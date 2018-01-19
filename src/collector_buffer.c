@@ -39,6 +39,7 @@ void init_export_buffer(export_buffer_t *buf) {
     buf->bufhead = NULL;
     buf->buftail = NULL;
     buf->alloced = 0;
+    buf->partialfront = 0;
 }
 
 void release_export_buffer(export_buffer_t *buf) {
@@ -90,12 +91,16 @@ static void validate_buffer(export_buffer_t *buf) {
 }
 
 uint64_t append_message_to_buffer(export_buffer_t *buf,
-        openli_exportmsg_t *msg) {
+        openli_exportmsg_t *msg, uint32_t beensent) {
 
     int i;
     uint32_t enclen = msg->msglen - msg->ipclen;
     uint64_t bufused = buf->buftail - buf->bufhead;
     uint64_t spaceleft = buf->alloced - bufused;
+
+    if (bufused == 0) {
+        buf->partialfront = beensent;
+    }
 
     while (spaceleft < msg->msglen) {
         /* Add some space to the buffer */
@@ -135,10 +140,12 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     return (buf->buftail - buf->bufhead);
 }
 
-uint64_t transmit_buffered_records(export_buffer_t *buf, int fd,
+int transmit_buffered_records(export_buffer_t *buf, int fd,
         uint64_t bytelimit) {
 
     uint64_t sent = 0;
+    uint64_t rem = 0;
+    uint64_t offset = buf->partialfront;
     wandder_etsispec_t *dec = wandder_create_etsili_decoder();
     int ret;
 
@@ -153,7 +160,8 @@ uint64_t transmit_buffered_records(export_buffer_t *buf, int fd,
             attachlen = 10000;
         }
 
-        wandder_attach_etsili_buffer(dec, buf->bufhead + sent, attachlen, 0);
+        wandder_attach_etsili_buffer(dec, buf->bufhead + sent,
+                attachlen, 0);
         pdulen = wandder_etsili_get_pdu_length(dec);
 
         if (pdulen == 0) {
@@ -169,44 +177,44 @@ uint64_t transmit_buffered_records(export_buffer_t *buf, int fd,
         sent += pdulen;
     }
 
-    if (sent == 0) {
-        return sent;
+    sent -= offset;
+    if (sent != 0) {
+        ret = send(fd, buf->bufhead + offset, (int)sent, MSG_DONTWAIT);
+        if (ret < 0) {
+            if (errno != EAGAIN) {
+                logger(LOG_DAEMON,
+                        "OpenLI: Error exporting to target from buffer: %s.",
+                        strerror(errno));
+                return -1;
+            }
+            return 0;
+        } else if (ret < sent) {
+            /* Partial send, move partialfront ahead by whatever we did send. */
+            buf->partialfront += (uint32_t)ret;
+            return sent;
+        }
     }
 
-    /* Should probably do something to prevent sent from being larger
-     * than what send() can handle? */
-
-    /* TODO to block or not block? we need to avoid partial sends if we
-     * are going to keep record alignment, but we don't want to hold up
-     * reading new records from the export queue...
-     */
-    ret = send(fd, buf->bufhead, (int)sent, 0);
-    if (ret == -1) {
-        /* TODO get caller to drop connection */
-        logger(LOG_DAEMON, "OpenLI: Error exporting to target from buffer: %s.",
-                strerror(errno));
-        return 0;
-    }
+    rem = (buf->buftail - (buf->bufhead + sent + offset));
 
     /* Consider shrinking buffer if it is now way too large */
-    if (buf->buftail - (buf->bufhead + sent) < buf->alloced / 2 &&
-            buf->alloced > 100 * BUFFER_ALLOC_SIZE) {
+    if (rem < buf->alloced / 2 && buf->alloced > 10 * BUFFER_ALLOC_SIZE) {
 
         uint8_t *newbuf = NULL;
-        uint64_t resize = (buf->buftail - (buf->bufhead + sent));
-        resize = ((resize / BUFFER_ALLOC_SIZE) + 1) * BUFFER_ALLOC_SIZE;
+        uint64_t resize = 0;
+        resize = ((rem / BUFFER_ALLOC_SIZE) + 1) * BUFFER_ALLOC_SIZE;
 
-        newbuf = (uint8_t *)realloc((buf->bufhead + sent), resize);
-        buf->buftail = newbuf + (buf->buftail - (buf->bufhead + sent));
+        memmove(buf->bufhead, buf->bufhead + sent + offset, rem);
+        newbuf = (uint8_t *)realloc(buf->bufhead, resize);
+        buf->buftail = newbuf + rem;
         buf->bufhead = newbuf;
         buf->alloced = resize;
     } else {
-        uint64_t rem = (buf->buftail - (buf->bufhead + sent));
-
-        memmove(buf->bufhead, buf->bufhead + sent, rem);
+        memmove(buf->bufhead, buf->bufhead + sent + offset, rem);
         buf->buftail = buf->bufhead + rem;
     }
 
+    buf->partialfront = 0;
     return sent;
 }
 

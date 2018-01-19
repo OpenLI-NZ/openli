@@ -86,7 +86,7 @@ static int connect_single_target(export_dest_t *dest) {
     if (sockfd == -1) {
         logger(LOG_DAEMON, "OpenLI: Error while creating export socket: %s.",
                 strerror(errno));
-        return -1;
+        goto endconnect;
     }
 
     if (connect(sockfd, res->ai_addr, res->ai_addrlen) == -1) {
@@ -98,13 +98,22 @@ static int connect_single_target(export_dest_t *dest) {
         }
 
         close(sockfd);
-        return -1;
+        sockfd = -1;
+        goto endconnect;
     }
 
     logger(LOG_DAEMON, "OpenLI: connected to %s:%s successfully.",
             dest->details.ipstr, dest->details.portstr);
     dest->failmsg = 0;
 
+    /* If we disconnected after a partial send, make sure we re-send the
+     * whole record and trust that downstream will figure out how to deal
+     * with any duplication.
+     */
+    dest->buffer.partialfront = 0;
+
+endconnect:
+    freeaddrinfo(res);
     return sockfd;
 }
 
@@ -175,33 +184,55 @@ static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
 
     /* XXX probably be better to replace send()s with sendmmsg?? */
 
-    /* TODO do non-blocking sends, buffer message if EAGAIN */
-
-    ret = send(dest->fd, msg->msgbody, enclen, 0);
-    if (ret == -1) {
-        logger(LOG_DAEMON, "OpenLI: Error exporting to target %s:%s -- %s.",
-                dest->details.ipstr, dest->details.portstr, strerror(errno));
-        /* buffer this message for when we are able to reconnect */
-        if (append_message_to_buffer(&(dest->buffer), msg) == 0) {
+    ret = send(dest->fd, msg->msgbody, enclen, MSG_DONTWAIT);
+    if (ret < 0) {
+        /* buffer this message for next time */
+        if (append_message_to_buffer(&(dest->buffer), msg, 0) == 0) {
             /* TODO do something if we run out of memory? */
 
         }
-        return -1;
+        if (errno != EAGAIN) {
+            logger(LOG_DAEMON, "OpenLI: Error exporting to target %s:%s -- %s.",
+                dest->details.ipstr, dest->details.portstr, strerror(errno));
+            return -1;
+        }
+
+        return 0;
+    } else if (ret < enclen && ret >= 0) {
+        /* Partial send, save whole message but make sure the buffer knows
+         * how much we've already sent so it can continue from there.
+         */
+        if (append_message_to_buffer(&(dest->buffer), msg, (uint32_t)ret)
+                    == 0) {
+            /* TODO do something if we run out of memory? */
+        }
     }
 
+
     if (msg->ipclen > 0) {
-        ret = send(dest->fd, msg->ipcontents, msg->ipclen, 0);
-        if (ret == -1) {
-            logger(LOG_DAEMON,
-                    "OpenLI: Error exporting IP content to target %s:%s -- %s.",
-                    dest->details.ipstr, dest->details.portstr,
-                    strerror(errno));
+        ret = send(dest->fd, msg->ipcontents, msg->ipclen, MSG_DONTWAIT);
+        if (ret < 0) {
             /* buffer this message for when we are able to reconnect */
-            if (append_message_to_buffer(&(dest->buffer), msg) == 0) {
+            if (append_message_to_buffer(&(dest->buffer), msg, 0) == 0) {
                 /* TODO do something if we run out of memory? */
 
             }
-            return -1;
+            if (errno != EAGAIN) {
+                logger(LOG_DAEMON,
+                    "OpenLI: Error exporting IP content to target %s:%s -- %s.",
+                    dest->details.ipstr, dest->details.portstr,
+                    strerror(errno));
+                return -1;
+            }
+        } else if (ret >= 0 && ret < msg->ipclen) {
+            /* Partial send, save whole message but make sure the buffer knows
+             * how much we've already sent (including the earlier headers)
+             * so we can continue from there.
+             */
+            if (append_message_to_buffer(&(dest->buffer), msg,
+                        (uint32_t)ret + enclen) == 0) {
+                /* TODO do something if we run out of memory? */
+            }
         }
     }
 
@@ -217,7 +248,7 @@ static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
 
         if (dest->fd == -1) {
             /* buffer this message for when we are able to connect */
-            if (append_message_to_buffer(&(dest->buffer), msg) == 0) {
+            if (append_message_to_buffer(&(dest->buffer), msg, 0) == 0) {
                 /* TODO do something if we run out of memory? */
 
             }
@@ -230,9 +261,9 @@ static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
     }
 
     if (transmit_buffered_records(&(dest->buffer), dest->fd, BUF_BATCH_SIZE)
-                == 0) {
+                == -1) {
 
-        /* TODO error detection and handling */
+        return -1;
 
     }
 
@@ -243,7 +274,7 @@ static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
 
     /* buffer was not completely drained, so we have to buffer this
      * message too -- hopefully we'll catch up soon */
-    if (append_message_to_buffer(&(dest->buffer), msg) == 0) {
+    if (append_message_to_buffer(&(dest->buffer), msg, 0) == 0) {
         /* TODO do something if we run out of memory? */
 
     }
@@ -284,8 +315,9 @@ static int check_epoll_fd(collector_export_t *exp, struct epoll_event *ev) {
 
         while (readmsgs < MAX_READ_BATCH) {
 
-            if (libtrace_message_queue_try_get(srcq, (void *)(&recvd)) ==
-                    LIBTRACE_MQ_FAILED) {
+            int x;
+            x = libtrace_message_queue_try_get(srcq, (void *)(&recvd));
+            if (x == LIBTRACE_MQ_FAILED) {
                 break;
             }
 
@@ -348,7 +380,7 @@ int exporter_thread_main(collector_export_t *exp) {
     epoll_ev->data.q = NULL;
 
     ev.data.ptr = epoll_ev;
-    ev.events = EPOLLIN | EPOLLET;
+    ev.events = EPOLLIN;
 
     its.it_interval.tv_sec = 0;
     its.it_interval.tv_nsec = 0;
@@ -409,7 +441,7 @@ void register_export_queue(collector_global_t *glob,
     epoll_ev->data.q = q;
 
     ev.data.ptr = (void *)epoll_ev;
-    ev.events = EPOLLIN | EPOLLET;
+    ev.events = EPOLLIN;
 
 	if (epoll_ctl(glob->export_epollfd, EPOLL_CTL_ADD,
                 libtrace_message_queue_get_fd(q), &ev) == -1) {

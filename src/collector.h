@@ -70,6 +70,8 @@ typedef struct export_buffer {
     uint8_t *bufhead;
     uint8_t *buftail;
     uint64_t alloced;
+
+    uint32_t partialfront;
 } export_buffer_t;
 
 typedef struct export_dest {
