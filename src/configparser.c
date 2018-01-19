@@ -34,6 +34,7 @@
 
 #include "configparser.h"
 #include "logger.h"
+#include "collector_buffer.h"
 
 void clear_global_config(collector_global_t *glob) {
         int i;
@@ -151,6 +152,7 @@ static int parse_export_target_list(libtrace_list_t *targets,
         dest.details.ipstr = NULL;
         dest.details.portstr = NULL;
         dest.details.destid = 0;
+        init_export_buffer(&(dest.buffer));
         dest.fd = -1;
         dest.failmsg = 0;
 

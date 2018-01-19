@@ -66,12 +66,19 @@ struct dest_details {
     uint32_t destid;
 };
 
+typedef struct export_buffer {
+    uint8_t *bufhead;
+    uint8_t *buftail;
+    uint64_t alloced;
+} export_buffer_t;
+
 typedef struct export_dest {
     int failmsg;
     int fd;
     struct dest_details details;
 
     /* TODO message buffering... */
+    export_buffer_t buffer;
 } export_dest_t;
 
 enum {

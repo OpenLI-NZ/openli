@@ -37,6 +37,7 @@
 
 #include "collector.h"
 #include "collector_export.h"
+#include "collector_buffer.h"
 #include "configparser.h"
 #include "logger.h"
 
@@ -157,6 +158,7 @@ void destroy_exporter(collector_export_t *exp) {
             close(d->fd);
         }
         /* Don't free d->details, let the sync thread tidy this up */
+        release_export_buffer(&(d->buffer));
         n = n->next;
     }
 
@@ -165,19 +167,11 @@ void destroy_exporter(collector_export_t *exp) {
     free(exp);
 }
 
-static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
+
+static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
 
     uint32_t enclen = msg->msglen - msg->ipclen;
     int ret;
-
-    if (dest->fd == -1) {
-        //dest->fd = connect_single_target(dest);
-
-        if (dest->fd == -1) {
-            /* TODO buffer this message for when we are able to connect */
-            return 0;
-        }
-    }
 
     /* XXX probably be better to replace send()s with sendmmsg?? */
 
@@ -187,7 +181,11 @@ static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
     if (ret == -1) {
         logger(LOG_DAEMON, "OpenLI: Error exporting to target %s:%s -- %s.",
                 dest->details.ipstr, dest->details.portstr, strerror(errno));
-        /* TODO buffer this message for when we are able to reconnect */
+        /* buffer this message for when we are able to reconnect */
+        if (append_message_to_buffer(&(dest->buffer), msg) == 0) {
+            /* TODO do something if we run out of memory? */
+
+        }
         return -1;
     }
 
@@ -198,13 +196,61 @@ static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
                     "OpenLI: Error exporting IP content to target %s:%s -- %s.",
                     dest->details.ipstr, dest->details.portstr,
                     strerror(errno));
-            /* TODO buffer this message for when we are able to reconnect */
+            /* buffer this message for when we are able to reconnect */
+            if (append_message_to_buffer(&(dest->buffer), msg) == 0) {
+                /* TODO do something if we run out of memory? */
+
+            }
             return -1;
         }
     }
 
     return 0;
 }
+
+#define BUF_BATCH_SIZE (10 * 1024 * 1024)
+
+static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
+
+    if (dest->fd == -1) {
+        //dest->fd = connect_single_target(dest);
+
+        if (dest->fd == -1) {
+            /* buffer this message for when we are able to connect */
+            if (append_message_to_buffer(&(dest->buffer), msg) == 0) {
+                /* TODO do something if we run out of memory? */
+
+            }
+            return 0;
+        }
+    }
+
+    if (get_buffered_amount(&(dest->buffer)) == 0) {
+        return forward_fd(dest, msg);
+    }
+
+    if (transmit_buffered_records(&(dest->buffer), dest->fd, BUF_BATCH_SIZE)
+                == 0) {
+
+        /* TODO error detection and handling */
+
+    }
+
+    if (get_buffered_amount(&(dest->buffer)) == 0) {
+        /* buffer is now empty, try to push out this message too */
+        return forward_fd(dest, msg);
+    }
+
+    /* buffer was not completely drained, so we have to buffer this
+     * message too -- hopefully we'll catch up soon */
+    if (append_message_to_buffer(&(dest->buffer), msg) == 0) {
+        /* TODO do something if we run out of memory? */
+
+    }
+
+    return 0;
+}
+
 
 #define MAX_READ_BATCH 25
 
