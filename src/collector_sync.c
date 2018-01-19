@@ -226,10 +226,7 @@ void register_sync_queues(collector_global_t *glob,
 
     printf("Registered sync queue %d\n", ind);
 
-    /* TODO push a hello message onto recvq, so that the sync thread can
-     * send it any currently active intercepts.
-     */
-     push_hello_message(recvq, sendq);
+    push_hello_message(recvq, sendq);
 }
 
 void halt_processing_threads(collector_global_t *glob) {

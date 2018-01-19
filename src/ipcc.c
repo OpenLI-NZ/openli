@@ -197,8 +197,6 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
     openli_export_recv_t msg;
     int matched = 0;
 
-    /* TODO remove FCS if present */
-
     if (rem < sizeof(libtrace_ip_t)) {
         /* Truncated IP header */
         logger(LOG_DAEMON, "OpenLI: Got IPv4 packet with truncated header?");

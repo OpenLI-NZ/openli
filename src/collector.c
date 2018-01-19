@@ -242,10 +242,7 @@ static void *start_sync_thread(void *params) {
         logger(LOG_DAEMON, "OpenLI: Warning - failed to parse IP intercept config");
     }
 
-    //dump_all_intercepts(sync);
     register_export_queue(glob, &(sync->exportq));
-
-    /* TODO send all recipients to the export thread */
 
     while (collector_halt == 0) {
         sync_thread_main(sync);
