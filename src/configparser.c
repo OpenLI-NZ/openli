@@ -66,6 +66,10 @@ void clear_global_config(collector_global_t *glob) {
         free(glob->networkelemid);
     }
 
+    if (glob->intpointid) {
+        free(glob->intpointid);
+    }
+
     pthread_mutex_destroy(&glob->syncq_mutex);
     free(glob);
 }
@@ -268,6 +272,7 @@ static int parse_ipintercept_list(libtrace_list_t *ipints, yaml_document_t *doc,
                     strcmp((char *)key->data.scalar.value, "liid") == 0 &&
                     newcept.liid == NULL) {
                 newcept.liid = strdup((char *)value->data.scalar.value);
+                newcept.liid_len = strlen(newcept.liid);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -275,6 +280,7 @@ static int parse_ipintercept_list(libtrace_list_t *ipints, yaml_document_t *doc,
                     strcmp((char *)key->data.scalar.value, "authcountrycode") == 0 &&
                     newcept.authcc == NULL) {
                 newcept.authcc = strdup((char *)value->data.scalar.value);
+                newcept.authcc_len = strlen(newcept.authcc);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -283,6 +289,7 @@ static int parse_ipintercept_list(libtrace_list_t *ipints, yaml_document_t *doc,
                             "deliverycountrycode") == 0 &&
                     newcept.delivcc == NULL) {
                 newcept.delivcc = strdup((char *)value->data.scalar.value);
+                newcept.delivcc_len = strlen(newcept.delivcc);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -290,6 +297,7 @@ static int parse_ipintercept_list(libtrace_list_t *ipints, yaml_document_t *doc,
                     strcmp((char *)key->data.scalar.value, "user") == 0 &&
                     newcept.username == NULL) {
                 newcept.username = strdup((char *)value->data.scalar.value);
+                newcept.username_len = strlen(newcept.username);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -468,6 +476,7 @@ collector_global_t *parse_global_config(char *configfile) {
     glob->sync_epollfd = -1;
     glob->export_epollfd = -1;
     glob->configfile = configfile;
+    glob->export_epoll_evs = NULL;
 
     pthread_mutex_init(&glob->syncq_mutex, NULL);
 

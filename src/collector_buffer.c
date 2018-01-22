@@ -177,6 +177,8 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         sent += pdulen;
     }
 
+    wandder_free_etsili_decoder(dec);
+
     sent -= offset;
     if (sent != 0) {
         ret = send(fd, buf->bufhead + offset, (int)sent, MSG_DONTWAIT);

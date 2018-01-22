@@ -52,6 +52,39 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
 }
 
+void free_all_intercepts(libtrace_list_t *interceptlist) {
+
+    libtrace_list_node_t *n;
+    ipintercept_t *cept;
+
+    n = interceptlist->head;
+    while (n) {
+        cept = (ipintercept_t *)n->data;
+        if (cept->liid) {
+            free(cept->liid);
+        }
+        if (cept->ipaddr) {
+            free(cept->ipaddr);
+        }
+
+        if (cept->authcc) {
+            free(cept->authcc);
+        }
+
+        if (cept->delivcc) {
+            free(cept->delivcc);
+        }
+
+        if (cept->username) {
+            free(cept->username);
+        }
+
+        n = n->next;
+    }
+
+	libtrace_list_deinit(interceptlist);
+}
+
 void clean_sync_data(collector_sync_t *sync) {
 
 	if (sync->instruct_fd != -1) {
@@ -62,7 +95,7 @@ void clean_sync_data(collector_sync_t *sync) {
 		close(sync->glob->sync_epollfd);
 	}
 
-	libtrace_list_deinit(sync->ipintercepts);
+    free_all_intercepts(sync->ipintercepts);
 	libtrace_message_queue_destroy(&(sync->exportq));
 
 	free(sync);

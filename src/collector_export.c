@@ -168,10 +168,26 @@ void destroy_exporter(collector_export_t *exp) {
         }
         /* Don't free d->details, let the sync thread tidy this up */
         release_export_buffer(&(d->buffer));
+
+        if (d->details.portstr) {
+            free(d->details.portstr);
+        }
+
+        if (d->details.ipstr) {
+            free(d->details.ipstr);
+        }
         n = n->next;
     }
 
     libtrace_list_deinit(exp->dests);
+
+    n = exp->glob->export_epoll_evs->head;
+    while (n) {
+        exporter_epoll_t *ev = *((exporter_epoll_t **)n->data);
+        free(ev);
+        n = n->next;
+    }
+    libtrace_list_deinit(exp->glob->export_epoll_evs);
 
     free(exp);
 }
@@ -343,6 +359,7 @@ static int check_epoll_fd(collector_export_t *exp, struct epoll_event *ev) {
                     logger(LOG_DAEMON, "Received a message for export to target %u, but no such target exists??", recvd.data.toexport.destid);
                     ret = -1;
                 }
+                free(recvd.data.toexport.msgbody);
             }
 
             if (recvd.type == OPENLI_EXPORT_PACKET_FIN) {
@@ -449,6 +466,12 @@ void register_export_queue(collector_global_t *glob,
         logger(LOG_DAEMON, "OpenLI: failed to register export queue: %s",
                 strerror(errno));
     }
+
+    if (glob->export_epoll_evs == NULL) {
+        glob->export_epoll_evs = libtrace_list_init(sizeof(exporter_epoll_t **));
+    }
+
+    libtrace_list_push_back(glob->export_epoll_evs, &epoll_ev);
 
 }
 

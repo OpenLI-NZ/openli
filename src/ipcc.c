@@ -99,8 +99,7 @@ static openli_export_recv_t form_ipcc(collector_global_t *glob,
      */
 
     if (loc->encoder == NULL) {
-        loc->encoder = (wandder_encoder_t *)malloc(sizeof(wandder_encoder_t));
-        init_wandder_encoder(loc->encoder);
+        loc->encoder = init_wandder_encoder();
     } else {
         reset_wandder_encoder(loc->encoder);
     }

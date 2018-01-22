@@ -140,7 +140,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_message_queue_destroy(&(loc->fromsyncq));
     libtrace_message_queue_destroy(&(loc->exportq));
 
-    libtrace_list_deinit(loc->activeipintercepts);
+    free_all_intercepts(loc->activeipintercepts);
 
     free_wandder_encoder(loc->encoder);
 
@@ -166,6 +166,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         if (syncpush.type == OPENLI_PUSH_IPINTERCEPT) {
             libtrace_list_push_front(loc->activeipintercepts,
                     (void *)(syncpush.data.ipint));
+            free(syncpush.data.ipint);
         }
 
         if (syncpush.type == OPENLI_PUSH_HALT_IPINTERCEPT) {

@@ -79,7 +79,6 @@ typedef struct export_dest {
     int fd;
     struct dest_details details;
 
-    /* TODO message buffering... */
     export_buffer_t buffer;
 } export_dest_t;
 
@@ -197,6 +196,8 @@ typedef struct collector_global {
     int operatorid_len;
     int networkelemid_len;
     int intpointid_len;
+
+    libtrace_list_t *export_epoll_evs;
 
 } collector_global_t;
 

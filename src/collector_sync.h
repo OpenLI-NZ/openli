@@ -49,6 +49,7 @@ void register_sync_queues(collector_global_t *glob,
         libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq);
 
 void halt_processing_threads(collector_global_t *glob);
+void free_all_intercepts(libtrace_list_t *interceptlist);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
