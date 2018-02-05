@@ -41,9 +41,8 @@ enum {
     PROV_EPOLL_MEDIATE_CONN,
     PROV_EPOLL_UPDATE_CONN,
     PROV_EPOLL_UPDATE,
-    PROV_EPOLL_MEDIATOR_RECV,
-    PROV_EPOLL_MEDIATOR_SEND,
-    PROV_EPOLL_COLL_SEND,
+    PROV_EPOLL_MEDIATOR,
+    PROV_EPOLL_COLLECTOR,
     PROV_EPOLL_MAIN_TIMER,
     PROV_EPOLL_FD_TIMER,
     PROV_EPOLL_SIGNAL,
@@ -93,11 +92,7 @@ typedef struct prov_state {
 typedef struct prov_collector {
 
     int fd;     /* The socket for communicating over */
-    prov_epoll_ev_t *sendev;
-
-    /* TODO consider a receive event for messages from the collector,
-     * e.g. warnings about dropped packets, filling buffers etc.
-     */
+    prov_epoll_ev_t *commev;
 
 } prov_collector_t;
 
@@ -105,8 +100,7 @@ typedef struct prov_mediator {
 
     int fd;     /* the socket for communication with the mediator */
     uint32_t destid;    /* the unique ID for this mediator */
-    prov_epoll_ev_t *sendev;
-    prov_epoll_ev_t *recvev;
+    prov_epoll_ev_t *commev;
 
 } prov_mediator_t;
 

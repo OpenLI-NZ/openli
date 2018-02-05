@@ -127,9 +127,8 @@ static void free_all_mediators(libtrace_list_t *m) {
     n = m->head;
     while (n) {
         med = (prov_mediator_t *)(n->data);
-        /* TODO free med->sendev->state and med->recvev->state */
-        free(med->sendev);
-        free(med->recvev);
+        /* TODO free med->commev->state*/
+        free(med->commev);
         close(med->fd);
         n = n->next;
     }
@@ -146,8 +145,8 @@ static void stop_all_collectors(libtrace_list_t *c) {
     n = c->head;
     while (n) {
         col = (prov_collector_t *)n->data;
-        /* TODO free col->sendev->state */
-        free(col->sendev);
+        /* TODO free col->commev->state */
+        free(col->commev);
         close(col->fd);
         n = n->next;
     }
@@ -280,6 +279,8 @@ static int accept_collector(provision_state_t *state) {
     libtrace_list_node_t *n;
     struct epoll_event ev;
 
+    /* TODO check for EPOLLHUP or EPOLLERR */
+
     /* Accept, then add to list of collectors. Push all active intercepts
      * out to the collector. */
     newfd = accept(state->clientfd->fd, (struct sockaddr *)&saddr, &socklen);
@@ -294,18 +295,20 @@ static int accept_collector(provision_state_t *state) {
     }
 
     if (newfd >= 0) {
+        /* TODO some rudimentary auth to identify genuine collectors? */
         col.fd = newfd;
-        col.sendev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
+        col.commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
-        col.sendev->fdtype = PROV_EPOLL_COLL_SEND;
-        col.sendev->fd = newfd;
-        col.sendev->state = NULL;
+        col.commev->fdtype = PROV_EPOLL_COLLECTOR;
+        col.commev->fd = newfd;
+        col.commev->state = NULL;
 
-        /* Create outgoing buffer state */
+
+        /* Create outgoing and incoming buffer state */
 
         /* Add fd to epoll */
-        ev.data.ptr = (void *)col.sendev;
-        ev.events = EPOLLOUT;
+        ev.data.ptr = (void *)col.commev;
+        ev.events = EPOLLOUT | EPOLLIN;
 
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, col.fd, &ev) < 0) {
             logger(LOG_DAEMON,
@@ -334,6 +337,8 @@ static int accept_mediator(provision_state_t *state) {
     prov_mediator_t med;
     libtrace_list_node_t *n;
 
+    /* TODO check for EPOLLHUP or EPOLLERR */
+
     /* Accept, then add to list of mediators. Push all known LEAs to the
      * mediator, as well as any intercept->LEA mappings that we have.
      */
@@ -349,29 +354,20 @@ static int accept_mediator(provision_state_t *state) {
     }
 
     if (newfd >= 0) {
+        /* TODO some rudimentary auth to identify genuine mediators? */
         med.fd = newfd;
         med.destid = 0;     /* will receive this from mediator soon */
-        med.sendev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
-        med.recvev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
+        med.commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
-        med.sendev->fdtype = PROV_EPOLL_MEDIATOR_SEND;
-        med.sendev->fd = newfd;
-        med.sendev->state = NULL;
+        med.commev->fdtype = PROV_EPOLL_MEDIATOR;
+        med.commev->fd = newfd;
+        med.commev->state = NULL;
 
-        /* Create outgoing buffer state */
+        /* Create outgoing and incoming buffer state */
 
         /* Add fd to epoll */
 
         /* Push all known LEAs to mediator, plus all intercept->LEA mappings */
-
-
-        med.recvev->fdtype = PROV_EPOLL_MEDIATOR_RECV;
-        med.recvev->fd = newfd;
-        med.recvev->state = NULL;
-
-        /* Create incoming buffer state */
-
-        /* Add fd to epoll */
 
         /* Wait to receive mediator ID etc from mediator */
 
@@ -529,10 +525,9 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
             ret = process_signal(state, pev->fd);
             break;
 
-        case PROV_EPOLL_MEDIATOR_RECV:
-        case PROV_EPOLL_MEDIATOR_SEND:
+        case PROV_EPOLL_MEDIATOR:
         case PROV_EPOLL_FD_TIMER:
-        case PROV_EPOLL_COLL_SEND:
+        case PROV_EPOLL_COLLECTOR:
         case PROV_EPOLL_UPDATE:
             /* TODO all of the above */
             break;
