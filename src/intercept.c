@@ -24,19 +24,39 @@
  *
  */
 
-#ifndef OPENLI_CONFIGPARSER_H_
-#define OPENLI_CONFIGPARSER_H_
+#include "intercept.h"
 
-#include "collector.h"
-#include "provisioner.h"
-#include <yaml.h>
+void free_all_intercepts(libtrace_list_t *interceptlist) {
 
-int parse_export_config(char *configfile, libtrace_list_t *exptargets);
-int parse_ipintercept_config(char *configfile, libtrace_list_t *ipints);
-collector_global_t *parse_global_config(char *configfile);
-void clear_global_config(collector_global_t *glob);
+    libtrace_list_node_t *n;
+    ipintercept_t *cept;
 
-int parse_provisioning_config(char *configfile, provision_state_t *state);
-#endif
+    n = interceptlist->head;
+    while (n) {
+        cept = (ipintercept_t *)n->data;
+        if (cept->liid) {
+            free(cept->liid);
+        }
+        if (cept->ipaddr) {
+            free(cept->ipaddr);
+        }
+
+        if (cept->authcc) {
+            free(cept->authcc);
+        }
+
+        if (cept->delivcc) {
+            free(cept->delivcc);
+        }
+
+        if (cept->username) {
+            free(cept->username);
+        }
+
+        n = n->next;
+    }
+
+    libtrace_list_deinit(interceptlist);
+}
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

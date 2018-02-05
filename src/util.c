@@ -24,19 +24,31 @@
  *
  */
 
-#ifndef OPENLI_CONFIGPARSER_H_
-#define OPENLI_CONFIGPARSER_H_
+#include <sys/timerfd.h>
+#include <inttypes.h>
+#include "util.h"
 
-#include "collector.h"
-#include "provisioner.h"
-#include <yaml.h>
+int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr) {
+    int timerfd;
+    struct epoll_event ev;
+    struct itimerspec its;
 
-int parse_export_config(char *configfile, libtrace_list_t *exptargets);
-int parse_ipintercept_config(char *configfile, libtrace_list_t *ipints);
-collector_global_t *parse_global_config(char *configfile);
-void clear_global_config(collector_global_t *glob);
+    ev.data.ptr = ptr;
+    ev.events = EPOLLIN;
 
-int parse_provisioning_config(char *configfile, provision_state_t *state);
-#endif
+    its.it_interval.tv_sec = 0;
+    its.it_interval.tv_nsec = 0;
+    its.it_value.tv_sec = 1;
+    its.it_value.tv_nsec = 0;
 
+    timerfd = timerfd_create(CLOCK_MONOTONIC, 0);
+    timerfd_settime(timerfd, 0, &its, NULL);
+
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, timerfd, &ev) == -1) {
+        return -1;
+    }
+
+    return timerfd;
+}
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
+

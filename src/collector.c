@@ -47,7 +47,6 @@
 
 volatile int collector_halt = 0;
 volatile int reload_export_config = 0;
-volatile int reload_intercepts = 0;
 
 static void cleanup_signal(int signal UNUSED)
 {

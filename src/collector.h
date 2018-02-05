@@ -34,36 +34,11 @@
 #include <libtrace/linked_list.h>
 #include <libwandder.h>
 
+#include "intercept.h"
+
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
     OPENLI_PUSH_HALT_IPINTERCEPT = 2
-};
-
-typedef struct ipintercept {
-    uint64_t internalid;
-    char *liid;
-    char *authcc;
-    char *delivcc;
-    uint64_t cin;
-
-    int liid_len;
-    int authcc_len;
-    int delivcc_len;
-    int username_len;
-
-    int ai_family;
-    struct sockaddr_storage *ipaddr;
-    char *username;
-
-    uint8_t active;
-    uint64_t nextseqno;
-    uint32_t destid;
-} ipintercept_t;
-
-struct dest_details {
-    char *ipstr;
-    char *portstr;
-    uint32_t destid;
 };
 
 typedef struct export_buffer {

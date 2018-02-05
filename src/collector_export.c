@@ -40,6 +40,7 @@
 #include "collector_buffer.h"
 #include "configparser.h"
 #include "logger.h"
+#include "util.h"
 
 enum {
     EXP_EPOLL_MQUEUE = 0,
@@ -386,8 +387,6 @@ int exporter_thread_main(collector_export_t *exp) {
 
 	int i, nfds, timerfd;
 	struct epoll_event evs[64];
-	struct itimerspec its;
-    struct epoll_event ev;
     int timerexpired = 0;
     exporter_epoll_t *epoll_ev = NULL;
 
@@ -396,19 +395,8 @@ int exporter_thread_main(collector_export_t *exp) {
     epoll_ev->type = EXP_EPOLL_TIMER;
     epoll_ev->data.q = NULL;
 
-    ev.data.ptr = epoll_ev;
-    ev.events = EPOLLIN;
-
-    its.it_interval.tv_sec = 0;
-    its.it_interval.tv_nsec = 0;
-    its.it_value.tv_sec = 1;
-    its.it_value.tv_nsec = 0;
-
-    timerfd = timerfd_create(CLOCK_MONOTONIC, 0);
-    timerfd_settime(timerfd, 0, &its, NULL);
-
-    if (epoll_ctl(exp->glob->export_epollfd, EPOLL_CTL_ADD, timerfd, &ev) == -1)
-    {
+    timerfd = epoll_add_timer(exp->glob->export_epollfd, 1, epoll_ev);
+    if (timerfd == -1) {
         logger(LOG_DAEMON, "OpenLI: failed to add export timer fd to epoll set: %s.", strerror(errno));
         return -1;
     }
@@ -435,7 +423,7 @@ int exporter_thread_main(collector_export_t *exp) {
         }
     }
 
-    if (epoll_ctl(exp->glob->export_epollfd, EPOLL_CTL_DEL, timerfd, &ev) == -1)
+    if (epoll_ctl(exp->glob->export_epollfd, EPOLL_CTL_DEL, timerfd, NULL) == -1)
     {
         logger(LOG_DAEMON, "OpenLI: failed to remove export timer fd to epoll set: %s.", strerror(errno));
         return -1;
