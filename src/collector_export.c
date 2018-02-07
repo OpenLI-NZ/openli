@@ -69,52 +69,26 @@ collector_export_t *init_exporter(collector_global_t *glob) {
 
 static int connect_single_target(export_dest_t *dest) {
 
-    struct addrinfo hints, *res;
-    int sockfd;
+    int sockfd = connect_socket(dest->details.ipstr, dest->details.portstr,
+            dest->failmsg);
 
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-
-    if (getaddrinfo(dest->details.ipstr, dest->details.portstr, &hints,
-                &res) == -1) {
-        logger(LOG_DAEMON, "OpenLI: Error while trying to look up %s:%s as an export target -- %s.", dest->details.ipstr, dest->details.portstr, strerror(errno));
+    if (sockfd == -1) {
+        /* TODO should probably bail completely on this dest if this
+         * happens. */
         return -1;
     }
 
-    sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-
-    if (sockfd == -1) {
-        logger(LOG_DAEMON, "OpenLI: Error while creating export socket: %s.",
-                strerror(errno));
-        goto endconnect;
+    if (sockfd == 0) {
+        dest->failmsg = 1;
+        return -1;
     }
 
-    if (connect(sockfd, res->ai_addr, res->ai_addrlen) == -1) {
-        if (!dest->failmsg) {
-            logger(LOG_DAEMON, "OpenLI: Failed to connect to export target %s:%s -- %s.",
-                    dest->details.ipstr, dest->details.portstr, strerror(errno));
-            logger(LOG_DAEMON, "OpenLI: Will retry connection periodically.");
-            dest->failmsg = 1;
-        }
-
-        close(sockfd);
-        sockfd = -1;
-        goto endconnect;
-    }
-
-    logger(LOG_DAEMON, "OpenLI: connected to %s:%s successfully.",
-            dest->details.ipstr, dest->details.portstr);
     dest->failmsg = 0;
-
     /* If we disconnected after a partial send, make sure we re-send the
      * whole record and trust that downstream will figure out how to deal
      * with any duplication.
      */
     dest->buffer.partialfront = 0;
-
-endconnect:
-    freeaddrinfo(res);
     return sockfd;
 }
 

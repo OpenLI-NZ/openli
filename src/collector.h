@@ -157,6 +157,8 @@ typedef struct collector_global {
     pthread_mutex_t syncq_mutex;
 
     libtrace_message_queue_t **syncsendqs;
+    void **syncepollevs;
+
     pthread_t syncthreadid;
     pthread_t exportthreadid;
 
@@ -167,6 +169,8 @@ typedef struct collector_global {
     char *operatorid;
     char *networkelemid;
     char *intpointid;
+    char *provisionerip;
+    char *provisionerport;
 
     int operatorid_len;
     int networkelemid_len;

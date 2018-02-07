@@ -78,6 +78,8 @@ int push_intercept_onto_net_buffer(net_buffer_t *nb, ipintercept_t *ipint);
 int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *ipint);
 int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
         char *agencyid);
+int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t
+        authtype);
 int transmit_net_buffer(net_buffer_t *nb);
 
 openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,

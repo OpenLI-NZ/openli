@@ -231,7 +231,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp) {
 
 static void *start_sync_thread(void *params) {
     collector_global_t *glob = (collector_global_t *)params;
-
+    int ret;
     collector_sync_t *sync = init_sync_data(glob);
 
     /* XXX For early development work, we will read intercept instructions
@@ -245,7 +245,26 @@ static void *start_sync_thread(void *params) {
     register_export_queue(glob, &(sync->exportq));
 
     while (collector_halt == 0) {
-        sync_thread_main(sync);
+        if (sync->instruct_fd == -1) {
+            ret = sync_connect_provisioner(sync);
+            if (ret < 0) {
+                /* Fatal error */
+                logger(LOG_DAEMON,
+                        "OpenLI: collector is unable to reach provisioner.");
+                break;
+            }
+
+            if (ret == 0) {
+                /* Connection failed, but we should retry */
+                usleep(500000);
+                continue;
+            }
+        }
+
+        ret = sync_thread_main(sync);
+        if (ret == -1) {
+            break;
+        }
     }
 
     /* Collector is halting, stop all processing threads */

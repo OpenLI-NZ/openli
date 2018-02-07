@@ -26,6 +26,9 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <errno.h>
+#include <string.h>
+#include <stdlib.h>
 
 #include "netcomms.h"
 #include "logger.h"
@@ -44,10 +47,83 @@ net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd) {
 }
 
 void destroy_net_buffer(net_buffer_t *nb) {
+    if (nb == NULL) {
+        return;
+    }
     free(nb->buf);
     free(nb);
 }
 
+
+int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype)
+{
+
+    /* TODO write this function! */
+
+    return 0;
+}
+
+int transmit_net_buffer(net_buffer_t *nb) {
+    int ret;
+
+    if (nb == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI: attempted to transmit using a NULL buffer.");
+        return -1;
+    }
+
+    if (nb->buftype != NETBUF_SEND) {
+        logger(LOG_DAEMON,
+                "OpenLI: attempted to transmit using a receive buffer.");
+        return -1;
+    }
+
+    if (NETBUF_CONTENT_SIZE(nb) == 0) {
+        return 0;
+    }
+
+    ret = send(nb->fd, nb->actptr, NETBUF_CONTENT_SIZE(nb), MSG_DONTWAIT);
+
+    if (ret == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            /* Socket not available right now... */
+            return 1;
+        }
+        logger(LOG_DAEMON,
+                "OpenLI: error while sending net buffer contents: %s.",
+                strerror(errno));
+        return -1;
+    }
+
+    nb->actptr += ret;
+
+    /* If we've got a lot of unused space at the front of the buffer,
+     * reclaim it by moving our content back to the front.
+     */
+    if (NETBUF_FRONT_FREE(nb) > NETBUF_ALLOC_SIZE) {
+        int consize = NETBUF_CONTENT_SIZE(nb);
+
+        if (consize > 0) {
+            memmove(nb->buf, nb->actptr, consize);
+        }
+        nb->actptr = nb->buf;
+        nb->appendptr = nb->actptr + consize;
+
+        /* TODO consider shrinking the buffer if alloced > 10 allocations
+         * and consize < 0.3 * alloced.
+         */
+    }
+
+    return NETBUF_CONTENT_SIZE(nb);
+}
+
+openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
+        uint16_t *msglen, uint64_t *intid) {
+
+    /* TODO write this function */
+
+    return OPENLI_PROTO_NO_MESSAGE;
+}
 
 #if 0
 static char *extend_xmit_buffer(xmit_buffer_t *xmit) {

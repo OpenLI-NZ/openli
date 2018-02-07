@@ -60,6 +60,10 @@ void clear_global_config(collector_global_t *glob) {
         free(glob->syncsendqs);
     }
 
+    if (glob->syncepollevs) {
+        free(glob->syncepollevs);
+    }
+
     if (glob->operatorid) {
         free(glob->operatorid);
     }
@@ -70,6 +74,14 @@ void clear_global_config(collector_global_t *glob) {
 
     if (glob->intpointid) {
         free(glob->intpointid);
+    }
+
+    if (glob->provisionerip) {
+        free(glob->provisionerip);
+    }
+
+    if (glob->provisionerport) {
+        free(glob->provisionerport);
     }
 
     pthread_mutex_destroy(&glob->syncq_mutex);
@@ -136,6 +148,8 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
             sizeof(libtrace_message_queue_t *) * glob->totalthreads);
     memset(glob->syncsendqs, 0,
             sizeof(libtrace_message_queue_t *) * glob->totalthreads);
+    glob->syncepollevs = (void **)malloc(sizeof(void *) * glob->totalthreads);
+    memset(glob->syncepollevs, 0, sizeof(void *) * glob->totalthreads);
     glob->queuealloced = glob->totalthreads;
     glob->registered_syncqs = 0;
 
@@ -461,6 +475,19 @@ static int global_parser(void *arg, yaml_document_t *doc,
             return -1;
         }
     }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "provisionerport") == 0) {
+        glob->provisionerport = strdup((char *) value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "provisionerip") == 0) {
+        glob->provisionerip = strdup((char *) value->data.scalar.value);
+    }
+
     return 0;
 }
 
@@ -477,6 +504,7 @@ collector_global_t *parse_global_config(char *configfile) {
     glob->queuealloced = 0;
     glob->registered_syncqs = 0;
     glob->syncsendqs = NULL;
+    glob->syncepollevs = 0;
     glob->intpointid = NULL;
     glob->intpointid_len = 0;
     glob->operatorid = NULL;
@@ -489,6 +517,8 @@ collector_global_t *parse_global_config(char *configfile) {
     glob->export_epollfd = -1;
     glob->configfile = configfile;
     glob->export_epoll_evs = NULL;
+    glob->provisionerip = NULL;
+    glob->provisionerport = NULL;
 
     pthread_mutex_init(&glob->syncq_mutex, NULL);
 

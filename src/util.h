@@ -29,6 +29,7 @@
 
 #include <sys/epoll.h>
 
+int connect_socket(char *ipstr, char *portstr, uint8_t isretry);
 int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr);
 
 #endif

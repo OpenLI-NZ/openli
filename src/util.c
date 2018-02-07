@@ -26,7 +26,65 @@
 
 #include <sys/timerfd.h>
 #include <inttypes.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#include "logger.h"
 #include "util.h"
+
+int connect_socket(char *ipstr, char *portstr, uint8_t isretry) {
+
+    struct addrinfo hints, *res;
+    int sockfd;
+
+    if (ipstr == NULL || portstr == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI: Error trying to connect to remote host -- host IP or port is not set.");
+        return -1;
+    }
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    if (getaddrinfo(ipstr, portstr, &hints, &res) == -1) {
+        logger(LOG_DAEMON, "OpenLI: Error while trying to look up %s:%s -- %s.",
+                ipstr, portstr, strerror(errno));
+        return -1;
+    }
+
+    sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+
+    if (sockfd == -1) {
+        logger(LOG_DAEMON, "OpenLI: Error while creating export socket: %s.",
+                strerror(errno));
+        goto endconnect;
+    }
+
+    if (connect(sockfd, res->ai_addr, res->ai_addrlen) == -1) {
+        if (!isretry) {
+            logger(LOG_DAEMON,
+                    "OpenLI: Failed to connect to %s:%s -- %s.",
+                    ipstr, portstr, strerror(errno));
+            logger(LOG_DAEMON, "OpenLI: Will retry connection periodically.");
+        }
+
+        close(sockfd);
+        sockfd = 0;     // a bit naughty to use 0 like this
+        goto endconnect;
+    }
+
+    logger(LOG_DAEMON, "OpenLI: connected to %s:%s successfully.",
+            ipstr, portstr);
+endconnect:
+    freeaddrinfo(res);
+    return sockfd;
+}
 
 int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr) {
     int timerfd;
