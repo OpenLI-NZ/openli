@@ -28,7 +28,7 @@
 #define OPENLI_PROVISIONER_H_
 
 #include <libtrace/linked_list.h>
-
+#include "netcomms.h"
 
 typedef struct prov_epoll_ev {
     int fdtype;
@@ -88,6 +88,20 @@ typedef struct prov_state {
 
 } provision_state_t;
 
+typedef struct prov_coll_state {
+    net_buffer_t *incoming;
+    net_buffer_t *outgoing;
+    uint8_t trusted;
+
+} prov_coll_state_t;
+
+typedef struct prov_med_state {
+    net_buffer_t *incoming;
+    net_buffer_t *outgoing;
+    uint8_t trusted;
+
+} prov_med_state_t;
+
 /* Describes a collector that is being served by the provisioner */
 typedef struct prov_collector {
 
@@ -99,7 +113,7 @@ typedef struct prov_collector {
 typedef struct prov_mediator {
 
     int fd;     /* the socket for communication with the mediator */
-    uint32_t destid;    /* the unique ID for this mediator */
+    openli_mediator_t *details;
     prov_epoll_ev_t *commev;
 
 } prov_mediator_t;

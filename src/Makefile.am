@@ -13,7 +13,7 @@ openlicollector_CFLAGS=
 openliprovisioner_SOURCES=provisioner.c provisioner.h byteswap.c \
                 byteswap.h intercept.h intercept.c configparser.c \
                 configparser.h util.c util.h agency.h  logger.c \
-                logger.h
+                logger.h mediator.h netcomms.h netcomms.c
 
 openliprovisioner_LDADD = @ADD_LIBS@
 openliprovisioner_LDFLAGS=

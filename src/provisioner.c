@@ -45,9 +45,13 @@
 #include "provisioner.h"
 #include "util.h"
 #include "agency.h"
+#include "netcomms.h"
+#include "mediator.h"
 
 volatile int provisioner_halt = 0;
 volatile int reload_config = 0;
+
+static openli_mediator_t testmed;
 
 static void halt_signal(int signal) {
     provisioner_halt = 1;
@@ -57,9 +61,101 @@ static void reload_signal(int signal) {
     reload_config = 1;
 }
 
+/* XXX these two functions look very similar right now, but avoid merging
+ * them as there may be further state that we wish to retain for one but
+ * not the other in the future.
+ */
+
+static void create_collector_state(prov_epoll_ev_t *pev) {
+
+    prov_coll_state_t *cs = (prov_coll_state_t *)malloc(
+            sizeof(prov_coll_state_t));
+
+    cs->incoming = create_net_buffer(NETBUF_RECV, pev->fd);
+    cs->outgoing = create_net_buffer(NETBUF_SEND, pev->fd);
+    cs->trusted = 0;
+
+    pev->state = cs;
+
+}
+
+static void create_mediator_state(prov_epoll_ev_t *pev) {
+
+    prov_med_state_t *ms = (prov_med_state_t *)malloc(
+            sizeof(prov_med_state_t));
+
+    ms->incoming = create_net_buffer(NETBUF_RECV, pev->fd);
+    ms->outgoing = create_net_buffer(NETBUF_SEND, pev->fd);
+    ms->trusted = 0;
+
+    pev->state = ms;
+
+}
+
+static void free_collector_state(prov_epoll_ev_t *pev) {
+    prov_coll_state_t *cs = (prov_coll_state_t *)(pev->state);
+
+    destroy_net_buffer(cs->incoming);
+    destroy_net_buffer(cs->outgoing);
+    free(cs);
+
+}
+
+static void free_mediator_state(prov_epoll_ev_t *pev) {
+    prov_med_state_t *ms = (prov_med_state_t *)(pev->state);
+
+    destroy_net_buffer(ms->incoming);
+    destroy_net_buffer(ms->outgoing);
+    free(ms);
+
+}
+
+static int map_intercepts_to_leas(provision_state_t *state) {
+
+    int failed = 0;
+    libtrace_list_node_t *intn;
+    libtrace_list_node_t *lean;
+
+    ipintercept_t *ipint;
+    liagency_t *lea;
+
+    /* Not the most efficient way of doing this, but the LEA list should
+     * generally be pretty short (e.g. max of 4 for NZ) and we're only
+     * going to do this once on startup.
+     */
+
+    intn = state->ipintercepts->head;
+
+    while (intn) {
+        ipint = (ipintercept_t *)(intn->data);
+
+        lean = state->leas->head;
+        while (lean) {
+            lea = (liagency_t *)(lean->data);
+            if (strcmp(lea->agencyid, ipint->targetagency) == 0) {
+                libtrace_list_push_back(lea->knownliids, ipint->liid);
+                break;
+            }
+            lean = lean->next;
+        }
+
+        if (lean == NULL) {
+            logger(LOG_DAEMON,
+                    "OpenLI: no such agency %s -- requested by intercept %s.",
+                    ipint->targetagency, ipint->liid);
+            failed ++;
+        }
+        intn = intn->next;
+    }
+
+    return failed;
+
+}
+
 static int init_prov_state(provision_state_t *state, char *configfile) {
 
     sigset_t sigmask;
+    int ret = 0;
 
     state->conffile = configfile;
 
@@ -69,6 +165,10 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->collectors = libtrace_list_init(sizeof(prov_collector_t));
     state->leas = libtrace_list_init(sizeof(liagency_t));
 
+    /* XXX temporary hardcoding of test "mediator" */
+    testmed.mediatorid = 6001;
+    testmed.ipstr = strdup("10.0.0.2");
+    testmed.portstr = strdup("43332");
 
     /* Three listening sockets
      *
@@ -85,6 +185,16 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->pushaddr = NULL;
 
     if (parse_provisioning_config(configfile, state) == -1) {
+        return -1;
+    }
+
+    /*
+     * XXX could also sanity check intercept->mediator mappings too...
+     */
+    if ((ret = map_intercepts_to_leas(state)) != 0) {
+        logger(LOG_DAEMON,
+                "OpenLI: failed to map %d intercepts to agencies. Exiting.",
+                ret);
         return -1;
     }
 
@@ -127,7 +237,7 @@ static void free_all_mediators(libtrace_list_t *m) {
     n = m->head;
     while (n) {
         med = (prov_mediator_t *)(n->data);
-        /* TODO free med->commev->state*/
+        free_mediator_state(med->commev);
         free(med->commev);
         close(med->fd);
         n = n->next;
@@ -145,7 +255,7 @@ static void stop_all_collectors(libtrace_list_t *c) {
     n = c->head;
     while (n) {
         col = (prov_collector_t *)n->data;
-        /* TODO free col->commev->state */
+        free_collector_state(col->commev);
         free(col->commev);
         close(col->fd);
         n = n->next;
@@ -155,6 +265,25 @@ static void stop_all_collectors(libtrace_list_t *c) {
 }
 
 static void free_all_leas(libtrace_list_t *l) {
+    libtrace_list_node_t *n;
+    liagency_t *lea;
+
+    n = l->head;
+    while (n) {
+        lea = (liagency_t *)n->data;
+        libtrace_list_deinit(lea->knownliids);
+        if (lea->ipstr) {
+            free(lea->ipstr);
+        }
+        if (lea->portstr) {
+            free(lea->portstr);
+        }
+        if (lea->agencyid) {
+            free(lea->agencyid);
+        }
+        n = n->next;
+    }
+
     libtrace_list_deinit(l);
 }
 
@@ -206,6 +335,10 @@ static void clear_prov_state(provision_state_t *state) {
     if (state->mediateport) {
         free(state->mediateport);
     }
+
+    /* XXX Freeing test mediator */
+    free(testmed.ipstr);
+    free(testmed.portstr);
 
 }
 
@@ -295,7 +428,6 @@ static int accept_collector(provision_state_t *state) {
     }
 
     if (newfd >= 0) {
-        /* TODO some rudimentary auth to identify genuine collectors? */
         col.fd = newfd;
         col.commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
@@ -303,12 +435,12 @@ static int accept_collector(provision_state_t *state) {
         col.commev->fd = newfd;
         col.commev->state = NULL;
 
-
         /* Create outgoing and incoming buffer state */
+        create_collector_state(col.commev);
 
         /* Add fd to epoll */
         ev.data.ptr = (void *)col.commev;
-        ev.events = EPOLLOUT | EPOLLIN;
+        ev.events = EPOLLIN; /* recv only until we trust the collector */
 
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, col.fd, &ev) < 0) {
             logger(LOG_DAEMON,
@@ -318,12 +450,8 @@ static int accept_collector(provision_state_t *state) {
             return -1;
         }
 
-        /* Push all known interfaces and mediators onto buffer state */
-
         libtrace_list_push_back(state->collectors, &col);
     }
-
-
 
     return newfd;
 }
@@ -336,6 +464,7 @@ static int accept_mediator(provision_state_t *state) {
     char strbuf[INET6_ADDRSTRLEN];
     prov_mediator_t med;
     libtrace_list_node_t *n;
+    struct epoll_event ev;
 
     /* TODO check for EPOLLHUP or EPOLLERR */
 
@@ -354,9 +483,8 @@ static int accept_mediator(provision_state_t *state) {
     }
 
     if (newfd >= 0) {
-        /* TODO some rudimentary auth to identify genuine mediators? */
         med.fd = newfd;
-        med.destid = 0;     /* will receive this from mediator soon */
+        med.details = NULL;     /* will receive this from mediator soon */
         med.commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
         med.commev->fdtype = PROV_EPOLL_MEDIATOR;
@@ -364,13 +492,20 @@ static int accept_mediator(provision_state_t *state) {
         med.commev->state = NULL;
 
         /* Create outgoing and incoming buffer state */
+        create_mediator_state(med.commev);
 
         /* Add fd to epoll */
+        ev.data.ptr = (void *)med.commev;
+        ev.events = EPOLLIN; /* recv only until we trust the mediator */
 
-        /* Push all known LEAs to mediator, plus all intercept->LEA mappings */
-
-        /* Wait to receive mediator ID etc from mediator */
-
+        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, med.fd, &ev) < 0) {
+            logger(LOG_DAEMON,
+                    "OpenLI: unable to add mediator fd to epoll: %s.",
+                    strerror(errno));
+            close(newfd);
+            return -1;
+        }
+        libtrace_list_push_back(state->mediators, &med);
     }
 
     return newfd;

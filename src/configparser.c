@@ -188,6 +188,7 @@ static int parse_agency_list(libtrace_list_t *aglist, yaml_document_t *doc,
         }
         if (newag.ipstr != NULL && newag.portstr != NULL &&
                 newag.agencyid != NULL) {
+            newag.knownliids = libtrace_list_init(sizeof(char *));
             libtrace_list_push_front(aglist, (void *)(&newag));
         } else {
             logger(LOG_DAEMON, "OpenLI: LEA configuration was incomplete -- skipping.");
@@ -225,6 +226,7 @@ static int parse_ipintercept_list(libtrace_list_t *ipints, yaml_document_t *doc,
         newcept.username = NULL;
         newcept.active = 1;
         newcept.destid = 0;
+        newcept.targetagency = NULL;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -295,19 +297,26 @@ static int parse_ipintercept_list(libtrace_list_t *ipints, yaml_document_t *doc,
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "exportto") == 0) {
+                    strcmp((char *)key->data.scalar.value, "mediator") == 0
+                    && newcept.destid == 0) {
                 newcept.destid = strtoul((char *)value->data.scalar.value,
                         NULL, 10);
                 if (newcept.destid == 0) {
-                    logger(LOG_DAEMON, "OpenLI: 0 is not a valid value for the 'exportto' config option.");
+                    logger(LOG_DAEMON, "OpenLI: 0 is not a valid value for the 'mediator' config option.");
                 }
+            }
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "agencyid") == 0
+                    && newcept.targetagency == NULL) {
+                newcept.targetagency = strdup((char *)value->data.scalar.value);
             }
 
         }
 
         if (newcept.liid != NULL && newcept.authcc != NULL &&
                 newcept.delivcc != NULL && newcept.username != NULL &&
-                newcept.destid > 0) {
+                newcept.destid > 0 && newcept.targetagency != NULL) {
             libtrace_list_push_front(ipints, (void *)(&newcept));
         } else {
             logger(LOG_DAEMON, "OpenLI: IP Intercept configuration was incomplete -- skipping.");
@@ -316,11 +325,6 @@ static int parse_ipintercept_list(libtrace_list_t *ipints, yaml_document_t *doc,
 
     return 0;
 }
-
-
-/* TODO lots of duplicated code in the next 3 functions, replace with
- * something nicer?
- */
 
 static int yaml_parser(char *configfile, void *arg,
         int (*parse_mapping)(void *, yaml_document_t *, yaml_node_t *,

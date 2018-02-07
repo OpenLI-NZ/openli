@@ -72,9 +72,10 @@ typedef struct ipintercept {
     struct sockaddr_storage *ipaddr;
     char *username;
 
-    uint8_t active;
     uint64_t nextseqno;
     uint32_t destid;
+    char *targetagency;
+    uint8_t active;
 } ipintercept_t;
 
 struct dest_details {
@@ -82,9 +83,6 @@ struct dest_details {
     char *portstr;
     uint32_t destid;
 };
-
-
-//int xmit_ipintercept(int targetfd, ipintercept_t *ipint);
 
 void free_all_intercepts(libtrace_list_t *interceptlist);
 

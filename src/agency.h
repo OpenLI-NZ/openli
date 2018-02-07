@@ -27,11 +27,16 @@
 #ifndef OPENLI_AGENCY_H_
 #define OPENLI_AGENCY_H_
 
+#include <libtrace/linked_list.h>
+
 typedef struct liagency {
 
     char *ipstr;
     char *portstr;
     char *agencyid;
+
+    /* XXX list may not be the best structure in this case */
+    libtrace_list_t *knownliids;
 
 } liagency_t;
 

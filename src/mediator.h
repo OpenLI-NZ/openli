@@ -24,43 +24,15 @@
  *
  */
 
-#include "intercept.h"
+#ifndef OPENLI_MEDIATOR_H_
+#define OPENLI_MEDIATOR_H_
 
-void free_all_intercepts(libtrace_list_t *interceptlist) {
+typedef struct openli_mediator {
+    uint32_t mediatorid;
+    char *ipstr;
+    char *portstr;
+} openli_mediator_t;
 
-    libtrace_list_node_t *n;
-    ipintercept_t *cept;
-
-    n = interceptlist->head;
-    while (n) {
-        cept = (ipintercept_t *)n->data;
-        if (cept->liid) {
-            free(cept->liid);
-        }
-        if (cept->ipaddr) {
-            free(cept->ipaddr);
-        }
-
-        if (cept->authcc) {
-            free(cept->authcc);
-        }
-
-        if (cept->delivcc) {
-            free(cept->delivcc);
-        }
-
-        if (cept->username) {
-            free(cept->username);
-        }
-
-        if (cept->targetagency) {
-            free(cept->targetagency);
-        }
-
-        n = n->next;
-    }
-
-    libtrace_list_deinit(interceptlist);
-}
+#endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
