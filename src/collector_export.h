@@ -29,6 +29,7 @@
 
 #include <sys/epoll.h>
 #include "collector.h"
+#include "mediator.h"
 
 typedef struct colexp_data {
 
@@ -38,6 +39,39 @@ typedef struct colexp_data {
     int failed_conns;
 
 } collector_export_t;
+
+typedef struct export_dest {
+    int failmsg;
+    int fd;
+    openli_mediator_t details;
+    export_buffer_t buffer;
+} export_dest_t;
+
+typedef struct openli_exp_msg {
+
+    uint32_t destid;
+    uint32_t msglen;
+    uint32_t ipclen;
+    uint8_t *msgbody;
+    uint8_t *ipcontents;
+
+} openli_exportmsg_t;
+
+enum {
+    OPENLI_EXPORT_ETSIREC = 1,
+    OPENLI_EXPORT_PACKET_FIN = 2,
+    OPENLI_EXPORT_MEDIATOR = 3,
+};
+
+typedef struct openli_export_recv {
+    uint8_t type;
+    union {
+        openli_exportmsg_t toexport;
+        openli_mediator_t med;
+        libtrace_packet_t *packet;
+    } data;
+} openli_export_recv_t;
+
 
 collector_export_t *init_exporter(collector_global_t *glob);
 int connect_export_targets(collector_export_t *exp);

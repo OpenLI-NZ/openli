@@ -273,6 +273,21 @@ static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
     return 0;
 }
 
+static inline void add_new_destination(collector_export_t *exp,
+        openli_mediator_t *med) {
+
+    export_dest_t newdest;
+
+    newdest.failmsg = 0;
+    newdest.fd = -1;
+    newdest.details = *(med);
+    init_export_buffer(&(newdest.buffer));
+
+    printf("got new destination %s:%s\n", med->ipstr, med->portstr);
+
+    libtrace_list_push_back(exp->dests, &newdest);
+
+}
 
 #define MAX_READ_BATCH 25
 
@@ -312,13 +327,19 @@ static int check_epoll_fd(collector_export_t *exp, struct epoll_event *ev) {
                 break;
             }
 
+            if (recvd.type == OPENLI_EXPORT_MEDIATOR) {
+                add_new_destination(exp, &(recvd.data.med));
+                continue;
+            }
+
             if (recvd.type == OPENLI_EXPORT_ETSIREC) {
                 readmsgs ++;
                 n = exp->dests->head;
                 while (n) {
                     dest = (export_dest_t *)(n->data);
 
-                    if (dest->details.destid == recvd.data.toexport.destid) {
+                    if (dest->details.mediatorid ==
+                                recvd.data.toexport.destid) {
                         ret = forward_message(dest, &(recvd.data.toexport));
                         if (ret == -1) {
                             close(dest->fd);

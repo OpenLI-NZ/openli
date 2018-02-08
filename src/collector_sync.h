@@ -49,7 +49,6 @@ typedef struct colsync_data {
     collector_global_t *glob;
 
     libtrace_list_t *ipintercepts;
-    libtrace_list_t *recipients;
     int instruct_fd;
     uint8_t instruct_fail;
     sync_epoll_t *ii_ev;

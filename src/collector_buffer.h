@@ -24,7 +24,11 @@
  *
  */
 
+#ifndef OPENLI_COLLECTOR_BUFFER_H_
+#define OPENLI_COLLECTOR_BUFFER_H_
+
 #include "collector.h"
+#include "collector_export.h"
 
 void init_export_buffer(export_buffer_t *buf);
 void release_export_buffer(export_buffer_t *buf);
@@ -35,4 +39,5 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
 int transmit_buffered_records(export_buffer_t *buf, int fd,
         uint64_t bytelimit);
 
+#endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

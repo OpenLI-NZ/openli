@@ -69,12 +69,22 @@ typedef struct net_buffer {
     net_buffer_type_t buftype;
 } net_buffer_t;
 
+typedef enum {
+    OPENLI_PROTO_FIELD_MEDIATORID,
+    OPENLI_PROTO_FIELD_MEDIATORIP,
+    OPENLI_PROTO_FIELD_MEDIATORPORT,
+    OPENLI_PROTO_FIELD_USERNAME,
+    OPENLI_PROTO_FIELD_LIID,
+    OPENLI_PROTO_FIELD_AUTHCC,
+    OPENLI_PROTO_FIELD_DELIVCC,
+} openli_proto_fieldtype_t;
+
 
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd);
 void destroy_net_buffer(net_buffer_t *nb);
 
 int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med);
-int push_intercept_onto_net_buffer(net_buffer_t *nb, ipintercept_t *ipint);
+int push_ipintercept_onto_net_buffer(net_buffer_t *nb, ipintercept_t *ipint);
 int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *ipint);
 int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
         char *agencyid);
@@ -84,7 +94,8 @@ int transmit_net_buffer(net_buffer_t *nb);
 
 openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
         uint16_t *msglen, uint64_t *intid);
-
+int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
+        openli_mediator_t *med);
 
 
 #endif

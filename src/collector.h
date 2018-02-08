@@ -49,14 +49,6 @@ typedef struct export_buffer {
     uint32_t partialfront;
 } export_buffer_t;
 
-typedef struct export_dest {
-    int failmsg;
-    int fd;
-    struct dest_details details;
-
-    export_buffer_t buffer;
-} export_dest_t;
-
 enum {
     OPENLI_UPDATE_HELLO = 0,
     OPENLI_UPDATE_RADIUS = 1,
@@ -82,30 +74,6 @@ typedef struct openli_ii_msg {
     } data;
 
 } openli_pushed_t;
-
-typedef struct openli_exp_msg {
-
-    uint32_t destid;
-    uint32_t msglen;
-    uint32_t ipclen;
-    uint8_t *msgbody;
-    uint8_t *ipcontents;
-
-} openli_exportmsg_t;
-
-enum {
-    OPENLI_EXPORT_ETSIREC = 1,
-    OPENLI_EXPORT_PACKET_FIN = 2,
-};
-
-typedef struct openli_export_recv {
-    uint8_t type;
-    union {
-        openli_exportmsg_t toexport;
-        export_dest_t dest;
-        libtrace_packet_t *packet;
-    } data;
-} openli_export_recv_t;
 
 typedef struct colinput_config {
     char *uri;

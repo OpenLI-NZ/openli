@@ -31,6 +31,7 @@
 
 #include "logger.h"
 #include "collector.h"
+#include "collector_export.h"
 
 #define BUFFER_ALLOC_SIZE (1024 * 1024 * 10)
 #define BUFFER_WARNING_THRESH (1024 * 1024 * 1024)

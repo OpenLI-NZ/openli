@@ -34,6 +34,7 @@
 
 #include "collector.h"
 #include "collector_sync.h"
+#include "collector_export.h"
 #include "configparser.h"
 #include "logger.h"
 #include "intercept.h"
@@ -127,6 +128,24 @@ static int send_to_provisioner(collector_sync_t *sync) {
     return 1;
 }
 
+static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+
+    openli_mediator_t med;
+    openli_export_recv_t expmsg;
+
+    if (decode_mediator_announcement(provmsg, msglen, &med) == -1) {
+        logger(LOG_DAEMON, "OpenLI: received invalid mediator announcement from provisioner.");
+        return -1;
+    }
+
+    expmsg.type = OPENLI_EXPORT_MEDIATOR;
+    expmsg.data.med = med;
+
+    libtrace_message_queue_put(&(sync->exportq), &expmsg);
+    return 0;
+}
+
 static int recv_from_provisioner(collector_sync_t *sync) {
     struct epoll_event ev;
     int ret = 0;
@@ -144,10 +163,12 @@ static int recv_from_provisioner(collector_sync_t *sync) {
             case OPENLI_PROTO_NO_MESSAGE:
                 break;
             case OPENLI_PROTO_ANNOUNCE_MEDIATOR:
-                //ret = new_mediator(sync, provmsg, msglen);
+                ret = new_mediator(sync, provmsg, msglen);
                 if (ret == -1) {
                     return -1;
                 }
+                break;
+            case OPENLI_PROTO_START_IPINTERCEPT:
                 break;
         }
 
@@ -183,6 +204,11 @@ int sync_connect_provisioner(collector_sync_t *sync) {
     sync->incoming = create_net_buffer(NETBUF_RECV, sync->instruct_fd);
 
     /* Put our auth message onto the outgoing buffer */
+    if (push_auth_onto_net_buffer(sync->outgoing, OPENLI_PROTO_COLLECTOR_AUTH)
+            < 0) {
+        logger(LOG_DAEMON,"OpenLI: collector is unable to queue auth message.");
+        return -1;
+    }
 
     /* Add instruct_fd to epoll for both reading and writing */
     sync->ii_ev->fdtype = SYNC_EVENT_PROVISIONER;
@@ -298,8 +324,7 @@ int sync_thread_main(collector_sync_t *sync) {
         syncev = (sync_epoll_t *)(evs[i].data.ptr);
 
 	    /* Check for incoming messages from processing threads and II fd */
-        if ((evs[i].events & EPOLLERR) || (evs[i].events & EPOLLHUP) ||
-                !(evs[i].events & EPOLLIN)) {
+        if ((evs[i].events & EPOLLERR) || (evs[i].events & EPOLLHUP)) {
             /* Some error detection / handling? */
 
             /* Don't close any fds on error -- they should get closed when

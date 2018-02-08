@@ -141,7 +141,9 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     free_all_intercepts(loc->activeipintercepts);
 
-    free_wandder_encoder(loc->encoder);
+    if (loc->encoder) {
+        free_wandder_encoder(loc->encoder);
+    }
 
     free(loc);
 }
@@ -238,9 +240,6 @@ static void *start_sync_thread(void *params) {
      * from a config file. Eventually this should be replaced with
      * instructions that are received via a network interface.
      */
-    if (parse_ipintercept_config(glob->configfile, sync->ipintercepts) == -1) {
-        logger(LOG_DAEMON, "OpenLI: Warning - failed to parse IP intercept config");
-    }
 
     register_export_queue(glob, &(sync->exportq));
 

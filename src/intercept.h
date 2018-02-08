@@ -27,34 +27,10 @@
 #ifndef OPENLI_INTERCEPT_H_
 #define OPENLI_INTERCEPT_H_
 
-#define OPENLI_II_MAGIC 0x5c4c6c5c
-
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <libtrace/linked_list.h>
-
-/*
-enum {
-    OPENLI_II_IPINTERCEPT = 1,
-    OPENLI_II_HALT_IPINTERCEPT = 2,
-};
-
-typedef struct ii_header {
-    uint32_t magic;
-    uint16_t bodylen;
-    uint16_t intercepttype;
-    uint64_t internalid;
-} ii_header_t;
-
-enum {
-    OPENLI_IPII_FIELD_LIID,
-    OPENLI_IPII_FIELD_AUTHCC,
-    OPENLI_IPII_FIELD_DELIVCC,
-    OPENLI_IPII_FIELD_TARGET,
-    OPENLI_IPII_FIELD_DESTID
-};
-*/
 
 typedef struct ipintercept {
     uint64_t internalid;
@@ -77,12 +53,6 @@ typedef struct ipintercept {
     char *targetagency;
     uint8_t active;
 } ipintercept_t;
-
-struct dest_details {
-    char *ipstr;
-    char *portstr;
-    uint32_t destid;
-};
 
 void free_all_intercepts(libtrace_list_t *interceptlist);
 

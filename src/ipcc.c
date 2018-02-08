@@ -31,6 +31,7 @@
 
 #include "logger.h"
 #include "collector.h"
+#include "collector_export.h"
 #include "etsili_const.h"
 
 

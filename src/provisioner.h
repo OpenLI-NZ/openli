@@ -79,6 +79,8 @@ typedef struct prov_state {
     prov_epoll_ev_t *timerfd;
     prov_epoll_ev_t *signalfd;
 
+    uint16_t dropped_collectors;
+
     /*
     int activeupdatefd;
     int updatetimerfd;
@@ -105,7 +107,6 @@ typedef struct prov_med_state {
 /* Describes a collector that is being served by the provisioner */
 typedef struct prov_collector {
 
-    int fd;     /* The socket for communicating over */
     prov_epoll_ev_t *commev;
 
 } prov_collector_t;

@@ -38,6 +38,7 @@
 #include <errno.h>
 #include <libtrace/linked_list.h>
 #include <unistd.h>
+#include <assert.h>
 
 #include "configparser.h"
 #include "logger.h"
@@ -50,8 +51,6 @@
 
 volatile int provisioner_halt = 0;
 volatile int reload_config = 0;
-
-static openli_mediator_t testmed;
 
 static void halt_signal(int signal) {
     provisioner_halt = 1;
@@ -95,18 +94,22 @@ static void create_mediator_state(prov_epoll_ev_t *pev) {
 static void free_collector_state(prov_epoll_ev_t *pev) {
     prov_coll_state_t *cs = (prov_coll_state_t *)(pev->state);
 
-    destroy_net_buffer(cs->incoming);
-    destroy_net_buffer(cs->outgoing);
-    free(cs);
+    if (cs) {
+        destroy_net_buffer(cs->incoming);
+        destroy_net_buffer(cs->outgoing);
+        free(cs);
+    }
 
 }
 
 static void free_mediator_state(prov_epoll_ev_t *pev) {
     prov_med_state_t *ms = (prov_med_state_t *)(pev->state);
 
-    destroy_net_buffer(ms->incoming);
-    destroy_net_buffer(ms->outgoing);
-    free(ms);
+    if (ms) {
+        destroy_net_buffer(ms->incoming);
+        destroy_net_buffer(ms->outgoing);
+        free(ms);
+    }
 
 }
 
@@ -152,9 +155,24 @@ static int map_intercepts_to_leas(provision_state_t *state) {
 
 }
 
+void free_openli_mediator(openli_mediator_t *med) {
+    if (!med) {
+        return;
+    }
+    if (med->portstr) {
+        free(med->portstr);
+    }
+    if (med->ipstr) {
+        free(med->ipstr);
+    }
+    free(med);
+}
+
 static int init_prov_state(provision_state_t *state, char *configfile) {
 
     sigset_t sigmask;
+    prov_mediator_t testwrap;
+    openli_mediator_t *testmed = malloc(sizeof(testmed));
     int ret = 0;
 
     state->conffile = configfile;
@@ -165,11 +183,20 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->collectors = libtrace_list_init(sizeof(prov_collector_t));
     state->leas = libtrace_list_init(sizeof(liagency_t));
 
-    /* XXX temporary hardcoding of test "mediator" */
-    testmed.mediatorid = 6001;
-    testmed.ipstr = strdup("10.0.0.2");
-    testmed.portstr = strdup("43332");
+    state->dropped_collectors = 0;
 
+    /* XXX temporary hardcoding of test "mediator" */
+    testmed->mediatorid = 6001;
+    testmed->ipstr = strdup("10.0.0.2");
+    testmed->portstr = strdup("43332");
+
+    testwrap.details = testmed;
+    testwrap.commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
+    testwrap.commev->fdtype = PROV_EPOLL_MEDIATOR;
+    testwrap.commev->fd = -1;
+    testwrap.commev->state = NULL;
+
+    libtrace_list_push_back(state->mediators, &testwrap);
     /* Three listening sockets
      *
      * listen:  collectors should connect to this socket to receive IIs
@@ -238,8 +265,11 @@ static void free_all_mediators(libtrace_list_t *m) {
     while (n) {
         med = (prov_mediator_t *)(n->data);
         free_mediator_state(med->commev);
+        free_openli_mediator(med->details);
+        if (med->commev->fd != -1) {
+            close(med->commev->fd);
+        }
         free(med->commev);
-        close(med->fd);
         n = n->next;
     }
 
@@ -256,8 +286,10 @@ static void stop_all_collectors(libtrace_list_t *c) {
     while (n) {
         col = (prov_collector_t *)n->data;
         free_collector_state(col->commev);
+        if (col->commev->fd != -1) {
+            close(col->commev->fd);
+        }
         free(col->commev);
-        close(col->fd);
         n = n->next;
     }
 
@@ -336,10 +368,6 @@ static void clear_prov_state(provision_state_t *state) {
         free(state->mediateport);
     }
 
-    /* XXX Freeing test mediator */
-    free(testmed.ipstr);
-    free(testmed.portstr);
-
 }
 
 static int create_listener(char *addr, char *port) {
@@ -402,6 +430,199 @@ endlistener:
     return sockfd;
 }
 
+static int push_all_mediators(libtrace_list_t *mediators, net_buffer_t *nb) {
+
+    libtrace_list_node_t *n;
+    openli_mediator_t *med;
+
+    n = mediators->head;
+    while (n) {
+        med = (openli_mediator_t *)(n->data);
+
+        if (push_mediator_onto_net_buffer(nb, med) < 0) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: error pushing mediator %s:%s onto buffer for writing to collector.",
+                    med->ipstr, med->portstr);
+            return -1;
+        }
+
+        n = n->next;
+    }
+    return 0;
+}
+
+static int push_all_ipintercepts(libtrace_list_t *intercepts,
+        net_buffer_t *nb) {
+
+    libtrace_list_node_t *n;
+    ipintercept_t *cept;
+
+    n = intercepts->head;
+    while (n) {
+        cept = (ipintercept_t *)(n->data);
+
+        if (push_ipintercept_onto_net_buffer(nb, cept) < 0) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: error pushing IP intercept %s onto buffer for writing to collector.",
+                    cept->liid);
+            return -1;
+        }
+
+        n = n->next;
+    }
+    return 0;
+}
+
+static int respond_collector_auth(provision_state_t *state,
+        prov_epoll_ev_t *pev, net_buffer_t *outgoing) {
+
+    struct epoll_event ev;
+
+    /* Collector just authed successfully, so we can safely shovel all
+     * of known mediators and active intercepts to it.
+     */
+
+    if (libtrace_list_get_size(state->mediators) +
+            libtrace_list_get_size(state->ipintercepts) == 0) {
+        return 0;
+    }
+
+    if (push_all_mediators(state->mediators, outgoing) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: unable to queue mediators to be sent to new collector on fd %d",
+                pev->fd);
+        return -1;
+    }
+
+    if (push_all_ipintercepts(state->ipintercepts, outgoing) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: unable to queue IP intercepts to be sent to new collector on fd %d",
+                pev->fd);
+        return -1;
+    }
+
+    ev.data.ptr = (void *)pev;
+    ev.events = EPOLLIN | EPOLLOUT;
+
+    if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, pev->fd, &ev) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: unable to enable epoll write event for newly authed collector on fd %d: %s",
+                pev->fd, strerror(errno));
+        return -1;
+    }
+
+    return 0;
+
+}
+
+static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
+
+    prov_coll_state_t *cs = (prov_coll_state_t *)(pev->state);
+    uint8_t *msgbody;
+    uint16_t msglen;
+    uint64_t internalid;
+    openli_proto_msgtype_t msgtype;
+    uint8_t justauthed = 0;
+
+    do {
+        msgtype = receive_net_buffer(cs->incoming, &msgbody, &msglen,
+                &internalid);
+        switch(msgtype) {
+            case OPENLI_PROTO_DISCONNECT:
+                logger(LOG_DAEMON,
+                        "OpenLI: error receiving message from collector.");
+                return -1;
+            case OPENLI_PROTO_NO_MESSAGE:
+                break;
+            case OPENLI_PROTO_COLLECTOR_AUTH:
+                if (internalid != OPENLI_COLLECTOR_MAGIC) {
+                    logger(LOG_DAEMON,
+                            "OpenLI: invalid auth code from collector.");
+                    return -1;
+                }
+                if (cs->trusted == 1) {
+                    logger(LOG_DAEMON,
+                            "OpenLI: warning -- double auth from collector.");
+                    assert(0);
+                    break;
+                }
+                cs->trusted = 1;
+                justauthed = 1;
+                break;
+            default:
+                logger(LOG_DAEMON,
+                        "OpenLI: unexpected message type %d received from collector.",
+                        msgtype);
+                return -1;
+        }
+    } while (msgtype != OPENLI_PROTO_NO_MESSAGE);
+
+    if (justauthed) {
+        logger(LOG_DAEMON, "OpenLI: collector on fd %d auth success.",
+                pev->fd);
+        return respond_collector_auth(state, pev, cs->outgoing);
+   }
+
+   return 0;
+}
+
+static int transmit_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
+
+    int ret;
+    struct epoll_event ev;
+    prov_coll_state_t *cs = (prov_coll_state_t *)(pev->state);
+
+    ret = transmit_net_buffer(cs->outgoing);
+    if (ret == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: error sending message from provisioner to collector.");
+        return -1;
+    }
+
+    if (ret == 0) {
+        /* No more outstanding data, remove EPOLLOUT event */
+        ev.data.ptr = pev;
+        ev.events = EPOLLIN;
+
+        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, pev->fd, &ev) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: error disabling EPOLLOUT for collector fd %d: %s.",
+                    pev->fd, strerror(errno));
+            return -1;
+        }
+    }
+
+    return 1;
+}
+
+static void drop_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
+
+    struct epoll_event ev;
+    prov_coll_state_t *cs = (prov_coll_state_t *)(pev->state);
+
+    if (pev->fd == -1) {
+        return;
+    }
+
+    if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, pev->fd, &ev) < 0) {
+        logger(LOG_DAEMON,
+                "OpenLI: unable to remove collector fd from epoll: %s.",
+                strerror(errno));
+    }
+
+    close(pev->fd);
+    pev->fd = -1;
+
+    state->dropped_collectors ++;
+
+    /* If we have a decent number of dropped collectors, re-create our
+     * collector list to remove all of the useless items.
+     *
+     * TODO
+     */
+
+}
+
 static int accept_collector(provision_state_t *state) {
 
     int newfd;
@@ -428,7 +649,6 @@ static int accept_collector(provision_state_t *state) {
     }
 
     if (newfd >= 0) {
-        col.fd = newfd;
         col.commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
         col.commev->fdtype = PROV_EPOLL_COLLECTOR;
@@ -442,7 +662,8 @@ static int accept_collector(provision_state_t *state) {
         ev.data.ptr = (void *)col.commev;
         ev.events = EPOLLIN; /* recv only until we trust the collector */
 
-        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, col.fd, &ev) < 0) {
+        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, col.commev->fd,
+                    &ev) < 0) {
             logger(LOG_DAEMON,
                     "OpenLI: unable to add collector fd to epoll: %s.",
                     strerror(errno));
@@ -659,10 +880,26 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
         case PROV_EPOLL_SIGNAL:
             ret = process_signal(state, pev->fd);
             break;
+        case PROV_EPOLL_COLLECTOR:
+            if (ev->events & EPOLLIN) {
+                ret = receive_collector(state, pev);
+            }
+            else if (ev->events & EPOLLOUT) {
+                ret = transmit_collector(state, pev);
+            } else {
+                ret = -1;
+            }
+
+            if (ret == -1) {
+                logger(LOG_DAEMON,
+                        "OpenLI Provisioner: disconnecting collector %d.",
+                        pev->fd);
+                drop_collector(state, pev);
+            }
+            break;
 
         case PROV_EPOLL_MEDIATOR:
         case PROV_EPOLL_FD_TIMER:
-        case PROV_EPOLL_COLLECTOR:
         case PROV_EPOLL_UPDATE:
             /* TODO all of the above */
             break;
