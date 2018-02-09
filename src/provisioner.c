@@ -507,7 +507,7 @@ static int respond_collector_auth(provision_state_t *state,
     }
 
     ev.data.ptr = (void *)pev;
-    ev.events = EPOLLIN | EPOLLOUT;
+    ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, pev->fd, &ev) == -1) {
         logger(LOG_DAEMON,
@@ -587,7 +587,7 @@ static int transmit_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
     if (ret == 0) {
         /* No more outstanding data, remove EPOLLOUT event */
         ev.data.ptr = pev;
-        ev.events = EPOLLIN;
+        ev.events = EPOLLIN | EPOLLRDHUP;
 
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, pev->fd, &ev) == -1) {
             logger(LOG_DAEMON,
@@ -665,7 +665,8 @@ static int accept_collector(provision_state_t *state) {
 
         /* Add fd to epoll */
         ev.data.ptr = (void *)col.commev;
-        ev.events = EPOLLIN; /* recv only until we trust the collector */
+        ev.events = EPOLLIN | EPOLLRDHUP;
+        /* recv only until we trust the collector */
 
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, col.commev->fd,
                     &ev) < 0) {
@@ -722,7 +723,7 @@ static int accept_mediator(provision_state_t *state) {
 
         /* Add fd to epoll */
         ev.data.ptr = (void *)med.commev;
-        ev.events = EPOLLIN; /* recv only until we trust the mediator */
+        ev.events = EPOLLIN | EPOLLRDHUP; /* recv only until we trust the mediator */
 
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, med.fd, &ev) < 0) {
             logger(LOG_DAEMON,
@@ -865,6 +866,7 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
     int ret = 0;
     prov_epoll_ev_t *pev = (prov_epoll_ev_t *)(ev->data.ptr);
 
+    /* TODO check for EPOLLRDHUP etc. */
     switch(pev->fdtype) {
         case PROV_EPOLL_COLL_CONN:
             ret = accept_collector(state);
@@ -886,7 +888,9 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
             ret = process_signal(state, pev->fd);
             break;
         case PROV_EPOLL_COLLECTOR:
-            if (ev->events & EPOLLIN) {
+            if (ev->events & EPOLLRDHUP) {
+                ret = -1;
+            } else if (ev->events & EPOLLIN) {
                 ret = receive_collector(state, pev);
             }
             else if (ev->events & EPOLLOUT) {
