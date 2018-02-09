@@ -142,6 +142,7 @@ static inline void push_single_intercept(libtrace_message_queue_t *q,
 
     copy->active = 1;
     copy->nextseqno = 0;
+    copy->awaitingconfirm = 0;
 
     msg.type = OPENLI_PUSH_IPINTERCEPT;
     msg.data.ipint = copy;
@@ -165,7 +166,7 @@ static int send_to_provisioner(collector_sync_t *sync) {
     if (ret == 0) {
         /* Everything has been sent successfully, no more to send right now. */
         ev.data.ptr = sync->ii_ev;
-        ev.events = EPOLLIN;
+        ev.events = EPOLLIN | EPOLLRDHUP;
 
         if (epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_MOD,
                     sync->instruct_fd, &ev) == -1) {
@@ -177,6 +178,38 @@ static int send_to_provisioner(collector_sync_t *sync) {
     }
 
     return 1;
+}
+
+static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
+    libtrace_list_node_t *n;
+    int i;
+
+    n = sync->ipintercepts->head;
+
+    /* TODO count total inactive as we go and reconstruct the list
+     * if the inactive count is relatively high?
+     */
+
+    while (n) {
+        ipintercept_t *cept = (ipintercept_t *)(n->data);
+
+        if (cept->awaitingconfirm && cept->active) {
+            cept->active = 0;
+
+            for (i = 0; i < sync->glob->registered_syncqs; i++) {
+                openli_pushed_t pmsg;
+
+                /* strdup because we might end up freeing this intercept
+                 * shortly.
+                 */
+                pmsg.type = OPENLI_PUSH_HALT_IPINTERCEPT;
+                pmsg.data.interceptid.liid = strdup(cept->liid);
+                pmsg.data.interceptid.authcc = strdup(cept->authcc);
+                libtrace_message_queue_put(sync->glob->syncsendqs[i], &pmsg);
+            }
+        }
+        n = n->next;
+    }
 }
 
 static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
@@ -247,13 +280,16 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         if (strcmp(x->liid, cept.liid) == 0 &&
                 strcmp(x->authcc, cept.authcc) == 0) {
             /* Duplicate LIID */
+
+            /* OpenLI-internal fields that could change value
+             * if the provisioner was restarted.
+             */
+            x->internalid = cept.internalid;
+            x->awaitingconfirm = 0;
+
             return 0;
         }
 
-        if (x->internalid == cept.internalid) {
-            /* Duplicate internal ID */
-            return 0;
-        }
         n = n->next;
     }
 
@@ -310,6 +346,9 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                     return -1;
                 }
                 break;
+            case OPENLI_PROTO_NOMORE_INTERCEPTS:
+                disable_unconfirmed_intercepts(sync);
+                break;
         }
 
     } while (msgtype != OPENLI_PROTO_NO_MESSAGE);
@@ -356,7 +395,7 @@ int sync_connect_provisioner(collector_sync_t *sync) {
     sync->ii_ev->msgq = NULL;
 
     ev.data.ptr = (void *)(sync->ii_ev);
-    ev.events = EPOLLIN | EPOLLOUT;
+    ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
 
     if (epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
         /* TODO Do something? */
@@ -367,6 +406,22 @@ int sync_connect_provisioner(collector_sync_t *sync) {
 
     return 1;
 
+}
+
+static inline void touch_all_intercepts(libtrace_list_t *intlist) {
+    libtrace_list_node_t *n;
+    ipintercept_t *ipint;
+
+    /* Set all intercepts to be "awaiting confirmation", i.e. if the
+     * provisioner doesn't announce them in its initial batch of
+     * intercepts then they are to be halted.
+     */
+    n = intlist->head;
+    while (n) {
+        ipint = (ipintercept_t *)(n->data);
+        ipint->awaitingconfirm = 1;
+        n = n->next;
+    }
 }
 
 static inline void disconnect_provisioner(collector_sync_t *sync) {
@@ -388,11 +443,11 @@ static inline void disconnect_provisioner(collector_sync_t *sync) {
     close(sync->instruct_fd);
     sync->instruct_fd = -1;
 
-    /* Reset the intercepts list -- the provisioner may have restarted and
-     * therefore may have a completely different set of intercepts for us.
+    /* Leave all intercepts running, but require them to be confirmed
+     * as active when we reconnect to the provisioner.
      */
-    free_all_intercepts(sync->ipintercepts);
-    sync->ipintercepts = libtrace_list_init(sizeof(ipintercept_t));
+    touch_all_intercepts(sync->ipintercepts);
+
 }
 
 
@@ -433,14 +488,13 @@ int sync_thread_main(collector_sync_t *sync) {
         syncev = (sync_epoll_t *)(evs[i].data.ptr);
 
 	    /* Check for incoming messages from processing threads and II fd */
-        if ((evs[i].events & EPOLLERR) || (evs[i].events & EPOLLHUP)) {
+        if ((evs[i].events & EPOLLERR) || (evs[i].events & EPOLLHUP) ||
+                (evs[i].events & EPOLLRDHUP)) {
             /* Some error detection / handling? */
 
             /* Don't close any fds on error -- they should get closed when
              * their parent structures are tidied up */
 
-            epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_DEL,
-                    syncev->fd, NULL);
 
             if (syncev->fd == sync->instruct_fd) {
                 logger(LOG_DAEMON, "OpenLI: collector lost connection to central provisioner");
@@ -449,6 +503,8 @@ int sync_thread_main(collector_sync_t *sync) {
 
             } else {
                 logger(LOG_DAEMON, "OpenLI: processor->sync message queue pipe has broken down.");
+                epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_DEL,
+                        syncev->fd, NULL);
             }
 
             continue;

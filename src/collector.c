@@ -85,14 +85,28 @@ static void dump_ip_intercept(ipintercept_t *ipint) {
 }
 
 static void deactivate_ip_intercept(libtrace_list_t *ipint_list,
-        uint64_t intid) {
+        char *liid, char *authcc) {
 
-    /* TODO */
+    libtrace_list_node_t *n;
+    ipintercept_t *cept;
 
-    /* Search the list for an intercept with a matching ID number */
+    /* Search the list for an intercept with a matching ID */
 
     /* If found, set the intercept to inactive */
 
+    n = ipint_list->head;
+    while (n) {
+        cept = (ipintercept_t *)(n->data);
+
+        if (strcmp(cept->liid, liid) == 0 && strcmp(cept->authcc, authcc) == 0)
+        {
+            cept->active = 0;
+            break;
+        }
+        n = n->next;
+    }
+
+    /* TODO */
     /* Starting from the back, prune any inactive intercepts until we
      * reach an active one. This isn't perfect, but might help keep
      * the size down a bit. */
@@ -100,6 +114,9 @@ static void deactivate_ip_intercept(libtrace_list_t *ipint_list,
     /* Future work: if the list is large and fragmented, just re-create
      * the list from scratch to contain only active intercepts. */
 
+    /* authcc and liid were strdup'd by the sync thread */
+    free(authcc);
+    free(liid);
 
     return;
 }
@@ -172,7 +189,8 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
         if (syncpush.type == OPENLI_PUSH_HALT_IPINTERCEPT) {
             deactivate_ip_intercept(loc->activeipintercepts,
-                    syncpush.data.interceptid);
+                    syncpush.data.interceptid.liid,
+                    syncpush.data.interceptid.authcc);
         }
 
     }

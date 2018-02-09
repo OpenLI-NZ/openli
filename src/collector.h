@@ -70,7 +70,10 @@ typedef struct openli_ii_msg {
     uint8_t type;
     union {
         ipintercept_t *ipint;
-        uint64_t interceptid;
+        struct {
+            char *liid;
+            char *authcc;
+        } interceptid;
     } data;
 
 } openli_pushed_t;

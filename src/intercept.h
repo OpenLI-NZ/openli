@@ -52,6 +52,7 @@ typedef struct ipintercept {
     uint32_t destid;
     char *targetagency;
     uint8_t active;
+    uint8_t awaitingconfirm;
 } ipintercept_t;
 
 void free_all_intercepts(libtrace_list_t *interceptlist);

@@ -280,6 +280,14 @@ int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med) {
     return (int)totallen;
 }
 
+int push_nomore_intercepts(net_buffer_t *nb) {
+    ii_header_t hdr;
+    populate_header(&hdr, OPENLI_PROTO_NOMORE_INTERCEPTS, 0, 0);
+
+    return push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t));
+}
+
 int transmit_net_buffer(net_buffer_t *nb) {
     int ret;
 
@@ -420,6 +428,7 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->targetagency = NULL;
     ipint->active = 1;
     ipint->nextseqno = 0;
+    ipint->awaitingconfirm = 0;
 
     ipint->liid_len = 0;
     ipint->authcc_len = 0;

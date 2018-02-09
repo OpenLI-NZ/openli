@@ -469,6 +469,12 @@ static int push_all_ipintercepts(libtrace_list_t *intercepts,
         }
         n = n->next;
     }
+    if (push_nomore_intercepts(nb) < 0) {
+        logger(LOG_DAEMON,
+                "OpenLI provisioner: error pushing end of intercepts onto buffer for writing to collector.");
+        return -1;
+    }
+
     return 0;
 }
 
