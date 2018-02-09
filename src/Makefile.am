@@ -3,7 +3,7 @@ bin_PROGRAMS=openlicollector openliprovisioner
 openlicollector_SOURCES=collector.c configparser.c configparser.h collector.h \
                 logger.c logger.h collector_sync.c collector_sync.h \
                 etsili_const.h ipcc.h ipcc.c collector_export.c \
-                collector_export.h collector_buffer.h collector_buffer.c \
+                collector_export.h export_buffer.h export_buffer.c \
                 util.c util.h intercept.c intercept.h netcomms.c netcomms.h \
                 byteswap.c byteswap.h
 

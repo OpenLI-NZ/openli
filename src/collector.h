@@ -41,14 +41,6 @@ enum {
     OPENLI_PUSH_HALT_IPINTERCEPT = 2
 };
 
-typedef struct export_buffer {
-    uint8_t *bufhead;
-    uint8_t *buftail;
-    uint64_t alloced;
-
-    uint32_t partialfront;
-} export_buffer_t;
-
 enum {
     OPENLI_UPDATE_HELLO = 0,
     OPENLI_UPDATE_RADIUS = 1,

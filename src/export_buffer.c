@@ -32,6 +32,7 @@
 #include "logger.h"
 #include "collector.h"
 #include "collector_export.h"
+#include "export_buffer.h"
 
 #define BUFFER_ALLOC_SIZE (1024 * 1024 * 10)
 #define BUFFER_WARNING_THRESH (1024 * 1024 * 1024)
@@ -91,10 +92,62 @@ static void validate_buffer(export_buffer_t *buf) {
     printf("\n");
 }
 
+static inline uint64_t extend_buffer(export_buffer_t *buf) {
+
+    /* Add some space to the buffer */
+    uint8_t *space = NULL;
+    uint64_t bufused = buf->buftail - buf->bufhead;
+
+    space = (uint8_t *)realloc(buf->bufhead, buf->alloced + BUFFER_ALLOC_SIZE);
+    if (space == NULL) {
+        /* OOM -- bad! */
+        /* TODO: maybe dump to disk at this point? */
+        logger(LOG_DAEMON, "OpenLI: no more free memory to use as buffer space!");
+        logger(LOG_DAEMON, "OpenLI: fix the connection between your collector and your mediator.");
+        return 0;
+    }
+
+    buf->bufhead = space;
+    buf->buftail = space + bufused;
+    buf->alloced = buf->alloced + BUFFER_ALLOC_SIZE;
+
+    if (buf->alloced - BUFFER_ALLOC_SIZE < BUFFER_WARNING_THRESH &&
+            buf->alloced >= BUFFER_WARNING_THRESH) {
+        /* TODO add email alerts */
+        logger(LOG_DAEMON, "OpenLI: buffer space for missing mediator has exceeded warning threshold.");
+    }
+    return buf->alloced - bufused;
+}
+
+uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
+        uint8_t *pdustart, uint32_t pdulen, uint32_t beensent) {
+
+    uint64_t bufused = buf->buftail - buf->bufhead;
+    uint64_t spaceleft = buf->alloced - bufused;
+
+    if (bufused == 0) {
+        buf->partialfront = beensent;
+    }
+
+    while (spaceleft < pdulen) {
+        spaceleft = extend_buffer(buf);
+        if (spaceleft == 0) {
+            return 0;
+        }
+    }
+
+    memcpy(buf->buftail, (void *)pdustart, pdulen);
+
+    buf->buftail += pdulen;
+
+    //validate_buffer(buf);
+    return (buf->buftail - buf->bufhead);
+
+}
+
 uint64_t append_message_to_buffer(export_buffer_t *buf,
         openli_exportmsg_t *msg, uint32_t beensent) {
 
-    int i;
     uint32_t enclen = msg->msglen - msg->ipclen;
     uint64_t bufused = buf->buftail - buf->bufhead;
     uint64_t spaceleft = buf->alloced - bufused;
@@ -104,29 +157,11 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     }
 
     while (spaceleft < msg->msglen) {
-        /* Add some space to the buffer */
-        uint8_t *space = NULL;
-
-        space = (uint8_t *)realloc(buf->bufhead,
-                buf->alloced + BUFFER_ALLOC_SIZE);
-        if (space == NULL) {
-            /* OOM -- bad! */
-            /* TODO: maybe dump to disk at this point? */
-            logger(LOG_DAEMON, "OpenLI: no more free memory to use as buffer space!");
-            logger(LOG_DAEMON, "OpenLI: fix the connection between your collector and your mediator.");
+        spaceleft = extend_buffer(buf);
+        if (spaceleft == 0) {
             return 0;
         }
-
-        buf->bufhead = space;
-        buf->buftail = space + bufused;
-        buf->alloced = buf->alloced + BUFFER_ALLOC_SIZE;
-
-        if (buf->alloced - BUFFER_ALLOC_SIZE < BUFFER_WARNING_THRESH &&
-                buf->alloced >= BUFFER_WARNING_THRESH) {
-            /* TODO add email alerts */
-            logger(LOG_DAEMON, "OpenLI: buffer space for missing mediator has exceeded warning threshold.");
-        }
-        spaceleft = buf->alloced - bufused;
+        /* Add some space to the buffer */
     }
 
     memcpy(buf->buftail, msg->msgbody, enclen);

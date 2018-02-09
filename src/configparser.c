@@ -34,7 +34,6 @@
 
 #include "configparser.h"
 #include "logger.h"
-#include "collector_buffer.h"
 #include "provisioner.h"
 #include "agency.h"
 

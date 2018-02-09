@@ -29,6 +29,7 @@
 
 #include <sys/epoll.h>
 #include "collector.h"
+#include "export_buffer.h"
 #include "mediator.h"
 
 typedef struct colexp_data {
@@ -46,16 +47,6 @@ typedef struct export_dest {
     openli_mediator_t details;
     export_buffer_t buffer;
 } export_dest_t;
-
-typedef struct openli_exp_msg {
-
-    uint32_t destid;
-    uint32_t msglen;
-    uint32_t ipclen;
-    uint8_t *msgbody;
-    uint8_t *ipcontents;
-
-} openli_exportmsg_t;
 
 enum {
     OPENLI_EXPORT_ETSIREC = 1,

@@ -37,7 +37,7 @@
 
 #include "collector.h"
 #include "collector_export.h"
-#include "collector_buffer.h"
+#include "export_buffer.h"
 #include "configparser.h"
 #include "logger.h"
 #include "util.h"
