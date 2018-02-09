@@ -77,6 +77,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_LIID,
     OPENLI_PROTO_FIELD_AUTHCC,
     OPENLI_PROTO_FIELD_DELIVCC,
+    OPENLI_PROTO_FIELD_INTERCEPTID,
 } openli_proto_fieldtype_t;
 
 
@@ -96,7 +97,8 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
         uint16_t *msglen, uint64_t *intid);
 int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
-
+int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
+        ipintercept_t *ipint);
 
 #endif
 

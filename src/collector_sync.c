@@ -31,6 +31,7 @@
 #include <arpa/inet.h>
 #include <libtrace_parallel.h>
 #include <assert.h>
+#include <netdb.h>
 
 #include "collector.h"
 #include "collector_sync.h"
@@ -98,6 +99,56 @@ void clean_sync_data(collector_sync_t *sync) {
 
 }
 
+static inline void push_single_intercept(libtrace_message_queue_t *q,
+        ipintercept_t *orig) {
+
+    ipintercept_t *copy;
+    openli_pushed_t msg;
+
+    copy = (ipintercept_t *)malloc(sizeof(ipintercept_t));
+
+    copy->internalid = orig->internalid;
+    copy->liid = strdup(orig->liid);
+    copy->liid_len = strlen(copy->liid);
+    copy->authcc = strdup(orig->authcc);
+    copy->authcc_len = strlen(copy->authcc);
+    copy->delivcc = strdup(orig->delivcc);
+    copy->delivcc_len = strlen(copy->delivcc);
+    copy->cin = orig->cin;
+    copy->ai_family = orig->ai_family;
+    copy->destid = orig->destid;
+
+    if (orig->targetagency) {
+        copy->targetagency = strdup(orig->targetagency);
+    } else {
+        copy->targetagency = NULL;
+    }
+
+    if (orig->ipaddr) {
+        copy->ipaddr = (struct sockaddr_storage *)malloc(
+                sizeof(struct sockaddr_storage));
+        memcpy(copy->ipaddr, orig->ipaddr, sizeof(struct sockaddr_storage));
+    } else {
+        copy->ipaddr = NULL;
+    }
+
+    if (orig->username) {
+        copy->username = strdup(orig->username);
+        copy->username_len = strlen(copy->username);
+    } else {
+        copy->username = NULL;
+        copy->username_len = 0;
+    }
+
+    copy->active = 1;
+    copy->nextseqno = 0;
+
+    msg.type = OPENLI_PUSH_IPINTERCEPT;
+    msg.data.ipint = copy;
+
+    libtrace_message_queue_put(q, (void *)(&msg));
+}
+
 static int send_to_provisioner(collector_sync_t *sync) {
 
     int ret;
@@ -146,6 +197,91 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
     return 0;
 }
 
+static void temporary_map_user_to_address(ipintercept_t *cept) {
+
+    char *knownip;
+    struct addrinfo *res = NULL;
+    struct addrinfo hints;
+
+    if (strcmp(cept->username, "RogerMegently") == 0) {
+        knownip = "130.217.250.112";
+    } else if (strcmp(cept->username, "Everything") == 0) {
+        knownip = "130.217.250.111";
+    } else {
+        return;
+    }
+
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_UNSPEC;
+
+    if (getaddrinfo(knownip, NULL, &hints, &res) != 0) {
+        logger(LOG_DAEMON, "OpenLI: getaddrinfo cannot parse IP address %s: %s",
+                knownip, strerror(errno));
+    }
+
+    cept->ai_family = res->ai_family;
+    cept->ipaddr = (struct sockaddr_storage *)malloc(
+            sizeof(struct sockaddr_storage));
+    memcpy(cept->ipaddr, res->ai_addr, res->ai_addrlen);
+
+    freeaddrinfo(res);
+}
+
+static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
+        uint16_t msglen) {
+
+    ipintercept_t cept;
+    libtrace_list_node_t *n;
+    int i;
+
+    if (decode_ipintercept_start(intmsg, msglen, &cept) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: received invalid IP intercept from provisioner.");
+        return -1;
+    }
+
+    /* Check if we already have this intercept */
+    n = sync->ipintercepts->head;
+    while (n) {
+        ipintercept_t *x = (ipintercept_t *)(n->data);
+        if (strcmp(x->liid, cept.liid) == 0 &&
+                strcmp(x->authcc, cept.authcc) == 0) {
+            /* Duplicate LIID */
+            return 0;
+        }
+
+        if (x->internalid == cept.internalid) {
+            /* Duplicate internal ID */
+            return 0;
+        }
+        n = n->next;
+    }
+
+    /* TODO try to find a CIN and IP address for this intercept, based on our
+     * known RADIUS (or equivalent) state.
+     *
+     * Only push the intercept to the processing threads once we've
+     * assigned a suitable CIN.
+     */
+
+    /* Temporary hard-coded mappings for testing.
+     * Please remove once proper RADIUS support is added.
+     */
+
+    temporary_map_user_to_address(&cept);
+
+    libtrace_list_push_front(sync->ipintercepts, &cept);
+    n = sync->ipintercepts->head;
+
+    for (i = 0; i < sync->glob->registered_syncqs; i++) {
+        push_single_intercept(sync->glob->syncsendqs[i],
+                (ipintercept_t *)(n->data));
+    }
+
+    return 0;
+
+}
+
 static int recv_from_provisioner(collector_sync_t *sync) {
     struct epoll_event ev;
     int ret = 0;
@@ -169,6 +305,10 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 }
                 break;
             case OPENLI_PROTO_START_IPINTERCEPT:
+                ret = new_ipintercept(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
                 break;
         }
 
@@ -247,15 +387,20 @@ static inline void disconnect_provisioner(collector_sync_t *sync) {
 
     close(sync->instruct_fd);
     sync->instruct_fd = -1;
+
+    /* Reset the intercepts list -- the provisioner may have restarted and
+     * therefore may have a completely different set of intercepts for us.
+     */
+    free_all_intercepts(sync->ipintercepts);
+    sync->ipintercepts = libtrace_list_init(sizeof(ipintercept_t));
 }
+
 
 static void push_all_active_intercepts(libtrace_list_t *intlist,
         libtrace_message_queue_t *q) {
 
     libtrace_list_node_t *n = intlist->head;
-    openli_pushed_t msg;
     ipintercept_t *orig;
-    ipintercept_t *copy;
 
     while (n) {
         orig = (ipintercept_t *)(n->data);
@@ -263,43 +408,7 @@ static void push_all_active_intercepts(libtrace_list_t *intlist,
             n = n->next;
             continue;
         }
-
-        copy = (ipintercept_t *)malloc(sizeof(ipintercept_t));
-
-        copy->internalid = orig->internalid;
-        copy->liid = strdup(orig->liid);
-        copy->liid_len = strlen(copy->liid);
-        copy->authcc = strdup(orig->authcc);
-        copy->authcc_len = strlen(copy->authcc);
-        copy->delivcc = strdup(orig->delivcc);
-        copy->delivcc_len = strlen(copy->delivcc);
-        copy->cin = orig->cin;
-        copy->ai_family = orig->ai_family;
-        copy->destid = orig->destid;
-
-        if (orig->ipaddr) {
-            copy->ipaddr = (struct sockaddr_storage *)malloc(
-                    sizeof(struct sockaddr_storage));
-            memcpy(copy->ipaddr, orig->ipaddr, sizeof(struct sockaddr_storage));
-        } else {
-            copy->ipaddr = NULL;
-        }
-
-        if (orig->username) {
-            copy->username = strdup(orig->username);
-            copy->username_len = strlen(copy->username);
-        } else {
-            copy->username = NULL;
-            copy->username_len = 0;
-        }
-
-        copy->active = 1;
-        copy->nextseqno = 0;
-
-        msg.type = OPENLI_PUSH_IPINTERCEPT;
-        msg.data.ipint = copy;
-
-        libtrace_message_queue_put(q, (void *)(&msg));
+        push_single_intercept(q, orig);
 
         n = n->next;
     }

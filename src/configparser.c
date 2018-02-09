@@ -223,9 +223,6 @@ static int parse_ipintercept_list(libtrace_list_t *ipints, yaml_document_t *doc,
         yaml_node_t *node = yaml_document_get_node(doc, *item);
         ipintercept_t newcept;
         yaml_node_pair_t *pair;
-        char *addrstr;
-        struct addrinfo *res = NULL;
-        struct addrinfo hints;
 
         /* Each sequence item is a new intercept */
         newcept.internalid = nextid;
@@ -250,31 +247,6 @@ static int parse_ipintercept_list(libtrace_list_t *ipints, yaml_document_t *doc,
             key = yaml_document_get_node(doc, pair->key);
             value = yaml_document_get_node(doc, pair->value);
 
-    /*
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "ipaddr") == 0 &&
-                    newcept.ipaddr == NULL) {
-                addrstr = ((char *)value->data.scalar.value);
-
-                memset(&hints, 0, sizeof(struct addrinfo));
-                hints.ai_family = AF_UNSPEC;
-
-                if (getaddrinfo(addrstr, NULL, &hints, &res) != 0) {
-                    logger(LOG_DAEMON, "OpenLI: getaddrinfo cannot parse IP address %s: %s",
-                            addrstr, strerror(errno));
-                    continue;
-                }
-
-                newcept.ai_family = res->ai_family;
-                newcept.ipaddr = (struct sockaddr_storage *)malloc(
-                        sizeof(struct sockaddr_storage));
-                memcpy(newcept.ipaddr, res->ai_addr, res->ai_addrlen);
-
-                freeaddrinfo(res);
-                res = NULL;
-            }
-    */
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value, "liid") == 0 &&

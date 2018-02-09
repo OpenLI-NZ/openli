@@ -433,16 +433,16 @@ endlistener:
 static int push_all_mediators(libtrace_list_t *mediators, net_buffer_t *nb) {
 
     libtrace_list_node_t *n;
-    openli_mediator_t *med;
+    prov_mediator_t *pmed;
 
     n = mediators->head;
     while (n) {
-        med = (openli_mediator_t *)(n->data);
+        pmed = (prov_mediator_t *)(n->data);
 
-        if (push_mediator_onto_net_buffer(nb, med) < 0) {
+        if (push_mediator_onto_net_buffer(nb, pmed->details) < 0) {
             logger(LOG_DAEMON,
                     "OpenLI provisioner: error pushing mediator %s:%s onto buffer for writing to collector.",
-                    med->ipstr, med->portstr);
+                    pmed->details->ipstr, pmed->details->portstr);
             return -1;
         }
 
@@ -467,7 +467,6 @@ static int push_all_ipintercepts(libtrace_list_t *intercepts,
                     cept->liid);
             return -1;
         }
-
         n = n->next;
     }
     return 0;

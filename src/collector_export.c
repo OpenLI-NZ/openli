@@ -283,8 +283,6 @@ static inline void add_new_destination(collector_export_t *exp,
     newdest.details = *(med);
     init_export_buffer(&(newdest.buffer));
 
-    printf("got new destination %s:%s\n", med->ipstr, med->portstr);
-
     libtrace_list_push_back(exp->dests, &newdest);
 
 }

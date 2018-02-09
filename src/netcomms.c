@@ -171,7 +171,8 @@ int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype)
 
 #define IPINTERCEPT_BODY_LEN(ipint) \
         (ipint->liid_len + ipint->authcc_len + ipint->delivcc_len + \
-         ipint->username_len + sizeof(ipint->destid) + (5 * 4))
+         ipint->username_len + sizeof(ipint->destid) + \
+         sizeof(ipint->internalid) + (6 * 4))
 
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, ipintercept_t *ipint) {
 
@@ -198,6 +199,12 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, ipintercept_t *ipint) {
     }
 
     /* Push on each intercept field */
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPTID,
+            (uint8_t *)&(ipint->internalid),
+            sizeof(ipint->internalid))) == -1) {
+        return -1;
+    }
+
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID, ipint->liid,
             ipint->liid_len)) == -1) {
         return -1;
@@ -259,8 +266,6 @@ int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med) {
             (uint8_t *)&(med->mediatorid), sizeof(med->mediatorid))) == -1) {
         return -1;
     }
-
-    printf("%s  %d\n", med->ipstr, strlen(med->ipstr));
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_MEDIATORIP, med->ipstr,
             strlen(med->ipstr))) == -1) {
@@ -393,6 +398,72 @@ static int decode_tlv(uint8_t *start, uint8_t *end,
     return 0;
 }
 
+#define DECODE_STRING_FIELD(target, valptr, vallen) \
+    target = (char *)malloc(vallen + 1); \
+    memcpy(target, valptr, vallen); \
+    target[vallen] = '\0';
+
+int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
+        ipintercept_t *ipint) {
+
+    uint8_t *msgend = msgbody + len;
+
+    ipint->internalid = 0;
+    ipint->liid = NULL;
+    ipint->authcc = NULL;
+    ipint->delivcc = NULL;
+    ipint->cin = 0;         /* Placeholder -- sync thread should populate */
+    ipint->username = NULL;
+    ipint->ai_family = 0;
+    ipint->ipaddr = NULL;
+    ipint->destid = 0;
+    ipint->targetagency = NULL;
+    ipint->active = 1;
+    ipint->nextseqno = 0;
+
+    ipint->liid_len = 0;
+    ipint->authcc_len = 0;
+    ipint->delivcc_len = 0;
+    ipint->username_len = 0;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_MEDIATORID) {
+            ipint->destid = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_LIID) {
+            DECODE_STRING_FIELD(ipint->liid, valptr, vallen);
+            ipint->liid_len = vallen;
+        } else if (f == OPENLI_PROTO_FIELD_AUTHCC) {
+            DECODE_STRING_FIELD(ipint->authcc, valptr, vallen);
+            ipint->authcc_len = vallen;
+        } else if (f == OPENLI_PROTO_FIELD_DELIVCC) {
+            DECODE_STRING_FIELD(ipint->delivcc, valptr, vallen);
+            ipint->delivcc_len = vallen;
+        } else if (f == OPENLI_PROTO_FIELD_USERNAME) {
+            DECODE_STRING_FIELD(ipint->username, valptr, vallen);
+            ipint->username_len = vallen;
+        } else if (f == OPENLI_PROTO_FIELD_INTERCEPTID) {
+            ipint->internalid = *((uint64_t *)valptr);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_DAEMON,
+                "OpenLI: invalid field in received IP intercept: %d.", f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+
+    return 0;
+
+}
+
 int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med) {
 
@@ -414,13 +485,9 @@ int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
         if (f == OPENLI_PROTO_FIELD_MEDIATORID) {
             med->mediatorid = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_MEDIATORIP) {
-            med->ipstr = (char *)malloc(vallen + 1);
-            memcpy(med->ipstr, valptr, vallen);
-            med->ipstr[vallen] = '\0';
+            DECODE_STRING_FIELD(med->ipstr, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_MEDIATORPORT) {
-            med->portstr = (char *)malloc(vallen + 1);
-            memcpy(med->portstr, valptr, vallen);
-            med->portstr[vallen] = '\0';
+            DECODE_STRING_FIELD(med->portstr, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_DAEMON,
@@ -485,8 +552,6 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
     nb->appendptr += ret;
 
     rettype = parse_received_message(nb, msgbody, msglen, intid);
-    dump_buffer_contents(*msgbody, *msglen);
-
     return rettype;
 }
 
