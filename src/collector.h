@@ -118,6 +118,8 @@ typedef struct collector_global {
     int registered_syncqs;
 
     pthread_mutex_t syncq_mutex;
+    pthread_mutex_t exportq_mutex;
+    pthread_cond_t exportq_cond;
 
     libtrace_message_queue_t **syncsendqs;
     void **syncepollevs;

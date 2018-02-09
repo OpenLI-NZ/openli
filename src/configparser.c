@@ -84,6 +84,9 @@ void clear_global_config(collector_global_t *glob) {
     }
 
     pthread_mutex_destroy(&glob->syncq_mutex);
+    pthread_mutex_destroy(&glob->exportq_mutex);
+    pthread_cond_destroy(&glob->exportq_cond);
+
     free(glob);
 }
 
@@ -492,6 +495,8 @@ collector_global_t *parse_global_config(char *configfile) {
     glob->provisionerport = NULL;
 
     pthread_mutex_init(&glob->syncq_mutex, NULL);
+    pthread_mutex_init(&glob->exportq_mutex, NULL);
+    pthread_cond_init(&glob->exportq_cond, NULL);
 
     if (yaml_parser(configfile, glob, global_parser) == -1) {
         return NULL;
