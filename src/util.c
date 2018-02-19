@@ -96,7 +96,7 @@ int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr) {
 
     its.it_interval.tv_sec = 0;
     its.it_interval.tv_nsec = 0;
-    its.it_value.tv_sec = 1;
+    its.it_value.tv_sec = secs;
     its.it_value.tv_nsec = 0;
 
     timerfd = timerfd_create(CLOCK_MONOTONIC, 0);
