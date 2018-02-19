@@ -65,7 +65,7 @@ static void reload_signal(int signal) {
  * not the other in the future.
  */
 
-static void create_collector_state(prov_epoll_ev_t *pev) {
+static void create_collector_state(prov_epoll_ev_t *pev, int authtimerfd) {
 
     prov_coll_state_t *cs = (prov_coll_state_t *)malloc(
             sizeof(prov_coll_state_t));
@@ -73,6 +73,9 @@ static void create_collector_state(prov_epoll_ev_t *pev) {
     cs->incoming = create_net_buffer(NETBUF_RECV, pev->fd);
     cs->outgoing = create_net_buffer(NETBUF_SEND, pev->fd);
     cs->trusted = 0;
+    cs->halted = 0;
+    cs->authfd = authtimerfd;
+    cs->mainfd = pev->fd;
 
     pev->state = cs;
 
@@ -274,6 +277,24 @@ static void free_all_mediators(libtrace_list_t *m) {
     }
 
     libtrace_list_deinit(m);
+}
+
+static void halt_auth_timer(provision_state_t *state, prov_coll_state_t *cs) {
+    struct epoll_event ev;
+
+    if (cs->authfd == -1) {
+        return;
+    }
+
+
+    if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, cs->authfd, &ev) < 0) {
+        logger(LOG_DAEMON,
+                "OpenLI: unable to remove collector fd from epoll: %s.",
+                strerror(errno));
+    }
+
+    close(cs->authfd);
+    cs->authfd = -1;
 }
 
 static void stop_all_collectors(libtrace_list_t *c) {
@@ -565,6 +586,7 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
     if (justauthed) {
         logger(LOG_DAEMON, "OpenLI: collector on fd %d auth success.",
                 pev->fd);
+        halt_auth_timer(state, cs);
         return respond_collector_auth(state, pev, cs->outgoing);
    }
 
@@ -605,20 +627,20 @@ static void drop_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
     struct epoll_event ev;
     prov_coll_state_t *cs = (prov_coll_state_t *)(pev->state);
 
-    if (pev->fd == -1) {
-        return;
+    if (cs->mainfd != -1) {
+        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, cs->mainfd, &ev) < 0) {
+            logger(LOG_DAEMON,
+                    "OpenLI: unable to remove collector fd from epoll: %s.",
+                    strerror(errno));
+        }
+
+        close(cs->mainfd);
+        cs->mainfd = -1;
+
+        state->dropped_collectors ++;
     }
 
-    if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, pev->fd, &ev) < 0) {
-        logger(LOG_DAEMON,
-                "OpenLI: unable to remove collector fd from epoll: %s.",
-                strerror(errno));
-    }
-
-    close(pev->fd);
-    pev->fd = -1;
-
-    state->dropped_collectors ++;
+    halt_auth_timer(state, cs);
 
     /* If we have a decent number of dropped collectors, re-create our
      * collector list to remove all of the useless items.
@@ -655,13 +677,18 @@ static int accept_collector(provision_state_t *state) {
 
     if (newfd >= 0) {
         col.commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
+        col.authev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
         col.commev->fdtype = PROV_EPOLL_COLLECTOR;
         col.commev->fd = newfd;
         col.commev->state = NULL;
 
+        col.authev->fdtype = PROV_EPOLL_FD_TIMER;
+        col.authev->fd = epoll_add_timer(state->epoll_fd, 5, col.authev);
         /* Create outgoing and incoming buffer state */
-        create_collector_state(col.commev);
+        create_collector_state(col.commev, col.authev->fd);
+        col.authev->state = col.commev->state;
+
 
         /* Add fd to epoll */
         ev.data.ptr = (void *)col.commev;
@@ -906,9 +933,19 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
                 drop_collector(state, pev);
             }
             break;
+        case PROV_EPOLL_FD_TIMER:
+            if (ev->events & EPOLLIN) {
+                logger(LOG_DAEMON,
+                        "OpenLI Provisioner: dropping unauthed collector.");
+                drop_collector(state, pev);
+            } else {
+                logger(LOG_DAEMON,
+                        "OpenLI Provisioner: collector auth timer has failed.");
+                return -1;
+            }
+            break;
 
         case PROV_EPOLL_MEDIATOR:
-        case PROV_EPOLL_FD_TIMER:
         case PROV_EPOLL_UPDATE:
             /* TODO all of the above */
             break;

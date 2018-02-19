@@ -94,6 +94,9 @@ typedef struct prov_coll_state {
     net_buffer_t *incoming;
     net_buffer_t *outgoing;
     uint8_t trusted;
+    uint8_t halted;
+    int mainfd;
+    int authfd;
 
 } prov_coll_state_t;
 
@@ -108,6 +111,7 @@ typedef struct prov_med_state {
 typedef struct prov_collector {
 
     prov_epoll_ev_t *commev;
+    prov_epoll_ev_t *authev;
 
 } prov_collector_t;
 
