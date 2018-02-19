@@ -316,12 +316,15 @@ static inline void add_new_destination(collector_export_t *exp,
             printf("resolved unknown destination %u\n", med->mediatorid);
             return;
         } else if (dest->details.mediatorid == med->mediatorid) {
-            assert(0);
-            /* Problem! We already have a mediator with this ID. */
 
-            /* TODO close existing mediator connection and replace with
-             * this one?
+            /* This is a re-announcement of an existing mediator -- this
+             * could be due to reconnecting to the provisioner so don't
+             * panic just yet. */
+
+            /* TODO check if the details have changed -- if so, drop the
+             * current connection and create a new one
              */
+            return;
 
         }
         n = n->next;
