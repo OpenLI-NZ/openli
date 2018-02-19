@@ -284,10 +284,16 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             /* OpenLI-internal fields that could change value
              * if the provisioner was restarted.
              */
+            if (strcmp(x->username, cept.username) != 0) {
+                logger(LOG_DAEMON,
+                        "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
+                        x->username, cept.username);
+                return -1;
+            }
             x->internalid = cept.internalid;
             x->awaitingconfirm = 0;
-
-            return 0;
+            x->active = 1;
+            break;
         }
 
         n = n->next;
@@ -304,10 +310,12 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
      * Please remove once proper RADIUS support is added.
      */
 
-    temporary_map_user_to_address(&cept);
+    if (n == NULL) {
+        temporary_map_user_to_address(&cept);
 
-    libtrace_list_push_front(sync->ipintercepts, &cept);
-    n = sync->ipintercepts->head;
+        libtrace_list_push_front(sync->ipintercepts, &cept);
+        n = sync->ipintercepts->head;
+    }
 
     for (i = 0; i < sync->glob->registered_syncqs; i++) {
         push_single_intercept(sync->glob->syncsendqs[i],
