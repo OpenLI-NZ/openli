@@ -362,7 +362,9 @@ static void clear_prov_state(provision_state_t *state) {
         free(state->mediatorfd);
     }
     if (state->timerfd) {
-        close(state->timerfd->fd);
+        if (state->timerfd->fd != -1) {
+            close(state->timerfd->fd);
+        }
         free(state->timerfd);
     }
     if (state->signalfd) {
@@ -964,6 +966,7 @@ static void run(provision_state_t *state) {
         }
 
         close(timerfd);
+        state->timerfd->fd = -1;
     }
 
 }

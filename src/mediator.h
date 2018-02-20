@@ -27,11 +27,58 @@
 #ifndef OPENLI_MEDIATOR_H_
 #define OPENLI_MEDIATOR_H_
 
-typedef struct openli_mediator {
+#include "netcomms.h"
+
+typedef struct med_epoll_ev {
+    int fdtype;
+    int fd;
+    void *state;
+} med_epoll_ev_t;
+
+enum {
+    MED_EPOLL_COLL_CONN,
+    MED_EPOLL_PROVISIONER,
+    MED_EPOLL_LEA,
+    MED_EPOLL_COLLECTOR,
+    MED_EPOLL_KA_TIMER,
+    MED_EPOLL_KA_RESPONSE_TIMER,
+    MED_EPOLL_SIGNAL,
+    MED_EPOLL_SIGCHECK_TIMER,
+};
+
+typedef struct mediator_collector {
+    med_epoll_ev_t *colev;
+    net_buffer_t *incoming;
+    int disabled;
+} mediator_collector_t;
+
+typedef struct mediator_provisioner {
+    med_epoll_ev_t *provev;
+    int sentinfo;
+    net_buffer_t *outgoing;
+    net_buffer_t *incoming;
+} mediator_prov_t;
+
+typedef struct med_state {
     uint32_t mediatorid;
-    char *ipstr;
-    char *portstr;
-} openli_mediator_t;
+    char *conffile;
+    char *mediatorname;
+    char *listenaddr;
+    char *listenport;
+
+    char *provaddr;
+    char *provport;
+
+    libtrace_list_t *collectors;
+
+    int epoll_fd;
+    med_epoll_ev_t *listenerev;
+    med_epoll_ev_t *signalev;
+    med_epoll_ev_t *timerev;
+
+    mediator_prov_t provisioner;
+
+} mediator_state_t;
 
 #endif
 

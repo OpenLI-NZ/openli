@@ -61,7 +61,7 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry) {
     sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 
     if (sockfd == -1) {
-        logger(LOG_DAEMON, "OpenLI: Error while creating export socket: %s.",
+        logger(LOG_DAEMON, "OpenLI: Error while creating connecting socket: %s.",
                 strerror(errno));
         goto endconnect;
     }

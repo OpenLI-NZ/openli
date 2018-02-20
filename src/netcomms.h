@@ -40,8 +40,13 @@
 #define NETBUF_CONTENT_SIZE(nbuf) (nbuf->appendptr - nbuf->actptr)
 
 #include "intercept.h"
-#include "mediator.h"
 #include "agency.h"
+
+typedef struct openli_mediator {
+    uint32_t mediatorid;
+    char *ipstr;
+    char *portstr;
+} openli_mediator_t;
 
 typedef enum {
     NETBUF_RECV,
