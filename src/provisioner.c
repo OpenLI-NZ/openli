@@ -391,66 +391,6 @@ static void clear_prov_state(provision_state_t *state) {
 
 }
 
-static int create_listener(char *addr, char *port) {
-    struct addrinfo hints, *res;
-    int sockfd;
-    int yes = 1;
-
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    if (addr == NULL) {
-        hints.ai_flags = AI_PASSIVE;
-    }
-
-    if (getaddrinfo(addr, port, &hints, &res) == -1)
-    {
-        logger(LOG_DAEMON, "OpenLI: Error while trying to getaddrinfo for main listening socket.");
-        return -1;
-    }
-
-    sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-
-    if (sockfd == -1) {
-        logger(LOG_DAEMON,
-                "OpenLI: Error while creating main listening socket: %s.",
-                strerror(errno));
-        goto endlistener;
-    }
-
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
-        logger(LOG_DAEMON,
-                "OpenLI: Error while setting options on main listening socket: %s",
-                strerror(errno));
-        close(sockfd);
-        sockfd = -1;
-        goto endlistener;
-    }
-
-
-    if (bind(sockfd, res->ai_addr, res->ai_addrlen) == -1) {
-        logger(LOG_DAEMON,
-                "OpenLI: Error while trying to bind main listening socket: %s.",
-                strerror(errno));
-        close(sockfd);
-        sockfd = -1;
-        goto endlistener;
-    }
-
-    if (listen(sockfd, 10) == -1) {
-        logger(LOG_DAEMON,
-                "OpenLI: Error while listening on main socket: %s.",
-                strerror(errno));
-        close(sockfd);
-        sockfd = -1;
-        goto endlistener;
-    }
-
-endlistener:
-    freeaddrinfo(res);
-    return sockfd;
-}
-
 static int push_all_mediators(libtrace_list_t *mediators, net_buffer_t *nb) {
 
     libtrace_list_node_t *n;
@@ -778,7 +718,8 @@ static int start_main_listener(provision_state_t *state) {
 
     state->clientfd = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
-    sockfd  = create_listener(state->listenaddr, state->listenport);
+    sockfd  = create_listener(state->listenaddr, state->listenport,
+            "provisioner");
     if (sockfd == -1) {
         return -1;
     }
@@ -807,7 +748,7 @@ static int start_push_listener(provision_state_t *state) {
 
     state->updatefd = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
-    sockfd  = create_listener(state->pushaddr, state->pushport);
+    sockfd  = create_listener(state->pushaddr, state->pushport, "II push");
     if (sockfd == -1) {
         return -1;
     }
@@ -836,7 +777,8 @@ static int start_mediator_listener(provision_state_t *state) {
 
     state->mediatorfd = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
-    sockfd  = create_listener(state->mediateaddr, state->mediateport);
+    sockfd  = create_listener(state->mediateaddr, state->mediateport,
+            "incoming mediator");
     if (sockfd == -1) {
         return -1;
     }
