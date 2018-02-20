@@ -24,19 +24,39 @@
  *
  */
 
-#ifndef OPENLI_CONFIGPARSER_H_
-#define OPENLI_CONFIGPARSER_H_
+#ifndef OPENLI_INTERCEPT_H_
+#define OPENLI_INTERCEPT_H_
 
-#include "collector.h"
-#include "provisioner.h"
-#include <yaml.h>
+#include <stdlib.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <libtrace/linked_list.h>
 
-int parse_export_config(char *configfile, libtrace_list_t *exptargets);
-int parse_ipintercept_config(char *configfile, libtrace_list_t *ipints);
-collector_global_t *parse_global_config(char *configfile);
-void clear_global_config(collector_global_t *glob);
+typedef struct ipintercept {
+    uint64_t internalid;
+    char *liid;
+    char *authcc;
+    char *delivcc;
+    uint64_t cin;
 
-int parse_provisioning_config(char *configfile, provision_state_t *state);
+    int liid_len;
+    int authcc_len;
+    int delivcc_len;
+    int username_len;
+
+    int ai_family;
+    struct sockaddr_storage *ipaddr;
+    char *username;
+
+    uint64_t nextseqno;
+    uint32_t destid;
+    char *targetagency;
+    uint8_t active;
+    uint8_t awaitingconfirm;
+} ipintercept_t;
+
+void free_all_intercepts(libtrace_list_t *interceptlist);
+
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

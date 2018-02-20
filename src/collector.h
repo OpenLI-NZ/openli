@@ -34,53 +34,12 @@
 #include <libtrace/linked_list.h>
 #include <libwandder.h>
 
+#include "intercept.h"
+
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
     OPENLI_PUSH_HALT_IPINTERCEPT = 2
 };
-
-typedef struct ipintercept {
-    uint64_t internalid;
-    char *liid;
-    char *authcc;
-    char *delivcc;
-    uint64_t cin;
-
-    int liid_len;
-    int authcc_len;
-    int delivcc_len;
-    int username_len;
-
-    int ai_family;
-    struct sockaddr_storage *ipaddr;
-    char *username;
-
-    uint8_t active;
-    uint64_t nextseqno;
-    uint32_t destid;
-} ipintercept_t;
-
-struct dest_details {
-    char *ipstr;
-    char *portstr;
-    uint32_t destid;
-};
-
-typedef struct export_buffer {
-    uint8_t *bufhead;
-    uint8_t *buftail;
-    uint64_t alloced;
-
-    uint32_t partialfront;
-} export_buffer_t;
-
-typedef struct export_dest {
-    int failmsg;
-    int fd;
-    struct dest_details details;
-
-    export_buffer_t buffer;
-} export_dest_t;
 
 enum {
     OPENLI_UPDATE_HELLO = 0,
@@ -103,34 +62,13 @@ typedef struct openli_ii_msg {
     uint8_t type;
     union {
         ipintercept_t *ipint;
-        uint64_t interceptid;
+        struct {
+            char *liid;
+            char *authcc;
+        } interceptid;
     } data;
 
 } openli_pushed_t;
-
-typedef struct openli_exp_msg {
-
-    uint32_t destid;
-    uint32_t msglen;
-    uint32_t ipclen;
-    uint8_t *msgbody;
-    uint8_t *ipcontents;
-
-} openli_exportmsg_t;
-
-enum {
-    OPENLI_EXPORT_ETSIREC = 1,
-    OPENLI_EXPORT_PACKET_FIN = 2,
-};
-
-typedef struct openli_export_recv {
-    uint8_t type;
-    union {
-        openli_exportmsg_t toexport;
-        export_dest_t dest;
-        libtrace_packet_t *packet;
-    } data;
-} openli_export_recv_t;
 
 typedef struct colinput_config {
     char *uri;
@@ -180,8 +118,12 @@ typedef struct collector_global {
     int registered_syncqs;
 
     pthread_mutex_t syncq_mutex;
+    pthread_mutex_t exportq_mutex;
+    pthread_cond_t exportq_cond;
 
     libtrace_message_queue_t **syncsendqs;
+    void **syncepollevs;
+
     pthread_t syncthreadid;
     pthread_t exportthreadid;
 
@@ -192,6 +134,8 @@ typedef struct collector_global {
     char *operatorid;
     char *networkelemid;
     char *intpointid;
+    char *provisionerip;
+    char *provisionerport;
 
     int operatorid_len;
     int networkelemid_len;

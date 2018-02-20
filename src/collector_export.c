@@ -37,9 +37,10 @@
 
 #include "collector.h"
 #include "collector_export.h"
-#include "collector_buffer.h"
+#include "export_buffer.h"
 #include "configparser.h"
 #include "logger.h"
+#include "util.h"
 
 enum {
     EXP_EPOLL_MQUEUE = 0,
@@ -61,59 +62,44 @@ collector_export_t *init_exporter(collector_global_t *glob) {
 
     exp->glob = glob;
     exp->dests = libtrace_list_init(sizeof(export_dest_t));
+
+    pthread_mutex_lock(&glob->exportq_mutex);
     exp->glob->export_epollfd = epoll_create1(0);
+    pthread_cond_signal(&glob->exportq_cond);
+    pthread_mutex_unlock(&glob->exportq_mutex);
     exp->failed_conns = 0;
     return exp;
 }
 
 static int connect_single_target(export_dest_t *dest) {
 
-    struct addrinfo hints, *res;
     int sockfd;
 
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-
-    if (getaddrinfo(dest->details.ipstr, dest->details.portstr, &hints,
-                &res) == -1) {
-        logger(LOG_DAEMON, "OpenLI: Error while trying to look up %s:%s as an export target -- %s.", dest->details.ipstr, dest->details.portstr, strerror(errno));
+    if (dest->details.ipstr == NULL) {
+        /* This is an unannounced mediator */
         return -1;
     }
 
-    sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    sockfd = connect_socket(dest->details.ipstr, dest->details.portstr,
+            dest->failmsg);
 
     if (sockfd == -1) {
-        logger(LOG_DAEMON, "OpenLI: Error while creating export socket: %s.",
-                strerror(errno));
-        goto endconnect;
+        /* TODO should probably bail completely on this dest if this
+         * happens. */
+        return -1;
     }
 
-    if (connect(sockfd, res->ai_addr, res->ai_addrlen) == -1) {
-        if (!dest->failmsg) {
-            logger(LOG_DAEMON, "OpenLI: Failed to connect to export target %s:%s -- %s.",
-                    dest->details.ipstr, dest->details.portstr, strerror(errno));
-            logger(LOG_DAEMON, "OpenLI: Will retry connection periodically.");
-            dest->failmsg = 1;
-        }
-
-        close(sockfd);
-        sockfd = -1;
-        goto endconnect;
+    if (sockfd == 0) {
+        dest->failmsg = 1;
+        return -1;
     }
 
-    logger(LOG_DAEMON, "OpenLI: connected to %s:%s successfully.",
-            dest->details.ipstr, dest->details.portstr);
     dest->failmsg = 0;
-
     /* If we disconnected after a partial send, make sure we re-send the
      * whole record and trust that downstream will figure out how to deal
      * with any duplication.
      */
     dest->buffer.partialfront = 0;
-
-endconnect:
-    freeaddrinfo(res);
     return sockfd;
 }
 
@@ -260,16 +246,12 @@ static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
 static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
 
     if (dest->fd == -1) {
-        //dest->fd = connect_single_target(dest);
+        /* buffer this message for when we are able to connect */
+        if (append_message_to_buffer(&(dest->buffer), msg, 0) == 0) {
+            /* TODO do something if we run out of memory? */
 
-        if (dest->fd == -1) {
-            /* buffer this message for when we are able to connect */
-            if (append_message_to_buffer(&(dest->buffer), msg, 0) == 0) {
-                /* TODO do something if we run out of memory? */
-
-            }
-            return 0;
         }
+        return 0;
     }
 
     if (get_buffered_amount(&(dest->buffer)) == 0) {
@@ -298,15 +280,142 @@ static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
     return 0;
 }
 
+static inline export_dest_t *add_unknown_destination(collector_export_t *exp,
+        uint32_t medid) {
+    export_dest_t newdest, *dest;
+
+    newdest.failmsg = 0;
+    newdest.fd = -1;
+    newdest.details.mediatorid = medid;
+    newdest.details.ipstr = NULL;
+    newdest.details.portstr = NULL;
+    init_export_buffer(&(newdest.buffer));
+
+    libtrace_list_push_back(exp->dests, &newdest);
+
+    dest = (export_dest_t *)(exp->dests->tail->data);
+    return dest;
+}
+
+static inline void add_new_destination(collector_export_t *exp,
+        openli_mediator_t *med) {
+
+    libtrace_list_node_t *n;
+    export_dest_t newdest, *dest;
+
+    n = exp->dests->head;
+    while (n) {
+        dest = (export_dest_t *)(n->data);
+        if (dest->details.ipstr == NULL &&
+                dest->details.mediatorid == med->mediatorid) {
+            /* This is the announcement for a previously unannounced
+             * mediator. */
+            dest->failmsg = 0;
+            dest->fd = -1;
+            dest->details = *(med);
+            printf("resolved unknown destination %u\n", med->mediatorid);
+            return;
+        } else if (dest->details.mediatorid == med->mediatorid) {
+
+            /* This is a re-announcement of an existing mediator -- this
+             * could be due to reconnecting to the provisioner so don't
+             * panic just yet. */
+
+            /* TODO check if the details have changed -- if so, drop the
+             * current connection and create a new one
+             */
+            return;
+
+        }
+        n = n->next;
+    }
+
+    /* Entirely new mediator ID */
+
+    newdest.failmsg = 0;
+    newdest.fd = -1;
+    newdest.details = *(med);
+    init_export_buffer(&(newdest.buffer));
+
+    libtrace_list_push_back(exp->dests, &newdest);
+
+}
 
 #define MAX_READ_BATCH 25
+
+static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
+{
+    int x;
+	openli_export_recv_t recvd;
+    libtrace_list_node_t *n;
+    export_dest_t *dest;
+
+    x = libtrace_message_queue_try_get(srcq, (void *)(&recvd));
+    if (x == LIBTRACE_MQ_FAILED) {
+        return 0;
+    }
+
+    if (recvd.type == OPENLI_EXPORT_MEDIATOR) {
+        add_new_destination(exp, &(recvd.data.med));
+        return 0;
+    }
+
+    if (recvd.type == OPENLI_EXPORT_ETSIREC) {
+        n = exp->dests->head;
+        while (n) {
+            dest = (export_dest_t *)(n->data);
+
+            if (dest->details.mediatorid ==
+                    recvd.data.toexport.destid) {
+                x = forward_message(dest, &(recvd.data.toexport));
+                if (x == -1) {
+                    close(dest->fd);
+                    dest->fd = -1;
+                    return -1;
+                }
+                break;
+            }
+            n = n->next;
+        }
+
+        if (n == NULL) {
+            /* We don't recognise this mediator ID, but the
+             * announcement for it could be coming soon. Create an
+             * export_dest for it and buffer received messages
+             * until we get an announcement.
+             *
+             * TODO need some way to recognise that an announcement
+             * is NOT coming so we don't buffer forever...
+             */
+            printf("adding unknown destination %u\n", recvd.data.toexport.destid);
+            dest = add_unknown_destination(exp,
+                    recvd.data.toexport.destid);
+            x = forward_message(dest, &(recvd.data.toexport));
+            if (x == -1) {
+                return -1;
+            }
+        }
+        free(recvd.data.toexport.msgbody);
+        return 1;
+    }
+
+    if (recvd.type == OPENLI_EXPORT_PACKET_FIN) {
+        /* All ETSIRECs relating to this packet have been seen, so
+         * we can safely free the packet.
+         */
+        trace_destroy_packet(recvd.data.packet);
+        return 0;
+    }
+
+    logger(LOG_DAEMON,
+            "OpenLI: invalid message type %d received from export queue.",
+            recvd.type);
+    return -1;
+}
 
 static int check_epoll_fd(collector_export_t *exp, struct epoll_event *ev) {
 
     libtrace_message_queue_t *srcq = NULL;
-	openli_export_recv_t recvd;
-    libtrace_list_node_t *n;
-    export_dest_t *dest;
     exporter_epoll_t *epptr = NULL;
     int ret = 0;
     int readmsgs = 0;
@@ -330,43 +439,15 @@ static int check_epoll_fd(collector_export_t *exp, struct epoll_event *ev) {
         srcq = epptr->data.q;
 
         while (readmsgs < MAX_READ_BATCH) {
-
-            int x;
-            x = libtrace_message_queue_try_get(srcq, (void *)(&recvd));
-            if (x == LIBTRACE_MQ_FAILED) {
+            ret = read_mqueue(exp, srcq);
+            if (ret == -1) {
                 break;
             }
-
-            if (recvd.type == OPENLI_EXPORT_ETSIREC) {
-                readmsgs ++;
-                n = exp->dests->head;
-                while (n) {
-                    dest = (export_dest_t *)(n->data);
-
-                    if (dest->details.destid == recvd.data.toexport.destid) {
-                        ret = forward_message(dest, &(recvd.data.toexport));
-                        if (ret == -1) {
-                            close(dest->fd);
-                            dest->fd = -1;
-                            break;
-                        }
-                        break;
-                    }
-                    n = n->next;
-                }
-
-                if (n == NULL) {
-                    logger(LOG_DAEMON, "Received a message for export to target %u, but no such target exists??", recvd.data.toexport.destid);
-                    ret = -1;
-                }
-                free(recvd.data.toexport.msgbody);
+            if (ret == 0) {
+                break;
             }
-
-            if (recvd.type == OPENLI_EXPORT_PACKET_FIN) {
-                /* All ETSIRECs relating to this packet have been seen, so
-                 * we can safely free the packet.
-                 */
-                trace_destroy_packet(recvd.data.packet);
+            if (ret > 0) {
+                readmsgs ++;
             }
         }
     }
@@ -386,8 +467,6 @@ int exporter_thread_main(collector_export_t *exp) {
 
 	int i, nfds, timerfd;
 	struct epoll_event evs[64];
-	struct itimerspec its;
-    struct epoll_event ev;
     int timerexpired = 0;
     exporter_epoll_t *epoll_ev = NULL;
 
@@ -396,19 +475,8 @@ int exporter_thread_main(collector_export_t *exp) {
     epoll_ev->type = EXP_EPOLL_TIMER;
     epoll_ev->data.q = NULL;
 
-    ev.data.ptr = epoll_ev;
-    ev.events = EPOLLIN;
-
-    its.it_interval.tv_sec = 0;
-    its.it_interval.tv_nsec = 0;
-    its.it_value.tv_sec = 1;
-    its.it_value.tv_nsec = 0;
-
-    timerfd = timerfd_create(CLOCK_MONOTONIC, 0);
-    timerfd_settime(timerfd, 0, &its, NULL);
-
-    if (epoll_ctl(exp->glob->export_epollfd, EPOLL_CTL_ADD, timerfd, &ev) == -1)
-    {
+    timerfd = epoll_add_timer(exp->glob->export_epollfd, 1, epoll_ev);
+    if (timerfd == -1) {
         logger(LOG_DAEMON, "OpenLI: failed to add export timer fd to epoll set: %s.", strerror(errno));
         return -1;
     }
@@ -435,7 +503,7 @@ int exporter_thread_main(collector_export_t *exp) {
         }
     }
 
-    if (epoll_ctl(exp->glob->export_epollfd, EPOLL_CTL_DEL, timerfd, &ev) == -1)
+    if (epoll_ctl(exp->glob->export_epollfd, EPOLL_CTL_DEL, timerfd, NULL) == -1)
     {
         logger(LOG_DAEMON, "OpenLI: failed to remove export timer fd to epoll set: %s.", strerror(errno));
         return -1;
@@ -460,11 +528,9 @@ void register_export_queue(collector_global_t *glob,
     ev.data.ptr = (void *)epoll_ev;
     ev.events = EPOLLIN;
 
-	if (epoll_ctl(glob->export_epollfd, EPOLL_CTL_ADD,
-                libtrace_message_queue_get_fd(q), &ev) == -1) {
-        /* TODO Do something? */
-        logger(LOG_DAEMON, "OpenLI: failed to register export queue: %s",
-                strerror(errno));
+    pthread_mutex_lock(&glob->exportq_mutex);
+    while (glob->export_epollfd == -1) {
+        pthread_cond_wait(&glob->exportq_cond, &glob->exportq_mutex);
     }
 
     if (glob->export_epoll_evs == NULL) {
@@ -472,6 +538,14 @@ void register_export_queue(collector_global_t *glob,
     }
 
     libtrace_list_push_back(glob->export_epoll_evs, &epoll_ev);
+    pthread_mutex_unlock(&glob->exportq_mutex);
+
+	if (epoll_ctl(glob->export_epollfd, EPOLL_CTL_ADD,
+                libtrace_message_queue_get_fd(q), &ev) == -1) {
+        /* TODO Do something? */
+        logger(LOG_DAEMON, "OpenLI: failed to register export queue: %s",
+                strerror(errno));
+    }
 
 }
 

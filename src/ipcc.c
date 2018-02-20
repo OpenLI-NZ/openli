@@ -31,6 +31,7 @@
 
 #include "logger.h"
 #include "collector.h"
+#include "collector_export.h"
 #include "etsili_const.h"
 
 
@@ -224,6 +225,12 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
         }
 
         intaddr = (struct sockaddr_in *)(ipint->ipaddr);
+
+        if (intaddr == NULL) {
+            /* Intercept with no associated IP address?? */
+            n = n->next;
+            continue;
+        }
 
         if (ipsrc.ss_family == ipint->ai_family) {
             cmp = (struct sockaddr_in *)(&ipsrc);

@@ -24,19 +24,15 @@
  *
  */
 
-#ifndef OPENLI_CONFIGPARSER_H_
-#define OPENLI_CONFIGPARSER_H_
+#ifndef OPENLI_MEDIATOR_H_
+#define OPENLI_MEDIATOR_H_
 
-#include "collector.h"
-#include "provisioner.h"
-#include <yaml.h>
+typedef struct openli_mediator {
+    uint32_t mediatorid;
+    char *ipstr;
+    char *portstr;
+} openli_mediator_t;
 
-int parse_export_config(char *configfile, libtrace_list_t *exptargets);
-int parse_ipintercept_config(char *configfile, libtrace_list_t *ipints);
-collector_global_t *parse_global_config(char *configfile);
-void clear_global_config(collector_global_t *glob);
-
-int parse_provisioning_config(char *configfile, provision_state_t *state);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

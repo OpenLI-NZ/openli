@@ -47,7 +47,6 @@
 
 volatile int collector_halt = 0;
 volatile int reload_export_config = 0;
-volatile int reload_intercepts = 0;
 
 static void cleanup_signal(int signal UNUSED)
 {
@@ -86,14 +85,28 @@ static void dump_ip_intercept(ipintercept_t *ipint) {
 }
 
 static void deactivate_ip_intercept(libtrace_list_t *ipint_list,
-        uint64_t intid) {
+        char *liid, char *authcc) {
 
-    /* TODO */
+    libtrace_list_node_t *n;
+    ipintercept_t *cept;
 
-    /* Search the list for an intercept with a matching ID number */
+    /* Search the list for an intercept with a matching ID */
 
     /* If found, set the intercept to inactive */
 
+    n = ipint_list->head;
+    while (n) {
+        cept = (ipintercept_t *)(n->data);
+
+        if (strcmp(cept->liid, liid) == 0 && strcmp(cept->authcc, authcc) == 0)
+        {
+            cept->active = 0;
+            break;
+        }
+        n = n->next;
+    }
+
+    /* TODO */
     /* Starting from the back, prune any inactive intercepts until we
      * reach an active one. This isn't perfect, but might help keep
      * the size down a bit. */
@@ -101,6 +114,9 @@ static void deactivate_ip_intercept(libtrace_list_t *ipint_list,
     /* Future work: if the list is large and fragmented, just re-create
      * the list from scratch to contain only active intercepts. */
 
+    /* authcc and liid were strdup'd by the sync thread */
+    free(authcc);
+    free(liid);
 
     return;
 }
@@ -142,7 +158,9 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     free_all_intercepts(loc->activeipintercepts);
 
-    free_wandder_encoder(loc->encoder);
+    if (loc->encoder) {
+        free_wandder_encoder(loc->encoder);
+    }
 
     free(loc);
 }
@@ -171,7 +189,8 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
         if (syncpush.type == OPENLI_PUSH_HALT_IPINTERCEPT) {
             deactivate_ip_intercept(loc->activeipintercepts,
-                    syncpush.data.interceptid);
+                    syncpush.data.interceptid.liid,
+                    syncpush.data.interceptid.authcc);
         }
 
     }
@@ -232,21 +251,37 @@ static int start_input(collector_global_t *glob, colinput_t *inp) {
 
 static void *start_sync_thread(void *params) {
     collector_global_t *glob = (collector_global_t *)params;
-
+    int ret;
     collector_sync_t *sync = init_sync_data(glob);
 
     /* XXX For early development work, we will read intercept instructions
      * from a config file. Eventually this should be replaced with
      * instructions that are received via a network interface.
      */
-    if (parse_ipintercept_config(glob->configfile, sync->ipintercepts) == -1) {
-        logger(LOG_DAEMON, "OpenLI: Warning - failed to parse IP intercept config");
-    }
 
     register_export_queue(glob, &(sync->exportq));
 
     while (collector_halt == 0) {
-        sync_thread_main(sync);
+        if (sync->instruct_fd == -1) {
+            ret = sync_connect_provisioner(sync);
+            if (ret < 0) {
+                /* Fatal error */
+                logger(LOG_DAEMON,
+                        "OpenLI: collector is unable to reach provisioner.");
+                break;
+            }
+
+            if (ret == 0) {
+                /* Connection failed, but we should retry */
+                usleep(500000);
+                continue;
+            }
+        }
+
+        ret = sync_thread_main(sync);
+        if (ret == -1) {
+            break;
+        }
     }
 
     /* Collector is halting, stop all processing threads */

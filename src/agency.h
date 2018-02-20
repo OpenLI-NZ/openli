@@ -24,19 +24,22 @@
  *
  */
 
-#ifndef OPENLI_CONFIGPARSER_H_
-#define OPENLI_CONFIGPARSER_H_
+#ifndef OPENLI_AGENCY_H_
+#define OPENLI_AGENCY_H_
 
-#include "collector.h"
-#include "provisioner.h"
-#include <yaml.h>
+#include <libtrace/linked_list.h>
 
-int parse_export_config(char *configfile, libtrace_list_t *exptargets);
-int parse_ipintercept_config(char *configfile, libtrace_list_t *ipints);
-collector_global_t *parse_global_config(char *configfile);
-void clear_global_config(collector_global_t *glob);
+typedef struct liagency {
 
-int parse_provisioning_config(char *configfile, provision_state_t *state);
+    char *ipstr;
+    char *portstr;
+    char *agencyid;
+
+    /* XXX list may not be the best structure in this case */
+    libtrace_list_t *knownliids;
+
+} liagency_t;
+
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

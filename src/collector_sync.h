@@ -28,15 +28,33 @@
 #define OPENLI_COLLECTOR_SYNC_H_
 
 #include <sys/epoll.h>
+
+#include <libtrace/linked_list.h>
 #include "collector.h"
+#include "netcomms.h"
+
+enum {
+    SYNC_EVENT_PROC_QUEUE,
+    SYNC_EVENT_PROVISIONER
+};
+
+typedef struct sync_epoll {
+    uint8_t fdtype;
+    int fd;
+    libtrace_message_queue_t *msgq;
+} sync_epoll_t;
 
 typedef struct colsync_data {
 
     collector_global_t *glob;
 
     libtrace_list_t *ipintercepts;
-    libtrace_list_t *recipients;
     int instruct_fd;
+    uint8_t instruct_fail;
+    sync_epoll_t *ii_ev;
+
+    net_buffer_t *outgoing;
+    net_buffer_t *incoming;
 
     libtrace_message_queue_t exportq;
 
@@ -44,6 +62,7 @@ typedef struct colsync_data {
 
 collector_sync_t *init_sync_data(collector_global_t *glob);
 void clean_sync_data(collector_sync_t *sync);
+int sync_connect_provisioner(collector_sync_t *sync);
 int sync_thread_main(collector_sync_t *sync);
 void register_sync_queues(collector_global_t *glob,
         libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq);

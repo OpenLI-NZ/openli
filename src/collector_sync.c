@@ -30,11 +30,17 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <libtrace_parallel.h>
+#include <assert.h>
+#include <netdb.h>
 
 #include "collector.h"
 #include "collector_sync.h"
+#include "collector_export.h"
 #include "configparser.h"
 #include "logger.h"
+#include "intercept.h"
+#include "netcomms.h"
+#include "util.h"
 
 collector_sync_t *init_sync_data(collector_global_t *glob) {
 
@@ -44,48 +50,22 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->glob = glob;
     sync->ipintercepts = libtrace_list_init(sizeof(ipintercept_t));
     sync->instruct_fd = -1;
+    sync->instruct_fail = 0;
+    sync->ii_ev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
     sync->glob->sync_epollfd = epoll_create1(0);
 
     libtrace_message_queue_init(&(sync->exportq), sizeof(openli_exportmsg_t));
+
+    sync->outgoing = NULL;
+    sync->incoming = NULL;
 
     return sync;
 
 }
 
-void free_all_intercepts(libtrace_list_t *interceptlist) {
-
-    libtrace_list_node_t *n;
-    ipintercept_t *cept;
-
-    n = interceptlist->head;
-    while (n) {
-        cept = (ipintercept_t *)n->data;
-        if (cept->liid) {
-            free(cept->liid);
-        }
-        if (cept->ipaddr) {
-            free(cept->ipaddr);
-        }
-
-        if (cept->authcc) {
-            free(cept->authcc);
-        }
-
-        if (cept->delivcc) {
-            free(cept->delivcc);
-        }
-
-        if (cept->username) {
-            free(cept->username);
-        }
-
-        n = n->next;
-    }
-
-	libtrace_list_deinit(interceptlist);
-}
-
 void clean_sync_data(collector_sync_t *sync) {
+
+    int i = 0;
 
 	if (sync->instruct_fd != -1) {
 		close(sync->instruct_fd);
@@ -95,20 +75,395 @@ void clean_sync_data(collector_sync_t *sync) {
 		close(sync->glob->sync_epollfd);
 	}
 
+    /* XXX possibly need to lock this? */
+    for (i = 0; i < sync->glob->registered_syncqs; i++) {
+        free(sync->glob->syncepollevs[i]);
+    }
+
     free_all_intercepts(sync->ipintercepts);
 	libtrace_message_queue_destroy(&(sync->exportq));
+
+    if (sync->outgoing) {
+        destroy_net_buffer(sync->outgoing);
+    }
+
+    if (sync->incoming) {
+        destroy_net_buffer(sync->incoming);
+    }
+
+    if (sync->ii_ev) {
+        free(sync->ii_ev);
+    }
 
 	free(sync);
 
 }
 
+static inline void push_single_intercept(libtrace_message_queue_t *q,
+        ipintercept_t *orig) {
+
+    ipintercept_t *copy;
+    openli_pushed_t msg;
+
+    copy = (ipintercept_t *)malloc(sizeof(ipintercept_t));
+
+    copy->internalid = orig->internalid;
+    copy->liid = strdup(orig->liid);
+    copy->liid_len = strlen(copy->liid);
+    copy->authcc = strdup(orig->authcc);
+    copy->authcc_len = strlen(copy->authcc);
+    copy->delivcc = strdup(orig->delivcc);
+    copy->delivcc_len = strlen(copy->delivcc);
+    copy->cin = orig->cin;
+    copy->ai_family = orig->ai_family;
+    copy->destid = orig->destid;
+
+    if (orig->targetagency) {
+        copy->targetagency = strdup(orig->targetagency);
+    } else {
+        copy->targetagency = NULL;
+    }
+
+    if (orig->ipaddr) {
+        copy->ipaddr = (struct sockaddr_storage *)malloc(
+                sizeof(struct sockaddr_storage));
+        memcpy(copy->ipaddr, orig->ipaddr, sizeof(struct sockaddr_storage));
+    } else {
+        copy->ipaddr = NULL;
+    }
+
+    if (orig->username) {
+        copy->username = strdup(orig->username);
+        copy->username_len = strlen(copy->username);
+    } else {
+        copy->username = NULL;
+        copy->username_len = 0;
+    }
+
+    copy->active = 1;
+    copy->nextseqno = 0;
+    copy->awaitingconfirm = 0;
+
+    msg.type = OPENLI_PUSH_IPINTERCEPT;
+    msg.data.ipint = copy;
+
+    libtrace_message_queue_put(q, (void *)(&msg));
+}
+
+static int send_to_provisioner(collector_sync_t *sync) {
+
+    int ret;
+    struct epoll_event ev;
+
+    ret = transmit_net_buffer(sync->outgoing);
+    if (ret == -1) {
+        /* Something went wrong */
+        logger(LOG_DAEMON,
+                "OpenLI: error sending message from collector to provisioner.");
+        return -1;
+    }
+
+    if (ret == 0) {
+        /* Everything has been sent successfully, no more to send right now. */
+        ev.data.ptr = sync->ii_ev;
+        ev.events = EPOLLIN | EPOLLRDHUP;
+
+        if (epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_MOD,
+                    sync->instruct_fd, &ev) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: error disabling EPOLLOUT on provisioner fd: %s.",
+                    strerror(errno));
+            return -1;
+        }
+    }
+
+    return 1;
+}
+
+static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
+    libtrace_list_node_t *n;
+    int i;
+
+    n = sync->ipintercepts->head;
+
+    /* TODO count total inactive as we go and reconstruct the list
+     * if the inactive count is relatively high?
+     */
+
+    while (n) {
+        ipintercept_t *cept = (ipintercept_t *)(n->data);
+
+        if (cept->awaitingconfirm && cept->active) {
+            cept->active = 0;
+
+            for (i = 0; i < sync->glob->registered_syncqs; i++) {
+                openli_pushed_t pmsg;
+
+                /* strdup because we might end up freeing this intercept
+                 * shortly.
+                 */
+                pmsg.type = OPENLI_PUSH_HALT_IPINTERCEPT;
+                pmsg.data.interceptid.liid = strdup(cept->liid);
+                pmsg.data.interceptid.authcc = strdup(cept->authcc);
+                libtrace_message_queue_put(sync->glob->syncsendqs[i], &pmsg);
+            }
+        }
+        n = n->next;
+    }
+}
+
+static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+
+    openli_mediator_t med;
+    openli_export_recv_t expmsg;
+
+    if (decode_mediator_announcement(provmsg, msglen, &med) == -1) {
+        logger(LOG_DAEMON, "OpenLI: received invalid mediator announcement from provisioner.");
+        return -1;
+    }
+
+    expmsg.type = OPENLI_EXPORT_MEDIATOR;
+    expmsg.data.med = med;
+
+    libtrace_message_queue_put(&(sync->exportq), &expmsg);
+    return 0;
+}
+
+static void temporary_map_user_to_address(ipintercept_t *cept) {
+
+    char *knownip;
+    struct addrinfo *res = NULL;
+    struct addrinfo hints;
+
+    if (strcmp(cept->username, "RogerMegently") == 0) {
+        knownip = "130.217.250.112";
+    } else if (strcmp(cept->username, "Everything") == 0) {
+        knownip = "130.217.250.111";
+    } else {
+        return;
+    }
+
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_UNSPEC;
+
+    if (getaddrinfo(knownip, NULL, &hints, &res) != 0) {
+        logger(LOG_DAEMON, "OpenLI: getaddrinfo cannot parse IP address %s: %s",
+                knownip, strerror(errno));
+    }
+
+    cept->ai_family = res->ai_family;
+    cept->ipaddr = (struct sockaddr_storage *)malloc(
+            sizeof(struct sockaddr_storage));
+    memcpy(cept->ipaddr, res->ai_addr, res->ai_addrlen);
+
+    freeaddrinfo(res);
+}
+
+static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
+        uint16_t msglen) {
+
+    ipintercept_t cept;
+    libtrace_list_node_t *n;
+    int i;
+
+    if (decode_ipintercept_start(intmsg, msglen, &cept) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: received invalid IP intercept from provisioner.");
+        return -1;
+    }
+
+    /* Check if we already have this intercept */
+    n = sync->ipintercepts->head;
+    while (n) {
+        ipintercept_t *x = (ipintercept_t *)(n->data);
+        if (strcmp(x->liid, cept.liid) == 0 &&
+                strcmp(x->authcc, cept.authcc) == 0) {
+            /* Duplicate LIID */
+
+            /* OpenLI-internal fields that could change value
+             * if the provisioner was restarted.
+             */
+            if (strcmp(x->username, cept.username) != 0) {
+                logger(LOG_DAEMON,
+                        "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
+                        x->username, cept.username);
+                return -1;
+            }
+            x->internalid = cept.internalid;
+            x->awaitingconfirm = 0;
+            x->active = 1;
+            break;
+        }
+
+        n = n->next;
+    }
+
+    /* TODO try to find a CIN and IP address for this intercept, based on our
+     * known RADIUS (or equivalent) state.
+     *
+     * Only push the intercept to the processing threads once we've
+     * assigned a suitable CIN.
+     */
+
+    /* Temporary hard-coded mappings for testing.
+     * Please remove once proper RADIUS support is added.
+     */
+
+    if (n == NULL) {
+        temporary_map_user_to_address(&cept);
+
+        libtrace_list_push_front(sync->ipintercepts, &cept);
+        n = sync->ipintercepts->head;
+    }
+
+    for (i = 0; i < sync->glob->registered_syncqs; i++) {
+        push_single_intercept(sync->glob->syncsendqs[i],
+                (ipintercept_t *)(n->data));
+    }
+
+    return 0;
+
+}
+
+static int recv_from_provisioner(collector_sync_t *sync) {
+    struct epoll_event ev;
+    int ret = 0;
+    uint8_t *provmsg;
+    uint16_t msglen = 0;
+    uint64_t intid = 0;
+
+    openli_proto_msgtype_t msgtype;
+
+    do {
+        msgtype = receive_net_buffer(sync->incoming, &provmsg, &msglen, &intid);
+        switch(msgtype) {
+            case OPENLI_PROTO_DISCONNECT:
+                return -1;
+            case OPENLI_PROTO_NO_MESSAGE:
+                break;
+            case OPENLI_PROTO_ANNOUNCE_MEDIATOR:
+                ret = new_mediator(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_START_IPINTERCEPT:
+                ret = new_ipintercept(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_NOMORE_INTERCEPTS:
+                disable_unconfirmed_intercepts(sync);
+                break;
+        }
+
+    } while (msgtype != OPENLI_PROTO_NO_MESSAGE);
+
+    return 1;
+}
+
+int sync_connect_provisioner(collector_sync_t *sync) {
+
+    struct epoll_event ev;
+    int sockfd;
+
+
+    sockfd = connect_socket(sync->glob->provisionerip,
+            sync->glob->provisionerport, sync->instruct_fail);
+
+    if (sockfd == -1) {
+        return -1;
+    }
+
+    if (sockfd == 0) {
+        sync->instruct_fail = 1;
+        return 0;
+    }
+
+    sync->instruct_fail = 0;
+    sync->instruct_fd = sockfd;
+
+    assert(sync->outgoing == NULL && sync->incoming == NULL);
+
+    sync->outgoing = create_net_buffer(NETBUF_SEND, sync->instruct_fd);
+    sync->incoming = create_net_buffer(NETBUF_RECV, sync->instruct_fd);
+
+    /* Put our auth message onto the outgoing buffer */
+    if (push_auth_onto_net_buffer(sync->outgoing, OPENLI_PROTO_COLLECTOR_AUTH)
+            < 0) {
+        logger(LOG_DAEMON,"OpenLI: collector is unable to queue auth message.");
+        return -1;
+    }
+
+    /* Add instruct_fd to epoll for both reading and writing */
+    sync->ii_ev->fdtype = SYNC_EVENT_PROVISIONER;
+    sync->ii_ev->fd = sync->instruct_fd;
+    sync->ii_ev->msgq = NULL;
+
+    ev.data.ptr = (void *)(sync->ii_ev);
+    ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
+
+    if (epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
+        /* TODO Do something? */
+        logger(LOG_DAEMON, "OpenLI: failed to register provisioner fd: %s",
+                strerror(errno));
+        return -1;
+    }
+
+    return 1;
+
+}
+
+static inline void touch_all_intercepts(libtrace_list_t *intlist) {
+    libtrace_list_node_t *n;
+    ipintercept_t *ipint;
+
+    /* Set all intercepts to be "awaiting confirmation", i.e. if the
+     * provisioner doesn't announce them in its initial batch of
+     * intercepts then they are to be halted.
+     */
+    n = intlist->head;
+    while (n) {
+        ipint = (ipintercept_t *)(n->data);
+        ipint->awaitingconfirm = 1;
+        n = n->next;
+    }
+}
+
+static inline void disconnect_provisioner(collector_sync_t *sync) {
+
+    struct epoll_event ev;
+
+    destroy_net_buffer(sync->outgoing);
+    destroy_net_buffer(sync->incoming);
+
+    sync->outgoing = NULL;
+    sync->incoming = NULL;
+
+    if (epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_DEL, sync->instruct_fd,
+            &ev) == -1) {
+        logger(LOG_DAEMON, "OpenLI: error de-registering provisioner fd: %s.",
+                strerror(errno));
+    }
+
+    close(sync->instruct_fd);
+    sync->instruct_fd = -1;
+
+    /* Leave all intercepts running, but require them to be confirmed
+     * as active when we reconnect to the provisioner.
+     */
+    touch_all_intercepts(sync->ipintercepts);
+
+}
+
+
 static void push_all_active_intercepts(libtrace_list_t *intlist,
         libtrace_message_queue_t *q) {
 
     libtrace_list_node_t *n = intlist->head;
-    openli_pushed_t msg;
     ipintercept_t *orig;
-    ipintercept_t *copy;
 
     while (n) {
         orig = (ipintercept_t *)(n->data);
@@ -116,43 +471,7 @@ static void push_all_active_intercepts(libtrace_list_t *intlist,
             n = n->next;
             continue;
         }
-
-        copy = (ipintercept_t *)malloc(sizeof(ipintercept_t));
-
-        copy->internalid = orig->internalid;
-        copy->liid = strdup(orig->liid);
-        copy->liid_len = strlen(copy->liid);
-        copy->authcc = strdup(orig->authcc);
-        copy->authcc_len = strlen(copy->authcc);
-        copy->delivcc = strdup(orig->delivcc);
-        copy->delivcc_len = strlen(copy->delivcc);
-        copy->cin = orig->cin;
-        copy->ai_family = orig->ai_family;
-        copy->destid = orig->destid;
-
-        if (orig->ipaddr) {
-            copy->ipaddr = (struct sockaddr_storage *)malloc(
-                    sizeof(struct sockaddr_storage));
-            memcpy(copy->ipaddr, orig->ipaddr, sizeof(struct sockaddr_storage));
-        } else {
-            copy->ipaddr = NULL;
-        }
-
-        if (orig->username) {
-            copy->username = strdup(orig->username);
-            copy->username_len = strlen(copy->username);
-        } else {
-            copy->username = NULL;
-            copy->username_len = 0;
-        }
-
-        copy->active = 1;
-        copy->nextseqno = 0;
-
-        msg.type = OPENLI_PUSH_IPINTERCEPT;
-        msg.data.ipint = copy;
-
-        libtrace_message_queue_put(q, (void *)(&msg));
+        push_single_intercept(q, orig);
 
         n = n->next;
     }
@@ -165,6 +484,7 @@ int sync_thread_main(collector_sync_t *sync) {
     struct epoll_event evs[64];
     openli_state_update_t recvd;
     libtrace_message_queue_t *srcq = NULL;
+    sync_epoll_t *syncev;
 
     nfds = epoll_wait(sync->glob->sync_epollfd, evs, 64, 50);
 
@@ -173,38 +493,49 @@ int sync_thread_main(collector_sync_t *sync) {
     }
 
     for (i = 0; i < nfds; i++) {
+        syncev = (sync_epoll_t *)(evs[i].data.ptr);
+
 	    /* Check for incoming messages from processing threads and II fd */
         if ((evs[i].events & EPOLLERR) || (evs[i].events & EPOLLHUP) ||
-                !(evs[i].events & EPOLLIN)) {
+                (evs[i].events & EPOLLRDHUP)) {
             /* Some error detection / handling? */
 
             /* Don't close any fds on error -- they should get closed when
              * their parent structures are tidied up */
 
-            if (evs[i].data.fd == sync->instruct_fd) {
+
+            if (syncev->fd == sync->instruct_fd) {
                 logger(LOG_DAEMON, "OpenLI: collector lost connection to central provisioner");
-                /* TODO reconnect */
+                disconnect_provisioner(sync);
+                return 0;
+
             } else {
                 logger(LOG_DAEMON, "OpenLI: processor->sync message queue pipe has broken down.");
+                epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_DEL,
+                        syncev->fd, NULL);
             }
 
-            epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_DEL,
-                    evs[i].data.fd, NULL);
             continue;
         }
 
-	    /* If II message, update intercept list and search for known mapping */
-        if (evs[i].data.fd == sync->instruct_fd) {
-
-		    /* If mapping exists, push a II message to all processing
-    		 * threads */
-
-             continue;
+        if (syncev->fd == sync->instruct_fd) {
+            /* Provisioner fd */
+            if (evs[i].events & EPOLLOUT) {
+                if (send_to_provisioner(sync) <= 0) {
+                    disconnect_provisioner(sync);
+                    return 0;
+                }
+            } else {
+                if (recv_from_provisioner(sync) <= 0) {
+                    disconnect_provisioner(sync);
+                    return 0;
+                }
+            }
+            continue;
         }
 
         /* Must be from a processing thread queue, figure out which one */
-        srcq = (libtrace_message_queue_t *) (evs[i].data.ptr);
-        libtrace_message_queue_get(srcq, (void *)(&recvd));
+        libtrace_message_queue_get(syncev->msgq, (void *)(&recvd));
 
         /* If a hello from a thread, push all active intercepts back */
         if (recvd.type == OPENLI_UPDATE_HELLO) {
@@ -239,13 +570,18 @@ void register_sync_queues(collector_global_t *glob,
         libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq) {
 
     struct epoll_event ev;
+    sync_epoll_t *syncev;
     int ind;
 
-    ev.data.ptr = (void *)recvq;
-    ev.events = EPOLLIN | EPOLLET;
+    syncev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
+    syncev->fdtype = SYNC_EVENT_PROC_QUEUE;
+    syncev->fd = libtrace_message_queue_get_fd(recvq);
+    syncev->msgq = recvq;
 
-    if (epoll_ctl(glob->sync_epollfd, EPOLL_CTL_ADD,
-                libtrace_message_queue_get_fd(recvq), &ev) == -1) {
+    ev.data.ptr = (void *)syncev;
+    ev.events = EPOLLIN;
+
+    if (epoll_ctl(glob->sync_epollfd, EPOLL_CTL_ADD, syncev->fd, &ev) == -1) {
         /* TODO Do something? */
         logger(LOG_DAEMON, "OpenLI: failed to register processor->sync queue: %s",
                 strerror(errno));
@@ -253,7 +589,9 @@ void register_sync_queues(collector_global_t *glob,
 
     pthread_mutex_lock(&(glob->syncq_mutex));
     ind  = glob->registered_syncqs;
+
     glob->syncsendqs[ind] = sendq;
+    glob->syncepollevs[ind] = syncev;
     glob->registered_syncqs ++;
     pthread_mutex_unlock(&(glob->syncq_mutex));
 
