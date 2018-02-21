@@ -115,10 +115,14 @@ int connect_export_targets(collector_export_t *exp) {
 
     while (n) {
         d = (export_dest_t *)n->data;
+        n = n->next;
+
+        if (d->halted) {
+            continue;
+        }
 
         if (d->fd != -1) {
             /* Already connected */
-            n = n->next;
             success ++;
             continue;
         }
@@ -129,7 +133,6 @@ int connect_export_targets(collector_export_t *exp) {
         } else {
             exp->failed_conns ++;
         }
-        n = n->next;
     }
 
     /* Return number of targets which we connected to */
@@ -289,6 +292,8 @@ static inline export_dest_t *add_unknown_destination(collector_export_t *exp,
     newdest.details.mediatorid = medid;
     newdest.details.ipstr = NULL;
     newdest.details.portstr = NULL;
+    newdest.awaitingconfirm = 0;
+    newdest.halted = 0;
     init_export_buffer(&(newdest.buffer));
 
     libtrace_list_push_back(exp->dests, &newdest);
@@ -320,10 +325,21 @@ static inline void add_new_destination(collector_export_t *exp,
             /* This is a re-announcement of an existing mediator -- this
              * could be due to reconnecting to the provisioner so don't
              * panic just yet. */
+            if (strcmp(dest->details.ipstr, med->ipstr) != 0 ||
+                    strcmp(dest->details.portstr, med->portstr) != 0) {
+                logger(LOG_DAEMON, "OpenLI: mediator %u has changed location from %s:%s to %s:%s.",
+                        med->mediatorid, dest->details.ipstr,
+                        dest->details.portstr, med->ipstr, med->portstr);
 
-            /* TODO check if the details have changed -- if so, drop the
-             * current connection and create a new one
-             */
+                dest->details = *(med);
+                if (dest->fd != -1) {
+                    close(dest->fd);
+                    dest->fd = -1;
+                }
+            }
+            dest->awaitingconfirm = 0;
+            dest->halted = 0;
+
             return;
 
         }
@@ -334,6 +350,8 @@ static inline void add_new_destination(collector_export_t *exp,
 
     newdest.failmsg = 0;
     newdest.fd = -1;
+    newdest.awaitingconfirm = 0;
+    newdest.halted = 0;
     newdest.details = *(med);
     init_export_buffer(&(newdest.buffer));
 
@@ -357,6 +375,34 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
 
     if (recvd.type == OPENLI_EXPORT_MEDIATOR) {
         add_new_destination(exp, &(recvd.data.med));
+        return 0;
+    }
+
+    if (recvd.type == OPENLI_EXPORT_FLAG_MEDIATORS) {
+        n = exp->dests->head;
+        while (n) {
+            dest = (export_dest_t *)(n->data);
+            dest->awaitingconfirm = 1;
+            n = n->next;
+        }
+        return 0;
+    }
+
+    if (recvd.type == OPENLI_EXPORT_INIT_MEDIATORS_OVER) {
+
+        n = exp->dests->head;
+        while (n) {
+            dest = (export_dest_t *)(n->data);
+            if (dest->awaitingconfirm) {
+                if (dest->fd != -1) {
+                    logger(LOG_DAEMON, "closing connection to unwanted mediator %d", dest->fd);
+                    close(dest->fd);
+                    dest->fd = -1;
+                }
+                dest->halted = 1;
+            }
+            n = n->next;
+        }
         return 0;
     }
 
@@ -431,6 +477,12 @@ static int check_epoll_fd(collector_export_t *exp, struct epoll_event *ev) {
         logger(LOG_DAEMON, "OpenLI: Thread lost connection to exporter?");
         return 0;
     }
+
+    /* TODO mediator fds should be part of epoll as well, so we can
+     *   a) check for mediator disconnections
+     *   b) check if we can send buffered data again
+     * without requiring a new MQUEUE event.
+     */
 
 
     epptr = (exporter_epoll_t *)(ev->data.ptr);

@@ -44,6 +44,8 @@ typedef struct colexp_data {
 typedef struct export_dest {
     int failmsg;
     int fd;
+    int awaitingconfirm;
+    int halted;
     openli_mediator_t details;
     export_buffer_t buffer;
 } export_dest_t;
@@ -52,6 +54,8 @@ enum {
     OPENLI_EXPORT_ETSIREC = 1,
     OPENLI_EXPORT_PACKET_FIN = 2,
     OPENLI_EXPORT_MEDIATOR = 3,
+    OPENLI_EXPORT_FLAG_MEDIATORS = 4,
+    OPENLI_EXPORT_INIT_MEDIATORS_OVER = 5,
 };
 
 typedef struct openli_export_recv {
