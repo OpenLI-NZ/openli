@@ -288,6 +288,14 @@ int push_nomore_intercepts(net_buffer_t *nb) {
             sizeof(ii_header_t));
 }
 
+int push_nomore_mediators(net_buffer_t *nb) {
+    ii_header_t hdr;
+    populate_header(&hdr, OPENLI_PROTO_NOMORE_MEDIATORS, 0, 0);
+
+    return push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t));
+}
+
 int transmit_net_buffer(net_buffer_t *nb) {
     int ret;
 

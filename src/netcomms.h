@@ -64,6 +64,7 @@ typedef enum {
     OPENLI_PROTO_COLLECTOR_AUTH,
     OPENLI_PROTO_MEDIATOR_AUTH,
     OPENLI_PROTO_NOMORE_INTERCEPTS,
+    OPENLI_PROTO_NOMORE_MEDIATORS,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -98,6 +99,7 @@ int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t
         authtype);
 int push_nomore_intercepts(net_buffer_t *nb);
+int push_nomore_mediators(net_buffer_t *nb);
 int transmit_net_buffer(net_buffer_t *nb);
 
 openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
