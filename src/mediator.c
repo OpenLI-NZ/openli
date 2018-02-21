@@ -89,6 +89,35 @@ static void free_provisioner(int epollfd, mediator_prov_t *prov) {
     }
 }
 
+static void free_agency(mediator_agency_t *agency) {
+
+    if (agency->outev) {
+        med_agency_state_t *agstate = (med_agency_state_t *)
+                (agency->outev->state);
+
+        close(agency->outev->fd);
+
+        release_export_buffer(&(agstate->buf));
+        if (agstate->incoming) {
+            destroy_net_buffer(agstate->incoming);
+        }
+        free(agstate);
+        free(agency->outev);
+    }
+
+    if (agency->agencyinfo.agencyid) {
+        free(agency->agencyinfo.agencyid);
+    }
+    if (agency->agencyinfo.ipstr) {
+        free(agency->agencyinfo.ipstr);
+    }
+    if (agency->agencyinfo.portstr) {
+        free(agency->agencyinfo.portstr);
+    }
+
+
+}
+
 static void drop_collector(med_epoll_ev_t *colev) {
     med_coll_state_t *mstate;
 
@@ -123,17 +152,33 @@ static void drop_all_collectors(libtrace_list_t *c) {
     while (n) {
         col = (mediator_collector_t *)n->data;
         drop_collector(col->colev);
+        free(col->colev);
         n = n->next;
     }
 
     libtrace_list_deinit(c);
 }
 
+static void drop_all_agencies(libtrace_list_t *a) {
+    /* TODO send disconnect messages to all agencies? */
+    libtrace_list_node_t *n;
+    mediator_agency_t *ag;
+
+    n = a->head;
+    while (n) {
+        ag = (mediator_agency_t *)n->data;
+        free_agency(ag);
+        n = n->next;
+    }
+
+    libtrace_list_deinit(a);
+}
 
 static void clear_med_state(mediator_state_t *state) {
 
     free_provisioner(state->epoll_fd, &(state->provisioner));
     drop_all_collectors(state->collectors);
+    drop_all_agencies(state->agencies);
 
     close(state->epoll_fd);
 
@@ -181,6 +226,7 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->provport = NULL;
 
     state->collectors = libtrace_list_init(sizeof(mediator_collector_t));
+    state->agencies = libtrace_list_init(sizeof(mediator_agency_t));
 
     if (parse_mediator_config(configfile, state) == -1) {
         return -1;
@@ -218,6 +264,67 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->provisioner.incoming = NULL;
     state->provisioner.outgoing = NULL;
     return 0;
+}
+
+static void connect_agencies(mediator_state_t *state) {
+    libtrace_list_node_t *n;
+    mediator_agency_t *ag;
+    med_agency_state_t *agstate;
+    struct epoll_event ev;
+
+    n = state->agencies->head;
+    while (n) {
+        ag = (mediator_agency_t *)(n->data);
+        agstate = (med_agency_state_t *)(ag->outev->state);
+        n = n->next;
+
+        if (agstate->disabled) {
+            continue;
+        }
+
+        if (ag->outev->fd != -1) {
+            continue;
+        }
+
+        ag->outev->fd = connect_socket(ag->agencyinfo.ipstr,
+                ag->agencyinfo.portstr, agstate->failmsg);
+
+        if (ag->outev->fd == -1) {
+            agstate->disabled = 1;
+            continue;
+        }
+
+        if (ag->outev->fd == 0) {
+            agstate->failmsg = 1;
+            continue;
+        }
+
+        ev.data.ptr = (void *)agstate;
+        ev.events = EPOLLIN | EPOLLRDHUP;
+
+        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, ag->outev->fd, &ev) == -1
+                && agstate->failmsg == 0) {
+            logger(LOG_DAEMON, "OpenLI: unable to add agency fd %d to epoll.",
+                    ag->outev->fd);
+            agstate->failmsg = 1;
+            close(ag->outev->fd);
+            continue;
+        }
+
+        agstate->incoming = create_net_buffer(NETBUF_RECV, ag->outev->fd);
+        agstate->failmsg = 0;
+        agstate->main_fd = ag->outev->fd;
+        agstate->katimer_fd = -1;
+        agstate->karesptimer_fd = -1;
+
+        logger(LOG_DAEMON, "OpenLI: mediator has connected to agency %s on %s:%s.",
+                ag->agencyinfo.agencyid, ag->agencyinfo.ipstr,
+                ag->agencyinfo.portstr);
+
+        /* Start a keep alive timer */
+
+    }
+
 }
 
 static int start_collector_listener(mediator_state_t *state) {
@@ -335,6 +442,70 @@ static int accept_collector(mediator_state_t *state) {
     return newfd;
 }
 
+static void create_new_agency(mediator_state_t *state, liagency_t *lea) {
+
+    mediator_agency_t newagency;
+    med_epoll_ev_t *agev;
+    med_agency_state_t *agstate;
+
+    agev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+    agstate = (med_agency_state_t *)malloc(sizeof(med_agency_state_t));
+
+    init_export_buffer(&(agstate->buf));
+    agstate->incoming = NULL;
+    agstate->disabled = 0;
+    agstate->awaitingconfirm = 0;
+    agstate->failmsg = 0;
+
+    agev->fd = -1;
+    agev->fdtype = MED_EPOLL_LEA;
+    agev->state = agstate;
+
+    newagency.outev = agev;
+    newagency.agencyinfo = *lea;
+
+    libtrace_list_push_back(state->agencies, &newagency);
+
+}
+
+static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
+        uint16_t msglen) {
+
+    liagency_t lea;
+    libtrace_list_node_t *n;
+
+    if (decode_lea_announcement(msgbody, msglen, &lea) == -1) {
+        logger(LOG_DAEMON, "OpenLI: received invalid LEA announcement from provisioner.");
+        return -1;
+    }
+
+    n = state->agencies->head;
+    while (n) {
+        mediator_agency_t *x = (mediator_agency_t *)(n->data);
+        med_agency_state_t *ms = (med_agency_state_t *)(x->outev->state);
+        n = n->next;
+
+        if (strcmp(x->agencyinfo.agencyid, lea.agencyid) == 0) {
+            if (strcmp(x->agencyinfo.ipstr, lea.ipstr) != 0 ||
+                    strcmp(x->agencyinfo.portstr, lea.portstr)) {
+                logger(LOG_DAEMON, "OpenLI: connection info for LEA %s has changed from %s:%s to %s:%s.",
+                        lea.agencyid, x->agencyinfo.ipstr,
+                        x->agencyinfo.portstr, lea.ipstr, lea.portstr);
+                x->agencyinfo = lea;
+
+                /* TODO disconnect from LEA */
+            }
+            ms->awaitingconfirm = 0;
+            ms->disabled = 0;
+            ms->failmsg = 0;
+            return 0;
+        }
+    }
+
+    create_new_agency(state, &lea);
+
+}
+
 static int transmit_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     mediator_prov_t *prov = &(state->provisioner);
@@ -382,7 +553,9 @@ static int receive_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
             case OPENLI_PROTO_NO_MESSAGE:
                 break;
             case OPENLI_PROTO_ANNOUNCE_LEA:
-                /* TODO */
+                if (receive_lea_announce(state, msgbody, msglen) == -1) {
+                    return -1;
+                }
                 break;
             case OPENLI_PROTO_MEDIATE_INTERCEPT:
                 /* TODO */
@@ -584,6 +757,9 @@ static void run(mediator_state_t *state) {
                 break;
             }
         }
+
+        /* Attempt to connect to the LEAs, if not already connected. */
+        connect_agencies(state);
 
         timerfd = epoll_add_timer(state->epoll_fd, 1, state->timerev);
         if (timerfd == -1) {

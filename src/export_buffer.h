@@ -27,8 +27,6 @@
 #ifndef OPENLI_COLLECTOR_BUFFER_H_
 #define OPENLI_COLLECTOR_BUFFER_H_
 
-#include "collector_export.h"
-
 typedef struct export_buffer {
     uint8_t *bufhead;
     uint8_t *buftail;

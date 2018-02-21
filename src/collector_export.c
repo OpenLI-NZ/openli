@@ -318,7 +318,6 @@ static inline void add_new_destination(collector_export_t *exp,
             dest->failmsg = 0;
             dest->fd = -1;
             dest->details = *(med);
-            printf("resolved unknown destination %u\n", med->mediatorid);
             return;
         } else if (dest->details.mediatorid == med->mediatorid) {
 

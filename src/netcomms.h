@@ -85,6 +85,9 @@ typedef enum {
     OPENLI_PROTO_FIELD_AUTHCC,
     OPENLI_PROTO_FIELD_DELIVCC,
     OPENLI_PROTO_FIELD_INTERCEPTID,
+    OPENLI_PROTO_FIELD_LEAID,
+    OPENLI_PROTO_FIELD_LEAIP,
+    OPENLI_PROTO_FIELD_LEAPORT,
 } openli_proto_fieldtype_t;
 
 
@@ -93,7 +96,7 @@ void destroy_net_buffer(net_buffer_t *nb);
 
 int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med);
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, ipintercept_t *ipint);
-int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *ipint);
+int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
         char *agencyid);
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t
@@ -108,6 +111,7 @@ int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
         ipintercept_t *ipint);
+int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 
 #endif
 

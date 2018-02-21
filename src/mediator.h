@@ -28,6 +28,7 @@
 #define OPENLI_MEDIATOR_H_
 
 #include "netcomms.h"
+#include "export_buffer.h"
 
 typedef struct med_epoll_ev {
     int fdtype;
@@ -51,6 +52,17 @@ typedef struct med_coll_state {
     int disabled;
 } med_coll_state_t;
 
+typedef struct med_agency_state {
+    export_buffer_t buf;
+    net_buffer_t *incoming;
+    int disabled;
+    int awaitingconfirm;
+    int failmsg;
+    int main_fd;
+    int katimer_fd;
+    int karesptimer_fd;
+} med_agency_state_t;
+
 typedef struct mediator_collector {
     med_epoll_ev_t *colev;
 } mediator_collector_t;
@@ -61,6 +73,14 @@ typedef struct mediator_provisioner {
     net_buffer_t *outgoing;
     net_buffer_t *incoming;
 } mediator_prov_t;
+
+typedef struct mediator_agency {
+    /* TODO add keep alive timer event */
+
+    /* TODO add keep alive response timer event */
+    med_epoll_ev_t *outev;
+    liagency_t agencyinfo;
+} mediator_agency_t;
 
 typedef struct med_state {
     uint32_t mediatorid;
@@ -73,6 +93,7 @@ typedef struct med_state {
     char *provport;
 
     libtrace_list_t *collectors;
+    libtrace_list_t *agencies;
 
     int epoll_fd;
     med_epoll_ev_t *listenerev;

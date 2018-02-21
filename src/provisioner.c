@@ -572,9 +572,21 @@ static int respond_collector_auth(provision_state_t *state,
 static int respond_mediator_auth(provision_state_t *state,
         prov_epoll_ev_t *pev, net_buffer_t *outgoing) {
 
+    libtrace_list_node_t *n;
+
     /* Mediator just authed successfully, so we can safely send it details
      * on any LEAs that we know about */
+    n = state->leas->head;
+    while (n) {
+        liagency_t *lea = (liagency_t *)(n->data);
+        n = n->next;
 
+        if (push_lea_onto_net_buffer(outgoing, lea) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: error while buffering LEA details to send from provisioner to mediator.");
+            return -1;
+        }
+    }
 
     /* We also need to send any LIID -> LEA mappings that we know about */
 

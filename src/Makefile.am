@@ -22,7 +22,8 @@ openliprovisioner_CFLAGS=
 
 openlimediator_SOURCES=mediator.c mediator.h byteswap.c byteswap.h \
                 configparser.c configparser.h util.c util.h agency.h \
-                logger.c logger.h netcomms.c netcomms.h
+                logger.c logger.h netcomms.c netcomms.h export_buffer.c \
+                export_buffer.h
 openlimediator_LDADD = @ADD_LIBS@
 openlimediator_LDFLAGS=
 openlimediator_CFLAGS=
