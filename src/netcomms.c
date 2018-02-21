@@ -569,7 +569,7 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
         }
 
         if (f == OPENLI_PROTO_FIELD_LEAID) {
-            DECODE_STRING_FIELD(lea->ipstr, valptr, vallen);
+            DECODE_STRING_FIELD(lea->agencyid, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_LEAIP) {
             DECODE_STRING_FIELD(lea->ipstr, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_LEAPORT) {
