@@ -46,10 +46,13 @@ enum {
     MED_EPOLL_SIGCHECK_TIMER,
 };
 
-typedef struct mediator_collector {
-    med_epoll_ev_t *colev;
+typedef struct med_coll_state {
     net_buffer_t *incoming;
     int disabled;
+} med_coll_state_t;
+
+typedef struct mediator_collector {
+    med_epoll_ev_t *colev;
 } mediator_collector_t;
 
 typedef struct mediator_provisioner {
