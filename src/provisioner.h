@@ -28,6 +28,7 @@
 #define OPENLI_PROVISIONER_H_
 
 #include <libtrace/linked_list.h>
+#include <uthash.h>
 #include "netcomms.h"
 
 typedef struct prov_epoll_ev {
@@ -57,6 +58,12 @@ typedef struct update_state {
     int16_t tocome;
 } provision_update_t;
 
+typedef struct liid_hash {
+    char *agency;
+    char *liid;
+    UT_hash_handle hh;
+} liid_hash_t;
+
 typedef struct prov_state {
 
     char *conffile;
@@ -81,6 +88,8 @@ typedef struct prov_state {
 
     uint16_t dropped_collectors;
     uint16_t dropped_mediators;
+
+    liid_hash_t *liid_map;
 
     /*
     int activeupdatefd;

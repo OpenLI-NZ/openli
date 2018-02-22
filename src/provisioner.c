@@ -113,43 +113,39 @@ static void free_socket_state(prov_epoll_ev_t *pev) {
 
 }
 
+static int liid_hash_sort(liid_hash_t *a, liid_hash_t *b) {
+
+    int x;
+
+    x = strcmp(a->agency, b->agency);
+    if (x != 0) {
+        return x;
+    }
+    return strcmp(a->liid, b->liid);
+}
+
 static int map_intercepts_to_leas(provision_state_t *state) {
 
     int failed = 0;
     libtrace_list_node_t *intn;
-    libtrace_list_node_t *lean;
-
     ipintercept_t *ipint;
-    liagency_t *lea;
-
-    /* Not the most efficient way of doing this, but the LEA list should
-     * generally be pretty short (e.g. max of 4 for NZ) and we're only
-     * going to do this once on startup.
-     */
 
     intn = state->ipintercepts->head;
 
     while (intn) {
+        liid_hash_t *h;
         ipint = (ipintercept_t *)(intn->data);
-
-        lean = state->leas->head;
-        while (lean) {
-            lea = (liagency_t *)(lean->data);
-            if (strcmp(lea->agencyid, ipint->targetagency) == 0) {
-                //libtrace_list_push_back(lea->knownliids, ipint->liid);
-                break;
-            }
-            lean = lean->next;
-        }
-
-        if (lean == NULL) {
-            logger(LOG_DAEMON,
-                    "OpenLI: no such agency %s -- requested by intercept %s.",
-                    ipint->targetagency, ipint->liid);
-            failed ++;
-        }
         intn = intn->next;
+
+        /* TODO check if targetagency is legit? */
+
+        h = (liid_hash_t *)malloc(sizeof(liid_hash_t));
+        h->agency = ipint->targetagency;
+        h->liid = ipint->liid;
+        HASH_ADD_STR(state->liid_map, agency, h);
     }
+
+    HASH_SORT(state->liid_map, liid_hash_sort);
 
     return failed;
 
@@ -171,8 +167,6 @@ void free_openli_mediator(openli_mediator_t *med) {
 static int init_prov_state(provision_state_t *state, char *configfile) {
 
     sigset_t sigmask;
-    //prov_mediator_t testwrap;
-    //openli_mediator_t *testmed = malloc(sizeof(testmed));
     int ret = 0;
 
     state->conffile = configfile;
@@ -186,20 +180,8 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->dropped_collectors = 0;
     state->dropped_mediators = 0;
 
-    /* XXX temporary hardcoding of test "mediator" */
-    /*
-    testmed->mediatorid = 6001;
-    testmed->ipstr = strdup("10.0.0.2");
-    testmed->portstr = strdup("43332");
+    state->liid_map = NULL;
 
-    testwrap.details = testmed;
-    testwrap.commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
-    testwrap.commev->fdtype = PROV_EPOLL_MEDIATOR;
-    testwrap.commev->fd = -1;
-    testwrap.commev->state = NULL;
-
-    libtrace_list_push_back(state->mediators, &testwrap);
-    */
     /* Three listening sockets
      *
      * listen:  collectors should connect to this socket to receive IIs
@@ -432,6 +414,13 @@ static void free_all_leas(libtrace_list_t *l) {
 
 static void clear_prov_state(provision_state_t *state) {
 
+    liid_hash_t *h, *tmp;
+
+    HASH_ITER(hh, state->liid_map, h, tmp) {
+        HASH_DEL(state->liid_map, h);
+        free(h);
+    }
+
     free_all_intercepts(state->ipintercepts);
     stop_all_collectors(state->collectors);
     free_all_mediators(state->mediators);
@@ -520,6 +509,10 @@ static int push_all_ipintercepts(libtrace_list_t *intercepts,
     while (n) {
         cept = (ipintercept_t *)(n->data);
 
+        if (cept->active == 0) {
+            continue;
+        }
+
         if (push_ipintercept_onto_net_buffer(nb, cept) < 0) {
             logger(LOG_DAEMON,
                     "OpenLI provisioner: error pushing IP intercept %s onto buffer for writing to collector.",
@@ -578,6 +571,8 @@ static int respond_mediator_auth(provision_state_t *state,
         prov_epoll_ev_t *pev, net_buffer_t *outgoing) {
 
     libtrace_list_node_t *n;
+    char *lastlea = NULL;
+    liid_hash_t *h;
 
     /* Mediator just authed successfully, so we can safely send it details
      * on any LEAs that we know about */
@@ -591,6 +586,17 @@ static int respond_mediator_auth(provision_state_t *state,
                     "OpenLI: error while buffering LEA details to send from provisioner to mediator.");
             return -1;
         }
+    }
+
+    h = state->liid_map;
+    while (h != NULL) {
+        if (push_liid_mapping_onto_net_buffer(outgoing, h->agency, h->liid)
+                == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: error while buffering LIID mappings to send to mediator.");
+            return -1;
+        }
+        h = h->hh.next;
     }
 
     /* We also need to send any LIID -> LEA mappings that we know about */

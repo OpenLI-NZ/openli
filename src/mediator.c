@@ -70,7 +70,6 @@ static int start_keepalive_timer(mediator_state_t *state,
     /* TODO make the timeout value configurable */
     if ((sock = epoll_add_timer(state->epoll_fd, 10, timerev)) == -1) {
         logger(LOG_DAEMON, "OpenLI: warning -- keep alive timer was not able to be set for agency connection: %s", strerror(errno));
-        assert(0);
         return -1;
     }
 
@@ -215,6 +214,14 @@ static void drop_all_agencies(libtrace_list_t *a) {
 
 static void clear_med_state(mediator_state_t *state) {
 
+    liid_map_t *m, *tmp;
+
+    HASH_ITER(hh, state->liids, m, tmp) {
+        HASH_DEL(state->liids, m);
+        free(m->liid);
+        free(m);
+    }
+
     free_provisioner(state->epoll_fd, &(state->provisioner));
     drop_all_collectors(state->collectors);
     drop_all_agencies(state->agencies);
@@ -266,6 +273,8 @@ static int init_med_state(mediator_state_t *state, char *configfile,
 
     state->collectors = libtrace_list_init(sizeof(mediator_collector_t));
     state->agencies = libtrace_list_init(sizeof(mediator_agency_t));
+
+    state->liids = NULL;
 
     if (parse_mediator_config(configfile, state) == -1) {
         return -1;
@@ -712,6 +721,74 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
 
 }
 
+static mediator_agency_t *lookup_agency(libtrace_list_t *alist, char *id) {
+
+    mediator_agency_t *ma;
+    libtrace_list_node_t *n;
+
+    /* Fingers crossed we don't have too many agencies at any one time. */
+
+    n = alist->head;
+    while (n) {
+        ma = (mediator_agency_t *)(n->data);
+        n = n->next;
+
+        if (strcmp(ma->agencyid, id) == 0) {
+            return ma;
+        }
+    }
+    return NULL;
+
+}
+
+static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
+        uint16_t msglen) {
+
+    char *agencyid, *liid;
+    mediator_agency_t *agency;
+    liid_map_t *m;
+
+    agencyid = NULL;
+    liid = NULL;
+
+    if (decode_liid_mapping(msgbody, msglen, &agencyid, &liid) == -1) {
+        logger(LOG_DAEMON, "OpenLI: receive invalid LIID mapping from provisioner.");
+        return -1;
+    }
+
+    if (agencyid == NULL || liid == NULL) {
+        return -1;
+    }
+
+    /* Try to find the agency in our agency list */
+    agency = lookup_agency(state->agencies, agencyid);
+
+    /* We *could* consider waiting for an LEA announcement that will resolve
+     * this discrepancy, but any relevant announcement should have been sent
+     * before the LIID mapping.
+     *
+     * Also, what are we going to do with any records matching that LIID?
+     * Buffer them? Our buffers are tied to handovers, so we'd need somewhere
+     * else to store them. Drop them?
+     */
+    if (agency == NULL) {
+        logger(LOG_DAEMON, "OpenLI: agency %s is not recognised by the mediator, yet LIID %s is intended for it?",
+                agencyid, liid);
+        return -1;
+    }
+
+    m = (liid_map_t *)malloc(sizeof(liid_map_t));
+    m->liid = liid;
+    m->agency = agency;
+    free(agencyid);
+
+    HASH_ADD_STR(state->liids, liid, m);
+
+    fprintf(stderr, "Added %s -> %s to LIID map\n", m->liid, m->agency->agencyid);
+    return 0;
+}
+
+
 static int transmit_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     mediator_prov_t *prov = &(state->provisioner);
@@ -764,10 +841,9 @@ static int receive_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
                 }
                 break;
             case OPENLI_PROTO_MEDIATE_INTERCEPT:
-                /* TODO */
-                break;
-            case OPENLI_PROTO_NOMORE_INTERCEPTS:
-                /* TODO */
+                if (receive_liid_mapping(state, msgbody, msglen) == -1) {
+                    return -1;
+                }
                 break;
             default:
                 logger(LOG_DAEMON,
@@ -834,7 +910,6 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
         default:
             logger(LOG_DAEMON,
                     "OpenLI Mediator: invalid fd triggering epoll event.");
-            assert(0);
             return -1;
     }
 

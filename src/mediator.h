@@ -27,7 +27,7 @@
 #ifndef OPENLI_MEDIATOR_H_
 #define OPENLI_MEDIATOR_H_
 
-#include "uthash.h"
+#include <uthash.h>
 #include "netcomms.h"
 #include "export_buffer.h"
 

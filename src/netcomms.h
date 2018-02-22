@@ -103,6 +103,8 @@ int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
         char *agencyid);
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t
         authtype);
+int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
+        char *liid);
 int push_nomore_intercepts(net_buffer_t *nb);
 int push_nomore_mediators(net_buffer_t *nb);
 int transmit_net_buffer(net_buffer_t *nb);
@@ -114,6 +116,8 @@ int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
         ipintercept_t *ipint);
 int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea);
+int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
+        char **liid);
 
 #endif
 

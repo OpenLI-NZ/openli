@@ -169,6 +169,35 @@ int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype)
             sizeof(ii_header_t));
 }
 
+#define LIIDMAP_BODY_LEN(agency, liid) \
+    (strlen(agency) + strlen(liid) + (2 * 4))
+
+int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
+        char *liid) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+
+    totallen = LIIDMAP_BODY_LEN(agency, liid);
+    populate_header(&hdr, OPENLI_PROTO_MEDIATE_INTERCEPT, totallen, 0);
+
+    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LEAID, (uint8_t *)(agency),
+                strlen(agency)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID, (uint8_t *)(liid),
+                strlen(liid)) == -1) {
+        return -1;
+    }
+    return (int)totallen;
+}
+
 #define LEA_BODY_LEN(lea) \
     (strlen(lea->agencyid) + strlen(lea->hi2_ipstr) + \
     strlen(lea->hi2_portstr) + strlen(lea->hi3_ipstr) + \
@@ -461,7 +490,7 @@ static int decode_tlv(uint8_t *start, uint8_t *end,
 #define DECODE_STRING_FIELD(target, valptr, vallen) \
     target = (char *)malloc(vallen + 1); \
     memcpy(target, valptr, vallen); \
-    target[vallen] = '\0';
+    (target)[vallen] = '\0';
 
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
         ipintercept_t *ipint) {
@@ -596,6 +625,37 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
             logger(LOG_DAEMON,
                 "OpenLI: invalid field in received LEA announcement: %d.",
                 f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+
+    return 0;
+}
+
+int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
+        char **liid) {
+
+    uint8_t *msgend = msgbody + len;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_LIID) {
+            DECODE_STRING_FIELD(*liid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_LEAID) {
+            DECODE_STRING_FIELD(*agency, valptr, vallen);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_DAEMON,
+                    "OpenLI: invalid field in received LIID mapping: %d.",
+                    f);
             return -1;
         }
         msgbody += (vallen + 4);
