@@ -257,6 +257,7 @@ static int parse_ipintercept_list(libtrace_list_t *ipints, yaml_document_t *doc,
         newcept.active = 1;
         newcept.destid = 0;
         newcept.targetagency = NULL;
+        newcept.awaitingconfirm = 0;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
