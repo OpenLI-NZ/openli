@@ -170,8 +170,10 @@ static int parse_agency_list(libtrace_list_t *aglist, yaml_document_t *doc,
         yaml_node_pair_t *pair;
         liagency_t newag;
 
-        newag.ipstr = NULL;
-        newag.portstr = NULL;
+        newag.hi2_ipstr = NULL;
+        newag.hi2_portstr = NULL;
+        newag.hi3_ipstr = NULL;
+        newag.hi3_portstr = NULL;
         newag.agencyid = NULL;
 
         for (pair = node->data.mapping.pairs.start;
@@ -184,15 +186,29 @@ static int parse_agency_list(libtrace_list_t *aglist, yaml_document_t *doc,
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value,
-                            "address") == 0 && newag.ipstr == NULL) {
-                newag.ipstr = strdup((char *)value->data.scalar.value);
+                            "hi2address") == 0 && newag.hi2_ipstr == NULL) {
+                newag.hi2_ipstr = strdup((char *)value->data.scalar.value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value,
-                            "port") == 0 && newag.portstr == NULL) {
-                newag.portstr = strdup((char *)value->data.scalar.value);
+                            "hi2port") == 0 && newag.hi2_portstr == NULL) {
+                newag.hi2_portstr = strdup((char *)value->data.scalar.value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                            "hi3address") == 0 && newag.hi3_ipstr == NULL) {
+                newag.hi3_ipstr = strdup((char *)value->data.scalar.value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                            "hi3port") == 0 && newag.hi3_portstr == NULL) {
+                newag.hi3_portstr = strdup((char *)value->data.scalar.value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -203,9 +219,9 @@ static int parse_agency_list(libtrace_list_t *aglist, yaml_document_t *doc,
             }
 
         }
-        if (newag.ipstr != NULL && newag.portstr != NULL &&
+        if (newag.hi2_ipstr != NULL && newag.hi2_portstr != NULL &&
+                newag.hi3_ipstr != NULL && newag.hi3_portstr != NULL &
                 newag.agencyid != NULL) {
-            newag.knownliids = libtrace_list_init(sizeof(char *));
             libtrace_list_push_front(aglist, (void *)(&newag));
         } else {
             logger(LOG_DAEMON, "OpenLI: LEA configuration was incomplete -- skipping.");

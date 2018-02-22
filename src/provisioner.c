@@ -136,7 +136,7 @@ static int map_intercepts_to_leas(provision_state_t *state) {
         while (lean) {
             lea = (liagency_t *)(lean->data);
             if (strcmp(lea->agencyid, ipint->targetagency) == 0) {
-                libtrace_list_push_back(lea->knownliids, ipint->liid);
+                //libtrace_list_push_back(lea->knownliids, ipint->liid);
                 break;
             }
             lean = lean->next;
@@ -409,12 +409,17 @@ static void free_all_leas(libtrace_list_t *l) {
     n = l->head;
     while (n) {
         lea = (liagency_t *)n->data;
-        libtrace_list_deinit(lea->knownliids);
-        if (lea->ipstr) {
-            free(lea->ipstr);
+        if (lea->hi2_ipstr) {
+            free(lea->hi2_ipstr);
         }
-        if (lea->portstr) {
-            free(lea->portstr);
+        if (lea->hi2_portstr) {
+            free(lea->hi2_portstr);
+        }
+        if (lea->hi3_ipstr) {
+            free(lea->hi3_ipstr);
+        }
+        if (lea->hi3_portstr) {
+            free(lea->hi3_portstr);
         }
         if (lea->agencyid) {
             free(lea->agencyid);

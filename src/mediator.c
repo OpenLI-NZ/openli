@@ -62,6 +62,38 @@ static void usage(char *prog) {
         fprintf(stderr, "Usage: %s -c configfile\n", prog);
 }
 
+static int start_keepalive_timer(mediator_state_t *state,
+        med_epoll_ev_t *timerev) {
+
+    int sock;
+
+    /* TODO make the timeout value configurable */
+    if ((sock = epoll_add_timer(state->epoll_fd, 10, timerev)) == -1) {
+        logger(LOG_DAEMON, "OpenLI: warning -- keep alive timer was not able to be set for agency connection: %s", strerror(errno));
+        assert(0);
+        return -1;
+    }
+
+    timerev->fd = sock;
+    return 0;
+
+}
+
+static void halt_keepalive_timer(mediator_state_t *state,
+        med_epoll_ev_t *timerev) {
+
+    struct epoll_event ev;
+    med_agency_state_t *ms = (med_agency_state_t *)(timerev->state);
+
+    if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, timerev->fd, &ev) == -1) {
+        logger(LOG_DAEMON, "OpenLI: warning -- keep alive timer was not able to be disabled for agency connection: %s.", strerror(errno));
+    }
+
+    close(timerev->fd);
+    timerev->fd = -1;
+    timerev->state = NULL;
+}
+
 static void free_provisioner(int epollfd, mediator_prov_t *prov) {
     struct epoll_event ev;
 
@@ -89,33 +121,37 @@ static void free_provisioner(int epollfd, mediator_prov_t *prov) {
     }
 }
 
-static void free_agency(mediator_agency_t *agency) {
+static void free_handover(handover_t *ho) {
 
-    if (agency->outev) {
+    if (ho->aliveev) {
+        if (ho->aliveev->fd != -1) {
+            close(ho->aliveev->fd);
+        }
+        free(ho->aliveev);
+    }
+
+    if (ho->outev) {
+        /* TODO send disconnect messages to all agencies? */
         med_agency_state_t *agstate = (med_agency_state_t *)
-                (agency->outev->state);
+                (ho->outev->state);
 
-        close(agency->outev->fd);
+        close(ho->outev->fd);
 
         release_export_buffer(&(agstate->buf));
         if (agstate->incoming) {
             destroy_net_buffer(agstate->incoming);
         }
         free(agstate);
-        free(agency->outev);
+        free(ho->outev);
     }
 
-    if (agency->agencyinfo.agencyid) {
-        free(agency->agencyinfo.agencyid);
+    if (ho->ipstr) {
+        free(ho->ipstr);
     }
-    if (agency->agencyinfo.ipstr) {
-        free(agency->agencyinfo.ipstr);
+    if (ho->portstr) {
+        free(ho->portstr);
     }
-    if (agency->agencyinfo.portstr) {
-        free(agency->agencyinfo.portstr);
-    }
-
-
+    free(ho);
 }
 
 static void drop_collector(med_epoll_ev_t *colev) {
@@ -160,14 +196,17 @@ static void drop_all_collectors(libtrace_list_t *c) {
 }
 
 static void drop_all_agencies(libtrace_list_t *a) {
-    /* TODO send disconnect messages to all agencies? */
     libtrace_list_node_t *n;
     mediator_agency_t *ag;
 
     n = a->head;
     while (n) {
         ag = (mediator_agency_t *)n->data;
-        free_agency(ag);
+        free_handover(ag->hi2);
+        free_handover(ag->hi3);
+        if (ag->agencyid) {
+            free(ag->agencyid);
+        }
         n = n->next;
     }
 
@@ -266,63 +305,143 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     return 0;
 }
 
+static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
+
+    med_agency_state_t *ms = (med_agency_state_t *)(mev->state);
+
+    fprintf(stderr, "Gotta send a keep alive to %s:%s\n",
+            ms->parent->ipstr, ms->parent->portstr);
+    /* TODO Construct a keep alive record and push it onto ms->buf */
+
+    /* TODO Now set up a keep alive response timer */
+
+    halt_keepalive_timer(state, mev);
+    if (start_keepalive_timer(state, mev) == -1) {
+        logger(LOG_DAEMON, "OpenLI: unable to reset keepalive timer.");
+        return -1;
+    }
+    ms->katimer_fd = mev->fd;
+    mev->state = ms;
+
+}
+
+static void disconnect_handover(mediator_state_t *state, handover_t *ho) {
+
+    struct epoll_event ev;
+    med_agency_state_t *agstate;
+
+    agstate = (med_agency_state_t *)(ho->outev->state);
+
+    if (agstate->main_fd != -1) {
+        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, agstate->main_fd, &ev)
+                == -1) {
+            logger(LOG_DAEMON, "OpenLI: unable to remove handover fd from epoll: %s.", strerror(errno));
+        }
+        close(agstate->main_fd);
+        agstate->main_fd = -1;
+        ho->outev->fd = -1;
+    }
+
+    if (agstate->katimer_fd != -1) {
+        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, agstate->katimer_fd, &ev)
+                == -1) {
+            logger(LOG_DAEMON, "OpenLI: unable to remove keepalive timer fd from epoll: %s.", strerror(errno));
+        }
+        close(agstate->katimer_fd);
+        agstate->katimer_fd = -1;
+        ho->aliveev->fd = -1;
+    }
+
+}
+
+static int connect_handover(mediator_state_t *state, handover_t *ho) {
+    med_agency_state_t *agstate;
+    struct epoll_event ev;
+
+    agstate = (med_agency_state_t *)(ho->outev->state);
+
+    if (ho->outev->fd != -1) {
+        return 0;
+    }
+
+    ho->outev->fd = connect_socket(ho->ipstr, ho->portstr, agstate->failmsg);
+    if (ho->outev->fd == -1) {
+        return -1;
+    }
+
+    if (ho->outev->fd == 0) {
+        ho->outev->fd = -1;
+        agstate->failmsg = 1;
+        return 0;
+    }
+
+    ev.data.ptr = (void *)agstate;
+    ev.events = EPOLLIN | EPOLLRDHUP;
+
+    if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, ho->outev->fd, &ev) == -1
+            && agstate->failmsg == 0) {
+        logger(LOG_DAEMON, "OpenLI: unable to add agency fd %d to epoll.",
+                ho->outev->fd);
+        agstate->failmsg = 1;
+        close(ho->outev->fd);
+        ho->outev->fd = -1;
+        return 0;
+    }
+
+    agstate->incoming = create_net_buffer(NETBUF_RECV, ho->outev->fd);
+    agstate->failmsg = 0;
+    agstate->main_fd = ho->outev->fd;
+    agstate->katimer_fd = -1;
+    agstate->karesptimer_fd = -1;
+
+    /* Start a keep alive timer */
+    if (ho->aliveev->fd != -1) {
+        halt_keepalive_timer(state, ho->aliveev);
+    }
+    if (start_keepalive_timer(state, ho->aliveev) == -1) {
+        return 1;
+    }
+    agstate->katimer_fd = ho->aliveev->fd;
+    return 1;
+}
+
 static void connect_agencies(mediator_state_t *state) {
     libtrace_list_node_t *n;
     mediator_agency_t *ag;
-    med_agency_state_t *agstate;
-    struct epoll_event ev;
+    int ret;
 
     n = state->agencies->head;
     while (n) {
         ag = (mediator_agency_t *)(n->data);
-        agstate = (med_agency_state_t *)(ag->outev->state);
         n = n->next;
 
-        if (agstate->disabled) {
+        if (ag->disabled) {
             continue;
         }
 
-        if (ag->outev->fd != -1) {
+        ret = connect_handover(state, ag->hi2);
+        if (ret == -1) {
+            ag->disabled = 1;
             continue;
         }
 
-        ag->outev->fd = connect_socket(ag->agencyinfo.ipstr,
-                ag->agencyinfo.portstr, agstate->failmsg);
+        if (ret == 1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: mediator has connected to agency %s on HI2 %s:%s.",
+                    ag->agencyid, ag->hi2->ipstr, ag->hi2->portstr);
+        }
 
-        if (ag->outev->fd == -1) {
-            agstate->disabled = 1;
+        ret = connect_handover(state, ag->hi3);
+        if (ret == -1) {
+            ag->disabled = 1;
             continue;
         }
 
-        if (ag->outev->fd == 0) {
-            agstate->failmsg = 1;
-            continue;
+        if (ret == 1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: mediator has connected to agency %s on HI3 %s:%s.",
+                    ag->agencyid, ag->hi3->ipstr, ag->hi3->portstr);
         }
-
-        ev.data.ptr = (void *)agstate;
-        ev.events = EPOLLIN | EPOLLRDHUP;
-
-        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, ag->outev->fd, &ev) == -1
-                && agstate->failmsg == 0) {
-            logger(LOG_DAEMON, "OpenLI: unable to add agency fd %d to epoll.",
-                    ag->outev->fd);
-            agstate->failmsg = 1;
-            close(ag->outev->fd);
-            continue;
-        }
-
-        agstate->incoming = create_net_buffer(NETBUF_RECV, ag->outev->fd);
-        agstate->failmsg = 0;
-        agstate->main_fd = ag->outev->fd;
-        agstate->katimer_fd = -1;
-        agstate->karesptimer_fd = -1;
-
-        logger(LOG_DAEMON, "OpenLI: mediator has connected to agency %s on %s:%s.",
-                ag->agencyinfo.agencyid, ag->agencyinfo.ipstr,
-                ag->agencyinfo.portstr);
-
-        /* Start a keep alive timer */
-
     }
 
 }
@@ -442,29 +561,116 @@ static int accept_collector(mediator_state_t *state) {
     return newfd;
 }
 
-static void create_new_agency(mediator_state_t *state, liagency_t *lea) {
+static handover_t *create_new_handover(char *ipstr, char *portstr,
+        int handover_type) {
 
-    mediator_agency_t newagency;
     med_epoll_ev_t *agev;
+    med_epoll_ev_t *timerev;
     med_agency_state_t *agstate;
 
+    handover_t *ho = (handover_t *)malloc(sizeof(handover_t));
+
+    if (ho == NULL) {
+        logger(LOG_DAEMON, "OpenLI: ran out of memory while allocating handover structure.");
+        return NULL;
+    }
+
+
     agev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+    timerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
     agstate = (med_agency_state_t *)malloc(sizeof(med_agency_state_t));
+
+    if (agev == NULL || timerev == NULL || agstate == NULL) {
+        logger(LOG_DAEMON, "OpenLI: ran out of memory while allocating handover structure.");
+        if (agev) {
+            free(agev);
+        }
+        if (timerev) {
+            free(timerev);
+        }
+        if (agstate) {
+            free(agstate);
+        }
+        free(ho);
+        return NULL;
+    }
+
 
     init_export_buffer(&(agstate->buf));
     agstate->incoming = NULL;
-    agstate->disabled = 0;
-    agstate->awaitingconfirm = 0;
     agstate->failmsg = 0;
+    agstate->main_fd = -1;
+    agstate->katimer_fd = -1;
+    agstate->karesptimer_fd = -1;
+    agstate->parent = ho;
 
     agev->fd = -1;
     agev->fdtype = MED_EPOLL_LEA;
     agev->state = agstate;
 
-    newagency.outev = agev;
-    newagency.agencyinfo = *lea;
+    timerev->fd = -1;
+    timerev->fdtype = MED_EPOLL_KA_TIMER;
+    timerev->state = agstate;
+
+    ho->ipstr = ipstr;
+    ho->portstr = portstr;
+    ho->handover_type = handover_type;
+    ho->outev = agev;
+    ho->aliveev = timerev;
+
+    return ho;
+}
+
+static void create_new_agency(mediator_state_t *state, liagency_t *lea) {
+
+    mediator_agency_t newagency;
+
+    newagency.agencyid = lea->agencyid;
+    newagency.awaitingconfirm = 0;
+    newagency.disabled = 0;
+    newagency.hi2 = create_new_handover(lea->hi2_ipstr, lea->hi2_portstr,
+            HANDOVER_HI2);
+    newagency.hi3 = create_new_handover(lea->hi3_ipstr, lea->hi3_portstr,
+            HANDOVER_HI3);
 
     libtrace_list_push_back(state->agencies, &newagency);
+
+}
+
+static int has_handover_changed(mediator_state_t *state,
+        handover_t *ho, char *ipstr, char *portstr, char *agencyid) {
+
+    char *hitypestr;
+    if (ho == NULL) {
+        return -1;
+    }
+
+    if (!ho->ipstr || !ho->portstr || !ipstr || !portstr) {
+        return -1;
+    }
+
+    if (strcmp(ho->ipstr, ipstr) == 0 && strcmp(ho->portstr, portstr) == 0) {
+        return 0;
+    }
+
+    if (ho->handover_type == HANDOVER_HI2) {
+        hitypestr = "HI2";
+    } else if (ho->handover_type == HANDOVER_HI3) {
+        hitypestr = "HI3";
+    } else {
+        hitypestr = "Unknown handover";
+    }
+
+    logger(LOG_DAEMON,
+            "OpenLI: %s connection info for LEA %s has changed from %s:%s to %s:%s.",
+            hitypestr, agencyid, ho->ipstr, ho->portstr, ipstr, portstr);
+
+    free(ho->ipstr);
+    free(ho->portstr);
+    ho->ipstr = ipstr;
+    ho->portstr = portstr;
+
+    disconnect_handover(state, ho);
 
 }
 
@@ -482,22 +688,22 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
     n = state->agencies->head;
     while (n) {
         mediator_agency_t *x = (mediator_agency_t *)(n->data);
-        med_agency_state_t *ms = (med_agency_state_t *)(x->outev->state);
         n = n->next;
 
-        if (strcmp(x->agencyinfo.agencyid, lea.agencyid) == 0) {
-            if (strcmp(x->agencyinfo.ipstr, lea.ipstr) != 0 ||
-                    strcmp(x->agencyinfo.portstr, lea.portstr)) {
-                logger(LOG_DAEMON, "OpenLI: connection info for LEA %s has changed from %s:%s to %s:%s.",
-                        lea.agencyid, x->agencyinfo.ipstr,
-                        x->agencyinfo.portstr, lea.ipstr, lea.portstr);
-                x->agencyinfo = lea;
-
-                /* TODO disconnect from LEA */
+        if (strcmp(x->agencyid, lea.agencyid) == 0) {
+            if (has_handover_changed(state, x->hi2, lea.hi2_ipstr,
+                    lea.hi2_portstr, x->agencyid) == -1) {
+                x->disabled = 1;
+                return -1;
             }
-            ms->awaitingconfirm = 0;
-            ms->disabled = 0;
-            ms->failmsg = 0;
+
+            if (has_handover_changed(state, x->hi3, lea.hi3_ipstr,
+                    lea.hi3_portstr, x->agencyid) == -1) {
+                x->disabled = 1;
+                return -1;
+            }
+            x->awaitingconfirm = 0;
+            x->disabled = 0;
             return 0;
         }
     }
@@ -536,8 +742,8 @@ static int transmit_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
 
 static int receive_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
 
-    uint8_t *msgbody;
-    uint16_t msglen;
+    uint8_t *msgbody = NULL;
+    uint16_t msglen = 0;
     uint64_t internalid;
 
     openli_proto_msgtype_t msgtype;
@@ -592,6 +798,10 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             break;
         case MED_EPOLL_COLL_CONN:
             ret = accept_collector(state);
+            break;
+        case MED_EPOLL_KA_TIMER:
+            assert(ev->events == EPOLLIN);
+            ret = trigger_keepalive(state, mev);
             break;
         case MED_EPOLL_PROVISIONER:
             if (ev->events & EPOLLRDHUP) {

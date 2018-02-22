@@ -170,8 +170,9 @@ int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype)
 }
 
 #define LEA_BODY_LEN(lea) \
-    (strlen(lea->agencyid) + strlen(lea->ipstr) + strlen(lea->portstr) + \
-    (3 * 4))
+    (strlen(lea->agencyid) + strlen(lea->hi2_ipstr) + \
+    strlen(lea->hi2_portstr) + strlen(lea->hi3_ipstr) + \
+    strlen(lea->hi3_portstr) + (5 * 4))
 
 int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
     ii_header_t hdr;
@@ -189,13 +190,23 @@ int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
         return -1;
     }
 
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_LEAIP, (uint8_t *)(lea->ipstr),
-                strlen(lea->ipstr)) == -1) {
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_HI2IP, (uint8_t *)(lea->hi2_ipstr),
+                strlen(lea->hi2_ipstr)) == -1) {
         return -1;
     }
 
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_LEAPORT, (uint8_t *)(lea->portstr),
-                strlen(lea->portstr)) == -1) {
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_HI2PORT, (uint8_t *)(lea->hi2_portstr),
+                strlen(lea->hi2_portstr)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_HI3IP, (uint8_t *)(lea->hi3_ipstr),
+                strlen(lea->hi3_ipstr)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_HI3PORT, (uint8_t *)(lea->hi3_portstr),
+                strlen(lea->hi3_portstr)) == -1) {
         return -1;
     }
     return (int)totallen;
@@ -555,8 +566,10 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
 
     uint8_t *msgend = msgbody + len;
 
-    lea->ipstr = NULL;
-    lea->portstr = NULL;
+    lea->hi2_ipstr = NULL;
+    lea->hi2_portstr = NULL;
+    lea->hi3_ipstr = NULL;
+    lea->hi3_portstr = NULL;
     lea->agencyid = 0;
 
     while (msgbody < msgend) {
@@ -570,10 +583,14 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
 
         if (f == OPENLI_PROTO_FIELD_LEAID) {
             DECODE_STRING_FIELD(lea->agencyid, valptr, vallen);
-        } else if (f == OPENLI_PROTO_FIELD_LEAIP) {
-            DECODE_STRING_FIELD(lea->ipstr, valptr, vallen);
-        } else if (f == OPENLI_PROTO_FIELD_LEAPORT) {
-            DECODE_STRING_FIELD(lea->portstr, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_HI2IP) {
+            DECODE_STRING_FIELD(lea->hi2_ipstr, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_HI2PORT) {
+            DECODE_STRING_FIELD(lea->hi2_portstr, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_HI3IP) {
+            DECODE_STRING_FIELD(lea->hi3_ipstr, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_HI3PORT) {
+            DECODE_STRING_FIELD(lea->hi3_portstr, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_DAEMON,

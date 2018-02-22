@@ -27,6 +27,7 @@
 #ifndef OPENLI_MEDIATOR_H_
 #define OPENLI_MEDIATOR_H_
 
+#include "uthash.h"
 #include "netcomms.h"
 #include "export_buffer.h"
 
@@ -52,15 +53,23 @@ typedef struct med_coll_state {
     int disabled;
 } med_coll_state_t;
 
+typedef struct handover {
+    char *ipstr;
+    char *portstr;
+    int handover_type;
+    med_epoll_ev_t *outev;
+    med_epoll_ev_t *aliveev;
+} handover_t;
+
 typedef struct med_agency_state {
     export_buffer_t buf;
     net_buffer_t *incoming;
-    int disabled;
-    int awaitingconfirm;
     int failmsg;
     int main_fd;
     int katimer_fd;
     int karesptimer_fd;
+
+    handover_t *parent;
 } med_agency_state_t;
 
 typedef struct mediator_collector {
@@ -74,12 +83,19 @@ typedef struct mediator_provisioner {
     net_buffer_t *incoming;
 } mediator_prov_t;
 
-typedef struct mediator_agency {
-    /* TODO add keep alive timer event */
+enum {
+    HANDOVER_HI2,
+    HANDOVER_HI3,
+};
 
-    /* TODO add keep alive response timer event */
-    med_epoll_ev_t *outev;
-    liagency_t agencyinfo;
+typedef struct liidmapping liid_map_t;
+
+typedef struct mediator_agency {
+    char *agencyid;
+    int awaitingconfirm;
+    int disabled;
+    handover_t *hi2;
+    handover_t *hi3;
 } mediator_agency_t;
 
 typedef struct med_state {
@@ -102,7 +118,15 @@ typedef struct med_state {
 
     mediator_prov_t provisioner;
 
+    liid_map_t *liids;
+
 } mediator_state_t;
+
+struct liidmapping {
+    char *liid;
+    mediator_agency_t *agency;
+    UT_hash_handle hh;
+};
 
 #endif
 
