@@ -186,13 +186,43 @@ static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
 
     uint32_t enclen = msg->msglen - msg->ipclen;
     int ret;
+    struct iovec iov[3];
+    struct msghdr mh;
+    int ind = 0;
+    int total = 0;
 
-    /* XXX probably be better to replace send()s with sendmmsg?? */
+    if (msg->header) {
 
-    ret = send(dest->fd, msg->msgbody, enclen, MSG_DONTWAIT);
+        iov[ind].iov_base = msg->header;
+        iov[ind].iov_len = msg->hdrlen;
+        ind ++;
+        total += msg->hdrlen;
+    }
+
+    iov[ind].iov_base = msg->msgbody;
+    iov[ind].iov_len = enclen;
+    total += enclen;
+    ind ++;
+
+    if (msg->ipclen > 0) {
+        iov[ind].iov_base = msg->ipcontents;
+        iov[ind].iov_len = msg->ipclen;
+        ind ++;
+        total += msg->ipclen;
+    }
+
+    mh.msg_name = NULL;
+    mh.msg_namelen = 0;
+    mh.msg_iov = iov;
+    mh.msg_iovlen = ind;
+    mh.msg_control = NULL;
+    mh.msg_controllen = 0;
+    mh.msg_flags = 0;
+
+    ret = sendmsg(dest->fd, &mh, MSG_DONTWAIT);
     if (ret < 0) {
-        /* buffer this message for next time */
         if (append_message_to_buffer(&(dest->buffer), msg, 0) == 0) {
+
             /* TODO do something if we run out of memory? */
 
         }
@@ -203,41 +233,13 @@ static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
         }
 
         return 0;
-    } else if (ret < enclen && ret >= 0) {
+    } else if (ret < total && ret >= 0) {
         /* Partial send, save whole message but make sure the buffer knows
          * how much we've already sent so it can continue from there.
          */
         if (append_message_to_buffer(&(dest->buffer), msg, (uint32_t)ret)
                     == 0) {
             /* TODO do something if we run out of memory? */
-        }
-    }
-
-
-    if (msg->ipclen > 0) {
-        ret = send(dest->fd, msg->ipcontents, msg->ipclen, MSG_DONTWAIT);
-        if (ret < 0) {
-            /* buffer this message for when we are able to reconnect */
-            if (append_message_to_buffer(&(dest->buffer), msg, 0) == 0) {
-                /* TODO do something if we run out of memory? */
-
-            }
-            if (errno != EAGAIN) {
-                logger(LOG_DAEMON,
-                    "OpenLI: Error exporting IP content to target %s:%s -- %s.",
-                    dest->details.ipstr, dest->details.portstr,
-                    strerror(errno));
-                return -1;
-            }
-        } else if (ret >= 0 && ret < msg->ipclen) {
-            /* Partial send, save whole message but make sure the buffer knows
-             * how much we've already sent (including the earlier headers)
-             * so we can continue from there.
-             */
-            if (append_message_to_buffer(&(dest->buffer), msg,
-                        (uint32_t)ret + enclen) == 0) {
-                /* TODO do something if we run out of memory? */
-            }
         }
     }
 
@@ -294,7 +296,7 @@ static inline export_dest_t *add_unknown_destination(collector_export_t *exp,
     newdest.details.portstr = NULL;
     newdest.awaitingconfirm = 0;
     newdest.halted = 0;
-    init_export_buffer(&(newdest.buffer));
+    init_export_buffer(&(newdest.buffer), 1);
 
     libtrace_list_push_back(exp->dests, &newdest);
 
@@ -352,7 +354,7 @@ static inline void add_new_destination(collector_export_t *exp,
     newdest.awaitingconfirm = 0;
     newdest.halted = 0;
     newdest.details = *(med);
-    init_export_buffer(&(newdest.buffer));
+    init_export_buffer(&(newdest.buffer), 1);
 
     libtrace_list_push_back(exp->dests, &newdest);
 
@@ -407,6 +409,8 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
 
     if (recvd.type == OPENLI_EXPORT_ETSIREC) {
         n = exp->dests->head;
+
+        /* TODO replace with a hash map? */
         while (n) {
             dest = (export_dest_t *)(n->data);
 
@@ -439,6 +443,9 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
             if (x == -1) {
                 return -1;
             }
+        }
+        if (recvd.data.toexport.header) {
+            free(recvd.data.toexport.header);
         }
         free(recvd.data.toexport.msgbody);
         return 1;

@@ -39,6 +39,7 @@
 #include <libtrace/linked_list.h>
 #include <unistd.h>
 #include <assert.h>
+#include <libwandder_etsili.h>
 
 #include "configparser.h"
 #include "logger.h"
@@ -605,7 +606,7 @@ static handover_t *create_new_handover(char *ipstr, char *portstr,
     }
 
 
-    init_export_buffer(&(agstate->buf));
+    init_export_buffer(&(agstate->buf), 0);
     agstate->incoming = NULL;
     agstate->failmsg = 0;
     agstate->main_fd = -1;
@@ -741,6 +742,44 @@ static mediator_agency_t *lookup_agency(libtrace_list_t *alist, char *id) {
 
 }
 
+static liid_map_t *match_etsi_to_agency(mediator_state_t *state,
+        uint8_t *etsimsg, uint16_t msglen) {
+
+    char liidstr[1024];
+    wandder_etsispec_t *etsidec;
+    liid_map_t *match = NULL;
+
+    etsidec = wandder_create_etsili_decoder();
+    wandder_attach_etsili_buffer(etsidec, etsimsg, msglen, false);
+
+    if (wandder_etsili_get_liid(etsidec, liidstr, 1024) == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI: unable to find LIID in ETSI record received from collector.");
+        wandder_free_etsili_decoder(etsidec);
+        return NULL;
+    }
+
+    wandder_free_etsili_decoder(etsidec);
+
+    HASH_FIND_STR(state->liids, liidstr, match);
+    if (match == NULL) {
+        logger(LOG_DAEMON, "OpenLI: mediator was unable to find LIID %s in its set of mappings.", liidstr);
+
+        /* TODO what do we do in this case -- buffer it somewhere in case
+         * a mapping turns up later? drop it? */
+        return NULL;
+    }
+
+    return match;
+}
+
+static int enqueue_etsi(mediator_state_t *state, handover_t *ho,
+        uint8_t *etsimsg, uint16_t msglen) {
+
+
+    return 0;
+}
+
 static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
 
@@ -856,6 +895,50 @@ static int receive_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
     return 0;
 }
 
+static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
+
+    uint8_t *msgbody = NULL;
+    uint16_t msglen = 0;
+    uint64_t internalid;
+    liid_map_t *thisint;
+    med_coll_state_t *cs = (med_coll_state_t *)(mev->state);
+
+    openli_proto_msgtype_t msgtype;
+
+
+    do {
+        msgtype = receive_net_buffer(cs->incoming, &msgbody,
+                &msglen, &internalid);
+        switch(msgtype) {
+
+            case OPENLI_PROTO_DISCONNECT:
+                logger(LOG_DAEMON,
+                        "OpenLI: error receiving message from collector.");
+                return -1;
+            case OPENLI_PROTO_NO_MESSAGE:
+                break;
+            case OPENLI_PROTO_ETSI_CC:
+                /* msgbody should contain a full ETSI record */
+                thisint = match_etsi_to_agency(state, msgbody, msglen);
+                if (thisint == NULL) {
+                    return -1;
+                }
+                if (enqueue_etsi(state, thisint->agency->hi3, msgbody,
+                            msglen) == -1) {
+                    return -1;
+                }
+                break;
+            default:
+                logger(LOG_DAEMON,
+                        "OpenLI mediator: unexpected message type %d received from collector.",
+                        msgtype);
+                return -1;
+        }
+    } while (msgtype != OPENLI_PROTO_NO_MESSAGE);
+
+    return 0;
+}
+
 static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 
 	med_epoll_ev_t *mev = (med_epoll_ev_t *)(ev->data.ptr);
@@ -899,6 +982,8 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
         case MED_EPOLL_COLLECTOR:
             if (ev->events & EPOLLRDHUP) {
                 ret = -1;
+            } else if (ev->events & EPOLLIN) {
+                ret = receive_collector(state, mev);
             }
             if (ret == -1) {
                 logger(LOG_DAEMON,

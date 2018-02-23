@@ -27,6 +27,7 @@
 #ifndef OPENLI_NETCOMMS_H_
 #define OPENLI_NETCOMMS_H_
 
+#include "config.h"
 #include <inttypes.h>
 
 #define NETBUF_ALLOC_SIZE (4096)
@@ -41,6 +42,14 @@
 
 #include "intercept.h"
 #include "agency.h"
+
+typedef struct ii_header {
+    uint32_t magic;
+    uint16_t bodylen;
+    uint16_t intercepttype;
+    uint64_t internalid;
+} PACKED ii_header_t;
+
 
 typedef struct openli_mediator {
     uint32_t mediatorid;
@@ -65,6 +74,8 @@ typedef enum {
     OPENLI_PROTO_MEDIATOR_AUTH,
     OPENLI_PROTO_NOMORE_INTERCEPTS,
     OPENLI_PROTO_NOMORE_MEDIATORS,
+    OPENLI_PROTO_ETSI_CC,
+    OPENLI_PROTO_ETSI_IRI,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -95,6 +106,9 @@ typedef enum {
 
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd);
 void destroy_net_buffer(net_buffer_t *nb);
+
+uint8_t *construct_netcomm_protocol_header(uint32_t contentlen,
+        uint16_t msgtype, uint64_t internalid, uint32_t *hdrlen);
 
 int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med);
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, ipintercept_t *ipint);
