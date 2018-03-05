@@ -812,8 +812,6 @@ static int enqueue_etsi(mediator_state_t *state, handover_t *ho,
                 ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
             return -1;
         }
-        logger(LOG_DAEMON, "Enabled EPOLLOUT for handover %s:%s %d",
-                ho->ipstr, ho->portstr, ho->handover_type);
         mas->outenabled = 1;
     }
 
@@ -824,7 +822,27 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     med_agency_state_t *mas = (med_agency_state_t *)(mev->state);
 
-    return transmit_buffered_records(&(mas->buf), mev->fd, 65535);
+    if (transmit_buffered_records(&(mas->buf), mev->fd, 65535) == -1) {
+        return -1;
+    }
+
+    if (get_buffered_amount(&(mas->buf)) == 0) {
+        struct epoll_event ev;
+        handover_t *ho = mas->parent;
+        ev.data.ptr = mev;
+        ev.events = EPOLLIN | EPOLLRDHUP;
+
+        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, mev->fd, &ev) == -1) {
+            logger(LOG_DAEMON,
+                "OpenLI: error while trying to disable xmit for handover %s:%s %d -- %s",
+                ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
+            return -1;
+        }
+        mas->outenabled = 0;
+    }
+
+    return 0;
+
 
 }
 
