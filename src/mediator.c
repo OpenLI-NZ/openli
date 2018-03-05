@@ -342,6 +342,10 @@ static void disconnect_handover(mediator_state_t *state, handover_t *ho) {
 
     agstate = (med_agency_state_t *)(ho->outev->state);
 
+    logger(LOG_DAEMON,
+        "OpenLI: mediator is disconnecting from handover %s:%s %d",
+        ho->ipstr, ho->portstr, ho->handover_type);
+
     if (agstate->main_fd != -1) {
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, agstate->main_fd, &ev)
                 == -1) {
@@ -385,12 +389,19 @@ static int connect_handover(mediator_state_t *state, handover_t *ho) {
         return 0;
     }
 
-    ev.data.ptr = (void *)agstate;
-    ev.events = EPOLLIN | EPOLLRDHUP;
+    if (get_buffered_amount(&(agstate->buf)) > 0) {
+        ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
+        agstate->outenabled = 1;
+    } else {
+        ev.events = EPOLLIN | EPOLLRDHUP;
+        agstate->outenabled = 0;
+    }
+    ev.data.ptr = (void *)ho->outev;
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, ho->outev->fd, &ev) == -1
             && agstate->failmsg == 0) {
-        logger(LOG_DAEMON, "OpenLI: unable to add agency fd %d to epoll.",
+        logger(LOG_DAEMON,
+                "OpenLI: unable to add agency handover fd %d to epoll.",
                 ho->outev->fd);
         agstate->failmsg = 1;
         close(ho->outev->fd);
@@ -610,6 +621,7 @@ static handover_t *create_new_handover(char *ipstr, char *portstr,
     agstate->incoming = NULL;
     agstate->failmsg = 0;
     agstate->main_fd = -1;
+    agstate->outenabled = 0;
     agstate->katimer_fd = -1;
     agstate->karesptimer_fd = -1;
     agstate->parent = ho;
@@ -776,8 +788,44 @@ static liid_map_t *match_etsi_to_agency(mediator_state_t *state,
 static int enqueue_etsi(mediator_state_t *state, handover_t *ho,
         uint8_t *etsimsg, uint16_t msglen) {
 
+    med_agency_state_t *mas;
+
+    mas = (med_agency_state_t *)(ho->outev->state);
+
+    if (append_etsipdu_to_buffer(&(mas->buf), etsimsg, (uint32_t)msglen, 0)
+            == 0) {
+        logger(LOG_DAEMON,
+            "OpenLI: mediator was unable to enqueue ETSI PDU for handover %s:%s %d",
+            ho->ipstr, ho->portstr, ho->handover_type);
+        return -1;
+    }
+
+    /* Got something to send, so make sure we are enable EPOLLOUT */
+    if (ho->outev->fd != -1 && !(mas->outenabled)) {
+        struct epoll_event ev;
+        ev.data.ptr = ho->outev;
+        ev.events = EPOLLRDHUP | EPOLLIN | EPOLLOUT;
+        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, ho->outev->fd, &ev) == -1)
+        {
+            logger(LOG_DAEMON,
+                "OpenLI: error while trying to enable xmit for handover %s:%s %d -- %s",
+                ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
+            return -1;
+        }
+        logger(LOG_DAEMON, "Enabled EPOLLOUT for handover %s:%s %d",
+                ho->ipstr, ho->portstr, ho->handover_type);
+        mas->outenabled = 1;
+    }
 
     return 0;
+}
+
+static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
+
+    med_agency_state_t *mas = (med_agency_state_t *)(mev->state);
+
+    return transmit_buffered_records(&(mas->buf), mev->fd, 65535);
+
 }
 
 static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
@@ -962,6 +1010,23 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             assert(ev->events == EPOLLIN);
             ret = trigger_keepalive(state, mev);
             break;
+        case MED_EPOLL_LEA:
+            if (ev->events & EPOLLRDHUP) {
+                ret = -1;
+            } else if (ev->events & EPOLLIN) {
+                /* message from LEA -- hopefully a keep-alive response */
+                /* TODO */
+            } else if (ev->events & EPOLLOUT) {
+                ret = xmit_handover(state, mev);
+            } else {
+                ret == -1;
+            }
+            if (ret == -1) {
+                med_agency_state_t *mas = (med_agency_state_t *)(mev->state);
+                disconnect_handover(state, mas->parent);
+            }
+            break;
+
         case MED_EPOLL_PROVISIONER:
             if (ev->events & EPOLLRDHUP) {
                 ret = -1;
@@ -995,6 +1060,7 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
         default:
             logger(LOG_DAEMON,
                     "OpenLI Mediator: invalid fd triggering epoll event.");
+            assert(0);
             return -1;
     }
 

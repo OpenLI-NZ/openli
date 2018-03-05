@@ -64,6 +64,7 @@ typedef struct handover {
 typedef struct med_agency_state {
     export_buffer_t buf;
     net_buffer_t *incoming;
+    int outenabled;
     int failmsg;
     int main_fd;
     int katimer_fd;
@@ -84,8 +85,8 @@ typedef struct mediator_provisioner {
 } mediator_prov_t;
 
 enum {
-    HANDOVER_HI2,
-    HANDOVER_HI3,
+    HANDOVER_HI2 = 2,
+    HANDOVER_HI3 = 3,
 };
 
 typedef struct liidmapping liid_map_t;
