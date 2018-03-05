@@ -47,6 +47,7 @@
 #include "agency.h"
 #include "netcomms.h"
 #include "mediator.h"
+#include "etsili_core.h"
 
 volatile int mediator_halt = 0;
 volatile int reload_config = 0;
@@ -318,12 +319,68 @@ static int init_med_state(mediator_state_t *state, char *configfile,
 static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     med_agency_state_t *ms = (med_agency_state_t *)(mev->state);
+    uint8_t *kamsg;
+    uint32_t kalen;
+    wandder_etsipshdr_data_t hdrdata;
 
-    fprintf(stderr, "Gotta send a keep alive to %s:%s\n",
-            ms->parent->ipstr, ms->parent->portstr);
-    /* TODO Construct a keep alive record and push it onto ms->buf */
+    if (ms->pending_ka == NULL && ms->main_fd != -1) {
+        /* Only create a new KA message if we have sent the last one we
+         * had queued up.
+         */
+        fprintf(stderr, "Gotta send a keep alive to %s:%s %d\n",
+                ms->parent->ipstr, ms->parent->portstr,
+                ms->parent->handover_type);
 
-    /* TODO Now set up a keep alive response timer */
+        if (ms->encoder == NULL) {
+            ms->encoder = init_wandder_encoder();
+        } else {
+            reset_wandder_encoder(ms->encoder);
+        }
+
+        hdrdata.liid = "none";
+        hdrdata.liid_len = strlen(hdrdata.liid);
+
+        hdrdata.authcc = "NA";
+        hdrdata.authcc_len = strlen(hdrdata.authcc);
+        hdrdata.delivcc = "NA";
+        hdrdata.delivcc_len = strlen(hdrdata.delivcc);
+
+        hdrdata.operatorid = "NA";
+        hdrdata.operatorid_len = strlen(hdrdata.operatorid);
+
+        hdrdata.networkelemid = "NA";
+        hdrdata.networkelemid_len = strlen(hdrdata.networkelemid);
+
+        kamsg = encode_etsi_keepalive(&kalen, ms->encoder, &hdrdata,
+                ms->lastkaseq + 1);
+        if (kamsg == NULL) {
+            logger(LOG_DAEMON,
+                    "OpenLI: mediator failed to construct a keep-alive.");
+            return -1;
+        }
+
+        ms->pending_ka = kamsg;
+        ms->pending_ka_len = kalen;
+        ms->lastkaseq += 1;
+
+        if (!ms->outenabled) {
+            struct epoll_event ev;
+            ev.data.ptr = ms->parent->outev;
+            ev.events = EPOLLRDHUP | EPOLLIN | EPOLLOUT;
+            if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, ms->main_fd,
+                        &ev) == -1) {
+                logger(LOG_DAEMON,
+                    "OpenLI: error while trying to enable xmit for handover %s:%s %d -- %s",
+                    ms->parent->ipstr, ms->parent->portstr,
+                    ms->parent->handover_type, strerror(errno));
+                return -1;
+            }
+            ms->outenabled = 1;
+        }
+
+
+        /* TODO Now set up a keep alive response timer */
+    }
 
     halt_keepalive_timer(state, mev);
     if (start_keepalive_timer(state, mev) == -1) {
@@ -332,7 +389,7 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
     }
     ms->katimer_fd = mev->fd;
     mev->state = ms;
-
+    return 0;
 }
 
 static void disconnect_handover(mediator_state_t *state, handover_t *ho) {
@@ -366,6 +423,14 @@ static void disconnect_handover(mediator_state_t *state, handover_t *ho) {
         ho->aliveev->fd = -1;
     }
 
+    if (agstate->encoder) {
+        free_wandder_encoder(agstate->encoder);
+        agstate->encoder = NULL;
+    }
+    if (agstate->pending_ka) {
+        free(agstate->pending_ka);
+        agstate->pending_ka = NULL;
+    }
 }
 
 static int connect_handover(mediator_state_t *state, handover_t *ho) {
@@ -414,6 +479,10 @@ static int connect_handover(mediator_state_t *state, handover_t *ho) {
     agstate->main_fd = ho->outev->fd;
     agstate->katimer_fd = -1;
     agstate->karesptimer_fd = -1;
+    agstate->lastkaseq = 0;
+    agstate->pending_ka = NULL;
+    agstate->pending_ka_len = 0;
+    agstate->encoder = NULL;
 
     /* Start a keep alive timer */
     if (ho->aliveev->fd != -1) {
@@ -821,6 +890,36 @@ static int enqueue_etsi(mediator_state_t *state, handover_t *ho,
 static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     med_agency_state_t *mas = (med_agency_state_t *)(mev->state);
+    handover_t *ho = mas->parent;
+    int ret = 0;
+
+    if (mas->pending_ka) {
+        ret = send(mev->fd, mas->pending_ka, mas->pending_ka_len,
+                MSG_DONTWAIT);
+        if (ret < 0) {
+            logger(LOG_DAEMON,
+                    "OpenLI: error while transmitting keepalive for handover %s:%s %d -- %s",
+                    ho->ipstr, ho->portstr, ho->handover_type,
+                    strerror(errno));
+            return -1;
+        }
+        if (ret == 0) {
+            return -1;
+        }
+        if (ret == mas->pending_ka_len) {
+            /* Sent the whole thing successfully */
+            free(mas->pending_ka);
+            mas->pending_ka = NULL;
+            mas->pending_ka_len = 0;
+        } else {
+            /* Partial send -- try the rest next time */
+            memmove(mas->pending_ka, mas->pending_ka + ret,
+                    mas->pending_ka_len - ret);
+            mas->pending_ka_len -= ret;
+        }
+        return 0;
+    }
+
 
     if (transmit_buffered_records(&(mas->buf), mev->fd, 65535) == -1) {
         return -1;
@@ -828,7 +927,6 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     if (get_buffered_amount(&(mas->buf)) == 0) {
         struct epoll_event ev;
-        handover_t *ho = mas->parent;
         ev.data.ptr = mev;
         ev.events = EPOLLIN | EPOLLRDHUP;
 

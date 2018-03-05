@@ -27,6 +27,7 @@
 #ifndef OPENLI_MEDIATOR_H_
 #define OPENLI_MEDIATOR_H_
 
+#include <libwandder.h>
 #include <uthash.h>
 #include "netcomms.h"
 #include "export_buffer.h"
@@ -69,6 +70,10 @@ typedef struct med_agency_state {
     int main_fd;
     int katimer_fd;
     int karesptimer_fd;
+    uint8_t *pending_ka;
+    uint32_t pending_ka_len;
+    uint64_t lastkaseq;
+    wandder_encoder_t *encoder;
 
     handover_t *parent;
 } med_agency_state_t;

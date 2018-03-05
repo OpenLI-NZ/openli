@@ -28,19 +28,12 @@
 #include <string.h>
 #include <assert.h>
 #include <libwandder.h>
+#include <libwandder_etsili.h>
 
 #include "logger.h"
 #include "collector.h"
 #include "collector_export.h"
-#include "etsili_const.h"
-
-
-#define ENC_USEQUENCE(enc) wandder_encode_next(enc, WANDDER_TAG_SEQUENCE, \
-        WANDDER_CLASS_UNIVERSAL_CONSTRUCT, WANDDER_TAG_SEQUENCE, NULL, 0)
-
-#define ENC_CSEQUENCE(enc, x) wandder_encode_next(enc, WANDDER_TAG_SEQUENCE, \
-        WANDDER_CLASS_CONTEXT_CONSTRUCT, x, NULL, 0)
-
+#include "etsili_core.h"
 
 static void dump_export_msg(openli_exportmsg_t *msg) {
 
@@ -79,6 +72,7 @@ static openli_export_recv_t form_ipcc(collector_global_t *glob,
     struct timeval tv = trace_get_timeval(pkt);
     openli_exportmsg_t msg;
     openli_export_recv_t exprecv;
+    wandder_etsipshdr_data_t hdrdata;
 
     /* Trying to decide between copying the packet contents into the IP CC
      * message or trying a zero-copy approach.
@@ -105,76 +99,22 @@ static openli_export_recv_t form_ipcc(collector_global_t *glob,
         reset_wandder_encoder(loc->encoder);
     }
 
-    ENC_USEQUENCE(loc->encoder);
+    hdrdata.liid = ipint->liid;
+    hdrdata.liid_len = ipint->liid_len;
+    hdrdata.authcc = ipint->authcc;
+    hdrdata.authcc_len = ipint->authcc_len;
+    hdrdata.delivcc = ipint->delivcc;
+    hdrdata.delivcc_len = ipint->delivcc_len;
+    hdrdata.operatorid = glob->operatorid;
+    hdrdata.operatorid_len = glob->operatorid_len;
+    hdrdata.networkelemid = glob->networkelemid;
+    hdrdata.networkelemid_len = glob->networkelemid_len;
+    hdrdata.intpointid = glob->intpointid;
+    hdrdata.intpointid_len = glob->intpointid_len;
 
-    ENC_CSEQUENCE(loc->encoder, 1);
-    wandder_encode_next(loc->encoder, WANDDER_TAG_OID,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, etsi_lipsdomainid,
-            sizeof(etsi_lipsdomainid));
-    wandder_encode_next(loc->encoder, WANDDER_TAG_OCTETSTRING,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, ipint->liid,
-            ipint->liid_len);
-    wandder_encode_next(loc->encoder, WANDDER_TAG_PRINTABLE,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, ipint->authcc,
-            ipint->authcc_len);
+    msg.msgbody = encode_etsi_ipcc(&(msg.msglen), loc->encoder, &hdrdata,
+            ipint->cin, ipint->nextseqno, &tv, l3, rem);
 
-    ENC_CSEQUENCE(loc->encoder, 3);
-
-    ENC_CSEQUENCE(loc->encoder, 0);
-    wandder_encode_next(loc->encoder, WANDDER_TAG_OCTETSTRING,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, glob->operatorid,
-            glob->operatorid_len);
-
-    wandder_encode_next(loc->encoder, WANDDER_TAG_OCTETSTRING,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, glob->networkelemid,
-            glob->networkelemid_len);
-    wandder_encode_endseq(loc->encoder);
-
-    wandder_encode_next(loc->encoder, WANDDER_TAG_INTEGER,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(ipint->cin),
-            sizeof(uint64_t));
-    wandder_encode_next(loc->encoder, WANDDER_TAG_PRINTABLE,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, ipint->delivcc,
-            ipint->delivcc_len);
-    wandder_encode_endseq(loc->encoder);
-
-    wandder_encode_next(loc->encoder, WANDDER_TAG_INTEGER,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, &(ipint->nextseqno),
-            sizeof(uint64_t));
-    wandder_encode_next(loc->encoder, WANDDER_TAG_GENERALTIME,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 5, &tv,
-            sizeof(struct timeval));
-
-    if (glob->intpointid) {
-        wandder_encode_next(loc->encoder, WANDDER_TAG_PRINTABLE,
-                WANDDER_CLASS_CONTEXT_PRIMITIVE, 6, glob->intpointid,
-                glob->intpointid_len);
-    }
-    wandder_encode_endseq(loc->encoder);
-
-    ENC_CSEQUENCE(loc->encoder, 2);
-    ENC_CSEQUENCE(loc->encoder, 1);
-    ENC_USEQUENCE(loc->encoder);
-    ENC_CSEQUENCE(loc->encoder, 2);
-    ENC_CSEQUENCE(loc->encoder, 2);
-
-    wandder_encode_next(loc->encoder, WANDDER_TAG_RELATIVEOID,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, etsi_ipccoid,
-            sizeof(etsi_ipccoid));
-    ENC_CSEQUENCE(loc->encoder, 1);
-    wandder_encode_next(loc->encoder, WANDDER_TAG_IPPACKET,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, l3, rem);
-
-
-    wandder_encode_endseq(loc->encoder);
-    wandder_encode_endseq(loc->encoder);
-    wandder_encode_endseq(loc->encoder);
-    wandder_encode_endseq(loc->encoder);
-    wandder_encode_endseq(loc->encoder);
-    wandder_encode_endseq(loc->encoder);
-    wandder_encode_endseq(loc->encoder);
-
-    msg.msgbody = wandder_encode_finish(loc->encoder, &(msg.msglen));
     msg.ipcontents = (uint8_t *)l3;
     msg.ipclen = rem;
     msg.destid = ipint->destid;
