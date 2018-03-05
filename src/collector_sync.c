@@ -230,6 +230,15 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
     return 0;
 }
 
+static void finish_init_mediators(collector_sync_t *sync) {
+    openli_export_recv_t expmsg;
+
+    expmsg.type = OPENLI_EXPORT_INIT_MEDIATORS_OVER;
+    expmsg.data.packet = NULL;
+
+    libtrace_message_queue_put(&(sync->exportq), &expmsg);
+}
+
 static void temporary_map_user_to_address(ipintercept_t *cept) {
 
     char *knownip;
@@ -357,6 +366,9 @@ static int recv_from_provisioner(collector_sync_t *sync) {
             case OPENLI_PROTO_NOMORE_INTERCEPTS:
                 disable_unconfirmed_intercepts(sync);
                 break;
+            case OPENLI_PROTO_NOMORE_MEDIATORS:
+                finish_init_mediators(sync);
+                break;
         }
 
     } while (msgtype != OPENLI_PROTO_NO_MESSAGE);
@@ -435,6 +447,7 @@ static inline void touch_all_intercepts(libtrace_list_t *intlist) {
 static inline void disconnect_provisioner(collector_sync_t *sync) {
 
     struct epoll_event ev;
+    openli_export_recv_t expmsg;
 
     destroy_net_buffer(sync->outgoing);
     destroy_net_buffer(sync->incoming);
@@ -455,6 +468,14 @@ static inline void disconnect_provisioner(collector_sync_t *sync) {
      * as active when we reconnect to the provisioner.
      */
     touch_all_intercepts(sync->ipintercepts);
+
+    /* Same with mediators -- keep exporting to them, but flag them to be
+     * disconnected if they are not announced after we reconnect. */
+    expmsg.type = OPENLI_EXPORT_FLAG_MEDIATORS;
+    expmsg.data.packet = NULL;
+
+    libtrace_message_queue_put(&(sync->exportq), &expmsg);
+
 
 }
 

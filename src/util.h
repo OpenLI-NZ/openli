@@ -31,6 +31,7 @@
 
 int connect_socket(char *ipstr, char *portstr, uint8_t isretry);
 int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr);
+int create_listener(char *addr, char *port, char *name);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

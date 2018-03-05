@@ -61,7 +61,7 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry) {
     sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 
     if (sockfd == -1) {
-        logger(LOG_DAEMON, "OpenLI: Error while creating export socket: %s.",
+        logger(LOG_DAEMON, "OpenLI: Error while creating connecting socket: %s.",
                 strerror(errno));
         goto endconnect;
     }
@@ -85,6 +85,66 @@ endconnect:
     freeaddrinfo(res);
     return sockfd;
 }
+
+int create_listener(char *addr, char *port, char *name) {
+    struct addrinfo hints, *res;
+    int sockfd;
+    int yes = 1;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    if (addr == NULL) {
+        hints.ai_flags = AI_PASSIVE;
+    }
+
+    if (getaddrinfo(addr, port, &hints, &res) == -1)
+    {
+        logger(LOG_DAEMON, "OpenLI: Error while trying to getaddrinfo for %s listening socket.", name);
+        return -1;
+    }
+
+    sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+
+    if (sockfd == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: Error while creating %s listening socket: %s.",
+                name, strerror(errno));
+        goto endlistener;
+    }
+
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: Error while setting options on %s listening socket: %s",
+				name, strerror(errno));
+        close(sockfd);
+        sockfd = -1;
+        goto endlistener;
+    }
+
+
+    if (bind(sockfd, res->ai_addr, res->ai_addrlen) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: Error while trying to bind %s listening socket: %s.",
+                name, strerror(errno));
+        close(sockfd);
+        sockfd = -1;
+        goto endlistener;
+    }
+
+    if (listen(sockfd, 10) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: Error while listening on %s socket: %s.",
+                name, strerror(errno));
+        close(sockfd);
+        sockfd = -1;
+        goto endlistener;
+    }
+endlistener:
+    freeaddrinfo(res);
+    return sockfd;
+}
+
 
 int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr) {
     int timerfd;

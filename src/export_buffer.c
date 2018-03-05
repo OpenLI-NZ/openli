@@ -33,15 +33,17 @@
 #include "collector.h"
 #include "collector_export.h"
 #include "export_buffer.h"
+#include "netcomms.h"
 
 #define BUFFER_ALLOC_SIZE (1024 * 1024 * 10)
 #define BUFFER_WARNING_THRESH (1024 * 1024 * 1024)
 
-void init_export_buffer(export_buffer_t *buf) {
+void init_export_buffer(export_buffer_t *buf, uint8_t hasnetcomm) {
     buf->bufhead = NULL;
     buf->buftail = NULL;
     buf->alloced = 0;
     buf->partialfront = 0;
+    buf->hasnetcomm = hasnetcomm;
 }
 
 void release_export_buffer(export_buffer_t *buf) {
@@ -156,7 +158,7 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
         buf->partialfront = beensent;
     }
 
-    while (spaceleft < msg->msglen) {
+    while (spaceleft < msg->msglen + msg->hdrlen) {
         spaceleft = extend_buffer(buf);
         if (spaceleft == 0) {
             return 0;
@@ -164,6 +166,11 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
         /* Add some space to the buffer */
     }
 
+    if (msg->header) {
+        ii_header_t *ii = (ii_header_t *)(msg->header);
+        memcpy(buf->buftail, msg->header, msg->hdrlen);
+        buf->buftail += msg->hdrlen;
+    }
     memcpy(buf->buftail, msg->msgbody, enclen);
 
     buf->buftail += enclen;
@@ -182,8 +189,13 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
     uint64_t sent = 0;
     uint64_t rem = 0;
     uint64_t offset = buf->partialfront;
-    wandder_etsispec_t *dec = wandder_create_etsili_decoder();
+    wandder_etsispec_t *dec;
     int ret;
+    ii_header_t *header = NULL;
+
+    if (!buf->hasnetcomm) {
+        dec = wandder_create_etsili_decoder();
+    }
 
     /* Try to maintain record alignment */
     while (buf->bufhead + sent < buf->buftail) {
@@ -196,14 +208,18 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
             attachlen = 10000;
         }
 
-        wandder_attach_etsili_buffer(dec, buf->bufhead + sent,
-                attachlen, 0);
-        pdulen = wandder_etsili_get_pdu_length(dec);
-
-        if (pdulen == 0) {
-            logger(LOG_DAEMON, "OpenLI: failed to decode buffered ETSI record.");
-            assert(0);
-            break;
+        if (buf->hasnetcomm) {
+            header = (ii_header_t *)(buf->bufhead + sent);
+            pdulen = ntohs(header->bodylen) + sizeof(ii_header_t);
+        } else {
+            wandder_attach_etsili_buffer(dec, buf->bufhead + sent,
+                    attachlen, 0);
+            pdulen = wandder_etsili_get_pdu_length(dec);
+            if (pdulen == 0) {
+                logger(LOG_DAEMON, "OpenLI: failed to decode buffered ETSI record.");
+                assert(0);
+                break;
+            }
         }
 
         if (sent + pdulen > bytelimit) {
@@ -213,7 +229,9 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         sent += pdulen;
     }
 
-    wandder_free_etsili_decoder(dec);
+    if (!buf->hasnetcomm) {
+        wandder_free_etsili_decoder(dec);
+    }
 
     sent -= offset;
     if (sent != 0) {
@@ -229,7 +247,7 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         } else if (ret < sent) {
             /* Partial send, move partialfront ahead by whatever we did send. */
             buf->partialfront += (uint32_t)ret;
-            return sent;
+            return ret;
         }
     }
 

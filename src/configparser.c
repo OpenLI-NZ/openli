@@ -35,6 +35,7 @@
 #include "configparser.h"
 #include "logger.h"
 #include "provisioner.h"
+#include "mediator.h"
 #include "agency.h"
 
 void clear_global_config(collector_global_t *glob) {
@@ -169,8 +170,10 @@ static int parse_agency_list(libtrace_list_t *aglist, yaml_document_t *doc,
         yaml_node_pair_t *pair;
         liagency_t newag;
 
-        newag.ipstr = NULL;
-        newag.portstr = NULL;
+        newag.hi2_ipstr = NULL;
+        newag.hi2_portstr = NULL;
+        newag.hi3_ipstr = NULL;
+        newag.hi3_portstr = NULL;
         newag.agencyid = NULL;
 
         for (pair = node->data.mapping.pairs.start;
@@ -183,15 +186,29 @@ static int parse_agency_list(libtrace_list_t *aglist, yaml_document_t *doc,
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value,
-                            "address") == 0 && newag.ipstr == NULL) {
-                newag.ipstr = strdup((char *)value->data.scalar.value);
+                            "hi2address") == 0 && newag.hi2_ipstr == NULL) {
+                newag.hi2_ipstr = strdup((char *)value->data.scalar.value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value,
-                            "port") == 0 && newag.portstr == NULL) {
-                newag.portstr = strdup((char *)value->data.scalar.value);
+                            "hi2port") == 0 && newag.hi2_portstr == NULL) {
+                newag.hi2_portstr = strdup((char *)value->data.scalar.value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                            "hi3address") == 0 && newag.hi3_ipstr == NULL) {
+                newag.hi3_ipstr = strdup((char *)value->data.scalar.value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                            "hi3port") == 0 && newag.hi3_portstr == NULL) {
+                newag.hi3_portstr = strdup((char *)value->data.scalar.value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -202,9 +219,9 @@ static int parse_agency_list(libtrace_list_t *aglist, yaml_document_t *doc,
             }
 
         }
-        if (newag.ipstr != NULL && newag.portstr != NULL &&
+        if (newag.hi2_ipstr != NULL && newag.hi2_portstr != NULL &&
+                newag.hi3_ipstr != NULL && newag.hi3_portstr != NULL &
                 newag.agencyid != NULL) {
-            newag.knownliids = libtrace_list_init(sizeof(char *));
             libtrace_list_push_front(aglist, (void *)(&newag));
         } else {
             logger(LOG_DAEMON, "OpenLI: LEA configuration was incomplete -- skipping.");
@@ -240,6 +257,7 @@ static int parse_ipintercept_list(libtrace_list_t *ipints, yaml_document_t *doc,
         newcept.active = 1;
         newcept.destid = 0;
         newcept.targetagency = NULL;
+        newcept.awaitingconfirm = 0;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -518,6 +536,48 @@ collector_global_t *parse_global_config(char *configfile) {
 
 }
 
+static int mediator_parser(void *arg, yaml_document_t *doc,
+        yaml_node_t *key, yaml_node_t *value) {
+
+    mediator_state_t *state = (mediator_state_t *)arg;
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "listenport") == 0) {
+        state->listenport = strdup((char *) value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "listenaddr") == 0) {
+        state->listenaddr = strdup((char *) value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "provisionerport") == 0) {
+        state->provport = strdup((char *) value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "provisioneraddr") == 0) {
+        state->provaddr = strdup((char *) value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "mediatorid") == 0) {
+        state->mediatorid = strtoul((char *)value->data.scalar.value,
+                NULL, 10);
+        if (state->mediatorid == 0) {
+            logger(LOG_DAEMON, "OpenLI: 0 is not a valid value for the 'mediatorid' config option.");
+        }
+    }
+    return 0;
+
+}
+
 static int provisioning_parser(void *arg, yaml_document_t *doc,
         yaml_node_t *key, yaml_node_t *value) {
 
@@ -582,5 +642,9 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
 int parse_provisioning_config(char *configfile, provision_state_t *state) {
 
     return yaml_parser(configfile, state, provisioning_parser);
+}
+
+int parse_mediator_config(char *configfile, mediator_state_t *state) {
+    return yaml_parser(configfile, state, mediator_parser);
 }
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

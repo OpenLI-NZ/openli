@@ -29,6 +29,7 @@
 
 #include "collector.h"
 #include "provisioner.h"
+#include "mediator.h"
 #include <yaml.h>
 
 int parse_export_config(char *configfile, libtrace_list_t *exptargets);
@@ -37,6 +38,7 @@ collector_global_t *parse_global_config(char *configfile);
 void clear_global_config(collector_global_t *glob);
 
 int parse_provisioning_config(char *configfile, provision_state_t *state);
+int parse_mediator_config(char *configfile, mediator_state_t *state);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

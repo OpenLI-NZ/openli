@@ -1,4 +1,4 @@
-bin_PROGRAMS=openlicollector openliprovisioner
+bin_PROGRAMS=openlicollector openliprovisioner openlimediator
 
 openlicollector_SOURCES=collector.c configparser.c configparser.h collector.h \
                 logger.c logger.h collector_sync.c collector_sync.h \
@@ -20,5 +20,12 @@ openliprovisioner_LDADD = @ADD_LIBS@
 openliprovisioner_LDFLAGS=
 openliprovisioner_CFLAGS=
 
+openlimediator_SOURCES=mediator.c mediator.h byteswap.c byteswap.h \
+                configparser.c configparser.h util.c util.h agency.h \
+                logger.c logger.h netcomms.c netcomms.h export_buffer.c \
+                export_buffer.h
+openlimediator_LDADD = @ADD_LIBS@
+openlimediator_LDFLAGS=
+openlimediator_CFLAGS=
 
 

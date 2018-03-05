@@ -178,6 +178,8 @@ static openli_export_recv_t form_ipcc(collector_global_t *glob,
     msg.ipcontents = (uint8_t *)l3;
     msg.ipclen = rem;
     msg.destid = ipint->destid;
+    msg.header = construct_netcomm_protocol_header(msg.msglen,
+            OPENLI_PROTO_ETSI_CC, ipint->internalid, &(msg.hdrlen));
 
     exprecv.type = OPENLI_EXPORT_ETSIREC;
     exprecv.data.toexport = msg;

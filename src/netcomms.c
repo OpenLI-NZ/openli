@@ -35,13 +35,6 @@
 #include "logger.h"
 #include "byteswap.h"
 
-typedef struct ii_header {
-    uint32_t magic;
-    uint16_t bodylen;
-    uint16_t intercepttype;
-    uint64_t internalid;
-} ii_header_t;
-
 
 static inline void dump_buffer_contents(uint8_t *buf, uint16_t len) {
 
@@ -124,6 +117,41 @@ static inline void populate_header(ii_header_t *hdr,
     hdr->internalid = bswap_host_to_be64(intid);
 }
 
+/* Quick and dirty method for constructing a netcomm protocol header
+ * that can be used to push netcomm messages via sockets that are not
+ * wrapped in a net buffer structure (e.g. collector->mediator sessions
+ * which use the collector export API rather than net buffer, but will
+ * use net buffer on the mediator side for receiving and decoding).
+ */
+uint8_t *construct_netcomm_protocol_header(uint32_t contentlen,
+        uint16_t msgtype, uint64_t internalid, uint32_t *hdrlen) {
+
+    ii_header_t *newhdr = (ii_header_t *)malloc(sizeof(ii_header_t));
+
+    if (newhdr == NULL) {
+        logger(LOG_DAEMON,
+                "OOM while trying to create a netcomm protocol header.");
+        return NULL;
+    }
+
+    if (contentlen > 65535) {
+        logger(LOG_DAEMON,
+                "Content of size %u cannot fit in a single netcomm PDU.",
+                contentlen);
+        free(newhdr);
+        return NULL;
+    }
+
+    populate_header(newhdr, (openli_proto_msgtype_t)msgtype,
+            (uint16_t)contentlen, internalid);
+    *hdrlen = sizeof(ii_header_t);
+
+    /* NOTE: the caller must free the header when they are finished with it!
+     */
+    return (uint8_t *)newhdr;
+
+}
+
 static inline int push_tlv(net_buffer_t *nb, openli_proto_fieldtype_t type,
         uint8_t *value, uint16_t vallen) {
 
@@ -167,6 +195,79 @@ int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype)
 
     return push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
             sizeof(ii_header_t));
+}
+
+#define LIIDMAP_BODY_LEN(agency, liid) \
+    (strlen(agency) + strlen(liid) + (2 * 4))
+
+int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
+        char *liid) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+
+    totallen = LIIDMAP_BODY_LEN(agency, liid);
+    populate_header(&hdr, OPENLI_PROTO_MEDIATE_INTERCEPT, totallen, 0);
+
+    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LEAID, (uint8_t *)(agency),
+                strlen(agency)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID, (uint8_t *)(liid),
+                strlen(liid)) == -1) {
+        return -1;
+    }
+    return (int)totallen;
+}
+
+#define LEA_BODY_LEN(lea) \
+    (strlen(lea->agencyid) + strlen(lea->hi2_ipstr) + \
+    strlen(lea->hi2_portstr) + strlen(lea->hi3_ipstr) + \
+    strlen(lea->hi3_portstr) + (5 * 4))
+
+int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
+    ii_header_t hdr;
+    uint16_t totallen;
+
+    totallen = LEA_BODY_LEN(lea);
+    populate_header(&hdr, OPENLI_PROTO_ANNOUNCE_LEA, totallen, 0);
+    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LEAID, (uint8_t *)(lea->agencyid),
+                strlen(lea->agencyid)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_HI2IP, (uint8_t *)(lea->hi2_ipstr),
+                strlen(lea->hi2_ipstr)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_HI2PORT, (uint8_t *)(lea->hi2_portstr),
+                strlen(lea->hi2_portstr)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_HI3IP, (uint8_t *)(lea->hi3_ipstr),
+                strlen(lea->hi3_ipstr)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_HI3PORT, (uint8_t *)(lea->hi3_portstr),
+                strlen(lea->hi3_portstr)) == -1) {
+        return -1;
+    }
+    return (int)totallen;
+
 }
 
 #define IPINTERCEPT_BODY_LEN(ipint) \
@@ -288,6 +389,14 @@ int push_nomore_intercepts(net_buffer_t *nb) {
             sizeof(ii_header_t));
 }
 
+int push_nomore_mediators(net_buffer_t *nb) {
+    ii_header_t hdr;
+    populate_header(&hdr, OPENLI_PROTO_NOMORE_MEDIATORS, 0, 0);
+
+    return push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t));
+}
+
 int transmit_net_buffer(net_buffer_t *nb) {
     int ret;
 
@@ -358,6 +467,7 @@ static openli_proto_msgtype_t parse_received_message(net_buffer_t *nb,
 
     if (ntohl(hdr->magic) != OPENLI_PROTO_MAGIC) {
         logger(LOG_DAEMON, "OpenLI: bogus message received via net buffer.");
+        dump_buffer_contents(nb->actptr, NETBUF_CONTENT_SIZE(nb));
         assert(0);
         return OPENLI_PROTO_DISCONNECT;
     }
@@ -372,7 +482,7 @@ static openli_proto_msgtype_t parse_received_message(net_buffer_t *nb,
     *intid = bswap_be_to_host64(hdr->internalid);
     rettype = ntohs(hdr->intercepttype);
 
-    nb->actptr += (*msglen + sizeof(ii_header_t));
+    nb->actptr += ((*msglen) + sizeof(ii_header_t));
 
     return rettype;
 }
@@ -409,7 +519,7 @@ static int decode_tlv(uint8_t *start, uint8_t *end,
 #define DECODE_STRING_FIELD(target, valptr, vallen) \
     target = (char *)malloc(vallen + 1); \
     memcpy(target, valptr, vallen); \
-    target[vallen] = '\0';
+    (target)[vallen] = '\0';
 
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
         ipintercept_t *ipint) {
@@ -508,8 +618,79 @@ int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
     }
 
     return 0;
+}
 
+int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
 
+    uint8_t *msgend = msgbody + len;
+
+    lea->hi2_ipstr = NULL;
+    lea->hi2_portstr = NULL;
+    lea->hi3_ipstr = NULL;
+    lea->hi3_portstr = NULL;
+    lea->agencyid = 0;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_LEAID) {
+            DECODE_STRING_FIELD(lea->agencyid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_HI2IP) {
+            DECODE_STRING_FIELD(lea->hi2_ipstr, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_HI2PORT) {
+            DECODE_STRING_FIELD(lea->hi2_portstr, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_HI3IP) {
+            DECODE_STRING_FIELD(lea->hi3_ipstr, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_HI3PORT) {
+            DECODE_STRING_FIELD(lea->hi3_portstr, valptr, vallen);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_DAEMON,
+                "OpenLI: invalid field in received LEA announcement: %d.",
+                f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+
+    return 0;
+}
+
+int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
+        char **liid) {
+
+    uint8_t *msgend = msgbody + len;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_LIID) {
+            DECODE_STRING_FIELD(*liid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_LEAID) {
+            DECODE_STRING_FIELD(*agency, valptr, vallen);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_DAEMON,
+                    "OpenLI: invalid field in received LIID mapping: %d.",
+                    f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+
+    return 0;
 }
 
 openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,

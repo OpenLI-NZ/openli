@@ -27,6 +27,7 @@
 #ifndef OPENLI_NETCOMMS_H_
 #define OPENLI_NETCOMMS_H_
 
+#include "config.h"
 #include <inttypes.h>
 
 #define NETBUF_ALLOC_SIZE (4096)
@@ -40,8 +41,21 @@
 #define NETBUF_CONTENT_SIZE(nbuf) (nbuf->appendptr - nbuf->actptr)
 
 #include "intercept.h"
-#include "mediator.h"
 #include "agency.h"
+
+typedef struct ii_header {
+    uint32_t magic;
+    uint16_t bodylen;
+    uint16_t intercepttype;
+    uint64_t internalid;
+} PACKED ii_header_t;
+
+
+typedef struct openli_mediator {
+    uint32_t mediatorid;
+    char *ipstr;
+    char *portstr;
+} openli_mediator_t;
 
 typedef enum {
     NETBUF_RECV,
@@ -59,6 +73,9 @@ typedef enum {
     OPENLI_PROTO_COLLECTOR_AUTH,
     OPENLI_PROTO_MEDIATOR_AUTH,
     OPENLI_PROTO_NOMORE_INTERCEPTS,
+    OPENLI_PROTO_NOMORE_MEDIATORS,
+    OPENLI_PROTO_ETSI_CC,
+    OPENLI_PROTO_ETSI_IRI,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -79,20 +96,31 @@ typedef enum {
     OPENLI_PROTO_FIELD_AUTHCC,
     OPENLI_PROTO_FIELD_DELIVCC,
     OPENLI_PROTO_FIELD_INTERCEPTID,
+    OPENLI_PROTO_FIELD_LEAID,
+    OPENLI_PROTO_FIELD_HI2IP,
+    OPENLI_PROTO_FIELD_HI2PORT,
+    OPENLI_PROTO_FIELD_HI3IP,
+    OPENLI_PROTO_FIELD_HI3PORT,
 } openli_proto_fieldtype_t;
 
 
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd);
 void destroy_net_buffer(net_buffer_t *nb);
 
+uint8_t *construct_netcomm_protocol_header(uint32_t contentlen,
+        uint16_t msgtype, uint64_t internalid, uint32_t *hdrlen);
+
 int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med);
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, ipintercept_t *ipint);
-int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *ipint);
+int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
         char *agencyid);
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t
         authtype);
+int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
+        char *liid);
 int push_nomore_intercepts(net_buffer_t *nb);
+int push_nomore_mediators(net_buffer_t *nb);
 int transmit_net_buffer(net_buffer_t *nb);
 
 openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
@@ -101,6 +129,9 @@ int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
         ipintercept_t *ipint);
+int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea);
+int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
+        char **liid);
 
 #endif
 

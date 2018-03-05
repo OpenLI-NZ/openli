@@ -27,28 +27,29 @@
 #ifndef OPENLI_COLLECTOR_BUFFER_H_
 #define OPENLI_COLLECTOR_BUFFER_H_
 
-#include "collector_export.h"
-
 typedef struct export_buffer {
     uint8_t *bufhead;
     uint8_t *buftail;
     uint64_t alloced;
 
     uint32_t partialfront;
+    uint8_t hasnetcomm;
 } export_buffer_t;
 
 typedef struct openli_exp_msg {
 
     uint32_t destid;
+    uint32_t hdrlen;
     uint32_t msglen;
     uint32_t ipclen;
+    uint8_t *header;
     uint8_t *msgbody;
     uint8_t *ipcontents;
 
 } openli_exportmsg_t;
 
 
-void init_export_buffer(export_buffer_t *buf);
+void init_export_buffer(export_buffer_t *buf, uint8_t hasnetcomm);
 void release_export_buffer(export_buffer_t *buf);
 uint64_t get_buffered_amount(export_buffer_t *buf);
 uint64_t append_message_to_buffer(export_buffer_t *buf,

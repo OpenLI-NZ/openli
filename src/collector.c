@@ -298,18 +298,10 @@ static void *start_export_thread(void *params) {
     collector_export_t *exp = init_exporter(glob);
     int connected = 0;
 
-    if (parse_export_config(glob->configfile, exp->dests) == -1) {
-        logger(LOG_DAEMON, "OpenLI: Warning - failed to parse recipient config");
-    }
-
     if (exp == NULL) {
         logger(LOG_DAEMON, "OpenLI: exporting thread is not functional!");
         collector_halt = 1;
         pthread_exit(NULL);
-    }
-
-    if (libtrace_list_get_size(exp->dests) == 0) {
-        logger(LOG_DAEMON, "OpenLI: warning, no valid targets for record export present in config.");
     }
 
     while (collector_halt == 0) {

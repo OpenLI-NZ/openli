@@ -31,13 +31,11 @@
 
 typedef struct liagency {
 
-    char *ipstr;
-    char *portstr;
+    char *hi2_ipstr;
+    char *hi2_portstr;
+    char *hi3_ipstr;
+    char *hi3_portstr;
     char *agencyid;
-
-    /* XXX list may not be the best structure in this case */
-    libtrace_list_t *knownliids;
-
 } liagency_t;
 
 #endif
