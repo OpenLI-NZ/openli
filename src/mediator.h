@@ -117,6 +117,9 @@ typedef struct med_state {
     char *provaddr;
     char *provport;
 
+    uint32_t keepalivefreq;
+    uint32_t keepalivewait;
+
     libtrace_list_t *collectors;
     libtrace_list_t *agencies;
 

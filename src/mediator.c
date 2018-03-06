@@ -352,6 +352,8 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->listenport = NULL;
     state->provaddr = NULL;
     state->provport = NULL;
+    state->keepalivefreq = 120;
+    state->keepalivewait = 60;
 
     state->collectors = libtrace_list_init(sizeof(mediator_collector_t));
     state->agencies = libtrace_list_init(sizeof(mediator_agency_t));
@@ -457,7 +459,8 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
         logger(LOG_DAEMON, "OpenLI: queued keep alive %ld for %s:%s HI%d",
                 ms->lastkaseq, ms->parent->ipstr, ms->parent->portstr,
                 ms->parent->handover_type);
-        if (start_keepalive_timer(state, ms->parent->aliverespev, 5) == -1) {
+        if (start_keepalive_timer(state, ms->parent->aliverespev,
+                state->keepalivewait) == -1) {
             logger(LOG_DAEMON,
                     "OpenLI: unable to start keepalive response timer.");
             return -1;
@@ -467,7 +470,7 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
     }
 
     halt_keepalive_timer(state, mev);
-    if (start_keepalive_timer(state, mev, 10) == -1) {
+    if (start_keepalive_timer(state, mev, state->keepalivefreq) == -1) {
         logger(LOG_DAEMON,
                 "OpenLI: unable to reset keepalive timer for  %s:%s HI%d.",
                 ms->parent->ipstr, ms->parent->portstr,
@@ -537,7 +540,7 @@ static int connect_handover(mediator_state_t *state, handover_t *ho) {
     if (ho->aliveev->fd != -1) {
         halt_keepalive_timer(state, ho->aliveev);
     }
-    if (start_keepalive_timer(state, ho->aliveev, 10) == -1) {
+    if (start_keepalive_timer(state, ho->aliveev, state->keepalivefreq) == -1) {
         return 1;
     }
     agstate->katimer_fd = ho->aliveev->fd;
@@ -1004,7 +1007,8 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     /* Reset the keep alive timer */
     halt_keepalive_timer(state, mas->parent->aliveev);
-    if (start_keepalive_timer(state, mas->parent->aliveev, 10) == -1) {
+    if (start_keepalive_timer(state, mas->parent->aliveev,
+                state->keepalivefreq) == -1) {
         logger(LOG_DAEMON, "OpenLI: unable to reset keepalive timer for handover %s:%s HI%d.",
                 ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
         return -1;
