@@ -28,6 +28,8 @@
 #define OPENLI_MEDIATOR_H_
 
 #include <libwandder.h>
+#include <libwandder_etsili.h>
+#include <libtrace/simple_circular_buffer.h>
 #include <uthash.h>
 #include "netcomms.h"
 #include "export_buffer.h"
@@ -60,11 +62,12 @@ typedef struct handover {
     int handover_type;
     med_epoll_ev_t *outev;
     med_epoll_ev_t *aliveev;
+    med_epoll_ev_t *aliverespev;
 } handover_t;
 
 typedef struct med_agency_state {
     export_buffer_t buf;
-    net_buffer_t *incoming;
+    libtrace_scb_t *incoming;
     int outenabled;
     int failmsg;
     int main_fd;
@@ -72,9 +75,9 @@ typedef struct med_agency_state {
     int karesptimer_fd;
     uint8_t *pending_ka;
     uint32_t pending_ka_len;
-    uint64_t lastkaseq;
+    int64_t lastkaseq;
     wandder_encoder_t *encoder;
-
+    wandder_etsispec_t *decoder;
     handover_t *parent;
 } med_agency_state_t;
 
