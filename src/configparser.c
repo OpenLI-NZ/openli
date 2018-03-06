@@ -572,8 +572,33 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
                 NULL, 10);
         if (state->mediatorid == 0) {
             logger(LOG_DAEMON, "OpenLI: 0 is not a valid value for the 'mediatorid' config option.");
+            return -1;
         }
     }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "keepalivefreq") == 0) {
+        state->keepalivefreq = strtoul((char *)value->data.scalar.value,
+                NULL, 10);
+        if (state->keepalivefreq == 0) {
+            logger(LOG_DAEMON, "OpenLI: 0 is not a valid value for the 'keepalivefreq' config option.");
+            return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "keepalivewait") == 0) {
+        state->keepalivewait = strtoul((char *)value->data.scalar.value,
+                NULL, 10);
+        if (state->keepalivewait == 0) {
+            logger(LOG_DAEMON, "OpenLI: 0 is not a valid value for the 'keepalivewait' config option.");
+            return -1;
+        }
+    }
+
+
     return 0;
 
 }
