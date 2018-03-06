@@ -25,10 +25,9 @@
  */
 #include <sys/time.h>
 #include <inttypes.h>
+#include <libwandder_etsili.h>
 #include "etsili_core.h"
 
-
-uint8_t etsi_lipsdomainid[9] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x05, 0x01, 0x11};
 uint8_t etsi_ipccoid[4] = {0x05, 0x03, 0x0a, 0x02};
 
 static inline void encode_tri_body(wandder_encoder_t *encoder) {
@@ -83,8 +82,9 @@ static inline void encode_etsili_pshdr(wandder_encoder_t *encoder,
 
     ENC_CSEQUENCE(encoder, 1);
     wandder_encode_next(encoder, WANDDER_TAG_OID,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, etsi_lipsdomainid,
-            sizeof(etsi_lipsdomainid));
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0,
+            (uint8_t *)WANDDER_ETSILI_PSDOMAINID,
+            sizeof(WANDDER_ETSILI_PSDOMAINID));
     wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, hdrdata->liid,
             hdrdata->liid_len);
@@ -151,7 +151,6 @@ uint8_t *encode_etsi_keepalive(uint32_t *enclen, wandder_encoder_t *encoder,
 
     return wandder_encode_finish(encoder, enclen);
 }
-
 
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
