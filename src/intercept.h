@@ -87,6 +87,18 @@ typedef struct voipintercept {
     UT_hash_handle hh;
 } voipintercept_t;
 
+typedef struct rtpstreaminf {
+    char *liid;
+    char *authcc;
+    char *delivcc;
+    uint32_t destid;
+    char *targetagency;
+    uint32_t cin;
+    int ai_family;
+    struct sockaddr_storage *addr;
+    uint16_t port;
+} rtpstreaminf_t;
+
 typedef struct voipcin {
 
     uint32_t cin;
@@ -95,28 +107,9 @@ typedef struct voipcin {
     uint32_t version;
     uint8_t ended;
 
+    libtrace_list_t *mediastreams;
+
 } voipcin_t;
-
-typedef struct voipcin_intercept {
-
-    uint64_t internalid;
-    voipcin_t comm;
-
-    char *liid;
-    char *authcc;
-    char *delivcc;
-
-    int liid_len;
-    int authcc_len;
-    int delivcc_len;
-    uint32_t nextseqno;
-
-    uint32_t destid;
-    char *targetagency;
-    uint8_t active;
-    uint8_t awaitingconfirm;
-
-} voipcinint_t;
 
 void free_all_ipintercepts(libtrace_list_t *interceptlist);
 void free_all_voipintercepts(voipintercept_t *vintercepts);

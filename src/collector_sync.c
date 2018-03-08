@@ -152,21 +152,17 @@ static inline void push_single_intercept(libtrace_message_queue_t *q,
     libtrace_message_queue_put(q, (void *)(&msg));
 }
 
-static inline void push_single_voipintercept(libtrace_message_queue_t *q,
-        voipintercept_t *orig, voipcin_t *vcin) {
+static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
+        rtpstreaminf_t *orig) {
 
-    voipcinint_t *copy;
+    rtpstreaminf_t *copy;
     openli_pushed_t msg;
 
-    copy = (voipcinint_t *)malloc(sizeof(voipcinint_t));
+    copy = (rtpstreaminf_t *)malloc(sizeof(rtpstreaminf_t));
 
-    copy->internalid = orig->internalid;
     copy->liid = strdup(orig->liid);
-    copy->liid_len = strlen(copy->liid);
     copy->authcc = strdup(orig->authcc);
-    copy->authcc_len = strlen(copy->authcc);
     copy->delivcc = strdup(orig->delivcc);
-    copy->delivcc_len = strlen(copy->delivcc);
     copy->destid = orig->destid;
 
     if (orig->targetagency) {
@@ -175,18 +171,15 @@ static inline void push_single_voipintercept(libtrace_message_queue_t *q,
         copy->targetagency = NULL;
     }
 
-    copy->active = 1;
-    copy->nextseqno = 0;
-    copy->awaitingconfirm = 0;
+    copy->cin = orig->cin;
+    copy->ai_family = orig->ai_family;
+    copy->addr = (struct sockaddr_storage *)malloc(
+            sizeof(struct sockaddr_storage));
+    memcpy(copy->addr, orig->addr, sizeof(struct sockaddr_storage));
+    copy->port = orig->port;
 
-    copy->comm.cin = vcin->cin;
-    copy->comm.callid = strdup(vcin->callid);
-    copy->comm.sessionid = vcin->sessionid;
-    copy->comm.version = vcin->version;
-    copy->comm.ended = 0;
-
-    msg.type = OPENLI_PUSH_VOIPINTERCEPT;
-    msg.data.voipint = copy;
+    msg.type = OPENLI_PUSH_IPMMINTERCEPT;
+    msg.data.ipmmint = copy;
 
     libtrace_message_queue_put(q, (void *)(&msg));
 }
@@ -257,13 +250,18 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
         if (v->awaitingconfirm && v->active) {
             v->active = 0;
 
+            if (v->active_cins == NULL ||
+                    libtrace_list_get_size(v->active_cins) == 0) {
+                continue;
+            }
+
             for (i = 0; i < sync->glob->registered_syncqs; i++) {
                 openli_pushed_t pmsg;
 
                 /* strdup because we might end up freeing this intercept
                  * shortly.
                  */
-                pmsg.type = OPENLI_PUSH_HALT_VOIPINTERCEPT;
+                pmsg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
                 pmsg.data.interceptid.liid = strdup(v->liid);
                 pmsg.data.interceptid.authcc = strdup(v->authcc);
                 libtrace_message_queue_put(sync->glob->syncsendqs[i], &pmsg);
@@ -329,6 +327,37 @@ static void temporary_map_user_to_address(ipintercept_t *cept) {
     freeaddrinfo(res);
 }
 
+static void push_all_active_voipstreams(libtrace_message_queue_t *q,
+        voipintercept_t *vint) {
+
+    libtrace_list_node_t *n;
+
+    if (vint->active_cins == NULL) {
+        return;
+    }
+
+    n = vint->active_cins->head;
+    while (n) {
+        libtrace_list_node_t *ms;
+        voipcin_t *cin = (voipcin_t *)(n->data);
+        if (!cin || cin->ended || cin->callid == NULL) {
+            n = n->next;
+            continue;
+        }
+
+        ms = cin->mediastreams->head;
+
+        while (ms) {
+            rtpstreaminf_t *rtp = (rtpstreaminf_t *)(ms->data);
+
+            push_single_voipstreamintercept(q, rtp);
+            ms = ms->next;
+        }
+        n = n->next;
+    }
+
+}
+
 static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
@@ -364,20 +393,21 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
             vint->liid, vint->sipuri);
     /* TODO look up any CINs that we already have for this SIP URI. */
 
+    /* XXX do we need to do this? can we just worry about calls that
+     * start from now onwards, rather than having to keep track of every
+     * ongoing call just in case we get an intercept request in the middle
+     * of it?
+     */
 
-    /* Forward all active CINs to our collector threads */
-    if (vint->active_cins != NULL) {
-        libtrace_list_node_t *n = vint->active_cins->head;
-        while (n) {
-            voipcin_t *cin = (voipcin_t *)(n->data);
-            if (cin != NULL && cin->ended == 0) {
-                for (i = 0; i < sync->glob->registered_syncqs; i++) {
-                    push_single_voipintercept(sync->glob->syncsendqs[i],
-                            vint, cin);
-                }
-            }
-            n = n->next;
-        }
+    if (vint->active_cins == NULL) {
+        return 0;
+    }
+
+    for (i = 0; i < sync->glob->registered_syncqs; i++) {
+
+        /* Forward all active CINs to our collector threads */
+        push_all_active_voipstreams(sync->glob->syncsendqs[i], vint);
+
     }
 }
 
@@ -416,7 +446,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             x->active = 1;
             /* our collector threads should already know about this intercept?
              */
-            return;
+            return 0;
         }
 
         n = n->next;
@@ -610,28 +640,6 @@ static inline void disconnect_provisioner(collector_sync_t *sync) {
 
 }
 
-static void push_all_active_voipintercepts(voipintercept_t *vints,
-        libtrace_message_queue_t *q) {
-
-    voipintercept_t *v;
-    libtrace_list_node_t *n;
-
-    for (v = vints; v != NULL; v = v->hh.next) {
-        if (v->active_cins == NULL) {
-            continue;
-        }
-        n = v->active_cins->head;
-        while (n) {
-            voipcin_t *cin = (voipcin_t *)(n->data);
-            if (cin != NULL && cin->ended == 0) {
-                push_single_voipintercept(q, v, cin);
-            }
-            n = n->next;
-        }
-
-    }
-}
-
 static void push_all_active_intercepts(libtrace_list_t *intlist,
         libtrace_message_queue_t *q) {
 
@@ -712,9 +720,12 @@ int sync_thread_main(collector_sync_t *sync) {
 
         /* If a hello from a thread, push all active intercepts back */
         if (recvd.type == OPENLI_UPDATE_HELLO) {
+            voipintercept_t *v;
+
             push_all_active_intercepts(sync->ipintercepts, recvd.data.replyq);
-            push_all_active_voipintercepts(sync->voipintercepts,
-                    recvd.data.replyq);
+            for (v = sync->voipintercepts; v != NULL; v = v->hh.next) {
+                push_all_active_voipstreams(recvd.data.replyq, v);
+            }
         }
 
 
