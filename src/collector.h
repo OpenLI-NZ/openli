@@ -38,7 +38,9 @@
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
-    OPENLI_PUSH_HALT_IPINTERCEPT = 2
+    OPENLI_PUSH_HALT_IPINTERCEPT = 2,
+    OPENLI_PUSH_VOIPINTERCEPT = 3,
+    OPENLI_PUSH_HALT_VOIPINTERCEPT = 4
 };
 
 enum {
@@ -62,6 +64,7 @@ typedef struct openli_ii_msg {
     uint8_t type;
     union {
         ipintercept_t *ipint;
+        voipcinint_t *voipint;
         struct {
             char *liid;
             char *authcc;

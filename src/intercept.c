@@ -26,7 +26,7 @@
 
 #include "intercept.h"
 
-void free_all_intercepts(libtrace_list_t *interceptlist) {
+void free_all_ipintercepts(libtrace_list_t *interceptlist) {
 
     libtrace_list_node_t *n;
     ipintercept_t *cept;
@@ -61,6 +61,47 @@ void free_all_intercepts(libtrace_list_t *interceptlist) {
     }
 
     libtrace_list_deinit(interceptlist);
+}
+
+static void free_voip_cins(libtrace_list_t *list) {
+
+    libtrace_list_node_t *n;
+
+    n = list->head;
+    while (n) {
+        /* TODO free all individual CIN contents inside each list item. */
+        n = n->next;
+    }
+    libtrace_list_deinit(list);
+
+}
+
+void free_all_voipintercepts(voipintercept_t *vints) {
+
+    voipintercept_t *v, *tmp;
+    HASH_ITER(hh, vints, v, tmp) {
+        if (v->liid) {
+            free(v->liid);
+        }
+        if (v->authcc) {
+            free(v->authcc);
+        }
+        if (v->delivcc) {
+            free(v->delivcc);
+        }
+        if (v->sipuri) {
+            free(v->sipuri);
+        }
+        if (v->targetagency) {
+            free(v->targetagency);
+        }
+
+        if (v->active_cins) {
+            free_voip_cins(v->active_cins);
+        }
+        free(v);
+    }
+
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

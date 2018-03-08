@@ -31,7 +31,11 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <libtrace/linked_list.h>
+#include <uthash.h>
 
+/* TODO if hashing works for voip intercepts, add it for IP intercepts
+ * too.
+ */
 typedef struct ipintercept {
     uint64_t internalid;
     char *liid;
@@ -48,14 +52,74 @@ typedef struct ipintercept {
     struct sockaddr_storage *ipaddr;
     char *username;
 
-    uint64_t nextseqno;
+    uint32_t nextseqno;
     uint32_t destid;
     char *targetagency;
     uint8_t active;
     uint8_t awaitingconfirm;
 } ipintercept_t;
 
-void free_all_intercepts(libtrace_list_t *interceptlist);
+
+/* Two types of VOIP intercept structure -- one for the target which stores
+ * all CINs for that target, and another for each target/CIN combination
+ * which is used by the collector threads to maintain per-CIN state.
+ */
+typedef struct voipintercept {
+
+    uint64_t internalid;
+    char *liid;
+    char *authcc;
+    char *delivcc;
+    char *sipuri;
+
+    int liid_len;
+    int authcc_len;
+    int delivcc_len;
+    int sipuri_len;
+
+    uint32_t destid;
+    char *targetagency;
+    uint8_t active;
+    uint8_t awaitingconfirm;
+
+    libtrace_list_t *active_cins;
+
+    UT_hash_handle hh;
+} voipintercept_t;
+
+typedef struct voipcin {
+
+    uint32_t cin;
+    char *callid;
+    uint32_t sessionid;
+    uint32_t version;
+    uint8_t ended;
+
+} voipcin_t;
+
+typedef struct voipcin_intercept {
+
+    uint64_t internalid;
+    voipcin_t comm;
+
+    char *liid;
+    char *authcc;
+    char *delivcc;
+
+    int liid_len;
+    int authcc_len;
+    int delivcc_len;
+    uint32_t nextseqno;
+
+    uint32_t destid;
+    char *targetagency;
+    uint8_t active;
+    uint8_t awaitingconfirm;
+
+} voipcinint_t;
+
+void free_all_ipintercepts(libtrace_list_t *interceptlist);
+void free_all_voipintercepts(voipintercept_t *vintercepts);
 
 #endif
 

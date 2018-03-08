@@ -80,6 +80,8 @@ typedef struct prov_state {
     libtrace_list_t *collectors;
     libtrace_list_t *leas;
 
+    voipintercept_t *voipintercepts;
+
     prov_epoll_ev_t *clientfd;
     prov_epoll_ev_t *updatefd;
     prov_epoll_ev_t *mediatorfd;

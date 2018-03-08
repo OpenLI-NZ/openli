@@ -129,11 +129,13 @@ static int map_intercepts_to_leas(provision_state_t *state) {
     int failed = 0;
     libtrace_list_node_t *intn;
     ipintercept_t *ipint;
+    voipintercept_t *vint;
+    liid_hash_t *h;
 
+    /* Do IP Intercepts */
     intn = state->ipintercepts->head;
 
     while (intn) {
-        liid_hash_t *h;
         ipint = (ipintercept_t *)(intn->data);
         intn = intn->next;
 
@@ -145,6 +147,16 @@ static int map_intercepts_to_leas(provision_state_t *state) {
         HASH_ADD_STR(state->liid_map, agency, h);
     }
 
+    /* Now do the VOIP intercepts */
+    for (vint = state->voipintercepts; vint != NULL; vint = vint->hh.next) {
+        h = (liid_hash_t *)malloc(sizeof(liid_hash_t));
+        /* TODO check if targetagency is legit? */
+        h->agency = vint->targetagency;
+        h->liid = vint->liid;
+        HASH_ADD_STR(state->liid_map, agency, h);
+    }
+
+    /* Sort the final mapping nicely */
     HASH_SORT(state->liid_map, liid_hash_sort);
 
     return failed;
@@ -176,6 +188,7 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->mediators = libtrace_list_init(sizeof(prov_mediator_t));
     state->collectors = libtrace_list_init(sizeof(prov_collector_t));
     state->leas = libtrace_list_init(sizeof(liagency_t));
+    state->voipintercepts = NULL;
 
     state->dropped_collectors = 0;
     state->dropped_mediators = 0;
@@ -421,7 +434,8 @@ static void clear_prov_state(provision_state_t *state) {
         free(h);
     }
 
-    free_all_intercepts(state->ipintercepts);
+    free_all_ipintercepts(state->ipintercepts);
+    free_all_voipintercepts(state->voipintercepts);
     stop_all_collectors(state->collectors);
     free_all_mediators(state->mediators);
     free_all_leas(state->leas);
@@ -499,6 +513,26 @@ static int push_all_mediators(libtrace_list_t *mediators, net_buffer_t *nb) {
     return 0;
 }
 
+static int push_all_voipintercepts(voipintercept_t *voipintercepts,
+        net_buffer_t *nb) {
+
+    voipintercept_t *v;
+
+    for (v = voipintercepts; v != NULL; v = v->hh.next) {
+        if (v->active == 0) {
+            continue;
+        }
+    
+        if (push_voipintercept_onto_net_buffer(nb, v) < 0) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: error pushing VOIP intercept %s onto buffer for writing to collector.",
+                    v->liid);
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static int push_all_ipintercepts(libtrace_list_t *intercepts,
         net_buffer_t *nb) {
 
@@ -521,11 +555,6 @@ static int push_all_ipintercepts(libtrace_list_t *intercepts,
         }
         n = n->next;
     }
-    if (push_nomore_intercepts(nb) < 0) {
-        logger(LOG_DAEMON,
-                "OpenLI provisioner: error pushing end of intercepts onto buffer for writing to collector.");
-        return -1;
-    }
 
     return 0;
 }
@@ -538,7 +567,8 @@ static int respond_collector_auth(provision_state_t *state,
      */
 
     if (libtrace_list_get_size(state->mediators) +
-            libtrace_list_get_size(state->ipintercepts) == 0) {
+            libtrace_list_get_size(state->ipintercepts) +
+            HASH_COUNT(state->voipintercepts) == 0) {
         return 0;
     }
 
@@ -553,6 +583,19 @@ static int respond_collector_auth(provision_state_t *state,
         logger(LOG_DAEMON,
                 "OpenLI: unable to queue IP intercepts to be sent to new collector on fd %d",
                 pev->fd);
+        return -1;
+    }
+
+    if (push_all_voipintercepts(state->voipintercepts, outgoing) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: unable to queue VOIP IP intercepts to be sent to new collector on fd %d",
+                pev->fd);
+        return -1;
+    }
+
+    if (push_nomore_intercepts(outgoing) < 0) {
+        logger(LOG_DAEMON,
+                "OpenLI provisioner: error pushing end of intercepts onto buffer for writing to collector.");
         return -1;
     }
 

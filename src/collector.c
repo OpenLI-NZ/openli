@@ -156,7 +156,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_message_queue_destroy(&(loc->fromsyncq));
     libtrace_message_queue_destroy(&(loc->exportq));
 
-    free_all_intercepts(loc->activeipintercepts);
+    free_all_ipintercepts(loc->activeipintercepts);
 
     if (loc->encoder) {
         free_wandder_encoder(loc->encoder);

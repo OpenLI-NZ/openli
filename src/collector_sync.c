@@ -49,6 +49,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
     sync->glob = glob;
     sync->ipintercepts = libtrace_list_init(sizeof(ipintercept_t));
+    sync->voipintercepts = NULL;
     sync->instruct_fd = -1;
     sync->instruct_fail = 0;
     sync->ii_ev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
@@ -80,7 +81,8 @@ void clean_sync_data(collector_sync_t *sync) {
         free(sync->glob->syncepollevs[i]);
     }
 
-    free_all_intercepts(sync->ipintercepts);
+    free_all_ipintercepts(sync->ipintercepts);
+    free_all_voipintercepts(sync->voipintercepts);
 	libtrace_message_queue_destroy(&(sync->exportq));
 
     if (sync->outgoing) {
@@ -150,6 +152,45 @@ static inline void push_single_intercept(libtrace_message_queue_t *q,
     libtrace_message_queue_put(q, (void *)(&msg));
 }
 
+static inline void push_single_voipintercept(libtrace_message_queue_t *q,
+        voipintercept_t *orig, voipcin_t *vcin) {
+
+    voipcinint_t *copy;
+    openli_pushed_t msg;
+
+    copy = (voipcinint_t *)malloc(sizeof(voipcinint_t));
+
+    copy->internalid = orig->internalid;
+    copy->liid = strdup(orig->liid);
+    copy->liid_len = strlen(copy->liid);
+    copy->authcc = strdup(orig->authcc);
+    copy->authcc_len = strlen(copy->authcc);
+    copy->delivcc = strdup(orig->delivcc);
+    copy->delivcc_len = strlen(copy->delivcc);
+    copy->destid = orig->destid;
+
+    if (orig->targetagency) {
+        copy->targetagency = strdup(orig->targetagency);
+    } else {
+        copy->targetagency = NULL;
+    }
+
+    copy->active = 1;
+    copy->nextseqno = 0;
+    copy->awaitingconfirm = 0;
+
+    copy->comm.cin = vcin->cin;
+    copy->comm.callid = strdup(vcin->callid);
+    copy->comm.sessionid = vcin->sessionid;
+    copy->comm.version = vcin->version;
+    copy->comm.ended = 0;
+
+    msg.type = OPENLI_PUSH_VOIPINTERCEPT;
+    msg.data.voipint = copy;
+
+    libtrace_message_queue_put(q, (void *)(&msg));
+}
+
 static int send_to_provisioner(collector_sync_t *sync) {
 
     int ret;
@@ -182,6 +223,7 @@ static int send_to_provisioner(collector_sync_t *sync) {
 
 static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
     libtrace_list_node_t *n;
+    voipintercept_t *v;
     int i;
 
     n = sync->ipintercepts->head;
@@ -209,6 +251,24 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
             }
         }
         n = n->next;
+    }
+
+    for (v = sync->voipintercepts; v != NULL; v = v->hh.next) {
+        if (v->awaitingconfirm && v->active) {
+            v->active = 0;
+
+            for (i = 0; i < sync->glob->registered_syncqs; i++) {
+                openli_pushed_t pmsg;
+
+                /* strdup because we might end up freeing this intercept
+                 * shortly.
+                 */
+                pmsg.type = OPENLI_PUSH_HALT_VOIPINTERCEPT;
+                pmsg.data.interceptid.liid = strdup(v->liid);
+                pmsg.data.interceptid.authcc = strdup(v->authcc);
+                libtrace_message_queue_put(sync->glob->syncsendqs[i], &pmsg);
+            }
+        }
     }
 }
 
@@ -269,6 +329,58 @@ static void temporary_map_user_to_address(ipintercept_t *cept) {
     freeaddrinfo(res);
 }
 
+static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
+        uint16_t msglen) {
+
+    voipintercept_t *vint, toadd;
+    int i;
+
+    if (decode_voipintercept_start(intmsg, msglen, &toadd) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: received invalid VOIP intercept from provisioner.");
+        return -1;
+    }
+
+    HASH_FIND_STR(sync->voipintercepts, toadd.liid, vint);
+    if (vint) {
+        /* Duplicate LIID */
+        if (strcmp(toadd.sipuri, vint->sipuri) != 0) {
+            logger(LOG_DAEMON,
+                    "OpenLI: duplicate VOIP intercept ID %s seen, but targets are different (was %s, now %s).",
+                    vint->liid, vint->sipuri, toadd.sipuri);
+            return -1;
+        }
+        vint->internalid = toadd.internalid;
+        vint->awaitingconfirm = 0;
+        vint->active = 1;
+        return 0;
+    }
+
+    vint = (voipintercept_t *)malloc(sizeof(voipintercept_t));
+    memcpy(vint, &toadd, sizeof(voipintercept_t));
+    HASH_ADD_KEYPTR(hh, sync->voipintercepts, vint->liid, vint->liid_len, vint);
+
+    fprintf(stderr, "received VOIP intercept %lu %s %s\n", vint->internalid,
+            vint->liid, vint->sipuri);
+    /* TODO look up any CINs that we already have for this SIP URI. */
+
+
+    /* Forward all active CINs to our collector threads */
+    if (vint->active_cins != NULL) {
+        libtrace_list_node_t *n = vint->active_cins->head;
+        while (n) {
+            voipcin_t *cin = (voipcin_t *)(n->data);
+            if (cin != NULL && cin->ended == 0) {
+                for (i = 0; i < sync->glob->registered_syncqs; i++) {
+                    push_single_voipintercept(sync->glob->syncsendqs[i],
+                            vint, cin);
+                }
+            }
+            n = n->next;
+        }
+    }
+}
+
 static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
@@ -296,13 +408,15 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             if (strcmp(x->username, cept.username) != 0) {
                 logger(LOG_DAEMON,
                         "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
-                        x->username, cept.username);
+                        x->liid, x->username, cept.username);
                 return -1;
             }
             x->internalid = cept.internalid;
             x->awaitingconfirm = 0;
             x->active = 1;
-            break;
+            /* our collector threads should already know about this intercept?
+             */
+            return;
         }
 
         n = n->next;
@@ -319,6 +433,8 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
      * Please remove once proper RADIUS support is added.
      */
 
+    fprintf(stderr, "received IP intercept %lu %s %s\n", cept.internalid,
+            cept.liid, cept.username);
     if (n == NULL) {
         temporary_map_user_to_address(&cept);
 
@@ -359,6 +475,12 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 break;
             case OPENLI_PROTO_START_IPINTERCEPT:
                 ret = new_ipintercept(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_START_VOIPINTERCEPT:
+                ret = new_voipintercept(sync, provmsg, msglen);
                 if (ret == -1) {
                     return -1;
                 }
@@ -444,6 +566,14 @@ static inline void touch_all_intercepts(libtrace_list_t *intlist) {
     }
 }
 
+static inline void touch_all_voipintercepts(voipintercept_t *vints) {
+    voipintercept_t *v;
+
+    for (v = vints; v != NULL; v = v->hh.next) {
+        v->awaitingconfirm = 1;
+    }
+}
+
 static inline void disconnect_provisioner(collector_sync_t *sync) {
 
     struct epoll_event ev;
@@ -468,6 +598,7 @@ static inline void disconnect_provisioner(collector_sync_t *sync) {
      * as active when we reconnect to the provisioner.
      */
     touch_all_intercepts(sync->ipintercepts);
+    touch_all_voipintercepts(sync->voipintercepts);
 
     /* Same with mediators -- keep exporting to them, but flag them to be
      * disconnected if they are not announced after we reconnect. */
@@ -479,6 +610,27 @@ static inline void disconnect_provisioner(collector_sync_t *sync) {
 
 }
 
+static void push_all_active_voipintercepts(voipintercept_t *vints,
+        libtrace_message_queue_t *q) {
+
+    voipintercept_t *v;
+    libtrace_list_node_t *n;
+
+    for (v = vints; v != NULL; v = v->hh.next) {
+        if (v->active_cins == NULL) {
+            continue;
+        }
+        n = v->active_cins->head;
+        while (n) {
+            voipcin_t *cin = (voipcin_t *)(n->data);
+            if (cin != NULL && cin->ended == 0) {
+                push_single_voipintercept(q, v, cin);
+            }
+            n = n->next;
+        }
+
+    }
+}
 
 static void push_all_active_intercepts(libtrace_list_t *intlist,
         libtrace_message_queue_t *q) {
@@ -561,6 +713,8 @@ int sync_thread_main(collector_sync_t *sync) {
         /* If a hello from a thread, push all active intercepts back */
         if (recvd.type == OPENLI_UPDATE_HELLO) {
             push_all_active_intercepts(sync->ipintercepts, recvd.data.replyq);
+            push_all_active_voipintercepts(sync->voipintercepts,
+                    recvd.data.replyq);
         }
 
 

@@ -38,6 +38,8 @@
 #include "mediator.h"
 #include "agency.h"
 
+uint64_t nextid = 0;
+
 void clear_global_config(collector_global_t *glob) {
         int i;
 
@@ -230,12 +232,113 @@ static int parse_agency_list(libtrace_list_t *aglist, yaml_document_t *doc,
     return 0;
 }
 
+static int parse_voipintercept_list(voipintercept_t **voipints,
+        yaml_document_t *doc, yaml_node_t *inputs) {
+
+    yaml_node_item_t *item;
+    int i;
+
+    for (item = inputs->data.sequence.items.start;
+            item != inputs->data.sequence.items.top; item ++) {
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+        voipintercept_t *newcept;
+        yaml_node_pair_t *pair;
+
+        /* Each sequence item is a new intercept */
+        newcept = (voipintercept_t *)malloc(sizeof(voipintercept_t));
+        newcept->internalid = nextid;
+        nextid ++;
+
+        newcept->liid = NULL;
+        newcept->authcc = NULL;
+        newcept->delivcc = NULL;
+        newcept->active_cins = NULL;
+        newcept->sipuri = NULL;
+        newcept->active = 1;
+        newcept->destid = 0;
+        newcept->targetagency = NULL;
+        newcept->awaitingconfirm = 0;
+
+
+        /* Mappings describe the parameters for each intercept */
+        for (pair = node->data.mapping.pairs.start;
+                pair < node->data.mapping.pairs.top; pair ++) {
+            yaml_node_t *key, *value;
+
+            key = yaml_document_get_node(doc, pair->key);
+            value = yaml_document_get_node(doc, pair->value);
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "liid") == 0 &&
+                    newcept->liid == NULL) {
+                newcept->liid = strdup((char *)value->data.scalar.value);
+                newcept->liid_len = strlen(newcept->liid);
+            }
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                        "authcountrycode") == 0 &&
+                    newcept->authcc == NULL) {
+                newcept->authcc = strdup((char *)value->data.scalar.value);
+                newcept->authcc_len = strlen(newcept->authcc);
+            }
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                        "deliverycountrycode") == 0 &&
+                    newcept->delivcc == NULL) {
+                newcept->delivcc = strdup((char *)value->data.scalar.value);
+                newcept->delivcc_len = strlen(newcept->delivcc);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "sipuri") == 0 &&
+                    newcept->sipuri == NULL) {
+                newcept->sipuri = strdup((char *)value->data.scalar.value);
+                newcept->sipuri_len = strlen(newcept->sipuri);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "mediator") == 0
+                    && newcept->destid == 0) {
+                newcept->destid = strtoul((char *)value->data.scalar.value,
+                        NULL, 10);
+                if (newcept->destid == 0) {
+                    logger(LOG_DAEMON, "OpenLI: 0 is not a valid value for the 'mediator' config option.");
+                }
+            }
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "agencyid") == 0
+                    && newcept->targetagency == NULL) {
+                newcept->targetagency = strdup((char *)value->data.scalar.value);
+            }
+
+        }
+
+        if (newcept->liid != NULL && newcept->authcc != NULL &&
+                newcept->delivcc != NULL && newcept->sipuri != NULL &&
+                newcept->destid > 0 && newcept->targetagency != NULL) {
+            HASH_ADD(hh, *voipints, internalid, sizeof(uint64_t),
+                    newcept);
+        } else {
+            logger(LOG_DAEMON, "OpenLI: IP Intercept configuration was incomplete -- skipping.");
+        }
+    }
+
+    return 0;
+}
+
+
+
 static int parse_ipintercept_list(libtrace_list_t *ipints, yaml_document_t *doc,
         yaml_node_t *inputs) {
 
     yaml_node_item_t *item;
     int i;
-    uint64_t nextid = 0;
 
     for (item = inputs->data.sequence.items.start;
             item != inputs->data.sequence.items.top; item ++) {
@@ -614,6 +717,15 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SEQUENCE_NODE &&
             strcmp((char *)key->data.scalar.value, "ipintercepts") == 0) {
         if (parse_ipintercept_list(state->ipintercepts, doc, value) == -1) {
+            return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value, "voipintercepts") == 0) {
+        if (parse_voipintercept_list(&state->voipintercepts, doc,
+                    value) == -1) {
             return -1;
         }
     }
