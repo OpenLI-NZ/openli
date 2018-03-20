@@ -41,6 +41,12 @@ typedef enum {
     SIP_IPv6_UDP
 } sipproto_t;
 
+enum {
+    SIP_MATCH_FROMURI,
+    SIP_MATCH_TOURI,
+    SIP_MATCH_VIAURI
+};
+
 typedef struct sipserverdetails {
     sipproto_t proto;
     union {
@@ -71,7 +77,8 @@ char *get_sip_session_id(openli_sip_parser_t *parser);
 char *get_sip_session_version(openli_sip_parser_t *parser);
 char *get_sip_media_ipaddr(openli_sip_parser_t *parser);
 char *get_sip_media_port(openli_sip_parser_t *parser);
-int sip_contains_rtpinfo(openli_sip_parser_t *parser);
+int sip_is_invite(openli_sip_parser_t *parser);
+int sip_is_200ok(openli_sip_parser_t *parser);
 int sip_is_bye(openli_sip_parser_t *parser);
 
 int identified_as_sip(libtrace_packet_t *packet, libtrace_list_t *knownsip);

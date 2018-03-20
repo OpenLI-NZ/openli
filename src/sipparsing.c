@@ -316,10 +316,14 @@ char *get_sip_media_port(openli_sip_parser_t *parser) {
     return port;
 }
 
-int sip_contains_rtpinfo(openli_sip_parser_t *parser) {
+int sip_is_invite(openli_sip_parser_t *parser) {
     if (MSG_IS_INVITE(parser->osip)) {
         return 1;
     }
+    return 0;
+}
+
+int sip_is_200ok(openli_sip_parser_t *parser) {
 
     if (MSG_IS_RESPONSE(parser->osip)) {
         if (osip_message_get_status_code(parser->osip) == 200) {
