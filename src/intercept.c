@@ -69,6 +69,7 @@ static void free_voip_cinmap(voipcinmap_t *cins) {
     /* TODO free all individual CIN contents inside each list item. */
 
     HASH_ITER(hh_callid, cins, c, tmp) {
+        free(c->callid);
         free(c);
     }
 
@@ -76,10 +77,20 @@ static void free_voip_cinmap(voipcinmap_t *cins) {
 
 static void free_voip_cins(voipcin_t *cins) {
     voipcin_t *c, *tmp;
+    libtrace_list_node_t *n;
+    rtpstreaminf_t *rtp;
 
     /* TODO free all individual CIN contents inside each list item. */
 
     HASH_ITER(hh, cins, c, tmp) {
+        n = c->mediastreams->head;
+        while (n) {
+            rtp = *(rtpstreaminf_t **)(n->data);
+            free(rtp->addr);
+            free(rtp);
+            n = n->next;
+        }
+        libtrace_list_deinit(c->mediastreams);
         free(c);
     }
 

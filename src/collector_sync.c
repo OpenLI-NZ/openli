@@ -305,12 +305,31 @@ static void finish_init_mediators(collector_sync_t *sync) {
     libtrace_message_queue_put(&(sync->exportq), &expmsg);
 }
 
-static void temporary_map_user_to_address(ipintercept_t *cept) {
+static inline void convert_ipstr_to_sockaddr(char *knownip,
+        struct sockaddr_storage **saddr, int *family) {
 
-    char *knownip;
     struct addrinfo *res = NULL;
     struct addrinfo hints;
 
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_UNSPEC;
+
+    if (getaddrinfo(knownip, NULL, &hints, &res) != 0) {
+        logger(LOG_DAEMON, "OpenLI: getaddrinfo cannot parse IP address %s: %s",
+                knownip, gai_strerror(errno));
+    }
+
+    *family = res->ai_family;
+    *saddr = (struct sockaddr_storage *)malloc(
+            sizeof(struct sockaddr_storage));
+    memcpy(*saddr, res->ai_addr, res->ai_addrlen);
+
+    freeaddrinfo(res);
+}
+
+static void temporary_map_user_to_address(ipintercept_t *cept) {
+
+    char *knownip;
     if (strcmp(cept->username, "RogerMegently") == 0) {
         knownip = "10.0.0.2";
     } else if (strcmp(cept->username, "Everything") == 0) {
@@ -319,20 +338,7 @@ static void temporary_map_user_to_address(ipintercept_t *cept) {
         return;
     }
 
-    memset(&hints, 0, sizeof(struct addrinfo));
-    hints.ai_family = AF_UNSPEC;
-
-    if (getaddrinfo(knownip, NULL, &hints, &res) != 0) {
-        logger(LOG_DAEMON, "OpenLI: getaddrinfo cannot parse IP address %s: %s",
-                knownip, strerror(errno));
-    }
-
-    cept->ai_family = res->ai_family;
-    cept->ipaddr = (struct sockaddr_storage *)malloc(
-            sizeof(struct sockaddr_storage));
-    memcpy(cept->ipaddr, res->ai_addr, res->ai_addrlen);
-
-    freeaddrinfo(res);
+    convert_ipstr_to_sockaddr(knownip, &(cept->ipaddr), &(cept->ai_family));
 }
 
 static void push_sip_uri(libtrace_message_queue_t *q, char *uri) {
@@ -362,13 +368,87 @@ static void push_all_active_voipstreams(libtrace_message_queue_t *q,
         ms = cin->mediastreams->head;
 
         while (ms) {
-            rtpstreaminf_t *rtp = (rtpstreaminf_t *)(ms->data);
+            rtpstreaminf_t *rtp = *((rtpstreaminf_t **)(ms->data));
 
             push_single_voipstreamintercept(q, rtp);
             ms = ms->next;
         }
     }
 
+}
+
+static int add_new_rtp_stream(collector_sync_t *sync, voipcin_t *cin,
+        voipintercept_t *vint, char *ipstr, char *portstr, uint8_t dir) {
+
+    uint32_t port;
+    struct sockaddr_storage *saddr;
+    int family, i;
+    libtrace_list_node_t *n;
+    rtpstreaminf_t *rtp;
+
+    errno = 0;
+    port = strtoul(portstr, NULL, 0);
+
+    if (errno != 0 || port > 65535) {
+        logger(LOG_DAEMON, "OpenLI: invalid RTP port number: %s", portstr);
+        return -1;
+    }
+
+    convert_ipstr_to_sockaddr(ipstr, &(saddr), &(family));
+
+    /* First check that we don't already have this stream in our list */
+    n = cin->mediastreams->head;
+    while (n) {
+        rtp = *((rtpstreaminf_t **)(n->data));
+        n = n->next;
+        if (!rtp) {
+            continue;
+        }
+        if (rtp->ai_family != family) {
+            continue;
+        }
+        if (rtp->port != (uint16_t)port) {
+            continue;
+        }
+        if (family == AF_INET) {
+            struct sockaddr_in *sa1, *sa2;
+            sa1 = (struct sockaddr_in *)(rtp->addr);
+            sa2 = (struct sockaddr_in *)(saddr);
+            if (sa1->sin_addr.s_addr == sa2->sin_addr.s_addr) {
+                return 0;
+            }
+        }
+        if (family == AF_INET6) {
+            struct sockaddr_in6 *sa1, *sa2;
+            sa1 = (struct sockaddr_in6 *)(rtp->addr);
+            sa2 = (struct sockaddr_in6 *)(saddr);
+
+            if (memcmp(&(sa1->sin6_addr), &(sa2->sin6_addr),
+                    sizeof(struct in6_addr)) == 0) {
+                return 0;
+            }
+        }
+    }
+
+    /* If we get here, the RTP stream is not in our list. */
+    rtp = (rtpstreaminf_t *) malloc(sizeof(rtpstreaminf_t));
+    rtp->liid = vint->liid;
+    rtp->authcc = vint->authcc;
+    rtp->delivcc = vint->delivcc;
+    rtp->destid = vint->destid;
+    rtp->targetagency = vint->targetagency;
+    rtp->cin = cin->cin;
+    rtp->ai_family = family;
+    rtp->addr = saddr;
+    rtp->port = (uint16_t)port;
+    rtp->direction = dir;
+
+    libtrace_list_push_back(cin->mediastreams, &rtp);
+
+    for (i = 0; i < sync->glob->registered_syncqs; i++) {
+        push_single_voipstreamintercept(sync->glob->syncsendqs[i], rtp);
+    }
+    return 0;
 }
 
 static inline int update_cin_callid_map(voipintercept_t *vint, uint32_t cin,
@@ -432,7 +512,7 @@ static int create_new_voipcin(voipcin_t **activecins, uint32_t cin_id) {
 
     newcin->cin = cin_id;
     newcin->ended = 0;
-    newcin->mediastreams = libtrace_list_init(sizeof(rtpstreaminf_t));
+    newcin->mediastreams = libtrace_list_init(sizeof(rtpstreaminf_t *));
 
     HASH_ADD(hh, *activecins, cin, sizeof(newcin->cin), newcin);
     return 0;
@@ -440,7 +520,7 @@ static int create_new_voipcin(voipcin_t **activecins, uint32_t cin_id) {
 }
 
 static int lookup_voip_calls(collector_sync_t *sync, char *uri,
-        char *callid, char *sessid, char *sessversion) {
+        char *callid, char *sessid, char *sessversion, uint8_t fromorto) {
 
     voipcinmap_t *cin1, *cin2;
     voipcin_t *thiscall = NULL;
@@ -530,17 +610,45 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
             continue;
         }
 
+        /* TODO sort out direction tagging for RTP streams */
+
         /* Check for a new RTP stream announcement in an INVITE */
-        /* Check for a new RTP stream announcement in a 200 OK */
-        if (sip_contains_rtpinfo(sync->sipparser)) {
+        if (sip_is_invite(sync->sipparser)) {
             ipstr = get_sip_media_ipaddr(sync->sipparser);
             portstr = get_sip_media_port(sync->sipparser);
 
             if (ipstr && portstr) {
                 fprintf(stderr, "RTP details for %s: %s:%s\n", vint->liid,
                     ipstr, portstr);
+                if (add_new_rtp_stream(sync, thiscall, vint, ipstr, portstr,
+                            0) == -1) {
+                    logger(LOG_DAEMON,
+                            "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
+                            vint->liid, ipstr, portstr);
+                    continue;
+                }
             }
         }
+
+        /* Check for a new RTP stream announcement in a 200 OK */
+        if (sip_is_200ok(sync->sipparser)) {
+            ipstr = get_sip_media_ipaddr(sync->sipparser);
+            portstr = get_sip_media_port(sync->sipparser);
+
+            if (ipstr && portstr) {
+                fprintf(stderr, "RTP details for %s: %s:%s\n", vint->liid,
+                    ipstr, portstr);
+                if (add_new_rtp_stream(sync, thiscall, vint, ipstr, portstr,
+                            1) == -1) {
+                    logger(LOG_DAEMON,
+                            "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
+                            vint->liid, ipstr, portstr);
+                    continue;
+                }
+            }
+        }
+
+        /* Check for "failure" codes so we can cancel an INVITE? */
 
         /* Check for a BYE? */
 
@@ -566,7 +674,7 @@ static int update_sip_state(collector_sync_t *sync) {
     fromuri = get_sip_from_uri(sync->sipparser);
     if (fromuri != NULL) {
         if (lookup_voip_calls(sync, fromuri, callid, sessid,
-                sessversion) < 0) {
+                sessversion, SIP_MATCH_FROMURI) < 0) {
             iserr = 1;
         }
 
@@ -575,7 +683,7 @@ static int update_sip_state(collector_sync_t *sync) {
     touri = get_sip_to_uri(sync->sipparser);
     if (touri != NULL) {
         if (lookup_voip_calls(sync, touri, callid, sessid,
-                sessversion) < 0) {
+                sessversion, SIP_MATCH_TOURI) < 0) {
             iserr = 1;
         }
 
