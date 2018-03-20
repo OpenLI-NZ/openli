@@ -192,7 +192,6 @@ static int process_sip_packet(libtrace_packet_t *pkt,
     int ret;
 
     if ((ret = parse_sip_packet(&(loc->sipparser), pkt)) == -1) {
-        trace_dump_packet(pkt);
         logger(LOG_DAEMON, "Error while attempting to parse SIP packet");
         return 0;
     }
@@ -232,8 +231,8 @@ static inline void send_sip_update(libtrace_packet_t *pkt,
     openli_state_update_t sipup;
 
     sipup.type = OPENLI_UPDATE_SIP;
-    sipup.data.sipupdate.pkt = pkt;
-    sipup.data.sipupdate.pkt = pkt;
+    sipup.data.pkt = pkt;
+    sipup.data.pkt = pkt;
 
     libtrace_message_queue_put(&(loc->tosyncq), (void *)(&sipup));
 
