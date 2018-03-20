@@ -253,6 +253,8 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         newcept->authcc = NULL;
         newcept->delivcc = NULL;
         newcept->active_cins = NULL;
+        newcept->cin_callid_map = NULL;
+        newcept->cin_sdp_map = NULL;
         newcept->sipuri = NULL;
         newcept->active = 1;
         newcept->destid = 0;
@@ -322,7 +324,7 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         if (newcept->liid != NULL && newcept->authcc != NULL &&
                 newcept->delivcc != NULL && newcept->sipuri != NULL &&
                 newcept->destid > 0 && newcept->targetagency != NULL) {
-            HASH_ADD(hh, *voipints, internalid, sizeof(uint64_t),
+            HASH_ADD(hh_liid, *voipints, liid, newcept->liid_len,
                     newcept);
         } else {
             logger(LOG_DAEMON, "OpenLI: IP Intercept configuration was incomplete -- skipping.");

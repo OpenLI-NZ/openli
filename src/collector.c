@@ -33,6 +33,7 @@
 #include <inttypes.h>
 #include <signal.h>
 #include <unistd.h>
+#include <arpa/inet.h>
 
 #include <libtrace_parallel.h>
 #include <libwandder.h>
@@ -44,6 +45,7 @@
 #include "collector_sync.h"
 #include "collector_export.h"
 #include "ipcc.h"
+#include "sipparsing.h"
 
 volatile int collector_halt = 0;
 volatile int reload_export_config = 0;
@@ -137,11 +139,14 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
             sizeof(openli_export_recv_t));
 
     loc->activeipintercepts = libtrace_list_init(sizeof(ipintercept_t));
+    loc->sip_targets = NULL;
 
     register_sync_queues(glob, &(loc->tosyncq), &(loc->fromsyncq));
     register_export_queue(glob, &(loc->exportq));
 
     loc->encoder = NULL;
+    loc->sipparser = NULL;
+    loc->knownsipservers = libtrace_list_init(sizeof(sipserverdetails_t));
 
     return loc;
 }
@@ -155,14 +160,83 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_message_queue_destroy(&(loc->tosyncq));
     libtrace_message_queue_destroy(&(loc->fromsyncq));
     libtrace_message_queue_destroy(&(loc->exportq));
+    libtrace_list_deinit(loc->knownsipservers);
 
     free_all_ipintercepts(loc->activeipintercepts);
+
+    if (loc->sip_targets) {
+        sipuri_hash_t *sip, *tmp;
+        HASH_ITER(hh, loc->sip_targets, sip, tmp) {
+            free(sip->uri);
+            free(sip);
+        }
+    }
+
+    if (loc->sipparser) {
+        release_sip_parser(loc->sipparser);
+    }
+
 
     if (loc->encoder) {
         free_wandder_encoder(loc->encoder);
     }
 
     free(loc);
+}
+
+static int process_sip_packet(libtrace_packet_t *pkt,
+        colthread_local_t *loc) {
+
+    char *uri;
+    sipuri_hash_t *siphash;
+    int ret;
+
+    if ((ret = parse_sip_packet(&(loc->sipparser), pkt)) == -1) {
+        trace_dump_packet(pkt);
+        logger(LOG_DAEMON, "Error while attempting to parse SIP packet");
+        return 0;
+    }
+
+    if (ret == 0) {
+        /* Not a usable SIP packet -- missing payload etc. */
+        return 0;
+    }
+
+    /* Check the From URI */
+    uri = get_sip_from_uri(loc->sipparser);
+    if (uri != NULL) {
+        HASH_FIND_STR(loc->sip_targets, uri, siphash);
+        if (siphash) {
+            /* Matches a known target -- push to sync thread */
+            return 1;
+        }
+    }
+
+
+    /* Check the To URI */
+    uri = get_sip_to_uri(loc->sipparser);
+    if (uri != NULL) {
+        HASH_FIND_STR(loc->sip_targets, uri, siphash);
+        if (siphash) {
+            /* Matches a known target -- push to sync thread */
+            return 1;
+        }
+    }
+
+    /* None of the URIs in this SIP packet belong to a known target */
+    return 0;
+}
+
+static inline void send_sip_update(libtrace_packet_t *pkt,
+        colthread_local_t *loc) {
+    openli_state_update_t sipup;
+
+    sipup.type = OPENLI_UPDATE_SIP;
+    sipup.data.sipupdate.pkt = pkt;
+    sipup.data.sipupdate.pkt = pkt;
+
+    libtrace_message_queue_put(&(loc->tosyncq), (void *)(&sipup));
+
 }
 
 static libtrace_packet_t *process_packet(libtrace_t *trace,
@@ -174,6 +248,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     void *l3;
     uint16_t ethertype;
     uint32_t rem;
+    int forwarded = 0;
 
     openli_pushed_t syncpush;
 
@@ -193,6 +268,25 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                     syncpush.data.interceptid.authcc);
         }
 
+        if (syncpush.type == OPENLI_PUSH_SIPURI) {
+            sipuri_hash_t *newsip = (sipuri_hash_t *)malloc(
+                    sizeof(sipuri_hash_t));
+            newsip->uri = syncpush.data.sipuri;
+            HASH_ADD_KEYPTR(hh, loc->sip_targets, newsip->uri,
+                    strlen(newsip->uri), newsip);
+        }
+
+        if (syncpush.type == OPENLI_PUSH_HALT_SIPURI) {
+            sipuri_hash_t *torem;
+            HASH_FIND_STR(loc->sip_targets, syncpush.data.sipuri, torem);
+            if (torem == NULL) {
+                logger(LOG_DAEMON, "Asked to halt SIP intercept for target %s, but that is not in our set of known URIs", syncpush.data.sipuri);
+                continue;
+            }
+            HASH_DEL(loc->sip_targets, torem);
+            free(torem->uri);
+            free(torem);
+        }
     }
 
     l3 = trace_get_layer3(pkt, &ethertype, &rem);
@@ -200,20 +294,36 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         return pkt;
     }
 
+    /* TODO increment packet refcount for each state update that
+     * we send with the packet in it */
+
     /* Is this a RADIUS packet? -- if yes, create a state update */
 
     /* Is this a SIP packet? -- if yes, create a state update */
+    if (identified_as_sip(pkt, loc->knownsipservers)) {
+        if (process_sip_packet(pkt, loc) == 1) {
+            /* Form an OpenLI state update message with this SIP packet
+             * attached TODO */
+            send_sip_update(pkt, loc);
+            trace_increment_packet_refcount(pkt);
+            forwarded = 1;
+        }
+    }
 
     /* Is this an RTP packet? -- if yes, possible IPMM CC */
 
     /* Is this an IP packet? -- if yes, possible IP CC */
     if (ethertype == TRACE_ETHERTYPE_IP) {
         if (ipv4_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
-            return NULL;
+            trace_increment_packet_refcount(pkt);
+            forwarded = 1;
         }
     }
 
 
+    if (forwarded) {
+        return NULL;
+    }
     return pkt;
 
 
@@ -357,6 +467,9 @@ int main(int argc, char *argv[]) {
         usage(argv[0]);
         return 1;
     }
+
+    /* Initialise osipparser2 */
+    parser_init();
 
     sigact.sa_handler = cleanup_signal;
     sigemptyset(&sigact.sa_mask);

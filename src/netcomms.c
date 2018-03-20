@@ -597,6 +597,8 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
     vint->authcc = NULL;
     vint->delivcc = NULL;
     vint->active_cins = NULL;  /* Placeholder -- sync thread should populate */
+    vint->cin_callid_map = NULL;
+    vint->cin_sdp_map = NULL;
     vint->sipuri = NULL;
     vint->destid = 0;
     vint->targetagency = NULL;

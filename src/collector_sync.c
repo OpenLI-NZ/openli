@@ -59,6 +59,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
     sync->outgoing = NULL;
     sync->incoming = NULL;
+    sync->sipparser = NULL;
 
     return sync;
 
@@ -82,7 +83,10 @@ void clean_sync_data(collector_sync_t *sync) {
     }
 
     free_all_ipintercepts(sync->ipintercepts);
-    free_all_voipintercepts(sync->voipintercepts);
+    if (sync->voipintercepts) {
+        free_all_voipintercepts(sync->voipintercepts);
+    }
+
 	libtrace_message_queue_destroy(&(sync->exportq));
 
     if (sync->outgoing) {
@@ -95,6 +99,10 @@ void clean_sync_data(collector_sync_t *sync) {
 
     if (sync->ii_ev) {
         free(sync->ii_ev);
+    }
+
+    if (sync->sipparser) {
+        release_sip_parser(sync->sipparser);
     }
 
 	free(sync);
@@ -164,6 +172,7 @@ static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
     copy->authcc = strdup(orig->authcc);
     copy->delivcc = strdup(orig->delivcc);
     copy->destid = orig->destid;
+    copy->direction = orig->direction;
 
     if (orig->targetagency) {
         copy->targetagency = strdup(orig->targetagency);
@@ -246,12 +255,11 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
         n = n->next;
     }
 
-    for (v = sync->voipintercepts; v != NULL; v = v->hh.next) {
+    for (v = sync->voipintercepts; v != NULL; v = v->hh_liid.next) {
         if (v->awaitingconfirm && v->active) {
             v->active = 0;
 
-            if (v->active_cins == NULL ||
-                    libtrace_list_get_size(v->active_cins) == 0) {
+            if (v->active_cins == NULL) {
                 continue;
             }
 
@@ -304,9 +312,9 @@ static void temporary_map_user_to_address(ipintercept_t *cept) {
     struct addrinfo hints;
 
     if (strcmp(cept->username, "RogerMegently") == 0) {
-        knownip = "130.217.250.112";
+        knownip = "10.0.0.2";
     } else if (strcmp(cept->username, "Everything") == 0) {
-        knownip = "130.217.250.111";
+        knownip = "10.0.0.1";
     } else {
         return;
     }
@@ -327,21 +335,27 @@ static void temporary_map_user_to_address(ipintercept_t *cept) {
     freeaddrinfo(res);
 }
 
+static void push_sip_uri(libtrace_message_queue_t *q, char *uri) {
+    openli_pushed_t msg;
+
+    msg.type = OPENLI_PUSH_SIPURI;
+    msg.data.sipuri = strdup(uri);
+
+    libtrace_message_queue_put(q, (void *)(&msg));
+}
+
 static void push_all_active_voipstreams(libtrace_message_queue_t *q,
         voipintercept_t *vint) {
 
-    libtrace_list_node_t *n;
+    voipcin_t *cin = NULL;
 
     if (vint->active_cins == NULL) {
         return;
     }
 
-    n = vint->active_cins->head;
-    while (n) {
+    for (cin = vint->active_cins; cin != NULL; cin=cin->hh.next) {
         libtrace_list_node_t *ms;
-        voipcin_t *cin = (voipcin_t *)(n->data);
-        if (!cin || cin->ended || cin->callid == NULL) {
-            n = n->next;
+        if (cin->ended) {
             continue;
         }
 
@@ -353,8 +367,230 @@ static void push_all_active_voipstreams(libtrace_message_queue_t *q,
             push_single_voipstreamintercept(q, rtp);
             ms = ms->next;
         }
-        n = n->next;
     }
+
+}
+
+static inline int update_cin_callid_map(voipintercept_t *vint, uint32_t cin,
+        char *callid, voipcinmap_t *existing) {
+
+    voipcinmap_t *newcinmap;
+
+    if (!existing) {
+        newcinmap = (voipcinmap_t *)malloc(sizeof(voipcinmap_t));
+        if (!newcinmap) {
+            logger(LOG_DAEMON,
+                    "OpenLI: out of memory in collector_sync thread.");
+            return -1;
+        }
+        newcinmap->cin = cin;
+        newcinmap->callid = strdup(callid);
+        newcinmap->sdpkey.sessionid = 0;
+        newcinmap->sdpkey.version = 0;
+        existing = newcinmap;
+    }
+
+    HASH_ADD_KEYPTR(hh_callid, vint->cin_callid_map, existing->callid,
+            strlen(existing->callid), existing);
+    return 0;
+}
+
+static inline int update_cin_sdp_map(voipintercept_t *vint, uint32_t cin,
+        sip_sdp_identifier_t *sdpo, voipcinmap_t *existing) {
+
+    voipcinmap_t *newcinmap;
+
+    if (!existing) {
+        newcinmap = (voipcinmap_t *)malloc(sizeof(voipcinmap_t));
+        if (!newcinmap) {
+            logger(LOG_DAEMON,
+                    "OpenLI: out of memory in collector_sync thread.");
+            return -1;
+        }
+        newcinmap->cin = cin;
+        newcinmap->callid = NULL;
+        newcinmap->sdpkey.sessionid = sdpo->sessionid;
+        newcinmap->sdpkey.version = sdpo->version;
+        existing = newcinmap;
+    }
+
+    HASH_ADD(hh_sdp, vint->cin_sdp_map, sdpkey,
+            sizeof(sip_sdp_identifier_t), existing);
+    return 0;
+}
+
+static int create_new_voipcin(voipcin_t **activecins, uint32_t cin_id) {
+
+    voipcin_t *newcin;
+
+    newcin = (voipcin_t *)malloc(sizeof(voipcin_t));
+    if (!newcin) {
+        logger(LOG_DAEMON,
+                "OpenLI: out of memory in collector_sync thread.");
+        return -1;
+    }
+
+    newcin->cin = cin_id;
+    newcin->ended = 0;
+    newcin->mediastreams = libtrace_list_init(sizeof(rtpstreaminf_t));
+
+    HASH_ADD(hh, *activecins, cin, sizeof(newcin->cin), newcin);
+    return 0;
+
+}
+
+static int lookup_voip_calls(collector_sync_t *sync, char *uri,
+        char *callid, char *sessid, char *sessversion) {
+
+    voipcinmap_t *cin1, *cin2;
+    voipcin_t *thiscall = NULL;
+    sip_sdp_identifier_t sdpo;
+    voipintercept_t *vint, *tmp;
+    char *ipstr, *portstr;
+
+    if (sessid != NULL) {
+        errno = 0;
+        sdpo.sessionid = strtoul(sessid, NULL, 0);
+        if (errno != 0) {
+            logger(LOG_DAEMON, "OpenLI: invalid session ID in SIP packet %s",
+                    sessid);
+            sessid = NULL;
+        }
+    }
+
+    if (sessversion != NULL) {
+        errno = 0;
+        sdpo.version = strtoul(sessversion, NULL, 0);
+        if (errno != 0) {
+            logger(LOG_DAEMON, "OpenLI: invalid version in SIP packet %s",
+                    sessid);
+            sessversion = NULL;
+        }
+    }
+
+    cin1 = NULL;
+    cin2 = NULL;
+
+    HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
+        uint32_t cin_id;
+
+        if (strcmp(vint->sipuri, uri) != 0) {
+            continue;
+        }
+
+        HASH_FIND(hh_callid, vint->cin_callid_map, callid, strlen(callid),
+                cin1);
+        if (sessid != NULL && sessversion != NULL) {
+            HASH_FIND(hh_sdp, vint->cin_sdp_map, &sdpo, sizeof(sdpo),
+                    cin2);
+        }
+
+        if (cin1 == NULL && cin2 == NULL) {
+            /* Never seen this call ID or session before */
+            cin_id = hashlittle(callid, strlen(callid), 0xbeefface);
+            if (create_new_voipcin(&(vint->active_cins), cin_id) == -1) {
+                return -1;
+            }
+
+            if (update_cin_callid_map(vint, cin_id, callid, NULL) == -1) {
+                return -1;
+            }
+            if (sessid != NULL && sessversion != NULL) {
+                if (update_cin_sdp_map(vint, cin_id, &sdpo, NULL)) {
+                    return -1;
+                }
+            }
+        } else if (cin1 == NULL && cin2 != NULL) {
+            /* New call ID but already seen this session */
+            cin_id = cin2->cin;
+            if (update_cin_callid_map(vint, cin_id, callid, cin2) == -1) {
+                return -1;
+            }
+
+        } else if (cin2 == NULL && cin1 != NULL && sessid != NULL &&
+                sessversion != NULL) {
+            /* New session ID for a known call ID */
+            cin_id = cin1->cin;
+            if (update_cin_sdp_map(vint, cin_id, &sdpo, cin1) == -1) {
+                return -1;
+            }
+
+        } else {
+            if (cin2) {
+                assert(cin1->cin == cin2->cin);     // XXX temporary
+            }
+            cin_id = cin1->cin;
+        }
+
+        HASH_FIND(hh, vint->active_cins, &cin_id, sizeof(cin_id), thiscall);
+        if (thiscall == NULL) {
+            logger(LOG_DAEMON,
+                    "OpenLI: unable to find %u in the active call list for %s, %s",
+                    cin_id, vint->liid, vint->sipuri);
+            continue;
+        }
+
+        /* Check for a new RTP stream announcement in an INVITE */
+        /* Check for a new RTP stream announcement in a 200 OK */
+        if (sip_contains_rtpinfo(sync->sipparser)) {
+            ipstr = get_sip_media_ipaddr(sync->sipparser);
+            portstr = get_sip_media_port(sync->sipparser);
+
+            if (ipstr && portstr) {
+                fprintf(stderr, "RTP details for %s: %s:%s\n", vint->liid,
+                    ipstr, portstr);
+            }
+        }
+
+        /* Check for a BYE? */
+
+    }
+    return 0;
+}
+
+static int update_sip_state(collector_sync_t *sync) {
+
+    char *fromuri, *touri, *callid, *sessid, *sessversion;
+    int iserr = 0;
+
+    callid = get_sip_callid(sync->sipparser);
+    sessid = get_sip_session_id(sync->sipparser);
+    sessversion = get_sip_session_version(sync->sipparser);
+
+    if (callid == NULL) {
+        iserr = 1;
+        goto sipgiveup;
+    }
+
+
+    fromuri = get_sip_from_uri(sync->sipparser);
+    if (fromuri != NULL) {
+        if (lookup_voip_calls(sync, fromuri, callid, sessid,
+                sessversion) < 0) {
+            iserr = 1;
+        }
+
+    }
+
+    touri = get_sip_to_uri(sync->sipparser);
+    if (touri != NULL) {
+        if (lookup_voip_calls(sync, touri, callid, sessid,
+                sessversion) < 0) {
+            iserr = 1;
+        }
+
+    }
+
+    if (!fromuri && !touri) {
+        iserr = 1;
+    }
+
+sipgiveup:
+
+    if (iserr) {
+        return -1;
+    }
+    return 0;
 
 }
 
@@ -370,7 +606,7 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
         return -1;
     }
 
-    HASH_FIND_STR(sync->voipintercepts, toadd.liid, vint);
+    HASH_FIND(hh_liid, sync->voipintercepts, toadd.liid, toadd.liid_len, vint);
     if (vint) {
         /* Duplicate LIID */
         if (strcmp(toadd.sipuri, vint->sipuri) != 0) {
@@ -387,23 +623,15 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     vint = (voipintercept_t *)malloc(sizeof(voipintercept_t));
     memcpy(vint, &toadd, sizeof(voipintercept_t));
-    HASH_ADD_KEYPTR(hh, sync->voipintercepts, vint->liid, vint->liid_len, vint);
+    HASH_ADD_KEYPTR(hh_liid, sync->voipintercepts, vint->liid, vint->liid_len,
+            vint);
 
     fprintf(stderr, "received VOIP intercept %lu %s %s\n", vint->internalid,
             vint->liid, vint->sipuri);
-    /* TODO look up any CINs that we already have for this SIP URI. */
-
-    /* XXX do we need to do this? can we just worry about calls that
-     * start from now onwards, rather than having to keep track of every
-     * ongoing call just in case we get an intercept request in the middle
-     * of it?
-     */
-
-    if (vint->active_cins == NULL) {
-        return 0;
-    }
 
     for (i = 0; i < sync->glob->registered_syncqs; i++) {
+
+        push_sip_uri(sync->glob->syncsendqs[i], vint->sipuri);
 
         /* Forward all active CINs to our collector threads */
         push_all_active_voipstreams(sync->glob->syncsendqs[i], vint);
@@ -599,7 +827,7 @@ static inline void touch_all_intercepts(libtrace_list_t *intlist) {
 static inline void touch_all_voipintercepts(voipintercept_t *vints) {
     voipintercept_t *v;
 
-    for (v = vints; v != NULL; v = v->hh.next) {
+    for (v = vints; v != NULL; v = v->hh_liid.next) {
         v->awaitingconfirm = 1;
     }
 }
@@ -723,7 +951,8 @@ int sync_thread_main(collector_sync_t *sync) {
             voipintercept_t *v;
 
             push_all_active_intercepts(sync->ipintercepts, recvd.data.replyq);
-            for (v = sync->voipintercepts; v != NULL; v = v->hh.next) {
+            for (v = sync->voipintercepts; v != NULL; v = v->hh_liid.next) {
+                push_sip_uri(recvd.data.replyq, v->sipuri);
                 push_all_active_voipstreams(recvd.data.replyq, v);
             }
         }
@@ -735,6 +964,28 @@ int sync_thread_main(collector_sync_t *sync) {
          * push II update messages to processing threads */
 
         /* If this relates to an active intercept, create IRI and export */
+
+        if (recvd.type == OPENLI_UPDATE_SIP) {
+
+            /* The error checking / reporting in here is a bit meaningless,
+             * as I'm not really sure what action I can take here if something
+             * goes wrong aside from just ignoring the SIP update.
+             */
+            int ret;
+            if ((ret = parse_sip_packet(&(sync->sipparser),
+                        recvd.data.pkt)) > 0) {
+                if (update_sip_state(sync) < 0) {
+                    logger(LOG_DAEMON,
+                            "OpenLI: error while updating SIP state in collector.");
+                }
+            } else if (ret < 0) {
+                logger(LOG_DAEMON,
+                        "OpenLI: sync thread received an invalid SIP packet?");
+            }
+
+
+            trace_decrement_packet_refcount(recvd.data.pkt);
+        }
 
     }
 

@@ -34,6 +34,7 @@
 #include <assert.h>
 
 #include <libtrace.h>
+#include <libtrace_parallel.h>
 
 #include "collector.h"
 #include "collector_export.h"
@@ -455,7 +456,8 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
         /* All ETSIRECs relating to this packet have been seen, so
          * we can safely free the packet.
          */
-        trace_destroy_packet(recvd.data.packet);
+
+        trace_decrement_packet_refcount(recvd.data.packet);
         return 0;
     }
 

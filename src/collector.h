@@ -32,15 +32,19 @@
 #include <libtrace.h>
 #include <libtrace/message_queue.h>
 #include <libtrace/linked_list.h>
+#include <uthash.h>
 #include <libwandder.h>
 
+#include "sipparsing.h"
 #include "intercept.h"
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
     OPENLI_PUSH_HALT_IPINTERCEPT = 2,
     OPENLI_PUSH_IPMMINTERCEPT = 3,
-    OPENLI_PUSH_HALT_IPMMINTERCEPT = 4
+    OPENLI_PUSH_HALT_IPMMINTERCEPT = 4,
+    OPENLI_PUSH_SIPURI = 5,
+    OPENLI_PUSH_HALT_SIPURI = 6,
 };
 
 enum {
@@ -55,6 +59,7 @@ typedef struct openli_state_msg {
     uint8_t type;
     union {
         libtrace_message_queue_t *replyq;
+        libtrace_packet_t *pkt;
     } data;
 
 } openli_state_update_t;
@@ -69,6 +74,7 @@ typedef struct openli_ii_msg {
             char *liid;
             char *authcc;
         } interceptid;
+        char *sipuri;
     } data;
 
 } openli_pushed_t;
@@ -87,6 +93,11 @@ typedef struct colinput {
 
 } colinput_t;
 
+typedef struct sipuri_hash {
+    UT_hash_handle hh;
+    char *uri;
+} sipuri_hash_t;
+
 typedef struct colthread_local {
 
     /* Message queue for pushing updates to sync thread */
@@ -101,10 +112,15 @@ typedef struct colthread_local {
      * eventually we might want a radix tree for faster lookups */
     libtrace_list_t *activeipintercepts;
 
+    /* Current SIP URIs that we are intercepting */
+    sipuri_hash_t *sip_targets;
+
     /* Message queue for exporting LI records */
     libtrace_message_queue_t exportq;
 
     wandder_encoder_t *encoder;
+    openli_sip_parser_t *sipparser;
+    libtrace_list_t *knownsipservers;
 
     char *inputidentifier;
 

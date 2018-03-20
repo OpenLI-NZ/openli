@@ -52,6 +52,7 @@ typedef struct colsync_data {
 
     libtrace_list_t *ipintercepts;
     voipintercept_t *voipintercepts;
+    voipintercept_t *voipintercepts_by_uri;
     int instruct_fd;
     uint8_t instruct_fail;
     sync_epoll_t *ii_ev;
@@ -60,6 +61,7 @@ typedef struct colsync_data {
     net_buffer_t *incoming;
 
     libtrace_message_queue_t exportq;
+    openli_sip_parser_t *sipparser;
 
 } collector_sync_t;
 

@@ -59,11 +59,32 @@ typedef struct ipintercept {
     uint8_t awaitingconfirm;
 } ipintercept_t;
 
+typedef struct sdpidentifier {
+    uint32_t sessionid;
+    uint32_t version;
+} sip_sdp_identifier_t;
 
 /* Two types of VOIP intercept structure -- one for the target which stores
  * all CINs for that target, and another for each target/CIN combination
  * which is used by the collector threads to maintain per-CIN state.
  */
+typedef struct voipcinmap {
+
+    char *callid;
+    uint32_t cin;
+    sip_sdp_identifier_t sdpkey;
+    UT_hash_handle hh_callid;
+    UT_hash_handle hh_sdp;
+
+} voipcinmap_t;
+
+typedef struct voipcin {
+    uint32_t cin;
+    uint8_t ended;
+    libtrace_list_t *mediastreams;
+    UT_hash_handle hh;
+} voipcin_t;
+
 typedef struct voipintercept {
 
     uint64_t internalid;
@@ -82,9 +103,11 @@ typedef struct voipintercept {
     uint8_t active;
     uint8_t awaitingconfirm;
 
-    libtrace_list_t *active_cins;
+    voipcinmap_t *cin_callid_map;
+    voipcinmap_t *cin_sdp_map;
+    voipcin_t *active_cins;
 
-    UT_hash_handle hh;
+    UT_hash_handle hh_liid;
 } voipintercept_t;
 
 typedef struct rtpstreaminf {
@@ -97,19 +120,8 @@ typedef struct rtpstreaminf {
     int ai_family;
     struct sockaddr_storage *addr;
     uint16_t port;
+    uint8_t direction;
 } rtpstreaminf_t;
-
-typedef struct voipcin {
-
-    uint32_t cin;
-    char *callid;
-    uint32_t sessionid;
-    uint32_t version;
-    uint8_t ended;
-
-    libtrace_list_t *mediastreams;
-
-} voipcin_t;
 
 void free_all_ipintercepts(libtrace_list_t *interceptlist);
 void free_all_voipintercepts(voipintercept_t *vintercepts);

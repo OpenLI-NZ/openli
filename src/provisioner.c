@@ -148,7 +148,8 @@ static int map_intercepts_to_leas(provision_state_t *state) {
     }
 
     /* Now do the VOIP intercepts */
-    for (vint = state->voipintercepts; vint != NULL; vint = vint->hh.next) {
+    for (vint = state->voipintercepts; vint != NULL; vint = vint->hh_liid.next)
+    {
         h = (liid_hash_t *)malloc(sizeof(liid_hash_t));
         /* TODO check if targetagency is legit? */
         h->agency = vint->targetagency;
@@ -518,7 +519,7 @@ static int push_all_voipintercepts(voipintercept_t *voipintercepts,
 
     voipintercept_t *v;
 
-    for (v = voipintercepts; v != NULL; v = v->hh.next) {
+    for (v = voipintercepts; v != NULL; v = v->hh_liid.next) {
         if (v->active == 0) {
             continue;
         }
@@ -568,7 +569,7 @@ static int respond_collector_auth(provision_state_t *state,
 
     if (libtrace_list_get_size(state->mediators) +
             libtrace_list_get_size(state->ipintercepts) +
-            HASH_COUNT(state->voipintercepts) == 0) {
+            HASH_CNT(hh_liid, state->voipintercepts) == 0) {
         return 0;
     }
 

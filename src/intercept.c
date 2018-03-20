@@ -63,23 +63,32 @@ void free_all_ipintercepts(libtrace_list_t *interceptlist) {
     libtrace_list_deinit(interceptlist);
 }
 
-static void free_voip_cins(libtrace_list_t *list) {
+static void free_voip_cinmap(voipcinmap_t *cins) {
+    voipcinmap_t *c, *tmp;
 
-    libtrace_list_node_t *n;
+    /* TODO free all individual CIN contents inside each list item. */
 
-    n = list->head;
-    while (n) {
-        /* TODO free all individual CIN contents inside each list item. */
-        n = n->next;
+    HASH_ITER(hh_callid, cins, c, tmp) {
+        free(c);
     }
-    libtrace_list_deinit(list);
+
+}
+
+static void free_voip_cins(voipcin_t *cins) {
+    voipcin_t *c, *tmp;
+
+    /* TODO free all individual CIN contents inside each list item. */
+
+    HASH_ITER(hh, cins, c, tmp) {
+        free(c);
+    }
 
 }
 
 void free_all_voipintercepts(voipintercept_t *vints) {
 
     voipintercept_t *v, *tmp;
-    HASH_ITER(hh, vints, v, tmp) {
+    HASH_ITER(hh_liid, vints, v, tmp) {
         if (v->liid) {
             free(v->liid);
         }
@@ -96,6 +105,9 @@ void free_all_voipintercepts(voipintercept_t *vints) {
             free(v->targetagency);
         }
 
+        if (v->cin_callid_map) {
+            free_voip_cinmap(v->cin_callid_map);
+        }
         if (v->active_cins) {
             free_voip_cins(v->active_cins);
         }
