@@ -72,6 +72,8 @@ static inline void encode_etsili_pshdr(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, uint64_t cin,
         uint64_t seqno, struct timeval *tv) {
 
+    uint32_t tvclass = 1;       // timeOfInterception
+
     /* hdrdata should be pretty static for each ETSI LI record, so
      * you can populate it once and repeatedly use it.
      * CIN, seqno and tv will change for each record, so I've made them
@@ -124,6 +126,9 @@ static inline void encode_etsili_pshdr(wandder_encoder_t *encoder,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 6, hdrdata->intpointid,
                 hdrdata->intpointid_len);
     }
+
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 8, &tvclass, sizeof(tvclass));
     wandder_encode_endseq(encoder);
 
 }
