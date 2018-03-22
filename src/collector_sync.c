@@ -33,6 +33,7 @@
 #include <assert.h>
 #include <netdb.h>
 
+#include "etsili_core.h"
 #include "collector.h"
 #include "collector_sync.h"
 #include "collector_export.h"
@@ -167,25 +168,20 @@ static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
     openli_pushed_t msg;
 
     copy = (rtpstreaminf_t *)malloc(sizeof(rtpstreaminf_t));
-
-    copy->liid = strdup(orig->liid);
-    copy->authcc = strdup(orig->authcc);
-    copy->delivcc = strdup(orig->delivcc);
-    copy->destid = orig->destid;
-    copy->direction = orig->direction;
-
-    if (orig->targetagency) {
-        copy->targetagency = strdup(orig->targetagency);
-    } else {
-        copy->targetagency = NULL;
-    }
-
+    copy->streamkey = strdup(orig->streamkey);
     copy->cin = orig->cin;
+    copy->parent = orig->parent;
     copy->ai_family = orig->ai_family;
-    copy->addr = (struct sockaddr_storage *)malloc(
+    copy->targetaddr = (struct sockaddr_storage *)malloc(
             sizeof(struct sockaddr_storage));
-    memcpy(copy->addr, orig->addr, sizeof(struct sockaddr_storage));
-    copy->port = orig->port;
+    memcpy(copy->targetaddr, orig->targetaddr, sizeof(struct sockaddr_storage));
+    copy->otheraddr = (struct sockaddr_storage *)malloc(
+            sizeof(struct sockaddr_storage));
+    memcpy(copy->otheraddr, orig->otheraddr, sizeof(struct sockaddr_storage));
+    copy->targetport = orig->targetport;
+    copy->otherport = orig->otherport;
+    copy->seqno = 0;
+    copy->active = orig->active;
 
     msg.type = OPENLI_PUSH_IPMMINTERCEPT;
     msg.data.ipmmint = copy;
@@ -353,38 +349,30 @@ static void push_sip_uri(libtrace_message_queue_t *q, char *uri) {
 static void push_all_active_voipstreams(libtrace_message_queue_t *q,
         voipintercept_t *vint) {
 
-    voipcin_t *cin = NULL;
+    rtpstreaminf_t *cin = NULL;
 
     if (vint->active_cins == NULL) {
         return;
     }
 
     for (cin = vint->active_cins; cin != NULL; cin=cin->hh.next) {
-        libtrace_list_node_t *ms;
-        if (cin->ended) {
+        if (cin->active == 0) {
             continue;
         }
 
-        ms = cin->mediastreams->head;
-
-        while (ms) {
-            rtpstreaminf_t *rtp = *((rtpstreaminf_t **)(ms->data));
-
-            push_single_voipstreamintercept(q, rtp);
-            ms = ms->next;
-        }
+        push_single_voipstreamintercept(q, cin);
     }
 
 }
 
-static int add_new_rtp_stream(collector_sync_t *sync, voipcin_t *cin,
+static int update_rtp_stream(collector_sync_t *sync, rtpstreaminf_t *rtp,
         voipintercept_t *vint, char *ipstr, char *portstr, uint8_t dir) {
 
     uint32_t port;
     struct sockaddr_storage *saddr;
     int family, i;
     libtrace_list_node_t *n;
-    rtpstreaminf_t *rtp;
+    int updaterequired = 1;
 
     errno = 0;
     port = strtoul(portstr, NULL, 0);
@@ -396,63 +384,47 @@ static int add_new_rtp_stream(collector_sync_t *sync, voipcin_t *cin,
 
     convert_ipstr_to_sockaddr(ipstr, &(saddr), &(family));
 
-    /* First check that we don't already have this stream in our list */
-    n = cin->mediastreams->head;
-    while (n) {
-        rtp = *((rtpstreaminf_t **)(n->data));
-        n = n->next;
-        if (!rtp) {
-            continue;
+    /* If we get here, the RTP stream is not in our list. */
+    if (dir == ETSI_DIR_FROM_TARGET) {
+        if (rtp->targetaddr) {
+            /* TODO */
+            /* has the address or port changed? */
         }
-        if (rtp->ai_family != family) {
-            continue;
-        }
-        if (rtp->port != (uint16_t)port) {
-            continue;
-        }
-        if (family == AF_INET) {
-            struct sockaddr_in *sa1, *sa2;
-            sa1 = (struct sockaddr_in *)(rtp->addr);
-            sa2 = (struct sockaddr_in *)(saddr);
-            if (sa1->sin_addr.s_addr == sa2->sin_addr.s_addr) {
-                return 0;
-            }
-        }
-        if (family == AF_INET6) {
-            struct sockaddr_in6 *sa1, *sa2;
-            sa1 = (struct sockaddr_in6 *)(rtp->addr);
-            sa2 = (struct sockaddr_in6 *)(saddr);
+        rtp->ai_family = family;
+        rtp->targetaddr = saddr;
+        rtp->targetport = (uint16_t)port;
 
-            if (memcmp(&(sa1->sin6_addr), &(sa2->sin6_addr),
-                    sizeof(struct in6_addr)) == 0) {
-                return 0;
-            }
+    } else {
+        if (rtp->otheraddr) {
+            /* TODO */
+            /* has the address or port changed? */
+
         }
+        rtp->ai_family = family;
+        rtp->otheraddr = saddr;
+        rtp->otherport = (uint16_t)port;
     }
 
-    /* If we get here, the RTP stream is not in our list. */
-    rtp = (rtpstreaminf_t *) malloc(sizeof(rtpstreaminf_t));
-    rtp->liid = vint->liid;
-    rtp->authcc = vint->authcc;
-    rtp->delivcc = vint->delivcc;
-    rtp->destid = vint->destid;
-    rtp->targetagency = vint->targetagency;
-    rtp->cin = cin->cin;
-    rtp->ai_family = family;
-    rtp->addr = saddr;
-    rtp->port = (uint16_t)port;
-    rtp->direction = dir;
+    /* Not got the full 5-tuple for the RTP stream yet */
+    if (!rtp->targetaddr || !rtp->otheraddr) {
+        return 0;
+    }
 
-    libtrace_list_push_back(cin->mediastreams, &rtp);
+    if (!updaterequired) {
+        return 0;
+    }
 
+    /* If we get here, we need to push the RTP stream details to the
+     * processing threads. */
     for (i = 0; i < sync->glob->registered_syncqs; i++) {
+        rtp->active = 1;
         push_single_voipstreamintercept(sync->glob->syncsendqs[i], rtp);
     }
     return 0;
 }
 
-static inline int update_cin_callid_map(voipintercept_t *vint, uint32_t cin,
-        char *callid, voipcinmap_t *existing) {
+static inline voipcinmap_t *update_cin_callid_map(voipintercept_t *vint,
+        uint32_t cin, char *callid, voipcinmap_t *existing) {
 
     voipcinmap_t *newcinmap;
 
@@ -461,22 +433,27 @@ static inline int update_cin_callid_map(voipintercept_t *vint, uint32_t cin,
         if (!newcinmap) {
             logger(LOG_DAEMON,
                     "OpenLI: out of memory in collector_sync thread.");
-            return -1;
+            return NULL;
         }
         newcinmap->cin = cin;
         newcinmap->callid = strdup(callid);
         newcinmap->sdpkey.sessionid = 0;
         newcinmap->sdpkey.version = 0;
         existing = newcinmap;
+    } else {
+        if (existing->callid) {
+            free(existing->callid);
+        }
+        existing->callid = strdup(callid);
     }
 
     HASH_ADD_KEYPTR(hh_callid, vint->cin_callid_map, existing->callid,
             strlen(existing->callid), existing);
-    return 0;
+    return existing;
 }
 
-static inline int update_cin_sdp_map(voipintercept_t *vint, uint32_t cin,
-        sip_sdp_identifier_t *sdpo, voipcinmap_t *existing) {
+static inline voipcinmap_t *update_cin_sdp_map(voipintercept_t *vint,
+        uint32_t cin, sip_sdp_identifier_t *sdpo, voipcinmap_t *existing) {
 
     voipcinmap_t *newcinmap;
 
@@ -485,36 +462,50 @@ static inline int update_cin_sdp_map(voipintercept_t *vint, uint32_t cin,
         if (!newcinmap) {
             logger(LOG_DAEMON,
                     "OpenLI: out of memory in collector_sync thread.");
-            return -1;
+            return NULL;
         }
         newcinmap->cin = cin;
         newcinmap->callid = NULL;
         newcinmap->sdpkey.sessionid = sdpo->sessionid;
         newcinmap->sdpkey.version = sdpo->version;
         existing = newcinmap;
+    } else {
+        existing->sdpkey.sessionid = sdpo->sessionid;
+        existing->sdpkey.version = sdpo->version;
     }
 
     HASH_ADD(hh_sdp, vint->cin_sdp_map, sdpkey,
             sizeof(sip_sdp_identifier_t), existing);
-    return 0;
+    return existing;
 }
 
-static int create_new_voipcin(voipcin_t **activecins, uint32_t cin_id) {
+static int create_new_voipcin(rtpstreaminf_t **activecins, uint32_t cin_id,
+        voipintercept_t *vint) {
 
-    voipcin_t *newcin;
+    rtpstreaminf_t *newcin;
 
-    newcin = (voipcin_t *)malloc(sizeof(voipcin_t));
+    newcin = (rtpstreaminf_t *)malloc(sizeof(rtpstreaminf_t));
     if (!newcin) {
         logger(LOG_DAEMON,
                 "OpenLI: out of memory in collector_sync thread.");
         return -1;
     }
 
+    newcin->streamkey = (char *)calloc(1, 256);
     newcin->cin = cin_id;
-    newcin->ended = 0;
-    newcin->mediastreams = libtrace_list_init(sizeof(rtpstreaminf_t *));
+    newcin->parent = vint;
+    newcin->active = 0;
+    newcin->targetaddr = NULL;
+    newcin->otheraddr = NULL;
+    newcin->ai_family = 0;
+    newcin->targetport = 0;
+    newcin->otherport = 0;
+    newcin->seqno = 0;
 
-    HASH_ADD(hh, *activecins, cin, sizeof(newcin->cin), newcin);
+    snprintf(newcin->streamkey, 256, "%s-%u", vint->liid, cin_id);
+
+    HASH_ADD_KEYPTR(hh, *activecins, newcin->streamkey,
+            strlen(newcin->streamkey), newcin);
     return 0;
 
 }
@@ -523,10 +514,11 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
         char *callid, char *sessid, char *sessversion, uint8_t fromorto) {
 
     voipcinmap_t *cin1, *cin2;
-    voipcin_t *thiscall = NULL;
+    rtpstreaminf_t *thisrtp = NULL;
     sip_sdp_identifier_t sdpo;
     voipintercept_t *vint, *tmp;
     char *ipstr, *portstr;
+    char rtpkey[256];
 
     if (sessid != NULL) {
         errno = 0;
@@ -553,6 +545,7 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
 
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
         uint32_t cin_id;
+        voipcinmap_t *newcin;
 
         if (strcmp(vint->sipuri, uri) != 0) {
             continue;
@@ -568,22 +561,24 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
         if (cin1 == NULL && cin2 == NULL) {
             /* Never seen this call ID or session before */
             cin_id = hashlittle(callid, strlen(callid), 0xbeefface);
-            if (create_new_voipcin(&(vint->active_cins), cin_id) == -1) {
+            if (create_new_voipcin(&(vint->active_cins), cin_id,
+                        vint) == -1) {
                 return -1;
             }
 
-            if (update_cin_callid_map(vint, cin_id, callid, NULL) == -1) {
+            newcin = update_cin_callid_map(vint, cin_id, callid, NULL);
+            if (newcin == NULL) {
                 return -1;
             }
             if (sessid != NULL && sessversion != NULL) {
-                if (update_cin_sdp_map(vint, cin_id, &sdpo, NULL)) {
+                if (update_cin_sdp_map(vint, cin_id, &sdpo, newcin) == NULL) {
                     return -1;
                 }
             }
         } else if (cin1 == NULL && cin2 != NULL) {
             /* New call ID but already seen this session */
             cin_id = cin2->cin;
-            if (update_cin_callid_map(vint, cin_id, callid, cin2) == -1) {
+            if (update_cin_callid_map(vint, cin_id, callid, cin2) == NULL) {
                 return -1;
             }
 
@@ -591,7 +586,7 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
                 sessversion != NULL) {
             /* New session ID for a known call ID */
             cin_id = cin1->cin;
-            if (update_cin_sdp_map(vint, cin_id, &sdpo, cin1) == -1) {
+            if (update_cin_sdp_map(vint, cin_id, &sdpo, cin1) == NULL) {
                 return -1;
             }
 
@@ -602,8 +597,9 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
             cin_id = cin1->cin;
         }
 
-        HASH_FIND(hh, vint->active_cins, &cin_id, sizeof(cin_id), thiscall);
-        if (thiscall == NULL) {
+        snprintf(rtpkey, 256, "%s-%u", vint->liid, cin_id);
+        HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
+        if (thisrtp == NULL) {
             logger(LOG_DAEMON,
                     "OpenLI: unable to find %u in the active call list for %s, %s",
                     cin_id, vint->liid, vint->sipuri);
@@ -618,9 +614,7 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
             portstr = get_sip_media_port(sync->sipparser);
 
             if (ipstr && portstr) {
-                fprintf(stderr, "RTP details for %s: %s:%s\n", vint->liid,
-                    ipstr, portstr);
-                if (add_new_rtp_stream(sync, thiscall, vint, ipstr, portstr,
+                if (update_rtp_stream(sync, thisrtp, vint, ipstr, portstr,
                             0) == -1) {
                     logger(LOG_DAEMON,
                             "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
@@ -636,9 +630,7 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
             portstr = get_sip_media_port(sync->sipparser);
 
             if (ipstr && portstr) {
-                fprintf(stderr, "RTP details for %s: %s:%s\n", vint->liid,
-                    ipstr, portstr);
-                if (add_new_rtp_stream(sync, thiscall, vint, ipstr, portstr,
+                if (update_rtp_stream(sync, thisrtp, vint, ipstr, portstr,
                             1) == -1) {
                     logger(LOG_DAEMON,
                             "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
@@ -691,6 +683,13 @@ static int update_sip_state(collector_sync_t *sync) {
 
     if (!fromuri && !touri) {
         iserr = 1;
+    }
+
+    if (fromuri) {
+        free(fromuri);
+    }
+    if (touri) {
+        free(touri);
     }
 
 sipgiveup:

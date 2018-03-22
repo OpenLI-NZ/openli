@@ -45,6 +45,7 @@
 #include "collector_sync.h"
 #include "collector_export.h"
 #include "ipcc.h"
+#include "ipmmcc.h"
 #include "sipparsing.h"
 
 volatile int collector_halt = 0;
@@ -83,6 +84,31 @@ static void dump_ip_intercept(ipintercept_t *ipint) {
     }
 
     printf("Communication ID: %u\n", ipint->cin);
+    printf("------\n");
+}
+
+static void dump_rtp_intercept(rtpstreaminf_t *rtp) {
+    char ipbuf[256];
+
+    printf("Intercept %u  %s\n", rtp->parent->internalid,
+            rtp->active ? "ACTIVE": "INACTIVE");
+    printf("LI ID: %s\n", rtp->parent->liid);
+    printf("Auth CC: %s     Delivery CC: %s\n", rtp->parent->authcc,
+            rtp->parent->delivcc);
+
+    if (rtp->targetaddr && rtp->ai_family == AF_INET) {
+        struct sockaddr_in *sin = (struct sockaddr_in *)rtp->targetaddr;
+        inet_ntop(AF_INET, (void *)&(sin->sin_addr), ipbuf, 256);
+        printf("Target RTP endpoint: %s:%u\n", ipbuf, rtp->targetport);
+    }
+
+    if (rtp->otheraddr && rtp->ai_family == AF_INET) {
+        struct sockaddr_in *sin = (struct sockaddr_in *)rtp->otheraddr;
+        inet_ntop(AF_INET, (void *)&(sin->sin_addr), ipbuf, 256);
+        printf("Remote RTP endpoint: %s:%u\n", ipbuf, rtp->otherport);
+    }
+
+    printf("Communication ID: %u\n", rtp->cin);
     printf("------\n");
 }
 
@@ -139,6 +165,7 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
             sizeof(openli_export_recv_t));
 
     loc->activeipintercepts = libtrace_list_init(sizeof(ipintercept_t));
+    loc->activertpintercepts = libtrace_list_init(sizeof(rtpstreaminf_t));
     loc->sip_targets = NULL;
 
     register_sync_queues(glob, &(loc->tosyncq), &(loc->fromsyncq));
@@ -163,10 +190,12 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_list_deinit(loc->knownsipservers);
 
     free_all_ipintercepts(loc->activeipintercepts);
+    free_all_rtpstreams(loc->activertpintercepts);
 
     if (loc->sip_targets) {
         sipuri_hash_t *sip, *tmp;
         HASH_ITER(hh, loc->sip_targets, sip, tmp) {
+            HASH_DEL(loc->sip_targets, sip);
             free(sip->uri);
             free(sip);
         }
@@ -205,6 +234,7 @@ static int process_sip_packet(libtrace_packet_t *pkt,
     uri = get_sip_from_uri(loc->sipparser);
     if (uri != NULL) {
         HASH_FIND_STR(loc->sip_targets, uri, siphash);
+        free(uri);
         if (siphash) {
             /* Matches a known target -- push to sync thread */
             return 1;
@@ -216,6 +246,7 @@ static int process_sip_packet(libtrace_packet_t *pkt,
     uri = get_sip_to_uri(loc->sipparser);
     if (uri != NULL) {
         HASH_FIND_STR(loc->sip_targets, uri, siphash);
+        free(uri);
         if (siphash) {
             /* Matches a known target -- push to sync thread */
             return 1;
@@ -267,6 +298,14 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                     syncpush.data.interceptid.authcc);
         }
 
+        if (syncpush.type == OPENLI_PUSH_IPMMINTERCEPT) {
+            libtrace_list_push_front(loc->activertpintercepts,
+                    (void *)(syncpush.data.ipmmint));
+            free(syncpush.data.ipmmint);
+        }
+
+        /* TODO HALT_IPMMINTERCEPT */
+
         if (syncpush.type == OPENLI_PUSH_SIPURI) {
             sipuri_hash_t *newsip = (sipuri_hash_t *)malloc(
                     sizeof(sipuri_hash_t));
@@ -309,15 +348,21 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         }
     }
 
-    /* Is this an RTP packet? -- if yes, possible IPMM CC */
-
-    /* Is this an IP packet? -- if yes, possible IP CC */
     if (ethertype == TRACE_ETHERTYPE_IP) {
+        /* Is this an IP packet? -- if yes, possible IP CC */
         if (ipv4_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
             trace_increment_packet_refcount(pkt);
             forwarded = 1;
         }
+        /* Is this an RTP packet? -- if yes, possible IPMM CC */
+        if (ip4mm_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
+            trace_increment_packet_refcount(pkt);
+            forwarded = 1;
+        }
+
     }
+
+    /* TODO IPV6 CC */
 
 
     if (forwarded) {

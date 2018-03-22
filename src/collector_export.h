@@ -65,7 +65,7 @@ typedef struct openli_export_recv {
         openli_mediator_t med;
         libtrace_packet_t *packet;
     } data;
-} openli_export_recv_t;
+} PACKED openli_export_recv_t;
 
 
 collector_export_t *init_exporter(collector_global_t *glob);

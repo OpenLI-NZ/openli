@@ -74,25 +74,6 @@ static openli_export_recv_t form_ipcc(collector_global_t *glob,
     openli_export_recv_t exprecv;
     wandder_etsipshdr_data_t hdrdata;
 
-    /* Trying to decide between copying the packet contents into the IP CC
-     * message or trying a zero-copy approach.
-     *
-     * Good reasons for copying:
-     * 1. zero copy is only feasible as long as the packet contents are the
-     *    last field in the entire message -- true for ETSI LI but may not be
-     *    so in other use cases -- therefore this is difficult to fit into
-     *    a generic library such as libwandder.
-     * 2. zero copy will mean that we are holding on to packets right up
-     *    until they are successfully exported, preventing the underlying
-     *    capture method from using that space for reading new packets off
-     *    the wire.
-     *
-     * Good reasons for zero copy:
-     * 1. Copying from kernel to user space memory is going to be costly
-     *    performance-wise. If we are exporting a lot of packets, this may
-     *    become an issue.
-     */
-
     if (loc->encoder == NULL) {
         loc->encoder = init_wandder_encoder();
     } else {
@@ -113,7 +94,7 @@ static openli_export_recv_t form_ipcc(collector_global_t *glob,
     hdrdata.intpointid_len = glob->intpointid_len;
 
     msg.msgbody = encode_etsi_ipcc(&(msg.msglen), loc->encoder, &hdrdata,
-            ipint->cin, ipint->nextseqno, &tv, l3, rem);
+            (int64_t)ipint->cin, (int64_t)ipint->nextseqno, &tv, l3, rem);
 
     msg.ipcontents = (uint8_t *)l3;
     msg.ipclen = rem;

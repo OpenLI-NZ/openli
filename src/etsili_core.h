@@ -36,7 +36,8 @@
 #define ENC_CSEQUENCE(enc, x) wandder_encode_next(enc, WANDDER_TAG_SEQUENCE, \
         WANDDER_CLASS_CONTEXT_CONSTRUCT, x, NULL, 0)
 
-
+#define ETSI_DIR_FROM_TARGET 0
+#define ETSI_DIR_TO_TARGET 1
 
 typedef struct wandder_etsipshdr_data {
 
@@ -56,11 +57,15 @@ typedef struct wandder_etsipshdr_data {
 } wandder_etsipshdr_data_t;
 
 uint8_t *encode_etsi_ipcc(uint32_t *enclen, wandder_encoder_t *encoder,
-        wandder_etsipshdr_data_t *hdrdata, uint64_t cin, uint64_t seqno,
+        wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
         struct timeval *tv, void *ipcontents, uint32_t iplen);
 
+uint8_t *encode_etsi_ipmmcc(uint32_t *enclen, wandder_encoder_t *encoder,
+        wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
+        struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir);
+
 uint8_t *encode_etsi_keepalive(uint32_t *enclen, wandder_encoder_t *encoder,
-        wandder_etsipshdr_data_t *hdrdata, uint64_t seqno);
+        wandder_etsipshdr_data_t *hdrdata, int64_t seqno);
 
 
 #endif

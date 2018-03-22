@@ -66,32 +66,29 @@ void free_all_ipintercepts(libtrace_list_t *interceptlist) {
 static void free_voip_cinmap(voipcinmap_t *cins) {
     voipcinmap_t *c, *tmp;
 
-    /* TODO free all individual CIN contents inside each list item. */
-
     HASH_ITER(hh_callid, cins, c, tmp) {
+        HASH_DELETE(hh_callid, cins, c);
         free(c->callid);
         free(c);
     }
 
 }
 
-static void free_voip_cins(voipcin_t *cins) {
-    voipcin_t *c, *tmp;
-    libtrace_list_node_t *n;
-    rtpstreaminf_t *rtp;
+static void free_voip_cins(rtpstreaminf_t *cins) {
+    rtpstreaminf_t *rtp, *tmp;
 
-    /* TODO free all individual CIN contents inside each list item. */
-
-    HASH_ITER(hh, cins, c, tmp) {
-        n = c->mediastreams->head;
-        while (n) {
-            rtp = *(rtpstreaminf_t **)(n->data);
-            free(rtp->addr);
-            free(rtp);
-            n = n->next;
+    HASH_ITER(hh, cins, rtp, tmp) {
+        HASH_DEL(cins, rtp);
+        if (rtp->targetaddr) {
+            free(rtp->targetaddr);
         }
-        libtrace_list_deinit(c->mediastreams);
-        free(c);
+        if (rtp->otheraddr) {
+            free(rtp->otheraddr);
+        }
+        if (rtp->streamkey) {
+            free(rtp->streamkey);
+        }
+        free(rtp);
     }
 
 }
@@ -100,6 +97,7 @@ void free_all_voipintercepts(voipintercept_t *vints) {
 
     voipintercept_t *v, *tmp;
     HASH_ITER(hh_liid, vints, v, tmp) {
+        HASH_DELETE(hh_liid, vints, v);
         if (v->liid) {
             free(v->liid);
         }
@@ -115,6 +113,9 @@ void free_all_voipintercepts(voipintercept_t *vints) {
         if (v->targetagency) {
             free(v->targetagency);
         }
+        if (v->cin_sdp_map) {
+            HASH_CLEAR(hh_sdp, v->cin_sdp_map);
+        }
 
         if (v->cin_callid_map) {
             free_voip_cinmap(v->cin_callid_map);
@@ -125,6 +126,27 @@ void free_all_voipintercepts(voipintercept_t *vints) {
         free(v);
     }
 
+}
+
+void free_all_rtpstreams(libtrace_list_t *streams) {
+    libtrace_list_node_t *n;
+    rtpstreaminf_t *rtp;
+
+    n = streams->head;
+    while (n) {
+        rtp = (rtpstreaminf_t *)(n->data);
+        if (rtp->targetaddr) {
+            free(rtp->targetaddr);
+        }
+        if (rtp->otheraddr) {
+            free(rtp->otheraddr);
+        }
+        if (rtp->streamkey) {
+            free(rtp->streamkey);
+        }
+        n = n->next;
+    }
+    libtrace_list_deinit(streams);
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

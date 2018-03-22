@@ -78,12 +78,7 @@ typedef struct voipcinmap {
 
 } voipcinmap_t;
 
-typedef struct voipcin {
-    uint32_t cin;
-    uint8_t ended;
-    libtrace_list_t *mediastreams;
-    UT_hash_handle hh;
-} voipcin_t;
+typedef struct rtpstreaminf rtpstreaminf_t;
 
 typedef struct voipintercept {
 
@@ -100,31 +95,34 @@ typedef struct voipintercept {
 
     uint32_t destid;
     char *targetagency;
-    uint8_t active;
     uint8_t awaitingconfirm;
+    uint8_t active;
 
     voipcinmap_t *cin_callid_map;
     voipcinmap_t *cin_sdp_map;
-    voipcin_t *active_cins;
+    rtpstreaminf_t *active_cins;
 
     UT_hash_handle hh_liid;
 } voipintercept_t;
 
-typedef struct rtpstreaminf {
-    char *liid;
-    char *authcc;
-    char *delivcc;
-    uint32_t destid;
-    char *targetagency;
+struct rtpstreaminf {
+    char *streamkey;
     uint32_t cin;
+
     int ai_family;
-    struct sockaddr_storage *addr;
-    uint16_t port;
-    uint8_t direction;
-} rtpstreaminf_t;
+    struct sockaddr_storage *targetaddr;
+    struct sockaddr_storage *otheraddr;
+    uint16_t targetport;
+    uint16_t otherport;
+    uint32_t seqno;
+    uint8_t active;
+    voipintercept_t *parent;
+    UT_hash_handle hh;
+};
 
 void free_all_ipintercepts(libtrace_list_t *interceptlist);
 void free_all_voipintercepts(voipintercept_t *vintercepts);
+void free_all_rtpstreams(libtrace_list_t *streams);
 
 #endif
 
