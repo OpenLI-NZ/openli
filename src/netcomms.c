@@ -610,6 +610,8 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
     vint->delivcc_len = 0;
     vint->sipuri_len = 0;
 
+    vint->iriseqno = 0;
+
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
         uint8_t *valptr;

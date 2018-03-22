@@ -39,6 +39,13 @@
 #define ETSI_DIR_FROM_TARGET 0
 #define ETSI_DIR_TO_TARGET 1
 
+typedef enum {
+    ETSILI_IRI_BEGIN = 1,
+    ETSILI_IRI_END = 2,
+    ETSILI_IRI_CONTINUE = 3,
+    ETSILI_IRI_REPORT = 4
+} etsili_iri_type_t;
+
 typedef struct wandder_etsipshdr_data {
 
     char *liid;
@@ -63,6 +70,11 @@ uint8_t *encode_etsi_ipcc(uint32_t *enclen, wandder_encoder_t *encoder,
 uint8_t *encode_etsi_ipmmcc(uint32_t *enclen, wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
         struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir);
+
+uint8_t *encode_etsi_ipmmiri(uint32_t *enclen, wandder_encoder_t *encoder,
+        wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
+        etsili_iri_type_t iritype, struct timeval *tv, void *ipcontents,
+        uint32_t iplen);
 
 uint8_t *encode_etsi_keepalive(uint32_t *enclen, wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t seqno);

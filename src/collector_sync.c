@@ -42,6 +42,7 @@
 #include "intercept.h"
 #include "netcomms.h"
 #include "util.h"
+#include "ipmmiri.h"
 
 collector_sync_t *init_sync_data(collector_global_t *glob) {
 
@@ -61,6 +62,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->outgoing = NULL;
     sync->incoming = NULL;
     sync->sipparser = NULL;
+    sync->encoder = NULL;
 
     return sync;
 
@@ -511,14 +513,17 @@ static int create_new_voipcin(rtpstreaminf_t **activecins, uint32_t cin_id,
 }
 
 static int lookup_voip_calls(collector_sync_t *sync, char *uri,
-        char *callid, char *sessid, char *sessversion, uint8_t fromorto) {
+        char *callid, char *sessid, char *sessversion, uint8_t fromorto,
+        libtrace_packet_t *pkt) {
 
-    voipcinmap_t *cin1, *cin2;
+    voipcinmap_t *cin = NULL;
     rtpstreaminf_t *thisrtp = NULL;
     sip_sdp_identifier_t sdpo;
     voipintercept_t *vint, *tmp;
     char *ipstr, *portstr;
     char rtpkey[256];
+    int exportcount = 0;
+    int ret;
 
     if (sessid != NULL) {
         errno = 0;
@@ -540,12 +545,13 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
         }
     }
 
-    cin1 = NULL;
-    cin2 = NULL;
-
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
         uint32_t cin_id;
-        voipcinmap_t *newcin;
+        voipcinmap_t *newcin, *cin1, *cin2;
+        etsili_iri_type_t iritype = ETSILI_IRI_REPORT;
+
+        cin1 = NULL;
+        cin2 = NULL;
 
         if (strcmp(vint->sipuri, uri) != 0) {
             continue;
@@ -563,38 +569,50 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
             cin_id = hashlittle(callid, strlen(callid), 0xbeefface);
             if (create_new_voipcin(&(vint->active_cins), cin_id,
                         vint) == -1) {
-                return -1;
+                ret = -1;
+                goto endvoiplookup;
             }
 
             newcin = update_cin_callid_map(vint, cin_id, callid, NULL);
             if (newcin == NULL) {
-                return -1;
+                ret = -1;
+                goto endvoiplookup;
             }
             if (sessid != NULL && sessversion != NULL) {
                 if (update_cin_sdp_map(vint, cin_id, &sdpo, newcin) == NULL) {
-                    return -1;
+                    ret = -1;
+                    goto endvoiplookup;
                 }
             }
+            cin = newcin;
+            iritype = ETSILI_IRI_BEGIN;
         } else if (cin1 == NULL && cin2 != NULL) {
             /* New call ID but already seen this session */
             cin_id = cin2->cin;
             if (update_cin_callid_map(vint, cin_id, callid, cin2) == NULL) {
-                return -1;
+                ret = -1;
+                goto endvoiplookup;
             }
+            cin = cin2;
+            iritype = ETSILI_IRI_CONTINUE;
 
         } else if (cin2 == NULL && cin1 != NULL && sessid != NULL &&
                 sessversion != NULL) {
             /* New session ID for a known call ID */
             cin_id = cin1->cin;
             if (update_cin_sdp_map(vint, cin_id, &sdpo, cin1) == NULL) {
-                return -1;
+                ret = -1;
+                goto endvoiplookup;
             }
-
+            cin = cin1;
+            iritype = ETSILI_IRI_CONTINUE;
         } else {
             if (cin2) {
                 assert(cin1->cin == cin2->cin);     // XXX temporary
             }
             cin_id = cin1->cin;
+            cin = cin1;
+            iritype = ETSILI_IRI_CONTINUE;
         }
 
         snprintf(rtpkey, 256, "%s-%u", vint->liid, cin_id);
@@ -644,11 +662,33 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
 
         /* Check for a BYE? */
 
+
+        /* Wrap this packet up in an IRI and forward it on to the exporter */
+        ret = ipmm_iri(pkt, sync->glob, &(sync->encoder), &(sync->exportq),
+                vint, cin, iritype);
+        if (ret == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: error while trying to export IRI containing SIP packet.");
+            goto endvoiplookup;
+        }
+        exportcount += ret;
+    }
+
+
+endvoiplookup:
+    if (exportcount > 0) {
+        /* Increment ref count for the packet and send a packet fin message
+         * so the exporter knows when to decrease the ref count */
+        openli_export_recv_t msg;
+        trace_increment_packet_refcount(pkt);
+        msg.type = OPENLI_EXPORT_PACKET_FIN;
+        msg.data.packet = pkt;
+        libtrace_message_queue_put(&(sync->exportq), (void *)(&msg));
     }
     return 0;
 }
 
-static int update_sip_state(collector_sync_t *sync) {
+static int update_sip_state(collector_sync_t *sync, libtrace_packet_t *pkt) {
 
     char *fromuri, *touri, *callid, *sessid, *sessversion;
     int iserr = 0;
@@ -666,7 +706,7 @@ static int update_sip_state(collector_sync_t *sync) {
     fromuri = get_sip_from_uri(sync->sipparser);
     if (fromuri != NULL) {
         if (lookup_voip_calls(sync, fromuri, callid, sessid,
-                sessversion, SIP_MATCH_FROMURI) < 0) {
+                sessversion, SIP_MATCH_FROMURI, pkt) < 0) {
             iserr = 1;
         }
 
@@ -675,7 +715,7 @@ static int update_sip_state(collector_sync_t *sync) {
     touri = get_sip_to_uri(sync->sipparser);
     if (touri != NULL) {
         if (lookup_voip_calls(sync, touri, callid, sessid,
-                sessversion, SIP_MATCH_TOURI) < 0) {
+                sessversion, SIP_MATCH_TOURI, pkt) < 0) {
             iserr = 1;
         }
 
@@ -1081,7 +1121,7 @@ int sync_thread_main(collector_sync_t *sync) {
             int ret;
             if ((ret = parse_sip_packet(&(sync->sipparser),
                         recvd.data.pkt)) > 0) {
-                if (update_sip_state(sync) < 0) {
+                if (update_sip_state(sync, recvd.data.pkt) < 0) {
                     logger(LOG_DAEMON,
                             "OpenLI: error while updating SIP state in collector.");
                 }

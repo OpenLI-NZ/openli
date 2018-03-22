@@ -29,6 +29,7 @@
 
 #include <sys/epoll.h>
 
+#include <libwandder.h>
 #include <libtrace/linked_list.h>
 #include <uthash.h>
 #include "collector.h"
@@ -62,6 +63,7 @@ typedef struct colsync_data {
 
     libtrace_message_queue_t exportq;
     openli_sip_parser_t *sipparser;
+    wandder_encoder_t *encoder;
 
 } collector_sync_t;
 

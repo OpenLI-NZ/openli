@@ -30,6 +30,7 @@
 
 uint8_t etsi_ipccoid[4] = {0x05, 0x03, 0x0a, 0x02};
 uint8_t etsi_ipmmccoid[4] = {0x05, 0x05, 0x06, 0x02};
+uint8_t etsi_ipmmirioid[4] = {0x05, 0x05, 0x06, 0x01};
 
 static inline void encode_tri_body(wandder_encoder_t *encoder) {
     ENC_CSEQUENCE(encoder, 2);          // Payload
@@ -58,6 +59,34 @@ static inline void encode_ipcc_body(wandder_encoder_t *encoder,
     wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, ipcontent, iplen);
 
+
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);    // ends outermost sequence
+
+}
+
+static inline void encode_ipmmiri_body(wandder_encoder_t *encoder,
+        etsili_iri_type_t iritype, void *ipcontent, uint32_t iplen) {
+
+    ENC_CSEQUENCE(encoder, 2);      // Payload
+    ENC_CSEQUENCE(encoder, 0);      // IRIPayload
+    ENC_USEQUENCE(encoder);         // IRIPayload sequence
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &iritype,
+            sizeof(iritype));
+    ENC_CSEQUENCE(encoder, 2);      // IRIContents
+    ENC_CSEQUENCE(encoder, 11);     // IPMMIRI
+    wandder_encode_next(encoder, WANDDER_TAG_RELATIVEOID,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, etsi_ipmmirioid,
+            sizeof(etsi_ipmmirioid));
+    ENC_CSEQUENCE(encoder, 1);      // IPMMIRIContents
+    wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, ipcontent, iplen);
 
     wandder_encode_endseq(encoder);
     wandder_encode_endseq(encoder);
@@ -195,6 +224,16 @@ uint8_t *encode_etsi_ipmmcc(uint32_t *enclen, wandder_encoder_t *encoder,
     encode_ipmmcc_body(encoder, ipcontents, iplen, dir);
     return wandder_encode_finish(encoder, enclen);
 
+}
+
+uint8_t *encode_etsi_ipmmiri(uint32_t *enclen, wandder_encoder_t *encoder,
+        wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
+        etsili_iri_type_t iritype, struct timeval *tv, void *ipcontents,
+        uint32_t iplen) {
+
+    encode_etsili_pshdr(encoder, hdrdata, cin, seqno, tv);
+    encode_ipmmiri_body(encoder, iritype, ipcontents, iplen);
+    return wandder_encode_finish(encoder, enclen);
 }
 
 uint8_t *encode_etsi_keepalive(uint32_t *enclen, wandder_encoder_t *encoder,

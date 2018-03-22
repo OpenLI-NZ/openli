@@ -1250,6 +1250,17 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                     return -1;
                 }
                 break;
+            case OPENLI_PROTO_ETSI_IRI:
+                /* msgbody should contain a full ETSI record */
+                thisint = match_etsi_to_agency(state, msgbody, msglen);
+                if (thisint == NULL) {
+                    return -1;
+                }
+                if (enqueue_etsi(state, thisint->agency->hi2, msgbody,
+                            msglen) == -1) {
+                    return -1;
+                }
+                break;
             default:
                 logger(LOG_DAEMON,
                         "OpenLI mediator: unexpected message type %d received from collector.",

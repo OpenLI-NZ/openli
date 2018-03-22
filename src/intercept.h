@@ -102,6 +102,8 @@ typedef struct voipintercept {
     voipcinmap_t *cin_sdp_map;
     rtpstreaminf_t *active_cins;
 
+    uint32_t iriseqno;
+
     UT_hash_handle hh_liid;
 } voipintercept_t;
 
