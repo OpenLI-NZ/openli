@@ -684,6 +684,7 @@ endvoiplookup:
         msg.type = OPENLI_EXPORT_PACKET_FIN;
         msg.data.packet = pkt;
         libtrace_message_queue_put(&(sync->exportq), (void *)(&msg));
+        return 1;
     }
     return 0;
 }
@@ -714,11 +715,16 @@ static int update_sip_state(collector_sync_t *sync, libtrace_packet_t *pkt) {
 
     touri = get_sip_to_uri(sync->sipparser);
     if (touri != NULL) {
-        if (lookup_voip_calls(sync, touri, callid, sessid,
-                sessversion, SIP_MATCH_TOURI, pkt) < 0) {
-            iserr = 1;
+        /* If the "from" and "to" URIs are the same (which can happen
+         * with REGISTER requests), don't repeat the lookup and processing
+         * we just did -- otherwise we'll end up sending duplicate IRIs.
+         */
+        if (fromuri == NULL || strcmp(fromuri, touri) != 0) {
+            if (lookup_voip_calls(sync, touri, callid, sessid,
+                    sessversion, SIP_MATCH_TOURI, pkt) < 0) {
+                iserr = 1;
+            }
         }
-
     }
 
     if (!fromuri && !touri) {
