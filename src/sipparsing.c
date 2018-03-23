@@ -201,6 +201,22 @@ static inline char *strip_sip_uri(char *uristr) {
     return uristr;
 }
 
+char *get_sip_cseq(openli_sip_parser_t *parser) {
+
+    osip_cseq_t *cseq = osip_message_get_cseq(parser->osip);
+    char *cseqstr;
+
+    if (cseq == NULL) {
+        return NULL;
+    }
+
+    if (osip_cseq_to_str(cseq, &cseqstr) != 0) {
+        return NULL;
+    }
+
+    return cseqstr;
+}
+
 char *get_sip_from_uri(openli_sip_parser_t *parser) {
 
     char *uristr;

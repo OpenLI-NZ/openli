@@ -505,6 +505,9 @@ static int create_new_voipcin(rtpstreaminf_t **activecins, uint32_t cin_id,
     newcin->targetport = 0;
     newcin->otherport = 0;
     newcin->seqno = 0;
+    newcin->invitecseq = NULL;
+    newcin->byecseq = NULL;
+    newcin->byematched = 0;
 
     snprintf(newcin->streamkey, 256, "%s-%u", vint->liid, cin_id);
 
@@ -522,7 +525,7 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
     rtpstreaminf_t *thisrtp = NULL;
     sip_sdp_identifier_t sdpo;
     voipintercept_t *vint, *tmp;
-    char *ipstr, *portstr;
+    char *ipstr, *portstr, *cseqstr;
     char rtpkey[256];
     int exportcount = 0;
     int ret;
@@ -642,28 +645,60 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
                     continue;
                 }
             }
+
+            if (thisrtp->invitecseq != NULL) {
+                free(thisrtp->invitecseq);
+            }
+            thisrtp->invitecseq = get_sip_cseq(sync->sipparser);
         }
 
         /* Check for a new RTP stream announcement in a 200 OK */
         if (sip_is_200ok(sync->sipparser)) {
-            ipstr = get_sip_media_ipaddr(sync->sipparser);
-            portstr = get_sip_media_port(sync->sipparser);
+            cseqstr = get_sip_cseq(sync->sipparser);
 
-            if (ipstr && portstr) {
-                if (update_rtp_stream(sync, thisrtp, vint, ipstr, portstr,
-                            1) == -1) {
-                    logger(LOG_DAEMON,
-                            "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
-                            vint->liid, ipstr, portstr);
-                    continue;
+            if (thisrtp->invitecseq && strcmp(thisrtp->invitecseq,
+                    cseqstr) == 0) {
+
+                ipstr = get_sip_media_ipaddr(sync->sipparser);
+                portstr = get_sip_media_port(sync->sipparser);
+
+                if (ipstr && portstr) {
+                    if (update_rtp_stream(sync, thisrtp, vint, ipstr,
+                                portstr, 1) == -1) {
+                        logger(LOG_DAEMON,
+                                "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
+                                vint->liid, ipstr, portstr);
+                        free(cseqstr);
+                        continue;
+                    }
                 }
+            } else if (thisrtp->byecseq && strcmp(thisrtp->byecseq,
+                    cseqstr) == 0) {
+                /* Call for this session should be over */
+
+                /* TODO this CIN should be scheduled to be removed at some
+                 * point to free up resources -- not immediately though,
+                 * as everything is UDP so we can't guarantee that the
+                 * call will end right away.
+                 */
+                thisrtp->byematched = 1;
+                iritype = ETSILI_IRI_END;
             }
+            free(cseqstr);
         }
 
-        /* Check for "failure" codes so we can cancel an INVITE? */
+        /* Check for a BYE */
+        if (sip_is_bye(sync->sipparser) && !thisrtp->byematched) {
+            if (thisrtp->byecseq) {
+                free(thisrtp->byecseq);
+            }
+            thisrtp->byecseq = get_sip_cseq(sync->sipparser);
+        }
 
-        /* Check for a BYE? */
-
+        if (thisrtp->byematched && iritype != ETSILI_IRI_END) {
+            /* All post-END IRIs must be REPORTs */
+            iritype = ETSILI_IRI_REPORT;
+        }
 
         /* Wrap this packet up in an IRI and forward it on to the exporter */
         ret = ipmm_iri(pkt, sync->glob, &(sync->encoder), &(sync->exportq),

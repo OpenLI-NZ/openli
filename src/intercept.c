@@ -79,6 +79,12 @@ static void free_voip_cins(rtpstreaminf_t *cins) {
 
     HASH_ITER(hh, cins, rtp, tmp) {
         HASH_DEL(cins, rtp);
+        if (rtp->invitecseq) {
+            free(rtp->invitecseq);
+        }
+        if (rtp->byecseq) {
+            free(rtp->byecseq);
+        }
         if (rtp->targetaddr) {
             free(rtp->targetaddr);
         }

@@ -72,6 +72,7 @@ int parse_sip_packet(openli_sip_parser_t **parser, libtrace_packet_t *packet);
 void release_sip_parser(openli_sip_parser_t *parser);
 char *get_sip_from_uri(openli_sip_parser_t *parser);
 char *get_sip_to_uri(openli_sip_parser_t *parser);
+char *get_sip_cseq(openli_sip_parser_t *parser);
 char *get_sip_callid(openli_sip_parser_t *parser);
 char *get_sip_session_id(openli_sip_parser_t *parser);
 char *get_sip_session_version(openli_sip_parser_t *parser);

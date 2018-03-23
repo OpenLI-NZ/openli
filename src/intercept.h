@@ -117,6 +117,10 @@ struct rtpstreaminf {
     uint16_t otherport;
     uint32_t seqno;
     uint8_t active;
+    uint8_t byematched;
+    char *invitecseq;
+    char *byecseq;
+
     voipintercept_t *parent;
     UT_hash_handle hh;
 };
