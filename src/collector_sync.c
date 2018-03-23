@@ -438,6 +438,7 @@ static inline voipcinmap_t *update_cin_callid_map(voipintercept_t *vint,
             return NULL;
         }
         newcinmap->cin = cin;
+        newcinmap->iriseqno = 0;
         newcinmap->callid = strdup(callid);
         newcinmap->sdpkey.sessionid = 0;
         newcinmap->sdpkey.version = 0;
@@ -468,6 +469,7 @@ static inline voipcinmap_t *update_cin_sdp_map(voipintercept_t *vint,
         }
         newcinmap->cin = cin;
         newcinmap->callid = NULL;
+        newcinmap->iriseqno = 0;
         newcinmap->sdpkey.sessionid = sdpo->sessionid;
         newcinmap->sdpkey.version = sdpo->version;
         existing = newcinmap;

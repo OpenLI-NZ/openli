@@ -73,6 +73,7 @@ typedef struct voipcinmap {
     char *callid;
     uint32_t cin;
     sip_sdp_identifier_t sdpkey;
+    uint32_t iriseqno;
     UT_hash_handle hh_callid;
     UT_hash_handle hh_sdp;
 
@@ -101,8 +102,6 @@ typedef struct voipintercept {
     voipcinmap_t *cin_callid_map;
     voipcinmap_t *cin_sdp_map;
     rtpstreaminf_t *active_cins;
-
-    uint32_t iriseqno;
 
     UT_hash_handle hh_liid;
 } voipintercept_t;
