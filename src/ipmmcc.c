@@ -28,6 +28,7 @@
 #include <string.h>
 #include <assert.h>
 #include <libtrace.h>
+#include <libtrace_parallel.h>
 #include <libwandder.h>
 #include <libwandder_etsili.h>
 
@@ -174,6 +175,7 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
     if (matched > 0) {
         msg.type = OPENLI_EXPORT_PACKET_FIN;
         msg.data.packet = pkt;
+        trace_increment_packet_refcount(pkt);
         libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
     }
 

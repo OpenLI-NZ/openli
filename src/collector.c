@@ -265,6 +265,7 @@ static inline void send_sip_update(libtrace_packet_t *pkt,
     sipup.data.pkt = pkt;
     sipup.data.pkt = pkt;
 
+    trace_increment_packet_refcount(pkt);
     libtrace_message_queue_put(&(loc->tosyncq), (void *)(&sipup));
 
 }
@@ -332,18 +333,12 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         return pkt;
     }
 
-    /* TODO increment packet refcount for each state update that
-     * we send with the packet in it */
-
     /* Is this a RADIUS packet? -- if yes, create a state update */
 
     /* Is this a SIP packet? -- if yes, create a state update */
     if (identified_as_sip(pkt, loc->knownsipservers)) {
         if (process_sip_packet(pkt, loc) == 1) {
-            /* Form an OpenLI state update message with this SIP packet
-             * attached TODO */
             send_sip_update(pkt, loc);
-            trace_increment_packet_refcount(pkt);
             forwarded = 1;
         }
     }
@@ -351,12 +346,10 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     if (ethertype == TRACE_ETHERTYPE_IP) {
         /* Is this an IP packet? -- if yes, possible IP CC */
         if (ipv4_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
-            trace_increment_packet_refcount(pkt);
             forwarded = 1;
         }
         /* Is this an RTP packet? -- if yes, possible IPMM CC */
         if (ip4mm_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
-            trace_increment_packet_refcount(pkt);
             forwarded = 1;
         }
 
