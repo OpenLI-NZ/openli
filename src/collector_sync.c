@@ -423,8 +423,10 @@ static int update_rtp_stream(collector_sync_t *sync, rtpstreaminf_t *rtp,
     /* If we get here, we need to push the RTP stream details to the
      * processing threads. */
     for (i = 0; i < sync->glob->registered_syncqs; i++) {
-        rtp->active = 1;
-        push_single_voipstreamintercept(sync->glob->syncsendqs[i], rtp);
+        if (rtp->active == 0) {
+            rtp->active = 1;
+            push_single_voipstreamintercept(sync->glob->syncsendqs[i], rtp);
+        }
     }
     return 0;
 }
