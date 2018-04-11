@@ -108,6 +108,10 @@ void clean_sync_data(collector_sync_t *sync) {
         release_sip_parser(sync->sipparser);
     }
 
+    if (sync->encoder) {
+        free_wandder_encoder(sync->encoder);
+    }
+
 	free(sync);
 
 }
