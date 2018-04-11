@@ -130,7 +130,6 @@ static int start_keepalive_timer(mediator_state_t *state,
 
     int sock;
 
-    /* TODO make the timeout value configurable */
     if ((sock = epoll_add_timer(state->epoll_fd, timeoutval, timerev)) == -1) {
         logger(LOG_DAEMON, "OpenLI: warning -- keep alive timer was not able to be set for handover: %s", strerror(errno));
         return -1;
