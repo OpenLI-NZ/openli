@@ -121,6 +121,7 @@ struct rtpstreaminf {
     char *invitecseq;
     char *byecseq;
 
+    void *timeout_ev;
     voipintercept_t *parent;
     UT_hash_handle hh;
 };

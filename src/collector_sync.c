@@ -184,6 +184,10 @@ static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
     copy->otherport = orig->otherport;
     copy->seqno = 0;
     copy->active = orig->active;
+    copy->invitecseq = NULL;
+    copy->byecseq = NULL;
+    copy->timeout_ev = NULL;
+    copy->byematched = 0;
 
     msg.type = OPENLI_PUSH_IPMMINTERCEPT;
     msg.data.ipmmint = copy;
@@ -507,6 +511,7 @@ static int create_new_voipcin(rtpstreaminf_t **activecins, uint32_t cin_id,
     newcin->seqno = 0;
     newcin->invitecseq = NULL;
     newcin->byecseq = NULL;
+    newcin->timeout_ev = NULL;
     newcin->byematched = 0;
 
     snprintf(newcin->streamkey, 256, "%s-%u", vint->liid, cin_id);
@@ -673,7 +678,10 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
                     }
                 }
             } else if (thisrtp->byecseq && strcmp(thisrtp->byecseq,
-                    cseqstr) == 0) {
+                    cseqstr) == 0 && thisrtp->byematched == 0) {
+                sync_epoll_t *timeout = (sync_epoll_t *)calloc(1,
+                        sizeof(sync_epoll_t));
+
                 /* Call for this session should be over */
 
                 /* TODO this CIN should be scheduled to be removed at some
@@ -681,6 +689,12 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
                  * as everything is UDP so we can't guarantee that the
                  * call will end right away.
                  */
+                thisrtp->timeout_ev = (void *)timeout;
+                timeout->fdtype = SYNC_EVENT_SIP_TIMEOUT;
+                timeout->fd = epoll_add_timer(sync->glob->sync_epollfd,
+                        30, timeout);
+                timeout->ptr = thisrtp;
+
                 thisrtp->byematched = 1;
                 iritype = ETSILI_IRI_END;
             }
@@ -982,7 +996,7 @@ int sync_connect_provisioner(collector_sync_t *sync) {
     /* Add instruct_fd to epoll for both reading and writing */
     sync->ii_ev->fdtype = SYNC_EVENT_PROVISIONER;
     sync->ii_ev->fd = sync->instruct_fd;
-    sync->ii_ev->msgq = NULL;
+    sync->ii_ev->ptr = NULL;
 
     ev.data.ptr = (void *)(sync->ii_ev);
     ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
@@ -1133,8 +1147,21 @@ int sync_thread_main(collector_sync_t *sync) {
             continue;
         }
 
+        if (syncev->fdtype == SYNC_EVENT_SIP_TIMEOUT) {
+            struct rtpstreaminf *thisrtp;
+
+            thisrtp = (struct rtpstreaminf *)(syncev->ptr);
+
+            /* TODO remove this once we're sure this actually works */
+            logger(LOG_DAEMON,
+                    "OpenLI TESTING: RTP stream %s:%u has timed out",
+                    thisrtp->streamkey, thisrtp->cin);
+
+        }
+
         /* Must be from a processing thread queue, figure out which one */
-        libtrace_message_queue_get(syncev->msgq, (void *)(&recvd));
+        libtrace_message_queue_get((libtrace_message_queue_t *)(syncev->ptr),
+                (void *)(&recvd));
 
         /* If a hello from a thread, push all active intercepts back */
         if (recvd.type == OPENLI_UPDATE_HELLO) {
@@ -1203,7 +1230,7 @@ void register_sync_queues(collector_global_t *glob,
     syncev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
     syncev->fdtype = SYNC_EVENT_PROC_QUEUE;
     syncev->fd = libtrace_message_queue_get_fd(recvq);
-    syncev->msgq = recvq;
+    syncev->ptr = recvq;
 
     ev.data.ptr = (void *)syncev;
     ev.events = EPOLLIN;

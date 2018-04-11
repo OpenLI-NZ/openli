@@ -38,13 +38,14 @@
 
 enum {
     SYNC_EVENT_PROC_QUEUE,
-    SYNC_EVENT_PROVISIONER
+    SYNC_EVENT_PROVISIONER,
+    SYNC_EVENT_SIP_TIMEOUT,
 };
 
 typedef struct sync_epoll {
     uint8_t fdtype;
     int fd;
-    libtrace_message_queue_t *msgq;
+    void *ptr;
 } sync_epoll_t;
 
 typedef struct colsync_data {
