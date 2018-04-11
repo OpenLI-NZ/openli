@@ -432,61 +432,45 @@ static int update_rtp_stream(collector_sync_t *sync, rtpstreaminf_t *rtp,
 }
 
 static inline voipcinmap_t *update_cin_callid_map(voipintercept_t *vint,
-        uint32_t cin, char *callid, voipcinmap_t *existing) {
+        char *callid, voipintshared_t *vshared) {
 
     voipcinmap_t *newcinmap;
 
-    if (!existing) {
-        newcinmap = (voipcinmap_t *)malloc(sizeof(voipcinmap_t));
-        if (!newcinmap) {
-            logger(LOG_DAEMON,
-                    "OpenLI: out of memory in collector_sync thread.");
-            return NULL;
-        }
-        newcinmap->cin = cin;
-        newcinmap->iriseqno = 0;
-        newcinmap->callid = strdup(callid);
-        newcinmap->sdpkey.sessionid = 0;
-        newcinmap->sdpkey.version = 0;
-        existing = newcinmap;
-    } else {
-        if (existing->callid) {
-            free(existing->callid);
-        }
-        existing->callid = strdup(callid);
+    newcinmap = (voipcinmap_t *)malloc(sizeof(voipcinmap_t));
+    if (!newcinmap) {
+        logger(LOG_DAEMON,
+                "OpenLI: out of memory in collector_sync thread.");
+        return NULL;
     }
+    newcinmap->callid = strdup(callid);
+    newcinmap->shared = vshared;
+    newcinmap->shared->refs ++;
 
-    HASH_ADD_KEYPTR(hh_callid, vint->cin_callid_map, existing->callid,
-            strlen(existing->callid), existing);
-    return existing;
+    HASH_ADD_KEYPTR(hh_callid, vint->cin_callid_map, newcinmap->callid,
+            strlen(newcinmap->callid), newcinmap);
+    return newcinmap;
 }
 
-static inline voipcinmap_t *update_cin_sdp_map(voipintercept_t *vint,
-        uint32_t cin, sip_sdp_identifier_t *sdpo, voipcinmap_t *existing) {
+static inline voipsdpmap_t *update_cin_sdp_map(voipintercept_t *vint,
+        sip_sdp_identifier_t *sdpo, voipintshared_t *vshared) {
 
-    voipcinmap_t *newcinmap;
+    voipsdpmap_t *newsdpmap;
 
-    if (!existing) {
-        newcinmap = (voipcinmap_t *)malloc(sizeof(voipcinmap_t));
-        if (!newcinmap) {
-            logger(LOG_DAEMON,
-                    "OpenLI: out of memory in collector_sync thread.");
-            return NULL;
-        }
-        newcinmap->cin = cin;
-        newcinmap->callid = NULL;
-        newcinmap->iriseqno = 0;
-        newcinmap->sdpkey.sessionid = sdpo->sessionid;
-        newcinmap->sdpkey.version = sdpo->version;
-        existing = newcinmap;
-    } else {
-        existing->sdpkey.sessionid = sdpo->sessionid;
-        existing->sdpkey.version = sdpo->version;
+    newsdpmap = (voipsdpmap_t *)malloc(sizeof(voipsdpmap_t));
+    if (!newsdpmap) {
+        logger(LOG_DAEMON,
+                "OpenLI: out of memory in collector_sync thread.");
+        return NULL;
     }
+    newsdpmap->sdpkey.sessionid = sdpo->sessionid;
+    newsdpmap->sdpkey.version = sdpo->version;
+    newsdpmap->shared = vshared;
+    newsdpmap->shared->refs ++;
 
     HASH_ADD(hh_sdp, vint->cin_sdp_map, sdpkey,
-            sizeof(sip_sdp_identifier_t), existing);
-    return existing;
+            sizeof(sip_sdp_identifier_t), newsdpmap);
+
+    return newsdpmap;
 }
 
 static int create_new_voipcin(rtpstreaminf_t **activecins, uint32_t cin_id,
@@ -559,24 +543,26 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
 
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
         uint32_t cin_id;
-        voipcinmap_t *newcin, *cin1, *cin2;
+        voipcinmap_t *newcin, *findcin;
+        voipsdpmap_t *findsdp = NULL;
+        voipintshared_t *vshared = NULL;
         etsili_iri_type_t iritype = ETSILI_IRI_REPORT;
 
-        cin1 = NULL;
-        cin2 = NULL;
+        findcin = NULL;
+        findsdp = NULL;
 
         if (strcmp(vint->sipuri, uri) != 0) {
             continue;
         }
 
         HASH_FIND(hh_callid, vint->cin_callid_map, callid, strlen(callid),
-                cin1);
+                findcin);
         if (sessid != NULL && sessversion != NULL) {
             HASH_FIND(hh_sdp, vint->cin_sdp_map, &sdpo, sizeof(sdpo),
-                    cin2);
+                    findsdp);
         }
 
-        if (cin1 == NULL && cin2 == NULL) {
+        if (findcin == NULL && findsdp == NULL) {
             /* Never seen this call ID or session before */
             cin_id = hashlittle(callid, strlen(callid), 0xbeefface);
             if (create_new_voipcin(&(vint->active_cins), cin_id,
@@ -584,59 +570,60 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
                 ret = -1;
                 goto endvoiplookup;
             }
+            vshared = (voipintshared_t *)malloc(sizeof(voipintshared_t));
+            vshared->cin = cin_id;
+            vshared->iriseqno = 0;
+            vshared->refs = 0;
 
-            newcin = update_cin_callid_map(vint, cin_id, callid, NULL);
+            newcin = update_cin_callid_map(vint, callid, vshared);
             if (newcin == NULL) {
                 ret = -1;
                 goto endvoiplookup;
             }
+
             if (sessid != NULL && sessversion != NULL) {
-                if (update_cin_sdp_map(vint, cin_id, &sdpo, newcin) == NULL) {
+                if (update_cin_sdp_map(vint, &sdpo, vshared) == NULL) {
                     ret = -1;
                     goto endvoiplookup;
                 }
             }
-            cin = newcin;
             iritype = ETSILI_IRI_BEGIN;
-        } else if (cin1 == NULL && cin2 != NULL) {
+        } else if (findcin == NULL && findsdp != NULL) {
             /* New call ID but already seen this session */
-            cin_id = cin2->cin;
-            if (update_cin_callid_map(vint, cin_id, callid, cin2) == NULL) {
+            vshared = findsdp->shared;
+            newcin = update_cin_callid_map(vint, callid, vshared);
+            if (newcin == NULL) {
                 ret = -1;
                 goto endvoiplookup;
             }
-            cin = cin2;
+
             iritype = ETSILI_IRI_CONTINUE;
 
-        } else if (cin2 == NULL && cin1 != NULL && sessid != NULL &&
+        } else if (findsdp == NULL && findcin != NULL && sessid != NULL &&
                 sessversion != NULL) {
             /* New session ID for a known call ID */
-            cin_id = cin1->cin;
-            if (update_cin_sdp_map(vint, cin_id, &sdpo, cin1) == NULL) {
+            vshared = findcin->shared;
+            if (update_cin_sdp_map(vint, &sdpo, vshared) == NULL) {
                 ret = -1;
                 goto endvoiplookup;
             }
-            cin = cin1;
             iritype = ETSILI_IRI_CONTINUE;
         } else {
-            if (cin2) {
-                assert(cin1->cin == cin2->cin);     // XXX temporary
+            if (findsdp) {
+                assert(findsdp->shared->cin == findcin->shared->cin); // XXX
             }
-            cin_id = cin1->cin;
-            cin = cin1;
+            vshared = findcin->shared;
             iritype = ETSILI_IRI_CONTINUE;
         }
 
-        snprintf(rtpkey, 256, "%s-%u", vint->liid, cin_id);
+        snprintf(rtpkey, 256, "%s-%u", vint->liid, vshared->cin);
         HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
         if (thisrtp == NULL) {
             logger(LOG_DAEMON,
                     "OpenLI: unable to find %u in the active call list for %s, %s",
-                    cin_id, vint->liid, vint->sipuri);
+                    vshared->cin, vint->liid, vint->sipuri);
             continue;
         }
-
-        /* TODO sort out direction tagging for RTP streams */
 
         /* Check for a new RTP stream announcement in an INVITE */
         if (sip_is_invite(sync->sipparser)) {
@@ -718,7 +705,7 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
 
         /* Wrap this packet up in an IRI and forward it on to the exporter */
         ret = ipmm_iri(pkt, sync->glob, &(sync->encoder), &(sync->exportq),
-                vint, cin, iritype);
+                vint, vshared, iritype);
         if (ret == -1) {
             logger(LOG_DAEMON,
                     "OpenLI: error while trying to export IRI containing SIP packet.");
@@ -1201,7 +1188,6 @@ int sync_thread_main(collector_sync_t *sync) {
                 logger(LOG_DAEMON,
                         "OpenLI: sync thread received an invalid SIP packet?");
             }
-
 
             trace_decrement_packet_refcount(recvd.data.pkt);
         }

@@ -64,6 +64,12 @@ typedef struct sdpidentifier {
     uint32_t version;
 } sip_sdp_identifier_t;
 
+typedef struct voipintshared {
+    uint32_t cin;
+    uint32_t iriseqno;
+    int refs;
+} voipintshared_t;
+
 /* Two types of VOIP intercept structure -- one for the target which stores
  * all CINs for that target, and another for each target/CIN combination
  * which is used by the collector threads to maintain per-CIN state.
@@ -71,13 +77,17 @@ typedef struct sdpidentifier {
 typedef struct voipcinmap {
 
     char *callid;
-    uint32_t cin;
-    sip_sdp_identifier_t sdpkey;
-    uint32_t iriseqno;
+    voipintshared_t *shared;
     UT_hash_handle hh_callid;
-    UT_hash_handle hh_sdp;
 
 } voipcinmap_t;
+
+typedef struct voipsdpmap {
+    sip_sdp_identifier_t sdpkey;
+    voipintshared_t *shared;
+    UT_hash_handle hh_sdp;
+} voipsdpmap_t;
+
 
 typedef struct rtpstreaminf rtpstreaminf_t;
 
@@ -100,7 +110,7 @@ typedef struct voipintercept {
     uint8_t active;
 
     voipcinmap_t *cin_callid_map;
-    voipcinmap_t *cin_sdp_map;
+    voipsdpmap_t *cin_sdp_map;
     rtpstreaminf_t *active_cins;
 
     UT_hash_handle hh_liid;

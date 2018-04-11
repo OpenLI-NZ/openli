@@ -35,7 +35,7 @@
 
 int ipmm_iri(libtrace_packet_t *pkt, collector_global_t *glob,
         wandder_encoder_t **encoder, libtrace_message_queue_t *q,
-        voipintercept_t *vint, voipcinmap_t *cin,
+        voipintercept_t *vint, voipintshared_t *cin,
         etsili_iri_type_t iritype);
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
