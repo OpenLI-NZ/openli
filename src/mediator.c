@@ -16,7 +16,7 @@
  * OpenLI is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
+ * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
@@ -130,7 +130,6 @@ static int start_keepalive_timer(mediator_state_t *state,
 
     int sock;
 
-    /* TODO make the timeout value configurable */
     if ((sock = epoll_add_timer(state->epoll_fd, timeoutval, timerev)) == -1) {
         logger(LOG_DAEMON, "OpenLI: warning -- keep alive timer was not able to be set for handover: %s", strerror(errno));
         return -1;
@@ -1246,6 +1245,17 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                     return -1;
                 }
                 if (enqueue_etsi(state, thisint->agency->hi3, msgbody,
+                            msglen) == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_ETSI_IRI:
+                /* msgbody should contain a full ETSI record */
+                thisint = match_etsi_to_agency(state, msgbody, msglen);
+                if (thisint == NULL) {
+                    return -1;
+                }
+                if (enqueue_etsi(state, thisint->agency->hi2, msgbody,
                             msglen) == -1) {
                     return -1;
                 }

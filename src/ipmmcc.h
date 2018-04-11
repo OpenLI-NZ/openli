@@ -23,21 +23,14 @@
  *
  *
  */
+#ifndef OPENLI_IPMMCC_H_
+#define OPENLI_IPMMCC_H_
 
-#ifndef OPENLI_AGENCY_H_
-#define OPENLI_AGENCY_H_
+#include <libtrace.h>
+#include "collector.h"
 
-#include <libtrace/linked_list.h>
-
-typedef struct liagency {
-
-    char *hi2_ipstr;
-    char *hi2_portstr;
-    char *hi3_ipstr;
-    char *hi3_portstr;
-    char *agencyid;
-} liagency_t;
+int ip4mm_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
+        uint32_t rem, collector_global_t *glob, colthread_local_t *loc);
 
 #endif
 
-// vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

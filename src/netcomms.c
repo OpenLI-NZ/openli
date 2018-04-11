@@ -16,7 +16,7 @@
  * OpenLI is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
+ * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
@@ -266,6 +266,72 @@ int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
                 strlen(lea->hi3_portstr)) == -1) {
         return -1;
     }
+    return (int)totallen;
+
+}
+
+#define VOIPINTERCEPT_BODY_LEN(vint) \
+        (vint->liid_len + vint->authcc_len + vint->delivcc_len + \
+         vint->sipuri_len + sizeof(vint->destid) + \
+         sizeof(vint->internalid) + (6 * 4))
+
+int push_voipintercept_onto_net_buffer(net_buffer_t *nb,
+        voipintercept_t *vint) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+    int ret;
+
+    /* Pre-compute our body length so we can write it in the header */
+    if (VOIPINTERCEPT_BODY_LEN(vint) > 65535) {
+        logger(LOG_DAEMON,
+                "OpenLI: VOIP intercept announcement is too long to fit in a single message (%d).",
+                VOIPINTERCEPT_BODY_LEN(vint));
+        return -1;
+    }
+
+    totallen = VOIPINTERCEPT_BODY_LEN(vint);
+
+    /* Push on header */
+    populate_header(&hdr, OPENLI_PROTO_START_VOIPINTERCEPT, totallen,
+            vint->internalid);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t))) == -1) {
+        return -1;
+    }
+
+    /* Push on each intercept field */
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPTID,
+            (uint8_t *)&(vint->internalid),
+            sizeof(vint->internalid))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID, vint->liid,
+            vint->liid_len)) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, vint->authcc,
+            vint->authcc_len)) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC, vint->delivcc,
+            vint->delivcc_len)) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_SIPURI, vint->sipuri,
+            vint->sipuri_len)) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_MEDIATORID,
+            (uint8_t *)&(vint->destid), sizeof(vint->destid))) == -1) {
+        return -1;
+    }
+
     return (int)totallen;
 
 }
@@ -520,6 +586,68 @@ static int decode_tlv(uint8_t *start, uint8_t *end,
     target = (char *)malloc(vallen + 1); \
     memcpy(target, valptr, vallen); \
     (target)[vallen] = '\0';
+
+int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
+        voipintercept_t *vint) {
+
+    uint8_t *msgend = msgbody + len;
+
+    vint->internalid = 0;
+    vint->liid = NULL;
+    vint->authcc = NULL;
+    vint->delivcc = NULL;
+    vint->active_cins = NULL;  /* Placeholder -- sync thread should populate */
+    vint->cin_callid_map = NULL;
+    vint->cin_sdp_map = NULL;
+    vint->sipuri = NULL;
+    vint->destid = 0;
+    vint->targetagency = NULL;
+    vint->active = 1;
+    vint->awaitingconfirm = 0;
+
+    vint->liid_len = 0;
+    vint->authcc_len = 0;
+    vint->delivcc_len = 0;
+    vint->sipuri_len = 0;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_MEDIATORID) {
+            vint->destid = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_LIID) {
+            DECODE_STRING_FIELD(vint->liid, valptr, vallen);
+            vint->liid_len = vallen;
+        } else if (f == OPENLI_PROTO_FIELD_AUTHCC) {
+            DECODE_STRING_FIELD(vint->authcc, valptr, vallen);
+            vint->authcc_len = vallen;
+        } else if (f == OPENLI_PROTO_FIELD_DELIVCC) {
+            DECODE_STRING_FIELD(vint->delivcc, valptr, vallen);
+            vint->delivcc_len = vallen;
+        } else if (f == OPENLI_PROTO_FIELD_SIPURI) {
+            DECODE_STRING_FIELD(vint->sipuri, valptr, vallen);
+            vint->sipuri_len = vallen;
+        } else if (f == OPENLI_PROTO_FIELD_INTERCEPTID) {
+            vint->internalid = *((uint64_t *)valptr);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_DAEMON,
+                "OpenLI: invalid field in received VOIP intercept: %d.", f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+
+    return 0;
+
+
+}
 
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
         ipintercept_t *ipint) {

@@ -24,20 +24,18 @@
  *
  */
 
-#ifndef OPENLI_AGENCY_H_
-#define OPENLI_AGENCY_H_
+#include <libtrace/message_queue.h>
+#include <libtrace.h>
+#include <libwandder.h>
+#include <libwandder_etsili.h>
 
-#include <libtrace/linked_list.h>
+#include "collector.h"
+#include "intercept.h"
+#include "etsili_core.h"
 
-typedef struct liagency {
-
-    char *hi2_ipstr;
-    char *hi2_portstr;
-    char *hi3_ipstr;
-    char *hi3_portstr;
-    char *agencyid;
-} liagency_t;
-
-#endif
+int ipmm_iri(libtrace_packet_t *pkt, collector_global_t *glob,
+        wandder_encoder_t **encoder, libtrace_message_queue_t *q,
+        voipintercept_t *vint, voipintshared_t *cin,
+        etsili_iri_type_t iritype);
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

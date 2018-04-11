@@ -16,7 +16,7 @@
  * OpenLI is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
+ * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
@@ -67,6 +67,8 @@ typedef enum {
     OPENLI_PROTO_NO_MESSAGE,
     OPENLI_PROTO_START_IPINTERCEPT,
     OPENLI_PROTO_HALT_IPINTERCEPT,
+    OPENLI_PROTO_START_VOIPINTERCEPT,
+    OPENLI_PROTO_HALT_VOIPINTERCEPT,
     OPENLI_PROTO_ANNOUNCE_MEDIATOR,
     OPENLI_PROTO_ANNOUNCE_LEA,
     OPENLI_PROTO_MEDIATE_INTERCEPT,
@@ -92,6 +94,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_MEDIATORIP,
     OPENLI_PROTO_FIELD_MEDIATORPORT,
     OPENLI_PROTO_FIELD_USERNAME,
+    OPENLI_PROTO_FIELD_SIPURI,
     OPENLI_PROTO_FIELD_LIID,
     OPENLI_PROTO_FIELD_AUTHCC,
     OPENLI_PROTO_FIELD_DELIVCC,
@@ -112,6 +115,8 @@ uint8_t *construct_netcomm_protocol_header(uint32_t contentlen,
 
 int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med);
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, ipintercept_t *ipint);
+int push_voipintercept_onto_net_buffer(net_buffer_t *nb,
+        voipintercept_t *vint);
 int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
         char *agencyid);
@@ -129,6 +134,8 @@ int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
         ipintercept_t *ipint);
+int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
+        voipintercept_t *vint);
 int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
         char **liid);
