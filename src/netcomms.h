@@ -70,6 +70,7 @@ typedef enum {
     OPENLI_PROTO_START_VOIPINTERCEPT,
     OPENLI_PROTO_HALT_VOIPINTERCEPT,
     OPENLI_PROTO_ANNOUNCE_MEDIATOR,
+    OPENLI_PROTO_WITHDRAW_MEDIATOR,
     OPENLI_PROTO_ANNOUNCE_LEA,
     OPENLI_PROTO_WITHDRAW_LEA,
     OPENLI_PROTO_MEDIATE_INTERCEPT,
@@ -117,6 +118,8 @@ uint8_t *construct_netcomm_protocol_header(uint32_t contentlen,
         uint16_t msgtype, uint64_t internalid, uint32_t *hdrlen);
 
 int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med);
+int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
+        openli_mediator_t *med);
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, ipintercept_t *ipint);
 int push_voipintercept_onto_net_buffer(net_buffer_t *nb,
         voipintercept_t *vint);
@@ -140,6 +143,8 @@ int transmit_net_buffer(net_buffer_t *nb);
 openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
         uint16_t *msglen, uint64_t *intid);
 int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
+        openli_mediator_t *med);
+int decode_mediator_withdraw(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
         ipintercept_t *ipint);

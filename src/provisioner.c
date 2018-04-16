@@ -273,7 +273,9 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
             sizeof(openli_mediator_t));
     libtrace_list_node_t *n;
     prov_mediator_t *provmed = NULL;
+    openli_mediator_t *prevmed = NULL;
     int updatereq = 0;
+    int ret = 0;
 
     if (decode_mediator_announcement(medmsg, msglen, med) == -1) {
         logger(LOG_DAEMON,
@@ -299,12 +301,7 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
             break;
         }
 
-        if (provmed->commev->fd == medfd) {
-            logger(LOG_DAEMON,
-                    "OpenLI: received multiple announcements for mediator %d?",
-                    medfd);
-        }
-        free(provmed->details);
+        prevmed = provmed->details;
         provmed->details = med;
         updatereq = 1;
         break;
@@ -330,22 +327,41 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
             continue;
         }
 
+        if (prevmed) {
+            /* The mediator has changed its details somehow, withdraw any
+             * references to the old one.
+             */
+            if (push_mediator_withdraw_onto_net_buffer(cs->outgoing,
+                    prevmed) < 0) {
+                logger(LOG_DAEMON,
+                        "OpenLI provisioner: error pushing mediator withdrawal %s:%s onto buffer for writing to collector.",
+                        prevmed->ipstr, prevmed->portstr);
+                ret = -1;
+                break;
+            }
+        }
+
         if (push_mediator_onto_net_buffer(cs->outgoing, provmed->details) < 0) {
             logger(LOG_DAEMON,
                     "OpenLI provisioner: error pushing mediator %s:%s onto buffer for writing to collector.",
                     provmed->details->ipstr, provmed->details->portstr);
-            return -1;
+            ret = -1;
+            break;
         }
 
         if (enable_epoll_write(state, col->commev) == -1) {
             logger(LOG_DAEMON,
                     "OpenLI provisioner: cannot enable epoll write event to transmit mediator update to collector: %s.",
                     strerror(errno));
-            return -1;
+            ret = -1;
+            break;
         }
 
     }
-    return 0;
+    if (prevmed) {
+        free(prevmed);
+    }
+    return ret;
 }
 
 static void free_all_mediators(libtrace_list_t *m) {

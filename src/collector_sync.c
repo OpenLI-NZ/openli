@@ -296,6 +296,24 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
     return 0;
 }
 
+static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+
+    openli_mediator_t med;
+    openli_export_recv_t expmsg;
+
+    if (decode_mediator_withdraw(provmsg, msglen, &med) == -1) {
+        logger(LOG_DAEMON, "OpenLI: received invalid mediator withdrawal from provisioner.");
+        return -1;
+    }
+
+    expmsg.type = OPENLI_EXPORT_DROP_SINGLE_MEDIATOR;
+    expmsg.data.med = med;
+
+    libtrace_message_queue_put(&(sync->exportq), &expmsg);
+    return 0;
+}
+
 static void finish_init_mediators(collector_sync_t *sync) {
     openli_export_recv_t expmsg;
 
@@ -989,6 +1007,12 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 break;
             case OPENLI_PROTO_ANNOUNCE_MEDIATOR:
                 ret = new_mediator(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_WITHDRAW_MEDIATOR:
+                ret = remove_mediator(sync, provmsg, msglen);
                 if (ret == -1) {
                     return -1;
                 }

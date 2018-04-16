@@ -507,7 +507,8 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, ipintercept_t *ipint) {
     (sizeof(med->mediatorid) + strlen(med->ipstr) + strlen(med->portstr) \
      + (3 * 4))
 
-int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med) {
+static inline int push_mediator_msg_onto_net_buffer(net_buffer_t *nb,
+        openli_mediator_t *med, openli_proto_msgtype_t type) {
 
     ii_header_t hdr;
     uint16_t totallen;
@@ -524,7 +525,7 @@ int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med) {
     totallen = MEDIATOR_BODY_LEN(med);
 
     /* Push on header */
-    populate_header(&hdr, OPENLI_PROTO_ANNOUNCE_MEDIATOR, totallen, 0);
+    populate_header(&hdr, type, totallen, 0);
     if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
             sizeof(ii_header_t))) == -1) {
         return -1;
@@ -548,6 +549,20 @@ int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med) {
 
     return (int)totallen;
 }
+
+int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med) {
+
+    return push_mediator_msg_onto_net_buffer(nb, med,
+            OPENLI_PROTO_ANNOUNCE_MEDIATOR);
+}
+
+int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
+        openli_mediator_t *med) {
+
+    return push_mediator_msg_onto_net_buffer(nb, med,
+            OPENLI_PROTO_WITHDRAW_MEDIATOR);
+}
+
 
 int push_nomore_intercepts(net_buffer_t *nb) {
     ii_header_t hdr;
@@ -851,6 +866,12 @@ int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
     }
 
     return 0;
+}
+
+int decode_mediator_withdraw(uint8_t *msgbody, uint16_t len,
+        openli_mediator_t *med) {
+
+    return decode_mediator_announcement(msgbody, len, med);
 }
 
 int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
