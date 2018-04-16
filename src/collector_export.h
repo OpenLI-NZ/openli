@@ -56,6 +56,7 @@ enum {
     OPENLI_EXPORT_MEDIATOR = 3,
     OPENLI_EXPORT_FLAG_MEDIATORS = 4,
     OPENLI_EXPORT_INIT_MEDIATORS_OVER = 5,
+    OPENLI_EXPORT_DROP_ALL_MEDIATORS = 6,
 };
 
 typedef struct openli_export_recv {

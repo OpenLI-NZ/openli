@@ -50,7 +50,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 			malloc(sizeof(collector_sync_t));
 
     sync->glob = glob;
-    sync->ipintercepts = libtrace_list_init(sizeof(ipintercept_t));
+    sync->ipintercepts = NULL;
     sync->voipintercepts = NULL;
     sync->instruct_fd = -1;
     sync->instruct_fail = 0;
@@ -230,21 +230,14 @@ static int send_to_provisioner(collector_sync_t *sync) {
 }
 
 static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
-    libtrace_list_node_t *n;
     voipintercept_t *v;
+    ipintercept_t *ipint, *tmp;
     int i;
 
-    n = sync->ipintercepts->head;
+    HASH_ITER(hh_liid, sync->ipintercepts, ipint, tmp) {
 
-    /* TODO count total inactive as we go and reconstruct the list
-     * if the inactive count is relatively high?
-     */
-
-    while (n) {
-        ipintercept_t *cept = (ipintercept_t *)(n->data);
-
-        if (cept->awaitingconfirm && cept->active) {
-            cept->active = 0;
+        if (ipint->awaitingconfirm && ipint->active) {
+            ipint->active = 0;
 
             for (i = 0; i < sync->glob->registered_syncqs; i++) {
                 openli_pushed_t pmsg;
@@ -253,12 +246,12 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
                  * shortly.
                  */
                 pmsg.type = OPENLI_PUSH_HALT_IPINTERCEPT;
-                pmsg.data.interceptid.liid = strdup(cept->liid);
-                pmsg.data.interceptid.authcc = strdup(cept->authcc);
+                pmsg.data.interceptid.liid = strdup(ipint->liid);
+                pmsg.data.interceptid.authcc = strdup(ipint->authcc);
                 libtrace_message_queue_put(sync->glob->syncsendqs[i], &pmsg);
             }
+            /* TODO remove from hashmap */
         }
-        n = n->next;
     }
 
     for (v = sync->voipintercepts; v != NULL; v = v->hh_liid.next) {
@@ -280,6 +273,7 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
                 pmsg.data.interceptid.authcc = strdup(v->authcc);
                 libtrace_message_queue_put(sync->glob->syncsendqs[i], &pmsg);
             }
+            /* TODO remove from hashmap */
         }
     }
 }
@@ -354,6 +348,39 @@ static void push_sip_uri(libtrace_message_queue_t *q, char *uri) {
     msg.data.sipuri = strdup(uri);
 
     libtrace_message_queue_put(q, (void *)(&msg));
+}
+
+static void push_sip_uri_halt(libtrace_message_queue_t *q, char *uri) {
+    openli_pushed_t msg;
+
+    msg.type = OPENLI_PUSH_HALT_SIPURI;
+    msg.data.sipuri = strdup(uri);
+
+    libtrace_message_queue_put(q, (void *)(&msg));
+}
+
+
+static void push_halt_active_voipstreams(libtrace_message_queue_t *q,
+        voipintercept_t *vint) {
+
+    rtpstreaminf_t *cin = NULL;
+    char *streamdup;
+    openli_pushed_t msg;
+
+    if (vint->active_cins == NULL) {
+        return;
+    }
+
+    for (cin = vint->active_cins; cin != NULL; cin=cin->hh.next) {
+        if (cin->active == 0) {
+            continue;
+        }
+        streamdup = strdup(cin->streamkey);
+        msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
+        msg.data.rtpstreamkey = streamdup;
+
+        libtrace_message_queue_put(q, (void *)(&msg));
+    }
 }
 
 static void push_all_active_voipstreams(libtrace_message_queue_t *q,
@@ -791,6 +818,46 @@ sipgiveup:
 
 }
 
+static int halt_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
+        uint16_t msglen) {
+
+    voipintercept_t *vint, torem;
+    int i;
+
+    if (decode_voipintercept_halt(intmsg, msglen, &torem) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: received invalid VOIP intercept withdrawal from provisioner.");
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, sync->voipintercepts, torem.liid, torem.liid_len, vint);
+    if (!vint) {
+        logger(LOG_DAEMON,
+                "OpenLI: received withdrawal for VOIP intercept %s but it is not present in the sync intercept list?",
+                torem.liid);
+        return 0;
+    }
+
+    logger(LOG_DAEMON, "OpenLI: sync thread withdrawing VOIP intercept %s",
+            torem.liid);
+
+    HASH_DELETE(hh_liid, sync->voipintercepts, vint);
+    for (i = 0; i < sync->glob->registered_syncqs; i++) {
+        push_sip_uri_halt(sync->glob->syncsendqs[i], vint->sipuri);
+        push_halt_active_voipstreams(sync->glob->syncsendqs[i], vint);
+    }
+    return 0;
+}
+
+static inline void drop_all_mediators(collector_sync_t *sync) {
+    openli_export_recv_t expmsg;
+
+    expmsg.type = OPENLI_EXPORT_DROP_ALL_MEDIATORS;
+    expmsg.data.packet = NULL;
+    libtrace_message_queue_put(&(sync->exportq), &expmsg);
+}
+
+
 static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
@@ -834,47 +901,46 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
         push_all_active_voipstreams(sync->glob->syncsendqs[i], vint);
 
     }
+    return 0;
 }
 
 static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
-    ipintercept_t cept;
-    libtrace_list_node_t *n;
+    ipintercept_t *cept, *x;
     int i;
 
-    if (decode_ipintercept_start(intmsg, msglen, &cept) == -1) {
+    cept = (ipintercept_t *)malloc(sizeof(ipintercept_t));
+    if (decode_ipintercept_start(intmsg, msglen, cept) == -1) {
         logger(LOG_DAEMON,
                 "OpenLI: received invalid IP intercept from provisioner.");
+        free(cept);
         return -1;
     }
 
     /* Check if we already have this intercept */
-    n = sync->ipintercepts->head;
-    while (n) {
-        ipintercept_t *x = (ipintercept_t *)(n->data);
-        if (strcmp(x->liid, cept.liid) == 0 &&
-                strcmp(x->authcc, cept.authcc) == 0) {
-            /* Duplicate LIID */
+    HASH_FIND(hh_liid, sync->ipintercepts, cept->liid, cept->liid_len, x);
 
-            /* OpenLI-internal fields that could change value
-             * if the provisioner was restarted.
-             */
-            if (strcmp(x->username, cept.username) != 0) {
-                logger(LOG_DAEMON,
-                        "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
-                        x->liid, x->username, cept.username);
-                return -1;
-            }
-            x->internalid = cept.internalid;
-            x->awaitingconfirm = 0;
-            x->active = 1;
-            /* our collector threads should already know about this intercept?
-             */
-            return 0;
+    if (x) {
+        /* Duplicate LIID */
+
+        /* OpenLI-internal fields that could change value
+         * if the provisioner was restarted.
+         */
+        if (strcmp(x->username, cept->username) != 0) {
+            logger(LOG_DAEMON,
+                    "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
+                    x->liid, x->username, cept->username);
+            free(cept);
+            return -1;
         }
-
-        n = n->next;
+        x->internalid = cept->internalid;
+        x->awaitingconfirm = 0;
+        x->active = 1;
+        free(cept);
+        /* our collector threads should already know about this intercept?
+         */
+        return 0;
     }
 
     /* TODO try to find a CIN and IP address for this intercept, based on our
@@ -888,18 +954,14 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
      * Please remove once proper RADIUS support is added.
      */
 
-    fprintf(stderr, "received IP intercept %lu %s %s\n", cept.internalid,
-            cept.liid, cept.username);
-    if (n == NULL) {
-        temporary_map_user_to_address(&cept);
+    fprintf(stderr, "received IP intercept %lu %s %s\n", cept->internalid,
+            cept->liid, cept->username);
+    temporary_map_user_to_address(cept);
 
-        libtrace_list_push_front(sync->ipintercepts, &cept);
-        n = sync->ipintercepts->head;
-    }
+    HASH_ADD(hh_liid, sync->ipintercepts, liid, strlen(cept->liid), cept);
 
     for (i = 0; i < sync->glob->registered_syncqs; i++) {
-        push_single_intercept(sync->glob->syncsendqs[i],
-                (ipintercept_t *)(n->data));
+        push_single_intercept(sync->glob->syncsendqs[i], cept);
     }
 
     return 0;
@@ -922,6 +984,9 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 return -1;
             case OPENLI_PROTO_NO_MESSAGE:
                 break;
+            case OPENLI_PROTO_DISCONNECT_MEDIATORS:
+                drop_all_mediators(sync);
+                break;
             case OPENLI_PROTO_ANNOUNCE_MEDIATOR:
                 ret = new_mediator(sync, provmsg, msglen);
                 if (ret == -1) {
@@ -936,6 +1001,12 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 break;
             case OPENLI_PROTO_START_VOIPINTERCEPT:
                 ret = new_voipintercept(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_HALT_VOIPINTERCEPT:
+                ret = halt_voipintercept(sync, provmsg, msglen);
                 if (ret == -1) {
                     return -1;
                 }
@@ -1005,19 +1076,15 @@ int sync_connect_provisioner(collector_sync_t *sync) {
 
 }
 
-static inline void touch_all_intercepts(libtrace_list_t *intlist) {
-    libtrace_list_node_t *n;
-    ipintercept_t *ipint;
+static inline void touch_all_intercepts(ipintercept_t *intlist) {
+    ipintercept_t *ipint, *tmp;
 
     /* Set all intercepts to be "awaiting confirmation", i.e. if the
      * provisioner doesn't announce them in its initial batch of
      * intercepts then they are to be halted.
      */
-    n = intlist->head;
-    while (n) {
-        ipint = (ipintercept_t *)(n->data);
+    HASH_ITER(hh_liid, intlist, ipint, tmp) {
         ipint->awaitingconfirm = 1;
-        n = n->next;
     }
 }
 
@@ -1065,21 +1132,17 @@ static inline void disconnect_provisioner(collector_sync_t *sync) {
 
 }
 
-static void push_all_active_intercepts(libtrace_list_t *intlist,
+
+static void push_all_active_intercepts(ipintercept_t *intlist,
         libtrace_message_queue_t *q) {
 
-    libtrace_list_node_t *n = intlist->head;
-    ipintercept_t *orig;
+    ipintercept_t *orig, *tmp;
 
-    while (n) {
-        orig = (ipintercept_t *)(n->data);
+    HASH_ITER(hh_liid, intlist, orig, tmp) {
         if (!orig->active) {
-            n = n->next;
             continue;
         }
         push_single_intercept(q, orig);
-
-        n = n->next;
     }
 
 }

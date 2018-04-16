@@ -114,12 +114,12 @@ static openli_export_recv_t form_ipcc(collector_global_t *glob,
 int ipv4_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
         uint32_t rem, collector_global_t *glob, colthread_local_t *loc) {
 
-    libtrace_list_node_t *n = loc->activeipintercepts->head;
     struct sockaddr_storage ipsrc;
     struct sockaddr_storage ipdst;
     struct sockaddr_in *intaddr, *cmp;
     openli_export_recv_t msg;
     int matched = 0;
+    ipintercept_t *tmp, *ipint;
 
     if (rem < sizeof(libtrace_ip_t)) {
         /* Truncated IP header */
@@ -140,11 +140,9 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
      * NOTE: a packet can match multiple intercepts so don't break early.
      */
 
-    while (n) {
-        ipintercept_t *ipint = (ipintercept_t *)(n->data);
+    HASH_ITER(hh_liid, loc->activeipintercepts, ipint, tmp) {
 
         if (!ipint->active) {
-            n = n->next;
             continue;
         }
 
@@ -152,7 +150,6 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
 
         if (intaddr == NULL) {
             /* Intercept with no associated IP address?? */
-            n = n->next;
             continue;
         }
 
@@ -164,7 +161,6 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
                 matched ++;
                 msg = form_ipcc(glob, loc, ipint, pkt, ip, rem);
                 libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
-                n = n->next;
                 continue;
             }
         }
@@ -177,12 +173,9 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
                 matched ++;
                 msg = form_ipcc(glob, loc, ipint, pkt, ip, rem);
                 libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
-                n = n->next;
                 continue;
             }
         }
-
-        n = n->next;
     }
 
     if (matched > 0) {

@@ -197,6 +197,16 @@ int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype)
             sizeof(ii_header_t));
 }
 
+int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb) {
+    ii_header_t hdr;
+
+    /* TODO maybe add some extra security to this? */
+    populate_header(&hdr, OPENLI_PROTO_DISCONNECT_MEDIATORS, 0, 0);
+    return push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t));
+}
+
+
 #define LIIDMAP_BODY_LEN(agency, liid) \
     (strlen(agency) + strlen(liid) + (2 * 4))
 
@@ -226,10 +236,33 @@ int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
     return (int)totallen;
 }
 
+int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
+        int liid_len) {
+    ii_header_t hdr;
+    uint16_t totallen;
+
+    totallen = liid_len + 4;
+    populate_header(&hdr, OPENLI_PROTO_CEASE_MEDIATION, totallen, 0);
+
+    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID, (uint8_t *)(liid),
+                liid_len) == -1) {
+        return -1;
+    }
+    return (int)totallen;
+}
+
 #define LEA_BODY_LEN(lea) \
     (strlen(lea->agencyid) + strlen(lea->hi2_ipstr) + \
     strlen(lea->hi2_portstr) + strlen(lea->hi3_ipstr) + \
     strlen(lea->hi3_portstr) + (5 * 4))
+
+#define LEA_WITHDRAW_BODY_LEN(lea) \
+    (strlen(lea->agencyid) + (1 * 4))
 
 int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
     ii_header_t hdr;
@@ -270,10 +303,79 @@ int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
 
 }
 
+int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
+    ii_header_t hdr;
+    uint16_t totallen;
+
+    totallen = LEA_WITHDRAW_BODY_LEN(lea);
+    populate_header(&hdr, OPENLI_PROTO_WITHDRAW_LEA, totallen, 0);
+    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LEAID, (uint8_t *)(lea->agencyid),
+                strlen(lea->agencyid)) == -1) {
+        return -1;
+    }
+    return (int)totallen;
+}
+
+
+
 #define VOIPINTERCEPT_BODY_LEN(vint) \
         (vint->liid_len + vint->authcc_len + vint->delivcc_len + \
          vint->sipuri_len + sizeof(vint->destid) + \
          sizeof(vint->internalid) + (6 * 4))
+
+#define VOIPINTERCEPT_WITHDRAW_BODY_LEN(vint) \
+        (vint->liid_len + vint->authcc_len + sizeof(vint->internalid) + \
+        (3 * 4))
+
+int push_voipintercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
+        voipintercept_t *vint) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+    int ret;
+
+    /* Pre-compute our body length so we can write it in the header */
+    if (VOIPINTERCEPT_WITHDRAW_BODY_LEN(vint) > 65535) {
+        logger(LOG_DAEMON,
+                "OpenLI: VOIP intercept withdrawal is too long to fit in a single message (%d).",
+                VOIPINTERCEPT_WITHDRAW_BODY_LEN(vint));
+        return -1;
+    }
+
+    totallen = VOIPINTERCEPT_WITHDRAW_BODY_LEN(vint);
+
+    /* Push on header */
+    populate_header(&hdr, OPENLI_PROTO_HALT_VOIPINTERCEPT, totallen,
+            vint->internalid);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t))) == -1) {
+        return -1;
+    }
+
+    /* Push on each intercept field */
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPTID,
+            (uint8_t *)&(vint->internalid),
+            sizeof(vint->internalid))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID, vint->liid,
+            vint->liid_len)) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, vint->authcc,
+            vint->authcc_len)) == -1) {
+        return -1;
+    }
+
+    return (int)totallen;
+}
 
 int push_voipintercept_onto_net_buffer(net_buffer_t *nb,
         voipintercept_t *vint) {
@@ -645,8 +747,11 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
     }
 
     return 0;
+}
 
-
+int decode_voipintercept_halt(uint8_t *msgbody, uint16_t len,
+        voipintercept_t *vint) {
+    return decode_voipintercept_start(msgbody, len, vint);
 }
 
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
@@ -756,7 +861,7 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
     lea->hi2_portstr = NULL;
     lea->hi3_ipstr = NULL;
     lea->hi3_portstr = NULL;
-    lea->agencyid = 0;
+    lea->agencyid = NULL;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -790,6 +895,10 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
     return 0;
 }
 
+int decode_lea_withdrawal(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
+    return decode_lea_announcement(msgbody, len, lea);
+}
+
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
         char **liid) {
 
@@ -820,6 +929,34 @@ int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
 
     return 0;
 }
+
+int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid) {
+    uint8_t *msgend = msgbody + len;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_LIID) {
+            DECODE_STRING_FIELD(*liid, valptr, vallen);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_DAEMON,
+                    "OpenLI: invalid field in received cease mediation: %d.",
+                    f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+
+    return 0;
+}
+
 
 openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
         uint16_t *msglen, uint64_t *intid) {

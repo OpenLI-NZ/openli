@@ -141,19 +141,18 @@ int connect_export_targets(collector_export_t *exp) {
 
 }
 
-void destroy_exporter(collector_export_t *exp) {
-    libtrace_list_node_t *n;
+static inline void remove_all_destinations(collector_export_t *exp) {
     export_dest_t *d;
-
-    if (exp->glob->export_epollfd != -1) {
-        close(exp->glob->export_epollfd);
-    }
+    libtrace_list_node_t *n;
+    struct epoll_event ev;
 
     /* Close all dest fds */
     n = exp->dests->head;
     while (n) {
         d = (export_dest_t *)n->data;
+
         if (d->fd != -1) {
+            epoll_ctl(exp->glob->export_epollfd, EPOLL_CTL_DEL, d->fd, &ev);
             close(d->fd);
         }
         /* Don't free d->details, let the sync thread tidy this up */
@@ -170,6 +169,18 @@ void destroy_exporter(collector_export_t *exp) {
     }
 
     libtrace_list_deinit(exp->dests);
+    exp->dests = NULL;
+
+}
+
+void destroy_exporter(collector_export_t *exp) {
+    libtrace_list_node_t *n;
+
+    if (exp->glob->export_epollfd != -1) {
+        close(exp->glob->export_epollfd);
+    }
+
+    remove_all_destinations(exp);
 
     n = exp->glob->export_epoll_evs->head;
     while (n) {
@@ -379,6 +390,14 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
         add_new_destination(exp, &(recvd.data.med));
         return 0;
     }
+
+    if (recvd.type == OPENLI_EXPORT_DROP_ALL_MEDIATORS) {
+        logger(LOG_DAEMON, "OpenLI exporter: dropping connections to all known mediators.");
+        remove_all_destinations(exp);
+        exp->dests = libtrace_list_init(sizeof(export_dest_t));
+        return 0;
+    }
+
 
     if (recvd.type == OPENLI_EXPORT_FLAG_MEDIATORS) {
         n = exp->dests->head;

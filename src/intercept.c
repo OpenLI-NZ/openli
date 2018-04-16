@@ -26,14 +26,12 @@
 
 #include "intercept.h"
 
-void free_all_ipintercepts(libtrace_list_t *interceptlist) {
+void free_all_ipintercepts(ipintercept_t *interceptlist) {
 
-    libtrace_list_node_t *n;
-    ipintercept_t *cept;
+    ipintercept_t *cept, *tmp;
 
-    n = interceptlist->head;
-    while (n) {
-        cept = (ipintercept_t *)n->data;
+    HASH_ITER(hh_liid, interceptlist, cept, tmp) {
+        HASH_DELETE(hh_liid, interceptlist, cept);
         if (cept->liid) {
             free(cept->liid);
         }
@@ -56,11 +54,8 @@ void free_all_ipintercepts(libtrace_list_t *interceptlist) {
         if (cept->targetagency) {
             free(cept->targetagency);
         }
-
-        n = n->next;
+        free(cept);
     }
-
-    libtrace_list_deinit(interceptlist);
 }
 
 static void free_voip_cinmap(voipcinmap_t *cins) {

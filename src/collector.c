@@ -112,33 +112,22 @@ static void dump_rtp_intercept(rtpstreaminf_t *rtp) {
     printf("------\n");
 }
 
-static void deactivate_ip_intercept(libtrace_list_t *ipint_list,
+static void deactivate_ip_intercept(colthread_local_t *loc,
         char *liid, char *authcc) {
 
-    libtrace_list_node_t *n;
     ipintercept_t *cept;
 
     /* Search the list for an intercept with a matching ID */
 
     /* If found, set the intercept to inactive */
 
-    n = ipint_list->head;
-    while (n) {
-        cept = (ipintercept_t *)(n->data);
+    HASH_FIND(hh_liid, loc->activeipintercepts, liid, strlen(liid), cept);
 
-        if (strcmp(cept->liid, liid) == 0 && strcmp(cept->authcc, authcc) == 0)
-        {
-            cept->active = 0;
-            break;
-        }
-        n = n->next;
+    if (cept) {
+        cept->active = 0;
     }
 
     /* TODO */
-    /* Starting from the back, prune any inactive intercepts until we
-     * reach an active one. This isn't perfect, but might help keep
-     * the size down a bit. */
-
     /* Future work: if the list is large and fragmented, just re-create
      * the list from scratch to contain only active intercepts. */
 
@@ -164,7 +153,7 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_message_queue_init(&(loc->exportq),
             sizeof(openli_export_recv_t));
 
-    loc->activeipintercepts = libtrace_list_init(sizeof(ipintercept_t));
+    loc->activeipintercepts = NULL;
     loc->activertpintercepts = libtrace_list_init(sizeof(rtpstreaminf_t));
     loc->sip_targets = NULL;
 
@@ -270,6 +259,27 @@ static inline void send_sip_update(libtrace_packet_t *pkt,
 
 }
 
+static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
+    libtrace_list_node_t *n = loc->activertpintercepts->head;
+    while (n) {
+        rtpstreaminf_t *rtp = (rtpstreaminf_t *)(n->data);
+        n = n->next;
+
+        if (strcmp(rtpstreamkey, rtp->streamkey) == 0) {
+            rtp->active = 0;
+            break;
+        }
+    }
+
+    if (n == NULL) {
+        logger(LOG_DAEMON, "OpenLI: collector thread was unable to remove RTP stream %s, as it was not present in its intercept set.",
+                rtpstreamkey);
+        return 0;
+    }
+
+    return 1;
+}
+
 static libtrace_packet_t *process_packet(libtrace_t *trace,
         libtrace_thread_t *t, void *global, void *tls,
         libtrace_packet_t *pkt) {
@@ -288,13 +298,14 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
         if (syncpush.type == OPENLI_PUSH_IPINTERCEPT) {
-            libtrace_list_push_front(loc->activeipintercepts,
-                    (void *)(syncpush.data.ipint));
-            free(syncpush.data.ipint);
+            HASH_ADD_KEYPTR(hh_liid, loc->activeipintercepts,
+                    syncpush.data.ipint->liid,
+                    strlen(syncpush.data.ipint->liid),
+                    syncpush.data.ipint);
         }
 
         if (syncpush.type == OPENLI_PUSH_HALT_IPINTERCEPT) {
-            deactivate_ip_intercept(loc->activeipintercepts,
+            deactivate_ip_intercept(loc,
                     syncpush.data.interceptid.liid,
                     syncpush.data.interceptid.authcc);
         }
@@ -305,26 +316,54 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             free(syncpush.data.ipmmint);
         }
 
-        /* TODO HALT_IPMMINTERCEPT */
+        if (syncpush.type == OPENLI_PUSH_HALT_IPMMINTERCEPT) {
+            if (remove_rtp_stream(loc, syncpush.data.rtpstreamkey) != 0) {
+                logger(LOG_DAEMON, "OpenLI: collector thread %d has stopped intercepting RTP stream %s\n",
+                        trace_get_perpkt_thread_id(t),
+                        syncpush.data.rtpstreamkey);
+            }
+            free(syncpush.data.rtpstreamkey);
+        }
 
         if (syncpush.type == OPENLI_PUSH_SIPURI) {
-            sipuri_hash_t *newsip = (sipuri_hash_t *)malloc(
-                    sizeof(sipuri_hash_t));
-            newsip->uri = syncpush.data.sipuri;
-            HASH_ADD_KEYPTR(hh, loc->sip_targets, newsip->uri,
-                    strlen(newsip->uri), newsip);
+            sipuri_hash_t *newsip;
+            HASH_FIND_STR(loc->sip_targets, syncpush.data.sipuri, newsip);
+
+            if (newsip) {
+                newsip->references ++;
+            } else {
+                newsip = (sipuri_hash_t *)malloc(
+                        sizeof(sipuri_hash_t));
+                newsip->uri = syncpush.data.sipuri;
+                newsip->references = 1;
+                HASH_ADD_KEYPTR(hh, loc->sip_targets, newsip->uri,
+                        strlen(newsip->uri), newsip);
+                logger(LOG_DAEMON, "OpenLI: collector thread %d has added %s to list of SIP URIs.",
+                        trace_get_perpkt_thread_id(t),
+                        syncpush.data.sipuri);
+            }
         }
 
         if (syncpush.type == OPENLI_PUSH_HALT_SIPURI) {
             sipuri_hash_t *torem;
             HASH_FIND_STR(loc->sip_targets, syncpush.data.sipuri, torem);
             if (torem == NULL) {
-                logger(LOG_DAEMON, "Asked to halt SIP intercept for target %s, but that is not in our set of known URIs", syncpush.data.sipuri);
+                logger(LOG_DAEMON, "OpenLI: asked to halt SIP intercept for target %s, but that is not in our set of known URIs", syncpush.data.sipuri);
                 continue;
+            } else {
+                torem->references --;
             }
-            HASH_DEL(loc->sip_targets, torem);
-            free(torem->uri);
-            free(torem);
+            assert(torem->references >= 0);
+
+            if (torem->references == 0) {
+                logger(LOG_DAEMON, "OpenLI: collector thread %d has removed %s from list of SIP URIs.",
+                        trace_get_perpkt_thread_id(t),
+                        syncpush.data.sipuri);
+                HASH_DEL(loc->sip_targets, torem);
+                free(torem->uri);
+                free(torem);
+            }
+            free(syncpush.data.sipuri);
         }
     }
 
