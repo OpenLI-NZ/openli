@@ -229,6 +229,45 @@ static int send_to_provisioner(collector_sync_t *sync) {
     return 1;
 }
 
+static void push_halt_active_voipstreams(libtrace_message_queue_t *q,
+        voipintercept_t *vint, int epollfd) {
+
+    rtpstreaminf_t *cin = NULL;
+    char *streamdup;
+    openli_pushed_t msg;
+
+    if (vint->active_cins == NULL) {
+        return;
+    }
+
+    for (cin = vint->active_cins; cin != NULL; cin=cin->hh.next) {
+        if (cin->active == 0) {
+            continue;
+        }
+        streamdup = strdup(cin->streamkey);
+        msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
+        msg.data.rtpstreamkey = streamdup;
+
+        libtrace_message_queue_put(q, (void *)(&msg));
+
+        /* If we were already about to time this intercept out, make sure
+         * we kill the timer.
+         */
+        if (cin->timeout_ev) {
+            struct epoll_event ev;
+            sync_epoll_t *timerev = (sync_epoll_t *)(cin->timeout_ev);
+            if (epoll_ctl(epollfd, EPOLL_CTL_DEL, timerev->fd, &ev) == -1) {
+                logger(LOG_DAEMON, "OpenLI: unable to remove RTP stream timeout event for %s from epoll: %s",
+                        cin->streamkey, strerror(errno));
+            }
+            close(timerev->fd);
+            free(timerev);
+            cin->timeout_ev = NULL;
+
+        }
+    }
+}
+
 static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
     voipintercept_t *v;
     ipintercept_t *ipint, *tmp;
@@ -263,15 +302,8 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
             }
 
             for (i = 0; i < sync->glob->registered_syncqs; i++) {
-                openli_pushed_t pmsg;
-
-                /* strdup because we might end up freeing this intercept
-                 * shortly.
-                 */
-                pmsg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
-                pmsg.data.interceptid.liid = strdup(v->liid);
-                pmsg.data.interceptid.authcc = strdup(v->authcc);
-                libtrace_message_queue_put(sync->glob->syncsendqs[i], &pmsg);
+                push_halt_active_voipstreams(sync->glob->syncsendqs[i], v,
+                        sync->glob->sync_epollfd);
             }
             /* TODO remove from hashmap */
         }
@@ -377,29 +409,6 @@ static void push_sip_uri_halt(libtrace_message_queue_t *q, char *uri) {
     libtrace_message_queue_put(q, (void *)(&msg));
 }
 
-
-static void push_halt_active_voipstreams(libtrace_message_queue_t *q,
-        voipintercept_t *vint) {
-
-    rtpstreaminf_t *cin = NULL;
-    char *streamdup;
-    openli_pushed_t msg;
-
-    if (vint->active_cins == NULL) {
-        return;
-    }
-
-    for (cin = vint->active_cins; cin != NULL; cin=cin->hh.next) {
-        if (cin->active == 0) {
-            continue;
-        }
-        streamdup = strdup(cin->streamkey);
-        msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
-        msg.data.rtpstreamkey = streamdup;
-
-        libtrace_message_queue_put(q, (void *)(&msg));
-    }
-}
 
 static void push_all_active_voipstreams(libtrace_message_queue_t *q,
         voipintercept_t *vint) {
@@ -721,12 +730,6 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
                         sizeof(sync_epoll_t));
 
                 /* Call for this session should be over */
-
-                /* TODO this CIN should be scheduled to be removed at some
-                 * point to free up resources -- not immediately though,
-                 * as everything is UDP so we can't guarantee that the
-                 * call will end right away.
-                 */
                 thisrtp->timeout_ev = (void *)timeout;
                 timeout->fdtype = SYNC_EVENT_SIP_TIMEOUT;
                 timeout->fd = epoll_add_timer(sync->glob->sync_epollfd,
@@ -862,7 +865,39 @@ static int halt_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
     HASH_DELETE(hh_liid, sync->voipintercepts, vint);
     for (i = 0; i < sync->glob->registered_syncqs; i++) {
         push_sip_uri_halt(sync->glob->syncsendqs[i], vint->sipuri);
-        push_halt_active_voipstreams(sync->glob->syncsendqs[i], vint);
+        push_halt_active_voipstreams(sync->glob->syncsendqs[i], vint,
+                sync->glob->sync_epollfd);
+    }
+    return 0;
+}
+
+static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
+    int i;
+
+    struct epoll_event ev;
+
+    if (rtp->active == 0) {
+        return 0;
+    }
+
+    if (rtp->timeout_ev) {
+        sync_epoll_t *timerev = (sync_epoll_t *)(rtp->timeout_ev);
+        if (epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_DEL, timerev->fd,
+                &ev) == -1) {
+            logger(LOG_DAEMON, "OpenLI: unable to remove RTP stream timeout event for %s from epoll: %s",
+                    rtp->streamkey, strerror(errno));
+        }
+        close(timerev->fd);
+        free(timerev);
+        rtp->timeout_ev = NULL;
+    }
+
+
+    for (i = 0; i < sync->glob->registered_syncqs; i++) {
+       openli_pushed_t msg;
+       msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
+       msg.data.rtpstreamkey = strdup(rtp->streamkey);
+       libtrace_message_queue_put(sync->glob->syncsendqs[i], (void *)(&msg));
     }
     return 0;
 }
@@ -1229,19 +1264,23 @@ int sync_thread_main(collector_sync_t *sync) {
 
         if (syncev->fdtype == SYNC_EVENT_SIP_TIMEOUT) {
             struct rtpstreaminf *thisrtp;
-
             thisrtp = (struct rtpstreaminf *)(syncev->ptr);
-
-            /* TODO remove this once we're sure this actually works */
-            logger(LOG_DAEMON,
-                    "OpenLI TESTING: RTP stream %s:%u has timed out",
-                    thisrtp->streamkey, thisrtp->cin);
-
+            if (halt_single_rtpstream(sync, thisrtp) == -1) {
+                logger(LOG_DAEMON, "OpenLI: unable to remove RTP stream %s from processing threads after timeout.",
+                        thisrtp->streamkey);
+            }
+            continue;
         }
 
         /* Must be from a processing thread queue, figure out which one */
-        libtrace_message_queue_get((libtrace_message_queue_t *)(syncev->ptr),
-                (void *)(&recvd));
+        if (libtrace_message_queue_try_get(
+                (libtrace_message_queue_t *)(syncev->ptr),
+                (void *)(&recvd)) == LIBTRACE_MQ_FAILED) {
+
+            logger(LOG_DAEMON, "OpenLI: warning -- processing thread queue was empty but we thought we had a message available?");
+            assert(0);
+            continue;
+        }
 
         /* If a hello from a thread, push all active intercepts back */
         if (recvd.type == OPENLI_UPDATE_HELLO) {
