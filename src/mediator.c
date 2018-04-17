@@ -428,6 +428,9 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
         hdrdata.networkelemid = "NA";
         hdrdata.networkelemid_len = strlen(hdrdata.networkelemid);
 
+        hdrdata.intpointid = NULL;
+        hdrdata.intpointid_len = 0;
+
         kamsg = encode_etsi_keepalive(&kalen, ms->encoder, &hdrdata,
                 ms->lastkaseq + 1);
         if (kamsg == NULL) {
@@ -864,6 +867,7 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
 
     liagency_t lea;
     libtrace_list_node_t *n;
+    int ret;
 
     if (decode_lea_announcement(msgbody, msglen, &lea) == -1) {
         logger(LOG_DAEMON, "OpenLI: received invalid LEA announcement from provisioner.");
@@ -882,12 +886,11 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
 
         if (strcmp(x->agencyid, lea.agencyid) == 0) {
             med_agency_state_t *mas;
-            int ret;
 
             if ((ret = has_handover_changed(state, x->hi2, lea.hi2_ipstr,
                     lea.hi2_portstr, x->agencyid)) == -1) {
                 x->disabled = 1;
-                return -1;
+                goto freelea;
             } else if (ret == 1) {
                 mas = (med_agency_state_t *)(x->hi2->outev->state);
                 if (mas) {
@@ -898,7 +901,7 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
             if ((ret = has_handover_changed(state, x->hi3, lea.hi3_ipstr,
                     lea.hi3_portstr, x->agencyid)) == -1) {
                 x->disabled = 1;
-                return -1;
+                goto freelea;
             } else if (ret == 1) {
                 mas = (med_agency_state_t *)(x->hi3->outev->state);
                 if (mas) {
@@ -908,13 +911,20 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
 
             x->awaitingconfirm = 0;
             x->disabled = 0;
-            return 0;
+            ret = 0;
+            goto freelea;
         }
     }
 
     create_new_agency(state, &lea);
     return 0;
 
+freelea:
+    free(lea.hi2_portstr);
+    free(lea.hi2_ipstr);
+    free(lea.hi3_portstr);
+    free(lea.hi3_ipstr);
+    return ret;
 }
 
 static mediator_agency_t *lookup_agency(libtrace_list_t *alist, char *id) {
