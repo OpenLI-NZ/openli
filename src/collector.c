@@ -263,12 +263,12 @@ static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
     libtrace_list_node_t *n = loc->activertpintercepts->head;
     while (n) {
         rtpstreaminf_t *rtp = (rtpstreaminf_t *)(n->data);
-        n = n->next;
 
         if (strcmp(rtpstreamkey, rtp->streamkey) == 0) {
             rtp->active = 0;
             break;
         }
+        n = n->next;
     }
 
     if (n == NULL) {
@@ -313,12 +313,13 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         if (syncpush.type == OPENLI_PUSH_IPMMINTERCEPT) {
             libtrace_list_push_front(loc->activertpintercepts,
                     (void *)(syncpush.data.ipmmint));
+            logger(LOG_DAEMON, "OpenLI: collector thread %d has started intercepting RTP stream %s", trace_get_perpkt_thread_id(t), syncpush.data.ipmmint->streamkey);
             free(syncpush.data.ipmmint);
         }
 
         if (syncpush.type == OPENLI_PUSH_HALT_IPMMINTERCEPT) {
             if (remove_rtp_stream(loc, syncpush.data.rtpstreamkey) != 0) {
-                logger(LOG_DAEMON, "OpenLI: collector thread %d has stopped intercepting RTP stream %s\n",
+                logger(LOG_DAEMON, "OpenLI: collector thread %d has stopped intercepting RTP stream %s",
                         trace_get_perpkt_thread_id(t),
                         syncpush.data.rtpstreamkey);
             }
