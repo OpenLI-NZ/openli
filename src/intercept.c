@@ -63,10 +63,30 @@ static void free_voip_cinmap(voipcinmap_t *cins) {
 
     HASH_ITER(hh_callid, cins, c, tmp) {
         HASH_DELETE(hh_callid, cins, c);
+        free(c->shared);
         free(c->callid);
         free(c);
     }
 
+}
+
+void free_single_voip_cin(rtpstreaminf_t *rtp) {
+    if (rtp->invitecseq) {
+        free(rtp->invitecseq);
+    }
+    if (rtp->byecseq) {
+        free(rtp->byecseq);
+    }
+    if (rtp->targetaddr) {
+        free(rtp->targetaddr);
+    }
+    if (rtp->otheraddr) {
+        free(rtp->otheraddr);
+    }
+    if (rtp->streamkey) {
+        free(rtp->streamkey);
+    }
+    free(rtp);
 }
 
 static void free_voip_cins(rtpstreaminf_t *cins) {
@@ -74,22 +94,7 @@ static void free_voip_cins(rtpstreaminf_t *cins) {
 
     HASH_ITER(hh, cins, rtp, tmp) {
         HASH_DEL(cins, rtp);
-        if (rtp->invitecseq) {
-            free(rtp->invitecseq);
-        }
-        if (rtp->byecseq) {
-            free(rtp->byecseq);
-        }
-        if (rtp->targetaddr) {
-            free(rtp->targetaddr);
-        }
-        if (rtp->otheraddr) {
-            free(rtp->otheraddr);
-        }
-        if (rtp->streamkey) {
-            free(rtp->streamkey);
-        }
-        free(rtp);
+        free_single_voip_cin(rtp);
     }
 
 }
