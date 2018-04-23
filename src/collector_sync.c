@@ -1303,8 +1303,10 @@ int sync_thread_main(collector_sync_t *sync) {
                 (libtrace_message_queue_t *)(syncev->ptr),
                 (void *)(&recvd)) == LIBTRACE_MQ_FAILED) {
 
-            logger(LOG_DAEMON, "OpenLI: warning -- processing thread queue was empty but we thought we had a message available?");
-            assert(0);
+            /* Processing thread queue was empty but we thought we had a
+             * message available? I think this is just a consequence of
+             * libtrace MQ's "fast" path that tries to avoid locking for
+             * simple operations. */
             continue;
         }
 
