@@ -913,9 +913,9 @@ static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
             cin_callid->shared->refs --;
             if (cin_callid->shared->refs == 0) {
                 free(cin_callid->shared);
+                break;
             }
             free(cin_callid);
-            break;
         }
     }
 
@@ -925,9 +925,9 @@ static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
             cin_sdp->shared->refs --;
             if (cin_sdp->shared->refs == 0) {
                 free(cin_sdp->shared);
+                break;
             }
             free(cin_sdp);
-            break;
         }
     }
 
