@@ -32,8 +32,6 @@
 #include "mediator.h"
 #include <yaml.h>
 
-int parse_export_config(char *configfile, libtrace_list_t *exptargets);
-int parse_ipintercept_config(char *configfile, libtrace_list_t *ipints);
 collector_global_t *parse_global_config(char *configfile);
 void clear_global_config(collector_global_t *glob);
 

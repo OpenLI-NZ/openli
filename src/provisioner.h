@@ -64,6 +64,12 @@ typedef struct liid_hash {
     UT_hash_handle hh;
 } liid_hash_t;
 
+typedef struct prov_agency {
+    liagency_t *ag;
+    uint8_t announcereq;
+    UT_hash_handle hh;
+} prov_agency_t;
+
 typedef struct prov_state {
 
     char *conffile;
@@ -75,12 +81,11 @@ typedef struct prov_state {
     char *pushport;
 
     int epoll_fd;
-    libtrace_list_t *ipintercepts;
     libtrace_list_t *mediators;
     libtrace_list_t *collectors;
-    libtrace_list_t *leas;
 
     voipintercept_t *voipintercepts;
+    ipintercept_t *ipintercepts;
 
     prov_epoll_ev_t *clientfd;
     prov_epoll_ev_t *updatefd;
@@ -91,6 +96,7 @@ typedef struct prov_state {
     uint16_t dropped_collectors;
     uint16_t dropped_mediators;
 
+    prov_agency_t *leas;
     liid_hash_t *liid_map;
 
     /*

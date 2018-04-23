@@ -75,6 +75,7 @@ typedef struct openli_ii_msg {
             char *authcc;
         } interceptid;
         char *sipuri;
+        char *rtpstreamkey;
     } data;
 
 } PACKED openli_pushed_t;
@@ -96,6 +97,7 @@ typedef struct colinput {
 typedef struct sipuri_hash {
     UT_hash_handle hh;
     char *uri;
+    int references;
 } sipuri_hash_t;
 
 typedef struct colthread_local {
@@ -108,9 +110,7 @@ typedef struct colthread_local {
 
 
     /* Current intercepts */
-    /* XXX For now, we can probably get away with a simple unordered list but
-     * eventually we might want a radix tree for faster lookups */
-    libtrace_list_t *activeipintercepts;
+    ipintercept_t *activeipintercepts;
 
     libtrace_list_t *activertpintercepts;
 

@@ -140,6 +140,8 @@ int create_listener(char *addr, char *port, char *name) {
         sockfd = -1;
         goto endlistener;
     }
+    logger(LOG_DAEMON, "OpenLI: %s listening on %s:%s successfully.",
+            name, addr, port);
 endlistener:
     freeaddrinfo(res);
     return sockfd;

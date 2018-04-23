@@ -52,7 +52,7 @@ typedef struct colsync_data {
 
     collector_global_t *glob;
 
-    libtrace_list_t *ipintercepts;
+    ipintercept_t *ipintercepts;
     voipintercept_t *voipintercepts;
     voipintercept_t *voipintercepts_by_uri;
     int instruct_fd;

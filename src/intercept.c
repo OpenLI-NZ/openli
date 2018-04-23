@@ -26,14 +26,12 @@
 
 #include "intercept.h"
 
-void free_all_ipintercepts(libtrace_list_t *interceptlist) {
+void free_all_ipintercepts(ipintercept_t *interceptlist) {
 
-    libtrace_list_node_t *n;
-    ipintercept_t *cept;
+    ipintercept_t *cept, *tmp;
 
-    n = interceptlist->head;
-    while (n) {
-        cept = (ipintercept_t *)n->data;
+    HASH_ITER(hh_liid, interceptlist, cept, tmp) {
+        HASH_DELETE(hh_liid, interceptlist, cept);
         if (cept->liid) {
             free(cept->liid);
         }
@@ -56,11 +54,8 @@ void free_all_ipintercepts(libtrace_list_t *interceptlist) {
         if (cept->targetagency) {
             free(cept->targetagency);
         }
-
-        n = n->next;
+        free(cept);
     }
-
-    libtrace_list_deinit(interceptlist);
 }
 
 static void free_voip_cinmap(voipcinmap_t *cins) {
@@ -68,10 +63,30 @@ static void free_voip_cinmap(voipcinmap_t *cins) {
 
     HASH_ITER(hh_callid, cins, c, tmp) {
         HASH_DELETE(hh_callid, cins, c);
+        free(c->shared);
         free(c->callid);
         free(c);
     }
 
+}
+
+void free_single_voip_cin(rtpstreaminf_t *rtp) {
+    if (rtp->invitecseq) {
+        free(rtp->invitecseq);
+    }
+    if (rtp->byecseq) {
+        free(rtp->byecseq);
+    }
+    if (rtp->targetaddr) {
+        free(rtp->targetaddr);
+    }
+    if (rtp->otheraddr) {
+        free(rtp->otheraddr);
+    }
+    if (rtp->streamkey) {
+        free(rtp->streamkey);
+    }
+    free(rtp);
 }
 
 static void free_voip_cins(rtpstreaminf_t *cins) {
@@ -79,22 +94,7 @@ static void free_voip_cins(rtpstreaminf_t *cins) {
 
     HASH_ITER(hh, cins, rtp, tmp) {
         HASH_DEL(cins, rtp);
-        if (rtp->invitecseq) {
-            free(rtp->invitecseq);
-        }
-        if (rtp->byecseq) {
-            free(rtp->byecseq);
-        }
-        if (rtp->targetaddr) {
-            free(rtp->targetaddr);
-        }
-        if (rtp->otheraddr) {
-            free(rtp->otheraddr);
-        }
-        if (rtp->streamkey) {
-            free(rtp->streamkey);
-        }
-        free(rtp);
+        free_single_voip_cin(rtp);
     }
 
 }

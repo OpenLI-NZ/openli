@@ -38,6 +38,13 @@ typedef struct liagency {
     char *agencyid;
 } liagency_t;
 
+#define agency_equal(a, b) \
+    ((strcmp(a->hi2_ipstr, b->hi2_ipstr) == 0) && \
+     (strcmp(a->hi2_portstr, b->hi2_portstr) == 0) && \
+     (strcmp(a->hi3_ipstr, b->hi3_ipstr) == 0) && \
+     (strcmp(a->hi3_portstr, b->hi3_portstr) == 0) && \
+     (strcmp(a->agencyid, b->agencyid) == 0))
+
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

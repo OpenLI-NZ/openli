@@ -57,6 +57,7 @@ typedef struct ipintercept {
     char *targetagency;
     uint8_t active;
     uint8_t awaitingconfirm;
+    UT_hash_handle hh_liid;
 } ipintercept_t;
 
 typedef struct sdpidentifier {
@@ -90,6 +91,12 @@ typedef struct voipsdpmap {
 
 
 typedef struct rtpstreaminf rtpstreaminf_t;
+
+#define voip_intercept_equal(a,b) \
+    ((strcmp(a->authcc, b->authcc) == 0) && \
+     (strcmp(a->delivcc, b->delivcc) == 0) && \
+     (strcmp(a->sipuri, b->sipuri) == 0) && \
+     (strcmp(a->targetagency, b->targetagency) == 0))
 
 typedef struct voipintercept {
 
@@ -136,9 +143,10 @@ struct rtpstreaminf {
     UT_hash_handle hh;
 };
 
-void free_all_ipintercepts(libtrace_list_t *interceptlist);
+void free_all_ipintercepts(ipintercept_t *interceptlist);
 void free_all_voipintercepts(voipintercept_t *vintercepts);
 void free_all_rtpstreams(libtrace_list_t *streams);
+void free_single_voip_cin(rtpstreaminf_t *rtp);
 
 #endif
 

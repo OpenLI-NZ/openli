@@ -428,6 +428,9 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
         hdrdata.networkelemid = "NA";
         hdrdata.networkelemid_len = strlen(hdrdata.networkelemid);
 
+        hdrdata.intpointid = NULL;
+        hdrdata.intpointid_len = 0;
+
         kamsg = encode_etsi_keepalive(&kalen, ms->encoder, &hdrdata,
                 ms->lastkaseq + 1);
         if (kamsg == NULL) {
@@ -557,6 +560,8 @@ static void connect_agencies(mediator_state_t *state) {
         n = n->next;
 
         if (ag->disabled) {
+            printf("cannot connect to agency %s because it is disabled\n",
+                    ag->agencyid);
             continue;
         }
 
@@ -820,25 +825,28 @@ static int has_handover_changed(mediator_state_t *state,
             "OpenLI: %s connection info for LEA %s has changed from %s:%s to %s:%s.",
             hitypestr, agencyid, ho->ipstr, ho->portstr, ipstr, portstr);
 
+    disconnect_handover(state, ho);
     free(ho->ipstr);
     free(ho->portstr);
     ho->ipstr = ipstr;
     ho->portstr = portstr;
-
-    disconnect_handover(state, ho);
+    return 1;
 
 }
 
-static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
+static int receive_lea_withdrawal(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
 
     liagency_t lea;
     libtrace_list_node_t *n;
 
-    if (decode_lea_announcement(msgbody, msglen, &lea) == -1) {
-        logger(LOG_DAEMON, "OpenLI: received invalid LEA announcement from provisioner.");
+    if (decode_lea_withdrawal(msgbody, msglen, &lea) == -1) {
+        logger(LOG_DAEMON, "OpenLI: received invalid LEA withdrawal from provisioner.");
         return -1;
     }
+
+    logger(LOG_DAEMON, "OpenLI: mediator received LEA withdrawal for %s.",
+            lea.agencyid);
 
     n = state->agencies->head;
     while (n) {
@@ -846,26 +854,77 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
         n = n->next;
 
         if (strcmp(x->agencyid, lea.agencyid) == 0) {
-            if (has_handover_changed(state, x->hi2, lea.hi2_ipstr,
-                    lea.hi2_portstr, x->agencyid) == -1) {
+            x->disabled = 1;
+            break;
+        }
+    }
+
+    return 0;
+}
+
+static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
+        uint16_t msglen) {
+
+    liagency_t lea;
+    libtrace_list_node_t *n;
+    int ret;
+
+    if (decode_lea_announcement(msgbody, msglen, &lea) == -1) {
+        logger(LOG_DAEMON, "OpenLI: received invalid LEA announcement from provisioner.");
+        return -1;
+    }
+
+    logger(LOG_DAEMON, "OpenLI: mediator received LEA announcement for %s.",
+            lea.agencyid);
+    logger(LOG_DAEMON, "OpenLI: HI2 = %s:%s    HI3 = %s:%s",
+            lea.hi2_ipstr, lea.hi2_portstr, lea.hi3_ipstr, lea.hi3_portstr);
+
+    n = state->agencies->head;
+    while (n) {
+        mediator_agency_t *x = (mediator_agency_t *)(n->data);
+        n = n->next;
+
+        if (strcmp(x->agencyid, lea.agencyid) == 0) {
+            med_agency_state_t *mas;
+
+            if ((ret = has_handover_changed(state, x->hi2, lea.hi2_ipstr,
+                    lea.hi2_portstr, x->agencyid)) == -1) {
                 x->disabled = 1;
-                return -1;
+                goto freelea;
+            } else if (ret == 1) {
+                mas = (med_agency_state_t *)(x->hi2->outev->state);
+                if (mas) {
+                    mas->failmsg = 0;
+                }
             }
 
-            if (has_handover_changed(state, x->hi3, lea.hi3_ipstr,
-                    lea.hi3_portstr, x->agencyid) == -1) {
+            if ((ret = has_handover_changed(state, x->hi3, lea.hi3_ipstr,
+                    lea.hi3_portstr, x->agencyid)) == -1) {
                 x->disabled = 1;
-                return -1;
+                goto freelea;
+            } else if (ret == 1) {
+                mas = (med_agency_state_t *)(x->hi3->outev->state);
+                if (mas) {
+                    mas->failmsg = 0;
+                }
             }
+
             x->awaitingconfirm = 0;
             x->disabled = 0;
-            return 0;
+            ret = 0;
+            goto freelea;
         }
     }
 
     create_new_agency(state, &lea);
     return 0;
 
+freelea:
+    free(lea.hi2_portstr);
+    free(lea.hi2_ipstr);
+    free(lea.hi3_portstr);
+    free(lea.hi3_ipstr);
+    return ret;
 }
 
 static mediator_agency_t *lookup_agency(libtrace_list_t *alist, char *id) {
@@ -1018,6 +1077,39 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
 
 }
 
+static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
+        uint16_t msglen) {
+
+    char *liid = NULL;
+    liid_map_t *m;
+
+    if (decode_cease_mediation(msgbody, msglen, &liid) == -1) {
+        logger(LOG_DAEMON, "OpenLI mediator: received invalid cease mediation command from provisioner.");
+        return -1;
+    }
+
+    if (liid == NULL) {
+        return -1;
+    }
+
+    HASH_FIND_STR(state->liids, liid, m);
+    if (m == NULL) {
+        logger(LOG_DAEMON, "OpenLI mediator: asked to cease mediation for LIID %s, but we have no record of this LIID?",
+                liid);
+        free(liid);
+        return 0;
+    }
+
+    logger(LOG_DAEMON, "OpenLI mediator: removed agency mapping for LIID %s.",
+            liid);
+
+    HASH_DEL(state->liids, m);
+    free(liid);
+    free(m->liid);
+    free(m);
+    return 0;
+}
+
 static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
 
@@ -1051,6 +1143,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     if (agency == NULL) {
         logger(LOG_DAEMON, "OpenLI: agency %s is not recognised by the mediator, yet LIID %s is intended for it?",
                 agencyid, liid);
+        assert(0);
         return -1;
     }
 
@@ -1128,8 +1221,18 @@ static int receive_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
                     return -1;
                 }
                 break;
+            case OPENLI_PROTO_WITHDRAW_LEA:
+                if (receive_lea_withdrawal(state, msgbody, msglen) == -1) {
+                    return -1;
+                }
+                break;
             case OPENLI_PROTO_MEDIATE_INTERCEPT:
                 if (receive_liid_mapping(state, msgbody, msglen) == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_CEASE_MEDIATION:
+                if (receive_cease(state, msgbody, msglen) == -1) {
                     return -1;
                 }
                 break;
@@ -1356,47 +1459,18 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 
 }
 
-static int init_provisioner_connection(mediator_state_t *state, int sock) {
-
-    struct epoll_event ev;
-    mediator_prov_t *prov = (mediator_prov_t *)&(state->provisioner);
+static int send_mediator_listen_details(mediator_state_t *state,
+        int justcreated) {
     openli_mediator_t meddeets;
+    mediator_prov_t *prov = (mediator_prov_t *)&(state->provisioner);
     struct sockaddr_storage sa;
     socklen_t salen = sizeof(struct sockaddr_storage);
     char listenname[NI_MAXHOST];
     int ret;
+    struct epoll_event ev;
 
-    if (sock == 0) {
-        return 0;
-    }
 
     memset(&sa, 0, sizeof(sa));
-
-    prov->provev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
-    prov->provev->fd = sock;
-    prov->provev->fdtype = MED_EPOLL_PROVISIONER;
-    prov->provev->state = NULL;
-
-    prov->sentinfo = 0;
-    prov->outgoing = create_net_buffer(NETBUF_SEND, sock);
-    prov->incoming = create_net_buffer(NETBUF_RECV, sock);
-
-    ev.data.ptr = prov->provev;
-    ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
-
-    if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, sock, &ev) == -1) {
-        logger(LOG_DAEMON,
-                "OpenLI mediator: failed to register provisioner socket: %s.",
-                strerror(errno));
-        return -1;
-    }
-
-    if (push_auth_onto_net_buffer(prov->outgoing,
-                OPENLI_PROTO_MEDIATOR_AUTH) == -1) {
-        logger(LOG_DAEMON, "OpenLI mediator: unable to push auth message for provisioner.");
-        return -1;
-    }
-
     meddeets.mediatorid = state->mediatorid;
 
     /* Use a combination of getsockname and getnameinfo to get the listening
@@ -1427,6 +1501,201 @@ static int init_provisioner_connection(mediator_state_t *state, int sock) {
         return -1;
     }
 
+    if (justcreated) {
+        return 0;
+    }
+
+    ev.data.ptr = prov->provev;
+    ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
+
+    if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, prov->provev->fd, &ev)
+            == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI mediator: failed to re-enable transmit on provisioner socket: %s.",
+                strerror(errno));
+        return -1;
+    }
+
+    return 0;
+}
+
+static int init_provisioner_connection(mediator_state_t *state, int sock) {
+
+    struct epoll_event ev;
+    mediator_prov_t *prov = (mediator_prov_t *)&(state->provisioner);
+
+    if (sock == 0) {
+        return 0;
+    }
+
+    prov->provev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+    prov->provev->fd = sock;
+    prov->provev->fdtype = MED_EPOLL_PROVISIONER;
+    prov->provev->state = NULL;
+
+    prov->sentinfo = 0;
+    prov->outgoing = create_net_buffer(NETBUF_SEND, sock);
+    prov->incoming = create_net_buffer(NETBUF_RECV, sock);
+
+    ev.data.ptr = prov->provev;
+    ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
+
+    if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, sock, &ev) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI mediator: failed to register provisioner socket: %s.",
+                strerror(errno));
+        return -1;
+    }
+
+    if (push_auth_onto_net_buffer(prov->outgoing,
+                OPENLI_PROTO_MEDIATOR_AUTH) == -1) {
+        logger(LOG_DAEMON, "OpenLI mediator: unable to push auth message for provisioner.");
+        return -1;
+    }
+
+    return send_mediator_listen_details(state, 1);
+}
+
+static int reload_provisioner_socket_config(mediator_state_t *currstate,
+        mediator_state_t *newstate) {
+
+    struct epoll_event ev;
+    int changed = 0;
+    liid_map_t *m, *tmp;
+
+    if (strcmp(newstate->provaddr, currstate->provaddr) != 0 ||
+            strcmp(newstate->provport, currstate->provport) != 0) {
+
+        /* Disconnect from provisioner and reset all state received
+         * from the old provisioner (just to be safe). */
+
+        HASH_ITER(hh, currstate->liids, m, tmp) {
+            HASH_DEL(currstate->liids, m);
+            free(m->liid);
+            free(m);
+        }
+        currstate->liids = NULL;
+
+        free_provisioner(currstate->epoll_fd, &(currstate->provisioner));
+
+        drop_all_agencies(currstate->agencies);
+        currstate->agencies = libtrace_list_init(sizeof(mediator_agency_t));
+
+        /* Replace existing IP and port strings */
+        free(currstate->provaddr);
+        free(currstate->provport);
+        currstate->provaddr = strdup(newstate->provaddr);
+        currstate->provport = strdup(newstate->provport);
+
+        /* Don't bother connecting right now, the run() loop will do this
+         * as soon as we return.
+         */
+        changed = 1;
+    }
+
+    if (!changed) {
+        logger(LOG_DAEMON,
+                "OpenLI mediator: provisioner socket configuration is unchanged.");
+    }
+
+    return changed;
+}
+
+static int reload_listener_socket_config(mediator_state_t *currstate,
+        mediator_state_t *newstate) {
+
+    struct epoll_event ev;
+    int changed = 0;
+
+    if (strcmp(newstate->listenaddr, currstate->listenaddr) != 0 ||
+            strcmp(newstate->listenport, currstate->listenport) != 0) {
+
+        /* Disconnect all collectors */
+        drop_all_collectors(currstate->collectors);
+        currstate->collectors = libtrace_list_init(
+                sizeof(mediator_collector_t));
+
+
+        /* Close listen socket */
+        if (currstate->listenerev) {
+            if (currstate->listenerev->fd != -1) {
+                logger(LOG_DAEMON, "OpenLI mediator: closing listening socket on %s:%s",
+                        currstate->listenaddr, currstate->listenport);
+                if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
+                        currstate->listenerev->fd, &ev) == -1) {
+                    logger(LOG_DAEMON,
+                            "OpenLI mediator: failed to remove listener fd %d from epoll: %s",
+                            currstate->listenerev->fd, strerror(errno));
+                }
+                close(currstate->listenerev->fd);
+            }
+            free(currstate->listenerev);
+        }
+
+        currstate->listenerev = NULL;
+
+        /* Replace existing IP and port strings */
+        free(currstate->listenaddr);
+        free(currstate->listenport);
+        currstate->listenaddr = strdup(newstate->listenaddr);
+        currstate->listenport = strdup(newstate->listenport);
+
+        /* Open new listen socket */
+        if (start_collector_listener(currstate) < 0) {
+            logger(LOG_DAEMON, "OpenLI mediator: Warning, listening socket did not restart. Will not be able to accept connections from collectors.");
+            return -1;
+        }
+        changed = 1;
+    }
+
+    if (currstate->mediatorid != newstate->mediatorid) {
+        logger(LOG_DAEMON,
+                "OpenLI mediator: changing mediator ID from %u to %u",
+                currstate->mediatorid, newstate->mediatorid);
+        currstate->mediatorid = newstate->mediatorid;
+        changed = 1;
+    }
+
+    if (!changed) {
+        logger(LOG_DAEMON,
+                "OpenLI mediator: inbound connection listening socket configuration is unchanged.");
+    }
+
+    return changed;
+}
+
+static int reload_mediator_config(mediator_state_t *currstate) {
+
+    mediator_state_t newstate;
+    int listenchanged = 0;
+    int provchanged = 0;
+
+    if (init_med_state(&newstate, currstate->conffile,
+            currstate->mediatorname) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: error reloading config file for mediator.");
+        return -1;
+    }
+
+    if ((provchanged = reload_provisioner_socket_config(currstate,
+            &newstate)) < 0) {
+        return -1;
+    }
+
+    if ((listenchanged = reload_listener_socket_config(currstate,
+            &newstate)) < 0) {
+        return -1;
+    }
+
+    if (listenchanged && !provchanged) {
+        /* Need to re-announce our details */
+        if (send_mediator_listen_details(currstate, 0) < 0) {
+            return -1;
+        }
+
+    }
+
+    clear_med_state(&newstate);
     return 0;
 
 }
@@ -1456,7 +1725,10 @@ static void run(mediator_state_t *state) {
 	state->timerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
 	while (!mediator_halt) {
         if (reload_config) {
-
+            if (reload_mediator_config(state) == -1) {
+                break;
+            }
+            reload_config = 0;
         }
 
 	    /* Attempt to connect to the provisioner */

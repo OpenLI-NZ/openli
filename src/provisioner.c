@@ -75,6 +75,10 @@ static inline int enable_epoll_write(provision_state_t *state,
         prov_epoll_ev_t *pev) {
     struct epoll_event ev;
 
+    if (pev->fd == -1) {
+        return 0;
+    }
+
     ev.data.ptr = (void *)pev;
     ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
 
@@ -124,37 +128,44 @@ static int liid_hash_sort(liid_hash_t *a, liid_hash_t *b) {
     return strcmp(a->liid, b->liid);
 }
 
+static inline liid_hash_t *add_liid_mapping(provision_state_t *state,
+        char *liid, char *agency) {
+
+    liid_hash_t *h;
+    prov_agency_t *lea;
+
+    h = (liid_hash_t *)malloc(sizeof(liid_hash_t));
+    HASH_FIND_STR(state->leas, agency, lea);
+    if (!lea) {
+        logger(LOG_DAEMON,
+                "OpenLI: intercept %s is destined for an unknown agency: %s -- skipping.",
+                liid, agency);
+        free(h);
+        return NULL;
+    } else {
+        h->agency = agency;
+        h->liid = liid;
+        HASH_ADD_KEYPTR(hh, state->liid_map, h->liid, strlen(h->liid), h);
+    }
+    return h;
+}
+
 static int map_intercepts_to_leas(provision_state_t *state) {
 
     int failed = 0;
-    libtrace_list_node_t *intn;
-    ipintercept_t *ipint;
+    ipintercept_t *ipint, *iptmp;
     voipintercept_t *vint;
-    liid_hash_t *h;
+    prov_agency_t *lea;
 
     /* Do IP Intercepts */
-    intn = state->ipintercepts->head;
-
-    while (intn) {
-        ipint = (ipintercept_t *)(intn->data);
-        intn = intn->next;
-
-        /* TODO check if targetagency is legit? */
-
-        h = (liid_hash_t *)malloc(sizeof(liid_hash_t));
-        h->agency = ipint->targetagency;
-        h->liid = ipint->liid;
-        HASH_ADD_STR(state->liid_map, agency, h);
+    HASH_ITER(hh_liid, state->ipintercepts, ipint, iptmp) {
+        add_liid_mapping(state, ipint->liid, ipint->targetagency);
     }
 
     /* Now do the VOIP intercepts */
     for (vint = state->voipintercepts; vint != NULL; vint = vint->hh_liid.next)
     {
-        h = (liid_hash_t *)malloc(sizeof(liid_hash_t));
-        /* TODO check if targetagency is legit? */
-        h->agency = vint->targetagency;
-        h->liid = vint->liid;
-        HASH_ADD_STR(state->liid_map, agency, h);
+        add_liid_mapping(state, vint->liid, vint->targetagency);
     }
 
     /* Sort the final mapping nicely */
@@ -185,16 +196,16 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->conffile = configfile;
 
     state->epoll_fd = epoll_create1(0);
-    state->ipintercepts = libtrace_list_init(sizeof(ipintercept_t));
     state->mediators = libtrace_list_init(sizeof(prov_mediator_t));
     state->collectors = libtrace_list_init(sizeof(prov_collector_t));
-    state->leas = libtrace_list_init(sizeof(liagency_t));
     state->voipintercepts = NULL;
+    state->ipintercepts = NULL;
 
     state->dropped_collectors = 0;
     state->dropped_mediators = 0;
 
     state->liid_map = NULL;
+    state->leas = NULL;
 
     /* Three listening sockets
      *
@@ -262,7 +273,9 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
             sizeof(openli_mediator_t));
     libtrace_list_node_t *n;
     prov_mediator_t *provmed = NULL;
+    openli_mediator_t *prevmed = NULL;
     int updatereq = 0;
+    int ret = 0;
 
     if (decode_mediator_announcement(medmsg, msglen, med) == -1) {
         logger(LOG_DAEMON,
@@ -288,12 +301,7 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
             break;
         }
 
-        if (provmed->commev->fd == medfd) {
-            logger(LOG_DAEMON,
-                    "OpenLI: received multiple announcements for mediator %d?",
-                    medfd);
-        }
-        free(provmed->details);
+        prevmed = provmed->details;
         provmed->details = med;
         updatereq = 1;
         break;
@@ -319,25 +327,41 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
             continue;
         }
 
+        if (prevmed) {
+            /* The mediator has changed its details somehow, withdraw any
+             * references to the old one.
+             */
+            if (push_mediator_withdraw_onto_net_buffer(cs->outgoing,
+                    prevmed) < 0) {
+                logger(LOG_DAEMON,
+                        "OpenLI provisioner: error pushing mediator withdrawal %s:%s onto buffer for writing to collector.",
+                        prevmed->ipstr, prevmed->portstr);
+                ret = -1;
+                break;
+            }
+        }
+
         if (push_mediator_onto_net_buffer(cs->outgoing, provmed->details) < 0) {
             logger(LOG_DAEMON,
                     "OpenLI provisioner: error pushing mediator %s:%s onto buffer for writing to collector.",
                     provmed->details->ipstr, provmed->details->portstr);
-            return -1;
+            ret = -1;
+            break;
         }
 
         if (enable_epoll_write(state, col->commev) == -1) {
             logger(LOG_DAEMON,
                     "OpenLI provisioner: cannot enable epoll write event to transmit mediator update to collector: %s.",
                     strerror(errno));
-            return -1;
+            ret = -1;
+            break;
         }
 
-        printf("sent mediator %u %s:%s to collector %d\n",
-                provmed->details->mediatorid, provmed->details->ipstr,
-                provmed->details->portstr, col->commev->fd);
     }
-    return 0;
+    if (prevmed) {
+        free(prevmed);
+    }
+    return ret;
 }
 
 static void free_all_mediators(libtrace_list_t *m) {
@@ -354,6 +378,7 @@ static void free_all_mediators(libtrace_list_t *m) {
             close(med->commev->fd);
         }
         free(med->commev);
+        free(med->authev);
         n = n->next;
     }
 
@@ -398,13 +423,20 @@ static void stop_all_collectors(libtrace_list_t *c) {
     libtrace_list_deinit(c);
 }
 
-static void free_all_leas(libtrace_list_t *l) {
-    libtrace_list_node_t *n;
+static void clear_prov_state(provision_state_t *state) {
+
+    liid_hash_t *h, *tmp;
+    prov_agency_t *h2, *tmp2;
     liagency_t *lea;
 
-    n = l->head;
-    while (n) {
-        lea = (liagency_t *)n->data;
+    HASH_ITER(hh, state->liid_map, h, tmp) {
+        HASH_DEL(state->liid_map, h);
+        free(h);
+    }
+
+    HASH_ITER(hh, state->leas, h2, tmp2) {
+        HASH_DEL(state->leas, h2);
+        lea = h2->ag;
         if (lea->hi2_ipstr) {
             free(lea->hi2_ipstr);
         }
@@ -420,26 +452,14 @@ static void free_all_leas(libtrace_list_t *l) {
         if (lea->agencyid) {
             free(lea->agencyid);
         }
-        n = n->next;
-    }
-
-    libtrace_list_deinit(l);
-}
-
-static void clear_prov_state(provision_state_t *state) {
-
-    liid_hash_t *h, *tmp;
-
-    HASH_ITER(hh, state->liid_map, h, tmp) {
-        HASH_DEL(state->liid_map, h);
-        free(h);
+        free(lea);
+        free(h2);
     }
 
     free_all_ipintercepts(state->ipintercepts);
     free_all_voipintercepts(state->voipintercepts);
     stop_all_collectors(state->collectors);
     free_all_mediators(state->mediators);
-    free_all_leas(state->leas);
 
     close(state->epoll_fd);
 
@@ -534,16 +554,12 @@ static int push_all_voipintercepts(voipintercept_t *voipintercepts,
     return 0;
 }
 
-static int push_all_ipintercepts(libtrace_list_t *intercepts,
+static int push_all_ipintercepts(ipintercept_t *ipintercepts,
         net_buffer_t *nb) {
 
-    libtrace_list_node_t *n;
     ipintercept_t *cept;
 
-    n = intercepts->head;
-    while (n) {
-        cept = (ipintercept_t *)(n->data);
-
+    for (cept = ipintercepts; cept != NULL; cept = cept->hh_liid.next) {
         if (cept->active == 0) {
             continue;
         }
@@ -554,7 +570,6 @@ static int push_all_ipintercepts(libtrace_list_t *intercepts,
                     cept->liid);
             return -1;
         }
-        n = n->next;
     }
 
     return 0;
@@ -568,7 +583,7 @@ static int respond_collector_auth(provision_state_t *state,
      */
 
     if (libtrace_list_get_size(state->mediators) +
-            libtrace_list_get_size(state->ipintercepts) +
+            HASH_CNT(hh_liid, state->ipintercepts) +
             HASH_CNT(hh_liid, state->voipintercepts) == 0) {
         return 0;
     }
@@ -614,18 +629,14 @@ static int respond_collector_auth(provision_state_t *state,
 static int respond_mediator_auth(provision_state_t *state,
         prov_epoll_ev_t *pev, net_buffer_t *outgoing) {
 
-    libtrace_list_node_t *n;
     char *lastlea = NULL;
     liid_hash_t *h;
+    prov_agency_t *ag, *tmp;
 
     /* Mediator just authed successfully, so we can safely send it details
      * on any LEAs that we know about */
-    n = state->leas->head;
-    while (n) {
-        liagency_t *lea = (liagency_t *)(n->data);
-        n = n->next;
-
-        if (push_lea_onto_net_buffer(outgoing, lea) == -1) {
+    HASH_ITER(hh, state->leas, ag, tmp) {
+        if (push_lea_onto_net_buffer(outgoing, ag->ag) == -1) {
             logger(LOG_DAEMON,
                     "OpenLI: error while buffering LEA details to send from provisioner to mediator.");
             return -1;
@@ -835,7 +846,7 @@ static void drop_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
 
 static void drop_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
 
-    state->dropped_mediators = drop_generic_socket(state, pev);
+    state->dropped_mediators += (drop_generic_socket(state, pev));
 
     /* If we have a decent number of dropped mediators, re-create our
      * mediator list to remove all of the useless items.
@@ -844,8 +855,6 @@ static void drop_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
      */
 
 }
-
-
 
 static int accept_collector(provision_state_t *state) {
 
@@ -1015,6 +1024,10 @@ static int start_push_listener(provision_state_t *state) {
         return -1;
     }
 
+    logger(LOG_DAEMON,
+            "OpenLI provisioner: listening for updates on %s:%s",
+            state->pushaddr, state->pushport);
+
     state->updatefd->fd = sockfd;
     state->updatefd->fdtype = PROV_EPOLL_UPDATE_CONN;
     state->updatefd->state = NULL;
@@ -1044,6 +1057,10 @@ static int start_mediator_listener(provision_state_t *state) {
     if (sockfd == -1) {
         return -1;
     }
+
+    logger(LOG_DAEMON,
+            "OpenLI provisioner: listening for mediators on %s:%s",
+            state->mediateaddr, state->mediateport);
 
     state->mediatorfd->fd = sockfd;
     state->mediatorfd->fdtype = PROV_EPOLL_MEDIATE_CONN;
@@ -1115,7 +1132,6 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
     int ret = 0;
     prov_epoll_ev_t *pev = (prov_epoll_ev_t *)(ev->data.ptr);
 
-    /* TODO check for EPOLLRDHUP etc. */
     switch(pev->fdtype) {
         case PROV_EPOLL_COLL_CONN:
             ret = accept_collector(state);
@@ -1183,7 +1199,7 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
             }
             break;
         case PROV_EPOLL_UPDATE:
-            /* TODO all of the above */
+            /* TODO */
             break;
 
         default:
@@ -1193,6 +1209,581 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
     }
 
     return ret;
+
+}
+
+static inline int reload_push_socket_config(provision_state_t *currstate,
+        provision_state_t *newstate) {
+
+    struct epoll_event ev;
+
+    /* TODO this will trigger on a whitespace change */
+    if (strcmp(newstate->pushaddr, currstate->pushaddr) != 0 ||
+            strcmp(newstate->pushport, currstate->pushport) != 0) {
+
+        if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
+                currstate->updatefd->fd, &ev) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: Failed to remove update fd from epoll: %s.",
+                    strerror(errno));
+            return -1;
+        }
+
+        close(currstate->updatefd->fd);
+        free(currstate->updatefd);
+        free(currstate->pushaddr);
+        free(currstate->pushport);
+        currstate->pushaddr = strdup(newstate->pushaddr);
+        currstate->pushport = strdup(newstate->pushport);
+
+        if (start_push_listener(currstate) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: Warning, update socket did not restart. Will not be able to receive live updates.");
+            return -1;
+        }
+        return 1;
+    } else {
+        logger(LOG_DAEMON,
+                "OpenLI provisioner: update socket configuration is unchanged.");
+    }
+    return 0;
+
+}
+
+static inline int reload_mediator_socket_config(provision_state_t *currstate,
+        provision_state_t *newstate) {
+
+    struct epoll_event ev;
+
+    /* TODO this will trigger on a whitespace change */
+    if (strcmp(newstate->mediateaddr, currstate->mediateaddr) != 0 ||
+            strcmp(newstate->mediateport, currstate->mediateport) != 0) {
+
+        free_all_mediators(currstate->mediators);
+        currstate->mediators = libtrace_list_init(sizeof(prov_mediator_t));
+
+        if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
+                currstate->mediatorfd->fd, &ev) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: Failed to remove mediator fd from epoll: %s.",
+                    strerror(errno));
+            return -1;
+        }
+
+        close(currstate->mediatorfd->fd);
+        free(currstate->mediatorfd);
+        free(currstate->mediateaddr);
+        free(currstate->mediateport);
+        currstate->mediateaddr = strdup(newstate->mediateaddr);
+        currstate->mediateport = strdup(newstate->mediateport);
+        currstate->dropped_mediators = 0;
+
+        if (start_mediator_listener(currstate) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: Warning, mediation socket did not restart. Will not be able to control mediators.");
+            return -1;
+        }
+        return 1;
+    } else {
+        logger(LOG_DAEMON,
+                "OpenLI provisioner: mediation socket configuration is unchanged.");
+    }
+    return 0;
+}
+
+static inline int reload_collector_socket_config(provision_state_t *currstate,
+        provision_state_t *newstate) {
+
+    struct epoll_event ev;
+
+    /* TODO this will trigger on a whitespace change */
+    if (strcmp(newstate->listenaddr, currstate->listenaddr) != 0 ||
+            strcmp(newstate->listenport, currstate->listenport) != 0) {
+
+        stop_all_collectors(currstate->collectors);
+        currstate->collectors = libtrace_list_init(sizeof(prov_collector_t));
+
+        if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
+                currstate->clientfd->fd, &ev) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: Failed to remove mediator fd from epoll: %s.",
+                    strerror(errno));
+            return -1;
+        }
+
+        close(currstate->clientfd->fd);
+        free(currstate->clientfd);
+        free(currstate->listenaddr);
+        free(currstate->listenport);
+        currstate->listenaddr = strdup(newstate->listenaddr);
+        currstate->listenport = strdup(newstate->listenport);
+        currstate->dropped_collectors = 0;
+
+        if (start_main_listener(currstate) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: Warning, listening socket did not restart. Will not be able to accept collector clients.");
+            return -1;
+        }
+        return 1;
+    } else {
+        logger(LOG_DAEMON,
+                "OpenLI provisioner: collector listening socket configuration is unchanged.");
+    }
+    return 0;
+}
+
+static int announce_lea_to_mediators(provision_state_t *state,
+        prov_agency_t *lea) {
+
+    libtrace_list_node_t *n;
+    prov_mediator_t *med;
+    prov_sock_state_t *sock;
+
+    n = state->mediators->head;
+    while (n) {
+        med = (prov_mediator_t *)(n->data);
+        n = n->next;
+
+        sock = (prov_sock_state_t *)(med->commev->state);
+        if (!sock->trusted || sock->halted) {
+            continue;
+        }
+
+        if (push_lea_onto_net_buffer(sock->outgoing, lea->ag) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: unable to send LEA %s to mediator %d.",
+                    lea->ag->agencyid, med->fd);
+            drop_mediator(state, med->commev);
+            continue;
+        }
+
+        if (enable_epoll_write(state, med->commev) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: unable to enable epoll write event for mediator on fd %d: %s",
+                    med->fd, strerror(errno));
+            drop_mediator(state, med->commev);
+        }
+
+    }
+
+    return 0;
+}
+
+static int withdraw_agency_from_mediators(provision_state_t *state,
+        prov_agency_t *lea) {
+
+    libtrace_list_node_t *n;
+    prov_mediator_t *med;
+    prov_sock_state_t *sock;
+
+    n = state->mediators->head;
+    while (n) {
+        med = (prov_mediator_t *)(n->data);
+        n = n->next;
+
+        sock = (prov_sock_state_t *)(med->commev->state);
+        if (!sock->trusted || sock->halted) {
+            continue;
+        }
+
+        if (push_lea_withdrawal_onto_net_buffer(sock->outgoing,
+                    lea->ag) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: unable to send withdrawal of LEA %s to mediator %d.",
+                    lea->ag->agencyid, med->fd);
+            drop_mediator(state, med->commev);
+            continue;
+        }
+
+        if (enable_epoll_write(state, med->commev) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: unable to enable epoll write event for mediator on fd %d: %s",
+                    med->fd, strerror(errno));
+            drop_mediator(state, med->commev);
+        }
+
+    }
+
+    return 0;
+
+}
+
+static inline int reload_leas(provision_state_t *currstate,
+        provision_state_t *newstate, int medchange) {
+
+    prov_agency_t *newleas;
+    liid_hash_t *newmap;
+    prov_agency_t *lea, *tmp, *newequiv;
+
+    /* If the mediators have not been disconnected, we need to tell them
+     * about any changes in the LEA list */
+    if (!medchange) {
+        HASH_ITER(hh, currstate->leas, lea, tmp) {
+            HASH_FIND_STR(newstate->leas, lea->ag->agencyid, newequiv);
+
+            if (!newequiv) {
+                /* Agency has been withdrawn entirely */
+                withdraw_agency_from_mediators(currstate, lea);
+            } else if (agency_equal(lea->ag, newequiv->ag)) {
+                /* Agency is unchanged */
+                newequiv->announcereq = 0;
+            } else {
+                /* Agency is changed, withdraw current and announce new */
+                withdraw_agency_from_mediators(currstate, lea);
+                newequiv->announcereq = 1;
+            }
+        }
+
+        HASH_ITER(hh, newstate->leas, lea, tmp) {
+            if (lea->announcereq) {
+                if (announce_lea_to_mediators(currstate, lea) == -1) {
+                    logger(LOG_DAEMON,
+                            "OpenLI provisioner: unable to announce new LEA to existing mediators.");
+                    return -1;
+                }
+            }
+        }
+    }
+
+
+    /* Swap the lea list and liid map from new to currstate */
+    newleas = newstate->leas;
+    newmap = newstate->liid_map;
+
+    newstate->leas = currstate->leas;
+    newstate->liid_map = currstate->liid_map;
+
+    currstate->leas = newleas;
+    currstate->liid_map = newmap;
+    return 0;
+}
+
+static int halt_existing_voip_intercept(provision_state_t *state,
+        voipintercept_t *vint) {
+
+    libtrace_list_node_t *n;
+    prov_collector_t *col;
+    prov_sock_state_t *sock;
+
+    n = state->collectors->head;
+    while (n) {
+        col = (prov_collector_t *)(n->data);
+        n = n->next;
+
+        sock = (prov_sock_state_t *)(col->commev->state);
+        if (!sock->trusted || sock->halted) {
+            continue;
+        }
+
+        if (push_voipintercept_withdrawal_onto_net_buffer(sock->outgoing,
+                    vint) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: unable to send withdrawal of intercept %s to collector %d.",
+                    vint->liid, sock->mainfd);
+            drop_collector(state, col->commev);
+            continue;
+        }
+
+        if (enable_epoll_write(state, col->commev) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
+                    sock->mainfd, strerror(errno));
+            drop_collector(state, col->commev);
+        }
+
+    }
+
+    return 0;
+
+}
+
+static int disconnect_mediators_from_collectors(provision_state_t *state) {
+
+    libtrace_list_node_t *n;
+    prov_collector_t *col;
+    prov_sock_state_t *sock;
+
+    n = state->collectors->head;
+    while (n) {
+        col = (prov_collector_t *)(n->data);
+        n = n->next;
+
+        sock = (prov_sock_state_t *)(col->commev->state);
+        if (!sock->trusted || sock->halted) {
+            continue;
+        }
+
+        if (push_disconnect_mediators_onto_net_buffer(sock->outgoing) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: unable to send 'disconnect mediators' to collector %d.",
+                    sock->mainfd);
+            drop_collector(state, col->commev);
+            continue;
+        }
+
+        if (enable_epoll_write(state, col->commev) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
+                    sock->mainfd, strerror(errno));
+            drop_collector(state, col->commev);
+        }
+
+    }
+
+    return 0;
+
+}
+
+
+static int remove_voip_liid_mapping(provision_state_t *state,
+        voipintercept_t *vint, int droppedmeds) {
+
+    libtrace_list_node_t *n;
+    prov_mediator_t *med;
+    prov_sock_state_t *sock;
+
+    /* Don't need to find and remove the mapping from our LIID map, as
+     * reload_lea() has already replaced our map with a new one. */
+
+    if (droppedmeds) {
+        return 0;
+    }
+
+    /* Still got mediators connected, so tell them about the now disabled
+     * LIID.
+     */
+    n = state->mediators->head;
+    while (n) {
+        med = (prov_mediator_t *)(n->data);
+        n = n->next;
+        sock = (prov_sock_state_t *)(med->commev->state);
+        if (!sock->trusted || sock->halted) {
+            continue;
+        }
+
+        if (push_cease_mediation_onto_net_buffer(sock->outgoing,
+                    vint->liid, vint->liid_len) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: unable to halt mediation of intercept %s on mediator %d.",
+                    vint->liid, sock->mainfd);
+            drop_mediator(state, med->commev);
+            continue;
+        }
+
+        if (enable_epoll_write(state, med->commev) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: unable to enable epoll write event for mediator on fd %d: %s",
+                    sock->mainfd, strerror(errno));
+            drop_mediator(state, med->commev);
+        }
+    }
+
+    return 0;
+}
+
+static int announce_liidmapping_to_mediators(provision_state_t *state,
+        liid_hash_t *liidmap) {
+
+    libtrace_list_node_t *n;
+    prov_mediator_t *med;
+    prov_sock_state_t *sock;
+
+    if (liidmap == NULL) {
+        return 0;
+    }
+
+    n = state->mediators->head;
+    while (n) {
+        med = (prov_mediator_t *)(n->data);
+        n = n->next;
+
+        sock = (prov_sock_state_t *)(med->commev->state);
+        if (!sock->trusted || sock->halted) {
+            continue;
+        }
+
+        if (push_liid_mapping_onto_net_buffer(sock->outgoing, liidmap->agency,
+                liidmap->liid) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: unable to send mapping for LIID %s to mediator %d.",
+                    liidmap->liid, med->fd);
+            drop_mediator(state, med->commev);
+            continue;
+        }
+
+        if (enable_epoll_write(state, med->commev) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: unable to enable epoll write event for mediator on fd %d: %s",
+                    med->fd, strerror(errno));
+            drop_mediator(state, med->commev);
+        }
+
+    }
+
+    return 0;
+}
+
+static int announce_single_voip_intercept(provision_state_t *state,
+        voipintercept_t *vint) {
+
+    libtrace_list_node_t *n;
+    prov_collector_t *col;
+    prov_sock_state_t *sock;
+
+    n = state->collectors->head;
+    while (n) {
+        col = (prov_collector_t *)(n->data);
+        n = n->next;
+
+        sock = (prov_sock_state_t *)(col->commev->state);
+        if (!sock->trusted || sock->halted) {
+            continue;
+        }
+
+        if (push_voipintercept_onto_net_buffer(sock->outgoing,
+                    vint) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: unable to announce VOIP intercept %s to collector %d.",
+                    vint->liid, sock->mainfd);
+            drop_collector(state, col->commev);
+            continue;
+        }
+
+        if (enable_epoll_write(state, col->commev) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
+                    sock->mainfd, strerror(errno));
+            drop_collector(state, col->commev);
+        }
+
+    }
+
+
+    return 0;
+}
+
+static inline int reload_voipintercepts(provision_state_t *currstate,
+        provision_state_t *newstate, int droppedcols, int droppedmeds) {
+
+    voipintercept_t *newints, *voipint, *tmp, *newequiv;
+    voipintercept_t *a, *b;
+    char *str;
+
+    /* TODO error handling in the "inform other components about changes"
+     * functions?
+     */
+    HASH_ITER(hh_liid, currstate->voipintercepts, voipint, tmp) {
+        HASH_FIND(hh_liid, newstate->voipintercepts, voipint->liid,
+                voipint->liid_len, newequiv);
+        if (!newequiv) {
+            /* Intercept has been withdrawn entirely */
+            if (!droppedcols) {
+                halt_existing_voip_intercept(currstate, voipint);
+            }
+            remove_voip_liid_mapping(currstate, voipint, droppedmeds);
+            continue;
+        } else if (!voip_intercept_equal(voipint, newequiv)) {
+            /* VOIP intercept has changed somehow -- this probably
+             * shouldn't happen but deal with it anyway
+             */
+            logger(LOG_DAEMON, "OpenLI provisioner: Details for VOIP intercept %s have changed?",
+                    voipint->liid);
+
+            if (!droppedcols) {
+                halt_existing_voip_intercept(currstate, voipint);
+            }
+            remove_voip_liid_mapping(currstate, voipint, droppedmeds);
+
+        } else {
+            newequiv->awaitingconfirm = 0;
+        }
+    }
+
+    HASH_ITER(hh_liid, newstate->voipintercepts, voipint, tmp) {
+        liid_hash_t *h = NULL;
+        if (!voipint->awaitingconfirm) {
+            continue;
+        }
+
+        /* Add the LIID mapping */
+        h = add_liid_mapping(currstate, voipint->liid,
+                voipint->targetagency);
+
+        if (!droppedmeds && announce_liidmapping_to_mediators(currstate,
+                h) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: unable to announce new VOIP intercept to mediators.");
+            return -1;
+        }
+
+        if (!droppedcols && announce_single_voip_intercept(currstate,
+                voipint) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: unable to announce new VOIP intercept to collectors.");
+            return -1;
+        }
+    }
+
+    /* Swap the intercept lists */
+    newints = newstate->voipintercepts;
+    newstate->voipintercepts = currstate->voipintercepts;
+    currstate->voipintercepts = newints;
+    return 0;
+}
+
+static int reload_provisioner_config(provision_state_t *currstate) {
+
+    provision_state_t newstate;
+    int mediatorchanged = 0;
+    int clientchanged = 0;
+    int pushchanged = 0;
+    int leachanged = 0;
+
+    if (init_prov_state(&newstate, currstate->conffile) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: Error reloading config file for provisioner.");
+        return -1;
+    }
+
+    /* Only make changes if the relevant configuration has changed, so as
+     * to minimise interruptions.
+     */
+    mediatorchanged = reload_mediator_socket_config(currstate, &newstate);
+    if (mediatorchanged == -1) {
+        return -1;
+    }
+
+    pushchanged = reload_push_socket_config(currstate, &newstate);
+    if (pushchanged == -1) {
+        return -1;
+    }
+
+    clientchanged = reload_collector_socket_config(currstate, &newstate);
+    if (clientchanged == -1) {
+        return -1;
+    }
+
+    if (mediatorchanged && !clientchanged) {
+        /* Tell all collectors to drop their mediators until further notice */
+        disconnect_mediators_from_collectors(currstate);
+
+    }
+
+    if (reload_leas(currstate, &newstate, mediatorchanged) == -1) {
+        return -1;
+    }
+
+    if (reload_voipintercepts(currstate, &newstate, clientchanged,
+            mediatorchanged) == -1) {
+        return -1;
+    }
+
+    /* TODO reload IP intercepts -- makes sense to wait until we've got at
+     * least RADIUS integration in place before doing this properly? */
+
+    clear_prov_state(&newstate);
+
+    return 0;
 
 }
 
@@ -1220,7 +1811,10 @@ static void run(provision_state_t *state) {
 
     while (!provisioner_halt) {
         if (reload_config) {
-
+            if (reload_provisioner_config(state) == -1) {
+                break;
+            }
+            reload_config = 0;
         }
 
         timerfd = epoll_add_timer(state->epoll_fd, 1, state->timerfd);
