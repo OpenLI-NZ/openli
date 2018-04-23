@@ -435,7 +435,6 @@ static int update_rtp_stream(collector_sync_t *sync, rtpstreaminf_t *rtp,
     uint32_t port;
     struct sockaddr_storage *saddr;
     int family, i;
-    libtrace_list_node_t *n;
     int updaterequired = 1;
 
     errno = 0;
@@ -875,6 +874,8 @@ static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
     int i;
 
     struct epoll_event ev;
+    voipcinmap_t *cin_callid, *tmp;
+    voipsdpmap_t *cin_sdp, *tmp2;
 
     if (rtp->active == 0) {
         return 0;
@@ -899,6 +900,39 @@ static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
        msg.data.rtpstreamkey = strdup(rtp->streamkey);
        libtrace_message_queue_put(sync->glob->syncsendqs[i], (void *)(&msg));
     }
+
+    HASH_DEL(rtp->parent->active_cins, rtp);
+
+    /* TODO this is painful, maybe include reverse references in the shared
+     * data structure?
+     */
+    HASH_ITER(hh_callid, rtp->parent->cin_callid_map, cin_callid, tmp) {
+        if (cin_callid->shared->cin == rtp->cin) {
+            HASH_DELETE(hh_callid, rtp->parent->cin_callid_map, cin_callid);
+            free(cin_callid->callid);
+            cin_callid->shared->refs --;
+            if (cin_callid->shared->refs == 0) {
+                free(cin_callid->shared);
+            }
+            free(cin_callid);
+            break;
+        }
+    }
+
+    HASH_ITER(hh_sdp, rtp->parent->cin_sdp_map, cin_sdp, tmp2) {
+        if (cin_sdp->shared->cin == rtp->cin) {
+            HASH_DELETE(hh_sdp, rtp->parent->cin_sdp_map, cin_sdp);
+            cin_sdp->shared->refs --;
+            if (cin_sdp->shared->refs == 0) {
+                free(cin_sdp->shared);
+            }
+            free(cin_sdp);
+            break;
+        }
+    }
+
+    free_single_voip_cin(rtp);
+
     return 0;
 }
 
@@ -942,9 +976,6 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
     memcpy(vint, &toadd, sizeof(voipintercept_t));
     HASH_ADD_KEYPTR(hh_liid, sync->voipintercepts, vint->liid, vint->liid_len,
             vint);
-
-    fprintf(stderr, "received VOIP intercept %lu %s %s\n", vint->internalid,
-            vint->liid, vint->sipuri);
 
     for (i = 0; i < sync->glob->registered_syncqs; i++) {
 
@@ -1007,8 +1038,6 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
      * Please remove once proper RADIUS support is added.
      */
 
-    fprintf(stderr, "received IP intercept %lu %s %s\n", cept->internalid,
-            cept->liid, cept->username);
     temporary_map_user_to_address(cept);
 
     HASH_ADD(hh_liid, sync->ipintercepts, liid, strlen(cept->liid), cept);
@@ -1265,10 +1294,7 @@ int sync_thread_main(collector_sync_t *sync) {
         if (syncev->fdtype == SYNC_EVENT_SIP_TIMEOUT) {
             struct rtpstreaminf *thisrtp;
             thisrtp = (struct rtpstreaminf *)(syncev->ptr);
-            if (halt_single_rtpstream(sync, thisrtp) == -1) {
-                logger(LOG_DAEMON, "OpenLI: unable to remove RTP stream %s from processing threads after timeout.",
-                        thisrtp->streamkey);
-            }
+            halt_single_rtpstream(sync, thisrtp);
             continue;
         }
 
@@ -1366,8 +1392,6 @@ void register_sync_queues(collector_global_t *glob,
     glob->syncepollevs[ind] = syncev;
     glob->registered_syncqs ++;
     pthread_mutex_unlock(&(glob->syncq_mutex));
-
-    printf("Registered sync queue %d\n", ind);
 
     push_hello_message(recvq, sendq);
 }
