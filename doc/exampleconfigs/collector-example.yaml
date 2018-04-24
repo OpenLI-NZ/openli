@@ -1,0 +1,24 @@
+# Example configuration file for an OpenLI collector
+
+# Connect to a provisioner that is listening on 10.0.0.1:9001
+provisioneraddr: 10.0.0.1
+provisionerport: 9001
+
+# Unique ID string for my network (16 chars max)
+operatorid: WAND
+
+# Unique ID string for the location of my collector (16 chars max)
+networkelementid: OpenLIdevlab
+
+# Unique ID string for this collector, just in case I have more than one
+# at this location. Optional if I only have one collector at this location
+# (8 chars max)
+interceptpointid: test01
+
+# List of interfaces to capture packets on
+inputs:
+ - uri: eth1            # capture on interface eth1
+   threads: 2           # use 2 processing threads for this input
+
+ - uri: dpdk:0000:42:00.0     # capture on DPDK interface with this PCI address
+   threads: 4                 # use 4 processing threads for this input

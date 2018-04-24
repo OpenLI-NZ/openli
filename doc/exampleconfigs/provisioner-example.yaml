@@ -1,0 +1,53 @@
+# Example configuration file for an OpenLI provisioner
+
+# Listen for incoming collectors on 10.0.0.1:9001
+clientaddr: 10.0.0.1
+clientport: 9001
+
+# Listen for incoming mediators on 10.0.0.1:12001
+mediationaddr: 10.0.0.1
+mediationport: 12001
+
+# List the set of agencies that we can perform intercepts for
+agencies:
+
+ - agencyid: "Police"           # id must be unique per agency
+   hi2address: 192.168.200.1    # address of the HI2 service at the agency
+   hi2port: 35530               # port number of the HI2 service at the agency
+   hi3address: 192.168.200.1    # address of the HI3 service at the agency
+   hi3port: 35531               # port number of the HI3 service at the agency
+
+ - agencyid: "Spooks"           # id must be unique per agency
+   hi2address: 10.10.1.1        # address of the HI2 service at the agency
+   hi2port: 7001                # port number of the HI2 service at the agency
+   hi3address: 10.10.1.2        # address of the HI3 service at the agency
+   hi3port: 18888               # port number of the HI3 service at the agency
+
+
+# List of active VOIP intercepts.
+# To change intercepts for a running OpenLI process, modify the intercept list
+# in the config file, then send a SIGHUP to the provisioner process.
+#
+# In this example, we have two VOIP intercepts running: one for the "Police"
+# intercepting VOIP calls for 'badguy@myisp.com' and one for the "Spooks"
+# intercepting VOIP calls for 'target@myisp.com'.
+# Both intercepts will be routed to the agencies via the mediator that is
+# configured with the ID 6001.
+voipintercepts:
+
+ - liid: 1A23RD112              # LIID, should be provided by requesting agency
+   authcountrycode: NZ          # Authorisation country code
+   deliverycountrycode: NZ      # Delivery country code
+   sipuri: sip:badguy@myisp.com # SIP URI identifying the intercept target
+   mediator: 6001               # ID of the mediator to send intercept via
+   agencyid: "Police"           # ID of agency to send intercept to
+
+ - liid: X7811DFWS              # LIID, should be provided by requesting agency
+   authcountrycode: NZ          # Authorisation country code
+   deliverycountrycode: NZ      # Delivery country code
+   sipuri: sip:target@myisp.com # SIP URI identifying the intercept target
+   mediator: 6001               # ID of the mediator to send intercept via
+   agencyid: "Spooks"           # ID of agency to send intercept to
+
+
+
