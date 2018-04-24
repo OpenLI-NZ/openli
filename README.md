@@ -15,7 +15,7 @@ This code has been developed by the University of Waikato WAND research group. F
 ## Dependencies
 
 * [libtrace 4.0.0 or later](http://research.wand.net.nz/software/libtrace.php)
-  (packages for Debian / Ubuntu are available
+  (packages for Debian / Ubuntu are available)
   [from WAND](http://packages.wand.net.nz) as well.
 
 * [libwandder](https://github.com/wanduow/libwandder/tree/develop)
@@ -32,15 +32,17 @@ To build OpenLI, just follow the series of steps given below.
 1. Run the `./bootstrap.sh` script at the top level of the source tree (only
    required if you have cloned the OpenLI git repo).
 
-2. Run the `./configure` script. If you wish to install OpenLI to a non-standard
-   location (which is typically `/usr/local/`), append `--prefix=<location>`
-   to the `./configure` command.
+2. Run the `./configure` script.
 
-   If you have installed any of the dependencies in non-standard locations,
-   you may need to also tell `./configure` where they are using the CFLAGS
-   and LDFLAGS arguments. For example, if I had installed libtrace into the
-   `/home/wand/` directory, I would need to add `CFLAGS="-I/home/wand/include"
-   LDFLAGS="-L/home/wand/lib"` to the `./configure` command.
+ If you wish to install OpenLI to a non-standard location (which is typically
+ `/usr/local/`), append `--prefix=<location>` to the `./configure` command.
+
+ If you have installed any of the dependencies in non-standard locations,
+ you may need to also tell `./configure` where they are using the CFLAGS
+ and LDFLAGS arguments. For example, if I had installed libtrace into the
+ `/home/wand/` directory, I would need to add
+ `CFLAGS="-I/home/wand/include" LDFLAGS="-L/home/wand/lib"` to the
+ `./configure` command.
 
 3. Run `make`.
 
