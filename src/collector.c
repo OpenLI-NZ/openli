@@ -49,11 +49,15 @@
 #include "sipparsing.h"
 
 volatile int collector_halt = 0;
-volatile int reload_export_config = 0;
+volatile int reload_config = 0;
 
 static void cleanup_signal(int signal UNUSED)
 {
     collector_halt = 1;
+}
+
+static void reload_signal(int signal) {
+    reload_config = 1;
 }
 
 static void usage(char *prog) {
@@ -157,7 +161,7 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->activertpintercepts = libtrace_list_init(sizeof(rtpstreaminf_t));
     loc->sip_targets = NULL;
 
-    register_sync_queues(glob, &(loc->tosyncq), &(loc->fromsyncq));
+    register_sync_queues(glob, &(loc->tosyncq), &(loc->fromsyncq), t);
     register_export_queue(glob, &(loc->exportq));
 
     loc->encoder = NULL;
@@ -172,6 +176,8 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     collector_global_t *glob = (collector_global_t *)global;
     colthread_local_t *loc = (colthread_local_t *)tls;
+
+    deregister_sync_queues(glob, t);
 
     libtrace_message_queue_destroy(&(loc->tosyncq));
     libtrace_message_queue_destroy(&(loc->fromsyncq));
@@ -408,32 +414,85 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
 static int start_input(collector_global_t *glob, colinput_t *inp) {
 
-    if (inp->pktcbs == NULL) {
-        inp->pktcbs = trace_create_callback_set();
+    if (inp->pktcbs != NULL) {
+        /* Trace is already running */
+        return 1;
     }
 
+    inp->pktcbs = trace_create_callback_set();
     trace_set_starting_cb(inp->pktcbs, start_processing_thread);
     trace_set_stopping_cb(inp->pktcbs, stop_processing_thread);
     trace_set_packet_cb(inp->pktcbs, process_packet);
 
-    inp->trace = trace_create(inp->config.uri);
+    inp->trace = trace_create(inp->uri);
     if (trace_is_err(inp->trace)) {
         libtrace_err_t lterr = trace_get_err(inp->trace);
         logger(LOG_DAEMON, "OpenLI: Failed to create trace for input %s: %s",
-                inp->config.uri, lterr.problem);
+                inp->uri, lterr.problem);
         return 0;
     }
 
-    trace_set_perpkt_threads(inp->trace, inp->config.threadcount);
+    trace_set_perpkt_threads(inp->trace, inp->threadcount);
 
     if (trace_pstart(inp->trace, glob, inp->pktcbs, NULL) == -1) {
         libtrace_err_t lterr = trace_get_err(inp->trace);
         logger(LOG_DAEMON, "OpenLI: Failed to start trace for input %s: %s",
-                inp->config.uri, lterr.problem);
+                inp->uri, lterr.problem);
         return 0;
     }
 
     return 1;
+}
+
+static int reload_collector_config(collector_global_t *glob,
+        collector_sync_t *sync) {
+
+    collector_global_t *newstate;
+
+    newstate = parse_global_config(glob->configfile);
+    if (newstate == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI: error reloading config file for collector.");
+        return -1;
+    }
+
+    if (strcmp(newstate->provisionerip, glob->provisionerip) != 0 ||
+            strcmp(newstate->provisionerport, glob->provisionerport) != 0) {
+        logger(LOG_DAEMON,
+                "OpenLI collector: disconnecting from provisioner due to config change.");
+        sync_disconnect_provisioner(sync);
+    } else {
+        logger(LOG_DAEMON,
+                "OpenLI collector: provisioner socket configuration is unchanged.");
+    }
+
+    pthread_rwlock_wrlock(&(glob->config_mutex));
+    /* Just update these, regardless of whether they've changed. It's more
+     * effort to check for a change than it is worth and there are no
+     * flow-on effects to a change.
+     */
+    if (glob->operatorid) {
+        free(glob->operatorid);
+    }
+    glob->operatorid = newstate->operatorid;
+    glob->operatorid_len = newstate->operatorid_len;
+    newstate->operatorid = NULL;
+
+    if (glob->networkelemid) {
+        free(glob->networkelemid);
+    }
+    glob->networkelemid = newstate->networkelemid;
+    glob->networkelemid_len = newstate->networkelemid_len;
+    newstate->networkelemid = NULL;
+
+    if (glob->intpointid) {
+        free(glob->intpointid);
+    }
+    glob->intpointid = newstate->intpointid;
+    glob->intpointid_len = newstate->intpointid_len;
+    newstate->intpointid = NULL;
+
+    pthread_rwlock_unlock(&(glob->config_mutex));
 }
 
 static void *start_sync_thread(void *params) {
@@ -449,6 +508,12 @@ static void *start_sync_thread(void *params) {
     register_export_queue(glob, &(sync->exportq));
 
     while (collector_halt == 0) {
+        if (reload_config) {
+            if (reload_collector_config(glob, sync) == -1) {
+                break;
+            }
+            reload_config = 0;
+        }
         if (sync->instruct_fd == -1) {
             ret = sync_connect_provisioner(sync);
             if (ret < 0) {
@@ -509,6 +574,7 @@ int main(int argc, char *argv[]) {
     char *configfile = NULL;
     collector_global_t *glob = NULL;
     int i, ret;
+    colinput_t *inp, *tmp;
 
     while (1) {
         int optind;
@@ -556,17 +622,17 @@ int main(int argc, char *argv[]) {
     sigaction(SIGTERM, &sigact, NULL);
 	signal(SIGPIPE, SIG_IGN);
 
+    sigact.sa_handler = reload_signal;
+    sigemptyset(&sigact.sa_mask);
+    sigact.sa_flags = SA_RESTART;
+
+    sigaction(SIGHUP, &sigact, NULL);
+
     /* Read config to generate list of input sources */
     glob = parse_global_config(configfile);
     if (glob == NULL) {
         return 1;
     }
-
-    sigemptyset(&sig_block_all);
-    if (pthread_sigmask(SIG_SETMASK, &sig_block_all, &sig_before) < 0) {
-        logger(LOG_DAEMON, "Unable to disable signals before starting threads.");
-		return 1;
-	}
 
     /* Start sync thread */
     ret = pthread_create(&(glob->syncthreadid), NULL, start_sync_thread,
@@ -585,27 +651,38 @@ int main(int argc, char *argv[]) {
     }
 
     /* Start processing threads for each input */
-    for (i = 0; i < glob->inputcount; i++) {
-        if (start_input(glob, &(glob->inputs[i])) == 0) {
-            logger(LOG_DAEMON, "OpenLI: failed to start input %s\n",
-                    glob->inputs[i].config.uri);
+    while (!collector_halt) {
+        sigemptyset(&sig_block_all);
+        if (pthread_sigmask(SIG_SETMASK, &sig_block_all, &sig_before) < 0) {
+            logger(LOG_DAEMON, "Unable to disable signals before starting threads.");
+            return 1;
+        }
+
+        pthread_rwlock_rdlock(&(glob->config_mutex));
+        HASH_ITER(hh, glob->inputs, inp, tmp) {
+            if (start_input(glob, inp) == 0) {
+                logger(LOG_DAEMON, "OpenLI: failed to start input %s\n",
+                        inp->uri);
+            }
+        }
+        pthread_rwlock_unlock(&(glob->config_mutex));
+
+        if (pthread_sigmask(SIG_SETMASK, &sig_before, NULL)) {
+            logger(LOG_DAEMON, "Unable to re-enable signals after starting threads.");
+            return 1;
         }
     }
 
-    if (pthread_sigmask(SIG_SETMASK, &sig_before, NULL)) {
-		logger(LOG_DAEMON, "Unable to re-enable signals after starting threads.");
-		return 1;
-	}
+    pthread_rwlock_rdlock(&(glob->config_mutex));
+    HASH_ITER(hh, glob->inputs, inp, tmp) {
+        if (inp->trace) {
+            trace_join(inp->trace);
+        }
+    }
+    pthread_rwlock_unlock(&(glob->config_mutex));
 
     pthread_join(glob->syncthreadid, NULL);
     pthread_join(glob->exportthreadid, NULL);
-
-    /* Join on all inputs */
-    for (i = 0; i < glob->inputcount; i++) {
-        if (glob->inputs[i].trace) {
-            trace_join(glob->inputs[i].trace);
-        }
-    }
 
     logger(LOG_DAEMON, "OpenLI: exiting OpenLI Collector.");
     /* Tidy up, exit */

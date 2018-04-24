@@ -40,22 +40,30 @@
 
 uint64_t nextid = 0;
 
-void clear_global_config(collector_global_t *glob) {
-        int i;
+void clear_input(colinput_t *input) {
 
-	if (glob->inputs) {
-        for (i = 0; i < glob->inputcount; i++) {
-            if (glob->inputs[i].config.uri) {
-                free(glob->inputs[i].config.uri);
-            }
-            if (glob->inputs[i].trace) {
-                trace_destroy(glob->inputs[i].trace);
-            }
-            if (glob->inputs[i].pktcbs) {
-                trace_destroy_callback_set(glob->inputs[i].pktcbs);
-            }
-        }
-        free(glob->inputs);
+    if (!input) {
+        return;
+    }
+    if (input->trace) {
+        trace_destroy(input->trace);
+    }
+    if (input->pktcbs) {
+        trace_destroy_callback_set(input->pktcbs);
+    }
+    if (input->uri) {
+        free(input->uri);
+    }
+    free(input);
+}
+
+void clear_global_config(collector_global_t *glob) {
+    colinput_t *inp, *tmp;
+
+
+    HASH_ITER(hh, glob->inputs, inp, tmp) {
+        HASH_DELETE(hh, glob->inputs, inp);
+        clear_input(inp);
     }
 
     if (glob->syncsendqs) {
@@ -86,6 +94,7 @@ void clear_global_config(collector_global_t *glob) {
         free(glob->provisionerport);
     }
 
+    pthread_rwlock_destroy(&glob->config_mutex);
     pthread_mutex_destroy(&glob->syncq_mutex);
     pthread_mutex_destroy(&glob->exportq_mutex);
     pthread_cond_destroy(&glob->exportq_cond);
@@ -106,20 +115,9 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         yaml_node_pair_t *pair;
 
         /* Each sequence item is a new input */
-        if (glob->inputcount == glob->inputalloced) {
-            if (glob->inputalloced == 0) {
-                glob->inputs = (colinput_t *)malloc(sizeof(colinput_t) * 10);
-                glob->inputalloced = 10;
-            } else {
-                glob->inputs = (colinput_t *)realloc(glob->inputs,
-                        sizeof(colinput_t) * (10 + glob->inputalloced));
-                glob->inputalloced += 10;
-            }
-        }
-
-        inp = &(glob->inputs[glob->inputcount]);
-        inp->config.uri = NULL;
-        inp->config.threadcount = 1;
+        inp = (colinput_t *)malloc(sizeof(colinput_t));
+        inp->uri = NULL;
+        inp->threadcount = 1;
         inp->trace = NULL;
         inp->pktcbs = NULL;
 
@@ -134,21 +132,26 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value, "uri") == 0 &&
-                    inp->config.uri == NULL) {
-                inp->config.uri = strdup((char *)value->data.scalar.value);
+                    inp->uri == NULL) {
+                inp->uri = strdup((char *)value->data.scalar.value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value, "threads") == 0) {
-                inp->config.threadcount = strtoul(
+                inp->threadcount = strtoul(
                         (char *)value->data.scalar.value, NULL, 10);
             }
         }
-        glob->inputcount ++;
-        glob->totalthreads += inp->config.threadcount;
+        glob->totalthreads += inp->threadcount;
+        if (!inp->uri) {
+            logger(LOG_DAEMON, "OpenLI collector: input is missing a URI?");
+            continue;
+        }
+        HASH_ADD_KEYPTR(hh, glob->inputs, inp->uri, strlen(inp->uri), inp);
     }
 
+    /*
     glob->syncsendqs = (libtrace_message_queue_t **)malloc(
             sizeof(libtrace_message_queue_t *) * glob->totalthreads);
     memset(glob->syncsendqs, 0,
@@ -157,6 +160,7 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
     memset(glob->syncepollevs, 0, sizeof(void *) * glob->totalthreads);
     glob->queuealloced = glob->totalthreads;
     glob->registered_syncqs = 0;
+    */
 
     return 0;
 }
@@ -579,8 +583,6 @@ collector_global_t *parse_global_config(char *configfile) {
 
     glob = (collector_global_t *)malloc(sizeof(collector_global_t));
 
-    glob->inputcount = 0;
-    glob->inputalloced = 0;
     glob->inputs = NULL;
     glob->totalthreads = 0;
     glob->queuealloced = 0;
@@ -602,6 +604,7 @@ collector_global_t *parse_global_config(char *configfile) {
     glob->provisionerip = NULL;
     glob->provisionerport = NULL;
 
+    pthread_rwlock_init(&glob->config_mutex, NULL);
     pthread_mutex_init(&glob->syncq_mutex, NULL);
     pthread_mutex_init(&glob->exportq_mutex, NULL);
     pthread_cond_init(&glob->exportq_cond, NULL);

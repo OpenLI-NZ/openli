@@ -80,18 +80,14 @@ typedef struct openli_ii_msg {
 
 } PACKED openli_pushed_t;
 
-typedef struct colinput_config {
+typedef struct colinput {
     char *uri;
     int threadcount;
-
-} colinput_config_t;
-
-typedef struct colinput {
-    colinput_config_t config;
     libtrace_t *trace;
-
     libtrace_callback_set_t *pktcbs;
+    
 
+    UT_hash_handle hh;
 } colinput_t;
 
 typedef struct sipuri_hash {
@@ -130,19 +126,18 @@ typedef struct colthread_local {
 
 typedef struct collector_global {
 
-    int inputcount;
-    int inputalloced;
     colinput_t *inputs;
 
     int totalthreads;
     int queuealloced;
     int registered_syncqs;
 
+    pthread_rwlock_t config_mutex;
     pthread_mutex_t syncq_mutex;
     pthread_mutex_t exportq_mutex;
     pthread_cond_t exportq_cond;
 
-    libtrace_message_queue_t **syncsendqs;
+    void **syncsendqs;
     void **syncepollevs;
 
     pthread_t syncthreadid;

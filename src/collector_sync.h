@@ -46,7 +46,16 @@ typedef struct sync_epoll {
     uint8_t fdtype;
     int fd;
     void *ptr;
+    libtrace_thread_t *parent;
+    UT_hash_handle hh;
 } sync_epoll_t;
+
+
+typedef struct sync_sendq {
+    libtrace_message_queue_t *q;
+    libtrace_thread_t *parent;
+    UT_hash_handle hh;
+} sync_sendq_t;
 
 typedef struct colsync_data {
 
@@ -70,11 +79,13 @@ typedef struct colsync_data {
 
 collector_sync_t *init_sync_data(collector_global_t *glob);
 void clean_sync_data(collector_sync_t *sync);
+void sync_disconnect_provisioner(collector_sync_t *sync);
 int sync_connect_provisioner(collector_sync_t *sync);
 int sync_thread_main(collector_sync_t *sync);
-void register_sync_queues(collector_global_t *glob,
-        libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq);
-
+int register_sync_queues(collector_global_t *glob,
+        libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq,
+        libtrace_thread_t *parent);
+void deregister_sync_queues(collector_global_t *glob, libtrace_thread_t *t);
 void halt_processing_threads(collector_global_t *glob);
 #endif
 

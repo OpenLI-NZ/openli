@@ -80,11 +80,6 @@ void clean_sync_data(collector_sync_t *sync) {
 		close(sync->glob->sync_epollfd);
 	}
 
-    /* XXX possibly need to lock this? */
-    for (i = 0; i < sync->glob->registered_syncqs; i++) {
-        free(sync->glob->syncepollevs[i]);
-    }
-
     free_all_ipintercepts(sync->ipintercepts);
     if (sync->voipintercepts) {
         free_all_voipintercepts(sync->voipintercepts);
@@ -271,6 +266,7 @@ static void push_halt_active_voipstreams(libtrace_message_queue_t *q,
 static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
     voipintercept_t *v;
     ipintercept_t *ipint, *tmp;
+    sync_sendq_t *sendq, *tmp2;
     int i;
 
     HASH_ITER(hh_liid, sync->ipintercepts, ipint, tmp) {
@@ -278,7 +274,8 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
         if (ipint->awaitingconfirm && ipint->active) {
             ipint->active = 0;
 
-            for (i = 0; i < sync->glob->registered_syncqs; i++) {
+            HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp2)
+            {
                 openli_pushed_t pmsg;
 
                 /* strdup because we might end up freeing this intercept
@@ -287,7 +284,7 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
                 pmsg.type = OPENLI_PUSH_HALT_IPINTERCEPT;
                 pmsg.data.interceptid.liid = strdup(ipint->liid);
                 pmsg.data.interceptid.authcc = strdup(ipint->authcc);
-                libtrace_message_queue_put(sync->glob->syncsendqs[i], &pmsg);
+                libtrace_message_queue_put(sendq->q, &pmsg);
             }
             /* TODO remove from hashmap */
         }
@@ -301,8 +298,9 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
                 continue;
             }
 
-            for (i = 0; i < sync->glob->registered_syncqs; i++) {
-                push_halt_active_voipstreams(sync->glob->syncsendqs[i], v,
+            HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp2)
+            {
+                push_halt_active_voipstreams(sendq->q, v,
                         sync->glob->sync_epollfd);
             }
             /* TODO remove from hashmap */
@@ -436,6 +434,7 @@ static int update_rtp_stream(collector_sync_t *sync, rtpstreaminf_t *rtp,
     struct sockaddr_storage *saddr;
     int family, i;
     int updaterequired = 1;
+    sync_sendq_t *sendq, *tmp;
 
     errno = 0;
     port = strtoul(portstr, NULL, 0);
@@ -479,10 +478,10 @@ static int update_rtp_stream(collector_sync_t *sync, rtpstreaminf_t *rtp,
 
     /* If we get here, we need to push the RTP stream details to the
      * processing threads. */
-    for (i = 0; i < sync->glob->registered_syncqs; i++) {
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
         if (rtp->active == 0) {
             rtp->active = 1;
-            push_single_voipstreamintercept(sync->glob->syncsendqs[i], rtp);
+            push_single_voipstreamintercept(sendq->q, rtp);
         }
     }
     return 0;
@@ -842,6 +841,7 @@ static int halt_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
     voipintercept_t *vint, torem;
+    sync_sendq_t *sendq, *tmp;
     int i;
 
     if (decode_voipintercept_halt(intmsg, msglen, &torem) == -1) {
@@ -862,9 +862,9 @@ static int halt_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
             torem.liid);
 
     HASH_DELETE(hh_liid, sync->voipintercepts, vint);
-    for (i = 0; i < sync->glob->registered_syncqs; i++) {
-        push_sip_uri_halt(sync->glob->syncsendqs[i], vint->sipuri);
-        push_halt_active_voipstreams(sync->glob->syncsendqs[i], vint,
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
+        push_sip_uri_halt(sendq->q, vint->sipuri);
+        push_halt_active_voipstreams(sendq->q, vint,
                 sync->glob->sync_epollfd);
     }
     return 0;
@@ -876,6 +876,7 @@ static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
     struct epoll_event ev;
     voipcinmap_t *cin_callid, *tmp;
     voipsdpmap_t *cin_sdp, *tmp2;
+    sync_sendq_t *sendq, *tmp3;
 
     if (rtp->active == 0) {
         return 0;
@@ -894,11 +895,11 @@ static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
     }
 
 
-    for (i = 0; i < sync->glob->registered_syncqs; i++) {
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp3) {
        openli_pushed_t msg;
        msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
        msg.data.rtpstreamkey = strdup(rtp->streamkey);
-       libtrace_message_queue_put(sync->glob->syncsendqs[i], (void *)(&msg));
+       libtrace_message_queue_put(sendq->q, (void *)(&msg));
     }
 
     HASH_DEL(rtp->parent->active_cins, rtp);
@@ -949,6 +950,7 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
     voipintercept_t *vint, toadd;
+    sync_sendq_t *sendq, *tmp;
     int i;
 
     if (decode_voipintercept_start(intmsg, msglen, &toadd) == -1) {
@@ -977,12 +979,11 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
     HASH_ADD_KEYPTR(hh_liid, sync->voipintercepts, vint->liid, vint->liid_len,
             vint);
 
-    for (i = 0; i < sync->glob->registered_syncqs; i++) {
-
-        push_sip_uri(sync->glob->syncsendqs[i], vint->sipuri);
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
+        push_sip_uri(sendq->q, vint->sipuri);
 
         /* Forward all active CINs to our collector threads */
-        push_all_active_voipstreams(sync->glob->syncsendqs[i], vint);
+        push_all_active_voipstreams(sendq->q, vint);
 
     }
     return 0;
@@ -992,7 +993,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
     ipintercept_t *cept, *x;
-    int i;
+    sync_sendq_t *tmp, *sendq;
 
     cept = (ipintercept_t *)malloc(sizeof(ipintercept_t));
     if (decode_ipintercept_start(intmsg, msglen, cept) == -1) {
@@ -1042,8 +1043,8 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     HASH_ADD(hh_liid, sync->ipintercepts, liid, strlen(cept->liid), cept);
 
-    for (i = 0; i < sync->glob->registered_syncqs; i++) {
-        push_single_intercept(sync->glob->syncsendqs[i], cept);
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
+        push_single_intercept(sendq->q, cept);
     }
 
     return 0;
@@ -1184,7 +1185,7 @@ static inline void touch_all_voipintercepts(voipintercept_t *vints) {
     }
 }
 
-static inline void disconnect_provisioner(collector_sync_t *sync) {
+void sync_disconnect_provisioner(collector_sync_t *sync) {
 
     struct epoll_event ev;
     openli_export_recv_t expmsg;
@@ -1263,7 +1264,7 @@ int sync_thread_main(collector_sync_t *sync) {
 
             if (syncev->fd == sync->instruct_fd) {
                 logger(LOG_DAEMON, "OpenLI: collector lost connection to central provisioner");
-                disconnect_provisioner(sync);
+                sync_disconnect_provisioner(sync);
                 return 0;
 
             } else {
@@ -1279,12 +1280,12 @@ int sync_thread_main(collector_sync_t *sync) {
             /* Provisioner fd */
             if (evs[i].events & EPOLLOUT) {
                 if (send_to_provisioner(sync) <= 0) {
-                    disconnect_provisioner(sync);
+                    sync_disconnect_provisioner(sync);
                     return 0;
                 }
             } else {
                 if (recv_from_provisioner(sync) <= 0) {
-                    disconnect_provisioner(sync);
+                    sync_disconnect_provisioner(sync);
                     return 0;
                 }
             }
@@ -1366,17 +1367,25 @@ static inline void push_hello_message(libtrace_message_queue_t *atob,
     libtrace_message_queue_put(atob, (void *)(&hello));
 }
 
-void register_sync_queues(collector_global_t *glob,
-        libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq) {
+int register_sync_queues(collector_global_t *glob,
+        libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq,
+        libtrace_thread_t *parent) {
 
     struct epoll_event ev;
-    sync_epoll_t *syncev;
+    sync_epoll_t *syncev, *syncev_hash;
+    sync_sendq_t *syncq, *sendq_hash, *a, *b;
     int ind;
+
+    syncq = (sync_sendq_t *)malloc(sizeof(sync_sendq_t));
+    syncq->q = sendq;
+    syncq->parent = parent;
+
 
     syncev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
     syncev->fdtype = SYNC_EVENT_PROC_QUEUE;
     syncev->fd = libtrace_message_queue_get_fd(recvq);
     syncev->ptr = recvq;
+    syncev->parent = parent;
 
     ev.data.ptr = (void *)syncev;
     ev.events = EPOLLIN;
@@ -1385,24 +1394,58 @@ void register_sync_queues(collector_global_t *glob,
         /* TODO Do something? */
         logger(LOG_DAEMON, "OpenLI: failed to register processor->sync queue: %s",
                 strerror(errno));
+        return -1;
     }
 
     pthread_mutex_lock(&(glob->syncq_mutex));
-    ind  = glob->registered_syncqs;
+    sendq_hash = (sync_sendq_t *)(glob->syncsendqs);
+    HASH_ADD_PTR(sendq_hash, parent, syncq);
+    glob->syncsendqs = (void *)sendq_hash;
 
-    glob->syncsendqs[ind] = sendq;
-    glob->syncepollevs[ind] = syncev;
-    glob->registered_syncqs ++;
+    syncev_hash = (sync_epoll_t *)(glob->syncepollevs);
+    HASH_ADD_PTR(syncev_hash, parent, syncev);
+    glob->syncepollevs = (void *)syncev_hash;
+
     pthread_mutex_unlock(&(glob->syncq_mutex));
 
     push_hello_message(recvq, sendq);
+    return 0;
+}
+
+void deregister_sync_queues(collector_global_t *glob, libtrace_thread_t *t) {
+
+    sync_epoll_t *syncev, *syncev_hash;
+    sync_sendq_t *syncq, *sendq_hash, *a, *b;
+    struct epoll_event ev;
+
+    pthread_mutex_lock(&(glob->syncq_mutex));
+    sendq_hash = (sync_sendq_t *)(glob->syncsendqs);
+
+    HASH_FIND_PTR(sendq_hash, &t, syncq);
+    /* Caller will free the queue itself */
+    if (syncq) {
+        HASH_DELETE(hh, sendq_hash, syncq);
+        free(syncq);
+    }
+
+    syncev_hash = (sync_epoll_t *)(glob->syncepollevs);
+    HASH_FIND_PTR(syncev_hash, &t, syncev);
+    if (syncev) {
+        if (epoll_ctl(glob->sync_epollfd, EPOLL_CTL_DEL, syncev->fd,
+                &ev) == -1) {
+            logger(LOG_DAEMON, "OpenLI: failed to de-register processor-> sync queue: %s", strerror(errno));
+        }
+        HASH_DELETE(hh, syncev_hash, syncev);
+        free(syncev);
+    }
+
+    pthread_mutex_unlock(&(glob->syncq_mutex));
 }
 
 void halt_processing_threads(collector_global_t *glob) {
-    int i;
-
-    for (i = 0; i < glob->inputcount; i++) {
-        trace_pstop(glob->inputs[i].trace);
+    colinput_t *inp, *tmp;
+    HASH_ITER(hh, glob->inputs, inp, tmp) {
+        trace_pstop(inp->trace);
     }
 }
 
