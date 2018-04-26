@@ -350,6 +350,17 @@ int sip_is_200ok(openli_sip_parser_t *parser) {
     return 0;
 }
 
+int sip_is_183sessprog(openli_sip_parser_t *parser) {
+
+    if (MSG_IS_RESPONSE(parser->osip)) {
+        if (osip_message_get_status_code(parser->osip) == 183) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 int sip_is_bye(openli_sip_parser_t *parser) {
     if (MSG_IS_BYE(parser->osip)) {
         return 1;

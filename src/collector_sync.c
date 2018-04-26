@@ -722,6 +722,8 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
                         free(cseqstr);
                         continue;
                     }
+                    free(thisrtp->invitecseq);
+                    thisrtp->invitecseq = NULL;
                 }
             } else if (thisrtp->byecseq && strcmp(thisrtp->byecseq,
                     cseqstr) == 0 && thisrtp->byematched == 0) {
@@ -740,6 +742,33 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
             }
             free(cseqstr);
         }
+
+        /* Check for 183 Session Progress, as this can contain RTP info */
+        if (sip_is_183sessprog(sync->sipparser)) {
+            cseqstr = get_sip_cseq(sync->sipparser);
+
+            if (thisrtp->invitecseq && strcmp(thisrtp->invitecseq,
+                    cseqstr) == 0) {
+
+                ipstr = get_sip_media_ipaddr(sync->sipparser);
+                portstr = get_sip_media_port(sync->sipparser);
+
+                if (ipstr && portstr) {
+                    if (update_rtp_stream(sync, thisrtp, vint, ipstr,
+                                portstr, 1) == -1) {
+                        logger(LOG_DAEMON,
+                                "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
+                                vint->liid, ipstr, portstr);
+                        free(cseqstr);
+                        continue;
+                    }
+                    free(thisrtp->invitecseq);
+                    thisrtp->invitecseq = NULL;
+                }
+            }
+            free(cseqstr);
+        }
+
 
         /* Check for a BYE */
         if (sip_is_bye(sync->sipparser) && !thisrtp->byematched) {
