@@ -183,7 +183,7 @@ static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
     copy->targetport = orig->targetport;
     copy->otherport = orig->otherport;
     copy->seqno = 0;
-    copy->active = orig->active;
+    copy->active = 1;
     copy->invitecseq = NULL;
     copy->byecseq = NULL;
     copy->timeout_ev = NULL;
@@ -481,10 +481,10 @@ static int update_rtp_stream(collector_sync_t *sync, rtpstreaminf_t *rtp,
      * processing threads. */
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
         if (rtp->active == 0) {
-            rtp->active = 1;
             push_single_voipstreamintercept(sendq->q, rtp);
         }
     }
+    rtp->active = 1;
     return 0;
 }
 
