@@ -113,8 +113,6 @@ void clean_sync_data(collector_sync_t *sync) {
         free_wandder_encoder(sync->encoder);
     }
 
-	free(sync);
-
 }
 
 static inline void push_single_intercept(libtrace_message_queue_t *q,

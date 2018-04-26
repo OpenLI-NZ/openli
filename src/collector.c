@@ -505,6 +505,7 @@ static void *start_sync_thread(void *params) {
     collector_global_t *glob = (collector_global_t *)params;
     int ret;
     collector_sync_t *sync = init_sync_data(glob);
+    sync_sendq_t *sq;
 
     /* XXX For early development work, we will read intercept instructions
      * from a config file. Eventually this should be replaced with
@@ -544,8 +545,14 @@ static void *start_sync_thread(void *params) {
 
     /* Collector is halting, stop all processing threads */
     halt_processing_threads(glob);
-
     clean_sync_data(sync);
+
+    /* Wait for all processing threads to de-register their sync queues */
+    while ((sq = (sync_sendq_t *)(glob->syncsendqs)) && HASH_CNT(hh, sq) > 0) {
+        usleep(500000);
+    }
+
+    free(sync);
     logger(LOG_DAEMON, "OpenLI: exiting sync thread.");
     pthread_exit(NULL);
 
