@@ -56,7 +56,6 @@ void clear_input(colinput_t *input) {
     if (input->uri) {
         free(input->uri);
     }
-    free(input);
 }
 
 void clear_global_config(collector_global_t *glob) {
@@ -66,6 +65,7 @@ void clear_global_config(collector_global_t *glob) {
     HASH_ITER(hh, glob->inputs, inp, tmp) {
         HASH_DELETE(hh, glob->inputs, inp);
         clear_input(inp);
+        free(inp);
     }
 
     if (glob->syncsendqs) {
@@ -94,6 +94,18 @@ void clear_global_config(collector_global_t *glob) {
 
     if (glob->provisionerport) {
         free(glob->provisionerport);
+    }
+
+    if (glob->expired_inputs) {
+        libtrace_list_node_t *n;
+        n = glob->expired_inputs->head;
+        while (n) {
+            inp = *((colinput_t **)(n->data));
+            clear_input(inp);
+            free(inp);
+            n = n->next;
+        }
+        libtrace_list_deinit(glob->expired_inputs);
     }
 
     pthread_rwlock_destroy(&glob->config_mutex);
@@ -129,6 +141,7 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         inp->threadcount = 1;
         inp->trace = NULL;
         inp->pktcbs = NULL;
+        inp->running = 0;
 
         /* Mappings describe the parameters for each input */
         for (pair = node->data.mapping.pairs.start;
@@ -612,6 +625,7 @@ collector_global_t *parse_global_config(char *configfile) {
     glob->export_epoll_evs = NULL;
     glob->provisionerip = NULL;
     glob->provisionerport = NULL;
+    glob->expired_inputs = libtrace_list_init(sizeof(colinput_t *));
 
     pthread_rwlock_init(&glob->config_mutex, NULL);
     pthread_mutex_init(&glob->syncq_mutex, NULL);

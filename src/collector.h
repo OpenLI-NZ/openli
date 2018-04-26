@@ -85,8 +85,8 @@ typedef struct colinput {
     int threadcount;
     libtrace_t *trace;
     libtrace_callback_set_t *pktcbs;
-    
 
+    uint8_t running;
     UT_hash_handle hh;
 } colinput_t;
 
@@ -157,6 +157,7 @@ typedef struct collector_global {
     int intpointid_len;
 
     libtrace_list_t *export_epoll_evs;
+    libtrace_list_t *expired_inputs;
 
 } collector_global_t;
 

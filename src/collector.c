@@ -179,6 +179,10 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     deregister_sync_queues(glob, t);
 
+    /* TODO drain fromsync message queue so we don't leak SIP URIs
+     * and any other malloced memory in the messages.
+     */
+
     libtrace_message_queue_destroy(&(loc->tosyncq));
     libtrace_message_queue_destroy(&(loc->fromsyncq));
     libtrace_message_queue_destroy(&(loc->exportq));
@@ -338,6 +342,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
             if (newsip) {
                 newsip->references ++;
+                free(syncpush.data.sipuri);
             } else {
                 newsip = (sipuri_hash_t *)malloc(
                         sizeof(sipuri_hash_t));
@@ -414,16 +419,19 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
 static int start_input(collector_global_t *glob, colinput_t *inp) {
 
-    if (inp->pktcbs != NULL) {
+    if (inp->running == 1) {
         /* Trace is already running */
         return 1;
     }
 
-    inp->pktcbs = trace_create_callback_set();
-    trace_set_starting_cb(inp->pktcbs, start_processing_thread);
-    trace_set_stopping_cb(inp->pktcbs, stop_processing_thread);
-    trace_set_packet_cb(inp->pktcbs, process_packet);
+    if (!inp->pktcbs) {
+        inp->pktcbs = trace_create_callback_set();
+        trace_set_starting_cb(inp->pktcbs, start_processing_thread);
+        trace_set_stopping_cb(inp->pktcbs, stop_processing_thread);
+        trace_set_packet_cb(inp->pktcbs, process_packet);
+    }
 
+    assert(!inp->trace);
     inp->trace = trace_create(inp->uri);
     if (trace_is_err(inp->trace)) {
         libtrace_err_t lterr = trace_get_err(inp->trace);
@@ -433,6 +441,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp) {
     }
 
     trace_set_perpkt_threads(inp->trace, inp->threadcount);
+    trace_set_hasher(inp->trace, HASHER_BIDIRECTIONAL, NULL, NULL);
 
     if (trace_pstart(inp->trace, glob, inp->pktcbs, NULL) == -1) {
         libtrace_err_t lterr = trace_get_err(inp->trace);
@@ -441,7 +450,47 @@ static int start_input(collector_global_t *glob, colinput_t *inp) {
         return 0;
     }
 
+    logger(LOG_DAEMON,
+            "OpenLI: collector has started reading packets from %s using %d threads.",
+            inp->uri, inp->threadcount);
+    inp->running = 1;
     return 1;
+}
+
+static void reload_inputs(collector_global_t *glob,
+        collector_global_t *newstate) {
+
+    colinput_t *oldinp, *newinp, *tmp;
+
+    HASH_ITER(hh, glob->inputs, oldinp, tmp) {
+        HASH_FIND(hh, newstate->inputs, oldinp->uri, strlen(oldinp->uri),
+                newinp);
+        if (!newinp || newinp->threadcount != oldinp->threadcount) {
+            /* This input is no longer wanted at all */
+            logger(LOG_DAEMON,
+                    "OpenLI collector: stop reading packets from %s\n",
+                    oldinp->uri);
+            trace_pstop(oldinp->trace);
+            HASH_DELETE(hh, glob->inputs, oldinp);
+            libtrace_list_push_back(glob->expired_inputs, &oldinp);
+            continue;
+        }
+
+        /* Mark this input as being present in the original list */
+        newinp->running = 1;
+    }
+
+    HASH_ITER(hh, newstate->inputs, newinp, tmp) {
+        if (newinp->running) {
+            continue;
+        }
+
+        /* This input is new, move it into the 'official' input list */
+        HASH_DELETE(hh, newstate->inputs, newinp);
+        HASH_ADD_KEYPTR(hh, glob->inputs, newinp->uri, strlen(newinp->uri),
+                newinp);
+    }
+
 }
 
 static int reload_collector_config(collector_global_t *glob,
@@ -471,6 +520,9 @@ static int reload_collector_config(collector_global_t *glob,
     }
 
     pthread_rwlock_wrlock(&(glob->config_mutex));
+
+    reload_inputs(glob, newstate);
+
     /* Just update these, regardless of whether they've changed. It's more
      * effort to check for a change than it is worth and there are no
      * flow-on effects to a change.
