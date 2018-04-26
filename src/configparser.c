@@ -31,6 +31,8 @@
 #include <errno.h>
 #include <libtrace/message_queue.h>
 #include <libtrace_parallel.h>
+#include <unistd.h>
+#include <sys/epoll.h>
 
 #include "configparser.h"
 #include "logger.h"
@@ -97,7 +99,14 @@ void clear_global_config(collector_global_t *glob) {
     pthread_rwlock_destroy(&glob->config_mutex);
     pthread_mutex_destroy(&glob->syncq_mutex);
     pthread_mutex_destroy(&glob->exportq_mutex);
-    pthread_cond_destroy(&glob->exportq_cond);
+
+    if (glob->sync_epollfd != -1) {
+        close(glob->sync_epollfd);
+    }
+
+    if (glob->export_epollfd != -1) {
+        close(glob->export_epollfd);
+    }
 
     free(glob);
 }
@@ -597,8 +606,8 @@ collector_global_t *parse_global_config(char *configfile) {
     glob->networkelemid_len = 0;
     glob->syncthreadid = 0;
     glob->exportthreadid = 0;
-    glob->sync_epollfd = -1;
-    glob->export_epollfd = -1;
+    glob->sync_epollfd = epoll_create1(0);
+    glob->export_epollfd = epoll_create1(0);
     glob->configfile = configfile;
     glob->export_epoll_evs = NULL;
     glob->provisionerip = NULL;
@@ -607,7 +616,6 @@ collector_global_t *parse_global_config(char *configfile) {
     pthread_rwlock_init(&glob->config_mutex, NULL);
     pthread_mutex_init(&glob->syncq_mutex, NULL);
     pthread_mutex_init(&glob->exportq_mutex, NULL);
-    pthread_cond_init(&glob->exportq_cond, NULL);
 
     if (yaml_parser(configfile, glob, global_parser) == -1) {
         return NULL;

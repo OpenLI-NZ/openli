@@ -56,10 +56,6 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->instruct_fail = 0;
     sync->ii_ev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
 
-    pthread_mutex_lock(&(glob->syncq_mutex));
-    sync->glob->sync_epollfd = epoll_create1(0);
-    pthread_mutex_unlock(&(glob->syncq_mutex));
-
     libtrace_message_queue_init(&(sync->exportq), sizeof(openli_exportmsg_t));
 
     sync->outgoing = NULL;
@@ -77,14 +73,8 @@ void clean_sync_data(collector_sync_t *sync) {
 
 	if (sync->instruct_fd != -1) {
 		close(sync->instruct_fd);
+        sync->instruct_fd = -1;
 	}
-
-    pthread_mutex_lock(&(sync->glob->syncq_mutex));
-	if (sync->glob->sync_epollfd != -1) {
-		close(sync->glob->sync_epollfd);
-        sync->glob->sync_epollfd = -1;
-	}
-    pthread_mutex_unlock(&(sync->glob->syncq_mutex));
 
     free_all_ipintercepts(sync->ipintercepts);
     if (sync->voipintercepts) {
@@ -113,6 +103,13 @@ void clean_sync_data(collector_sync_t *sync) {
         free_wandder_encoder(sync->encoder);
     }
 
+    sync->ipintercepts = NULL;
+    sync->voipintercepts = NULL;
+    sync->outgoing = NULL;
+    sync->incoming = NULL;
+    sync->sipparser = NULL;
+    sync->encoder = NULL;
+    sync->ii_ev = NULL;
 }
 
 static inline void push_single_intercept(libtrace_message_queue_t *q,
@@ -1385,7 +1382,6 @@ int register_sync_queues(collector_global_t *glob,
     syncq = (sync_sendq_t *)malloc(sizeof(sync_sendq_t));
     syncq->q = sendq;
     syncq->parent = parent;
-
 
     syncev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
     syncev->fdtype = SYNC_EVENT_PROC_QUEUE;

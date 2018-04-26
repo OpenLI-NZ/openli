@@ -135,10 +135,9 @@ typedef struct collector_global {
     pthread_rwlock_t config_mutex;
     pthread_mutex_t syncq_mutex;
     pthread_mutex_t exportq_mutex;
-    pthread_cond_t exportq_cond;
 
-    void **syncsendqs;
-    void **syncepollevs;
+    void *syncsendqs;
+    void *syncepollevs;
 
     pthread_t syncthreadid;
     pthread_t exportthreadid;

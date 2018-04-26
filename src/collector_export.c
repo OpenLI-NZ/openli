@@ -64,10 +64,6 @@ collector_export_t *init_exporter(collector_global_t *glob) {
     exp->glob = glob;
     exp->dests = libtrace_list_init(sizeof(export_dest_t));
 
-    pthread_mutex_lock(&glob->exportq_mutex);
-    exp->glob->export_epollfd = epoll_create1(0);
-    pthread_cond_signal(&glob->exportq_cond);
-    pthread_mutex_unlock(&glob->exportq_mutex);
     exp->failed_conns = 0;
     return exp;
 }
@@ -175,10 +171,6 @@ static inline void remove_all_destinations(collector_export_t *exp) {
 
 void destroy_exporter(collector_export_t *exp) {
     libtrace_list_node_t *n;
-
-    if (exp->glob->export_epollfd != -1) {
-        close(exp->glob->export_epollfd);
-    }
 
     remove_all_destinations(exp);
 
@@ -643,9 +635,6 @@ void register_export_queue(collector_global_t *glob,
     ev.events = EPOLLIN;
 
     pthread_mutex_lock(&glob->exportq_mutex);
-    while (glob->export_epollfd == -1) {
-        pthread_cond_wait(&glob->exportq_cond, &glob->exportq_mutex);
-    }
 
     if (glob->export_epoll_evs == NULL) {
         glob->export_epoll_evs = libtrace_list_init(sizeof(exporter_epoll_t **));
