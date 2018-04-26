@@ -1017,6 +1017,10 @@ static int start_push_listener(provision_state_t *state) {
     struct epoll_event ev;
     int sockfd;
 
+    if (state->pushaddr == NULL) {
+        return -1;
+    }
+
     state->updatefd = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
     sockfd  = create_listener(state->pushaddr, state->pushport, "II push");
@@ -1216,27 +1220,45 @@ static inline int reload_push_socket_config(provision_state_t *currstate,
         provision_state_t *newstate) {
 
     struct epoll_event ev;
+    int changed = 0;
 
     /* TODO this will trigger on a whitespace change */
-    if (strcmp(newstate->pushaddr, currstate->pushaddr) != 0 ||
-            strcmp(newstate->pushport, currstate->pushport) != 0) {
+    if (currstate->pushaddr) {
 
-        if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
-                currstate->updatefd->fd, &ev) == -1) {
-            logger(LOG_DAEMON,
-                    "OpenLI provisioner: Failed to remove update fd from epoll: %s.",
-                    strerror(errno));
-            return -1;
+        if (strcmp(newstate->pushaddr, currstate->pushaddr) != 0 ||
+                strcmp(newstate->pushport, currstate->pushport) != 0) {
+
+            if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
+                    currstate->updatefd->fd, &ev) == -1) {
+                logger(LOG_DAEMON,
+                        "OpenLI provisioner: Failed to remove update fd from epoll: %s.",
+                        strerror(errno));
+                return -1;
+            }
+
+            close(currstate->updatefd->fd);
+            free(currstate->updatefd);
+            free(currstate->pushaddr);
+            free(currstate->pushport);
+
+            if (newstate->pushaddr) {
+                currstate->pushaddr = strdup(newstate->pushaddr);
+            } else {
+                currstate->pushaddr = NULL;
+            }
+            currstate->pushport = strdup(newstate->pushport);
+            changed = 1;
         }
+    }
 
-        close(currstate->updatefd->fd);
-        free(currstate->updatefd);
-        free(currstate->pushaddr);
-        free(currstate->pushport);
+    else if (newstate->pushaddr) {
         currstate->pushaddr = strdup(newstate->pushaddr);
         currstate->pushport = strdup(newstate->pushport);
+        changed = 1;
+    }
 
-        if (start_push_listener(currstate) == -1) {
+    if (changed) {
+        if (currstate->pushaddr && start_push_listener(currstate) == -1) {
             logger(LOG_DAEMON,
                     "OpenLI provisioner: Warning, update socket did not restart. Will not be able to receive live updates.");
             return -1;

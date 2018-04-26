@@ -18,7 +18,7 @@ openliprovisioner_SOURCES=provisioner.c provisioner.h byteswap.c \
                 logger.h mediator.h netcomms.h netcomms.c
 
 openliprovisioner_LDADD = @ADD_LIBS@
-openliprovisioner_LDFLAGS=
+openliprovisioner_LDFLAGS=-lpthread
 openliprovisioner_CFLAGS=
 
 openlimediator_SOURCES=mediator.c mediator.h byteswap.c byteswap.h \
@@ -26,7 +26,7 @@ openlimediator_SOURCES=mediator.c mediator.h byteswap.c byteswap.h \
                 logger.c logger.h netcomms.c netcomms.h export_buffer.c \
                 export_buffer.h etsili_core.h etsili_core.c
 openlimediator_LDADD = @ADD_LIBS@
-openlimediator_LDFLAGS=
+openlimediator_LDFLAGS=-lpthread
 openlimediator_CFLAGS=
 
 

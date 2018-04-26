@@ -32,6 +32,8 @@
 #include "mediator.h"
 #include <yaml.h>
 
+
+void clear_input(colinput_t *input);
 collector_global_t *parse_global_config(char *configfile);
 void clear_global_config(collector_global_t *glob);
 
