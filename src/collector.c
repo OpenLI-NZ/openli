@@ -461,6 +461,10 @@ static int reload_collector_config(collector_global_t *glob,
         logger(LOG_DAEMON,
                 "OpenLI collector: disconnecting from provisioner due to config change.");
         sync_disconnect_provisioner(sync);
+        free(glob->provisionerip);
+        free(glob->provisionerport);
+        glob->provisionerip = strdup(newstate->provisionerip);
+        glob->provisionerport = strdup(newstate->provisionerport);
     } else {
         logger(LOG_DAEMON,
                 "OpenLI collector: provisioner socket configuration is unchanged.");
@@ -493,6 +497,8 @@ static int reload_collector_config(collector_global_t *glob,
     newstate->intpointid = NULL;
 
     pthread_rwlock_unlock(&(glob->config_mutex));
+    clear_global_config(newstate);
+    return 0;
 }
 
 static void *start_sync_thread(void *params) {
@@ -671,6 +677,7 @@ int main(int argc, char *argv[]) {
             logger(LOG_DAEMON, "Unable to re-enable signals after starting threads.");
             return 1;
         }
+        usleep(1000);
     }
 
     pthread_rwlock_rdlock(&(glob->config_mutex));

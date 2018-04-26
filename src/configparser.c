@@ -613,14 +613,24 @@ collector_global_t *parse_global_config(char *configfile) {
         return NULL;
     }
 
+    if (glob->provisionerport == NULL) {
+        glob->provisionerport = strdup("8993");
+    }
+
     if (glob->networkelemid == NULL) {
-        logger(LOG_DAEMON, "OpenLI: No network element ID specified in config file. Exiting.\n");
+        logger(LOG_DAEMON, "OpenLI: No network element ID specified in config file. Exiting.");
         clear_global_config(glob);
         glob = NULL;
     }
 
-    if (glob->operatorid == NULL) {
-        logger(LOG_DAEMON, "OpenLI: No operator ID specified in config file. Exiting.\n");
+    else if (glob->operatorid == NULL) {
+        logger(LOG_DAEMON, "OpenLI: No operator ID specified in config file. Exiting.");
+        clear_global_config(glob);
+        glob = NULL;
+    }
+
+    else if (glob->provisionerip == NULL) {
+        logger(LOG_DAEMON, "OpenLI collector: no provisioner IP address specified in config file. Exiting.");
         clear_global_config(glob);
         glob = NULL;
     }

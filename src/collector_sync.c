@@ -55,7 +55,10 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->instruct_fd = -1;
     sync->instruct_fail = 0;
     sync->ii_ev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
+
+    pthread_mutex_lock(&(glob->syncq_mutex));
     sync->glob->sync_epollfd = epoll_create1(0);
+    pthread_mutex_unlock(&(glob->syncq_mutex));
 
     libtrace_message_queue_init(&(sync->exportq), sizeof(openli_exportmsg_t));
 
@@ -76,9 +79,12 @@ void clean_sync_data(collector_sync_t *sync) {
 		close(sync->instruct_fd);
 	}
 
+    pthread_mutex_lock(&(sync->glob->syncq_mutex));
 	if (sync->glob->sync_epollfd != -1) {
 		close(sync->glob->sync_epollfd);
+        sync->glob->sync_epollfd = -1;
 	}
+    pthread_mutex_unlock(&(sync->glob->syncq_mutex));
 
     free_all_ipintercepts(sync->ipintercepts);
     if (sync->voipintercepts) {
@@ -1196,14 +1202,16 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
     sync->outgoing = NULL;
     sync->incoming = NULL;
 
-    if (epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_DEL, sync->instruct_fd,
-            &ev) == -1) {
-        logger(LOG_DAEMON, "OpenLI: error de-registering provisioner fd: %s.",
-                strerror(errno));
+    if (sync->instruct_fd != -1) {
+        if (epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_DEL,
+                sync->instruct_fd, &ev) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: error de-registering provisioner fd: %s.",
+                    strerror(errno));
+        }
+        close(sync->instruct_fd);
+        sync->instruct_fd = -1;
     }
-
-    close(sync->instruct_fd);
-    sync->instruct_fd = -1;
 
     /* Leave all intercepts running, but require them to be confirmed
      * as active when we reconnect to the provisioner.
@@ -1390,14 +1398,15 @@ int register_sync_queues(collector_global_t *glob,
     ev.data.ptr = (void *)syncev;
     ev.events = EPOLLIN;
 
+    pthread_mutex_lock(&(glob->syncq_mutex));
     if (epoll_ctl(glob->sync_epollfd, EPOLL_CTL_ADD, syncev->fd, &ev) == -1) {
         /* TODO Do something? */
         logger(LOG_DAEMON, "OpenLI: failed to register processor->sync queue: %s",
                 strerror(errno));
+        pthread_mutex_unlock(&(glob->syncq_mutex));
         return -1;
     }
 
-    pthread_mutex_lock(&(glob->syncq_mutex));
     sendq_hash = (sync_sendq_t *)(glob->syncsendqs);
     HASH_ADD_PTR(sendq_hash, parent, syncq);
     glob->syncsendqs = (void *)sendq_hash;
@@ -1415,7 +1424,7 @@ int register_sync_queues(collector_global_t *glob,
 void deregister_sync_queues(collector_global_t *glob, libtrace_thread_t *t) {
 
     sync_epoll_t *syncev, *syncev_hash;
-    sync_sendq_t *syncq, *sendq_hash, *a, *b;
+    sync_sendq_t *syncq, *sendq_hash;
     struct epoll_event ev;
 
     pthread_mutex_lock(&(glob->syncq_mutex));
@@ -1426,17 +1435,19 @@ void deregister_sync_queues(collector_global_t *glob, libtrace_thread_t *t) {
     if (syncq) {
         HASH_DELETE(hh, sendq_hash, syncq);
         free(syncq);
+        glob->syncsendqs = (void *)sendq_hash;
     }
 
     syncev_hash = (sync_epoll_t *)(glob->syncepollevs);
     HASH_FIND_PTR(syncev_hash, &t, syncev);
     if (syncev) {
-        if (epoll_ctl(glob->sync_epollfd, EPOLL_CTL_DEL, syncev->fd,
-                &ev) == -1) {
-            logger(LOG_DAEMON, "OpenLI: failed to de-register processor-> sync queue: %s", strerror(errno));
+        if (glob->sync_epollfd != -1 && epoll_ctl(glob->sync_epollfd,
+                    EPOLL_CTL_DEL, syncev->fd, &ev) == -1) {
+            logger(LOG_DAEMON, "OpenLI: failed to de-register processor->sync queue %d: %s", syncev->fd, strerror(errno));
         }
         HASH_DELETE(hh, syncev_hash, syncev);
         free(syncev);
+        glob->syncepollevs = (void *)syncev_hash;
     }
 
     pthread_mutex_unlock(&(glob->syncq_mutex));
