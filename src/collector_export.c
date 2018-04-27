@@ -408,7 +408,7 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
     libtrace_list_node_t *n;
     export_dest_t *dest;
 
-    x = libtrace_message_queue_try_get(srcq, (void *)(&recvd));
+    x = libtrace_message_queue_get(srcq, (void *)(&recvd));
     if (x == LIBTRACE_MQ_FAILED) {
         return 0;
     }
@@ -638,7 +638,7 @@ void register_export_queue(collector_global_t *glob,
     epoll_ev->data.q = q;
 
     ev.data.ptr = (void *)epoll_ev;
-    ev.events = EPOLLIN;
+    ev.events = EPOLLIN | EPOLLRDHUP;
 
     pthread_mutex_lock(&glob->exportq_mutex);
 

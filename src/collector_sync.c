@@ -1332,9 +1332,8 @@ int sync_thread_main(collector_sync_t *sync) {
         }
 
         /* Must be from a processing thread queue, figure out which one */
-        if (libtrace_message_queue_try_get(
-                (libtrace_message_queue_t *)(syncev->ptr),
-                (void *)(&recvd)) == LIBTRACE_MQ_FAILED) {
+        if (libtrace_message_queue_count(
+                (libtrace_message_queue_t *)(syncev->ptr)) <= 0) {
 
             /* Processing thread queue was empty but we thought we had a
              * message available? I think this is just a consequence of
@@ -1342,6 +1341,9 @@ int sync_thread_main(collector_sync_t *sync) {
              * simple operations. */
             continue;
         }
+
+        libtrace_message_queue_get((libtrace_message_queue_t *)(syncev->ptr),
+                (void *)(&recvd));
 
         /* If a hello from a thread, push all active intercepts back */
         if (recvd.type == OPENLI_UPDATE_HELLO) {
