@@ -188,7 +188,7 @@ void destroy_exporter(collector_export_t *exp) {
 
 static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
 
-    uint32_t enclen = msg->msglen - msg->ipclen;
+    uint32_t enclen = msg->msgbody->len - msg->ipclen;
     int ret;
     struct iovec iov[3];
     struct msghdr mh;
@@ -203,7 +203,7 @@ static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
         total += msg->hdrlen;
     }
 
-    iov[ind].iov_base = msg->msgbody;
+    iov[ind].iov_base = msg->msgbody->encoded;
     iov[ind].iov_len = enclen;
     total += enclen;
     ind ++;
@@ -254,29 +254,32 @@ static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
 
 static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
 
+    int ret = 0;
     if (dest->fd == -1) {
         /* buffer this message for when we are able to connect */
         if (append_message_to_buffer(&(dest->buffer), msg, 0) == 0) {
             /* TODO do something if we run out of memory? */
 
         }
-        return 0;
+        goto endforward;
     }
 
     if (get_buffered_amount(&(dest->buffer)) == 0) {
-        return forward_fd(dest, msg);
+        ret = forward_fd(dest, msg);
+        goto endforward;
     }
 
     if (transmit_buffered_records(&(dest->buffer), dest->fd, BUF_BATCH_SIZE)
                 == -1) {
-
-        return -1;
+        ret = -1;
+        goto endforward;
 
     }
 
     if (get_buffered_amount(&(dest->buffer)) == 0) {
         /* buffer is now empty, try to push out this message too */
-        return forward_fd(dest, msg);
+        ret = forward_fd(dest, msg);
+        goto endforward;
     }
 
     /* buffer was not completely drained, so we have to buffer this
@@ -285,6 +288,9 @@ static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
         /* TODO do something if we run out of memory? */
 
     }
+
+endforward:
+    wandder_release_encoded_result(NULL, msg->msgbody);
 
     return 0;
 }
@@ -494,7 +500,7 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
         if (recvd.data.toexport.header) {
             free(recvd.data.toexport.header);
         }
-        free(recvd.data.toexport.msgbody);
+        //free(recvd.data.toexport.msgbody);
         return 1;
     }
 

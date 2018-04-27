@@ -150,7 +150,7 @@ uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
 uint64_t append_message_to_buffer(export_buffer_t *buf,
         openli_exportmsg_t *msg, uint32_t beensent) {
 
-    uint32_t enclen = msg->msglen - msg->ipclen;
+    uint32_t enclen = msg->msgbody->len - msg->ipclen;
     uint64_t bufused = buf->buftail - buf->bufhead;
     uint64_t spaceleft = buf->alloced - bufused;
 
@@ -158,7 +158,7 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
         buf->partialfront = beensent;
     }
 
-    while (spaceleft < msg->msglen + msg->hdrlen) {
+    while (spaceleft < msg->msgbody->len + msg->hdrlen) {
         spaceleft = extend_buffer(buf);
         if (spaceleft == 0) {
             return 0;
@@ -171,7 +171,7 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
         memcpy(buf->buftail, msg->header, msg->hdrlen);
         buf->buftail += msg->hdrlen;
     }
-    memcpy(buf->buftail, msg->msgbody, enclen);
+    memcpy(buf->buftail, msg->msgbody->encoded, enclen);
 
     buf->buftail += enclen;
     if (msg->ipclen > 0) {

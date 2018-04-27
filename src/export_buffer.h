@@ -27,7 +27,7 @@
 #ifndef OPENLI_COLLECTOR_BUFFER_H_
 #define OPENLI_COLLECTOR_BUFFER_H_
 
-
+#include <libwandder.h>
 
 typedef struct export_buffer {
     uint8_t *bufhead;
@@ -40,12 +40,12 @@ typedef struct export_buffer {
 
 typedef struct openli_exp_msg {
 
+    wandder_encoder_t *encoder;
     uint32_t destid;
     uint32_t hdrlen;
-    uint32_t msglen;
     uint32_t ipclen;
     uint8_t *header;
-    uint8_t *msgbody;
+    wandder_encoded_result_t *msgbody;
     uint8_t *ipcontents;
 
 } openli_exportmsg_t;

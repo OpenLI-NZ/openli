@@ -38,11 +38,11 @@
 
 static void dump_export_msg(openli_exportmsg_t *msg) {
 
-    uint32_t enclen = msg->msglen - msg->ipclen;
+    uint32_t enclen = msg->msgbody->len - msg->ipclen;
     uint32_t i;
 
     for (i = 0; i < enclen; i++) {
-        printf("%02x ", msg->msgbody[i]);
+        printf("%02x ", msg->msgbody->encoded[i]);
         if ((i % 16) == 15) {
             printf("\n");
         }
@@ -94,13 +94,14 @@ static openli_export_recv_t form_ipcc(collector_global_t *glob,
     hdrdata.intpointid = glob->intpointid;
     hdrdata.intpointid_len = glob->intpointid_len;
 
-    msg.msgbody = encode_etsi_ipcc(&(msg.msglen), loc->encoder, &hdrdata,
+    msg.msgbody = encode_etsi_ipcc(loc->encoder, &hdrdata,
             (int64_t)ipint->cin, (int64_t)ipint->nextseqno, &tv, l3, rem);
 
+    msg.encoder = loc->encoder;
     msg.ipcontents = (uint8_t *)l3;
     msg.ipclen = rem;
     msg.destid = ipint->destid;
-    msg.header = construct_netcomm_protocol_header(msg.msglen,
+    msg.header = construct_netcomm_protocol_header(msg.msgbody->len,
             OPENLI_PROTO_ETSI_CC, ipint->internalid, &(msg.hdrlen));
 
     exprecv.type = OPENLI_EXPORT_ETSIREC;

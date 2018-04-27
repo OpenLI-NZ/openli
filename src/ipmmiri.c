@@ -77,14 +77,15 @@ int ipmm_iri(libtrace_packet_t *pkt, collector_global_t *glob,
     hdrdata.intpointid = glob->intpointid;
     hdrdata.intpointid_len = glob->intpointid_len;
 
-    iri.msgbody = encode_etsi_ipmmiri(&(iri.msglen), *encoder, &hdrdata,
+    iri.msgbody = encode_etsi_ipmmiri(*encoder, &hdrdata,
             (int64_t)(cin->cin), (int64_t)cin->iriseqno, iritype, &tv, l3,
             rem);
 
+    iri.encoder = *encoder;
     iri.ipcontents = (uint8_t *)l3;
     iri.ipclen = rem;
     iri.destid = vint->destid;
-    iri.header = construct_netcomm_protocol_header(iri.msglen,
+    iri.header = construct_netcomm_protocol_header(iri.msgbody->len,
             OPENLI_PROTO_ETSI_IRI, vint->internalid, &(iri.hdrlen));
 
     msg.type = OPENLI_EXPORT_ETSIREC;

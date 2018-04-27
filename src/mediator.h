@@ -73,8 +73,7 @@ typedef struct med_agency_state {
     int main_fd;
     int katimer_fd;
     int karesptimer_fd;
-    uint8_t *pending_ka;
-    uint32_t pending_ka_len;
+    wandder_encoded_result_t *pending_ka;
     int64_t lastkaseq;
     wandder_encoder_t *encoder;
     wandder_etsispec_t *decoder;

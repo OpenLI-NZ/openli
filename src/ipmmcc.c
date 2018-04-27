@@ -66,15 +66,16 @@ static openli_export_recv_t form_ipmmcc(collector_global_t *glob,
     hdrdata.intpointid = glob->intpointid;
     hdrdata.intpointid_len = glob->intpointid_len;
 
-    msg.msgbody = encode_etsi_ipmmcc(&(msg.msglen), loc->encoder, &hdrdata,
+    msg.msgbody = encode_etsi_ipmmcc(loc->encoder, &hdrdata,
                 (int64_t)rtp->cin, (int64_t)rtp->seqno, &tv, l3, rem, dir);
 
     /* Unfortunately, the packet body is not the last item in our message so
      * we can't easily use our zero-copy shortcut :( */
+    msg.encoder = loc->encoder;
     msg.ipcontents = NULL;
     msg.ipclen = 0;
     msg.destid = rtp->parent->destid;
-    msg.header = construct_netcomm_protocol_header(msg.msglen,
+    msg.header = construct_netcomm_protocol_header(msg.msgbody->len,
                 OPENLI_PROTO_ETSI_CC, rtp->parent->internalid, &(msg.hdrlen));
 
     exprecv.type = OPENLI_EXPORT_ETSIREC;

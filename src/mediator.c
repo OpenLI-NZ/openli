@@ -114,7 +114,7 @@ static void disconnect_handover(mediator_state_t *state, handover_t *ho) {
         agstate->decoder = NULL;
     }
     if (agstate->pending_ka) {
-        free(agstate->pending_ka);
+        wandder_release_encoded_result(NULL, agstate->pending_ka);
         agstate->pending_ka = NULL;
     }
     if (agstate->incoming) {
@@ -213,7 +213,7 @@ static void free_handover(handover_t *ho) {
             wandder_free_etsili_decoder(agstate->decoder);
         }
         if (agstate->pending_ka) {
-            free(agstate->pending_ka);
+            wandder_release_encoded_result(NULL, agstate->pending_ka);
         }
         if (agstate->incoming) {
             libtrace_scb_destroy(agstate->incoming);
@@ -400,8 +400,7 @@ static int init_med_state(mediator_state_t *state, char *configfile,
 static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     med_agency_state_t *ms = (med_agency_state_t *)(mev->state);
-    uint8_t *kamsg;
-    uint32_t kalen;
+    wandder_encoded_result_t *kamsg;
     wandder_etsipshdr_data_t hdrdata;
 
     if (ms->pending_ka == NULL && ms->main_fd != -1) {
@@ -431,7 +430,7 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
         hdrdata.intpointid = NULL;
         hdrdata.intpointid_len = 0;
 
-        kamsg = encode_etsi_keepalive(&kalen, ms->encoder, &hdrdata,
+        kamsg = encode_etsi_keepalive(ms->encoder, &hdrdata,
                 ms->lastkaseq + 1);
         if (kamsg == NULL) {
             logger(LOG_DAEMON,
@@ -440,7 +439,6 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
         }
 
         ms->pending_ka = kamsg;
-        ms->pending_ka_len = kalen;
         ms->lastkaseq += 1;
 
         if (!ms->outenabled) {
@@ -534,7 +532,6 @@ static int connect_handover(mediator_state_t *state, handover_t *ho) {
     agstate->karesptimer_fd = -1;
     agstate->lastkaseq = 0;
     agstate->pending_ka = NULL;
-    agstate->pending_ka_len = 0;
     agstate->encoder = NULL;
     agstate->decoder = NULL;
 
@@ -1018,7 +1015,7 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
     int ret = 0;
 
     if (mas->pending_ka) {
-        ret = send(mev->fd, mas->pending_ka, mas->pending_ka_len,
+        ret = send(mev->fd, mas->pending_ka->encoded, mas->pending_ka->len,
                 MSG_DONTWAIT);
         if (ret < 0) {
             logger(LOG_DAEMON,
@@ -1030,16 +1027,15 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
         if (ret == 0) {
             return -1;
         }
-        if (ret == mas->pending_ka_len) {
+        if (ret == mas->pending_ka->len) {
             /* Sent the whole thing successfully */
-            free(mas->pending_ka);
+            wandder_release_encoded_result(NULL, mas->pending_ka);
             mas->pending_ka = NULL;
-            mas->pending_ka_len = 0;
         } else {
             /* Partial send -- try the rest next time */
-            memmove(mas->pending_ka, mas->pending_ka + ret,
-                    mas->pending_ka_len - ret);
-            mas->pending_ka_len -= ret;
+            memmove(mas->pending_ka->encoded, mas->pending_ka->encoded + ret,
+                    mas->pending_ka->len - ret);
+            mas->pending_ka->len -= ret;
         }
         return 0;
     }

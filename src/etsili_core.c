@@ -204,39 +204,38 @@ static inline void encode_etsili_pshdr(wandder_encoder_t *encoder,
 
 }
 
-uint8_t *encode_etsi_ipcc(uint32_t *enclen, wandder_encoder_t *encoder,
+wandder_encoded_result_t *encode_etsi_ipcc(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
         struct timeval *tv, void *ipcontents, uint32_t iplen) {
 
 
     encode_etsili_pshdr(encoder, hdrdata, cin, seqno, tv);
     encode_ipcc_body(encoder, ipcontents, iplen);
-
-    return wandder_encode_finish(encoder, enclen);
+    return wandder_encode_finish(encoder);
 
 }
 
-uint8_t *encode_etsi_ipmmcc(uint32_t *enclen, wandder_encoder_t *encoder,
+wandder_encoded_result_t *encode_etsi_ipmmcc(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
         struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir) {
 
     encode_etsili_pshdr(encoder, hdrdata, cin, seqno, tv);
     encode_ipmmcc_body(encoder, ipcontents, iplen, dir);
-    return wandder_encode_finish(encoder, enclen);
+    return wandder_encode_finish(encoder);
 
 }
 
-uint8_t *encode_etsi_ipmmiri(uint32_t *enclen, wandder_encoder_t *encoder,
+wandder_encoded_result_t *encode_etsi_ipmmiri(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
         etsili_iri_type_t iritype, struct timeval *tv, void *ipcontents,
         uint32_t iplen) {
 
     encode_etsili_pshdr(encoder, hdrdata, cin, seqno, tv);
     encode_ipmmiri_body(encoder, iritype, ipcontents, iplen);
-    return wandder_encode_finish(encoder, enclen);
+    return wandder_encode_finish(encoder);
 }
 
-uint8_t *encode_etsi_keepalive(uint32_t *enclen, wandder_encoder_t *encoder,
+wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t seqno) {
 
     struct timeval tv;
@@ -245,7 +244,7 @@ uint8_t *encode_etsi_keepalive(uint32_t *enclen, wandder_encoder_t *encoder,
     encode_etsili_pshdr(encoder, hdrdata, 0, seqno, &tv);
     encode_tri_body(encoder);
 
-    return wandder_encode_finish(encoder, enclen);
+    return wandder_encode_finish(encoder);
 }
 
 
