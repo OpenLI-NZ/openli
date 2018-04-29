@@ -131,10 +131,6 @@ static void deactivate_ip_intercept(colthread_local_t *loc,
         cept->active = 0;
     }
 
-    /* TODO */
-    /* Future work: if the list is large and fragmented, just re-create
-     * the list from scratch to contain only active intercepts. */
-
     /* authcc and liid were strdup'd by the sync thread */
     free(authcc);
     free(liid);

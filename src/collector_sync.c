@@ -287,7 +287,7 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
                 pmsg.data.interceptid.authcc = strdup(ipint->authcc);
                 libtrace_message_queue_put(sendq->q, &pmsg);
             }
-            /* TODO remove from hashmap */
+            HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
         }
     }
 
@@ -304,7 +304,7 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
                 push_halt_active_voipstreams(sendq->q, v,
                         sync->glob->sync_epollfd);
             }
-            /* TODO remove from hashmap */
+            HASH_DELETE(hh_liid, sync->voipintercepts, v);
         }
     }
 }
@@ -450,8 +450,8 @@ static int update_rtp_stream(collector_sync_t *sync, rtpstreaminf_t *rtp,
     /* If we get here, the RTP stream is not in our list. */
     if (dir == ETSI_DIR_FROM_TARGET) {
         if (rtp->targetaddr) {
-            /* TODO */
-            /* has the address or port changed? */
+            /* has the address or port changed? should we warn? */
+            free(rtp->targetaddr);
         }
         rtp->ai_family = family;
         rtp->targetaddr = saddr;
@@ -459,9 +459,8 @@ static int update_rtp_stream(collector_sync_t *sync, rtpstreaminf_t *rtp,
 
     } else {
         if (rtp->otheraddr) {
-            /* TODO */
-            /* has the address or port changed? */
-
+            /* has the address or port changed? should we warn? */
+            free(rtp->otheraddr);
         }
         rtp->ai_family = family;
         rtp->otheraddr = saddr;
@@ -524,7 +523,7 @@ static inline voipsdpmap_t *update_cin_sdp_map(voipintercept_t *vint,
     newsdpmap->shared = vshared;
     newsdpmap->shared->refs ++;
 
-    HASH_ADD(hh_sdp, vint->cin_sdp_map, sdpkey,
+    HASH_ADD_KEYPTR(hh_sdp, vint->cin_sdp_map, &(newsdpmap->sdpkey),
             sizeof(sip_sdp_identifier_t), newsdpmap);
 
     return newsdpmap;
@@ -908,10 +907,6 @@ static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
     voipsdpmap_t *cin_sdp, *tmp2;
     sync_sendq_t *sendq, *tmp3;
 
-    if (rtp->active == 0) {
-        return 0;
-    }
-
     if (rtp->timeout_ev) {
         sync_epoll_t *timerev = (sync_epoll_t *)(rtp->timeout_ev);
         if (epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_DEL, timerev->fd,
@@ -925,11 +920,13 @@ static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
     }
 
 
-    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp3) {
-       openli_pushed_t msg;
-       msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
-       msg.data.rtpstreamkey = strdup(rtp->streamkey);
-       libtrace_message_queue_put(sendq->q, (void *)(&msg));
+    if (rtp->active) {
+        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp3) {
+           openli_pushed_t msg;
+           msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
+           msg.data.rtpstreamkey = strdup(rtp->streamkey);
+           libtrace_message_queue_put(sendq->q, (void *)(&msg));
+        }
     }
 
     HASH_DEL(rtp->parent->active_cins, rtp);
@@ -951,14 +948,18 @@ static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
     }
 
     HASH_ITER(hh_sdp, rtp->parent->cin_sdp_map, cin_sdp, tmp2) {
+        int stop = 0;
         if (cin_sdp->shared->cin == rtp->cin) {
             HASH_DELETE(hh_sdp, rtp->parent->cin_sdp_map, cin_sdp);
             cin_sdp->shared->refs --;
             if (cin_sdp->shared->refs == 0) {
                 free(cin_sdp->shared);
-                break;
+                stop = 1;
             }
             free(cin_sdp);
+            if (stop) {
+                break;
+            }
         }
     }
 

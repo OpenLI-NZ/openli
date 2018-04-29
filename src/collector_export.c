@@ -596,8 +596,6 @@ int exporter_thread_main(collector_export_t *exp) {
     /* Try to connect to any targets which we have buffered records for */
     connect_export_targets(exp);
 
-    /* TODO */
-
 
     while (timerexpired == 0) {
     	nfds = epoll_wait(exp->glob->export_epollfd, evs, 64, -1);
