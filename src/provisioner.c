@@ -560,10 +560,6 @@ static int push_all_ipintercepts(ipintercept_t *ipintercepts,
     ipintercept_t *cept;
 
     for (cept = ipintercepts; cept != NULL; cept = cept->hh_liid.next) {
-        if (cept->active == 0) {
-            continue;
-        }
-
         if (push_ipintercept_onto_net_buffer(nb, cept) < 0) {
             logger(LOG_DAEMON,
                     "OpenLI provisioner: error pushing IP intercept %s onto buffer for writing to collector.",

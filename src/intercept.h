@@ -33,29 +33,19 @@
 #include <libtrace/linked_list.h>
 #include <uthash.h>
 
-/* TODO if hashing works for voip intercepts, add it for IP intercepts
- * too.
- */
 typedef struct ipintercept {
-    uint64_t internalid;
     char *liid;
     char *authcc;
     char *delivcc;
-    uint64_t cin;
+    char *username;
 
     int liid_len;
     int authcc_len;
     int delivcc_len;
     int username_len;
 
-    int ai_family;
-    struct sockaddr_storage *ipaddr;
-    char *username;
-
-    uint32_t nextseqno;
     uint32_t destid;
     char *targetagency;
-    uint8_t active;
     uint8_t awaitingconfirm;
     UT_hash_handle hh_liid;
 } ipintercept_t;
@@ -147,6 +137,7 @@ void free_all_ipintercepts(ipintercept_t *interceptlist);
 void free_all_voipintercepts(voipintercept_t *vintercepts);
 void free_all_rtpstreams(rtpstreaminf_t *streams);
 void free_single_voip_cin(rtpstreaminf_t *rtp);
+void free_single_ipintercept(ipintercept_t *cept);
 
 #endif
 

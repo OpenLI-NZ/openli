@@ -71,8 +71,8 @@ typedef struct openli_ii_msg {
         ipintercept_t *ipint;
         rtpstreaminf_t *ipmmint;
         struct {
-            char *liid;
-            char *authcc;
+            int ipfamily;
+            struct sockaddr_storage ipaddr;
         } interceptid;
         char *sipuri;
         char *rtpstreamkey;

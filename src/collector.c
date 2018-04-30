@@ -65,6 +65,7 @@ static void usage(char *prog) {
     fprintf(stderr, "Usage: %s -c configfile\n", prog);
 }
 
+#if 0
 static void dump_ip_intercept(ipintercept_t *ipint) {
     char ipbuf[256];
 
@@ -90,6 +91,7 @@ static void dump_ip_intercept(ipintercept_t *ipint) {
     printf("Communication ID: %u\n", ipint->cin);
     printf("------\n");
 }
+#endif
 
 static void dump_rtp_intercept(rtpstreaminf_t *rtp) {
     char ipbuf[256];
@@ -117,7 +119,9 @@ static void dump_rtp_intercept(rtpstreaminf_t *rtp) {
 }
 
 static void deactivate_ip_intercept(colthread_local_t *loc,
-        char *liid, char *authcc) {
+        int ipfamily, struct sockaddr_storage *ipaddr) {
+
+#if 0
 
     ipintercept_t *cept;
 
@@ -128,12 +132,14 @@ static void deactivate_ip_intercept(colthread_local_t *loc,
     HASH_FIND(hh_liid, loc->activeipintercepts, liid, strlen(liid), cept);
 
     if (cept) {
-        cept->active = 0;
+        HASH_DELETE(hh_liid, loc->activeipintercepts, cept);
     }
 
     /* authcc and liid were strdup'd by the sync thread */
     free(authcc);
     free(liid);
+
+#endif
 
     return;
 }
@@ -308,8 +314,8 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
         if (syncpush.type == OPENLI_PUSH_HALT_IPINTERCEPT) {
             deactivate_ip_intercept(loc,
-                    syncpush.data.interceptid.liid,
-                    syncpush.data.interceptid.authcc);
+                    syncpush.data.interceptid.ipfamily,
+                    &(syncpush.data.interceptid.ipaddr));
         }
 
         if (syncpush.type == OPENLI_PUSH_IPMMINTERCEPT) {
@@ -388,9 +394,9 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     if (ethertype == TRACE_ETHERTYPE_IP) {
         /* Is this an IP packet? -- if yes, possible IP CC */
-        if (ipv4_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
-            forwarded = 1;
-        }
+        //if (ipv4_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
+        //    forwarded = 1;
+        //}
         /* Is this an RTP packet? -- if yes, possible IPMM CC */
         if (ip4mm_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
             forwarded = 1;

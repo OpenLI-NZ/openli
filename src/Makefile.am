@@ -2,11 +2,12 @@ bin_PROGRAMS=openlicollector openliprovisioner openlimediator
 
 openlicollector_SOURCES=collector.c configparser.c configparser.h collector.h \
                 logger.c logger.h collector_sync.c collector_sync.h \
-                etsili_core.h ipcc.h ipcc.c collector_export.c \
+                etsili_core.h collector_export.c \
                 collector_export.h export_buffer.h export_buffer.c \
                 util.c util.h intercept.c intercept.h netcomms.c netcomms.h \
                 byteswap.c byteswap.h etsili_core.c sipparsing.c sipparsing.h \
-                jenkinshash.c ipmmcc.c ipmmcc.h ipmmiri.c ipmmiri.h
+                jenkinshash.c ipmmcc.c ipmmcc.h ipmmiri.c ipmmiri.h \
+                internetaccess.c internetaccess.h
 
 openlicollector_LDADD = @ADD_LIBS@
 openlicollector_LDFLAGS=-lpthread

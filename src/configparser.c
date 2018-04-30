@@ -383,20 +383,18 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
 
         /* Each sequence item is a new intercept */
         newcept = (ipintercept_t *)malloc(sizeof(ipintercept_t));
-        newcept->internalid = nextid;
-        nextid ++;
 
         newcept->liid = NULL;
         newcept->authcc = NULL;
         newcept->delivcc = NULL;
-        newcept->cin = 0;
-        newcept->ipaddr = NULL;
-        newcept->ai_family = AF_UNSPEC;
         newcept->username = NULL;
-        newcept->active = 1;
         newcept->destid = 0;
         newcept->targetagency = NULL;
         newcept->awaitingconfirm = 0;
+        newcept->liid_len = 0;
+        newcept->username_len = 0;
+        newcept->authcc_len = 0;
+        newcept->delivcc_len = 0;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -462,9 +460,9 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         if (newcept->liid != NULL && newcept->authcc != NULL &&
                 newcept->delivcc != NULL && newcept->username != NULL &&
                 newcept->destid > 0 && newcept->targetagency != NULL) {
-        } else {
             HASH_ADD(hh_liid, *ipints, liid, newcept->liid_len,
                     newcept);
+        } else {
             logger(LOG_DAEMON, "OpenLI: IP Intercept configuration was incomplete -- skipping.");
         }
     }

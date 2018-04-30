@@ -26,35 +26,37 @@
 
 #include "intercept.h"
 
+void free_single_ipintercept(ipintercept_t *cept) {
+
+    if (cept->liid) {
+        free(cept->liid);
+    }
+
+    if (cept->authcc) {
+        free(cept->authcc);
+    }
+
+    if (cept->delivcc) {
+        free(cept->delivcc);
+    }
+
+    if (cept->username) {
+        free(cept->username);
+    }
+
+    if (cept->targetagency) {
+        free(cept->targetagency);
+    }
+    free(cept);
+}
+
 void free_all_ipintercepts(ipintercept_t *interceptlist) {
 
     ipintercept_t *cept, *tmp;
 
     HASH_ITER(hh_liid, interceptlist, cept, tmp) {
         HASH_DELETE(hh_liid, interceptlist, cept);
-        if (cept->liid) {
-            free(cept->liid);
-        }
-        if (cept->ipaddr) {
-            free(cept->ipaddr);
-        }
-
-        if (cept->authcc) {
-            free(cept->authcc);
-        }
-
-        if (cept->delivcc) {
-            free(cept->delivcc);
-        }
-
-        if (cept->username) {
-            free(cept->username);
-        }
-
-        if (cept->targetagency) {
-            free(cept->targetagency);
-        }
-        free(cept);
+        free_single_ipintercept(cept);
     }
 }
 

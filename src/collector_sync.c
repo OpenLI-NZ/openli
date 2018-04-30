@@ -32,6 +32,8 @@
 #include <libtrace_parallel.h>
 #include <assert.h>
 #include <netdb.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 #include "etsili_core.h"
 #include "collector.h"
@@ -50,6 +52,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 			malloc(sizeof(collector_sync_t));
 
     sync->glob = glob;
+    sync->allusers = NULL;
     sync->ipintercepts = NULL;
     sync->voipintercepts = NULL;
     sync->instruct_fd = -1;
@@ -76,6 +79,7 @@ void clean_sync_data(collector_sync_t *sync) {
         sync->instruct_fd = -1;
 	}
 
+    free_all_users(sync->allusers);
     free_all_ipintercepts(sync->ipintercepts);
     if (sync->voipintercepts) {
         free_all_voipintercepts(sync->voipintercepts);
@@ -103,6 +107,7 @@ void clean_sync_data(collector_sync_t *sync) {
         free_wandder_encoder(sync->encoder);
     }
 
+    sync->allusers = NULL;
     sync->ipintercepts = NULL;
     sync->voipintercepts = NULL;
     sync->outgoing = NULL;
@@ -112,6 +117,7 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->ii_ev = NULL;
 }
 
+#if 0
 static inline void push_single_intercept(libtrace_message_queue_t *q,
         ipintercept_t *orig) {
 
@@ -162,6 +168,8 @@ static inline void push_single_intercept(libtrace_message_queue_t *q,
 
     libtrace_message_queue_put(q, (void *)(&msg));
 }
+
+#endif
 
 static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
         rtpstreaminf_t *orig) {
@@ -264,30 +272,76 @@ static void push_halt_active_voipstreams(libtrace_message_queue_t *q,
     }
 }
 
+static void push_sip_uri_halt(libtrace_message_queue_t *q, char *uri) {
+    openli_pushed_t msg;
+
+    msg.type = OPENLI_PUSH_HALT_SIPURI;
+    msg.data.sipuri = strdup(uri);
+
+    libtrace_message_queue_put(q, (void *)(&msg));
+}
+
+static inline void push_voipintercept_halt_to_threads(collector_sync_t *sync,
+        voipintercept_t *vint) {
+
+    sync_sendq_t *sendq, *tmp;
+
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
+        push_sip_uri_halt(sendq->q, vint->sipuri);
+        push_halt_active_voipstreams(sendq->q, vint,
+                sync->glob->sync_epollfd);
+    }
+}
+
+static inline void push_session_halt_to_threads(void *sendqs,
+        access_session_t *sess) {
+
+    sync_sendq_t *sendq, *tmp;
+
+    HASH_ITER(hh, (sync_sendq_t *)sendqs, sendq, tmp) {
+        openli_pushed_t pmsg;
+        char ipstr[128];
+
+        pmsg.type = OPENLI_PUSH_HALT_IPINTERCEPT;
+        pmsg.data.interceptid.ipfamily = sess->ipfamily;
+        memcpy(&(pmsg.data.interceptid.ipaddr), sess->assignedip,
+                sizeof(struct sockaddr_storage));
+
+        /* XXX no error checking because this logging should not reach
+         * the production version... */
+        getnameinfo((struct sockaddr *)(&sess->assignedip),
+                (sess->ipfamily == AF_INET) ? sizeof(struct sockaddr_in) :
+                    sizeof(struct sockaddr_in6),
+                    ipstr, sizeof(ipstr), 0, 0, NI_NUMERICHOST);
+        logger(LOG_DAEMON, "OpenLI: telling threads to cease intercepting traffic for IP %s", ipstr);
+        libtrace_message_queue_put(sendq->q, &pmsg);
+    }
+}
+
 static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
     voipintercept_t *v;
     ipintercept_t *ipint, *tmp;
-    sync_sendq_t *sendq, *tmp2;
-    int i;
+    access_session_t *sess, *tmp2;
+    internet_user_t *user;
 
     HASH_ITER(hh_liid, sync->ipintercepts, ipint, tmp) {
 
-        if (ipint->awaitingconfirm && ipint->active) {
-            ipint->active = 0;
+        if (ipint->awaitingconfirm) {
 
-            HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp2)
-            {
-                openli_pushed_t pmsg;
-
-                /* strdup because we might end up freeing this intercept
-                 * shortly.
-                 */
-                pmsg.type = OPENLI_PUSH_HALT_IPINTERCEPT;
-                pmsg.data.interceptid.liid = strdup(ipint->liid);
-                pmsg.data.interceptid.authcc = strdup(ipint->authcc);
-                libtrace_message_queue_put(sendq->q, &pmsg);
+            /* Tell every collector thread to stop intercepting traffic for
+             * the IPs associated with this target. */
+            logger(LOG_DAEMON, "OpenLI: collector will stop intercepting traffic for user %s", ipint->username);
+            HASH_FIND(hh, sync->allusers, ipint->username, ipint->username_len,
+                    user);
+            if (user != NULL) {
+                /* Cancel all IP sessions for the target */
+                HASH_ITER(hh, user->sessions, sess, tmp2) {
+                    push_session_halt_to_threads(sync->glob->syncsendqs, sess);
+                }
             }
+
             HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
+            free_single_ipintercept(ipint);
         }
     }
 
@@ -299,11 +353,7 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
                 continue;
             }
 
-            HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp2)
-            {
-                push_halt_active_voipstreams(sendq->q, v,
-                        sync->glob->sync_epollfd);
-            }
+            push_voipintercept_halt_to_threads(sync, v);
             HASH_DELETE(hh_liid, sync->voipintercepts, v);
         }
     }
@@ -376,33 +426,11 @@ static inline void convert_ipstr_to_sockaddr(char *knownip,
     freeaddrinfo(res);
 }
 
-static void temporary_map_user_to_address(ipintercept_t *cept) {
-
-    char *knownip;
-    if (strcmp(cept->username, "RogerMegently") == 0) {
-        knownip = "10.0.0.2";
-    } else if (strcmp(cept->username, "Everything") == 0) {
-        knownip = "10.0.0.1";
-    } else {
-        return;
-    }
-
-    convert_ipstr_to_sockaddr(knownip, &(cept->ipaddr), &(cept->ai_family));
-}
 
 static void push_sip_uri(libtrace_message_queue_t *q, char *uri) {
     openli_pushed_t msg;
 
     msg.type = OPENLI_PUSH_SIPURI;
-    msg.data.sipuri = strdup(uri);
-
-    libtrace_message_queue_put(q, (void *)(&msg));
-}
-
-static void push_sip_uri_halt(libtrace_message_queue_t *q, char *uri) {
-    openli_pushed_t msg;
-
-    msg.type = OPENLI_PUSH_HALT_SIPURI;
     msg.data.sipuri = strdup(uri);
 
     libtrace_message_queue_put(q, (void *)(&msg));
@@ -890,12 +918,8 @@ static int halt_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
     logger(LOG_DAEMON, "OpenLI: sync thread withdrawing VOIP intercept %s",
             torem.liid);
 
+    push_voipintercept_halt_to_threads(sync, vint);
     HASH_DELETE(hh_liid, sync->voipintercepts, vint);
-    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
-        push_sip_uri_halt(sendq->q, vint->sipuri);
-        push_halt_active_voipstreams(sendq->q, vint,
-                sync->glob->sync_epollfd);
-    }
     return 0;
 }
 
@@ -1050,9 +1074,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             free(cept);
             return -1;
         }
-        x->internalid = cept->internalid;
         x->awaitingconfirm = 0;
-        x->active = 1;
         free(cept);
         /* our collector threads should already know about this intercept?
          */
@@ -1065,18 +1087,19 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
      * Only push the intercept to the processing threads once we've
      * assigned a suitable CIN.
      */
-
-    /* Temporary hard-coded mappings for testing.
-     * Please remove once proper RADIUS support is added.
-     */
-
-    temporary_map_user_to_address(cept);
-
-    HASH_ADD(hh_liid, sync->ipintercepts, liid, strlen(cept->liid), cept);
-
+    /*
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
         push_single_intercept(sendq->q, cept);
     }
+    */
+
+    HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->liid,
+            strlen(cept->liid), cept);
+
+    logger(LOG_DAEMON,
+            "OpenLI: received IP intercept from provisioner for user %s (LIID %s, authCC %s)",
+            cept->username, cept->liid, cept->authcc);
+
 
     return 0;
 
@@ -1254,20 +1277,18 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
 
 }
 
-
+#if 0
 static void push_all_active_intercepts(ipintercept_t *intlist,
         libtrace_message_queue_t *q) {
 
     ipintercept_t *orig, *tmp;
 
     HASH_ITER(hh_liid, intlist, orig, tmp) {
-        if (!orig->active) {
-            continue;
-        }
         push_single_intercept(q, orig);
     }
 
 }
+#endif
 
 int sync_thread_main(collector_sync_t *sync) {
 
@@ -1350,7 +1371,7 @@ int sync_thread_main(collector_sync_t *sync) {
         if (recvd.type == OPENLI_UPDATE_HELLO) {
             voipintercept_t *v;
 
-            push_all_active_intercepts(sync->ipintercepts, recvd.data.replyq);
+            //push_all_active_intercepts(sync->ipintercepts, recvd.data.replyq);
             for (v = sync->voipintercepts; v != NULL; v = v->hh_liid.next) {
                 push_sip_uri(recvd.data.replyq, v->sipuri);
                 push_all_active_voipstreams(recvd.data.replyq, v);

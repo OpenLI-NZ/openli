@@ -326,11 +326,10 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
 #define VOIPINTERCEPT_BODY_LEN(vint) \
         (vint->liid_len + vint->authcc_len + vint->delivcc_len + \
          vint->sipuri_len + sizeof(vint->destid) + \
-         sizeof(vint->internalid) + (6 * 4))
+         + (5 * 4))
 
 #define VOIPINTERCEPT_WITHDRAW_BODY_LEN(vint) \
-        (vint->liid_len + vint->authcc_len + sizeof(vint->internalid) + \
-        (3 * 4))
+        (vint->liid_len + vint->authcc_len) + (2 * 4)
 
 int push_voipintercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
         voipintercept_t *vint) {
@@ -350,19 +349,13 @@ int push_voipintercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
     totallen = VOIPINTERCEPT_WITHDRAW_BODY_LEN(vint);
 
     /* Push on header */
-    populate_header(&hdr, OPENLI_PROTO_HALT_VOIPINTERCEPT, totallen,
-            vint->internalid);
+    populate_header(&hdr, OPENLI_PROTO_HALT_VOIPINTERCEPT, totallen, 0);
     if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
             sizeof(ii_header_t))) == -1) {
         return -1;
     }
 
     /* Push on each intercept field */
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPTID,
-            (uint8_t *)&(vint->internalid),
-            sizeof(vint->internalid))) == -1) {
-        return -1;
-    }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID, vint->liid,
             vint->liid_len)) == -1) {
@@ -395,20 +388,13 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb,
     totallen = VOIPINTERCEPT_BODY_LEN(vint);
 
     /* Push on header */
-    populate_header(&hdr, OPENLI_PROTO_START_VOIPINTERCEPT, totallen,
-            vint->internalid);
+    populate_header(&hdr, OPENLI_PROTO_START_VOIPINTERCEPT, totallen, 0);
     if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
             sizeof(ii_header_t))) == -1) {
         return -1;
     }
 
     /* Push on each intercept field */
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPTID,
-            (uint8_t *)&(vint->internalid),
-            sizeof(vint->internalid))) == -1) {
-        return -1;
-    }
-
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID, vint->liid,
             vint->liid_len)) == -1) {
         return -1;
@@ -441,7 +427,7 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb,
 #define IPINTERCEPT_BODY_LEN(ipint) \
         (ipint->liid_len + ipint->authcc_len + ipint->delivcc_len + \
          ipint->username_len + sizeof(ipint->destid) + \
-         sizeof(ipint->internalid) + (6 * 4))
+         + (5 * 4))
 
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, ipintercept_t *ipint) {
 
@@ -460,20 +446,13 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, ipintercept_t *ipint) {
     totallen = IPINTERCEPT_BODY_LEN(ipint);
 
     /* Push on header */
-    populate_header(&hdr, OPENLI_PROTO_START_IPINTERCEPT, totallen,
-            ipint->internalid);
+    populate_header(&hdr, OPENLI_PROTO_START_IPINTERCEPT, totallen, 0);
     if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
             sizeof(ii_header_t))) == -1) {
         return -1;
     }
 
     /* Push on each intercept field */
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPTID,
-            (uint8_t *)&(ipint->internalid),
-            sizeof(ipint->internalid))) == -1) {
-        return -1;
-    }
-
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID, ipint->liid,
             ipint->liid_len)) == -1) {
         return -1;
@@ -774,18 +753,12 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
 
     uint8_t *msgend = msgbody + len;
 
-    ipint->internalid = 0;
     ipint->liid = NULL;
     ipint->authcc = NULL;
     ipint->delivcc = NULL;
-    ipint->cin = 0;         /* Placeholder -- sync thread should populate */
     ipint->username = NULL;
-    ipint->ai_family = 0;
-    ipint->ipaddr = NULL;
     ipint->destid = 0;
     ipint->targetagency = NULL;
-    ipint->active = 1;
-    ipint->nextseqno = 0;
     ipint->awaitingconfirm = 0;
 
     ipint->liid_len = 0;
@@ -816,8 +789,6 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
         } else if (f == OPENLI_PROTO_FIELD_USERNAME) {
             DECODE_STRING_FIELD(ipint->username, valptr, vallen);
             ipint->username_len = vallen;
-        } else if (f == OPENLI_PROTO_FIELD_INTERCEPTID) {
-            ipint->internalid = *((uint64_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_DAEMON,
