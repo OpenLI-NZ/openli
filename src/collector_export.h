@@ -32,15 +32,6 @@
 #include "export_buffer.h"
 #include "mediator.h"
 
-typedef struct colexp_data {
-
-    collector_global_t *glob;
-    libtrace_list_t *dests;     // if dests gets large, replace with map?
-
-    int failed_conns;
-
-} collector_export_t;
-
 typedef struct export_dest {
     int failmsg;
     int fd;
@@ -50,12 +41,32 @@ typedef struct export_dest {
     export_buffer_t buffer;
 } export_dest_t;
 
+typedef struct exporter_epoll {
+    uint8_t type;
+    union {
+        libtrace_message_queue_t *q;
+        export_dest_t *dest;
+    } data;
+} exporter_epoll_t;
+
+
+typedef struct colexp_data {
+
+    collector_global_t *glob;
+    libtrace_list_t *dests;     // if dests gets large, replace with map?
+
+    uint8_t flagged;
+    int failed_conns;
+    exporter_epoll_t *flag_timer_ev;
+    int flagtimerfd;
+
+} collector_export_t;
+
 enum {
     OPENLI_EXPORT_ETSIREC = 1,
     OPENLI_EXPORT_PACKET_FIN = 2,
     OPENLI_EXPORT_MEDIATOR = 3,
     OPENLI_EXPORT_FLAG_MEDIATORS = 4,
-    OPENLI_EXPORT_INIT_MEDIATORS_OVER = 5,
     OPENLI_EXPORT_DROP_ALL_MEDIATORS = 6,
     OPENLI_EXPORT_DROP_SINGLE_MEDIATOR = 7,
 };

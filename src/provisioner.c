@@ -526,11 +526,6 @@ static int push_all_mediators(libtrace_list_t *mediators, net_buffer_t *nb) {
             return -1;
         }
     }
-    if (push_nomore_mediators(nb) < 0) {
-        logger(LOG_DAEMON,
-                "OpenLI provisioner: error pushing end of mediators onto buffer for writing to collector.");
-        return -1;
-    }
     return 0;
 }
 

@@ -395,15 +395,6 @@ static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
     return 0;
 }
 
-static void finish_init_mediators(collector_sync_t *sync) {
-    openli_export_recv_t expmsg;
-
-    expmsg.type = OPENLI_EXPORT_INIT_MEDIATORS_OVER;
-    expmsg.data.packet = NULL;
-
-    libtrace_message_queue_put(&(sync->exportq), &expmsg);
-}
-
 static inline void convert_ipstr_to_sockaddr(char *knownip,
         struct sockaddr_storage **saddr, int *family) {
 
@@ -1156,9 +1147,6 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 break;
             case OPENLI_PROTO_NOMORE_INTERCEPTS:
                 disable_unconfirmed_intercepts(sync);
-                break;
-            case OPENLI_PROTO_NOMORE_MEDIATORS:
-                finish_init_mediators(sync);
                 break;
         }
 

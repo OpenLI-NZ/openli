@@ -79,7 +79,6 @@ typedef enum {
     OPENLI_PROTO_MEDIATOR_AUTH,
     OPENLI_PROTO_DISCONNECT_MEDIATORS,
     OPENLI_PROTO_NOMORE_INTERCEPTS,
-    OPENLI_PROTO_NOMORE_MEDIATORS,
     OPENLI_PROTO_ETSI_CC,
     OPENLI_PROTO_ETSI_IRI,
 } openli_proto_msgtype_t;
@@ -137,7 +136,6 @@ int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
         int liid_len);
 int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb);
 int push_nomore_intercepts(net_buffer_t *nb);
-int push_nomore_mediators(net_buffer_t *nb);
 int transmit_net_buffer(net_buffer_t *nb);
 
 openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
