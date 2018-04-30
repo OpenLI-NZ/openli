@@ -108,7 +108,7 @@ typedef struct colthread_local {
     /* Current intercepts */
     ipintercept_t *activeipintercepts;
 
-    libtrace_list_t *activertpintercepts;
+    rtpstreaminf_t *activertpintercepts;
 
     /* Current SIP URIs that we are intercepting */
     sipuri_hash_t *sip_targets;

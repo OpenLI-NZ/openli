@@ -134,13 +134,11 @@ void free_all_voipintercepts(voipintercept_t *vints) {
 
 }
 
-void free_all_rtpstreams(libtrace_list_t *streams) {
-    libtrace_list_node_t *n;
-    rtpstreaminf_t *rtp;
+void free_all_rtpstreams(rtpstreaminf_t *streams) {
+    rtpstreaminf_t *rtp, *tmp;
 
-    n = streams->head;
-    while (n) {
-        rtp = (rtpstreaminf_t *)(n->data);
+    HASH_ITER(hh, streams, rtp, tmp) {
+        HASH_DELETE(hh, streams, rtp);
         if (rtp->targetaddr) {
             free(rtp->targetaddr);
         }
@@ -150,9 +148,8 @@ void free_all_rtpstreams(libtrace_list_t *streams) {
         if (rtp->streamkey) {
             free(rtp->streamkey);
         }
-        n = n->next;
+        free(rtp);
     }
-    libtrace_list_deinit(streams);
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

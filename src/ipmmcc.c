@@ -88,13 +88,13 @@ static openli_export_recv_t form_ipmmcc(collector_global_t *glob,
 int ip4mm_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
         uint32_t rem, collector_global_t *glob, colthread_local_t *loc) {
 
-    libtrace_list_node_t *n = loc->activertpintercepts->head;
     struct sockaddr_storage ipsrc;
     struct sockaddr_storage ipdst;
     struct sockaddr_in *targetaddr, *cmp, *otheraddr;
     openli_export_recv_t msg;
     int matched = 0;
     uint16_t srcport, dstport;
+    rtpstreaminf_t *rtp, *tmp;
 
     if (rem < sizeof(libtrace_ip_t)) {
         logger(LOG_DAEMON, "OpenLI: Got IPv4 RTP packet with truncated header?");
@@ -122,9 +122,7 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
         return 0;
     }
 
-    while (n) {
-        rtpstreaminf_t *rtp = (rtpstreaminf_t *)(n->data);
-        n = n->next;
+    HASH_ITER(hh, loc->activertpintercepts, rtp, tmp) {
         if (!rtp->active) {
             continue;
         }

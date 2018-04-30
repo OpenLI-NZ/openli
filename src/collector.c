@@ -154,7 +154,7 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
             sizeof(openli_export_recv_t));
 
     loc->activeipintercepts = NULL;
-    loc->activertpintercepts = libtrace_list_init(sizeof(rtpstreaminf_t));
+    loc->activertpintercepts = NULL;
     loc->sip_targets = NULL;
 
     register_sync_queues(glob, &(loc->tosyncq), &(loc->fromsyncq), t);
@@ -266,22 +266,18 @@ static inline void send_sip_update(libtrace_packet_t *pkt,
 }
 
 static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
-    libtrace_list_node_t *n = loc->activertpintercepts->head;
-    while (n) {
-        rtpstreaminf_t *rtp = (rtpstreaminf_t *)(n->data);
+    rtpstreaminf_t *rtp;
 
-        if (strcmp(rtpstreamkey, rtp->streamkey) == 0) {
-            rtp->active = 0;
-            break;
-        }
-        n = n->next;
-    }
+    HASH_FIND(hh, loc->activertpintercepts, rtpstreamkey, strlen(rtpstreamkey),
+            rtp);
 
-    if (n == NULL) {
+    if (rtp == NULL) {
         logger(LOG_DAEMON, "OpenLI: collector thread was unable to remove RTP stream %s, as it was not present in its intercept set.",
                 rtpstreamkey);
         return 0;
     }
+
+    HASH_DELETE(hh, loc->activertpintercepts, rtp);
 
     return 1;
 }
@@ -317,10 +313,10 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         }
 
         if (syncpush.type == OPENLI_PUSH_IPMMINTERCEPT) {
-            libtrace_list_push_front(loc->activertpintercepts,
-                    (void *)(syncpush.data.ipmmint));
-            logger(LOG_DAEMON, "OpenLI: collector thread %d has started intercepting RTP stream %s", trace_get_perpkt_thread_id(t), syncpush.data.ipmmint->streamkey);
-            free(syncpush.data.ipmmint);
+            HASH_ADD_KEYPTR(hh, loc->activertpintercepts,
+                    syncpush.data.ipmmint->streamkey,
+                    strlen(syncpush.data.ipmmint->streamkey),
+                    syncpush.data.ipmmint);
         }
 
         if (syncpush.type == OPENLI_PUSH_HALT_IPMMINTERCEPT) {

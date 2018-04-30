@@ -145,7 +145,7 @@ struct rtpstreaminf {
 
 void free_all_ipintercepts(ipintercept_t *interceptlist);
 void free_all_voipintercepts(voipintercept_t *vintercepts);
-void free_all_rtpstreams(libtrace_list_t *streams);
+void free_all_rtpstreams(rtpstreaminf_t *streams);
 void free_single_voip_cin(rtpstreaminf_t *rtp);
 
 #endif
