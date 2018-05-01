@@ -54,6 +54,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->glob = glob;
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
+    sync->ipintercepts_by_userid = NULL;
     sync->voipintercepts = NULL;
     sync->instruct_fd = -1;
     sync->instruct_fail = 0;
@@ -80,6 +81,7 @@ void clean_sync_data(collector_sync_t *sync) {
 	}
 
     free_all_users(sync->allusers);
+    HASH_CLEAR(hh_user, sync->ipintercepts_by_userid);
     free_all_ipintercepts(sync->ipintercepts);
     if (sync->voipintercepts) {
         free_all_voipintercepts(sync->voipintercepts);
@@ -109,6 +111,7 @@ void clean_sync_data(collector_sync_t *sync) {
 
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
+    sync->ipintercepts_by_userid = NULL;
     sync->voipintercepts = NULL;
     sync->outgoing = NULL;
     sync->incoming = NULL;
@@ -117,59 +120,29 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->ii_ev = NULL;
 }
 
-#if 0
-static inline void push_single_intercept(libtrace_message_queue_t *q,
-        ipintercept_t *orig) {
+static inline void push_single_ipintercept(libtrace_message_queue_t *q,
+        ipintercept_t *ipint, access_session_t *session) {
 
-    ipintercept_t *copy;
+    ipsession_t *sess;
     openli_pushed_t msg;
 
-    copy = (ipintercept_t *)malloc(sizeof(ipintercept_t));
-
-    copy->internalid = orig->internalid;
-    copy->liid = strdup(orig->liid);
-    copy->liid_len = strlen(copy->liid);
-    copy->authcc = strdup(orig->authcc);
-    copy->authcc_len = strlen(copy->authcc);
-    copy->delivcc = strdup(orig->delivcc);
-    copy->delivcc_len = strlen(copy->delivcc);
-    copy->cin = orig->cin;
-    copy->ai_family = orig->ai_family;
-    copy->destid = orig->destid;
-
-    if (orig->targetagency) {
-        copy->targetagency = strdup(orig->targetagency);
-    } else {
-        copy->targetagency = NULL;
+    /* No assigned IP, session is not fully active yet. Don't push yet */
+    if (session->assignedip == NULL) {
+        return;
     }
 
-    if (orig->ipaddr) {
-        copy->ipaddr = (struct sockaddr_storage *)malloc(
-                sizeof(struct sockaddr_storage));
-        memcpy(copy->ipaddr, orig->ipaddr, sizeof(struct sockaddr_storage));
-    } else {
-        copy->ipaddr = NULL;
+    sess = create_ipsession(ipint, session);
+
+    if (!sess) {
+        logger(LOG_DAEMON,
+                "OpenLI: ran out of memory while creating IP session message.");
+        return;
     }
-
-    if (orig->username) {
-        copy->username = strdup(orig->username);
-        copy->username_len = strlen(copy->username);
-    } else {
-        copy->username = NULL;
-        copy->username_len = 0;
-    }
-
-    copy->active = 1;
-    copy->nextseqno = 0;
-    copy->awaitingconfirm = 0;
-
     msg.type = OPENLI_PUSH_IPINTERCEPT;
-    msg.data.ipint = copy;
+    msg.data.ipsess = sess;
 
     libtrace_message_queue_put(q, (void *)(&msg));
 }
-
-#endif
 
 static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
         rtpstreaminf_t *orig) {
@@ -177,25 +150,12 @@ static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
     rtpstreaminf_t *copy;
     openli_pushed_t msg;
 
-    copy = (rtpstreaminf_t *)malloc(sizeof(rtpstreaminf_t));
-    copy->streamkey = strdup(orig->streamkey);
-    copy->cin = orig->cin;
-    copy->parent = orig->parent;
-    copy->ai_family = orig->ai_family;
-    copy->targetaddr = (struct sockaddr_storage *)malloc(
-            sizeof(struct sockaddr_storage));
-    memcpy(copy->targetaddr, orig->targetaddr, sizeof(struct sockaddr_storage));
-    copy->otheraddr = (struct sockaddr_storage *)malloc(
-            sizeof(struct sockaddr_storage));
-    memcpy(copy->otheraddr, orig->otheraddr, sizeof(struct sockaddr_storage));
-    copy->targetport = orig->targetport;
-    copy->otherport = orig->otherport;
-    copy->seqno = 0;
-    copy->active = 1;
-    copy->invitecseq = NULL;
-    copy->byecseq = NULL;
-    copy->timeout_ev = NULL;
-    copy->byematched = 0;
+    copy = deep_copy_rtpstream(orig);
+    if (!copy) {
+        logger(LOG_DAEMON,
+                "OpenLI: unable to copy RTP stream in sync thread.");
+        return;
+    }
 
     msg.type = OPENLI_PUSH_IPMMINTERCEPT;
     msg.data.ipmmint = copy;
@@ -294,18 +254,20 @@ static inline void push_voipintercept_halt_to_threads(collector_sync_t *sync,
 }
 
 static inline void push_session_halt_to_threads(void *sendqs,
-        access_session_t *sess) {
+        access_session_t *sess, ipintercept_t *ipint) {
 
     sync_sendq_t *sendq, *tmp;
 
     HASH_ITER(hh, (sync_sendq_t *)sendqs, sendq, tmp) {
         openli_pushed_t pmsg;
+        ipsession_t *sessdup;
         char ipstr[128];
 
         pmsg.type = OPENLI_PUSH_HALT_IPINTERCEPT;
-        pmsg.data.interceptid.ipfamily = sess->ipfamily;
-        memcpy(&(pmsg.data.interceptid.ipaddr), sess->assignedip,
-                sizeof(struct sockaddr_storage));
+        sessdup = create_ipsession(ipint, sess);
+
+        /* misnomer, but whatever. */
+        pmsg.data.ipsess = sessdup;
 
         /* XXX no error checking because this logging should not reach
          * the production version... */
@@ -323,6 +285,7 @@ static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
 
     sync_sendq_t *sendq, *tmp;
     internet_user_t *user;
+    access_session_t *sess, *tmp2;
 
     logger(LOG_DAEMON, "OpenLI: collector will stop intercepting traffic for user %s", ipint->username);
 
@@ -333,13 +296,12 @@ static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
         return;
     }
 
-    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
-        access_session_t *sess, *tmp2;
+    /* Cancel all IP sessions for the target */
+    HASH_ITER(hh, user->sessions, sess, tmp2) {
+        /* TODO skip sessions that were never active */
 
-        /* Cancel all IP sessions for the target */
-        HASH_ITER(hh, user->sessions, sess, tmp2) {
-            push_session_halt_to_threads(sync->glob->syncsendqs, sess);
-        }
+        push_session_halt_to_threads(sync->glob->syncsendqs, sess,
+                ipint);
     }
 }
 
@@ -357,6 +319,7 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
              * the IPs associated with this target. */
             push_ipintercept_halt_to_threads(sync, ipint);
             HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
+            HASH_DELETE(hh_user, sync->ipintercepts_by_userid, ipint);
             free_single_ipintercept(ipint);
         }
     }
@@ -570,30 +533,13 @@ static int create_new_voipcin(rtpstreaminf_t **activecins, uint32_t cin_id,
 
     rtpstreaminf_t *newcin;
 
-    newcin = (rtpstreaminf_t *)malloc(sizeof(rtpstreaminf_t));
+    newcin = create_rtpstream(vint, cin_id);
+
     if (!newcin) {
         logger(LOG_DAEMON,
-                "OpenLI: out of memory in collector_sync thread.");
+                "OpenLI: out of memory while creating new RTP stream");
         return -1;
     }
-
-    newcin->streamkey = (char *)calloc(1, 256);
-    newcin->cin = cin_id;
-    newcin->parent = vint;
-    newcin->active = 0;
-    newcin->targetaddr = NULL;
-    newcin->otheraddr = NULL;
-    newcin->ai_family = 0;
-    newcin->targetport = 0;
-    newcin->otherport = 0;
-    newcin->seqno = 0;
-    newcin->invitecseq = NULL;
-    newcin->byecseq = NULL;
-    newcin->timeout_ev = NULL;
-    newcin->byematched = 0;
-
-    snprintf(newcin->streamkey, 256, "%s-%u", vint->liid, cin_id);
-
     HASH_ADD_KEYPTR(hh, *activecins, newcin->streamkey,
             strlen(newcin->streamkey), newcin);
     return 0;
@@ -708,12 +654,12 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
             iritype = ETSILI_IRI_CONTINUE;
         }
 
-        snprintf(rtpkey, 256, "%s-%u", vint->liid, vshared->cin);
+        snprintf(rtpkey, 256, "%s-%u", vint->common.liid, vshared->cin);
         HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
         if (thisrtp == NULL) {
             logger(LOG_DAEMON,
                     "OpenLI: unable to find %u in the active call list for %s, %s",
-                    vshared->cin, vint->liid, vint->sipuri);
+                    vshared->cin, vint->common.liid, vint->sipuri);
             continue;
         }
 
@@ -727,7 +673,7 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
                             0) == -1) {
                     logger(LOG_DAEMON,
                             "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
-                            vint->liid, ipstr, portstr);
+                            vint->common.liid, ipstr, portstr);
                     continue;
                 }
             }
@@ -753,7 +699,7 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
                                 portstr, 1) == -1) {
                         logger(LOG_DAEMON,
                                 "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
-                                vint->liid, ipstr, portstr);
+                                vint->common.liid, ipstr, portstr);
                         free(cseqstr);
                         continue;
                     }
@@ -793,7 +739,7 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
                                 portstr, 1) == -1) {
                         logger(LOG_DAEMON,
                                 "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
-                                vint->liid, ipstr, portstr);
+                                vint->common.liid, ipstr, portstr);
                         free(cseqstr);
                         continue;
                     }
@@ -915,16 +861,17 @@ static int halt_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sync->voipintercepts, torem.liid, torem.liid_len, vint);
+    HASH_FIND(hh_liid, sync->voipintercepts, torem.common.liid,
+            torem.common.liid_len, vint);
     if (!vint) {
         logger(LOG_DAEMON,
                 "OpenLI: received withdrawal for VOIP intercept %s but it is not present in the sync intercept list?",
-                torem.liid);
+                torem.common.liid);
         return 0;
     }
 
     logger(LOG_DAEMON, "OpenLI: sync thread withdrawing VOIP intercept %s",
-            torem.liid);
+            torem.common.liid);
 
     push_voipintercept_halt_to_threads(sync, vint);
     HASH_DELETE(hh_liid, sync->voipintercepts, vint);
@@ -945,19 +892,21 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sync->ipintercepts, torem.liid, torem.liid_len, ipint);
+    HASH_FIND(hh_liid, sync->ipintercepts, torem.common.liid,
+            torem.common.liid_len, ipint);
     if (!ipint) {
         logger(LOG_DAEMON,
                 "OpenLI: received withdrawal for IP intercept %s but it is not present in the sync intercept list?",
-                torem.liid);
+                torem.common.liid);
         return 0;
     }
 
     logger(LOG_DAEMON, "OpenLI: sync thread withdrawing IP intercept %s",
-            torem.liid);
+            torem.common.liid);
 
     push_ipintercept_halt_to_threads(sync, ipint);
     HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
+    HASH_DELETE(hh_user, sync->ipintercepts_by_userid, ipint);
     free_single_ipintercept(ipint);
     return 0;
 }
@@ -1053,13 +1002,14 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sync->voipintercepts, toadd.liid, toadd.liid_len, vint);
+    HASH_FIND(hh_liid, sync->voipintercepts, toadd.common.liid,
+            toadd.common.liid_len, vint);
     if (vint) {
         /* Duplicate LIID */
         if (strcmp(toadd.sipuri, vint->sipuri) != 0) {
             logger(LOG_DAEMON,
                     "OpenLI: duplicate VOIP intercept ID %s seen, but targets are different (was %s, now %s).",
-                    vint->liid, vint->sipuri, toadd.sipuri);
+                    vint->common.liid, vint->sipuri, toadd.sipuri);
             return -1;
         }
         vint->internalid = toadd.internalid;
@@ -1070,8 +1020,8 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     vint = (voipintercept_t *)malloc(sizeof(voipintercept_t));
     memcpy(vint, &toadd, sizeof(voipintercept_t));
-    HASH_ADD_KEYPTR(hh_liid, sync->voipintercepts, vint->liid, vint->liid_len,
-            vint);
+    HASH_ADD_KEYPTR(hh_liid, sync->voipintercepts, vint->common.liid,
+            vint->common.liid_len, vint);
 
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
         push_sip_uri(sendq->q, vint->sipuri);
@@ -1088,6 +1038,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     ipintercept_t *cept, *x;
     sync_sendq_t *tmp, *sendq;
+    internet_user_t *user;
 
     cept = (ipintercept_t *)malloc(sizeof(ipintercept_t));
     if (decode_ipintercept_start(intmsg, msglen, cept) == -1) {
@@ -1098,7 +1049,8 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     }
 
     /* Check if we already have this intercept */
-    HASH_FIND(hh_liid, sync->ipintercepts, cept->liid, cept->liid_len, x);
+    HASH_FIND(hh_liid, sync->ipintercepts, cept->common.liid,
+            cept->common.liid_len, x);
 
     if (x) {
         /* Duplicate LIID */
@@ -1109,7 +1061,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         if (strcmp(x->username, cept->username) != 0) {
             logger(LOG_DAEMON,
                     "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
-                    x->liid, x->username, cept->username);
+                    x->common.liid, x->username, cept->username);
             free(cept);
             return -1;
         }
@@ -1131,13 +1083,23 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         push_single_intercept(sendq->q, cept);
     }
     */
+    HASH_FIND(hh, sync->allusers, cept->username, cept->username_len, user);
 
-    HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->liid,
-            strlen(cept->liid), cept);
+    if (user) {
+        access_session_t *sess, *tmp2;
+        HASH_ITER(hh, user->sessions, sess, tmp2) {
+            push_single_ipintercept(sendq->q, cept, sess);
+        }
+    }
+
+    HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
+            cept->common.liid_len, cept);
+    HASH_ADD_KEYPTR(hh_user, sync->ipintercepts_by_userid, cept->username,
+            strlen(cept->username), cept);
 
     logger(LOG_DAEMON,
             "OpenLI: received IP intercept from provisioner for user %s (LIID %s, authCC %s)",
-            cept->username, cept->liid, cept->authcc);
+            cept->username, cept->common.liid, cept->common.authcc);
 
 
     return 0;
@@ -1319,18 +1281,25 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
 
 }
 
-#if 0
-static void push_all_active_intercepts(ipintercept_t *intlist,
-        libtrace_message_queue_t *q) {
+static void push_all_active_intercepts(internet_user_t *allusers,
+        ipintercept_t *intlist, libtrace_message_queue_t *q) {
 
     ipintercept_t *orig, *tmp;
+    internet_user_t *user;
+    access_session_t *sess, *tmp2;
 
     HASH_ITER(hh_liid, intlist, orig, tmp) {
-        push_single_intercept(q, orig);
-    }
+        /* Do we have a valid user that matches the target username? */
+        HASH_FIND(hh, allusers, orig->username, orig->username_len, user);
+        if (!user) {
+            continue;
+        }
 
+        HASH_ITER(hh, user->sessions, sess, tmp2) {
+            push_single_ipintercept(q, orig, sess);
+        }
+    }
 }
-#endif
 
 int sync_thread_main(collector_sync_t *sync) {
 
@@ -1413,7 +1382,8 @@ int sync_thread_main(collector_sync_t *sync) {
         if (recvd.type == OPENLI_UPDATE_HELLO) {
             voipintercept_t *v;
 
-            //push_all_active_intercepts(sync->ipintercepts, recvd.data.replyq);
+            push_all_active_intercepts(sync->allusers, sync->ipintercepts,
+                    recvd.data.replyq);
             for (v = sync->voipintercepts; v != NULL; v = v->hh_liid.next) {
                 push_sip_uri(recvd.data.replyq, v->sipuri);
                 push_all_active_voipstreams(recvd.data.replyq, v);

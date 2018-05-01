@@ -324,8 +324,9 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
 
 
 #define VOIPINTERCEPT_BODY_LEN(vint) \
-        (vint->liid_len + vint->authcc_len + vint->delivcc_len + \
-         vint->sipuri_len + sizeof(vint->destid) + \
+        (vint->common.liid_len + vint->common.authcc_len + \
+         vint->common.delivcc_len + \
+         vint->sipuri_len + sizeof(vint->common.destid) + \
          + (5 * 4))
 
 #define INTERCEPT_WITHDRAW_BODY_LEN(liid, authcc) \
@@ -343,12 +344,12 @@ int push_intercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
 
     if (wdtype == OPENLI_PROTO_HALT_VOIPINTERCEPT) {
         vint = (voipintercept_t *)data;
-        liid = vint->liid;
-        authcc = vint->authcc;
+        liid = vint->common.liid;
+        authcc = vint->common.authcc;
     } else if (wdtype == OPENLI_PROTO_HALT_IPINTERCEPT) {
         ipint = (ipintercept_t *)data;
-        liid = ipint->liid;
-        authcc = ipint->authcc;
+        liid = ipint->common.liid;
+        authcc = ipint->common.authcc;
     } else {
         logger(LOG_DAEMON,
                 "OpenLI: invalid withdrawal type: %d\n", wdtype);
@@ -416,18 +417,18 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     }
 
     /* Push on each intercept field */
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID, vint->liid,
-            vint->liid_len)) == -1) {
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID, vint->common.liid,
+            vint->common.liid_len)) == -1) {
         goto pushvoipintfail;
     }
 
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, vint->authcc,
-            vint->authcc_len)) == -1) {
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, vint->common.authcc,
+            vint->common.authcc_len)) == -1) {
         goto pushvoipintfail;
     }
 
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC, vint->delivcc,
-            vint->delivcc_len)) == -1) {
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC, vint->common.delivcc,
+            vint->common.delivcc_len)) == -1) {
         goto pushvoipintfail;
     }
 
@@ -437,7 +438,8 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_MEDIATORID,
-            (uint8_t *)&(vint->destid), sizeof(vint->destid))) == -1) {
+            (uint8_t *)&(vint->common.destid),
+            sizeof(vint->common.destid))) == -1) {
         goto pushvoipintfail;
     }
 
@@ -446,13 +448,14 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 pushvoipintfail:
     logger(LOG_DAEMON,
             "OpenLI: unable to push new VOIP intercept %s to collector fd %d",
-            vint->liid, nb->fd);
+            vint->common.liid, nb->fd);
     return -1;
 }
 
 #define IPINTERCEPT_BODY_LEN(ipint) \
-        (ipint->liid_len + ipint->authcc_len + ipint->delivcc_len + \
-         ipint->username_len + sizeof(ipint->destid) + \
+        (ipint->common.liid_len + ipint->common.authcc_len + \
+         ipint->common.delivcc_len + \
+         ipint->username_len + sizeof(ipint->common.destid) + \
          + (5 * 4))
 
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
@@ -481,18 +484,18 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     }
 
     /* Push on each intercept field */
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID, ipint->liid,
-            ipint->liid_len)) == -1) {
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID, ipint->common.liid,
+            ipint->common.liid_len)) == -1) {
         goto pushipintfail;
     }
 
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, ipint->authcc,
-            ipint->authcc_len)) == -1) {
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, ipint->common.authcc,
+            ipint->common.authcc_len)) == -1) {
         goto pushipintfail;
     }
 
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC, ipint->delivcc,
-            ipint->delivcc_len)) == -1) {
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC, ipint->common.delivcc,
+            ipint->common.delivcc_len)) == -1) {
         goto pushipintfail;
     }
 
@@ -502,7 +505,8 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_MEDIATORID,
-            (uint8_t *)&(ipint->destid), sizeof(ipint->destid))) == -1) {
+            (uint8_t *)&(ipint->common.destid),
+            sizeof(ipint->common.destid))) == -1) {
         goto pushipintfail;
     }
 
@@ -512,7 +516,7 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 pushipintfail:
     logger(LOG_DAEMON,
             "OpenLI: unable to push new IP intercept %s to collector fd %d",
-            ipint->liid, nb->fd);
+            ipint->common.liid, nb->fd);
     return -1;
 }
 
@@ -715,21 +719,21 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
     uint8_t *msgend = msgbody + len;
 
     vint->internalid = 0;
-    vint->liid = NULL;
-    vint->authcc = NULL;
-    vint->delivcc = NULL;
+    vint->common.liid = NULL;
+    vint->common.authcc = NULL;
+    vint->common.delivcc = NULL;
     vint->active_cins = NULL;  /* Placeholder -- sync thread should populate */
     vint->cin_callid_map = NULL;
     vint->cin_sdp_map = NULL;
     vint->sipuri = NULL;
-    vint->destid = 0;
-    vint->targetagency = NULL;
+    vint->common.destid = 0;
+    vint->common.targetagency = NULL;
     vint->active = 1;
     vint->awaitingconfirm = 0;
 
-    vint->liid_len = 0;
-    vint->authcc_len = 0;
-    vint->delivcc_len = 0;
+    vint->common.liid_len = 0;
+    vint->common.authcc_len = 0;
+    vint->common.delivcc_len = 0;
     vint->sipuri_len = 0;
 
     while (msgbody < msgend) {
@@ -742,16 +746,16 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
         }
 
         if (f == OPENLI_PROTO_FIELD_MEDIATORID) {
-            vint->destid = *((uint32_t *)valptr);
+            vint->common.destid = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_LIID) {
-            DECODE_STRING_FIELD(vint->liid, valptr, vallen);
-            vint->liid_len = vallen;
+            DECODE_STRING_FIELD(vint->common.liid, valptr, vallen);
+            vint->common.liid_len = vallen;
         } else if (f == OPENLI_PROTO_FIELD_AUTHCC) {
-            DECODE_STRING_FIELD(vint->authcc, valptr, vallen);
-            vint->authcc_len = vallen;
+            DECODE_STRING_FIELD(vint->common.authcc, valptr, vallen);
+            vint->common.authcc_len = vallen;
         } else if (f == OPENLI_PROTO_FIELD_DELIVCC) {
-            DECODE_STRING_FIELD(vint->delivcc, valptr, vallen);
-            vint->delivcc_len = vallen;
+            DECODE_STRING_FIELD(vint->common.delivcc, valptr, vallen);
+            vint->common.delivcc_len = vallen;
         } else if (f == OPENLI_PROTO_FIELD_SIPURI) {
             DECODE_STRING_FIELD(vint->sipuri, valptr, vallen);
             vint->sipuri_len = vallen;
@@ -784,17 +788,17 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
 
     uint8_t *msgend = msgbody + len;
 
-    ipint->liid = NULL;
-    ipint->authcc = NULL;
-    ipint->delivcc = NULL;
+    ipint->common.liid = NULL;
+    ipint->common.authcc = NULL;
+    ipint->common.delivcc = NULL;
     ipint->username = NULL;
-    ipint->destid = 0;
-    ipint->targetagency = NULL;
+    ipint->common.destid = 0;
+    ipint->common.targetagency = NULL;
     ipint->awaitingconfirm = 0;
 
-    ipint->liid_len = 0;
-    ipint->authcc_len = 0;
-    ipint->delivcc_len = 0;
+    ipint->common.liid_len = 0;
+    ipint->common.authcc_len = 0;
+    ipint->common.delivcc_len = 0;
     ipint->username_len = 0;
 
     while (msgbody < msgend) {
@@ -807,16 +811,16 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
         }
 
         if (f == OPENLI_PROTO_FIELD_MEDIATORID) {
-            ipint->destid = *((uint32_t *)valptr);
+            ipint->common.destid = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_LIID) {
-            DECODE_STRING_FIELD(ipint->liid, valptr, vallen);
-            ipint->liid_len = vallen;
+            DECODE_STRING_FIELD(ipint->common.liid, valptr, vallen);
+            ipint->common.liid_len = vallen;
         } else if (f == OPENLI_PROTO_FIELD_AUTHCC) {
-            DECODE_STRING_FIELD(ipint->authcc, valptr, vallen);
-            ipint->authcc_len = vallen;
+            DECODE_STRING_FIELD(ipint->common.authcc, valptr, vallen);
+            ipint->common.authcc_len = vallen;
         } else if (f == OPENLI_PROTO_FIELD_DELIVCC) {
-            DECODE_STRING_FIELD(ipint->delivcc, valptr, vallen);
-            ipint->delivcc_len = vallen;
+            DECODE_STRING_FIELD(ipint->common.delivcc, valptr, vallen);
+            ipint->common.delivcc_len = vallen;
         } else if (f == OPENLI_PROTO_FIELD_USERNAME) {
             DECODE_STRING_FIELD(ipint->username, valptr, vallen);
             ipint->username_len = vallen;

@@ -68,12 +68,8 @@ typedef struct openli_ii_msg {
 
     uint8_t type;
     union {
-        ipintercept_t *ipint;
+        ipsession_t *ipsess;
         rtpstreaminf_t *ipmmint;
-        struct {
-            int ipfamily;
-            struct sockaddr_storage ipaddr;
-        } interceptid;
         char *sipuri;
         char *rtpstreamkey;
     } data;
@@ -96,6 +92,20 @@ typedef struct sipuri_hash {
     int references;
 } sipuri_hash_t;
 
+typedef struct ipv4_target {
+    uint32_t address;
+    ipsession_t *intercepts;
+
+    UT_hash_handle hh;
+} ipv4_target_t;
+
+typedef struct ipv6_target {
+    uint8_t address[16];
+    ipsession_t *intercepts;
+
+    UT_hash_handle hh;
+} ipv6_target_t;
+
 typedef struct colthread_local {
 
     /* Message queue for pushing updates to sync thread */
@@ -106,7 +116,8 @@ typedef struct colthread_local {
 
 
     /* Current intercepts */
-    ipintercept_t *activeipintercepts;
+    ipv6_target_t *activeipv6intercepts;
+    ipv4_target_t *activeipv4intercepts;
 
     rtpstreaminf_t *activertpintercepts;
 

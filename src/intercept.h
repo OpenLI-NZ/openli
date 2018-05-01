@@ -33,21 +33,28 @@
 #include <libtrace/linked_list.h>
 #include <uthash.h>
 
-typedef struct ipintercept {
+#include "internetaccess.h"
+
+typedef struct intercept_common {
     char *liid;
     char *authcc;
     char *delivcc;
-    char *username;
-
     int liid_len;
     int authcc_len;
     int delivcc_len;
-    int username_len;
-
     uint32_t destid;
     char *targetagency;
+} intercept_common_t;
+
+typedef struct ipintercept {
+    intercept_common_t common;
+
+    char *username;
+    int username_len;
+
     uint8_t awaitingconfirm;
     UT_hash_handle hh_liid;
+    UT_hash_handle hh_user;
 } ipintercept_t;
 
 typedef struct sdpidentifier {
@@ -81,38 +88,30 @@ typedef struct voipsdpmap {
 
 
 typedef struct rtpstreaminf rtpstreaminf_t;
+typedef struct ipsession ipsession_t;
 
 #define ip_intercept_equal(a,b) \
-    ((strcmp(a->authcc, b->authcc) == 0) && \
-     (strcmp(a->delivcc, b->delivcc) == 0) && \
+    ((strcmp(a->common.authcc, b->common.authcc) == 0) && \
+     (strcmp(a->common.delivcc, b->common.delivcc) == 0) && \
      (strcmp(a->username, b->username) == 0) && \
-     (strcmp(a->targetagency, b->targetagency) == 0))
+     (strcmp(a->common.targetagency, b->common.targetagency) == 0))
 
 
 #define voip_intercept_equal(a,b) \
-    ((strcmp(a->authcc, b->authcc) == 0) && \
-     (strcmp(a->delivcc, b->delivcc) == 0) && \
+    ((strcmp(a->common.authcc, b->common.authcc) == 0) && \
+     (strcmp(a->common.delivcc, b->common.delivcc) == 0) && \
      (strcmp(a->sipuri, b->sipuri) == 0) && \
-     (strcmp(a->targetagency, b->targetagency) == 0))
+     (strcmp(a->common.targetagency, b->common.targetagency) == 0))
 
 typedef struct voipintercept {
 
     uint64_t internalid;
-    char *liid;
-    char *authcc;
-    char *delivcc;
+    intercept_common_t common;
     char *sipuri;
-
-    int liid_len;
-    int authcc_len;
-    int delivcc_len;
     int sipuri_len;
 
-    uint32_t destid;
-    char *targetagency;
     uint8_t awaitingconfirm;
     uint8_t active;
-
     voipcinmap_t *cin_callid_map;
     voipsdpmap_t *cin_sdp_map;
     rtpstreaminf_t *active_cins;
@@ -135,18 +134,37 @@ struct rtpstreaminf {
     char *invitecseq;
     char *byecseq;
 
-    void *timeout_ev;
+    intercept_common_t common;
     voipintercept_t *parent;
+
+    void *timeout_ev;
     UT_hash_handle hh;
 };
+
+struct ipsession {
+    char *streamkey;
+    uint32_t cin;
+    int ai_family;
+    struct sockaddr_storage *targetip;
+
+    intercept_common_t common;
+    UT_hash_handle hh;
+};
+
 
 void free_all_ipintercepts(ipintercept_t *interceptlist);
 void free_all_voipintercepts(voipintercept_t *vintercepts);
 void free_all_rtpstreams(rtpstreaminf_t *streams);
+void free_all_ipsessions(ipsession_t *sessions);
 void free_single_voip_cin(rtpstreaminf_t *rtp);
 void free_single_ipintercept(ipintercept_t *cept);
 void free_single_voipintercept(voipintercept_t *v);
+void free_single_ipsession(ipsession_t *sess);
 
+rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin);
+rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *rtp);
+
+ipsession_t *create_ipsession(ipintercept_t *ipint, access_session_t *session);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

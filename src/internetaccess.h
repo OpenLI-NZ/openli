@@ -28,7 +28,6 @@
 #define OPENLI_INTERNETACCESS_H_
 
 #include <uthash.h>
-#include "intercept.h"
 
 enum {
     ACCESS_RADIUS,

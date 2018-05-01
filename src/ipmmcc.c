@@ -53,12 +53,12 @@ static openli_export_recv_t form_ipmmcc(collector_global_t *glob,
         reset_wandder_encoder(loc->encoder);
     }
 
-    hdrdata.liid = rtp->parent->liid;
-    hdrdata.liid_len = rtp->parent->liid_len;
-    hdrdata.authcc = rtp->parent->authcc;
-    hdrdata.authcc_len = rtp->parent->authcc_len;
-    hdrdata.delivcc = rtp->parent->delivcc;
-    hdrdata.delivcc_len = rtp->parent->delivcc_len;
+    hdrdata.liid = rtp->common.liid;
+    hdrdata.liid_len = rtp->common.liid_len;
+    hdrdata.authcc = rtp->common.authcc;
+    hdrdata.authcc_len = rtp->common.authcc_len;
+    hdrdata.delivcc = rtp->common.delivcc;
+    hdrdata.delivcc_len = rtp->common.delivcc_len;
     hdrdata.operatorid = glob->operatorid;
     hdrdata.operatorid_len = glob->operatorid_len;
     hdrdata.networkelemid = glob->networkelemid;
@@ -74,9 +74,9 @@ static openli_export_recv_t form_ipmmcc(collector_global_t *glob,
     msg.encoder = loc->encoder;
     msg.ipcontents = NULL;
     msg.ipclen = 0;
-    msg.destid = rtp->parent->destid;
+    msg.destid = rtp->common.destid;
     msg.header = construct_netcomm_protocol_header(msg.msgbody->len,
-                OPENLI_PROTO_ETSI_CC, rtp->parent->internalid, &(msg.hdrlen));
+                OPENLI_PROTO_ETSI_CC, 0, &(msg.hdrlen));
 
     exprecv.type = OPENLI_EXPORT_ETSIREC;
     exprecv.data.toexport = msg;
@@ -122,6 +122,7 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
         return 0;
     }
 
+    /* TODO change active RTP so we can look up by 5 tuple? */
     HASH_ITER(hh, loc->activertpintercepts, rtp, tmp) {
         if (!rtp->active) {
             continue;

@@ -96,11 +96,9 @@ static void dump_ip_intercept(ipintercept_t *ipint) {
 static void dump_rtp_intercept(rtpstreaminf_t *rtp) {
     char ipbuf[256];
 
-    printf("Intercept %u  %s\n", rtp->parent->internalid,
-            rtp->active ? "ACTIVE": "INACTIVE");
-    printf("LI ID: %s\n", rtp->parent->liid);
-    printf("Auth CC: %s     Delivery CC: %s\n", rtp->parent->authcc,
-            rtp->parent->delivcc);
+    printf("LI ID: %s\n", rtp->common.liid);
+    printf("Auth CC: %s     Delivery CC: %s\n", rtp->common.authcc,
+            rtp->common.delivcc);
 
     if (rtp->targetaddr && rtp->ai_family == AF_INET) {
         struct sockaddr_in *sin = (struct sockaddr_in *)rtp->targetaddr;
@@ -118,32 +116,6 @@ static void dump_rtp_intercept(rtpstreaminf_t *rtp) {
     printf("------\n");
 }
 
-static void deactivate_ip_intercept(colthread_local_t *loc,
-        int ipfamily, struct sockaddr_storage *ipaddr) {
-
-#if 0
-
-    ipintercept_t *cept;
-
-    /* Search the list for an intercept with a matching ID */
-
-    /* If found, set the intercept to inactive */
-
-    HASH_FIND(hh_liid, loc->activeipintercepts, liid, strlen(liid), cept);
-
-    if (cept) {
-        HASH_DELETE(hh_liid, loc->activeipintercepts, cept);
-    }
-
-    /* authcc and liid were strdup'd by the sync thread */
-    free(authcc);
-    free(liid);
-
-#endif
-
-    return;
-}
-
 static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
         void *global) {
 
@@ -159,7 +131,8 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_message_queue_init(&(loc->exportq),
             sizeof(openli_export_recv_t));
 
-    loc->activeipintercepts = NULL;
+    loc->activeipv4intercepts = NULL;
+    loc->activeipv6intercepts = NULL;
     loc->activertpintercepts = NULL;
     loc->sip_targets = NULL;
 
@@ -178,6 +151,8 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     collector_global_t *glob = (collector_global_t *)global;
     colthread_local_t *loc = (colthread_local_t *)tls;
+    ipv4_target_t *v4, *tmp;
+    ipv6_target_t *v6, *tmp2;
 
     deregister_sync_queues(glob, t);
 
@@ -190,7 +165,18 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_message_queue_destroy(&(loc->exportq));
     libtrace_list_deinit(loc->knownsipservers);
 
-    free_all_ipintercepts(loc->activeipintercepts);
+    HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
+        free_all_ipsessions(v4->intercepts);
+        HASH_DELETE(hh, loc->activeipv4intercepts, v4);
+        free(v4);
+    }
+
+    HASH_ITER(hh, loc->activeipv6intercepts, v6, tmp2) {
+        free_all_ipsessions(v6->intercepts);
+        HASH_DELETE(hh, loc->activeipv6intercepts, v6);
+        free(v6);
+    }
+
     free_all_rtpstreams(loc->activertpintercepts);
 
     if (loc->sip_targets) {
@@ -288,6 +274,151 @@ static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
     return 1;
 }
 
+static int add_ipv4_intercept(colthread_local_t *loc, ipsession_t *sess) {
+
+    uint32_t v4addr;
+    struct sockaddr_in *sin;
+    ipv4_target_t *tgt;
+    ipsession_t *check;
+
+    sin = (struct sockaddr_in *)(sess->targetip);
+    if (sin == NULL) {
+        logger(LOG_DAEMON, "OpenLI: attempted to add IPv4 intercept but target IP was NULL?");
+        return -1;
+    }
+
+    v4addr = sin->sin_addr.s_addr;
+
+    HASH_FIND(hh, loc->activeipv4intercepts, &v4addr, sizeof(v4addr), tgt);
+    if (tgt == NULL) {
+        tgt = (ipv4_target_t *)malloc(sizeof(ipv4_target_t));
+        if (!tgt) {
+            logger(LOG_DAEMON, "OpenLI: ran out of memory while adding IPv4 intercept address.");
+            return -1;
+        }
+        tgt->address = v4addr;
+        tgt->intercepts = NULL;
+        HASH_ADD(hh, loc->activeipv4intercepts, address, sizeof(uint32_t),
+                tgt);
+    }
+
+    HASH_FIND(hh, tgt->intercepts, sess->streamkey, strlen(sess->streamkey),
+            check);
+    assert(check == NULL);
+    HASH_ADD_KEYPTR(hh, tgt->intercepts, sess->streamkey,
+            strlen(sess->streamkey), sess);
+
+    return 0;
+}
+
+static int add_ipv6_intercept(colthread_local_t *loc, ipsession_t *sess) {
+
+    uint8_t *v6addr;
+    struct sockaddr_in6 *sin6;
+    ipv6_target_t *tgt;
+    ipsession_t *check;
+
+    sin6 = (struct sockaddr_in6 *)(sess->targetip);
+    if (sin6 == NULL) {
+        logger(LOG_DAEMON, "OpenLI: attempted to add IPv6 intercept but target IP was NULL?");
+        return -1;
+    }
+
+    v6addr = sin6->sin6_addr.s6_addr;
+
+    HASH_FIND(hh, loc->activeipv6intercepts, v6addr, 16, tgt);
+    if (tgt == NULL) {
+        tgt = (ipv6_target_t *)malloc(sizeof(ipv6_target_t));
+        if (!tgt) {
+            logger(LOG_DAEMON, "OpenLI: ran out of memory while adding IPv6 intercept address.");
+            return -1;
+        }
+        memcpy(tgt->address, v6addr, 16);
+        tgt->intercepts = NULL;
+        HASH_ADD_KEYPTR(hh, loc->activeipv6intercepts, tgt->address, 16, tgt);
+    }
+
+    HASH_FIND(hh, tgt->intercepts, sess->streamkey, strlen(sess->streamkey),
+            check);
+    assert(check == NULL);
+    HASH_ADD_KEYPTR(hh, tgt->intercepts, sess->streamkey,
+            strlen(sess->streamkey), sess);
+
+    return 0;
+}
+
+static int remove_ipv4_intercept(colthread_local_t *loc, ipsession_t *torem) {
+
+    ipv4_target_t *v4;
+    struct sockaddr_in *sin;
+    uint32_t v4addr;
+    ipsession_t *found;
+
+    sin = (struct sockaddr_in *)(torem->targetip);
+    if (sin == NULL) {
+        logger(LOG_DAEMON, "OpenLI: attempted to remove IPv4 intercept but target IP was NULL?");
+        return -1;
+    }
+
+    v4addr = sin->sin_addr.s_addr;
+    HASH_FIND(hh, loc->activeipv4intercepts, &v4addr, sizeof(v4addr), v4);
+    if (!v4) {
+        return 0;
+    }
+
+    HASH_FIND(hh, v4->intercepts, torem->streamkey, strlen(torem->streamkey),
+            found);
+    if (!found) {
+        return 0;
+    }
+
+    HASH_DELETE(hh, v4->intercepts, found);
+    free_single_ipsession(found);
+
+    if (HASH_CNT(hh, v4->intercepts) == 0) {
+        HASH_DELETE(hh, loc->activeipv4intercepts, v4);
+        free(v4);
+    }
+
+    return 1;
+}
+
+static int remove_ipv6_intercept(colthread_local_t *loc, ipsession_t *torem) {
+
+    ipv6_target_t *v6;
+    struct sockaddr_in6 *sin6;
+    uint8_t *v6addr;
+    ipsession_t *found;
+
+    sin6 = (struct sockaddr_in6 *)(torem->targetip);
+    if (sin6 == NULL) {
+        logger(LOG_DAEMON, "OpenLI: attempted to remove IPv6 intercept but target IP was NULL?");
+        return -1;
+    }
+
+    v6addr = sin6->sin6_addr.s6_addr;
+    HASH_FIND(hh, loc->activeipv6intercepts, v6addr, 16, v6);
+    if (!v6) {
+        return 0;
+    }
+
+    HASH_FIND(hh, v6->intercepts, torem->streamkey, strlen(torem->streamkey),
+            found);
+    if (!found) {
+        return 0;
+    }
+
+    HASH_DELETE(hh, v6->intercepts, found);
+    free_single_ipsession(found);
+
+    if (HASH_CNT(hh, v6->intercepts) == 0) {
+        HASH_DELETE(hh, loc->activeipv6intercepts, v6);
+        free(v6);
+    }
+
+    return 1;
+}
+
 static libtrace_packet_t *process_packet(libtrace_t *trace,
         libtrace_thread_t *t, void *global, void *tls,
         libtrace_packet_t *pkt) {
@@ -306,16 +437,41 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
         if (syncpush.type == OPENLI_PUSH_IPINTERCEPT) {
-            HASH_ADD_KEYPTR(hh_liid, loc->activeipintercepts,
-                    syncpush.data.ipint->liid,
-                    strlen(syncpush.data.ipint->liid),
-                    syncpush.data.ipint);
+            if (syncpush.data.ipsess->ai_family == AF_INET) {
+                if (add_ipv4_intercept(loc, syncpush.data.ipsess) != 0) {
+                    free_single_ipsession(syncpush.data.ipsess);
+                }
+            } else if (syncpush.data.ipsess->ai_family == AF_INET6) {
+                if (add_ipv6_intercept(loc, syncpush.data.ipsess) != 0) {
+                    free_single_ipsession(syncpush.data.ipsess);
+                }
+            } else {
+                logger(LOG_DAEMON,
+                        "OpenLI: invalid address family for new IP intercept: %d",
+                        syncpush.data.ipsess->ai_family);
+                free_single_ipsession(syncpush.data.ipsess);
+            }
         }
 
         if (syncpush.type == OPENLI_PUSH_HALT_IPINTERCEPT) {
-            deactivate_ip_intercept(loc,
-                    syncpush.data.interceptid.ipfamily,
-                    &(syncpush.data.interceptid.ipaddr));
+            if (syncpush.data.ipsess->ai_family == AF_INET) {
+                if (remove_ipv4_intercept(loc, syncpush.data.ipsess) > 0) {
+                    logger(LOG_DAEMON, "OpenLI: collector thread %d has stopped intercepting IP session %s",
+                            trace_get_perpkt_thread_id(t),
+                            syncpush.data.ipsess->streamkey);
+                }
+            } else if (syncpush.data.ipsess->ai_family == AF_INET6) {
+                if (remove_ipv6_intercept(loc, syncpush.data.ipsess) > 0) {
+                    logger(LOG_DAEMON, "OpenLI: collector thread %d has stopped intercepting IP session %s",
+                            trace_get_perpkt_thread_id(t),
+                            syncpush.data.ipsess->streamkey);
+                }
+            } else {
+                logger(LOG_DAEMON,
+                        "OpenLI: invalid address family for removing IP intercept: %d",
+                        syncpush.data.ipsess->ai_family);
+            }
+            free_single_ipsession(syncpush.data.ipsess);
         }
 
         if (syncpush.type == OPENLI_PUSH_IPMMINTERCEPT) {

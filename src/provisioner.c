@@ -159,13 +159,13 @@ static int map_intercepts_to_leas(provision_state_t *state) {
 
     /* Do IP Intercepts */
     HASH_ITER(hh_liid, state->ipintercepts, ipint, iptmp) {
-        add_liid_mapping(state, ipint->liid, ipint->targetagency);
+        add_liid_mapping(state, ipint->common.liid, ipint->common.targetagency);
     }
 
     /* Now do the VOIP intercepts */
     for (vint = state->voipintercepts; vint != NULL; vint = vint->hh_liid.next)
     {
-        add_liid_mapping(state, vint->liid, vint->targetagency);
+        add_liid_mapping(state, vint->common.liid, vint->common.targetagency);
     }
 
     /* Sort the final mapping nicely */
@@ -542,7 +542,7 @@ static int push_all_voipintercepts(voipintercept_t *voipintercepts,
         if (push_voipintercept_onto_net_buffer(nb, v) < 0) {
             logger(LOG_DAEMON,
                     "OpenLI provisioner: error pushing VOIP intercept %s onto buffer for writing to collector.",
-                    v->liid);
+                    v->common.liid);
             return -1;
         }
     }
@@ -558,7 +558,7 @@ static int push_all_ipintercepts(ipintercept_t *ipintercepts,
         if (push_ipintercept_onto_net_buffer(nb, cept) < 0) {
             logger(LOG_DAEMON,
                     "OpenLI provisioner: error pushing IP intercept %s onto buffer for writing to collector.",
-                    cept->liid);
+                    cept->common.liid);
             return -1;
         }
     }
@@ -1678,30 +1678,31 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
      * functions?
      */
     HASH_ITER(hh_liid, currstate->voipintercepts, voipint, tmp) {
-        HASH_FIND(hh_liid, newstate->voipintercepts, voipint->liid,
-                voipint->liid_len, newequiv);
+        HASH_FIND(hh_liid, newstate->voipintercepts, voipint->common.liid,
+                voipint->common.liid_len, newequiv);
         if (!newequiv) {
             /* Intercept has been withdrawn entirely */
             if (!droppedcols) {
                 halt_existing_intercept(currstate, (void *)voipint,
                         OPENLI_PROTO_HALT_VOIPINTERCEPT);
             }
-            remove_liid_mapping(currstate, voipint->liid, voipint->liid_len,
-                    droppedmeds);
+            remove_liid_mapping(currstate, voipint->common.liid,
+                    voipint->common.liid_len, droppedmeds);
             continue;
         } else if (!voip_intercept_equal(voipint, newequiv)) {
             /* VOIP intercept has changed somehow -- this probably
              * shouldn't happen but deal with it anyway
              */
-            logger(LOG_DAEMON, "OpenLI provisioner: Details for VOIP intercept %s have changed?",
-                    voipint->liid);
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: Details for VOIP intercept %s have changed?",
+                    voipint->common.liid);
 
             if (!droppedcols) {
                 halt_existing_intercept(currstate, (void *)voipint,
                         OPENLI_PROTO_HALT_VOIPINTERCEPT);
             }
-            remove_liid_mapping(currstate, voipint->liid, voipint->liid_len,
-                    droppedmeds);
+            remove_liid_mapping(currstate, voipint->common.liid,
+                    voipint->common.liid_len, droppedmeds);
 
         } else {
             newequiv->awaitingconfirm = 0;
@@ -1715,8 +1716,8 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
         }
 
         /* Add the LIID mapping */
-        h = add_liid_mapping(currstate, voipint->liid,
-                voipint->targetagency);
+        h = add_liid_mapping(currstate, voipint->common.liid,
+                voipint->common.targetagency);
 
         if (!droppedmeds && announce_liidmapping_to_mediators(currstate,
                 h) == -1) {
@@ -1750,34 +1751,32 @@ static inline int reload_ipintercepts(provision_state_t *currstate,
      * functions?
      */
     HASH_ITER(hh_liid, currstate->ipintercepts, ipint, tmp) {
-        HASH_FIND(hh_liid, newstate->ipintercepts, ipint->liid,
-                ipint->liid_len, newequiv);
+        HASH_FIND(hh_liid, newstate->ipintercepts, ipint->common.liid,
+                ipint->common.liid_len, newequiv);
         if (!newequiv) {
             /* Intercept has been withdrawn entirely */
             if (!droppedcols) {
                 halt_existing_intercept(currstate, (void *)ipint,
                         OPENLI_PROTO_HALT_IPINTERCEPT);
             }
-            remove_liid_mapping(currstate, ipint->liid, ipint->liid_len,
-                    droppedmeds);
+            remove_liid_mapping(currstate, ipint->common.liid,
+                    ipint->common.liid_len, droppedmeds);
             logger(LOG_DAEMON, "OpenLI provisioner: LIID %s has been withdrawn",
-                    ipint->liid);
+                    ipint->common.liid);
             continue;
         } else if (!ip_intercept_equal(ipint, newequiv)) {
             /* IP intercept has changed somehow -- this probably
              * shouldn't happen but deal with it anyway
              */
             logger(LOG_DAEMON, "OpenLI provisioner: Details for IP intercept %s have changed?",
-                    ipint->liid);
+                    ipint->common.liid);
 
-            logger(LOG_DAEMON, "OpenLI provisioner: LIID %s has been changed, reannouncing.",
-                    ipint->liid);
             if (!droppedcols) {
                 halt_existing_intercept(currstate, (void *)ipint,
                         OPENLI_PROTO_HALT_IPINTERCEPT);
             }
-            remove_liid_mapping(currstate, ipint->liid, ipint->liid_len,
-                    droppedmeds);
+            remove_liid_mapping(currstate, ipint->common.liid,
+                    ipint->common.liid_len, droppedmeds);
         } else {
             newequiv->awaitingconfirm = 0;
         }
@@ -1790,8 +1789,8 @@ static inline int reload_ipintercepts(provision_state_t *currstate,
         }
 
         /* Add the LIID mapping */
-        h = add_liid_mapping(currstate, ipint->liid,
-                ipint->targetagency);
+        h = add_liid_mapping(currstate, ipint->common.liid,
+                ipint->common.targetagency);
 
         if (!droppedmeds && announce_liidmapping_to_mediators(currstate,
                 h) == -1) {
