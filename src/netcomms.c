@@ -328,54 +328,75 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
          vint->sipuri_len + sizeof(vint->destid) + \
          + (5 * 4))
 
-#define VOIPINTERCEPT_WITHDRAW_BODY_LEN(vint) \
-        (vint->liid_len + vint->authcc_len) + (2 * 4)
+#define INTERCEPT_WITHDRAW_BODY_LEN(liid, authcc) \
+        (strlen(liid) + strlen(authcc) + (2 * 4))
 
-int push_voipintercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
-        voipintercept_t *vint) {
+int push_intercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
+        void *data, openli_proto_msgtype_t wdtype) {
 
     ii_header_t hdr;
     uint16_t totallen;
     int ret;
+    char *liid, *authcc;
+    voipintercept_t *vint = NULL;
+    ipintercept_t *ipint =  NULL;
 
-    /* Pre-compute our body length so we can write it in the header */
-    if (VOIPINTERCEPT_WITHDRAW_BODY_LEN(vint) > 65535) {
+    if (wdtype == OPENLI_PROTO_HALT_VOIPINTERCEPT) {
+        vint = (voipintercept_t *)data;
+        liid = vint->liid;
+        authcc = vint->authcc;
+    } else if (wdtype == OPENLI_PROTO_HALT_IPINTERCEPT) {
+        ipint = (ipintercept_t *)data;
+        liid = ipint->liid;
+        authcc = ipint->authcc;
+    } else {
         logger(LOG_DAEMON,
-                "OpenLI: VOIP intercept withdrawal is too long to fit in a single message (%d).",
-                VOIPINTERCEPT_WITHDRAW_BODY_LEN(vint));
+                "OpenLI: invalid withdrawal type: %d\n", wdtype);
         return -1;
     }
 
-    totallen = VOIPINTERCEPT_WITHDRAW_BODY_LEN(vint);
+    /* Pre-compute our body length so we can write it in the header */
+    totallen = INTERCEPT_WITHDRAW_BODY_LEN(liid, authcc);
+    if (totallen > 65535) {
+        logger(LOG_DAEMON,
+                "OpenLI: intercept withdrawal is too long to fit in a single message (%d).",
+                totallen);
+        return -1;
+    }
+
 
     /* Push on header */
-    populate_header(&hdr, OPENLI_PROTO_HALT_VOIPINTERCEPT, totallen, 0);
+    populate_header(&hdr, wdtype, totallen, 0);
     if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
             sizeof(ii_header_t))) == -1) {
-        return -1;
+        goto pushwdfail;
     }
 
     /* Push on each intercept field */
 
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID, vint->liid,
-            vint->liid_len)) == -1) {
-        return -1;
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID, liid, strlen(liid)) == -1) {
+        goto pushwdfail;
     }
 
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, vint->authcc,
-            vint->authcc_len)) == -1) {
-        return -1;
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, authcc, strlen(authcc)) == -1) {
+        goto pushwdfail;
     }
 
     return (int)totallen;
+
+pushwdfail:
+    logger(LOG_DAEMON,
+            "OpenLI: unable to push intercept withdraw for %s to collector fd %d",
+            liid, nb->fd);
+    return -1;
 }
 
-int push_voipintercept_onto_net_buffer(net_buffer_t *nb,
-        voipintercept_t *vint) {
+int push_voipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
     ii_header_t hdr;
     uint16_t totallen;
     int ret;
+    voipintercept_t *vint = (voipintercept_t *)data;
 
     /* Pre-compute our body length so we can write it in the header */
     if (VOIPINTERCEPT_BODY_LEN(vint) > 65535) {
@@ -391,37 +412,42 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb,
     populate_header(&hdr, OPENLI_PROTO_START_VOIPINTERCEPT, totallen, 0);
     if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
             sizeof(ii_header_t))) == -1) {
-        return -1;
+        goto pushvoipintfail;
     }
 
     /* Push on each intercept field */
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID, vint->liid,
             vint->liid_len)) == -1) {
-        return -1;
+        goto pushvoipintfail;
     }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, vint->authcc,
             vint->authcc_len)) == -1) {
-        return -1;
+        goto pushvoipintfail;
     }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC, vint->delivcc,
             vint->delivcc_len)) == -1) {
-        return -1;
+        goto pushvoipintfail;
     }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_SIPURI, vint->sipuri,
             vint->sipuri_len)) == -1) {
-        return -1;
+        goto pushvoipintfail;
     }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_MEDIATORID,
             (uint8_t *)&(vint->destid), sizeof(vint->destid))) == -1) {
-        return -1;
+        goto pushvoipintfail;
     }
 
     return (int)totallen;
 
+pushvoipintfail:
+    logger(LOG_DAEMON,
+            "OpenLI: unable to push new VOIP intercept %s to collector fd %d",
+            vint->liid, nb->fd);
+    return -1;
 }
 
 #define IPINTERCEPT_BODY_LEN(ipint) \
@@ -429,11 +455,13 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb,
          ipint->username_len + sizeof(ipint->destid) + \
          + (5 * 4))
 
-int push_ipintercept_onto_net_buffer(net_buffer_t *nb, ipintercept_t *ipint) {
+int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
     ii_header_t hdr;
     uint16_t totallen;
     int ret;
+    ipintercept_t *ipint = (ipintercept_t *)data;
+
 
     /* Pre-compute our body length so we can write it in the header */
     if (IPINTERCEPT_BODY_LEN(ipint) > 65535) {
@@ -449,37 +477,43 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, ipintercept_t *ipint) {
     populate_header(&hdr, OPENLI_PROTO_START_IPINTERCEPT, totallen, 0);
     if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
             sizeof(ii_header_t))) == -1) {
-        return -1;
+        goto pushipintfail;
     }
 
     /* Push on each intercept field */
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID, ipint->liid,
             ipint->liid_len)) == -1) {
-        return -1;
+        goto pushipintfail;
     }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, ipint->authcc,
             ipint->authcc_len)) == -1) {
-        return -1;
+        goto pushipintfail;
     }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC, ipint->delivcc,
             ipint->delivcc_len)) == -1) {
-        return -1;
+        goto pushipintfail;
     }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_USERNAME, ipint->username,
             ipint->username_len)) == -1) {
-        return -1;
+        goto pushipintfail;
     }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_MEDIATORID,
             (uint8_t *)&(ipint->destid), sizeof(ipint->destid))) == -1) {
-        return -1;
+        goto pushipintfail;
     }
+
 
     return (int)totallen;
 
+pushipintfail:
+    logger(LOG_DAEMON,
+            "OpenLI: unable to push new IP intercept %s to collector fd %d",
+            ipint->liid, nb->fd);
+    return -1;
 }
 
 #define MEDIATOR_BODY_LEN(med) \
@@ -738,6 +772,11 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
 int decode_voipintercept_halt(uint8_t *msgbody, uint16_t len,
         voipintercept_t *vint) {
     return decode_voipintercept_start(msgbody, len, vint);
+}
+
+int decode_ipintercept_halt(uint8_t *msgbody, uint16_t len,
+        ipintercept_t *ipint) {
+    return decode_ipintercept_start(msgbody, len, ipint);
 }
 
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,

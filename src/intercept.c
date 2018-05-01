@@ -101,37 +101,41 @@ static void free_voip_cins(rtpstreaminf_t *cins) {
 
 }
 
+void free_single_voipintercept(voipintercept_t *v) {
+    if (v->liid) {
+        free(v->liid);
+    }
+    if (v->authcc) {
+        free(v->authcc);
+    }
+    if (v->delivcc) {
+        free(v->delivcc);
+    }
+    if (v->sipuri) {
+        free(v->sipuri);
+    }
+    if (v->targetagency) {
+        free(v->targetagency);
+    }
+    if (v->cin_sdp_map) {
+        HASH_CLEAR(hh_sdp, v->cin_sdp_map);
+    }
+
+    if (v->cin_callid_map) {
+        free_voip_cinmap(v->cin_callid_map);
+    }
+    if (v->active_cins) {
+        free_voip_cins(v->active_cins);
+    }
+    free(v);
+}
+
 void free_all_voipintercepts(voipintercept_t *vints) {
 
     voipintercept_t *v, *tmp;
     HASH_ITER(hh_liid, vints, v, tmp) {
         HASH_DELETE(hh_liid, vints, v);
-        if (v->liid) {
-            free(v->liid);
-        }
-        if (v->authcc) {
-            free(v->authcc);
-        }
-        if (v->delivcc) {
-            free(v->delivcc);
-        }
-        if (v->sipuri) {
-            free(v->sipuri);
-        }
-        if (v->targetagency) {
-            free(v->targetagency);
-        }
-        if (v->cin_sdp_map) {
-            HASH_CLEAR(hh_sdp, v->cin_sdp_map);
-        }
-
-        if (v->cin_callid_map) {
-            free_voip_cinmap(v->cin_callid_map);
-        }
-        if (v->active_cins) {
-            free_voip_cins(v->active_cins);
-        }
-        free(v);
+        free_single_voipintercept(v);
     }
 
 }

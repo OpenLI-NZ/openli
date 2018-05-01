@@ -318,6 +318,31 @@ static inline void push_session_halt_to_threads(void *sendqs,
     }
 }
 
+static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
+        ipintercept_t *ipint) {
+
+    sync_sendq_t *sendq, *tmp;
+    internet_user_t *user;
+
+    logger(LOG_DAEMON, "OpenLI: collector will stop intercepting traffic for user %s", ipint->username);
+
+    HASH_FIND(hh, sync->allusers, ipint->username, ipint->username_len,
+            user);
+
+    if (user == NULL) {
+        return;
+    }
+
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
+        access_session_t *sess, *tmp2;
+
+        /* Cancel all IP sessions for the target */
+        HASH_ITER(hh, user->sessions, sess, tmp2) {
+            push_session_halt_to_threads(sync->glob->syncsendqs, sess);
+        }
+    }
+}
+
 static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
     voipintercept_t *v;
     ipintercept_t *ipint, *tmp;
@@ -330,16 +355,7 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
 
             /* Tell every collector thread to stop intercepting traffic for
              * the IPs associated with this target. */
-            logger(LOG_DAEMON, "OpenLI: collector will stop intercepting traffic for user %s", ipint->username);
-            HASH_FIND(hh, sync->allusers, ipint->username, ipint->username_len,
-                    user);
-            if (user != NULL) {
-                /* Cancel all IP sessions for the target */
-                HASH_ITER(hh, user->sessions, sess, tmp2) {
-                    push_session_halt_to_threads(sync->glob->syncsendqs, sess);
-                }
-            }
-
+            push_ipintercept_halt_to_threads(sync, ipint);
             HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
             free_single_ipintercept(ipint);
         }
@@ -355,6 +371,7 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
 
             push_voipintercept_halt_to_threads(sync, v);
             HASH_DELETE(hh_liid, sync->voipintercepts, v);
+            free_single_voipintercept(v);
         }
     }
 }
@@ -911,6 +928,37 @@ static int halt_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     push_voipintercept_halt_to_threads(sync, vint);
     HASH_DELETE(hh_liid, sync->voipintercepts, vint);
+    free_single_voipintercept(vint);
+    return 0;
+}
+
+static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
+        uint16_t msglen) {
+
+    ipintercept_t *ipint, torem;
+    sync_sendq_t *sendq, *tmp;
+    int i;
+
+    if (decode_ipintercept_halt(intmsg, msglen, &torem) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: received invalid IP intercept withdrawal from provisioner.");
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, sync->ipintercepts, torem.liid, torem.liid_len, ipint);
+    if (!ipint) {
+        logger(LOG_DAEMON,
+                "OpenLI: received withdrawal for IP intercept %s but it is not present in the sync intercept list?",
+                torem.liid);
+        return 0;
+    }
+
+    logger(LOG_DAEMON, "OpenLI: sync thread withdrawing IP intercept %s",
+            torem.liid);
+
+    push_ipintercept_halt_to_threads(sync, ipint);
+    HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
+    free_single_ipintercept(ipint);
     return 0;
 }
 
@@ -1141,6 +1189,12 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 break;
             case OPENLI_PROTO_HALT_VOIPINTERCEPT:
                 ret = halt_voipintercept(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_HALT_IPINTERCEPT:
+                ret = halt_ipintercept(sync, provmsg, msglen);
                 if (ret == -1) {
                     return -1;
                 }

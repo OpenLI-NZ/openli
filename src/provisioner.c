@@ -1471,8 +1471,8 @@ static inline int reload_leas(provision_state_t *currstate,
     return 0;
 }
 
-static int halt_existing_voip_intercept(provision_state_t *state,
-        voipintercept_t *vint) {
+static int halt_existing_intercept(provision_state_t *state,
+        void *cept, openli_proto_msgtype_t wdtype) {
 
     libtrace_list_node_t *n;
     prov_collector_t *col;
@@ -1488,11 +1488,8 @@ static int halt_existing_voip_intercept(provision_state_t *state,
             continue;
         }
 
-        if (push_voipintercept_withdrawal_onto_net_buffer(sock->outgoing,
-                    vint) == -1) {
-            logger(LOG_DAEMON,
-                    "OpenLI provisioner: unable to send withdrawal of intercept %s to collector %d.",
-                    vint->liid, sock->mainfd);
+        if (push_intercept_withdrawal_onto_net_buffer(sock->outgoing,
+                cept, wdtype) == -1) {
             drop_collector(state, col->commev);
             continue;
         }
@@ -1548,8 +1545,8 @@ static int disconnect_mediators_from_collectors(provision_state_t *state) {
 }
 
 
-static int remove_voip_liid_mapping(provision_state_t *state,
-        voipintercept_t *vint, int droppedmeds) {
+static int remove_liid_mapping(provision_state_t *state,
+        char *liid, int liid_len, int droppedmeds) {
 
     libtrace_list_node_t *n;
     prov_mediator_t *med;
@@ -1575,10 +1572,10 @@ static int remove_voip_liid_mapping(provision_state_t *state,
         }
 
         if (push_cease_mediation_onto_net_buffer(sock->outgoing,
-                    vint->liid, vint->liid_len) == -1) {
+                    liid, liid_len) == -1) {
             logger(LOG_DAEMON,
                     "OpenLI provisioner: unable to halt mediation of intercept %s on mediator %d.",
-                    vint->liid, sock->mainfd);
+                    liid, sock->mainfd);
             drop_mediator(state, med->commev);
             continue;
         }
@@ -1636,8 +1633,8 @@ static int announce_liidmapping_to_mediators(provision_state_t *state,
     return 0;
 }
 
-static int announce_single_voip_intercept(provision_state_t *state,
-        voipintercept_t *vint) {
+static int announce_single_intercept(provision_state_t *state,
+        void *cept, int (*sendfunc)(net_buffer_t *, void *)) {
 
     libtrace_list_node_t *n;
     prov_collector_t *col;
@@ -1653,11 +1650,7 @@ static int announce_single_voip_intercept(provision_state_t *state,
             continue;
         }
 
-        if (push_voipintercept_onto_net_buffer(sock->outgoing,
-                    vint) == -1) {
-            logger(LOG_DAEMON,
-                    "OpenLI provisioner: unable to announce VOIP intercept %s to collector %d.",
-                    vint->liid, sock->mainfd);
+        if (sendfunc(sock->outgoing, cept) == -1) {
             drop_collector(state, col->commev);
             continue;
         }
@@ -1679,7 +1672,6 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
         provision_state_t *newstate, int droppedcols, int droppedmeds) {
 
     voipintercept_t *newints, *voipint, *tmp, *newequiv;
-    voipintercept_t *a, *b;
     char *str;
 
     /* TODO error handling in the "inform other components about changes"
@@ -1691,9 +1683,11 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
         if (!newequiv) {
             /* Intercept has been withdrawn entirely */
             if (!droppedcols) {
-                halt_existing_voip_intercept(currstate, voipint);
+                halt_existing_intercept(currstate, (void *)voipint,
+                        OPENLI_PROTO_HALT_VOIPINTERCEPT);
             }
-            remove_voip_liid_mapping(currstate, voipint, droppedmeds);
+            remove_liid_mapping(currstate, voipint->liid, voipint->liid_len,
+                    droppedmeds);
             continue;
         } else if (!voip_intercept_equal(voipint, newequiv)) {
             /* VOIP intercept has changed somehow -- this probably
@@ -1703,9 +1697,11 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
                     voipint->liid);
 
             if (!droppedcols) {
-                halt_existing_voip_intercept(currstate, voipint);
+                halt_existing_intercept(currstate, (void *)voipint,
+                        OPENLI_PROTO_HALT_VOIPINTERCEPT);
             }
-            remove_voip_liid_mapping(currstate, voipint, droppedmeds);
+            remove_liid_mapping(currstate, voipint->liid, voipint->liid_len,
+                    droppedmeds);
 
         } else {
             newequiv->awaitingconfirm = 0;
@@ -1729,8 +1725,8 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
             return -1;
         }
 
-        if (!droppedcols && announce_single_voip_intercept(currstate,
-                voipint) == -1) {
+        if (!droppedcols && announce_single_intercept(currstate,
+                (void *)voipint, push_voipintercept_onto_net_buffer) == -1) {
             logger(LOG_DAEMON,
                     "OpenLI provisioner: unable to announce new VOIP intercept to collectors.");
             return -1;
@@ -1741,6 +1737,81 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
     newints = newstate->voipintercepts;
     newstate->voipintercepts = currstate->voipintercepts;
     currstate->voipintercepts = newints;
+    return 0;
+}
+
+static inline int reload_ipintercepts(provision_state_t *currstate,
+        provision_state_t *newstate, int droppedcols, int droppedmeds) {
+
+    ipintercept_t *newints, *ipint, *tmp, *newequiv;
+    char *str;
+
+    /* TODO error handling in the "inform other components about changes"
+     * functions?
+     */
+    HASH_ITER(hh_liid, currstate->ipintercepts, ipint, tmp) {
+        HASH_FIND(hh_liid, newstate->ipintercepts, ipint->liid,
+                ipint->liid_len, newequiv);
+        if (!newequiv) {
+            /* Intercept has been withdrawn entirely */
+            if (!droppedcols) {
+                halt_existing_intercept(currstate, (void *)ipint,
+                        OPENLI_PROTO_HALT_IPINTERCEPT);
+            }
+            remove_liid_mapping(currstate, ipint->liid, ipint->liid_len,
+                    droppedmeds);
+            logger(LOG_DAEMON, "OpenLI provisioner: LIID %s has been withdrawn",
+                    ipint->liid);
+            continue;
+        } else if (!ip_intercept_equal(ipint, newequiv)) {
+            /* IP intercept has changed somehow -- this probably
+             * shouldn't happen but deal with it anyway
+             */
+            logger(LOG_DAEMON, "OpenLI provisioner: Details for IP intercept %s have changed?",
+                    ipint->liid);
+
+            logger(LOG_DAEMON, "OpenLI provisioner: LIID %s has been changed, reannouncing.",
+                    ipint->liid);
+            if (!droppedcols) {
+                halt_existing_intercept(currstate, (void *)ipint,
+                        OPENLI_PROTO_HALT_IPINTERCEPT);
+            }
+            remove_liid_mapping(currstate, ipint->liid, ipint->liid_len,
+                    droppedmeds);
+        } else {
+            newequiv->awaitingconfirm = 0;
+        }
+    }
+
+    HASH_ITER(hh_liid, newstate->ipintercepts, ipint, tmp) {
+        liid_hash_t *h = NULL;
+        if (!ipint->awaitingconfirm) {
+            continue;
+        }
+
+        /* Add the LIID mapping */
+        h = add_liid_mapping(currstate, ipint->liid,
+                ipint->targetagency);
+
+        if (!droppedmeds && announce_liidmapping_to_mediators(currstate,
+                h) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: unable to announce new IP intercept to mediators.");
+            return -1;
+        }
+
+        if (!droppedcols && announce_single_intercept(currstate,
+                (void *)ipint, push_ipintercept_onto_net_buffer) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: unable to announce new IP intercept to collectors.");
+            return -1;
+        }
+    }
+
+    /* Swap the intercept lists */
+    newints = newstate->ipintercepts;
+    newstate->ipintercepts = currstate->ipintercepts;
+    currstate->ipintercepts = newints;
     return 0;
 }
 
@@ -1791,8 +1862,10 @@ static int reload_provisioner_config(provision_state_t *currstate) {
         return -1;
     }
 
-    /* TODO reload IP intercepts -- makes sense to wait until we've got at
-     * least RADIUS integration in place before doing this properly? */
+    if (reload_ipintercepts(currstate, &newstate, clientchanged,
+            mediatorchanged) == -1) {
+        return -1;
+    }
 
     clear_prov_state(&newstate);
 

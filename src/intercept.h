@@ -82,6 +82,13 @@ typedef struct voipsdpmap {
 
 typedef struct rtpstreaminf rtpstreaminf_t;
 
+#define ip_intercept_equal(a,b) \
+    ((strcmp(a->authcc, b->authcc) == 0) && \
+     (strcmp(a->delivcc, b->delivcc) == 0) && \
+     (strcmp(a->username, b->username) == 0) && \
+     (strcmp(a->targetagency, b->targetagency) == 0))
+
+
 #define voip_intercept_equal(a,b) \
     ((strcmp(a->authcc, b->authcc) == 0) && \
      (strcmp(a->delivcc, b->delivcc) == 0) && \
@@ -138,6 +145,7 @@ void free_all_voipintercepts(voipintercept_t *vintercepts);
 void free_all_rtpstreams(rtpstreaminf_t *streams);
 void free_single_voip_cin(rtpstreaminf_t *rtp);
 void free_single_ipintercept(ipintercept_t *cept);
+void free_single_voipintercept(voipintercept_t *v);
 
 #endif
 

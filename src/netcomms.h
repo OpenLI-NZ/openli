@@ -119,11 +119,11 @@ uint8_t *construct_netcomm_protocol_header(uint32_t contentlen,
 int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med);
 int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
         openli_mediator_t *med);
-int push_ipintercept_onto_net_buffer(net_buffer_t *nb, ipintercept_t *ipint);
+int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *ipint);
 int push_voipintercept_onto_net_buffer(net_buffer_t *nb,
-        voipintercept_t *vint);
-int push_voipintercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
-        voipintercept_t *vint);
+        void *vint);
+int push_intercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
+        void *cept, openli_proto_msgtype_t wdtype);
 int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
@@ -145,6 +145,8 @@ int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
 int decode_mediator_withdraw(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
+        ipintercept_t *ipint);
+int decode_ipintercept_halt(uint8_t *msgbody, uint16_t len,
         ipintercept_t *ipint);
 int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
         voipintercept_t *vint);
