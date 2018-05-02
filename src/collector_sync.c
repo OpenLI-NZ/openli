@@ -1068,22 +1068,10 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         }
         x->awaitingconfirm = 0;
         free(cept);
-        /* our collector threads should already know about this intercept?
-         */
+        /* our collector threads should already know about this intercept? */
         return 0;
     }
 
-    /* TODO try to find a CIN and IP address for this intercept, based on our
-     * known RADIUS (or equivalent) state.
-     *
-     * Only push the intercept to the processing threads once we've
-     * assigned a suitable CIN.
-     */
-    /*
-    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
-        push_single_intercept(sendq->q, cept);
-    }
-    */
     HASH_FIND(hh, sync->allusers, cept->username, cept->username_len, user);
 
     if (user) {

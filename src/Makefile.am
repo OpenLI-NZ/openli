@@ -7,7 +7,7 @@ openlicollector_SOURCES=collector.c configparser.c configparser.h collector.h \
                 util.c util.h intercept.c intercept.h netcomms.c netcomms.h \
                 byteswap.c byteswap.h etsili_core.c sipparsing.c sipparsing.h \
                 jenkinshash.c ipmmcc.c ipmmcc.h ipmmiri.c ipmmiri.h \
-                internetaccess.c internetaccess.h
+                internetaccess.c internetaccess.h ipcc.c ipcc.h
 
 openlicollector_LDADD = @ADD_LIBS@
 openlicollector_LDFLAGS=-lpthread

@@ -550,9 +550,9 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     if (ethertype == TRACE_ETHERTYPE_IP) {
         /* Is this an IP packet? -- if yes, possible IP CC */
-        //if (ipv4_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
-        //    forwarded = 1;
-        //}
+        if (ipv4_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
+            forwarded = 1;
+        }
         /* Is this an RTP packet? -- if yes, possible IPMM CC */
         if (ip4mm_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
             forwarded = 1;
