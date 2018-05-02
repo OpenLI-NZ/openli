@@ -272,6 +272,7 @@ ipsession_t *create_ipsession(ipintercept_t *ipint, access_session_t *session) {
         return NULL;
     }
 
+    ipsess->nextseqno = 0;
     ipsess->cin = session->cin;
     ipsess->ai_family = session->ipfamily;
     ipsess->targetip = (struct sockaddr_storage *)(malloc(

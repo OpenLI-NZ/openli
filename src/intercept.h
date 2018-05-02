@@ -151,6 +151,7 @@ struct ipsession {
     uint32_t cin;
     int ai_family;
     struct sockaddr_storage *targetip;
+    uint32_t nextseqno;
 
     intercept_common_t common;
     UT_hash_handle hh;
