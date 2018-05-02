@@ -43,6 +43,7 @@ typedef struct access_session {
     uint32_t cin;
     int ipfamily;
     struct sockaddr *assignedip;
+    uint32_t iriseqno;
 
     UT_hash_handle hh;
 } access_session_t;
