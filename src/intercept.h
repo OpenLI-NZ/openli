@@ -54,8 +54,13 @@ typedef struct ipintercept {
 
     uint8_t awaitingconfirm;
     UT_hash_handle hh_liid;
-    UT_hash_handle hh_user;
 } ipintercept_t;
+
+typedef struct userinterceptlist {
+    char *username;
+    ipintercept_t *intlist;
+    UT_hash_handle hh;
+} user_intercept_list_t;
 
 typedef struct sdpidentifier {
     uint32_t sessionid;
@@ -165,6 +170,12 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin);
 rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *rtp);
 
 ipsession_t *create_ipsession(ipintercept_t *ipint, access_session_t *session);
+
+void clear_user_intercept_list(user_intercept_list_t *ulist);
+int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
+        ipintercept_t *ipint);
+int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
+        ipintercept_t *ipint);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

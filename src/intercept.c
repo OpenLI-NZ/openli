@@ -24,7 +24,9 @@
  *
  */
 
+#include "logger.h"
 #include "intercept.h"
+
 static inline void copy_intercept_common(intercept_common_t *src,
         intercept_common_t *dest) {
 
@@ -311,4 +313,88 @@ void free_all_ipsessions(ipsession_t *sessions) {
         free_single_ipsession(s);
     }
 }
+
+int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
+        ipintercept_t *ipint) {
+
+    user_intercept_list_t *found;
+    ipintercept_t *check;
+
+    HASH_FIND(hh, *ulist, ipint->username, ipint->username_len, found);
+    if (!found) {
+        found = (user_intercept_list_t *)malloc(sizeof(user_intercept_list_t));
+        if (!found) {
+            logger(LOG_DAEMON,
+                    "OpenLI: out of memory in add_intercept_to_userlist()");
+            return -1;
+        }
+        found->username = strdup(ipint->username);
+        if (!found->username) {
+            free(found);
+            logger(LOG_DAEMON,
+                    "OpenLI: out of memory in add_intercept_to_userlist()");
+            return -1;
+        }
+        found->intlist = NULL;
+        HASH_ADD_KEYPTR(hh, *ulist, found->username, ipint->username_len,
+                found);
+    }
+
+    HASH_FIND(hh_liid, found->intlist, ipint->common.liid,
+            ipint->common.liid_len, check);
+    if (check) {
+        logger(LOG_DAEMON,
+                "OpenLI: user %s already has an intercept with ID %s?",
+                found->username, ipint->common.liid);
+        return -1;
+    }
+
+    HASH_ADD_KEYPTR(hh_liid, found->intlist, ipint->common.liid,
+            ipint->common.liid_len, ipint);
+    return 0;
+}
+
+int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
+        ipintercept_t *ipint) {
+
+    user_intercept_list_t *found;
+    ipintercept_t *existing;
+    HASH_FIND(hh, *ulist, ipint->username, ipint->username_len, found);
+
+    if (!found) {
+        return 0;
+    }
+
+    HASH_FIND(hh_liid, found->intlist, ipint->common.liid,
+            ipint->common.liid_len, existing);
+    if (!existing) {
+        return 0;
+    }
+
+    HASH_DELETE(hh_liid, found->intlist, existing);
+    /* Don't free existing -- the caller should do that instead */
+
+    /* If there are no intercepts left associated with this user, we can
+     * remove them from the user list */
+    if (HASH_CNT(hh_liid, found->intlist) == 0) {
+        HASH_DELETE(hh, *ulist, found);
+        free(found->username);
+        free(found);
+    }
+    return 0;
+}
+
+void clear_user_intercept_list(user_intercept_list_t *ulist) {
+    user_intercept_list_t *u, *tmp;
+
+    HASH_ITER(hh, ulist, u, tmp) {
+        /* Again, don't free the ipintercepts in the list -- someone else
+         * should have that covered. */
+        HASH_CLEAR(hh_liid, u->intlist);
+        HASH_DELETE(hh, ulist, u);
+        free(u->username);
+        free(u);
+    }
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

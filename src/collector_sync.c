@@ -54,7 +54,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->glob = glob;
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
-    sync->ipintercepts_by_userid = NULL;
+    sync->userintercepts = NULL;
     sync->voipintercepts = NULL;
     sync->instruct_fd = -1;
     sync->instruct_fail = 0;
@@ -81,7 +81,7 @@ void clean_sync_data(collector_sync_t *sync) {
 	}
 
     free_all_users(sync->allusers);
-    HASH_CLEAR(hh_user, sync->ipintercepts_by_userid);
+    clear_user_intercept_list(sync->userintercepts);
     free_all_ipintercepts(sync->ipintercepts);
     if (sync->voipintercepts) {
         free_all_voipintercepts(sync->voipintercepts);
@@ -111,7 +111,7 @@ void clean_sync_data(collector_sync_t *sync) {
 
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
-    sync->ipintercepts_by_userid = NULL;
+    sync->userintercepts = NULL;
     sync->voipintercepts = NULL;
     sync->outgoing = NULL;
     sync->incoming = NULL;
@@ -319,7 +319,8 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
              * the IPs associated with this target. */
             push_ipintercept_halt_to_threads(sync, ipint);
             HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
-            HASH_DELETE(hh_user, sync->ipintercepts_by_userid, ipint);
+            remove_intercept_from_user_intercept_list(&sync->userintercepts,
+                    ipint);
             free_single_ipintercept(ipint);
         }
     }
@@ -906,7 +907,7 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     push_ipintercept_halt_to_threads(sync, ipint);
     HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
-    HASH_DELETE(hh_user, sync->ipintercepts_by_userid, ipint);
+    remove_intercept_from_user_intercept_list(&sync->userintercepts, ipint);
     free_single_ipintercept(ipint);
     return 0;
 }
@@ -1094,8 +1095,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
             cept->common.liid_len, cept);
-    HASH_ADD_KEYPTR(hh_user, sync->ipintercepts_by_userid, cept->username,
-            strlen(cept->username), cept);
+    add_intercept_to_user_intercept_list(&sync->userintercepts, cept);
 
     logger(LOG_DAEMON,
             "OpenLI: received IP intercept from provisioner for user %s (LIID %s, authCC %s)",
