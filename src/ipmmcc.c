@@ -113,12 +113,12 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
     srcport = trace_get_source_port(pkt);
     dstport = trace_get_destination_port(pkt);
 
-    if (srcport == 0 || dstport == 0) {
-        logger(LOG_DAEMON, "OpenLI: IPv4 RTP packet is missing a port number.");
+    if (ip->ip_p != TRACE_IPPROTO_UDP) {
         return 0;
     }
 
-    if (ip->ip_p != TRACE_IPPROTO_UDP) {
+    if (srcport == 0 || dstport == 0) {
+        logger(LOG_DAEMON, "OpenLI: IPv4 RTP packet is missing a port number.");
         return 0;
     }
 
