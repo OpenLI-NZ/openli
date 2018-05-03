@@ -419,6 +419,108 @@ static int remove_ipv6_intercept(colthread_local_t *loc, ipsession_t *torem) {
     return 1;
 }
 
+static void process_incoming_messages(libtrace_thread_t *t,
+        collector_global_t *glob, colthread_local_t *loc,
+        openli_pushed_t *syncpush) {
+
+    if (syncpush->type == OPENLI_PUSH_IPINTERCEPT) {
+        if (syncpush->data.ipsess->ai_family == AF_INET) {
+            if (add_ipv4_intercept(loc, syncpush->data.ipsess) != 0) {
+                free_single_ipsession(syncpush->data.ipsess);
+            }
+        } else if (syncpush->data.ipsess->ai_family == AF_INET6) {
+            if (add_ipv6_intercept(loc, syncpush->data.ipsess) != 0) {
+                free_single_ipsession(syncpush->data.ipsess);
+            }
+        } else {
+            logger(LOG_DAEMON,
+                    "OpenLI: invalid address family for new IP intercept: %d",
+                    syncpush->data.ipsess->ai_family);
+            free_single_ipsession(syncpush->data.ipsess);
+        }
+    }
+
+    if (syncpush->type == OPENLI_PUSH_HALT_IPINTERCEPT) {
+        if (syncpush->data.ipsess->ai_family == AF_INET) {
+            if (remove_ipv4_intercept(loc, syncpush->data.ipsess) > 0) {
+                logger(LOG_DAEMON, "OpenLI: collector thread %d has stopped intercepting IP session %s",
+                        trace_get_perpkt_thread_id(t),
+                        syncpush->data.ipsess->streamkey);
+            }
+        } else if (syncpush->data.ipsess->ai_family == AF_INET6) {
+            if (remove_ipv6_intercept(loc, syncpush->data.ipsess) > 0) {
+                logger(LOG_DAEMON, "OpenLI: collector thread %d has stopped intercepting IP session %s",
+                        trace_get_perpkt_thread_id(t),
+                        syncpush->data.ipsess->streamkey);
+            }
+        } else {
+            logger(LOG_DAEMON,
+                    "OpenLI: invalid address family for removing IP intercept: %d",
+                    syncpush->data.ipsess->ai_family);
+        }
+        free_single_ipsession(syncpush->data.ipsess);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_IPMMINTERCEPT) {
+        HASH_ADD_KEYPTR(hh, loc->activertpintercepts,
+                syncpush->data.ipmmint->streamkey,
+                strlen(syncpush->data.ipmmint->streamkey),
+                syncpush->data.ipmmint);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_HALT_IPMMINTERCEPT) {
+        if (remove_rtp_stream(loc, syncpush->data.rtpstreamkey) != 0) {
+            logger(LOG_DAEMON, "OpenLI: collector thread %d has stopped intercepting RTP stream %s",
+                    trace_get_perpkt_thread_id(t),
+                    syncpush->data.rtpstreamkey);
+        }
+        free(syncpush->data.rtpstreamkey);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_SIPURI) {
+        sipuri_hash_t *newsip;
+        HASH_FIND_STR(loc->sip_targets, syncpush->data.sipuri, newsip);
+
+        if (newsip) {
+            newsip->references ++;
+            free(syncpush->data.sipuri);
+        } else {
+            newsip = (sipuri_hash_t *)malloc(
+                    sizeof(sipuri_hash_t));
+            newsip->uri = syncpush->data.sipuri;
+            newsip->references = 1;
+            HASH_ADD_KEYPTR(hh, loc->sip_targets, newsip->uri,
+                    strlen(newsip->uri), newsip);
+            logger(LOG_DAEMON, "OpenLI: collector thread %d has added %s to list of SIP URIs.",
+                    trace_get_perpkt_thread_id(t),
+                    syncpush->data.sipuri);
+        }
+    }
+
+    if (syncpush->type == OPENLI_PUSH_HALT_SIPURI) {
+        sipuri_hash_t *torem;
+        HASH_FIND_STR(loc->sip_targets, syncpush->data.sipuri, torem);
+        if (torem == NULL) {
+            logger(LOG_DAEMON, "OpenLI: asked to halt SIP intercept for target %s, but that is not in our set of known URIs", syncpush->data.sipuri);
+            return;
+        } else {
+            torem->references --;
+        }
+        assert(torem->references >= 0);
+
+        if (torem->references == 0) {
+            logger(LOG_DAEMON, "OpenLI: collector thread %d has removed %s from list of SIP URIs.",
+                    trace_get_perpkt_thread_id(t),
+                    syncpush->data.sipuri);
+            HASH_DEL(loc->sip_targets, torem);
+            free(torem->uri);
+            free(torem);
+        }
+        free(syncpush->data.sipuri);
+    }
+
+}
+
 static libtrace_packet_t *process_packet(libtrace_t *trace,
         libtrace_thread_t *t, void *global, void *tls,
         libtrace_packet_t *pkt) {
@@ -436,101 +538,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     while (libtrace_message_queue_try_get(&(loc->fromsyncq),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
-        if (syncpush.type == OPENLI_PUSH_IPINTERCEPT) {
-            if (syncpush.data.ipsess->ai_family == AF_INET) {
-                if (add_ipv4_intercept(loc, syncpush.data.ipsess) != 0) {
-                    free_single_ipsession(syncpush.data.ipsess);
-                }
-            } else if (syncpush.data.ipsess->ai_family == AF_INET6) {
-                if (add_ipv6_intercept(loc, syncpush.data.ipsess) != 0) {
-                    free_single_ipsession(syncpush.data.ipsess);
-                }
-            } else {
-                logger(LOG_DAEMON,
-                        "OpenLI: invalid address family for new IP intercept: %d",
-                        syncpush.data.ipsess->ai_family);
-                free_single_ipsession(syncpush.data.ipsess);
-            }
-        }
-
-        if (syncpush.type == OPENLI_PUSH_HALT_IPINTERCEPT) {
-            if (syncpush.data.ipsess->ai_family == AF_INET) {
-                if (remove_ipv4_intercept(loc, syncpush.data.ipsess) > 0) {
-                    logger(LOG_DAEMON, "OpenLI: collector thread %d has stopped intercepting IP session %s",
-                            trace_get_perpkt_thread_id(t),
-                            syncpush.data.ipsess->streamkey);
-                }
-            } else if (syncpush.data.ipsess->ai_family == AF_INET6) {
-                if (remove_ipv6_intercept(loc, syncpush.data.ipsess) > 0) {
-                    logger(LOG_DAEMON, "OpenLI: collector thread %d has stopped intercepting IP session %s",
-                            trace_get_perpkt_thread_id(t),
-                            syncpush.data.ipsess->streamkey);
-                }
-            } else {
-                logger(LOG_DAEMON,
-                        "OpenLI: invalid address family for removing IP intercept: %d",
-                        syncpush.data.ipsess->ai_family);
-            }
-            free_single_ipsession(syncpush.data.ipsess);
-        }
-
-        if (syncpush.type == OPENLI_PUSH_IPMMINTERCEPT) {
-            HASH_ADD_KEYPTR(hh, loc->activertpintercepts,
-                    syncpush.data.ipmmint->streamkey,
-                    strlen(syncpush.data.ipmmint->streamkey),
-                    syncpush.data.ipmmint);
-        }
-
-        if (syncpush.type == OPENLI_PUSH_HALT_IPMMINTERCEPT) {
-            if (remove_rtp_stream(loc, syncpush.data.rtpstreamkey) != 0) {
-                logger(LOG_DAEMON, "OpenLI: collector thread %d has stopped intercepting RTP stream %s",
-                        trace_get_perpkt_thread_id(t),
-                        syncpush.data.rtpstreamkey);
-            }
-            free(syncpush.data.rtpstreamkey);
-        }
-
-        if (syncpush.type == OPENLI_PUSH_SIPURI) {
-            sipuri_hash_t *newsip;
-            HASH_FIND_STR(loc->sip_targets, syncpush.data.sipuri, newsip);
-
-            if (newsip) {
-                newsip->references ++;
-                free(syncpush.data.sipuri);
-            } else {
-                newsip = (sipuri_hash_t *)malloc(
-                        sizeof(sipuri_hash_t));
-                newsip->uri = syncpush.data.sipuri;
-                newsip->references = 1;
-                HASH_ADD_KEYPTR(hh, loc->sip_targets, newsip->uri,
-                        strlen(newsip->uri), newsip);
-                logger(LOG_DAEMON, "OpenLI: collector thread %d has added %s to list of SIP URIs.",
-                        trace_get_perpkt_thread_id(t),
-                        syncpush.data.sipuri);
-            }
-        }
-
-        if (syncpush.type == OPENLI_PUSH_HALT_SIPURI) {
-            sipuri_hash_t *torem;
-            HASH_FIND_STR(loc->sip_targets, syncpush.data.sipuri, torem);
-            if (torem == NULL) {
-                logger(LOG_DAEMON, "OpenLI: asked to halt SIP intercept for target %s, but that is not in our set of known URIs", syncpush.data.sipuri);
-                continue;
-            } else {
-                torem->references --;
-            }
-            assert(torem->references >= 0);
-
-            if (torem->references == 0) {
-                logger(LOG_DAEMON, "OpenLI: collector thread %d has removed %s from list of SIP URIs.",
-                        trace_get_perpkt_thread_id(t),
-                        syncpush.data.sipuri);
-                HASH_DEL(loc->sip_targets, torem);
-                free(torem->uri);
-                free(torem);
-            }
-            free(syncpush.data.sipuri);
-        }
+        process_incoming_messages(t, glob, loc, &syncpush);
     }
 
     l3 = trace_get_layer3(pkt, &ethertype, &rem);
