@@ -341,7 +341,7 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
                 found);
     }
 
-    HASH_FIND(hh_liid, found->intlist, ipint->common.liid,
+    HASH_FIND(hh_user, found->intlist, ipint->common.liid,
             ipint->common.liid_len, check);
     if (check) {
         logger(LOG_DAEMON,
@@ -350,7 +350,7 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
         return -1;
     }
 
-    HASH_ADD_KEYPTR(hh_liid, found->intlist, ipint->common.liid,
+    HASH_ADD_KEYPTR(hh_user, found->intlist, ipint->common.liid,
             ipint->common.liid_len, ipint);
     return 0;
 }
@@ -366,18 +366,18 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
         return 0;
     }
 
-    HASH_FIND(hh_liid, found->intlist, ipint->common.liid,
+    HASH_FIND(hh_user, found->intlist, ipint->common.liid,
             ipint->common.liid_len, existing);
     if (!existing) {
         return 0;
     }
 
-    HASH_DELETE(hh_liid, found->intlist, existing);
+    HASH_DELETE(hh_user, found->intlist, existing);
     /* Don't free existing -- the caller should do that instead */
 
     /* If there are no intercepts left associated with this user, we can
      * remove them from the user list */
-    if (HASH_CNT(hh_liid, found->intlist) == 0) {
+    if (HASH_CNT(hh_user, found->intlist) == 0) {
         HASH_DELETE(hh, *ulist, found);
         free(found->username);
         free(found);
@@ -387,11 +387,15 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
 
 void clear_user_intercept_list(user_intercept_list_t *ulist) {
     user_intercept_list_t *u, *tmp;
+    ipintercept_t *ipint, *tmp2;
+
 
     HASH_ITER(hh, ulist, u, tmp) {
         /* Again, don't free the ipintercepts in the list -- someone else
          * should have that covered. */
-        HASH_CLEAR(hh_liid, u->intlist);
+        HASH_ITER(hh_user, u->intlist, ipint, tmp2) {
+            HASH_DELETE(hh_user, u->intlist, ipint);
+        }
         HASH_DELETE(hh, ulist, u);
         free(u->username);
         free(u);

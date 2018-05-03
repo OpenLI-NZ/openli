@@ -54,6 +54,7 @@ typedef struct ipintercept {
 
     uint8_t awaitingconfirm;
     UT_hash_handle hh_liid;
+    UT_hash_handle hh_user;
 } ipintercept_t;
 
 typedef struct userinterceptlist {
