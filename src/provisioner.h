@@ -83,6 +83,7 @@ typedef struct prov_state {
     int epoll_fd;
     libtrace_list_t *mediators;
     libtrace_list_t *collectors;
+    coreserver_t *radiusservers;
 
     voipintercept_t *voipintercepts;
     ipintercept_t *ipintercepts;

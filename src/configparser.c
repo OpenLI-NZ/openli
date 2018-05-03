@@ -39,6 +39,7 @@
 #include "provisioner.h"
 #include "mediator.h"
 #include "agency.h"
+#include "coreserver.h"
 
 uint64_t nextid = 0;
 
@@ -184,6 +185,62 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
     glob->registered_syncqs = 0;
     */
 
+    return 0;
+}
+
+static int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
+        yaml_document_t *doc, yaml_node_t *inputs) {
+
+    yaml_node_item_t *item;
+
+    for (item = inputs->data.sequence.items.start;
+            item != inputs->data.sequence.items.top; item ++) {
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+        yaml_node_pair_t *pair;
+        coreserver_t *cs;
+        char keyspace[256];
+
+        cs = (coreserver_t *)calloc(1, sizeof(coreserver_t));
+
+        cs->serverkey = NULL;
+        cs->info = NULL;
+        cs->ipstr = NULL;
+        cs->portstr = NULL;
+        cs->servertype = cstype;
+        cs->awaitingconfirm = 1;
+
+        for (pair = node->data.mapping.pairs.start;
+                pair < node->data.mapping.pairs.top; pair ++) {
+            yaml_node_t *key, *value;
+
+            key = yaml_document_get_node(doc, pair->key);
+            value = yaml_document_get_node(doc, pair->value);
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "ip") == 0 &&
+                    cs->ipstr == NULL) {
+                cs->ipstr = strdup((char *)value->data.scalar.value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "port") == 0 &&
+                    cs->portstr == NULL) {
+                cs->portstr = strdup((char *)value->data.scalar.value);
+            }
+        }
+
+        if (construct_coreserver_key(cs) != NULL) {
+            HASH_ADD_KEYPTR(hh, *servlist, cs->serverkey,
+                    strlen(cs->serverkey), cs);
+        } else {
+            logger(LOG_DAEMON,
+                    "OpenLI: %s server configuration was incomplete -- skipping.",
+                    coreserver_type_to_string(cstype));
+            free_single_coreserver(cs);
+        }
+    }
     return 0;
 }
 
@@ -754,6 +811,15 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SEQUENCE_NODE &&
             strcmp((char *)key->data.scalar.value, "agencies") == 0) {
         if (parse_agency_list(state, doc, value) == -1) {
+            return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value, "radiusservers") == 0) {
+        if (parse_core_server_list(&state->radiusservers,
+                OPENLI_CORE_SERVER_RADIUS, doc, value) == -1) {
             return -1;
         }
     }

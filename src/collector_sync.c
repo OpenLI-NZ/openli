@@ -56,6 +56,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->ipintercepts = NULL;
     sync->userintercepts = NULL;
     sync->voipintercepts = NULL;
+    sync->coreservers = NULL;
     sync->instruct_fd = -1;
     sync->instruct_fail = 0;
     sync->ii_ev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
@@ -120,6 +121,19 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->ii_ev = NULL;
 }
 
+static inline void push_coreserver_msg(collector_sync_t *sync,
+        coreserver_t *cs, uint8_t msgtype) {
+
+    sync_sendq_t *sendq, *tmp;
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
+        openli_pushed_t msg;
+
+        msg.type = msgtype;
+        msg.data.coreserver = deep_copy_coreserver(cs);
+        libtrace_message_queue_put(sendq->q, (void *)(&msg));
+    }
+}
+
 static inline void push_single_ipintercept(libtrace_message_queue_t *q,
         ipintercept_t *ipint, access_session_t *session) {
 
@@ -161,6 +175,19 @@ static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
     msg.data.ipmmint = copy;
 
     libtrace_message_queue_put(q, (void *)(&msg));
+}
+
+static void push_all_coreservers(coreserver_t *servers,
+        libtrace_message_queue_t *q) {
+
+    coreserver_t *cs, *tmp;
+    HASH_ITER(hh, servers, cs, tmp) {
+        openli_pushed_t msg;
+
+        msg.type = OPENLI_PUSH_CORESERVER;
+        msg.data.coreserver = deep_copy_coreserver(cs);
+        libtrace_message_queue_put(q, (void *)(&msg));
+    }
 }
 
 static int send_to_provisioner(collector_sync_t *sync) {
@@ -306,9 +333,9 @@ static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
 }
 
 static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
-    voipintercept_t *v;
+    voipintercept_t *v, *tmp2;
+    coreserver_t *cs, *tmp3;
     ipintercept_t *ipint, *tmp;
-    access_session_t *sess, *tmp2;
     internet_user_t *user;
 
     HASH_ITER(hh_liid, sync->ipintercepts, ipint, tmp) {
@@ -325,7 +352,7 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
         }
     }
 
-    for (v = sync->voipintercepts; v != NULL; v = v->hh_liid.next) {
+    HASH_ITER(hh_liid, sync->voipintercepts, v, tmp2) {
         if (v->awaitingconfirm && v->active) {
             v->active = 0;
 
@@ -336,6 +363,15 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
             push_voipintercept_halt_to_threads(sync, v);
             HASH_DELETE(hh_liid, sync->voipintercepts, v);
             free_single_voipintercept(v);
+        }
+    }
+
+    /* Also remove any unconfirmed core servers */
+    HASH_ITER(hh, sync->coreservers, cs, tmp3) {
+        if (cs->awaitingconfirm) {
+            push_coreserver_msg(sync, cs, OPENLI_PUSH_REMOVE_CORESERVER);
+            HASH_DELETE(hh, sync->coreservers, cs);
+            free_single_coreserver(cs);
         }
     }
 }
@@ -408,6 +444,58 @@ static void push_sip_uri(libtrace_message_queue_t *q, char *uri) {
     libtrace_message_queue_put(q, (void *)(&msg));
 }
 
+static int forward_new_coreserver(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+    coreserver_t *cs, *found;
+
+    cs = (coreserver_t *)calloc(1, sizeof(coreserver_t));
+
+    if (decode_coreserver_announcement(provmsg, msglen, cs) == -1) {
+        logger(LOG_DAEMON, "OpenLI: received invalid core server announcement from provisioner.");
+        free_single_coreserver(cs);
+        return -1;
+    }
+
+    HASH_FIND(hh, sync->coreservers, cs->serverkey, strlen(cs->serverkey),
+            found);
+    if (found) {
+        /* Already in the core server list? */
+        found->awaitingconfirm = 0;
+        free_single_coreserver(cs);
+    } else {
+        /* New core server, pass on to all collector threads */
+        HASH_ADD_KEYPTR(hh, sync->coreservers, cs->serverkey,
+                strlen(cs->serverkey), cs);
+        push_coreserver_msg(sync, cs, OPENLI_PUSH_CORESERVER);
+    }
+    return 0;
+}
+
+static int forward_remove_coreserver(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+
+    coreserver_t *cs, *found;
+
+    cs = (coreserver_t *)calloc(1, sizeof(coreserver_t));
+    if (decode_coreserver_withdraw(provmsg, msglen, cs) == -1) {
+        logger(LOG_DAEMON, "OpenLI: received invalid core server withdrawal from provisioner.");
+        free_single_coreserver(cs);
+        return -1;
+    }
+
+    HASH_FIND(hh, sync->coreservers, cs->serverkey, strlen(cs->serverkey),
+            found);
+    if (!found) {
+        logger(LOG_DAEMON, "OpenLI sync: asked to remove %s server %s, but we don't have any record of it?",
+                coreserver_type_to_string(cs->servertype), cs->serverkey);
+    } else {
+        push_coreserver_msg(sync, cs, OPENLI_PUSH_REMOVE_CORESERVER);
+        HASH_DELETE(hh, sync->coreservers, found);
+        free_single_coreserver(found);
+    }
+    free_single_coreserver(cs);
+    return 0;
+}
 
 static void push_all_active_voipstreams(libtrace_message_queue_t *q,
         voipintercept_t *vint) {
@@ -1149,6 +1237,18 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                     return -1;
                 }
                 break;
+            case OPENLI_PROTO_ANNOUNCE_CORESERVER:
+                ret = forward_new_coreserver(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_WITHDRAW_CORESERVER:
+                ret = forward_remove_coreserver(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
             case OPENLI_PROTO_NOMORE_INTERCEPTS:
                 disable_unconfirmed_intercepts(sync);
                 break;
@@ -1211,6 +1311,14 @@ int sync_connect_provisioner(collector_sync_t *sync) {
 
 }
 
+static inline void touch_all_coreservers(coreserver_t *servers) {
+    coreserver_t *cs, *tmp;
+
+    HASH_ITER(hh, servers, cs, tmp) {
+        cs->awaitingconfirm = 1;
+    }
+}
+
 static inline void touch_all_intercepts(ipintercept_t *intlist) {
     ipintercept_t *ipint, *tmp;
 
@@ -1258,6 +1366,8 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
      */
     touch_all_intercepts(sync->ipintercepts);
     touch_all_voipintercepts(sync->voipintercepts);
+
+    touch_all_coreservers(sync->coreservers);
 
     /* Same with mediators -- keep exporting to them, but flag them to be
      * disconnected if they are not announced after we reconnect. */
@@ -1376,6 +1486,7 @@ int sync_thread_main(collector_sync_t *sync) {
                 push_sip_uri(recvd.data.replyq, v->sipuri);
                 push_all_active_voipstreams(recvd.data.replyq, v);
             }
+            push_all_coreservers(sync->coreservers, recvd.data.replyq);
         }
 
 

@@ -48,7 +48,7 @@
 #include "agency.h"
 #include "netcomms.h"
 #include "mediator.h"
-
+#include "coreserver.h"
 
 volatile int provisioner_halt = 0;
 volatile int reload_config = 0;
@@ -198,6 +198,7 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->epoll_fd = epoll_create1(0);
     state->mediators = libtrace_list_init(sizeof(prov_mediator_t));
     state->collectors = libtrace_list_init(sizeof(prov_collector_t));
+    state->radiusservers = NULL;
     state->voipintercepts = NULL;
     state->ipintercepts = NULL;
 
@@ -460,6 +461,7 @@ static void clear_prov_state(provision_state_t *state) {
     free_all_voipintercepts(state->voipintercepts);
     stop_all_collectors(state->collectors);
     free_all_mediators(state->mediators);
+    free_coreserver_list(state->radiusservers);
 
     close(state->epoll_fd);
 
@@ -505,6 +507,21 @@ static void clear_prov_state(provision_state_t *state) {
         free(state->mediateport);
     }
 
+}
+
+static int push_coreservers(coreserver_t *servers, uint8_t cstype,
+        net_buffer_t *nb) {
+    coreserver_t *cs, *tmp;
+
+    HASH_ITER(hh, servers, cs, tmp) {
+        if (push_coreserver_onto_net_buffer(nb, cs, cstype) < 0) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: error pushing %s server %s onto buffer for writing to collector.",
+                    coreserver_type_to_string(cstype), cs->ipstr);
+            return -1;
+        }
+    }
+    return 0;
 }
 
 static int push_all_mediators(libtrace_list_t *mediators, net_buffer_t *nb) {
@@ -574,6 +591,7 @@ static int respond_collector_auth(provision_state_t *state,
      */
 
     if (libtrace_list_get_size(state->mediators) +
+            HASH_CNT(hh, state->radiusservers) +
             HASH_CNT(hh_liid, state->ipintercepts) +
             HASH_CNT(hh_liid, state->voipintercepts) == 0) {
         return 0;
@@ -583,6 +601,13 @@ static int respond_collector_auth(provision_state_t *state,
         logger(LOG_DAEMON,
                 "OpenLI: unable to queue mediators to be sent to new collector on fd %d",
                 pev->fd);
+        return -1;
+    }
+
+    if (push_coreservers(state->radiusservers, OPENLI_CORE_SERVER_RADIUS,
+            outgoing) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: unable to queue RADIUS server details to be sent to new collector on fd %d", pev->fd);
         return -1;
     }
 
@@ -1633,6 +1658,54 @@ static int announce_liidmapping_to_mediators(provision_state_t *state,
     return 0;
 }
 
+static int announce_coreserver_change(provision_state_t *state,
+        coreserver_t *cs, uint8_t isnew) {
+    libtrace_list_node_t *n;
+    prov_collector_t *col;
+    prov_sock_state_t *sock;
+
+    n = state->collectors->head;
+    while (n) {
+        col = (prov_collector_t *)(n->data);
+        n = n->next;
+
+        sock = (prov_sock_state_t *)(col->commev->state);
+        if (!sock->trusted || sock->halted) {
+            continue;
+        }
+
+        if (isnew) {
+            if (push_coreserver_onto_net_buffer(sock->outgoing, cs,
+                        cs->servertype) == -1) {
+                logger(LOG_DAEMON,
+                        "OpenLI: Unable to push new %s server to collector on fd %d",
+                        coreserver_type_to_string(cs->servertype),
+                        sock->mainfd);
+                drop_collector(state, col->commev);
+                continue;
+            }
+        } else {
+            if (push_coreserver_withdraw_onto_net_buffer(sock->outgoing,
+                        cs, cs->servertype) == -1) {
+                logger(LOG_DAEMON,
+                        "OpenLI: Unable to push removal of %s server to collector on fd %d",
+                        coreserver_type_to_string(cs->servertype),
+                        sock->mainfd);
+                drop_collector(state, col->commev);
+                continue;
+            }
+        }
+
+        if (enable_epoll_write(state, col->commev) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
+                    sock->mainfd, strerror(errno));
+            drop_collector(state, col->commev);
+        }
+    }
+    return 0;
+}
+
 static int announce_single_intercept(provision_state_t *state,
         void *cept, int (*sendfunc)(net_buffer_t *, void *)) {
 
@@ -1740,6 +1813,49 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
     currstate->voipintercepts = newints;
     return 0;
 }
+
+static inline void reload_coreservers(provision_state_t *state,
+        coreserver_t *currserv, coreserver_t *newserv, int droppedcols) {
+
+    coreserver_t *cs, *tmp, *newequiv;
+    HASH_ITER(hh, currserv, cs, tmp) {
+        HASH_FIND(hh, newserv, cs->serverkey, strlen(cs->serverkey), newequiv);
+        if (!newequiv) {
+            /* Core server has been withdrawn */
+            if (!droppedcols) {
+                announce_coreserver_change(state, cs, false);
+            }
+        } else {
+            newequiv->awaitingconfirm = 0;
+        }
+    }
+
+    HASH_ITER(hh, newserv, cs, tmp) {
+        if (!cs->awaitingconfirm) {
+            continue;
+        }
+
+        /* Announce this server as it has just been added */
+        if (!droppedcols) {
+            announce_coreserver_change(state, cs, true);
+        }
+    }
+}
+
+static inline int reload_radiusservers(provision_state_t *currstate,
+        provision_state_t *newstate, int droppedcols) {
+
+    coreserver_t *newrad;
+
+    reload_coreservers(currstate, currstate->radiusservers,
+            newstate->radiusservers, droppedcols);
+
+    newrad = newstate->radiusservers;
+    newstate->radiusservers = currstate->radiusservers;
+    currstate->radiusservers = newrad;
+    return 0;
+}
+
 
 static inline int reload_ipintercepts(provision_state_t *currstate,
         provision_state_t *newstate, int droppedcols, int droppedmeds) {
@@ -1863,6 +1979,10 @@ static int reload_provisioner_config(provision_state_t *currstate) {
 
     if (reload_ipintercepts(currstate, &newstate, clientchanged,
             mediatorchanged) == -1) {
+        return -1;
+    }
+
+    if (reload_radiusservers(currstate, &newstate, clientchanged) == -1) {
         return -1;
     }
 

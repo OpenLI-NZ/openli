@@ -42,6 +42,7 @@
 
 #include "intercept.h"
 #include "agency.h"
+#include "coreserver.h"
 
 typedef struct ii_header {
     uint32_t magic;
@@ -81,6 +82,8 @@ typedef enum {
     OPENLI_PROTO_NOMORE_INTERCEPTS,
     OPENLI_PROTO_ETSI_CC,
     OPENLI_PROTO_ETSI_IRI,
+    OPENLI_PROTO_ANNOUNCE_CORESERVER,
+    OPENLI_PROTO_WITHDRAW_CORESERVER,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -107,6 +110,9 @@ typedef enum {
     OPENLI_PROTO_FIELD_HI2PORT,
     OPENLI_PROTO_FIELD_HI3IP,
     OPENLI_PROTO_FIELD_HI3PORT,
+    OPENLI_PROTO_FIELD_CORESERVER_TYPE,
+    OPENLI_PROTO_FIELD_CORESERVER_IP,
+    OPENLI_PROTO_FIELD_CORESERVER_PORT,
 } openli_proto_fieldtype_t;
 
 
@@ -135,6 +141,10 @@ int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
 int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
         int liid_len);
 int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb);
+int push_coreserver_onto_net_buffer(net_buffer_t *nb, coreserver_t *cs,
+        uint8_t cstype);
+int push_coreserver_withdraw_onto_net_buffer(net_buffer_t *nb, coreserver_t *cs,
+        uint8_t cstype);
 int push_nomore_intercepts(net_buffer_t *nb);
 int transmit_net_buffer(net_buffer_t *nb);
 
@@ -157,6 +167,10 @@ int decode_lea_withdrawal(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
         char **liid);
 int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid);
+int decode_coreserver_announcement(uint8_t *msgbody, uint16_t len,
+        coreserver_t *cs);
+int decode_coreserver_withdraw(uint8_t *msgbody, uint16_t len,
+        coreserver_t *cs);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

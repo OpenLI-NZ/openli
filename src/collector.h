@@ -35,6 +35,7 @@
 #include <uthash.h>
 #include <libwandder.h>
 
+#include "coreserver.h"
 #include "sipparsing.h"
 #include "intercept.h"
 
@@ -45,6 +46,8 @@ enum {
     OPENLI_PUSH_HALT_IPMMINTERCEPT = 4,
     OPENLI_PUSH_SIPURI = 5,
     OPENLI_PUSH_HALT_SIPURI = 6,
+    OPENLI_PUSH_CORESERVER = 7,
+    OPENLI_PUSH_REMOVE_CORESERVER = 8,
 };
 
 enum {
@@ -72,6 +75,7 @@ typedef struct openli_ii_msg {
         rtpstreaminf_t *ipmmint;
         char *sipuri;
         char *rtpstreamkey;
+        coreserver_t *coreserver;
     } data;
 
 } PACKED openli_pushed_t;
@@ -126,6 +130,11 @@ typedef struct colthread_local {
 
     /* Message queue for exporting LI records */
     libtrace_message_queue_t exportq;
+
+    /* Known RADIUS servers, i.e. if we see traffic to or from these
+     * servers, we assume it is RADIUS.
+     */
+    coreserver_t *radiusservers;
 
     wandder_encoder_t *encoder;
     openli_sip_parser_t *sipparser;

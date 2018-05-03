@@ -135,6 +135,7 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->activeipv6intercepts = NULL;
     loc->activertpintercepts = NULL;
     loc->sip_targets = NULL;
+    loc->radiusservers = NULL;
 
     register_sync_queues(glob, &(loc->tosyncq), &(loc->fromsyncq), t);
     register_export_queue(glob, &(loc->exportq));
@@ -178,6 +179,8 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     }
 
     free_all_rtpstreams(loc->activertpintercepts);
+
+    free_coreserver_list(loc->radiusservers);
 
     if (loc->sip_targets) {
         sipuri_hash_t *sip, *tmp;
@@ -423,6 +426,9 @@ static void process_incoming_messages(libtrace_thread_t *t,
         collector_global_t *glob, colthread_local_t *loc,
         openli_pushed_t *syncpush) {
 
+    coreserver_t *found;
+    coreserver_t **servlist;
+
     if (syncpush->type == OPENLI_PUSH_IPINTERCEPT) {
         if (syncpush->data.ipsess->ai_family == AF_INET) {
             if (add_ipv4_intercept(loc, syncpush->data.ipsess) != 0) {
@@ -517,6 +523,60 @@ static void process_incoming_messages(libtrace_thread_t *t,
             free(torem);
         }
         free(syncpush->data.sipuri);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_CORESERVER) {
+        switch(syncpush->data.coreserver->servertype) {
+            case OPENLI_CORE_SERVER_RADIUS:
+                servlist = &(loc->radiusservers);
+                break;
+            default:
+                logger(LOG_DAEMON,
+                        "OpenLI: unexpected core server type received by collector thread %d: %d",
+                        syncpush->data.coreserver->servertype,
+                        trace_get_perpkt_thread_id(t));
+                return;
+        }
+        HASH_FIND(hh, *servlist, syncpush->data.coreserver->serverkey,
+                strlen(syncpush->data.coreserver->serverkey), found);
+        if (!found) {
+            HASH_ADD_KEYPTR(hh, *servlist, syncpush->data.coreserver->serverkey,
+                    strlen(syncpush->data.coreserver->serverkey),
+                    syncpush->data.coreserver);
+            logger(LOG_DAEMON, "OpenLI: collector thread %d has added %s to its %s core server list.",
+                    trace_get_perpkt_thread_id(t),
+                    syncpush->data.coreserver->serverkey,
+                    coreserver_type_to_string(
+                            syncpush->data.coreserver->servertype));
+        } else {
+            free_single_coreserver(syncpush->data.coreserver);
+        }
+    }
+
+    if (syncpush->type == OPENLI_PUSH_REMOVE_CORESERVER) {
+        switch(syncpush->data.coreserver->servertype) {
+            case OPENLI_CORE_SERVER_RADIUS:
+                servlist = &(loc->radiusservers);
+                break;
+            default:
+                logger(LOG_DAEMON,
+                        "OpenLI: unexpected core server type received by collector thread %d: %d",
+                        syncpush->data.coreserver->servertype,
+                        trace_get_perpkt_thread_id(t));
+                return;
+        }
+        HASH_FIND(hh, *servlist, syncpush->data.coreserver->serverkey,
+                strlen(syncpush->data.coreserver->serverkey), found);
+        if (found) {
+            HASH_DELETE(hh, *servlist, found);
+            logger(LOG_DAEMON, "OpenLI: collector thread %d has removed %s from its %s core server list.",
+                    trace_get_perpkt_thread_id(t),
+                    syncpush->data.coreserver->serverkey,
+                    coreserver_type_to_string(
+                        syncpush->data.coreserver->servertype));
+            free_single_coreserver(found);
+        }
+        free_single_coreserver(syncpush->data.coreserver);
     }
 
 }

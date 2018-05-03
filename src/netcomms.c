@@ -580,6 +580,67 @@ int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
             OPENLI_PROTO_WITHDRAW_MEDIATOR);
 }
 
+#define CORESERVER_BODY_LEN(cs) \
+    (sizeof(uint8_t) + strlen(cs->ipstr) + \
+    (cs->portstr ? (strlen(cs->portstr) + (3 * 4)) : (2 * 4)))
+
+static int push_coreserver_msg_onto_net_buffer(net_buffer_t *nb,
+        coreserver_t *cs, uint8_t cstype, openli_proto_msgtype_t type) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+    int ret;
+
+    /* Pre-compute our body length so we can write it in the header */
+    totallen = CORESERVER_BODY_LEN(cs);
+    if (totallen > 65535) {
+        logger(LOG_DAEMON,
+                "OpenLI: %s server announcement is too long to fit in a single message (%d).",
+                coreserver_type_to_string(cstype), totallen);
+        return -1;
+    }
+
+    /* Push on header */
+    populate_header(&hdr, type, totallen, 0);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t))) == -1) {
+        return -1;
+    }
+
+    /* Push on each field */
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_TYPE,
+            (uint8_t *)&(cstype), sizeof(cstype))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_IP, cs->ipstr,
+            strlen(cs->ipstr))) == -1) {
+        return -1;
+    }
+
+    if (cs->portstr) {
+        if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_PORT, cs->portstr,
+                strlen(cs->portstr))) == -1) {
+            return -1;
+        }
+    }
+
+    return (int)totallen;
+}
+
+int push_coreserver_onto_net_buffer(net_buffer_t *nb, coreserver_t *cs,
+        uint8_t cstype) {
+
+    return push_coreserver_msg_onto_net_buffer(nb, cs, cstype,
+            OPENLI_PROTO_ANNOUNCE_CORESERVER);
+}
+
+int push_coreserver_withdraw_onto_net_buffer(net_buffer_t *nb, coreserver_t *cs,
+        uint8_t cstype) {
+
+    return push_coreserver_msg_onto_net_buffer(nb, cs, cstype,
+            OPENLI_PROTO_WITHDRAW_CORESERVER);
+}
 
 int push_nomore_intercepts(net_buffer_t *nb) {
     ii_header_t hdr;
@@ -878,6 +939,57 @@ int decode_mediator_withdraw(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med) {
 
     return decode_mediator_announcement(msgbody, len, med);
+}
+
+int decode_coreserver_announcement(uint8_t *msgbody, uint16_t len,
+        coreserver_t *cs) {
+    uint8_t *msgend = msgbody + len;
+
+    cs->servertype = OPENLI_CORE_SERVER_UNKNOWN;
+    cs->ipstr = NULL;
+    cs->portstr = NULL;
+    cs->info = NULL;
+    cs->awaitingconfirm = 0;
+    cs->serverkey = NULL;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_CORESERVER_TYPE) {
+            cs->servertype = *((uint8_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_CORESERVER_IP) {
+            DECODE_STRING_FIELD(cs->ipstr, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_CORESERVER_PORT) {
+            DECODE_STRING_FIELD(cs->portstr, valptr, vallen);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_DAEMON,
+                "OpenLI: invalid field in received core server announcement: %d.",
+                f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+
+    construct_coreserver_key(cs);
+    if (cs->serverkey == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI: core server announcement is missing an IP address");
+        return -1;
+    }
+
+    return 0;
+}
+
+int decode_coreserver_withdraw(uint8_t *msgbody, uint16_t len,
+        coreserver_t *cs) {
+    return decode_coreserver_announcement(msgbody, len, cs);
 }
 
 int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
