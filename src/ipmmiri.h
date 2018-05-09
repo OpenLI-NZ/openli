@@ -16,22 +16,26 @@
  * OpenLI is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
+ * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  *
  */
-#ifndef OPENLI_ETSILI_CONST_H_
-#define OPENLI_ETSILI_CONST_H_
 
-#include <inttypes.h>
+#include <libtrace/message_queue.h>
+#include <libtrace.h>
+#include <libwandder.h>
+#include <libwandder_etsili.h>
 
-uint8_t etsi_lipsdomainid[9] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x05, 0x01, 0x11};
-uint8_t etsi_ipccoid[4] = {0x05, 0x03, 0x0a, 0x02};
+#include "collector.h"
+#include "intercept.h"
+#include "etsili_core.h"
 
-
-#endif
+int ipmm_iri(libtrace_packet_t *pkt, collector_global_t *glob,
+        wandder_encoder_t **encoder, libtrace_message_queue_t *q,
+        voipintercept_t *vint, voipintshared_t *cin,
+        etsili_iri_type_t iritype);
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

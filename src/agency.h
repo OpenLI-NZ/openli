@@ -23,16 +23,28 @@
  *
  *
  */
-#ifndef OPENLI_IPCC_H_
-#define OPENLI_IPCC_H_
 
-#include <libtrace.h>
-#include "collector.h"
+#ifndef OPENLI_AGENCY_H_
+#define OPENLI_AGENCY_H_
 
-int ipv4_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
-        uint32_t rem, collector_global_t *glob, colthread_local_t *loc);
+#include <libtrace/linked_list.h>
+
+typedef struct liagency {
+
+    char *hi2_ipstr;
+    char *hi2_portstr;
+    char *hi3_ipstr;
+    char *hi3_portstr;
+    char *agencyid;
+} liagency_t;
+
+#define agency_equal(a, b) \
+    ((strcmp(a->hi2_ipstr, b->hi2_ipstr) == 0) && \
+     (strcmp(a->hi2_portstr, b->hi2_portstr) == 0) && \
+     (strcmp(a->hi3_ipstr, b->hi3_ipstr) == 0) && \
+     (strcmp(a->hi3_portstr, b->hi3_portstr) == 0) && \
+     (strcmp(a->agencyid, b->agencyid) == 0))
 
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
-

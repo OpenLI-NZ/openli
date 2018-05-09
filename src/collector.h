@@ -16,7 +16,7 @@
  * OpenLI is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
+ * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
@@ -32,47 +32,20 @@
 #include <libtrace.h>
 #include <libtrace/message_queue.h>
 #include <libtrace/linked_list.h>
+#include <uthash.h>
 #include <libwandder.h>
+
+#include "sipparsing.h"
+#include "intercept.h"
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
-    OPENLI_PUSH_HALT_IPINTERCEPT = 2
+    OPENLI_PUSH_HALT_IPINTERCEPT = 2,
+    OPENLI_PUSH_IPMMINTERCEPT = 3,
+    OPENLI_PUSH_HALT_IPMMINTERCEPT = 4,
+    OPENLI_PUSH_SIPURI = 5,
+    OPENLI_PUSH_HALT_SIPURI = 6,
 };
-
-typedef struct ipintercept {
-    uint64_t internalid;
-    char *liid;
-    char *authcc;
-    char *delivcc;
-    uint64_t cin;
-
-    int liid_len;
-    int authcc_len;
-    int delivcc_len;
-    int username_len;
-
-    int ai_family;
-    struct sockaddr_storage *ipaddr;
-    char *username;
-
-    uint8_t active;
-    uint64_t nextseqno;
-    uint32_t destid;
-} ipintercept_t;
-
-struct dest_details {
-    char *ipstr;
-    char *portstr;
-    uint32_t destid;
-};
-
-typedef struct export_dest {
-    int failmsg;
-    int fd;
-    struct dest_details details;
-
-    /* TODO message buffering... */
-} export_dest_t;
 
 enum {
     OPENLI_UPDATE_HELLO = 0,
@@ -86,57 +59,42 @@ typedef struct openli_state_msg {
     uint8_t type;
     union {
         libtrace_message_queue_t *replyq;
+        libtrace_packet_t *pkt;
     } data;
 
-} openli_state_update_t;
+} PACKED openli_state_update_t;
 
 typedef struct openli_ii_msg {
 
     uint8_t type;
     union {
         ipintercept_t *ipint;
-        uint64_t interceptid;
+        rtpstreaminf_t *ipmmint;
+        struct {
+            char *liid;
+            char *authcc;
+        } interceptid;
+        char *sipuri;
+        char *rtpstreamkey;
     } data;
 
-} openli_pushed_t;
-
-typedef struct openli_exp_msg {
-
-    uint32_t destid;
-    uint32_t msglen;
-    uint32_t ipclen;
-    uint8_t *msgbody;
-    uint8_t *ipcontents;
-
-} openli_exportmsg_t;
-
-enum {
-    OPENLI_EXPORT_ETSIREC = 1,
-    OPENLI_EXPORT_PACKET_FIN = 2,
-};
-
-typedef struct openli_export_recv {
-    uint8_t type;
-    union {
-        openli_exportmsg_t toexport;
-        export_dest_t dest;
-        libtrace_packet_t *packet;
-    } data;
-} openli_export_recv_t;
-
-typedef struct colinput_config {
-    char *uri;
-    int threadcount;
-
-} colinput_config_t;
+} PACKED openli_pushed_t;
 
 typedef struct colinput {
-    colinput_config_t config;
+    char *uri;
+    int threadcount;
     libtrace_t *trace;
-
     libtrace_callback_set_t *pktcbs;
 
+    uint8_t running;
+    UT_hash_handle hh;
 } colinput_t;
+
+typedef struct sipuri_hash {
+    UT_hash_handle hh;
+    char *uri;
+    int references;
+} sipuri_hash_t;
 
 typedef struct colthread_local {
 
@@ -148,14 +106,19 @@ typedef struct colthread_local {
 
 
     /* Current intercepts */
-    /* XXX For now, we can probably get away with a simple unordered list but
-     * eventually we might want a radix tree for faster lookups */
-    libtrace_list_t *activeipintercepts;
+    ipintercept_t *activeipintercepts;
+
+    rtpstreaminf_t *activertpintercepts;
+
+    /* Current SIP URIs that we are intercepting */
+    sipuri_hash_t *sip_targets;
 
     /* Message queue for exporting LI records */
     libtrace_message_queue_t exportq;
 
     wandder_encoder_t *encoder;
+    openli_sip_parser_t *sipparser;
+    libtrace_list_t *knownsipservers;
 
     char *inputidentifier;
 
@@ -163,17 +126,19 @@ typedef struct colthread_local {
 
 typedef struct collector_global {
 
-    int inputcount;
-    int inputalloced;
     colinput_t *inputs;
 
     int totalthreads;
     int queuealloced;
     int registered_syncqs;
 
+    pthread_rwlock_t config_mutex;
     pthread_mutex_t syncq_mutex;
+    pthread_mutex_t exportq_mutex;
 
-    libtrace_message_queue_t **syncsendqs;
+    void *syncsendqs;
+    void *syncepollevs;
+
     pthread_t syncthreadid;
     pthread_t exportthreadid;
 
@@ -184,10 +149,15 @@ typedef struct collector_global {
     char *operatorid;
     char *networkelemid;
     char *intpointid;
+    char *provisionerip;
+    char *provisionerport;
 
     int operatorid_len;
     int networkelemid_len;
     int intpointid_len;
+
+    libtrace_list_t *export_epoll_evs;
+    libtrace_list_t *expired_inputs;
 
 } collector_global_t;
 

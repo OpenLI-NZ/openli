@@ -16,7 +16,7 @@
  * OpenLI is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Lesser General Public License for more details.
+ * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
@@ -28,13 +28,17 @@
 #define OPENLI_CONFIGPARSER_H_
 
 #include "collector.h"
+#include "provisioner.h"
+#include "mediator.h"
 #include <yaml.h>
 
-int parse_export_config(char *configfile, libtrace_list_t *exptargets);
-int parse_ipintercept_config(char *configfile, libtrace_list_t *ipints);
+
+void clear_input(colinput_t *input);
 collector_global_t *parse_global_config(char *configfile);
 void clear_global_config(collector_global_t *glob);
 
+int parse_provisioning_config(char *configfile, provision_state_t *state);
+int parse_mediator_config(char *configfile, mediator_state_t *state);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

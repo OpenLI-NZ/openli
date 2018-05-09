@@ -18,11 +18,16 @@ AC_PROG_LIBTOOL
 
 EXTRA_LIBS=""
 
-AC_CHECK_LIB([trace], [trace_pstart],,libtrace_found = 0)
-AC_CHECK_LIB([wandder], [init_wandder_encoder],,libwandder_found = 0)
-AC_CHECK_LIB([yaml], [yaml_document_get_node],,libyaml_found = 0)
+AC_CHECK_LIB([trace], [trace_pstart],,libtrace_found=0)
+AC_CHECK_LIB([wandder], [init_wandder_encoder],,libwandder_found=0)
+AC_CHECK_LIB([yaml], [yaml_document_get_node],,libyaml_found=0)
+AC_CHECK_LIB([osipparser2], [osip_message_init],,libosip2_found=0)
 
 AC_CONFIG_FILES([Makefile src/Makefile])
+
+if test "$libosip2_found" = 0; then
+        AC_MSG_ERROR(Required library libosipparser2 not found; use LDFLAGS to specify library location)
+fi
 
 if test "$libtrace_found" = 0; then
         AC_MSG_ERROR(Required library libtrace not found; use LDFLAGS to specify library location)

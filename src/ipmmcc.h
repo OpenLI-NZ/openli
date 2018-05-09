@@ -23,16 +23,14 @@
  *
  *
  */
-#ifndef OPENLI_IPCC_H_
-#define OPENLI_IPCC_H_
+#ifndef OPENLI_IPMMCC_H_
+#define OPENLI_IPMMCC_H_
 
 #include <libtrace.h>
 #include "collector.h"
 
-int ipv4_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
+int ip4mm_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
         uint32_t rem, collector_global_t *glob, colthread_local_t *loc);
 
 #endif
-
-// vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 
