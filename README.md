@@ -23,6 +23,7 @@ This code has been developed by the University of Waikato WAND research group. F
 
 * libosip2 -- Debian / Ubuntu users can install the libosip2-dev package.
 
+* uthash -- Debian / Ubuntu users can install the uthash-dev package.
 
 ## Building OpenLI
 
