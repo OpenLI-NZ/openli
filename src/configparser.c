@@ -526,8 +526,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
 
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
                 newcept->common.delivcc != NULL &&
-                (newcept->username != NULL ||
-                    newcept->alushimid != OPENLI_ALUSHIM_NONE) &&
+                newcept->username != NULL &&
                 newcept->common.destid > 0 &&
                 newcept->common.targetagency != NULL) {
             HASH_ADD_KEYPTR(hh_liid, *ipints, newcept->common.liid, newcept->common.liid_len,

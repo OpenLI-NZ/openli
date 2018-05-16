@@ -159,10 +159,14 @@ static inline void push_single_ipintercept(libtrace_message_queue_t *q,
 }
 
 static inline void push_single_alushimid(libtrace_message_queue_t *q,
-        ipintercept_t *ipint) {
+        ipintercept_t *ipint, uint32_t sesscin) {
 
     aluintercept_t *alu;
     openli_pushed_t msg;
+
+    if (ipint->alushimid == OPENLI_ALUSHIM_NONE) {
+        return;
+    }
 
     alu = create_aluintercept(ipint);
     if (!alu) {
@@ -170,6 +174,7 @@ static inline void push_single_alushimid(libtrace_message_queue_t *q,
                 "OpenLI: ran out of memory while creating ALU intercept message.");
         return;
     }
+    alu->cin = sesscin;
 
     msg.type = OPENLI_PUSH_ALUINTERCEPT;
     msg.data.aluint = alu;
@@ -1181,21 +1186,14 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         /* OpenLI-internal fields that could change value
          * if the provisioner was restarted.
          */
-        if (x->username) {
-            if (!cept->username || strcmp(x->username, cept->username) != 0) {
+        if (x->username && cept->username) {
+            if (strcmp(x->username, cept->username) != 0) {
                 logger(LOG_DAEMON,
                         "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
-                        x->common.liid, x->username,
-                        cept->username ? cept->username : "unspecified");
+                        x->common.liid, x->username, cept->username);
                 free(cept);
                 return -1;
             }
-        } else if (cept->username) {
-            logger(LOG_DAEMON,
-                    "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
-                    x->common.liid, "unspecified", cept->username);
-            free(cept);
-            return -1;
         } else if (cept->alushimid != x->alushimid) {
             logger(LOG_DAEMON,
                     "OpenLI: duplicate IP ID %s seen, but ALU intercept IDs are different (was %u, now %u).",
@@ -1218,7 +1216,11 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             HASH_ITER(hh, user->sessions, sess, tmp2) {
                 HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs),
                         sendq, tmp) {
-                    push_single_ipintercept(sendq->q, cept, sess);
+                    if (cept->alushimid != OPENLI_ALUSHIM_NONE) {
+                        push_single_alushimid(sendq->q, cept, sess->cin);
+                    } else {
+                        push_single_ipintercept(sendq->q, cept, sess);
+                    }
                 }
             }
         }
@@ -1227,10 +1229,8 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
                 "OpenLI: received IP intercept from provisioner for user %s (LIID %s, authCC %s)",
                 cept->username, cept->common.liid, cept->common.authcc);
     }
+
     if (cept->alushimid != OPENLI_ALUSHIM_NONE) {
-        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
-            push_single_alushimid(sendq->q, cept);
-        }
         logger(LOG_DAEMON,
                 "OpenLI: received IP intercept from provisioner for ALU shim ID %u (LIID %s, authCC %s)",
                 cept->alushimid, cept->common.liid, cept->common.authcc);
@@ -1456,12 +1456,12 @@ static void push_all_active_intercepts(internet_user_t *allusers,
             }
 
             HASH_ITER(hh, user->sessions, sess, tmp2) {
-                push_single_ipintercept(q, orig, sess);
+                if (orig->alushimid != OPENLI_ALUSHIM_NONE) {
+                    push_single_alushimid(q, orig, sess->cin);
+                } else {
+                    push_single_ipintercept(q, orig, sess);
+                }
             }
-        }
-
-        if (orig->alushimid != OPENLI_ALUSHIM_NONE) {
-            push_single_alushimid(q, orig);
         }
     }
 }

@@ -105,7 +105,7 @@ alushimhdr_t *get_alushim_header(libtrace_packet_t *packet, uint32_t *rem) {
 }
 
 static void form_alu_ipcc(collector_global_t *glob,
-        colthread_local_t *loc, aluintercept_t *alu, int64_t cin,
+        colthread_local_t *loc, aluintercept_t *alu,
         void *l3, uint32_t rem, struct timeval *tv, uint8_t dir) {
 
 
@@ -132,7 +132,7 @@ static void form_alu_ipcc(collector_global_t *glob,
     hdrdata.intpointid = glob->intpointid;
     hdrdata.intpointid_len = glob->intpointid_len;
 
-    msg.msgbody = encode_etsi_ipcc(loc->encoder, &hdrdata, cin,
+    msg.msgbody = encode_etsi_ipcc(loc->encoder, &hdrdata, (int64_t)(alu->cin),
             (int64_t)alu->nextseqno, tv, l3, rem, dir);
     msg.encoder = loc->encoder;
     msg.ipcontents = (uint8_t *)l3;
@@ -251,7 +251,7 @@ int check_alu_intercept(collector_global_t *glob, colthread_local_t *loc,
     /* Direction 0 = ingress (i.e. coming from the subscriber) */
 
     /* Create an appropriate IPCC and export it */
-    form_alu_ipcc(glob, loc, alu, (int64_t)(ntohl(aluhdr->sessionid)),
+    form_alu_ipcc(glob, loc, alu,
             l3, rem, &tv, alushim_get_direction(aluhdr));
 
     /* Also follow up with a PACKET_FIN so the packet gets released */
