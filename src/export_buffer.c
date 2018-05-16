@@ -217,7 +217,6 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
             pdulen = wandder_etsili_get_pdu_length(dec);
             if (pdulen == 0) {
                 logger(LOG_DAEMON, "OpenLI: failed to decode buffered ETSI record.");
-                assert(0);
                 break;
             }
         }
