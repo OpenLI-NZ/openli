@@ -263,6 +263,35 @@ void free_all_rtpstreams(rtpstreaminf_t *streams) {
     }
 }
 
+aluintercept_t *create_aluintercept(ipintercept_t *ipint) {
+    aluintercept_t *alu;
+
+    alu = (aluintercept_t *)malloc(sizeof(aluintercept_t));
+    if (alu == NULL) {
+        return NULL;
+    }
+
+    alu->nextseqno = 0;
+    alu->cin = 0;
+    alu->aluinterceptid = ipint->alushimid;
+    copy_intercept_common(&(ipint->common), &(alu->common));
+
+    return alu;
+}
+
+void free_single_aluintercept(aluintercept_t *alu) {
+    free_intercept_common(&(alu->common));
+    free(alu);
+}
+
+void free_all_aluintercepts(aluintercept_t *aluints) {
+    aluintercept_t *alu, *tmp;
+    HASH_ITER(hh, aluints, alu, tmp) {
+        HASH_DELETE(hh, aluints, alu);
+        free_single_aluintercept(alu);
+    }
+}
+
 ipsession_t *create_ipsession(ipintercept_t *ipint, access_session_t *session) {
 
     ipsession_t *ipsess;
@@ -298,6 +327,7 @@ ipsession_t *create_ipsession(ipintercept_t *ipint, access_session_t *session) {
 
 void free_single_ipsession(ipsession_t *sess) {
 
+    free_intercept_common(&(sess->common));
     if (sess->streamkey) {
         free(sess->streamkey);
     }
@@ -320,6 +350,12 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
 
     user_intercept_list_t *found;
     ipintercept_t *check;
+
+    if (ipint->username == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI: attempted to add non-user-based IP intercept to user intercept list.");
+        return -1;
+    }
 
     HASH_FIND(hh, *ulist, ipint->username, ipint->username_len, found);
     if (!found) {
@@ -360,6 +396,13 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
 
     user_intercept_list_t *found;
     ipintercept_t *existing;
+
+    if (ipint->username == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI: attempted to remove non-user-based IP intercept from user intercept list.");
+        return -1;
+    }
+
     HASH_FIND(hh, *ulist, ipint->username, ipint->username_len, found);
 
     if (!found) {
@@ -388,7 +431,6 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
 void clear_user_intercept_list(user_intercept_list_t *ulist) {
     user_intercept_list_t *u, *tmp;
     ipintercept_t *ipint, *tmp2;
-
 
     HASH_ITER(hh, ulist, u, tmp) {
         /* Again, don't free the ipintercepts in the list -- someone else

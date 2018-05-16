@@ -1856,6 +1856,36 @@ static inline int reload_radiusservers(provision_state_t *currstate,
     return 0;
 }
 
+/* define here rather than as a macro, since IP intercepts are now
+ * a bit more complicated (i.e. some structure fields are optional).
+ */
+static inline int ip_intercept_equal(ipintercept_t *a, ipintercept_t *b) {
+    if (strcmp(a->common.liid, b->common.liid) != 0) {
+        return 1;
+    }
+
+    if (strcmp(a->common.authcc, b->common.authcc) != 0) {
+        return 1;
+    }
+
+    if (strcmp(a->common.delivcc, b->common.delivcc) != 0) {
+        return 1;
+    }
+
+    if (a->username && b->username && strcmp(a->username, b->username) != 0) {
+        return 1;
+    }
+
+    if (a->alushimid != b->alushimid) {
+        return 1;
+    }
+
+    if (strcmp(a->common.targetagency, b->common.targetagency) != 0) {
+        return 1;
+    }
+
+    return 0;
+}
 
 static inline int reload_ipintercepts(provision_state_t *currstate,
         provision_state_t *newstate, int droppedcols, int droppedmeds) {

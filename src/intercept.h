@@ -35,6 +35,8 @@
 
 #include "internetaccess.h"
 
+#define OPENLI_ALUSHIM_NONE (0xffffffff)
+
 typedef struct intercept_common {
     char *liid;
     char *authcc;
@@ -51,6 +53,9 @@ typedef struct ipintercept {
 
     char *username;
     int username_len;
+
+    /* Special case for converting ALU intercepts into ETSI ones */
+    uint32_t alushimid;
 
     uint8_t awaitingconfirm;
     UT_hash_handle hh_liid;
@@ -95,13 +100,7 @@ typedef struct voipsdpmap {
 
 typedef struct rtpstreaminf rtpstreaminf_t;
 typedef struct ipsession ipsession_t;
-
-#define ip_intercept_equal(a,b) \
-    ((strcmp(a->common.authcc, b->common.authcc) == 0) && \
-     (strcmp(a->common.delivcc, b->common.delivcc) == 0) && \
-     (strcmp(a->username, b->username) == 0) && \
-     (strcmp(a->common.targetagency, b->common.targetagency) == 0))
-
+typedef struct aluintercept aluintercept_t;
 
 #define voip_intercept_equal(a,b) \
     ((strcmp(a->common.authcc, b->common.authcc) == 0) && \
@@ -158,20 +157,32 @@ struct ipsession {
     UT_hash_handle hh;
 };
 
+struct aluintercept {
+    uint32_t cin;       // how do we set this properly?
+    uint32_t aluinterceptid;
+    uint32_t nextseqno;
+
+    intercept_common_t common;
+    UT_hash_handle hh;
+};
 
 void free_all_ipintercepts(ipintercept_t *interceptlist);
 void free_all_voipintercepts(voipintercept_t *vintercepts);
 void free_all_rtpstreams(rtpstreaminf_t *streams);
 void free_all_ipsessions(ipsession_t *sessions);
+void free_all_aluintercepts(aluintercept_t *aluintercepts);
 void free_single_voip_cin(rtpstreaminf_t *rtp);
 void free_single_ipintercept(ipintercept_t *cept);
 void free_single_voipintercept(voipintercept_t *v);
 void free_single_ipsession(ipsession_t *sess);
+void free_single_aluintercept(aluintercept_t *alu);
 
 rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin);
 rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *rtp);
 
 ipsession_t *create_ipsession(ipintercept_t *ipint, access_session_t *session);
+
+aluintercept_t *create_aluintercept(ipintercept_t *ipint);
 
 void clear_user_intercept_list(user_intercept_list_t *ulist);
 int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
