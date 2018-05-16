@@ -288,7 +288,7 @@ static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
 endforward:
     wandder_release_encoded_result(NULL, msg->msgbody);
 
-    return 0;
+    return ret;
 }
 
 static inline export_dest_t *add_unknown_destination(collector_export_t *exp,
