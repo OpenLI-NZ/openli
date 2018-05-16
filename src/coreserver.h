@@ -61,5 +61,8 @@ void free_coreserver_list(coreserver_t *servlist);
 const char *coreserver_type_to_string(uint8_t cstype);
 coreserver_t *deep_copy_coreserver(coreserver_t *cs);
 
+int coreserver_match(coreserver_t *cs, struct sockaddr_storage *sa,
+        uint16_t port);
+
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
