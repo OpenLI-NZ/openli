@@ -62,12 +62,13 @@ void clear_input(colinput_t *input) {
 void clear_global_config(collector_global_t *glob) {
     colinput_t *inp, *tmp;
 
-
     HASH_ITER(hh, glob->inputs, inp, tmp) {
         HASH_DELETE(hh, glob->inputs, inp);
         clear_input(inp);
         free(inp);
     }
+
+    free_coreserver_list(glob->alumirrors);
 
     if (glob->syncsendqs) {
         free(glob->syncsendqs);
@@ -453,6 +454,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->username_len = 0;
         newcept->common.authcc_len = 0;
         newcept->common.delivcc_len = 0;
+        newcept->alushimid = OPENLI_ALUSHIM_NONE;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -498,6 +500,13 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "alushimid") == 0) {
+                newcept->alushimid = strtoul((char *)value->data.scalar.value,
+                        NULL, 10);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value, "mediator") == 0
                     && newcept->common.destid == 0) {
                 newcept->common.destid = strtoul((char *)value->data.scalar.value,
@@ -516,7 +525,9 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         }
 
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
-                newcept->common.delivcc != NULL && newcept->username != NULL &&
+                newcept->common.delivcc != NULL &&
+                (newcept->username != NULL ||
+                    newcept->alushimid != OPENLI_ALUSHIM_NONE) &&
                 newcept->common.destid > 0 &&
                 newcept->common.targetagency != NULL) {
             HASH_ADD_KEYPTR(hh_liid, *ipints, newcept->common.liid, newcept->common.liid_len,
@@ -653,6 +664,15 @@ static int global_parser(void *arg, yaml_document_t *doc,
         glob->provisionerip = strdup((char *) value->data.scalar.value);
     }
 
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value, "alumirrors") == 0) {
+        if (parse_core_server_list(&glob->alumirrors,
+                OPENLI_CORE_SERVER_ALUMIRROR, doc, value) == -1) {
+            return -1;
+        }
+    }
+
     return 0;
 }
 
@@ -682,6 +702,7 @@ collector_global_t *parse_global_config(char *configfile) {
     glob->export_epoll_evs = NULL;
     glob->provisionerip = NULL;
     glob->provisionerport = NULL;
+    glob->alumirrors = NULL;
     glob->expired_inputs = libtrace_list_init(sizeof(colinput_t *));
 
     pthread_rwlock_init(&glob->config_mutex, NULL);

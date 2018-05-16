@@ -179,6 +179,8 @@ typedef struct collector_global {
     libtrace_list_t *export_epoll_evs;
     libtrace_list_t *expired_inputs;
 
+    coreserver_t *alumirrors;
+
 } collector_global_t;
 
 #endif
