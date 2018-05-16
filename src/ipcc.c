@@ -68,7 +68,7 @@ static void dump_export_msg(openli_exportmsg_t *msg) {
 
 static openli_export_recv_t form_ipcc(collector_global_t *glob,
 		colthread_local_t *loc, ipsession_t *sess,
-        libtrace_packet_t *pkt, void *l3, uint32_t rem) {
+        libtrace_packet_t *pkt, void *l3, uint32_t rem, uint8_t dir) {
 
     struct timeval tv = trace_get_timeval(pkt);
     openli_exportmsg_t msg;
@@ -95,7 +95,7 @@ static openli_export_recv_t form_ipcc(collector_global_t *glob,
     hdrdata.intpointid_len = glob->intpointid_len;
 
     msg.msgbody = encode_etsi_ipcc(loc->encoder, &hdrdata,
-            (int64_t)sess->cin, (int64_t)sess->nextseqno, &tv, l3, rem);
+            (int64_t)sess->cin, (int64_t)sess->nextseqno, &tv, l3, rem, dir);
 
     msg.encoder = loc->encoder;
     msg.ipcontents = (uint8_t *)l3;
@@ -149,7 +149,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = form_ipcc(glob, loc, sess, pkt, ip, rem);
+            msg = form_ipcc(glob, loc, sess, pkt, ip, rem, 0);
             libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
         }
         goto ipv4ccdone;
@@ -162,7 +162,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = form_ipcc(glob, loc, sess, pkt, ip, rem);
+            msg = form_ipcc(glob, loc, sess, pkt, ip, rem, 1);
             libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
         }
     }
