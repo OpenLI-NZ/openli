@@ -41,6 +41,7 @@ enum {
     OPENLI_CORE_SERVER_RADIUS,
     OPENLI_CORE_SERVER_DHCP,
     OPENLI_CORE_SERVER_SIP,
+    OPENLI_CORE_SERVER_ALUMIRROR,
 };
 
 typedef struct coreserver {

@@ -36,6 +36,8 @@ const char *coreserver_type_to_string(uint8_t cstype) {
             return "DHCP";
         case OPENLI_CORE_SERVER_SIP:
             return "SIP";
+        case OPENLI_CORE_SERVER_ALUMIRROR:
+            return "ALU-Mirror";
     }
     return "Unknown";
 }
