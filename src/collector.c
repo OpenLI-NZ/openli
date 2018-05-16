@@ -44,9 +44,11 @@
 #include "configparser.h"
 #include "collector_sync.h"
 #include "collector_export.h"
+#include "collector_push_messaging.h"
 #include "ipcc.h"
 #include "ipmmcc.h"
 #include "sipparsing.h"
+#include "alushim_parser.h"
 
 volatile int collector_halt = 0;
 volatile int reload_config = 0;
@@ -134,6 +136,7 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->activeipv4intercepts = NULL;
     loc->activeipv6intercepts = NULL;
     loc->activertpintercepts = NULL;
+    loc->activealuintercepts = NULL;
     loc->sip_targets = NULL;
     loc->radiusservers = NULL;
 
@@ -179,7 +182,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     }
 
     free_all_rtpstreams(loc->activertpintercepts);
-
+    free_all_aluintercepts(loc->activealuintercepts);
     free_coreserver_list(loc->radiusservers);
 
     if (loc->sip_targets) {
@@ -260,323 +263,48 @@ static inline void send_sip_update(libtrace_packet_t *pkt,
 
 }
 
-static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
-    rtpstreaminf_t *rtp;
-
-    HASH_FIND(hh, loc->activertpintercepts, rtpstreamkey, strlen(rtpstreamkey),
-            rtp);
-
-    if (rtp == NULL) {
-        logger(LOG_DAEMON, "OpenLI: collector thread was unable to remove RTP stream %s, as it was not present in its intercept set.",
-                rtpstreamkey);
-        return 0;
-    }
-
-    HASH_DELETE(hh, loc->activertpintercepts, rtp);
-
-    return 1;
-}
-
-static int add_ipv4_intercept(colthread_local_t *loc, ipsession_t *sess) {
-
-    uint32_t v4addr;
-    struct sockaddr_in *sin;
-    ipv4_target_t *tgt;
-    ipsession_t *check;
-
-    sin = (struct sockaddr_in *)(sess->targetip);
-    if (sin == NULL) {
-        logger(LOG_DAEMON, "OpenLI: attempted to add IPv4 intercept but target IP was NULL?");
-        return -1;
-    }
-
-    v4addr = sin->sin_addr.s_addr;
-
-    HASH_FIND(hh, loc->activeipv4intercepts, &v4addr, sizeof(v4addr), tgt);
-    if (tgt == NULL) {
-        tgt = (ipv4_target_t *)malloc(sizeof(ipv4_target_t));
-        if (!tgt) {
-            logger(LOG_DAEMON, "OpenLI: ran out of memory while adding IPv4 intercept address.");
-            return -1;
-        }
-        tgt->address = v4addr;
-        tgt->intercepts = NULL;
-        HASH_ADD(hh, loc->activeipv4intercepts, address, sizeof(uint32_t),
-                tgt);
-    }
-
-    HASH_FIND(hh, tgt->intercepts, sess->streamkey, strlen(sess->streamkey),
-            check);
-    assert(check == NULL);
-    HASH_ADD_KEYPTR(hh, tgt->intercepts, sess->streamkey,
-            strlen(sess->streamkey), sess);
-
-    return 0;
-}
-
-static int add_ipv6_intercept(colthread_local_t *loc, ipsession_t *sess) {
-
-    uint8_t *v6addr;
-    struct sockaddr_in6 *sin6;
-    ipv6_target_t *tgt;
-    ipsession_t *check;
-
-    sin6 = (struct sockaddr_in6 *)(sess->targetip);
-    if (sin6 == NULL) {
-        logger(LOG_DAEMON, "OpenLI: attempted to add IPv6 intercept but target IP was NULL?");
-        return -1;
-    }
-
-    v6addr = sin6->sin6_addr.s6_addr;
-
-    HASH_FIND(hh, loc->activeipv6intercepts, v6addr, 16, tgt);
-    if (tgt == NULL) {
-        tgt = (ipv6_target_t *)malloc(sizeof(ipv6_target_t));
-        if (!tgt) {
-            logger(LOG_DAEMON, "OpenLI: ran out of memory while adding IPv6 intercept address.");
-            return -1;
-        }
-        memcpy(tgt->address, v6addr, 16);
-        tgt->intercepts = NULL;
-        HASH_ADD_KEYPTR(hh, loc->activeipv6intercepts, tgt->address, 16, tgt);
-    }
-
-    HASH_FIND(hh, tgt->intercepts, sess->streamkey, strlen(sess->streamkey),
-            check);
-    assert(check == NULL);
-    HASH_ADD_KEYPTR(hh, tgt->intercepts, sess->streamkey,
-            strlen(sess->streamkey), sess);
-
-    return 0;
-}
-
-static int remove_ipv4_intercept(colthread_local_t *loc, ipsession_t *torem) {
-
-    ipv4_target_t *v4;
-    struct sockaddr_in *sin;
-    uint32_t v4addr;
-    ipsession_t *found;
-
-    sin = (struct sockaddr_in *)(torem->targetip);
-    if (sin == NULL) {
-        logger(LOG_DAEMON, "OpenLI: attempted to remove IPv4 intercept but target IP was NULL?");
-        return -1;
-    }
-
-    v4addr = sin->sin_addr.s_addr;
-    HASH_FIND(hh, loc->activeipv4intercepts, &v4addr, sizeof(v4addr), v4);
-    if (!v4) {
-        return 0;
-    }
-
-    HASH_FIND(hh, v4->intercepts, torem->streamkey, strlen(torem->streamkey),
-            found);
-    if (!found) {
-        return 0;
-    }
-
-    HASH_DELETE(hh, v4->intercepts, found);
-    free_single_ipsession(found);
-
-    if (HASH_CNT(hh, v4->intercepts) == 0) {
-        HASH_DELETE(hh, loc->activeipv4intercepts, v4);
-        free(v4);
-    }
-
-    return 1;
-}
-
-static int remove_ipv6_intercept(colthread_local_t *loc, ipsession_t *torem) {
-
-    ipv6_target_t *v6;
-    struct sockaddr_in6 *sin6;
-    uint8_t *v6addr;
-    ipsession_t *found;
-
-    sin6 = (struct sockaddr_in6 *)(torem->targetip);
-    if (sin6 == NULL) {
-        logger(LOG_DAEMON, "OpenLI: attempted to remove IPv6 intercept but target IP was NULL?");
-        return -1;
-    }
-
-    v6addr = sin6->sin6_addr.s6_addr;
-    HASH_FIND(hh, loc->activeipv6intercepts, v6addr, 16, v6);
-    if (!v6) {
-        return 0;
-    }
-
-    HASH_FIND(hh, v6->intercepts, torem->streamkey, strlen(torem->streamkey),
-            found);
-    if (!found) {
-        return 0;
-    }
-
-    HASH_DELETE(hh, v6->intercepts, found);
-    free_single_ipsession(found);
-
-    if (HASH_CNT(hh, v6->intercepts) == 0) {
-        HASH_DELETE(hh, loc->activeipv6intercepts, v6);
-        free(v6);
-    }
-
-    return 1;
-}
-
 static void process_incoming_messages(libtrace_thread_t *t,
         collector_global_t *glob, colthread_local_t *loc,
         openli_pushed_t *syncpush) {
 
-    coreserver_t *found;
-    coreserver_t **servlist;
-
     if (syncpush->type == OPENLI_PUSH_IPINTERCEPT) {
-        if (syncpush->data.ipsess->ai_family == AF_INET) {
-            if (add_ipv4_intercept(loc, syncpush->data.ipsess) != 0) {
-                free_single_ipsession(syncpush->data.ipsess);
-            }
-        } else if (syncpush->data.ipsess->ai_family == AF_INET6) {
-            if (add_ipv6_intercept(loc, syncpush->data.ipsess) != 0) {
-                free_single_ipsession(syncpush->data.ipsess);
-            }
-        } else {
-            logger(LOG_DAEMON,
-                    "OpenLI: invalid address family for new IP intercept: %d",
-                    syncpush->data.ipsess->ai_family);
-            free_single_ipsession(syncpush->data.ipsess);
-        }
+        handle_push_ipintercept(t, loc, syncpush->data.ipsess);
     }
 
     if (syncpush->type == OPENLI_PUSH_HALT_IPINTERCEPT) {
-        if (syncpush->data.ipsess->ai_family == AF_INET) {
-            if (remove_ipv4_intercept(loc, syncpush->data.ipsess) > 0) {
-                logger(LOG_DAEMON, "OpenLI: collector thread %d has stopped intercepting IP session %s",
-                        trace_get_perpkt_thread_id(t),
-                        syncpush->data.ipsess->streamkey);
-            }
-        } else if (syncpush->data.ipsess->ai_family == AF_INET6) {
-            if (remove_ipv6_intercept(loc, syncpush->data.ipsess) > 0) {
-                logger(LOG_DAEMON, "OpenLI: collector thread %d has stopped intercepting IP session %s",
-                        trace_get_perpkt_thread_id(t),
-                        syncpush->data.ipsess->streamkey);
-            }
-        } else {
-            logger(LOG_DAEMON,
-                    "OpenLI: invalid address family for removing IP intercept: %d",
-                    syncpush->data.ipsess->ai_family);
-        }
-        free_single_ipsession(syncpush->data.ipsess);
+        handle_halt_ipintercept(t, loc, syncpush->data.ipsess);
     }
 
     if (syncpush->type == OPENLI_PUSH_IPMMINTERCEPT) {
-        HASH_ADD_KEYPTR(hh, loc->activertpintercepts,
-                syncpush->data.ipmmint->streamkey,
-                strlen(syncpush->data.ipmmint->streamkey),
-                syncpush->data.ipmmint);
+        handle_push_ipmmintercept(t, loc, syncpush->data.ipmmint);
     }
 
     if (syncpush->type == OPENLI_PUSH_HALT_IPMMINTERCEPT) {
-        if (remove_rtp_stream(loc, syncpush->data.rtpstreamkey) != 0) {
-            logger(LOG_DAEMON, "OpenLI: collector thread %d has stopped intercepting RTP stream %s",
-                    trace_get_perpkt_thread_id(t),
-                    syncpush->data.rtpstreamkey);
-        }
-        free(syncpush->data.rtpstreamkey);
+        handle_halt_ipmmintercept(t, loc, syncpush->data.rtpstreamkey);
     }
 
     if (syncpush->type == OPENLI_PUSH_SIPURI) {
-        sipuri_hash_t *newsip;
-        HASH_FIND_STR(loc->sip_targets, syncpush->data.sipuri, newsip);
-
-        if (newsip) {
-            newsip->references ++;
-            free(syncpush->data.sipuri);
-        } else {
-            newsip = (sipuri_hash_t *)malloc(
-                    sizeof(sipuri_hash_t));
-            newsip->uri = syncpush->data.sipuri;
-            newsip->references = 1;
-            HASH_ADD_KEYPTR(hh, loc->sip_targets, newsip->uri,
-                    strlen(newsip->uri), newsip);
-            logger(LOG_DAEMON, "OpenLI: collector thread %d has added %s to list of SIP URIs.",
-                    trace_get_perpkt_thread_id(t),
-                    syncpush->data.sipuri);
-        }
+        handle_push_sipuri(t, loc, syncpush->data.sipuri);
     }
 
     if (syncpush->type == OPENLI_PUSH_HALT_SIPURI) {
-        sipuri_hash_t *torem;
-        HASH_FIND_STR(loc->sip_targets, syncpush->data.sipuri, torem);
-        if (torem == NULL) {
-            logger(LOG_DAEMON, "OpenLI: asked to halt SIP intercept for target %s, but that is not in our set of known URIs", syncpush->data.sipuri);
-            return;
-        } else {
-            torem->references --;
-        }
-        assert(torem->references >= 0);
-
-        if (torem->references == 0) {
-            logger(LOG_DAEMON, "OpenLI: collector thread %d has removed %s from list of SIP URIs.",
-                    trace_get_perpkt_thread_id(t),
-                    syncpush->data.sipuri);
-            HASH_DEL(loc->sip_targets, torem);
-            free(torem->uri);
-            free(torem);
-        }
-        free(syncpush->data.sipuri);
+        handle_halt_sipuri(t, loc, syncpush->data.sipuri);
     }
 
     if (syncpush->type == OPENLI_PUSH_CORESERVER) {
-        switch(syncpush->data.coreserver->servertype) {
-            case OPENLI_CORE_SERVER_RADIUS:
-                servlist = &(loc->radiusservers);
-                break;
-            default:
-                logger(LOG_DAEMON,
-                        "OpenLI: unexpected core server type received by collector thread %d: %d",
-                        syncpush->data.coreserver->servertype,
-                        trace_get_perpkt_thread_id(t));
-                return;
-        }
-        HASH_FIND(hh, *servlist, syncpush->data.coreserver->serverkey,
-                strlen(syncpush->data.coreserver->serverkey), found);
-        if (!found) {
-            HASH_ADD_KEYPTR(hh, *servlist, syncpush->data.coreserver->serverkey,
-                    strlen(syncpush->data.coreserver->serverkey),
-                    syncpush->data.coreserver);
-            logger(LOG_DAEMON, "OpenLI: collector thread %d has added %s to its %s core server list.",
-                    trace_get_perpkt_thread_id(t),
-                    syncpush->data.coreserver->serverkey,
-                    coreserver_type_to_string(
-                            syncpush->data.coreserver->servertype));
-        } else {
-            free_single_coreserver(syncpush->data.coreserver);
-        }
+        handle_push_coreserver(t, loc, syncpush->data.coreserver);
     }
 
     if (syncpush->type == OPENLI_PUSH_REMOVE_CORESERVER) {
-        switch(syncpush->data.coreserver->servertype) {
-            case OPENLI_CORE_SERVER_RADIUS:
-                servlist = &(loc->radiusservers);
-                break;
-            default:
-                logger(LOG_DAEMON,
-                        "OpenLI: unexpected core server type received by collector thread %d: %d",
-                        syncpush->data.coreserver->servertype,
-                        trace_get_perpkt_thread_id(t));
-                return;
-        }
-        HASH_FIND(hh, *servlist, syncpush->data.coreserver->serverkey,
-                strlen(syncpush->data.coreserver->serverkey), found);
-        if (found) {
-            HASH_DELETE(hh, *servlist, found);
-            logger(LOG_DAEMON, "OpenLI: collector thread %d has removed %s from its %s core server list.",
-                    trace_get_perpkt_thread_id(t),
-                    syncpush->data.coreserver->serverkey,
-                    coreserver_type_to_string(
-                        syncpush->data.coreserver->servertype));
-            free_single_coreserver(found);
-        }
-        free_single_coreserver(syncpush->data.coreserver);
+        handle_remove_coreserver(t, loc, syncpush->data.coreserver);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_ALUINTERCEPT) {
+        handle_push_aluintercept(t, loc, syncpush->data.aluint);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_HALT_ALUINTERCEPT) {
+        handle_halt_aluintercept(t, loc, syncpush->data.aluint);
     }
 
 }
@@ -604,6 +332,13 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     l3 = trace_get_layer3(pkt, &ethertype, &rem);
     if (l3 == NULL || rem == 0) {
         return pkt;
+    }
+
+    /* Is this from one of our ALU mirrors -- if yes, parse + strip it
+     * for conversion to an ETSI record */
+    if (glob->alumirrors && check_alu_intercept(glob, loc, pkt,
+            glob->alumirrors, loc->activealuintercepts)) {
+        return NULL;
     }
 
     /* Is this a RADIUS packet? -- if yes, create a state update */

@@ -158,6 +158,25 @@ static inline void push_single_ipintercept(libtrace_message_queue_t *q,
     libtrace_message_queue_put(q, (void *)(&msg));
 }
 
+static inline void push_single_alushimid(libtrace_message_queue_t *q,
+        ipintercept_t *ipint) {
+
+    aluintercept_t *alu;
+    openli_pushed_t msg;
+
+    alu = create_aluintercept(ipint);
+    if (!alu) {
+        logger(LOG_DAEMON,
+                "OpenLI: ran out of memory while creating ALU intercept message.");
+        return;
+    }
+
+    msg.type = OPENLI_PUSH_ALUINTERCEPT;
+    msg.data.aluint = alu;
+
+    libtrace_message_queue_put(q, (void *)(&msg));
+}
+
 static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
         rtpstreaminf_t *orig) {
 
@@ -346,8 +365,10 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
              * the IPs associated with this target. */
             push_ipintercept_halt_to_threads(sync, ipint);
             HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
-            remove_intercept_from_user_intercept_list(&sync->userintercepts,
-                    ipint);
+            if (ipint->username) {
+                remove_intercept_from_user_intercept_list(&sync->userintercepts,
+                        ipint);
+            }
             free_single_ipintercept(ipint);
         }
     }
@@ -995,7 +1016,9 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     push_ipintercept_halt_to_threads(sync, ipint);
     HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
-    remove_intercept_from_user_intercept_list(&sync->userintercepts, ipint);
+    if (ipint->username) {
+        remove_intercept_from_user_intercept_list(&sync->userintercepts, ipint);
+    }
     free_single_ipintercept(ipint);
     return 0;
 }
@@ -1141,42 +1164,80 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     HASH_FIND(hh_liid, sync->ipintercepts, cept->common.liid,
             cept->common.liid_len, x);
 
+    /* TODO change alushimid and username to not be mutually exclusive.
+     * Ideally, username would be mandatory even for ALU intercepts as we
+     * still will need to produce IRIs for those targets from AAA traffic.
+     * We can also use the AAA stream to assign CINs for the CCs created from
+     * the ALU intercepted packets, so really this still needs a lot of proper
+     * sync work.
+     *
+     * Therefore, we'll want to only announce ALU Shim IDs once we have a
+     * valid session for the user and withdraw them once the session is over.
+     */
+
     if (x) {
         /* Duplicate LIID */
 
         /* OpenLI-internal fields that could change value
          * if the provisioner was restarted.
          */
-        if (strcmp(x->username, cept->username) != 0) {
+        if (x->username) {
+            if (!cept->username || strcmp(x->username, cept->username) != 0) {
+                logger(LOG_DAEMON,
+                        "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
+                        x->common.liid, x->username,
+                        cept->username ? cept->username : "unspecified");
+                free(cept);
+                return -1;
+            }
+        } else if (cept->username) {
             logger(LOG_DAEMON,
                     "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
-                    x->common.liid, x->username, cept->username);
+                    x->common.liid, "unspecified", cept->username);
+            free(cept);
+            return -1;
+        } else if (cept->alushimid != x->alushimid) {
+            logger(LOG_DAEMON,
+                    "OpenLI: duplicate IP ID %s seen, but ALU intercept IDs are different (was %u, now %u).",
+                    x->common.liid, x->alushimid, cept->alushimid);
             free(cept);
             return -1;
         }
+
         x->awaitingconfirm = 0;
         free(cept);
         /* our collector threads should already know about this intercept? */
         return 0;
     }
 
-    HASH_FIND(hh, sync->allusers, cept->username, cept->username_len, user);
+    if (cept->username) {
+        HASH_FIND(hh, sync->allusers, cept->username, cept->username_len, user);
 
-    if (user) {
-        access_session_t *sess, *tmp2;
-        HASH_ITER(hh, user->sessions, sess, tmp2) {
-            push_single_ipintercept(sendq->q, cept, sess);
+        if (user) {
+            access_session_t *sess, *tmp2;
+            HASH_ITER(hh, user->sessions, sess, tmp2) {
+                HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs),
+                        sendq, tmp) {
+                    push_single_ipintercept(sendq->q, cept, sess);
+                }
+            }
         }
+        add_intercept_to_user_intercept_list(&sync->userintercepts, cept);
+        logger(LOG_DAEMON,
+                "OpenLI: received IP intercept from provisioner for user %s (LIID %s, authCC %s)",
+                cept->username, cept->common.liid, cept->common.authcc);
+    }
+    if (cept->alushimid != OPENLI_ALUSHIM_NONE) {
+        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
+            push_single_alushimid(sendq->q, cept);
+        }
+        logger(LOG_DAEMON,
+                "OpenLI: received IP intercept from provisioner for ALU shim ID %u (LIID %s, authCC %s)",
+                cept->alushimid, cept->common.liid, cept->common.authcc);
     }
 
     HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
             cept->common.liid_len, cept);
-    add_intercept_to_user_intercept_list(&sync->userintercepts, cept);
-
-    logger(LOG_DAEMON,
-            "OpenLI: received IP intercept from provisioner for user %s (LIID %s, authCC %s)",
-            cept->username, cept->common.liid, cept->common.authcc);
-
 
     return 0;
 
@@ -1388,13 +1449,19 @@ static void push_all_active_intercepts(internet_user_t *allusers,
 
     HASH_ITER(hh_liid, intlist, orig, tmp) {
         /* Do we have a valid user that matches the target username? */
-        HASH_FIND(hh, allusers, orig->username, orig->username_len, user);
-        if (!user) {
-            continue;
+        if (orig->username != NULL) {
+            HASH_FIND(hh, allusers, orig->username, orig->username_len, user);
+            if (!user) {
+                continue;
+            }
+
+            HASH_ITER(hh, user->sessions, sess, tmp2) {
+                push_single_ipintercept(q, orig, sess);
+            }
         }
 
-        HASH_ITER(hh, user->sessions, sess, tmp2) {
-            push_single_ipintercept(q, orig, sess);
+        if (orig->alushimid != OPENLI_ALUSHIM_NONE) {
+            push_single_alushimid(q, orig);
         }
     }
 }

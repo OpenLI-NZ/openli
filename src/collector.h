@@ -48,6 +48,8 @@ enum {
     OPENLI_PUSH_HALT_SIPURI = 6,
     OPENLI_PUSH_CORESERVER = 7,
     OPENLI_PUSH_REMOVE_CORESERVER = 8,
+    OPENLI_PUSH_ALUINTERCEPT = 9,
+    OPENLI_PUSH_HALT_ALUINTERCEPT = 10,
 };
 
 enum {
@@ -73,6 +75,7 @@ typedef struct openli_ii_msg {
     union {
         ipsession_t *ipsess;
         rtpstreaminf_t *ipmmint;
+        aluintercept_t *aluint;
         char *sipuri;
         char *rtpstreamkey;
         coreserver_t *coreserver;
@@ -124,6 +127,7 @@ typedef struct colthread_local {
     ipv4_target_t *activeipv4intercepts;
 
     rtpstreaminf_t *activertpintercepts;
+    aluintercept_t *activealuintercepts;
 
     /* Current SIP URIs that we are intercepting */
     sipuri_hash_t *sip_targets;
