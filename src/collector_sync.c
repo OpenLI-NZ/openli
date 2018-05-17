@@ -68,6 +68,8 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->sipparser = NULL;
     sync->encoder = NULL;
 
+    sync->radiusplugin = init_access_plugin(ACCESS_RADIUS);
+
     return sync;
 
 }
@@ -110,6 +112,10 @@ void clean_sync_data(collector_sync_t *sync) {
         free_wandder_encoder(sync->encoder);
     }
 
+    if (sync->radiusplugin) {
+        destroy_access_plugin(sync->radiusplugin);
+    }
+
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
     sync->userintercepts = NULL;
@@ -119,6 +125,7 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->sipparser = NULL;
     sync->encoder = NULL;
     sync->ii_ev = NULL;
+    sync->radiusplugin = NULL;
 }
 
 static inline void push_coreserver_msg(collector_sync_t *sync,
@@ -137,7 +144,7 @@ static inline void push_coreserver_msg(collector_sync_t *sync,
 static inline void push_single_ipintercept(libtrace_message_queue_t *q,
         ipintercept_t *ipint, access_session_t *session) {
 
-    ipsession_t *sess;
+    ipsession_t *ipsess;
     openli_pushed_t msg;
 
     /* No assigned IP, session is not fully active yet. Don't push yet */
@@ -145,15 +152,16 @@ static inline void push_single_ipintercept(libtrace_message_queue_t *q,
         return;
     }
 
-    sess = create_ipsession(ipint, session);
+    ipsess = create_ipsession(ipint, session->cin, session->ipfamily,
+            session->assignedip);
 
-    if (!sess) {
+    if (!ipsess) {
         logger(LOG_DAEMON,
                 "OpenLI: ran out of memory while creating IP session message.");
         return;
     }
     msg.type = OPENLI_PUSH_IPINTERCEPT;
-    msg.data.ipsess = sess;
+    msg.data.ipsess = ipsess;
 
     libtrace_message_queue_put(q, (void *)(&msg));
 }
@@ -315,9 +323,9 @@ static inline void push_session_halt_to_threads(void *sendqs,
         char ipstr[128];
 
         pmsg.type = OPENLI_PUSH_HALT_IPINTERCEPT;
-        sessdup = create_ipsession(ipint, sess);
+        sessdup = create_ipsession(ipint, sess->cin, sess->ipfamily,
+                sess->assignedip);
 
-        /* misnomer, but whatever. */
         pmsg.data.ipsess = sessdup;
 
         /* XXX no error checking because this logging should not reach
@@ -1466,6 +1474,110 @@ static void push_all_active_intercepts(internet_user_t *allusers,
     }
 }
 
+static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
+        uint8_t accesstype) {
+
+    access_plugin_t *p = NULL;
+    char *userid;
+    internet_user_t *iuser;
+    access_session_t *sess;
+    access_action_t accessaction; 
+    session_state_t oldstate, newstate;
+    user_intercept_list_t *userint;
+    ipintercept_t *ipint, *tmp;
+    openli_export_recv_t msg;
+    int expcount = 0;
+
+    if (accesstype == ACCESS_RADIUS) {
+        p = sync->radiusplugin;
+    }
+
+    if (!p) {
+        logger(LOG_DAEMON, "OpenLI: tried to update user sessions using an unsupported access type: %u", accesstype);
+        return -1;
+    }
+
+    userid = p->get_userid_from_packet(p, pkt);
+    if (userid == NULL) {
+        logger(LOG_DAEMON, "OpenLI: unable to find a user ID in %s packet",
+                p->name);
+        return -1;
+    }
+
+    HASH_FIND(hh, sync->allusers, userid, strlen(userid), iuser);
+    if (iuser == NULL) {
+        iuser = (internet_user_t *)malloc(sizeof(internet_user_t));
+
+        if (!iuser) {
+            logger(LOG_DAEMON, "OpenLI: unable to allocate memory for new Internet user");
+            return -1;
+        }
+        iuser->userid = strdup(userid);
+        iuser->sessions = NULL;
+
+        HASH_ADD_KEYPTR(hh, sync->allusers, iuser->userid,
+                strlen(iuser->userid), iuser);
+    }
+
+    sess = p->update_session_state(p, pkt, iuser->sessions, &oldstate,
+            &newstate, &accessaction);
+    if (!sess) {
+        logger(LOG_DAEMON, "OpenLI: error while assigning packet to a Internet access session");
+        return -1;
+    }
+
+    HASH_FIND(hh, sync->userintercepts, userid, strlen(userid), userint);
+
+    if (oldstate != newstate) {
+
+        if (userint && newstate == SESSION_STATE_ACTIVE &&
+                oldstate == SESSION_STATE_AUTHING) {
+
+            HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
+                /* TODO tell collector threads that we have a new IP to
+                 * watch out for.
+                 */
+            }
+
+        } else if (newstate == SESSION_STATE_OVER) {
+
+            if (userint) {
+                HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
+                    /* TODO tell collector threads to stop intercepting for
+                     * this IP.
+                     */
+                }
+            }
+            free_single_session(iuser, sess);
+        }
+    }
+
+    if (userint) {
+        HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
+            if (p->create_iri_from_packet(p, sync->glob, &(sync->encoder),
+                    &(sync->exportq), sess, ipint, pkt, accessaction) == -1) {
+                logger(LOG_DAEMON,
+                        "OpenLI: unable to form IP IRI from %s packet for intercept %s",
+                        p->name, ipint->common.liid);
+                continue;
+            }
+            expcount ++;
+        }
+        sess->iriseqno ++;
+    }
+
+    if (expcount > 0) {
+        /* Increment ref count for the packet and send a packet fin message
+         * so the exporter knows when to decrease the ref count */
+        trace_increment_packet_refcount(pkt);
+        msg.type = OPENLI_EXPORT_PACKET_FIN;
+        msg.data.packet = pkt;
+        libtrace_message_queue_put(&(sync->exportq), (void *)(&msg));
+        return 1;
+    }
+    return 0;
+}
+
 int sync_thread_main(collector_sync_t *sync) {
 
     int i, nfds;
@@ -1580,6 +1692,17 @@ int sync_thread_main(collector_sync_t *sync) {
             } else if (ret < 0) {
                 logger(LOG_DAEMON,
                         "OpenLI: sync thread received an invalid SIP packet?");
+            }
+
+            trace_decrement_packet_refcount(recvd.data.pkt);
+        }
+
+        if (recvd.type == OPENLI_UPDATE_RADIUS) {
+            int ret;
+            if ((ret = update_user_sessions(sync, recvd.data.pkt,
+                        ACCESS_RADIUS)) < 0) {
+                logger(LOG_DAEMON,
+                        "OpenLI: sync thread received an invalid RADIUS packet");
             }
 
             trace_decrement_packet_refcount(recvd.data.pkt);
