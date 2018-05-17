@@ -27,6 +27,31 @@
 #include "logger.h"
 #include "internetaccess.h"
 
+access_plugin_t *init_access_plugin(uint8_t accessmethod) {
+
+    access_plugin_t *p = NULL;
+
+    switch(accessmethod) {
+        case ACCESS_RADIUS:
+            p = get_radius_access_plugin();
+            break;
+    }
+
+    if (p == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI: invalid access method %d observed in init_access_plugin()");
+        return NULL;
+    }
+
+    p->init_plugin_data(p);
+    return p;
+}
+
+void destroy_access_plugin(access_plugin_t *p) {
+    p->destroy_plugin_data(p);
+    free(p);
+}
+
 static inline void free_session(access_session_t *sess) {
 
     if (sess == NULL) {
@@ -38,9 +63,7 @@ static inline void free_session(access_session_t *sess) {
     }
 
     /* session id and state data should be handled by the appropriate plugin */
-
-    /* TODO */
-
+    sess->plugin->destroy_session_data(sess->plugin, sess);
     free(sess);
 }
 
@@ -70,9 +93,7 @@ void free_all_users(internet_user_t *users) {
     }
 }
 
-int free_single_session(internet_user_t *user, void *sessionid, void *idlen) {
-
-    access_session_t *sess;
+int free_single_session(internet_user_t *user, access_session_t *sess) {
 
     if (user == NULL) {
         logger(LOG_DAEMON,
@@ -80,15 +101,7 @@ int free_single_session(internet_user_t *user, void *sessionid, void *idlen) {
         return -1;
     }
 
-    HASH_FIND(hh, user->sessions, sessionid, idlen, sess);
-    if (!sess) {
-        logger(LOG_DAEMON, "OpenLI: unable to free expired Internet session because it was not present in the session map for user %s", user->userid);
-
-        /* TODO use the plugin to help log the session ID */
-
-        return -1;
-    }
-
+    HASH_DELETE(hh, user->sessions, sess);
     free_session(sess);
     return 0;
 }
