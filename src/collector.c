@@ -250,16 +250,15 @@ static int process_sip_packet(libtrace_packet_t *pkt,
     return 0;
 }
 
-static inline void send_sip_update(libtrace_packet_t *pkt,
-        colthread_local_t *loc) {
-    openli_state_update_t sipup;
+static inline void send_packet_to_sync(libtrace_packet_t *pkt,
+        colthread_local_t *loc, uint8_t updatetype) {
+    openli_state_update_t syncup;
 
-    sipup.type = OPENLI_UPDATE_SIP;
-    sipup.data.pkt = pkt;
-    sipup.data.pkt = pkt;
+    syncup.type = updatetype;
+    syncup.data.pkt = pkt;
 
     trace_increment_packet_refcount(pkt);
-    libtrace_message_queue_put(&(loc->tosyncq), (void *)(&sipup));
+    libtrace_message_queue_put(&(loc->tosyncq), (void *)(&syncup));
 
 }
 
@@ -309,6 +308,61 @@ static void process_incoming_messages(libtrace_thread_t *t,
 
 }
 
+static inline int is_radius_packet(libtrace_packet_t *pkt,
+        coreserver_t *radservers) {
+
+    coreserver_t *rad, *tmp;
+    struct sockaddr_storage srcaddr, destaddr;
+    uint16_t srcport, dstport;
+
+    if (trace_get_destination_address(pkt,
+            (struct sockaddr *)&destaddr) == NULL) {
+        return 0;
+    }
+
+    if (trace_get_source_address(pkt, (struct sockaddr *)&srcaddr) == NULL) {
+        return 0;
+    }
+
+    srcport = trace_get_source_port(pkt);
+    dstport = trace_get_destination_port(pkt);
+
+    if (srcport == 0 || dstport == 0) {
+        return 0;
+    }
+
+    HASH_ITER(hh, radservers, rad, tmp) {
+        int ret;
+        if ((ret = coreserver_match(rad, &srcaddr, srcport)) > 0) {
+            return 1;
+        }
+
+        if (ret == -1) {
+            logger(LOG_DAEMON,
+                    "Removing %s:%s from RADIUS server list due to getaddrinfo error",
+                    rad->ipstr, rad->portstr);
+            HASH_DELETE(hh, radservers, rad);
+            continue;
+        }
+
+        if ((ret = coreserver_match(rad, &destaddr, dstport)) > 0) {
+            return 1;
+        }
+
+        if (ret == -1) {
+            /* should never happen at this point? */
+            logger(LOG_DAEMON,
+                    "Removing %s:%s from RADIUS server list due to getaddrinfo error",
+                    rad->ipstr, rad->portstr);
+            HASH_DELETE(hh, radservers, rad);
+            continue;
+        }
+    }
+
+    /* Doesn't match any of our known RADIUS servers */
+    return 0;
+}
+
 static libtrace_packet_t *process_packet(libtrace_t *trace,
         libtrace_thread_t *t, void *global, void *tls,
         libtrace_packet_t *pkt) {
@@ -318,6 +372,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     void *l3;
     uint16_t ethertype;
     uint32_t rem;
+    uint8_t proto;
     int forwarded = 0;
 
     openli_pushed_t syncpush;
@@ -334,20 +389,30 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         return pkt;
     }
 
-    /* Is this from one of our ALU mirrors -- if yes, parse + strip it
-     * for conversion to an ETSI record */
-    if (glob->alumirrors && check_alu_intercept(glob, loc, pkt,
-            glob->alumirrors, loc->activealuintercepts)) {
-        return NULL;
-    }
+    /* All these special packets are UDP, so we can avoid a whole bunch
+     * of these checks for TCP traffic */
+    if (trace_get_transport(pkt, &proto, &rem) != NULL &&
+            proto == TRACE_IPPROTO_UDP) {
 
-    /* Is this a RADIUS packet? -- if yes, create a state update */
+        /* Is this from one of our ALU mirrors -- if yes, parse + strip it
+         * for conversion to an ETSI record */
+        if (glob->alumirrors && check_alu_intercept(glob, loc, pkt,
+                glob->alumirrors, loc->activealuintercepts)) {
+            return NULL;
+        }
 
-    /* Is this a SIP packet? -- if yes, create a state update */
-    if (identified_as_sip(pkt, loc->knownsipservers)) {
-        if (process_sip_packet(pkt, loc) == 1) {
-            send_sip_update(pkt, loc);
+        /* Is this a RADIUS packet? -- if yes, create a state update */
+        if (loc->radiusservers && is_radius_packet(pkt, loc->radiusservers)) {
+            send_packet_to_sync(pkt, loc, OPENLI_UPDATE_RADIUS);
             forwarded = 1;
+        }
+
+        /* Is this a SIP packet? -- if yes, create a state update */
+        if (identified_as_sip(pkt, loc->knownsipservers)) {
+            if (process_sip_packet(pkt, loc) == 1) {
+                send_packet_to_sync(pkt, loc, OPENLI_UPDATE_SIP);
+                forwarded = 1;
+            }
         }
     }
 
@@ -356,9 +421,12 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         if (ipv4_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
             forwarded = 1;
         }
+
         /* Is this an RTP packet? -- if yes, possible IPMM CC */
-        if (ip4mm_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
-            forwarded = 1;
+        if (proto == TRACE_IPPROTO_UDP) {
+            if (ip4mm_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
+                forwarded = 1;
+            }
         }
 
     }
