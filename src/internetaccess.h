@@ -55,6 +55,7 @@ typedef enum {
     ACCESS_ACTION_ALREADY_ACTIVE,
     ACCESS_ACTION_INTERIM_UPDATE,
     ACCESS_ACTION_END,
+    ACCESS_ACTION_END_SUDDEN,
     ACCESS_ACTION_NONE
 } access_action_t;
 
@@ -90,17 +91,20 @@ struct access_plugin {
     void (*init_plugin_data)(access_plugin_t *p);
     void (*destroy_plugin_data)(access_plugin_t *p);
 
-    char *(*get_userid_from_packet)(access_plugin_t *p, libtrace_packet_t *pkt);
+    void *(*process_packet)(access_plugin_t *p, libtrace_packet_t *pkt);
+    void (*destroy_parsed_data)(access_plugin_t *p, void *parseddata);
+
+    char *(*get_userid)(access_plugin_t *p, void *parseddata);
 
     access_session_t *(*update_session_state)(access_plugin_t *p,
-            libtrace_packet_t *pkt, access_session_t *sesslist,
+            void *parseddata, access_session_t *sesslist,
             session_state_t *oldstate, session_state_t *newstate,
             access_action_t *action);
 
     int (*create_iri_from_packet)(access_plugin_t *p, collector_global_t *glob,
             wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
             access_session_t *sess, ipintercept_t *ipint,
-            libtrace_packet_t *packet, access_action_t action);
+            void *parseddata, access_action_t action);
 
     void (*destroy_session_data)(access_plugin_t *p, access_session_t *sess);
 

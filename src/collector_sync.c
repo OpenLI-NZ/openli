@@ -1487,6 +1487,7 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     ipintercept_t *ipint, *tmp;
     openli_export_recv_t msg;
     int expcount = 0;
+    void *parseddata = NULL;
 
     if (accesstype == ACCESS_RADIUS) {
         p = sync->radiusplugin;
@@ -1497,10 +1498,18 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         return -1;
     }
 
-    userid = p->get_userid_from_packet(p, pkt);
+    parseddata = p->process_packet(p, pkt);
+
+    if (parseddata == NULL) {
+        logger(LOG_DAEMON, "OpenLI: unable to parse %s packet", p->name);
+        return -1;
+    }
+
+    userid = p->get_userid(p, parseddata);
     if (userid == NULL) {
         logger(LOG_DAEMON, "OpenLI: unable to find a user ID in %s packet",
                 p->name);
+        p->destroy_parsed_data(p, parseddata);
         return -1;
     }
 
@@ -1510,6 +1519,7 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
 
         if (!iuser) {
             logger(LOG_DAEMON, "OpenLI: unable to allocate memory for new Internet user");
+            p->destroy_parsed_data(p, parseddata);
             return -1;
         }
         iuser->userid = strdup(userid);
@@ -1519,12 +1529,20 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
                 strlen(iuser->userid), iuser);
     }
 
-    sess = p->update_session_state(p, pkt, iuser->sessions, &oldstate,
+    sess = p->update_session_state(p, parseddata, iuser->sessions, &oldstate,
             &newstate, &accessaction);
     if (!sess) {
         logger(LOG_DAEMON, "OpenLI: error while assigning packet to a Internet access session");
+        p->destroy_parsed_data(p, parseddata);
         return -1;
     }
+
+    /* TODO keep track of ip->user mappings so that we can recognise when
+     * an IP has been re-assigned silently.
+     *
+     * In this case, we want to find and withdraw any intercepts for the
+     * old owner.
+     */
 
     HASH_FIND(hh, sync->userintercepts, userid, strlen(userid), userint);
 
@@ -1555,7 +1573,8 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     if (userint) {
         HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
             if (p->create_iri_from_packet(p, sync->glob, &(sync->encoder),
-                    &(sync->exportq), sess, ipint, pkt, accessaction) == -1) {
+                    &(sync->exportq), sess, ipint, parseddata,
+                    accessaction) == -1) {
                 logger(LOG_DAEMON,
                         "OpenLI: unable to form IP IRI from %s packet for intercept %s",
                         p->name, ipint->common.liid);
@@ -1565,6 +1584,8 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         }
         sess->iriseqno ++;
     }
+
+    p->destroy_parsed_data(p, parseddata);
 
     if (expcount > 0) {
         /* Increment ref count for the packet and send a packet fin message
