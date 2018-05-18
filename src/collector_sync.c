@@ -1216,11 +1216,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             HASH_ITER(hh, user->sessions, sess, tmp2) {
                 HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs),
                         sendq, tmp) {
-                    if (cept->alushimid != OPENLI_ALUSHIM_NONE) {
-                        push_single_alushimid(sendq->q, cept, sess->cin);
-                    } else {
-                        push_single_ipintercept(sendq->q, cept, sess);
-                    }
+                    push_single_ipintercept(sendq->q, cept, sess);
                 }
             }
         }
@@ -1234,6 +1230,20 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         logger(LOG_DAEMON,
                 "OpenLI: received IP intercept from provisioner for ALU shim ID %u (LIID %s, authCC %s)",
                 cept->alushimid, cept->common.liid, cept->common.authcc);
+
+        /* Don't need to wait for a session to start an ALU intercept.
+         * The CIN is contained within the packet and only valid
+         * interceptable packets should have the intercept ID we're
+         * looking for.
+         *
+         * TODO allow config that will force us to wait for a session
+         * instead, i.e. if the ALU is configured to NOT set the session
+         * ID in the shim.
+         */
+        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs),
+                sendq, tmp) {
+            push_single_alushimid(sendq->q, cept, 0);
+        }
     }
 
     HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
@@ -1451,17 +1461,14 @@ static void push_all_active_intercepts(internet_user_t *allusers,
         /* Do we have a valid user that matches the target username? */
         if (orig->username != NULL) {
             HASH_FIND(hh, allusers, orig->username, orig->username_len, user);
-            if (!user) {
-                continue;
-            }
-
-            HASH_ITER(hh, user->sessions, sess, tmp2) {
-                if (orig->alushimid != OPENLI_ALUSHIM_NONE) {
-                    push_single_alushimid(q, orig, sess->cin);
-                } else {
+            if (user) {
+                HASH_ITER(hh, user->sessions, sess, tmp2) {
                     push_single_ipintercept(q, orig, sess);
                 }
             }
+        }
+        if (orig->alushimid != OPENLI_ALUSHIM_NONE) {
+            push_single_alushimid(q, orig, 0);
         }
     }
 }
