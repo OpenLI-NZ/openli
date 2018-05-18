@@ -250,6 +250,10 @@ int check_alu_intercept(collector_global_t *glob, colthread_local_t *loc,
 
     /* Direction 0 = ingress (i.e. coming from the subscriber) */
 
+    /* Use the session ID from the shim as the CIN */
+    /* TODO double check that this will be available in the RADIUS stream */
+    alu->cin = ntohl(aluhdr->sessionid);
+
     /* Create an appropriate IPCC and export it */
     form_alu_ipcc(glob, loc, alu,
             l3, rem, &tv, alushim_get_direction(aluhdr));
