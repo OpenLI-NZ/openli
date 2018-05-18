@@ -94,6 +94,7 @@ static openli_export_recv_t form_ipcc(collector_global_t *glob,
     hdrdata.intpointid = glob->intpointid;
     hdrdata.intpointid_len = glob->intpointid_len;
 
+    memset(&msg, 0, sizeof(openli_exportmsg_t));
     msg.msgbody = encode_etsi_ipcc(loc->encoder, &hdrdata,
             (int64_t)sess->cin, (int64_t)sess->nextseqno, &tv, l3, rem, dir);
 
@@ -104,6 +105,7 @@ static openli_export_recv_t form_ipcc(collector_global_t *glob,
     msg.header = construct_netcomm_protocol_header(msg.msgbody->len,
             OPENLI_PROTO_ETSI_CC, 0, &(msg.hdrlen));
 
+    memset(&exprecv, 0, sizeof(openli_export_recv_t));
     exprecv.type = OPENLI_EXPORT_ETSIREC;
     exprecv.data.toexport = msg;
 

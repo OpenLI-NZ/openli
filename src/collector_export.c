@@ -424,6 +424,7 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
     libtrace_list_node_t *n;
     export_dest_t *dest;
 
+    memset(&recvd, 0, sizeof(openli_export_recv_t));
     x = libtrace_message_queue_get(srcq, (void *)(&recvd));
     if (x == LIBTRACE_MQ_FAILED) {
         return 0;
