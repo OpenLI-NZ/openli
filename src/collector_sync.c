@@ -84,6 +84,7 @@ void clean_sync_data(collector_sync_t *sync) {
     free_all_users(sync->allusers);
     clear_user_intercept_list(sync->userintercepts);
     free_all_ipintercepts(sync->ipintercepts);
+    free_coreserver_list(sync->coreservers);
     if (sync->voipintercepts) {
         free_all_voipintercepts(sync->voipintercepts);
     }
