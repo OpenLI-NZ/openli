@@ -13,11 +13,16 @@ This code has been developed by the University of Waikato WAND research group. F
 
 ## Dependencies
 
-* [libtrace 4.0.0 or later](http://research.wand.net.nz/software/libtrace.php)
+* [libtrace 4.0.4 or later](http://research.wand.net.nz/software/libtrace.php)
   (packages for Debian / Ubuntu are available
-  [from WAND](http://packages.wand.net.nz) as well).
+  [from WAND](http://packages.wand.net.nz) as well). Early adopters may
+  need to clone the 'develop' branch from
+  [the Github repo](https://github.com/LibtraceTeam/libtrace) if 4.0.4 is
+  not yet released.
 
-* [libwandder](https://github.com/wanduow/libwandder/tree/develop)
+* [libwandder](https://github.com/wanduow/libwandder/) -- again, consider
+  running the 'develop' branch to ensure you have all of the latest bug
+  fixes.
 
 * libyaml -- Debian / Ubuntu users can install the libyaml-dev package.
 
