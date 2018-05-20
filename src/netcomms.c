@@ -905,6 +905,10 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
             ipint->common.delivcc_len = vallen;
         } else if (f == OPENLI_PROTO_FIELD_USERNAME) {
             DECODE_STRING_FIELD(ipint->username, valptr, vallen);
+            if (vallen == 0) {
+                free(ipint->username);
+                ipint->username = NULL;
+            }
             ipint->username_len = vallen;
         } else {
             dump_buffer_contents(msgbody, len);

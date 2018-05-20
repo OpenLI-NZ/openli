@@ -86,6 +86,7 @@ void clean_sync_data(collector_sync_t *sync) {
     free_all_users(sync->allusers);
     clear_user_intercept_list(sync->userintercepts);
     free_all_ipintercepts(sync->ipintercepts);
+    free_coreserver_list(sync->coreservers);
     if (sync->voipintercepts) {
         free_all_voipintercepts(sync->voipintercepts);
     }
@@ -135,6 +136,7 @@ static inline void push_coreserver_msg(collector_sync_t *sync,
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
         openli_pushed_t msg;
 
+        memset(&msg, 0, sizeof(openli_pushed_t));
         msg.type = msgtype;
         msg.data.coreserver = deep_copy_coreserver(cs);
         libtrace_message_queue_put(sendq->q, (void *)(&msg));
@@ -160,6 +162,7 @@ static inline void push_single_ipintercept(libtrace_message_queue_t *q,
                 "OpenLI: ran out of memory while creating IP session message.");
         return;
     }
+    memset(&msg, 0, sizeof(openli_pushed_t));
     msg.type = OPENLI_PUSH_IPINTERCEPT;
     msg.data.ipsess = ipsess;
 
@@ -184,6 +187,7 @@ static inline void push_single_alushimid(libtrace_message_queue_t *q,
     }
     alu->cin = sesscin;
 
+    memset(&msg, 0, sizeof(openli_pushed_t));
     msg.type = OPENLI_PUSH_ALUINTERCEPT;
     msg.data.aluint = alu;
 
@@ -203,6 +207,7 @@ static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
         return;
     }
 
+    memset(&msg, 0, sizeof(openli_pushed_t));
     msg.type = OPENLI_PUSH_IPMMINTERCEPT;
     msg.data.ipmmint = copy;
 
@@ -216,6 +221,7 @@ static void push_all_coreservers(coreserver_t *servers,
     HASH_ITER(hh, servers, cs, tmp) {
         openli_pushed_t msg;
 
+        memset(&msg, 0, sizeof(openli_pushed_t));
         msg.type = OPENLI_PUSH_CORESERVER;
         msg.data.coreserver = deep_copy_coreserver(cs);
         libtrace_message_queue_put(q, (void *)(&msg));
@@ -268,6 +274,7 @@ static void push_halt_active_voipstreams(libtrace_message_queue_t *q,
             continue;
         }
         streamdup = strdup(cin->streamkey);
+        memset(&msg, 0, sizeof(openli_pushed_t));
         msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
         msg.data.rtpstreamkey = streamdup;
 
@@ -294,6 +301,7 @@ static void push_halt_active_voipstreams(libtrace_message_queue_t *q,
 static void push_sip_uri_halt(libtrace_message_queue_t *q, char *uri) {
     openli_pushed_t msg;
 
+    memset(&msg, 0, sizeof(openli_pushed_t));
     msg.type = OPENLI_PUSH_HALT_SIPURI;
     msg.data.sipuri = strdup(uri);
 
@@ -322,6 +330,7 @@ static inline void push_session_halt_to_threads(void *sendqs,
         ipsession_t *sessdup;
         char ipstr[128];
 
+        memset(&pmsg, 0, sizeof(openli_pushed_t));
         pmsg.type = OPENLI_PUSH_HALT_IPINTERCEPT;
         sessdup = create_ipsession(ipint, sess->cin, sess->ipfamily,
                 sess->assignedip);
@@ -421,6 +430,7 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
         return -1;
     }
 
+    memset(&expmsg, 0, sizeof(openli_export_recv_t));
     expmsg.type = OPENLI_EXPORT_MEDIATOR;
     expmsg.data.med = med;
 
@@ -439,6 +449,7 @@ static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
         return -1;
     }
 
+    memset(&expmsg, 0, sizeof(openli_export_recv_t));
     expmsg.type = OPENLI_EXPORT_DROP_SINGLE_MEDIATOR;
     expmsg.data.med = med;
 
@@ -472,6 +483,7 @@ static inline void convert_ipstr_to_sockaddr(char *knownip,
 static void push_sip_uri(libtrace_message_queue_t *q, char *uri) {
     openli_pushed_t msg;
 
+    memset(&msg, 0, sizeof(openli_pushed_t));
     msg.type = OPENLI_PUSH_SIPURI;
     msg.data.sipuri = strdup(uri);
 
@@ -905,6 +917,7 @@ endvoiplookup:
          * so the exporter knows when to decrease the ref count */
         openli_export_recv_t msg;
         trace_increment_packet_refcount(pkt);
+        memset(&msg, 0, sizeof(openli_export_recv_t));
         msg.type = OPENLI_EXPORT_PACKET_FIN;
         msg.data.packet = pkt;
         libtrace_message_queue_put(&(sync->exportq), (void *)(&msg));
@@ -1060,6 +1073,7 @@ static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
     if (rtp->active) {
         HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp3) {
            openli_pushed_t msg;
+           memset(&msg, 0, sizeof(openli_pushed_t));
            msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
            msg.data.rtpstreamkey = strdup(rtp->streamkey);
            libtrace_message_queue_put(sendq->q, (void *)(&msg));
@@ -1108,6 +1122,7 @@ static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
 static inline void drop_all_mediators(collector_sync_t *sync) {
     openli_export_recv_t expmsg;
 
+    memset(&expmsg, 0, sizeof(openli_export_recv_t));
     expmsg.type = OPENLI_EXPORT_DROP_ALL_MEDIATORS;
     expmsg.data.packet = NULL;
     libtrace_message_queue_put(&(sync->exportq), &expmsg);
@@ -1224,11 +1239,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             HASH_ITER(hh, user->sessions, sess, tmp2) {
                 HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs),
                         sendq, tmp) {
-                    if (cept->alushimid != OPENLI_ALUSHIM_NONE) {
-                        push_single_alushimid(sendq->q, cept, sess->cin);
-                    } else {
-                        push_single_ipintercept(sendq->q, cept, sess);
-                    }
+                    push_single_ipintercept(sendq->q, cept, sess);
                 }
             }
         }
@@ -1242,6 +1253,20 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         logger(LOG_DAEMON,
                 "OpenLI: received IP intercept from provisioner for ALU shim ID %u (LIID %s, authCC %s)",
                 cept->alushimid, cept->common.liid, cept->common.authcc);
+
+        /* Don't need to wait for a session to start an ALU intercept.
+         * The CIN is contained within the packet and only valid
+         * interceptable packets should have the intercept ID we're
+         * looking for.
+         *
+         * TODO allow config that will force us to wait for a session
+         * instead, i.e. if the ALU is configured to NOT set the session
+         * ID in the shim.
+         */
+        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs),
+                sendq, tmp) {
+            push_single_alushimid(sendq->q, cept, 0);
+        }
     }
 
     HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
@@ -1440,6 +1465,7 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
 
     /* Same with mediators -- keep exporting to them, but flag them to be
      * disconnected if they are not announced after we reconnect. */
+    memset(&expmsg, 0, sizeof(openli_export_recv_t));
     expmsg.type = OPENLI_EXPORT_FLAG_MEDIATORS;
     expmsg.data.packet = NULL;
 
@@ -1459,17 +1485,14 @@ static void push_all_active_intercepts(internet_user_t *allusers,
         /* Do we have a valid user that matches the target username? */
         if (orig->username != NULL) {
             HASH_FIND(hh, allusers, orig->username, orig->username_len, user);
-            if (!user) {
-                continue;
-            }
-
-            HASH_ITER(hh, user->sessions, sess, tmp2) {
-                if (orig->alushimid != OPENLI_ALUSHIM_NONE) {
-                    push_single_alushimid(q, orig, sess->cin);
-                } else {
+            if (user) {
+                HASH_ITER(hh, user->sessions, sess, tmp2) {
                     push_single_ipintercept(q, orig, sess);
                 }
             }
+        }
+        if (orig->alushimid != OPENLI_ALUSHIM_NONE) {
+            push_single_alushimid(q, orig, 0);
         }
     }
 }
@@ -1739,6 +1762,7 @@ static inline void push_hello_message(libtrace_message_queue_t *atob,
 
     openli_state_update_t hello;
 
+    memset(&hello, 0, sizeof(openli_state_update_t));
     hello.type = OPENLI_UPDATE_HELLO;
     hello.data.replyq = btoa;
 

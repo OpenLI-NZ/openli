@@ -77,6 +77,7 @@ int ipmm_iri(libtrace_packet_t *pkt, collector_global_t *glob,
     hdrdata.intpointid = glob->intpointid;
     hdrdata.intpointid_len = glob->intpointid_len;
 
+    memset(&iri, 0, sizeof(openli_exportmsg_t));
     iri.msgbody = encode_etsi_ipmmiri(*encoder, &hdrdata,
             (int64_t)(cin->cin), (int64_t)cin->iriseqno, iritype, &tv, l3,
             rem);
@@ -88,6 +89,7 @@ int ipmm_iri(libtrace_packet_t *pkt, collector_global_t *glob,
     iri.header = construct_netcomm_protocol_header(iri.msgbody->len,
             OPENLI_PROTO_ETSI_IRI, vint->internalid, &(iri.hdrlen));
 
+    memset(&msg, 0, sizeof(openli_export_recv_t));
     msg.type = OPENLI_EXPORT_ETSIREC;
     msg.data.toexport = iri;
 
