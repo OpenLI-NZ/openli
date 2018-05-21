@@ -127,6 +127,7 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->encoder = NULL;
     sync->ii_ev = NULL;
     sync->radiusplugin = NULL;
+
 }
 
 static inline void push_coreserver_msg(collector_sync_t *sync,
@@ -1497,10 +1498,12 @@ static void push_all_active_intercepts(internet_user_t *allusers,
     }
 }
 
+
 static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         uint8_t accesstype) {
 
     access_plugin_t *p = NULL;
+    char userspace[128];
     char *userid;
     internet_user_t *iuser;
     access_session_t *sess;
@@ -1510,6 +1513,7 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     ipintercept_t *ipint, *tmp;
     openli_export_recv_t msg;
     int expcount = 0;
+    int useridlen = 128;
     void *parseddata = NULL;
 
     if (accesstype == ACCESS_RADIUS) {
@@ -1530,7 +1534,7 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
 
     userid = p->get_userid(p, parseddata);
     if (userid == NULL) {
-        logger(LOG_DAEMON, "OpenLI: unable to find a user ID in %s packet",
+        logger(LOG_DAEMON, "OpenLI: unable to assign a user ID to %s packet",
                 p->name);
         p->destroy_parsed_data(p, parseddata);
         return -1;
@@ -1552,7 +1556,7 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
                 strlen(iuser->userid), iuser);
     }
 
-    sess = p->update_session_state(p, parseddata, iuser->sessions, &oldstate,
+    sess = p->update_session_state(p, parseddata, &(iuser->sessions), &oldstate,
             &newstate, &accessaction);
     if (!sess) {
         logger(LOG_DAEMON, "OpenLI: error while assigning packet to a Internet access session");
@@ -1571,8 +1575,8 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
 
     if (oldstate != newstate) {
 
-        if (userint && newstate == SESSION_STATE_ACTIVE &&
-                oldstate == SESSION_STATE_AUTHING) {
+        if (userint && accessaction == ACCESS_ACTION_ACCEPT ||
+                accessaction == ACCESS_ACTION_ALREADY_ACTIVE) {
 
             HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
                 /* TODO tell collector threads that we have a new IP to

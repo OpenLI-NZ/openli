@@ -56,6 +56,7 @@ typedef enum {
     ACCESS_ACTION_INTERIM_UPDATE,
     ACCESS_ACTION_END,
     ACCESS_ACTION_END_SUDDEN,
+    ACCESS_ACTION_RETRY,
     ACCESS_ACTION_NONE
 } access_action_t;
 
@@ -97,7 +98,7 @@ struct access_plugin {
     char *(*get_userid)(access_plugin_t *p, void *parseddata);
 
     access_session_t *(*update_session_state)(access_plugin_t *p,
-            void *parseddata, access_session_t *sesslist,
+            void *parseddata, access_session_t **sesslist,
             session_state_t *oldstate, session_state_t *newstate,
             access_action_t *action);
 
