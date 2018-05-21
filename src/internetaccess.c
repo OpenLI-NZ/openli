@@ -49,7 +49,6 @@ access_plugin_t *init_access_plugin(uint8_t accessmethod) {
 
 void destroy_access_plugin(access_plugin_t *p) {
     p->destroy_plugin_data(p);
-    free(p);
 }
 
 static inline void free_session(access_session_t *sess) {
