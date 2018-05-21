@@ -389,6 +389,8 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         return pkt;
     }
 
+    trace_increment_packet_refcount(pkt);
+
     /* All these special packets are UDP, so we can avoid a whole bunch
      * of these checks for TCP traffic */
     if (trace_get_transport(pkt, &proto, &rem) != NULL &&
@@ -433,8 +435,8 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     /* TODO IPV6 CC */
 
-
     if (forwarded) {
+        trace_decrement_packet_refcount(pkt);
         return NULL;
     }
     return pkt;
