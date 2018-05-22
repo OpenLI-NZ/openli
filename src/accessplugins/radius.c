@@ -99,8 +99,7 @@ struct radius_attribute {
     uint8_t att_len;
     void *att_val;
 
-    radius_attribute_t *nextfree;
-    UT_hash_handle hh;
+    radius_attribute_t *next;
 };
 
 
@@ -202,7 +201,7 @@ static void radius_destroy_plugin_data(access_plugin_t *p) {
     at = glob->freeattrs;
     while (at) {
         tmp = at;
-        at = at->nextfree;
+        at = at->next;
         free(tmp);
     }
 
@@ -251,9 +250,11 @@ static void radius_destroy_plugin_data(access_plugin_t *p) {
         free(srv);
     }
 
-    HASH_ITER(hh, glob->parsedpkt.attrs, at, tmp) {
-        HASH_DELETE(hh, glob->parsedpkt.attrs, at);
-        free(at);
+    at = glob->parsedpkt.attrs;
+    while (at) {
+        tmp = at;
+        at = at->next;
+        free(tmp);
     }
     free(glob);
     return;
@@ -267,16 +268,19 @@ static void radius_destroy_parsed_data(access_plugin_t *p, void *parsed) {
 
     glob = (radius_global_t *)(p->plugindata);
 
-    HASH_ITER(hh, rparsed->attrs, at, tmp) {
-        HASH_DELETE(hh, rparsed->attrs, at);
+    at = rparsed->attrs;
+    while (at != NULL) {
+        tmp = at;
+        at = at->next;
         if (glob->freeattrs == NULL) {
-            glob->freeattrs = at;
-            at->nextfree = NULL;
+            glob->freeattrs = tmp;
+            glob->freeattrs->next = NULL;
         } else {
-            at->nextfree = glob->freeattrs;
-            glob->freeattrs = at;
+            tmp->next = glob->freeattrs;
+            glob->freeattrs = tmp;
         }
     }
+    rparsed->attrs = at;
 
     if (rparsed->accessreq) {
         free(rparsed->accessreq);
@@ -366,19 +370,11 @@ static inline int grab_nas_details_from_packet(radius_parsed_t *parsed,
 static inline radius_attribute_t *create_new_attribute(radius_global_t *glob,
         radius_parsed_t *parsed, uint8_t type, uint8_t len, uint8_t *valptr) {
 
-    radius_attribute_t *attr, *existing;
-
-    /* Some attributes can appear more than once, but none of these
-     * are important for OpenLI so just keep the first instance. */
-    HASH_FIND(hh, parsed->attrs, &(type), sizeof(uint8_t), existing);
-
-    if (existing) {
-        return existing;
-    }
+    radius_attribute_t *attr;
 
     if (glob->freeattrs) {
         attr = glob->freeattrs;
-        glob->freeattrs = attr->nextfree;
+        glob->freeattrs = attr->next;
     } else {
         attr = (radius_attribute_t *)malloc(sizeof(radius_attribute_t));
     }
@@ -386,11 +382,9 @@ static inline radius_attribute_t *create_new_attribute(radius_global_t *glob,
     attr->att_type = type;
     attr->att_len = len - 2;
     attr->att_val = (void *)valptr;
-    attr->nextfree = NULL;
+    attr->next = parsed->attrs;
 
-    HASH_ADD_KEYPTR(hh, parsed->attrs, &(attr->att_type), sizeof(uint8_t),
-            attr);
-
+    parsed->attrs = attr;
     return attr;
 }
 
@@ -523,14 +517,20 @@ static inline void process_username_attribute(radius_parsed_t *raddata) {
     char userkey[256];
     radius_user_t *user;
     radius_attribute_t *userattr;
-    uint8_t attrnum = RADIUS_ATTR_USERNAME;
 
     if (raddata->msgtype != RADIUS_CODE_ACCESS_REQUEST &&
             raddata->msgtype != RADIUS_CODE_ACCOUNT_REQUEST) {
         return;
     }
 
-    HASH_FIND(hh, raddata->attrs, &attrnum, sizeof(attrnum), userattr);
+    userattr = raddata->attrs;
+    while (userattr) {
+        if (userattr->att_type == RADIUS_ATTR_USERNAME) {
+            break;
+        }
+        userattr = userattr->next;
+    }
+
     if (!userattr) {
         return;
     }
@@ -545,6 +545,7 @@ static inline void process_username_attribute(radius_parsed_t *raddata) {
                 "OpenLI RADIUS: User-Name is too long, truncated to %s",
                 userkey);
     }
+
     HASH_FIND(hh_username, raddata->matchednas->users, userkey,
             strlen(userkey), user);
 
@@ -576,7 +577,14 @@ static inline void process_nasid_attribute(radius_parsed_t *raddata) {
         return;
     }
 
-    HASH_FIND(hh, raddata->attrs, &attrnum, sizeof(attrnum), nasattr);
+    nasattr = raddata->attrs;
+    while (nasattr) {
+        if (nasattr->att_type == RADIUS_ATTR_NASIDENTIFIER) {
+            break;
+        }
+        nasattr = nasattr->next;
+    }
+
     if (!nasattr) {
         return;
     }
@@ -613,37 +621,19 @@ static inline void process_nasport_attribute(radius_parsed_t *raddata) {
 
     radius_attribute_t *nasattr;
 
-    HASH_FIND(hh, raddata->attrs, &attrnum, sizeof(attrnum), nasattr);
+    nasattr = raddata->attrs;
+    while (nasattr) {
+        if (nasattr->att_type == RADIUS_ATTR_NASPORT) {
+            break;
+        }
+        nasattr = nasattr->next;
+    }
+
     if (!nasattr) {
         return;
     }
 
     raddata->nasport = *((uint32_t *)nasattr->att_val);
-}
-
-static inline char *grab_account_session_id(radius_parsed_t *raddata,
-        char *space, int len) {
-
-    uint8_t attrnum = RADIUS_ATTR_ACCT_SESSION_ID;
-
-    radius_attribute_t *attr;
-    HASH_FIND(hh, raddata->attrs, &attrnum, sizeof(attrnum), attr);
-
-    if (!attr) {
-        snprintf(space, len, "no session ID present");
-        return space;
-    }
-
-    if (attr->att_len > len) {
-        memcpy(space, attr->att_val, len - 1);
-        space[len] = '\0';
-    } else {
-        memcpy(space, attr->att_val, attr->att_len);
-        space[attr->att_len] = '\0';
-    }
-
-    return space;
-
 }
 
 static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
@@ -662,43 +652,45 @@ static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
 
     /* TODO is multiple address assignment a thing that happens in reality? */
 
-    /* Try v4 first */
-    attrnum = RADIUS_ATTR_FRAMED_IP_ADDRESS;
-    HASH_FIND(hh, raddata->attrs, &attrnum, sizeof(attrnum), attr);
-    if (attr) {
-        struct sockaddr_in *in;
+    attr = raddata->attrs;
+    while (attr) {
+        if (attr->att_type == RADIUS_ATTR_FRAMED_IP_ADDRESS) {
+            struct sockaddr_in *in;
 
-        sa = (struct sockaddr_storage *)malloc(sizeof(struct sockaddr_storage));
-        memset(sa, 0, sizeof(struct sockaddr_storage));
-        in = (struct sockaddr_in *)sa;
+            sa = (struct sockaddr_storage *)malloc(
+                    sizeof(struct sockaddr_storage));
+            memset(sa, 0, sizeof(struct sockaddr_storage));
+            in = (struct sockaddr_in *)sa;
 
-        in->sin_family = AF_INET;
-        in->sin_port = 0;
-        in->sin_addr.s_addr = *((uint32_t *)attr->att_val);
+            in->sin_family = AF_INET;
+            in->sin_port = 0;
+            in->sin_addr.s_addr = *((uint32_t *)attr->att_val);
 
-        sess->ipfamily = AF_INET;
-        sess->assignedip = (struct sockaddr *)sa;
-        return;
-    }
+            sess->ipfamily = AF_INET;
+            sess->assignedip = (struct sockaddr *)sa;
+            return;
+        }
 
-    attrnum = RADIUS_ATTR_FRAMED_IPV6_ADDRESS;
-    HASH_FIND(hh, raddata->attrs, &attrnum, sizeof(attrnum), attr);
-    if (attr) {
-        struct sockaddr_in6 *in6;
+        if (attr->att_type == RADIUS_ATTR_FRAMED_IPV6_ADDRESS) {
+            struct sockaddr_in6 *in6;
 
-        sa = (struct sockaddr_storage *)malloc(sizeof(struct sockaddr_storage));
-        memset(sa, 0, sizeof(struct sockaddr_storage));
-        in6 = (struct sockaddr_in6 *)sa;
+            sa = (struct sockaddr_storage *)malloc(
+                    sizeof(struct sockaddr_storage));
+            memset(sa, 0, sizeof(struct sockaddr_storage));
+            in6 = (struct sockaddr_in6 *)sa;
 
-        in6->sin6_family = AF_INET6;
-        in6->sin6_port = 0;
-        in6->sin6_flowinfo = 0;
+            in6->sin6_family = AF_INET6;
+            in6->sin6_port = 0;
+            in6->sin6_flowinfo = 0;
 
-        memcpy(&(in6->sin6_addr.s6_addr), attr->att_val, 16);
+            memcpy(&(in6->sin6_addr.s6_addr), attr->att_val, 16);
 
-        sess->ipfamily = AF_INET6;
-        sess->assignedip = (struct sockaddr *)sa;
-        return;
+            sess->ipfamily = AF_INET6;
+            sess->assignedip = (struct sockaddr *)sa;
+            return;
+        }
+
+        attr = attr->next;
     }
 
 }
@@ -713,24 +705,24 @@ static inline void save_octet_counts(radius_parsed_t *raddata,
         return;
     }
 
-    attrnum = RADIUS_ATTR_ACCT_INOCTETS;
-    HASH_FIND(hh, raddata->attrs, &attrnum, sizeof(attrnum), attr);
-    if (attr) {
-        req->inoctets = *((uint32_t *)attr->att_val);
-    }
+    /* TODO what if there are duplicate attributes?? */
+    attr = raddata->attrs;
+    while (attr) {
+        if (attr->att_type == RADIUS_ATTR_ACCT_INOCTETS) {
+            req->inoctets = *((uint32_t *)attr->att_val);
+        }
 
-    attrnum = RADIUS_ATTR_ACCT_OUTOCTETS;
-    HASH_FIND(hh, raddata->attrs, &attrnum, sizeof(attrnum), attr);
-    if (attr) {
-        req->outoctets = *((uint32_t *)attr->att_val);
-    }
+        if (attr->att_type == RADIUS_ATTR_ACCT_OUTOCTETS) {
+            req->outoctets = *((uint32_t *)attr->att_val);
+        }
 
-    attrnum = RADIUS_ATTR_ACCT_SESSION_ID;
-    HASH_FIND(hh, raddata->attrs, &attrnum, sizeof(attrnum), attr);
-    if (attr) {
-        req->accsessionid = (char *)malloc(attr->att_len + 1);
-        memcpy(req->accsessionid, attr->att_val, attr->att_len);
-        req->accsessionid[attr->att_len] = '\0';
+
+        if (attr->att_type == RADIUS_ATTR_ACCT_SESSION_ID) {
+            req->accsessionid = (char *)malloc(attr->att_len + 1);
+            memcpy(req->accsessionid, attr->att_val, attr->att_len);
+            req->accsessionid[attr->att_len] = '\0';
+        }
+        attr = attr->next;
     }
 
 }
@@ -777,8 +769,6 @@ static inline void find_matching_request(radius_parsed_t *raddata) {
         if (req->accsessionid) {
             printf("req session id: %s\n", req->accsessionid);
         }
-        printf("reply session id: %s\n", grab_account_session_id(raddata,
-                debug, 1024));
         assert(raddata->matcheduser == NULL ||
                 req->targetuser == raddata->matcheduser);
         raddata->matcheduser = req->targetuser;
@@ -809,8 +799,6 @@ static char *radius_get_userid(access_plugin_t *p, void *parsed) {
         logger(LOG_DAEMON, "OpenLI RADIUS: please parse the packet before attempting to get the user id.");
         return NULL;
     }
-
-    printf("\nnas = %s\n", raddata->matchednas->nasip);
 
     process_username_attribute(raddata);
     process_nasport_attribute(raddata);
