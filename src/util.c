@@ -33,6 +33,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <arpa/inet.h>
+#include <stdio.h>
 
 #include "logger.h"
 #include "util.h"
@@ -147,6 +149,23 @@ endlistener:
     return sockfd;
 }
 
+char *sockaddr_to_string(struct sockaddr *sa, char *str, int len) {
+
+    switch(sa->sa_family) {
+        case AF_INET:
+            inet_ntop(AF_INET, &(((struct sockaddr_in *)sa)->sin_addr), str,
+                    len);
+            break;
+        case AF_INET6:
+            inet_ntop(AF_INET6, &(((struct sockaddr_in6 *)sa)->sin6_addr), str,
+                    len);
+            break;
+        default:
+            snprintf(str, len, "(unprintable)");
+            break;
+    }
+    return str;
+}
 
 int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr) {
     int timerfd;
