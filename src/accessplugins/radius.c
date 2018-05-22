@@ -388,6 +388,9 @@ static inline radius_attribute_t *create_new_attribute(radius_global_t *glob,
     attr->att_val = (void *)valptr;
     attr->nextfree = NULL;
 
+    HASH_ADD_KEYPTR(hh, parsed->attrs, &(attr->att_type), sizeof(uint8_t),
+            attr);
+
     return attr;
 }
 
