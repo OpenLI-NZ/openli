@@ -62,7 +62,9 @@ static inline void free_session(access_session_t *sess) {
     }
 
     /* session id and state data should be handled by the appropriate plugin */
-    sess->plugin->destroy_session_data(sess->plugin, sess);
+    if (sess->plugin) {
+        sess->plugin->destroy_session_data(sess->plugin, sess);
+    }
     free(sess);
 }
 
@@ -101,6 +103,7 @@ int free_single_session(internet_user_t *user, access_session_t *sess) {
     }
 
     HASH_DELETE(hh, user->sessions, sess);
+
     free_session(sess);
     return 0;
 }
