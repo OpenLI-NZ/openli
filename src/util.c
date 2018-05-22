@@ -167,6 +167,21 @@ char *sockaddr_to_string(struct sockaddr *sa, char *str, int len) {
     return str;
 }
 
+uint8_t *sockaddr_to_key(struct sockaddr *sa, int *socklen) {
+
+    switch(sa->sa_family) {
+        case AF_INET:
+            *socklen = sizeof(struct in_addr);
+            return (uint8_t *)(&(((struct sockaddr_in *)sa)->sin_addr));
+        case AF_INET6:
+            *socklen = sizeof(struct in6_addr);
+            return (uint8_t *)(&(((struct sockaddr_in6 *)sa)->sin6_addr));
+        default:
+            return NULL;
+    }
+    return NULL;
+}
+
 int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr) {
     int timerfd;
     struct epoll_event ev;

@@ -105,7 +105,7 @@ struct radius_attribute {
 
 
 typedef struct radius_nas_t {
-    char *nasip;
+    uint8_t *nasip;
     radius_user_t *users;
     radius_access_req_t *requests;
     radius_account_req_t *accountings;
@@ -114,7 +114,7 @@ typedef struct radius_nas_t {
 } radius_nas_t;
 
 typedef struct radius_server {
-    char *servip;
+    uint8_t *servip;
     radius_nas_t *naslist;
     UT_hash_handle hh;
 } radius_server_t;
@@ -364,9 +364,17 @@ static inline int grab_nas_details_from_packet(radius_parsed_t *parsed,
 }
 
 static inline radius_attribute_t *create_new_attribute(radius_global_t *glob,
-        uint8_t type, uint8_t len, uint8_t *valptr) {
+        radius_parsed_t *parsed, uint8_t type, uint8_t len, uint8_t *valptr) {
 
-    radius_attribute_t *attr;
+    radius_attribute_t *attr, *existing;
+
+    /* Some attributes can appear more than once, but none of these
+     * are important for OpenLI so just keep the first instance. */
+    HASH_FIND(hh, parsed->attrs, &(type), sizeof(uint8_t), existing);
+
+    if (existing) {
+        return existing;
+    }
 
     if (glob->freeattrs) {
         attr = glob->freeattrs;
@@ -388,32 +396,43 @@ static inline void update_known_servers(radius_global_t *glob,
 
     radius_server_t *srv;
     radius_nas_t *nas;
-    char ipstr[128];
+    uint8_t *sockkey;
+    int socklen;
 
-    sockaddr_to_string((struct sockaddr *)&(parsed->radiusip), ipstr, 128);
+    sockkey = sockaddr_to_key((struct sockaddr *)&(parsed->radiusip),
+            &socklen);
 
-    HASH_FIND(hh, glob->servers, ipstr, strlen(ipstr), srv);
+    if (sockkey == NULL) {
+        return;
+    }
+    HASH_FIND(hh, glob->servers, sockkey, socklen, srv);
 
     if (!srv) {
         srv = (radius_server_t *)malloc(sizeof(radius_server_t));
         srv->naslist = NULL;
-        srv->servip = strdup(ipstr);
+        srv->servip = (uint8_t *)malloc(socklen);
+        memcpy(srv->servip, sockkey, socklen);
 
-        HASH_ADD_KEYPTR(hh, glob->servers, srv->servip, strlen(srv->servip),
-                srv);
+        HASH_ADD_KEYPTR(hh, glob->servers, srv->servip, socklen, srv);
     }
 
 
-    sockaddr_to_string((struct sockaddr *)&(parsed->nasip), ipstr, 128);
-    HASH_FIND(hh, srv->naslist, ipstr, strlen(ipstr), nas);
+    sockkey = sockaddr_to_key((struct sockaddr *)&(parsed->radiusip),
+            &socklen);
+
+    if (sockkey == NULL) {
+        return;
+    }
+    HASH_FIND(hh, srv->naslist, sockkey, socklen, nas);
     if (!nas) {
         nas = (radius_nas_t *)malloc(sizeof(radius_nas_t));
         nas->users = NULL;
         nas->requests = NULL;
         nas->accountings = NULL;
-        nas->nasip = strdup(ipstr);
+        nas->nasip = (uint8_t *)malloc(socklen);
+        memcpy(nas->nasip, sockkey, socklen);
 
-        HASH_ADD_KEYPTR(hh, srv->naslist, nas->nasip, strlen(nas->nasip), nas);
+        HASH_ADD_KEYPTR(hh, srv->naslist, nas->nasip, socklen, nas);
     }
 
     parsed->matchednas = nas;
@@ -473,7 +492,7 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
 
     while (rem > 2) {
         uint8_t att_type, att_len;
-        radius_attribute_t *newattr, *existing;
+        radius_attribute_t *newattr;
 
         att_type = *ptr;
         att_len = *(ptr+1);
@@ -483,19 +502,10 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
             break;
         }
 
-        newattr = create_new_attribute(glob, att_type, att_len, ptr);
-        /* Some attributes can appear more than once, but none of these
-         * are important for OpenLI so just keep the first instance. */
-        HASH_FIND(hh, parsed->attrs, &(newattr->att_type), sizeof(uint8_t),
-                existing);
+        newattr = create_new_attribute(glob, parsed, att_type, att_len, ptr);
 
         if (newattr->att_type == RADIUS_ATTR_ACCT_STATUS_TYPE) {
             parsed->accttype = *((uint32_t *)newattr->att_val);
-        }
-
-        if (!existing) {
-            HASH_ADD_KEYPTR(hh, parsed->attrs, &(newattr->att_type),
-                    sizeof(uint8_t), newattr);
         }
 
         rem -= att_len;
@@ -789,7 +799,6 @@ static char *radius_get_userid(access_plugin_t *p, void *parsed) {
     raddata = (radius_parsed_t *)parsed;
 
     if (raddata->matcheduser) {
-        assert(0);
         return raddata->matcheduser->userid;
     }
 
