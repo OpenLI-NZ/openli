@@ -29,6 +29,10 @@
 
 #include "logger.h"
 #include "internetaccess.h"
+#include "util.h"
+
+#define DERIVE_REQUEST_ID(rad) \
+    ((((uint32_t)rad->msgident) << 16) + (((uint32_t)rad->sourceport)))
 
 enum {
     RADIUS_CODE_ACCESS_REQUEST = 1,
@@ -42,8 +46,13 @@ enum {
 enum {
     RADIUS_ATTR_USERNAME = 1,
     RADIUS_ATTR_NASPORT = 5,
+    RADIUS_ATTR_FRAMED_IP_ADDRESS = 8,
     RADIUS_ATTR_NASIDENTIFIER = 32,
     RADIUS_ATTR_ACCT_STATUS_TYPE = 40,
+    RADIUS_ATTR_ACCT_INOCTETS = 42,
+    RADIUS_ATTR_ACCT_OUTOCTETS = 43,
+    RADIUS_ATTR_ACCT_SESSION_ID = 44,
+    RADIUS_ATTR_FRAMED_IPV6_ADDRESS = 168,
 };
 
 enum {
@@ -56,7 +65,6 @@ typedef struct radius_user {
 
     char *userid;
     char *nasidentifier;
-    uint32_t nasport;
     session_state_t current;
     struct sockaddr *framedip4;
     struct sockaddr *framedip6;
@@ -77,6 +85,7 @@ typedef struct radius_account_req {
     uint32_t statustype;
     uint64_t inoctets;
     uint64_t outoctets;
+    char *accsessionid;
 
     radius_user_t *targetuser;
     UT_hash_handle hh;
@@ -96,7 +105,7 @@ struct radius_attribute {
 
 
 typedef struct radius_nas_t {
-    struct sockaddr_storage nasip;
+    char *nasip;
     radius_user_t *users;
     radius_access_req_t *requests;
     radius_account_req_t *accountings;
@@ -105,7 +114,7 @@ typedef struct radius_nas_t {
 } radius_nas_t;
 
 typedef struct radius_server {
-    struct sockaddr_storage servip;
+    char *servip;
     radius_nas_t *naslist;
     UT_hash_handle hh;
 } radius_server_t;
@@ -115,6 +124,7 @@ typedef struct radius_parsed {
     uint8_t msgtype;
     uint8_t msgident;
     uint32_t accttype;
+    uint32_t nasport;
     radius_attribute_t *attrs;
 
     struct sockaddr_storage nasip;
@@ -124,6 +134,9 @@ typedef struct radius_parsed {
     radius_user_t *matcheduser;
     radius_nas_t *matchednas;
     radius_server_t *matchedserv;
+
+    radius_access_req_t *accessreq;
+    radius_account_req_t *accountreq;
 
 } radius_parsed_t;
 
@@ -141,6 +154,23 @@ typedef struct radius_header {
     uint8_t auth[16];
 } PACKED radius_header_t;
 
+static inline void reset_parsed_packet(radius_parsed_t *parsed) {
+
+    parsed->msgtype = 0;
+    parsed->accttype = 0;
+    parsed->msgident = 0;
+    parsed->attrs = NULL;
+    parsed->sourceport = 0;
+    parsed->nasport = 0;
+    parsed->matcheduser = NULL;
+    parsed->matchednas = NULL;
+    parsed->matchedserv = NULL;
+    parsed->accessreq = NULL;
+    parsed->accountreq = NULL;
+    memset(&(parsed->nasip), 0, sizeof(struct sockaddr_storage));
+    memset(&(parsed->radiusip), 0, sizeof(struct sockaddr_storage));
+}
+
 static void radius_init_plugin_data(access_plugin_t *p) {
     radius_global_t *glob;
 
@@ -148,16 +178,7 @@ static void radius_init_plugin_data(access_plugin_t *p) {
     glob->freeattrs = NULL;
     glob->servers = NULL;
 
-    glob->parsedpkt.msgtype = 0;
-    glob->parsedpkt.accttype = 0;
-    glob->parsedpkt.msgident = 0;
-    glob->parsedpkt.attrs = NULL;
-    glob->parsedpkt.sourceport = 0;
-    glob->parsedpkt.matcheduser = NULL;
-    glob->parsedpkt.matchednas = NULL;
-    glob->parsedpkt.matchedserv = NULL;
-    memset(&(glob->parsedpkt.nasip), 0, sizeof(struct sockaddr_storage));
-    memset(&(glob->parsedpkt.radiusip), 0, sizeof(struct sockaddr_storage));
+    reset_parsed_packet(&(glob->parsedpkt));
 
     p->plugindata = (void *)(glob);
     return;
@@ -167,6 +188,11 @@ static void radius_destroy_plugin_data(access_plugin_t *p) {
 
     radius_global_t *glob;
     radius_attribute_t *at, *tmp;
+    radius_server_t *srv, *tmpsrv;
+    radius_nas_t *nas, *tmpnas;
+    radius_user_t *user, *tmpuser;
+    radius_access_req_t *req, *tmpreq;
+    radius_account_req_t *acc, *tmpacc;
 
     glob = (radius_global_t *)(p->plugindata);
     if (!glob) {
@@ -178,6 +204,51 @@ static void radius_destroy_plugin_data(access_plugin_t *p) {
         tmp = at;
         at = at->nextfree;
         free(tmp);
+    }
+
+    HASH_ITER(hh, glob->servers, srv, tmpsrv) {
+        HASH_ITER(hh, srv->naslist, nas, tmpnas) {
+            HASH_ITER(hh_username, nas->users, user, tmpuser) {
+                HASH_DELETE(hh_username, nas->users, user);
+                if (user->userid) {
+                    free(user->userid);
+                }
+                if (user->nasidentifier) {
+                    free(user->nasidentifier);
+                }
+                if (user->framedip4) {
+                    free(user->framedip4);
+                }
+                if (user->framedip6) {
+                    free(user->framedip6);
+                }
+                free(user);
+            }
+
+            HASH_ITER(hh, nas->requests, req, tmpreq) {
+                HASH_DELETE(hh, nas->requests, req);
+                free(req);
+            }
+
+            HASH_ITER(hh, nas->accountings, acc, tmpacc) {
+                HASH_DELETE(hh, nas->accountings, acc);
+                if (acc->accsessionid) {
+                    free(acc->accsessionid);
+                }
+                free(acc);
+            }
+
+            HASH_DELETE(hh, srv->naslist, nas);
+            if (nas->nasip) {
+                free(nas->nasip);
+            }
+            free(nas);
+        }
+        HASH_DELETE(hh, glob->servers, srv);
+        if (srv->servip) {
+            free(srv->servip);
+        }
+        free(srv);
     }
 
     HASH_ITER(hh, glob->parsedpkt.attrs, at, tmp) {
@@ -207,18 +278,17 @@ static void radius_destroy_parsed_data(access_plugin_t *p, void *parsed) {
         }
     }
 
-    rparsed->attrs = NULL;
-    rparsed->msgtype = 0;
-    rparsed->accttype = 0;
-    rparsed->msgident = 0;
-    rparsed->sourceport = 0;
-    rparsed->matcheduser = NULL;
-    rparsed->matchednas = NULL;
-    rparsed->matchedserv = NULL;
-    memset(&(rparsed->nasip), 0, sizeof(struct sockaddr_storage));
-    memset(&(rparsed->radiusip), 0, sizeof(struct sockaddr_storage));
+    if (rparsed->accessreq) {
+        free(rparsed->accessreq);
+    }
+    if (rparsed->accountreq) {
+        if (rparsed->accountreq->accsessionid) {
+            free(rparsed->accountreq->accsessionid);
+        }
+        free(rparsed->accountreq);
+    }
 
-    /* TODO free servers, nas's and users */
+    reset_parsed_packet(rparsed);
 
 }
 
@@ -245,6 +315,9 @@ static inline int grab_nas_details_from_packet(radius_parsed_t *parsed,
 
     struct sockaddr_storage ipaddr_nas;
     struct sockaddr_storage ipaddr_rad;
+
+    memset(&ipaddr_nas, 0, sizeof(struct sockaddr_storage));
+    memset(&ipaddr_rad, 0, sizeof(struct sockaddr_storage));
 
     switch(code) {
         case RADIUS_CODE_ACCESS_REQUEST:
@@ -315,30 +388,32 @@ static inline void update_known_servers(radius_global_t *glob,
 
     radius_server_t *srv;
     radius_nas_t *nas;
+    char ipstr[128];
 
-    HASH_FIND(hh, glob->servers, &(parsed->radiusip),
-            sizeof(struct sockaddr_storage), srv);
+    sockaddr_to_string((struct sockaddr *)&(parsed->radiusip), ipstr, 128);
+
+    HASH_FIND(hh, glob->servers, ipstr, strlen(ipstr), srv);
 
     if (!srv) {
         srv = (radius_server_t *)malloc(sizeof(radius_server_t));
         srv->naslist = NULL;
-        srv->servip = parsed->radiusip;
+        srv->servip = strdup(ipstr);
 
-        HASH_ADD_KEYPTR(hh, glob->servers, &(srv->servip),
-                sizeof(struct sockaddr_storage), srv);
+        HASH_ADD_KEYPTR(hh, glob->servers, srv->servip, strlen(srv->servip),
+                srv);
     }
 
-    HASH_FIND(hh, srv->naslist, &(parsed->nasip),
-            sizeof(struct sockaddr_storage), nas);
+
+    sockaddr_to_string((struct sockaddr *)&(parsed->nasip), ipstr, 128);
+    HASH_FIND(hh, srv->naslist, ipstr, strlen(ipstr), nas);
     if (!nas) {
         nas = (radius_nas_t *)malloc(sizeof(radius_nas_t));
         nas->users = NULL;
         nas->requests = NULL;
         nas->accountings = NULL;
-        nas->nasip = parsed->nasip;
+        nas->nasip = strdup(ipstr);
 
-        HASH_ADD_KEYPTR(hh, srv->naslist, &(nas->nasip),
-                sizeof(struct sockaddr_storage), nas);
+        HASH_ADD_KEYPTR(hh, srv->naslist, nas->nasip, strlen(nas->nasip), nas);
     }
 
     parsed->matchednas = nas;
@@ -469,7 +544,6 @@ static inline void process_username_attribute(radius_parsed_t *raddata) {
 
     user->userid = strdup(userkey);
     user->nasidentifier = NULL;
-    user->nasport = 0;
     user->current = SESSION_STATE_NEW;
     user->framedip4 = NULL;
     user->framedip6 = NULL;
@@ -508,7 +582,7 @@ static inline void process_nasid_attribute(radius_parsed_t *raddata) {
     if (raddata->matcheduser->nasidentifier) {
         if (strcmp(nasid, raddata->matcheduser->nasidentifier) != 0) {
             logger(LOG_DAEMON,
-                    "OpenLI RADIUS: NAS-Identifier for user %s has changed from %s to %s\n",
+                    "OpenLI RADIUS: NAS-Identifier for user %s has changed from %s to %s",
                     raddata->matcheduser->userid,
                     raddata->matcheduser->nasidentifier,
                     nasid);
@@ -526,18 +600,127 @@ static inline void process_nasport_attribute(radius_parsed_t *raddata) {
 
     radius_attribute_t *nasattr;
 
-    if (!raddata->matcheduser) {
-        return;
-    }
-
     HASH_FIND(hh, raddata->attrs, &attrnum, sizeof(attrnum), nasattr);
     if (!nasattr) {
         return;
     }
 
-    raddata->matcheduser->nasport = *((uint32_t *)nasattr->att_val);
+    raddata->nasport = *((uint32_t *)nasattr->att_val);
 }
 
+static inline char *grab_account_session_id(radius_parsed_t *raddata,
+        char *space, int len) {
+
+    uint8_t attrnum = RADIUS_ATTR_ACCT_SESSION_ID;
+
+    radius_attribute_t *attr;
+    HASH_FIND(hh, raddata->attrs, &attrnum, sizeof(attrnum), attr);
+
+    if (!attr) {
+        snprintf(space, len, "no session ID present");
+        return space;
+    }
+
+    if (attr->att_len > len) {
+        memcpy(space, attr->att_val, len - 1);
+        space[len] = '\0';
+    } else {
+        memcpy(space, attr->att_val, attr->att_len);
+        space[attr->att_len] = '\0';
+    }
+
+    return space;
+
+}
+
+static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
+        access_session_t *sess) {
+
+    uint8_t attrnum;
+    radius_attribute_t *attr;
+    struct sockaddr_storage *sa;
+
+    if (!raddata->matcheduser) {
+        return;
+    }
+    if (!sess) {
+        return;
+    }
+
+    /* TODO is multiple address assignment a thing that happens in reality? */
+
+    /* Try v4 first */
+    attrnum = RADIUS_ATTR_FRAMED_IP_ADDRESS;
+    HASH_FIND(hh, raddata->attrs, &attrnum, sizeof(attrnum), attr);
+    if (attr) {
+        struct sockaddr_in *in;
+
+        sa = (struct sockaddr_storage *)malloc(sizeof(struct sockaddr_storage));
+        memset(sa, 0, sizeof(struct sockaddr_storage));
+        in = (struct sockaddr_in *)sa;
+
+        in->sin_family = AF_INET;
+        in->sin_port = 0;
+        in->sin_addr.s_addr = *((uint32_t *)attr->att_val);
+
+        sess->ipfamily = AF_INET;
+        sess->assignedip = (struct sockaddr *)sa;
+        return;
+    }
+
+    attrnum = RADIUS_ATTR_FRAMED_IPV6_ADDRESS;
+    HASH_FIND(hh, raddata->attrs, &attrnum, sizeof(attrnum), attr);
+    if (attr) {
+        struct sockaddr_in6 *in6;
+
+        sa = (struct sockaddr_storage *)malloc(sizeof(struct sockaddr_storage));
+        memset(sa, 0, sizeof(struct sockaddr_storage));
+        in6 = (struct sockaddr_in6 *)sa;
+
+        in6->sin6_family = AF_INET6;
+        in6->sin6_port = 0;
+        in6->sin6_flowinfo = 0;
+
+        memcpy(&(in6->sin6_addr.s6_addr), attr->att_val, 16);
+
+        sess->ipfamily = AF_INET6;
+        sess->assignedip = (struct sockaddr *)sa;
+        return;
+    }
+
+}
+
+static inline void save_octet_counts(radius_parsed_t *raddata,
+        radius_account_req_t *req) {
+
+    uint8_t attrnum;
+    radius_attribute_t *attr;
+
+    if (!raddata->matcheduser) {
+        return;
+    }
+
+    attrnum = RADIUS_ATTR_ACCT_INOCTETS;
+    HASH_FIND(hh, raddata->attrs, &attrnum, sizeof(attrnum), attr);
+    if (attr) {
+        req->inoctets = *((uint32_t *)attr->att_val);
+    }
+
+    attrnum = RADIUS_ATTR_ACCT_OUTOCTETS;
+    HASH_FIND(hh, raddata->attrs, &attrnum, sizeof(attrnum), attr);
+    if (attr) {
+        req->outoctets = *((uint32_t *)attr->att_val);
+    }
+
+    attrnum = RADIUS_ATTR_ACCT_SESSION_ID;
+    HASH_FIND(hh, raddata->attrs, &attrnum, sizeof(attrnum), attr);
+    if (attr) {
+        req->accsessionid = (char *)malloc(attr->att_len + 1);
+        memcpy(req->accsessionid, attr->att_val, attr->att_len);
+        req->accsessionid[attr->att_len] = '\0';
+    }
+
+}
 
 
 static inline void find_matching_request(radius_parsed_t *raddata) {
@@ -546,6 +729,8 @@ static inline void find_matching_request(radius_parsed_t *raddata) {
 
     reqid = ((uint32_t)raddata->msgident << 16) + raddata->sourceport;
 
+    printf("%u %u %u %u \n", raddata->msgtype, reqid, raddata->msgident,
+            raddata->sourceport);
     if (raddata->msgtype == RADIUS_CODE_ACCESS_ACCEPT ||
             raddata->msgtype == RADIUS_CODE_ACCESS_REJECT ||
             raddata->msgtype == RADIUS_CODE_ACCESS_CHALLENGE) {
@@ -558,13 +743,17 @@ static inline void find_matching_request(radius_parsed_t *raddata) {
             return;
         }
 
+        assert(raddata->matcheduser == NULL ||
+                req->targetuser == raddata->matcheduser);
         raddata->matcheduser = req->targetuser;
+        raddata->accessreq = req;
         HASH_DELETE(hh, raddata->matchednas->requests, req);
         return;
     }
 
     if (raddata->msgtype == RADIUS_CODE_ACCOUNT_RESPONSE) {
         radius_account_req_t *req = NULL;
+        char debug[1024];
 
         HASH_FIND(hh, raddata->matchednas->accountings, &reqid, sizeof(reqid),
                 req);
@@ -572,21 +761,35 @@ static inline void find_matching_request(radius_parsed_t *raddata) {
             return;
         }
 
+        if (req->accsessionid) {
+            printf("req session id: %s\n", req->accsessionid);
+        }
+        printf("reply session id: %s\n", grab_account_session_id(raddata,
+                debug, 1024));
+        assert(raddata->matcheduser == NULL ||
+                req->targetuser == raddata->matcheduser);
         raddata->matcheduser = req->targetuser;
         raddata->accttype = req->statustype;
+        raddata->accountreq = req;
         HASH_DELETE(hh, raddata->matchednas->accountings, req);
         return;
     }
 
+    if (raddata->matcheduser == NULL) {
+        printf("fail\n");
+        assert(0);
+    }
 }
 
 static char *radius_get_userid(access_plugin_t *p, void *parsed) {
 
     radius_parsed_t *raddata;
+    char foo[128];
 
     raddata = (radius_parsed_t *)parsed;
 
     if (raddata->matcheduser) {
+        assert(0);
         return raddata->matcheduser->userid;
     }
 
@@ -595,14 +798,14 @@ static char *radius_get_userid(access_plugin_t *p, void *parsed) {
         return NULL;
     }
 
+    printf("\nnas = %s\n", raddata->matchednas->nasip);
+
     process_username_attribute(raddata);
+    process_nasport_attribute(raddata);
 
-    if (raddata->matcheduser) {
-        return raddata->matcheduser->userid;
-    }
-
-    if (raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST ||
-            raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
+    if (!raddata->matcheduser && (
+            raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST ||
+            raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST)) {
         logger(LOG_DAEMON,
                 "OpenLI RADIUS: got a request with no User-Name field?");
         return NULL;
@@ -716,7 +919,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     /* XXX test that this is suitably unique */
     snprintf(sessionid, 1024, "%s-%s-%u", raddata->matcheduser->userid,
             raddata->matcheduser->nasidentifier,
-            raddata->matcheduser->nasport);
+            raddata->nasport);
 
     HASH_FIND(hh, *sesslist, sessionid, strlen(sessionid), thissess);
     if (!thissess) {
@@ -737,10 +940,61 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
 
     apply_fsm_logic(raddata, oldstate, newstate, action);
 
-    if (raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST ||
-            raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
+    if (raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST) {
 
         /* Save the request so we can match the reply later on */
+        radius_access_req_t *req = NULL;
+        radius_access_req_t *check = NULL;
+
+        req = (radius_access_req_t *)malloc(sizeof(radius_access_req_t));
+        req->reqid = DERIVE_REQUEST_ID(raddata);
+        req->targetuser = raddata->matcheduser;
+
+        HASH_FIND(hh, raddata->matchednas->requests, &(req->reqid),
+                sizeof(req->reqid), check);
+        if (check) {
+            logger(LOG_DAEMON,
+                    "OpenLI RADIUS: received duplicate request %u:%u from NAS %s",
+                    raddata->msgident, raddata->sourceport,
+                    raddata->matchednas->nasip);
+            HASH_DELETE(hh, raddata->matchednas->requests, check);
+        }
+
+        HASH_ADD_KEYPTR(hh, raddata->matchednas->requests, &(req->reqid),
+                sizeof(req->reqid), req);
+    }
+
+    if (raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
+
+        /* Save the request so we can match the reply later on */
+        radius_account_req_t *req = NULL;
+        radius_account_req_t *check = NULL;
+
+        req = (radius_account_req_t *)malloc(sizeof(radius_account_req_t));
+        req->reqid = DERIVE_REQUEST_ID(raddata);
+        req->targetuser = raddata->matcheduser;
+        req->statustype = raddata->accttype;
+        req->inoctets = 0;
+        req->outoctets = 0;
+        req->accsessionid = NULL;
+
+        save_octet_counts(raddata, req);
+
+        HASH_FIND(hh, raddata->matchednas->accountings, &(req->reqid),
+                sizeof(req->reqid), check);
+        if (check) {
+            /* Apparently this happens a lot, so don't log... */
+            /*
+            logger(LOG_DAEMON,
+                    "OpenLI RADIUS: received duplicate accounting request %u:%u from NAS %s",
+                    raddata->msgident, raddata->sourceport,
+                    raddata->matchednas->nasip);
+            */
+            HASH_DELETE(hh, raddata->matchednas->accountings, check);
+        }
+
+        HASH_ADD_KEYPTR(hh, raddata->matchednas->accountings, &(req->reqid),
+                sizeof(req->reqid), req);
 
     }
 
@@ -748,6 +1002,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
             *action == ACCESS_ACTION_ALREADY_ACTIVE) {
 
         /* Session is now active: make sure we get the IP address */
+        extract_assigned_ip_address(raddata, thissess);
 
     }
 
@@ -764,6 +1019,10 @@ static int radius_create_iri_from_packet(access_plugin_t *p,
 
 static void radius_destroy_session_data(access_plugin_t *p,
         access_session_t *sess) {
+
+    if (sess->sessionid) {
+        free(sess->sessionid);
+    }
 
     return;
 }
