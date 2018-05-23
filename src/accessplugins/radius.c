@@ -79,7 +79,9 @@ typedef struct radius_access_req {
     UT_hash_handle hh;
 } radius_access_req_t;
 
-typedef struct radius_account_req {
+typedef struct radius_account_req radius_account_req_t;
+
+struct radius_account_req {
 
     uint32_t reqid;
     uint32_t statustype;
@@ -87,9 +89,10 @@ typedef struct radius_account_req {
     uint64_t outoctets;
 
     radius_user_t *targetuser;
+    radius_account_req_t *next;
     UT_hash_handle hh;
 
-} radius_account_req_t;
+};
 
 typedef struct radius_attribute radius_attribute_t;
 
@@ -140,6 +143,7 @@ typedef struct radius_parsed {
 
 typedef struct radius_global {
     radius_attribute_t *freeattrs;
+    radius_account_req_t *freeaccreqs;
     radius_parsed_t parsedpkt;
 
     radius_server_t *servers;
@@ -201,6 +205,13 @@ static void radius_destroy_plugin_data(access_plugin_t *p) {
     while (at) {
         tmp = at;
         at = at->next;
+        free(tmp);
+    }
+
+    acc = glob->freeaccreqs;
+    while (acc) {
+        tmpacc = acc;
+        acc = acc->next;
         free(tmp);
     }
 
@@ -282,7 +293,14 @@ static void radius_destroy_parsed_data(access_plugin_t *p, void *parsed) {
         free(rparsed->accessreq);
     }
     if (rparsed->accountreq) {
-        free(rparsed->accountreq);
+        if (glob->freeaccreqs == NULL) {
+            glob->freeaccreqs = rparsed->accountreq;
+            glob->freeaccreqs->next = NULL;
+        } else {
+            rparsed->accountreq->next = glob->freeaccreqs;
+            glob->freeaccreqs = rparsed->accountreq;
+        }
+        rparsed->accountreq = NULL;
     }
 
     reset_parsed_packet(rparsed);
@@ -745,7 +763,8 @@ static inline void find_matching_request(radius_parsed_t *raddata) {
 
     if (raddata->msgtype == RADIUS_CODE_ACCOUNT_RESPONSE) {
         radius_account_req_t *req = NULL;
-        char debug[1024];
+
+        req = raddata->matchednas->accountings;
 
         HASH_FIND(hh, raddata->matchednas->accountings, &reqid, sizeof(reqid),
                 req);
@@ -878,15 +897,41 @@ static inline void apply_fsm_logic(radius_parsed_t *raddata,
     *newstate = raddata->matcheduser->current;
 }
 
+static inline char *quickcat(char *ptr, int *rem, char *toadd) {
+
+    int towrite = strlen(toadd);
+
+    if (*rem <= 1) {
+        return ptr;
+    }
+
+    if (towrite < (*rem - 1)) {
+        memcpy(ptr, toadd, towrite);
+        *rem -= towrite;
+        ptr += towrite;
+    } else {
+        memcpy(ptr, toadd, (*rem - 1));
+        ptr += (*rem - 1);
+        *rem = 1;
+    }
+
+    *ptr = '\0';
+    return (ptr + 1);
+}
+
 static access_session_t *radius_update_session_state(access_plugin_t *p,
         void *parsed, access_session_t **sesslist,
         session_state_t *oldstate, session_state_t *newstate,
         access_action_t *action) {
 
+    radius_global_t *glob;
     radius_parsed_t *raddata;
     access_session_t *thissess;
     char sessionid[1024];
+    char *ptr;
+    int rem = 1024;
 
+    glob = (radius_global_t *)(p->plugindata);
     raddata = (radius_parsed_t *)parsed;
     if (!raddata || raddata->matcheduser == NULL) {
         return NULL;
@@ -900,12 +945,20 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         assert(0);
     }
 
-    /* XXX test that this is suitably unique */
-    snprintf(sessionid, 1024, "%s-%s", raddata->matcheduser->userid,
-            raddata->matcheduser->nasidentifier);
+    ptr = sessionid;
+    ptr = quickcat(ptr, &rem, raddata->matcheduser->userid);
+    ptr = quickcat(ptr, &rem, "-");
+    ptr = quickcat(ptr, &rem, raddata->matcheduser->nasidentifier);
 
-    printf("sessionid=%s\n", sessionid);
-    HASH_FIND(hh, *sesslist, sessionid, strlen(sessionid), thissess);
+
+    thissess = *sesslist;
+    while (thissess != NULL) {
+        if (strcmp(thissess->sessionid, sessionid) == 0) {
+            break;
+        }
+        thissess = thissess->next;
+    }
+
     if (!thissess) {
         thissess = (access_session_t *)malloc(sizeof(access_session_t));
 
@@ -917,13 +970,12 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         thissess->ipfamily = AF_UNSPEC;
         thissess->assignedip = NULL;
         thissess->iriseqno = 0;
+        thissess->next = *sesslist;
 
-        HASH_ADD_KEYPTR(hh, *sesslist, thissess->sessionid, thissess->idlength,
-                thissess);
+        *sesslist = thissess;
     }
 
     apply_fsm_logic(raddata, oldstate, newstate, action);
-    printf("action = %u\n", *action);
 
     if (raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST) {
 
@@ -955,12 +1007,19 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         radius_account_req_t *req = NULL;
         radius_account_req_t *check = NULL;
 
-        req = (radius_account_req_t *)malloc(sizeof(radius_account_req_t));
+        if (glob->freeaccreqs == NULL) {
+            req = (radius_account_req_t *)malloc(sizeof(radius_account_req_t));
+        } else {
+            req = glob->freeaccreqs;
+            glob->freeaccreqs = req->next;
+        }
+
         req->reqid = DERIVE_REQUEST_ID(raddata);
         req->targetuser = raddata->matcheduser;
         req->statustype = raddata->accttype;
         req->inoctets = 0;
         req->outoctets = 0;
+        req->next = NULL;
 
         save_octet_counts(raddata, req);
 

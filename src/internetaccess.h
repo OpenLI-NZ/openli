@@ -62,7 +62,9 @@ typedef enum {
 
 typedef struct access_plugin access_plugin_t;
 
-typedef struct access_session {
+typedef struct access_session access_session_t;
+
+struct access_session {
 
     access_plugin_t *plugin;
     void *sessionid;
@@ -73,8 +75,9 @@ typedef struct access_session {
     struct sockaddr *assignedip;
     uint32_t iriseqno;
 
+    access_session_t *next;
     UT_hash_handle hh;
-} access_session_t;
+} ;
 
 typedef struct internet_user {
     char *userid;
