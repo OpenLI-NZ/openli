@@ -33,42 +33,6 @@
 #include "sipparsing.h"
 #include "logger.h"
 
-int identified_as_sip(libtrace_packet_t *packet, libtrace_list_t *knownsip) {
-
-    void *transport;
-    uint8_t proto;
-    uint32_t rem;
-    uint16_t sport, dport;
-
-    transport = trace_get_transport(packet, &proto, &rem);
-    if (transport == NULL) {
-        return 0;
-    }
-
-    if (proto == TRACE_IPPROTO_TCP) {
-        if (rem < sizeof(libtrace_tcp_t)) {
-            return 0;
-        }
-    } else if (proto == TRACE_IPPROTO_UDP) {
-        if (rem < sizeof(libtrace_udp_t)) {
-            return 0;
-        }
-    } else {
-        return 0;
-    }
-
-    sport = trace_get_source_port(packet);
-    dport = trace_get_destination_port(packet);
-
-    if (sport == 5060 || dport == 5060) {
-        return 1;
-    }
-
-    /* TODO check against user-configured servers in the knownsip list */
-
-
-    return 0;
-}
 
 int parse_sip_packet(openli_sip_parser_t **parser, libtrace_packet_t *packet) {
 

@@ -29,7 +29,8 @@
 #include <libtrace.h>
 #include "collector.h"
 
-int ip4mm_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
+int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
+        libtrace_ip_t *ip,
         uint32_t rem, collector_global_t *glob, colthread_local_t *loc);
 
 #endif

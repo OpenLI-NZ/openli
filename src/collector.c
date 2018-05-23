@@ -308,32 +308,19 @@ static void process_incoming_messages(libtrace_thread_t *t,
 
 }
 
-static inline int is_radius_packet(libtrace_packet_t *pkt,
+static inline int is_radius_packet(libtrace_packet_t *pkt, packet_info_t *pinfo,
         coreserver_t *radservers) {
 
     coreserver_t *rad, *tmp;
-    struct sockaddr_storage srcaddr, destaddr;
-    uint16_t srcport, dstport;
 
-    if (trace_get_destination_address(pkt,
-            (struct sockaddr *)&destaddr) == NULL) {
-        return 0;
-    }
-
-    if (trace_get_source_address(pkt, (struct sockaddr *)&srcaddr) == NULL) {
-        return 0;
-    }
-
-    srcport = trace_get_source_port(pkt);
-    dstport = trace_get_destination_port(pkt);
-
-    if (srcport == 0 || dstport == 0) {
+    if (pinfo->srcport == 0 || pinfo->destport == 0) {
         return 0;
     }
 
     HASH_ITER(hh, radservers, rad, tmp) {
         int ret;
-        if ((ret = coreserver_match(rad, &srcaddr, srcport)) > 0) {
+        if ((ret = coreserver_match(rad, &(pinfo->srcip),
+                    pinfo->srcport)) > 0) {
             return 1;
         }
 
@@ -345,7 +332,8 @@ static inline int is_radius_packet(libtrace_packet_t *pkt,
             continue;
         }
 
-        if ((ret = coreserver_match(rad, &destaddr, dstport)) > 0) {
+        if ((ret = coreserver_match(rad, &(pinfo->destip),
+                    pinfo->destport)) > 0) {
             return 1;
         }
 
@@ -363,6 +351,42 @@ static inline int is_radius_packet(libtrace_packet_t *pkt,
     return 0;
 }
 
+static int identified_as_sip(libtrace_packet_t *packet, packet_info_t *pinfo,
+        libtrace_list_t *knownsip) {
+
+    void *transport;
+    uint8_t proto;
+    uint32_t rem;
+    uint16_t sport, dport;
+
+    transport = trace_get_transport(packet, &proto, &rem);
+    if (transport == NULL) {
+        return 0;
+    }
+
+    if (proto == TRACE_IPPROTO_TCP) {
+        if (rem < sizeof(libtrace_tcp_t)) {
+            return 0;
+        }
+    } else if (proto == TRACE_IPPROTO_UDP) {
+        if (rem < sizeof(libtrace_udp_t)) {
+            return 0;
+        }
+    } else {
+        return 0;
+    }
+
+    if (pinfo->srcport == 5060 || pinfo->destport == 5060) {
+        return 1;
+    }
+
+    /* TODO check against user-configured servers in the knownsip list */
+
+
+    return 0;
+}
+
+
 static libtrace_packet_t *process_packet(libtrace_t *trace,
         libtrace_thread_t *t, void *global, void *tls,
         libtrace_packet_t *pkt) {
@@ -376,6 +400,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     int forwarded = 0;
 
     openli_pushed_t syncpush;
+    packet_info_t pinfo;
 
     /* Check for any messages from the sync thread */
     while (libtrace_message_queue_try_get(&(loc->fromsyncq),
@@ -390,6 +415,17 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     }
 
     trace_increment_packet_refcount(pkt);
+    if (!trace_get_source_address(pkt, (struct sockaddr *)(&pinfo.srcip))) {
+        return pkt;
+    }
+    if (!trace_get_destination_address(pkt,
+            (struct sockaddr *)(&pinfo.destip))) {
+        return pkt;
+    }
+    pinfo.srcport = trace_get_source_port(pkt);
+    pinfo.destport = trace_get_destination_port(pkt);
+
+    pinfo.family = pinfo.srcip.ss_family;
 
     /* All these special packets are UDP, so we can avoid a whole bunch
      * of these checks for TCP traffic */
@@ -398,19 +434,20 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
         /* Is this from one of our ALU mirrors -- if yes, parse + strip it
          * for conversion to an ETSI record */
-        if (glob->alumirrors && check_alu_intercept(glob, loc, pkt,
+        if (glob->alumirrors && check_alu_intercept(glob, loc, pkt, &pinfo,
                 glob->alumirrors, loc->activealuintercepts)) {
             return NULL;
         }
 
         /* Is this a RADIUS packet? -- if yes, create a state update */
-        if (loc->radiusservers && is_radius_packet(pkt, loc->radiusservers)) {
+        if (loc->radiusservers && is_radius_packet(pkt, &pinfo,
+                    loc->radiusservers)) {
             send_packet_to_sync(pkt, loc, OPENLI_UPDATE_RADIUS);
             forwarded = 1;
         }
 
         /* Is this a SIP packet? -- if yes, create a state update */
-        if (identified_as_sip(pkt, loc->knownsipservers)) {
+        if (identified_as_sip(pkt, &pinfo, loc->knownsipservers)) {
             if (process_sip_packet(pkt, loc) == 1) {
                 send_packet_to_sync(pkt, loc, OPENLI_UPDATE_SIP);
                 forwarded = 1;
@@ -420,13 +457,15 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     if (ethertype == TRACE_ETHERTYPE_IP) {
         /* Is this an IP packet? -- if yes, possible IP CC */
-        if (ipv4_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
+        if (ipv4_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, rem, glob,
+                    loc)) {
             forwarded = 1;
         }
 
         /* Is this an RTP packet? -- if yes, possible IPMM CC */
         if (proto == TRACE_IPPROTO_UDP) {
-            if (ip4mm_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
+            if (ip4mm_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, rem,
+                        glob, loc)) {
                 forwarded = 1;
             }
         }
