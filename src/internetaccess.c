@@ -96,14 +96,32 @@ void free_all_users(internet_user_t *users) {
 
 int free_single_session(internet_user_t *user, access_session_t *sess) {
 
+    access_session_t *prev, *tmp;
+
     if (user == NULL) {
         logger(LOG_DAEMON,
                 "OpenLI: called free_single_session() for a NULL user!");
         return -1;
     }
 
-    HASH_DELETE(hh, user->sessions, sess);
+    tmp = user->sessions;
+    prev = NULL;
+    while (tmp) {
+        if (sess == tmp) {
+            break;
+        }
+        prev = tmp;
+        tmp = tmp->next;
+    }
 
+    //HASH_DELETE(hh, user->sessions, sess);
+    if (tmp != NULL) {
+        if (prev) {
+            prev->next = tmp->next;
+        } else {
+            user->sessions = tmp->next;
+        }
+    }
     free_session(sess);
     return 0;
 }
