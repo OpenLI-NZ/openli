@@ -422,8 +422,17 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             (struct sockaddr *)(&pinfo.destip))) {
         return pkt;
     }
-    pinfo.srcport = trace_get_source_port(pkt);
-    pinfo.destport = trace_get_destination_port(pkt);
+
+    if (ethertype == TRACE_ETHERTYPE_IP) {
+        pinfo.srcport = ntohs(((struct sockaddr_in *)(&pinfo.srcip))->sin_port);
+        pinfo.destport = ntohs(((struct sockaddr_in *)(&pinfo.destip))->sin_port);
+    } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
+        pinfo.srcport = ntohs(((struct sockaddr_in6 *)(&pinfo.srcip))->sin6_port);
+        pinfo.destport = ntohs(((struct sockaddr_in6 *)(&pinfo.destip))->sin6_port);
+    } else {
+        pinfo.srcport = 0;
+        pinfo.destport = 0;
+    }
 
     pinfo.family = pinfo.srcip.ss_family;
 
