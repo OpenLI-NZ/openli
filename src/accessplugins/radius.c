@@ -159,8 +159,8 @@ typedef struct radius_parsed {
     radius_account_req_t *accountreq;
     radius_orphaned_resp_t *accountresp;
 
-    access_action_t requestaction;
-    access_action_t responseaction;
+    access_action_t firstaction;
+    access_action_t secondaction;
 
 } radius_parsed_t;
 
@@ -201,8 +201,8 @@ static inline void reset_parsed_packet(radius_parsed_t *parsed) {
     memset(&(parsed->nasip), 0, sizeof(struct sockaddr_storage));
     memset(&(parsed->radiusip), 0, sizeof(struct sockaddr_storage));
 
-    parsed->requestaction = ACCESS_ACTION_NONE;
-    parsed->responseaction = ACCESS_ACTION_NONE;
+    parsed->firstaction = ACCESS_ACTION_NONE;
+    parsed->secondaction = ACCESS_ACTION_NONE;
 }
 
 static void radius_init_plugin_data(access_plugin_t *p) {
@@ -1230,24 +1230,29 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
 
     *oldstate = raddata->matcheduser->current;
     apply_fsm_logic(raddata, raddata->msgtype, raddata->accttype, newstate,
-            &(raddata->requestaction));
+            &(raddata->firstaction));
     if (raddata->accountresp) {
         apply_fsm_logic(raddata, RADIUS_CODE_ACCOUNT_RESPONSE,
-                raddata->accttype, newstate, &(raddata->responseaction));
+                raddata->accttype, newstate, &(raddata->secondaction));
     } else if (raddata->accessresp) {
         apply_fsm_logic(raddata, raddata->accessresp->resptype,
-                raddata->accttype, newstate, &(raddata->responseaction));
+                raddata->accttype, newstate, &(raddata->secondaction));
     }
 
-    if (raddata->requestaction == ACCESS_ACTION_ACCEPT ||
-            raddata->requestaction == ACCESS_ACTION_ALREADY_ACTIVE ||
-            raddata->responseaction == ACCESS_ACTION_ACCEPT ||
-            raddata->responseaction == ACCESS_ACTION_ALREADY_ACTIVE) {
+    if (raddata->firstaction == ACCESS_ACTION_ACCEPT ||
+            raddata->firstaction == ACCESS_ACTION_ALREADY_ACTIVE ||
+            raddata->secondaction == ACCESS_ACTION_ACCEPT ||
+            raddata->secondaction == ACCESS_ACTION_ALREADY_ACTIVE) {
 
         /* Session is now active: make sure we get the IP address */
         extract_assigned_ip_address(raddata, thissess);
     }
 
+    if (raddata->firstaction != ACCESS_ACTION_NONE) {
+        *action = raddata->firstaction;
+    } else {
+        *action = raddata->secondaction;
+    }
     return thissess;
 }
 
