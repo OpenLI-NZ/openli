@@ -75,11 +75,12 @@ void free_single_user(internet_user_t *u) {
         free(u->userid);
     }
 
-    HASH_ITER(hh, u->sessions, sess, tmp) {
-        HASH_DELETE(hh, u->sessions, sess);
+    tmp = u->sessions;
+    while (tmp) {
+        sess = tmp;
+        tmp = tmp->next;
         free_session(sess);
     }
-
     free(u);
 
 }
@@ -122,6 +123,7 @@ int free_single_session(internet_user_t *user, access_session_t *sess) {
             user->sessions = tmp->next;
         }
     }
+
     free_session(sess);
     return 0;
 }
