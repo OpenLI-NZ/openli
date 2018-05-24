@@ -101,6 +101,7 @@ struct radius_attribute {
     uint8_t att_type;
     uint8_t att_len;
     void *att_val;
+    uint8_t copied;
 
     radius_attribute_t *next;
 };
@@ -112,6 +113,7 @@ struct radius_orphaned_resp {
     uint8_t resptype;
     uint32_t key;
     double tvsec;
+    radius_attribute_t *savedattrs;
     radius_orphaned_resp_t *next;
 };
 
@@ -219,10 +221,20 @@ static void radius_init_plugin_data(access_plugin_t *p) {
     return;
 }
 
+static inline void free_attribute_list(radius_attribute_t *attrlist) {
+    radius_attribute_t *at, *tmp;
+
+    at = attrlist;
+    while (at) {
+        tmp = at;
+        at = at->next;
+        free(tmp);
+    }
+}
+
 static void radius_destroy_plugin_data(access_plugin_t *p) {
 
     radius_global_t *glob;
-    radius_attribute_t *at, *tmp;
     radius_server_t *srv, *tmpsrv;
     radius_nas_t *nas, *tmpnas;
     radius_user_t *user, *tmpuser;
@@ -235,12 +247,7 @@ static void radius_destroy_plugin_data(access_plugin_t *p) {
         return;
     }
 
-    at = glob->freeattrs;
-    while (at) {
-        tmp = at;
-        at = at->next;
-        free(tmp);
-    }
+    free_attribute_list(glob->freeattrs);
 
     acc = glob->freeaccreqs;
     while (acc) {
@@ -282,6 +289,7 @@ static void radius_destroy_plugin_data(access_plugin_t *p) {
             while (orph) {
                 tmporph = orph;
                 orph = orph->next;
+                free_attribute_list(tmporph->savedattrs);
                 free(tmporph);
             }
 
@@ -289,6 +297,7 @@ static void radius_destroy_plugin_data(access_plugin_t *p) {
             while (orph) {
                 tmporph = orph;
                 orph = orph->next;
+                free_attribute_list(tmporph->savedattrs);
                 free(tmporph);
             }
 
@@ -305,14 +314,25 @@ static void radius_destroy_plugin_data(access_plugin_t *p) {
         free(srv);
     }
 
-    at = glob->parsedpkt.attrs;
-    while (at) {
-        tmp = at;
-        at = at->next;
-        free(tmp);
-    }
+    free_attribute_list(glob->parsedpkt.attrs);
     free(glob);
     return;
+}
+
+static inline void release_attribute(radius_attribute_t **freelist,
+        radius_attribute_t *attr) {
+
+    if (*freelist == NULL) {
+        *freelist = attr;
+        (*freelist)->next = NULL;
+    } else {
+        attr->next = *freelist;
+        *freelist = attr;
+    }
+    if (attr->copied) {
+        free(attr->att_val);
+    }
+    attr->att_val = NULL;
 }
 
 static void radius_destroy_parsed_data(access_plugin_t *p, void *parsed) {
@@ -327,13 +347,7 @@ static void radius_destroy_parsed_data(access_plugin_t *p, void *parsed) {
     while (at != NULL) {
         tmp = at;
         at = at->next;
-        if (glob->freeattrs == NULL) {
-            glob->freeattrs = tmp;
-            glob->freeattrs->next = NULL;
-        } else {
-            tmp->next = glob->freeattrs;
-            glob->freeattrs = tmp;
-        }
+        release_attribute(&(glob->freeattrs), tmp);
     }
     rparsed->attrs = at;
 
@@ -351,10 +365,22 @@ static void radius_destroy_parsed_data(access_plugin_t *p, void *parsed) {
         rparsed->accountreq = NULL;
     }
     if (rparsed->accountresp) {
+        at = rparsed->accountresp->savedattrs;
+        while (at) {
+            tmp = at;
+            at = at->next;
+            release_attribute(&(glob->freeattrs), tmp);
+        }
         free(rparsed->accountresp);
     }
 
     if (rparsed->accessresp) {
+        at = rparsed->accessresp->savedattrs;
+        while (at) {
+            tmp = at;
+            at = at->next;
+            release_attribute(&(glob->freeattrs), tmp);
+        }
         free(rparsed->accessresp);
     }
 
@@ -365,7 +391,7 @@ static void radius_destroy_parsed_data(access_plugin_t *p, void *parsed) {
 static void create_orphan(radius_orphaned_resp_t **head,
         radius_orphaned_resp_t **tail,
         libtrace_packet_t *pkt, uint32_t reqid, uint8_t resptype) {
-    
+
     /* Hopefully this is rare enough that we don't need a freelist of
      * orphaned responses */
 
@@ -376,6 +402,9 @@ static void create_orphan(radius_orphaned_resp_t **head,
     resp->next = NULL;
     resp->tvsec = trace_get_seconds(pkt);
     resp->resptype = resptype;
+    resp->savedattrs = NULL;
+
+    /* TODO save a copy of the attributes */
 
     if (*tail == NULL) {
         *head = resp;
@@ -393,6 +422,8 @@ static void create_orphan(radius_orphaned_resp_t **head,
             break;
         }
         (*head) = iter->next;
+        /* XXX should really put these back in the free list */
+        free_attribute_list(iter->savedattrs);
         free(iter);
         iter = *head;
         if (!warned) {
@@ -477,7 +508,8 @@ static inline int grab_nas_details_from_packet(radius_parsed_t *parsed,
 }
 
 static inline radius_attribute_t *create_new_attribute(radius_global_t *glob,
-        radius_parsed_t *parsed, uint8_t type, uint8_t len, uint8_t *valptr) {
+        radius_parsed_t *parsed, uint8_t type, uint8_t len, uint8_t *valptr,
+        uint8_t copy) {
 
     radius_attribute_t *attr;
 
@@ -490,7 +522,14 @@ static inline radius_attribute_t *create_new_attribute(radius_global_t *glob,
 
     attr->att_type = type;
     attr->att_len = len - 2;
-    attr->att_val = (void *)valptr;
+    if (copy) {
+        attr->att_val = malloc(attr->att_len);
+        memcpy(attr->att_val, valptr, attr->att_len);
+        attr->copied = 1;
+    } else {
+        attr->att_val = (void *)valptr;
+        attr->copied = 0;
+    }
     attr->next = parsed->attrs;
 
     parsed->attrs = attr;
@@ -614,7 +653,7 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
             break;
         }
 
-        newattr = create_new_attribute(glob, parsed, att_type, att_len, ptr);
+        newattr = create_new_attribute(glob, parsed, att_type, att_len, ptr, 0);
 
         if (newattr->att_type == RADIUS_ATTR_ACCT_STATUS_TYPE) {
             parsed->accttype = ntohl(*((uint32_t *)newattr->att_val));
@@ -752,7 +791,7 @@ static inline void process_nasport_attribute(radius_parsed_t *raddata) {
 }
 
 static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
-        access_session_t *sess) {
+        radius_attribute_t *attrlist, access_session_t *sess) {
 
     uint8_t attrnum;
     radius_attribute_t *attr;
@@ -767,7 +806,7 @@ static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
 
     /* TODO is multiple address assignment a thing that happens in reality? */
 
-    attr = raddata->attrs;
+    attr = attrlist;
     while (attr) {
         if (attr->att_type == RADIUS_ATTR_FRAMED_IP_ADDRESS) {
             struct sockaddr_in *in;
@@ -1017,6 +1056,8 @@ static radius_orphaned_resp_t *search_orphans(radius_orphaned_resp_t **head,
             if (*tail == iter) {
                 *tail = NULL;
             }
+            /* XXX should really put these back in the free list */
+            free_attribute_list(iter->savedattrs);
             tmp = iter;
             iter = iter->next;
             free(tmp);
@@ -1240,12 +1281,23 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     }
 
     if (raddata->firstaction == ACCESS_ACTION_ACCEPT ||
-            raddata->firstaction == ACCESS_ACTION_ALREADY_ACTIVE ||
-            raddata->secondaction == ACCESS_ACTION_ACCEPT ||
-            raddata->secondaction == ACCESS_ACTION_ALREADY_ACTIVE) {
+            raddata->firstaction == ACCESS_ACTION_ALREADY_ACTIVE) {
 
         /* Session is now active: make sure we get the IP address */
-        extract_assigned_ip_address(raddata, thissess);
+        extract_assigned_ip_address(raddata, raddata->attrs, thissess);
+    }
+
+    if (raddata->secondaction == ACCESS_ACTION_ACCEPT ||
+            raddata->secondaction == ACCESS_ACTION_ALREADY_ACTIVE) {
+
+        /* Use saved orphan attributes to get IP address */
+        if (raddata->accountresp) {
+            extract_assigned_ip_address(raddata,
+                    raddata->accountresp->savedattrs, thissess);
+        } else if (raddata->accessresp) {
+            extract_assigned_ip_address(raddata,
+                    raddata->accessresp->savedattrs, thissess);
+        }
     }
 
     if (raddata->firstaction != ACCESS_ACTION_NONE) {
@@ -1260,6 +1312,22 @@ static int radius_create_iri_from_packet(access_plugin_t *p,
         collector_global_t *glob, wandder_encoder_t **encoder,
         libtrace_message_queue_t *mqueue, access_session_t *sess,
         ipintercept_t *ipint, void *parsed, access_action_t action) {
+
+    radius_global_t *radglob;
+    radius_parsed_t *raddata;
+
+    radglob = (radius_global_t *)(p->plugindata);
+    raddata = (radius_parsed_t *)parsed;
+
+    if (raddata->firstaction != ACCESS_ACTION_NONE) {
+        
+
+    }
+
+    if (raddata->secondaction != ACCESS_ACTION_NONE) {
+
+    }
+
 
     return 0;
 }
