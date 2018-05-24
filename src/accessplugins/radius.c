@@ -26,6 +26,7 @@
 
 #include <assert.h>
 #include <uthash.h>
+#include <libtrace_parallel.h>
 
 #include "logger.h"
 #include "internetaccess.h"
@@ -105,11 +106,25 @@ struct radius_attribute {
 };
 
 
+typedef struct radius_orphaned_resp radius_orphaned_resp_t;
+
+struct radius_orphaned_resp {
+    uint8_t resptype;
+    uint32_t key;
+    double tvsec;
+    radius_orphaned_resp_t *next;
+};
+
 typedef struct radius_nas_t {
     uint8_t *nasip;
     radius_user_t *users;
     radius_access_req_t *requests;
     radius_account_req_t *accountings;
+
+    radius_orphaned_resp_t *access_orphans;
+    radius_orphaned_resp_t *access_orphans_tail;
+    radius_orphaned_resp_t *account_orphans;
+    radius_orphaned_resp_t *account_orphans_tail;
 
     UT_hash_handle hh;
 } radius_nas_t;
@@ -122,10 +137,12 @@ typedef struct radius_server {
 
 typedef struct radius_parsed {
 
+    libtrace_packet_t *origpkt;
     uint8_t msgtype;
     uint8_t msgident;
     uint32_t accttype;
     uint32_t nasport;
+    double tvsec;
     radius_attribute_t *attrs;
 
     struct sockaddr_storage nasip;
@@ -137,7 +154,13 @@ typedef struct radius_parsed {
     radius_server_t *matchedserv;
 
     radius_access_req_t *accessreq;
+    radius_orphaned_resp_t *accessresp;
+
     radius_account_req_t *accountreq;
+    radius_orphaned_resp_t *accountresp;
+
+    access_action_t requestaction;
+    access_action_t responseaction;
 
 } radius_parsed_t;
 
@@ -156,21 +179,30 @@ typedef struct radius_header {
     uint8_t auth[16];
 } PACKED radius_header_t;
 
+static int warned = 0;
+
 static inline void reset_parsed_packet(radius_parsed_t *parsed) {
 
+    parsed->origpkt = NULL;
     parsed->msgtype = 0;
     parsed->accttype = 0;
     parsed->msgident = 0;
     parsed->attrs = NULL;
     parsed->sourceport = 0;
+    parsed->tvsec = 0;
     parsed->nasport = 0;
     parsed->matcheduser = NULL;
     parsed->matchednas = NULL;
     parsed->matchedserv = NULL;
     parsed->accessreq = NULL;
+    parsed->accessresp = NULL;
     parsed->accountreq = NULL;
+    parsed->accountresp = NULL;
     memset(&(parsed->nasip), 0, sizeof(struct sockaddr_storage));
     memset(&(parsed->radiusip), 0, sizeof(struct sockaddr_storage));
+
+    parsed->requestaction = ACCESS_ACTION_NONE;
+    parsed->responseaction = ACCESS_ACTION_NONE;
 }
 
 static void radius_init_plugin_data(access_plugin_t *p) {
@@ -178,6 +210,7 @@ static void radius_init_plugin_data(access_plugin_t *p) {
 
     glob = (radius_global_t *)(malloc(sizeof(radius_global_t)));
     glob->freeattrs = NULL;
+    glob->freeaccreqs = NULL;
     glob->servers = NULL;
 
     reset_parsed_packet(&(glob->parsedpkt));
@@ -195,6 +228,7 @@ static void radius_destroy_plugin_data(access_plugin_t *p) {
     radius_user_t *user, *tmpuser;
     radius_access_req_t *req, *tmpreq;
     radius_account_req_t *acc, *tmpacc;
+    radius_orphaned_resp_t *orph, *tmporph;
 
     glob = (radius_global_t *)(p->plugindata);
     if (!glob) {
@@ -212,7 +246,7 @@ static void radius_destroy_plugin_data(access_plugin_t *p) {
     while (acc) {
         tmpacc = acc;
         acc = acc->next;
-        free(tmp);
+        free(tmpacc);
     }
 
     HASH_ITER(hh, glob->servers, srv, tmpsrv) {
@@ -242,6 +276,20 @@ static void radius_destroy_plugin_data(access_plugin_t *p) {
             HASH_ITER(hh, nas->accountings, acc, tmpacc) {
                 HASH_DELETE(hh, nas->accountings, acc);
                 free(acc);
+            }
+
+            orph = nas->account_orphans;
+            while (orph) {
+                tmporph = orph;
+                orph = orph->next;
+                free(tmporph);
+            }
+
+            orph = nas->access_orphans;
+            while (orph) {
+                tmporph = orph;
+                orph = orph->next;
+                free(tmporph);
             }
 
             HASH_DELETE(hh, srv->naslist, nas);
@@ -302,9 +350,59 @@ static void radius_destroy_parsed_data(access_plugin_t *p, void *parsed) {
         }
         rparsed->accountreq = NULL;
     }
+    if (rparsed->accountresp) {
+        free(rparsed->accountresp);
+    }
+
+    if (rparsed->accessresp) {
+        free(rparsed->accessresp);
+    }
 
     reset_parsed_packet(rparsed);
 
+}
+
+static void create_orphan(radius_orphaned_resp_t **head,
+        radius_orphaned_resp_t **tail,
+        libtrace_packet_t *pkt, uint32_t reqid, uint8_t resptype) {
+    
+    /* Hopefully this is rare enough that we don't need a freelist of
+     * orphaned responses */
+
+    radius_orphaned_resp_t *resp, *iter;
+
+    resp = (radius_orphaned_resp_t *)malloc(sizeof(radius_orphaned_resp_t));
+    resp->key = reqid;
+    resp->next = NULL;
+    resp->tvsec = trace_get_seconds(pkt);
+    resp->resptype = resptype;
+
+    if (*tail == NULL) {
+        *head = resp;
+        *tail = resp;
+        return;
+    }
+
+    (*tail)->next = resp;
+    (*tail) = resp;
+
+    /* Peel off any expired orphans */
+    iter = *head;
+    while (iter) {
+        if (iter->tvsec + 0.1 >= resp->tvsec) {
+            break;
+        }
+        (*head) = iter->next;
+        free(iter);
+        iter = *head;
+        if (!warned) {
+            logger(LOG_DAEMON,
+                "OpenLI RADIUS: expired orphaned response packet.");
+            logger(LOG_DAEMON,
+                "OpenLI RADIUS: capture is possibly dropping RADIUS packets?");
+            warned = 1;
+        }
+    }
 }
 
 static inline void *find_radius_start(libtrace_packet_t *pkt, uint32_t *rem) {
@@ -437,6 +535,10 @@ static inline void update_known_servers(radius_global_t *glob,
         nas->users = NULL;
         nas->requests = NULL;
         nas->accountings = NULL;
+        nas->access_orphans = NULL;
+        nas->access_orphans_tail = NULL;
+        nas->account_orphans = NULL;
+        nas->account_orphans_tail = NULL;
         nas->nasip = (uint8_t *)malloc(socklen);
         memcpy(nas->nasip, sockkey, socklen);
 
@@ -488,6 +590,8 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
 
     parsed->msgtype = hdr->code;
     parsed->msgident = hdr->identifier;
+    parsed->origpkt = pkt;
+    parsed->tvsec = trace_get_seconds(pkt);;
 
     if (grab_nas_details_from_packet(parsed, pkt, hdr->code) < 0) {
         return NULL;
@@ -513,7 +617,7 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
         newattr = create_new_attribute(glob, parsed, att_type, att_len, ptr);
 
         if (newattr->att_type == RADIUS_ATTR_ACCT_STATUS_TYPE) {
-            parsed->accttype = *((uint32_t *)newattr->att_val);
+            parsed->accttype = ntohl(*((uint32_t *)newattr->att_val));
         }
 
         rem -= att_len;
@@ -740,7 +844,6 @@ static inline void find_matching_request(radius_parsed_t *raddata) {
 
     reqid = ((uint32_t)raddata->msgident << 16) + raddata->sourceport;
 
-    printf("%u %u %u\n", raddata->msgtype, raddata->msgident, raddata->sourceport);
     if (raddata->msgtype == RADIUS_CODE_ACCESS_ACCEPT ||
             raddata->msgtype == RADIUS_CODE_ACCESS_REJECT ||
             raddata->msgtype == RADIUS_CODE_ACCESS_CHALLENGE) {
@@ -750,6 +853,9 @@ static inline void find_matching_request(radius_parsed_t *raddata) {
         HASH_FIND(hh, raddata->matchednas->requests, &reqid, sizeof(reqid),
                 req);
         if (req == NULL) {
+            create_orphan(&(raddata->matchednas->access_orphans),
+                    &(raddata->matchednas->access_orphans_tail),
+                    raddata->origpkt, reqid, raddata->msgtype);
             return;
         }
 
@@ -769,6 +875,9 @@ static inline void find_matching_request(radius_parsed_t *raddata) {
         HASH_FIND(hh, raddata->matchednas->accountings, &reqid, sizeof(reqid),
                 req);
         if (req == NULL) {
+            create_orphan(&(raddata->matchednas->account_orphans),
+                    &(raddata->matchednas->account_orphans_tail),
+                    raddata->origpkt, reqid, raddata->msgtype);
             return;
         }
 
@@ -781,9 +890,6 @@ static inline void find_matching_request(radius_parsed_t *raddata) {
         return;
     }
 
-    if (raddata->matcheduser == NULL) {
-        assert(0);
-    }
 }
 
 static char *radius_get_userid(access_plugin_t *p, void *parsed) {
@@ -825,65 +931,66 @@ static char *radius_get_userid(access_plugin_t *p, void *parsed) {
 }
 
 static inline void apply_fsm_logic(radius_parsed_t *raddata,
-        session_state_t *oldstate, session_state_t *newstate,
+        uint8_t msgtype, uint32_t accttype, session_state_t *newstate,
         access_action_t *action) {
 
-    *oldstate = raddata->matcheduser->current;
     *action = ACCESS_ACTION_NONE;
 
     /* RADIUS state machine logic goes here */
     /* TODO figure out what Access-Failed is, since it is in the ETSI spec */
-    if (*oldstate == SESSION_STATE_NEW && (
-            raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST ||
-            (raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
-                raddata->accttype == RADIUS_ACCT_START))) {
+    if ((raddata->matcheduser->current == SESSION_STATE_NEW ||
+            raddata->matcheduser->current == SESSION_STATE_OVER) && (
+            msgtype == RADIUS_CODE_ACCESS_REQUEST ||
+            (msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
+                accttype == RADIUS_ACCT_START))) {
 
         raddata->matcheduser->current = SESSION_STATE_AUTHING;
         *action = ACCESS_ACTION_ATTEMPT;
-    } else if (*oldstate == SESSION_STATE_AUTHING && (
-            raddata->msgtype == RADIUS_CODE_ACCESS_REJECT)) {
+    } else if (raddata->matcheduser->current == SESSION_STATE_AUTHING && (
+            msgtype == RADIUS_CODE_ACCESS_REJECT)) {
 
         raddata->matcheduser->current = SESSION_STATE_OVER;
         *action = ACCESS_ACTION_REJECT;
 
-    } else if (*oldstate == SESSION_STATE_AUTHING && (
-            raddata->msgtype == RADIUS_CODE_ACCESS_CHALLENGE)) {
+    } else if (raddata->matcheduser->current == SESSION_STATE_AUTHING && (
+            msgtype == RADIUS_CODE_ACCESS_CHALLENGE)) {
 
         raddata->matcheduser->current = SESSION_STATE_AUTHING;
         *action = ACCESS_ACTION_RETRY;
 
-    } else if (*oldstate == SESSION_STATE_AUTHING && (
-            raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
-            raddata->accttype == RADIUS_ACCT_STOP)) {
+    } else if (raddata->matcheduser->current == SESSION_STATE_AUTHING && (
+            msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
+            accttype == RADIUS_ACCT_STOP)) {
 
         raddata->matcheduser->current = SESSION_STATE_OVER;
         *action = ACCESS_ACTION_FAILED;
 
-    } else if (*oldstate == SESSION_STATE_AUTHING && (
-            raddata->msgtype == RADIUS_CODE_ACCESS_ACCEPT ||
-            (raddata->msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
-                raddata->accttype == RADIUS_ACCT_START))) {
+    } else if (raddata->matcheduser->current == SESSION_STATE_AUTHING && (
+            msgtype == RADIUS_CODE_ACCESS_ACCEPT ||
+            (msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
+                accttype == RADIUS_ACCT_START))) {
 
         raddata->matcheduser->current = SESSION_STATE_ACTIVE;
         *action = ACCESS_ACTION_ACCEPT;
 
-    } else if (*oldstate == SESSION_STATE_ACTIVE && (
-            raddata->msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
-            (raddata->accttype == RADIUS_ACCT_START ||
-                raddata->accttype == RADIUS_ACCT_INTERIM_UPDATE))) {
+    } else if (raddata->matcheduser->current == SESSION_STATE_ACTIVE && (
+            msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
+            (accttype == RADIUS_ACCT_START ||
+                accttype == RADIUS_ACCT_INTERIM_UPDATE))) {
 
         *action = ACCESS_ACTION_INTERIM_UPDATE;
 
-    } else if (*oldstate == SESSION_STATE_ACTIVE && (
-            raddata->msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
-            raddata->accttype == RADIUS_ACCT_STOP)) {
+    } else if (raddata->matcheduser->current == SESSION_STATE_ACTIVE && (
+            msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
+            accttype == RADIUS_ACCT_STOP)) {
 
         raddata->matcheduser->current = SESSION_STATE_OVER;
         *action = ACCESS_ACTION_END;
 
-    } else if (*oldstate == SESSION_STATE_NEW && (
-            raddata->msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
-            raddata->accttype == RADIUS_ACCT_INTERIM_UPDATE)) {
+    } else if ((raddata->matcheduser->current == SESSION_STATE_NEW ||
+            raddata->matcheduser->current == SESSION_STATE_OVER) && (
+            msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
+            accttype == RADIUS_ACCT_INTERIM_UPDATE)) {
 
         /* session was already underway when we started the intercept,
          * jump straight to active and try to carry on from there.
@@ -895,6 +1002,61 @@ static inline void apply_fsm_logic(radius_parsed_t *raddata,
 
 
     *newstate = raddata->matcheduser->current;
+}
+
+static radius_orphaned_resp_t *search_orphans(radius_orphaned_resp_t **head,
+        radius_orphaned_resp_t **tail, uint32_t reqid, double tvsec) {
+
+    radius_orphaned_resp_t *iter, *prev, *tmp;
+
+    prev = NULL;
+    iter = *head;
+    while (iter) {
+        if (iter == *head && iter->tvsec + 0.1 < tvsec) {
+            *head = iter->next;
+            if (*tail == iter) {
+                *tail = NULL;
+            }
+            tmp = iter;
+            iter = iter->next;
+            free(tmp);
+            if (!warned) {
+                logger(LOG_DAEMON,
+                    "OpenLI RADIUS: expired orphaned response packet.");
+                logger(LOG_DAEMON,
+                    "OpenLI RADIUS: capture is possibly dropping RADIUS packets?");
+                warned = 1;
+            }
+            continue;
+        }
+
+        if (iter->key == reqid && tvsec < iter->tvsec + 0.1) {
+            break;
+        }
+        prev = iter;
+        iter = iter->next;
+    }
+
+    if (iter == NULL) {
+        return iter;
+    }
+
+    if (prev == NULL) {
+        *head = iter->next;
+    } else {
+        prev->next = iter->next;
+    }
+
+    if (iter == *tail) {
+        *tail = prev;
+        if (prev) {
+            prev->next = NULL;
+        }
+    }
+
+    iter->next = NULL;
+    return iter;
+
 }
 
 static inline char *quickcat(char *ptr, int *rem, char *toadd) {
@@ -975,7 +1137,6 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         *sesslist = thissess;
     }
 
-    apply_fsm_logic(raddata, oldstate, newstate, action);
 
     if (raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST) {
 
@@ -983,22 +1144,37 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         radius_access_req_t *req = NULL;
         radius_access_req_t *check = NULL;
 
+        radius_orphaned_resp_t *orphan = NULL;
+
+        orphan = search_orphans(
+                &(raddata->matchednas->access_orphans),
+                &(raddata->matchednas->access_orphans_tail),
+                DERIVE_REQUEST_ID(raddata), raddata->tvsec);
+        if (orphan) {
+            raddata->accessresp = orphan;
+            logger(LOG_DAEMON,
+                    "OpenLI RADIUS: found request for access orphan: %s",
+                    (char *)thissess->sessionid);
+        }
+
         req = (radius_access_req_t *)malloc(sizeof(radius_access_req_t));
         req->reqid = DERIVE_REQUEST_ID(raddata);
         req->targetuser = raddata->matcheduser;
 
-        HASH_FIND(hh, raddata->matchednas->requests, &(req->reqid),
-                sizeof(req->reqid), check);
-        if (check) {
-            logger(LOG_DAEMON,
-                    "OpenLI RADIUS: received duplicate request %u:%u from NAS %s",
-                    raddata->msgident, raddata->sourceport,
-                    raddata->matchednas->nasip);
-            HASH_DELETE(hh, raddata->matchednas->requests, check);
-        }
+        if (!raddata->accessresp) {
+            HASH_FIND(hh, raddata->matchednas->requests, &(req->reqid),
+                    sizeof(req->reqid), check);
+            if (check) {
+                logger(LOG_DAEMON,
+                        "OpenLI RADIUS: received duplicate request %u:%u from NAS %s",
+                        raddata->msgident, raddata->sourceport,
+                        raddata->matchednas->nasip);
+                HASH_DELETE(hh, raddata->matchednas->requests, check);
+            }
 
-        HASH_ADD_KEYPTR(hh, raddata->matchednas->requests, &(req->reqid),
-                sizeof(req->reqid), req);
+            HASH_ADD_KEYPTR(hh, raddata->matchednas->requests, &(req->reqid),
+                    sizeof(req->reqid), req);
+        }
     }
 
     if (raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
@@ -1006,6 +1182,18 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         /* Save the request so we can match the reply later on */
         radius_account_req_t *req = NULL;
         radius_account_req_t *check = NULL;
+        radius_orphaned_resp_t *orphan = NULL;
+
+        orphan = search_orphans(
+                &(raddata->matchednas->account_orphans),
+                &(raddata->matchednas->account_orphans_tail),
+                DERIVE_REQUEST_ID(raddata), raddata->tvsec);
+        if (orphan) {
+            raddata->accountresp = orphan;
+            logger(LOG_DAEMON,
+                    "OpenLI RADIUS: found request for accounting orphan: %s",
+                    (char *)thissess->sessionid);
+        }
 
         if (glob->freeaccreqs == NULL) {
             req = (radius_account_req_t *)malloc(sizeof(radius_account_req_t));
@@ -1023,30 +1211,41 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
 
         save_octet_counts(raddata, req);
 
-        HASH_FIND(hh, raddata->matchednas->accountings, &(req->reqid),
-                sizeof(req->reqid), check);
-        if (check) {
-            /* Apparently this happens a lot, so don't log... */
-            /*
-            logger(LOG_DAEMON,
-                    "OpenLI RADIUS: received duplicate accounting request %u:%u from NAS %s",
-                    raddata->msgident, raddata->sourceport,
-                    raddata->matchednas->nasip);
-            */
-            HASH_DELETE(hh, raddata->matchednas->accountings, check);
-        }
+        if (!raddata->accountresp) {
+            HASH_FIND(hh, raddata->matchednas->accountings, &(req->reqid),
+                    sizeof(req->reqid), check);
+            if (check) {
+                /* The old one is probably an unanswered request, replace
+                 * it with this one instead. */
+                HASH_DELETE(hh, raddata->matchednas->accountings, check);
+            }
 
-        HASH_ADD_KEYPTR(hh, raddata->matchednas->accountings, &(req->reqid),
-                sizeof(req->reqid), req);
+            HASH_ADD_KEYPTR(hh, raddata->matchednas->accountings, &(req->reqid),
+                    sizeof(req->reqid), req);
+        } else {
+            raddata->accountreq = req;
+        }
 
     }
 
-    if (*action == ACCESS_ACTION_ACCEPT ||
-            *action == ACCESS_ACTION_ALREADY_ACTIVE) {
+    *oldstate = raddata->matcheduser->current;
+    apply_fsm_logic(raddata, raddata->msgtype, raddata->accttype, newstate,
+            &(raddata->requestaction));
+    if (raddata->accountresp) {
+        apply_fsm_logic(raddata, RADIUS_CODE_ACCOUNT_RESPONSE,
+                raddata->accttype, newstate, &(raddata->responseaction));
+    } else if (raddata->accessresp) {
+        apply_fsm_logic(raddata, raddata->accessresp->resptype,
+                raddata->accttype, newstate, &(raddata->responseaction));
+    }
+
+    if (raddata->requestaction == ACCESS_ACTION_ACCEPT ||
+            raddata->requestaction == ACCESS_ACTION_ALREADY_ACTIVE ||
+            raddata->responseaction == ACCESS_ACTION_ACCEPT ||
+            raddata->responseaction == ACCESS_ACTION_ALREADY_ACTIVE) {
 
         /* Session is now active: make sure we get the IP address */
         extract_assigned_ip_address(raddata, thissess);
-
     }
 
     return thissess;

@@ -325,11 +325,19 @@ static inline void push_session_halt_to_threads(void *sendqs,
         access_session_t *sess, ipintercept_t *ipint) {
 
     sync_sendq_t *sendq, *tmp;
+    char ipstr[128];
+
+    /* XXX no error checking because this logging should not reach
+     * the production version... */
+    getnameinfo((struct sockaddr *)(sess->assignedip),
+            (sess->ipfamily == AF_INET) ? sizeof(struct sockaddr_in) :
+                sizeof(struct sockaddr_in6),
+                ipstr, sizeof(ipstr), 0, 0, NI_NUMERICHOST);
+    logger(LOG_DAEMON, "OpenLI: telling threads to cease intercepting traffic for IP %s", ipstr);
 
     HASH_ITER(hh, (sync_sendq_t *)sendqs, sendq, tmp) {
         openli_pushed_t pmsg;
         ipsession_t *sessdup;
-        char ipstr[128];
 
         memset(&pmsg, 0, sizeof(openli_pushed_t));
         pmsg.type = OPENLI_PUSH_HALT_IPINTERCEPT;
@@ -338,13 +346,6 @@ static inline void push_session_halt_to_threads(void *sendqs,
 
         pmsg.data.ipsess = sessdup;
 
-        /* XXX no error checking because this logging should not reach
-         * the production version... */
-        getnameinfo((struct sockaddr *)(&sess->assignedip),
-                (sess->ipfamily == AF_INET) ? sizeof(struct sockaddr_in) :
-                    sizeof(struct sockaddr_in6),
-                    ipstr, sizeof(ipstr), 0, 0, NI_NUMERICHOST);
-        logger(LOG_DAEMON, "OpenLI: telling threads to cease intercepting traffic for IP %s", ipstr);
         libtrace_message_queue_put(sendq->q, &pmsg);
     }
 }
@@ -1503,7 +1504,6 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         uint8_t accesstype) {
 
     access_plugin_t *p = NULL;
-    char userspace[128];
     char *userid;
     internet_user_t *iuser;
     access_session_t *sess;
@@ -1512,8 +1512,8 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     user_intercept_list_t *userint;
     ipintercept_t *ipint, *tmp;
     openli_export_recv_t msg;
+    sync_sendq_t *sendq, *tmpq;
     int expcount = 0;
-    int useridlen = 128;
     void *parseddata = NULL;
 
     if (accesstype == ACCESS_RADIUS) {
@@ -1534,10 +1534,8 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
 
     userid = p->get_userid(p, parseddata);
     if (userid == NULL) {
-        logger(LOG_DAEMON, "OpenLI: unable to assign a user ID to %s packet",
-                p->name);
-        p->destroy_parsed_data(p, parseddata);
-        return -1;
+        /* Probably an orphaned response packet */
+        goto endupdate;
     }
 
     HASH_FIND(hh, sync->allusers, userid, strlen(userid), iuser);
@@ -1574,29 +1572,33 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     HASH_FIND(hh, sync->userintercepts, userid, strlen(userid), userint);
 
     if (oldstate != newstate) {
+        char ipstr[1024];
 
-        if (userint && accessaction == ACCESS_ACTION_ACCEPT ||
-                accessaction == ACCESS_ACTION_ALREADY_ACTIVE) {
-
+        if (userint && newstate == SESSION_STATE_ACTIVE) {
+            /* Session has been confirmed, time to start intercepting
+             * packets involving the session IP.
+             */
             HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
-                /* TODO tell collector threads that we have a new IP to
-                 * watch out for.
-                 */
+                HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs),
+                        sendq, tmpq) {
+                    push_single_ipintercept(sendq->q, ipint, sess);
+                }
             }
 
         } else if (newstate == SESSION_STATE_OVER) {
-
+            /* If this was an active intercept, tell our threads to
+             * stop intercepting traffic for this session */
             if (userint) {
                 HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
-                    /* TODO tell collector threads to stop intercepting for
-                     * this IP.
-                     */
+                    push_session_halt_to_threads(sync->glob->syncsendqs,
+                            sess, ipint);
                 }
             }
             free_single_session(iuser, sess);
         }
     }
 
+#if 0
     if (userint) {
         HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
             if (p->create_iri_from_packet(p, sync->glob, &(sync->encoder),
@@ -1611,7 +1613,9 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         }
         sess->iriseqno ++;
     }
+#endif
 
+endupdate:
     p->destroy_parsed_data(p, parseddata);
 
     if (expcount > 0) {
