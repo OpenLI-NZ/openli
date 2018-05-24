@@ -1572,8 +1572,6 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     HASH_FIND(hh, sync->userintercepts, userid, strlen(userid), userint);
 
     if (oldstate != newstate) {
-        char ipstr[1024];
-
         if (userint && newstate == SESSION_STATE_ACTIVE) {
             /* Session has been confirmed, time to start intercepting
              * packets involving the session IP.
