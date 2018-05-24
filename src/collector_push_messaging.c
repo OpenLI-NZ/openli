@@ -27,6 +27,7 @@
 #include <libtrace_parallel.h>
 #include <assert.h>
 #include <uthash.h>
+#include <arpa/inet.h>
 
 #include "logger.h"
 #include "collector.h"
@@ -224,17 +225,23 @@ void handle_push_ipintercept(libtrace_thread_t *t, colthread_local_t *loc,
     if (sess->ai_family == AF_INET) {
         if (add_ipv4_intercept(loc, sess) != 0) {
             free_single_ipsession(sess);
+            return;
         }
     } else if (sess->ai_family == AF_INET6) {
         if (add_ipv6_intercept(loc, sess) != 0) {
             free_single_ipsession(sess);
+            return;
         }
     } else {
         logger(LOG_DAEMON,
                  "OpenLI: invalid address family for new IP intercept: %d",
                  sess->ai_family);
         free_single_ipsession(sess);
+        return;
     }
+    logger(LOG_DAEMON,
+            "OpenLI: collector thread %d has started intercepting IP session %s",
+            trace_get_perpkt_thread_id(t), sess->streamkey);
 }
 
 void handle_push_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
