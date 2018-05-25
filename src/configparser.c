@@ -660,7 +660,7 @@ static int global_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
-            strcmp((char *)key->data.scalar.value, "provisionerip") == 0) {
+            strcmp((char *)key->data.scalar.value, "provisioneraddr") == 0) {
         glob->provisionerip = strdup((char *) value->data.scalar.value);
     }
 
