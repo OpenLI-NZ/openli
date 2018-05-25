@@ -244,7 +244,7 @@ void handle_push_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
             strlen(rtp->streamkey), rtp);
     logger(LOG_DAEMON,
             "OpenLI: collector thread %d has started intercepting RTP stream %s",
-            trace_get_perpkt_thread_id(t), streamkey);
+            trace_get_perpkt_thread_id(t), rtp->streamkey);
 }
 
 void handle_halt_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
