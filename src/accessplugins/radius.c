@@ -216,8 +216,37 @@ static inline void free_attribute_list(radius_attribute_t *attrlist) {
     while (at) {
         tmp = at;
         at = at->next;
+        if (tmp->copied) {
+            free(tmp->att_val);
+        }
         free(tmp);
     }
+}
+
+static inline radius_attribute_t *create_new_attribute(radius_global_t *glob,
+        uint8_t type, uint8_t len, uint8_t *valptr, uint8_t copy) {
+
+    radius_attribute_t *attr;
+
+    if (glob->freeattrs) {
+        attr = glob->freeattrs;
+        glob->freeattrs = attr->next;
+    } else {
+        attr = (radius_attribute_t *)malloc(sizeof(radius_attribute_t));
+    }
+
+    attr->next = NULL;
+    attr->att_type = type;
+    attr->att_len = len - 2;
+    if (copy) {
+        attr->att_val = malloc(attr->att_len);
+        memcpy(attr->att_val, valptr, attr->att_len);
+        attr->copied = 1;
+    } else {
+        attr->att_val = (void *)valptr;
+        attr->copied = 0;
+    }
+    return attr;
 }
 
 static void radius_destroy_plugin_data(access_plugin_t *p) {
@@ -360,23 +389,31 @@ static void radius_destroy_parsed_data(access_plugin_t *p, void *parsed) {
 
 }
 
-static void create_orphan(radius_orphaned_resp_t **head,
-        radius_orphaned_resp_t **tail,
-        libtrace_packet_t *pkt, uint32_t reqid, uint8_t resptype) {
+static void create_orphan(radius_global_t *glob, radius_orphaned_resp_t **head,
+        radius_orphaned_resp_t **tail, libtrace_packet_t *pkt,
+        radius_parsed_t *raddata, uint32_t reqid) {
 
     /* Hopefully this is rare enough that we don't need a freelist of
      * orphaned responses */
 
     radius_orphaned_resp_t *resp, *iter;
+    radius_attribute_t *attr, *attrcopy;
 
     resp = (radius_orphaned_resp_t *)malloc(sizeof(radius_orphaned_resp_t));
     resp->key = reqid;
     resp->next = NULL;
     resp->tvsec = trace_get_seconds(pkt);
-    resp->resptype = resptype;
+    resp->resptype = raddata->msgtype;
     resp->savedattrs = NULL;
 
-    /* TODO save a copy of the attributes */
+    attr = raddata->attrs;
+    while (attr) {
+        attrcopy = create_new_attribute(glob, attr->att_type, attr->att_len,
+                attr->att_val, 1);
+        attrcopy->next = resp->savedattrs;
+        resp->savedattrs = attrcopy;
+        attr = attr->next;
+    }
 
     if (*tail == NULL) {
         *head = resp;
@@ -477,35 +514,6 @@ static inline int grab_nas_details_from_packet(radius_parsed_t *parsed,
     memcpy(&(parsed->nasip), &ipaddr_nas, sizeof(struct sockaddr_storage));
     memcpy(&(parsed->radiusip), &ipaddr_rad, sizeof(struct sockaddr_storage));
     return 0;
-}
-
-static inline radius_attribute_t *create_new_attribute(radius_global_t *glob,
-        radius_parsed_t *parsed, uint8_t type, uint8_t len, uint8_t *valptr,
-        uint8_t copy) {
-
-    radius_attribute_t *attr;
-
-    if (glob->freeattrs) {
-        attr = glob->freeattrs;
-        glob->freeattrs = attr->next;
-    } else {
-        attr = (radius_attribute_t *)malloc(sizeof(radius_attribute_t));
-    }
-
-    attr->att_type = type;
-    attr->att_len = len - 2;
-    if (copy) {
-        attr->att_val = malloc(attr->att_len);
-        memcpy(attr->att_val, valptr, attr->att_len);
-        attr->copied = 1;
-    } else {
-        attr->att_val = (void *)valptr;
-        attr->copied = 0;
-    }
-    attr->next = parsed->attrs;
-
-    parsed->attrs = attr;
-    return attr;
 }
 
 static inline void update_known_servers(radius_global_t *glob,
@@ -622,7 +630,9 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
             break;
         }
 
-        newattr = create_new_attribute(glob, parsed, att_type, att_len, ptr, 0);
+        newattr = create_new_attribute(glob, att_type, att_len, ptr, 0);
+        newattr->next = parsed->attrs;
+        parsed->attrs = newattr;
 
         if (newattr->att_type == RADIUS_ATTR_ACCT_STATUS_TYPE) {
             parsed->accttype = ntohl(*((uint32_t *)newattr->att_val));
@@ -819,7 +829,8 @@ static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
 
 }
 
-static inline void find_matching_request(radius_parsed_t *raddata) {
+static inline void find_matching_request(radius_global_t *glob,
+        radius_parsed_t *raddata) {
 
     uint32_t reqid;
 
@@ -839,9 +850,9 @@ static inline void find_matching_request(radius_parsed_t *raddata) {
         HASH_FIND(hh, raddata->matchednas->requests, &reqid, sizeof(reqid),
                 req);
         if (req == NULL) {
-            create_orphan(&(raddata->matchednas->orphans),
-                    &(raddata->matchednas->orphans_tail),
-                    raddata->origpkt, reqid, raddata->msgtype);
+            create_orphan(glob, &(raddata->matchednas->orphans),
+                    &(raddata->matchednas->orphans_tail), raddata->origpkt,
+                    raddata, reqid);
             return;
         }
 
@@ -858,8 +869,10 @@ static inline void find_matching_request(radius_parsed_t *raddata) {
 static char *radius_get_userid(access_plugin_t *p, void *parsed) {
 
     radius_parsed_t *raddata;
+    radius_global_t *glob;
     char foo[128];
 
+    glob = (radius_global_t *)(p->plugindata);
     raddata = (radius_parsed_t *)parsed;
 
     if (raddata->matcheduser) {
@@ -885,7 +898,7 @@ static char *radius_get_userid(access_plugin_t *p, void *parsed) {
     /* This must be a response packet, try to match it to a previously
      * seen request...
      */
-    find_matching_request(raddata);
+    find_matching_request(glob, raddata);
     if (raddata->matcheduser) {
         return raddata->matcheduser->userid;
     }
@@ -1111,6 +1124,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         radius_saved_req_t *check = NULL;
 
         radius_orphaned_resp_t *orphan = NULL;
+        radius_attribute_t *attr, *attrcopy;
 
         orphan = search_orphans(
                 &(raddata->matchednas->orphans),
@@ -1147,7 +1161,14 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
                 release_saved_request(&(glob->freeaccreqs), check);
             }
 
-            /* TODO save copies of attributes for future matching */
+            attr = raddata->attrs;
+            while (attr) {
+                attrcopy = create_new_attribute(glob, attr->att_type,
+                        attr->att_len, attr->att_val, 1);
+                attrcopy->next = req->attrs;
+                req->attrs = attrcopy;
+                attr = attr->next;
+            }
 
             HASH_ADD_KEYPTR(hh, raddata->matchednas->requests, &(req->reqid),
                     sizeof(req->reqid), req);
