@@ -35,6 +35,7 @@
 #include <uthash.h>
 #include <libwandder.h>
 
+#include "coreserver.h"
 #include "sipparsing.h"
 #include "intercept.h"
 
@@ -45,6 +46,10 @@ enum {
     OPENLI_PUSH_HALT_IPMMINTERCEPT = 4,
     OPENLI_PUSH_SIPURI = 5,
     OPENLI_PUSH_HALT_SIPURI = 6,
+    OPENLI_PUSH_CORESERVER = 7,
+    OPENLI_PUSH_REMOVE_CORESERVER = 8,
+    OPENLI_PUSH_ALUINTERCEPT = 9,
+    OPENLI_PUSH_HALT_ALUINTERCEPT = 10,
 };
 
 enum {
@@ -68,14 +73,12 @@ typedef struct openli_ii_msg {
 
     uint8_t type;
     union {
-        ipintercept_t *ipint;
+        ipsession_t *ipsess;
         rtpstreaminf_t *ipmmint;
-        struct {
-            char *liid;
-            char *authcc;
-        } interceptid;
+        aluintercept_t *aluint;
         char *sipuri;
         char *rtpstreamkey;
+        coreserver_t *coreserver;
     } data;
 
 } PACKED openli_pushed_t;
@@ -96,6 +99,20 @@ typedef struct sipuri_hash {
     int references;
 } sipuri_hash_t;
 
+typedef struct ipv4_target {
+    uint32_t address;
+    ipsession_t *intercepts;
+
+    UT_hash_handle hh;
+} ipv4_target_t;
+
+typedef struct ipv6_target {
+    uint8_t address[16];
+    ipsession_t *intercepts;
+
+    UT_hash_handle hh;
+} ipv6_target_t;
+
 typedef struct colthread_local {
 
     /* Message queue for pushing updates to sync thread */
@@ -106,15 +123,22 @@ typedef struct colthread_local {
 
 
     /* Current intercepts */
-    ipintercept_t *activeipintercepts;
+    ipv6_target_t *activeipv6intercepts;
+    ipv4_target_t *activeipv4intercepts;
 
     rtpstreaminf_t *activertpintercepts;
+    aluintercept_t *activealuintercepts;
 
     /* Current SIP URIs that we are intercepting */
     sipuri_hash_t *sip_targets;
 
     /* Message queue for exporting LI records */
     libtrace_message_queue_t exportq;
+
+    /* Known RADIUS servers, i.e. if we see traffic to or from these
+     * servers, we assume it is RADIUS.
+     */
+    coreserver_t *radiusservers;
 
     wandder_encoder_t *encoder;
     openli_sip_parser_t *sipparser;
@@ -158,6 +182,8 @@ typedef struct collector_global {
 
     libtrace_list_t *export_epoll_evs;
     libtrace_list_t *expired_inputs;
+
+    coreserver_t *alumirrors;
 
 } collector_global_t;
 

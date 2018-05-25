@@ -64,12 +64,12 @@ int ipmm_iri(libtrace_packet_t *pkt, collector_global_t *glob,
 
     tv = trace_get_timeval(pkt);
 
-    hdrdata.liid = vint->liid;
-    hdrdata.liid_len = vint->liid_len;
-    hdrdata.authcc = vint->authcc;
-    hdrdata.authcc_len = vint->authcc_len;
-    hdrdata.delivcc = vint->delivcc;
-    hdrdata.delivcc_len = vint->delivcc_len;
+    hdrdata.liid = vint->common.liid;
+    hdrdata.liid_len = vint->common.liid_len;
+    hdrdata.authcc = vint->common.authcc;
+    hdrdata.authcc_len = vint->common.authcc_len;
+    hdrdata.delivcc = vint->common.delivcc;
+    hdrdata.delivcc_len = vint->common.delivcc_len;
     hdrdata.operatorid = glob->operatorid;
     hdrdata.operatorid_len = glob->operatorid_len;
     hdrdata.networkelemid = glob->networkelemid;
@@ -77,6 +77,7 @@ int ipmm_iri(libtrace_packet_t *pkt, collector_global_t *glob,
     hdrdata.intpointid = glob->intpointid;
     hdrdata.intpointid_len = glob->intpointid_len;
 
+    memset(&iri, 0, sizeof(openli_exportmsg_t));
     iri.msgbody = encode_etsi_ipmmiri(*encoder, &hdrdata,
             (int64_t)(cin->cin), (int64_t)cin->iriseqno, iritype, &tv, l3,
             rem);
@@ -84,10 +85,11 @@ int ipmm_iri(libtrace_packet_t *pkt, collector_global_t *glob,
     iri.encoder = *encoder;
     iri.ipcontents = (uint8_t *)l3;
     iri.ipclen = rem;
-    iri.destid = vint->destid;
+    iri.destid = vint->common.destid;
     iri.header = construct_netcomm_protocol_header(iri.msgbody->len,
             OPENLI_PROTO_ETSI_IRI, vint->internalid, &(iri.hdrlen));
 
+    memset(&msg, 0, sizeof(openli_export_recv_t));
     msg.type = OPENLI_EXPORT_ETSIREC;
     msg.data.toexport = iri;
 

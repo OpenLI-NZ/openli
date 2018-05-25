@@ -65,7 +65,7 @@ typedef struct wandder_etsipshdr_data {
 
 wandder_encoded_result_t *encode_etsi_ipcc(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
-        struct timeval *tv, void *ipcontents, uint32_t iplen);
+        struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir);
 
 wandder_encoded_result_t *encode_etsi_ipmmcc(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,

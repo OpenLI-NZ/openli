@@ -44,9 +44,11 @@
 #include "configparser.h"
 #include "collector_sync.h"
 #include "collector_export.h"
+#include "collector_push_messaging.h"
 #include "ipcc.h"
 #include "ipmmcc.h"
 #include "sipparsing.h"
+#include "alushim_parser.h"
 
 volatile int collector_halt = 0;
 volatile int reload_config = 0;
@@ -65,6 +67,7 @@ static void usage(char *prog) {
     fprintf(stderr, "Usage: %s -c configfile\n", prog);
 }
 
+#if 0
 static void dump_ip_intercept(ipintercept_t *ipint) {
     char ipbuf[256];
 
@@ -90,15 +93,14 @@ static void dump_ip_intercept(ipintercept_t *ipint) {
     printf("Communication ID: %u\n", ipint->cin);
     printf("------\n");
 }
+#endif
 
 static void dump_rtp_intercept(rtpstreaminf_t *rtp) {
     char ipbuf[256];
 
-    printf("Intercept %u  %s\n", rtp->parent->internalid,
-            rtp->active ? "ACTIVE": "INACTIVE");
-    printf("LI ID: %s\n", rtp->parent->liid);
-    printf("Auth CC: %s     Delivery CC: %s\n", rtp->parent->authcc,
-            rtp->parent->delivcc);
+    printf("LI ID: %s\n", rtp->common.liid);
+    printf("Auth CC: %s     Delivery CC: %s\n", rtp->common.authcc,
+            rtp->common.delivcc);
 
     if (rtp->targetaddr && rtp->ai_family == AF_INET) {
         struct sockaddr_in *sin = (struct sockaddr_in *)rtp->targetaddr;
@@ -116,28 +118,6 @@ static void dump_rtp_intercept(rtpstreaminf_t *rtp) {
     printf("------\n");
 }
 
-static void deactivate_ip_intercept(colthread_local_t *loc,
-        char *liid, char *authcc) {
-
-    ipintercept_t *cept;
-
-    /* Search the list for an intercept with a matching ID */
-
-    /* If found, set the intercept to inactive */
-
-    HASH_FIND(hh_liid, loc->activeipintercepts, liid, strlen(liid), cept);
-
-    if (cept) {
-        cept->active = 0;
-    }
-
-    /* authcc and liid were strdup'd by the sync thread */
-    free(authcc);
-    free(liid);
-
-    return;
-}
-
 static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
         void *global) {
 
@@ -153,9 +133,12 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_message_queue_init(&(loc->exportq),
             sizeof(openli_export_recv_t));
 
-    loc->activeipintercepts = NULL;
+    loc->activeipv4intercepts = NULL;
+    loc->activeipv6intercepts = NULL;
     loc->activertpintercepts = NULL;
+    loc->activealuintercepts = NULL;
     loc->sip_targets = NULL;
+    loc->radiusservers = NULL;
 
     register_sync_queues(glob, &(loc->tosyncq), &(loc->fromsyncq), t);
     register_export_queue(glob, &(loc->exportq));
@@ -172,6 +155,8 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     collector_global_t *glob = (collector_global_t *)global;
     colthread_local_t *loc = (colthread_local_t *)tls;
+    ipv4_target_t *v4, *tmp;
+    ipv6_target_t *v6, *tmp2;
 
     deregister_sync_queues(glob, t);
 
@@ -184,8 +169,21 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_message_queue_destroy(&(loc->exportq));
     libtrace_list_deinit(loc->knownsipservers);
 
-    free_all_ipintercepts(loc->activeipintercepts);
+    HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
+        free_all_ipsessions(v4->intercepts);
+        HASH_DELETE(hh, loc->activeipv4intercepts, v4);
+        free(v4);
+    }
+
+    HASH_ITER(hh, loc->activeipv6intercepts, v6, tmp2) {
+        free_all_ipsessions(v6->intercepts);
+        HASH_DELETE(hh, loc->activeipv6intercepts, v6);
+        free(v6);
+    }
+
     free_all_rtpstreams(loc->activertpintercepts);
+    free_all_aluintercepts(loc->activealuintercepts);
+    free_coreserver_list(loc->radiusservers);
 
     if (loc->sip_targets) {
         sipuri_hash_t *sip, *tmp;
@@ -265,21 +263,50 @@ static inline void send_sip_update(libtrace_packet_t *pkt,
 
 }
 
-static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
-    rtpstreaminf_t *rtp;
+static void process_incoming_messages(libtrace_thread_t *t,
+        collector_global_t *glob, colthread_local_t *loc,
+        openli_pushed_t *syncpush) {
 
-    HASH_FIND(hh, loc->activertpintercepts, rtpstreamkey, strlen(rtpstreamkey),
-            rtp);
-
-    if (rtp == NULL) {
-        logger(LOG_DAEMON, "OpenLI: collector thread was unable to remove RTP stream %s, as it was not present in its intercept set.",
-                rtpstreamkey);
-        return 0;
+    if (syncpush->type == OPENLI_PUSH_IPINTERCEPT) {
+        handle_push_ipintercept(t, loc, syncpush->data.ipsess);
     }
 
-    HASH_DELETE(hh, loc->activertpintercepts, rtp);
+    if (syncpush->type == OPENLI_PUSH_HALT_IPINTERCEPT) {
+        handle_halt_ipintercept(t, loc, syncpush->data.ipsess);
+    }
 
-    return 1;
+    if (syncpush->type == OPENLI_PUSH_IPMMINTERCEPT) {
+        handle_push_ipmmintercept(t, loc, syncpush->data.ipmmint);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_HALT_IPMMINTERCEPT) {
+        handle_halt_ipmmintercept(t, loc, syncpush->data.rtpstreamkey);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_SIPURI) {
+        handle_push_sipuri(t, loc, syncpush->data.sipuri);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_HALT_SIPURI) {
+        handle_halt_sipuri(t, loc, syncpush->data.sipuri);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_CORESERVER) {
+        handle_push_coreserver(t, loc, syncpush->data.coreserver);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_REMOVE_CORESERVER) {
+        handle_remove_coreserver(t, loc, syncpush->data.coreserver);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_ALUINTERCEPT) {
+        handle_push_aluintercept(t, loc, syncpush->data.aluint);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_HALT_ALUINTERCEPT) {
+        handle_halt_aluintercept(t, loc, syncpush->data.aluint);
+    }
+
 }
 
 static libtrace_packet_t *process_packet(libtrace_t *trace,
@@ -299,81 +326,19 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     while (libtrace_message_queue_try_get(&(loc->fromsyncq),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
-        if (syncpush.type == OPENLI_PUSH_IPINTERCEPT) {
-            HASH_ADD_KEYPTR(hh_liid, loc->activeipintercepts,
-                    syncpush.data.ipint->liid,
-                    strlen(syncpush.data.ipint->liid),
-                    syncpush.data.ipint);
-        }
-
-        if (syncpush.type == OPENLI_PUSH_HALT_IPINTERCEPT) {
-            deactivate_ip_intercept(loc,
-                    syncpush.data.interceptid.liid,
-                    syncpush.data.interceptid.authcc);
-        }
-
-        if (syncpush.type == OPENLI_PUSH_IPMMINTERCEPT) {
-            HASH_ADD_KEYPTR(hh, loc->activertpintercepts,
-                    syncpush.data.ipmmint->streamkey,
-                    strlen(syncpush.data.ipmmint->streamkey),
-                    syncpush.data.ipmmint);
-        }
-
-        if (syncpush.type == OPENLI_PUSH_HALT_IPMMINTERCEPT) {
-            if (remove_rtp_stream(loc, syncpush.data.rtpstreamkey) != 0) {
-                logger(LOG_DAEMON, "OpenLI: collector thread %d has stopped intercepting RTP stream %s",
-                        trace_get_perpkt_thread_id(t),
-                        syncpush.data.rtpstreamkey);
-            }
-            free(syncpush.data.rtpstreamkey);
-        }
-
-        if (syncpush.type == OPENLI_PUSH_SIPURI) {
-            sipuri_hash_t *newsip;
-            HASH_FIND_STR(loc->sip_targets, syncpush.data.sipuri, newsip);
-
-            if (newsip) {
-                newsip->references ++;
-                free(syncpush.data.sipuri);
-            } else {
-                newsip = (sipuri_hash_t *)malloc(
-                        sizeof(sipuri_hash_t));
-                newsip->uri = syncpush.data.sipuri;
-                newsip->references = 1;
-                HASH_ADD_KEYPTR(hh, loc->sip_targets, newsip->uri,
-                        strlen(newsip->uri), newsip);
-                logger(LOG_DAEMON, "OpenLI: collector thread %d has added %s to list of SIP URIs.",
-                        trace_get_perpkt_thread_id(t),
-                        syncpush.data.sipuri);
-            }
-        }
-
-        if (syncpush.type == OPENLI_PUSH_HALT_SIPURI) {
-            sipuri_hash_t *torem;
-            HASH_FIND_STR(loc->sip_targets, syncpush.data.sipuri, torem);
-            if (torem == NULL) {
-                logger(LOG_DAEMON, "OpenLI: asked to halt SIP intercept for target %s, but that is not in our set of known URIs", syncpush.data.sipuri);
-                continue;
-            } else {
-                torem->references --;
-            }
-            assert(torem->references >= 0);
-
-            if (torem->references == 0) {
-                logger(LOG_DAEMON, "OpenLI: collector thread %d has removed %s from list of SIP URIs.",
-                        trace_get_perpkt_thread_id(t),
-                        syncpush.data.sipuri);
-                HASH_DEL(loc->sip_targets, torem);
-                free(torem->uri);
-                free(torem);
-            }
-            free(syncpush.data.sipuri);
-        }
+        process_incoming_messages(t, glob, loc, &syncpush);
     }
 
     l3 = trace_get_layer3(pkt, &ethertype, &rem);
     if (l3 == NULL || rem == 0) {
         return pkt;
+    }
+
+    /* Is this from one of our ALU mirrors -- if yes, parse + strip it
+     * for conversion to an ETSI record */
+    if (glob->alumirrors && check_alu_intercept(glob, loc, pkt,
+            glob->alumirrors, loc->activealuintercepts)) {
+        return NULL;
     }
 
     /* Is this a RADIUS packet? -- if yes, create a state update */

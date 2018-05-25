@@ -44,11 +44,16 @@ static inline void encode_tri_body(wandder_encoder_t *encoder) {
 
 
 static inline void encode_ipcc_body(wandder_encoder_t *encoder,
-        void *ipcontent, uint32_t iplen) {
+        void *ipcontent, uint32_t iplen, uint8_t dir) {
+
+    uint32_t dir32 = dir;
 
     ENC_CSEQUENCE(encoder, 2);
     ENC_CSEQUENCE(encoder, 1);
     ENC_USEQUENCE(encoder);
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &dir32,
+            sizeof(uint32_t));
     ENC_CSEQUENCE(encoder, 2);
     ENC_CSEQUENCE(encoder, 2);
 
@@ -206,11 +211,11 @@ static inline void encode_etsili_pshdr(wandder_encoder_t *encoder,
 
 wandder_encoded_result_t *encode_etsi_ipcc(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
-        struct timeval *tv, void *ipcontents, uint32_t iplen) {
+        struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir) {
 
 
     encode_etsili_pshdr(encoder, hdrdata, cin, seqno, tv);
-    encode_ipcc_body(encoder, ipcontents, iplen);
+    encode_ipcc_body(encoder, ipcontents, iplen, dir);
     return wandder_encode_finish(encoder);
 
 }

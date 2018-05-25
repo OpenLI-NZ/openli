@@ -35,6 +35,8 @@
 #include "collector.h"
 #include "netcomms.h"
 #include "intercept.h"
+#include "internetaccess.h"
+#include "coreserver.h"
 
 enum {
     SYNC_EVENT_PROC_QUEUE,
@@ -61,9 +63,14 @@ typedef struct colsync_data {
 
     collector_global_t *glob;
 
+    internet_user_t *allusers;
     ipintercept_t *ipintercepts;
+    user_intercept_list_t *userintercepts;
+
     voipintercept_t *voipintercepts;
-    voipintercept_t *voipintercepts_by_uri;
+
+    coreserver_t *coreservers;
+
     int instruct_fd;
     uint8_t instruct_fail;
     sync_epoll_t *ii_ev;

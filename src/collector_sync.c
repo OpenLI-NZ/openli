@@ -32,6 +32,8 @@
 #include <libtrace_parallel.h>
 #include <assert.h>
 #include <netdb.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 #include "etsili_core.h"
 #include "collector.h"
@@ -50,8 +52,11 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 			malloc(sizeof(collector_sync_t));
 
     sync->glob = glob;
+    sync->allusers = NULL;
     sync->ipintercepts = NULL;
+    sync->userintercepts = NULL;
     sync->voipintercepts = NULL;
+    sync->coreservers = NULL;
     sync->instruct_fd = -1;
     sync->instruct_fail = 0;
     sync->ii_ev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
@@ -76,7 +81,10 @@ void clean_sync_data(collector_sync_t *sync) {
         sync->instruct_fd = -1;
 	}
 
+    free_all_users(sync->allusers);
+    clear_user_intercept_list(sync->userintercepts);
     free_all_ipintercepts(sync->ipintercepts);
+    free_coreserver_list(sync->coreservers);
     if (sync->voipintercepts) {
         free_all_voipintercepts(sync->voipintercepts);
     }
@@ -103,7 +111,9 @@ void clean_sync_data(collector_sync_t *sync) {
         free_wandder_encoder(sync->encoder);
     }
 
+    sync->allusers = NULL;
     sync->ipintercepts = NULL;
+    sync->userintercepts = NULL;
     sync->voipintercepts = NULL;
     sync->outgoing = NULL;
     sync->incoming = NULL;
@@ -112,53 +122,66 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->ii_ev = NULL;
 }
 
-static inline void push_single_intercept(libtrace_message_queue_t *q,
-        ipintercept_t *orig) {
+static inline void push_coreserver_msg(collector_sync_t *sync,
+        coreserver_t *cs, uint8_t msgtype) {
 
-    ipintercept_t *copy;
+    sync_sendq_t *sendq, *tmp;
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
+        openli_pushed_t msg;
+
+        memset(&msg, 0, sizeof(openli_pushed_t));
+        msg.type = msgtype;
+        msg.data.coreserver = deep_copy_coreserver(cs);
+        libtrace_message_queue_put(sendq->q, (void *)(&msg));
+    }
+}
+
+static inline void push_single_ipintercept(libtrace_message_queue_t *q,
+        ipintercept_t *ipint, access_session_t *session) {
+
+    ipsession_t *sess;
     openli_pushed_t msg;
 
-    copy = (ipintercept_t *)malloc(sizeof(ipintercept_t));
-
-    copy->internalid = orig->internalid;
-    copy->liid = strdup(orig->liid);
-    copy->liid_len = strlen(copy->liid);
-    copy->authcc = strdup(orig->authcc);
-    copy->authcc_len = strlen(copy->authcc);
-    copy->delivcc = strdup(orig->delivcc);
-    copy->delivcc_len = strlen(copy->delivcc);
-    copy->cin = orig->cin;
-    copy->ai_family = orig->ai_family;
-    copy->destid = orig->destid;
-
-    if (orig->targetagency) {
-        copy->targetagency = strdup(orig->targetagency);
-    } else {
-        copy->targetagency = NULL;
+    /* No assigned IP, session is not fully active yet. Don't push yet */
+    if (session->assignedip == NULL) {
+        return;
     }
 
-    if (orig->ipaddr) {
-        copy->ipaddr = (struct sockaddr_storage *)malloc(
-                sizeof(struct sockaddr_storage));
-        memcpy(copy->ipaddr, orig->ipaddr, sizeof(struct sockaddr_storage));
-    } else {
-        copy->ipaddr = NULL;
+    sess = create_ipsession(ipint, session);
+
+    if (!sess) {
+        logger(LOG_DAEMON,
+                "OpenLI: ran out of memory while creating IP session message.");
+        return;
     }
-
-    if (orig->username) {
-        copy->username = strdup(orig->username);
-        copy->username_len = strlen(copy->username);
-    } else {
-        copy->username = NULL;
-        copy->username_len = 0;
-    }
-
-    copy->active = 1;
-    copy->nextseqno = 0;
-    copy->awaitingconfirm = 0;
-
+    memset(&msg, 0, sizeof(openli_pushed_t));
     msg.type = OPENLI_PUSH_IPINTERCEPT;
-    msg.data.ipint = copy;
+    msg.data.ipsess = sess;
+
+    libtrace_message_queue_put(q, (void *)(&msg));
+}
+
+static inline void push_single_alushimid(libtrace_message_queue_t *q,
+        ipintercept_t *ipint, uint32_t sesscin) {
+
+    aluintercept_t *alu;
+    openli_pushed_t msg;
+
+    if (ipint->alushimid == OPENLI_ALUSHIM_NONE) {
+        return;
+    }
+
+    alu = create_aluintercept(ipint);
+    if (!alu) {
+        logger(LOG_DAEMON,
+                "OpenLI: ran out of memory while creating ALU intercept message.");
+        return;
+    }
+    alu->cin = sesscin;
+
+    memset(&msg, 0, sizeof(openli_pushed_t));
+    msg.type = OPENLI_PUSH_ALUINTERCEPT;
+    msg.data.aluint = alu;
 
     libtrace_message_queue_put(q, (void *)(&msg));
 }
@@ -169,30 +192,32 @@ static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
     rtpstreaminf_t *copy;
     openli_pushed_t msg;
 
-    copy = (rtpstreaminf_t *)malloc(sizeof(rtpstreaminf_t));
-    copy->streamkey = strdup(orig->streamkey);
-    copy->cin = orig->cin;
-    copy->parent = orig->parent;
-    copy->ai_family = orig->ai_family;
-    copy->targetaddr = (struct sockaddr_storage *)malloc(
-            sizeof(struct sockaddr_storage));
-    memcpy(copy->targetaddr, orig->targetaddr, sizeof(struct sockaddr_storage));
-    copy->otheraddr = (struct sockaddr_storage *)malloc(
-            sizeof(struct sockaddr_storage));
-    memcpy(copy->otheraddr, orig->otheraddr, sizeof(struct sockaddr_storage));
-    copy->targetport = orig->targetport;
-    copy->otherport = orig->otherport;
-    copy->seqno = 0;
-    copy->active = 1;
-    copy->invitecseq = NULL;
-    copy->byecseq = NULL;
-    copy->timeout_ev = NULL;
-    copy->byematched = 0;
+    copy = deep_copy_rtpstream(orig);
+    if (!copy) {
+        logger(LOG_DAEMON,
+                "OpenLI: unable to copy RTP stream in sync thread.");
+        return;
+    }
 
+    memset(&msg, 0, sizeof(openli_pushed_t));
     msg.type = OPENLI_PUSH_IPMMINTERCEPT;
     msg.data.ipmmint = copy;
 
     libtrace_message_queue_put(q, (void *)(&msg));
+}
+
+static void push_all_coreservers(coreserver_t *servers,
+        libtrace_message_queue_t *q) {
+
+    coreserver_t *cs, *tmp;
+    HASH_ITER(hh, servers, cs, tmp) {
+        openli_pushed_t msg;
+
+        memset(&msg, 0, sizeof(openli_pushed_t));
+        msg.type = OPENLI_PUSH_CORESERVER;
+        msg.data.coreserver = deep_copy_coreserver(cs);
+        libtrace_message_queue_put(q, (void *)(&msg));
+    }
 }
 
 static int send_to_provisioner(collector_sync_t *sync) {
@@ -241,6 +266,7 @@ static void push_halt_active_voipstreams(libtrace_message_queue_t *q,
             continue;
         }
         streamdup = strdup(cin->streamkey);
+        memset(&msg, 0, sizeof(openli_pushed_t));
         msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
         msg.data.rtpstreamkey = streamdup;
 
@@ -264,34 +290,104 @@ static void push_halt_active_voipstreams(libtrace_message_queue_t *q,
     }
 }
 
+static void push_sip_uri_halt(libtrace_message_queue_t *q, char *uri) {
+    openli_pushed_t msg;
+
+    memset(&msg, 0, sizeof(openli_pushed_t));
+    msg.type = OPENLI_PUSH_HALT_SIPURI;
+    msg.data.sipuri = strdup(uri);
+
+    libtrace_message_queue_put(q, (void *)(&msg));
+}
+
+static inline void push_voipintercept_halt_to_threads(collector_sync_t *sync,
+        voipintercept_t *vint) {
+
+    sync_sendq_t *sendq, *tmp;
+
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
+        push_sip_uri_halt(sendq->q, vint->sipuri);
+        push_halt_active_voipstreams(sendq->q, vint,
+                sync->glob->sync_epollfd);
+    }
+}
+
+static inline void push_session_halt_to_threads(void *sendqs,
+        access_session_t *sess, ipintercept_t *ipint) {
+
+    sync_sendq_t *sendq, *tmp;
+
+    HASH_ITER(hh, (sync_sendq_t *)sendqs, sendq, tmp) {
+        openli_pushed_t pmsg;
+        ipsession_t *sessdup;
+        char ipstr[128];
+
+        memset(&pmsg, 0, sizeof(openli_pushed_t));
+        pmsg.type = OPENLI_PUSH_HALT_IPINTERCEPT;
+        sessdup = create_ipsession(ipint, sess);
+
+        /* misnomer, but whatever. */
+        pmsg.data.ipsess = sessdup;
+
+        /* XXX no error checking because this logging should not reach
+         * the production version... */
+        getnameinfo((struct sockaddr *)(&sess->assignedip),
+                (sess->ipfamily == AF_INET) ? sizeof(struct sockaddr_in) :
+                    sizeof(struct sockaddr_in6),
+                    ipstr, sizeof(ipstr), 0, 0, NI_NUMERICHOST);
+        logger(LOG_DAEMON, "OpenLI: telling threads to cease intercepting traffic for IP %s", ipstr);
+        libtrace_message_queue_put(sendq->q, &pmsg);
+    }
+}
+
+static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
+        ipintercept_t *ipint) {
+
+    sync_sendq_t *sendq, *tmp;
+    internet_user_t *user;
+    access_session_t *sess, *tmp2;
+
+    logger(LOG_DAEMON, "OpenLI: collector will stop intercepting traffic for user %s", ipint->username);
+
+    HASH_FIND(hh, sync->allusers, ipint->username, ipint->username_len,
+            user);
+
+    if (user == NULL) {
+        return;
+    }
+
+    /* Cancel all IP sessions for the target */
+    HASH_ITER(hh, user->sessions, sess, tmp2) {
+        /* TODO skip sessions that were never active */
+
+        push_session_halt_to_threads(sync->glob->syncsendqs, sess,
+                ipint);
+    }
+}
+
 static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
-    voipintercept_t *v;
+    voipintercept_t *v, *tmp2;
+    coreserver_t *cs, *tmp3;
     ipintercept_t *ipint, *tmp;
-    sync_sendq_t *sendq, *tmp2;
-    int i;
+    internet_user_t *user;
 
     HASH_ITER(hh_liid, sync->ipintercepts, ipint, tmp) {
 
-        if (ipint->awaitingconfirm && ipint->active) {
-            ipint->active = 0;
+        if (ipint->awaitingconfirm) {
 
-            HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp2)
-            {
-                openli_pushed_t pmsg;
-
-                /* strdup because we might end up freeing this intercept
-                 * shortly.
-                 */
-                pmsg.type = OPENLI_PUSH_HALT_IPINTERCEPT;
-                pmsg.data.interceptid.liid = strdup(ipint->liid);
-                pmsg.data.interceptid.authcc = strdup(ipint->authcc);
-                libtrace_message_queue_put(sendq->q, &pmsg);
-            }
+            /* Tell every collector thread to stop intercepting traffic for
+             * the IPs associated with this target. */
+            push_ipintercept_halt_to_threads(sync, ipint);
             HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
+            if (ipint->username) {
+                remove_intercept_from_user_intercept_list(&sync->userintercepts,
+                        ipint);
+            }
+            free_single_ipintercept(ipint);
         }
     }
 
-    for (v = sync->voipintercepts; v != NULL; v = v->hh_liid.next) {
+    HASH_ITER(hh_liid, sync->voipintercepts, v, tmp2) {
         if (v->awaitingconfirm && v->active) {
             v->active = 0;
 
@@ -299,12 +395,18 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
                 continue;
             }
 
-            HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp2)
-            {
-                push_halt_active_voipstreams(sendq->q, v,
-                        sync->glob->sync_epollfd);
-            }
+            push_voipintercept_halt_to_threads(sync, v);
             HASH_DELETE(hh_liid, sync->voipintercepts, v);
+            free_single_voipintercept(v);
+        }
+    }
+
+    /* Also remove any unconfirmed core servers */
+    HASH_ITER(hh, sync->coreservers, cs, tmp3) {
+        if (cs->awaitingconfirm) {
+            push_coreserver_msg(sync, cs, OPENLI_PUSH_REMOVE_CORESERVER);
+            HASH_DELETE(hh, sync->coreservers, cs);
+            free_single_coreserver(cs);
         }
     }
 }
@@ -320,6 +422,7 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
         return -1;
     }
 
+    memset(&expmsg, 0, sizeof(openli_export_recv_t));
     expmsg.type = OPENLI_EXPORT_MEDIATOR;
     expmsg.data.med = med;
 
@@ -338,20 +441,12 @@ static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
         return -1;
     }
 
+    memset(&expmsg, 0, sizeof(openli_export_recv_t));
     expmsg.type = OPENLI_EXPORT_DROP_SINGLE_MEDIATOR;
     expmsg.data.med = med;
 
     libtrace_message_queue_put(&(sync->exportq), &expmsg);
     return 0;
-}
-
-static void finish_init_mediators(collector_sync_t *sync) {
-    openli_export_recv_t expmsg;
-
-    expmsg.type = OPENLI_EXPORT_INIT_MEDIATORS_OVER;
-    expmsg.data.packet = NULL;
-
-    libtrace_message_queue_put(&(sync->exportq), &expmsg);
 }
 
 static inline void convert_ipstr_to_sockaddr(char *knownip,
@@ -376,38 +471,69 @@ static inline void convert_ipstr_to_sockaddr(char *knownip,
     freeaddrinfo(res);
 }
 
-static void temporary_map_user_to_address(ipintercept_t *cept) {
-
-    char *knownip;
-    if (strcmp(cept->username, "RogerMegently") == 0) {
-        knownip = "10.0.0.2";
-    } else if (strcmp(cept->username, "Everything") == 0) {
-        knownip = "10.0.0.1";
-    } else {
-        return;
-    }
-
-    convert_ipstr_to_sockaddr(knownip, &(cept->ipaddr), &(cept->ai_family));
-}
 
 static void push_sip_uri(libtrace_message_queue_t *q, char *uri) {
     openli_pushed_t msg;
 
+    memset(&msg, 0, sizeof(openli_pushed_t));
     msg.type = OPENLI_PUSH_SIPURI;
     msg.data.sipuri = strdup(uri);
 
     libtrace_message_queue_put(q, (void *)(&msg));
 }
 
-static void push_sip_uri_halt(libtrace_message_queue_t *q, char *uri) {
-    openli_pushed_t msg;
+static int forward_new_coreserver(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+    coreserver_t *cs, *found;
 
-    msg.type = OPENLI_PUSH_HALT_SIPURI;
-    msg.data.sipuri = strdup(uri);
+    cs = (coreserver_t *)calloc(1, sizeof(coreserver_t));
 
-    libtrace_message_queue_put(q, (void *)(&msg));
+    if (decode_coreserver_announcement(provmsg, msglen, cs) == -1) {
+        logger(LOG_DAEMON, "OpenLI: received invalid core server announcement from provisioner.");
+        free_single_coreserver(cs);
+        return -1;
+    }
+
+    HASH_FIND(hh, sync->coreservers, cs->serverkey, strlen(cs->serverkey),
+            found);
+    if (found) {
+        /* Already in the core server list? */
+        found->awaitingconfirm = 0;
+        free_single_coreserver(cs);
+    } else {
+        /* New core server, pass on to all collector threads */
+        HASH_ADD_KEYPTR(hh, sync->coreservers, cs->serverkey,
+                strlen(cs->serverkey), cs);
+        push_coreserver_msg(sync, cs, OPENLI_PUSH_CORESERVER);
+    }
+    return 0;
 }
 
+static int forward_remove_coreserver(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+
+    coreserver_t *cs, *found;
+
+    cs = (coreserver_t *)calloc(1, sizeof(coreserver_t));
+    if (decode_coreserver_withdraw(provmsg, msglen, cs) == -1) {
+        logger(LOG_DAEMON, "OpenLI: received invalid core server withdrawal from provisioner.");
+        free_single_coreserver(cs);
+        return -1;
+    }
+
+    HASH_FIND(hh, sync->coreservers, cs->serverkey, strlen(cs->serverkey),
+            found);
+    if (!found) {
+        logger(LOG_DAEMON, "OpenLI sync: asked to remove %s server %s, but we don't have any record of it?",
+                coreserver_type_to_string(cs->servertype), cs->serverkey);
+    } else {
+        push_coreserver_msg(sync, cs, OPENLI_PUSH_REMOVE_CORESERVER);
+        HASH_DELETE(hh, sync->coreservers, found);
+        free_single_coreserver(found);
+    }
+    free_single_coreserver(cs);
+    return 0;
+}
 
 static void push_all_active_voipstreams(libtrace_message_queue_t *q,
         voipintercept_t *vint) {
@@ -534,30 +660,13 @@ static int create_new_voipcin(rtpstreaminf_t **activecins, uint32_t cin_id,
 
     rtpstreaminf_t *newcin;
 
-    newcin = (rtpstreaminf_t *)malloc(sizeof(rtpstreaminf_t));
+    newcin = create_rtpstream(vint, cin_id);
+
     if (!newcin) {
         logger(LOG_DAEMON,
-                "OpenLI: out of memory in collector_sync thread.");
+                "OpenLI: out of memory while creating new RTP stream");
         return -1;
     }
-
-    newcin->streamkey = (char *)calloc(1, 256);
-    newcin->cin = cin_id;
-    newcin->parent = vint;
-    newcin->active = 0;
-    newcin->targetaddr = NULL;
-    newcin->otheraddr = NULL;
-    newcin->ai_family = 0;
-    newcin->targetport = 0;
-    newcin->otherport = 0;
-    newcin->seqno = 0;
-    newcin->invitecseq = NULL;
-    newcin->byecseq = NULL;
-    newcin->timeout_ev = NULL;
-    newcin->byematched = 0;
-
-    snprintf(newcin->streamkey, 256, "%s-%u", vint->liid, cin_id);
-
     HASH_ADD_KEYPTR(hh, *activecins, newcin->streamkey,
             strlen(newcin->streamkey), newcin);
     return 0;
@@ -672,12 +781,12 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
             iritype = ETSILI_IRI_CONTINUE;
         }
 
-        snprintf(rtpkey, 256, "%s-%u", vint->liid, vshared->cin);
+        snprintf(rtpkey, 256, "%s-%u", vint->common.liid, vshared->cin);
         HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
         if (thisrtp == NULL) {
             logger(LOG_DAEMON,
                     "OpenLI: unable to find %u in the active call list for %s, %s",
-                    vshared->cin, vint->liid, vint->sipuri);
+                    vshared->cin, vint->common.liid, vint->sipuri);
             continue;
         }
 
@@ -691,7 +800,7 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
                             0) == -1) {
                     logger(LOG_DAEMON,
                             "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
-                            vint->liid, ipstr, portstr);
+                            vint->common.liid, ipstr, portstr);
                     continue;
                 }
             }
@@ -717,7 +826,7 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
                                 portstr, 1) == -1) {
                         logger(LOG_DAEMON,
                                 "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
-                                vint->liid, ipstr, portstr);
+                                vint->common.liid, ipstr, portstr);
                         free(cseqstr);
                         continue;
                     }
@@ -757,7 +866,7 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
                                 portstr, 1) == -1) {
                         logger(LOG_DAEMON,
                                 "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
-                                vint->liid, ipstr, portstr);
+                                vint->common.liid, ipstr, portstr);
                         free(cseqstr);
                         continue;
                     }
@@ -800,6 +909,7 @@ endvoiplookup:
          * so the exporter knows when to decrease the ref count */
         openli_export_recv_t msg;
         trace_increment_packet_refcount(pkt);
+        memset(&msg, 0, sizeof(openli_export_recv_t));
         msg.type = OPENLI_EXPORT_PACKET_FIN;
         msg.data.packet = pkt;
         libtrace_message_queue_put(&(sync->exportq), (void *)(&msg));
@@ -879,23 +989,55 @@ static int halt_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sync->voipintercepts, torem.liid, torem.liid_len, vint);
+    HASH_FIND(hh_liid, sync->voipintercepts, torem.common.liid,
+            torem.common.liid_len, vint);
     if (!vint) {
         logger(LOG_DAEMON,
                 "OpenLI: received withdrawal for VOIP intercept %s but it is not present in the sync intercept list?",
-                torem.liid);
+                torem.common.liid);
         return 0;
     }
 
     logger(LOG_DAEMON, "OpenLI: sync thread withdrawing VOIP intercept %s",
-            torem.liid);
+            torem.common.liid);
 
+    push_voipintercept_halt_to_threads(sync, vint);
     HASH_DELETE(hh_liid, sync->voipintercepts, vint);
-    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
-        push_sip_uri_halt(sendq->q, vint->sipuri);
-        push_halt_active_voipstreams(sendq->q, vint,
-                sync->glob->sync_epollfd);
+    free_single_voipintercept(vint);
+    return 0;
+}
+
+static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
+        uint16_t msglen) {
+
+    ipintercept_t *ipint, torem;
+    sync_sendq_t *sendq, *tmp;
+    int i;
+
+    if (decode_ipintercept_halt(intmsg, msglen, &torem) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: received invalid IP intercept withdrawal from provisioner.");
+        return -1;
     }
+
+    HASH_FIND(hh_liid, sync->ipintercepts, torem.common.liid,
+            torem.common.liid_len, ipint);
+    if (!ipint) {
+        logger(LOG_DAEMON,
+                "OpenLI: received withdrawal for IP intercept %s but it is not present in the sync intercept list?",
+                torem.common.liid);
+        return 0;
+    }
+
+    logger(LOG_DAEMON, "OpenLI: sync thread withdrawing IP intercept %s",
+            torem.common.liid);
+
+    push_ipintercept_halt_to_threads(sync, ipint);
+    HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
+    if (ipint->username) {
+        remove_intercept_from_user_intercept_list(&sync->userintercepts, ipint);
+    }
+    free_single_ipintercept(ipint);
     return 0;
 }
 
@@ -923,6 +1065,7 @@ static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
     if (rtp->active) {
         HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp3) {
            openli_pushed_t msg;
+           memset(&msg, 0, sizeof(openli_pushed_t));
            msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
            msg.data.rtpstreamkey = strdup(rtp->streamkey);
            libtrace_message_queue_put(sendq->q, (void *)(&msg));
@@ -971,6 +1114,7 @@ static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
 static inline void drop_all_mediators(collector_sync_t *sync) {
     openli_export_recv_t expmsg;
 
+    memset(&expmsg, 0, sizeof(openli_export_recv_t));
     expmsg.type = OPENLI_EXPORT_DROP_ALL_MEDIATORS;
     expmsg.data.packet = NULL;
     libtrace_message_queue_put(&(sync->exportq), &expmsg);
@@ -990,13 +1134,14 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sync->voipintercepts, toadd.liid, toadd.liid_len, vint);
+    HASH_FIND(hh_liid, sync->voipintercepts, toadd.common.liid,
+            toadd.common.liid_len, vint);
     if (vint) {
         /* Duplicate LIID */
         if (strcmp(toadd.sipuri, vint->sipuri) != 0) {
             logger(LOG_DAEMON,
                     "OpenLI: duplicate VOIP intercept ID %s seen, but targets are different (was %s, now %s).",
-                    vint->liid, vint->sipuri, toadd.sipuri);
+                    vint->common.liid, vint->sipuri, toadd.sipuri);
             return -1;
         }
         vint->internalid = toadd.internalid;
@@ -1007,8 +1152,8 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     vint = (voipintercept_t *)malloc(sizeof(voipintercept_t));
     memcpy(vint, &toadd, sizeof(voipintercept_t));
-    HASH_ADD_KEYPTR(hh_liid, sync->voipintercepts, vint->liid, vint->liid_len,
-            vint);
+    HASH_ADD_KEYPTR(hh_liid, sync->voipintercepts, vint->common.liid,
+            vint->common.liid_len, vint);
 
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
         push_sip_uri(sendq->q, vint->sipuri);
@@ -1025,6 +1170,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     ipintercept_t *cept, *x;
     sync_sendq_t *tmp, *sendq;
+    internet_user_t *user;
 
     cept = (ipintercept_t *)malloc(sizeof(ipintercept_t));
     if (decode_ipintercept_start(intmsg, msglen, cept) == -1) {
@@ -1035,7 +1181,19 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     }
 
     /* Check if we already have this intercept */
-    HASH_FIND(hh_liid, sync->ipintercepts, cept->liid, cept->liid_len, x);
+    HASH_FIND(hh_liid, sync->ipintercepts, cept->common.liid,
+            cept->common.liid_len, x);
+
+    /* TODO change alushimid and username to not be mutually exclusive.
+     * Ideally, username would be mandatory even for ALU intercepts as we
+     * still will need to produce IRIs for those targets from AAA traffic.
+     * We can also use the AAA stream to assign CINs for the CCs created from
+     * the ALU intercepted packets, so really this still needs a lot of proper
+     * sync work.
+     *
+     * Therefore, we'll want to only announce ALU Shim IDs once we have a
+     * valid session for the user and withdraw them once the session is over.
+     */
 
     if (x) {
         /* Duplicate LIID */
@@ -1043,40 +1201,68 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         /* OpenLI-internal fields that could change value
          * if the provisioner was restarted.
          */
-        if (strcmp(x->username, cept->username) != 0) {
+        if (x->username && cept->username) {
+            if (strcmp(x->username, cept->username) != 0) {
+                logger(LOG_DAEMON,
+                        "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
+                        x->common.liid, x->username, cept->username);
+                free(cept);
+                return -1;
+            }
+        } else if (cept->alushimid != x->alushimid) {
             logger(LOG_DAEMON,
-                    "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
-                    x->liid, x->username, cept->username);
+                    "OpenLI: duplicate IP ID %s seen, but ALU intercept IDs are different (was %u, now %u).",
+                    x->common.liid, x->alushimid, cept->alushimid);
             free(cept);
             return -1;
         }
-        x->internalid = cept->internalid;
+
         x->awaitingconfirm = 0;
-        x->active = 1;
         free(cept);
-        /* our collector threads should already know about this intercept?
-         */
+        /* our collector threads should already know about this intercept? */
         return 0;
     }
 
-    /* TODO try to find a CIN and IP address for this intercept, based on our
-     * known RADIUS (or equivalent) state.
-     *
-     * Only push the intercept to the processing threads once we've
-     * assigned a suitable CIN.
-     */
+    if (cept->username) {
+        HASH_FIND(hh, sync->allusers, cept->username, cept->username_len, user);
 
-    /* Temporary hard-coded mappings for testing.
-     * Please remove once proper RADIUS support is added.
-     */
-
-    temporary_map_user_to_address(cept);
-
-    HASH_ADD(hh_liid, sync->ipintercepts, liid, strlen(cept->liid), cept);
-
-    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
-        push_single_intercept(sendq->q, cept);
+        if (user) {
+            access_session_t *sess, *tmp2;
+            HASH_ITER(hh, user->sessions, sess, tmp2) {
+                HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs),
+                        sendq, tmp) {
+                    push_single_ipintercept(sendq->q, cept, sess);
+                }
+            }
+        }
+        add_intercept_to_user_intercept_list(&sync->userintercepts, cept);
+        logger(LOG_DAEMON,
+                "OpenLI: received IP intercept from provisioner for user %s (LIID %s, authCC %s)",
+                cept->username, cept->common.liid, cept->common.authcc);
     }
+
+    if (cept->alushimid != OPENLI_ALUSHIM_NONE) {
+        logger(LOG_DAEMON,
+                "OpenLI: received IP intercept from provisioner for ALU shim ID %u (LIID %s, authCC %s)",
+                cept->alushimid, cept->common.liid, cept->common.authcc);
+
+        /* Don't need to wait for a session to start an ALU intercept.
+         * The CIN is contained within the packet and only valid
+         * interceptable packets should have the intercept ID we're
+         * looking for.
+         *
+         * TODO allow config that will force us to wait for a session
+         * instead, i.e. if the ALU is configured to NOT set the session
+         * ID in the shim.
+         */
+        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs),
+                sendq, tmp) {
+            push_single_alushimid(sendq->q, cept, 0);
+        }
+    }
+
+    HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
+            cept->common.liid_len, cept);
 
     return 0;
 
@@ -1131,11 +1317,26 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                     return -1;
                 }
                 break;
+            case OPENLI_PROTO_HALT_IPINTERCEPT:
+                ret = halt_ipintercept(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_ANNOUNCE_CORESERVER:
+                ret = forward_new_coreserver(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_WITHDRAW_CORESERVER:
+                ret = forward_remove_coreserver(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
             case OPENLI_PROTO_NOMORE_INTERCEPTS:
                 disable_unconfirmed_intercepts(sync);
-                break;
-            case OPENLI_PROTO_NOMORE_MEDIATORS:
-                finish_init_mediators(sync);
                 break;
         }
 
@@ -1196,6 +1397,14 @@ int sync_connect_provisioner(collector_sync_t *sync) {
 
 }
 
+static inline void touch_all_coreservers(coreserver_t *servers) {
+    coreserver_t *cs, *tmp;
+
+    HASH_ITER(hh, servers, cs, tmp) {
+        cs->awaitingconfirm = 1;
+    }
+}
+
 static inline void touch_all_intercepts(ipintercept_t *intlist) {
     ipintercept_t *ipint, *tmp;
 
@@ -1244,8 +1453,11 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
     touch_all_intercepts(sync->ipintercepts);
     touch_all_voipintercepts(sync->voipintercepts);
 
+    touch_all_coreservers(sync->coreservers);
+
     /* Same with mediators -- keep exporting to them, but flag them to be
      * disconnected if they are not announced after we reconnect. */
+    memset(&expmsg, 0, sizeof(openli_export_recv_t));
     expmsg.type = OPENLI_EXPORT_FLAG_MEDIATORS;
     expmsg.data.packet = NULL;
 
@@ -1254,19 +1466,27 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
 
 }
 
-
-static void push_all_active_intercepts(ipintercept_t *intlist,
-        libtrace_message_queue_t *q) {
+static void push_all_active_intercepts(internet_user_t *allusers,
+        ipintercept_t *intlist, libtrace_message_queue_t *q) {
 
     ipintercept_t *orig, *tmp;
+    internet_user_t *user;
+    access_session_t *sess, *tmp2;
 
     HASH_ITER(hh_liid, intlist, orig, tmp) {
-        if (!orig->active) {
-            continue;
+        /* Do we have a valid user that matches the target username? */
+        if (orig->username != NULL) {
+            HASH_FIND(hh, allusers, orig->username, orig->username_len, user);
+            if (user) {
+                HASH_ITER(hh, user->sessions, sess, tmp2) {
+                    push_single_ipintercept(q, orig, sess);
+                }
+            }
         }
-        push_single_intercept(q, orig);
+        if (orig->alushimid != OPENLI_ALUSHIM_NONE) {
+            push_single_alushimid(q, orig, 0);
+        }
     }
-
 }
 
 int sync_thread_main(collector_sync_t *sync) {
@@ -1350,11 +1570,13 @@ int sync_thread_main(collector_sync_t *sync) {
         if (recvd.type == OPENLI_UPDATE_HELLO) {
             voipintercept_t *v;
 
-            push_all_active_intercepts(sync->ipintercepts, recvd.data.replyq);
+            push_all_active_intercepts(sync->allusers, sync->ipintercepts,
+                    recvd.data.replyq);
             for (v = sync->voipintercepts; v != NULL; v = v->hh_liid.next) {
                 push_sip_uri(recvd.data.replyq, v->sipuri);
                 push_all_active_voipstreams(recvd.data.replyq, v);
             }
+            push_all_coreservers(sync->coreservers, recvd.data.replyq);
         }
 
 
@@ -1396,6 +1618,7 @@ static inline void push_hello_message(libtrace_message_queue_t *atob,
 
     openli_state_update_t hello;
 
+    memset(&hello, 0, sizeof(openli_state_update_t));
     hello.type = OPENLI_UPDATE_HELLO;
     hello.data.replyq = btoa;
 

@@ -67,8 +67,8 @@ static void dump_export_msg(openli_exportmsg_t *msg) {
 }
 
 static openli_export_recv_t form_ipcc(collector_global_t *glob,
-		colthread_local_t *loc, ipintercept_t *ipint,
-        libtrace_packet_t *pkt, void *l3, uint32_t rem) {
+		colthread_local_t *loc, ipsession_t *sess,
+        libtrace_packet_t *pkt, void *l3, uint32_t rem, uint8_t dir) {
 
     struct timeval tv = trace_get_timeval(pkt);
     openli_exportmsg_t msg;
@@ -81,12 +81,12 @@ static openli_export_recv_t form_ipcc(collector_global_t *glob,
         reset_wandder_encoder(loc->encoder);
     }
 
-    hdrdata.liid = ipint->liid;
-    hdrdata.liid_len = ipint->liid_len;
-    hdrdata.authcc = ipint->authcc;
-    hdrdata.authcc_len = ipint->authcc_len;
-    hdrdata.delivcc = ipint->delivcc;
-    hdrdata.delivcc_len = ipint->delivcc_len;
+    hdrdata.liid = sess->common.liid;
+    hdrdata.liid_len = sess->common.liid_len;
+    hdrdata.authcc = sess->common.authcc;
+    hdrdata.authcc_len = sess->common.authcc_len;
+    hdrdata.delivcc = sess->common.delivcc;
+    hdrdata.delivcc_len = sess->common.delivcc_len;
     hdrdata.operatorid = glob->operatorid;
     hdrdata.operatorid_len = glob->operatorid_len;
     hdrdata.networkelemid = glob->networkelemid;
@@ -94,20 +94,22 @@ static openli_export_recv_t form_ipcc(collector_global_t *glob,
     hdrdata.intpointid = glob->intpointid;
     hdrdata.intpointid_len = glob->intpointid_len;
 
+    memset(&msg, 0, sizeof(openli_exportmsg_t));
     msg.msgbody = encode_etsi_ipcc(loc->encoder, &hdrdata,
-            (int64_t)ipint->cin, (int64_t)ipint->nextseqno, &tv, l3, rem);
+            (int64_t)sess->cin, (int64_t)sess->nextseqno, &tv, l3, rem, dir);
 
     msg.encoder = loc->encoder;
     msg.ipcontents = (uint8_t *)l3;
     msg.ipclen = rem;
-    msg.destid = ipint->destid;
+    msg.destid = sess->common.destid;
     msg.header = construct_netcomm_protocol_header(msg.msgbody->len,
-            OPENLI_PROTO_ETSI_CC, ipint->internalid, &(msg.hdrlen));
+            OPENLI_PROTO_ETSI_CC, 0, &(msg.hdrlen));
 
+    memset(&exprecv, 0, sizeof(openli_export_recv_t));
     exprecv.type = OPENLI_EXPORT_ETSIREC;
     exprecv.data.toexport = msg;
 
-    ipint->nextseqno ++;
+    sess->nextseqno ++;
 
     return exprecv;
 
@@ -120,7 +122,8 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
     struct sockaddr_in *intaddr, *cmp;
     openli_export_recv_t msg;
     int matched = 0;
-    ipintercept_t *tmp, *ipint;
+    ipv4_target_t *tgt;
+    ipsession_t *sess, *tmp;
 
     if (rem < sizeof(libtrace_ip_t)) {
         /* Truncated IP header */
@@ -141,44 +144,32 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
      * NOTE: a packet can match multiple intercepts so don't break early.
      */
 
-    HASH_ITER(hh_liid, loc->activeipintercepts, ipint, tmp) {
+    cmp = (struct sockaddr_in *)(&ipsrc);
+    HASH_FIND(hh, loc->activeipv4intercepts, &(cmp->sin_addr.s_addr),
+            sizeof(cmp->sin_addr.s_addr), tgt);
 
-        if (!ipint->active) {
-            continue;
+    if (tgt) {
+        HASH_ITER(hh, tgt->intercepts, sess, tmp) {
+            matched ++;
+            msg = form_ipcc(glob, loc, sess, pkt, ip, rem, 0);
+            libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
         }
+        goto ipv4ccdone;
+    }
 
-        intaddr = (struct sockaddr_in *)(ipint->ipaddr);
+    cmp = (struct sockaddr_in *)(&ipdst);
+    HASH_FIND(hh, loc->activeipv4intercepts, &(cmp->sin_addr.s_addr),
+            sizeof(cmp->sin_addr.s_addr), tgt);
 
-        if (intaddr == NULL) {
-            /* Intercept with no associated IP address?? */
-            continue;
-        }
-
-        if (ipsrc.ss_family == ipint->ai_family) {
-            cmp = (struct sockaddr_in *)(&ipsrc);
-
-            if (intaddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
-                /* Match */
-                matched ++;
-                msg = form_ipcc(glob, loc, ipint, pkt, ip, rem);
-                libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
-                continue;
-            }
-        }
-
-        if (ipdst.ss_family == ipint->ai_family) {
-            cmp = (struct sockaddr_in *)(&ipdst);
-
-            if (intaddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
-                /* Match */
-                matched ++;
-                msg = form_ipcc(glob, loc, ipint, pkt, ip, rem);
-                libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
-                continue;
-            }
+    if (tgt) {
+        HASH_ITER(hh, tgt->intercepts, sess, tmp) {
+            matched ++;
+            msg = form_ipcc(glob, loc, sess, pkt, ip, rem, 1);
+            libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
         }
     }
 
+ipv4ccdone:
     if (matched > 0) {
         msg.type = OPENLI_EXPORT_PACKET_FIN;
         msg.data.packet = pkt;

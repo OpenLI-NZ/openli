@@ -42,6 +42,7 @@
 
 #include "intercept.h"
 #include "agency.h"
+#include "coreserver.h"
 
 typedef struct ii_header {
     uint32_t magic;
@@ -79,9 +80,10 @@ typedef enum {
     OPENLI_PROTO_MEDIATOR_AUTH,
     OPENLI_PROTO_DISCONNECT_MEDIATORS,
     OPENLI_PROTO_NOMORE_INTERCEPTS,
-    OPENLI_PROTO_NOMORE_MEDIATORS,
     OPENLI_PROTO_ETSI_CC,
     OPENLI_PROTO_ETSI_IRI,
+    OPENLI_PROTO_ANNOUNCE_CORESERVER,
+    OPENLI_PROTO_WITHDRAW_CORESERVER,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -108,6 +110,10 @@ typedef enum {
     OPENLI_PROTO_FIELD_HI2PORT,
     OPENLI_PROTO_FIELD_HI3IP,
     OPENLI_PROTO_FIELD_HI3PORT,
+    OPENLI_PROTO_FIELD_CORESERVER_TYPE,
+    OPENLI_PROTO_FIELD_CORESERVER_IP,
+    OPENLI_PROTO_FIELD_CORESERVER_PORT,
+    OPENLI_PROTO_FIELD_ALUSHIMID,
 } openli_proto_fieldtype_t;
 
 
@@ -120,11 +126,11 @@ uint8_t *construct_netcomm_protocol_header(uint32_t contentlen,
 int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med);
 int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
         openli_mediator_t *med);
-int push_ipintercept_onto_net_buffer(net_buffer_t *nb, ipintercept_t *ipint);
+int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *ipint);
 int push_voipintercept_onto_net_buffer(net_buffer_t *nb,
-        voipintercept_t *vint);
-int push_voipintercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
-        voipintercept_t *vint);
+        void *vint);
+int push_intercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
+        void *cept, openli_proto_msgtype_t wdtype);
 int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
@@ -136,8 +142,11 @@ int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
 int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
         int liid_len);
 int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb);
+int push_coreserver_onto_net_buffer(net_buffer_t *nb, coreserver_t *cs,
+        uint8_t cstype);
+int push_coreserver_withdraw_onto_net_buffer(net_buffer_t *nb, coreserver_t *cs,
+        uint8_t cstype);
 int push_nomore_intercepts(net_buffer_t *nb);
-int push_nomore_mediators(net_buffer_t *nb);
 int transmit_net_buffer(net_buffer_t *nb);
 
 openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
@@ -148,6 +157,8 @@ int decode_mediator_withdraw(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
         ipintercept_t *ipint);
+int decode_ipintercept_halt(uint8_t *msgbody, uint16_t len,
+        ipintercept_t *ipint);
 int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
         voipintercept_t *vint);
 int decode_voipintercept_halt(uint8_t *msgbody, uint16_t len,
@@ -157,6 +168,10 @@ int decode_lea_withdrawal(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
         char **liid);
 int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid);
+int decode_coreserver_announcement(uint8_t *msgbody, uint16_t len,
+        coreserver_t *cs);
+int decode_coreserver_withdraw(uint8_t *msgbody, uint16_t len,
+        coreserver_t *cs);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

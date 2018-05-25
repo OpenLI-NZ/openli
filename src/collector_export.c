@@ -45,16 +45,9 @@
 
 enum {
     EXP_EPOLL_MQUEUE = 0,
-    EXP_EPOLL_TIMER = 1
+    EXP_EPOLL_TIMER = 1,
+    EXP_EPOLL_FLAG_TIMEOUT = 2,
 };
-
-typedef struct exporter_epoll {
-    uint8_t type;
-    union {
-        libtrace_message_queue_t *q;
-        export_dest_t *dest;
-    } data;
-} exporter_epoll_t;
 
 collector_export_t *init_exporter(collector_global_t *glob) {
 
@@ -65,6 +58,9 @@ collector_export_t *init_exporter(collector_global_t *glob) {
     exp->dests = libtrace_list_init(sizeof(export_dest_t));
 
     exp->failed_conns = 0;
+    exp->flagged = 0;
+    exp->flag_timer_ev = NULL;
+    exp->flagtimerfd = -1;
     return exp;
 }
 
@@ -292,7 +288,7 @@ static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
 endforward:
     wandder_release_encoded_result(NULL, msg->msgbody);
 
-    return 0;
+    return ret;
 }
 
 static inline export_dest_t *add_unknown_destination(collector_export_t *exp,
@@ -399,6 +395,26 @@ static inline void add_new_destination(collector_export_t *exp,
 
 }
 
+static void purge_unconfirmed_mediators(collector_export_t *exp) {
+    libtrace_list_node_t *n;
+    export_dest_t *dest;
+
+    n = exp->dests->head;
+    while (n) {
+        dest = (export_dest_t *)(n->data);
+        if (dest->awaitingconfirm) {
+            if (dest->fd != -1) {
+                logger(LOG_DAEMON,
+                        "OpenLI exporter: closing connection to unwanted mediator on fd %d", dest->fd);
+                close(dest->fd);
+                dest->fd = -1;
+            }
+            dest->halted = 1;
+        }
+        n = n->next;
+    }
+}
+
 #define MAX_READ_BATCH 25
 
 static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
@@ -408,6 +424,7 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
     libtrace_list_node_t *n;
     export_dest_t *dest;
 
+    memset(&recvd, 0, sizeof(openli_export_recv_t));
     x = libtrace_message_queue_get(srcq, (void *)(&recvd));
     if (x == LIBTRACE_MQ_FAILED) {
         return 0;
@@ -415,6 +432,34 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
 
     if (recvd.type == OPENLI_EXPORT_MEDIATOR) {
         add_new_destination(exp, &(recvd.data.med));
+
+        if (!exp->flagged) {
+            return 0;
+        }
+
+        exp->flag_timer_ev = (exporter_epoll_t *)malloc(
+                sizeof(exporter_epoll_t));
+        exp->flag_timer_ev->type = EXP_EPOLL_FLAG_TIMEOUT;
+        exp->flag_timer_ev->data.q = NULL;
+
+        if (exp->flagtimerfd == -1) {
+            exp->flagtimerfd = epoll_add_timer(exp->glob->export_epollfd, 10,
+                    exp->flag_timer_ev);
+            if (exp->flagtimerfd == -1) {
+                logger(LOG_DAEMON, "OpenLI: failed to add export timer fd to epoll set: %s.", strerror(errno));
+                return -1;
+            }
+        } else {
+            struct itimerspec its;
+
+            its.it_value.tv_sec = 10;
+            its.it_value.tv_nsec = 0;
+
+            if (timerfd_settime(exp->flagtimerfd, 0, &its, NULL) == -1) {
+                logger(LOG_DAEMON, "OpenLI: exporter has failed to reset the export timer fd: %s", strerror(errno));
+                return -1;
+            }
+        }
         return 0;
     }
 
@@ -432,31 +477,15 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
 
 
     if (recvd.type == OPENLI_EXPORT_FLAG_MEDIATORS) {
+
         n = exp->dests->head;
         while (n) {
             dest = (export_dest_t *)(n->data);
             dest->awaitingconfirm = 1;
             n = n->next;
         }
-        return 0;
-    }
 
-    if (recvd.type == OPENLI_EXPORT_INIT_MEDIATORS_OVER) {
-
-        n = exp->dests->head;
-        while (n) {
-            dest = (export_dest_t *)(n->data);
-            if (dest->awaitingconfirm) {
-                if (dest->fd != -1) {
-                    logger(LOG_DAEMON,
-                            "OpenLI exporter: closing connection to unwanted mediator on fd %d", dest->fd);
-                    close(dest->fd);
-                    dest->fd = -1;
-                }
-                dest->halted = 1;
-            }
-            n = n->next;
-        }
+        exp->flagged = 1;
         return 0;
     }
 
@@ -500,7 +529,6 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
         if (recvd.data.toexport.header) {
             free(recvd.data.toexport.header);
         }
-        //free(recvd.data.toexport.msgbody);
         return 1;
     }
 
@@ -570,6 +598,15 @@ static int check_epoll_fd(collector_export_t *exp, struct epoll_event *ev) {
         }
         logger(LOG_DAEMON, "OpenLI: export thread timer has misbehaved.");
         return -1;
+    }
+
+    if (epptr->type == EXP_EPOLL_FLAG_TIMEOUT) {
+        purge_unconfirmed_mediators(exp);
+        exp->flagged = 0;
+        free(exp->flag_timer_ev);
+        exp->flag_timer_ev = NULL;
+        close(exp->flagtimerfd);
+        exp->flagtimerfd = -1;
     }
 
     return ret;
