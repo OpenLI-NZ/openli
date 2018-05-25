@@ -38,6 +38,8 @@
     ((((uint32_t)rad->msgident) << 16) + (((uint32_t)rad->sourceport)) + \
     (((uint32_t)reqtype) << 24))
 
+#define STANDARD_ATTR_ALLOC (64)
+
 enum {
     RADIUS_CODE_ACCESS_REQUEST = 1,
     RADIUS_CODE_ACCESS_ACCEPT = 2,
@@ -83,8 +85,6 @@ struct radius_attribute {
     uint8_t att_type;
     uint8_t att_len;
     void *att_val;
-    uint8_t copied;
-
     radius_attribute_t *next;
 };
 
@@ -216,7 +216,7 @@ static inline void free_attribute_list(radius_attribute_t *attrlist) {
     while (at) {
         tmp = at;
         at = at->next;
-        if (tmp->copied) {
+        if (tmp->att_val) {
             free(tmp->att_val);
         }
         free(tmp);
@@ -224,7 +224,7 @@ static inline void free_attribute_list(radius_attribute_t *attrlist) {
 }
 
 static inline radius_attribute_t *create_new_attribute(radius_global_t *glob,
-        uint8_t type, uint8_t len, uint8_t *valptr, uint8_t copy) {
+        uint8_t type, uint8_t len, uint8_t *valptr) {
 
     radius_attribute_t *attr;
 
@@ -232,20 +232,24 @@ static inline radius_attribute_t *create_new_attribute(radius_global_t *glob,
         attr = glob->freeattrs;
         glob->freeattrs = attr->next;
     } else {
-        attr = (radius_attribute_t *)malloc(sizeof(radius_attribute_t));
+        attr = (radius_attribute_t *)calloc(1, sizeof(radius_attribute_t));
     }
 
     attr->next = NULL;
     attr->att_type = type;
     attr->att_len = len - 2;
-    if (copy) {
-        attr->att_val = malloc(attr->att_len);
-        memcpy(attr->att_val, valptr, attr->att_len);
-        attr->copied = 1;
-    } else {
-        attr->att_val = (void *)valptr;
-        attr->copied = 0;
+
+    if (attr->att_val == NULL) {
+        if (attr->att_len > STANDARD_ATTR_ALLOC) {
+            attr->att_val = malloc(attr->att_len);
+        } else {
+            attr->att_val = malloc(STANDARD_ATTR_ALLOC);
+        }
+    } else if (attr->att_len > STANDARD_ATTR_ALLOC) {
+        attr->att_val = realloc(attr->att_val, attr->att_len);
     }
+
+    memcpy(attr->att_val, valptr, attr->att_len);
     return attr;
 }
 
@@ -333,10 +337,6 @@ static inline void release_attribute(radius_attribute_t **freelist,
         attr->next = *freelist;
         *freelist = attr;
     }
-    if (attr->copied) {
-        free(attr->att_val);
-    }
-    attr->att_val = NULL;
 }
 
 static inline void release_attribute_list(radius_attribute_t **freelist,
@@ -404,12 +404,12 @@ static void create_orphan(radius_global_t *glob, radius_orphaned_resp_t **head,
     resp->next = NULL;
     resp->tvsec = trace_get_seconds(pkt);
     resp->resptype = raddata->msgtype;
-    resp->savedattrs = NULL;
+    resp->savedattrs = raddata->attrs;
 
-    attr = raddata->attrs;
+    raddata->attrs = NULL;
     while (attr) {
         attrcopy = create_new_attribute(glob, attr->att_type, attr->att_len,
-                attr->att_val, 1);
+                attr->att_val);
         attrcopy->next = resp->savedattrs;
         resp->savedattrs = attrcopy;
         attr = attr->next;
@@ -630,7 +630,7 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
             break;
         }
 
-        newattr = create_new_attribute(glob, att_type, att_len, ptr, 0);
+        newattr = create_new_attribute(glob, att_type, att_len, ptr);
         newattr->next = parsed->attrs;
         parsed->attrs = newattr;
 
@@ -1161,14 +1161,8 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
                 release_saved_request(&(glob->freeaccreqs), check);
             }
 
-            attr = raddata->attrs;
-            while (attr) {
-                attrcopy = create_new_attribute(glob, attr->att_type,
-                        attr->att_len, attr->att_val, 1);
-                attrcopy->next = req->attrs;
-                req->attrs = attrcopy;
-                attr = attr->next;
-            }
+            req->attrs = raddata->attrs;
+            raddata->attrs = NULL;
 
             HASH_ADD_KEYPTR(hh, raddata->matchednas->requests, &(req->reqid),
                     sizeof(req->reqid), req);
