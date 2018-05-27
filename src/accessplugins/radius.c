@@ -51,6 +51,7 @@ enum {
 
 enum {
     RADIUS_ATTR_USERNAME = 1,
+    RADIUS_ATTR_NASIP = 4,
     RADIUS_ATTR_NASPORT = 5,
     RADIUS_ATTR_FRAMED_IP_ADDRESS = 8,
     RADIUS_ATTR_NASIDENTIFIER = 32,
@@ -207,6 +208,26 @@ static void radius_init_plugin_data(access_plugin_t *p) {
 
     p->plugindata = (void *)(glob);
     return;
+}
+
+static inline int interesting_attribute(uint8_t attrnum) {
+
+    switch(attrnum) {
+        case RADIUS_ATTR_USERNAME:
+        case RADIUS_ATTR_ACCT_STATUS_TYPE:
+        case RADIUS_ATTR_NASIDENTIFIER:
+        case RADIUS_ATTR_NASPORT:
+        case RADIUS_ATTR_FRAMED_IP_ADDRESS:
+        case RADIUS_ATTR_FRAMED_IPV6_ADDRESS:
+        case RADIUS_ATTR_ACCT_INOCTETS:
+        case RADIUS_ATTR_ACCT_OUTOCTETS:
+        case RADIUS_ATTR_ACCT_SESSION_ID:
+        case RADIUS_ATTR_NASIP:
+            return 1;
+    }
+
+    return 0;
+
 }
 
 static inline void free_attribute_list(radius_attribute_t *attrlist) {
@@ -405,15 +426,7 @@ static void create_orphan(radius_global_t *glob, radius_orphaned_resp_t **head,
     resp->tvsec = trace_get_seconds(pkt);
     resp->resptype = raddata->msgtype;
     resp->savedattrs = raddata->attrs;
-
     raddata->attrs = NULL;
-    while (attr) {
-        attrcopy = create_new_attribute(glob, attr->att_type, attr->att_len,
-                attr->att_val);
-        attrcopy->next = resp->savedattrs;
-        resp->savedattrs = attrcopy;
-        attr = attr->next;
-    }
 
     if (*tail == NULL) {
         *head = resp;
@@ -630,12 +643,14 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
             break;
         }
 
-        newattr = create_new_attribute(glob, att_type, att_len, ptr);
-        newattr->next = parsed->attrs;
-        parsed->attrs = newattr;
+        if (interesting_attribute(att_type)) {
+            newattr = create_new_attribute(glob, att_type, att_len, ptr);
+            newattr->next = parsed->attrs;
+            parsed->attrs = newattr;
 
-        if (newattr->att_type == RADIUS_ATTR_ACCT_STATUS_TYPE) {
-            parsed->accttype = ntohl(*((uint32_t *)newattr->att_val));
+            if (newattr->att_type == RADIUS_ATTR_ACCT_STATUS_TYPE) {
+                parsed->accttype = ntohl(*((uint32_t *)newattr->att_val));
+            }
         }
 
         rem -= att_len;
