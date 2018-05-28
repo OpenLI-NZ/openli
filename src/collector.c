@@ -712,6 +712,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     pthread_mutex_init(&glob->exportq_mutex, NULL);
 
     if (parse_collector_config(configfile, glob) == -1) {
+        clear_global_config(glob);
         return NULL;
     }
 
