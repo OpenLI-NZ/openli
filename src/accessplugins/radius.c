@@ -136,6 +136,7 @@ typedef struct radius_parsed {
     libtrace_packet_t *origpkt;
     uint8_t msgtype;
     uint8_t msgident;
+    uint8_t *authptr;
     uint32_t accttype;
     uint32_t nasport;
     double tvsec;
@@ -180,6 +181,7 @@ static inline void reset_parsed_packet(radius_parsed_t *parsed) {
     parsed->msgtype = 0;
     parsed->accttype = 0;
     parsed->msgident = 0;
+    parsed->authptr = NULL;
     parsed->attrs = NULL;
     parsed->sourceport = 0;
     parsed->tvsec = 0;
@@ -619,6 +621,7 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
 
     parsed->msgtype = hdr->code;
     parsed->msgident = hdr->identifier;
+    parsed->authptr = hdr->auth;
     parsed->origpkt = pkt;
     parsed->tvsec = trace_get_seconds(pkt);;
 
@@ -713,6 +716,50 @@ static inline void process_username_attribute(radius_parsed_t *raddata) {
     HASH_ADD_KEYPTR(hh_username, raddata->matchednas->users, user->userid,
             strlen(user->userid), user);
     raddata->matcheduser = user;
+}
+
+static uint32_t assign_cin(radius_parsed_t *raddata) {
+
+    /* CIN assignment for RADIUS sessions:
+     *
+     * Use the Acct-Session-ID if available -- often present in
+     * Access-Requests but not guaranteed. It's a variable length
+     * UTF-8 string, so we need to hash it into a 32 bit space.
+     *
+     * Depending on your RADIUS setup, session ID may not be unique.
+     * See https://freeradius.org/rfc/acct_session_id_uniqueness.html for
+     * more info.
+     *
+     * The fallback option is to hash the Authenticator bytes, as this
+     * should be a random 16 byte number for Access-Requests. For
+     * Accounting-Requests, the number is not random but there must be a
+     * Acct-Session-ID in that case anyway, so we should be OK.
+     */
+
+    struct timeval tv;
+    radius_attribute_t *attr;
+
+    attr = raddata->attrs;
+    while (attr) {
+        if (attr->att_type == RADIUS_ATTR_ACCT_SESSION_ID) {
+            return hashlittle(attr->att_val, attr->att_len, 0xfacebeef);
+        }
+        attr = attr->next;
+    }
+
+    if (raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST) {
+        return hashlittle(raddata->authptr, 16, 0xfacebeef);
+    }
+
+    /* We really shouldn't get here, but just in case... */
+
+    /* Not a great solution, but probably unique enough -- are we ever
+     * likely to see multiple sessions for the same user within the same
+     * second AND they're not using one of the other supported ID methods??
+     */
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec;
+
 }
 
 static inline void process_nasid_attribute(radius_parsed_t *raddata) {
@@ -1121,13 +1168,14 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         thissess->sessionid = strdup(sessionid);
         thissess->statedata = NULL;
         thissess->idlength = strlen(sessionid);
-        thissess->cin = 100;     /* TODO hash the session id */
+        thissess->cin = assign_cin(raddata);
         thissess->ipfamily = AF_UNSPEC;
         thissess->assignedip = NULL;
         thissess->iriseqno = 0;
         thissess->next = *sesslist;
 
         *sesslist = thissess;
+
     }
 
 
