@@ -253,4 +253,46 @@ wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
 }
 
 
+etsili_generic_t *create_etsili_generic(etsili_generic_t **freelist,
+        uint8_t itemnum, uint16_t itemlen, uint8_t *itemvalptr) {
+
+    etsili_generic_t *gen;
+
+    if (*freelist) {
+        gen = *freelist;
+        *freelist = (*freelist)->nextfree;
+    } else {
+        gen = (etsili_generic_t *)malloc(sizeof(etsili_generic_t));
+    }
+
+    gen->itemnum = itemnum;
+    gen->itemlen = itemlen;
+    gen->itemptr = itemvalptr;
+    gen->nextfree = NULL;
+    return gen;
+}
+
+void release_etsili_generic(etsili_generic_t **freelist, etsili_generic_t *gen) {
+
+    if (*freelist) {
+        gen->nextfree = *freelist;
+        *freelist = gen;
+    } else {
+        gen->nextfree = NULL;
+        *freelist = gen;
+    }
+
+}
+
+void free_etsili_generics(etsili_generic_t *freelist) {
+    etsili_generic_t *gen, *tmp;
+
+    gen = freelist;
+    while (gen) {
+        tmp = gen;
+        gen = gen->nextfree;
+        free(tmp);
+    }
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

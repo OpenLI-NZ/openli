@@ -29,6 +29,7 @@
 #include <stdlib.h>
 #include <inttypes.h>
 #include <libwandder.h>
+#include <uthash.h>
 
 #define ENC_USEQUENCE(enc) wandder_encode_next(enc, WANDDER_TAG_SEQUENCE, \
         WANDDER_CLASS_UNIVERSAL_CONSTRUCT, WANDDER_TAG_SEQUENCE, NULL, 0)
@@ -38,6 +39,18 @@
 
 #define ETSI_DIR_FROM_TARGET 0
 #define ETSI_DIR_TO_TARGET 1
+
+typedef struct etsili_generic etsili_generic_t;
+
+struct etsili_generic {
+    uint8_t itemnum;
+    uint16_t itemlen;
+    uint8_t *itemptr;
+
+    UT_hash_handle hh;
+    etsili_generic_t *nextfree;
+};
+
 
 typedef enum {
     ETSILI_IRI_BEGIN = 1,
@@ -76,10 +89,19 @@ wandder_encoded_result_t *encode_etsi_ipmmiri(wandder_encoder_t *encoder,
         etsili_iri_type_t iritype, struct timeval *tv, void *ipcontents,
         uint32_t iplen);
 
+wandder_encoded_result_t *encode_etsi_ipiri(wandder_encoder_t *encoder,
+        wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
+        etsili_iri_type_t iritype, struct timeval *tv,
+        etsili_generic_t *params);
+
 wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t seqno);
 
 
+etsili_generic_t *create_etsili_generic(etsili_generic_t **freelist,
+        uint8_t itemnum, uint16_t itemlen, uint8_t *itemvalptr);
+void release_etsili_generic(etsili_generic_t **freelist, etsili_generic_t *gen);
+void free_etsili_generics(etsili_generic_t *freelist);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
