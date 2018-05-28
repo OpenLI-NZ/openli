@@ -43,88 +43,6 @@
 
 uint64_t nextid = 0;
 
-void clear_input(colinput_t *input) {
-
-    if (!input) {
-        return;
-    }
-    if (input->trace) {
-        trace_destroy(input->trace);
-    }
-    if (input->pktcbs) {
-        trace_destroy_callback_set(input->pktcbs);
-    }
-    if (input->uri) {
-        free(input->uri);
-    }
-}
-
-void clear_global_config(collector_global_t *glob) {
-    colinput_t *inp, *tmp;
-
-    HASH_ITER(hh, glob->inputs, inp, tmp) {
-        HASH_DELETE(hh, glob->inputs, inp);
-        clear_input(inp);
-        free(inp);
-    }
-
-    free_coreserver_list(glob->alumirrors);
-
-    if (glob->syncsendqs) {
-        free(glob->syncsendqs);
-    }
-
-    if (glob->syncepollevs) {
-        free(glob->syncepollevs);
-    }
-
-    if (glob->operatorid) {
-        free(glob->operatorid);
-    }
-
-    if (glob->networkelemid) {
-        free(glob->networkelemid);
-    }
-
-    if (glob->intpointid) {
-        free(glob->intpointid);
-    }
-
-    if (glob->provisionerip) {
-        free(glob->provisionerip);
-    }
-
-    if (glob->provisionerport) {
-        free(glob->provisionerport);
-    }
-
-    if (glob->expired_inputs) {
-        libtrace_list_node_t *n;
-        n = glob->expired_inputs->head;
-        while (n) {
-            inp = *((colinput_t **)(n->data));
-            clear_input(inp);
-            free(inp);
-            n = n->next;
-        }
-        libtrace_list_deinit(glob->expired_inputs);
-    }
-
-    pthread_rwlock_destroy(&glob->config_mutex);
-    pthread_mutex_destroy(&glob->syncq_mutex);
-    pthread_mutex_destroy(&glob->exportq_mutex);
-
-    if (glob->sync_epollfd != -1) {
-        close(glob->sync_epollfd);
-    }
-
-    if (glob->export_epollfd != -1) {
-        close(glob->export_epollfd);
-    }
-
-    free(glob);
-}
-
 static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         yaml_node_t *inputs) {
 
@@ -603,7 +521,6 @@ static int global_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SEQUENCE_NODE &&
             strcmp((char *)key->data.scalar.value, "inputs") == 0) {
         if (parse_input_config(glob, doc, value) == -1) {
-            clear_global_config(glob);
             return -1;
         }
     }
@@ -617,7 +534,6 @@ static int global_parser(void *arg, yaml_document_t *doc,
         /* Limited to 16 chars */
         if (glob->operatorid_len > 16) {
             logger(LOG_DAEMON, "OpenLI: Operator ID must be 16 characters or less!");
-            clear_global_config(glob);
             return -1;
         }
     }
@@ -632,7 +548,6 @@ static int global_parser(void *arg, yaml_document_t *doc,
         /* Limited to 16 chars */
         if (glob->networkelemid_len > 16) {
             logger(LOG_DAEMON, "OpenLI: Network Element ID must be 16 characters or less!");
-            clear_global_config(glob);
             return -1;
         }
     }
@@ -647,7 +562,6 @@ static int global_parser(void *arg, yaml_document_t *doc,
         /* Limited to 8 chars */
         if (glob->intpointid_len > 8) {
             logger(LOG_DAEMON, "OpenLI: Intercept Point ID must be 8 characters or less!");
-            clear_global_config(glob);
             return -1;
         }
     }
@@ -674,69 +588,6 @@ static int global_parser(void *arg, yaml_document_t *doc,
     }
 
     return 0;
-}
-
-collector_global_t *parse_global_config(char *configfile) {
-
-    collector_global_t *glob = NULL;
-
-    glob = (collector_global_t *)malloc(sizeof(collector_global_t));
-
-    glob->inputs = NULL;
-    glob->totalthreads = 0;
-    glob->queuealloced = 0;
-    glob->registered_syncqs = 0;
-    glob->syncsendqs = NULL;
-    glob->syncepollevs = 0;
-    glob->intpointid = NULL;
-    glob->intpointid_len = 0;
-    glob->operatorid = NULL;
-    glob->operatorid_len = 0;
-    glob->networkelemid = NULL;
-    glob->networkelemid_len = 0;
-    glob->syncthreadid = 0;
-    glob->exportthreadid = 0;
-    glob->sync_epollfd = epoll_create1(0);
-    glob->export_epollfd = epoll_create1(0);
-    glob->configfile = configfile;
-    glob->export_epoll_evs = NULL;
-    glob->provisionerip = NULL;
-    glob->provisionerport = NULL;
-    glob->alumirrors = NULL;
-    glob->expired_inputs = libtrace_list_init(sizeof(colinput_t *));
-
-    pthread_rwlock_init(&glob->config_mutex, NULL);
-    pthread_mutex_init(&glob->syncq_mutex, NULL);
-    pthread_mutex_init(&glob->exportq_mutex, NULL);
-
-    if (yaml_parser(configfile, glob, global_parser) == -1) {
-        return NULL;
-    }
-
-    if (glob->provisionerport == NULL) {
-        glob->provisionerport = strdup("8993");
-    }
-
-    if (glob->networkelemid == NULL) {
-        logger(LOG_DAEMON, "OpenLI: No network element ID specified in config file. Exiting.");
-        clear_global_config(glob);
-        glob = NULL;
-    }
-
-    else if (glob->operatorid == NULL) {
-        logger(LOG_DAEMON, "OpenLI: No operator ID specified in config file. Exiting.");
-        clear_global_config(glob);
-        glob = NULL;
-    }
-
-    else if (glob->provisionerip == NULL) {
-        logger(LOG_DAEMON, "OpenLI collector: no provisioner IP address specified in config file. Exiting.");
-        clear_global_config(glob);
-        glob = NULL;
-    }
-
-    return glob;
-
 }
 
 static int mediator_parser(void *arg, yaml_document_t *doc,
@@ -881,6 +732,10 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
         state->mediateaddr = strdup((char *) value->data.scalar.value);
     }
     return 0;
+}
+
+int parse_collector_config(char *configfile, collector_global_t *glob) {
+    return yaml_parser(configfile, glob, global_parser);
 }
 
 int parse_provisioning_config(char *configfile, provision_state_t *state) {

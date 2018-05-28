@@ -38,6 +38,7 @@
 #include "coreserver.h"
 #include "sipparsing.h"
 #include "intercept.h"
+#include "etsili_core.h"
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
@@ -184,6 +185,8 @@ typedef struct collector_global {
     libtrace_list_t *expired_inputs;
 
     coreserver_t *alumirrors;
+
+    etsili_generic_t *freegenerics;
 
 } collector_global_t;
 
