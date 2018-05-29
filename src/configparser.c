@@ -621,6 +621,12 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "operatorid") == 0) {
+        state->operatorid = strdup((char *) value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "mediatorid") == 0) {
         state->mediatorid = strtoul((char *)value->data.scalar.value,
                 NULL, 10);
