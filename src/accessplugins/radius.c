@@ -28,6 +28,7 @@
 #include <uthash.h>
 #include <libtrace_parallel.h>
 
+#include "ipiri.h"
 #include "logger.h"
 #include "internetaccess.h"
 #include "util.h"
@@ -39,6 +40,10 @@
     (((uint32_t)reqtype) << 24))
 
 #define STANDARD_ATTR_ALLOC (64)
+
+#define TIMESTAMP_TO_TV(tv, floatts) \
+        tv->tv_sec = (uint32_t)(floatts); \
+        tv->tv_usec = (uint32_t)(((floatts - tv->tv_sec) * 1000000));
 
 enum {
     RADIUS_CODE_ACCESS_REQUEST = 1,
@@ -54,6 +59,8 @@ enum {
     RADIUS_ATTR_NASIP = 4,
     RADIUS_ATTR_NASPORT = 5,
     RADIUS_ATTR_FRAMED_IP_ADDRESS = 8,
+    RADIUS_ATTR_CALLED_STATION_ID = 30,
+    RADIUS_ATTR_CALLING_STATION_ID = 31,
     RADIUS_ATTR_NASIDENTIFIER = 32,
     RADIUS_ATTR_ACCT_STATUS_TYPE = 40,
     RADIUS_ATTR_ACCT_INOCTETS = 42,
@@ -95,6 +102,7 @@ struct radius_saved_request {
 
     uint32_t reqid;
     uint32_t statustype;
+    double tvsec;
     radius_attribute_t *attrs;
 
     radius_user_t *targetuser;
@@ -196,6 +204,7 @@ static inline void reset_parsed_packet(radius_parsed_t *parsed) {
 
     parsed->firstaction = ACCESS_ACTION_NONE;
     parsed->secondaction = ACCESS_ACTION_NONE;
+
 }
 
 static void radius_init_plugin_data(access_plugin_t *p) {
@@ -225,6 +234,8 @@ static inline int interesting_attribute(uint8_t attrnum) {
         case RADIUS_ATTR_ACCT_OUTOCTETS:
         case RADIUS_ATTR_ACCT_SESSION_ID:
         case RADIUS_ATTR_NASIP:
+        case RADIUS_ATTR_CALLED_STATION_ID:
+        case RADIUS_ATTR_CALLING_STATION_ID:
             return 1;
     }
 
@@ -393,8 +404,28 @@ static void radius_destroy_parsed_data(access_plugin_t *p, void *parsed) {
 
     glob = (radius_global_t *)(p->plugindata);
 
-    release_attribute_list(&(glob->freeattrs), rparsed->attrs);
-    rparsed->attrs = NULL;
+    /* Only release our attributes if we were part of a successful req/resp
+     * match. Otherwise, the attributes are still somewhere in our saved
+     * requests or orphans maps so don't free them just yet.
+     */
+    if (rparsed->msgtype == RADIUS_CODE_ACCESS_REQUEST ||
+                    rparsed->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
+        if (rparsed->savedresp) {
+            release_attribute_list(&(glob->freeattrs), rparsed->attrs);
+        }
+    }
+    else if (rparsed->msgtype == RADIUS_CODE_ACCESS_ACCEPT ||
+            rparsed->msgtype == RADIUS_CODE_ACCESS_REJECT ||
+            rparsed->msgtype == RADIUS_CODE_ACCESS_CHALLENGE ||
+            rparsed->msgtype == RADIUS_CODE_ACCOUNT_RESPONSE) {
+        if (rparsed->savedreq) {
+            release_attribute_list(&(glob->freeattrs), rparsed->attrs);
+        }
+    }
+    else {
+        release_attribute_list(&(glob->freeattrs), rparsed->attrs);
+    }
+
 
     if (rparsed->savedreq) {
         release_attribute_list(&(glob->freeattrs), rparsed->savedreq->attrs);
@@ -428,7 +459,7 @@ static void create_orphan(radius_global_t *glob, radius_orphaned_resp_t **head,
     resp->tvsec = trace_get_seconds(pkt);
     resp->resptype = raddata->msgtype;
     resp->savedattrs = raddata->attrs;
-    raddata->attrs = NULL;
+    //raddata->attrs = NULL;
 
     if (*tail == NULL) {
         *head = resp;
@@ -623,7 +654,7 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
     parsed->msgident = hdr->identifier;
     parsed->authptr = hdr->auth;
     parsed->origpkt = pkt;
-    parsed->tvsec = trace_get_seconds(pkt);;
+    parsed->tvsec = trace_get_seconds(pkt);
 
     if (grab_nas_details_from_packet(parsed, pkt, hdr->code) < 0) {
         return NULL;
@@ -1210,6 +1241,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         req->reqid = DERIVE_REQUEST_ID(raddata, raddata->msgtype);
         req->targetuser = raddata->matcheduser;
         req->statustype = raddata->accttype;
+        req->tvsec = raddata->tvsec;
         req->next = NULL;
         req->attrs = NULL;
 
@@ -1225,7 +1257,6 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
             }
 
             req->attrs = raddata->attrs;
-            raddata->attrs = NULL;
 
             HASH_ADD_KEYPTR(hh, raddata->matchednas->requests, &(req->reqid),
                     sizeof(req->reqid), req);
@@ -1264,6 +1295,109 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     return thissess;
 }
 
+static int generate_iri(collector_global_t *glob,
+        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
+        access_session_t *sess, ipintercept_t *ipint,
+        radius_parsed_t *raddata, struct timeval *tv,
+        uint32_t eventtype, etsili_iri_type_t iritype) {
+
+    etsili_generic_t *p, *params = NULL;
+    radius_attribute_t *attr;
+    int ret;
+    int64_t nasport;
+    etsili_ipaddress_t *nasip = NULL;
+    ipiri_id_t *nasid = NULL;
+
+    p = create_etsili_generic(&(glob->freegenerics),
+            IPIRI_CONTENTS_ACCESS_EVENT_TYPE, sizeof(uint32_t),
+            (uint8_t *)(&eventtype));
+    HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
+
+
+    if (ipint->username) {
+        p = create_etsili_generic(&(glob->freegenerics),
+                IPIRI_CONTENTS_TARGET_USERNAME, ipint->username_len,
+                ipint->username);
+        HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
+    }
+
+    if (raddata->savedreq) {
+        attr = raddata->savedreq->attrs;
+    } else {
+        attr = raddata->attrs;
+    }
+
+    while (attr) {
+        uint8_t iriattr = 0xff;
+        uint16_t attrlen = attr->att_len;
+        uint8_t *attrptr = attr->att_val;
+
+        /* We may need to convert some of these attributes to a
+         * "standard" format that etsili_core functions expect.
+         */
+        switch(attr->att_type) {
+            case RADIUS_ATTR_NASPORT:
+                /* uint32_t -> int64_t */
+                iriattr = IPIRI_CONTENTS_POP_PORTNUMBER;
+                attrlen = sizeof(int64_t);
+                nasport = (int64_t) ntohl(*((uint32_t *)(attr->att_val)));
+                attrptr = (uint8_t *)(&nasport);
+                break;
+            case RADIUS_ATTR_NASIP:
+                /* uint32_t -> IPAddress */
+                iriattr = IPIRI_CONTENTS_POP_IPADDRESS;
+                nasip = etsili_create_ipaddress_v4((uint32_t *)(attr->att_val),
+                        ETSILI_IPV4_SUBNET_UNKNOWN,
+                        ETSILI_IPADDRESS_ASSIGNED_UNKNOWN);
+                attrlen = sizeof(etsili_ipaddress_t);
+                attrptr = (uint8_t *)(nasip);
+                break;
+            case RADIUS_ATTR_NASIDENTIFIER:
+                /* String -> IPIRIIDType */
+                iriattr = IPIRI_CONTENTS_POP_IDENTIFIER;
+                nasid = ipiri_create_id_printable((char *)(attr->att_val),
+                        attr->att_len);
+                attrlen = sizeof(ipiri_id_t);
+                attrptr = (uint8_t *)(nasid);
+                break;
+            case RADIUS_ATTR_CALLED_STATION_ID:
+                /* String -> String */
+                iriattr = IPIRI_CONTENTS_POP_PHONENUMBER;
+                break;
+            case RADIUS_ATTR_CALLING_STATION_ID:
+                /* String -> String */
+                iriattr = IPIRI_CONTENTS_TARGET_NETWORKID;
+                break;
+        }
+        if (iriattr != 0xff) {
+            p = create_etsili_generic(&(glob->freegenerics), iriattr,
+                    attrlen, attrptr);
+            HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
+        }
+        attr = attr->next;
+    }
+    ret = ip_iri(glob, encoder, mqueue, sess, ipint, iritype, tv, params);
+
+    if (nasip) {
+        free_etsili_ipaddress(nasip);
+    }
+    if (nasid) {
+        ipiri_free_id(nasid);
+    }
+    return ret;
+
+}
+
+static int radius_generate_access_attempt_iri(collector_global_t *glob,
+        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
+        access_session_t *sess, ipintercept_t *ipint,
+        radius_parsed_t *raddata, struct timeval *tv) {
+
+    return generate_iri(glob, encoder, mqueue, sess, ipint, raddata, tv,
+            IPIRI_ACCESS_ATTEMPT, ETSILI_IRI_REPORT);
+
+}
+
 static int radius_create_iri_from_packet(access_plugin_t *p,
         collector_global_t *glob, wandder_encoder_t **encoder,
         libtrace_message_queue_t *mqueue, access_session_t *sess,
@@ -1271,12 +1405,23 @@ static int radius_create_iri_from_packet(access_plugin_t *p,
 
     radius_global_t *radglob;
     radius_parsed_t *raddata;
+    struct timeval tv;
 
     radglob = (radius_global_t *)(p->plugindata);
     raddata = (radius_parsed_t *)parsed;
 
     if (raddata->firstaction != ACCESS_ACTION_NONE) {
-        
+        TIMESTAMP_TO_TV((&tv), raddata->tvsec);
+
+        switch(raddata->firstaction) {
+            case ACCESS_ACTION_ATTEMPT:
+                if (radius_generate_access_attempt_iri(glob, encoder, mqueue,
+                        sess, ipint, raddata, &tv) < 0) {
+                    return -1;
+                }
+                break;
+
+        }
 
     }
 
