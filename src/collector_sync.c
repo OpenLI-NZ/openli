@@ -903,7 +903,7 @@ static int lookup_voip_calls(collector_sync_t *sync, char *uri,
 
         /* Wrap this packet up in an IRI and forward it on to the exporter */
         ret = ipmm_iri(pkt, sync->glob, &(sync->encoder), &(sync->exportq),
-                vint, vshared, iritype);
+                vint, vshared, iritype, OPENLI_IPMMIRI_SIP);
         if (ret == -1) {
             logger(LOG_DAEMON,
                     "OpenLI: error while trying to export IRI containing SIP packet.");
