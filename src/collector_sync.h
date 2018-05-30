@@ -82,6 +82,8 @@ typedef struct colsync_data {
     openli_sip_parser_t *sipparser;
     wandder_encoder_t *encoder;
 
+    access_plugin_t *radiusplugin;
+
 } collector_sync_t;
 
 collector_sync_t *init_sync_data(collector_global_t *glob);

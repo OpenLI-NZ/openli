@@ -23,12 +23,15 @@
  *
  *
  */
+#include <assert.h>
 #include <sys/time.h>
 #include <inttypes.h>
 #include <libwandder_etsili.h>
 #include "etsili_core.h"
+#include "ipiri.h"
 
 uint8_t etsi_ipccoid[4] = {0x05, 0x03, 0x0a, 0x02};
+uint8_t etsi_ipirioid[4] = {0x05, 0x03, 0x0a, 0x01};
 uint8_t etsi_ipmmccoid[4] = {0x05, 0x05, 0x06, 0x02};
 uint8_t etsi_ipmmirioid[4] = {0x05, 0x05, 0x06, 0x01};
 
@@ -101,6 +104,188 @@ static inline void encode_ipmmiri_body(wandder_encoder_t *encoder,
     wandder_encode_endseq(encoder);
     wandder_encode_endseq(encoder);    // ends outermost sequence
 
+}
+
+static inline void encode_ipaddress(wandder_encoder_t *encoder,
+        etsili_ipaddress_t *addr) {
+
+    uint32_t addrlen = 4;
+    uint32_t iptype = addr->iptype;
+    uint32_t assign = addr->assignment;
+
+    if (addr->iptype == ETSILI_IPADDRESS_VERSION_6) {
+        addrlen = 16;
+    }
+
+    // iP-Type
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(iptype), sizeof(iptype));
+
+    ENC_CSEQUENCE(encoder, 2);      // iP-value
+    if (addr->valtype == ETSILI_IPADDRESS_REP_BINARY) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, addr->ipvalue, addrlen);
+    } else {
+        wandder_encode_next(encoder, WANDDER_TAG_IA5,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, addr->ipvalue,
+            strlen((char *)(addr->ipvalue)));
+    }
+
+    wandder_encode_endseq(encoder);     // ends iP-value
+
+    // iP-assignment
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 3, &(assign), sizeof(assign));
+
+    // iPv6PrefixLength
+    if (addr->v6prefixlen > 0) {
+        wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, &(addr->v6prefixlen),
+            sizeof(addr->v6prefixlen));
+    }
+
+    // iPv4SubnetMask
+    if (addr->v4subnetmask > 0) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 5, &(addr->v4subnetmask),
+            sizeof(addr->v4subnetmask));
+    }
+
+    wandder_encode_endseq(encoder);    // ends IPAddress sequence
+}
+
+static inline void encode_ipiri_id(wandder_encoder_t *encoder,
+        ipiri_id_t *iriid) {
+
+    if (iriid->type == IPIRI_ID_PRINTABLE) {
+        wandder_encode_next(encoder, WANDDER_TAG_UTF8STR,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, iriid->content.printable,
+                strlen(iriid->content.printable));
+    } else if (iriid->type == IPIRI_ID_MAC) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, iriid->content.mac, 6);
+    } else if (iriid->type == IPIRI_ID_IPADDR) {
+        ENC_CSEQUENCE(encoder, 2);
+        encode_ipaddress(encoder, iriid->content.ip);
+    }
+
+    wandder_encode_endseq(encoder);
+}
+
+static int sort_etsili_generic(etsili_generic_t *a, etsili_generic_t *b) {
+
+    if (a->itemnum < b->itemnum) {
+        return -1;
+    }
+    if (a->itemnum > b->itemnum) {
+        return 1;
+    }
+    return 0;
+}
+
+
+static inline void encode_ipiri_body(wandder_encoder_t *encoder,
+        etsili_iri_type_t iritype, etsili_generic_t *params) {
+
+    etsili_generic_t *p, *tmp;
+
+    ENC_CSEQUENCE(encoder, 2);      // Payload
+    ENC_CSEQUENCE(encoder, 0);      // IRIPayload
+    ENC_USEQUENCE(encoder);         // IRIPayload sequence
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &iritype,
+            sizeof(iritype));
+    ENC_CSEQUENCE(encoder, 2);      // IRIContents
+    ENC_CSEQUENCE(encoder, 2);      // IPIRI
+    wandder_encode_next(encoder, WANDDER_TAG_RELATIVEOID,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, etsi_ipirioid,
+            sizeof(etsi_ipmmirioid));
+    ENC_CSEQUENCE(encoder, 1);      // IPIRIContents
+
+    /* Sort the parameter list by item ID, since we have to provide the
+     * IRI contents in order.
+     */
+    HASH_SRT(hh, params, sort_etsili_generic);
+
+    HASH_ITER(hh, params, p, tmp) {
+        switch(p->itemnum) {
+            case IPIRI_CONTENTS_ACCESS_EVENT_TYPE:
+            case IPIRI_CONTENTS_INTERNET_ACCESS_TYPE:
+            case IPIRI_CONTENTS_IPVERSION:
+            case IPIRI_CONTENTS_ENDREASON:
+            case IPIRI_CONTENTS_AUTHENTICATION_TYPE:
+                wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+                        WANDDER_CLASS_CONTEXT_PRIMITIVE, p->itemnum,
+                        p->itemptr, p->itemlen);
+                break;
+
+            case IPIRI_CONTENTS_TARGET_USERNAME:
+            case IPIRI_CONTENTS_RAW_AAA_DATA:
+                wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                        WANDDER_CLASS_CONTEXT_PRIMITIVE, p->itemnum,
+                        p->itemptr, p->itemlen);
+                break;
+
+            case IPIRI_CONTENTS_TARGET_IPADDRESS:
+            case IPIRI_CONTENTS_POP_IPADDRESS:
+            case IPIRI_CONTENTS_ADDITIONAL_IPADDRESS:
+                ENC_CSEQUENCE(encoder, p->itemnum);
+                encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
+                break;
+
+            case IPIRI_CONTENTS_POP_IDENTIFIER:
+                ENC_CSEQUENCE(encoder, p->itemnum);
+                encode_ipiri_id(encoder, (ipiri_id_t *)(p->itemptr));
+                break;
+
+            case IPIRI_CONTENTS_NATIONAL_IPIRI_PARAMETERS:
+                /* TODO NationalIPIRIParameters */
+                break;
+
+            case IPIRI_CONTENTS_OTHER_TARGET_IDENTIFIERS:
+                /* TODO */
+                break;
+
+            case IPIRI_CONTENTS_POP_PORTNUMBER:
+            case IPIRI_CONTENTS_OCTETS_RECEIVED:
+            case IPIRI_CONTENTS_OCTETS_TRANSMITTED:
+                wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+                        WANDDER_CLASS_CONTEXT_PRIMITIVE, p->itemnum,
+                        p->itemptr, p->itemlen);
+                break;
+
+            case IPIRI_CONTENTS_STARTTIME:
+            case IPIRI_CONTENTS_ENDTIME:
+            case IPIRI_CONTENTS_EXPECTED_ENDTIME:
+                if (p->itemlen != sizeof(struct timeval)) {
+                    return;
+                }
+                wandder_encode_next(encoder, WANDDER_TAG_GENERALTIME,
+                        WANDDER_CLASS_CONTEXT_PRIMITIVE, p->itemnum,
+                        p->itemptr, p->itemlen);
+                break;
+
+            case IPIRI_CONTENTS_TARGET_NETWORKID:
+            case IPIRI_CONTENTS_TARGET_CPEID:
+            case IPIRI_CONTENTS_TARGET_LOCATION:
+            case IPIRI_CONTENTS_CALLBACK_NUMBER:
+            case IPIRI_CONTENTS_POP_PHONENUMBER:
+                /* TODO enforce max string lens */
+                wandder_encode_next(encoder, WANDDER_TAG_UTF8STR,
+                        WANDDER_CLASS_CONTEXT_PRIMITIVE, p->itemnum,
+                        p->itemptr, p->itemlen);
+                break;
+
+        }
+    }
+
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);    // ends outermost sequence
 }
 
 static inline void encode_ipmmcc_body(wandder_encoder_t *encoder,
@@ -240,6 +425,17 @@ wandder_encoded_result_t *encode_etsi_ipmmiri(wandder_encoder_t *encoder,
     return wandder_encode_finish(encoder);
 }
 
+wandder_encoded_result_t *encode_etsi_ipiri(wandder_encoder_t *encoder,
+        wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
+        etsili_iri_type_t iritype, struct timeval *tv,
+        etsili_generic_t *params) {
+
+    encode_etsili_pshdr(encoder, hdrdata, cin, seqno, tv);
+    encode_ipiri_body(encoder, iritype, params);
+    return wandder_encode_finish(encoder);
+
+}
+
 wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t seqno) {
 
@@ -252,5 +448,71 @@ wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
     return wandder_encode_finish(encoder);
 }
 
+
+etsili_generic_t *create_etsili_generic(etsili_generic_t **freelist,
+        uint8_t itemnum, uint16_t itemlen, uint8_t *itemvalptr) {
+
+    etsili_generic_t *gen;
+
+    if (*freelist) {
+        gen = *freelist;
+        *freelist = (*freelist)->nextfree;
+    } else {
+        gen = (etsili_generic_t *)malloc(sizeof(etsili_generic_t));
+    }
+
+    gen->itemnum = itemnum;
+    gen->itemlen = itemlen;
+    gen->itemptr = itemvalptr;
+    gen->nextfree = NULL;
+    return gen;
+}
+
+void release_etsili_generic(etsili_generic_t **freelist, etsili_generic_t *gen) {
+
+    if (*freelist) {
+        gen->nextfree = *freelist;
+        *freelist = gen;
+    } else {
+        gen->nextfree = NULL;
+        *freelist = gen;
+    }
+
+}
+
+void free_etsili_generics(etsili_generic_t *freelist) {
+    etsili_generic_t *gen, *tmp;
+
+    gen = freelist;
+    while (gen) {
+        tmp = gen;
+        gen = gen->nextfree;
+        free(tmp);
+    }
+}
+
+etsili_ipaddress_t *etsili_create_ipaddress_v4(uint32_t *addrnum,
+        uint8_t slashbits, uint8_t assigned) {
+
+    etsili_ipaddress_t *ip = NULL;
+
+    ip = (etsili_ipaddress_t *)malloc(sizeof(etsili_ipaddress_t));
+    ip->iptype = ETSILI_IPADDRESS_VERSION_4;
+    ip->assignment = assigned;
+    ip->v4subnetmask = 0xffffffff;
+    ip->v6prefixlen = 0;
+
+    if (slashbits < 32) {
+        ip->v4subnetmask = ~((1 << (32 - slashbits)) - 1);
+    }
+
+    ip->valtype = ETSILI_IPADDRESS_REP_BINARY;
+    ip->ipvalue = (uint8_t *)addrnum;
+    return ip;
+}
+
+void free_etsili_ipaddress(etsili_ipaddress_t *etsiip) {
+    free(etsiip);
+}
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

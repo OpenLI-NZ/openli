@@ -110,6 +110,7 @@ typedef struct med_state {
     uint32_t mediatorid;
     char *conffile;
     char *mediatorname;
+    char *operatorid;
     char *listenaddr;
     char *listenport;
 

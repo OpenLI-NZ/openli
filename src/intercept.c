@@ -292,7 +292,8 @@ void free_all_aluintercepts(aluintercept_t *aluints) {
     }
 }
 
-ipsession_t *create_ipsession(ipintercept_t *ipint, access_session_t *session) {
+ipsession_t *create_ipsession(ipintercept_t *ipint, uint32_t cin,
+        int ipfamily, struct sockaddr *assignedip) {
 
     ipsession_t *ipsess;
 
@@ -302,16 +303,15 @@ ipsession_t *create_ipsession(ipintercept_t *ipint, access_session_t *session) {
     }
 
     ipsess->nextseqno = 0;
-    ipsess->cin = session->cin;
-    ipsess->ai_family = session->ipfamily;
+    ipsess->cin = cin;
+    ipsess->ai_family = ipfamily;
     ipsess->targetip = (struct sockaddr_storage *)(malloc(
             sizeof(struct sockaddr_storage)));
     if (!ipsess->targetip) {
         free(ipsess);
         return NULL;
     }
-    memcpy(ipsess->targetip, session->assignedip,
-            sizeof(struct sockaddr_storage));
+    memcpy(ipsess->targetip, assignedip, sizeof(struct sockaddr_storage));
 
     copy_intercept_common(&(ipint->common), &(ipsess->common));
 
@@ -321,7 +321,7 @@ ipsession_t *create_ipsession(ipintercept_t *ipint, access_session_t *session) {
         free(ipsess);
         return NULL;
     }
-    snprintf(ipsess->streamkey, 256, "%s-%u", ipint->common.liid, session->cin);
+    snprintf(ipsess->streamkey, 256, "%s-%u", ipint->common.liid, cin);
     return ipsess;
 }
 

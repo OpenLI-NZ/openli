@@ -321,6 +321,9 @@ static void clear_med_state(mediator_state_t *state) {
     if (state->provaddr) {
         free(state->provaddr);
     }
+    if (state->operatorid) {
+        free(state->operatorid);
+    }
     if (state->signalev) {
         close(state->signalev->fd);
         free(state->signalev);
@@ -349,6 +352,7 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->epoll_fd = epoll_create1(0);
     state->listenaddr = NULL;
     state->listenport = NULL;
+    state->operatorid = NULL;
     state->provaddr = NULL;
     state->provport = NULL;
     state->keepalivefreq = 120;
@@ -402,6 +406,7 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
     med_agency_state_t *ms = (med_agency_state_t *)(mev->state);
     wandder_encoded_result_t *kamsg;
     wandder_etsipshdr_data_t hdrdata;
+    char elemstring[16];
 
     if (ms->pending_ka == NULL && ms->main_fd != -1) {
         /* Only create a new KA message if we have sent the last one we
@@ -413,7 +418,7 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
             reset_wandder_encoder(ms->encoder);
         }
 
-        hdrdata.liid = "none";
+        hdrdata.liid = "openlikeepalive";
         hdrdata.liid_len = strlen(hdrdata.liid);
 
         hdrdata.authcc = "NA";
@@ -421,10 +426,16 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
         hdrdata.delivcc = "NA";
         hdrdata.delivcc_len = strlen(hdrdata.delivcc);
 
-        hdrdata.operatorid = "NA";
+        if (state->operatorid) {
+            hdrdata.operatorid = state->operatorid;
+        } else {
+            hdrdata.operatorid = "unspecified";
+        }
         hdrdata.operatorid_len = strlen(hdrdata.operatorid);
 
-        hdrdata.networkelemid = "NA";
+        /* Stupid 16 character limit... */
+        snprintf(elemstring, 16, "med-%u", state->mediatorid);
+        hdrdata.networkelemid = elemstring;
         hdrdata.networkelemid_len = strlen(hdrdata.networkelemid);
 
         hdrdata.intpointid = NULL;

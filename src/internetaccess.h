@@ -28,15 +28,45 @@
 #define OPENLI_INTERNETACCESS_H_
 
 #include <uthash.h>
+#include <libtrace.h>
+#include <libtrace/message_queue.h>
+
+#include "intercept.h"
+#include "collector.h"
 
 enum {
     ACCESS_RADIUS,
     ACCESS_DHCP
 };
 
-typedef struct access_session {
+typedef enum {
+    SESSION_STATE_NEW,
+    SESSION_STATE_AUTHING,
+    SESSION_STATE_ACTIVE,
+    SESSION_STATE_RENEW,
+    SESSION_STATE_OVER,
+} session_state_t;
 
-    uint8_t accesstype;
+typedef enum {
+    ACCESS_ACTION_ATTEMPT,
+    ACCESS_ACTION_FAILED,
+    ACCESS_ACTION_ACCEPT,
+    ACCESS_ACTION_REJECT,
+    ACCESS_ACTION_ALREADY_ACTIVE,
+    ACCESS_ACTION_INTERIM_UPDATE,
+    ACCESS_ACTION_END,
+    ACCESS_ACTION_END_SUDDEN,
+    ACCESS_ACTION_RETRY,
+    ACCESS_ACTION_NONE
+} access_action_t;
+
+typedef struct access_plugin access_plugin_t;
+
+typedef struct access_session access_session_t;
+
+struct access_session {
+
+    access_plugin_t *plugin;
     void *sessionid;
     void *statedata;
     int idlength;
@@ -45,8 +75,9 @@ typedef struct access_session {
     struct sockaddr *assignedip;
     uint32_t iriseqno;
 
+    access_session_t *next;
     UT_hash_handle hh;
-} access_session_t;
+} ;
 
 typedef struct internet_user {
     char *userid;
@@ -54,9 +85,46 @@ typedef struct internet_user {
     UT_hash_handle hh;
 } internet_user_t;
 
-void free_all_users(internet_user_t *users);
-int free_single_session(internet_user_t *user, void *sessionid, void *idlen);
 
+struct access_plugin {
+    const char *name;
+    uint8_t access_type;
+    void *plugindata;
+
+    /* Mandatory plugin APIs */
+    void (*init_plugin_data)(access_plugin_t *p);
+    void (*destroy_plugin_data)(access_plugin_t *p);
+
+    void *(*process_packet)(access_plugin_t *p, libtrace_packet_t *pkt);
+    void (*destroy_parsed_data)(access_plugin_t *p, void *parseddata);
+
+    char *(*get_userid)(access_plugin_t *p, void *parseddata);
+
+    access_session_t *(*update_session_state)(access_plugin_t *p,
+            void *parseddata, access_session_t **sesslist,
+            session_state_t *oldstate, session_state_t *newstate,
+            access_action_t *action);
+
+    int (*create_iri_from_packet)(access_plugin_t *p, collector_global_t *glob,
+            wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
+            access_session_t *sess, ipintercept_t *ipint,
+            void *parseddata, access_action_t action);
+
+    void (*destroy_session_data)(access_plugin_t *p, access_session_t *sess);
+
+    /* APIs that are internally used but should be required by all plugins
+     * so may as well enforce them as part of the plugin definition.
+     */
+
+};
+
+access_plugin_t *init_access_plugin(uint8_t accessmethod);
+void destroy_access_plugin(access_plugin_t *p);
+
+void free_all_users(internet_user_t *users);
+int free_single_session(internet_user_t *user, access_session_t *sess);
+
+access_plugin_t *get_radius_access_plugin(void);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

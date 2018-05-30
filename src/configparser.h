@@ -33,10 +33,7 @@
 #include <yaml.h>
 
 
-void clear_input(colinput_t *input);
-collector_global_t *parse_global_config(char *configfile);
-void clear_global_config(collector_global_t *glob);
-
+int parse_collector_config(char *configfile, collector_global_t *glob);
 int parse_provisioning_config(char *configfile, provision_state_t *state);
 int parse_mediator_config(char *configfile, mediator_state_t *state);
 #endif

@@ -114,11 +114,10 @@ static openli_export_recv_t form_ipcc(collector_global_t *glob,
     return exprecv;
 
 }
-int ipv4_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
+int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
+        libtrace_ip_t *ip,
         uint32_t rem, collector_global_t *glob, colthread_local_t *loc) {
 
-    struct sockaddr_storage ipsrc;
-    struct sockaddr_storage ipdst;
     struct sockaddr_in *intaddr, *cmp;
     openli_export_recv_t msg;
     int matched = 0;
@@ -131,20 +130,11 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
         return 0;
     }
 
-    if (trace_get_source_address(pkt, (struct sockaddr *)(&ipsrc)) == NULL) {
-        return 0;
-    }
-
-    if (trace_get_destination_address(pkt, (struct sockaddr *)(&ipdst)) ==
-                NULL) {
-        return 0;
-    }
-
     /* Check if ipsrc or ipdst match any of our active intercepts.
      * NOTE: a packet can match multiple intercepts so don't break early.
      */
 
-    cmp = (struct sockaddr_in *)(&ipsrc);
+    cmp = (struct sockaddr_in *)(&pinfo->srcip);
     HASH_FIND(hh, loc->activeipv4intercepts, &(cmp->sin_addr.s_addr),
             sizeof(cmp->sin_addr.s_addr), tgt);
 
@@ -157,7 +147,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
         goto ipv4ccdone;
     }
 
-    cmp = (struct sockaddr_in *)(&ipdst);
+    cmp = (struct sockaddr_in *)(&pinfo->destip);
     HASH_FIND(hh, loc->activeipv4intercepts, &(cmp->sin_addr.s_addr),
             sizeof(cmp->sin_addr.s_addr), tgt);
 
