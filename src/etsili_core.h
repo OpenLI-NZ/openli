@@ -51,6 +51,15 @@ struct etsili_generic {
     etsili_generic_t *nextfree;
 };
 
+typedef struct etsili_ipaddress {
+    uint8_t iptype;
+    uint8_t assignment;
+    uint8_t v6prefixlen;
+    uint32_t v4subnetmask;
+
+    uint8_t valtype;
+    uint8_t *ipvalue;
+} etsili_ipaddress_t;
 
 typedef enum {
     ETSILI_IRI_BEGIN = 1,
@@ -58,6 +67,24 @@ typedef enum {
     ETSILI_IRI_CONTINUE = 3,
     ETSILI_IRI_REPORT = 4
 } etsili_iri_type_t;
+
+enum {
+    ETSILI_IPADDRESS_VERSION_4 = 0,
+    ETSILI_IPADDRESS_VERSION_6 = 1,
+};
+
+enum {
+    ETSILI_IPADDRESS_REP_BINARY = 1,
+    ETSILI_IPADDRESS_REP_TEXT = 2,
+};
+
+enum {
+    ETSILI_IPADDRESS_ASSIGNED_STATIC = 1,
+    ETSILI_IPADDRESS_ASSIGNED_DYNAMIC = 2,
+    ETSILI_IPADDRESS_ASSIGNED_UNKNOWN = 3,
+};
+
+#define ETSILI_IPV4_SUBNET_UNKNOWN 255
 
 typedef struct wandder_etsipshdr_data {
 
@@ -102,6 +129,11 @@ etsili_generic_t *create_etsili_generic(etsili_generic_t **freelist,
         uint8_t itemnum, uint16_t itemlen, uint8_t *itemvalptr);
 void release_etsili_generic(etsili_generic_t **freelist, etsili_generic_t *gen);
 void free_etsili_generics(etsili_generic_t *freelist);
+
+/* TODO consider adding free lists to these APIs to avoid excess mallocs */
+etsili_ipaddress_t *etsili_create_ipaddress_v4(uint32_t *addrnum,
+        uint8_t slashbits, uint8_t assigned);
+void free_etsili_ipaddress(etsili_ipaddress_t *etsiip);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

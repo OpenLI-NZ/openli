@@ -24,6 +24,9 @@
  *
  */
 
+#ifndef OPENLI_IPIRI_H_
+#define OPENLI_IPIRI_H_
+
 #include <uthash.h>
 #include <libtrace.h>
 #include <libwandder.h>
@@ -110,10 +113,33 @@ enum {
     IPIRI_AUTHTYPE_DIAMETER = 4,
 };
 
+enum {
+    IPIRI_ID_PRINTABLE = 0,
+    IPIRI_ID_MAC = 1,
+    IPIRI_ID_IPADDR = 2,
+};
+
+typedef struct ipiri_id {
+    uint8_t type;
+    union {
+        char *printable;
+        uint8_t mac[6];
+        etsili_ipaddress_t *ip;
+    } content;
+} ipiri_id_t;
+
 int ip_iri(collector_global_t *glob, wandder_encoder_t **encoder,
                 libtrace_message_queue_t *q, access_session_t *sess,
                 ipintercept_t *ipint, etsili_iri_type_t iritype,
                 struct timeval *tv, etsili_generic_t *params);
 
 
+/* TODO consider adding free lists to these APIs to avoid excess mallocs */
+ipiri_id_t *ipiri_create_id_printable(char *idstr, int length);
+ipiri_id_t *ipiri_create_id_mac(uint8_t *macaddr);
+ipiri_id_t *ipiri_create_id_ipv4(uint32_t addrnum, uint8_t slashbits);
+
+void ipiri_free_id(ipiri_id_t *iriid);
+
+#endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

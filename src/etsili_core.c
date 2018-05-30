@@ -23,6 +23,7 @@
  *
  *
  */
+#include <assert.h>
 #include <sys/time.h>
 #include <inttypes.h>
 #include <libwandder_etsili.h>
@@ -105,6 +106,72 @@ static inline void encode_ipmmiri_body(wandder_encoder_t *encoder,
 
 }
 
+static inline void encode_ipaddress(wandder_encoder_t *encoder,
+        etsili_ipaddress_t *addr) {
+
+    uint32_t addrlen = 4;
+    uint32_t iptype = addr->iptype;
+    uint32_t assign = addr->assignment;
+
+    if (addr->iptype == ETSILI_IPADDRESS_VERSION_6) {
+        addrlen = 16;
+    }
+
+    // iP-Type
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(iptype), sizeof(iptype));
+
+    ENC_CSEQUENCE(encoder, 2);      // iP-value
+    if (addr->valtype == ETSILI_IPADDRESS_REP_BINARY) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, addr->ipvalue, addrlen);
+    } else {
+        wandder_encode_next(encoder, WANDDER_TAG_IA5,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, addr->ipvalue,
+            strlen((char *)(addr->ipvalue)));
+    }
+
+    wandder_encode_endseq(encoder);     // ends iP-value
+
+    // iP-assignment
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 3, &(assign), sizeof(assign));
+
+    // iPv6PrefixLength
+    if (addr->v6prefixlen > 0) {
+        wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, &(addr->v6prefixlen),
+            sizeof(addr->v6prefixlen));
+    }
+
+    // iPv4SubnetMask
+    if (addr->v4subnetmask > 0) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 5, &(addr->v4subnetmask),
+            sizeof(addr->v4subnetmask));
+    }
+
+    wandder_encode_endseq(encoder);    // ends IPAddress sequence
+}
+
+static inline void encode_ipiri_id(wandder_encoder_t *encoder,
+        ipiri_id_t *iriid) {
+
+    if (iriid->type == IPIRI_ID_PRINTABLE) {
+        wandder_encode_next(encoder, WANDDER_TAG_UTF8STR,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, iriid->content.printable,
+                strlen(iriid->content.printable));
+    } else if (iriid->type == IPIRI_ID_MAC) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, iriid->content.mac, 6);
+    } else if (iriid->type == IPIRI_ID_IPADDR) {
+        ENC_CSEQUENCE(encoder, 2);
+        encode_ipaddress(encoder, iriid->content.ip);
+    }
+
+    wandder_encode_endseq(encoder);
+}
+
 static int sort_etsili_generic(etsili_generic_t *a, etsili_generic_t *b) {
 
     if (a->itemnum < b->itemnum) {
@@ -162,11 +229,13 @@ static inline void encode_ipiri_body(wandder_encoder_t *encoder,
             case IPIRI_CONTENTS_TARGET_IPADDRESS:
             case IPIRI_CONTENTS_POP_IPADDRESS:
             case IPIRI_CONTENTS_ADDITIONAL_IPADDRESS:
-                /* TODO IPAddress */
+                ENC_CSEQUENCE(encoder, p->itemnum);
+                encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
                 break;
 
             case IPIRI_CONTENTS_POP_IDENTIFIER:
-                /* TODO IPIRIIDType */
+                ENC_CSEQUENCE(encoder, p->itemnum);
+                encode_ipiri_id(encoder, (ipiri_id_t *)(p->itemptr));
                 break;
 
             case IPIRI_CONTENTS_NATIONAL_IPIRI_PARAMETERS:
@@ -217,7 +286,6 @@ static inline void encode_ipiri_body(wandder_encoder_t *encoder,
     wandder_encode_endseq(encoder);
     wandder_encode_endseq(encoder);
     wandder_encode_endseq(encoder);    // ends outermost sequence
-
 }
 
 static inline void encode_ipmmcc_body(wandder_encoder_t *encoder,
@@ -421,6 +489,30 @@ void free_etsili_generics(etsili_generic_t *freelist) {
         gen = gen->nextfree;
         free(tmp);
     }
+}
+
+etsili_ipaddress_t *etsili_create_ipaddress_v4(uint32_t *addrnum,
+        uint8_t slashbits, uint8_t assigned) {
+
+    etsili_ipaddress_t *ip = NULL;
+
+    ip = (etsili_ipaddress_t *)malloc(sizeof(etsili_ipaddress_t));
+    ip->iptype = ETSILI_IPADDRESS_VERSION_4;
+    ip->assignment = assigned;
+    ip->v4subnetmask = 0xffffffff;
+    ip->v6prefixlen = 0;
+
+    if (slashbits < 32) {
+        ip->v4subnetmask = ~((1 << (32 - slashbits)) - 1);
+    }
+
+    ip->valtype = ETSILI_IPADDRESS_REP_BINARY;
+    ip->ipvalue = (uint8_t *)addrnum;
+    return ip;
+}
+
+void free_etsili_ipaddress(etsili_ipaddress_t *etsiip) {
+    free(etsiip);
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

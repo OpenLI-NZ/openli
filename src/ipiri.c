@@ -36,6 +36,8 @@
 #include "intercept.h"
 #include "collector_export.h"
 #include "etsili_core.h"
+#include "ipiri.h"
+#include "internetaccess.h"
 
 int ip_iri(collector_global_t *glob, wandder_encoder_t **encoder,
         libtrace_message_queue_t *q, access_session_t *sess,
@@ -84,6 +86,46 @@ int ip_iri(collector_global_t *glob, wandder_encoder_t **encoder,
     libtrace_message_queue_put(q, (void *)(&msg));
 
     return 1;
+}
+
+ipiri_id_t *ipiri_create_id_printable(char *idstr, int length) {
+    ipiri_id_t *iriid;
+
+    if (length <= 0) {
+        return NULL;
+    }
+
+    if (length > 128) {
+        logger(LOG_DAEMON, "OpenLI: Printable IPIRI ID is too long, truncating to 128 characters.");
+        length = 128;
+    }
+
+    iriid = (ipiri_id_t *)malloc(sizeof(ipiri_id_t));
+    iriid->type = IPIRI_ID_PRINTABLE;
+    iriid->content.printable = (char *)malloc(length + 1);
+    memcpy(iriid->content.printable, idstr, length);
+
+    if (iriid->content.printable[length - 1] != '\0') {
+        iriid->content.printable[length] = '\0';
+    }
+    return iriid;
+}
+
+ipiri_id_t *ipiri_create_id_mac(uint8_t *macaddr) {
+    /* TODO */
+    return NULL;
+}
+
+ipiri_id_t *ipiri_create_id_ipv4(uint32_t addrnum, uint8_t slashbits) {
+    /* TODO */
+    return NULL;
+}
+
+void ipiri_free_id(ipiri_id_t *iriid) {
+    if (iriid->type == IPIRI_ID_PRINTABLE) {
+        free(iriid->content.printable);
+    }
+    free(iriid);
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
