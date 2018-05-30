@@ -94,11 +94,16 @@ int parse_sip_packet(openli_sip_parser_t **parser, libtrace_packet_t *packet) {
 
     /* Check for a CRLF keep alive */
     if (memcmp(payload, "\x0d\x0a\x0d\x0a", 4) == 0) {
-        return 1;
+        return 0;
     }
 
     if (memcmp(payload, "\x0d\x0a", 2) == 0 && plen == 2) {
-        return 1;
+        return 0;
+    }
+
+    /* 00 00 00 00 seems to be some sort of keep alive as well? */
+    if (plen == 4 && memcmp(payload, "\x00\x00\x00\x00", 4) == 0) {
+        return 0;
     }
 
     if (plen < rem) {

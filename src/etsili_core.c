@@ -26,6 +26,7 @@
 #include <assert.h>
 #include <sys/time.h>
 #include <inttypes.h>
+#include <libtrace.h>
 #include <libwandder_etsili.h>
 #include "etsili_core.h"
 #include "ipiri.h"
@@ -67,34 +68,6 @@ static inline void encode_ipcc_body(wandder_encoder_t *encoder,
     wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, ipcontent, iplen);
 
-
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);    // ends outermost sequence
-
-}
-
-static inline void encode_ipmmiri_body(wandder_encoder_t *encoder,
-        etsili_iri_type_t iritype, void *ipcontent, uint32_t iplen) {
-
-    ENC_CSEQUENCE(encoder, 2);      // Payload
-    ENC_CSEQUENCE(encoder, 0);      // IRIPayload
-    ENC_USEQUENCE(encoder);         // IRIPayload sequence
-    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &iritype,
-            sizeof(iritype));
-    ENC_CSEQUENCE(encoder, 2);      // IRIContents
-    ENC_CSEQUENCE(encoder, 11);     // IPMMIRI
-    wandder_encode_next(encoder, WANDDER_TAG_RELATIVEOID,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, etsi_ipmmirioid,
-            sizeof(etsi_ipmmirioid));
-    ENC_CSEQUENCE(encoder, 1);      // IPMMIRIContents
-    wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, ipcontent, iplen);
 
     wandder_encode_endseq(encoder);
     wandder_encode_endseq(encoder);
@@ -152,6 +125,93 @@ static inline void encode_ipaddress(wandder_encoder_t *encoder,
     }
 
     wandder_encode_endseq(encoder);    // ends IPAddress sequence
+}
+
+static inline void encode_ipmmiri_body_common(wandder_encoder_t *encoder,
+        etsili_iri_type_t iritype) {
+
+    ENC_CSEQUENCE(encoder, 2);      // Payload
+    ENC_CSEQUENCE(encoder, 0);      // IRIPayload
+    ENC_USEQUENCE(encoder);         // IRIPayload sequence
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &iritype,
+            sizeof(iritype));
+    ENC_CSEQUENCE(encoder, 2);      // IRIContents
+    ENC_CSEQUENCE(encoder, 11);     // IPMMIRI
+    wandder_encode_next(encoder, WANDDER_TAG_RELATIVEOID,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, etsi_ipmmirioid,
+            sizeof(etsi_ipmmirioid));
+    ENC_CSEQUENCE(encoder, 1);      // IPMMIRIContents
+
+}
+
+static inline void encode_ipmmiri_body_common_end(wandder_encoder_t *encoder) {
+
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);
+    wandder_encode_endseq(encoder);    // ends outermost sequence
+}
+
+static inline void encode_ipmmiri_body(wandder_encoder_t *encoder,
+        etsili_iri_type_t iritype, void *ipcontent, uint32_t iplen) {
+
+    encode_ipmmiri_body_common(encoder, iritype);
+    wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, ipcontent, iplen);
+    encode_ipmmiri_body_common_end(encoder);
+
+}
+
+static inline void encode_sipiri_body(wandder_encoder_t *encoder,
+        etsili_iri_type_t iritype, void *ipheader, uint16_t ethertype,
+        void *sipcontent, uint32_t siplen) {
+
+    etsili_ipaddress_t ipsrc, ipdst;
+
+    if (ethertype == TRACE_ETHERTYPE_IP) {
+        libtrace_ip_t *ip4 = (libtrace_ip_t *)ipheader;
+
+        ipsrc.iptype = ETSILI_IPADDRESS_VERSION_4;
+        ipsrc.assignment = ETSILI_IPADDRESS_ASSIGNED_UNKNOWN;
+        ipsrc.v6prefixlen = 0;
+        ipsrc.v4subnetmask = 0xffffffff;
+        ipsrc.valtype = ETSILI_IPADDRESS_REP_BINARY;
+        ipsrc.ipvalue = (uint8_t *)(&(ip4->ip_src.s_addr));
+
+        ipdst = ipsrc;
+        ipdst.ipvalue = (uint8_t *)(&(ip4->ip_dst.s_addr));
+    } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
+        libtrace_ip6_t *ip6 = (libtrace_ip6_t *)ipheader;
+
+        ipsrc.iptype = ETSILI_IPADDRESS_VERSION_6;
+        ipsrc.assignment = ETSILI_IPADDRESS_ASSIGNED_UNKNOWN;
+        ipsrc.v6prefixlen = 0;
+        ipsrc.v4subnetmask = 0;
+        ipsrc.valtype = ETSILI_IPADDRESS_REP_BINARY;
+
+        ipsrc.ipvalue = (uint8_t *)(&(ip6->ip_src.s6_addr));
+
+        ipdst = ipsrc;
+        ipdst.ipvalue = (uint8_t *)(&(ip6->ip_dst.s6_addr));
+    } else {
+        wandder_encode_endseq(encoder);    // ends outermost sequence
+        return;
+    }
+
+    encode_ipmmiri_body_common(encoder, iritype);
+    ENC_CSEQUENCE(encoder, 1);      // SIPMessage
+    ENC_CSEQUENCE(encoder, 0);
+    encode_ipaddress(encoder, &ipsrc);
+    ENC_CSEQUENCE(encoder, 1);
+    encode_ipaddress(encoder, &ipdst);
+    wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, sipcontent, siplen);
+    wandder_encode_endseq(encoder); // end SIPMessage
+    encode_ipmmiri_body_common_end(encoder);
 }
 
 static inline void encode_ipiri_id(wandder_encoder_t *encoder,
@@ -435,6 +495,18 @@ wandder_encoded_result_t *encode_etsi_ipiri(wandder_encoder_t *encoder,
     return wandder_encode_finish(encoder);
 
 }
+
+wandder_encoded_result_t *encode_etsi_sipiri(wandder_encoder_t *encoder,
+        wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
+        etsili_iri_type_t iritype, struct timeval *tv, void *ipheader,
+        uint16_t ethertype, void *sipcontents, uint32_t siplen) {
+
+    encode_etsili_pshdr(encoder, hdrdata, cin, seqno, tv);
+    encode_sipiri_body(encoder, iritype, ipheader, ethertype, sipcontents,
+            siplen);
+    return wandder_encode_finish(encoder);
+}
+
 
 wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t seqno) {

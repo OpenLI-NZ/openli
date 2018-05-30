@@ -132,7 +132,7 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             cmp = (struct sockaddr_in *)(&pinfo->srcip);
 
             if (targetaddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
-                cmp = (struct sockaddr_in *)(&pinfo->destport);
+                cmp = (struct sockaddr_in *)(&pinfo->destip);
                 if (otheraddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
                     matched ++;
                     msg = form_ipmmcc(glob, loc, rtp, pkt, ip, rem,
