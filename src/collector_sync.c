@@ -1596,7 +1596,6 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         }
     }
 
-#if 0
     if (userint) {
         HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
             if (p->create_iri_from_packet(p, sync->glob, &(sync->encoder),
@@ -1609,9 +1608,7 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
             }
             expcount ++;
         }
-        sess->iriseqno ++;
     }
-#endif
 
 endupdate:
     p->destroy_parsed_data(p, parseddata);
