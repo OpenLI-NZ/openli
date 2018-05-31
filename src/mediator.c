@@ -369,7 +369,7 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->provaddr = NULL;
     state->provport = NULL;
     state->keepalivefreq = 120;
-    state->keepalivewait = 60;
+    state->keepalivewait = 30;
 
     state->collectors = libtrace_list_init(sizeof(mediator_collector_t));
     state->agencies = libtrace_list_init(sizeof(mediator_agency_t));
@@ -822,15 +822,22 @@ static void create_new_agency(mediator_state_t *state, liagency_t *lea) {
             HANDOVER_HI2, lea->keepalive_responder);
     newagency.hi3 = create_new_handover(lea->hi3_ipstr, lea->hi3_portstr,
             HANDOVER_HI3, lea->keepalive_responder);
+    newagency.karespreq = lea->keepalive_responder;
 
     libtrace_list_push_back(state->agencies, &newagency);
 
 }
 
 static int has_handover_changed(mediator_state_t *state,
-        handover_t *ho, char *ipstr, char *portstr, char *agencyid) {
+        handover_t *ho, char *ipstr, char *portstr, mediator_agency_t *existing,
+        liagency_t *newag, med_agency_state_t *mas) {
 
     char *hitypestr;
+    int changedloc = 0;
+    int changedkaresp = 0;
+
+    /* TODO this function is a bit awkward at the moment */
+
     if (ho == NULL) {
         return -1;
     }
@@ -839,7 +846,15 @@ static int has_handover_changed(mediator_state_t *state,
         return -1;
     }
 
-    if (strcmp(ho->ipstr, ipstr) == 0 && strcmp(ho->portstr, portstr) == 0) {
+    if (newag->keepalive_responder != existing->karespreq) {
+        changedkaresp = 1;
+    }
+
+    if (strcmp(ho->ipstr, ipstr) != 0 || strcmp(ho->portstr, portstr) != 0) {
+        changedloc = 1;
+    }
+
+    if (!changedkaresp && !changedloc) {
         return 0;
     }
 
@@ -851,9 +866,40 @@ static int has_handover_changed(mediator_state_t *state,
         hitypestr = "Unknown handover";
     }
 
-    logger(LOG_DAEMON,
-            "OpenLI: %s connection info for LEA %s has changed from %s:%s to %s:%s.",
-            hitypestr, agencyid, ho->ipstr, ho->portstr, ipstr, portstr);
+    if (changedloc) {
+        logger(LOG_DAEMON,
+                "OpenLI: %s connection info for LEA %s has changed from %s:%s to %s:%s.",
+                hitypestr, existing->agencyid, ho->ipstr, ho->portstr, ipstr, portstr);
+    } else {
+        if (newag->keepalive_responder == 0) {
+            if (ho->handover_type == HANDOVER_HI2) {
+                logger(LOG_DAEMON,
+                        "OpenLI: disabled keep-alive response requirement for LEA %s",
+                        existing->agencyid);
+            }
+            if (ho->aliverespev) {
+                if (ho->aliverespev->fd != -1) {
+                    close(ho->aliverespev->fd);
+                }
+                free(ho->aliverespev);
+                ho->aliverespev = NULL;
+            }
+        } else {
+            if (ho->handover_type == HANDOVER_HI2) {
+                logger(LOG_DAEMON,
+                        "OpenLI: enabled keep-alive response requirement for LEA %s",
+                        existing->agencyid);
+            }
+            if (ho->aliverespev == NULL) {
+                ho->aliverespev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+            }
+            ho->aliverespev->fd = -1;
+            ho->aliverespev->fdtype = MED_EPOLL_KA_RESPONSE_TIMER;
+            ho->aliverespev->state = mas;
+
+        }
+        return 0;
+    }
 
     disconnect_handover(state, ho);
     free(ho->ipstr);
@@ -917,28 +963,33 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
         if (strcmp(x->agencyid, lea.agencyid) == 0) {
             med_agency_state_t *mas;
 
+            mas = (med_agency_state_t *)(x->hi2->outev->state);
             if ((ret = has_handover_changed(state, x->hi2, lea.hi2_ipstr,
-                    lea.hi2_portstr, x->agencyid)) == -1) {
+                    lea.hi2_portstr, x, &lea, mas)) == -1) {
                 x->disabled = 1;
                 goto freelea;
             } else if (ret == 1) {
-                mas = (med_agency_state_t *)(x->hi2->outev->state);
                 if (mas) {
                     mas->failmsg = 0;
                 }
+                lea.hi2_portstr = NULL;
+                lea.hi2_ipstr = NULL;
             }
 
+            mas = (med_agency_state_t *)(x->hi3->outev->state);
             if ((ret = has_handover_changed(state, x->hi3, lea.hi3_ipstr,
-                    lea.hi3_portstr, x->agencyid)) == -1) {
+                    lea.hi3_portstr, x, &lea, mas)) == -1) {
                 x->disabled = 1;
                 goto freelea;
             } else if (ret == 1) {
-                mas = (med_agency_state_t *)(x->hi3->outev->state);
                 if (mas) {
                     mas->failmsg = 0;
                 }
+                lea.hi3_portstr = NULL;
+                lea.hi3_ipstr = NULL;
             }
 
+            x->karespreq = lea.keepalive_responder;
             x->awaitingconfirm = 0;
             x->disabled = 0;
             ret = 0;
