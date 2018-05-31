@@ -80,7 +80,8 @@ key-value elements:
 * hi2port       -- the port number for the HI2 handover on the agency side
 * hi3address    -- the address of the HI3 handover on the agency side
 * hi3port       -- the port number for the HI3 handover on the agency side
-
+* requirekaresponse -- if set to 'no', OpenLI will NOT disconnect the handovers
+                       if they fail to respond to a Keep-Alive message.
 
 VOIP intercepts are also expressed as a YAML sequence, with a key of
 `voipintercepts:`. Each sequence item represents a single intercept and must
