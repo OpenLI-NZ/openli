@@ -1592,7 +1592,6 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
                             sess, ipint);
                 }
             }
-            free_single_session(iuser, sess);
         }
     }
 
@@ -1608,6 +1607,10 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
             }
             expcount ++;
         }
+    }
+
+    if (oldstate != newstate && newstate == SESSION_STATE_OVER) {
+        free_single_session(iuser, sess);
     }
 
 endupdate:
