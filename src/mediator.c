@@ -102,7 +102,9 @@ static void disconnect_handover(mediator_state_t *state, handover_t *ho) {
         }
         close(agstate->karesptimer_fd);
         agstate->karesptimer_fd = -1;
-        ho->aliverespev->fd = -1;
+        if (ho->aliverespev) {
+            ho->aliverespev->fd = -1;
+        }
     }
 
     if (agstate->encoder) {
@@ -130,6 +132,11 @@ static int start_keepalive_timer(mediator_state_t *state,
 
     int sock;
 
+    /* Timer is disabled, ignore */
+    if (timerev == NULL) {
+        return 0;
+    }
+
     if ((sock = epoll_add_timer(state->epoll_fd, timeoutval, timerev)) == -1) {
         logger(LOG_DAEMON, "OpenLI: warning -- keep alive timer was not able to be set for handover: %s", strerror(errno));
         return -1;
@@ -144,7 +151,13 @@ static void halt_keepalive_timer(mediator_state_t *state,
         med_epoll_ev_t *timerev) {
 
     struct epoll_event ev;
-    med_agency_state_t *ms = (med_agency_state_t *)(timerev->state);
+    med_agency_state_t *ms;
+
+    if (timerev == NULL) {
+        return;
+    }
+
+    ms = (med_agency_state_t *)(timerev->state);
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, timerev->fd, &ev) == -1) {
         logger(LOG_DAEMON, "OpenLI: warning -- keep alive timer was not able to be disabled for agency connection: %s.", strerror(errno));
@@ -476,7 +489,9 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
                     "OpenLI: unable to start keepalive response timer.");
             return -1;
         }
-        ms->karesptimer_fd = ms->parent->aliverespev->fd;
+        if (ms->parent->aliverespev) {
+            ms->karesptimer_fd = ms->parent->aliverespev->fd;
+        }
 
     }
 
@@ -716,7 +731,7 @@ static int accept_collector(mediator_state_t *state) {
 }
 
 static handover_t *create_new_handover(char *ipstr, char *portstr,
-        int handover_type) {
+        int handover_type, uint8_t expectkaresp) {
 
     med_epoll_ev_t *agev;
     med_epoll_ev_t *timerev;
@@ -733,10 +748,15 @@ static handover_t *create_new_handover(char *ipstr, char *portstr,
 
     agev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
     timerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
-    respev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
     agstate = (med_agency_state_t *)malloc(sizeof(med_agency_state_t));
 
-    if (agev == NULL || timerev == NULL || agstate == NULL || respev == NULL) {
+    if (expectkaresp) {
+        respev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+    } else {
+        respev = NULL;
+    }
+
+    if (agev == NULL || timerev == NULL || agstate == NULL) {
         logger(LOG_DAEMON, "OpenLI: ran out of memory while allocating handover structure.");
         if (agev) {
             free(agev);
@@ -775,9 +795,11 @@ static handover_t *create_new_handover(char *ipstr, char *portstr,
     timerev->fdtype = MED_EPOLL_KA_TIMER;
     timerev->state = agstate;
 
-    respev->fd = -1;
-    respev->fdtype = MED_EPOLL_KA_RESPONSE_TIMER;
-    respev->state = agstate;
+    if (respev) {
+        respev->fd = -1;
+        respev->fdtype = MED_EPOLL_KA_RESPONSE_TIMER;
+        respev->state = agstate;
+    }
 
     ho->ipstr = ipstr;
     ho->portstr = portstr;
@@ -797,9 +819,9 @@ static void create_new_agency(mediator_state_t *state, liagency_t *lea) {
     newagency.awaitingconfirm = 0;
     newagency.disabled = 0;
     newagency.hi2 = create_new_handover(lea->hi2_ipstr, lea->hi2_portstr,
-            HANDOVER_HI2);
+            HANDOVER_HI2, lea->keepalive_responder);
     newagency.hi3 = create_new_handover(lea->hi3_ipstr, lea->hi3_portstr,
-            HANDOVER_HI3);
+            HANDOVER_HI3, lea->keepalive_responder);
 
     libtrace_list_push_back(state->agencies, &newagency);
 
