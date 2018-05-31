@@ -75,6 +75,8 @@ struct access_session {
     struct sockaddr *assignedip;
     uint32_t iriseqno;
 
+    struct timeval started;
+
     access_session_t *next;
     UT_hash_handle hh;
 } ;
