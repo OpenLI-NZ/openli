@@ -179,6 +179,7 @@ static int parse_agency_list(provision_state_t *state, yaml_document_t *doc,
         newag->hi3_ipstr = NULL;
         newag->hi3_portstr = NULL;
         newag->agencyid = NULL;
+        newag->keepalive_responder = 1;
 
         for (pair = node->data.mapping.pairs.start;
                 pair < node->data.mapping.pairs.top; pair ++) {
@@ -222,7 +223,22 @@ static int parse_agency_list(provision_state_t *state, yaml_document_t *doc,
                 newag->agencyid = strdup((char *)value->data.scalar.value);
             }
 
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                            "requirekaresponse") == 0) {
+               if (strcmp((char *)value->data.scalar.value, "no") == 0) {
+                   newag->keepalive_responder = 0;
+               }
+               if (strcmp((char *)value->data.scalar.value, "disabled") == 0) {
+                   newag->keepalive_responder = 0;
+               }
+               if (strcmp((char *)value->data.scalar.value, "off") == 0) {
+                   newag->keepalive_responder = 0;
+               }
+            }
         }
+
         if (newag->hi2_ipstr != NULL && newag->hi2_portstr != NULL &&
                 newag->hi3_ipstr != NULL && newag->hi3_portstr != NULL &
                 newag->agencyid != NULL) {

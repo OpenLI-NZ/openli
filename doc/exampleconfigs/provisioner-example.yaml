@@ -22,6 +22,8 @@ agencies:
    hi2port: 7001                # port number of the HI2 service at the agency
    hi3address: 10.10.1.2        # address of the HI3 service at the agency
    hi3port: 18888               # port number of the HI3 service at the agency
+   requirekaresponse: no        # keep the handovers going, even if the agency
+                                # fails to respond to our keepalives.
 
 
 # List of active VOIP intercepts.

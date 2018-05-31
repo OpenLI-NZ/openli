@@ -36,6 +36,7 @@ typedef struct liagency {
     char *hi3_ipstr;
     char *hi3_portstr;
     char *agencyid;
+    uint8_t keepalive_responder;
 } liagency_t;
 
 #define agency_equal(a, b) \
