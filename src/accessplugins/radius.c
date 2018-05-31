@@ -66,6 +66,7 @@ enum {
     RADIUS_ATTR_ACCT_INOCTETS = 42,
     RADIUS_ATTR_ACCT_OUTOCTETS = 43,
     RADIUS_ATTR_ACCT_SESSION_ID = 44,
+    RADIUS_ATTR_ACCT_TERMINATE_CAUSE = 49,
     RADIUS_ATTR_FRAMED_IPV6_ADDRESS = 168,
 };
 
@@ -236,6 +237,7 @@ static inline int interesting_attribute(uint8_t attrnum) {
         case RADIUS_ATTR_NASIP:
         case RADIUS_ATTR_CALLED_STATION_ID:
         case RADIUS_ATTR_CALLING_STATION_ID:
+        case RADIUS_ATTR_ACCT_TERMINATE_CAUSE:
             return 1;
     }
 
@@ -1130,6 +1132,37 @@ static radius_orphaned_resp_t *search_orphans(radius_orphaned_resp_t **head,
 
 }
 
+static inline int64_t translate_term_cause(uint32_t *tcause) {
+
+    /* TODO verify that these are sensible mappings */
+
+    switch(ntohl(*tcause)) {
+        case 1:     // user request
+            return IPIRI_END_REASON_REGULAR;
+        case 4:     // idle timeout
+        case 5:     // session timeout
+            return IPIRI_END_REASON_CONNECTION_TIMEOUT;
+        case 2:     // lost carrier
+        case 3:     // lost service
+        case 6:     // admin reset
+        case 7:     // admin reboot
+        case 8:     // port error
+        case 9:     // nas error
+        case 10:    // nas request
+        case 11:    // nas reboot
+        case 12:    // port unneeded
+        case 13:    // port preempted
+        case 14:    // port suspended
+        case 15:    // service unavailable
+        case 16:    // callback
+        case 17:    // user error
+        case 18:    // host request
+            return IPIRI_END_REASON_CONNECTION_LOSS;
+    }
+
+    return IPIRI_END_REASON_UNDEFINED;
+}
+
 static inline char *quickcat(char *ptr, int *rem, char *toadd) {
 
     int towrite = strlen(toadd);
@@ -1203,8 +1236,10 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         thissess->ipfamily = AF_UNSPEC;
         thissess->assignedip = NULL;
         thissess->iriseqno = 0;
-        thissess->next = *sesslist;
+        thissess->started.tv_sec = 0;
+        thissess->started.tv_usec = 0;
 
+        thissess->next = *sesslist;
         *sesslist = thissess;
 
     }
@@ -1277,6 +1312,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
 
         /* Session is now active: make sure we get the IP address */
         extract_assigned_ip_address(raddata, raddata->attrs, thissess);
+        TIMESTAMP_TO_TV((&(thissess->started)), raddata->tvsec);
     }
 
     if (raddata->secondaction == ACCESS_ACTION_ACCEPT ||
@@ -1285,6 +1321,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         /* Use saved orphan attributes to get IP address */
         extract_assigned_ip_address(raddata,
             raddata->savedresp->savedattrs, thissess);
+        TIMESTAMP_TO_TV((&(thissess->started)), raddata->savedresp->tvsec);
     }
 
     if (raddata->firstaction != ACCESS_ACTION_NONE) {
@@ -1306,7 +1343,10 @@ static int generate_iri(collector_global_t *glob,
     int ret;
     int64_t nasport;
     etsili_ipaddress_t *nasip = NULL;
+    etsili_ipaddress_t *targetip = NULL;
     ipiri_id_t *nasid = NULL;
+    int64_t ipversion;
+    int64_t endreason;
 
     p = create_etsili_generic(&(glob->freegenerics),
             IPIRI_CONTENTS_ACCESS_EVENT_TYPE, sizeof(uint32_t),
@@ -1320,6 +1360,51 @@ static int generate_iri(collector_global_t *glob,
                 ipint->username);
         HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
     }
+
+    if (sess->assignedip) {
+        /* TODO handle v4 AND v6 case, if it even happens. */
+
+        if (sess->ipfamily == AF_INET) {
+            struct sockaddr_in *in = (struct sockaddr_in *)(sess->assignedip);
+            targetip = etsili_create_ipaddress_v4(
+                    (uint32_t *)(&(in->sin_addr.s_addr)),
+                    ETSILI_IPV4_SUBNET_UNKNOWN,
+                    ETSILI_IPADDRESS_ASSIGNED_UNKNOWN);     // TODO??
+            ipversion = IPIRI_IPVERSION_4;
+        } else if (sess->ipfamily == AF_INET6) {
+            /* TODO */
+            ipversion = IPIRI_IPVERSION_6;
+
+        }
+
+        if (targetip) {
+            p = create_etsili_generic(&(glob->freegenerics),
+                    IPIRI_CONTENTS_IPVERSION, sizeof(int64_t),
+                    (uint8_t *)(&ipversion));
+            HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
+
+            p = create_etsili_generic(&(glob->freegenerics),
+                    IPIRI_CONTENTS_TARGET_IPADDRESS,
+                    sizeof(etsili_ipaddress_t), (uint8_t *)targetip);
+            HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
+        }
+    }
+
+    if (sess->started.tv_sec > 0) {
+        p = create_etsili_generic(&(glob->freegenerics),
+                IPIRI_CONTENTS_STARTTIME, sizeof(struct timeval),
+                (uint8_t *)(&(sess->started)));
+        HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
+    }
+
+    if (iritype == ETSILI_IRI_END) {
+        p = create_etsili_generic(&(glob->freegenerics),
+                IPIRI_CONTENTS_ENDTIME, sizeof(struct timeval),
+                (uint8_t *)tv);
+        HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
+
+    }
+
 
     if (raddata->savedreq) {
         attr = raddata->savedreq->attrs;
@@ -1368,6 +1453,13 @@ static int generate_iri(collector_global_t *glob,
                 /* String -> String */
                 iriattr = IPIRI_CONTENTS_TARGET_NETWORKID;
                 break;
+            case RADIUS_ATTR_ACCT_TERMINATE_CAUSE:
+                /* uint32_t -> EndReason */
+                iriattr = IPIRI_CONTENTS_ENDREASON;
+                endreason = translate_term_cause((uint32_t *)(attr->att_val));
+                attrlen = sizeof(endreason);
+                attrptr = (uint8_t *)(&endreason);
+                break;
         }
         if (iriattr != 0xff) {
             p = create_etsili_generic(&(glob->freegenerics), iriattr,
@@ -1380,6 +1472,9 @@ static int generate_iri(collector_global_t *glob,
 
     if (nasip) {
         free_etsili_ipaddress(nasip);
+    }
+    if (targetip) {
+        free_etsili_ipaddress(targetip);
     }
     if (nasid) {
         ipiri_free_id(nasid);
@@ -1395,6 +1490,26 @@ static int radius_generate_access_attempt_iri(collector_global_t *glob,
 
     return generate_iri(glob, encoder, mqueue, sess, ipint, raddata, tv,
             IPIRI_ACCESS_ATTEMPT, ETSILI_IRI_REPORT);
+
+}
+
+static int radius_generate_access_accept_iri(collector_global_t *glob,
+        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
+        access_session_t *sess, ipintercept_t *ipint,
+        radius_parsed_t *raddata, struct timeval *tv) {
+
+    return generate_iri(glob, encoder, mqueue, sess, ipint, raddata, tv,
+            IPIRI_ACCESS_ACCEPT, ETSILI_IRI_BEGIN);
+
+}
+
+static int radius_generate_access_end_iri(collector_global_t *glob,
+        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
+        access_session_t *sess, ipintercept_t *ipint,
+        radius_parsed_t *raddata, struct timeval *tv) {
+
+    return generate_iri(glob, encoder, mqueue, sess, ipint, raddata, tv,
+            IPIRI_ACCESS_END, ETSILI_IRI_END);
 
 }
 
@@ -1420,7 +1535,18 @@ static int radius_create_iri_from_packet(access_plugin_t *p,
                     return -1;
                 }
                 break;
-
+            case ACCESS_ACTION_ACCEPT:
+                if (radius_generate_access_accept_iri(glob, encoder, mqueue,
+                        sess, ipint, raddata, &tv) < 0) {
+                    return -1;
+                }
+                break;
+            case ACCESS_ACTION_END:
+                if (radius_generate_access_end_iri(glob, encoder, mqueue,
+                        sess, ipint, raddata, &tv) < 0) {
+                    return -1;
+                }
+                break;
         }
 
     }
