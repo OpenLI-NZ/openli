@@ -1345,7 +1345,7 @@ static int generate_iri(collector_global_t *glob,
     etsili_ipaddress_t *nasip = NULL;
     etsili_ipaddress_t *targetip = NULL;
     ipiri_id_t *nasid = NULL;
-    int64_t ipversion;
+    int64_t ipversion, inocts, outocts;
     int64_t endreason;
 
     p = create_etsili_generic(&(glob->freegenerics),
@@ -1460,6 +1460,18 @@ static int generate_iri(collector_global_t *glob,
                 attrlen = sizeof(endreason);
                 attrptr = (uint8_t *)(&endreason);
                 break;
+            case RADIUS_ATTR_ACCT_INOCTETS:
+                iriattr = IPIRI_CONTENTS_OCTETS_RECEIVED;
+                inocts = (int64_t) ntohl(*((uint32_t *)(attr->att_val)));
+                attrlen = sizeof(int64_t);
+                attrptr = (uint8_t *)&inocts;
+                break;
+            case RADIUS_ATTR_ACCT_OUTOCTETS:
+                iriattr = IPIRI_CONTENTS_OCTETS_TRANSMITTED;
+                outocts = (int64_t) ntohl(*((uint32_t *)(attr->att_val)));
+                attrlen = sizeof(int64_t);
+                attrptr = (uint8_t *)&outocts;
+                break;
         }
         if (iriattr != 0xff) {
             p = create_etsili_generic(&(glob->freegenerics), iriattr,
@@ -1503,6 +1515,16 @@ static int radius_generate_access_accept_iri(collector_global_t *glob,
 
 }
 
+static int radius_generate_interim_iri(collector_global_t *glob,
+        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
+        access_session_t *sess, ipintercept_t *ipint,
+        radius_parsed_t *raddata, struct timeval *tv) {
+
+    return generate_iri(glob, encoder, mqueue, sess, ipint, raddata, tv,
+            IPIRI_INTERIM_UPDATE, ETSILI_IRI_CONTINUE);
+
+}
+
 static int radius_generate_access_end_iri(collector_global_t *glob,
         wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
         access_session_t *sess, ipintercept_t *ipint,
@@ -1513,6 +1535,59 @@ static int radius_generate_access_end_iri(collector_global_t *glob,
 
 }
 
+static int radius_generate_access_reject_iri(collector_global_t *glob,
+        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
+        access_session_t *sess, ipintercept_t *ipint,
+        radius_parsed_t *raddata, struct timeval *tv) {
+
+    return generate_iri(glob, encoder, mqueue, sess, ipint, raddata, tv,
+            IPIRI_ACCESS_REJECT, ETSILI_IRI_REPORT);
+
+}
+
+static inline int action_to_iri(collector_global_t *glob,
+        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
+        access_session_t *sess, ipintercept_t *ipint, radius_parsed_t *raddata,
+        access_action_t action) {
+
+    struct timeval tv;
+    TIMESTAMP_TO_TV((&tv), raddata->tvsec);
+
+    switch(action) {
+        case ACCESS_ACTION_ATTEMPT:
+            if (radius_generate_access_attempt_iri(glob, encoder, mqueue,
+                        sess, ipint, raddata, &tv) < 0) {
+                return -1;
+            }
+            break;
+        case ACCESS_ACTION_ACCEPT:
+            if (radius_generate_access_accept_iri(glob, encoder, mqueue,
+                        sess, ipint, raddata, &tv) < 0) {
+                return -1;
+            }
+            break;
+        case ACCESS_ACTION_END:
+            if (radius_generate_access_end_iri(glob, encoder, mqueue,
+                        sess, ipint, raddata, &tv) < 0) {
+                return -1;
+            }
+            break;
+        case ACCESS_ACTION_INTERIM_UPDATE:
+            if (radius_generate_interim_iri(glob, encoder, mqueue,
+                        sess, ipint, raddata, &tv) < 0) {
+                return -1;
+            }
+            break;
+        case ACCESS_ACTION_REJECT:
+            if (radius_generate_access_reject_iri(glob, encoder, mqueue,
+                        sess, ipint, raddata, &tv) < 0) {
+                return -1;
+            }
+            break;
+    }
+
+}
+
 static int radius_create_iri_from_packet(access_plugin_t *p,
         collector_global_t *glob, wandder_encoder_t **encoder,
         libtrace_message_queue_t *mqueue, access_session_t *sess,
@@ -1520,39 +1595,18 @@ static int radius_create_iri_from_packet(access_plugin_t *p,
 
     radius_global_t *radglob;
     radius_parsed_t *raddata;
-    struct timeval tv;
 
     radglob = (radius_global_t *)(p->plugindata);
     raddata = (radius_parsed_t *)parsed;
 
     if (raddata->firstaction != ACCESS_ACTION_NONE) {
-        TIMESTAMP_TO_TV((&tv), raddata->tvsec);
-
-        switch(raddata->firstaction) {
-            case ACCESS_ACTION_ATTEMPT:
-                if (radius_generate_access_attempt_iri(glob, encoder, mqueue,
-                        sess, ipint, raddata, &tv) < 0) {
-                    return -1;
-                }
-                break;
-            case ACCESS_ACTION_ACCEPT:
-                if (radius_generate_access_accept_iri(glob, encoder, mqueue,
-                        sess, ipint, raddata, &tv) < 0) {
-                    return -1;
-                }
-                break;
-            case ACCESS_ACTION_END:
-                if (radius_generate_access_end_iri(glob, encoder, mqueue,
-                        sess, ipint, raddata, &tv) < 0) {
-                    return -1;
-                }
-                break;
-        }
-
+        action_to_iri(glob, encoder, mqueue, sess, ipint, raddata,
+                raddata->firstaction);
     }
 
     if (raddata->secondaction != ACCESS_ACTION_NONE) {
-
+        action_to_iri(glob, encoder, mqueue, sess, ipint, raddata,
+                raddata->secondaction);
     }
 
 
