@@ -26,6 +26,35 @@ agencies:
                                 # fails to respond to our keepalives.
 
 
+# List of active IP intercepts.
+# To change intercepts for a running OpenLI process, modify the intercept list
+# in the config file, then send a SIGHUP to the provisioner process.
+#
+# In this example, we have two IP intercepts running: one for the "Police"
+# intercepting all IP traffic for the user 'imacriminal' and one for the
+# "Spooks" that is translating an Alcatel-Lucent native intercept into an
+# ETSI-compliant one. For the latter, all ALU intercept packets with an
+# Intercept ID of 522781 will be converted to have the ETSI LIID of NAPP9321HN
+# and the resulting records will be forwarded to the "Spooks" agency.
+
+ipintercepts:
+ - liid:  LP45NNST3             # LIID, should be provided by requesting agency
+   authcountrycode: NZ          # Authorisation country code
+   deliverycountrycode: NZ      # Delivery country code
+   user: "imacriminal"          # Username identifying the target in your AAA
+   mediator: 6001               # ID of the mediator to send intercept via
+   agencyid: "Police"           # ID of agency to send intercept to
+
+
+ - liid: NAPP9321HN
+   authcountrycode: NZ          # Authorisation country code
+   deliverycountrycode: NZ      # Delivery country code
+   alushimid: 522781            # Intercept-ID number used by the ALU
+                                # intercept.
+   mediator: 6001               # ID of the mediator to send intercept via
+   agencyid: "Spooks"           # ID of agency to send intercept to
+
+
 # List of active VOIP intercepts.
 # To change intercepts for a running OpenLI process, modify the intercept list
 # in the config file, then send a SIGHUP to the provisioner process.

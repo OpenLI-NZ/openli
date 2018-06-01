@@ -48,13 +48,52 @@ each intercept must be configured with the following six parameters:
   assigned by the agency and should be present on the warrant for the intercept.
 * Authorisation country code -- the country within which the authorisation to
   intercept was granted.
-* Delivery country code -- the country where the intercept is taking place (probably the same as above).
+* Delivery country code -- the country where the intercept is taking place
+  (probably the same as above).
 * SIP URI -- a SIP URI that identifies the target of the intercept. All SIP and
   RTP traffic for that SIP user will be intercepted.
 * Mediator -- the ID number of the mediator which will be forwarding the
   intercept records to the requesting agency.
 * Agency ID -- the agency that requested the intercept (this should match one
   of the agencies specified elsewhere in this configuration file).
+
+
+### IP Data Intercepts
+
+All IP intercepts are specified using the ipintercepts option. As with VOIP
+intercepts, each individual intercept is expressed as a list item and each
+intercept must be configured with the following parameters:
+
+* LIID -- the unique lawful intercept ID for this intercept. This will be
+  assigned by the agency and should be present on the warrant for the intercept.
+* Authorisation country code -- the country within which the authorisation to
+  intercept was granted.
+* Delivery country code -- the country where the intercept is taking place
+  (probably the same as above).
+* Mediator -- the ID number of the mediator which will be forwarding the
+  intercept records to the requesting agency.
+* Agency ID -- the agency that requested the intercept (this should match one
+  of the agencies specified elsewhere in this configuration file).
+
+An IP intercept must also include ONE of the following parameters, which is
+used to identify the intercept target.
+
+* User -- the username assigned to that user within your AAA system.
+* ALU Shim ID -- if you are using OpenLI to convert Alcatel-Lucent intercepts
+  to ETSI-compliant records, this is the value that will be in the intercept-id
+  fields of the packets emitted by the mirror.
+
+If you have using User as the target identification method, you will need to
+ensure that the OpenLI collectors receive a copy of all RADIUS traffic
+relating to the subscribers whose traffic will be passing that collector.
+This includes both Authentication AND Accounting messages, as well both the
+Requests and Responses for both message types.
+
+If you are using the ALU Shim method, you will still need to provide a
+RADIUS feed to an OpenLI collector to generate the IRI records but it
+doesn't necessarily need to be the same collector instance as the one that
+is receiving the ALU intercept packets.
+
 
 
 
@@ -83,14 +122,19 @@ key-value elements:
 * requirekaresponse -- if set to 'no', OpenLI will NOT disconnect the handovers
                        if they fail to respond to a Keep-Alive message.
 
-VOIP intercepts are also expressed as a YAML sequence, with a key of
-`voipintercepts:`. Each sequence item represents a single intercept and must
-contain the following key-value elements:
+VOIP and IPintercepts are also expressed as a YAML sequence, with a key of
+`voipintercepts:` and `ipintercepts:` respectively. Each sequence item
+represents a single intercept and must contain the following key-value
+elements:
 
 * liid                  -- the LIID
 * authcountrycode       -- the authorisation country code
 * deliverycountrycode   -- the delivery country code
-* sipuri                -- the SIP URI for the target
+* sipuri                -- the SIP URI for the target  (VOIP only)
+* user                  -- the AAA username for the target  (IP only)
+* alushimid             -- the intercept ID from the ALU intercept packets
+                           (IP only + only for re-encoding ALU intercepts as
+                            ETSI)
 * mediator              -- the ID of the mediator which will forward the
                            intercept
 * agencyid              -- the internal identifier of the agency that requested
