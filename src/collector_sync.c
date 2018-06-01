@@ -327,6 +327,10 @@ static inline void push_session_halt_to_threads(void *sendqs,
     sync_sendq_t *sendq, *tmp;
     char ipstr[128];
 
+    if (sess->assignedip == NULL) {
+        return;
+    }
+
     /* XXX no error checking because this logging should not reach
      * the production version... */
     getnameinfo((struct sockaddr *)(sess->assignedip),
@@ -1620,6 +1624,7 @@ endupdate:
         /* Increment ref count for the packet and send a packet fin message
          * so the exporter knows when to decrease the ref count */
         trace_increment_packet_refcount(pkt);
+        memset(&msg, 0, sizeof(openli_export_recv_t));
         msg.type = OPENLI_EXPORT_PACKET_FIN;
         msg.data.packet = pkt;
         libtrace_message_queue_put(&(sync->exportq), (void *)(&msg));
