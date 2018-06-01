@@ -1,7 +1,9 @@
-bin_PROGRAMS=openlicollector openliprovisioner openlimediator
+bin_PROGRAMS=
 
 PLUGIN_SRCS=accessplugins/radius.c
 
+if BUILD_COLLECTOR
+bin_PROGRAMS +=openlicollector
 openlicollector_SOURCES=collector.c configparser.c configparser.h collector.h \
                 logger.c logger.h collector_sync.c collector_sync.h \
                 etsili_core.h collector_export.c \
@@ -18,7 +20,10 @@ openlicollector_SOURCES=collector.c configparser.c configparser.h collector.h \
 openlicollector_LDADD = @ADD_LIBS@
 openlicollector_LDFLAGS=-lpthread
 openlicollector_CFLAGS=
+endif
 
+if BUILD_PROVISIONER
+bin_PROGRAMS += openliprovisioner
 openliprovisioner_SOURCES=provisioner.c provisioner.h byteswap.c \
                 byteswap.h intercept.h intercept.c configparser.c \
                 configparser.h util.c util.h agency.h  logger.c \
@@ -28,7 +33,10 @@ openliprovisioner_SOURCES=provisioner.c provisioner.h byteswap.c \
 openliprovisioner_LDADD = @ADD_LIBS@
 openliprovisioner_LDFLAGS=-lpthread
 openliprovisioner_CFLAGS=
+endif
 
+if BUILD_MEDIATOR
+bin_PROGRAMS += openlimediator
 openlimediator_SOURCES=mediator.c mediator.h byteswap.c byteswap.h \
                 configparser.c configparser.h util.c util.h agency.h \
                 logger.c logger.h netcomms.c netcomms.h export_buffer.c \
@@ -37,5 +45,5 @@ openlimediator_SOURCES=mediator.c mediator.h byteswap.c byteswap.h \
 openlimediator_LDADD = @ADD_LIBS@
 openlimediator_LDFLAGS=-lpthread
 openlimediator_CFLAGS=
-
+endif
 
