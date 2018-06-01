@@ -445,6 +445,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
          * for conversion to an ETSI record */
         if (glob->alumirrors && check_alu_intercept(glob, loc, pkt, &pinfo,
                 glob->alumirrors, loc->activealuintercepts)) {
+            trace_decrement_packet_refcount(pkt);
             return NULL;
         }
 
