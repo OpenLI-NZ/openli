@@ -1264,37 +1264,38 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
             logger(LOG_DAEMON,
                     "OpenLI RADIUS: found request for access orphan: %s",
                     (char *)thissess->sessionid);
-        }
-
-        if (glob->freeaccreqs == NULL) {
-            req = (radius_saved_req_t *)malloc(sizeof(radius_saved_req_t));
         } else {
-            req = glob->freeaccreqs;
-            glob->freeaccreqs = req->next;
-        }
 
-        req->reqid = DERIVE_REQUEST_ID(raddata, raddata->msgtype);
-        req->targetuser = raddata->matcheduser;
-        req->statustype = raddata->accttype;
-        req->tvsec = raddata->tvsec;
-        req->next = NULL;
-        req->attrs = NULL;
-
-        if (!raddata->savedresp) {
-            HASH_FIND(hh, raddata->matchednas->requests, &(req->reqid),
-                    sizeof(req->reqid), check);
-            if (check) {
-                /* The old one is probably an unanswered request, replace
-                 * it with this one instead. */
-                HASH_DELETE(hh, raddata->matchednas->requests, check);
-                release_attribute_list(&(glob->freeattrs), check->attrs);
-                release_saved_request(&(glob->freeaccreqs), check);
+            if (glob->freeaccreqs == NULL) {
+                req = (radius_saved_req_t *)malloc(sizeof(radius_saved_req_t));
+            } else {
+                req = glob->freeaccreqs;
+                glob->freeaccreqs = req->next;
             }
 
-            req->attrs = raddata->attrs;
+            req->reqid = DERIVE_REQUEST_ID(raddata, raddata->msgtype);
+            req->targetuser = raddata->matcheduser;
+            req->statustype = raddata->accttype;
+            req->tvsec = raddata->tvsec;
+            req->next = NULL;
+            req->attrs = NULL;
 
-            HASH_ADD_KEYPTR(hh, raddata->matchednas->requests, &(req->reqid),
-                    sizeof(req->reqid), req);
+            if (!raddata->savedresp) {
+                HASH_FIND(hh, raddata->matchednas->requests, &(req->reqid),
+                        sizeof(req->reqid), check);
+                if (check) {
+                    /* The old one is probably an unanswered request, replace
+                     * it with this one instead. */
+                    HASH_DELETE(hh, raddata->matchednas->requests, check);
+                    release_attribute_list(&(glob->freeattrs), check->attrs);
+                    release_saved_request(&(glob->freeaccreqs), check);
+                }
+
+                req->attrs = raddata->attrs;
+
+                HASH_ADD_KEYPTR(hh, raddata->matchednas->requests,
+                        &(req->reqid), sizeof(req->reqid), req);
+            }
         }
     }
 
@@ -1338,7 +1339,7 @@ static int generate_iri(collector_global_t *glob,
         radius_parsed_t *raddata, struct timeval *tv,
         uint32_t eventtype, etsili_iri_type_t iritype) {
 
-    etsili_generic_t *p, *params = NULL;
+    etsili_generic_t *p, *tmp, *params = NULL;
     radius_attribute_t *attr;
     int ret;
     int64_t nasport;
@@ -1491,6 +1492,12 @@ static int generate_iri(collector_global_t *glob,
     if (nasid) {
         ipiri_free_id(nasid);
     }
+
+    HASH_ITER(hh, params, p, tmp) {
+        HASH_DELETE(hh, params, p);
+        release_etsili_generic(&(glob->freegenerics), p);
+    }
+
     return ret;
 
 }
@@ -1545,6 +1552,24 @@ static int radius_generate_access_reject_iri(collector_global_t *glob,
 
 }
 
+static int radius_generate_access_failed_iri(collector_global_t *glob,
+        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
+        access_session_t *sess, ipintercept_t *ipint,
+        radius_parsed_t *raddata, struct timeval *tv) {
+
+    return generate_iri(glob, encoder, mqueue, sess, ipint, raddata, tv,
+            IPIRI_ACCESS_FAILED, ETSILI_IRI_REPORT);
+}
+
+static int radius_generate_already_active_iri(collector_global_t *glob,
+        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
+        access_session_t *sess, ipintercept_t *ipint,
+        radius_parsed_t *raddata, struct timeval *tv) {
+
+    return generate_iri(glob, encoder, mqueue, sess, ipint, raddata, tv,
+            IPIRI_START_WHILE_ACTIVE, ETSILI_IRI_BEGIN);
+}
+
 static inline int action_to_iri(collector_global_t *glob,
         wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
         access_session_t *sess, ipintercept_t *ipint, radius_parsed_t *raddata,
@@ -1584,7 +1609,26 @@ static inline int action_to_iri(collector_global_t *glob,
                 return -1;
             }
             break;
+        case ACCESS_ACTION_FAILED:
+            if (radius_generate_access_failed_iri(glob, encoder, mqueue,
+                        sess, ipint, raddata, &tv) < 0) {
+                return -1;
+            }
+            break;
+        case ACCESS_ACTION_ALREADY_ACTIVE:
+            if (radius_generate_already_active_iri(glob, encoder, mqueue,
+                        sess, ipint, raddata, &tv) < 0) {
+                return -1;
+            }
+            break;
+        default:
+            logger(LOG_DAEMON,
+                    "OpenLI RADIUS: cannot generate IRI for unknown action %u",
+                    action);
+            return -1;
     }
+
+    return 0;
 
 }
 
