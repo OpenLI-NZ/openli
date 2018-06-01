@@ -104,12 +104,14 @@ typedef struct mediator_agency {
     int disabled;
     handover_t *hi2;
     handover_t *hi3;
+    uint8_t karespreq;
 } mediator_agency_t;
 
 typedef struct med_state {
     uint32_t mediatorid;
     char *conffile;
     char *mediatorname;
+    char *operatorid;
     char *listenaddr;
     char *listenport;
 

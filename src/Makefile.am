@@ -1,5 +1,7 @@
 bin_PROGRAMS=openlicollector openliprovisioner openlimediator
 
+PLUGIN_SRCS=accessplugins/radius.c
+
 openlicollector_SOURCES=collector.c configparser.c configparser.h collector.h \
                 logger.c logger.h collector_sync.c collector_sync.h \
                 etsili_core.h collector_export.c \
@@ -9,7 +11,9 @@ openlicollector_SOURCES=collector.c configparser.c configparser.h collector.h \
                 jenkinshash.c ipmmcc.c ipmmcc.h ipmmiri.c ipmmiri.h \
                 internetaccess.c internetaccess.h ipcc.c ipcc.h coreserver.h \
                 coreserver.c collector_push_messaging.c \
-                collector_push_messaging.h alushim_parser.c alushim_parser.h
+                collector_push_messaging.h alushim_parser.c alushim_parser.h \
+                ipiri.c ipiri.h \
+                $(PLUGIN_SRCS)
 
 openlicollector_LDADD = @ADD_LIBS@
 openlicollector_LDFLAGS=-lpthread

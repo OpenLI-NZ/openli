@@ -33,9 +33,15 @@
 #include "intercept.h"
 #include "etsili_core.h"
 
+enum {
+    OPENLI_IPMMIRI_ORIGINAL,
+    OPENLI_IPMMIRI_SIP,
+    OPENLI_IPMMIRI_H323,
+};
+
 int ipmm_iri(libtrace_packet_t *pkt, collector_global_t *glob,
         wandder_encoder_t **encoder, libtrace_message_queue_t *q,
         voipintercept_t *vint, voipintshared_t *cin,
-        etsili_iri_type_t iritype);
+        etsili_iri_type_t iritype, uint8_t iristyle);
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

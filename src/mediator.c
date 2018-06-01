@@ -102,7 +102,9 @@ static void disconnect_handover(mediator_state_t *state, handover_t *ho) {
         }
         close(agstate->karesptimer_fd);
         agstate->karesptimer_fd = -1;
-        ho->aliverespev->fd = -1;
+        if (ho->aliverespev) {
+            ho->aliverespev->fd = -1;
+        }
     }
 
     if (agstate->encoder) {
@@ -130,6 +132,11 @@ static int start_keepalive_timer(mediator_state_t *state,
 
     int sock;
 
+    /* Timer is disabled, ignore */
+    if (timerev == NULL) {
+        return 0;
+    }
+
     if ((sock = epoll_add_timer(state->epoll_fd, timeoutval, timerev)) == -1) {
         logger(LOG_DAEMON, "OpenLI: warning -- keep alive timer was not able to be set for handover: %s", strerror(errno));
         return -1;
@@ -144,7 +151,13 @@ static void halt_keepalive_timer(mediator_state_t *state,
         med_epoll_ev_t *timerev) {
 
     struct epoll_event ev;
-    med_agency_state_t *ms = (med_agency_state_t *)(timerev->state);
+    med_agency_state_t *ms;
+
+    if (timerev == NULL) {
+        return;
+    }
+
+    ms = (med_agency_state_t *)(timerev->state);
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, timerev->fd, &ev) == -1) {
         logger(LOG_DAEMON, "OpenLI: warning -- keep alive timer was not able to be disabled for agency connection: %s.", strerror(errno));
@@ -321,6 +334,9 @@ static void clear_med_state(mediator_state_t *state) {
     if (state->provaddr) {
         free(state->provaddr);
     }
+    if (state->operatorid) {
+        free(state->operatorid);
+    }
     if (state->signalev) {
         close(state->signalev->fd);
         free(state->signalev);
@@ -349,10 +365,11 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->epoll_fd = epoll_create1(0);
     state->listenaddr = NULL;
     state->listenport = NULL;
+    state->operatorid = NULL;
     state->provaddr = NULL;
     state->provport = NULL;
     state->keepalivefreq = 120;
-    state->keepalivewait = 60;
+    state->keepalivewait = 30;
 
     state->collectors = libtrace_list_init(sizeof(mediator_collector_t));
     state->agencies = libtrace_list_init(sizeof(mediator_agency_t));
@@ -402,6 +419,7 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
     med_agency_state_t *ms = (med_agency_state_t *)(mev->state);
     wandder_encoded_result_t *kamsg;
     wandder_etsipshdr_data_t hdrdata;
+    char elemstring[16];
 
     if (ms->pending_ka == NULL && ms->main_fd != -1) {
         /* Only create a new KA message if we have sent the last one we
@@ -413,7 +431,7 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
             reset_wandder_encoder(ms->encoder);
         }
 
-        hdrdata.liid = "none";
+        hdrdata.liid = "openlikeepalive";
         hdrdata.liid_len = strlen(hdrdata.liid);
 
         hdrdata.authcc = "NA";
@@ -421,10 +439,16 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
         hdrdata.delivcc = "NA";
         hdrdata.delivcc_len = strlen(hdrdata.delivcc);
 
-        hdrdata.operatorid = "NA";
+        if (state->operatorid) {
+            hdrdata.operatorid = state->operatorid;
+        } else {
+            hdrdata.operatorid = "unspecified";
+        }
         hdrdata.operatorid_len = strlen(hdrdata.operatorid);
 
-        hdrdata.networkelemid = "NA";
+        /* Stupid 16 character limit... */
+        snprintf(elemstring, 16, "med-%u", state->mediatorid);
+        hdrdata.networkelemid = elemstring;
         hdrdata.networkelemid_len = strlen(hdrdata.networkelemid);
 
         hdrdata.intpointid = NULL;
@@ -465,7 +489,9 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
                     "OpenLI: unable to start keepalive response timer.");
             return -1;
         }
-        ms->karesptimer_fd = ms->parent->aliverespev->fd;
+        if (ms->parent->aliverespev) {
+            ms->karesptimer_fd = ms->parent->aliverespev->fd;
+        }
 
     }
 
@@ -705,7 +731,7 @@ static int accept_collector(mediator_state_t *state) {
 }
 
 static handover_t *create_new_handover(char *ipstr, char *portstr,
-        int handover_type) {
+        int handover_type, uint8_t expectkaresp) {
 
     med_epoll_ev_t *agev;
     med_epoll_ev_t *timerev;
@@ -722,10 +748,15 @@ static handover_t *create_new_handover(char *ipstr, char *portstr,
 
     agev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
     timerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
-    respev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
     agstate = (med_agency_state_t *)malloc(sizeof(med_agency_state_t));
 
-    if (agev == NULL || timerev == NULL || agstate == NULL || respev == NULL) {
+    if (expectkaresp) {
+        respev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+    } else {
+        respev = NULL;
+    }
+
+    if (agev == NULL || timerev == NULL || agstate == NULL) {
         logger(LOG_DAEMON, "OpenLI: ran out of memory while allocating handover structure.");
         if (agev) {
             free(agev);
@@ -764,9 +795,11 @@ static handover_t *create_new_handover(char *ipstr, char *portstr,
     timerev->fdtype = MED_EPOLL_KA_TIMER;
     timerev->state = agstate;
 
-    respev->fd = -1;
-    respev->fdtype = MED_EPOLL_KA_RESPONSE_TIMER;
-    respev->state = agstate;
+    if (respev) {
+        respev->fd = -1;
+        respev->fdtype = MED_EPOLL_KA_RESPONSE_TIMER;
+        respev->state = agstate;
+    }
 
     ho->ipstr = ipstr;
     ho->portstr = portstr;
@@ -786,18 +819,25 @@ static void create_new_agency(mediator_state_t *state, liagency_t *lea) {
     newagency.awaitingconfirm = 0;
     newagency.disabled = 0;
     newagency.hi2 = create_new_handover(lea->hi2_ipstr, lea->hi2_portstr,
-            HANDOVER_HI2);
+            HANDOVER_HI2, lea->keepalive_responder);
     newagency.hi3 = create_new_handover(lea->hi3_ipstr, lea->hi3_portstr,
-            HANDOVER_HI3);
+            HANDOVER_HI3, lea->keepalive_responder);
+    newagency.karespreq = lea->keepalive_responder;
 
     libtrace_list_push_back(state->agencies, &newagency);
 
 }
 
 static int has_handover_changed(mediator_state_t *state,
-        handover_t *ho, char *ipstr, char *portstr, char *agencyid) {
+        handover_t *ho, char *ipstr, char *portstr, mediator_agency_t *existing,
+        liagency_t *newag, med_agency_state_t *mas) {
 
     char *hitypestr;
+    int changedloc = 0;
+    int changedkaresp = 0;
+
+    /* TODO this function is a bit awkward at the moment */
+
     if (ho == NULL) {
         return -1;
     }
@@ -806,7 +846,15 @@ static int has_handover_changed(mediator_state_t *state,
         return -1;
     }
 
-    if (strcmp(ho->ipstr, ipstr) == 0 && strcmp(ho->portstr, portstr) == 0) {
+    if (newag->keepalive_responder != existing->karespreq) {
+        changedkaresp = 1;
+    }
+
+    if (strcmp(ho->ipstr, ipstr) != 0 || strcmp(ho->portstr, portstr) != 0) {
+        changedloc = 1;
+    }
+
+    if (!changedkaresp && !changedloc) {
         return 0;
     }
 
@@ -818,9 +866,40 @@ static int has_handover_changed(mediator_state_t *state,
         hitypestr = "Unknown handover";
     }
 
-    logger(LOG_DAEMON,
-            "OpenLI: %s connection info for LEA %s has changed from %s:%s to %s:%s.",
-            hitypestr, agencyid, ho->ipstr, ho->portstr, ipstr, portstr);
+    if (changedloc) {
+        logger(LOG_DAEMON,
+                "OpenLI: %s connection info for LEA %s has changed from %s:%s to %s:%s.",
+                hitypestr, existing->agencyid, ho->ipstr, ho->portstr, ipstr, portstr);
+    } else {
+        if (newag->keepalive_responder == 0) {
+            if (ho->handover_type == HANDOVER_HI2) {
+                logger(LOG_DAEMON,
+                        "OpenLI: disabled keep-alive response requirement for LEA %s",
+                        existing->agencyid);
+            }
+            if (ho->aliverespev) {
+                if (ho->aliverespev->fd != -1) {
+                    close(ho->aliverespev->fd);
+                }
+                free(ho->aliverespev);
+                ho->aliverespev = NULL;
+            }
+        } else {
+            if (ho->handover_type == HANDOVER_HI2) {
+                logger(LOG_DAEMON,
+                        "OpenLI: enabled keep-alive response requirement for LEA %s",
+                        existing->agencyid);
+            }
+            if (ho->aliverespev == NULL) {
+                ho->aliverespev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+            }
+            ho->aliverespev->fd = -1;
+            ho->aliverespev->fdtype = MED_EPOLL_KA_RESPONSE_TIMER;
+            ho->aliverespev->state = mas;
+
+        }
+        return 0;
+    }
 
     disconnect_handover(state, ho);
     free(ho->ipstr);
@@ -884,28 +963,33 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
         if (strcmp(x->agencyid, lea.agencyid) == 0) {
             med_agency_state_t *mas;
 
+            mas = (med_agency_state_t *)(x->hi2->outev->state);
             if ((ret = has_handover_changed(state, x->hi2, lea.hi2_ipstr,
-                    lea.hi2_portstr, x->agencyid)) == -1) {
+                    lea.hi2_portstr, x, &lea, mas)) == -1) {
                 x->disabled = 1;
                 goto freelea;
             } else if (ret == 1) {
-                mas = (med_agency_state_t *)(x->hi2->outev->state);
                 if (mas) {
                     mas->failmsg = 0;
                 }
+                lea.hi2_portstr = NULL;
+                lea.hi2_ipstr = NULL;
             }
 
+            mas = (med_agency_state_t *)(x->hi3->outev->state);
             if ((ret = has_handover_changed(state, x->hi3, lea.hi3_ipstr,
-                    lea.hi3_portstr, x->agencyid)) == -1) {
+                    lea.hi3_portstr, x, &lea, mas)) == -1) {
                 x->disabled = 1;
                 goto freelea;
             } else if (ret == 1) {
-                mas = (med_agency_state_t *)(x->hi3->outev->state);
                 if (mas) {
                     mas->failmsg = 0;
                 }
+                lea.hi3_portstr = NULL;
+                lea.hi3_ipstr = NULL;
             }
 
+            x->karespreq = lea.keepalive_responder;
             x->awaitingconfirm = 0;
             x->disabled = 0;
             ret = 0;

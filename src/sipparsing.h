@@ -83,8 +83,6 @@ int sip_is_200ok(openli_sip_parser_t *parser);
 int sip_is_183sessprog(openli_sip_parser_t *parser);
 int sip_is_bye(openli_sip_parser_t *parser);
 
-int identified_as_sip(libtrace_packet_t *packet, libtrace_list_t *knownsip);
-
 #endif
 
 

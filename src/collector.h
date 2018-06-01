@@ -38,6 +38,7 @@
 #include "coreserver.h"
 #include "sipparsing.h"
 #include "intercept.h"
+#include "etsili_core.h"
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
@@ -185,7 +186,18 @@ typedef struct collector_global {
 
     coreserver_t *alumirrors;
 
+    etsili_generic_t *freegenerics;
+
 } collector_global_t;
+
+typedef struct packetinfo {
+    int family;
+    struct sockaddr_storage srcip;
+    struct sockaddr_storage destip;
+    uint16_t srcport;
+    uint16_t destport;
+} packet_info_t;
+
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

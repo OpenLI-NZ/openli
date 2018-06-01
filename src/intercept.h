@@ -33,8 +33,6 @@
 #include <libtrace/linked_list.h>
 #include <uthash.h>
 
-#include "internetaccess.h"
-
 #define OPENLI_ALUSHIM_NONE (0xffffffff)
 
 typedef struct intercept_common {
@@ -180,7 +178,8 @@ void free_single_aluintercept(aluintercept_t *alu);
 rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin);
 rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *rtp);
 
-ipsession_t *create_ipsession(ipintercept_t *ipint, access_session_t *session);
+ipsession_t *create_ipsession(ipintercept_t *ipint, uint32_t cin,
+        int ipfamily, struct sockaddr *assignedip);
 
 aluintercept_t *create_aluintercept(ipintercept_t *ipint);
 

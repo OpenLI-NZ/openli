@@ -152,14 +152,13 @@ static void form_alu_ipcc(collector_global_t *glob,
 }
 
 int check_alu_intercept(collector_global_t *glob, colthread_local_t *loc,
-        libtrace_packet_t *packet, coreserver_t *alusources,
-        aluintercept_t *aluints) {
+        libtrace_packet_t *packet, packet_info_t *pinfo,
+        coreserver_t *alusources, aluintercept_t *aluints) {
 
     coreserver_t *cs, *tmp;
     aluintercept_t *alu;
     int alumatched = 0;
-    uint16_t destport, ethertype;
-    struct sockaddr_storage destaddr;
+    uint16_t ethertype;
     alushimhdr_t *aluhdr = NULL;
     uint32_t rem = 0, shimintid;
     void *l3, *l2;
@@ -167,20 +166,15 @@ int check_alu_intercept(collector_global_t *glob, colthread_local_t *loc,
     struct timeval tv;
     int aludir;
 
-    if (trace_get_destination_address(packet,
-            (struct sockaddr *)&destaddr) == NULL) {
-        return 0;
-    }
-
-    destport = trace_get_destination_port(packet);
-    if (destport == 0) {
+    if (pinfo->destport == 0) {
         return 0;
     }
 
     /* Is this packet from any of our known ALU mirrors? */
     HASH_ITER(hh, alusources, cs, tmp) {
         int ret = 0;
-        if ((ret = coreserver_match(cs, &destaddr, destport)) > 0) {
+        if ((ret = coreserver_match(cs, &(pinfo->destip),
+                pinfo->destport)) > 0) {
             alumatched = 1;
             break;
         }

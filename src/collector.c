@@ -250,16 +250,15 @@ static int process_sip_packet(libtrace_packet_t *pkt,
     return 0;
 }
 
-static inline void send_sip_update(libtrace_packet_t *pkt,
-        colthread_local_t *loc) {
-    openli_state_update_t sipup;
+static inline void send_packet_to_sync(libtrace_packet_t *pkt,
+        colthread_local_t *loc, uint8_t updatetype) {
+    openli_state_update_t syncup;
 
-    sipup.type = OPENLI_UPDATE_SIP;
-    sipup.data.pkt = pkt;
-    sipup.data.pkt = pkt;
+    syncup.type = updatetype;
+    syncup.data.pkt = pkt;
 
     trace_increment_packet_refcount(pkt);
-    libtrace_message_queue_put(&(loc->tosyncq), (void *)(&sipup));
+    libtrace_message_queue_put(&(loc->tosyncq), (void *)(&syncup));
 
 }
 
@@ -309,6 +308,85 @@ static void process_incoming_messages(libtrace_thread_t *t,
 
 }
 
+static inline int is_radius_packet(libtrace_packet_t *pkt, packet_info_t *pinfo,
+        coreserver_t *radservers) {
+
+    coreserver_t *rad, *tmp;
+
+    if (pinfo->srcport == 0 || pinfo->destport == 0) {
+        return 0;
+    }
+
+    HASH_ITER(hh, radservers, rad, tmp) {
+        int ret;
+        if ((ret = coreserver_match(rad, &(pinfo->srcip),
+                    pinfo->srcport)) > 0) {
+            return 1;
+        }
+
+        if (ret == -1) {
+            logger(LOG_DAEMON,
+                    "Removing %s:%s from RADIUS server list due to getaddrinfo error",
+                    rad->ipstr, rad->portstr);
+            HASH_DELETE(hh, radservers, rad);
+            continue;
+        }
+
+        if ((ret = coreserver_match(rad, &(pinfo->destip),
+                    pinfo->destport)) > 0) {
+            return 1;
+        }
+
+        if (ret == -1) {
+            /* should never happen at this point? */
+            logger(LOG_DAEMON,
+                    "Removing %s:%s from RADIUS server list due to getaddrinfo error",
+                    rad->ipstr, rad->portstr);
+            HASH_DELETE(hh, radservers, rad);
+            continue;
+        }
+    }
+
+    /* Doesn't match any of our known RADIUS servers */
+    return 0;
+}
+
+static int identified_as_sip(libtrace_packet_t *packet, packet_info_t *pinfo,
+        libtrace_list_t *knownsip) {
+
+    void *transport;
+    uint8_t proto;
+    uint32_t rem;
+    uint16_t sport, dport;
+
+    transport = trace_get_transport(packet, &proto, &rem);
+    if (transport == NULL) {
+        return 0;
+    }
+
+    if (proto == TRACE_IPPROTO_TCP) {
+        if (rem < sizeof(libtrace_tcp_t)) {
+            return 0;
+        }
+    } else if (proto == TRACE_IPPROTO_UDP) {
+        if (rem < sizeof(libtrace_udp_t)) {
+            return 0;
+        }
+    } else {
+        return 0;
+    }
+
+    if (pinfo->srcport == 5060 || pinfo->destport == 5060) {
+        return 1;
+    }
+
+    /* TODO check against user-configured servers in the knownsip list */
+
+
+    return 0;
+}
+
+
 static libtrace_packet_t *process_packet(libtrace_t *trace,
         libtrace_thread_t *t, void *global, void *tls,
         libtrace_packet_t *pkt) {
@@ -318,9 +396,11 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     void *l3;
     uint16_t ethertype;
     uint32_t rem;
+    uint8_t proto;
     int forwarded = 0;
 
     openli_pushed_t syncpush;
+    packet_info_t pinfo;
 
     /* Check for any messages from the sync thread */
     while (libtrace_message_queue_try_get(&(loc->fromsyncq),
@@ -334,39 +414,77 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         return pkt;
     }
 
-    /* Is this from one of our ALU mirrors -- if yes, parse + strip it
-     * for conversion to an ETSI record */
-    if (glob->alumirrors && check_alu_intercept(glob, loc, pkt,
-            glob->alumirrors, loc->activealuintercepts)) {
-        return NULL;
+    trace_increment_packet_refcount(pkt);
+    if (!trace_get_source_address(pkt, (struct sockaddr *)(&pinfo.srcip))) {
+        return pkt;
+    }
+    if (!trace_get_destination_address(pkt,
+            (struct sockaddr *)(&pinfo.destip))) {
+        return pkt;
     }
 
-    /* Is this a RADIUS packet? -- if yes, create a state update */
+    if (ethertype == TRACE_ETHERTYPE_IP) {
+        pinfo.srcport = ntohs(((struct sockaddr_in *)(&pinfo.srcip))->sin_port);
+        pinfo.destport = ntohs(((struct sockaddr_in *)(&pinfo.destip))->sin_port);
+    } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
+        pinfo.srcport = ntohs(((struct sockaddr_in6 *)(&pinfo.srcip))->sin6_port);
+        pinfo.destport = ntohs(((struct sockaddr_in6 *)(&pinfo.destip))->sin6_port);
+    } else {
+        pinfo.srcport = 0;
+        pinfo.destport = 0;
+    }
 
-    /* Is this a SIP packet? -- if yes, create a state update */
-    if (identified_as_sip(pkt, loc->knownsipservers)) {
-        if (process_sip_packet(pkt, loc) == 1) {
-            send_sip_update(pkt, loc);
+    pinfo.family = pinfo.srcip.ss_family;
+
+    /* All these special packets are UDP, so we can avoid a whole bunch
+     * of these checks for TCP traffic */
+    if (trace_get_transport(pkt, &proto, &rem) != NULL &&
+            proto == TRACE_IPPROTO_UDP) {
+
+        /* Is this from one of our ALU mirrors -- if yes, parse + strip it
+         * for conversion to an ETSI record */
+        if (glob->alumirrors && check_alu_intercept(glob, loc, pkt, &pinfo,
+                glob->alumirrors, loc->activealuintercepts)) {
+            return NULL;
+        }
+
+        /* Is this a RADIUS packet? -- if yes, create a state update */
+        if (loc->radiusservers && is_radius_packet(pkt, &pinfo,
+                    loc->radiusservers)) {
+            send_packet_to_sync(pkt, loc, OPENLI_UPDATE_RADIUS);
             forwarded = 1;
+        }
+
+        /* Is this a SIP packet? -- if yes, create a state update */
+        if (identified_as_sip(pkt, &pinfo, loc->knownsipservers)) {
+            if (process_sip_packet(pkt, loc) == 1) {
+                send_packet_to_sync(pkt, loc, OPENLI_UPDATE_SIP);
+                forwarded = 1;
+            }
         }
     }
 
     if (ethertype == TRACE_ETHERTYPE_IP) {
         /* Is this an IP packet? -- if yes, possible IP CC */
-        if (ipv4_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
+        if (ipv4_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, rem, glob,
+                    loc)) {
             forwarded = 1;
         }
+
         /* Is this an RTP packet? -- if yes, possible IPMM CC */
-        if (ip4mm_comm_contents(pkt, (libtrace_ip_t *)l3, rem, glob, loc)) {
-            forwarded = 1;
+        if (proto == TRACE_IPPROTO_UDP) {
+            if (ip4mm_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, rem,
+                        glob, loc)) {
+                forwarded = 1;
+            }
         }
 
     }
 
     /* TODO IPV6 CC */
 
-
     if (forwarded) {
+        trace_decrement_packet_refcount(pkt);
         return NULL;
     }
     return pkt;
@@ -447,6 +565,180 @@ static void reload_inputs(collector_global_t *glob,
         HASH_ADD_KEYPTR(hh, glob->inputs, newinp->uri, strlen(newinp->uri),
                 newinp);
     }
+
+}
+
+static void *start_export_thread(void *params) {
+    collector_global_t *glob = (collector_global_t *)params;
+    collector_export_t *exp = init_exporter(glob);
+    int connected = 0;
+
+    if (exp == NULL) {
+        logger(LOG_DAEMON, "OpenLI: exporting thread is not functional!");
+        collector_halt = 1;
+        pthread_exit(NULL);
+    }
+
+    while (collector_halt == 0) {
+        if (exporter_thread_main(exp) <= 0) {
+            break;
+        }
+    }
+
+    destroy_exporter(exp);
+    logger(LOG_DAEMON, "OpenLI: exiting export thread.");
+    pthread_exit(NULL);
+}
+
+static void clear_input(colinput_t *input) {
+
+    if (!input) {
+        return;
+    }
+    if (input->trace) {
+        trace_destroy(input->trace);
+    }
+    if (input->pktcbs) {
+        trace_destroy_callback_set(input->pktcbs);
+    }
+    if (input->uri) {
+        free(input->uri);
+    }
+}
+
+static void clear_global_config(collector_global_t *glob) {
+    colinput_t *inp, *tmp;
+
+    HASH_ITER(hh, glob->inputs, inp, tmp) {
+        HASH_DELETE(hh, glob->inputs, inp);
+        clear_input(inp);
+        free(inp);
+    }
+
+    free_coreserver_list(glob->alumirrors);
+
+    if (glob->syncsendqs) {
+        free(glob->syncsendqs);
+    }
+
+    if (glob->syncepollevs) {
+        free(glob->syncepollevs);
+    }
+
+    if (glob->operatorid) {
+        free(glob->operatorid);
+    }
+
+    if (glob->networkelemid) {
+        free(glob->networkelemid);
+    }
+
+    if (glob->intpointid) {
+        free(glob->intpointid);
+    }
+
+    if (glob->provisionerip) {
+        free(glob->provisionerip);
+    }
+
+    if (glob->provisionerport) {
+        free(glob->provisionerport);
+    }
+
+    if (glob->expired_inputs) {
+        libtrace_list_node_t *n;
+        n = glob->expired_inputs->head;
+        while (n) {
+            inp = *((colinput_t **)(n->data));
+            clear_input(inp);
+            free(inp);
+            n = n->next;
+        }
+        libtrace_list_deinit(glob->expired_inputs);
+    }
+
+    pthread_rwlock_destroy(&glob->config_mutex);
+    pthread_mutex_destroy(&glob->syncq_mutex);
+    pthread_mutex_destroy(&glob->exportq_mutex);
+
+    if (glob->sync_epollfd != -1) {
+        close(glob->sync_epollfd);
+    }
+
+    if (glob->export_epollfd != -1) {
+        close(glob->export_epollfd);
+    }
+
+    if (glob->freegenerics) {
+        free_etsili_generics(glob->freegenerics);
+    }
+
+    free(glob);
+}
+
+
+static collector_global_t *parse_global_config(char *configfile) {
+
+    collector_global_t *glob = NULL;
+
+    glob = (collector_global_t *)malloc(sizeof(collector_global_t));
+
+    glob->inputs = NULL;
+    glob->totalthreads = 0;
+    glob->queuealloced = 0;
+    glob->registered_syncqs = 0;
+    glob->syncsendqs = NULL;
+    glob->syncepollevs = 0;
+    glob->intpointid = NULL;
+    glob->intpointid_len = 0;
+    glob->operatorid = NULL;
+    glob->operatorid_len = 0;
+    glob->networkelemid = NULL;
+    glob->networkelemid_len = 0;
+    glob->syncthreadid = 0;
+    glob->exportthreadid = 0;
+    glob->sync_epollfd = epoll_create1(0);
+    glob->export_epollfd = epoll_create1(0);
+    glob->configfile = configfile;
+    glob->export_epoll_evs = NULL;
+    glob->provisionerip = NULL;
+    glob->provisionerport = NULL;
+    glob->alumirrors = NULL;
+    glob->expired_inputs = libtrace_list_init(sizeof(colinput_t *));
+    glob->freegenerics = NULL;
+
+    pthread_rwlock_init(&glob->config_mutex, NULL);
+    pthread_mutex_init(&glob->syncq_mutex, NULL);
+    pthread_mutex_init(&glob->exportq_mutex, NULL);
+
+    if (parse_collector_config(configfile, glob) == -1) {
+        clear_global_config(glob);
+        return NULL;
+    }
+
+    if (glob->provisionerport == NULL) {
+        glob->provisionerport = strdup("8993");
+    }
+
+    if (glob->networkelemid == NULL) {
+        logger(LOG_DAEMON, "OpenLI: No network element ID specified in config file. Exiting.");
+        clear_global_config(glob);
+        glob = NULL;
+    }
+
+    else if (glob->operatorid == NULL) {
+        logger(LOG_DAEMON, "OpenLI: No operator ID specified in config file. Exiting.");
+        clear_global_config(glob);
+        glob = NULL;
+    }
+
+    else if (glob->provisionerip == NULL) {
+        logger(LOG_DAEMON, "OpenLI collector: no provisioner IP address specified in config file. Exiting.");
+        clear_global_config(glob);
+        glob = NULL;
+    }
+
+    return glob;
 
 }
 
@@ -567,27 +859,6 @@ static void *start_sync_thread(void *params) {
 
 }
 
-static void *start_export_thread(void *params) {
-    collector_global_t *glob = (collector_global_t *)params;
-    collector_export_t *exp = init_exporter(glob);
-    int connected = 0;
-
-    if (exp == NULL) {
-        logger(LOG_DAEMON, "OpenLI: exporting thread is not functional!");
-        collector_halt = 1;
-        pthread_exit(NULL);
-    }
-
-    while (collector_halt == 0) {
-        if (exporter_thread_main(exp) <= 0) {
-            break;
-        }
-    }
-
-    destroy_exporter(exp);
-    logger(LOG_DAEMON, "OpenLI: exiting export thread.");
-    pthread_exit(NULL);
-}
 
 int main(int argc, char *argv[]) {
 

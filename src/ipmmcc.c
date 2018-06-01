@@ -87,15 +87,13 @@ static openli_export_recv_t form_ipmmcc(collector_global_t *glob,
     return exprecv;
 }
 
-int ip4mm_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
+int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
+        libtrace_ip_t *ip,
         uint32_t rem, collector_global_t *glob, colthread_local_t *loc) {
 
-    struct sockaddr_storage ipsrc;
-    struct sockaddr_storage ipdst;
     struct sockaddr_in *targetaddr, *cmp, *otheraddr;
     openli_export_recv_t msg;
     int matched = 0;
-    uint16_t srcport, dstport;
     rtpstreaminf_t *rtp, *tmp;
 
     if (rem < sizeof(libtrace_ip_t)) {
@@ -103,23 +101,11 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
         return 0;
     }
 
-    if (trace_get_source_address(pkt, (struct sockaddr *)(&ipsrc)) == NULL) {
-        return 0;
-    }
-
-    if (trace_get_destination_address(pkt, (struct sockaddr *)(&ipdst)) ==
-            NULL) {
-        return 0;
-    }
-
-    srcport = trace_get_source_port(pkt);
-    dstport = trace_get_destination_port(pkt);
-
     if (ip->ip_p != TRACE_IPPROTO_UDP) {
         return 0;
     }
 
-    if (srcport == 0 || dstport == 0) {
+    if (pinfo->srcport == 0 || pinfo->destport == 0) {
         logger(LOG_DAEMON, "OpenLI: IPv4 RTP packet is missing a port number.");
         return 0;
     }
@@ -136,16 +122,17 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
             continue;
         }
 
-        if (ipsrc.ss_family != rtp->ai_family) {
+        if (pinfo->srcip.ss_family != rtp->ai_family) {
             continue;
         }
 
         /* Check for src = target, dst = other */
-        if (srcport == rtp->targetport && dstport == rtp->otherport) {
-            cmp = (struct sockaddr_in *)(&ipsrc);
+        if (pinfo->srcport == rtp->targetport &&
+                pinfo->destport == rtp->otherport) {
+            cmp = (struct sockaddr_in *)(&pinfo->srcip);
 
             if (targetaddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
-                cmp = (struct sockaddr_in *)(&ipdst);
+                cmp = (struct sockaddr_in *)(&pinfo->destip);
                 if (otheraddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
                     matched ++;
                     msg = form_ipmmcc(glob, loc, rtp, pkt, ip, rem,
@@ -157,11 +144,12 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
         }
 
         /* Check for dst = target, src = other */
-        if (dstport == rtp->targetport && srcport == rtp->otherport) {
-            cmp = (struct sockaddr_in *)(&ipsrc);
+        if (pinfo->destport == rtp->targetport &&
+                    pinfo->srcport == rtp->otherport) {
+            cmp = (struct sockaddr_in *)(&pinfo->srcip);
 
             if (otheraddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
-                cmp = (struct sockaddr_in *)(&ipdst);
+                cmp = (struct sockaddr_in *)(&pinfo->destip);
                 if (targetaddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
                     matched ++;
                     msg = form_ipmmcc(glob, loc, rtp, pkt, ip, rem,
