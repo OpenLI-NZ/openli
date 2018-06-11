@@ -33,6 +33,7 @@
 #include "collector.h"
 #include "collector_push_messaging.h"
 #include "intercept.h"
+#include "internetaccess.h"
 
 static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
     rtpstreaminf_t *rtp;
@@ -240,8 +241,9 @@ void handle_push_ipintercept(libtrace_thread_t *t, colthread_local_t *loc,
         return;
     }
     logger(LOG_DAEMON,
-            "OpenLI: collector thread %d has started intercepting IP session %s",
-            trace_get_perpkt_thread_id(t), sess->streamkey);
+            "OpenLI: collector thread %d has started intercepting %s IP session %s",
+            trace_get_perpkt_thread_id(t),
+            accesstype_to_string(sess->accesstype), sess->streamkey);
 }
 
 void handle_push_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,

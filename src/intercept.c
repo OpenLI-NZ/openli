@@ -312,6 +312,7 @@ ipsession_t *create_ipsession(ipintercept_t *ipint, uint32_t cin,
         return NULL;
     }
     memcpy(ipsess->targetip, assignedip, sizeof(struct sockaddr_storage));
+    ipsess->accesstype = ipint->accesstype;
 
     copy_intercept_common(&(ipint->common), &(ipsess->common));
 

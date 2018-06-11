@@ -1021,6 +1021,27 @@ static int halt_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
     return 0;
 }
 
+static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
+
+    if (!ipint) {
+        logger(LOG_DAEMON,
+                "OpenLI: received withdrawal for IP intercept %s but it is not present in the sync intercept list?",
+                ipint->common.liid);
+        return;
+    }
+
+    logger(LOG_DAEMON, "OpenLI: sync thread withdrawing IP intercept %s",
+            ipint->common.liid);
+
+    push_ipintercept_halt_to_threads(sync, ipint);
+    HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
+    if (ipint->username) {
+        remove_intercept_from_user_intercept_list(&sync->userintercepts, ipint);
+    }
+    free_single_ipintercept(ipint);
+
+}
+
 static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
@@ -1033,25 +1054,10 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
                 "OpenLI: received invalid IP intercept withdrawal from provisioner.");
         return -1;
     }
-
     HASH_FIND(hh_liid, sync->ipintercepts, torem.common.liid,
             torem.common.liid_len, ipint);
-    if (!ipint) {
-        logger(LOG_DAEMON,
-                "OpenLI: received withdrawal for IP intercept %s but it is not present in the sync intercept list?",
-                torem.common.liid);
-        return 0;
-    }
+    remove_ip_intercept(sync, ipint);
 
-    logger(LOG_DAEMON, "OpenLI: sync thread withdrawing IP intercept %s",
-            torem.common.liid);
-
-    push_ipintercept_halt_to_threads(sync, ipint);
-    HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
-    if (ipint->username) {
-        remove_intercept_from_user_intercept_list(&sync->userintercepts, ipint);
-    }
-    free_single_ipintercept(ipint);
     return 0;
 }
 
@@ -1231,9 +1237,15 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             return -1;
         }
 
+        if (cept->accesstype != x->accesstype) {
+            logger(LOG_DAEMON,
+                    "OpenLI: duplicate IP ID %s seen, but access type has changed to %s.", x->common.liid, accesstype_to_string(cept->accesstype));
+            /* Only affects IRIs so don't need to modify collector threads */
+            x->accesstype = cept->accesstype;
+        }
         x->awaitingconfirm = 0;
         free(cept);
-        /* our collector threads should already know about this intercept? */
+        /* our collector threads should already know about this intercept */
         return 0;
     }
 

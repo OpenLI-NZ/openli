@@ -127,4 +127,30 @@ int free_single_session(internet_user_t *user, access_session_t *sess) {
     free_session(sess);
     return 0;
 }
+
+const char *accesstype_to_string(internet_access_method_t am) {
+    switch(am) {
+        case INTERNET_ACCESS_TYPE_UNDEFINED:
+            return "undefined";
+        case INTERNET_ACCESS_TYPE_DIALUP:
+            return "dialup";
+        case INTERNET_ACCESS_TYPE_XDSL:
+            return "DSL";
+        case INTERNET_ACCESS_TYPE_CABLEMODEM:
+            return "cable modem";
+        case INTERNET_ACCESS_TYPE_LAN:
+            return "LAN";
+        case INTERNET_ACCESS_TYPE_WIRELESS_LAN:
+            return "wireless LAN";
+        case INTERNET_ACCESS_TYPE_FIBER:
+            return "fiber";
+        case INTERNET_ACCESS_TYPE_WIMAX:
+            return "WIMAX/HIPERMAN";
+        case INTERNET_ACCESS_TYPE_SATELLITE:
+            return "satellite";
+        case INTERNET_ACCESS_TYPE_WIRELESS_OTHER:
+            return "wireless (Other)";
+    }
+    return "invalid";
+}
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

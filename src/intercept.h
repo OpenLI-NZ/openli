@@ -35,6 +35,19 @@
 
 #define OPENLI_ALUSHIM_NONE (0xffffffff)
 
+typedef enum {
+    INTERNET_ACCESS_TYPE_UNDEFINED = 0,
+    INTERNET_ACCESS_TYPE_DIALUP = 1,
+    INTERNET_ACCESS_TYPE_XDSL = 2,
+    INTERNET_ACCESS_TYPE_CABLEMODEM = 3,
+    INTERNET_ACCESS_TYPE_LAN = 4,
+    INTERNET_ACCESS_TYPE_WIRELESS_LAN = 5,
+    INTERNET_ACCESS_TYPE_FIBER = 6,
+    INTERNET_ACCESS_TYPE_WIMAX = 7,
+    INTERNET_ACCESS_TYPE_SATELLITE= 8,
+    INTERNET_ACCESS_TYPE_WIRELESS_OTHER = 9,
+} internet_access_method_t;
+
 typedef struct intercept_common {
     char *liid;
     char *authcc;
@@ -51,6 +64,8 @@ typedef struct ipintercept {
 
     char *username;
     int username_len;
+
+    internet_access_method_t accesstype;
 
     /* Special case for converting ALU intercepts into ETSI ones */
     uint32_t alushimid;
@@ -150,6 +165,7 @@ struct ipsession {
     int ai_family;
     struct sockaddr_storage *targetip;
     uint32_t nextseqno;
+    internet_access_method_t accesstype;
 
     intercept_common_t common;
     UT_hash_handle hh;
