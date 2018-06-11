@@ -291,51 +291,6 @@ void handle_halt_ipintercept(libtrace_thread_t *t , colthread_local_t *loc,
     free_single_ipsession(sess);
 }
 
-void handle_push_sipuri(libtrace_thread_t *t, colthread_local_t *loc,
-        char *sipuri) {
-    sipuri_hash_t *newsip;
-    HASH_FIND_STR(loc->sip_targets, sipuri, newsip);
-
-    if (newsip) {
-        newsip->references ++;
-        free(sipuri);
-    } else {
-        newsip = (sipuri_hash_t *)malloc(sizeof(sipuri_hash_t));
-        newsip->uri = sipuri;
-        newsip->references = 1;
-        HASH_ADD_KEYPTR(hh, loc->sip_targets, newsip->uri,
-                strlen(newsip->uri), newsip);
-        logger(LOG_DAEMON,
-                "OpenLI: collector thread %d has added %s to list of SIP URIs.",
-                trace_get_perpkt_thread_id(t),
-                sipuri);
-    }
-}
-
-void handle_halt_sipuri(libtrace_thread_t *t, colthread_local_t *loc,
-        char *sipuri) {
-    sipuri_hash_t *torem;
-    HASH_FIND_STR(loc->sip_targets, sipuri, torem);
-    if (torem == NULL) {
-        logger(LOG_DAEMON, "OpenLI: asked to halt SIP intercept for target %s, but that is not in our set of known URIs", sipuri);
-        return;
-    } else {
-        torem->references --;
-    }
-    assert(torem->references >= 0);
-
-    if (torem->references == 0) {
-        logger(LOG_DAEMON,
-                "OpenLI: collector thread %d has removed %s from list of SIP URIs.",
-                trace_get_perpkt_thread_id(t),
-                sipuri);
-        HASH_DEL(loc->sip_targets, torem);
-        free(torem->uri);
-        free(torem);
-    }
-    free(sipuri);
-}
-
 void handle_push_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
         coreserver_t *cs) {
     coreserver_t *found, **servlist;
@@ -343,6 +298,9 @@ void handle_push_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
     switch(cs->servertype) {
         case OPENLI_CORE_SERVER_RADIUS:
             servlist = &(loc->radiusservers);
+            break;
+        case OPENLI_CORE_SERVER_SIP:
+            servlist = &(loc->sipservers);
             break;
         default:
             logger(LOG_DAEMON,
@@ -370,6 +328,9 @@ void handle_remove_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
     switch(cs->servertype) {
         case OPENLI_CORE_SERVER_RADIUS:
             servlist = &(loc->radiusservers);
+            break;
+        case OPENLI_CORE_SERVER_SIP:
+            servlist = &(loc->sipservers);
             break;
         default:
             logger(LOG_DAEMON,

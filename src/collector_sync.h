@@ -37,6 +37,7 @@
 #include "intercept.h"
 #include "internetaccess.h"
 #include "coreserver.h"
+#include "sipparsing.h"
 
 enum {
     SYNC_EVENT_PROC_QUEUE,

@@ -299,23 +299,12 @@ static void push_halt_active_voipstreams(libtrace_message_queue_t *q,
     }
 }
 
-static void push_sip_uri_halt(libtrace_message_queue_t *q, char *uri) {
-    openli_pushed_t msg;
-
-    memset(&msg, 0, sizeof(openli_pushed_t));
-    msg.type = OPENLI_PUSH_HALT_SIPURI;
-    msg.data.sipuri = strdup(uri);
-
-    libtrace_message_queue_put(q, (void *)(&msg));
-}
-
 static inline void push_voipintercept_halt_to_threads(collector_sync_t *sync,
         voipintercept_t *vint) {
 
     sync_sendq_t *sendq, *tmp;
 
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
-        push_sip_uri_halt(sendq->q, vint->sipuri);
         push_halt_active_voipstreams(sendq->q, vint,
                 sync->glob->sync_epollfd);
     }
@@ -485,16 +474,6 @@ static inline void convert_ipstr_to_sockaddr(char *knownip,
     freeaddrinfo(res);
 }
 
-
-static void push_sip_uri(libtrace_message_queue_t *q, char *uri) {
-    openli_pushed_t msg;
-
-    memset(&msg, 0, sizeof(openli_pushed_t));
-    msg.type = OPENLI_PUSH_SIPURI;
-    msg.data.sipuri = strdup(uri);
-
-    libtrace_message_queue_put(q, (void *)(&msg));
-}
 
 static int forward_new_coreserver(collector_sync_t *sync, uint8_t *provmsg,
         uint16_t msglen) {
@@ -1176,8 +1155,6 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
             vint->common.liid_len, vint);
 
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
-        push_sip_uri(sendq->q, vint->sipuri);
-
         /* Forward all active CINs to our collector threads */
         push_all_active_voipstreams(sendq->q, vint);
 
@@ -1729,7 +1706,6 @@ int sync_thread_main(collector_sync_t *sync) {
             push_all_active_intercepts(sync->allusers, sync->ipintercepts,
                     recvd.data.replyq);
             for (v = sync->voipintercepts; v != NULL; v = v->hh_liid.next) {
-                push_sip_uri(recvd.data.replyq, v->sipuri);
                 push_all_active_voipstreams(recvd.data.replyq, v);
             }
             push_all_coreservers(sync->coreservers, recvd.data.replyq);
