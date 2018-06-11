@@ -74,6 +74,8 @@ intercept must be configured with the following parameters:
   intercept records to the requesting agency.
 * Agency ID -- the agency that requested the intercept (this should match one
   of the agencies specified elsewhere in this configuration file).
+* Access type -- the technology used to provide the target with Internet
+  access (e.g. DSL, Fiber, Wireless, etc).
 
 An IP intercept must also include ONE of the following parameters, which is
 used to identify the intercept target.
@@ -139,5 +141,10 @@ elements:
                            intercept
 * agencyid              -- the internal identifier of the agency that requested
                            the intercept
+* accesstype            -- the access type providied to the user, will
+                           default to 'undefined' if not set.
 
+Valid access types are:
+  'dialup', 'adsl', 'vdsl', 'fiber', 'wireless', 'lan', 'satellite', 'wimax',
+  'cable' and 'wireless-other'.
 
