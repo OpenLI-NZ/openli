@@ -44,6 +44,7 @@ ipintercepts:
    user: "imacriminal"          # Username identifying the target in your AAA
    mediator: 6001               # ID of the mediator to send intercept via
    agencyid: "Police"           # ID of agency to send intercept to
+   accesstype: "Fiber"          # Access tech used by the target to access IP
 
 
  - liid: NAPP9321HN
@@ -53,6 +54,7 @@ ipintercepts:
                                 # intercept.
    mediator: 6001               # ID of the mediator to send intercept via
    agencyid: "Spooks"           # ID of agency to send intercept to
+   accesstype: "ADSL"           # Access tech used by the target to access IP
 
 
 # List of active VOIP intercepts.

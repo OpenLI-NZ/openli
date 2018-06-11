@@ -128,5 +128,7 @@ int free_single_session(internet_user_t *user, access_session_t *sess);
 
 access_plugin_t *get_radius_access_plugin(void);
 
+const char *accesstype_to_string(internet_access_method_t am);
+
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

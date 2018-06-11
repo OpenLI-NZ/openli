@@ -1354,6 +1354,10 @@ static int generate_iri(collector_global_t *glob,
             (uint8_t *)(&eventtype));
     HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
 
+    p = create_etsili_generic(&(glob->freegenerics),
+            IPIRI_CONTENTS_INTERNET_ACCESS_TYPE, sizeof(uint32_t),
+            (uint8_t *)(&ipint->accesstype));
+    HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
 
     if (ipint->username) {
         p = create_etsili_generic(&(glob->freegenerics),

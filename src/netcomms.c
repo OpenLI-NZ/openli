@@ -462,13 +462,13 @@ pushvoipintfail:
         (ipint->common.liid_len + ipint->common.authcc_len + \
          ipint->common.delivcc_len + \
          ipint->username_len + sizeof(ipint->common.destid) + \
-         + (5 * 4))
+         sizeof(ipint->accesstype) + (6 * 4))
 
 #define ALUSHIM_IPINTERCEPT_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
          ipint->common.delivcc_len + ipint->username_len + \
          sizeof(ipint->alushimid) + sizeof(ipint->common.destid) + \
-         + (6 * 4))
+         sizeof(ipint->accesstype) + (7 * 4))
 
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
@@ -517,6 +517,12 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_USERNAME, ipint->username,
             ipint->username_len)) == -1) {
+        goto pushipintfail;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_ACCESSTYPE,
+            (uint8_t *)(&ipint->accesstype),
+            sizeof(ipint->accesstype))) == -1) {
         goto pushipintfail;
     }
 
@@ -881,6 +887,7 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->common.targetagency = NULL;
     ipint->awaitingconfirm = 0;
     ipint->alushimid = OPENLI_ALUSHIM_NONE;
+    ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
 
     ipint->common.liid_len = 0;
     ipint->common.authcc_len = 0;
@@ -900,6 +907,8 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
             ipint->common.destid = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_ALUSHIMID) {
             ipint->alushimid = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_ACCESSTYPE) {
+            ipint->accesstype = *((internet_access_method_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_LIID) {
             DECODE_STRING_FIELD(ipint->common.liid, valptr, vallen);
             ipint->common.liid_len = vallen;
