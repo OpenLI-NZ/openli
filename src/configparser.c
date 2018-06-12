@@ -164,6 +164,59 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
     return 0;
 }
 
+static void parse_sip_targets(libtrace_list_t *targets, yaml_document_t *doc,
+        yaml_node_t *tgtconf) {
+
+    yaml_node_item_t *item;
+
+    for (item = tgtconf->data.sequence.items.start;
+            item != tgtconf->data.sequence.items.top; item ++) {
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+        yaml_node_pair_t *pair;
+
+        openli_sip_identity_t *newtgt;
+
+        newtgt = (openli_sip_identity_t *)calloc(1,
+                sizeof(openli_sip_identity_t));
+        newtgt->awaitingconfirm = 1;
+
+        for (pair = node->data.mapping.pairs.start;
+                pair < node->data.mapping.pairs.top; pair ++) {
+            yaml_node_t *key, *value;
+            key = yaml_document_get_node(doc, pair->key);
+            value = yaml_document_get_node(doc, pair->value);
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "username") == 0 &&
+                    newtgt->username == NULL) {
+                newtgt->username = strdup((char *)value->data.scalar.value);
+                newtgt->username_len = strlen(newtgt->username);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "realm") == 0 &&
+                    newtgt->realm == NULL) {
+                newtgt->realm = strdup((char *)value->data.scalar.value);
+                newtgt->realm_len = strlen(newtgt->realm);
+            }
+        }
+
+        if (newtgt->username) {
+            libtrace_list_push_back(targets, &newtgt);
+        } else {
+            logger(LOG_DAEMON,
+                    "OpenLI: a SIP target requires a username, skipping.");
+            if (newtgt->realm) {
+                free(newtgt->realm);
+            }
+            free(newtgt);
+        }
+    }
+
+}
+
 static int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
         yaml_document_t *doc, yaml_node_t *inputs) {
 
@@ -337,7 +390,7 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         newcept->active_cins = NULL;
         newcept->cin_callid_map = NULL;
         newcept->cin_sdp_map = NULL;
-        newcept->sipuri = NULL;
+        newcept->targets = libtrace_list_init(sizeof(openli_sip_identity_t *));
         newcept->active = 1;
         newcept->common.destid = 0;
         newcept->common.targetagency = NULL;
@@ -377,11 +430,10 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
             }
 
             if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "sipuri") == 0 &&
-                    newcept->sipuri == NULL) {
-                newcept->sipuri = strdup((char *)value->data.scalar.value);
-                newcept->sipuri_len = strlen(newcept->sipuri);
+                    value->type == YAML_SEQUENCE_NODE &&
+                    strcmp((char *)key->data.scalar.value, "siptargets") == 0) {
+
+                parse_sip_targets(newcept->targets, doc, value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -404,7 +456,8 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         }
 
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
-                newcept->common.delivcc != NULL && newcept->sipuri != NULL &&
+                newcept->common.delivcc != NULL &&
+                libtrace_list_get_size(newcept->targets) > 0 &&
                 newcept->common.destid > 0 &&
                 newcept->common.targetagency != NULL) {
             HASH_ADD_KEYPTR(hh_liid, *voipints, newcept->common.liid,

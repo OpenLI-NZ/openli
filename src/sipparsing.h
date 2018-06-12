@@ -33,6 +33,7 @@
 #include <osipparser2/osip_message.h>
 #include <osipparser2/sdp_message.h>
 
+#include "intercept.h"
 
 typedef enum {
     SIP_IPV4_TCP,
@@ -72,6 +73,14 @@ int parse_sip_packet(openli_sip_parser_t **parser, libtrace_packet_t *packet);
 void release_sip_parser(openli_sip_parser_t *parser);
 char *get_sip_from_uri(openli_sip_parser_t *parser);
 char *get_sip_to_uri(openli_sip_parser_t *parser);
+char *get_sip_to_uri_username(openli_sip_parser_t *parser);
+char *get_sip_to_uri_realm(openli_sip_parser_t *parser);
+int get_sip_to_uri_identity(openli_sip_parser_t *parser,
+        openli_sip_identity_t *sipid);
+int get_sip_auth_identity(openli_sip_parser_t *parser, int index,
+        int *authcount, openli_sip_identity_t *sipid);
+int get_sip_proxy_auth_identity(openli_sip_parser_t *parser, int index,
+        int *authcount, openli_sip_identity_t *sipid);
 char *get_sip_cseq(openli_sip_parser_t *parser);
 char *get_sip_callid(openli_sip_parser_t *parser);
 char *get_sip_session_id(openli_sip_parser_t *parser);

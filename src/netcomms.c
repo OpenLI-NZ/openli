@@ -332,8 +332,8 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
 #define VOIPINTERCEPT_BODY_LEN(vint) \
         (vint->common.liid_len + vint->common.authcc_len + \
          vint->common.delivcc_len + \
-         vint->sipuri_len + sizeof(vint->common.destid) + \
-         + (5 * 4))
+         sizeof(vint->common.destid) + \
+         + (4 * 4))
 
 #define INTERCEPT_WITHDRAW_BODY_LEN(liid, authcc) \
         (strlen(liid) + strlen(authcc) + (2 * 4))
@@ -438,11 +438,6 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
         goto pushvoipintfail;
     }
 
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_SIPURI, vint->sipuri,
-            vint->sipuri_len)) == -1) {
-        goto pushvoipintfail;
-    }
-
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_MEDIATORID,
             (uint8_t *)&(vint->common.destid),
             sizeof(vint->common.destid))) == -1) {
@@ -457,6 +452,101 @@ pushvoipintfail:
             vint->common.liid, nb->fd);
     return -1;
 }
+
+#define SIPTARGET_BODY_LEN_NOREALM(sipid, vint) \
+        (vint->common.liid_len + sipid->username_len + (2 * 4))
+
+#define SIPTARGET_BODY_LEN(sipid, vint) \
+        (vint->common.liid_len + sipid->username_len + sipid->realm_len \
+        + (3 * 4))
+
+static inline int push_sip_target_onto_net_buffer_generic(net_buffer_t *nb,
+        openli_sip_identity_t *sipid, voipintercept_t *vint,
+        openli_proto_msgtype_t msgtype) {
+
+    uint16_t totallen;
+    ii_header_t hdr;
+    int ret;
+
+    if (msgtype != OPENLI_PROTO_ANNOUNCE_SIP_TARGET &&
+            msgtype != OPENLI_PROTO_WITHDRAW_SIP_TARGET) {
+        logger(LOG_DAEMON,
+                "OpenLI: push_sip_target_onto_net_buffer_generic() called with invalid message type: %d",
+                msgtype);
+        return -1;
+    }
+
+    if (sipid->realm) {
+        totallen = SIPTARGET_BODY_LEN(sipid, vint);
+    } else {
+        totallen = SIPTARGET_BODY_LEN_NOREALM(sipid, vint);
+    }
+
+    if (totallen > 65535) {
+        logger(LOG_DAEMON,
+                "OpenLI: SIP target announcement is too long to fit in a single message (%d).",
+                totallen);
+        return -1;
+    }
+
+    /* Push on header */
+    populate_header(&hdr, msgtype, totallen, 0);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t))) == -1) {
+        goto pushsiptargetfail;
+    }
+
+    /* Push on each field */
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID, vint->common.liid,
+            vint->common.liid_len)) == -1) {
+        goto pushsiptargetfail;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_SIP_USER, sipid->username,
+            sipid->username_len)) == -1) {
+        goto pushsiptargetfail;
+    }
+
+    if (sipid->realm) {
+        if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_SIP_REALM,
+                sipid->realm, sipid->realm_len)) == -1) {
+            goto pushsiptargetfail;
+        }
+    }
+
+    /* Technically, we should also include authCC in here too for
+     * multi-national operators but that can probably wait for now.
+     */
+
+    return (int)totallen;
+
+pushsiptargetfail:
+    if (sipid->realm) {
+        logger(LOG_DAEMON,
+                "OpenLI: unable to push new SIP target %s@%s to collector fd %d",
+            sipid->username, sipid->realm, nb->fd);
+    } else {
+        logger(LOG_DAEMON,
+                "OpenLI: unable to push new SIP target %s@* to collector fd %d",
+            sipid->username, nb->fd);
+    }
+    return -1;
+}
+
+int push_sip_target_onto_net_buffer(net_buffer_t *nb,
+        openli_sip_identity_t *sipid, voipintercept_t *vint) {
+
+    return push_sip_target_onto_net_buffer_generic(nb, sipid, vint,
+            OPENLI_PROTO_ANNOUNCE_SIP_TARGET);
+}
+
+int push_sip_target_withdrawal_onto_net_buffer(net_buffer_t *nb,
+        openli_sip_identity_t *sipid, voipintercept_t *vint) {
+
+    return push_sip_target_onto_net_buffer_generic(nb, sipid, vint,
+            OPENLI_PROTO_WITHDRAW_SIP_TARGET);
+}
+
 
 #define IPINTERCEPT_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
@@ -816,7 +906,7 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
     vint->active_cins = NULL;  /* Placeholder -- sync thread should populate */
     vint->cin_callid_map = NULL;
     vint->cin_sdp_map = NULL;
-    vint->sipuri = NULL;
+    vint->targets = libtrace_list_init(sizeof(openli_sip_identity_t *));
     vint->common.destid = 0;
     vint->common.targetagency = NULL;
     vint->active = 1;
@@ -825,7 +915,6 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
     vint->common.liid_len = 0;
     vint->common.authcc_len = 0;
     vint->common.delivcc_len = 0;
-    vint->sipuri_len = 0;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -847,9 +936,6 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
         } else if (f == OPENLI_PROTO_FIELD_DELIVCC) {
             DECODE_STRING_FIELD(vint->common.delivcc, valptr, vallen);
             vint->common.delivcc_len = vallen;
-        } else if (f == OPENLI_PROTO_FIELD_SIPURI) {
-            DECODE_STRING_FIELD(vint->sipuri, valptr, vallen);
-            vint->sipuri_len = vallen;
         } else if (f == OPENLI_PROTO_FIELD_INTERCEPTID) {
             vint->internalid = *((uint64_t *)valptr);
         } else {
@@ -979,6 +1065,64 @@ int decode_mediator_withdraw(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med) {
 
     return decode_mediator_announcement(msgbody, len, med);
+}
+
+int decode_sip_target_announcement(uint8_t *msgbody, uint16_t len,
+        openli_sip_identity_t *sipid, char *liidspace, int spacelen) {
+
+    uint8_t *msgend = msgbody + len;
+    sipid->realm = NULL;
+    sipid->realm_len = 0;
+    sipid->username = NULL;
+    sipid->username_len = 0;
+    sipid->awaitingconfirm = 0;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_SIP_USER) {
+            DECODE_STRING_FIELD(sipid->username, valptr, vallen);
+            sipid->username_len = strlen(sipid->username);
+        } else if (f == OPENLI_PROTO_FIELD_SIP_REALM) {
+            DECODE_STRING_FIELD(sipid->realm, valptr, vallen);
+            sipid->realm_len = strlen(sipid->realm);
+        } else if (f == OPENLI_PROTO_FIELD_LIID) {
+            if (vallen >= spacelen) {
+                logger(LOG_DAEMON,
+                        "OpenLI: not enough space to save LIID from SIP target message -- space provided %d, required %u\n", spacelen, vallen);
+                return -1;
+            }
+            strncpy(liidspace, (char *)valptr, vallen);
+            liidspace[vallen] = '\0';
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_DAEMON,
+                "OpenLI: invalid field in received core server announcement: %d.",
+                f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+
+    if (sipid->username == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI: received a SIP target message with no username?");
+        return -1;
+    }
+    return 0;
+}
+
+int decode_sip_target_withdraw(uint8_t *msgbody, uint16_t len,
+        openli_sip_identity_t *sipid, char *liidspace, int spacelen) {
+
+    return decode_sip_target_announcement(msgbody, len, sipid, liidspace,
+            spacelen);
 }
 
 int decode_coreserver_announcement(uint8_t *msgbody, uint16_t len,
