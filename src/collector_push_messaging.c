@@ -48,7 +48,7 @@ static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
     }
 
     HASH_DELETE(hh, loc->activertpintercepts, rtp);
-
+    free(rtp);
     return 1;
 }
 
