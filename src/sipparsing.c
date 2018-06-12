@@ -273,19 +273,30 @@ int get_sip_to_uri_identity(openli_sip_parser_t *parser,
 
 static inline void strip_quotes(openli_sip_identity_t *sipid) {
 
-    if (sipid->username[0] == '"' &&
-            sipid->username[sipid->username_len - 1] == '"') {
-        sipid->username[sipid->username_len - 1] = '\0';
+    /* The removal of the trailing " is permanent, so we need to
+     * be careful about detecting cases where we call strip_quotes
+     * again on a term that will now only have a beginning quote,
+     * e.g. "username
+     */
+
+    if (sipid->username[0] == '"') {
+        if (sipid->username[sipid->username_len - 1] == '"') {
+            sipid->username[sipid->username_len - 1] = '\0';
+            sipid->username_len --;
+        }
         sipid->username ++;
-        sipid->username_len -= 2;
+        sipid->username_len --;
     }
 
-    if (sipid->realm[0] == '"' &&
-            sipid->realm[sipid->realm_len - 1] == '"') {
-        sipid->realm[sipid->realm_len - 1] = '\0';
+    if (sipid->realm[0] == '"') {
+        if (sipid->realm[sipid->realm_len - 1] == '"') {
+            sipid->realm[sipid->realm_len - 1] = '\0';
+            sipid->realm_len --;
+        }
         sipid->realm ++;
-        sipid->realm_len -= 2;
+        sipid->realm_len --;
     }
+
 }
 
 int get_sip_auth_identity(openli_sip_parser_t *parser, int index,
