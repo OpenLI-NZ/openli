@@ -50,13 +50,12 @@ each intercept must be configured with the following six parameters:
   intercept was granted.
 * Delivery country code -- the country where the intercept is taking place
   (probably the same as above).
-* SIP URI -- a SIP URI that identifies the target of the intercept. All SIP and
-  RTP traffic for that SIP user will be intercepted.
 * Mediator -- the ID number of the mediator which will be forwarding the
   intercept records to the requesting agency.
 * Agency ID -- the agency that requested the intercept (this should match one
   of the agencies specified elsewhere in this configuration file).
-
+* SIP targets -- a list of identities that can be used to recognise
+  activity in the SIP stream that is related to the intercept target.
 
 ### IP Data Intercepts
 
@@ -97,6 +96,24 @@ doesn't necessarily need to be the same collector instance as the one that
 is receiving the ALU intercept packets.
 
 
+### SIP Servers and RADIUS Servers
+OpenLI uses SIP and RADIUS traffic to maintain internal state regarding which
+VOIP calls and IP sessions should be intercepted, respectively. To be able
+to recognise SIP and RADIUS traffic that should be used for state tracking,
+the OpenLI collectors must be able to identify traffic that is either going
+to or from your SIP and RADIUS servers.
+
+SIP servers are defined using the sipservers option. Each SIP server that
+you have in your network should be included as a list item within the
+sipservers option. Failure to configure SIP servers will prevent OpenLI from
+performing any VOIP intercepts. A SIP server is configured using two parameters:
+* ip -- the IP address of the SIP server
+* port -- the port that the SIP server is listening on.
+
+RADIUS servers are defined using the radiusservers option. The configuration
+works much the same as for SIP, except that most RADIUS deployments will need
+TWO server entries: one for the auth service and one for the accounting service,
+as these are usually listening on different ports.
 
 
 ### Configuration Syntax
@@ -126,17 +143,16 @@ key-value elements:
 
 VOIP and IPintercepts are also expressed as a YAML sequence, with a key of
 `voipintercepts:` and `ipintercepts:` respectively. Each sequence item
-represents a single intercept and must contain the following key-value
-elements:
+represents a single intercept.
+
+An IP intercept must contain the following key-value elements:
 
 * liid                  -- the LIID
 * authcountrycode       -- the authorisation country code
 * deliverycountrycode   -- the delivery country code
-* sipuri                -- the SIP URI for the target  (VOIP only)
-* user                  -- the AAA username for the target  (IP only)
+* user                  -- the AAA username for the target
 * alushimid             -- the intercept ID from the ALU intercept packets
-                           (IP only + only for re-encoding ALU intercepts as
-                            ETSI)
+                           (only for re-encoding ALU intercepts as ETSI)
 * mediator              -- the ID of the mediator which will forward the
                            intercept
 * agencyid              -- the internal identifier of the agency that requested
@@ -147,4 +163,90 @@ elements:
 Valid access types are:
   'dialup', 'adsl', 'vdsl', 'fiber', 'wireless', 'lan', 'satellite', 'wimax',
   'cable' and 'wireless-other'.
+
+
+A VOIP intercept must contain the following key-value elements:
+
+* liid                  -- the LIID
+* authcountrycode       -- the authorisation country code
+* deliverycountrycode   -- the delivery country code
+* mediator              -- the ID of the mediator which will forward the
+                           intercept
+* agencyid              -- the internal identifier of the agency that requested
+                           the intercept
+* siptargets            -- a list of identities that can be used to recognise
+                           SIP activity related to the target
+
+
+A SIP target can be described using the following key-value elements:
+
+* username              -- the username that is associated with the target
+* realm                 -- the host or realm that the user belongs to in your
+                           SIP environment; if not present, any SIP where the
+                           username appears in the 'To:' URI or an
+                           Authorization header will be associated with the
+                           target.
+
+### SIP Target Specifics
+
+OpenLI currently supports three approaches for associating a SIP session
+with a VOIP intercept: using the To: URI, using the Authorization header,
+and using the Proxy-Authorization header. OpenLI does NOT attempt to match
+SIP traffic to a target based on the contents of the From: URI -- this field
+can be re-written by SIP clients as they please and therefore is not a
+reliable indicator of who is attempting to create a SIP session.
+
+The To: URI is used for matching incoming calls. As an example, the URI
+typically takes the form "sip:roger@sip.example.net". If our goal is to
+intercept any incoming calls to that SIP address, we could add the following
+SIP target to our VOIP intercept config:
+
+voipintercepts:
+  - liid: RogerIntercept
+    authcountrycode: NZ
+    deliverycountrycode: NZ
+    mediatorid: 1001
+    agencyid: "ExampleLEA"
+    siptargets:
+      - username: roger
+        realm: sip.example.net
+
+In situations where the hostname is dynamic, e.g. you use the user's dynamic
+IP address as your hostname, then excluding the "realm:" line will result in
+OpenLI intercepting all incoming calls for 'roger' regardless of what appears
+after the '@' symbol in the To: URI.
+
+For outgoing calls, OpenLI will examine any Authorization and
+Proxy-Authorization headers that are present in your SIP INVITE and attempt
+to match the user details within against the SIP targets specified in your
+configuration file. In an ideal world, the Auth username and realm will match
+the user and host that would appear in the To: URI for any incoming calls. In
+that case, you'll only need the one SIP target to match both incoming and
+outgoing calls.
+
+If the Authorization details for the user are different to what would appear
+in the To: URI, then simply add another SIP target to cover the identity
+that will appear in the Authorization header. For instance, if our example
+user from earlier was to authorize using the username "6478384466" (i.e.
+their phone number) against the realm "sippysoft.com", we can update our
+config as follows:
+
+voipintercepts:
+  - liid: RogerIntercept
+    authcountrycode: NZ
+    deliverycountrycode: NZ
+    mediatorid: 1001
+    agencyid: "ExampleLEA"
+    siptargets:
+      - username: roger
+        realm: sip.example.net
+      - username: 6478384466
+        realm: sippysoft.com
+
+Now OpenLI should be able to pick up both incoming and outgoing calls for
+this user, despite the discrepancies between outgoing Auth and the address
+used for routing incoming calls. Once again, "realm:" may be left unspecified,
+provided the "username:" is unique within your SIP deployment.
+
+
 
