@@ -81,6 +81,16 @@ typedef struct userinterceptlist {
     UT_hash_handle hh;
 } user_intercept_list_t;
 
+typedef struct sip_identity {
+    char *username;
+    int username_len;
+    char *realm;        // or hostname, I guess
+    int realm_len;
+    int awaitingconfirm;
+    int active;
+} openli_sip_identity_t;
+
+
 typedef struct sdpidentifier {
     uint32_t sessionid;
     uint32_t version;
@@ -118,15 +128,13 @@ typedef struct aluintercept aluintercept_t;
 #define voip_intercept_equal(a,b) \
     ((strcmp(a->common.authcc, b->common.authcc) == 0) && \
      (strcmp(a->common.delivcc, b->common.delivcc) == 0) && \
-     (strcmp(a->sipuri, b->sipuri) == 0) && \
      (strcmp(a->common.targetagency, b->common.targetagency) == 0))
 
 typedef struct voipintercept {
 
     uint64_t internalid;
     intercept_common_t common;
-    char *sipuri;
-    int sipuri_len;
+    libtrace_list_t *targets;
 
     uint8_t awaitingconfirm;
     uint8_t active;
@@ -185,6 +193,7 @@ void free_all_voipintercepts(voipintercept_t *vintercepts);
 void free_all_rtpstreams(rtpstreaminf_t *streams);
 void free_all_ipsessions(ipsession_t *sessions);
 void free_all_aluintercepts(aluintercept_t *aluintercepts);
+void free_voip_cinmap(voipcinmap_t *cins);
 void free_single_voip_cin(rtpstreaminf_t *rtp);
 void free_single_ipintercept(ipintercept_t *cept);
 void free_single_voipintercept(voipintercept_t *v);
@@ -198,6 +207,9 @@ ipsession_t *create_ipsession(ipintercept_t *ipint, uint32_t cin,
         int ipfamily, struct sockaddr *assignedip);
 
 aluintercept_t *create_aluintercept(ipintercept_t *ipint);
+
+int are_sip_identities_same(openli_sip_identity_t *a,
+        openli_sip_identity_t *b);
 
 void clear_user_intercept_list(user_intercept_list_t *ulist);
 int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,

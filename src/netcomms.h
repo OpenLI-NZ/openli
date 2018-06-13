@@ -84,6 +84,8 @@ typedef enum {
     OPENLI_PROTO_ETSI_IRI,
     OPENLI_PROTO_ANNOUNCE_CORESERVER,
     OPENLI_PROTO_WITHDRAW_CORESERVER,
+    OPENLI_PROTO_ANNOUNCE_SIP_TARGET,
+    OPENLI_PROTO_WITHDRAW_SIP_TARGET,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -116,6 +118,8 @@ typedef enum {
     OPENLI_PROTO_FIELD_ALUSHIMID,
     OPENLI_PROTO_FIELD_KAFLAG,
     OPENLI_PROTO_FIELD_ACCESSTYPE,
+    OPENLI_PROTO_FIELD_SIP_USER,
+    OPENLI_PROTO_FIELD_SIP_REALM,
 } openli_proto_fieldtype_t;
 
 
@@ -148,6 +152,10 @@ int push_coreserver_onto_net_buffer(net_buffer_t *nb, coreserver_t *cs,
         uint8_t cstype);
 int push_coreserver_withdraw_onto_net_buffer(net_buffer_t *nb, coreserver_t *cs,
         uint8_t cstype);
+int push_sip_target_onto_net_buffer(net_buffer_t *nb,
+        openli_sip_identity_t *sipid, voipintercept_t *vint);
+int push_sip_target_withdrawal_onto_net_buffer(net_buffer_t *nb,
+        openli_sip_identity_t *sipid, voipintercept_t *vint);
 int push_nomore_intercepts(net_buffer_t *nb);
 int transmit_net_buffer(net_buffer_t *nb);
 
@@ -174,6 +182,10 @@ int decode_coreserver_announcement(uint8_t *msgbody, uint16_t len,
         coreserver_t *cs);
 int decode_coreserver_withdraw(uint8_t *msgbody, uint16_t len,
         coreserver_t *cs);
+int decode_sip_target_announcement(uint8_t *msgbody, uint16_t len,
+        openli_sip_identity_t *sipid, char *liidspace, int spacelen);
+int decode_sip_target_withdraw(uint8_t *msgbody, uint16_t len,
+        openli_sip_identity_t *sipid, char *liidspace, int spacelen);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

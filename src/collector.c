@@ -137,15 +137,13 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->activeipv6intercepts = NULL;
     loc->activertpintercepts = NULL;
     loc->activealuintercepts = NULL;
-    loc->sip_targets = NULL;
     loc->radiusservers = NULL;
+    loc->sipservers = NULL;
 
     register_sync_queues(glob, &(loc->tosyncq), &(loc->fromsyncq), t);
     register_export_queue(glob, &(loc->exportq));
 
     loc->encoder = NULL;
-    loc->sipparser = NULL;
-    loc->knownsipservers = libtrace_list_init(sizeof(sipserverdetails_t));
 
     return loc;
 }
@@ -167,7 +165,6 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_message_queue_destroy(&(loc->tosyncq));
     libtrace_message_queue_destroy(&(loc->fromsyncq));
     libtrace_message_queue_destroy(&(loc->exportq));
-    libtrace_list_deinit(loc->knownsipservers);
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
         free_all_ipsessions(v4->intercepts);
@@ -184,70 +181,13 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     free_all_rtpstreams(loc->activertpintercepts);
     free_all_aluintercepts(loc->activealuintercepts);
     free_coreserver_list(loc->radiusservers);
-
-    if (loc->sip_targets) {
-        sipuri_hash_t *sip, *tmp;
-        HASH_ITER(hh, loc->sip_targets, sip, tmp) {
-            HASH_DEL(loc->sip_targets, sip);
-            free(sip->uri);
-            free(sip);
-        }
-    }
-
-    if (loc->sipparser) {
-        release_sip_parser(loc->sipparser);
-    }
-
+    free_coreserver_list(loc->sipservers);
 
     if (loc->encoder) {
         free_wandder_encoder(loc->encoder);
     }
 
     free(loc);
-}
-
-static int process_sip_packet(libtrace_packet_t *pkt,
-        colthread_local_t *loc) {
-
-    char *uri;
-    sipuri_hash_t *siphash;
-    int ret;
-
-    if ((ret = parse_sip_packet(&(loc->sipparser), pkt)) == -1) {
-        logger(LOG_DAEMON, "Error while attempting to parse SIP packet");
-        return 0;
-    }
-
-    if (ret == 0) {
-        /* Not a usable SIP packet -- missing payload etc. */
-        return 0;
-    }
-
-    /* Check the From URI */
-    uri = get_sip_from_uri(loc->sipparser);
-    if (uri != NULL) {
-        HASH_FIND_STR(loc->sip_targets, uri, siphash);
-        free(uri);
-        if (siphash) {
-            /* Matches a known target -- push to sync thread */
-            return 1;
-        }
-    }
-
-
-    /* Check the To URI */
-    uri = get_sip_to_uri(loc->sipparser);
-    if (uri != NULL) {
-        HASH_FIND_STR(loc->sip_targets, uri, siphash);
-        free(uri);
-        if (siphash) {
-            /* Matches a known target -- push to sync thread */
-            return 1;
-        }
-    }
-
-    /* None of the URIs in this SIP packet belong to a known target */
-    return 0;
 }
 
 static inline void send_packet_to_sync(libtrace_packet_t *pkt,
@@ -282,14 +222,6 @@ static void process_incoming_messages(libtrace_thread_t *t,
         handle_halt_ipmmintercept(t, loc, syncpush->data.rtpstreamkey);
     }
 
-    if (syncpush->type == OPENLI_PUSH_SIPURI) {
-        handle_push_sipuri(t, loc, syncpush->data.sipuri);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_HALT_SIPURI) {
-        handle_halt_sipuri(t, loc, syncpush->data.sipuri);
-    }
-
     if (syncpush->type == OPENLI_PUSH_CORESERVER) {
         handle_push_coreserver(t, loc, syncpush->data.coreserver);
     }
@@ -308,8 +240,8 @@ static void process_incoming_messages(libtrace_thread_t *t,
 
 }
 
-static inline int is_radius_packet(libtrace_packet_t *pkt, packet_info_t *pinfo,
-        coreserver_t *radservers) {
+static inline int is_core_server_packet(libtrace_packet_t *pkt,
+        packet_info_t *pinfo, coreserver_t *servers) {
 
     coreserver_t *rad, *tmp;
 
@@ -317,7 +249,7 @@ static inline int is_radius_packet(libtrace_packet_t *pkt, packet_info_t *pinfo,
         return 0;
     }
 
-    HASH_ITER(hh, radservers, rad, tmp) {
+    HASH_ITER(hh, servers, rad, tmp) {
         int ret;
         if ((ret = coreserver_match(rad, &(pinfo->srcip),
                     pinfo->srcport)) > 0) {
@@ -326,9 +258,11 @@ static inline int is_radius_packet(libtrace_packet_t *pkt, packet_info_t *pinfo,
 
         if (ret == -1) {
             logger(LOG_DAEMON,
-                    "Removing %s:%s from RADIUS server list due to getaddrinfo error",
-                    rad->ipstr, rad->portstr);
-            HASH_DELETE(hh, radservers, rad);
+                    "Removing %s:%s from %s server list due to getaddrinfo error",
+                    rad->ipstr, rad->portstr,
+                    coreserver_type_to_string(rad->servertype));
+
+            HASH_DELETE(hh, servers, rad);
             continue;
         }
 
@@ -340,49 +274,15 @@ static inline int is_radius_packet(libtrace_packet_t *pkt, packet_info_t *pinfo,
         if (ret == -1) {
             /* should never happen at this point? */
             logger(LOG_DAEMON,
-                    "Removing %s:%s from RADIUS server list due to getaddrinfo error",
-                    rad->ipstr, rad->portstr);
-            HASH_DELETE(hh, radservers, rad);
+                    "Removing %s:%s from %s server list due to getaddrinfo error",
+                    rad->ipstr, rad->portstr,
+                    coreserver_type_to_string(rad->servertype));
+            HASH_DELETE(hh, servers, rad);
             continue;
         }
     }
 
-    /* Doesn't match any of our known RADIUS servers */
-    return 0;
-}
-
-static int identified_as_sip(libtrace_packet_t *packet, packet_info_t *pinfo,
-        libtrace_list_t *knownsip) {
-
-    void *transport;
-    uint8_t proto;
-    uint32_t rem;
-    uint16_t sport, dport;
-
-    transport = trace_get_transport(packet, &proto, &rem);
-    if (transport == NULL) {
-        return 0;
-    }
-
-    if (proto == TRACE_IPPROTO_TCP) {
-        if (rem < sizeof(libtrace_tcp_t)) {
-            return 0;
-        }
-    } else if (proto == TRACE_IPPROTO_UDP) {
-        if (rem < sizeof(libtrace_udp_t)) {
-            return 0;
-        }
-    } else {
-        return 0;
-    }
-
-    if (pinfo->srcport == 5060 || pinfo->destport == 5060) {
-        return 1;
-    }
-
-    /* TODO check against user-configured servers in the knownsip list */
-
-
+    /* Doesn't match any of our known core servers */
     return 0;
 }
 
@@ -450,18 +350,17 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         }
 
         /* Is this a RADIUS packet? -- if yes, create a state update */
-        if (loc->radiusservers && is_radius_packet(pkt, &pinfo,
+        if (loc->radiusservers && is_core_server_packet(pkt, &pinfo,
                     loc->radiusservers)) {
             send_packet_to_sync(pkt, loc, OPENLI_UPDATE_RADIUS);
             forwarded = 1;
         }
 
         /* Is this a SIP packet? -- if yes, create a state update */
-        if (identified_as_sip(pkt, &pinfo, loc->knownsipservers)) {
-            if (process_sip_packet(pkt, loc) == 1) {
-                send_packet_to_sync(pkt, loc, OPENLI_UPDATE_SIP);
-                forwarded = 1;
-            }
+        if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
+                    loc->sipservers)) {
+            send_packet_to_sync(pkt, loc, OPENLI_UPDATE_SIP);
+            forwarded = 1;
         }
     }
 

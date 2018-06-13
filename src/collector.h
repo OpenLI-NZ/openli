@@ -36,7 +36,6 @@
 #include <libwandder.h>
 
 #include "coreserver.h"
-#include "sipparsing.h"
 #include "intercept.h"
 #include "etsili_core.h"
 
@@ -45,8 +44,6 @@ enum {
     OPENLI_PUSH_HALT_IPINTERCEPT = 2,
     OPENLI_PUSH_IPMMINTERCEPT = 3,
     OPENLI_PUSH_HALT_IPMMINTERCEPT = 4,
-    OPENLI_PUSH_SIPURI = 5,
-    OPENLI_PUSH_HALT_SIPURI = 6,
     OPENLI_PUSH_CORESERVER = 7,
     OPENLI_PUSH_REMOVE_CORESERVER = 8,
     OPENLI_PUSH_ALUINTERCEPT = 9,
@@ -77,7 +74,6 @@ typedef struct openli_ii_msg {
         ipsession_t *ipsess;
         rtpstreaminf_t *ipmmint;
         aluintercept_t *aluint;
-        char *sipuri;
         char *rtpstreamkey;
         coreserver_t *coreserver;
     } data;
@@ -93,12 +89,6 @@ typedef struct colinput {
     uint8_t running;
     UT_hash_handle hh;
 } colinput_t;
-
-typedef struct sipuri_hash {
-    UT_hash_handle hh;
-    char *uri;
-    int references;
-} sipuri_hash_t;
 
 typedef struct ipv4_target {
     uint32_t address;
@@ -130,9 +120,6 @@ typedef struct colthread_local {
     rtpstreaminf_t *activertpintercepts;
     aluintercept_t *activealuintercepts;
 
-    /* Current SIP URIs that we are intercepting */
-    sipuri_hash_t *sip_targets;
-
     /* Message queue for exporting LI records */
     libtrace_message_queue_t exportq;
 
@@ -141,10 +128,12 @@ typedef struct colthread_local {
      */
     coreserver_t *radiusservers;
 
-    wandder_encoder_t *encoder;
-    openli_sip_parser_t *sipparser;
-    libtrace_list_t *knownsipservers;
+    /* Known SIP servers, i.e. if we see traffic to or from these
+     * servers, we assume it is SIP.
+     */
+    coreserver_t *sipservers;
 
+    wandder_encoder_t *encoder;
     char *inputidentifier;
 
 } colthread_local_t;

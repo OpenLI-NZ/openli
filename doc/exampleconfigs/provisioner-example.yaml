@@ -8,6 +8,23 @@ clientport: 9001
 mediationaddr: 10.0.0.1
 mediationport: 12001
 
+# List of SIP servers on our network (for managing VOIP intercepts)
+sipservers:
+  - ip: 192.168.110.100
+    port: 5060
+
+
+# List of RADIUS servers on our network (for managing IP intercepts).
+# NOTE: we have two entries with the same IP -- one for the Auth service
+#       on port 1812 and one for the Accounting service on port 1813.
+# NOTE: make sure you are mirroring ALL RADIUS traffic into your collector(s),
+#       even the Accounting-Response records as these are necessary for ETSI LI.
+radiusservers:
+  - ip: 10.199.0.253
+    port: 1812
+  - ip: 10.199.0.253
+    port: 1813
+
 # List the set of agencies that we can perform intercepts for
 agencies:
 
@@ -71,16 +88,24 @@ voipintercepts:
  - liid: 1A23RD112              # LIID, should be provided by requesting agency
    authcountrycode: NZ          # Authorisation country code
    deliverycountrycode: NZ      # Delivery country code
-   sipuri: sip:badguy@myisp.com # SIP URI identifying the intercept target
    mediator: 6001               # ID of the mediator to send intercept via
    agencyid: "Police"           # ID of agency to send intercept to
+   siptargets:                  # List of SIP identities for the target
+     - username: badguy
+       realm: myisp.com
 
  - liid: X7811DFWS              # LIID, should be provided by requesting agency
    authcountrycode: NZ          # Authorisation country code
    deliverycountrycode: NZ      # Delivery country code
-   sipuri: sip:target@myisp.com # SIP URI identifying the intercept target
    mediator: 6001               # ID of the mediator to send intercept via
    agencyid: "Spooks"           # ID of agency to send intercept to
+   siptargets:                  # List of SIP identities for the target
+     - username: target
+       realm: myisp.com
+     - username: 6478564444     # Alternative identity that is used in SIP
+                                # Authorization headers. Note the lack of
+                                # realm, this means we can match this username
+                                # against *any* realm.
 
 
 

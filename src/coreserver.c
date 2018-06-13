@@ -75,6 +75,8 @@ int coreserver_match(coreserver_t *cs, struct sockaddr_storage *sa,
 
     /* XXX for now, all supported server types are UDP so no need to
      * set socktype to be anything other than SOCK_DGRAM */
+
+    /* TCP SIP?? TODO */
     if (cs->info == NULL) {
         cs->info = populate_addrinfo(cs->ipstr, cs->portstr, SOCK_DGRAM);
     }

@@ -46,6 +46,27 @@ static inline void copy_intercept_common(intercept_common_t *src,
     dest->destid = src->destid;
 }
 
+int are_sip_identities_same(openli_sip_identity_t *a,
+        openli_sip_identity_t *b) {
+
+    if (strcmp(a->username, b->username) != 0) {
+        return 0;
+    }
+
+    if (a->realm == NULL && b->realm == NULL) {
+        return 1;
+    }
+
+    if (a->realm == NULL || b->realm == NULL) {
+        return 0;
+    }
+
+    if (strcmp(a->realm, b->realm) == 0) {
+        return 1;
+    }
+
+    return 0;
+}
 
 rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
 
@@ -162,12 +183,14 @@ void free_all_ipintercepts(ipintercept_t *interceptlist) {
     }
 }
 
-static inline void free_voip_cinmap(voipcinmap_t *cins) {
+void free_voip_cinmap(voipcinmap_t *cins) {
     voipcinmap_t *c, *tmp;
 
     HASH_ITER(hh_callid, cins, c, tmp) {
         HASH_DELETE(hh_callid, cins, c);
-        free(c->shared);
+        if (c->shared) {
+            free(c->shared);
+        }
         free(c->callid);
         free(c);
     }
@@ -216,11 +239,26 @@ static void free_voip_cins(rtpstreaminf_t *cins) {
 
 }
 
+static void free_sip_targets(libtrace_list_t *targets) {
+
+    libtrace_list_node_t *n;
+    n = targets->head;
+    while (n) {
+        openli_sip_identity_t *sipid = *((openli_sip_identity_t **)(n->data));
+        if (sipid->username) {
+            free(sipid->username);
+        }
+        if (sipid->realm) {
+            free(sipid->realm);
+        }
+        free(sipid);
+        n = n->next;
+    }
+    libtrace_list_deinit(targets);
+}
+
 void free_single_voipintercept(voipintercept_t *v) {
     free_intercept_common(&(v->common));
-    if (v->sipuri) {
-        free(v->sipuri);
-    }
     if (v->cin_sdp_map) {
         free_voip_sdpmap(v->cin_sdp_map);
     }
@@ -230,6 +268,10 @@ void free_single_voipintercept(voipintercept_t *v) {
     }
     if (v->active_cins) {
         free_voip_cins(v->active_cins);
+    }
+
+    if (v->targets) {
+        free_sip_targets(v->targets);
     }
     free(v);
 }
