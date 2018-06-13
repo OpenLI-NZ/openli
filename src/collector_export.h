@@ -52,7 +52,7 @@ typedef struct exporter_epoll {
 
 typedef struct colexp_data {
 
-    collector_global_t *glob;
+    support_thread_global_t *glob;
     libtrace_list_t *dests;     // if dests gets large, replace with map?
 
     uint8_t flagged;
@@ -85,7 +85,7 @@ collector_export_t *init_exporter(collector_global_t *glob);
 int connect_export_targets(collector_export_t *exp);
 void destroy_exporter(collector_export_t *exp);
 int exporter_thread_main(collector_export_t *exp);
-void register_export_queue(collector_global_t *glob,
+void register_export_queue(support_thread_global_t *glob,
         libtrace_message_queue_t *q);
 
 #endif

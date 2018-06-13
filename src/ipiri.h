@@ -128,7 +128,7 @@ typedef struct ipiri_id {
     } content;
 } ipiri_id_t;
 
-int ip_iri(collector_global_t *glob, wandder_encoder_t **encoder,
+int ip_iri(shared_global_info_t *info, wandder_encoder_t **encoder,
                 libtrace_message_queue_t *q, access_session_t *sess,
                 ipintercept_t *ipint, etsili_iri_type_t iritype,
                 struct timeval *tv, etsili_generic_t *params);

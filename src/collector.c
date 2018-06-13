@@ -34,6 +34,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <errno.h>
 
 #include <libtrace_parallel.h>
 #include <libwandder.h>
@@ -42,6 +43,7 @@
 #include "logger.h"
 #include "collector.h"
 #include "configparser.h"
+#include "collector_sync_voip.h"
 #include "collector_sync.h"
 #include "collector_export.h"
 #include "collector_push_messaging.h"
@@ -126,9 +128,13 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     loc = (colthread_local_t *)malloc(sizeof(colthread_local_t));
 
-    libtrace_message_queue_init(&(loc->tosyncq),
+    libtrace_message_queue_init(&(loc->tosyncq_ip),
             sizeof(openli_state_update_t));
-    libtrace_message_queue_init(&(loc->fromsyncq),
+    libtrace_message_queue_init(&(loc->fromsyncq_ip),
+            sizeof(openli_pushed_t));
+    libtrace_message_queue_init(&(loc->tosyncq_voip),
+            sizeof(openli_state_update_t));
+    libtrace_message_queue_init(&(loc->fromsyncq_voip),
             sizeof(openli_pushed_t));
     libtrace_message_queue_init(&(loc->exportq),
             sizeof(openli_export_recv_t));
@@ -140,8 +146,11 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->radiusservers = NULL;
     loc->sipservers = NULL;
 
-    register_sync_queues(glob, &(loc->tosyncq), &(loc->fromsyncq), t);
-    register_export_queue(glob, &(loc->exportq));
+    register_sync_queues(&(glob->syncip), &(loc->tosyncq_ip),
+			&(loc->fromsyncq_ip), t);
+    register_sync_queues(&(glob->syncvoip), &(loc->tosyncq_voip),
+			&(loc->fromsyncq_voip), t);
+    register_export_queue(&(glob->exporter), &(loc->exportq));
 
     loc->encoder = NULL;
 
@@ -156,14 +165,17 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     ipv4_target_t *v4, *tmp;
     ipv6_target_t *v6, *tmp2;
 
-    deregister_sync_queues(glob, t);
+    deregister_sync_queues(&(glob->syncip), t);
+    deregister_sync_queues(&(glob->syncvoip), t);
 
     /* TODO drain fromsync message queue so we don't leak SIP URIs
      * and any other malloced memory in the messages.
      */
 
-    libtrace_message_queue_destroy(&(loc->tosyncq));
-    libtrace_message_queue_destroy(&(loc->fromsyncq));
+    libtrace_message_queue_destroy(&(loc->tosyncq_ip));
+    libtrace_message_queue_destroy(&(loc->fromsyncq_ip));
+    libtrace_message_queue_destroy(&(loc->tosyncq_voip));
+    libtrace_message_queue_destroy(&(loc->fromsyncq_voip));
     libtrace_message_queue_destroy(&(loc->exportq));
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
@@ -191,14 +203,14 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 }
 
 static inline void send_packet_to_sync(libtrace_packet_t *pkt,
-        colthread_local_t *loc, uint8_t updatetype) {
+        libtrace_message_queue_t *q, uint8_t updatetype) {
     openli_state_update_t syncup;
 
     syncup.type = updatetype;
     syncup.data.pkt = pkt;
 
     trace_increment_packet_refcount(pkt);
-    libtrace_message_queue_put(&(loc->tosyncq), (void *)(&syncup));
+    libtrace_message_queue_put(q, (void *)(&syncup));
 
 }
 
@@ -302,8 +314,14 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     openli_pushed_t syncpush;
     packet_info_t pinfo;
 
-    /* Check for any messages from the sync thread */
-    while (libtrace_message_queue_try_get(&(loc->fromsyncq),
+    /* Check for any messages from the sync threads */
+    while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
+            (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
+
+        process_incoming_messages(t, glob, loc, &syncpush);
+    }
+
+    while (libtrace_message_queue_try_get(&(loc->fromsyncq_voip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
         process_incoming_messages(t, glob, loc, &syncpush);
@@ -343,8 +361,8 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
         /* Is this from one of our ALU mirrors -- if yes, parse + strip it
          * for conversion to an ETSI record */
-        if (glob->alumirrors && check_alu_intercept(glob, loc, pkt, &pinfo,
-                glob->alumirrors, loc->activealuintercepts)) {
+        if (glob->alumirrors && check_alu_intercept(&(glob->sharedinfo), loc,
+                pkt, &pinfo, glob->alumirrors, loc->activealuintercepts)) {
             trace_decrement_packet_refcount(pkt);
             return NULL;
         }
@@ -352,29 +370,29 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         /* Is this a RADIUS packet? -- if yes, create a state update */
         if (loc->radiusservers && is_core_server_packet(pkt, &pinfo,
                     loc->radiusservers)) {
-            send_packet_to_sync(pkt, loc, OPENLI_UPDATE_RADIUS);
+            send_packet_to_sync(pkt, &(loc->tosyncq_ip), OPENLI_UPDATE_RADIUS);
             forwarded = 1;
         }
 
         /* Is this a SIP packet? -- if yes, create a state update */
         if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
                     loc->sipservers)) {
-            send_packet_to_sync(pkt, loc, OPENLI_UPDATE_SIP);
+            send_packet_to_sync(pkt, &(loc->tosyncq_voip), OPENLI_UPDATE_SIP);
             forwarded = 1;
         }
     }
 
     if (ethertype == TRACE_ETHERTYPE_IP) {
         /* Is this an IP packet? -- if yes, possible IP CC */
-        if (ipv4_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, rem, glob,
-                    loc)) {
+        if (ipv4_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, rem,
+                    &(glob->sharedinfo), loc)) {
             forwarded = 1;
         }
 
         /* Is this an RTP packet? -- if yes, possible IPMM CC */
         if (proto == TRACE_IPPROTO_UDP) {
             if (ip4mm_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, rem,
-                        glob, loc)) {
+                        &(glob->sharedinfo), loc)) {
                 forwarded = 1;
             }
         }
@@ -506,6 +524,30 @@ static void clear_input(colinput_t *input) {
     }
 }
 
+static inline void init_support_thread_data(support_thread_global_t *sup) {
+
+    sup->threadid = 0;
+    pthread_mutex_init(&(sup->mutex), NULL);
+    sup->collector_queues = NULL;
+    sup->epollevs = NULL;
+    sup->epoll_fd = epoll_create1(0);
+
+}
+
+static inline void free_support_thread_data(support_thread_global_t *sup) {
+	pthread_mutex_destroy(&(sup->mutex));
+	if (sup->epoll_fd != -1) {
+		close(sup->epoll_fd);
+	}
+	if (sup->collector_queues) {
+		free(sup->collector_queues);
+	}
+	if (sup->epollevs) {
+		free(sup->epollevs);
+	}
+}
+
+
 static void clear_global_config(collector_global_t *glob) {
     colinput_t *inp, *tmp;
 
@@ -517,32 +559,24 @@ static void clear_global_config(collector_global_t *glob) {
 
     free_coreserver_list(glob->alumirrors);
 
-    if (glob->syncsendqs) {
-        free(glob->syncsendqs);
+    if (glob->sharedinfo.operatorid) {
+        free(glob->sharedinfo.operatorid);
     }
 
-    if (glob->syncepollevs) {
-        free(glob->syncepollevs);
+    if (glob->sharedinfo.networkelemid) {
+        free(glob->sharedinfo.networkelemid);
     }
 
-    if (glob->operatorid) {
-        free(glob->operatorid);
+    if (glob->sharedinfo.intpointid) {
+        free(glob->sharedinfo.intpointid);
     }
 
-    if (glob->networkelemid) {
-        free(glob->networkelemid);
+    if (glob->sharedinfo.provisionerip) {
+        free(glob->sharedinfo.provisionerip);
     }
 
-    if (glob->intpointid) {
-        free(glob->intpointid);
-    }
-
-    if (glob->provisionerip) {
-        free(glob->provisionerip);
-    }
-
-    if (glob->provisionerport) {
-        free(glob->provisionerport);
+    if (glob->sharedinfo.provisionerport) {
+        free(glob->sharedinfo.provisionerport);
     }
 
     if (glob->expired_inputs) {
@@ -558,22 +592,105 @@ static void clear_global_config(collector_global_t *glob) {
     }
 
     pthread_rwlock_destroy(&glob->config_mutex);
-    pthread_mutex_destroy(&glob->syncq_mutex);
-    pthread_mutex_destroy(&glob->exportq_mutex);
 
-    if (glob->sync_epollfd != -1) {
-        close(glob->sync_epollfd);
-    }
+	free_support_thread_data(&(glob->syncip));
+	free_support_thread_data(&(glob->syncvoip));
+	free_support_thread_data(&(glob->exporter));
 
-    if (glob->export_epollfd != -1) {
-        close(glob->export_epollfd);
-    }
-
-    if (glob->freegenerics) {
-        free_etsili_generics(glob->freegenerics);
-    }
+    libtrace_message_queue_destroy(&(glob->intersyncq));
 
     free(glob);
+}
+
+static inline void push_hello_message(libtrace_message_queue_t *atob,
+        libtrace_message_queue_t *btoa) {
+
+    openli_state_update_t hello;
+
+    memset(&hello, 0, sizeof(openli_state_update_t));
+    hello.type = OPENLI_UPDATE_HELLO;
+    hello.data.replyq = btoa;
+
+    libtrace_message_queue_put(atob, (void *)(&hello));
+}
+
+int register_sync_queues(support_thread_global_t *glob,
+        libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq,
+        libtrace_thread_t *parent) {
+
+    struct epoll_event ev;
+    sync_epoll_t *syncev, *syncev_hash;
+    sync_sendq_t *syncq, *sendq_hash, *a, *b;
+    int ind;
+
+    syncq = (sync_sendq_t *)malloc(sizeof(sync_sendq_t));
+    syncq->q = sendq;
+    syncq->parent = parent;
+
+    syncev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
+    syncev->fdtype = SYNC_EVENT_PROC_QUEUE;
+    syncev->fd = libtrace_message_queue_get_fd(recvq);
+    syncev->ptr = recvq;
+    syncev->parent = parent;
+
+    ev.data.ptr = (void *)syncev;
+    ev.events = EPOLLIN;
+
+    pthread_mutex_lock(&(glob->mutex));
+    if (epoll_ctl(glob->epoll_fd, EPOLL_CTL_ADD, syncev->fd,
+                &ev) == -1) {
+        /* TODO Do something? */
+        logger(LOG_DAEMON, "OpenLI: failed to register processor->sync queue: %s",
+                strerror(errno));
+        pthread_mutex_unlock(&(glob->mutex));
+        return -1;
+    }
+
+    sendq_hash = (sync_sendq_t *)(glob->collector_queues);
+    HASH_ADD_PTR(sendq_hash, parent, syncq);
+    glob->collector_queues = (void *)sendq_hash;
+
+    syncev_hash = (sync_epoll_t *)(glob->epollevs);
+    HASH_ADD_PTR(syncev_hash, parent, syncev);
+    glob->epollevs = (void *)syncev_hash;
+
+    pthread_mutex_unlock(&(glob->mutex));
+
+    push_hello_message(recvq, sendq);
+    return 0;
+}
+
+void deregister_sync_queues(support_thread_global_t *glob,
+		libtrace_thread_t *t) {
+
+    sync_epoll_t *syncev, *syncev_hash;
+    sync_sendq_t *syncq, *sendq_hash;
+    struct epoll_event ev;
+
+    pthread_mutex_lock(&(glob->mutex));
+    sendq_hash = (sync_sendq_t *)(glob->collector_queues);
+
+    HASH_FIND_PTR(sendq_hash, &t, syncq);
+    /* Caller will free the queue itself */
+    if (syncq) {
+        HASH_DELETE(hh, sendq_hash, syncq);
+        free(syncq);
+        glob->collector_queues = (void *)sendq_hash;
+    }
+
+    syncev_hash = (sync_epoll_t *)(glob->epollevs);
+    HASH_FIND_PTR(syncev_hash, &t, syncev);
+    if (syncev) {
+        if (glob->epoll_fd != -1 && epoll_ctl(glob->epoll_fd,
+                    EPOLL_CTL_DEL, syncev->fd, &ev) == -1) {
+            logger(LOG_DAEMON, "OpenLI: failed to de-register processor->sync queue %d: %s", syncev->fd, strerror(errno));
+        }
+        HASH_DELETE(hh, syncev_hash, syncev);
+        free(syncev);
+        glob->epollevs = (void *)syncev_hash;
+    }
+
+    pthread_mutex_unlock(&(glob->mutex));
 }
 
 
@@ -586,53 +703,50 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->inputs = NULL;
     glob->totalthreads = 0;
     glob->queuealloced = 0;
-    glob->registered_syncqs = 0;
-    glob->syncsendqs = NULL;
-    glob->syncepollevs = 0;
-    glob->intpointid = NULL;
-    glob->intpointid_len = 0;
-    glob->operatorid = NULL;
-    glob->operatorid_len = 0;
-    glob->networkelemid = NULL;
-    glob->networkelemid_len = 0;
-    glob->syncthreadid = 0;
-    glob->exportthreadid = 0;
-    glob->sync_epollfd = epoll_create1(0);
-    glob->export_epollfd = epoll_create1(0);
+    glob->sharedinfo.intpointid = NULL;
+    glob->sharedinfo.intpointid_len = 0;
+    glob->sharedinfo.operatorid = NULL;
+    glob->sharedinfo.operatorid_len = 0;
+    glob->sharedinfo.networkelemid = NULL;
+    glob->sharedinfo.networkelemid_len = 0;
+
+    init_support_thread_data(&(glob->syncip));
+    init_support_thread_data(&(glob->syncvoip));
+    init_support_thread_data(&(glob->exporter));
+
     glob->configfile = configfile;
-    glob->export_epoll_evs = NULL;
-    glob->provisionerip = NULL;
-    glob->provisionerport = NULL;
+    glob->sharedinfo.provisionerip = NULL;
+    glob->sharedinfo.provisionerport = NULL;
     glob->alumirrors = NULL;
     glob->expired_inputs = libtrace_list_init(sizeof(colinput_t *));
-    glob->freegenerics = NULL;
+
+    libtrace_message_queue_init(&glob->intersyncq,
+            sizeof(openli_intersync_msg_t));
 
     pthread_rwlock_init(&glob->config_mutex, NULL);
-    pthread_mutex_init(&glob->syncq_mutex, NULL);
-    pthread_mutex_init(&glob->exportq_mutex, NULL);
 
     if (parse_collector_config(configfile, glob) == -1) {
         clear_global_config(glob);
         return NULL;
     }
 
-    if (glob->provisionerport == NULL) {
-        glob->provisionerport = strdup("8993");
+    if (glob->sharedinfo.provisionerport == NULL) {
+        glob->sharedinfo.provisionerport = strdup("8993");
     }
 
-    if (glob->networkelemid == NULL) {
+    if (glob->sharedinfo.networkelemid == NULL) {
         logger(LOG_DAEMON, "OpenLI: No network element ID specified in config file. Exiting.");
         clear_global_config(glob);
         glob = NULL;
     }
 
-    else if (glob->operatorid == NULL) {
+    else if (glob->sharedinfo.operatorid == NULL) {
         logger(LOG_DAEMON, "OpenLI: No operator ID specified in config file. Exiting.");
         clear_global_config(glob);
         glob = NULL;
     }
 
-    else if (glob->provisionerip == NULL) {
+    else if (glob->sharedinfo.provisionerip == NULL) {
         logger(LOG_DAEMON, "OpenLI collector: no provisioner IP address specified in config file. Exiting.");
         clear_global_config(glob);
         glob = NULL;
@@ -654,15 +768,17 @@ static int reload_collector_config(collector_global_t *glob,
         return -1;
     }
 
-    if (strcmp(newstate->provisionerip, glob->provisionerip) != 0 ||
-            strcmp(newstate->provisionerport, glob->provisionerport) != 0) {
+    if (strcmp(newstate->sharedinfo.provisionerip,
+                glob->sharedinfo.provisionerip) != 0 ||
+            strcmp(newstate->sharedinfo.provisionerport,
+                    glob->sharedinfo.provisionerport) != 0) {
         logger(LOG_DAEMON,
                 "OpenLI collector: disconnecting from provisioner due to config change.");
         sync_disconnect_provisioner(sync);
-        free(glob->provisionerip);
-        free(glob->provisionerport);
-        glob->provisionerip = strdup(newstate->provisionerip);
-        glob->provisionerport = strdup(newstate->provisionerport);
+        free(glob->sharedinfo.provisionerip);
+        free(glob->sharedinfo.provisionerport);
+        glob->sharedinfo.provisionerip = strdup(newstate->sharedinfo.provisionerip);
+        glob->sharedinfo.provisionerport = strdup(newstate->sharedinfo.provisionerport);
     } else {
         logger(LOG_DAEMON,
                 "OpenLI collector: provisioner socket configuration is unchanged.");
@@ -676,33 +792,70 @@ static int reload_collector_config(collector_global_t *glob,
      * effort to check for a change than it is worth and there are no
      * flow-on effects to a change.
      */
-    if (glob->operatorid) {
-        free(glob->operatorid);
+    if (glob->sharedinfo.operatorid) {
+        free(glob->sharedinfo.operatorid);
     }
-    glob->operatorid = newstate->operatorid;
-    glob->operatorid_len = newstate->operatorid_len;
-    newstate->operatorid = NULL;
+    glob->sharedinfo.operatorid = newstate->sharedinfo.operatorid;
+    glob->sharedinfo.operatorid_len = newstate->sharedinfo.operatorid_len;
+    newstate->sharedinfo.operatorid = NULL;
 
-    if (glob->networkelemid) {
-        free(glob->networkelemid);
+    if (glob->sharedinfo.networkelemid) {
+        free(glob->sharedinfo.networkelemid);
     }
-    glob->networkelemid = newstate->networkelemid;
-    glob->networkelemid_len = newstate->networkelemid_len;
-    newstate->networkelemid = NULL;
+    glob->sharedinfo.networkelemid = newstate->sharedinfo.networkelemid;
+    glob->sharedinfo.networkelemid_len = newstate->sharedinfo.networkelemid_len;
+    newstate->sharedinfo.networkelemid = NULL;
 
-    if (glob->intpointid) {
-        free(glob->intpointid);
+    if (glob->sharedinfo.intpointid) {
+        free(glob->sharedinfo.intpointid);
     }
-    glob->intpointid = newstate->intpointid;
-    glob->intpointid_len = newstate->intpointid_len;
-    newstate->intpointid = NULL;
+    glob->sharedinfo.intpointid = newstate->sharedinfo.intpointid;
+    glob->sharedinfo.intpointid_len = newstate->sharedinfo.intpointid_len;
+    newstate->sharedinfo.intpointid = NULL;
 
     pthread_rwlock_unlock(&(glob->config_mutex));
     clear_global_config(newstate);
     return 0;
 }
 
-static void *start_sync_thread(void *params) {
+static void *start_voip_sync_thread(void *params) {
+
+    collector_global_t *glob = (collector_global_t *)params;
+    int ret;
+    collector_sync_voip_t *sync = init_voip_sync_data(glob);
+    sync_sendq_t *sq;
+
+    register_export_queue(&(glob->exporter), &(sync->exportq));
+
+    while (collector_halt == 0) {
+        ret = sync_voip_thread_main(sync);
+        if (ret == -1) {
+            break;
+        }
+    }
+
+    clean_sync_voip_data(sync);
+    while ((sq = (sync_sendq_t *)(glob->syncvoip.collector_queues)) &&
+                HASH_CNT(hh, sq) > 0) {
+
+        usleep(500000);
+    }
+
+    free(sync);
+    logger(LOG_DAEMON, "OpenLI: exiting VOIP sync thread.");
+    pthread_exit(NULL);
+}
+
+void halt_processing_threads(collector_global_t *glob) {
+    colinput_t *inp, *tmp;
+    HASH_ITER(hh, glob->inputs, inp, tmp) {
+        trace_pstop(inp->trace);
+    }
+}
+
+
+static void *start_ip_sync_thread(void *params) {
+
     collector_global_t *glob = (collector_global_t *)params;
     int ret;
     collector_sync_t *sync = init_sync_data(glob);
@@ -713,7 +866,7 @@ static void *start_sync_thread(void *params) {
      * instructions that are received via a network interface.
      */
 
-    register_export_queue(glob, &(sync->exportq));
+    register_export_queue(&(glob->exporter), &(sync->exportq));
 
     while (collector_halt == 0) {
         if (reload_config) {
@@ -749,7 +902,8 @@ static void *start_sync_thread(void *params) {
     clean_sync_data(sync);
 
     /* Wait for all processing threads to de-register their sync queues */
-    while ((sq = (sync_sendq_t *)(glob->syncsendqs)) && HASH_CNT(hh, sq) > 0) {
+    while ((sq = (sync_sendq_t *)(glob->syncip.collector_queues)) &&
+			HASH_CNT(hh, sq) > 0) {
         usleep(500000);
     }
 
@@ -827,16 +981,24 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    /* Start sync thread */
-    ret = pthread_create(&(glob->syncthreadid), NULL, start_sync_thread,
+    /* Start IP intercept sync thread */
+    ret = pthread_create(&(glob->syncip.threadid), NULL, start_ip_sync_thread,
             (void *)glob);
     if (ret != 0) {
-        logger(LOG_DAEMON, "OpenLI: error creating sync thread. Exiting.");
+        logger(LOG_DAEMON, "OpenLI: error creating IP sync thread. Exiting.");
+        return 1;
+    }
+
+    /* Start VOIP intercept sync thread */
+    ret = pthread_create(&(glob->syncvoip.threadid), NULL,
+            start_voip_sync_thread, (void *)glob);
+    if (ret != 0) {
+        logger(LOG_DAEMON, "OpenLI: error creating VOIP sync thread. Exiting.");
         return 1;
     }
 
     /* Start export thread */
-    ret = pthread_create(&(glob->exportthreadid), NULL, start_export_thread,
+    ret = pthread_create(&(glob->exporter.threadid), NULL, start_export_thread,
             (void *)glob);
     if (ret != 0) {
         logger(LOG_DAEMON, "OpenLI: error creating export thread. Exiting.");
@@ -875,8 +1037,9 @@ int main(int argc, char *argv[]) {
     }
     pthread_rwlock_unlock(&(glob->config_mutex));
 
-    pthread_join(glob->syncthreadid, NULL);
-    pthread_join(glob->exportthreadid, NULL);
+    pthread_join(glob->syncip.threadid, NULL);
+    pthread_join(glob->exporter.threadid, NULL);
+    pthread_join(glob->syncvoip.threadid, NULL);
 
     logger(LOG_DAEMON, "OpenLI: exiting OpenLI Collector.");
     /* Tidy up, exit */

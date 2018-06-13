@@ -182,6 +182,29 @@ uint8_t *sockaddr_to_key(struct sockaddr *sa, int *socklen) {
     return NULL;
 }
 
+void convert_ipstr_to_sockaddr(char *knownip,
+        struct sockaddr_storage **saddr, int *family) {
+
+    struct addrinfo *res = NULL;
+    struct addrinfo hints;
+
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_UNSPEC;
+
+    if (getaddrinfo(knownip, NULL, &hints, &res) != 0) {
+        logger(LOG_DAEMON, "OpenLI: getaddrinfo cannot parse IP address %s: %s",
+                knownip, gai_strerror(errno));
+    }
+
+    *family = res->ai_family;
+    *saddr = (struct sockaddr_storage *)malloc(
+            sizeof(struct sockaddr_storage));
+    memcpy(*saddr, res->ai_addr, res->ai_addrlen);
+
+    freeaddrinfo(res);
+}
+
+
 int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr) {
     int timerfd;
     struct epoll_event ev;

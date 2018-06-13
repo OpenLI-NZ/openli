@@ -38,7 +38,7 @@
 #include "etsili_core.h"
 
 
-static openli_export_recv_t form_ipmmcc(collector_global_t *glob,
+static openli_export_recv_t form_ipmmcc(shared_global_info_t *info,
         colthread_local_t *loc, rtpstreaminf_t *rtp,
         libtrace_packet_t *pkt, void *l3, uint32_t rem, uint8_t dir) {
 
@@ -59,12 +59,12 @@ static openli_export_recv_t form_ipmmcc(collector_global_t *glob,
     hdrdata.authcc_len = rtp->common.authcc_len;
     hdrdata.delivcc = rtp->common.delivcc;
     hdrdata.delivcc_len = rtp->common.delivcc_len;
-    hdrdata.operatorid = glob->operatorid;
-    hdrdata.operatorid_len = glob->operatorid_len;
-    hdrdata.networkelemid = glob->networkelemid;
-    hdrdata.networkelemid_len = glob->networkelemid_len;
-    hdrdata.intpointid = glob->intpointid;
-    hdrdata.intpointid_len = glob->intpointid_len;
+    hdrdata.operatorid = info->operatorid;
+    hdrdata.operatorid_len = info->operatorid_len;
+    hdrdata.networkelemid = info->networkelemid;
+    hdrdata.networkelemid_len = info->networkelemid_len;
+    hdrdata.intpointid = info->intpointid;
+    hdrdata.intpointid_len = info->intpointid_len;
 
     memset(&msg, 0, sizeof(openli_exportmsg_t));
     msg.msgbody = encode_etsi_ipmmcc(loc->encoder, &hdrdata,
@@ -89,7 +89,7 @@ static openli_export_recv_t form_ipmmcc(collector_global_t *glob,
 
 int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip_t *ip,
-        uint32_t rem, collector_global_t *glob, colthread_local_t *loc) {
+        uint32_t rem, shared_global_info_t *info, colthread_local_t *loc) {
 
     struct sockaddr_in *targetaddr, *cmp, *otheraddr;
     openli_export_recv_t msg;
@@ -135,7 +135,7 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
                 cmp = (struct sockaddr_in *)(&pinfo->destip);
                 if (otheraddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
                     matched ++;
-                    msg = form_ipmmcc(glob, loc, rtp, pkt, ip, rem,
+                    msg = form_ipmmcc(info, loc, rtp, pkt, ip, rem,
                             ETSI_DIR_FROM_TARGET);
                     libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
                     continue;
@@ -152,7 +152,7 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
                 cmp = (struct sockaddr_in *)(&pinfo->destip);
                 if (targetaddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
                     matched ++;
-                    msg = form_ipmmcc(glob, loc, rtp, pkt, ip, rem,
+                    msg = form_ipmmcc(info, loc, rtp, pkt, ip, rem,
                             ETSI_DIR_TO_TARGET);
                     libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
                     continue;

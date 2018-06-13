@@ -54,7 +54,7 @@ collector_export_t *init_exporter(collector_global_t *glob) {
     collector_export_t *exp = (collector_export_t *)malloc(
             sizeof(collector_export_t));
 
-    exp->glob = glob;
+    exp->glob = &(glob->exporter);
     exp->dests = libtrace_list_init(sizeof(export_dest_t));
 
     exp->failed_conns = 0;
@@ -144,7 +144,7 @@ static inline void remove_all_destinations(collector_export_t *exp) {
         d = (export_dest_t *)n->data;
 
         if (d->fd != -1) {
-            epoll_ctl(exp->glob->export_epollfd, EPOLL_CTL_DEL, d->fd, &ev);
+            epoll_ctl(exp->glob->epoll_fd, EPOLL_CTL_DEL, d->fd, &ev);
             close(d->fd);
         }
         /* Don't free d->details, let the sync thread tidy this up */
@@ -166,17 +166,22 @@ static inline void remove_all_destinations(collector_export_t *exp) {
 }
 
 void destroy_exporter(collector_export_t *exp) {
+    libtrace_list_t *evlist;
     libtrace_list_node_t *n;
 
     remove_all_destinations(exp);
 
-    n = exp->glob->export_epoll_evs->head;
+    evlist = (libtrace_list_t *)(exp->glob->epollevs);
+    n = evlist->head;
     while (n) {
         exporter_epoll_t *ev = *((exporter_epoll_t **)n->data);
         free(ev);
         n = n->next;
     }
-    libtrace_list_deinit(exp->glob->export_epoll_evs);
+
+    /* Don't free evlist, this will be done when the main thread
+     * frees the exporter support data. */
+    //libtrace_list_deinit(evlist);
 
     free(exp);
 }
@@ -331,7 +336,7 @@ static void remove_destination(collector_export_t *exp,
                 med->mediatorid);
 
         if (dest->fd != -1) {
-            epoll_ctl(exp->glob->export_epollfd, EPOLL_CTL_DEL, dest->fd, &ev);
+            epoll_ctl(exp->glob->epoll_fd, EPOLL_CTL_DEL, dest->fd, &ev);
             close(dest->fd);
             dest->fd = -1;
         }
@@ -443,7 +448,7 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
         exp->flag_timer_ev->data.q = NULL;
 
         if (exp->flagtimerfd == -1) {
-            exp->flagtimerfd = epoll_add_timer(exp->glob->export_epollfd, 10,
+            exp->flagtimerfd = epoll_add_timer(exp->glob->epoll_fd, 10,
                     exp->flag_timer_ev);
             if (exp->flagtimerfd == -1) {
                 logger(LOG_DAEMON, "OpenLI: failed to add export timer fd to epoll set: %s.", strerror(errno));
@@ -518,7 +523,6 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
              * TODO need some way to recognise that an announcement
              * is NOT coming so we don't buffer forever...
              */
-            printf("adding unknown destination %u\n", recvd.data.toexport.destid);
             dest = add_unknown_destination(exp,
                     recvd.data.toexport.destid);
             x = forward_message(dest, &(recvd.data.toexport));
@@ -536,7 +540,6 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
         /* All ETSIRECs relating to this packet have been seen, so
          * we can safely free the packet.
          */
-
         trace_decrement_packet_refcount(recvd.data.packet);
         return 0;
     }
@@ -624,7 +627,7 @@ int exporter_thread_main(collector_export_t *exp) {
     epoll_ev->type = EXP_EPOLL_TIMER;
     epoll_ev->data.q = NULL;
 
-    timerfd = epoll_add_timer(exp->glob->export_epollfd, 1, epoll_ev);
+    timerfd = epoll_add_timer(exp->glob->epoll_fd, 1, epoll_ev);
     if (timerfd == -1) {
         logger(LOG_DAEMON, "OpenLI: failed to add export timer fd to epoll set: %s.", strerror(errno));
         return -1;
@@ -635,7 +638,7 @@ int exporter_thread_main(collector_export_t *exp) {
 
 
     while (timerexpired == 0) {
-    	nfds = epoll_wait(exp->glob->export_epollfd, evs, 64, -1);
+    	nfds = epoll_wait(exp->glob->epoll_fd, evs, 64, -1);
 
         if (nfds < 0) {
             logger(LOG_DAEMON, "OpenLI: error while checking for messages to export: %s.", strerror(errno));
@@ -650,7 +653,7 @@ int exporter_thread_main(collector_export_t *exp) {
         }
     }
 
-    if (epoll_ctl(exp->glob->export_epollfd, EPOLL_CTL_DEL, timerfd, NULL) == -1)
+    if (epoll_ctl(exp->glob->epoll_fd, EPOLL_CTL_DEL, timerfd, NULL) == -1)
     {
         logger(LOG_DAEMON, "OpenLI: failed to remove export timer fd to epoll set: %s.", strerror(errno));
         return -1;
@@ -662,7 +665,7 @@ int exporter_thread_main(collector_export_t *exp) {
 
 }
 
-void register_export_queue(collector_global_t *glob,
+void register_export_queue(support_thread_global_t *glob,
         libtrace_message_queue_t *q) {
 
     struct epoll_event ev;
@@ -675,16 +678,17 @@ void register_export_queue(collector_global_t *glob,
     ev.data.ptr = (void *)epoll_ev;
     ev.events = EPOLLIN | EPOLLRDHUP;
 
-    pthread_mutex_lock(&glob->exportq_mutex);
+    pthread_mutex_lock(&(glob->mutex));
 
-    if (glob->export_epoll_evs == NULL) {
-        glob->export_epoll_evs = libtrace_list_init(sizeof(exporter_epoll_t **));
+    if (glob->epollevs == NULL) {
+        glob->epollevs = libtrace_list_init(
+                sizeof(exporter_epoll_t **));
     }
 
-    libtrace_list_push_back(glob->export_epoll_evs, &epoll_ev);
-    pthread_mutex_unlock(&glob->exportq_mutex);
+    libtrace_list_push_back(glob->epollevs, &epoll_ev);
+    pthread_mutex_unlock(&(glob->mutex));
 
-	if (epoll_ctl(glob->export_epollfd, EPOLL_CTL_ADD,
+	if (epoll_ctl(glob->epoll_fd, EPOLL_CTL_ADD,
                 libtrace_message_queue_get_fd(q), &ev) == -1) {
         /* TODO Do something? */
         logger(LOG_DAEMON, "OpenLI: failed to register export queue: %s",

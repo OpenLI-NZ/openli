@@ -39,7 +39,7 @@
 #include "ipiri.h"
 #include "internetaccess.h"
 
-int ip_iri(collector_global_t *glob, wandder_encoder_t **encoder,
+int ip_iri(shared_global_info_t *info, wandder_encoder_t **encoder,
         libtrace_message_queue_t *q, access_session_t *sess,
         ipintercept_t *ipint, etsili_iri_type_t iritype,
         struct timeval *tv, etsili_generic_t *params) {
@@ -60,12 +60,12 @@ int ip_iri(collector_global_t *glob, wandder_encoder_t **encoder,
     hdrdata.authcc_len = ipint->common.authcc_len;
     hdrdata.delivcc = ipint->common.delivcc;
     hdrdata.delivcc_len = ipint->common.delivcc_len;
-    hdrdata.operatorid = glob->operatorid;
-    hdrdata.operatorid_len = glob->operatorid_len;
-    hdrdata.networkelemid = glob->networkelemid;
-    hdrdata.networkelemid_len = glob->networkelemid_len;
-    hdrdata.intpointid = glob->intpointid;
-    hdrdata.intpointid_len = glob->intpointid_len;
+    hdrdata.operatorid = info->operatorid;
+    hdrdata.operatorid_len = info->operatorid_len;
+    hdrdata.networkelemid = info->networkelemid;
+    hdrdata.networkelemid_len = info->networkelemid_len;
+    hdrdata.intpointid = info->intpointid;
+    hdrdata.intpointid_len = info->intpointid_len;
 
     memset(&iri, 0, sizeof(openli_exportmsg_t));
     iri.msgbody = encode_etsi_ipiri(*encoder, &hdrdata,

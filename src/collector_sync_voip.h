@@ -24,53 +24,38 @@
  *
  */
 
-#ifndef OPENLI_COLLECTOR_SYNC_H_
-#define OPENLI_COLLECTOR_SYNC_H_
+#ifndef OPENLI_COLLECTOR_SYNC_VOIP_H_
+#define OPENLI_COLLECTOR_SYNC_VOIP_H_
 
-#include <sys/epoll.h>
+#include <libtrace.h>
+#include <libtrace/message_queue.h>
 
-#include <libwandder.h>
-#include <libtrace/linked_list.h>
-#include <uthash.h>
-#include "collector.h"
-#include "netcomms.h"
 #include "intercept.h"
-#include "internetaccess.h"
-#include "coreserver.h"
+#include "collector.h"
 #include "sipparsing.h"
+#include "util.h"
 
-typedef struct colsync_data {
+typedef struct collector_sync_voip_data {
 
     support_thread_global_t *glob;
     shared_global_info_t *info;
 
-    internet_user_t *allusers;
-    ipintercept_t *ipintercepts;
-    user_intercept_list_t *userintercepts;
-
-    coreserver_t *coreservers;
-
-    int instruct_fd;
-    uint8_t instruct_fail;
-    sync_epoll_t *ii_ev;
-
-    net_buffer_t *outgoing;
-    net_buffer_t *incoming;
+    voipintercept_t *voipintercepts;
+    voipcinmap_t *knowncallids;
 
     libtrace_message_queue_t *intersyncq;
+    sync_epoll_t intersync_ev;
+
     libtrace_message_queue_t exportq;
+    openli_sip_parser_t *sipparser;
     wandder_encoder_t *encoder;
 
-    access_plugin_t *radiusplugin;
-    etsili_generic_t *freegenerics;
+} collector_sync_voip_t;
 
-} collector_sync_t;
+collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob);
+void clean_sync_voip_data(collector_sync_voip_t *sync);
+int sync_voip_thread_main(collector_sync_voip_t *sync);
 
-collector_sync_t *init_sync_data(collector_global_t *glob);
-void clean_sync_data(collector_sync_t *sync);
-void sync_disconnect_provisioner(collector_sync_t *sync);
-int sync_connect_provisioner(collector_sync_t *sync);
-int sync_thread_main(collector_sync_t *sync);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

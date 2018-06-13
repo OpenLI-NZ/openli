@@ -34,6 +34,8 @@ int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr);
 int create_listener(char *addr, char *port, char *name);
 char *sockaddr_to_string(struct sockaddr *sa, char *str, int len);
 uint8_t *sockaddr_to_key(struct sockaddr *sa, int *socklen);
+void convert_ipstr_to_sockaddr(char *knownip, struct sockaddr_storage **saddr,
+        int *family);
 
 uint32_t hashlittle( const void *key, size_t length, uint32_t initval);
 

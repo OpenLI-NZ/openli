@@ -666,11 +666,11 @@ static int global_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "operatorid") == 0) {
-        glob->operatorid = strdup((char *) value->data.scalar.value);
-        glob->operatorid_len = strlen(glob->operatorid);
+        glob->sharedinfo.operatorid = strdup((char *) value->data.scalar.value);
+        glob->sharedinfo.operatorid_len = strlen(glob->sharedinfo.operatorid);
 
         /* Limited to 16 chars */
-        if (glob->operatorid_len > 16) {
+        if (glob->sharedinfo.operatorid_len > 16) {
             logger(LOG_DAEMON, "OpenLI: Operator ID must be 16 characters or less!");
             return -1;
         }
@@ -680,11 +680,11 @@ static int global_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "networkelementid")
             == 0) {
-        glob->networkelemid = strdup((char *) value->data.scalar.value);
-        glob->networkelemid_len = strlen(glob->networkelemid);
+        glob->sharedinfo.networkelemid = strdup((char *) value->data.scalar.value);
+        glob->sharedinfo.networkelemid_len = strlen(glob->sharedinfo.networkelemid);
 
         /* Limited to 16 chars */
-        if (glob->networkelemid_len > 16) {
+        if (glob->sharedinfo.networkelemid_len > 16) {
             logger(LOG_DAEMON, "OpenLI: Network Element ID must be 16 characters or less!");
             return -1;
         }
@@ -694,11 +694,11 @@ static int global_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "interceptpointid")
             == 0) {
-        glob->intpointid = strdup((char *) value->data.scalar.value);
-        glob->intpointid_len = strlen(glob->intpointid);
+        glob->sharedinfo.intpointid = strdup((char *) value->data.scalar.value);
+        glob->sharedinfo.intpointid_len = strlen(glob->sharedinfo.intpointid);
 
         /* Limited to 8 chars */
-        if (glob->intpointid_len > 8) {
+        if (glob->sharedinfo.intpointid_len > 8) {
             logger(LOG_DAEMON, "OpenLI: Intercept Point ID must be 8 characters or less!");
             return -1;
         }
@@ -707,13 +707,13 @@ static int global_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "provisionerport") == 0) {
-        glob->provisionerport = strdup((char *) value->data.scalar.value);
+        glob->sharedinfo.provisionerport = strdup((char *) value->data.scalar.value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "provisioneraddr") == 0) {
-        glob->provisionerip = strdup((char *) value->data.scalar.value);
+        glob->sharedinfo.provisionerip = strdup((char *) value->data.scalar.value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
