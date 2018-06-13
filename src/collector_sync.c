@@ -52,12 +52,11 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 	collector_sync_t *sync = (collector_sync_t *)
 			malloc(sizeof(collector_sync_t));
 
-    sync->glob = glob;
+    sync->glob = &(glob->syncip);
+    sync->intersyncq = &(glob->intersyncq);
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
     sync->userintercepts = NULL;
-    sync->voipintercepts = NULL;
-    sync->knowncallids = NULL;
     sync->coreservers = NULL;
     sync->instruct_fd = -1;
     sync->instruct_fail = 0;
@@ -67,11 +66,11 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
     sync->outgoing = NULL;
     sync->incoming = NULL;
-    sync->sipparser = NULL;
     sync->encoder = NULL;
+    sync->info = &(glob->sharedinfo);
 
     sync->radiusplugin = init_access_plugin(ACCESS_RADIUS);
-
+    sync->freegenerics = NULL;
     return sync;
 
 }
@@ -89,10 +88,6 @@ void clean_sync_data(collector_sync_t *sync) {
     clear_user_intercept_list(sync->userintercepts);
     free_all_ipintercepts(sync->ipintercepts);
     free_coreserver_list(sync->coreservers);
-    free_voip_cinmap(sync->knowncallids);
-    if (sync->voipintercepts) {
-        free_all_voipintercepts(sync->voipintercepts);
-    }
 
 	libtrace_message_queue_destroy(&(sync->exportq));
 
@@ -108,10 +103,6 @@ void clean_sync_data(collector_sync_t *sync) {
         free(sync->ii_ev);
     }
 
-    if (sync->sipparser) {
-        release_sip_parser(sync->sipparser);
-    }
-
     if (sync->encoder) {
         free_wandder_encoder(sync->encoder);
     }
@@ -120,16 +111,33 @@ void clean_sync_data(collector_sync_t *sync) {
         destroy_access_plugin(sync->radiusplugin);
     }
 
+    if (sync->freegenerics) {
+        free_etsili_generics(sync->freegenerics);
+    }
+
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
     sync->userintercepts = NULL;
-    sync->voipintercepts = NULL;
     sync->outgoing = NULL;
     sync->incoming = NULL;
-    sync->sipparser = NULL;
     sync->encoder = NULL;
     sync->ii_ev = NULL;
     sync->radiusplugin = NULL;
+
+}
+
+static int forward_provmsg_to_voipsync(collector_sync_t *sync,
+        uint8_t *provmsg, uint16_t msglen, openli_proto_msgtype_t msgtype) {
+
+    openli_intersync_msg_t topush;
+
+    topush.msgtype = msgtype;
+    topush.msgbody = (uint8_t *)malloc(msglen);
+    memcpy(topush.msgbody, provmsg, msglen);
+    topush.msglen = msglen;
+
+    libtrace_message_queue_put(sync->intersyncq, &topush);
+    return 0;
 
 }
 
@@ -137,7 +145,7 @@ static inline void push_coreserver_msg(collector_sync_t *sync,
         coreserver_t *cs, uint8_t msgtype) {
 
     sync_sendq_t *sendq, *tmp;
-    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
         openli_pushed_t msg;
 
         memset(&msg, 0, sizeof(openli_pushed_t));
@@ -230,7 +238,7 @@ static int send_to_provisioner(collector_sync_t *sync) {
         ev.data.ptr = sync->ii_ev;
         ev.events = EPOLLIN | EPOLLRDHUP;
 
-        if (epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_MOD,
+        if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_MOD,
                     sync->instruct_fd, &ev) == -1) {
             logger(LOG_DAEMON,
                     "OpenLI: error disabling EPOLLOUT on provisioner fd: %s.",
@@ -295,7 +303,7 @@ static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
     HASH_ITER(hh, user->sessions, sess, tmp2) {
         /* TODO skip sessions that were never active */
 
-        push_session_halt_to_threads(sync->glob->syncsendqs, sess,
+        push_session_halt_to_threads(sync->glob->collector_queues, sess,
                 ipint);
     }
 }
@@ -319,42 +327,6 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
                         ipint);
             }
             free_single_ipintercept(ipint);
-        }
-    }
-
-    HASH_ITER(hh_liid, sync->voipintercepts, v, tmp2) {
-        if (v->awaitingconfirm && v->active) {
-            v->active = 0;
-
-            if (v->active_cins == NULL) {
-                continue;
-            }
-
-            push_voipintercept_halt_to_threads(sync, v);
-            HASH_DELETE(hh_liid, sync->voipintercepts, v);
-            free_single_voipintercept(v);
-        } else if (v->active) {
-            /* Deal with any unconfirmed SIP targets */
-            libtrace_list_node_t *n;
-            openli_sip_identity_t *sipid;
-
-            n = v->targets->head;
-            while (n) {
-                sipid = *((openli_sip_identity_t **)(n->data));
-                n = n->next;
-
-                if (sipid->active && sipid->awaitingconfirm) {
-                    sipid->active = 0;
-                    if (sipid->realm) {
-                        logger(LOG_DAEMON, "OpenLI: removing unconfirmed SIP target %s@%s for LIID %s",
-                                sipid->username, sipid->realm,
-                                v->common.liid);
-                    } else {
-                        logger(LOG_DAEMON, "OpenLI: removing unconfirmed SIP target %s@* for LIID %s",
-                                sipid->username, v->common.liid);
-                    }
-                }
-            }
         }
     }
 
@@ -500,76 +472,6 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     return 0;
 }
 
-static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
-    int i;
-
-    struct epoll_event ev;
-    voipcinmap_t *cin_callid, *tmp;
-    voipsdpmap_t *cin_sdp, *tmp2;
-    sync_sendq_t *sendq, *tmp3;
-
-    if (rtp->timeout_ev) {
-        sync_epoll_t *timerev = (sync_epoll_t *)(rtp->timeout_ev);
-        if (epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_DEL, timerev->fd,
-                &ev) == -1) {
-            logger(LOG_DAEMON, "OpenLI: unable to remove RTP stream timeout event for %s from epoll: %s",
-                    rtp->streamkey, strerror(errno));
-        }
-        close(timerev->fd);
-        free(timerev);
-        rtp->timeout_ev = NULL;
-    }
-
-
-    if (rtp->active) {
-        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp3) {
-           openli_pushed_t msg;
-           memset(&msg, 0, sizeof(openli_pushed_t));
-           msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
-           msg.data.rtpstreamkey = strdup(rtp->streamkey);
-           libtrace_message_queue_put(sendq->q, (void *)(&msg));
-        }
-    }
-
-    HASH_DEL(rtp->parent->active_cins, rtp);
-
-    /* TODO this is painful, maybe include reverse references in the shared
-     * data structure?
-     */
-    HASH_ITER(hh_callid, rtp->parent->cin_callid_map, cin_callid, tmp) {
-        if (cin_callid->shared->cin == rtp->cin) {
-            HASH_DELETE(hh_callid, rtp->parent->cin_callid_map, cin_callid);
-            free(cin_callid->callid);
-            cin_callid->shared->refs --;
-            if (cin_callid->shared->refs == 0) {
-                free(cin_callid->shared);
-                break;
-            }
-            free(cin_callid);
-        }
-    }
-
-    HASH_ITER(hh_sdp, rtp->parent->cin_sdp_map, cin_sdp, tmp2) {
-        int stop = 0;
-        if (cin_sdp->shared->cin == rtp->cin) {
-            HASH_DELETE(hh_sdp, rtp->parent->cin_sdp_map, cin_sdp);
-            cin_sdp->shared->refs --;
-            if (cin_sdp->shared->refs == 0) {
-                free(cin_sdp->shared);
-                stop = 1;
-            }
-            free(cin_sdp);
-            if (stop) {
-                break;
-            }
-        }
-    }
-
-    free_single_voip_cin(rtp);
-
-    return 0;
-}
-
 static inline void drop_all_mediators(collector_sync_t *sync) {
     openli_export_recv_t expmsg;
 
@@ -649,7 +551,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         if (user) {
             access_session_t *sess, *tmp2;
             HASH_ITER(hh, user->sessions, sess, tmp2) {
-                HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs),
+                HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                         sendq, tmp) {
                     push_single_ipintercept(sendq->q, cept, sess);
                 }
@@ -675,7 +577,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
          * instead, i.e. if the ALU is configured to NOT set the session
          * ID in the shim.
          */
-        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs),
+        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                 sendq, tmp) {
             push_single_alushimid(sendq->q, cept, 0);
         }
@@ -725,18 +627,6 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                     return -1;
                 }
                 break;
-            case OPENLI_PROTO_START_VOIPINTERCEPT:
-                ret = new_voipintercept(sync, provmsg, msglen);
-                if (ret == -1) {
-                    return -1;
-                }
-                break;
-            case OPENLI_PROTO_HALT_VOIPINTERCEPT:
-                ret = halt_voipintercept(sync, provmsg, msglen);
-                if (ret == -1) {
-                    return -1;
-                }
-                break;
             case OPENLI_PROTO_HALT_IPINTERCEPT:
                 ret = halt_ipintercept(sync, provmsg, msglen);
                 if (ret == -1) {
@@ -755,20 +645,19 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                     return -1;
                 }
                 break;
+            case OPENLI_PROTO_START_VOIPINTERCEPT:
+            case OPENLI_PROTO_HALT_VOIPINTERCEPT:
             case OPENLI_PROTO_ANNOUNCE_SIP_TARGET:
-                ret = new_voip_sip_target(sync, provmsg, msglen);
-                if (ret == -1) {
-                    return -1;
-                }
-                break;
             case OPENLI_PROTO_WITHDRAW_SIP_TARGET:
-                ret = withdraw_voip_sip_target(sync, provmsg, msglen);
+                ret = forward_provmsg_to_voipsync(sync, provmsg, msglen,
+                        msgtype);
                 if (ret == -1) {
                     return -1;
                 }
                 break;
             case OPENLI_PROTO_NOMORE_INTERCEPTS:
                 disable_unconfirmed_intercepts(sync);
+                forward_provmsg_to_voipsync(sync, provmsg, msglen, msgtype);
                 break;
         }
 
@@ -783,8 +672,8 @@ int sync_connect_provisioner(collector_sync_t *sync) {
     int sockfd;
 
 
-    sockfd = connect_socket(sync->glob->provisionerip,
-            sync->glob->provisionerport, sync->instruct_fail);
+    sockfd = connect_socket(sync->info->provisionerip,
+            sync->info->provisionerport, sync->instruct_fail);
 
     if (sockfd == -1) {
         return -1;
@@ -818,7 +707,7 @@ int sync_connect_provisioner(collector_sync_t *sync) {
     ev.data.ptr = (void *)(sync->ii_ev);
     ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
 
-    if (epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
+    if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
         /* TODO Do something? */
         logger(LOG_DAEMON, "OpenLI: failed to register provisioner fd: %s",
                 strerror(errno));
@@ -861,7 +750,7 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
     sync->incoming = NULL;
 
     if (sync->instruct_fd != -1) {
-        if (epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_DEL,
+        if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_DEL,
                 sync->instruct_fd, &ev) == -1) {
             logger(LOG_DAEMON,
                     "OpenLI: error de-registering provisioner fd: %s.",
@@ -875,9 +764,10 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
      * as active when we reconnect to the provisioner.
      */
     touch_all_intercepts(sync->ipintercepts);
-    touch_all_voipintercepts(sync->voipintercepts);
-
     touch_all_coreservers(sync->coreservers);
+
+    /* Tell other sync thread to flag its intercepts too */
+    forward_provmsg_to_voipsync(sync, NULL, 0, OPENLI_PROTO_DISCONNECT);
 
     /* Same with mediators -- keep exporting to them, but flag them to be
      * disconnected if they are not announced after we reconnect. */
@@ -991,7 +881,7 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
              * packets involving the session IP.
              */
             HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
-                HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs),
+                HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                         sendq, tmpq) {
                     push_single_ipintercept(sendq->q, ipint, sess);
                 }
@@ -1002,7 +892,7 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
              * stop intercepting traffic for this session */
             if (userint) {
                 HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
-                    push_session_halt_to_threads(sync->glob->syncsendqs,
+                    push_session_halt_to_threads(sync->glob->collector_queues,
                             sess, ipint);
                 }
             }
@@ -1011,9 +901,9 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
 
     if (userint) {
         HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
-            if (p->create_iri_from_packet(p, sync->glob, &(sync->encoder),
-                    &(sync->exportq), sess, ipint, parseddata,
-                    accessaction) == -1) {
+            if (p->create_iri_from_packet(p, sync->info, &(sync->freegenerics),
+                    &(sync->encoder), &(sync->exportq), sess, ipint,
+                    parseddata, accessaction) == -1) {
                 logger(LOG_DAEMON,
                         "OpenLI: unable to form IP IRI from %s packet for intercept %s",
                         p->name, ipint->common.liid);
@@ -1051,7 +941,7 @@ int sync_thread_main(collector_sync_t *sync) {
     libtrace_message_queue_t *srcq = NULL;
     sync_epoll_t *syncev;
 
-    nfds = epoll_wait(sync->glob->sync_epollfd, evs, 64, 50);
+    nfds = epoll_wait(sync->glob->epoll_fd, evs, 64, 50);
 
     if (nfds <= 0) {
         return nfds;
@@ -1076,7 +966,7 @@ int sync_thread_main(collector_sync_t *sync) {
 
             } else {
                 logger(LOG_DAEMON, "OpenLI: processor->sync message queue pipe has broken down.");
-                epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_DEL,
+                epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_DEL,
                         syncev->fd, NULL);
             }
 
@@ -1099,13 +989,6 @@ int sync_thread_main(collector_sync_t *sync) {
             continue;
         }
 
-        if (syncev->fdtype == SYNC_EVENT_SIP_TIMEOUT) {
-            struct rtpstreaminf *thisrtp;
-            thisrtp = (struct rtpstreaminf *)(syncev->ptr);
-            halt_single_rtpstream(sync, thisrtp);
-            continue;
-        }
-
         /* Must be from a processing thread queue, figure out which one */
         if (libtrace_message_queue_count(
                 (libtrace_message_queue_t *)(syncev->ptr)) <= 0) {
@@ -1122,13 +1005,8 @@ int sync_thread_main(collector_sync_t *sync) {
 
         /* If a hello from a thread, push all active intercepts back */
         if (recvd.type == OPENLI_UPDATE_HELLO) {
-            voipintercept_t *v;
-
             push_all_active_intercepts(sync->allusers, sync->ipintercepts,
                     recvd.data.replyq);
-            for (v = sync->voipintercepts; v != NULL; v = v->hh_liid.next) {
-                push_all_active_voipstreams(recvd.data.replyq, v);
-            }
             push_all_coreservers(sync->coreservers, recvd.data.replyq);
         }
 
@@ -1139,28 +1017,6 @@ int sync_thread_main(collector_sync_t *sync) {
          * push II update messages to processing threads */
 
         /* If this relates to an active intercept, create IRI and export */
-
-        if (recvd.type == OPENLI_UPDATE_SIP) {
-
-            /* The error checking / reporting in here is a bit meaningless,
-             * as I'm not really sure what action I can take here if something
-             * goes wrong aside from just ignoring the SIP update.
-             */
-            int ret;
-            if ((ret = parse_sip_packet(&(sync->sipparser),
-                        recvd.data.pkt)) > 0) {
-                if (update_sip_state(sync, recvd.data.pkt) < 0) {
-                    logger(LOG_DAEMON,
-                            "OpenLI: error while updating SIP state in collector.");
-                }
-            } else if (ret < 0) {
-                logger(LOG_DAEMON,
-                        "OpenLI: sync thread received an invalid SIP packet?");
-            }
-
-            trace_decrement_packet_refcount(recvd.data.pkt);
-        }
-
         if (recvd.type == OPENLI_UPDATE_RADIUS) {
             int ret;
             if ((ret = update_user_sessions(sync, recvd.data.pkt,
@@ -1175,102 +1031,6 @@ int sync_thread_main(collector_sync_t *sync) {
     }
 
     return nfds;
-}
-
-static inline void push_hello_message(libtrace_message_queue_t *atob,
-        libtrace_message_queue_t *btoa) {
-
-    openli_state_update_t hello;
-
-    memset(&hello, 0, sizeof(openli_state_update_t));
-    hello.type = OPENLI_UPDATE_HELLO;
-    hello.data.replyq = btoa;
-
-    libtrace_message_queue_put(atob, (void *)(&hello));
-}
-
-int register_sync_queues(collector_global_t *glob,
-        libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq,
-        libtrace_thread_t *parent) {
-
-    struct epoll_event ev;
-    sync_epoll_t *syncev, *syncev_hash;
-    sync_sendq_t *syncq, *sendq_hash, *a, *b;
-    int ind;
-
-    syncq = (sync_sendq_t *)malloc(sizeof(sync_sendq_t));
-    syncq->q = sendq;
-    syncq->parent = parent;
-
-    syncev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
-    syncev->fdtype = SYNC_EVENT_PROC_QUEUE;
-    syncev->fd = libtrace_message_queue_get_fd(recvq);
-    syncev->ptr = recvq;
-    syncev->parent = parent;
-
-    ev.data.ptr = (void *)syncev;
-    ev.events = EPOLLIN;
-
-    pthread_mutex_lock(&(glob->syncq_mutex));
-    if (epoll_ctl(glob->sync_epollfd, EPOLL_CTL_ADD, syncev->fd, &ev) == -1) {
-        /* TODO Do something? */
-        logger(LOG_DAEMON, "OpenLI: failed to register processor->sync queue: %s",
-                strerror(errno));
-        pthread_mutex_unlock(&(glob->syncq_mutex));
-        return -1;
-    }
-
-    sendq_hash = (sync_sendq_t *)(glob->syncsendqs);
-    HASH_ADD_PTR(sendq_hash, parent, syncq);
-    glob->syncsendqs = (void *)sendq_hash;
-
-    syncev_hash = (sync_epoll_t *)(glob->syncepollevs);
-    HASH_ADD_PTR(syncev_hash, parent, syncev);
-    glob->syncepollevs = (void *)syncev_hash;
-
-    pthread_mutex_unlock(&(glob->syncq_mutex));
-
-    push_hello_message(recvq, sendq);
-    return 0;
-}
-
-void deregister_sync_queues(collector_global_t *glob, libtrace_thread_t *t) {
-
-    sync_epoll_t *syncev, *syncev_hash;
-    sync_sendq_t *syncq, *sendq_hash;
-    struct epoll_event ev;
-
-    pthread_mutex_lock(&(glob->syncq_mutex));
-    sendq_hash = (sync_sendq_t *)(glob->syncsendqs);
-
-    HASH_FIND_PTR(sendq_hash, &t, syncq);
-    /* Caller will free the queue itself */
-    if (syncq) {
-        HASH_DELETE(hh, sendq_hash, syncq);
-        free(syncq);
-        glob->syncsendqs = (void *)sendq_hash;
-    }
-
-    syncev_hash = (sync_epoll_t *)(glob->syncepollevs);
-    HASH_FIND_PTR(syncev_hash, &t, syncev);
-    if (syncev) {
-        if (glob->sync_epollfd != -1 && epoll_ctl(glob->sync_epollfd,
-                    EPOLL_CTL_DEL, syncev->fd, &ev) == -1) {
-            logger(LOG_DAEMON, "OpenLI: failed to de-register processor->sync queue %d: %s", syncev->fd, strerror(errno));
-        }
-        HASH_DELETE(hh, syncev_hash, syncev);
-        free(syncev);
-        glob->syncepollevs = (void *)syncev_hash;
-    }
-
-    pthread_mutex_unlock(&(glob->syncq_mutex));
-}
-
-void halt_processing_threads(collector_global_t *glob) {
-    colinput_t *inp, *tmp;
-    HASH_ITER(hh, glob->inputs, inp, tmp) {
-        trace_pstop(inp->trace);
-    }
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

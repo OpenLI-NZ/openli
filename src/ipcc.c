@@ -66,7 +66,7 @@ static void dump_export_msg(openli_exportmsg_t *msg) {
 
 }
 
-static openli_export_recv_t form_ipcc(collector_global_t *glob,
+static openli_export_recv_t form_ipcc(shared_global_info_t *info,
 		colthread_local_t *loc, ipsession_t *sess,
         libtrace_packet_t *pkt, void *l3, uint32_t rem, uint8_t dir) {
 
@@ -87,12 +87,12 @@ static openli_export_recv_t form_ipcc(collector_global_t *glob,
     hdrdata.authcc_len = sess->common.authcc_len;
     hdrdata.delivcc = sess->common.delivcc;
     hdrdata.delivcc_len = sess->common.delivcc_len;
-    hdrdata.operatorid = glob->operatorid;
-    hdrdata.operatorid_len = glob->operatorid_len;
-    hdrdata.networkelemid = glob->networkelemid;
-    hdrdata.networkelemid_len = glob->networkelemid_len;
-    hdrdata.intpointid = glob->intpointid;
-    hdrdata.intpointid_len = glob->intpointid_len;
+    hdrdata.operatorid = info->operatorid;
+    hdrdata.operatorid_len = info->operatorid_len;
+    hdrdata.networkelemid = info->networkelemid;
+    hdrdata.networkelemid_len = info->networkelemid_len;
+    hdrdata.intpointid = info->intpointid;
+    hdrdata.intpointid_len = info->intpointid_len;
 
     memset(&msg, 0, sizeof(openli_exportmsg_t));
     msg.msgbody = encode_etsi_ipcc(loc->encoder, &hdrdata,
@@ -116,7 +116,7 @@ static openli_export_recv_t form_ipcc(collector_global_t *glob,
 }
 int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip_t *ip,
-        uint32_t rem, collector_global_t *glob, colthread_local_t *loc) {
+        uint32_t rem, shared_global_info_t *info, colthread_local_t *loc) {
 
     struct sockaddr_in *intaddr, *cmp;
     openli_export_recv_t msg;
@@ -141,7 +141,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = form_ipcc(glob, loc, sess, pkt, ip, rem, 0);
+            msg = form_ipcc(info, loc, sess, pkt, ip, rem, 0);
             libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
         }
         goto ipv4ccdone;
@@ -154,7 +154,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = form_ipcc(glob, loc, sess, pkt, ip, rem, 1);
+            msg = form_ipcc(info, loc, sess, pkt, ip, rem, 1);
             libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
         }
     }

@@ -46,6 +46,76 @@
 #include "ipmmiri.h"
 
 
+collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
+
+    struct epoll_event ev;
+
+    collector_sync_voip_t *sync = (collector_sync_voip_t *)
+            malloc(sizeof(collector_sync_voip_t));
+
+
+    sync->glob = &(glob->syncvoip);
+    sync->info = &(glob->sharedinfo);
+    sync->intersyncq = &(glob->intersyncq);
+    sync->intersync_ev.fdtype = SYNC_EVENT_INTERSYNC;
+    sync->intersync_ev.fd = libtrace_message_queue_get_fd(sync->intersyncq);
+    sync->intersync_ev.ptr = sync->intersyncq;
+    sync->intersync_ev.parent = NULL;
+
+    ev.data.ptr = (void *)(&sync->intersync_ev);
+    ev.events = EPOLLIN;
+
+    pthread_mutex_lock(&(sync->glob->mutex));
+    if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_ADD, sync->intersync_ev.fd,
+            &ev) == -1) {
+        logger(LOG_DAEMON, "OpenLI: failed to register epoll event for receiving on intersync queue: %s",
+                strerror(errno));
+        pthread_mutex_unlock(&(sync->glob->mutex));
+        free(sync);
+        return NULL;
+    }
+
+    pthread_mutex_unlock(&(sync->glob->mutex));
+
+    sync->voipintercepts = NULL;
+    sync->knowncallids = NULL;
+    sync->sipparser = NULL;
+    sync->encoder = NULL;
+    libtrace_message_queue_init(&(sync->exportq), sizeof(openli_exportmsg_t));
+
+    return sync;
+}
+
+void clean_sync_voip_data(collector_sync_voip_t *sync) {
+    struct epoll_event ev;
+
+    free_voip_cinmap(sync->knowncallids);
+    if (sync->voipintercepts) {
+        free_all_voipintercepts(sync->voipintercepts);
+    }
+    libtrace_message_queue_destroy(&(sync->exportq));
+    if (sync->sipparser) {
+        release_sip_parser(sync->sipparser);
+    }
+    if (sync->encoder) {
+        free_wandder_encoder(sync->encoder);
+    }
+
+    sync->voipintercepts = NULL;
+    sync->knowncallids = NULL;
+    sync->sipparser = NULL;
+    sync->encoder = NULL;
+
+    pthread_mutex_lock(&(sync->glob->mutex));
+    if (sync->glob->epoll_fd != -1 && epoll_ctl(sync->glob->epoll_fd,
+                EPOLL_CTL_DEL, sync->intersync_ev.fd, &ev) == -1) {
+        logger(LOG_DAEMON, "OpenLI: failed to de-register epoll event for receiving on intersync queue: %s",
+                strerror(errno));
+    }
+    pthread_mutex_unlock(&(sync->glob->mutex));
+
+}
+
 static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
         rtpstreaminf_t *orig) {
 
@@ -106,18 +176,18 @@ static void push_halt_active_voipstreams(libtrace_message_queue_t *q,
     }
 }
 
-void push_voipintercept_halt_to_threads(collector_sync_t *sync,
+static void push_voipintercept_halt_to_threads(collector_sync_voip_t *sync,
         voipintercept_t *vint) {
 
     sync_sendq_t *sendq, *tmp;
 
-    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
         push_halt_active_voipstreams(sendq->q, vint,
-                sync->glob->sync_epollfd);
+                sync->glob->epoll_fd);
     }
 }
 
-void push_all_active_voipstreams(libtrace_message_queue_t *q,
+static void push_all_active_voipstreams(libtrace_message_queue_t *q,
         voipintercept_t *vint) {
 
     rtpstreaminf_t *cin = NULL;
@@ -136,7 +206,7 @@ void push_all_active_voipstreams(libtrace_message_queue_t *q,
 
 }
 
-static int update_rtp_stream(collector_sync_t *sync, rtpstreaminf_t *rtp,
+static int update_rtp_stream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp,
         voipintercept_t *vint, char *ipstr, char *portstr, uint8_t dir) {
 
     uint32_t port;
@@ -185,7 +255,7 @@ static int update_rtp_stream(collector_sync_t *sync, rtpstreaminf_t *rtp,
     }
     /* If we get here, we need to push the RTP stream details to the
      * processing threads. */
-    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
         if (rtp->active == 0) {
             push_single_voipstreamintercept(sendq->q, rtp);
         }
@@ -292,7 +362,7 @@ static int sipid_matches_target(libtrace_list_t *targets,
     return 0;
 }
 
-static inline int lookup_sip_callid(collector_sync_t *sync, char *callid) {
+static inline int lookup_sip_callid(collector_sync_voip_t *sync, char *callid) {
 
     voipcinmap_t *lookup;
 
@@ -303,7 +373,7 @@ static inline int lookup_sip_callid(collector_sync_t *sync, char *callid) {
     return 1;
 }
 
-static voipintshared_t *create_new_voip_session(collector_sync_t *sync,
+static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
         char *callid, sip_sdp_identifier_t *sdpo, voipintercept_t *vint) {
 
     voipintshared_t *vshared = NULL;
@@ -343,7 +413,7 @@ static voipintshared_t *create_new_voip_session(collector_sync_t *sync,
     return vshared;
 }
 
-static inline voipintshared_t *check_sip_auth_fields(collector_sync_t *sync,
+static inline voipintshared_t *check_sip_auth_fields(collector_sync_voip_t *sync,
         voipintercept_t *vint, char *callid, sip_sdp_identifier_t *sdpo,
         uint8_t isproxy) {
 
@@ -376,7 +446,7 @@ static inline voipintshared_t *check_sip_auth_fields(collector_sync_t *sync,
     return vshared;
 }
 
-static int process_sip_183sessprog(collector_sync_t *sync,
+static int process_sip_183sessprog(collector_sync_voip_t *sync,
         rtpstreaminf_t *thisrtp, voipintercept_t *vint,
         etsili_iri_type_t *iritype) {
 
@@ -407,7 +477,7 @@ static int process_sip_183sessprog(collector_sync_t *sync,
     return 0;
 }
 
-static int process_sip_200ok(collector_sync_t *sync, rtpstreaminf_t *thisrtp,
+static int process_sip_200ok(collector_sync_voip_t *sync, rtpstreaminf_t *thisrtp,
         voipintercept_t *vint, etsili_iri_type_t *iritype) {
 
     char *ipstr, *portstr, *cseqstr;
@@ -440,7 +510,7 @@ static int process_sip_200ok(collector_sync_t *sync, rtpstreaminf_t *thisrtp,
         /* Call for this session should be over */
         thisrtp->timeout_ev = (void *)timeout;
         timeout->fdtype = SYNC_EVENT_SIP_TIMEOUT;
-        timeout->fd = epoll_add_timer(sync->glob->sync_epollfd,
+        timeout->fd = epoll_add_timer(sync->glob->epoll_fd,
                 30, timeout);
         timeout->ptr = thisrtp;
 
@@ -451,7 +521,7 @@ static int process_sip_200ok(collector_sync_t *sync, rtpstreaminf_t *thisrtp,
     return 0;
 }
 
-static int process_sip_other(collector_sync_t *sync, char *callid,
+static int process_sip_other(collector_sync_voip_t *sync, char *callid,
         sip_sdp_identifier_t *sdpo, libtrace_packet_t *pkt) {
 
     voipintercept_t *vint, *tmp;
@@ -512,7 +582,7 @@ static int process_sip_other(collector_sync_t *sync, char *callid,
         }
 
         /* Wrap this packet up in an IRI and forward it on to the exporter */
-        ret = ipmm_iri(pkt, sync->glob, &(sync->encoder), &(sync->exportq),
+        ret = ipmm_iri(pkt, sync->info, &(sync->encoder), &(sync->exportq),
                 vint, vshared, iritype, OPENLI_IPMMIRI_SIP);
         if (ret == -1) {
             logger(LOG_DAEMON,
@@ -525,7 +595,7 @@ static int process_sip_other(collector_sync_t *sync, char *callid,
 
 }
 
-static int process_sip_invite(collector_sync_t *sync, char *callid,
+static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         sip_sdp_identifier_t *sdpo, libtrace_packet_t *pkt) {
 
     voipintercept_t *vint, *tmp;
@@ -633,7 +703,7 @@ static int process_sip_invite(collector_sync_t *sync, char *callid,
 
 
         /* Wrap this packet up in an IRI and forward it on to the exporter */
-        ret = ipmm_iri(pkt, sync->glob, &(sync->encoder), &(sync->exportq),
+        ret = ipmm_iri(pkt, sync->info, &(sync->encoder), &(sync->exportq),
                 vint, vshared, iritype, OPENLI_IPMMIRI_SIP);
         if (ret == -1) {
             logger(LOG_DAEMON,
@@ -646,7 +716,8 @@ static int process_sip_invite(collector_sync_t *sync, char *callid,
 
 }
 
-int update_sip_state(collector_sync_t *sync, libtrace_packet_t *pkt) {
+static int update_sip_state(collector_sync_voip_t *sync,
+        libtrace_packet_t *pkt) {
 
     char *callid, *sessid, *sessversion;
     openli_sip_identity_t authid, touriid;
@@ -723,7 +794,7 @@ sipgiveup:
 
 }
 
-int halt_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
+static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
     voipintercept_t *vint, torem;
@@ -754,7 +825,7 @@ int halt_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
     return 0;
 }
 
-static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
+static int halt_single_rtpstream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp) {
     int i;
 
     struct epoll_event ev;
@@ -764,7 +835,7 @@ static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
 
     if (rtp->timeout_ev) {
         sync_epoll_t *timerev = (sync_epoll_t *)(rtp->timeout_ev);
-        if (epoll_ctl(sync->glob->sync_epollfd, EPOLL_CTL_DEL, timerev->fd,
+        if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_DEL, timerev->fd,
                 &ev) == -1) {
             logger(LOG_DAEMON, "OpenLI: unable to remove RTP stream timeout event for %s from epoll: %s",
                     rtp->streamkey, strerror(errno));
@@ -776,7 +847,8 @@ static int halt_single_rtpstream(collector_sync_t *sync, rtpstreaminf_t *rtp) {
 
 
     if (rtp->active) {
-        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp3) {
+        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq,
+                tmp3) {
            openli_pushed_t msg;
            memset(&msg, 0, sizeof(openli_pushed_t));
            msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
@@ -913,7 +985,7 @@ static inline void add_new_sip_target_to_list(voipintercept_t *vint,
 
 }
 
-int new_voip_sip_target(collector_sync_t *sync, uint8_t *intmsg,
+static int new_voip_sip_target(collector_sync_voip_t *sync, uint8_t *intmsg,
 		uint16_t msglen) {
 
     voipintercept_t *vint;
@@ -941,8 +1013,8 @@ int new_voip_sip_target(collector_sync_t *sync, uint8_t *intmsg,
 }
 
 
-int withdraw_voip_sip_target(collector_sync_t *sync, uint8_t *intmsg,
-        uint16_t msglen) {
+static int withdraw_voip_sip_target(collector_sync_voip_t *sync,
+        uint8_t *intmsg, uint16_t msglen) {
 
     voipintercept_t *vint;
     openli_sip_identity_t sipid;
@@ -967,8 +1039,8 @@ int withdraw_voip_sip_target(collector_sync_t *sync, uint8_t *intmsg,
     disable_sip_target(vint, &sipid);
 }
 
-int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg, uint16_t msglen)
-{
+static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
+        uint16_t msglen) {
 
     voipintercept_t *vint, toadd;
     sync_sendq_t *sendq, *tmp;
@@ -998,7 +1070,7 @@ int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg, uint16_t msglen)
     HASH_ADD_KEYPTR(hh_liid, sync->voipintercepts, vint->common.liid,
             vint->common.liid_len, vint);
 
-    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->syncsendqs), sendq, tmp) {
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
         /* Forward all active CINs to our collector threads */
         push_all_active_voipstreams(sendq->q, vint);
 
@@ -1006,7 +1078,7 @@ int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg, uint16_t msglen)
     return 0;
 }
 
-void touch_all_voipintercepts(voipintercept_t *vints) {
+static void touch_all_voipintercepts(voipintercept_t *vints) {
     voipintercept_t *v;
     libtrace_list_node_t *n;
     openli_sip_identity_t *sipid;
@@ -1025,6 +1097,200 @@ void touch_all_voipintercepts(voipintercept_t *vints) {
     }
 }
 
+static inline void process_colthread_message(collector_sync_voip_t *sync,
+        sync_epoll_t *syncev) {
+
+    openli_state_update_t recvd;
+
+    libtrace_message_queue_get((libtrace_message_queue_t *)(syncev->ptr),
+            (void *)(&recvd));
+
+    /* If a hello from a thread, push all active VOIP intercepts back */
+    if (recvd.type == OPENLI_UPDATE_HELLO) {
+        voipintercept_t *v;
+        for (v = sync->voipintercepts; v != NULL; v = v->hh_liid.next) {
+            push_all_active_voipstreams(recvd.data.replyq, v);
+        }
+    }
+
+    /* If an update from a thread, update appropriate internal state */
+
+    /* If this resolves an unknown mapping or changes an existing one,
+     * push II update messages to processing threads */
+
+    /* If this relates to an active intercept, create IRI and export */
+
+    if (recvd.type == OPENLI_UPDATE_SIP) {
+
+        /* The error checking / reporting in here is a bit meaningless,
+         * as I'm not really sure what action I can take here if something
+         * goes wrong aside from just ignoring the SIP update.
+         */
+        int ret;
+        if ((ret = parse_sip_packet(&(sync->sipparser),
+                        recvd.data.pkt)) > 0) {
+            if (update_sip_state(sync, recvd.data.pkt) < 0) {
+                logger(LOG_DAEMON,
+                        "OpenLI: error while updating SIP state in collector.");
+            }
+        } else if (ret < 0) {
+            logger(LOG_DAEMON,
+                    "OpenLI: sync thread received an invalid SIP packet?");
+        }
+
+        trace_decrement_packet_refcount(recvd.data.pkt);
+    }
+
+}
+
+static void disable_unconfirmed_voip_intercepts(collector_sync_voip_t *sync) {
+
+    voipintercept_t *v, *tmp;
+    libtrace_list_node_t *n;
+    openli_sip_identity_t *sipid;
+
+    HASH_ITER(hh_liid, sync->voipintercepts, v, tmp) {
+        if (v->awaitingconfirm && v->active) {
+            v->active = 0;
+
+            if (v->active_cins == NULL) {
+                continue;
+            }
+
+            push_voipintercept_halt_to_threads(sync, v);
+            HASH_DELETE(hh_liid, sync->voipintercepts, v);
+            free_single_voipintercept(v);
+        } else if (v->active) {
+            /* Deal with any unconfirmed SIP targets */
+
+            n = v->targets->head;
+            while (n) {
+                sipid = *((openli_sip_identity_t **)(n->data));
+                n = n->next;
+
+                if (sipid->active && sipid->awaitingconfirm) {
+                    sipid->active = 0;
+                    if (sipid->realm) {
+                        logger(LOG_DAEMON, "OpenLI: removing unconfirmed SIP target %s@%s for LIID %s",
+                                sipid->username, sipid->realm,
+                                v->common.liid);
+                    } else {
+                        logger(LOG_DAEMON, "OpenLI: removing unconfirmed SIP target %s@* for LIID %s",
+                                sipid->username, v->common.liid);
+                    }
+                }
+            }
+        }
+    }
+
+
+}
+
+static inline int process_intersync_msg(collector_sync_voip_t *sync,
+        sync_epoll_t *syncev) {
+
+    openli_intersync_msg_t syncmsg;
+
+    libtrace_message_queue_get((libtrace_message_queue_t *)(syncev->ptr),
+            (void *)(&syncmsg));
+
+    switch(syncmsg.msgtype) {
+        case OPENLI_PROTO_START_VOIPINTERCEPT:
+            if (new_voipintercept(sync, syncmsg.msgbody, syncmsg.msglen) < 0) {
+                /* error, do something XXX */
+            }
+            break;
+        case OPENLI_PROTO_HALT_VOIPINTERCEPT:
+            if (halt_voipintercept(sync, syncmsg.msgbody, syncmsg.msglen) < 0) {
+                /* error, do something XXX */
+            }
+            break;
+        case OPENLI_PROTO_ANNOUNCE_SIP_TARGET:
+            if (new_voip_sip_target(sync, syncmsg.msgbody,
+                    syncmsg.msglen) < 0) {
+                /* error, do something XXX */
+            }
+            break;
+        case OPENLI_PROTO_WITHDRAW_SIP_TARGET:
+            if (withdraw_voip_sip_target(sync, syncmsg.msgbody,
+                    syncmsg.msglen) < 0) {
+                /* error, do something XXX */
+            }
+            break;
+        case OPENLI_PROTO_NOMORE_INTERCEPTS:
+            disable_unconfirmed_voip_intercepts(sync);
+            break;
+        case OPENLI_PROTO_DISCONNECT:
+            touch_all_voipintercepts(sync->voipintercepts);
+            break;
+    }
+
+    if (syncmsg.msgbody) {
+        free(syncmsg.msgbody);
+    }
+    return 0;
+}
+
+
+int sync_voip_thread_main(collector_sync_voip_t *sync) {
+
+    int i, nfds;
+    struct epoll_event evs[64];
+    sync_epoll_t *syncev;
+
+    nfds = epoll_wait(sync->glob->epoll_fd, evs, 64, 50);
+
+    if (nfds <= 0) {
+        return nfds;
+    }
+
+    for (i = 0; i < nfds; i++) {
+        syncev = (sync_epoll_t *)(evs[i].data.ptr);
+
+        /* Check for incoming messages from processing threads and II fd */
+        if ((evs[i].events & EPOLLERR) || (evs[i].events & EPOLLHUP) ||
+                (evs[i].events & EPOLLRDHUP)) {
+
+            if (syncev->fd == sync->intersync_ev.fd) {
+                logger(LOG_DAEMON, "OpenLI: intersync message queue has failed");
+                return -1;
+            }
+
+            logger(LOG_DAEMON, "OpenLI: processor->sync message queue pipe has broken down.");
+            epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_DEL,
+                    syncev->fd, NULL);
+            continue;
+        }
+
+        if (syncev->fdtype == SYNC_EVENT_SIP_TIMEOUT) {
+            struct rtpstreaminf *thisrtp;
+            thisrtp = (struct rtpstreaminf *)(syncev->ptr);
+            halt_single_rtpstream(sync, thisrtp);
+            continue;
+        }
+
+        if (libtrace_message_queue_count(
+                    (libtrace_message_queue_t *)(syncev->ptr)) <= 0) {
+
+            /* Processing thread queue was empty but we thought we had a
+             * message available? I think this is just a consequence of
+             * libtrace MQ's "fast" path that tries to avoid locking for
+             * simple operations. */
+            continue;
+        }
+
+        if (syncev->fdtype == SYNC_EVENT_INTERSYNC) {
+            /* Received a provisioner II via the IP sync thread */
+            process_intersync_msg(sync, syncev);
+            continue;
+        }
+
+        /* If we get here, we must be dealing with a processing thread */
+        process_colthread_message(sync, syncev);
+
+    }
+    return nfds;
+}
 
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

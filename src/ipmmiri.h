@@ -39,7 +39,7 @@ enum {
     OPENLI_IPMMIRI_H323,
 };
 
-int ipmm_iri(libtrace_packet_t *pkt, collector_global_t *glob,
+int ipmm_iri(libtrace_packet_t *pkt, shared_global_info_t *info,
         wandder_encoder_t **encoder, libtrace_message_queue_t *q,
         voipintercept_t *vint, voipintshared_t *cin,
         etsili_iri_type_t iritype, uint8_t iristyle);

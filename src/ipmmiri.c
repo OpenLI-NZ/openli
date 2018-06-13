@@ -38,7 +38,7 @@
 #include "etsili_core.h"
 #include "ipmmiri.h"
 
-int ipmm_iri(libtrace_packet_t *pkt, collector_global_t *glob,
+int ipmm_iri(libtrace_packet_t *pkt, shared_global_info_t *info,
         wandder_encoder_t **encoder, libtrace_message_queue_t *q,
         voipintercept_t *vint, voipintshared_t *cin,
         etsili_iri_type_t iritype, uint8_t ipmmiri_style) {
@@ -84,12 +84,12 @@ int ipmm_iri(libtrace_packet_t *pkt, collector_global_t *glob,
     hdrdata.authcc_len = vint->common.authcc_len;
     hdrdata.delivcc = vint->common.delivcc;
     hdrdata.delivcc_len = vint->common.delivcc_len;
-    hdrdata.operatorid = glob->operatorid;
-    hdrdata.operatorid_len = glob->operatorid_len;
-    hdrdata.networkelemid = glob->networkelemid;
-    hdrdata.networkelemid_len = glob->networkelemid_len;
-    hdrdata.intpointid = glob->intpointid;
-    hdrdata.intpointid_len = glob->intpointid_len;
+    hdrdata.operatorid = info->operatorid;
+    hdrdata.operatorid_len = info->operatorid_len;
+    hdrdata.networkelemid = info->networkelemid;
+    hdrdata.networkelemid_len = info->networkelemid_len;
+    hdrdata.intpointid = info->intpointid;
+    hdrdata.intpointid_len = info->intpointid_len;
 
     memset(&iri, 0, sizeof(openli_exportmsg_t));
 

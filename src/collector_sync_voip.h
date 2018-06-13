@@ -28,27 +28,34 @@
 #define OPENLI_COLLECTOR_SYNC_VOIP_H_
 
 #include <libtrace.h>
+#include <libtrace/message_queue.h>
 
 #include "intercept.h"
-#include "collector_sync.h"
+#include "collector.h"
+#include "sipparsing.h"
 #include "util.h"
 
-void push_all_active_voipstreams(libtrace_message_queue_t *q,
-        voipintercept_t *vint);
-void push_voipintercept_halt_to_threads(collector_sync_t *sync,
-        voipintercept_t *vint);
+typedef struct collector_sync_voip_data {
 
-int update_sip_state(collector_sync_t *sync, libtrace_packet_t *pkt);
+    support_thread_global_t *glob;
+    shared_global_info_t *info;
 
-int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg, uint16_t msglen);
-int halt_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
-        uint16_t msglen);
-void touch_all_voipintercepts(voipintercept_t *vints);
+    voipintercept_t *voipintercepts;
+    voipcinmap_t *knowncallids;
 
-int withdraw_voip_sip_target(collector_sync_t *sync, uint8_t *intmsg,
-        uint16_t msglen);
-int new_voip_sip_target(collector_sync_t *sync, uint8_t *intmsg,
-        uint16_t msglen);
+    libtrace_message_queue_t *intersyncq;
+    sync_epoll_t intersync_ev;
+
+    libtrace_message_queue_t exportq;
+    openli_sip_parser_t *sipparser;
+    wandder_encoder_t *encoder;
+
+} collector_sync_voip_t;
+
+collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob);
+void clean_sync_voip_data(collector_sync_voip_t *sync);
+int sync_voip_thread_main(collector_sync_voip_t *sync);
+
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

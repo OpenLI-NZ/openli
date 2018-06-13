@@ -31,7 +31,7 @@
 
 int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip_t *ip,
-        uint32_t rem, collector_global_t *glob, colthread_local_t *loc);
+        uint32_t rem, shared_global_info_t *info, colthread_local_t *loc);
 
 #endif
 

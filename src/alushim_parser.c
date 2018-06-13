@@ -104,7 +104,7 @@ alushimhdr_t *get_alushim_header(libtrace_packet_t *packet, uint32_t *rem) {
     return (alushimhdr_t *)(udppayload);
 }
 
-static void form_alu_ipcc(collector_global_t *glob,
+static void form_alu_ipcc(shared_global_info_t *info,
         colthread_local_t *loc, aluintercept_t *alu,
         void *l3, uint32_t rem, struct timeval *tv, uint8_t dir) {
 
@@ -125,12 +125,12 @@ static void form_alu_ipcc(collector_global_t *glob,
     hdrdata.authcc_len = alu->common.authcc_len;
     hdrdata.delivcc = alu->common.delivcc;
     hdrdata.delivcc_len = alu->common.delivcc_len;
-    hdrdata.operatorid = glob->operatorid;
-    hdrdata.operatorid_len = glob->operatorid_len;
-    hdrdata.networkelemid = glob->networkelemid;
-    hdrdata.networkelemid_len = glob->networkelemid_len;
-    hdrdata.intpointid = glob->intpointid;
-    hdrdata.intpointid_len = glob->intpointid_len;
+    hdrdata.operatorid = info->operatorid;
+    hdrdata.operatorid_len = info->operatorid_len;
+    hdrdata.networkelemid = info->networkelemid;
+    hdrdata.networkelemid_len = info->networkelemid_len;
+    hdrdata.intpointid = info->intpointid;
+    hdrdata.intpointid_len = info->intpointid_len;
 
     memset(&msg, 0, sizeof(openli_exportmsg_t));
     msg.msgbody = encode_etsi_ipcc(loc->encoder, &hdrdata, (int64_t)(alu->cin),
@@ -151,7 +151,7 @@ static void form_alu_ipcc(collector_global_t *glob,
 
 }
 
-int check_alu_intercept(collector_global_t *glob, colthread_local_t *loc,
+int check_alu_intercept(shared_global_info_t *info, colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
         coreserver_t *alusources, aluintercept_t *aluints) {
 
@@ -251,7 +251,7 @@ int check_alu_intercept(collector_global_t *glob, colthread_local_t *loc,
     alu->cin = ntohl(aluhdr->sessionid);
 
     /* Create an appropriate IPCC and export it */
-    form_alu_ipcc(glob, loc, alu,
+    form_alu_ipcc(info, loc, alu,
             l3, rem, &tv, alushim_get_direction(aluhdr));
 
     /* Also follow up with a PACKET_FIN so the packet gets released */

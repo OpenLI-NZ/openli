@@ -57,6 +57,12 @@ enum {
     OPENLI_UPDATE_SIP = 3
 };
 
+typedef struct openli_intersync_msg {
+    uint8_t msgtype;
+    uint8_t *msgbody;
+    uint16_t msglen;
+} PACKED openli_intersync_msg_t;
+
 typedef struct openli_state_msg {
 
     uint8_t type;
@@ -104,13 +110,43 @@ typedef struct ipv6_target {
     UT_hash_handle hh;
 } ipv6_target_t;
 
+enum {
+    SYNC_EVENT_PROC_QUEUE,
+    SYNC_EVENT_PROVISIONER,
+    SYNC_EVENT_SIP_TIMEOUT,
+    SYNC_EVENT_INTERSYNC,
+};
+
+
+typedef struct sync_epoll {
+    uint8_t fdtype;
+    int fd;
+    void *ptr;
+    libtrace_thread_t *parent;
+    UT_hash_handle hh;
+} sync_epoll_t;
+
+typedef struct sync_sendq {
+    libtrace_message_queue_t *q;
+    libtrace_thread_t *parent;
+    UT_hash_handle hh;
+} sync_sendq_t;
+
+
 typedef struct colthread_local {
 
-    /* Message queue for pushing updates to sync thread */
-    libtrace_message_queue_t tosyncq;
+    /* Message queue for pushing updates to sync IP thread */
+    libtrace_message_queue_t tosyncq_ip;
 
-    /* Message queue for receiving intercept instructions from sync thread */
-    libtrace_message_queue_t fromsyncq;
+    /* Message queue for receiving IP intercept instructions from sync thread */
+    libtrace_message_queue_t fromsyncq_ip;
+
+    /* Message queue for pushing updates to sync VOIP thread */
+    libtrace_message_queue_t tosyncq_voip;
+
+    /* Message queue for receiving VOIP intercept instructions from sync
+       thread */
+    libtrace_message_queue_t fromsyncq_voip;
 
 
     /* Current intercepts */
@@ -138,28 +174,7 @@ typedef struct colthread_local {
 
 } colthread_local_t;
 
-typedef struct collector_global {
-
-    colinput_t *inputs;
-
-    int totalthreads;
-    int queuealloced;
-    int registered_syncqs;
-
-    pthread_rwlock_t config_mutex;
-    pthread_mutex_t syncq_mutex;
-    pthread_mutex_t exportq_mutex;
-
-    void *syncsendqs;
-    void *syncepollevs;
-
-    pthread_t syncthreadid;
-    pthread_t exportthreadid;
-
-    int sync_epollfd;
-    int export_epollfd;
-
-    char *configfile;
+typedef struct shared_global_info {
     char *operatorid;
     char *networkelemid;
     char *intpointid;
@@ -170,12 +185,40 @@ typedef struct collector_global {
     int networkelemid_len;
     int intpointid_len;
 
-    libtrace_list_t *export_epoll_evs;
+} shared_global_info_t;
+
+typedef struct supporting_thread_global {
+
+    pthread_t threadid;
+    pthread_mutex_t mutex;
+    void *collector_queues;
+    void *epollevs;
+    int epoll_fd;
+
+} support_thread_global_t;
+
+typedef struct collector_global {
+
+    colinput_t *inputs;
+
+    int totalthreads;
+    int queuealloced;
+
+    pthread_rwlock_t config_mutex;
+
+    support_thread_global_t syncip;
+    support_thread_global_t syncvoip;
+    support_thread_global_t exporter;
+
+    libtrace_message_queue_t intersyncq;
+
+    char *configfile;
+    shared_global_info_t sharedinfo;
     libtrace_list_t *expired_inputs;
 
     coreserver_t *alumirrors;
 
-    etsili_generic_t *freegenerics;
+
 
 } collector_global_t;
 
@@ -186,6 +229,12 @@ typedef struct packetinfo {
     uint16_t srcport;
     uint16_t destport;
 } packet_info_t;
+
+int register_sync_queues(support_thread_global_t *glob,
+        libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq,
+        libtrace_thread_t *parent);
+void deregister_sync_queues(support_thread_global_t *glob,
+        libtrace_thread_t *t);
 
 
 #endif
