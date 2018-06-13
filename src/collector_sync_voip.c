@@ -623,6 +623,12 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         HASH_FIND(hh_callid, vint->cin_callid_map, callid, strlen(callid),
                 findcin);
 
+        /* NOTE: some SIP clients don't set version or sessionid properly,
+         * just leaving them as zeroes. To avoid issues with duplicate
+         * sessionids, we're going to assume any packets with a sessionid
+         * AND version of 0 are one of the lazy clients and just ignore the
+         * session info.
+         */
         if (sdpo->version != 0 || sdpo->sessionid != 0) {
             HASH_FIND(hh_sdp, vint->cin_sdp_map, sdpo, sizeof(sdpo),
                     findsdp);
