@@ -14,7 +14,7 @@ openlicollector_SOURCES=collector.c configparser.c configparser.h collector.h \
                 internetaccess.c internetaccess.h ipcc.c ipcc.h coreserver.h \
                 coreserver.c collector_push_messaging.c \
                 collector_push_messaging.h alushim_parser.c alushim_parser.h \
-                ipiri.c ipiri.h \
+                ipiri.c ipiri.h collector_sync_voip.c collector_sync_voip.h \
                 $(PLUGIN_SRCS)
 
 openlicollector_LDADD = @ADD_LIBS@

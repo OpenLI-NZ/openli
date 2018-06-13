@@ -24,21 +24,31 @@
  *
  */
 
-#ifndef OPENLI_UTIL_H_
-#define OPENLI_UTIL_H_
+#ifndef OPENLI_COLLECTOR_SYNC_VOIP_H_
+#define OPENLI_COLLECTOR_SYNC_VOIP_H_
 
-#include <sys/epoll.h>
+#include <libtrace.h>
 
-int connect_socket(char *ipstr, char *portstr, uint8_t isretry);
-int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr);
-int create_listener(char *addr, char *port, char *name);
-char *sockaddr_to_string(struct sockaddr *sa, char *str, int len);
-uint8_t *sockaddr_to_key(struct sockaddr *sa, int *socklen);
-void convert_ipstr_to_sockaddr(char *knownip, struct sockaddr_storage **saddr,
-        int *family);
+#include "intercept.h"
+#include "collector_sync.h"
+#include "util.h"
 
-uint32_t hashlittle( const void *key, size_t length, uint32_t initval);
+void push_all_active_voipstreams(libtrace_message_queue_t *q,
+        voipintercept_t *vint);
+void push_voipintercept_halt_to_threads(collector_sync_t *sync,
+        voipintercept_t *vint);
 
+int update_sip_state(collector_sync_t *sync, libtrace_packet_t *pkt);
+
+int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg, uint16_t msglen);
+int halt_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
+        uint16_t msglen);
+void touch_all_voipintercepts(voipintercept_t *vints);
+
+int withdraw_voip_sip_target(collector_sync_t *sync, uint8_t *intmsg,
+        uint16_t msglen);
+int new_voip_sip_target(collector_sync_t *sync, uint8_t *intmsg,
+        uint16_t msglen);
 #endif
-// vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 
+// vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
