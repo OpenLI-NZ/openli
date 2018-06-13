@@ -178,7 +178,10 @@ void destroy_exporter(collector_export_t *exp) {
         free(ev);
         n = n->next;
     }
-    libtrace_list_deinit(evlist);
+
+    /* Don't free evlist, this will be done when the main thread
+     * frees the exporter support data. */
+    //libtrace_list_deinit(evlist);
 
     free(exp);
 }
