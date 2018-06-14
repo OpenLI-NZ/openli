@@ -116,6 +116,19 @@ TWO server entries: one for the auth service and one for the accounting service,
 as these are usually listening on different ports.
 
 
+### Pcap Output Mode
+For situations where you need to perform an intercept but the requesting
+agency is not able to accept a live ETSI stream, OpenLI has the ability to
+instead write the captured CC records to a pcap trace file. To enable this
+for an intercept, set the agency ID in the intercept configuration to
+'pcapdisk'.
+
+NOTE: you will also need to set the 'pcapdirectory' option in the
+configuration file for your mediators.
+
+WARNING: you should confirm with the requesting agency that a pcap file is
+an acceptable format for an intercept before using pcap output mode.
+
 ### Configuration Syntax
 The socket options are expressed used standard YAML key-value pairs, where the
 key is the option name and the value is your chosen value for that option.
