@@ -118,6 +118,7 @@ typedef struct med_state {
 
     char *provaddr;
     char *provport;
+    char *pcapdirectory;
 
     libtrace_list_t *collectors;
     libtrace_list_t *agencies;
@@ -131,7 +132,40 @@ typedef struct med_state {
 
     liid_map_t *liids;
 
+    pthread_t pcapthread;
+    libtrace_message_queue_t pcapqueue;
+
 } mediator_state_t;
+
+enum {
+    PCAP_MESSAGE_CHANGE_DIR,
+    PCAP_MESSAGE_HALT,
+    PCAP_MESSAGE_PACKET
+};
+
+typedef struct active_pcap_output {
+    char *liid;
+    libtrace_out_t *out;
+
+    UT_hash_handle hh;
+} active_pcap_output_t;
+
+typedef struct pcap_thread_state {
+
+    libtrace_message_queue_t *inqueue;
+    libtrace_packet_t *packet;
+    active_pcap_output_t *active;
+    char *dir;
+    int dirwarned;
+    wandder_etsispec_t *decoder;
+
+} pcap_thread_state_t;
+
+typedef struct mediator_pcap_message {
+    uint8_t msgtype;
+    uint8_t *msgbody;
+    uint16_t msglen;
+} mediator_pcap_msg_t;
 
 struct liidmapping {
     char *liid;

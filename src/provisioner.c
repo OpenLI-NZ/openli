@@ -135,18 +135,22 @@ static inline liid_hash_t *add_liid_mapping(provision_state_t *state,
     prov_agency_t *lea;
 
     h = (liid_hash_t *)malloc(sizeof(liid_hash_t));
-    HASH_FIND_STR(state->leas, agency, lea);
-    if (!lea) {
-        logger(LOG_DAEMON,
-                "OpenLI: intercept %s is destined for an unknown agency: %s -- skipping.",
-                liid, agency);
-        free(h);
-        return NULL;
-    } else {
-        h->agency = agency;
-        h->liid = liid;
-        HASH_ADD_KEYPTR(hh, state->liid_map, h->liid, strlen(h->liid), h);
+
+    /* pcapdisk is a special agency that is not user-defined */
+    if (strcmp(agency, "pcapdisk") != 0) {
+        HASH_FIND_STR(state->leas, agency, lea);
+        if (!lea) {
+            logger(LOG_DAEMON,
+                    "OpenLI: intercept %s is destined for an unknown agency: %s -- skipping.",
+                    liid, agency);
+            free(h);
+            return NULL;
+        }
     }
+
+    h->agency = agency;
+    h->liid = liid;
+    HASH_ADD_KEYPTR(hh, state->liid_map, h->liid, strlen(h->liid), h);
     return h;
 }
 

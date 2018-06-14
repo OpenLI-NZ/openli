@@ -11,4 +11,6 @@ provisionerport: 12001
 listenaddr: 10.200.5.100
 listenport: 8888
 
-
+# Write any pcap trace files out to this directory. Only applies to
+# intercepts that are configured to use the pcap output mode.
+pcapdirectory: /traces/openlipcaps/

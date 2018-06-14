@@ -332,6 +332,7 @@ static int parse_agency_list(provision_state_t *state, yaml_document_t *doc,
                     strcmp((char *)key->data.scalar.value,
                             "agencyid") == 0 && newag->agencyid == NULL) {
                 newag->agencyid = strdup((char *)value->data.scalar.value);
+
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -349,6 +350,16 @@ static int parse_agency_list(provision_state_t *state, yaml_document_t *doc,
                 newag->keepalivewait = strtoul(
                         (char *)value->data.scalar.value, NULL, 10);
             }
+        }
+
+        /* 'pcapdisk' is reserved for the intercepts that need to
+         * be written to pcap files instead of live streamed to an
+         * ETSI-capable agency. */
+        if (strcmp(newag->agencyid, "pcapdisk") == 0) {
+            logger(LOG_DAEMON,
+                    "OpenLI: 'pcapdisk' is a reserved agencyid, please rename to something else.");
+            free(newag->agencyid);
+            newag->agencyid = NULL;
         }
 
         if (newag->hi2_ipstr != NULL && newag->hi2_portstr != NULL &&
@@ -757,6 +768,12 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "provisioneraddr") == 0) {
         state->provaddr = strdup((char *) value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "pcapdirectory") == 0) {
+        state->pcapdirectory = strdup((char *) value->data.scalar.value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&

@@ -31,6 +31,13 @@ available and therefore no collectors will be told to connect to it. If
 the provisioner goes down for some reason, the mediator will periodically
 attempt to reconnect to it.
 
+### Pcap Directory
+OpenLI allows intercepts to be written to disk as pcap trace files instead
+of being live streamed to the requesting agency. If you wish to do this for
+any intercepts, you will need to set the pcap directory option in your
+mediator configuration. All pcap traces created by this mediator will be
+written into this directory; filenames will include the LIID for the intercept
+so should be unique and easily identifiable.
 
 ### Configuration Syntax
 All of the mediator config options are standard YAML key-value pairs, where
@@ -42,3 +49,4 @@ The supported option keys are:
 * provisionerport  -- connect to a provisioner listening on this port
 * listenaddr       -- listen on the interface with this address for collectors
 * listenport       -- listen on this port for collectors
+* pcapdirectory    -- the directory to write any pcap trace files to
