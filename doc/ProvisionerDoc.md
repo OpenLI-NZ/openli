@@ -138,8 +138,14 @@ key-value elements:
 * hi2port       -- the port number for the HI2 handover on the agency side
 * hi3address    -- the address of the HI3 handover on the agency side
 * hi3port       -- the port number for the HI3 handover on the agency side
-* requirekaresponse -- if set to 'no', OpenLI will NOT disconnect the handovers
-                       if they fail to respond to a Keep-Alive message.
+* keepalivefreq -- the frequency at which keep alive messages should be sent
+                   to this agency by the mediators (in seconds). Defaults to
+                   300. If set to zero, no keep alives are sent.
+* keepalivewait -- the amount of time (in seconds) to wait for a keep alive
+                   response from the agency before terminating the handover
+                   connection. Defaults to 30. If set to zero, the mediator
+                   will not require a response to keep alives to maintain the
+                   handover connections.
 
 VOIP and IPintercepts are also expressed as a YAML sequence, with a key of
 `voipintercepts:` and `ipintercepts:` respectively. Each sequence item
