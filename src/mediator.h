@@ -77,6 +77,8 @@ typedef struct med_agency_state {
     int64_t lastkaseq;
     wandder_encoder_t *encoder;
     wandder_etsispec_t *decoder;
+    uint32_t kafreq;
+    uint32_t kawait;
     handover_t *parent;
 } med_agency_state_t;
 
@@ -104,7 +106,6 @@ typedef struct mediator_agency {
     int disabled;
     handover_t *hi2;
     handover_t *hi3;
-    uint8_t karespreq;
 } mediator_agency_t;
 
 typedef struct med_state {
@@ -117,9 +118,6 @@ typedef struct med_state {
 
     char *provaddr;
     char *provport;
-
-    uint32_t keepalivefreq;
-    uint32_t keepalivewait;
 
     libtrace_list_t *collectors;
     libtrace_list_t *agencies;

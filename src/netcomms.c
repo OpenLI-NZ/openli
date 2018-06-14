@@ -259,7 +259,7 @@ int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
 #define LEA_BODY_LEN(lea) \
     (strlen(lea->agencyid) + strlen(lea->hi2_ipstr) + \
     strlen(lea->hi2_portstr) + strlen(lea->hi3_ipstr) + \
-    strlen(lea->hi3_portstr) + sizeof(uint8_t) + (6 * 4))
+    strlen(lea->hi3_portstr) + sizeof(uint32_t) + sizeof(uint32_t) + (7 * 4))
 
 #define LEA_WITHDRAW_BODY_LEN(lea) \
     (strlen(lea->agencyid) + (1 * 4))
@@ -300,9 +300,15 @@ int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
         return -1;
     }
 
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_KAFLAG,
-                (uint8_t *)(&lea->keepalive_responder),
-                sizeof(uint8_t)) == -1) {
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_KAFREQ,
+                (uint8_t *)(&lea->keepalivefreq),
+                sizeof(uint32_t)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_KAWAIT,
+                (uint8_t *)(&lea->keepalivewait),
+                sizeof(uint32_t)) == -1) {
         return -1;
     }
     return (int)totallen;
@@ -1185,7 +1191,8 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
     lea->hi3_ipstr = NULL;
     lea->hi3_portstr = NULL;
     lea->agencyid = NULL;
-    lea->keepalive_responder = 1;
+    lea->keepalivefreq = 300;
+    lea->keepalivewait = 0;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -1206,8 +1213,10 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
             DECODE_STRING_FIELD(lea->hi3_ipstr, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_HI3PORT) {
             DECODE_STRING_FIELD(lea->hi3_portstr, valptr, vallen);
-        } else if (f == OPENLI_PROTO_FIELD_KAFLAG) {
-            lea->keepalive_responder = *((uint8_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_KAFREQ) {
+            lea->keepalivefreq = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_KAWAIT) {
+            lea->keepalivewait = *((uint32_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_DAEMON,

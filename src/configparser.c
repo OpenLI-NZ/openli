@@ -289,7 +289,8 @@ static int parse_agency_list(provision_state_t *state, yaml_document_t *doc,
         newag->hi3_ipstr = NULL;
         newag->hi3_portstr = NULL;
         newag->agencyid = NULL;
-        newag->keepalive_responder = 1;
+        newag->keepalivefreq = 300;
+        newag->keepalivewait = 30;
 
         for (pair = node->data.mapping.pairs.start;
                 pair < node->data.mapping.pairs.top; pair ++) {
@@ -336,16 +337,17 @@ static int parse_agency_list(provision_state_t *state, yaml_document_t *doc,
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value,
-                            "requirekaresponse") == 0) {
-               if (strcmp((char *)value->data.scalar.value, "no") == 0) {
-                   newag->keepalive_responder = 0;
-               }
-               if (strcmp((char *)value->data.scalar.value, "disabled") == 0) {
-                   newag->keepalive_responder = 0;
-               }
-               if (strcmp((char *)value->data.scalar.value, "off") == 0) {
-                   newag->keepalive_responder = 0;
-               }
+                            "keepalivefreq") == 0) {
+                newag->keepalivefreq = strtoul(
+                        (char *)value->data.scalar.value, NULL, 10);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                            "keepalivewait") == 0) {
+                newag->keepalivewait = strtoul(
+                        (char *)value->data.scalar.value, NULL, 10);
             }
         }
 
@@ -773,29 +775,6 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
             return -1;
         }
     }
-
-    if (key->type == YAML_SCALAR_NODE &&
-            value->type == YAML_SCALAR_NODE &&
-            strcmp((char *)key->data.scalar.value, "keepalivefreq") == 0) {
-        state->keepalivefreq = strtoul((char *)value->data.scalar.value,
-                NULL, 10);
-        if (state->keepalivefreq == 0) {
-            logger(LOG_DAEMON, "OpenLI: 0 is not a valid value for the 'keepalivefreq' config option.");
-            return -1;
-        }
-    }
-
-    if (key->type == YAML_SCALAR_NODE &&
-            value->type == YAML_SCALAR_NODE &&
-            strcmp((char *)key->data.scalar.value, "keepalivewait") == 0) {
-        state->keepalivewait = strtoul((char *)value->data.scalar.value,
-                NULL, 10);
-        if (state->keepalivewait == 0) {
-            logger(LOG_DAEMON, "OpenLI: 0 is not a valid value for the 'keepalivewait' config option.");
-            return -1;
-        }
-    }
-
 
     return 0;
 
