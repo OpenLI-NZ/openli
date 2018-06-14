@@ -336,6 +336,9 @@ static void clear_med_state(mediator_state_t *state) {
     if (state->provaddr) {
         free(state->provaddr);
     }
+    if (state->pcapdirectory) {
+        free(state->pcapdirectory);
+    }
     if (state->operatorid) {
         free(state->operatorid);
     }
@@ -354,6 +357,8 @@ static void clear_med_state(mediator_state_t *state) {
 		free(state->timerev);
 	}
 
+    libtrace_message_queue_destroy(&(state->pcapqueue));
+
 }
 
 static int init_med_state(mediator_state_t *state, char *configfile,
@@ -370,11 +375,15 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->operatorid = NULL;
     state->provaddr = NULL;
     state->provport = NULL;
+    state->pcapdirectory = NULL;
+    state->pcapthread = -1;
 
     state->collectors = libtrace_list_init(sizeof(mediator_collector_t));
     state->agencies = libtrace_list_init(sizeof(mediator_agency_t));
 
     state->liids = NULL;
+    libtrace_message_queue_init(&(state->pcapqueue),
+            sizeof(mediator_pcap_msg_t));
 
     if (parse_mediator_config(configfile, state) == -1) {
         return -1;
@@ -411,6 +420,7 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->provisioner.provev = NULL;
     state->provisioner.incoming = NULL;
     state->provisioner.outgoing = NULL;
+
     return 0;
 }
 
@@ -1271,22 +1281,28 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         return -1;
     }
 
-    /* Try to find the agency in our agency list */
-    agency = lookup_agency(state->agencies, agencyid);
-
-    /* We *could* consider waiting for an LEA announcement that will resolve
-     * this discrepancy, but any relevant announcement should have been sent
-     * before the LIID mapping.
-     *
-     * Also, what are we going to do with any records matching that LIID?
-     * Buffer them? Our buffers are tied to handovers, so we'd need somewhere
-     * else to store them. Drop them?
+    /* "Special" agency ID for intercepts that need to be written to a
+     * PCAP file instead of sent to an agency...
      */
-    if (agency == NULL) {
-        logger(LOG_DAEMON, "OpenLI: agency %s is not recognised by the mediator, yet LIID %s is intended for it?",
-                agencyid, liid);
-        assert(0);
-        return -1;
+    if (strcmp(agencyid, "pcapdisk") == 0) {
+        agency = NULL;
+    } else {
+        /* Try to find the agency in our agency list */
+        agency = lookup_agency(state->agencies, agencyid);
+
+        /* We *could* consider waiting for an LEA announcement that will resolve
+         * this discrepancy, but any relevant announcement should have been sent
+         * before the LIID mapping.
+         *
+         * Also, what are we going to do with any records matching that LIID?
+         * Buffer them? Our buffers are tied to handovers, so we'd need
+         * somewhere else to store them. Drop them?
+         */
+        if (agency == NULL) {
+            logger(LOG_DAEMON, "OpenLI: agency %s is not recognised by the mediator, yet LIID %s is intended for it?",
+                    agencyid, liid);
+            return -1;
+        }
     }
 
     m = (liid_map_t *)malloc(sizeof(liid_map_t));
@@ -1296,7 +1312,13 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
 
     HASH_ADD_STR(state->liids, liid, m);
 
-    fprintf(stderr, "Added %s -> %s to LIID map\n", m->liid, m->agency->agencyid);
+    if (agency) {
+        logger(LOG_DAEMON, "OpenLI mediator: added %s -> %s to LIID map",
+                m->liid, m->agency->agencyid);
+    } else {
+        logger(LOG_DAEMON, "OpenLI mediator: added %s -> pcapdisk to LIID map",
+                m->liid);
+    }
     return 0;
 }
 
@@ -1468,9 +1490,8 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
     uint64_t internalid;
     liid_map_t *thisint;
     med_coll_state_t *cs = (med_coll_state_t *)(mev->state);
-
     openli_proto_msgtype_t msgtype;
-
+    mediator_pcap_msg_t pcapmsg;
 
     do {
         msgtype = receive_net_buffer(cs->incoming, &msgbody,
@@ -1489,7 +1510,16 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                 if (thisint == NULL) {
                     return -1;
                 }
-                if (enqueue_etsi(state, thisint->agency->hi3, msgbody,
+
+                if (thisint->agency == NULL) {
+                    /* Destined for a pcap file rather than an agency */
+                    /* TODO freelist rather than repeated malloc/free */
+                    pcapmsg.msgtype = PCAP_MESSAGE_PACKET;
+                    pcapmsg.msgbody = (uint8_t *)malloc(msglen);
+                    memcpy(pcapmsg.msgbody, msgbody, msglen);
+                    pcapmsg.msglen = msglen;
+                    libtrace_message_queue_put(&(state->pcapqueue), &pcapmsg);
+                } else if (enqueue_etsi(state, thisint->agency->hi3, msgbody,
                             msglen) == -1) {
                     return -1;
                 }
@@ -1499,6 +1529,11 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                 thisint = match_etsi_to_agency(state, msgbody, msglen);
                 if (thisint == NULL) {
                     return -1;
+                }
+                if (thisint->agency == NULL) {
+                    /* Destined for a pcap file rather than an agency */
+                    /* IRIs don't make sense for a pcap, so just ignore it */
+                    break;
                 }
                 if (enqueue_etsi(state, thisint->agency->hi2, msgbody,
                             msglen) == -1) {
@@ -1940,12 +1975,224 @@ static void run(mediator_state_t *state) {
 
 }
 
+static void halt_pcap_outputs(pcap_thread_state_t *pstate) {
+
+    active_pcap_output_t *out, *tmp;
+
+    HASH_ITER(hh, pstate->active, out, tmp) {
+        HASH_DELETE(hh, pstate->active, out);
+        free(out->liid);
+        trace_destroy_output(out->out);
+        free(out);
+    }
+}
+
+static active_pcap_output_t *create_new_pcap_output(pcap_thread_state_t *pstate,
+        char *liid) {
+
+    active_pcap_output_t *act;
+    char uri[2048];
+    int compressmethod = TRACE_OPTION_COMPRESSTYPE_ZLIB;
+    int compresslevel = 1;
+
+    if (pstate->dir == NULL) {
+        if (!pstate->dirwarned) {
+            logger(LOG_DAEMON,
+                    "OpenLI mediator: pcap directory is not configured so will not write any pcap files.");
+            pstate->dirwarned = 1;
+        }
+        return NULL;
+    }
+
+    act = (active_pcap_output_t *)malloc(sizeof(active_pcap_output_t));
+    act->liid = strdup(liid);
+
+    snprintf(uri, 2048, "pcapfile:%s/openli-%s.pcap.gz", pstate->dir,
+            liid);
+    act->out = trace_create_output(uri);
+    if (trace_is_err_output(act->out)) {
+        libtrace_err_t err;
+        err = trace_get_err_output(act->out);
+        logger(LOG_DAEMON,
+                "OpenLI mediator: Error opening %s for writing trace file: %s",
+                uri, err.problem);
+        goto pcaptraceerr;
+    }
+
+    if (trace_config_output(act->out, TRACE_OPTION_OUTPUT_COMPRESSTYPE,
+            &compressmethod) == -1) {
+        libtrace_err_t err;
+        err = trace_get_err_output(act->out);
+        logger(LOG_DAEMON,
+                "OpenLI mediator: Error configuring compression for writing trace file %s: %s",
+                uri, err.problem);
+        goto pcaptraceerr;
+    }
+
+    if (trace_config_output(act->out, TRACE_OPTION_OUTPUT_COMPRESS,
+            &compresslevel) == -1) {
+        libtrace_err_t err;
+        err = trace_get_err_output(act->out);
+        logger(LOG_DAEMON,
+                "OpenLI mediator: Error configuring compression for writing trace file %s: %s",
+                uri, err.problem);
+        goto pcaptraceerr;
+    }
+
+    if (trace_start_output(act->out) == -1) {
+        libtrace_err_t err;
+        err = trace_get_err_output(act->out);
+        logger(LOG_DAEMON,
+                "OpenLI mediator: Error starting output trace file %s: %s",
+                uri, err.problem);
+        goto pcaptraceerr;
+    }
+
+    logger(LOG_DAEMON, "OpenLI mediator: opened new trace file %s for LIID %s",
+            uri, act->liid);
+    HASH_ADD_KEYPTR(hh, pstate->active, act->liid, strlen(act->liid), act);
+    return act;
+
+pcaptraceerr:
+    trace_destroy_output(act->out);
+    free(act->liid);
+    free(act);
+    return NULL;
+}
+
+static void write_pcap_packet(pcap_thread_state_t *pstate,
+        mediator_pcap_msg_t *pcapmsg) {
+
+    uint32_t pdulen;
+    char liidspace[1024];
+    char ccname[128];
+    active_pcap_output_t *pcapout;
+
+    if (pstate->decoder == NULL) {
+        pstate->decoder = wandder_create_etsili_decoder();
+    }
+
+    wandder_attach_etsili_buffer(pstate->decoder, pcapmsg->msgbody,
+            pcapmsg->msglen, false);
+    pdulen = wandder_etsili_get_pdu_length(pstate->decoder);
+    if (pdulen == 0 || pcapmsg->msglen < pdulen) {
+        logger(LOG_DAEMON,
+                "OpenLI mediator: pcap thread received incomplete ETSI CC?");
+        return;
+    }
+
+    if (wandder_etsili_get_liid(pstate->decoder, liidspace, 1024) == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI mediator: unable to find LIID for ETSI CC in pcap thread");
+        return;
+    }
+
+    HASH_FIND(hh, pstate->active, liidspace, strlen(liidspace), pcapout);
+    if (!pcapout) {
+        pcapout = create_new_pcap_output(pstate, liidspace);
+    }
+
+    if (pcapout) {
+        uint8_t *rawip;
+        uint32_t cclen;
+
+        if (!pstate->packet) {
+            pstate->packet = trace_create_packet();
+        }
+
+        /* turn the ETSI CC into a pcap packet */
+        rawip = wandder_etsili_get_cc_contents(pstate->decoder, &cclen,
+                ccname, 128);
+        if (cclen > 65535) {
+            logger(LOG_DAEMON,
+                    "OpenLI mediator: ETSI CC record is too large to write as a pcap packet -- possibly corrupt.");
+        } else {
+            trace_construct_packet(pstate->packet, TRACE_TYPE_NONE,
+                    (const void *)rawip, (uint16_t)cclen);
+
+            /* write resulting packet to libtrace output */
+            if (trace_write_packet(pcapout->out, pstate->packet) < 0) {
+                libtrace_err_t err = trace_get_err_output(pcapout->out);
+                logger(LOG_DAEMON,
+                        "OpenLI mediator: error while writing packet to pcap trace file: %s",
+                        err.problem);
+                trace_destroy_output(pcapout->out);
+                HASH_DELETE(hh, pstate->active, pcapout);
+                free(pcapout->liid);
+                free(pcapout);
+            }
+        }
+    }
+
+    free(pcapmsg->msgbody);
+}
+
+static void *start_pcap_thread(void *params) {
+
+    pcap_thread_state_t pstate;
+    mediator_pcap_msg_t pcapmsg;
+
+    pstate.active = NULL;
+    pstate.dir = NULL;
+    pstate.dirwarned = 0;
+    pstate.inqueue = (libtrace_message_queue_t *)params;
+    pstate.decoder = NULL;
+    pstate.packet = NULL;
+
+    while (mediator_halt == 0) {
+        if (libtrace_message_queue_try_get(pstate.inqueue,
+                (void *)&pcapmsg) == LIBTRACE_MQ_FAILED) {
+            usleep(500);
+            continue;
+        }
+
+        if (pcapmsg.msgtype == PCAP_MESSAGE_HALT) {
+            break;
+        }
+
+        if (pcapmsg.msgtype == PCAP_MESSAGE_CHANGE_DIR) {
+            if (pstate.dir) {
+                free(pstate.dir);
+                if (strcmp(pstate.dir, (char *)pcapmsg.msgbody) != 0) {
+                    halt_pcap_outputs(&pstate);
+                }
+            }
+            pstate.dir = (char *)pcapmsg.msgbody;
+            if (pstate.dir) {
+                logger(LOG_DAEMON,
+                        "OpenLI mediator: pcap trace files are now being written to %s",
+                        pstate.dir);
+            } else {
+                logger(LOG_DAEMON,
+                        "OpenLI mediator: pcap trace file directory has been set to NULL");
+            }
+            continue;
+        }
+
+        write_pcap_packet(&pstate, &pcapmsg);
+    }
+
+    if (pstate.dir) {
+        free(pstate.dir);
+        halt_pcap_outputs(&pstate);
+    }
+    if (pstate.decoder) {
+        wandder_free_etsili_decoder(pstate.decoder);
+    }
+    if (pstate.packet) {
+        trace_destroy_packet(pstate.packet);
+    }
+    logger(LOG_DAEMON, "OpenLI mediator: exiting pcap thread.");
+    pthread_exit(NULL);
+}
+
 int main(int argc, char *argv[]) {
     char *configfile = NULL;
     char *mediatorid = NULL;
     sigset_t sigblock;
 
     mediator_state_t medstate;
+    mediator_pcap_msg_t pcapmsg;
 
     while (1) {
         int optind;
@@ -2000,6 +2247,18 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    if (medstate.pcapdirectory != NULL) {
+        memset(&pcapmsg, 0, sizeof(pcapmsg));
+        pcapmsg.msgtype = PCAP_MESSAGE_CHANGE_DIR;
+        pcapmsg.msgbody = (uint8_t *)strdup(medstate.pcapdirectory);
+        pcapmsg.msglen = strlen(medstate.pcapdirectory);
+
+        libtrace_message_queue_put(&(medstate.pcapqueue), &pcapmsg);
+    }
+
+    pthread_create(&(medstate.pcapthread), NULL, start_pcap_thread,
+            &(medstate.pcapqueue));
+
     if (start_collector_listener(&medstate) == -1) {
         logger(LOG_DAEMON,
                 "OpenLI Mediator: could not start collector listener socket.");
@@ -2009,6 +2268,7 @@ int main(int argc, char *argv[]) {
     run(&medstate);
     clear_med_state(&medstate);
 
+    pthread_join(medstate.pcapthread, NULL);
     logger(LOG_DAEMON, "OpenLI: Mediator '%s' has exited.", mediatorid);
     return 0;
 }
