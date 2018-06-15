@@ -39,6 +39,8 @@ typedef struct collector_sync_voip_data {
 
     support_thread_global_t *glob;
     shared_global_info_t *info;
+    export_queue_set_t *exportqueues;
+    uint8_t *export_used;
 
     voipintercept_t *voipintercepts;
     voipcinmap_t *knowncallids;
@@ -46,9 +48,7 @@ typedef struct collector_sync_voip_data {
     libtrace_message_queue_t *intersyncq;
     sync_epoll_t intersync_ev;
 
-    libtrace_message_queue_t exportq;
     openli_sip_parser_t *sipparser;
-    wandder_encoder_t *encoder;
 
 } collector_sync_voip_t;
 

@@ -32,7 +32,6 @@
 #include <libtrace/message_queue.h>
 
 #include "intercept.h"
-#include "collector.h"
 
 enum {
     ACCESS_RADIUS,
@@ -107,11 +106,13 @@ struct access_plugin {
             session_state_t *oldstate, session_state_t *newstate,
             access_action_t *action);
 
+/*
     int (*create_iri_from_packet)(access_plugin_t *p,
             shared_global_info_t *info, etsili_generic_t **freegenerics,
-            wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
+            openli_export_recv_t *irimsg,
             access_session_t *sess, ipintercept_t *ipint,
             void *parseddata, access_action_t action);
+*/
 
     void (*destroy_session_data)(access_plugin_t *p, access_session_t *sess);
 

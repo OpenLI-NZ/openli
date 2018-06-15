@@ -1645,10 +1645,10 @@ static inline int action_to_iri(shared_global_info_t *info,
 
 }
 
+#if 0
 static int radius_create_iri_from_packet(access_plugin_t *p,
         shared_global_info_t *info, etsili_generic_t **freegenerics,
-        wandder_encoder_t **encoder,
-        libtrace_message_queue_t *mqueue, access_session_t *sess,
+        openli_export_recv_t *irimsg, access_session_t *sess,
         ipintercept_t *ipint, void *parsed, access_action_t action) {
 
     radius_global_t *radglob;
@@ -1670,6 +1670,7 @@ static int radius_create_iri_from_packet(access_plugin_t *p,
 
     return 0;
 }
+#endif
 
 static void radius_destroy_session_data(access_plugin_t *p,
         access_session_t *sess) {
@@ -1693,7 +1694,7 @@ static access_plugin_t radiusplugin = {
     radius_destroy_parsed_data,
     radius_get_userid,
     radius_update_session_state,
-    radius_create_iri_from_packet,
+    //radius_create_iri_from_packet,
     radius_destroy_session_data
 };
 

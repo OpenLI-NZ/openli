@@ -49,18 +49,20 @@ enum {
     EXP_EPOLL_FLAG_TIMEOUT = 2,
 };
 
-collector_export_t *init_exporter(collector_global_t *glob) {
+collector_export_t *init_exporter(support_thread_global_t *glob) {
 
     collector_export_t *exp = (collector_export_t *)malloc(
             sizeof(collector_export_t));
 
-    exp->glob = &(glob->exporter);
+    exp->glob = glob;
     exp->dests = libtrace_list_init(sizeof(export_dest_t));
+    exp->intercepts = NULL;
 
     exp->failed_conns = 0;
     exp->flagged = 0;
     exp->flag_timer_ev = NULL;
     exp->flagtimerfd = -1;
+    exp->radiusplugin = init_access_plugin(ACCESS_RADIUS);
     return exp;
 }
 
@@ -182,6 +184,10 @@ void destroy_exporter(collector_export_t *exp) {
     /* Don't free evlist, this will be done when the main thread
      * frees the exporter support data. */
     //libtrace_list_deinit(evlist);
+
+    if (exp->radiusplugin) {
+        destroy_access_plugin(exp->radiusplugin);
+    }
 
     free(exp);
 }
@@ -435,6 +441,12 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
         return 0;
     }
 
+    if (recvd.type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
+    }
+
+    if (recvd.type == OPENLI_EXPORT_INTERCEPT_OVER) {
+    }
+
     if (recvd.type == OPENLI_EXPORT_MEDIATOR) {
         add_new_destination(exp, &(recvd.data.med));
 
@@ -494,6 +506,7 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
         return 0;
     }
 
+#if 0
     if (recvd.type == OPENLI_EXPORT_ETSIREC) {
         n = exp->dests->head;
 
@@ -536,8 +549,10 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
         return 1;
     }
 
+#endif
+
     if (recvd.type == OPENLI_EXPORT_PACKET_FIN) {
-        /* All ETSIRECs relating to this packet have been seen, so
+        /* All ETSI records relating to this packet have been seen, so
          * we can safely free the packet.
          */
         trace_decrement_packet_refcount(recvd.data.packet);
@@ -665,36 +680,42 @@ int exporter_thread_main(collector_export_t *exp) {
 
 }
 
-void register_export_queue(support_thread_global_t *glob,
-        libtrace_message_queue_t *q) {
+void register_export_queues(support_thread_global_t *glob,
+        export_queue_set_t *qset) {
 
     struct epoll_event ev;
-    exporter_epoll_t *epoll_ev = (exporter_epoll_t *)malloc(
-            sizeof(exporter_epoll_t));
+    int i;
+    exporter_epoll_t *epoll_ev;
 
-    epoll_ev->type = EXP_EPOLL_MQUEUE;
-    epoll_ev->data.q = q;
+    for (i = 0; i < qset->numqueues; i++) {
 
-    ev.data.ptr = (void *)epoll_ev;
-    ev.events = EPOLLIN | EPOLLRDHUP;
+        epoll_ev = (exporter_epoll_t *)malloc(
+                sizeof(exporter_epoll_t));
 
-    pthread_mutex_lock(&(glob->mutex));
+        epoll_ev->type = EXP_EPOLL_MQUEUE;
+        epoll_ev->data.q = qset->queues[i];
 
-    if (glob->epollevs == NULL) {
-        glob->epollevs = libtrace_list_init(
-                sizeof(exporter_epoll_t **));
+        ev.data.ptr = (void *)epoll_ev;
+        ev.events = EPOLLIN | EPOLLRDHUP;
+
+        pthread_mutex_lock(&(glob[i].mutex));
+
+        if (glob[i].epollevs == NULL) {
+            glob[i].epollevs = libtrace_list_init(
+                    sizeof(exporter_epoll_t **));
+        }
+
+        libtrace_list_push_back(glob[i].epollevs, &epoll_ev);
+        pthread_mutex_unlock(&(glob[i].mutex));
+
+        if (epoll_ctl(glob[i].epoll_fd, EPOLL_CTL_ADD,
+                    libtrace_message_queue_get_fd(qset->queues[i]),
+                    &ev) == -1) {
+            /* TODO Do something? */
+            logger(LOG_DAEMON, "OpenLI: failed to register export queue: %s",
+                    strerror(errno));
+        }
     }
-
-    libtrace_list_push_back(glob->epollevs, &epoll_ev);
-    pthread_mutex_unlock(&(glob->mutex));
-
-	if (epoll_ctl(glob->epoll_fd, EPOLL_CTL_ADD,
-                libtrace_message_queue_get_fd(q), &ev) == -1) {
-        /* TODO Do something? */
-        logger(LOG_DAEMON, "OpenLI: failed to register export queue: %s",
-                strerror(errno));
-    }
-
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

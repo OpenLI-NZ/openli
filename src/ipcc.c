@@ -106,21 +106,33 @@ static openli_export_recv_t form_ipcc(shared_global_info_t *info,
             OPENLI_PROTO_ETSI_CC, 0, &(msg.hdrlen));
 
     memset(&exprecv, 0, sizeof(openli_export_recv_t));
-    exprecv.type = OPENLI_EXPORT_ETSIREC;
-    exprecv.data.toexport = msg;
 
     sess->nextseqno ++;
 
     return exprecv;
 
 }
+
+static inline void make_ipcc_job(openli_export_recv_t *msg,
+        ipsession_t *sess, libtrace_packet_t *pkt, uint8_t dir) {
+
+    memset(msg, 0, sizeof(openli_export_recv_t));
+
+    msg->type = OPENLI_EXPORT_IPCC;
+    msg->data.ipcc.liid = strdup(sess->common.liid);
+    msg->data.ipcc.packet = pkt;
+    msg->data.ipcc.cin = sess->cin;
+    msg->data.ipcc.dir = dir;
+
+}
+
 int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip_t *ip,
         uint32_t rem, shared_global_info_t *info, colthread_local_t *loc) {
 
     struct sockaddr_in *intaddr, *cmp;
     openli_export_recv_t msg;
-    int matched = 0;
+    int matched = 0, queueused = 0;
     ipv4_target_t *tgt;
     ipsession_t *sess, *tmp;
 
@@ -141,8 +153,10 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = form_ipcc(info, loc, sess, pkt, ip, rem, 0);
-            libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
+            make_ipcc_job(&msg, sess, pkt, 0);
+            queueused = export_queue_put_by_liid(loc->exportqueues,
+                    &msg, sess->common.liid);
+            loc->export_used[queueused] = 1;
         }
         goto ipv4ccdone;
     }
@@ -154,19 +168,14 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = form_ipcc(info, loc, sess, pkt, ip, rem, 1);
-            libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
+            make_ipcc_job(&msg, sess, pkt, 0);
+            queueused = export_queue_put_by_liid(loc->exportqueues,
+                    &msg, sess->common.liid);
+            loc->export_used[queueused] = 1;
         }
     }
 
 ipv4ccdone:
-    if (matched > 0) {
-        msg.type = OPENLI_EXPORT_PACKET_FIN;
-        msg.data.packet = pkt;
-        trace_increment_packet_refcount(pkt);
-        libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
-    }
-
     return matched;
 
 }

@@ -39,6 +39,9 @@
 #include "ipiri.h"
 #include "internetaccess.h"
 
+
+
+#if 0
 int ip_iri(shared_global_info_t *info, wandder_encoder_t **encoder,
         libtrace_message_queue_t *q, access_session_t *sess,
         ipintercept_t *ipint, etsili_iri_type_t iritype,
@@ -79,14 +82,13 @@ int ip_iri(shared_global_info_t *info, wandder_encoder_t **encoder,
             OPENLI_PROTO_ETSI_IRI, 0, &(iri.hdrlen));
 
     memset(&msg, 0, sizeof(openli_export_recv_t));
-    msg.type = OPENLI_EXPORT_ETSIREC;
-    msg.data.toexport = iri;
 
     sess->iriseqno ++;
     libtrace_message_queue_put(q, (void *)(&msg));
 
     return 1;
 }
+#endif
 
 ipiri_id_t *ipiri_create_id_printable(char *idstr, int length) {
     ipiri_id_t *iriid;

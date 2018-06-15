@@ -143,11 +143,26 @@ static void form_alu_ipcc(shared_global_info_t *info,
             OPENLI_PROTO_ETSI_CC, 0, &(msg.hdrlen));
 
     memset(&exprecv, 0, sizeof(openli_export_recv_t));
-    exprecv.type = OPENLI_EXPORT_ETSIREC;
-    exprecv.data.toexport = msg;
 
     alu->nextseqno ++;
-    libtrace_message_queue_put(&(loc->exportq), (void *)&exprecv);
+
+}
+
+static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
+        aluintercept_t *alu, uint8_t dir) {
+
+    openli_export_recv_t msg;
+    int queueused;
+
+    msg.type = OPENLI_EXPORT_IPCC;
+    msg.data.ipcc.liid = strdup(alu->common.liid);
+    msg.data.ipcc.packet = packet;
+    msg.data.ipcc.cin = alu->cin;
+    msg.data.ipcc.dir = dir;
+
+    queueused = export_queue_put_by_liid(loc->exportqueues, &msg,
+            alu->common.liid);
+    loc->export_used[queueused] = 1;
 
 }
 
@@ -251,14 +266,7 @@ int check_alu_intercept(shared_global_info_t *info, colthread_local_t *loc,
     alu->cin = ntohl(aluhdr->sessionid);
 
     /* Create an appropriate IPCC and export it */
-    form_alu_ipcc(info, loc, alu,
-            l3, rem, &tv, alushim_get_direction(aluhdr));
-
-    /* Also follow up with a PACKET_FIN so the packet gets released */
-    msg.type = OPENLI_EXPORT_PACKET_FIN;
-    msg.data.packet = packet;
-    trace_increment_packet_refcount(packet);
-    libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
+    push_alu_ipcc_job(loc, packet, alu, alushim_get_direction(aluhdr));
 
     return 1;
 }

@@ -43,6 +43,8 @@ typedef struct colsync_data {
 
     support_thread_global_t *glob;
     shared_global_info_t *info;
+    export_queue_set_t *exportqueues;
+    uint8_t *export_used;
 
     internet_user_t *allusers;
     ipintercept_t *ipintercepts;

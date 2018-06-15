@@ -38,6 +38,21 @@
 #include "etsili_core.h"
 #include "ipmmiri.h"
 
+int ipmm_iri(libtrace_packet_t *pkt, openli_export_recv_t *irimsg,
+        voipintercept_t *vint, voipintshared_t *cin,
+        etsili_iri_type_t iritype, uint8_t ipmmiri_style) {
+
+    irimsg->type = OPENLI_EXPORT_IPMMIRI;
+
+    irimsg->data.ipmmiri.liid = strdup(vint->common.liid);
+    irimsg->data.ipmmiri.packet = pkt;
+    irimsg->data.ipmmiri.cin = cin->cin;
+    irimsg->data.ipmmiri.iritype = iritype;
+    irimsg->data.ipmmiri.ipmmiri_style = ipmmiri_style;
+
+}
+
+#if 0
 int ipmm_iri(libtrace_packet_t *pkt, shared_global_info_t *info,
         wandder_encoder_t **encoder, libtrace_message_queue_t *q,
         voipintercept_t *vint, voipintshared_t *cin,
@@ -128,5 +143,9 @@ int ipmm_iri(libtrace_packet_t *pkt, shared_global_info_t *info,
     return 1;
 
 }
+#endif
+
+
+
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

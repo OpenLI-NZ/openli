@@ -80,8 +80,6 @@ static openli_export_recv_t form_ipmmcc(shared_global_info_t *info,
                 OPENLI_PROTO_ETSI_CC, 0, &(msg.hdrlen));
 
     memset(&exprecv, 0, sizeof(openli_export_recv_t));
-    exprecv.type = OPENLI_EXPORT_ETSIREC;
-    exprecv.data.toexport = msg;
 
     rtp->seqno ++;
     return exprecv;
@@ -93,8 +91,10 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
 
     struct sockaddr_in *targetaddr, *cmp, *otheraddr;
     openli_export_recv_t msg;
-    int matched = 0;
     rtpstreaminf_t *rtp, *tmp;
+    int matched = 0, queueused;
+
+    memset(&msg, 0, sizeof(openli_export_recv_t));
 
     if (rem < sizeof(libtrace_ip_t)) {
         logger(LOG_DAEMON, "OpenLI: Got IPv4 RTP packet with truncated header?");
@@ -134,10 +134,17 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             if (targetaddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
                 cmp = (struct sockaddr_in *)(&pinfo->destip);
                 if (otheraddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
+
+                    msg.type = OPENLI_EXPORT_IPMMCC;
+                    msg.data.ipmmcc.liid = strdup(rtp->common.liid);
+                    msg.data.ipmmcc.packet = pkt;
+                    msg.data.ipmmcc.cin = rtp->cin;
+                    msg.data.ipmmcc.dir = ETSI_DIR_FROM_TARGET;
+                    queueused = export_queue_put_by_liid(loc->exportqueues,
+                            &msg, rtp->common.liid);
+                    loc->export_used[queueused] = 1;
+
                     matched ++;
-                    msg = form_ipmmcc(info, loc, rtp, pkt, ip, rem,
-                            ETSI_DIR_FROM_TARGET);
-                    libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
                     continue;
                 }
             }
@@ -151,22 +158,21 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             if (otheraddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
                 cmp = (struct sockaddr_in *)(&pinfo->destip);
                 if (targetaddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
+                    msg.type = OPENLI_EXPORT_IPMMCC;
+                    msg.data.ipmmcc.liid = strdup(rtp->common.liid);
+                    msg.data.ipmmcc.packet = pkt;
+                    msg.data.ipmmcc.cin = rtp->cin;
+                    msg.data.ipmmcc.dir = ETSI_DIR_TO_TARGET;
+                    queueused = export_queue_put_by_liid(loc->exportqueues,
+                            &msg, rtp->common.liid);
+                    loc->export_used[queueused] = 1;
+
                     matched ++;
-                    msg = form_ipmmcc(info, loc, rtp, pkt, ip, rem,
-                            ETSI_DIR_TO_TARGET);
-                    libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
                     continue;
                 }
             }
         }
 
-    }
-
-    if (matched > 0) {
-        msg.type = OPENLI_EXPORT_PACKET_FIN;
-        msg.data.packet = pkt;
-        trace_increment_packet_refcount(pkt);
-        libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
     }
 
     return matched;
