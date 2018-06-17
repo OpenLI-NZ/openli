@@ -693,7 +693,7 @@ void register_export_queues(support_thread_global_t *glob,
                 sizeof(exporter_epoll_t));
 
         epoll_ev->type = EXP_EPOLL_MQUEUE;
-        epoll_ev->data.q = qset->queues[i];
+        epoll_ev->data.q = &(qset->queues[i]);
 
         ev.data.ptr = (void *)epoll_ev;
         ev.events = EPOLLIN | EPOLLRDHUP;
@@ -709,7 +709,7 @@ void register_export_queues(support_thread_global_t *glob,
         pthread_mutex_unlock(&(glob[i].mutex));
 
         if (epoll_ctl(glob[i].epoll_fd, EPOLL_CTL_ADD,
-                    libtrace_message_queue_get_fd(qset->queues[i]),
+                    libtrace_message_queue_get_fd(&(qset->queues[i])),
                     &ev) == -1) {
             /* TODO Do something? */
             logger(LOG_DAEMON, "OpenLI: failed to register export queue: %s",
@@ -718,4 +718,67 @@ void register_export_queues(support_thread_global_t *glob,
     }
 }
 
+export_queue_set_t *create_export_queue_set(int numqueues) {
+
+    int i;
+    export_queue_set_t *qset;
+
+    qset = (export_queue_set_t *)malloc(sizeof(export_queue_set_t));
+    qset->numqueues = numqueues;
+
+    qset->queues = (libtrace_message_queue_t *)malloc(numqueues *
+            sizeof(libtrace_message_queue_t));
+
+    for (i = 0; i < numqueues; i++) {
+        libtrace_message_queue_init(&(qset->queues[i]),
+                sizeof(openli_export_recv_t));
+    }
+    return qset;
+}
+
+void free_export_queue_set(export_queue_set_t *qset) {
+
+    int i;
+
+    for (i = 0; i < qset->numqueues; i++) {
+        libtrace_message_queue_destroy(&(qset->queues[i]));
+    }
+    free(qset->queues);
+    free(qset);
+}
+
+void export_queue_put_all(export_queue_set_t *qset, openli_export_recv_t *msg) {
+
+    int i;
+
+    for (i = 0; i < qset->numqueues; i++) {
+        libtrace_message_queue_put(&(qset->queues[i]), (void *)msg);
+    }
+}
+
+int export_queue_put_by_liid(export_queue_set_t *qset,
+        openli_export_recv_t *msg, char *liid) {
+
+    uint32_t hash;
+    int queueid;
+
+    hash = hashlittle(liid, strlen(liid), 0x188532fa);
+    queueid = hash % qset->numqueues;
+
+    libtrace_message_queue_put(&(qset->queues[queueid]), (void *)msg);
+    return 0;
+}
+
+int export_queue_put_by_queueid(export_queue_set_t *qset,
+        openli_export_recv_t *msg, int queueid) {
+
+    if (queueid < 0 || queueid >= qset->numqueues) {
+        logger(LOG_DAEMON,
+                "OpenLI: bad export queue passed into export_queue_put_by_queueid: %d",
+                queueid);
+        return -1;
+    }
+    libtrace_message_queue_put(&(qset->queues[queueid]), (void *)msg);
+    return 0;
+}
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -120,7 +120,7 @@ enum {
 typedef struct export_queue_set {
 
     int numqueues;
-    libtrace_message_queue_t **queues;
+    libtrace_message_queue_t *queues;
 
 } export_queue_set_t;
 
