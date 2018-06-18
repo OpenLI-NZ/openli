@@ -62,7 +62,6 @@ collector_export_t *init_exporter(support_thread_global_t *glob) {
     exp->flagged = 0;
     exp->flag_timer_ev = NULL;
     exp->flagtimerfd = -1;
-    exp->radiusplugin = init_access_plugin(ACCESS_RADIUS);
     return exp;
 }
 
@@ -135,6 +134,22 @@ int connect_export_targets(collector_export_t *exp) {
 
 }
 
+static inline void free_intercept_msg(exporter_intercept_msg_t *msg) {
+    free(msg->liid);
+    free(msg->authcc);
+    free(msg->delivcc);
+    free(msg);
+}
+
+static inline void free_cinsequencing(exporter_intercept_state_t *intstate) {
+    cin_seqno_t *c, *tmp;
+
+    HASH_ITER(hh, intstate->cinsequencing, c, tmp) {
+        HASH_DELETE(hh, intstate->cinsequencing, c);
+        free(c);
+    }
+}
+
 static inline void remove_all_destinations(collector_export_t *exp) {
     export_dest_t *d;
     libtrace_list_node_t *n;
@@ -184,10 +199,6 @@ void destroy_exporter(collector_export_t *exp) {
     /* Don't free evlist, this will be done when the main thread
      * frees the exporter support data. */
     //libtrace_list_deinit(evlist);
-
-    if (exp->radiusplugin) {
-        destroy_access_plugin(exp->radiusplugin);
-    }
 
     free(exp);
 }
@@ -426,6 +437,57 @@ static void purge_unconfirmed_mediators(collector_export_t *exp) {
     }
 }
 
+static void exporter_new_intercept(collector_export_t *exp,
+        exporter_intercept_msg_t *msg) {
+
+    exporter_intercept_state_t *intstate;
+
+    /* If this LIID already exists, we'll need to replace it */
+    HASH_FIND(hh, exp->intercepts, msg->liid, strlen(msg->liid), intstate);
+
+    if (intstate) {
+        logger(LOG_DAEMON, "Exporter thread has observed duplicate LIID %s",
+                msg->liid);
+        free_intercept_msg(intstate->details);
+        /* leave the CIN seqno state as is for now */
+        intstate->details = msg;
+        return;
+    }
+
+    /* New LIID, create fresh intercept state */
+    intstate = (exporter_intercept_state_t *)malloc(
+            sizeof(exporter_intercept_state_t));
+    intstate->details = msg;
+    intstate->cinsequencing = NULL;
+    HASH_ADD_KEYPTR(hh, exp->intercepts, msg->liid, strlen(msg->liid),
+            intstate);
+    logger(LOG_DAEMON, "Exporter thread has added new intercept LIID %s",
+            msg->liid);
+}
+
+static int exporter_end_intercept(collector_export_t *exp,
+        exporter_intercept_msg_t *msg) {
+
+    exporter_intercept_state_t *intstate;
+
+    HASH_FIND(hh, exp->intercepts, msg->liid, strlen(msg->liid), intstate);
+
+    if (!intstate) {
+        logger(LOG_DAEMON, "Exporter thread was told to end intercept LIID %s, but it is not a valid ID?",
+                msg->liid);
+        return -1;
+    }
+
+    logger(LOG_DAEMON, "Exporter thread has withdrawn intercept LIID %s",
+            msg->liid);
+    HASH_DELETE(hh, exp->intercepts, intstate);
+    free_intercept_msg(msg);
+    free_intercept_msg(intstate->details);
+    free_cinsequencing(intstate);
+    free(intstate);
+    return 0;
+}
+
 #define MAX_READ_BATCH 25
 
 static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
@@ -442,9 +504,12 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
     }
 
     if (recvd.type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
+        exporter_new_intercept(exp, recvd.data.cept);
+        return 0;
     }
 
     if (recvd.type == OPENLI_EXPORT_INTERCEPT_OVER) {
+        return exporter_end_intercept(exp, recvd.data.cept);
     }
 
     if (recvd.type == OPENLI_EXPORT_MEDIATOR) {

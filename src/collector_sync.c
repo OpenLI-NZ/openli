@@ -469,14 +469,16 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     HASH_FIND(hh_liid, sync->ipintercepts, torem.common.liid,
             torem.common.liid_len, ipint);
 
-    expmsg.type = OPENLI_EXPORT_INTERCEPT_OVER;
-    expmsg.data.cept = (exporter_intercept_msg_t *)malloc(
-            sizeof(exporter_intercept_msg_t));
-    expmsg.data.cept->liid = strdup(ipint->common.liid);
-    expmsg.data.cept->authcc = strdup(ipint->common.authcc);
-    expmsg.data.cept->delivcc = strdup(ipint->common.delivcc);
+    for (i = 0; i < sync->exportqueues->numqueues; i++) {
+        expmsg.type = OPENLI_EXPORT_INTERCEPT_OVER;
+        expmsg.data.cept = (exporter_intercept_msg_t *)malloc(
+                sizeof(exporter_intercept_msg_t));
+        expmsg.data.cept->liid = strdup(ipint->common.liid);
+        expmsg.data.cept->authcc = strdup(ipint->common.authcc);
+        expmsg.data.cept->delivcc = strdup(ipint->common.delivcc);
 
-    export_queue_put_all(sync->exportqueues, &expmsg);
+        export_queue_put_by_queueid(sync->exportqueues, &expmsg, i);
+    }
     remove_ip_intercept(sync, ipint);
 
     return 0;
@@ -498,6 +500,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     sync_sendq_t *tmp, *sendq;
     internet_user_t *user;
     openli_export_recv_t expmsg;
+    int i;
 
     memset(&expmsg, 0, sizeof(openli_export_recv_t));
 
@@ -599,14 +602,16 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
             cept->common.liid_len, cept);
 
-    expmsg.type = OPENLI_EXPORT_INTERCEPT_DETAILS;
-    expmsg.data.cept = (exporter_intercept_msg_t *)malloc(
-            sizeof(exporter_intercept_msg_t));
-    expmsg.data.cept->liid = strdup(cept->common.liid);
-    expmsg.data.cept->authcc = strdup(cept->common.authcc);
-    expmsg.data.cept->delivcc = strdup(cept->common.delivcc);
+    for (i = 0; i < sync->exportqueues->numqueues; i++) {
+        expmsg.type = OPENLI_EXPORT_INTERCEPT_DETAILS;
+        expmsg.data.cept = (exporter_intercept_msg_t *)malloc(
+                sizeof(exporter_intercept_msg_t));
+        expmsg.data.cept->liid = strdup(cept->common.liid);
+        expmsg.data.cept->authcc = strdup(cept->common.authcc);
+        expmsg.data.cept->delivcc = strdup(cept->common.delivcc);
 
-    export_queue_put_all(sync->exportqueues, &expmsg);
+        export_queue_put_by_queueid(sync->exportqueues, &expmsg, i);
+    }
 
     return 0;
 
@@ -933,7 +938,7 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
             memset(&irimsg, 0, sizeof(irimsg));
             irimsg.type = OPENLI_EXPORT_IPIRI;
             irimsg.data.ipiri.liid = strdup(ipint->common.liid);
-            irimsg.data.ipiri.plugin_id = p->access_type;
+            irimsg.data.ipiri.plugin = p;
             irimsg.data.ipiri.plugin_data = parseddata;
             irimsg.data.ipiri.access_tech = ipint->accesstype;
             irimsg.data.ipiri.cin = sess->cin;

@@ -80,8 +80,6 @@ typedef struct colexp_data {
     exporter_epoll_t *flag_timer_ev;
     int flagtimerfd;
 
-    access_plugin_t *radiusplugin;  // could have one global instance?
-
 } collector_export_t;
 
 enum {
@@ -123,7 +121,7 @@ typedef struct openli_ipmmiri_job {
 
 typedef struct openli_ipiri_job {
     char *liid;
-    uint8_t plugin_id;
+    access_plugin_t *plugin;
     void *plugin_data;
 
     uint32_t cin;

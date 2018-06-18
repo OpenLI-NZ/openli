@@ -847,15 +847,17 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
 
     push_voipintercept_halt_to_threads(sync, vint);
 
-    memset(&expmsg, 0, sizeof(openli_export_recv_t));
-    expmsg.type = OPENLI_EXPORT_INTERCEPT_OVER;
-    expmsg.data.cept = (exporter_intercept_msg_t *)malloc(
-            sizeof(exporter_intercept_msg_t));
-    expmsg.data.cept->liid = strdup(vint->common.liid);
-    expmsg.data.cept->authcc = strdup(vint->common.authcc);
-    expmsg.data.cept->delivcc = strdup(vint->common.delivcc);
+    for (i = 0; i < sync->exportqueues->numqueues; i++) {
+        memset(&expmsg, 0, sizeof(openli_export_recv_t));
+        expmsg.type = OPENLI_EXPORT_INTERCEPT_OVER;
+        expmsg.data.cept = (exporter_intercept_msg_t *)malloc(
+                sizeof(exporter_intercept_msg_t));
+        expmsg.data.cept->liid = strdup(vint->common.liid);
+        expmsg.data.cept->authcc = strdup(vint->common.authcc);
+        expmsg.data.cept->delivcc = strdup(vint->common.delivcc);
 
-    export_queue_put_all(sync->exportqueues, &expmsg);
+        export_queue_put_by_queueid(sync->exportqueues, &expmsg, i);
+    }
 
     HASH_DELETE(hh_liid, sync->voipintercepts, vint);
     free_single_voipintercept(vint);
@@ -1108,15 +1110,17 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     HASH_ADD_KEYPTR(hh_liid, sync->voipintercepts, vint->common.liid,
             vint->common.liid_len, vint);
 
-    memset(&expmsg, 0, sizeof(openli_export_recv_t));
-    expmsg.type = OPENLI_EXPORT_INTERCEPT_DETAILS;
-    expmsg.data.cept = (exporter_intercept_msg_t *)malloc(
-            sizeof(exporter_intercept_msg_t));
-    expmsg.data.cept->liid = strdup(vint->common.liid);
-    expmsg.data.cept->authcc = strdup(vint->common.authcc);
-    expmsg.data.cept->delivcc = strdup(vint->common.delivcc);
+    for (i = 0; i < sync->exportqueues->numqueues; i++) {
+        memset(&expmsg, 0, sizeof(openli_export_recv_t));
+        expmsg.type = OPENLI_EXPORT_INTERCEPT_DETAILS;
+        expmsg.data.cept = (exporter_intercept_msg_t *)malloc(
+                sizeof(exporter_intercept_msg_t));
+        expmsg.data.cept->liid = strdup(vint->common.liid);
+        expmsg.data.cept->authcc = strdup(vint->common.authcc);
+        expmsg.data.cept->delivcc = strdup(vint->common.delivcc);
 
-    export_queue_put_all(sync->exportqueues, &expmsg);
+        export_queue_put_by_queueid(sync->exportqueues, &expmsg, i);
+    }
 
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
         /* Forward all active CINs to our collector threads */
