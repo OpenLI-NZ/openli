@@ -142,6 +142,7 @@ static inline void push_coreserver_msg(collector_sync_t *sync,
         coreserver_t *cs, uint8_t msgtype) {
 
     sync_sendq_t *sendq, *tmp;
+    pthread_mutex_lock(&(sync->glob->mutex));
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
         openli_pushed_t msg;
 
@@ -150,6 +151,7 @@ static inline void push_coreserver_msg(collector_sync_t *sync,
         msg.data.coreserver = deep_copy_coreserver(cs);
         libtrace_message_queue_put(sendq->q, (void *)(&msg));
     }
+    pthread_mutex_unlock(&(sync->glob->mutex));
 }
 
 static inline void push_single_ipintercept(libtrace_message_queue_t *q,
@@ -1005,7 +1007,8 @@ endupdate:
     memset(&msg, 0, sizeof(openli_export_recv_t));
     msg.type = OPENLI_EXPORT_PACKET_FIN;
     msg.data.packet = pkt;
-
+    
+    trace_increment_packet_refcount(pkt);
     for (i = 0; i < sync->exportqueues->numqueues; i++) {
         if (sync->export_used[i] == 0) {
             continue;
@@ -1016,6 +1019,7 @@ endupdate:
         trace_increment_packet_refcount(pkt);
         export_queue_put_by_queueid(sync->exportqueues, (&msg), i);
     }
+    trace_decrement_packet_refcount(pkt);
     return 1;
 }
 

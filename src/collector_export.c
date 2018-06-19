@@ -194,6 +194,7 @@ void destroy_exporter(collector_export_t *exp) {
 
     remove_all_destinations(exp);
 
+    pthread_mutex_lock(&(exp->glob->mutex));
     evlist = (libtrace_list_t *)(exp->glob->epollevs);
     n = evlist->head;
     while (n) {
@@ -201,6 +202,7 @@ void destroy_exporter(collector_export_t *exp) {
         free(ev);
         n = n->next;
     }
+    pthread_mutex_unlock(&(exp->glob->mutex));
 
     if (exp->freegenerics) {
         free_etsili_generics(exp->freegenerics);
@@ -671,16 +673,19 @@ static int run_encoding_job(collector_export_t *exp,
                 ret = encode_ipmmcc(&(exp->encoder), &(recvd->data.ipmmcc),
                         intstate->details, cinseq->cc_seqno, tosend);
                 cinseq->cc_seqno ++;
+                trace_decrement_packet_refcount(recvd->data.ipmmcc.packet);
                 break;
             case OPENLI_EXPORT_IPCC:
                 ret = encode_ipcc(&(exp->encoder), &(recvd->data.ipcc),
                         intstate->details, cinseq->cc_seqno, tosend);
                 cinseq->cc_seqno ++;
+                trace_decrement_packet_refcount(recvd->data.ipcc.packet);
                 break;
             case OPENLI_EXPORT_IPMMIRI:
                 ret = encode_ipmmiri(&(exp->encoder), &(recvd->data.ipmmiri),
                         intstate->details, cinseq->iri_seqno, tosend);
                 cinseq->iri_seqno ++;
+                trace_decrement_packet_refcount(recvd->data.ipmmiri.packet);
                 break;
             case OPENLI_EXPORT_IPIRI:
                 ret = encode_ipiri(&(exp->freegenerics),
@@ -709,7 +714,7 @@ static int run_encoding_job(collector_export_t *exp,
 
 static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
 {
-    int x;
+    int x, ret;
 	openli_export_recv_t recvd;
     openli_exportmsg_t tosend;
     libtrace_list_node_t *n;
@@ -758,11 +763,11 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
         case OPENLI_EXPORT_IPCC:
         case OPENLI_EXPORT_IPMMIRI:
         case OPENLI_EXPORT_IPIRI:
-
+            ret = 0;
             if (run_encoding_job(exp, &recvd, &tosend) < 0) {
-                return -1;
+                ret = -1;
             }
-            return 0;
+            return ret;
 
         case OPENLI_EXPORT_PACKET_FIN:
             /* All ETSI records relating to this packet have been seen, so

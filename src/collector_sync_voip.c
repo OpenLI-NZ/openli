@@ -590,12 +590,13 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
         /* Wrap this packet up in an IRI and forward it on to the exporter */
         ret = ipmm_iri(pkt, &irimsg, vint, vshared, iritype,
                 OPENLI_IPMMIRI_SIP, sync->info);
-        if (ret == -1) {
+        if (ret < 0) {
             logger(LOG_DAEMON,
                     "OpenLI: error while trying to export IRI containing SIP packet.");
             return -1;
         }
 
+        trace_increment_packet_refcount(pkt);
         queueused = export_queue_put_by_liid(sync->exportqueues, &irimsg,
                 vint->common.liid);
         sync->export_used[queueused] = 1;
@@ -731,6 +732,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         }
         queueused = export_queue_put_by_liid(sync->exportqueues, &irimsg,
                 vint->common.liid);
+        trace_increment_packet_refcount(pkt);
         sync->export_used[queueused] = 1;
         exportcount += ret;
     }
@@ -753,6 +755,7 @@ static int update_sip_state(collector_sync_voip_t *sync,
     sessversion = get_sip_session_version(sync->sipparser);
 
     if (callid == NULL) {
+        logger(LOG_DAEMON, "OpenLI: SIP packet has no Call ID?");
         iserr = 1;
         goto sipgiveup;
     }
@@ -784,34 +787,25 @@ static int update_sip_state(collector_sync_voip_t *sync,
     }
 
     memset(sync->export_used, 0, sizeof(uint8_t) * sync->exportqueues->numqueues);
-
     ret = 0;
     if (sip_is_invite(sync->sipparser)) {
         if ((ret = process_sip_invite(sync, callid, &sdpo, pkt)) < 0) {
             iserr = 1;
+            logger(LOG_DAEMON, "OpenLI: error while processing SIP invite");
             goto sipgiveup;
         }
     } else if (lookup_sip_callid(sync, callid) != 0) {
         /* SIP packet matches a "known" call of interest */
         if ((ret = process_sip_other(sync, callid, &sdpo, pkt)) < 0) {
             iserr = 1;
+            logger(LOG_DAEMON, "OpenLI: error while processing non-invite SIP");
             goto sipgiveup;
         }
     }
-
     if (ret == 0) {
         return 0;
     }
 
-    memset(&msg, 0, sizeof(openli_export_recv_t));
-    msg.type = OPENLI_EXPORT_PACKET_FIN;
-    msg.data.packet = pkt;
-    for (i = 0; i < sync->exportqueues->numqueues; i++) {
-        /* Increment ref count for the packet and send a packet fin message
-         * so the exporter knows when to decrease the ref count */
-        trace_increment_packet_refcount(pkt);
-        export_queue_put_by_queueid(sync->exportqueues, (&msg), i);
-    }
 sipgiveup:
 
     if (iserr) {
@@ -1130,11 +1124,13 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         export_queue_put_by_queueid(sync->exportqueues, &expmsg, i);
     }
 
+    pthread_mutex_lock(&(sync->glob->mutex));
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
         /* Forward all active CINs to our collector threads */
         push_all_active_voipstreams(sendq->q, vint);
 
     }
+    pthread_mutex_unlock(&(sync->glob->mutex));
     return 0;
 }
 
@@ -1161,6 +1157,16 @@ static inline void process_colthread_message(collector_sync_voip_t *sync,
         sync_epoll_t *syncev) {
 
     openli_state_update_t recvd;
+
+    if (libtrace_message_queue_count(
+                (libtrace_message_queue_t *)(syncev->ptr)) <= 0) {
+        /* Processing thread queue was empty but we thought we had a
+         * message available? I think this is just a consequence of
+         * libtrace MQ's "fast" path that tries to avoid locking for
+         * simple operations. */
+
+        return;
+    }
 
     libtrace_message_queue_get((libtrace_message_queue_t *)(syncev->ptr),
             (void *)(&recvd));

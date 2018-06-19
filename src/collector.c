@@ -163,6 +163,12 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     ipv4_target_t *v4, *tmp;
     ipv6_target_t *v6, *tmp2;
 
+    if (trace_is_err(trace)) {
+        libtrace_err_t err = trace_get_err(trace);
+        logger(LOG_DAEMON, "OpenLI: halting input due to error: %s",
+                err.problem);
+    }
+
     deregister_sync_queues(&(glob->syncip), t);
     deregister_sync_queues(&(glob->syncvoip), t);
 
@@ -307,6 +313,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     uint32_t rem;
     uint8_t proto;
     int forwarded = 0, i;
+    int synced = 0;
 
     openli_pushed_t syncpush;
     packet_info_t pinfo;
@@ -370,14 +377,14 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         if (loc->radiusservers && is_core_server_packet(pkt, &pinfo,
                     loc->radiusservers)) {
             send_packet_to_sync(pkt, &(loc->tosyncq_ip), OPENLI_UPDATE_RADIUS);
-            forwarded = 1;
+            synced = 1;
         }
 
         /* Is this a SIP packet? -- if yes, create a state update */
         if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
                     loc->sipservers)) {
             send_packet_to_sync(pkt, &(loc->tosyncq_voip), OPENLI_UPDATE_SIP);
-            forwarded = 1;
+            synced = 1;
         }
     }
 
@@ -402,18 +409,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     /* TODO IPV6 CC */
 
 processdone:
-    if (forwarded) {
-        memset(&finmsg, 0, sizeof(openli_export_recv_t));
-        finmsg.type = OPENLI_EXPORT_PACKET_FIN;
-        finmsg.data.packet = pkt;
-
-        for (i = 0; i < loc->exportqueues->numqueues; i++) {
-            if (loc->export_used == 0) {
-                continue;
-            }
-            trace_increment_packet_refcount(pkt);
-            export_queue_put_by_queueid(loc->exportqueues, &finmsg, i);
-        }
+    if (forwarded || synced) {
         trace_decrement_packet_refcount(pkt);
         return NULL;
     }
@@ -854,11 +850,16 @@ static void *start_voip_sync_thread(void *params) {
     }
 
     clean_sync_voip_data(sync);
-    while ((sq = (sync_sendq_t *)(glob->syncvoip.collector_queues)) &&
-                HASH_CNT(hh, sq) > 0) {
-
+    do {
+        pthread_mutex_lock(&(glob->syncvoip.mutex));
+        sq = (sync_sendq_t *)(glob->syncvoip.collector_queues);
+        if (HASH_CNT(hh, sq) == 0) {
+            pthread_mutex_unlock(&(glob->syncvoip.mutex));
+            break;
+        }
+        pthread_mutex_unlock(&(glob->syncvoip.mutex));
         usleep(500000);
-    }
+    } while (1);
 
     free(sync);
     logger(LOG_DAEMON, "OpenLI: exiting VOIP sync thread.");
@@ -921,10 +922,16 @@ static void *start_ip_sync_thread(void *params) {
     clean_sync_data(sync);
 
     /* Wait for all processing threads to de-register their sync queues */
-    while ((sq = (sync_sendq_t *)(glob->syncip.collector_queues)) &&
-			HASH_CNT(hh, sq) > 0) {
+    do {
+        pthread_mutex_lock(&(glob->syncip.mutex));
+        sq = (sync_sendq_t *)(glob->syncip.collector_queues);
+        if (HASH_CNT(hh, sq) == 0) {
+            pthread_mutex_unlock(&(glob->syncip.mutex));
+            break;
+        }
+        pthread_mutex_unlock(&(glob->syncip.mutex));
         usleep(500000);
-    }
+    } while (1);
 
     free(sync);
     logger(LOG_DAEMON, "OpenLI: exiting sync thread.");
@@ -1000,6 +1007,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    sigemptyset(&sig_block_all);
+    if (pthread_sigmask(SIG_SETMASK, &sig_block_all, &sig_before) < 0) {
+        logger(LOG_DAEMON, "Unable to disable signals before starting threads.");
+        return 1;
+    }
     /* Start export threads */
     glob->exporters = (support_thread_global_t *)malloc(
             sizeof(support_thread_global_t) * glob->exportthreads);
@@ -1027,6 +1039,11 @@ int main(int argc, char *argv[]) {
             start_voip_sync_thread, (void *)glob);
     if (ret != 0) {
         logger(LOG_DAEMON, "OpenLI: error creating VOIP sync thread. Exiting.");
+        return 1;
+    }
+
+    if (pthread_sigmask(SIG_SETMASK, &sig_before, NULL)) {
+        logger(LOG_DAEMON, "Unable to re-enable signals after starting threads.");
         return 1;
     }
 
