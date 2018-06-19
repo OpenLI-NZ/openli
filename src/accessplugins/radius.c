@@ -1384,13 +1384,6 @@ static int generate_iri(etsili_generic_t **paramlist,
 
     }
 
-
-    if (raddata->savedreq) {
-        attr = raddata->savedreq->attrs;
-    } else {
-        attr = raddata->attrs;
-    }
-
     while (attr) {
         uint8_t iriattr = 0xff;
         uint16_t attrlen = attr->att_len;
