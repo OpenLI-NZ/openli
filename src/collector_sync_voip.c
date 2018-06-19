@@ -730,9 +730,9 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
                     "OpenLI: error while trying to export IRI containing SIP packet.");
             continue;
         }
+        trace_increment_packet_refcount(pkt);
         queueused = export_queue_put_by_liid(sync->exportqueues, &irimsg,
                 vint->common.liid);
-        trace_increment_packet_refcount(pkt);
         sync->export_used[queueused] = 1;
         exportcount += ret;
     }
