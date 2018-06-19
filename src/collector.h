@@ -117,6 +117,13 @@ enum {
     SYNC_EVENT_INTERSYNC,
 };
 
+typedef struct export_queue_set {
+
+    int numqueues;
+    libtrace_message_queue_t *queues;
+
+} export_queue_set_t;
+
 
 typedef struct sync_epoll {
     uint8_t fdtype;
@@ -156,8 +163,9 @@ typedef struct colthread_local {
     rtpstreaminf_t *activertpintercepts;
     aluintercept_t *activealuintercepts;
 
-    /* Message queue for exporting LI records */
-    libtrace_message_queue_t exportq;
+    /* Message queues for exporting LI records */
+    export_queue_set_t *exportqueues;
+    uint8_t *export_used;
 
     /* Known RADIUS servers, i.e. if we see traffic to or from these
      * servers, we assume it is RADIUS.
@@ -169,7 +177,6 @@ typedef struct colthread_local {
      */
     coreserver_t *sipservers;
 
-    wandder_encoder_t *encoder;
     char *inputidentifier;
 
 } colthread_local_t;
@@ -200,15 +207,13 @@ typedef struct supporting_thread_global {
 typedef struct collector_global {
 
     colinput_t *inputs;
-
-    int totalthreads;
-    int queuealloced;
+    int exportthreads;
 
     pthread_rwlock_t config_mutex;
 
     support_thread_global_t syncip;
     support_thread_global_t syncvoip;
-    support_thread_global_t exporter;
+    support_thread_global_t *exporters;
 
     libtrace_message_queue_t intersyncq;
 
@@ -217,8 +222,6 @@ typedef struct collector_global {
     libtrace_list_t *expired_inputs;
 
     coreserver_t *alumirrors;
-
-
 
 } collector_global_t;
 

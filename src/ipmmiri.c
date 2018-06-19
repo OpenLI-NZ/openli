@@ -38,28 +38,42 @@
 #include "etsili_core.h"
 #include "ipmmiri.h"
 
-int ipmm_iri(libtrace_packet_t *pkt, shared_global_info_t *info,
-        wandder_encoder_t **encoder, libtrace_message_queue_t *q,
+int ipmm_iri(libtrace_packet_t *pkt, openli_export_recv_t *irimsg,
         voipintercept_t *vint, voipintshared_t *cin,
-        etsili_iri_type_t iritype, uint8_t ipmmiri_style) {
+        etsili_iri_type_t iritype, uint8_t ipmmiri_style,
+        shared_global_info_t *info) {
+
+    irimsg->type = OPENLI_EXPORT_IPMMIRI;
+
+    irimsg->destid = vint->common.destid;
+    irimsg->data.ipmmiri.liid = strdup(vint->common.liid);
+    irimsg->data.ipmmiri.packet = pkt;
+    irimsg->data.ipmmiri.cin = cin->cin;
+    irimsg->data.ipmmiri.iritype = iritype;
+    irimsg->data.ipmmiri.ipmmiri_style = ipmmiri_style;
+    irimsg->data.ipmmiri.colinfo = info;
+
+}
+
+int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
+        exporter_intercept_msg_t *intdetails, uint32_t seqno,
+        openli_exportmsg_t *msg) {
 
     void *l3, *content, *transport;
     uint16_t ethertype;
     uint32_t rem;
     uint8_t proto;
-    openli_export_recv_t msg;
     wandder_etsipshdr_data_t hdrdata;
-    openli_exportmsg_t iri;
     struct timeval tv;
 
     content = NULL;
-    l3 = trace_get_layer3(pkt, &ethertype, &rem);
+    l3 = trace_get_layer3(job->packet, &ethertype, &rem);
     if (l3 == NULL || rem < sizeof(libtrace_ip_t)) {
         logger(LOG_DAEMON, "OpenLI: packet intended for IPMM IRI is invalid.");
         return -1;
     }
 
-    transport = trace_get_transport(pkt, &proto, &rem);
+    transport = trace_get_transport(job->packet, &proto, &rem);
     if (transport) {
         if (proto == TRACE_IPPROTO_UDP) {
             content = trace_get_payload_from_udp((libtrace_udp_t *)transport,
@@ -76,57 +90,51 @@ int ipmm_iri(libtrace_packet_t *pkt, shared_global_info_t *info,
         reset_wandder_encoder(*encoder);
     }
 
-    tv = trace_get_timeval(pkt);
+    tv = trace_get_timeval(job->packet);
 
-    hdrdata.liid = vint->common.liid;
-    hdrdata.liid_len = vint->common.liid_len;
-    hdrdata.authcc = vint->common.authcc;
-    hdrdata.authcc_len = vint->common.authcc_len;
-    hdrdata.delivcc = vint->common.delivcc;
-    hdrdata.delivcc_len = vint->common.delivcc_len;
-    hdrdata.operatorid = info->operatorid;
-    hdrdata.operatorid_len = info->operatorid_len;
-    hdrdata.networkelemid = info->networkelemid;
-    hdrdata.networkelemid_len = info->networkelemid_len;
-    hdrdata.intpointid = info->intpointid;
-    hdrdata.intpointid_len = info->intpointid_len;
+    hdrdata.liid = intdetails->liid;
+    hdrdata.liid_len = intdetails->liid_len;
+    hdrdata.authcc = intdetails->authcc;
+    hdrdata.authcc_len = intdetails->authcc_len;
+    hdrdata.delivcc = intdetails->delivcc;
+    hdrdata.delivcc_len = intdetails->delivcc_len;
+    hdrdata.operatorid = job->colinfo->operatorid;
+    hdrdata.operatorid_len = job->colinfo->operatorid_len;
+    hdrdata.networkelemid = job->colinfo->networkelemid;
+    hdrdata.networkelemid_len = job->colinfo->networkelemid_len;
+    hdrdata.intpointid = job->colinfo->intpointid;
+    hdrdata.intpointid_len = job->colinfo->intpointid_len;
 
-    memset(&iri, 0, sizeof(openli_exportmsg_t));
+    memset(msg, 0, sizeof(openli_exportmsg_t));
 
-    if (ipmmiri_style == OPENLI_IPMMIRI_ORIGINAL) {
-        iri.msgbody = encode_etsi_ipmmiri(*encoder, &hdrdata,
-                (int64_t)(cin->cin), (int64_t)cin->iriseqno, iritype, &tv, l3,
+    if (job->ipmmiri_style == OPENLI_IPMMIRI_ORIGINAL) {
+        msg->msgbody = encode_etsi_ipmmiri(*encoder, &hdrdata,
+                (int64_t)(job->cin), (int64_t)seqno, job->iritype, &tv, l3,
                 rem);
-        iri.ipcontents = (uint8_t *)l3;
-        iri.ipclen = rem;
-    } else if (ipmmiri_style == OPENLI_IPMMIRI_SIP) {
+        msg->ipcontents = (uint8_t *)l3;
+        msg->ipclen = rem;
+    } else if (job->ipmmiri_style == OPENLI_IPMMIRI_SIP) {
         if (content == NULL) {
             logger(LOG_DAEMON, "OpenLI: trying to create SIP IRI but packet has no SIP payload?");
             return -1;
         }
 
-        iri.msgbody = encode_etsi_sipiri(*encoder, &hdrdata,
-                (int64_t)(cin->cin), (int64_t)cin->iriseqno, iritype, &tv,
+        msg->msgbody = encode_etsi_sipiri(*encoder, &hdrdata,
+                (int64_t)(job->cin), (int64_t)seqno, job->iritype, &tv,
                 l3, ethertype, content, rem);
-        iri.ipcontents = (uint8_t *)content;
-        iri.ipclen = rem;
+        msg->ipcontents = (uint8_t *)content;
+        msg->ipclen = rem;
     }
     /* TODO style == H323 */
 
-    iri.encoder = *encoder;
-    iri.destid = vint->common.destid;
-    iri.header = construct_netcomm_protocol_header(iri.msgbody->len,
-            OPENLI_PROTO_ETSI_IRI, vint->internalid, &(iri.hdrlen));
+    msg->encoder = *encoder;
+    msg->header = construct_netcomm_protocol_header(msg->msgbody->len,
+            OPENLI_PROTO_ETSI_IRI, 0, &(msg->hdrlen));
 
-    memset(&msg, 0, sizeof(openli_export_recv_t));
-    msg.type = OPENLI_EXPORT_ETSIREC;
-    msg.data.toexport = iri;
-
-    cin->iriseqno ++;
-
-    libtrace_message_queue_put(q, (void *)(&msg));
-    return 1;
-
+    return 0;
 }
+
+
+
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

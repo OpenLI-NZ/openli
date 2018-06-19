@@ -142,24 +142,12 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
                         (char *)value->data.scalar.value, NULL, 10);
             }
         }
-        glob->totalthreads += inp->threadcount;
         if (!inp->uri) {
             logger(LOG_DAEMON, "OpenLI collector: input is missing a URI?");
             continue;
         }
         HASH_ADD_KEYPTR(hh, glob->inputs, inp->uri, strlen(inp->uri), inp);
     }
-
-    /*
-    glob->syncsendqs = (libtrace_message_queue_t **)malloc(
-            sizeof(libtrace_message_queue_t *) * glob->totalthreads);
-    memset(glob->syncsendqs, 0,
-            sizeof(libtrace_message_queue_t *) * glob->totalthreads);
-    glob->syncepollevs = (void **)malloc(sizeof(void *) * glob->totalthreads);
-    memset(glob->syncepollevs, 0, sizeof(void *) * glob->totalthreads);
-    glob->queuealloced = glob->totalthreads;
-    glob->registered_syncqs = 0;
-    */
 
     return 0;
 }
@@ -735,6 +723,17 @@ static int global_parser(void *arg, yaml_document_t *doc,
         if (parse_core_server_list(&glob->alumirrors,
                 OPENLI_CORE_SERVER_ALUMIRROR, doc, value) == -1) {
             return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "exportthreads") == 0) {
+        glob->exportthreads = strtoul((char *) value->data.scalar.value, NULL,
+                10);
+        if (glob->exportthreads <= 0) {
+            glob->exportthreads = 1;
+            logger(LOG_DAEMON, "OpenLI: must have at least one export thread per collector!");
         }
     }
 

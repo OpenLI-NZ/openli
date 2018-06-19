@@ -104,50 +104,21 @@ alushimhdr_t *get_alushim_header(libtrace_packet_t *packet, uint32_t *rem) {
     return (alushimhdr_t *)(udppayload);
 }
 
-static void form_alu_ipcc(shared_global_info_t *info,
-        colthread_local_t *loc, aluintercept_t *alu,
-        void *l3, uint32_t rem, struct timeval *tv, uint8_t dir) {
+static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
+        aluintercept_t *alu, uint8_t dir) {
 
+    openli_export_recv_t msg;
+    int queueused;
 
-    openli_exportmsg_t msg;
-    openli_export_recv_t exprecv;
-    wandder_etsipshdr_data_t hdrdata;
+    msg.type = OPENLI_EXPORT_IPCC;
+    msg.data.ipcc.liid = strdup(alu->common.liid);
+    msg.data.ipcc.packet = packet;
+    msg.data.ipcc.cin = alu->cin;
+    msg.data.ipcc.dir = dir;
 
-    if (loc->encoder) {
-        reset_wandder_encoder(loc->encoder);
-    } else {
-        loc->encoder = init_wandder_encoder();
-    }
-
-    hdrdata.liid = alu->common.liid;
-    hdrdata.liid_len = alu->common.liid_len;
-    hdrdata.authcc = alu->common.authcc;
-    hdrdata.authcc_len = alu->common.authcc_len;
-    hdrdata.delivcc = alu->common.delivcc;
-    hdrdata.delivcc_len = alu->common.delivcc_len;
-    hdrdata.operatorid = info->operatorid;
-    hdrdata.operatorid_len = info->operatorid_len;
-    hdrdata.networkelemid = info->networkelemid;
-    hdrdata.networkelemid_len = info->networkelemid_len;
-    hdrdata.intpointid = info->intpointid;
-    hdrdata.intpointid_len = info->intpointid_len;
-
-    memset(&msg, 0, sizeof(openli_exportmsg_t));
-    msg.msgbody = encode_etsi_ipcc(loc->encoder, &hdrdata, (int64_t)(alu->cin),
-            (int64_t)alu->nextseqno, tv, l3, rem, dir);
-    msg.encoder = loc->encoder;
-    msg.ipcontents = (uint8_t *)l3;
-    msg.ipclen = rem;
-    msg.destid = alu->common.destid;
-    msg.header = construct_netcomm_protocol_header(msg.msgbody->len,
-            OPENLI_PROTO_ETSI_CC, 0, &(msg.hdrlen));
-
-    memset(&exprecv, 0, sizeof(openli_export_recv_t));
-    exprecv.type = OPENLI_EXPORT_ETSIREC;
-    exprecv.data.toexport = msg;
-
-    alu->nextseqno ++;
-    libtrace_message_queue_put(&(loc->exportq), (void *)&exprecv);
+    queueused = export_queue_put_by_liid(loc->exportqueues, &msg,
+            alu->common.liid);
+    loc->export_used[queueused] = 1;
 
 }
 
@@ -251,14 +222,7 @@ int check_alu_intercept(shared_global_info_t *info, colthread_local_t *loc,
     alu->cin = ntohl(aluhdr->sessionid);
 
     /* Create an appropriate IPCC and export it */
-    form_alu_ipcc(info, loc, alu,
-            l3, rem, &tv, alushim_get_direction(aluhdr));
-
-    /* Also follow up with a PACKET_FIN so the packet gets released */
-    msg.type = OPENLI_EXPORT_PACKET_FIN;
-    msg.data.packet = packet;
-    trace_increment_packet_refcount(packet);
-    libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
+    push_alu_ipcc_job(loc, packet, alu, alushim_get_direction(aluhdr));
 
     return 1;
 }

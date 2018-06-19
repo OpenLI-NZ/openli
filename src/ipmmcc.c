@@ -38,53 +38,67 @@
 #include "etsili_core.h"
 
 
-static openli_export_recv_t form_ipmmcc(shared_global_info_t *info,
-        colthread_local_t *loc, rtpstreaminf_t *rtp,
-        libtrace_packet_t *pkt, void *l3, uint32_t rem, uint8_t dir) {
+int encode_ipmmcc(wandder_encoder_t **encoder, openli_ipmmcc_job_t *job,
+        exporter_intercept_msg_t *intdetails, uint32_t seqno,
+        openli_exportmsg_t *msg) {
 
-    struct timeval tv = trace_get_timeval(pkt);
-    openli_exportmsg_t msg;
-    openli_export_recv_t exprecv;
+    struct timeval tv = trace_get_timeval(job->packet);
     wandder_etsipshdr_data_t hdrdata;
+    void *l3;
+    uint32_t rem;
+    uint16_t ethertype;
 
-    if (loc->encoder == NULL) {
-        loc->encoder = init_wandder_encoder();
+    if (*encoder == NULL) {
+        *encoder = init_wandder_encoder();
     } else {
-        reset_wandder_encoder(loc->encoder);
+        reset_wandder_encoder(*encoder);
     }
 
-    hdrdata.liid = rtp->common.liid;
-    hdrdata.liid_len = rtp->common.liid_len;
-    hdrdata.authcc = rtp->common.authcc;
-    hdrdata.authcc_len = rtp->common.authcc_len;
-    hdrdata.delivcc = rtp->common.delivcc;
-    hdrdata.delivcc_len = rtp->common.delivcc_len;
-    hdrdata.operatorid = info->operatorid;
-    hdrdata.operatorid_len = info->operatorid_len;
-    hdrdata.networkelemid = info->networkelemid;
-    hdrdata.networkelemid_len = info->networkelemid_len;
-    hdrdata.intpointid = info->intpointid;
-    hdrdata.intpointid_len = info->intpointid_len;
+    l3 = trace_get_layer3(job->packet, &ethertype, &rem);
 
-    memset(&msg, 0, sizeof(openli_exportmsg_t));
-    msg.msgbody = encode_etsi_ipmmcc(loc->encoder, &hdrdata,
-                (int64_t)rtp->cin, (int64_t)rtp->seqno, &tv, l3, rem, dir);
+    hdrdata.liid = intdetails->liid;
+    hdrdata.liid_len = intdetails->liid_len;
+    hdrdata.authcc = intdetails->authcc;
+    hdrdata.authcc_len = intdetails->authcc_len;
+    hdrdata.delivcc = intdetails->delivcc;
+    hdrdata.delivcc_len = intdetails->delivcc_len;
+    hdrdata.operatorid = job->colinfo->operatorid;
+    hdrdata.operatorid_len = job->colinfo->operatorid_len;
+    hdrdata.networkelemid = job->colinfo->networkelemid;
+    hdrdata.networkelemid_len = job->colinfo->networkelemid_len;
+    hdrdata.intpointid = job->colinfo->intpointid;
+    hdrdata.intpointid_len = job->colinfo->intpointid_len;
+
+    memset(msg, 0, sizeof(openli_exportmsg_t));
+    msg->msgbody = encode_etsi_ipmmcc(*encoder, &hdrdata,
+                (int64_t)job->cin, (int64_t)seqno, &tv, l3, rem, job->dir);
 
     /* Unfortunately, the packet body is not the last item in our message so
      * we can't easily use our zero-copy shortcut :( */
-    msg.encoder = loc->encoder;
-    msg.ipcontents = NULL;
-    msg.ipclen = 0;
-    msg.destid = rtp->common.destid;
-    msg.header = construct_netcomm_protocol_header(msg.msgbody->len,
-                OPENLI_PROTO_ETSI_CC, 0, &(msg.hdrlen));
+    msg->encoder = *encoder;
+    msg->ipcontents = NULL;
+    msg->ipclen = 0;
+    msg->header = construct_netcomm_protocol_header(msg->msgbody->len,
+                OPENLI_PROTO_ETSI_CC, 0, &(msg->hdrlen));
 
-    memset(&exprecv, 0, sizeof(openli_export_recv_t));
-    exprecv.type = OPENLI_EXPORT_ETSIREC;
-    exprecv.data.toexport = msg;
+    return 0;
+}
 
-    rtp->seqno ++;
-    return exprecv;
+static inline int form_ipmmcc_job(openli_export_recv_t *msg,
+        char *liid, shared_global_info_t *info, libtrace_packet_t *packet,
+        uint32_t cin, uint8_t dir, colthread_local_t *loc, uint32_t destid) {
+
+    int queueused;
+
+    msg->type = OPENLI_EXPORT_IPMMCC;
+    msg->destid = destid;
+    msg->data.ipmmcc.liid = strdup(liid);
+    msg->data.ipmmcc.packet = packet;
+    msg->data.ipmmcc.cin = cin;
+    msg->data.ipmmcc.dir = dir;
+    msg->data.ipmmcc.colinfo = info;
+    queueused = export_queue_put_by_liid(loc->exportqueues, msg, liid);
+    loc->export_used[queueused] = 1;
 }
 
 int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
@@ -93,8 +107,10 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
 
     struct sockaddr_in *targetaddr, *cmp, *otheraddr;
     openli_export_recv_t msg;
-    int matched = 0;
     rtpstreaminf_t *rtp, *tmp;
+    int matched = 0, queueused;
+
+    memset(&msg, 0, sizeof(openli_export_recv_t));
 
     if (rem < sizeof(libtrace_ip_t)) {
         logger(LOG_DAEMON, "OpenLI: Got IPv4 RTP packet with truncated header?");
@@ -134,10 +150,9 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             if (targetaddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
                 cmp = (struct sockaddr_in *)(&pinfo->destip);
                 if (otheraddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
+                    form_ipmmcc_job(&msg, rtp->common.liid, info, pkt, rtp->cin,
+                            ETSI_DIR_FROM_TARGET, loc, rtp->common.destid);
                     matched ++;
-                    msg = form_ipmmcc(info, loc, rtp, pkt, ip, rem,
-                            ETSI_DIR_FROM_TARGET);
-                    libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
                     continue;
                 }
             }
@@ -151,22 +166,14 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             if (otheraddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
                 cmp = (struct sockaddr_in *)(&pinfo->destip);
                 if (targetaddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
+                    form_ipmmcc_job(&msg, rtp->common.liid, info, pkt, rtp->cin,
+                            ETSI_DIR_TO_TARGET, loc, rtp->common.destid);
                     matched ++;
-                    msg = form_ipmmcc(info, loc, rtp, pkt, ip, rem,
-                            ETSI_DIR_TO_TARGET);
-                    libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
                     continue;
                 }
             }
         }
 
-    }
-
-    if (matched > 0) {
-        msg.type = OPENLI_EXPORT_PACKET_FIN;
-        msg.data.packet = pkt;
-        trace_increment_packet_refcount(pkt);
-        libtrace_message_queue_put(&(loc->exportq), (void *)&msg);
     }
 
     return matched;
