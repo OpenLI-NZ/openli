@@ -28,6 +28,11 @@
 
 #include <libtrace.h>
 #include "collector.h"
+#include "collector_export.h"
+
+int encode_ipmmcc(wandder_encoder_t **encoder, openli_ipmmcc_job_t *job,
+        exporter_intercept_msg_t *intdetails, uint32_t seqno,
+                openli_exportmsg_t *msg);
 
 int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip_t *ip,

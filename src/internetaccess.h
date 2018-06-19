@@ -31,6 +31,8 @@
 #include <libtrace.h>
 #include <libtrace/message_queue.h>
 
+
+#include "etsili_core.h"
 #include "intercept.h"
 
 enum {
@@ -98,6 +100,7 @@ struct access_plugin {
 
     void *(*process_packet)(access_plugin_t *p, libtrace_packet_t *pkt);
     void (*destroy_parsed_data)(access_plugin_t *p, void *parseddata);
+    void (*uncouple_parsed_data)(access_plugin_t *p);
 
     char *(*get_userid)(access_plugin_t *p, void *parseddata);
 
@@ -105,6 +108,10 @@ struct access_plugin {
             void *parseddata, access_session_t **sesslist,
             session_state_t *oldstate, session_state_t *newstate,
             access_action_t *action);
+
+    int (*generate_iri_data)(access_plugin_t *p, void *parseddata,
+            etsili_generic_t **params, etsili_iri_type_t *iritype,
+            etsili_generic_t **freegenerics, int iteration);
 
 /*
     int (*create_iri_from_packet)(access_plugin_t *p,

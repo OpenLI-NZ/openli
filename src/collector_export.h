@@ -27,7 +27,9 @@
 #ifndef OPENLI_COLLECTOR_EXPORT_H_
 #define OPENLI_COLLECTOR_EXPORT_H_
 
+#include <libwandder.h>
 #include <sys/epoll.h>
+
 #include "collector.h"
 #include "export_buffer.h"
 #include "mediator.h"
@@ -52,13 +54,17 @@ typedef struct exporter_epoll {
 
 typedef struct exporter_intercept_msg {
     char *liid;
+    int liid_len;
     char *authcc;
+    int authcc_len;
     char *delivcc;
+    int delivcc_len;
 } exporter_intercept_msg_t;
 
 typedef struct cin_seqno {
     uint32_t cin;
-    uint32_t seqno;
+    uint32_t cc_seqno;
+    uint32_t iri_seqno;
     UT_hash_handle hh;
 } cin_seqno_t;
 
@@ -74,6 +80,8 @@ typedef struct colexp_data {
     support_thread_global_t *glob;
     libtrace_list_t *dests;     // if dests gets large, replace with map?
     exporter_intercept_state_t *intercepts;
+    wandder_encoder_t *encoder;
+    etsili_generic_t *freegenerics;
 
     uint8_t flagged;
     int failed_conns;
@@ -102,6 +110,7 @@ typedef struct openli_ipmmcc_job {
     libtrace_packet_t *packet;
     uint32_t cin;
     uint8_t dir;
+    shared_global_info_t *colinfo;
 } openli_ipmmcc_job_t;
 
 typedef struct openli_ipcc_job {
@@ -109,6 +118,7 @@ typedef struct openli_ipcc_job {
     libtrace_packet_t *packet;
     uint32_t cin;
     uint8_t dir;
+    shared_global_info_t *colinfo;
 } openli_ipcc_job_t;
 
 typedef struct openli_ipmmiri_job {
@@ -117,6 +127,7 @@ typedef struct openli_ipmmiri_job {
     uint32_t cin;
     etsili_iri_type_t iritype;
     uint8_t ipmmiri_style;
+    shared_global_info_t *colinfo;
 } openli_ipmmiri_job_t;
 
 typedef struct openli_ipiri_job {
@@ -125,12 +136,18 @@ typedef struct openli_ipiri_job {
     void *plugin_data;
 
     uint32_t cin;
+    char *username;
+    struct sockaddr_storage assignedip;
+    int ipfamily;
+    struct timeval sessionstartts;
     internet_access_method_t access_tech;
+    shared_global_info_t *colinfo;
 } openli_ipiri_job_t;
 
 
 typedef struct openli_export_recv {
     uint8_t type;
+    uint32_t destid;
     union {
         openli_mediator_t med;
         libtrace_packet_t *packet;

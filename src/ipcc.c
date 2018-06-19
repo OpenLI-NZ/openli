@@ -66,63 +66,65 @@ static void dump_export_msg(openli_exportmsg_t *msg) {
 
 }
 
-static openli_export_recv_t form_ipcc(shared_global_info_t *info,
-		colthread_local_t *loc, ipsession_t *sess,
-        libtrace_packet_t *pkt, void *l3, uint32_t rem, uint8_t dir) {
+int encode_ipcc(wandder_encoder_t **encoder, openli_ipcc_job_t *job,
+        exporter_intercept_msg_t *intdetails, uint32_t seqno,
+        openli_exportmsg_t *msg) {
 
-    struct timeval tv = trace_get_timeval(pkt);
-    openli_exportmsg_t msg;
-    openli_export_recv_t exprecv;
+    struct timeval tv = trace_get_timeval(job->packet);
     wandder_etsipshdr_data_t hdrdata;
+   	void *l3;
+    uint32_t rem;
+    uint16_t ethertype;
 
-    if (loc->encoder == NULL) {
-        loc->encoder = init_wandder_encoder();
+    if (*encoder == NULL) {
+        *encoder = init_wandder_encoder();
     } else {
-        reset_wandder_encoder(loc->encoder);
+        reset_wandder_encoder(*encoder);
     }
 
-    hdrdata.liid = sess->common.liid;
-    hdrdata.liid_len = sess->common.liid_len;
-    hdrdata.authcc = sess->common.authcc;
-    hdrdata.authcc_len = sess->common.authcc_len;
-    hdrdata.delivcc = sess->common.delivcc;
-    hdrdata.delivcc_len = sess->common.delivcc_len;
-    hdrdata.operatorid = info->operatorid;
-    hdrdata.operatorid_len = info->operatorid_len;
-    hdrdata.networkelemid = info->networkelemid;
-    hdrdata.networkelemid_len = info->networkelemid_len;
-    hdrdata.intpointid = info->intpointid;
-    hdrdata.intpointid_len = info->intpointid_len;
+    l3 = trace_get_layer3(job->packet, &ethertype, &rem);
 
-    memset(&msg, 0, sizeof(openli_exportmsg_t));
-    msg.msgbody = encode_etsi_ipcc(loc->encoder, &hdrdata,
-            (int64_t)sess->cin, (int64_t)sess->nextseqno, &tv, l3, rem, dir);
+    hdrdata.liid = intdetails->liid;
+    hdrdata.liid_len = intdetails->liid_len;
+    hdrdata.authcc = intdetails->authcc;
+    hdrdata.authcc_len = intdetails->authcc_len;
+    hdrdata.delivcc = intdetails->delivcc;
+    hdrdata.delivcc_len = intdetails->delivcc_len;
+    hdrdata.operatorid = job->colinfo->operatorid;
+    hdrdata.operatorid_len = job->colinfo->operatorid_len;
+    hdrdata.networkelemid = job->colinfo->networkelemid;
+    hdrdata.networkelemid_len = job->colinfo->networkelemid_len;
+    hdrdata.intpointid = job->colinfo->intpointid;
+    hdrdata.intpointid_len = job->colinfo->intpointid_len;
 
-    msg.encoder = loc->encoder;
-    msg.ipcontents = (uint8_t *)l3;
-    msg.ipclen = rem;
-    msg.destid = sess->common.destid;
-    msg.header = construct_netcomm_protocol_header(msg.msgbody->len,
-            OPENLI_PROTO_ETSI_CC, 0, &(msg.hdrlen));
+    memset(msg, 0, sizeof(openli_exportmsg_t));
 
-    memset(&exprecv, 0, sizeof(openli_export_recv_t));
+    msg->msgbody = encode_etsi_ipcc(*encoder, &hdrdata,
+            (int64_t)job->cin, (int64_t)seqno, &tv, l3, rem, job->dir);
 
-    sess->nextseqno ++;
+    msg->encoder = *encoder;
+    msg->ipcontents = (uint8_t *)l3;
+    msg->ipclen = rem;
+    msg->header = construct_netcomm_protocol_header(msg->msgbody->len,
+            OPENLI_PROTO_ETSI_CC, 0, &(msg->hdrlen));
 
-    return exprecv;
+    return 0;
 
 }
 
 static inline void make_ipcc_job(openli_export_recv_t *msg,
-        ipsession_t *sess, libtrace_packet_t *pkt, uint8_t dir) {
+        ipsession_t *sess, libtrace_packet_t *pkt, uint8_t dir,
+        shared_global_info_t *info) {
 
     memset(msg, 0, sizeof(openli_export_recv_t));
 
     msg->type = OPENLI_EXPORT_IPCC;
+    msg->destid = sess->common.destid;
     msg->data.ipcc.liid = strdup(sess->common.liid);
     msg->data.ipcc.packet = pkt;
     msg->data.ipcc.cin = sess->cin;
     msg->data.ipcc.dir = dir;
+    msg->data.ipcc.colinfo = info;
 
 }
 
@@ -153,7 +155,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            make_ipcc_job(&msg, sess, pkt, 0);
+            make_ipcc_job(&msg, sess, pkt, 0, info);
             queueused = export_queue_put_by_liid(loc->exportqueues,
                     &msg, sess->common.liid);
             loc->export_used[queueused] = 1;
@@ -168,7 +170,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            make_ipcc_job(&msg, sess, pkt, 0);
+            make_ipcc_job(&msg, sess, pkt, 0, info);
             queueused = export_queue_put_by_liid(loc->exportqueues,
                     &msg, sess->common.liid);
             loc->export_used[queueused] = 1;

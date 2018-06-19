@@ -538,6 +538,7 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
 
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
         openli_export_recv_t irimsg;
+        memset(&irimsg, 0, sizeof(openli_export_recv_t));
         int queueused;
 
         /* Is this call ID associated with this intercept? */
@@ -588,7 +589,7 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
 
         /* Wrap this packet up in an IRI and forward it on to the exporter */
         ret = ipmm_iri(pkt, &irimsg, vint, vshared, iritype,
-                OPENLI_IPMMIRI_SIP);
+                OPENLI_IPMMIRI_SIP, sync->info);
         if (ret == -1) {
             logger(LOG_DAEMON,
                     "OpenLI: error while trying to export IRI containing SIP packet.");
@@ -630,6 +631,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         int queueused;
         vshared = NULL;
 
+        memset(&irimsg, 0, sizeof(openli_export_recv_t));
         /* Is this a call ID we've seen already? */
         HASH_FIND(hh_callid, vint->cin_callid_map, callid, strlen(callid),
                 findcin);
@@ -721,7 +723,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
 
         /* Wrap this packet up in an IRI and forward it on to the exporter */
         ret = ipmm_iri(pkt, &irimsg, vint, vshared, iritype,
-                OPENLI_IPMMIRI_SIP);
+                OPENLI_IPMMIRI_SIP, sync->info);
         if (ret == -1) {
             logger(LOG_DAEMON,
                     "OpenLI: error while trying to export IRI containing SIP packet.");
@@ -855,6 +857,9 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         expmsg.data.cept->liid = strdup(vint->common.liid);
         expmsg.data.cept->authcc = strdup(vint->common.authcc);
         expmsg.data.cept->delivcc = strdup(vint->common.delivcc);
+        expmsg.data.cept->liid_len = vint->common.liid_len;
+        expmsg.data.cept->authcc_len = vint->common.authcc_len;
+        expmsg.data.cept->delivcc_len = vint->common.delivcc_len;
 
         export_queue_put_by_queueid(sync->exportqueues, &expmsg, i);
     }
@@ -1118,6 +1123,9 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         expmsg.data.cept->liid = strdup(vint->common.liid);
         expmsg.data.cept->authcc = strdup(vint->common.authcc);
         expmsg.data.cept->delivcc = strdup(vint->common.delivcc);
+        expmsg.data.cept->liid_len = vint->common.liid_len;
+        expmsg.data.cept->authcc_len = vint->common.authcc_len;
+        expmsg.data.cept->delivcc_len = vint->common.delivcc_len;
 
         export_queue_put_by_queueid(sync->exportqueues, &expmsg, i);
     }

@@ -32,6 +32,7 @@
 #include <libwandder.h>
 #include <libwandder_etsili.h>
 #include "collector.h"
+#include "collector_export.h"
 #include "intercept.h"
 #include "internetaccess.h"
 #include "etsili_core.h"
@@ -133,11 +134,16 @@ int ip_iri(shared_global_info_t *info, wandder_encoder_t **encoder,
                 ipintercept_t *ipint, etsili_iri_type_t iritype,
                 struct timeval *tv, etsili_generic_t *params);
 
+int encode_ipiri(etsili_generic_t **freegenerics,
+        wandder_encoder_t **encoder, openli_ipiri_job_t *job,
+        exporter_intercept_msg_t *intdetails, uint32_t seqno,
+        openli_exportmsg_t *msg, int iteration);
 
 /* TODO consider adding free lists to these APIs to avoid excess mallocs */
-ipiri_id_t *ipiri_create_id_printable(char *idstr, int length);
-ipiri_id_t *ipiri_create_id_mac(uint8_t *macaddr);
-ipiri_id_t *ipiri_create_id_ipv4(uint32_t addrnum, uint8_t slashbits);
+int ipiri_create_id_printable(char *idstr, int length, ipiri_id_t *ipiriid);
+int ipiri_create_id_mac(uint8_t *macaddr, ipiri_id_t *ipiriid);
+int ipiri_create_id_ipv4(uint32_t addrnum, uint8_t slashbits,
+        ipiri_id_t *ipiriid);
 
 void ipiri_free_id(ipiri_id_t *iriid);
 

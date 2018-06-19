@@ -142,6 +142,7 @@ typedef struct radius_server {
 
 typedef struct radius_parsed {
 
+    uint8_t attached;
     libtrace_packet_t *origpkt;
     uint8_t msgtype;
     uint8_t msgident;
@@ -170,7 +171,7 @@ typedef struct radius_parsed {
 typedef struct radius_global {
     radius_attribute_t *freeattrs;
     radius_saved_req_t *freeaccreqs;
-    radius_parsed_t parsedpkt;
+    radius_parsed_t *parsedpkt;
 
     radius_server_t *servers;
 } radius_global_t;
@@ -186,6 +187,7 @@ static int warned = 0;
 
 static inline void reset_parsed_packet(radius_parsed_t *parsed) {
 
+    parsed->attached = 1;
     parsed->origpkt = NULL;
     parsed->msgtype = 0;
     parsed->accttype = 0;
@@ -216,7 +218,8 @@ static void radius_init_plugin_data(access_plugin_t *p) {
     glob->freeaccreqs = NULL;
     glob->servers = NULL;
 
-    reset_parsed_packet(&(glob->parsedpkt));
+    glob->parsedpkt = (radius_parsed_t *)malloc(sizeof(radius_parsed_t));
+    reset_parsed_packet(glob->parsedpkt);
 
     p->plugindata = (void *)(glob);
     return;
@@ -358,7 +361,10 @@ static void radius_destroy_plugin_data(access_plugin_t *p) {
         free(srv);
     }
 
-    free_attribute_list(glob->parsedpkt.attrs);
+    if (glob->parsedpkt) {
+        free_attribute_list(glob->parsedpkt->attrs);
+        free(glob->parsedpkt);
+    }
     free(glob);
     return;
 }
@@ -441,7 +447,22 @@ static void radius_destroy_parsed_data(access_plugin_t *p, void *parsed) {
         free(rparsed->savedresp);
     }
 
-    reset_parsed_packet(rparsed);
+    if (rparsed->attached) {
+        reset_parsed_packet(rparsed);
+    } else {
+        free(rparsed);
+    }
+
+}
+
+static void radius_uncouple_parsed_data(access_plugin_t *p) {
+
+    radius_global_t *glob;
+    glob = (radius_global_t *)(p->plugindata);
+    glob->parsedpkt->attached = 0;
+
+    glob->parsedpkt = (radius_parsed_t *)malloc(sizeof(radius_parsed_t));
+    reset_parsed_packet(glob->parsedpkt);
 
 }
 
@@ -625,8 +646,8 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
 
     glob = (radius_global_t *)(p->plugindata);
 
-    parsed = &(glob->parsedpkt);
-    if (parsed->msgtype != 0) {
+    parsed = glob->parsedpkt;
+    if (parsed && parsed->msgtype != 0) {
         radius_destroy_parsed_data(p, (void *)parsed);
     }
 
@@ -1333,81 +1354,33 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     return thissess;
 }
 
-static int generate_iri(shared_global_info_t *info,
-        etsili_generic_t **freegenerics,
-        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
-        access_session_t *sess, ipintercept_t *ipint,
-        radius_parsed_t *raddata, struct timeval *tv,
-        uint32_t eventtype, etsili_iri_type_t iritype) {
+static int generate_iri(etsili_generic_t **paramlist,
+        etsili_generic_t **freegenerics, radius_parsed_t *raddata,
+        radius_attribute_t *attr,
+        struct timeval *tv, uint32_t eventtype, etsili_iri_type_t *iritype) {
 
-    etsili_generic_t *p, *tmp, *params = NULL;
-    radius_attribute_t *attr;
-    int ret;
+
+    etsili_generic_t *np;
     int64_t nasport;
-    etsili_ipaddress_t *nasip = NULL;
-    etsili_ipaddress_t *targetip = NULL;
-    ipiri_id_t *nasid = NULL;
-    int64_t ipversion, inocts, outocts;
-    int64_t endreason;
+    etsili_ipaddress_t nasip;
+    ipiri_id_t nasid;
+    int64_t inocts, outocts, endreason;
 
-    p = create_etsili_generic(freegenerics,
+
+    /* XXX Static generics aren't going to work anymore -- we'll need to
+     * copy them into memory that we control...
+     */
+    np = create_etsili_generic(freegenerics,
             IPIRI_CONTENTS_ACCESS_EVENT_TYPE, sizeof(uint32_t),
             (uint8_t *)(&eventtype));
-    HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
+    HASH_ADD_KEYPTR(hh, *paramlist, &(np->itemnum), sizeof(np->itemnum), np);
 
-    p = create_etsili_generic(freegenerics,
-            IPIRI_CONTENTS_INTERNET_ACCESS_TYPE, sizeof(uint32_t),
-            (uint8_t *)(&ipint->accesstype));
-    HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
-
-    if (ipint->username) {
-        p = create_etsili_generic(freegenerics,
-                IPIRI_CONTENTS_TARGET_USERNAME, ipint->username_len,
-                ipint->username);
-        HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
-    }
-
-    if (sess->assignedip) {
-        /* TODO handle v4 AND v6 case, if it even happens. */
-
-        if (sess->ipfamily == AF_INET) {
-            struct sockaddr_in *in = (struct sockaddr_in *)(sess->assignedip);
-            targetip = etsili_create_ipaddress_v4(
-                    (uint32_t *)(&(in->sin_addr.s_addr)),
-                    ETSILI_IPV4_SUBNET_UNKNOWN,
-                    ETSILI_IPADDRESS_ASSIGNED_UNKNOWN);     // TODO??
-            ipversion = IPIRI_IPVERSION_4;
-        } else if (sess->ipfamily == AF_INET6) {
-            /* TODO */
-            ipversion = IPIRI_IPVERSION_6;
-
-        }
-
-        if (targetip) {
-            p = create_etsili_generic(freegenerics,
-                    IPIRI_CONTENTS_IPVERSION, sizeof(int64_t),
-                    (uint8_t *)(&ipversion));
-            HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
-
-            p = create_etsili_generic(freegenerics,
-                    IPIRI_CONTENTS_TARGET_IPADDRESS,
-                    sizeof(etsili_ipaddress_t), (uint8_t *)targetip);
-            HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
-        }
-    }
-
-    if (sess->started.tv_sec > 0) {
-        p = create_etsili_generic(freegenerics,
-                IPIRI_CONTENTS_STARTTIME, sizeof(struct timeval),
-                (uint8_t *)(&(sess->started)));
-        HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
-    }
-
-    if (iritype == ETSILI_IRI_END) {
-        p = create_etsili_generic(freegenerics,
+    if (*iritype == ETSILI_IRI_END) {
+        np = create_etsili_generic(freegenerics,
                 IPIRI_CONTENTS_ENDTIME, sizeof(struct timeval),
                 (uint8_t *)tv);
-        HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
+        HASH_ADD_KEYPTR(hh, *paramlist, &(np->itemnum), sizeof(np->itemnum),
+                np);
 
     }
 
@@ -1437,19 +1410,22 @@ static int generate_iri(shared_global_info_t *info,
             case RADIUS_ATTR_NASIP:
                 /* uint32_t -> IPAddress */
                 iriattr = IPIRI_CONTENTS_POP_IPADDRESS;
-                nasip = etsili_create_ipaddress_v4((uint32_t *)(attr->att_val),
+                etsili_create_ipaddress_v4((uint32_t *)(attr->att_val),
                         ETSILI_IPV4_SUBNET_UNKNOWN,
-                        ETSILI_IPADDRESS_ASSIGNED_UNKNOWN);
+                        ETSILI_IPADDRESS_ASSIGNED_UNKNOWN, &nasip);
                 attrlen = sizeof(etsili_ipaddress_t);
-                attrptr = (uint8_t *)(nasip);
+                attrptr = (uint8_t *)(&nasip);
                 break;
             case RADIUS_ATTR_NASIDENTIFIER:
                 /* String -> IPIRIIDType */
                 iriattr = IPIRI_CONTENTS_POP_IDENTIFIER;
-                nasid = ipiri_create_id_printable((char *)(attr->att_val),
-                        attr->att_len);
+                if (ipiri_create_id_printable((char *)(attr->att_val),
+                        attr->att_len, &nasid) < 0) {
+                    logger(LOG_DAEMON, "OpenLI: Unable to convert RADIUS NAS Identifier attribute into a printable POP Identifier");
+                    break;
+                }
                 attrlen = sizeof(ipiri_id_t);
-                attrptr = (uint8_t *)(nasid);
+                attrptr = (uint8_t *)(&nasid);
                 break;
             case RADIUS_ATTR_CALLED_STATION_ID:
                 /* String -> String */
@@ -1480,157 +1456,144 @@ static int generate_iri(shared_global_info_t *info,
                 break;
         }
         if (iriattr != 0xff) {
-            p = create_etsili_generic(freegenerics, iriattr,
+            np = create_etsili_generic(freegenerics, iriattr,
                     attrlen, attrptr);
-            HASH_ADD_KEYPTR(hh, params, &(p->itemnum), sizeof(p->itemnum), p);
+            HASH_ADD_KEYPTR(hh, *paramlist, &(np->itemnum),
+                    sizeof(np->itemnum), np);
         }
         attr = attr->next;
     }
-    ret = ip_iri(info, encoder, mqueue, sess, ipint, iritype, tv, params);
 
-    if (nasip) {
-        free_etsili_ipaddress(nasip);
-    }
-    if (targetip) {
-        free_etsili_ipaddress(targetip);
-    }
-    if (nasid) {
-        ipiri_free_id(nasid);
-    }
-
-    HASH_ITER(hh, params, p, tmp) {
-        HASH_DELETE(hh, params, p);
-        release_etsili_generic(freegenerics, p);
-    }
-
-    return ret;
+    return 0;
 
 }
 
-static int radius_generate_access_attempt_iri(shared_global_info_t *info,
-        etsili_generic_t **freelist,
-        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
-        access_session_t *sess, ipintercept_t *ipint,
-        radius_parsed_t *raddata, struct timeval *tv) {
+static int radius_generate_access_attempt_iri(etsili_generic_t **params,
+        etsili_generic_t **freelist, radius_parsed_t *raddata,
+        radius_attribute_t *attrs, struct timeval *tv,
+        etsili_iri_type_t *iritype) {
 
-    return generate_iri(info, freelist, encoder, mqueue, sess, ipint, raddata,
-            tv, IPIRI_ACCESS_ATTEMPT, ETSILI_IRI_REPORT);
+    *iritype = ETSILI_IRI_REPORT;
 
+    return generate_iri(params, freelist, raddata, attrs,
+            tv, IPIRI_ACCESS_ATTEMPT, iritype);
 }
 
-static int radius_generate_access_accept_iri(shared_global_info_t *info,
-        etsili_generic_t **freelist,
-        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
-        access_session_t *sess, ipintercept_t *ipint,
-        radius_parsed_t *raddata, struct timeval *tv) {
 
-    return generate_iri(info, freelist, encoder, mqueue, sess, ipint, raddata,
-            tv, IPIRI_ACCESS_ACCEPT, ETSILI_IRI_BEGIN);
+static int radius_generate_access_accept_iri(etsili_generic_t **params,
+        etsili_generic_t **freelist, radius_parsed_t *raddata,
+        radius_attribute_t *attrs, struct timeval *tv,
+        etsili_iri_type_t *iritype) {
 
+    *iritype = ETSILI_IRI_BEGIN;
+
+    return generate_iri(params, freelist, raddata, attrs,
+            tv, IPIRI_ACCESS_ACCEPT, iritype);
 }
 
-static int radius_generate_interim_iri(shared_global_info_t *info,
-        etsili_generic_t **freelist,
-        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
-        access_session_t *sess, ipintercept_t *ipint,
-        radius_parsed_t *raddata, struct timeval *tv) {
+static int radius_generate_interim_iri(etsili_generic_t **params,
+        etsili_generic_t **freelist, radius_parsed_t *raddata,
+        radius_attribute_t *attrs, struct timeval *tv,
+        etsili_iri_type_t *iritype) {
 
-    return generate_iri(info, freelist, encoder, mqueue, sess, ipint, raddata,
-            tv, IPIRI_INTERIM_UPDATE, ETSILI_IRI_CONTINUE);
+    *iritype = ETSILI_IRI_CONTINUE;
 
+    return generate_iri(params, freelist, raddata, attrs,
+            tv, IPIRI_INTERIM_UPDATE, iritype);
 }
 
-static int radius_generate_access_end_iri(shared_global_info_t *info,
-        etsili_generic_t **freelist,
-        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
-        access_session_t *sess, ipintercept_t *ipint,
-        radius_parsed_t *raddata, struct timeval *tv) {
+static int radius_generate_access_end_iri(etsili_generic_t **params,
+        etsili_generic_t **freelist, radius_parsed_t *raddata,
+        radius_attribute_t *attrs, struct timeval *tv,
+        etsili_iri_type_t *iritype) {
 
-    return generate_iri(info, freelist, encoder, mqueue, sess, ipint, raddata,
-            tv, IPIRI_ACCESS_END, ETSILI_IRI_END);
+    *iritype = ETSILI_IRI_END;
 
+    return generate_iri(params, freelist, raddata, attrs,
+            tv, IPIRI_ACCESS_END, iritype);
 }
 
-static int radius_generate_access_reject_iri(shared_global_info_t *info,
-        etsili_generic_t **freelist,
-        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
-        access_session_t *sess, ipintercept_t *ipint,
-        radius_parsed_t *raddata, struct timeval *tv) {
+static int radius_generate_access_reject_iri(etsili_generic_t **params,
+        etsili_generic_t **freelist, radius_parsed_t *raddata,
+        radius_attribute_t *attrs, struct timeval *tv,
+        etsili_iri_type_t *iritype) {
 
-    return generate_iri(info, freelist, encoder, mqueue, sess, ipint, raddata,
-            tv, IPIRI_ACCESS_REJECT, ETSILI_IRI_REPORT);
+    *iritype = ETSILI_IRI_REPORT;
 
+    return generate_iri(params, freelist, raddata, attrs,
+            tv, IPIRI_ACCESS_REJECT, iritype);
 }
 
-static int radius_generate_access_failed_iri(shared_global_info_t *info,
-        etsili_generic_t **freelist,
-        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
-        access_session_t *sess, ipintercept_t *ipint,
-        radius_parsed_t *raddata, struct timeval *tv) {
+static int radius_generate_access_failed_iri(etsili_generic_t **params,
+        etsili_generic_t **freelist, radius_parsed_t *raddata,
+        radius_attribute_t *attrs, struct timeval *tv,
+        etsili_iri_type_t *iritype) {
 
-    return generate_iri(info, freelist, encoder, mqueue, sess, ipint, raddata,
-            tv, IPIRI_ACCESS_FAILED, ETSILI_IRI_REPORT);
+    *iritype = ETSILI_IRI_REPORT;
+
+    return generate_iri(params, freelist, raddata, attrs,
+            tv, IPIRI_ACCESS_FAILED, iritype);
 }
 
-static int radius_generate_already_active_iri(shared_global_info_t *info,
-        etsili_generic_t **freelist,
-        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
-        access_session_t *sess, ipintercept_t *ipint,
-        radius_parsed_t *raddata, struct timeval *tv) {
+static int radius_generate_already_active_iri(etsili_generic_t **params,
+        etsili_generic_t **freelist, radius_parsed_t *raddata,
+        radius_attribute_t *attrs, struct timeval *tv,
+        etsili_iri_type_t *iritype) {
 
-    return generate_iri(info, freelist, encoder, mqueue, sess, ipint, raddata,
-            tv, IPIRI_START_WHILE_ACTIVE, ETSILI_IRI_BEGIN);
+    *iritype = ETSILI_IRI_BEGIN;
+
+    return generate_iri(params, freelist, raddata, attrs,
+            tv, IPIRI_START_WHILE_ACTIVE, iritype);
 }
 
-static inline int action_to_iri(shared_global_info_t *info,
-        etsili_generic_t **freegenerics,
-        wandder_encoder_t **encoder, libtrace_message_queue_t *mqueue,
-        access_session_t *sess, ipintercept_t *ipint, radius_parsed_t *raddata,
-        access_action_t action) {
+static inline int action_to_iri(etsili_generic_t **params,
+        etsili_generic_t **freegenerics, radius_parsed_t *raddata,
+        access_action_t action, radius_attribute_t *attrs,
+        etsili_iri_type_t *iritype) {
 
     struct timeval tv;
     TIMESTAMP_TO_TV((&tv), raddata->tvsec);
 
     switch(action) {
         case ACCESS_ACTION_ATTEMPT:
-            if (radius_generate_access_attempt_iri(info, freegenerics,
-                        encoder, mqueue, sess, ipint, raddata, &tv) < 0) {
+            if (radius_generate_access_attempt_iri(params, freegenerics,
+                        raddata, attrs, &tv, iritype) < 0) {
                 return -1;
             }
             break;
         case ACCESS_ACTION_ACCEPT:
-            if (radius_generate_access_accept_iri(info, freegenerics,
-                        encoder, mqueue, sess, ipint, raddata, &tv) < 0) {
+            if (radius_generate_access_accept_iri(params, freegenerics,
+                        raddata, attrs, &tv, iritype) < 0) {
                 return -1;
             }
             break;
         case ACCESS_ACTION_END:
-            if (radius_generate_access_end_iri(info, freegenerics,
-                        encoder, mqueue, sess, ipint, raddata, &tv) < 0) {
+            if (radius_generate_access_end_iri(params, freegenerics,
+                        raddata, attrs, &tv, iritype) < 0) {
                 return -1;
             }
             break;
         case ACCESS_ACTION_INTERIM_UPDATE:
-            if (radius_generate_interim_iri(info, freegenerics,
-                        encoder, mqueue, sess, ipint, raddata, &tv) < 0) {
+            if (radius_generate_interim_iri(params, freegenerics,
+                        raddata, attrs, &tv, iritype) < 0) {
                 return -1;
             }
             break;
         case ACCESS_ACTION_REJECT:
-            if (radius_generate_access_reject_iri(info, freegenerics,
-                        encoder, mqueue, sess, ipint, raddata, &tv) < 0) {
+            if (radius_generate_access_reject_iri(params, freegenerics,
+                        raddata, attrs, &tv, iritype) < 0) {
                 return -1;
             }
             break;
         case ACCESS_ACTION_FAILED:
-            if (radius_generate_access_failed_iri(info, freegenerics,
-                        encoder, mqueue, sess, ipint, raddata, &tv) < 0) {
+            if (radius_generate_access_failed_iri(params, freegenerics,
+                        raddata, attrs, &tv, iritype) < 0) {
                 return -1;
             }
             break;
         case ACCESS_ACTION_ALREADY_ACTIVE:
-            if (radius_generate_already_active_iri(info, freegenerics,
-                        encoder, mqueue, sess, ipint, raddata, &tv) < 0) {
+            if (radius_generate_already_active_iri(params, freegenerics,
+                        raddata, attrs, &tv, iritype) < 0) {
                 return -1;
             }
             break;
@@ -1643,6 +1606,50 @@ static inline int action_to_iri(shared_global_info_t *info,
 
     return 0;
 
+}
+
+static int radius_generate_iri_data(access_plugin_t *p, void *parseddata,
+        etsili_generic_t **params, etsili_iri_type_t *iritype,
+        etsili_generic_t **freelist, int iteration) {
+
+    radius_global_t *radglob;
+    radius_parsed_t *raddata;
+
+    radglob = (radius_global_t *)(p->plugindata);
+    raddata = (radius_parsed_t *)parseddata;
+
+    if (raddata->firstaction != ACCESS_ACTION_NONE && iteration == 0) {
+        radius_attribute_t *attrs;
+
+        if (raddata->savedreq) {
+            attrs = raddata->savedreq->attrs;
+        } else {
+            attrs = raddata->attrs;
+        }
+
+        if (action_to_iri(params, freelist, raddata, raddata->firstaction,
+                attrs, iritype) < 0) {
+            return -1;
+        }
+
+        if (raddata->secondaction != ACCESS_ACTION_NONE) {
+            return 1;
+        }
+        return 0;
+    }
+
+    if (raddata->secondaction != ACCESS_ACTION_NONE && iteration == 1) {
+        if (action_to_iri(params, freelist, raddata, raddata->secondaction,
+                raddata->attrs, iritype) < 0) {
+            return -1;
+        }
+        return 0;
+    }
+
+    logger(LOG_DAEMON,
+            "OpenLI RADIUS: invalid iteration in radius_generate_iri_data (%d)",
+            iteration);
+    return -1;
 }
 
 #if 0
@@ -1692,8 +1699,10 @@ static access_plugin_t radiusplugin = {
     radius_destroy_plugin_data,
     radius_parse_packet,
     radius_destroy_parsed_data,
+    radius_uncouple_parsed_data,
     radius_get_userid,
     radius_update_session_state,
+    radius_generate_iri_data,
     //radius_create_iri_from_packet,
     radius_destroy_session_data
 };

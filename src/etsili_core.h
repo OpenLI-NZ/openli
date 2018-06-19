@@ -46,6 +46,7 @@ struct etsili_generic {
     uint8_t itemnum;
     uint16_t itemlen;
     uint8_t *itemptr;
+    uint16_t alloced;
 
     UT_hash_handle hh;
     etsili_generic_t *nextfree;
@@ -135,10 +136,8 @@ etsili_generic_t *create_etsili_generic(etsili_generic_t **freelist,
 void release_etsili_generic(etsili_generic_t **freelist, etsili_generic_t *gen);
 void free_etsili_generics(etsili_generic_t *freelist);
 
-/* TODO consider adding free lists to these APIs to avoid excess mallocs */
-etsili_ipaddress_t *etsili_create_ipaddress_v4(uint32_t *addrnum,
-        uint8_t slashbits, uint8_t assigned);
-void free_etsili_ipaddress(etsili_ipaddress_t *etsiip);
+void etsili_create_ipaddress_v4(uint32_t *addrnum, uint8_t slashbits,
+        uint8_t assigned, etsili_ipaddress_t *ip);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

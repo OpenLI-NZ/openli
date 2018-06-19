@@ -340,6 +340,7 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
 static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
         uint16_t msglen) {
 
+    int i;
     openli_mediator_t med;
     openli_export_recv_t expmsg;
 
@@ -348,17 +349,23 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
         return -1;
     }
 
-    memset(&expmsg, 0, sizeof(openli_export_recv_t));
-    expmsg.type = OPENLI_EXPORT_MEDIATOR;
-    expmsg.data.med = med;
-
-    export_queue_put_all(sync->exportqueues, &expmsg);
+    for (i = 0; i < sync->exportqueues->numqueues; i++) {
+        memset(&expmsg, 0, sizeof(openli_export_recv_t));
+        expmsg.type = OPENLI_EXPORT_MEDIATOR;
+        expmsg.data.med.ipstr = strdup(med.ipstr);
+        expmsg.data.med.portstr = strdup(med.portstr);
+        expmsg.data.med.mediatorid = med.mediatorid;
+        export_queue_put_by_queueid(sync->exportqueues, &expmsg, i);
+    }
+    free(med.ipstr);
+    free(med.portstr);
     return 0;
 }
 
 static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
         uint16_t msglen) {
 
+    int i;
     openli_mediator_t med;
     openli_export_recv_t expmsg;
 
@@ -367,11 +374,17 @@ static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
         return -1;
     }
 
-    memset(&expmsg, 0, sizeof(openli_export_recv_t));
-    expmsg.type = OPENLI_EXPORT_DROP_SINGLE_MEDIATOR;
-    expmsg.data.med = med;
+    for (i = 0; i < sync->exportqueues->numqueues; i++) {
+        memset(&expmsg, 0, sizeof(openli_export_recv_t));
+        expmsg.type = OPENLI_EXPORT_DROP_SINGLE_MEDIATOR;
+        expmsg.data.med.mediatorid = med.mediatorid;
+        expmsg.data.med.ipstr = NULL;
+        expmsg.data.med.portstr = NULL;
 
-    export_queue_put_all(sync->exportqueues, &expmsg);
+        export_queue_put_by_queueid(sync->exportqueues, &expmsg, i);
+    }
+    free(med.ipstr);
+    free(med.portstr);
     return 0;
 }
 
@@ -476,6 +489,9 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         expmsg.data.cept->liid = strdup(ipint->common.liid);
         expmsg.data.cept->authcc = strdup(ipint->common.authcc);
         expmsg.data.cept->delivcc = strdup(ipint->common.delivcc);
+        expmsg.data.cept->liid_len = ipint->common.liid_len;
+        expmsg.data.cept->authcc_len = ipint->common.authcc_len;
+        expmsg.data.cept->delivcc_len = ipint->common.delivcc_len;
 
         export_queue_put_by_queueid(sync->exportqueues, &expmsg, i);
     }
@@ -609,6 +625,9 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         expmsg.data.cept->liid = strdup(cept->common.liid);
         expmsg.data.cept->authcc = strdup(cept->common.authcc);
         expmsg.data.cept->delivcc = strdup(cept->common.delivcc);
+        expmsg.data.cept->liid_len = cept->common.liid_len;
+        expmsg.data.cept->authcc_len = cept->common.authcc_len;
+        expmsg.data.cept->delivcc_len = cept->common.delivcc_len;
 
         export_queue_put_by_queueid(sync->exportqueues, &expmsg, i);
     }
@@ -930,24 +949,44 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     memset(sync->export_used, 0, sizeof(uint8_t) *
             sync->exportqueues->numqueues);
 
-    if (userint) {
+    if (userint && accessaction != ACCESS_ACTION_NONE) {
         HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
             openli_export_recv_t irimsg;
             int queueused = 0;
 
             memset(&irimsg, 0, sizeof(irimsg));
             irimsg.type = OPENLI_EXPORT_IPIRI;
+            irimsg.destid = ipint->common.destid;
             irimsg.data.ipiri.liid = strdup(ipint->common.liid);
             irimsg.data.ipiri.plugin = p;
             irimsg.data.ipiri.plugin_data = parseddata;
             irimsg.data.ipiri.access_tech = ipint->accesstype;
             irimsg.data.ipiri.cin = sess->cin;
+            irimsg.data.ipiri.colinfo = sync->info;
+            irimsg.data.ipiri.username = strdup(ipint->username);
+            if (irimsg.data.ipiri.ipfamily) {
+                irimsg.data.ipiri.sessionstartts = sess->started;
+                irimsg.data.ipiri.ipfamily = sess->ipfamily;
+                memcpy(&(irimsg.data.ipiri.assignedip), sess->assignedip,
+                        (sess->ipfamily == AF_INET) ?
+                                sizeof(struct sockaddr_in) :
+                                sizeof(struct sockaddr_in6));
+            } else {
+                irimsg.data.ipiri.ipfamily = 0;
+                irimsg.data.ipiri.sessionstartts.tv_sec = 0;
+                irimsg.data.ipiri.sessionstartts.tv_usec = 0;
+                memset(&(irimsg.data.ipiri.assignedip), 0,
+                        sizeof(struct sockaddr_storage));
+            }
+
 
             queueused = export_queue_put_by_liid(sync->exportqueues, &irimsg,
                     ipint->common.liid);
             sync->export_used[queueused] = 1;
             expcount ++;
         }
+        p->uncouple_parsed_data(p);
+        parseddata = NULL;
     }
 
     if (oldstate != newstate && newstate == SESSION_STATE_OVER) {
@@ -955,7 +994,9 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     }
 
 endupdate:
-    p->destroy_parsed_data(p, parseddata);
+    if (parseddata) {
+        p->destroy_parsed_data(p, parseddata);
+    }
 
     if (expcount == 0) {
         return 0;

@@ -152,8 +152,6 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 			&(loc->fromsyncq_voip), t);
     register_export_queues(glob->exporters, loc->exportqueues);
 
-    loc->encoder = NULL;
-
     return loc;
 }
 
@@ -197,10 +195,6 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     free_all_aluintercepts(loc->activealuintercepts);
     free_coreserver_list(loc->radiusservers);
     free_coreserver_list(loc->sipservers);
-
-    if (loc->encoder) {
-        free_wandder_encoder(loc->encoder);
-    }
 
     free(loc);
 }

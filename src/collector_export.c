@@ -40,6 +40,10 @@
 #include "collector_export.h"
 #include "export_buffer.h"
 #include "configparser.h"
+#include "ipmmcc.h"
+#include "ipcc.h"
+#include "ipmmiri.h"
+#include "ipiri.h"
 #include "logger.h"
 #include "util.h"
 
@@ -57,6 +61,8 @@ collector_export_t *init_exporter(support_thread_global_t *glob) {
     exp->glob = glob;
     exp->dests = libtrace_list_init(sizeof(export_dest_t));
     exp->intercepts = NULL;
+    exp->encoder = NULL;
+    exp->freegenerics = NULL;
 
     exp->failed_conns = 0;
     exp->flagged = 0;
@@ -194,6 +200,14 @@ void destroy_exporter(collector_export_t *exp) {
         exporter_epoll_t *ev = *((exporter_epoll_t **)n->data);
         free(ev);
         n = n->next;
+    }
+
+    if (exp->freegenerics) {
+        free_etsili_generics(exp->freegenerics);
+    }
+
+    if (exp->encoder) {
+        free_wandder_encoder(exp->encoder);
     }
 
     /* Don't free evlist, this will be done when the main thread
@@ -361,11 +375,12 @@ static void remove_destination(collector_export_t *exp,
     }
 }
 
-static inline void add_new_destination(collector_export_t *exp,
+static int add_new_destination(collector_export_t *exp,
         openli_mediator_t *med) {
 
     libtrace_list_node_t *n;
     export_dest_t newdest, *dest;
+    struct itimerspec its;
 
     n = exp->dests->head;
     while (n) {
@@ -377,7 +392,7 @@ static inline void add_new_destination(collector_export_t *exp,
             dest->failmsg = 0;
             dest->fd = -1;
             dest->details = *(med);
-            return;
+            goto destepoll;
         } else if (dest->details.mediatorid == med->mediatorid) {
 
             /* This is a re-announcement of an existing mediator -- this
@@ -397,9 +412,7 @@ static inline void add_new_destination(collector_export_t *exp,
             }
             dest->awaitingconfirm = 0;
             dest->halted = 0;
-
-            return;
-
+            goto destepoll;
         }
         n = n->next;
     }
@@ -415,6 +428,33 @@ static inline void add_new_destination(collector_export_t *exp,
 
     libtrace_list_push_back(exp->dests, &newdest);
 
+destepoll:
+    if (!exp->flagged) {
+        return 0;
+    }
+
+    exp->flag_timer_ev = (exporter_epoll_t *)malloc(
+            sizeof(exporter_epoll_t));
+    exp->flag_timer_ev->type = EXP_EPOLL_FLAG_TIMEOUT;
+    exp->flag_timer_ev->data.q = NULL;
+
+    if (exp->flagtimerfd == -1) {
+        exp->flagtimerfd = epoll_add_timer(exp->glob->epoll_fd, 10,
+                exp->flag_timer_ev);
+        if (exp->flagtimerfd == -1) {
+            logger(LOG_DAEMON, "OpenLI: failed to add export timer fd to epoll set: %s.", strerror(errno));
+            return -1;
+        }
+    } else {
+        its.it_value.tv_sec = 10;
+        its.it_value.tv_nsec = 0;
+
+        if (timerfd_settime(exp->flagtimerfd, 0, &its, NULL) == -1) {
+            logger(LOG_DAEMON, "OpenLI: exporter has failed to reset the export timer fd: %s", strerror(errno));
+            return -1;
+        }
+    }
+    return 0;
 }
 
 static void purge_unconfirmed_mediators(collector_export_t *exp) {
@@ -488,12 +528,190 @@ static int exporter_end_intercept(collector_export_t *exp,
     return 0;
 }
 
+static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
+
+    switch(recvd->type) {
+        case OPENLI_EXPORT_IPMMCC:
+            return recvd->data.ipmmcc.liid;
+        case OPENLI_EXPORT_IPCC:
+            return recvd->data.ipcc.liid;
+        case OPENLI_EXPORT_IPIRI:
+            return recvd->data.ipiri.liid;
+        case OPENLI_EXPORT_IPMMIRI:
+            return recvd->data.ipmmiri.liid;
+    }
+    return NULL;
+}
+
+static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
+
+    switch(recvd->type) {
+        case OPENLI_EXPORT_IPMMCC:
+            return recvd->data.ipmmcc.cin;
+        case OPENLI_EXPORT_IPCC:
+            return recvd->data.ipcc.cin;
+        case OPENLI_EXPORT_IPIRI:
+            return recvd->data.ipiri.cin;
+        case OPENLI_EXPORT_IPMMIRI:
+            return recvd->data.ipmmiri.cin;
+    }
+    logger(LOG_DAEMON,
+            "OpenLI: invalid message type in extract_cin_from_job: %u",
+            recvd->type);
+    return 0;
+}
+
+static inline void free_job_request(openli_export_recv_t *recvd) {
+    switch(recvd->type) {
+        case OPENLI_EXPORT_IPMMCC:
+            free(recvd->data.ipmmcc.liid);
+            break;
+        case OPENLI_EXPORT_IPCC:
+            free(recvd->data.ipcc.liid);
+            break;
+        case OPENLI_EXPORT_IPIRI:
+            free(recvd->data.ipiri.liid);
+            free(recvd->data.ipiri.username);
+            recvd->data.ipiri.plugin->destroy_parsed_data(
+                    recvd->data.ipiri.plugin,
+                    recvd->data.ipiri.plugin_data);
+            break;
+        case OPENLI_EXPORT_IPMMIRI:
+            free(recvd->data.ipmmiri.liid);
+            break;
+    }
+}
+
+static int export_encoded_record(collector_export_t *exp,
+        openli_exportmsg_t *tosend) {
+
+    libtrace_list_node_t *n;
+    export_dest_t *dest;
+    int x;
+
+    n = exp->dests->head;
+
+    /* TODO replace with a hash map? */
+    while (n) {
+        dest = (export_dest_t *)(n->data);
+
+        if (dest->details.mediatorid == tosend->destid) {
+            x = forward_message(dest, tosend);
+            if (x == -1) {
+                close(dest->fd);
+                dest->fd = -1;
+                return -1;
+            }
+            break;
+        }
+        n = n->next;
+    }
+
+    if (n == NULL) {
+        /* We don't recognise this mediator ID, but the
+         * announcement for it could be coming soon. Create an
+         * export_dest for it and buffer received messages
+         * until we get an announcement.
+         *
+         * TODO need some way to recognise that an announcement
+         * is NOT coming so we don't buffer forever...
+         */
+        dest = add_unknown_destination(exp, tosend->destid);
+        x = forward_message(dest, tosend);
+        if (x == -1) {
+            return -1;
+        }
+    }
+    if (tosend->header) {
+        free(tosend->header);
+    }
+    return 1;
+}
+static int run_encoding_job(collector_export_t *exp,
+        openli_export_recv_t *recvd, openli_exportmsg_t *tosend) {
+
+    char *liid;
+    uint32_t cin;
+    cin_seqno_t *cinseq;
+    exporter_intercept_state_t *intstate;
+    int ret = -1;
+    int ind = 0;
+
+    liid = extract_liid_from_job(recvd);
+    cin = extract_cin_from_job(recvd);
+
+    HASH_FIND(hh, exp->intercepts, liid, strlen(liid), intstate);
+    if (!intstate) {
+        logger(LOG_DAEMON, "Received encoding job for an unknown LIID: %s??",
+                liid);
+        return -1;
+    }
+
+    HASH_FIND(hh, intstate->cinsequencing, &cin, sizeof(cin), cinseq);
+    if (!cinseq) {
+        cinseq = (cin_seqno_t *)malloc(sizeof(cin_seqno_t));
+
+        if (!cinseq) {
+            logger(LOG_DAEMON,
+                    "OpenLI: out of memory when creating CIN seqno tracker in exporter thread");
+            return -1;
+        }
+
+        cinseq->cin = cin;
+        cinseq->iri_seqno = 0;
+        cinseq->cc_seqno = 0;
+
+        HASH_ADD_KEYPTR(hh, intstate->cinsequencing, &(cinseq->cin),
+                sizeof(cin), cinseq);
+    }
+
+    while (ret != 0) {
+        switch(recvd->type) {
+            case OPENLI_EXPORT_IPMMCC:
+                ret = encode_ipmmcc(&(exp->encoder), &(recvd->data.ipmmcc),
+                        intstate->details, cinseq->cc_seqno, tosend);
+                cinseq->cc_seqno ++;
+                break;
+            case OPENLI_EXPORT_IPCC:
+                ret = encode_ipcc(&(exp->encoder), &(recvd->data.ipcc),
+                        intstate->details, cinseq->cc_seqno, tosend);
+                cinseq->cc_seqno ++;
+                break;
+            case OPENLI_EXPORT_IPMMIRI:
+                ret = encode_ipmmiri(&(exp->encoder), &(recvd->data.ipmmiri),
+                        intstate->details, cinseq->iri_seqno, tosend);
+                cinseq->iri_seqno ++;
+                break;
+            case OPENLI_EXPORT_IPIRI:
+                ret = encode_ipiri(&(exp->freegenerics),
+                        &(exp->encoder), &(recvd->data.ipiri),
+                        intstate->details, cinseq->iri_seqno, tosend, ind);
+                cinseq->iri_seqno ++;
+                ind ++;
+                break;
+        }
+        if (ret < 0) {
+            break;
+        }
+
+        tosend->destid = recvd->destid;
+        if (export_encoded_record(exp, tosend) < 0) {
+            ret = -1;
+            break;
+        }
+    }
+
+    free_job_request(recvd);
+    return ret;
+}
+
 #define MAX_READ_BATCH 25
 
 static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
 {
     int x;
 	openli_export_recv_t recvd;
+    openli_exportmsg_t tosend;
     libtrace_list_node_t *n;
     export_dest_t *dest;
 
@@ -503,125 +721,55 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
         return 0;
     }
 
-    if (recvd.type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
-        exporter_new_intercept(exp, recvd.data.cept);
-        return 0;
-    }
-
-    if (recvd.type == OPENLI_EXPORT_INTERCEPT_OVER) {
-        return exporter_end_intercept(exp, recvd.data.cept);
-    }
-
-    if (recvd.type == OPENLI_EXPORT_MEDIATOR) {
-        add_new_destination(exp, &(recvd.data.med));
-
-        if (!exp->flagged) {
+    switch(recvd.type) {
+        case OPENLI_EXPORT_INTERCEPT_DETAILS:
+            exporter_new_intercept(exp, recvd.data.cept);
             return 0;
-        }
 
-        exp->flag_timer_ev = (exporter_epoll_t *)malloc(
-                sizeof(exporter_epoll_t));
-        exp->flag_timer_ev->type = EXP_EPOLL_FLAG_TIMEOUT;
-        exp->flag_timer_ev->data.q = NULL;
+        case OPENLI_EXPORT_INTERCEPT_OVER:
+            return exporter_end_intercept(exp, recvd.data.cept);
 
-        if (exp->flagtimerfd == -1) {
-            exp->flagtimerfd = epoll_add_timer(exp->glob->epoll_fd, 10,
-                    exp->flag_timer_ev);
-            if (exp->flagtimerfd == -1) {
-                logger(LOG_DAEMON, "OpenLI: failed to add export timer fd to epoll set: %s.", strerror(errno));
+        case OPENLI_EXPORT_MEDIATOR:
+            return add_new_destination(exp, &(recvd.data.med));
+
+        case OPENLI_EXPORT_DROP_SINGLE_MEDIATOR:
+            remove_destination(exp, &(recvd.data.med));
+            return 0;
+
+        case OPENLI_EXPORT_DROP_ALL_MEDIATORS:
+            logger(LOG_DAEMON,
+                    "OpenLI exporter: dropping connections to all known mediators.");
+            remove_all_destinations(exp);
+            exp->dests = libtrace_list_init(sizeof(export_dest_t));
+            return 0;
+
+         case OPENLI_EXPORT_FLAG_MEDIATORS:
+            n = exp->dests->head;
+            while (n) {
+                dest = (export_dest_t *)(n->data);
+                dest->awaitingconfirm = 1;
+                n = n->next;
+            }
+
+            exp->flagged = 1;
+            return 0;
+
+        case OPENLI_EXPORT_IPMMCC:
+        case OPENLI_EXPORT_IPCC:
+        case OPENLI_EXPORT_IPMMIRI:
+        case OPENLI_EXPORT_IPIRI:
+
+            if (run_encoding_job(exp, &recvd, &tosend) < 0) {
                 return -1;
             }
-        } else {
-            struct itimerspec its;
+            return 0;
 
-            its.it_value.tv_sec = 10;
-            its.it_value.tv_nsec = 0;
-
-            if (timerfd_settime(exp->flagtimerfd, 0, &its, NULL) == -1) {
-                logger(LOG_DAEMON, "OpenLI: exporter has failed to reset the export timer fd: %s", strerror(errno));
-                return -1;
-            }
-        }
-        return 0;
-    }
-
-    if (recvd.type == OPENLI_EXPORT_DROP_SINGLE_MEDIATOR) {
-        remove_destination(exp, &(recvd.data.med));
-        return 0;
-    }
-
-    if (recvd.type == OPENLI_EXPORT_DROP_ALL_MEDIATORS) {
-        logger(LOG_DAEMON, "OpenLI exporter: dropping connections to all known mediators.");
-        remove_all_destinations(exp);
-        exp->dests = libtrace_list_init(sizeof(export_dest_t));
-        return 0;
-    }
-
-
-    if (recvd.type == OPENLI_EXPORT_FLAG_MEDIATORS) {
-
-        n = exp->dests->head;
-        while (n) {
-            dest = (export_dest_t *)(n->data);
-            dest->awaitingconfirm = 1;
-            n = n->next;
-        }
-
-        exp->flagged = 1;
-        return 0;
-    }
-
-#if 0
-    if (recvd.type == OPENLI_EXPORT_ETSIREC) {
-        n = exp->dests->head;
-
-        /* TODO replace with a hash map? */
-        while (n) {
-            dest = (export_dest_t *)(n->data);
-
-            if (dest->details.mediatorid ==
-                    recvd.data.toexport.destid) {
-                x = forward_message(dest, &(recvd.data.toexport));
-                if (x == -1) {
-                    close(dest->fd);
-                    dest->fd = -1;
-                    return -1;
-                }
-                break;
-            }
-            n = n->next;
-        }
-
-        if (n == NULL) {
-            /* We don't recognise this mediator ID, but the
-             * announcement for it could be coming soon. Create an
-             * export_dest for it and buffer received messages
-             * until we get an announcement.
-             *
-             * TODO need some way to recognise that an announcement
-             * is NOT coming so we don't buffer forever...
+        case OPENLI_EXPORT_PACKET_FIN:
+            /* All ETSI records relating to this packet have been seen, so
+             * we can safely free the packet.
              */
-            dest = add_unknown_destination(exp,
-                    recvd.data.toexport.destid);
-            x = forward_message(dest, &(recvd.data.toexport));
-            if (x == -1) {
-                return -1;
-            }
-        }
-        if (recvd.data.toexport.header) {
-            free(recvd.data.toexport.header);
-        }
-        return 1;
-    }
-
-#endif
-
-    if (recvd.type == OPENLI_EXPORT_PACKET_FIN) {
-        /* All ETSI records relating to this packet have been seen, so
-         * we can safely free the packet.
-         */
-        trace_decrement_packet_refcount(recvd.data.packet);
-        return 0;
+            trace_decrement_packet_refcount(recvd.data.packet);
+            return 0;
     }
 
     logger(LOG_DAEMON,

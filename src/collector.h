@@ -177,7 +177,6 @@ typedef struct colthread_local {
      */
     coreserver_t *sipservers;
 
-    wandder_encoder_t *encoder;
     char *inputidentifier;
 
 } colthread_local_t;

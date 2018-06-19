@@ -531,11 +531,22 @@ etsili_generic_t *create_etsili_generic(etsili_generic_t **freelist,
         *freelist = (*freelist)->nextfree;
     } else {
         gen = (etsili_generic_t *)malloc(sizeof(etsili_generic_t));
+        gen->itemptr = (uint8_t *)malloc(64);
+        gen->alloced = 64;
     }
+
+    if (itemlen > gen->alloced) {
+        gen->itemptr = (uint8_t *)realloc(gen->itemptr, itemlen);
+        gen->alloced = itemlen;
+    } else if (itemlen < 64 && gen->alloced > 64) {
+        gen->itemptr = (uint8_t *)realloc(gen->itemptr, 64);
+        gen->alloced = 64;
+    }
+
 
     gen->itemnum = itemnum;
     gen->itemlen = itemlen;
-    gen->itemptr = itemvalptr;
+    memcpy(gen->itemptr, itemvalptr, itemlen);
     gen->nextfree = NULL;
     return gen;
 }
@@ -559,16 +570,14 @@ void free_etsili_generics(etsili_generic_t *freelist) {
     while (gen) {
         tmp = gen;
         gen = gen->nextfree;
+        free(tmp->itemptr);
         free(tmp);
     }
 }
 
-etsili_ipaddress_t *etsili_create_ipaddress_v4(uint32_t *addrnum,
-        uint8_t slashbits, uint8_t assigned) {
+void etsili_create_ipaddress_v4(uint32_t *addrnum,
+        uint8_t slashbits, uint8_t assigned, etsili_ipaddress_t *ip) {
 
-    etsili_ipaddress_t *ip = NULL;
-
-    ip = (etsili_ipaddress_t *)malloc(sizeof(etsili_ipaddress_t));
     ip->iptype = ETSILI_IPADDRESS_VERSION_4;
     ip->assignment = assigned;
     ip->v4subnetmask = 0xffffffff;
@@ -580,11 +589,6 @@ etsili_ipaddress_t *etsili_create_ipaddress_v4(uint32_t *addrnum,
 
     ip->valtype = ETSILI_IPADDRESS_REP_BINARY;
     ip->ipvalue = (uint8_t *)addrnum;
-    return ip;
-}
-
-void free_etsili_ipaddress(etsili_ipaddress_t *etsiip) {
-    free(etsiip);
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

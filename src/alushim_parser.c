@@ -104,50 +104,6 @@ alushimhdr_t *get_alushim_header(libtrace_packet_t *packet, uint32_t *rem) {
     return (alushimhdr_t *)(udppayload);
 }
 
-static void form_alu_ipcc(shared_global_info_t *info,
-        colthread_local_t *loc, aluintercept_t *alu,
-        void *l3, uint32_t rem, struct timeval *tv, uint8_t dir) {
-
-
-    openli_exportmsg_t msg;
-    openli_export_recv_t exprecv;
-    wandder_etsipshdr_data_t hdrdata;
-
-    if (loc->encoder) {
-        reset_wandder_encoder(loc->encoder);
-    } else {
-        loc->encoder = init_wandder_encoder();
-    }
-
-    hdrdata.liid = alu->common.liid;
-    hdrdata.liid_len = alu->common.liid_len;
-    hdrdata.authcc = alu->common.authcc;
-    hdrdata.authcc_len = alu->common.authcc_len;
-    hdrdata.delivcc = alu->common.delivcc;
-    hdrdata.delivcc_len = alu->common.delivcc_len;
-    hdrdata.operatorid = info->operatorid;
-    hdrdata.operatorid_len = info->operatorid_len;
-    hdrdata.networkelemid = info->networkelemid;
-    hdrdata.networkelemid_len = info->networkelemid_len;
-    hdrdata.intpointid = info->intpointid;
-    hdrdata.intpointid_len = info->intpointid_len;
-
-    memset(&msg, 0, sizeof(openli_exportmsg_t));
-    msg.msgbody = encode_etsi_ipcc(loc->encoder, &hdrdata, (int64_t)(alu->cin),
-            (int64_t)alu->nextseqno, tv, l3, rem, dir);
-    msg.encoder = loc->encoder;
-    msg.ipcontents = (uint8_t *)l3;
-    msg.ipclen = rem;
-    msg.destid = alu->common.destid;
-    msg.header = construct_netcomm_protocol_header(msg.msgbody->len,
-            OPENLI_PROTO_ETSI_CC, 0, &(msg.hdrlen));
-
-    memset(&exprecv, 0, sizeof(openli_export_recv_t));
-
-    alu->nextseqno ++;
-
-}
-
 static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
         aluintercept_t *alu, uint8_t dir) {
 
