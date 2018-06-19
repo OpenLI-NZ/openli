@@ -53,6 +53,7 @@ int ipmm_iri(libtrace_packet_t *pkt, openli_export_recv_t *irimsg,
     irimsg->data.ipmmiri.ipmmiri_style = ipmmiri_style;
     irimsg->data.ipmmiri.colinfo = info;
 
+    return 1;
 }
 
 int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
