@@ -144,8 +144,10 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         }
 
         /* Check for src = target, dst = other */
-        if (pinfo->srcport == rtp->targetport &&
-                pinfo->destport == rtp->otherport) {
+        if ((pinfo->srcport == rtp->targetport &&
+                pinfo->destport == rtp->otherport) ||
+                (pinfo->srcport == rtp->targetport + 1 &&
+                 pinfo->destport == rtp->otherport + 1)) {
             cmp = (struct sockaddr_in *)(&pinfo->srcip);
 
             if (targetaddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
@@ -160,8 +162,10 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         }
 
         /* Check for dst = target, src = other */
-        if (pinfo->destport == rtp->targetport &&
-                    pinfo->srcport == rtp->otherport) {
+        if ((pinfo->destport == rtp->targetport &&
+                    pinfo->srcport == rtp->otherport) ||
+                    (pinfo->destport == rtp->targetport + 1 &&
+                     pinfo->srcport == rtp->otherport + 1)) {
             cmp = (struct sockaddr_in *)(&pinfo->srcip);
 
             if (otheraddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
