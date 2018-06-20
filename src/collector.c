@@ -946,18 +946,20 @@ int main(int argc, char *argv[]) {
     sigset_t sig_before, sig_block_all;
     char *configfile = NULL;
     collector_global_t *glob = NULL;
-    int i, ret;
+    int i, ret, todaemon;
     colinput_t *inp, *tmp;
 
+    todaemon = 0;
     while (1) {
         int optind;
         struct option long_options[] = {
             { "help", 0, 0, 'h' },
             { "config", 1, 0, 'c'},
+            { "config", 0, 0, 'd'},
             { NULL, 0, 0, 0 }
         };
 
-        int c = getopt_long(argc, argv, "c:h", long_options,
+        int c = getopt_long(argc, argv, "c:dh", long_options,
                 &optind);
         if (c == -1) {
             break;
@@ -966,6 +968,9 @@ int main(int argc, char *argv[]) {
         switch(c) {
             case 'c':
                 configfile = optarg;
+                break;
+            case 'd':
+                todaemon = 1;
                 break;
             case 'h':
                 usage(argv[0]);
@@ -982,6 +987,10 @@ int main(int argc, char *argv[]) {
                 "OpenLI: no config file specified. Use -c to specify one.");
         usage(argv[0]);
         return 1;
+    }
+
+    if (todaemon) {
+        daemonise(argv[0]);
     }
 
     /* Initialise osipparser2 */
