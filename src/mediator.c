@@ -61,7 +61,8 @@ static void reload_signal(int signal) {
 }
 
 static void usage(char *prog) {
-        fprintf(stderr, "Usage: %s -c configfile\n", prog);
+        fprintf(stderr, "Usage: %s [ -d ] -c configfile\n", prog);
+        fprintf(stderr, "\nSet the -d flag to run as a daemon.\n");
 }
 
 static void disconnect_handover(mediator_state_t *state, handover_t *ho) {
@@ -490,9 +491,11 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
             ms->outenabled = 1;
         }
 
+    /*
         logger(LOG_DAEMON, "OpenLI: queued keep alive %ld for %s:%s HI%d",
                 ms->lastkaseq, ms->parent->ipstr, ms->parent->portstr,
                 ms->parent->handover_type);
+    */
         if (start_keepalive_timer(state, ms->parent->aliverespev,
                 ms->kawait) == -1) {
             logger(LOG_DAEMON,
@@ -1466,9 +1469,11 @@ static int receive_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
                         mas->lastkaseq, recvseq);
                 return -1;
             }
+            /*
             logger(LOG_DAEMON, "OpenLI mediator -- received KA response for %ld from LEA handover %s:%s HI%d",
                     recvseq, mas->parent->ipstr, mas->parent->portstr,
                     mas->parent->handover_type);
+            */
             halt_keepalive_timer(state, mas->parent->aliverespev);
             libtrace_scb_advance_read(mas->incoming, reclen);
             mas->karesptimer_fd = -1;
@@ -2190,6 +2195,7 @@ int main(int argc, char *argv[]) {
     char *configfile = NULL;
     char *mediatorid = NULL;
     sigset_t sigblock;
+    int todaemon = 0;
 
     mediator_state_t medstate;
     mediator_pcap_msg_t pcapmsg;
@@ -2199,10 +2205,11 @@ int main(int argc, char *argv[]) {
         struct option long_options[] = {
             { "help", 0, 0, 'h' },
             { "config", 1, 0, 'c'},
+            { "daemonise", 0, 0, 'd'},
             { NULL, 0, 0, 0},
         };
 
-        int c = getopt_long(argc, argv, "c:m:h", long_options, &optind);
+        int c = getopt_long(argc, argv, "c:dm:h", long_options, &optind);
         if (c == -1) {
             break;
         }
@@ -2213,6 +2220,9 @@ int main(int argc, char *argv[]) {
                 break;
             case 'm':
                 mediatorid = optarg;
+                break;
+            case 'd':
+                todaemon = 1;
                 break;
             case 'h':
                 usage(argv[0]);
@@ -2230,6 +2240,10 @@ int main(int argc, char *argv[]) {
                 "OpenLI: no config file specified. Use -c to specify one.");
         usage(argv[0]);
         return 1;
+    }
+
+    if (todaemon) {
+        daemonise(argv[0]);
     }
 
     if (mediatorid == NULL) {
