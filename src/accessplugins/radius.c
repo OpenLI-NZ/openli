@@ -851,11 +851,13 @@ static inline void process_nasid_attribute(radius_parsed_t *raddata) {
 
     if (raddata->matcheduser->nasidentifier) {
         if (strcmp(nasid, raddata->matcheduser->nasidentifier) != 0) {
+            /*
             logger(LOG_DAEMON,
                     "OpenLI RADIUS: NAS-Identifier for user %s has changed from %s to %s",
                     raddata->matcheduser->userid,
                     raddata->matcheduser->nasidentifier,
                     nasid);
+            */
             free(raddata->matcheduser->nasidentifier);
         } else {
             return;

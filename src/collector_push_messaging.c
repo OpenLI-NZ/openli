@@ -240,10 +240,12 @@ void handle_push_ipintercept(libtrace_thread_t *t, colthread_local_t *loc,
         free_single_ipsession(sess);
         return;
     }
+    /*
     logger(LOG_DAEMON,
             "OpenLI: collector thread %d has started intercepting %s IP session %s",
             trace_get_perpkt_thread_id(t),
             accesstype_to_string(sess->accesstype), sess->streamkey);
+    */
 }
 
 void handle_push_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
@@ -251,17 +253,21 @@ void handle_push_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
 
     HASH_ADD_KEYPTR(hh, loc->activertpintercepts, rtp->streamkey,
             strlen(rtp->streamkey), rtp);
+    /*
     logger(LOG_DAEMON,
             "OpenLI: collector thread %d has started intercepting RTP stream %s",
             trace_get_perpkt_thread_id(t), rtp->streamkey);
+    */
 }
 
 void handle_halt_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
         char *streamkey) {
     if (remove_rtp_stream(loc, streamkey) != 0) {
+        /*
         logger(LOG_DAEMON,
                 "OpenLI: collector thread %d has stopped intercepting RTP stream %s",
                 trace_get_perpkt_thread_id(t), streamkey);
+        */
     }
     free(streamkey);
 }
@@ -271,16 +277,20 @@ void handle_halt_ipintercept(libtrace_thread_t *t , colthread_local_t *loc,
 
     if (sess->ai_family == AF_INET) {
         if (remove_ipv4_intercept(loc, sess) > 0) {
+            /*
             logger(LOG_DAEMON,
                     "OpenLI: collector thread %d has stopped intercepting IP session %s",
                     trace_get_perpkt_thread_id(t), sess->streamkey);
+            */
 
         }
     } else if (sess->ai_family == AF_INET6) {
         if (remove_ipv6_intercept(loc, sess) > 0) {
+            /*
             logger(LOG_DAEMON,
                     "OpenLI: collector thread %d has stopped intercepting IP session %s",
                     trace_get_perpkt_thread_id(t), sess->streamkey);
+            */
 
         }
     } else {
@@ -312,9 +322,11 @@ void handle_push_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
     if (!found) {
         HASH_ADD_KEYPTR(hh, *servlist, cs->serverkey, strlen(cs->serverkey),
                 cs);
+        /*
         logger(LOG_DAEMON, "OpenLI: collector thread %d has added %s to its %s core server list.",
                 trace_get_perpkt_thread_id(t),
                 cs->serverkey, coreserver_type_to_string(cs->servertype));
+        */
     } else {
         free_single_coreserver(cs);
     }
@@ -341,9 +353,11 @@ void handle_remove_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
     HASH_FIND(hh, *servlist, cs->serverkey, strlen(cs->serverkey), found);
     if (found) {
         HASH_DELETE(hh, *servlist, found);
+        /*
         logger(LOG_DAEMON, "OpenLI: collector thread %d has removed %s from its %s core server list.",
                 trace_get_perpkt_thread_id(t),
                 cs->serverkey, coreserver_type_to_string(cs->servertype));
+        */
         free_single_coreserver(found);
     }
     free_single_coreserver(cs);
