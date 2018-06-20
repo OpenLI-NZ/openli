@@ -8,7 +8,7 @@
 #include <assert.h>
 #include <sys/stat.h>
 
-#if HAVE_SYSLOG_H_
+#if HAVE_SYSLOG_H
 #include <sys/syslog.h>
 #endif
 
@@ -57,7 +57,7 @@ void daemonise(char *name) {
     daemonised = 1;
     name = strrchr(name,'/') ? strrchr(name,'/') + 1 : name;
 
-#if HAVE_SYSLOG_H_
+#if HAVE_SYSLOG_H
     openlog(name, LOG_PID, LOG_DAEMON);
 #endif
 
@@ -70,9 +70,9 @@ void logger(int priority, const char *fmt, ...) {
     va_start(ap, fmt);
     if (daemonised) {
         vsnprintf(buffer, sizeof(buffer), fmt, ap);
-#if HAVE_SYSLOG_H_
+#if HAVE_SYSLOG_H
         /* Ensure logs have an appropriate priority */
-        priority |= LOG_DEBUG;
+        priority |= LOG_INFO;
         syslog(priority, "%s", buffer);
 #endif
     } else {
