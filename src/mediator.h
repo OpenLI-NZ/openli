@@ -49,6 +49,7 @@ enum {
     MED_EPOLL_KA_RESPONSE_TIMER,
     MED_EPOLL_SIGNAL,
     MED_EPOLL_SIGCHECK_TIMER,
+    MED_EPOLL_PCAP_TIMER,
 };
 
 typedef struct med_coll_state {
@@ -127,11 +128,13 @@ typedef struct med_state {
     med_epoll_ev_t *listenerev;
     med_epoll_ev_t *signalev;
     med_epoll_ev_t *timerev;
+    med_epoll_ev_t *pcaptimerev;
 
     mediator_prov_t provisioner;
 
     liid_map_t *liids;
 
+    uint32_t pcaprotatefreq;
     pthread_t pcapthread;
     libtrace_message_queue_t pcapqueue;
 
@@ -140,7 +143,9 @@ typedef struct med_state {
 enum {
     PCAP_MESSAGE_CHANGE_DIR,
     PCAP_MESSAGE_HALT,
-    PCAP_MESSAGE_PACKET
+    PCAP_MESSAGE_PACKET,
+    PCAP_MESSAGE_FLUSH,
+    PCAP_MESSAGE_ROTATE,
 };
 
 typedef struct active_pcap_output {
