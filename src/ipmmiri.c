@@ -82,6 +82,12 @@ int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
             if (rem == 0) {
                 content = NULL;
             }
+        } else if (proto == TRACE_IPPROTO_TCP) {
+            content = trace_get_payload_from_tcp((libtrace_tcp_t *)transport,
+                    &rem);
+            if (rem == 0) {
+                content = NULL;
+            }
         }
     }
 

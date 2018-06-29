@@ -308,7 +308,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     collector_global_t *glob = (collector_global_t *)global;
     colthread_local_t *loc = (colthread_local_t *)tls;
-    void *l3;
+    void *l3, *transport;
     uint16_t ethertype;
     uint32_t rem;
     uint8_t proto;
@@ -362,7 +362,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     /* All these special packets are UDP, so we can avoid a whole bunch
      * of these checks for TCP traffic */
-    if (trace_get_transport(pkt, &proto, &rem) != NULL &&
+    if ((transport = trace_get_transport(pkt, &proto, &rem)) != NULL &&
             proto == TRACE_IPPROTO_UDP) {
 
         /* Is this from one of our ALU mirrors -- if yes, parse + strip it
@@ -380,6 +380,13 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             synced = 1;
         }
 
+        /* Is this a SIP packet? -- if yes, create a state update */
+        if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
+                    loc->sipservers)) {
+            send_packet_to_sync(pkt, &(loc->tosyncq_voip), OPENLI_UPDATE_SIP);
+            synced = 1;
+        }
+    } else if (transport != NULL && proto == TRACE_IPPROTO_TCP) {
         /* Is this a SIP packet? -- if yes, create a state update */
         if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
                     loc->sipservers)) {
