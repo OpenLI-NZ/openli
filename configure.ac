@@ -25,7 +25,7 @@ AC_ARG_ENABLE([provisioner], AS_HELP_STRING([--disable-provisioner],
 AC_ARG_ENABLE([collector], AS_HELP_STRING([--disable-collector],
         [Disable building the OpenLI collector]))
 
-AC_CHECK_LIB([trace], [trace_pstart],,libtrace_found=0)
+AC_CHECK_LIB([trace], [trace_increment_packet_refcount],,libtrace_found=0)
 AC_CHECK_LIB([yaml], [yaml_document_get_node],,libyaml_found=0)
 
 AC_CHECK_HEADERS([syslog.h])
@@ -48,7 +48,7 @@ if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then
 fi
 
 if test "$libtrace_found" = 0; then
-        AC_MSG_ERROR(Required library libtrace not found; use LDFLAGS to specify library location)
+        AC_MSG_ERROR(Required library libtrace 4.0.4 not found; use LDFLAGS to specify library location)
 fi
 
 if test "$libyaml_found" = 0; then
