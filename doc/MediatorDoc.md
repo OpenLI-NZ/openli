@@ -39,6 +39,14 @@ mediator configuration. All pcap traces created by this mediator will be
 written into this directory; filenames will include the LIID for the intercept
 so should be unique and easily identifiable.
 
+The pcap output files will be rotated every 30 minutes. If no traffic is
+observed for that intercept during the 30 minute period, no output file will
+be created. The rotation frequency can be configured.
+
+Note: a pcap file should not be considered usable until *after* it has been
+rotated -- in-progress pcap traces do not contain all of the necessary
+trailers to allow them to be correctly parsed by a reader.
+
 ### Configuration Syntax
 All of the mediator config options are standard YAML key-value pairs, where
 the key is the option name and the value is your chosen value for that option.
@@ -50,3 +58,4 @@ The supported option keys are:
 * listenaddr       -- listen on the interface with this address for collectors
 * listenport       -- listen on this port for collectors
 * pcapdirectory    -- the directory to write any pcap trace files to
+* pcaprotatefreq   -- the number of minutes to wait before rotating pcap traces
