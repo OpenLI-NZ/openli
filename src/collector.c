@@ -217,6 +217,66 @@ static inline void send_packet_to_sync(libtrace_packet_t *pkt,
 
 }
 
+static inline uint8_t check_for_invalid_sip(libtrace_packet_t *pkt) {
+
+    void *transport, *payload;
+    uint32_t plen, fourbytes;
+    uint8_t proto;
+    uint32_t rem;
+
+    /* STUN can be sent by clients to the SIP servers, so try to detect
+     * that.
+     *
+     * Typical examples so far: 20 byte UDP, with payload beginning with
+     * 00 01 00 00.
+     */
+    transport = trace_get_transport(pkt, &proto, &rem);
+
+    if (transport == NULL || rem == 0) {
+        return 1;
+    }
+
+    if (proto == TRACE_IPPROTO_UDP) {
+        payload = trace_get_payload_from_udp((libtrace_udp_t *)transport, &rem);
+
+        if (payload == NULL || rem == 0) {
+            return 1;
+        }
+
+        plen = trace_get_payload_length(pkt);
+        fourbytes = ntohl(*((uint32_t *)payload));
+
+        /* STUN matching borrowed from libprotoident */
+        if ((fourbytes & 0xffff) == plen - 20) {
+            if ((fourbytes & 0xffff0000) == 0x00010000) {
+                return 1;
+            }
+
+            if ((fourbytes & 0xffff0000) == 0x01010000) {
+                return 1;
+            }
+
+            if ((fourbytes & 0xffff0000) == 0x01110000) {
+                return 1;
+            }
+
+            if ((fourbytes & 0xffff0000) == 0x00030000) {
+                return 1;
+            }
+
+            if ((fourbytes & 0xffff0000) == 0x01030000) {
+                return 1;
+            }
+
+            if ((fourbytes & 0xffff0000) == 0x01130000) {
+                return 1;
+            }
+        }
+    }
+
+    return 0;
+}
+
 static void process_incoming_messages(libtrace_thread_t *t,
         collector_global_t *glob, colthread_local_t *loc,
         openli_pushed_t *syncpush) {
@@ -383,8 +443,11 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         /* Is this a SIP packet? -- if yes, create a state update */
         if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
                     loc->sipservers)) {
-            send_packet_to_sync(pkt, &(loc->tosyncq_voip), OPENLI_UPDATE_SIP);
-            synced = 1;
+            if (!check_for_invalid_sip(pkt)) {
+                send_packet_to_sync(pkt, &(loc->tosyncq_voip),
+                        OPENLI_UPDATE_SIP);
+                synced = 1;
+            }
         }
     } else if (transport != NULL && proto == TRACE_IPPROTO_TCP) {
         /* Is this a SIP packet? -- if yes, create a state update */
