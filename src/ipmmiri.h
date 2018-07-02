@@ -31,11 +31,23 @@
 
 #include "collector.h"
 #include "intercept.h"
+#include "collector_export.h"
 #include "etsili_core.h"
 
-int ipmm_iri(libtrace_packet_t *pkt, collector_global_t *glob,
-        wandder_encoder_t **encoder, libtrace_message_queue_t *q,
+enum {
+    OPENLI_IPMMIRI_ORIGINAL,
+    OPENLI_IPMMIRI_SIP,
+    OPENLI_IPMMIRI_H323,
+};
+
+int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
+        exporter_intercept_msg_t *intdetails, uint32_t seqno,
+                openli_exportmsg_t *msg);
+
+int ipmm_iri(libtrace_packet_t *pkt, openli_export_recv_t *irimsg,
         voipintercept_t *vint, voipintshared_t *cin,
-        etsili_iri_type_t iritype);
+        etsili_iri_type_t iritype, uint8_t ipmmiri_style,
+        shared_global_info_t *info);
+
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

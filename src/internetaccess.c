@@ -27,6 +27,30 @@
 #include "logger.h"
 #include "internetaccess.h"
 
+access_plugin_t *init_access_plugin(uint8_t accessmethod) {
+
+    access_plugin_t *p = NULL;
+
+    switch(accessmethod) {
+        case ACCESS_RADIUS:
+            p = get_radius_access_plugin();
+            break;
+    }
+
+    if (p == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI: invalid access method %d observed in init_access_plugin()");
+        return NULL;
+    }
+
+    p->init_plugin_data(p);
+    return p;
+}
+
+void destroy_access_plugin(access_plugin_t *p) {
+    p->destroy_plugin_data(p);
+}
+
 static inline void free_session(access_session_t *sess) {
 
     if (sess == NULL) {
@@ -38,9 +62,9 @@ static inline void free_session(access_session_t *sess) {
     }
 
     /* session id and state data should be handled by the appropriate plugin */
-
-    /* TODO */
-
+    if (sess->plugin) {
+        sess->plugin->destroy_session_data(sess->plugin, sess);
+    }
     free(sess);
 }
 
@@ -51,11 +75,12 @@ void free_single_user(internet_user_t *u) {
         free(u->userid);
     }
 
-    HASH_ITER(hh, u->sessions, sess, tmp) {
-        HASH_DELETE(hh, u->sessions, sess);
+    tmp = u->sessions;
+    while (tmp) {
+        sess = tmp;
+        tmp = tmp->next;
         free_session(sess);
     }
-
     free(u);
 
 }
@@ -70,9 +95,9 @@ void free_all_users(internet_user_t *users) {
     }
 }
 
-int free_single_session(internet_user_t *user, void *sessionid, void *idlen) {
+int free_single_session(internet_user_t *user, access_session_t *sess) {
 
-    access_session_t *sess;
+    access_session_t *prev, *tmp;
 
     if (user == NULL) {
         logger(LOG_DAEMON,
@@ -80,16 +105,52 @@ int free_single_session(internet_user_t *user, void *sessionid, void *idlen) {
         return -1;
     }
 
-    HASH_FIND(hh, user->sessions, sessionid, idlen, sess);
-    if (!sess) {
-        logger(LOG_DAEMON, "OpenLI: unable to free expired Internet session because it was not present in the session map for user %s", user->userid);
+    tmp = user->sessions;
+    prev = NULL;
+    while (tmp) {
+        if (sess == tmp) {
+            break;
+        }
+        prev = tmp;
+        tmp = tmp->next;
+    }
 
-        /* TODO use the plugin to help log the session ID */
-
-        return -1;
+    //HASH_DELETE(hh, user->sessions, sess);
+    if (tmp != NULL) {
+        if (prev) {
+            prev->next = tmp->next;
+        } else {
+            user->sessions = tmp->next;
+        }
     }
 
     free_session(sess);
     return 0;
+}
+
+const char *accesstype_to_string(internet_access_method_t am) {
+    switch(am) {
+        case INTERNET_ACCESS_TYPE_UNDEFINED:
+            return "undefined";
+        case INTERNET_ACCESS_TYPE_DIALUP:
+            return "dialup";
+        case INTERNET_ACCESS_TYPE_XDSL:
+            return "DSL";
+        case INTERNET_ACCESS_TYPE_CABLEMODEM:
+            return "cable modem";
+        case INTERNET_ACCESS_TYPE_LAN:
+            return "LAN";
+        case INTERNET_ACCESS_TYPE_WIRELESS_LAN:
+            return "wireless LAN";
+        case INTERNET_ACCESS_TYPE_FIBER:
+            return "fiber";
+        case INTERNET_ACCESS_TYPE_WIMAX:
+            return "WIMAX/HIPERMAN";
+        case INTERNET_ACCESS_TYPE_SATELLITE:
+            return "satellite";
+        case INTERNET_ACCESS_TYPE_WIRELESS_OTHER:
+            return "wireless (Other)";
+    }
+    return "invalid";
 }
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

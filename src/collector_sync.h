@@ -37,37 +37,18 @@
 #include "intercept.h"
 #include "internetaccess.h"
 #include "coreserver.h"
-
-enum {
-    SYNC_EVENT_PROC_QUEUE,
-    SYNC_EVENT_PROVISIONER,
-    SYNC_EVENT_SIP_TIMEOUT,
-};
-
-typedef struct sync_epoll {
-    uint8_t fdtype;
-    int fd;
-    void *ptr;
-    libtrace_thread_t *parent;
-    UT_hash_handle hh;
-} sync_epoll_t;
-
-
-typedef struct sync_sendq {
-    libtrace_message_queue_t *q;
-    libtrace_thread_t *parent;
-    UT_hash_handle hh;
-} sync_sendq_t;
+#include "sipparsing.h"
 
 typedef struct colsync_data {
 
-    collector_global_t *glob;
+    support_thread_global_t *glob;
+    shared_global_info_t *info;
+    export_queue_set_t *exportqueues;
+    uint8_t *export_used;
 
     internet_user_t *allusers;
     ipintercept_t *ipintercepts;
     user_intercept_list_t *userintercepts;
-
-    voipintercept_t *voipintercepts;
 
     coreserver_t *coreservers;
 
@@ -78,9 +59,12 @@ typedef struct colsync_data {
     net_buffer_t *outgoing;
     net_buffer_t *incoming;
 
+    libtrace_message_queue_t *intersyncq;
     libtrace_message_queue_t exportq;
-    openli_sip_parser_t *sipparser;
     wandder_encoder_t *encoder;
+
+    access_plugin_t *radiusplugin;
+    etsili_generic_t *freegenerics;
 
 } collector_sync_t;
 
@@ -89,11 +73,6 @@ void clean_sync_data(collector_sync_t *sync);
 void sync_disconnect_provisioner(collector_sync_t *sync);
 int sync_connect_provisioner(collector_sync_t *sync);
 int sync_thread_main(collector_sync_t *sync);
-int register_sync_queues(collector_global_t *glob,
-        libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq,
-        libtrace_thread_t *parent);
-void deregister_sync_queues(collector_global_t *glob, libtrace_thread_t *t);
-void halt_processing_threads(collector_global_t *glob);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

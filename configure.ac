@@ -18,29 +18,47 @@ AC_PROG_LIBTOOL
 
 EXTRA_LIBS=""
 
-AC_CHECK_LIB([trace], [trace_pstart],,libtrace_found=0)
-AC_CHECK_LIB([wandder], [init_wandder_encoder],,libwandder_found=0)
+AC_ARG_ENABLE([mediator], AS_HELP_STRING([--disable-mediator],
+        [Disable building the OpenLI mediator]))
+AC_ARG_ENABLE([provisioner], AS_HELP_STRING([--disable-provisioner],
+        [Disable building the OpenLI provisioner]))
+AC_ARG_ENABLE([collector], AS_HELP_STRING([--disable-collector],
+        [Disable building the OpenLI collector]))
+
+AC_CHECK_LIB([trace], [trace_increment_packet_refcount],,libtrace_found=0)
 AC_CHECK_LIB([yaml], [yaml_document_get_node],,libyaml_found=0)
-AC_CHECK_LIB([osipparser2], [osip_message_init],,libosip2_found=0)
+
+AC_CHECK_HEADERS([syslog.h])
 
 AC_CONFIG_FILES([Makefile src/Makefile])
 
-if test "$libosip2_found" = 0; then
-        AC_MSG_ERROR(Required library libosipparser2 not found; use LDFLAGS to specify library location)
+if test "x$enable_collector" != "xno"; then
+        AC_CHECK_LIB([osipparser2], [osip_message_init],,libosip2_found=0)
+        if test "$libosip2_found" = 0; then
+                AC_MSG_ERROR(Required library libosipparser2 not found; use LDFLAGS to specify library location)
+        fi
+fi
+
+
+if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then
+        AC_CHECK_LIB([wandder], [init_wandder_encoder],,libwandder_found=0)
+        if test "$libwandder_found" = 0; then
+                AC_MSG_ERROR(Required library libwandder not found; use LDFLAGS to specify library location)
+        fi
 fi
 
 if test "$libtrace_found" = 0; then
-        AC_MSG_ERROR(Required library libtrace not found; use LDFLAGS to specify library location)
-fi
-
-if test "$libwandder_found" = 0; then
-        AC_MSG_ERROR(Required library libwandder not found; use LDFLAGS to specify library location)
+        AC_MSG_ERROR(Required library libtrace 4.0.4 not found; use LDFLAGS to specify library location)
 fi
 
 if test "$libyaml_found" = 0; then
         AC_MSG_ERROR(Required library libyaml not found; use LDFLAGS to specify library location)
 fi
 
+
+AM_CONDITIONAL([BUILD_MEDIATOR], [test "x$enable_mediator" != "xno"])
+AM_CONDITIONAL([BUILD_PROVISIONER], [test "x$enable_provisioner" != "xno"])
+AM_CONDITIONAL([BUILD_COLLECTOR], [test "x$enable_collector" != "xno"])
 
 AC_SUBST([ADD_LIBS])
 AC_SUBST([EXTRA_LIBS])

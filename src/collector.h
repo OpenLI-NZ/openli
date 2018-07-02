@@ -36,16 +36,14 @@
 #include <libwandder.h>
 
 #include "coreserver.h"
-#include "sipparsing.h"
 #include "intercept.h"
+#include "etsili_core.h"
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
     OPENLI_PUSH_HALT_IPINTERCEPT = 2,
     OPENLI_PUSH_IPMMINTERCEPT = 3,
     OPENLI_PUSH_HALT_IPMMINTERCEPT = 4,
-    OPENLI_PUSH_SIPURI = 5,
-    OPENLI_PUSH_HALT_SIPURI = 6,
     OPENLI_PUSH_CORESERVER = 7,
     OPENLI_PUSH_REMOVE_CORESERVER = 8,
     OPENLI_PUSH_ALUINTERCEPT = 9,
@@ -58,6 +56,12 @@ enum {
     OPENLI_UPDATE_DHCP = 2,
     OPENLI_UPDATE_SIP = 3
 };
+
+typedef struct openli_intersync_msg {
+    uint8_t msgtype;
+    uint8_t *msgbody;
+    uint16_t msglen;
+} PACKED openli_intersync_msg_t;
 
 typedef struct openli_state_msg {
 
@@ -76,7 +80,6 @@ typedef struct openli_ii_msg {
         ipsession_t *ipsess;
         rtpstreaminf_t *ipmmint;
         aluintercept_t *aluint;
-        char *sipuri;
         char *rtpstreamkey;
         coreserver_t *coreserver;
     } data;
@@ -93,12 +96,6 @@ typedef struct colinput {
     UT_hash_handle hh;
 } colinput_t;
 
-typedef struct sipuri_hash {
-    UT_hash_handle hh;
-    char *uri;
-    int references;
-} sipuri_hash_t;
-
 typedef struct ipv4_target {
     uint32_t address;
     ipsession_t *intercepts;
@@ -113,13 +110,50 @@ typedef struct ipv6_target {
     UT_hash_handle hh;
 } ipv6_target_t;
 
+enum {
+    SYNC_EVENT_PROC_QUEUE,
+    SYNC_EVENT_PROVISIONER,
+    SYNC_EVENT_SIP_TIMEOUT,
+    SYNC_EVENT_INTERSYNC,
+};
+
+typedef struct export_queue_set {
+
+    int numqueues;
+    libtrace_message_queue_t *queues;
+
+} export_queue_set_t;
+
+
+typedef struct sync_epoll {
+    uint8_t fdtype;
+    int fd;
+    void *ptr;
+    libtrace_thread_t *parent;
+    UT_hash_handle hh;
+} sync_epoll_t;
+
+typedef struct sync_sendq {
+    libtrace_message_queue_t *q;
+    libtrace_thread_t *parent;
+    UT_hash_handle hh;
+} sync_sendq_t;
+
+
 typedef struct colthread_local {
 
-    /* Message queue for pushing updates to sync thread */
-    libtrace_message_queue_t tosyncq;
+    /* Message queue for pushing updates to sync IP thread */
+    libtrace_message_queue_t tosyncq_ip;
 
-    /* Message queue for receiving intercept instructions from sync thread */
-    libtrace_message_queue_t fromsyncq;
+    /* Message queue for receiving IP intercept instructions from sync thread */
+    libtrace_message_queue_t fromsyncq_ip;
+
+    /* Message queue for pushing updates to sync VOIP thread */
+    libtrace_message_queue_t tosyncq_voip;
+
+    /* Message queue for receiving VOIP intercept instructions from sync
+       thread */
+    libtrace_message_queue_t fromsyncq_voip;
 
 
     /* Current intercepts */
@@ -129,47 +163,25 @@ typedef struct colthread_local {
     rtpstreaminf_t *activertpintercepts;
     aluintercept_t *activealuintercepts;
 
-    /* Current SIP URIs that we are intercepting */
-    sipuri_hash_t *sip_targets;
-
-    /* Message queue for exporting LI records */
-    libtrace_message_queue_t exportq;
+    /* Message queues for exporting LI records */
+    export_queue_set_t *exportqueues;
+    uint8_t *export_used;
 
     /* Known RADIUS servers, i.e. if we see traffic to or from these
      * servers, we assume it is RADIUS.
      */
     coreserver_t *radiusservers;
 
-    wandder_encoder_t *encoder;
-    openli_sip_parser_t *sipparser;
-    libtrace_list_t *knownsipservers;
+    /* Known SIP servers, i.e. if we see traffic to or from these
+     * servers, we assume it is SIP.
+     */
+    coreserver_t *sipservers;
 
     char *inputidentifier;
 
 } colthread_local_t;
 
-typedef struct collector_global {
-
-    colinput_t *inputs;
-
-    int totalthreads;
-    int queuealloced;
-    int registered_syncqs;
-
-    pthread_rwlock_t config_mutex;
-    pthread_mutex_t syncq_mutex;
-    pthread_mutex_t exportq_mutex;
-
-    void *syncsendqs;
-    void *syncepollevs;
-
-    pthread_t syncthreadid;
-    pthread_t exportthreadid;
-
-    int sync_epollfd;
-    int export_epollfd;
-
-    char *configfile;
+typedef struct shared_global_info {
     char *operatorid;
     char *networkelemid;
     char *intpointid;
@@ -180,12 +192,53 @@ typedef struct collector_global {
     int networkelemid_len;
     int intpointid_len;
 
-    libtrace_list_t *export_epoll_evs;
+} shared_global_info_t;
+
+typedef struct supporting_thread_global {
+
+    pthread_t threadid;
+    pthread_mutex_t mutex;
+    void *collector_queues;
+    void *epollevs;
+    int epoll_fd;
+
+} support_thread_global_t;
+
+typedef struct collector_global {
+
+    colinput_t *inputs;
+    int exportthreads;
+
+    pthread_rwlock_t config_mutex;
+
+    support_thread_global_t syncip;
+    support_thread_global_t syncvoip;
+    support_thread_global_t *exporters;
+
+    libtrace_message_queue_t intersyncq;
+
+    char *configfile;
+    shared_global_info_t sharedinfo;
     libtrace_list_t *expired_inputs;
 
     coreserver_t *alumirrors;
 
 } collector_global_t;
+
+typedef struct packetinfo {
+    int family;
+    struct sockaddr_storage srcip;
+    struct sockaddr_storage destip;
+    uint16_t srcport;
+    uint16_t destport;
+} packet_info_t;
+
+int register_sync_queues(support_thread_global_t *glob,
+        libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq,
+        libtrace_thread_t *parent);
+void deregister_sync_queues(support_thread_global_t *glob,
+        libtrace_thread_t *t);
+
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

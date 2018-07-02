@@ -31,9 +31,9 @@
 #include "coreserver.h"
 #include "intercept.h"
 
-int check_alu_intercept(collector_global_t *glob, colthread_local_t *loc,
-        libtrace_packet_t *packet, coreserver_t *alusources,
-        aluintercept_t *aluints);
+int check_alu_intercept(shared_global_info_t *info, colthread_local_t *loc,
+        libtrace_packet_t *packet, packet_info_t *pinfo,
+        coreserver_t *alusources, aluintercept_t *aluints);
 
 #endif
 

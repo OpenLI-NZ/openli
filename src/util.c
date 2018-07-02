@@ -33,6 +33,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <arpa/inet.h>
+#include <stdio.h>
 
 #include "logger.h"
 #include "util.h"
@@ -145,6 +147,61 @@ int create_listener(char *addr, char *port, char *name) {
 endlistener:
     freeaddrinfo(res);
     return sockfd;
+}
+
+char *sockaddr_to_string(struct sockaddr *sa, char *str, int len) {
+
+    switch(sa->sa_family) {
+        case AF_INET:
+            inet_ntop(AF_INET, &(((struct sockaddr_in *)sa)->sin_addr), str,
+                    len);
+            break;
+        case AF_INET6:
+            inet_ntop(AF_INET6, &(((struct sockaddr_in6 *)sa)->sin6_addr), str,
+                    len);
+            break;
+        default:
+            snprintf(str, len, "(unprintable)");
+            break;
+    }
+    return str;
+}
+
+uint8_t *sockaddr_to_key(struct sockaddr *sa, int *socklen) {
+
+    switch(sa->sa_family) {
+        case AF_INET:
+            *socklen = sizeof(struct in_addr);
+            return (uint8_t *)(&(((struct sockaddr_in *)sa)->sin_addr));
+        case AF_INET6:
+            *socklen = sizeof(struct in6_addr);
+            return (uint8_t *)(&(((struct sockaddr_in6 *)sa)->sin6_addr));
+        default:
+            return NULL;
+    }
+    return NULL;
+}
+
+void convert_ipstr_to_sockaddr(char *knownip,
+        struct sockaddr_storage **saddr, int *family) {
+
+    struct addrinfo *res = NULL;
+    struct addrinfo hints;
+
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_UNSPEC;
+
+    if (getaddrinfo(knownip, NULL, &hints, &res) != 0) {
+        logger(LOG_DAEMON, "OpenLI: getaddrinfo cannot parse IP address %s: %s",
+                knownip, gai_strerror(errno));
+    }
+
+    *family = res->ai_family;
+    *saddr = (struct sockaddr_storage *)malloc(
+            sizeof(struct sockaddr_storage));
+    memcpy(*saddr, res->ai_addr, res->ai_addrlen);
+
+    freeaddrinfo(res);
 }
 
 

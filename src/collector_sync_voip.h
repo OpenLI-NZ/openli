@@ -23,20 +23,39 @@
  *
  *
  */
-#ifndef OPENLI_IPMMCC_H_
-#define OPENLI_IPMMCC_H_
+
+#ifndef OPENLI_COLLECTOR_SYNC_VOIP_H_
+#define OPENLI_COLLECTOR_SYNC_VOIP_H_
 
 #include <libtrace.h>
+#include <libtrace/message_queue.h>
+
+#include "intercept.h"
 #include "collector.h"
-#include "collector_export.h"
+#include "sipparsing.h"
+#include "util.h"
 
-int encode_ipmmcc(wandder_encoder_t **encoder, openli_ipmmcc_job_t *job,
-        exporter_intercept_msg_t *intdetails, uint32_t seqno,
-                openli_exportmsg_t *msg);
+typedef struct collector_sync_voip_data {
 
-int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
-        libtrace_ip_t *ip,
-        uint32_t rem, shared_global_info_t *info, colthread_local_t *loc);
+    support_thread_global_t *glob;
+    shared_global_info_t *info;
+    export_queue_set_t *exportqueues;
+    uint8_t *export_used;
+
+    voipintercept_t *voipintercepts;
+    voipcinmap_t *knowncallids;
+
+    libtrace_message_queue_t *intersyncq;
+    sync_epoll_t intersync_ev;
+
+    openli_sip_parser_t *sipparser;
+
+} collector_sync_voip_t;
+
+collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob);
+void clean_sync_voip_data(collector_sync_voip_t *sync);
+int sync_voip_thread_main(collector_sync_voip_t *sync);
 
 #endif
 
+// vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

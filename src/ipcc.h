@@ -28,9 +28,14 @@
 
 #include <libtrace.h>
 #include "collector.h"
+#include "collector_export.h"
 
-int ipv4_comm_contents(libtrace_packet_t *pkt, libtrace_ip_t *ip,
-        uint32_t rem, collector_global_t *glob, colthread_local_t *loc);
+int encode_ipcc(wandder_encoder_t **encoder, openli_ipcc_job_t *job,
+        exporter_intercept_msg_t *intdetails, uint32_t seqno,
+        openli_exportmsg_t *msg);
+int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
+        libtrace_ip_t *ip,
+        uint32_t rem, shared_global_info_t *info, colthread_local_t *loc);
 
 #endif
 

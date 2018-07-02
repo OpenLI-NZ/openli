@@ -27,11 +27,13 @@
 #include <libtrace_parallel.h>
 #include <assert.h>
 #include <uthash.h>
+#include <arpa/inet.h>
 
 #include "logger.h"
 #include "collector.h"
 #include "collector_push_messaging.h"
 #include "intercept.h"
+#include "internetaccess.h"
 
 static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
     rtpstreaminf_t *rtp;
@@ -46,7 +48,7 @@ static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
     }
 
     HASH_DELETE(hh, loc->activertpintercepts, rtp);
-
+    free(rtp);
     return 1;
 }
 
@@ -224,17 +226,26 @@ void handle_push_ipintercept(libtrace_thread_t *t, colthread_local_t *loc,
     if (sess->ai_family == AF_INET) {
         if (add_ipv4_intercept(loc, sess) != 0) {
             free_single_ipsession(sess);
+            return;
         }
     } else if (sess->ai_family == AF_INET6) {
         if (add_ipv6_intercept(loc, sess) != 0) {
             free_single_ipsession(sess);
+            return;
         }
     } else {
         logger(LOG_DAEMON,
                  "OpenLI: invalid address family for new IP intercept: %d",
                  sess->ai_family);
         free_single_ipsession(sess);
+        return;
     }
+    /*
+    logger(LOG_DAEMON,
+            "OpenLI: collector thread %d has started intercepting %s IP session %s",
+            trace_get_perpkt_thread_id(t),
+            accesstype_to_string(sess->accesstype), sess->streamkey);
+    */
 }
 
 void handle_push_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
@@ -242,17 +253,21 @@ void handle_push_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
 
     HASH_ADD_KEYPTR(hh, loc->activertpintercepts, rtp->streamkey,
             strlen(rtp->streamkey), rtp);
+    /*
     logger(LOG_DAEMON,
             "OpenLI: collector thread %d has started intercepting RTP stream %s",
             trace_get_perpkt_thread_id(t), rtp->streamkey);
+    */
 }
 
 void handle_halt_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
         char *streamkey) {
     if (remove_rtp_stream(loc, streamkey) != 0) {
+        /*
         logger(LOG_DAEMON,
                 "OpenLI: collector thread %d has stopped intercepting RTP stream %s",
                 trace_get_perpkt_thread_id(t), streamkey);
+        */
     }
     free(streamkey);
 }
@@ -262,16 +277,20 @@ void handle_halt_ipintercept(libtrace_thread_t *t , colthread_local_t *loc,
 
     if (sess->ai_family == AF_INET) {
         if (remove_ipv4_intercept(loc, sess) > 0) {
+            /*
             logger(LOG_DAEMON,
                     "OpenLI: collector thread %d has stopped intercepting IP session %s",
                     trace_get_perpkt_thread_id(t), sess->streamkey);
+            */
 
         }
     } else if (sess->ai_family == AF_INET6) {
         if (remove_ipv6_intercept(loc, sess) > 0) {
+            /*
             logger(LOG_DAEMON,
                     "OpenLI: collector thread %d has stopped intercepting IP session %s",
                     trace_get_perpkt_thread_id(t), sess->streamkey);
+            */
 
         }
     } else {
@@ -282,51 +301,6 @@ void handle_halt_ipintercept(libtrace_thread_t *t , colthread_local_t *loc,
     free_single_ipsession(sess);
 }
 
-void handle_push_sipuri(libtrace_thread_t *t, colthread_local_t *loc,
-        char *sipuri) {
-    sipuri_hash_t *newsip;
-    HASH_FIND_STR(loc->sip_targets, sipuri, newsip);
-
-    if (newsip) {
-        newsip->references ++;
-        free(sipuri);
-    } else {
-        newsip = (sipuri_hash_t *)malloc(sizeof(sipuri_hash_t));
-        newsip->uri = sipuri;
-        newsip->references = 1;
-        HASH_ADD_KEYPTR(hh, loc->sip_targets, newsip->uri,
-                strlen(newsip->uri), newsip);
-        logger(LOG_DAEMON,
-                "OpenLI: collector thread %d has added %s to list of SIP URIs.",
-                trace_get_perpkt_thread_id(t),
-                sipuri);
-    }
-}
-
-void handle_halt_sipuri(libtrace_thread_t *t, colthread_local_t *loc,
-        char *sipuri) {
-    sipuri_hash_t *torem;
-    HASH_FIND_STR(loc->sip_targets, sipuri, torem);
-    if (torem == NULL) {
-        logger(LOG_DAEMON, "OpenLI: asked to halt SIP intercept for target %s, but that is not in our set of known URIs", sipuri);
-        return;
-    } else {
-        torem->references --;
-    }
-    assert(torem->references >= 0);
-
-    if (torem->references == 0) {
-        logger(LOG_DAEMON,
-                "OpenLI: collector thread %d has removed %s from list of SIP URIs.",
-                trace_get_perpkt_thread_id(t),
-                sipuri);
-        HASH_DEL(loc->sip_targets, torem);
-        free(torem->uri);
-        free(torem);
-    }
-    free(sipuri);
-}
-
 void handle_push_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
         coreserver_t *cs) {
     coreserver_t *found, **servlist;
@@ -334,6 +308,9 @@ void handle_push_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
     switch(cs->servertype) {
         case OPENLI_CORE_SERVER_RADIUS:
             servlist = &(loc->radiusservers);
+            break;
+        case OPENLI_CORE_SERVER_SIP:
+            servlist = &(loc->sipservers);
             break;
         default:
             logger(LOG_DAEMON,
@@ -345,9 +322,11 @@ void handle_push_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
     if (!found) {
         HASH_ADD_KEYPTR(hh, *servlist, cs->serverkey, strlen(cs->serverkey),
                 cs);
+        /*
         logger(LOG_DAEMON, "OpenLI: collector thread %d has added %s to its %s core server list.",
                 trace_get_perpkt_thread_id(t),
                 cs->serverkey, coreserver_type_to_string(cs->servertype));
+        */
     } else {
         free_single_coreserver(cs);
     }
@@ -362,6 +341,9 @@ void handle_remove_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
         case OPENLI_CORE_SERVER_RADIUS:
             servlist = &(loc->radiusservers);
             break;
+        case OPENLI_CORE_SERVER_SIP:
+            servlist = &(loc->sipservers);
+            break;
         default:
             logger(LOG_DAEMON,
                     "OpenLI: unexpected core server type received by collector thread %d: %d",
@@ -371,9 +353,11 @@ void handle_remove_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
     HASH_FIND(hh, *servlist, cs->serverkey, strlen(cs->serverkey), found);
     if (found) {
         HASH_DELETE(hh, *servlist, found);
+        /*
         logger(LOG_DAEMON, "OpenLI: collector thread %d has removed %s from its %s core server list.",
                 trace_get_perpkt_thread_id(t),
                 cs->serverkey, coreserver_type_to_string(cs->servertype));
+        */
         free_single_coreserver(found);
     }
     free_single_coreserver(cs);

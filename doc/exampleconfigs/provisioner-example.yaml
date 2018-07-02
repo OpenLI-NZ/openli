@@ -8,6 +8,23 @@ clientport: 9001
 mediationaddr: 10.0.0.1
 mediationport: 12001
 
+# List of SIP servers on our network (for managing VOIP intercepts)
+sipservers:
+  - ip: 192.168.110.100
+    port: 5060
+
+
+# List of RADIUS servers on our network (for managing IP intercepts).
+# NOTE: we have two entries with the same IP -- one for the Auth service
+#       on port 1812 and one for the Accounting service on port 1813.
+# NOTE: make sure you are mirroring ALL RADIUS traffic into your collector(s),
+#       even the Accounting-Response records as these are necessary for ETSI LI.
+radiusservers:
+  - ip: 10.199.0.253
+    port: 1812
+  - ip: 10.199.0.253
+    port: 1813
+
 # List the set of agencies that we can perform intercepts for
 agencies:
 
@@ -16,12 +33,51 @@ agencies:
    hi2port: 35530               # port number of the HI2 service at the agency
    hi3address: 192.168.200.1    # address of the HI3 service at the agency
    hi3port: 35531               # port number of the HI3 service at the agency
+   keepalivefreq: 300           # send keep alives every 5 minutes, if handover
+                                # is idle
+   keepalivewait: 30            # agency must respond to a keep alive within
+                                # 30 seconds to avoid being disconnected
 
  - agencyid: "Spooks"           # id must be unique per agency
    hi2address: 10.10.1.1        # address of the HI2 service at the agency
    hi2port: 7001                # port number of the HI2 service at the agency
    hi3address: 10.10.1.2        # address of the HI3 service at the agency
    hi3port: 18888               # port number of the HI3 service at the agency
+   keepalivefreq: 120           # send keep alives every 2 minutes, if handover
+                                # is idle
+   keepalivewait: 0             # agency does not respond to keep alives, so
+                                # don't disconnect if no response is received
+
+
+# List of active IP intercepts.
+# To change intercepts for a running OpenLI process, modify the intercept list
+# in the config file, then send a SIGHUP to the provisioner process.
+#
+# In this example, we have two IP intercepts running: one for the "Police"
+# intercepting all IP traffic for the user 'imacriminal' and one for the
+# "Spooks" that is translating an Alcatel-Lucent native intercept into an
+# ETSI-compliant one. For the latter, all ALU intercept packets with an
+# Intercept ID of 522781 will be converted to have the ETSI LIID of NAPP9321HN
+# and the resulting records will be forwarded to the "Spooks" agency.
+
+ipintercepts:
+ - liid:  LP45NNST3             # LIID, should be provided by requesting agency
+   authcountrycode: NZ          # Authorisation country code
+   deliverycountrycode: NZ      # Delivery country code
+   user: "imacriminal"          # Username identifying the target in your AAA
+   mediator: 6001               # ID of the mediator to send intercept via
+   agencyid: "Police"           # ID of agency to send intercept to
+   accesstype: "Fiber"          # Access tech used by the target to access IP
+
+
+ - liid: NAPP9321HN
+   authcountrycode: NZ          # Authorisation country code
+   deliverycountrycode: NZ      # Delivery country code
+   alushimid: 522781            # Intercept-ID number used by the ALU
+                                # intercept.
+   mediator: 6001               # ID of the mediator to send intercept via
+   agencyid: "Spooks"           # ID of agency to send intercept to
+   accesstype: "ADSL"           # Access tech used by the target to access IP
 
 
 # List of active VOIP intercepts.
@@ -38,16 +94,24 @@ voipintercepts:
  - liid: 1A23RD112              # LIID, should be provided by requesting agency
    authcountrycode: NZ          # Authorisation country code
    deliverycountrycode: NZ      # Delivery country code
-   sipuri: sip:badguy@myisp.com # SIP URI identifying the intercept target
    mediator: 6001               # ID of the mediator to send intercept via
    agencyid: "Police"           # ID of agency to send intercept to
+   siptargets:                  # List of SIP identities for the target
+     - username: badguy
+       realm: myisp.com
 
  - liid: X7811DFWS              # LIID, should be provided by requesting agency
    authcountrycode: NZ          # Authorisation country code
    deliverycountrycode: NZ      # Delivery country code
-   sipuri: sip:target@myisp.com # SIP URI identifying the intercept target
    mediator: 6001               # ID of the mediator to send intercept via
    agencyid: "Spooks"           # ID of agency to send intercept to
+   siptargets:                  # List of SIP identities for the target
+     - username: target
+       realm: myisp.com
+     - username: 6478564444     # Alternative identity that is used in SIP
+                                # Authorization headers. Note the lack of
+                                # realm, this means we can match this username
+                                # against *any* realm.
 
 
 

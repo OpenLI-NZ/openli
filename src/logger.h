@@ -1,6 +1,7 @@
 #ifndef LOGGER_H_
 #define LOGGER_H_
 
+#include "config.h"
 #if HAVE_SYSLOG_H
 #include <sys/syslog.h>
 #else

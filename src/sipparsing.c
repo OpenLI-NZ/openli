@@ -33,42 +33,6 @@
 #include "sipparsing.h"
 #include "logger.h"
 
-int identified_as_sip(libtrace_packet_t *packet, libtrace_list_t *knownsip) {
-
-    void *transport;
-    uint8_t proto;
-    uint32_t rem;
-    uint16_t sport, dport;
-
-    transport = trace_get_transport(packet, &proto, &rem);
-    if (transport == NULL) {
-        return 0;
-    }
-
-    if (proto == TRACE_IPPROTO_TCP) {
-        if (rem < sizeof(libtrace_tcp_t)) {
-            return 0;
-        }
-    } else if (proto == TRACE_IPPROTO_UDP) {
-        if (rem < sizeof(libtrace_udp_t)) {
-            return 0;
-        }
-    } else {
-        return 0;
-    }
-
-    sport = trace_get_source_port(packet);
-    dport = trace_get_destination_port(packet);
-
-    if (sport == 5060 || dport == 5060) {
-        return 1;
-    }
-
-    /* TODO check against user-configured servers in the knownsip list */
-
-
-    return 0;
-}
 
 int parse_sip_packet(openli_sip_parser_t **parser, libtrace_packet_t *packet) {
 
@@ -130,11 +94,16 @@ int parse_sip_packet(openli_sip_parser_t **parser, libtrace_packet_t *packet) {
 
     /* Check for a CRLF keep alive */
     if (memcmp(payload, "\x0d\x0a\x0d\x0a", 4) == 0) {
-        return 1;
+        return 0;
     }
 
     if (memcmp(payload, "\x0d\x0a", 2) == 0 && plen == 2) {
-        return 1;
+        return 0;
+    }
+
+    /* 00 00 00 00 seems to be some sort of keep alive as well? */
+    if (plen == 4 && memcmp(payload, "\x00\x00\x00\x00", 4) == 0) {
+        return 0;
     }
 
     if (plen < rem) {
@@ -254,6 +223,148 @@ char *get_sip_to_uri(openli_sip_parser_t *parser) {
      * additional arguments etc. */
     uristr = strip_sip_uri(uristr);
     return uristr;
+}
+
+char *get_sip_to_uri_username(openli_sip_parser_t *parser) {
+
+    char *uriuser;
+    osip_to_t *to = osip_message_get_to(parser->osip);
+
+    if (to == NULL) {
+        return NULL;
+    }
+
+    uriuser = osip_uri_get_username(osip_to_get_url(to));
+    return uriuser;
+}
+
+char *get_sip_to_uri_realm(openli_sip_parser_t *parser) {
+    /* I use the term 'realm' here to be consistent with Authorization
+     * header fields, but really this part of a To: uri is generally
+     * called a 'host'.
+     */
+    char *urihost;
+    osip_to_t *to = osip_message_get_to(parser->osip);
+
+    if (to == NULL) {
+        return NULL;
+    }
+
+    urihost = osip_uri_get_host(osip_to_get_url(to));
+    return urihost;
+}
+
+int get_sip_to_uri_identity(openli_sip_parser_t *parser,
+        openli_sip_identity_t *sipid) {
+
+    sipid->username = get_sip_to_uri_username(parser);
+    if (sipid->username == NULL) {
+        return -1;
+    }
+    sipid->username_len = strlen(sipid->username);
+
+    sipid->realm = get_sip_to_uri_realm(parser);
+    if (sipid->realm == NULL) {
+        return -1;
+    }
+    sipid->realm_len = strlen(sipid->realm);
+    return 1;
+}
+
+static inline void strip_quotes(openli_sip_identity_t *sipid) {
+
+    /* The removal of the trailing " is permanent, so we need to
+     * be careful about detecting cases where we call strip_quotes
+     * again on a term that will now only have a beginning quote,
+     * e.g. "username
+     */
+
+    if (sipid->username[0] == '"') {
+        if (sipid->username[sipid->username_len - 1] == '"') {
+            sipid->username[sipid->username_len - 1] = '\0';
+            sipid->username_len --;
+        }
+        sipid->username ++;
+        sipid->username_len --;
+    }
+
+    if (sipid->realm[0] == '"') {
+        if (sipid->realm[sipid->realm_len - 1] == '"') {
+            sipid->realm[sipid->realm_len - 1] = '\0';
+            sipid->realm_len --;
+        }
+        sipid->realm ++;
+        sipid->realm_len --;
+    }
+
+}
+
+int get_sip_auth_identity(openli_sip_parser_t *parser, int index,
+        int *authcount, openli_sip_identity_t *sipid) {
+
+    osip_authorization_t *auth;
+
+    *authcount = osip_list_size(&(parser->osip->authorizations));
+
+    if (*authcount == 0) {
+        return 0;
+    }
+
+    if (index >= *authcount) {
+        logger(LOG_DAEMON,
+                "OpenLI: Error, requested auth username %d but packet only has %d auth headers.",
+                index, *authcount);
+        return -1;
+    }
+
+    if (osip_message_get_authorization(parser->osip, index, &auth) != 0) {
+        logger(LOG_DAEMON,
+                "OpenLI: Error while extracting auth header from SIP packet.");
+        return -1;
+    }
+
+    sipid->username = osip_authorization_get_username(auth);
+    sipid->username_len = strlen(sipid->username);
+    sipid->realm = osip_authorization_get_realm(auth);
+    sipid->realm_len = strlen(sipid->realm);
+
+    strip_quotes(sipid);
+
+    return 1;
+
+}
+
+int get_sip_proxy_auth_identity(openli_sip_parser_t *parser, int index,
+        int *authcount, openli_sip_identity_t *sipid) {
+
+    osip_proxy_authorization_t *auth;
+
+    *authcount = osip_list_size(&(parser->osip->proxy_authorizations));
+
+    if (*authcount == 0) {
+        return 0;
+    }
+
+    if (index >= *authcount) {
+        logger(LOG_DAEMON,
+                "OpenLI: Error, requested proxy auth username %d but packet only has %d auth headers.",
+                index, *authcount);
+        return -1;
+    }
+
+    if (osip_message_get_proxy_authorization(parser->osip, index, &auth) != 0) {
+        logger(LOG_DAEMON,
+                "OpenLI: Error while extracting proxy auth header from SIP packet.");
+        return -1;
+    }
+
+    sipid->username = osip_proxy_authorization_get_username(auth);
+    sipid->username_len = strlen(sipid->username);
+    sipid->realm = osip_proxy_authorization_get_realm(auth);
+    sipid->realm_len = strlen(sipid->realm);
+
+    strip_quotes(sipid);
+    return 1;
 }
 
 char *get_sip_callid(openli_sip_parser_t *parser) {

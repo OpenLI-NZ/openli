@@ -49,6 +49,7 @@ enum {
     MED_EPOLL_KA_RESPONSE_TIMER,
     MED_EPOLL_SIGNAL,
     MED_EPOLL_SIGCHECK_TIMER,
+    MED_EPOLL_PCAP_TIMER,
 };
 
 typedef struct med_coll_state {
@@ -77,6 +78,8 @@ typedef struct med_agency_state {
     int64_t lastkaseq;
     wandder_encoder_t *encoder;
     wandder_etsispec_t *decoder;
+    uint32_t kafreq;
+    uint32_t kawait;
     handover_t *parent;
 } med_agency_state_t;
 
@@ -110,14 +113,13 @@ typedef struct med_state {
     uint32_t mediatorid;
     char *conffile;
     char *mediatorname;
+    char *operatorid;
     char *listenaddr;
     char *listenport;
 
     char *provaddr;
     char *provport;
-
-    uint32_t keepalivefreq;
-    uint32_t keepalivewait;
+    char *pcapdirectory;
 
     libtrace_list_t *collectors;
     libtrace_list_t *agencies;
@@ -126,12 +128,49 @@ typedef struct med_state {
     med_epoll_ev_t *listenerev;
     med_epoll_ev_t *signalev;
     med_epoll_ev_t *timerev;
+    med_epoll_ev_t *pcaptimerev;
 
     mediator_prov_t provisioner;
 
     liid_map_t *liids;
 
+    uint32_t pcaprotatefreq;
+    pthread_t pcapthread;
+    libtrace_message_queue_t pcapqueue;
+
 } mediator_state_t;
+
+enum {
+    PCAP_MESSAGE_CHANGE_DIR,
+    PCAP_MESSAGE_HALT,
+    PCAP_MESSAGE_PACKET,
+    PCAP_MESSAGE_FLUSH,
+    PCAP_MESSAGE_ROTATE,
+};
+
+typedef struct active_pcap_output {
+    char *liid;
+    libtrace_out_t *out;
+
+    UT_hash_handle hh;
+} active_pcap_output_t;
+
+typedef struct pcap_thread_state {
+
+    libtrace_message_queue_t *inqueue;
+    libtrace_packet_t *packet;
+    active_pcap_output_t *active;
+    char *dir;
+    int dirwarned;
+    wandder_etsispec_t *decoder;
+
+} pcap_thread_state_t;
+
+typedef struct mediator_pcap_message {
+    uint8_t msgtype;
+    uint8_t *msgbody;
+    uint16_t msglen;
+} mediator_pcap_msg_t;
 
 struct liidmapping {
     char *liid;

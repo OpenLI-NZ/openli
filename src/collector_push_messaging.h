@@ -43,10 +43,6 @@ void handle_halt_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
         char *streamkey);
 void handle_halt_ipintercept(libtrace_thread_t *t , colthread_local_t *loc,
         ipsession_t *sess);
-void handle_push_sipuri(libtrace_thread_t *t, colthread_local_t *loc,
-        char *sipuri);
-void handle_halt_sipuri(libtrace_thread_t *t, colthread_local_t *loc,
-        char *sipuri);
 void handle_push_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
         coreserver_t *cs);
 void handle_remove_coreserver(libtrace_thread_t *t, colthread_local_t *loc,

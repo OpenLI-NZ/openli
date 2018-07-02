@@ -33,9 +33,20 @@
 #include <libtrace/linked_list.h>
 #include <uthash.h>
 
-#include "internetaccess.h"
-
 #define OPENLI_ALUSHIM_NONE (0xffffffff)
+
+typedef enum {
+    INTERNET_ACCESS_TYPE_UNDEFINED = 0,
+    INTERNET_ACCESS_TYPE_DIALUP = 1,
+    INTERNET_ACCESS_TYPE_XDSL = 2,
+    INTERNET_ACCESS_TYPE_CABLEMODEM = 3,
+    INTERNET_ACCESS_TYPE_LAN = 4,
+    INTERNET_ACCESS_TYPE_WIRELESS_LAN = 5,
+    INTERNET_ACCESS_TYPE_FIBER = 6,
+    INTERNET_ACCESS_TYPE_WIMAX = 7,
+    INTERNET_ACCESS_TYPE_SATELLITE= 8,
+    INTERNET_ACCESS_TYPE_WIRELESS_OTHER = 9,
+} internet_access_method_t;
 
 typedef struct intercept_common {
     char *liid;
@@ -54,6 +65,8 @@ typedef struct ipintercept {
     char *username;
     int username_len;
 
+    internet_access_method_t accesstype;
+
     /* Special case for converting ALU intercepts into ETSI ones */
     uint32_t alushimid;
 
@@ -67,6 +80,16 @@ typedef struct userinterceptlist {
     ipintercept_t *intlist;
     UT_hash_handle hh;
 } user_intercept_list_t;
+
+typedef struct sip_identity {
+    char *username;
+    int username_len;
+    char *realm;        // or hostname, I guess
+    int realm_len;
+    int awaitingconfirm;
+    int active;
+} openli_sip_identity_t;
+
 
 typedef struct sdpidentifier {
     uint32_t sessionid;
@@ -105,15 +128,13 @@ typedef struct aluintercept aluintercept_t;
 #define voip_intercept_equal(a,b) \
     ((strcmp(a->common.authcc, b->common.authcc) == 0) && \
      (strcmp(a->common.delivcc, b->common.delivcc) == 0) && \
-     (strcmp(a->sipuri, b->sipuri) == 0) && \
      (strcmp(a->common.targetagency, b->common.targetagency) == 0))
 
 typedef struct voipintercept {
 
     uint64_t internalid;
     intercept_common_t common;
-    char *sipuri;
-    int sipuri_len;
+    libtrace_list_t *targets;
 
     uint8_t awaitingconfirm;
     uint8_t active;
@@ -152,6 +173,7 @@ struct ipsession {
     int ai_family;
     struct sockaddr_storage *targetip;
     uint32_t nextseqno;
+    internet_access_method_t accesstype;
 
     intercept_common_t common;
     UT_hash_handle hh;
@@ -171,6 +193,7 @@ void free_all_voipintercepts(voipintercept_t *vintercepts);
 void free_all_rtpstreams(rtpstreaminf_t *streams);
 void free_all_ipsessions(ipsession_t *sessions);
 void free_all_aluintercepts(aluintercept_t *aluintercepts);
+void free_voip_cinmap(voipcinmap_t *cins);
 void free_single_voip_cin(rtpstreaminf_t *rtp);
 void free_single_ipintercept(ipintercept_t *cept);
 void free_single_voipintercept(voipintercept_t *v);
@@ -180,9 +203,13 @@ void free_single_aluintercept(aluintercept_t *alu);
 rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin);
 rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *rtp);
 
-ipsession_t *create_ipsession(ipintercept_t *ipint, access_session_t *session);
+ipsession_t *create_ipsession(ipintercept_t *ipint, uint32_t cin,
+        int ipfamily, struct sockaddr *assignedip);
 
 aluintercept_t *create_aluintercept(ipintercept_t *ipint);
+
+int are_sip_identities_same(openli_sip_identity_t *a,
+        openli_sip_identity_t *b);
 
 void clear_user_intercept_list(user_intercept_list_t *ulist);
 int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,

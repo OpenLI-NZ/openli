@@ -135,18 +135,22 @@ static inline liid_hash_t *add_liid_mapping(provision_state_t *state,
     prov_agency_t *lea;
 
     h = (liid_hash_t *)malloc(sizeof(liid_hash_t));
-    HASH_FIND_STR(state->leas, agency, lea);
-    if (!lea) {
-        logger(LOG_DAEMON,
-                "OpenLI: intercept %s is destined for an unknown agency: %s -- skipping.",
-                liid, agency);
-        free(h);
-        return NULL;
-    } else {
-        h->agency = agency;
-        h->liid = liid;
-        HASH_ADD_KEYPTR(hh, state->liid_map, h->liid, strlen(h->liid), h);
+
+    /* pcapdisk is a special agency that is not user-defined */
+    if (strcmp(agency, "pcapdisk") != 0) {
+        HASH_FIND_STR(state->leas, agency, lea);
+        if (!lea) {
+            logger(LOG_DAEMON,
+                    "OpenLI: intercept %s is destined for an unknown agency: %s -- skipping.",
+                    liid, agency);
+            free(h);
+            return NULL;
+        }
     }
+
+    h->agency = agency;
+    h->liid = liid;
+    HASH_ADD_KEYPTR(hh, state->liid_map, h->liid, strlen(h->liid), h);
     return h;
 }
 
@@ -199,6 +203,7 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->mediators = libtrace_list_init(sizeof(prov_mediator_t));
     state->collectors = libtrace_list_init(sizeof(prov_collector_t));
     state->radiusservers = NULL;
+    state->sipservers = NULL;
     state->voipintercepts = NULL;
     state->ipintercepts = NULL;
 
@@ -223,6 +228,7 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->pushaddr = NULL;
 
     if (parse_provisioning_config(configfile, state) == -1) {
+        logger(LOG_DAEMON, "OpenLI provisioner: error while parsing provisioner config in %s", configfile);
         return -1;
     }
 
@@ -462,6 +468,7 @@ static void clear_prov_state(provision_state_t *state) {
     stop_all_collectors(state->collectors);
     free_all_mediators(state->mediators);
     free_coreserver_list(state->radiusservers);
+    free_coreserver_list(state->sipservers);
 
     close(state->epoll_fd);
 
@@ -546,6 +553,25 @@ static int push_all_mediators(libtrace_list_t *mediators, net_buffer_t *nb) {
     return 0;
 }
 
+static int push_all_sip_targets(net_buffer_t *nb, libtrace_list_t *targets,
+        voipintercept_t *vint) {
+
+
+    libtrace_list_node_t *n;
+    openli_sip_identity_t *sipid;
+
+    n = targets->head;
+    while (n) {
+        sipid = *((openli_sip_identity_t **)(n->data));
+        n = n->next;
+
+        if (push_sip_target_onto_net_buffer(nb, sipid, vint) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static int push_all_voipintercepts(voipintercept_t *voipintercepts,
         net_buffer_t *nb) {
 
@@ -560,6 +586,12 @@ static int push_all_voipintercepts(voipintercept_t *voipintercepts,
             logger(LOG_DAEMON,
                     "OpenLI provisioner: error pushing VOIP intercept %s onto buffer for writing to collector.",
                     v->common.liid);
+            return -1;
+        }
+
+        if (push_all_sip_targets(nb, v->targets, v) < 0) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: error pushing SIP targets for VOIP intercept %s onto buffer.", v->common.liid);
             return -1;
         }
     }
@@ -592,6 +624,7 @@ static int respond_collector_auth(provision_state_t *state,
 
     if (libtrace_list_get_size(state->mediators) +
             HASH_CNT(hh, state->radiusservers) +
+            HASH_CNT(hh, state->sipservers) +
             HASH_CNT(hh_liid, state->ipintercepts) +
             HASH_CNT(hh_liid, state->voipintercepts) == 0) {
         return 0;
@@ -605,6 +638,13 @@ static int respond_collector_auth(provision_state_t *state,
     }
 
     if (push_coreservers(state->radiusservers, OPENLI_CORE_SERVER_RADIUS,
+            outgoing) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: unable to queue RADIUS server details to be sent to new collector on fd %d", pev->fd);
+        return -1;
+    }
+
+    if (push_coreservers(state->sipservers, OPENLI_CORE_SERVER_SIP,
             outgoing) == -1) {
         logger(LOG_DAEMON,
                 "OpenLI: unable to queue RADIUS server details to be sent to new collector on fd %d", pev->fd);
@@ -1532,6 +1572,10 @@ static int halt_existing_intercept(provision_state_t *state,
 
 }
 
+/* TODO replace all these functions with a single generic version, much
+ * like announce_single_intercept but even more generic.
+ */
+
 static int disconnect_mediators_from_collectors(provision_state_t *state) {
 
     libtrace_list_node_t *n;
@@ -1706,6 +1750,53 @@ static int announce_coreserver_change(provision_state_t *state,
     return 0;
 }
 
+static int announce_sip_target_change(provision_state_t *state,
+        openli_sip_identity_t *sipid, voipintercept_t *vint, uint8_t isnew) {
+
+    libtrace_list_node_t *n;
+    prov_collector_t *col;
+    prov_sock_state_t *sock;
+
+    n = state->collectors->head;
+    while (n) {
+        col = (prov_collector_t *)(n->data);
+        n = n->next;
+
+        sock = (prov_sock_state_t *)(col->commev->state);
+        if (!sock->trusted || sock->halted) {
+            continue;
+        }
+
+        if (isnew) {
+            if (push_sip_target_onto_net_buffer(sock->outgoing, sipid,
+                        vint) == -1) {
+                logger(LOG_DAEMON,
+                        "OpenLI: Unable to push SIP target to collector on fd %d",
+                        sock->mainfd);
+                drop_collector(state, col->commev);
+                continue;
+            }
+        } else {
+            if (push_sip_target_withdrawal_onto_net_buffer(sock->outgoing,
+                        sipid, vint) == -1) {
+                logger(LOG_DAEMON,
+                        "OpenLI: Unable to push removal of SIP target to collector on fd %d",
+                        sock->mainfd);
+                drop_collector(state, col->commev);
+                continue;
+            }
+        }
+
+        if (enable_epoll_write(state, col->commev) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
+                    sock->mainfd, strerror(errno));
+            drop_collector(state, col->commev);
+        }
+    }
+    return 0;
+}
+
 static int announce_single_intercept(provision_state_t *state,
         void *cept, int (*sendfunc)(net_buffer_t *, void *)) {
 
@@ -1737,6 +1828,80 @@ static int announce_single_intercept(provision_state_t *state,
 
     }
 
+
+    return 0;
+}
+
+static int announce_all_sip_targets(provision_state_t *state,
+        libtrace_list_t *siptargets, voipintercept_t *vint) {
+
+    libtrace_list_node_t *n;
+    openli_sip_identity_t *sipid;
+
+    n = siptargets->head;
+    while (n) {
+        sipid = *((openli_sip_identity_t **)(n->data));
+        if (announce_sip_target_change(state, sipid, vint, 1) < 0) {
+            return -1;
+        }
+        n = n->next;
+    }
+    return 0;
+}
+
+static inline int compare_sip_targets(provision_state_t *currstate,
+        voipintercept_t *existing, voipintercept_t *reload) {
+
+    openli_sip_identity_t *oldtgt, *newtgt;
+    libtrace_list_node_t *n1, *n2;
+
+    /* Sluggish (n^2), but hopefully we don't have many IDs per intercept */
+
+    n1 = existing->targets->head;
+    while (n1) {
+        oldtgt = *((openli_sip_identity_t **)(n1->data));
+        n1 = n1->next;
+
+        oldtgt->awaitingconfirm = 1;
+        n2 = reload->targets->head;
+        while (n2) {
+            newtgt = *((openli_sip_identity_t **)(n2->data));
+            n2 = n2->next;
+            if (newtgt->awaitingconfirm == 0) {
+                continue;
+            }
+
+            if (are_sip_identities_same(newtgt, oldtgt)) {
+                oldtgt->awaitingconfirm = 0;
+                newtgt->awaitingconfirm = 0;
+                break;
+            }
+        }
+
+        if (oldtgt->awaitingconfirm) {
+            /* This target is no longer in the intercept config so
+             * withdraw it. */
+            if (announce_sip_target_change(currstate, oldtgt, existing, 0) < 0)
+            {
+                return -1;
+            }
+        }
+    }
+
+    n2 = reload->targets->head;
+    while (n2) {
+        newtgt = *((openli_sip_identity_t **)(n2->data));
+        n2 = n2->next;
+        if (newtgt->awaitingconfirm == 0) {
+            continue;
+        }
+
+        /* This target has been added since we last reloaded config so
+         * announce it. */
+        if (announce_sip_target_change(currstate, newtgt, existing, 1) < 0) {
+            return -1;
+        }
+    }
 
     return 0;
 }
@@ -1778,6 +1943,9 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
                     voipint->common.liid_len, droppedmeds);
 
         } else {
+            if (compare_sip_targets(currstate, voipint, newequiv) < 0) {
+                return -1;
+            }
             newequiv->awaitingconfirm = 0;
         }
     }
@@ -1803,6 +1971,13 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
                 (void *)voipint, push_voipintercept_onto_net_buffer) == -1) {
             logger(LOG_DAEMON,
                     "OpenLI provisioner: unable to announce new VOIP intercept to collectors.");
+            return -1;
+        }
+
+        if (!droppedcols && announce_all_sip_targets(currstate,
+                    voipint->targets, voipint) < 0) {
+            logger(LOG_DAEMON,
+                    "OpenLI provisioner: error pushing SIP targets for VOIP intercept %s onto buffer.", voipint->common.liid);
             return -1;
         }
     }
@@ -1856,35 +2031,53 @@ static inline int reload_radiusservers(provision_state_t *currstate,
     return 0;
 }
 
+static inline int reload_sipservers(provision_state_t *currstate,
+        provision_state_t *newstate, int droppedcols) {
+
+    coreserver_t *newsip;
+
+    reload_coreservers(currstate, currstate->sipservers,
+            newstate->sipservers, droppedcols);
+
+    newsip = newstate->sipservers;
+    newstate->sipservers = currstate->sipservers;
+    currstate->sipservers = newsip;
+    return 0;
+}
+
 /* define here rather than as a macro, since IP intercepts are now
  * a bit more complicated (i.e. some structure fields are optional).
  */
 static inline int ip_intercept_equal(ipintercept_t *a, ipintercept_t *b) {
     if (strcmp(a->common.liid, b->common.liid) != 0) {
-        return 1;
+        return 0;
     }
 
     if (strcmp(a->common.authcc, b->common.authcc) != 0) {
-        return 1;
+        return 0;
     }
 
     if (strcmp(a->common.delivcc, b->common.delivcc) != 0) {
-        return 1;
+        return 0;
     }
 
     if (a->username && b->username && strcmp(a->username, b->username) != 0) {
-        return 1;
+        return 0;
     }
 
     if (a->alushimid != b->alushimid) {
-        return 1;
+        return 0;
     }
 
     if (strcmp(a->common.targetagency, b->common.targetagency) != 0) {
-        return 1;
+        return 0;
     }
 
-    return 0;
+    if (a->accesstype != b->accesstype) {
+        return 0;
+    }
+
+    return 1;
 }
 
 static inline int reload_ipintercepts(provision_state_t *currstate,
@@ -2016,6 +2209,10 @@ static int reload_provisioner_config(provision_state_t *currstate) {
         return -1;
     }
 
+    if (reload_sipservers(currstate, &newstate, clientchanged) == -1) {
+        return -1;
+    }
+
     clear_prov_state(&newstate);
 
     return 0;
@@ -2093,12 +2290,14 @@ static void run(provision_state_t *state) {
 }
 
 static void usage(char *prog) {
-    fprintf(stderr, "Usage: %s -c configfile\n", prog);
+    fprintf(stderr, "Usage: %s [ -d ] -c configfile\n", prog);
+    fprintf(stderr, "\nSet the -d flag to run this program as a daemon.");
 }
 
 int main(int argc, char *argv[]) {
     char *configfile = NULL;
     sigset_t sigblock;
+    int daemonmode = 0;
 
     provision_state_t provstate;
 
@@ -2107,10 +2306,11 @@ int main(int argc, char *argv[]) {
         struct option long_options[] = {
             { "help", 0, 0, 'h' },
             { "config", 1, 0, 'c'},
+            { "daemonise", 0, 0, 'd'},
             { NULL, 0, 0, 0},
         };
 
-        int c = getopt_long(argc, argv, "c:h", long_options, &optind);
+        int c = getopt_long(argc, argv, "c:dh", long_options, &optind);
         if (c == -1) {
             break;
         }
@@ -2118,6 +2318,9 @@ int main(int argc, char *argv[]) {
         switch (c) {
             case 'c':
                 configfile = optarg;
+                break;
+            case 'd':
+                daemonmode = 1;
                 break;
             case 'h':
                 usage(argv[0]);
@@ -2135,6 +2338,10 @@ int main(int argc, char *argv[]) {
                 "OpenLI: no config file specified. Use -c to specify one.");
         usage(argv[0]);
         return 1;
+    }
+
+    if (daemonmode) {
+        daemonise(argv[0]);
     }
 
     sigemptyset(&sigblock);
