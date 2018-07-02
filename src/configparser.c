@@ -792,6 +792,17 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
         }
     }
 
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "pcaprotatefreq") == 0) {
+        state->pcaprotatefreq = strtoul((char *)value->data.scalar.value,
+                NULL, 10);
+        if (state->pcaprotatefreq == 0) {
+            logger(LOG_DAEMON, "OpenLI: 0 is not a valid value for the 'pcaprotatefreq' config option.");
+            return -1;
+        }
+    }
+
     return 0;
 
 }
