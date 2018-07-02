@@ -718,6 +718,12 @@ static int global_parser(void *arg, yaml_document_t *doc,
     }
 
     if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "sipdebugfile") == 0) {
+        glob->sipdebugfile = strdup((char *) value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SEQUENCE_NODE &&
             strcmp((char *)key->data.scalar.value, "alumirrors") == 0) {
         if (parse_core_server_list(&glob->alumirrors,

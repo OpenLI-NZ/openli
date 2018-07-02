@@ -741,6 +741,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->sharedinfo.provisionerport = NULL;
     glob->alumirrors = NULL;
     glob->expired_inputs = libtrace_list_init(sizeof(colinput_t *));
+    glob->sipdebugfile = NULL;
 
     libtrace_message_queue_init(&glob->intersyncq,
             sizeof(openli_intersync_msg_t));

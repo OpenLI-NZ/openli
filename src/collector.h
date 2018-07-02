@@ -223,6 +223,8 @@ typedef struct collector_global {
 
     coreserver_t *alumirrors;
 
+    char *sipdebugfile;
+
 } collector_global_t;
 
 typedef struct packetinfo {
