@@ -900,7 +900,6 @@ static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
     }
 
     /* TODO is multiple address assignment a thing that happens in reality? */
-
     attr = attrlist;
     while (attr) {
         if (attr->att_type == RADIUS_ATTR_FRAMED_IP_ADDRESS) {
@@ -1329,12 +1328,17 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
                 raddata->accttype, newstate, &(raddata->secondaction));
     }
 
-    if (raddata->firstaction == ACCESS_ACTION_ACCEPT ||
-            raddata->firstaction == ACCESS_ACTION_ALREADY_ACTIVE) {
-
+    if (raddata->firstaction == ACCESS_ACTION_ACCEPT) {
         /* Session is now active: make sure we get the IP address */
         extract_assigned_ip_address(raddata, raddata->attrs, thissess);
         TIMESTAMP_TO_TV((&(thissess->started)), raddata->tvsec);
+    }
+
+    if (raddata->firstaction == ACCESS_ACTION_ALREADY_ACTIVE) {
+        /* Session is now active: make sure we get the IP address */
+        extract_assigned_ip_address(raddata, raddata->savedreq->attrs,
+                    thissess);
+        TIMESTAMP_TO_TV((&(thissess->started)), raddata->savedreq->tvsec);
     }
 
     if (raddata->secondaction == ACCESS_ACTION_ACCEPT ||
