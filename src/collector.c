@@ -370,7 +370,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     colthread_local_t *loc = (colthread_local_t *)tls;
     void *l3, *transport;
     uint16_t ethertype;
-    uint32_t rem;
+    uint32_t rem, iprem;
     uint8_t proto;
     int forwarded = 0, i;
     int synced = 0;
@@ -420,6 +420,8 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     pinfo.family = pinfo.srcip.ss_family;
     memset(loc->export_used, 0, sizeof(uint8_t) * loc->exportqueues->numqueues);
 
+    iprem = rem;
+
     /* All these special packets are UDP, so we can avoid a whole bunch
      * of these checks for TCP traffic */
     if ((transport = trace_get_transport(pkt, &proto, &rem)) != NULL &&
@@ -461,14 +463,14 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     if (ethertype == TRACE_ETHERTYPE_IP) {
         /* Is this an IP packet? -- if yes, possible IP CC */
-        if (ipv4_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, rem,
+        if (ipv4_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, iprem,
                     &(glob->sharedinfo), loc)) {
             forwarded = 1;
         }
 
         /* Is this an RTP packet? -- if yes, possible IPMM CC */
         if (proto == TRACE_IPPROTO_UDP) {
-            if (ip4mm_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, rem,
+            if (ip4mm_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, iprem,
                         &(glob->sharedinfo), loc)) {
                 forwarded = 1;
             }
