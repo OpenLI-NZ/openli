@@ -265,7 +265,6 @@ static inline void push_session_halt_to_threads(void *sendqs,
             (sess->ipfamily == AF_INET) ? sizeof(struct sockaddr_in) :
                 sizeof(struct sockaddr_in6),
                 ipstr, sizeof(ipstr), 0, 0, NI_NUMERICHOST);
-    logger(LOG_DAEMON, "OpenLI: telling threads to cease intercepting traffic for IP %s", ipstr);
 
     HASH_ITER(hh, (sync_sendq_t *)sendqs, sendq, tmp) {
         openli_pushed_t pmsg;
@@ -289,7 +288,7 @@ static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
     internet_user_t *user;
     access_session_t *sess, *tmp2;
 
-    logger(LOG_DAEMON, "OpenLI: collector will stop intercepting traffic for user %s", ipint->username);
+    logger(LOG_DAEMON, "OpenLI: collector will stop intercepting traffic for LIID %s", ipint->common.liid);
 
     HASH_FIND(hh, sync->allusers, ipint->username, ipint->username_len,
             user);
@@ -333,6 +332,9 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
     HASH_ITER(hh, sync->coreservers, cs, tmp3) {
         if (cs->awaitingconfirm) {
             push_coreserver_msg(sync, cs, OPENLI_PUSH_REMOVE_CORESERVER);
+            logger(LOG_DAEMON,
+                    "OpenLI: collector has removed %s from its %s core server list.",
+                    cs->serverkey, coreserver_type_to_string(cs->servertype));
             HASH_DELETE(hh, sync->coreservers, cs);
             free_single_coreserver(cs);
         }
@@ -414,6 +416,9 @@ static int forward_new_coreserver(collector_sync_t *sync, uint8_t *provmsg,
         HASH_ADD_KEYPTR(hh, sync->coreservers, cs->serverkey,
                 strlen(cs->serverkey), cs);
         push_coreserver_msg(sync, cs, OPENLI_PUSH_CORESERVER);
+        logger(LOG_DAEMON,
+                "OpenLI: collector has added %s to its %s core server list.",
+                cs->serverkey, coreserver_type_to_string(cs->servertype));
     }
     return 0;
 }
@@ -437,6 +442,9 @@ static int forward_remove_coreserver(collector_sync_t *sync, uint8_t *provmsg,
                 coreserver_type_to_string(cs->servertype), cs->serverkey);
     } else {
         push_coreserver_msg(sync, cs, OPENLI_PUSH_REMOVE_CORESERVER);
+        logger(LOG_DAEMON,
+                "OpenLI: collector has removed %s from its %s core server list.",
+                cs->serverkey, coreserver_type_to_string(cs->servertype));
         HASH_DELETE(hh, sync->coreservers, found);
         free_single_coreserver(found);
     }
@@ -452,9 +460,6 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
                 ipint->common.liid);
         return;
     }
-
-    logger(LOG_DAEMON, "OpenLI: sync thread withdrawing IP intercept %s",
-            ipint->common.liid);
 
     push_ipintercept_halt_to_threads(sync, ipint);
     HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
@@ -593,7 +598,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         }
         add_intercept_to_user_intercept_list(&sync->userintercepts, cept);
         logger(LOG_DAEMON,
-                "OpenLI: received IP intercept from provisioner for user %s (LIID %s, authCC %s)",
+                "OpenLI: received IP intercept from provisioner (LIID %s, authCC %s)",
                 cept->username, cept->common.liid, cept->common.authcc);
     }
 

@@ -503,8 +503,6 @@ static void exporter_new_intercept(collector_export_t *exp,
     intstate->cinsequencing = NULL;
     HASH_ADD_KEYPTR(hh, exp->intercepts, msg->liid, strlen(msg->liid),
             intstate);
-    logger(LOG_DAEMON, "Exporter thread has added new intercept LIID %s",
-            msg->liid);
 }
 
 static int exporter_end_intercept(collector_export_t *exp,
@@ -520,8 +518,6 @@ static int exporter_end_intercept(collector_export_t *exp,
         return -1;
     }
 
-    logger(LOG_DAEMON, "Exporter thread has withdrawn intercept LIID %s",
-            msg->liid);
     HASH_DELETE(hh, exp->intercepts, intstate);
     free_intercept_msg(msg);
     free_intercept_msg(intstate->details);

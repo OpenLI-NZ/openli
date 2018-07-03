@@ -94,6 +94,8 @@ typedef struct sip_identity {
 typedef struct sdpidentifier {
     uint32_t sessionid;
     uint32_t version;
+    char username[32];
+    char address[32];
 } sip_sdp_identifier_t;
 
 typedef struct voipintshared {

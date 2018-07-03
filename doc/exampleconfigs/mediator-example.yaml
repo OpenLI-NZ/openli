@@ -14,3 +14,11 @@ listenport: 8888
 # Write any pcap trace files out to this directory. Only applies to
 # intercepts that are configured to use the pcap output mode.
 pcapdirectory: /traces/openlipcaps/
+
+# Rotate pcap trace files every 30 minutes. This will close any open trace
+# files, flush any remaining output, append the gzip trailers and ensure that
+# the rotated file is ready for processing.
+# Note that the rotation period is aligned to the epoch, so if you start
+# OpenLI at 10:58am, the first rotation will occur at 11:00am, followed by
+# one at 11:30am etc.
+pcaprotatefreq: 30

@@ -61,7 +61,8 @@ static void reload_signal(int signal) {
 }
 
 static void usage(char *prog) {
-        fprintf(stderr, "Usage: %s -c configfile\n", prog);
+        fprintf(stderr, "Usage: %s [ -d ] -c configfile\n", prog);
+        fprintf(stderr, "\nSet the -d flag to run as a daemon.\n");
 }
 
 static void disconnect_handover(mediator_state_t *state, handover_t *ho) {
@@ -149,17 +150,14 @@ static int start_keepalive_timer(mediator_state_t *state,
 
 }
 
-static void halt_keepalive_timer(mediator_state_t *state,
+static void halt_mediator_timer(mediator_state_t *state,
         med_epoll_ev_t *timerev) {
 
     struct epoll_event ev;
-    med_agency_state_t *ms;
 
     if (timerev == NULL) {
         return;
     }
-
-    ms = (med_agency_state_t *)(timerev->state);
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, timerev->fd, &ev) == -1) {
         logger(LOG_DAEMON, "OpenLI: warning -- keep alive timer was not able to be disabled for agency connection: %s.", strerror(errno));
@@ -357,6 +355,13 @@ static void clear_med_state(mediator_state_t *state) {
 		free(state->timerev);
 	}
 
+    if (state->pcaptimerev) {
+        if (state->pcaptimerev->fd != -1) {
+            close(state->pcaptimerev->fd);
+        }
+        free(state->pcaptimerev);
+    }
+
     libtrace_message_queue_destroy(&(state->pcapqueue));
 
 }
@@ -377,6 +382,7 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->provport = NULL;
     state->pcapdirectory = NULL;
     state->pcapthread = -1;
+    state->pcaprotatefreq = 30;
 
     state->collectors = libtrace_list_init(sizeof(mediator_collector_t));
     state->agencies = libtrace_list_init(sizeof(mediator_agency_t));
@@ -417,12 +423,47 @@ static int init_med_state(mediator_state_t *state, char *configfile,
 
     state->listenerev = NULL;
     state->timerev = NULL;
+    state->pcaptimerev = NULL;
     state->provisioner.provev = NULL;
     state->provisioner.incoming = NULL;
     state->provisioner.outgoing = NULL;
 
     return 0;
 }
+
+static int trigger_pcap_flush(mediator_state_t *state, med_epoll_ev_t *mev) {
+
+    mediator_pcap_msg_t pmsg;
+    struct timeval tv;
+    int timerfd;
+
+    memset(&pmsg, 0, sizeof(pmsg));
+    gettimeofday(&tv, NULL);
+
+    if (tv.tv_sec % (60 * state->pcaprotatefreq) < 60) {
+        pmsg.msgtype = PCAP_MESSAGE_ROTATE;
+    } else {
+        pmsg.msgtype = PCAP_MESSAGE_FLUSH;
+    }
+    pmsg.msgbody = NULL;
+    pmsg.msglen = 0;
+
+    libtrace_message_queue_put(&(state->pcapqueue), (void *)(&pmsg));
+
+    halt_mediator_timer(state, mev);
+
+    timerfd = epoll_add_timer(state->epoll_fd, 60, state->pcaptimerev);
+    if (timerfd == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI mediator: failed to create pcap rotation timer");
+        return -1;
+    }
+    state->pcaptimerev->fd = timerfd;
+    state->pcaptimerev->fdtype = MED_EPOLL_PCAP_TIMER;
+    state->pcaptimerev->state = NULL;
+    return 0;
+}
+
 
 static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
 
@@ -490,9 +531,11 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
             ms->outenabled = 1;
         }
 
+    /*
         logger(LOG_DAEMON, "OpenLI: queued keep alive %ld for %s:%s HI%d",
                 ms->lastkaseq, ms->parent->ipstr, ms->parent->portstr,
                 ms->parent->handover_type);
+    */
         if (start_keepalive_timer(state, ms->parent->aliverespev,
                 ms->kawait) == -1) {
             logger(LOG_DAEMON,
@@ -505,7 +548,7 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     }
 
-    halt_keepalive_timer(state, mev);
+    halt_mediator_timer(state, mev);
     if (start_keepalive_timer(state, mev, ms->kafreq) == -1) {
         logger(LOG_DAEMON,
                 "OpenLI: unable to reset keepalive timer for  %s:%s HI%d.",
@@ -573,7 +616,7 @@ static int connect_handover(mediator_state_t *state, handover_t *ho) {
 
     /* Start a keep alive timer */
     if (ho->aliveev && ho->aliveev->fd != -1) {
-        halt_keepalive_timer(state, ho->aliveev);
+        halt_mediator_timer(state, ho->aliveev);
     }
 
     if (start_keepalive_timer(state, ho->aliveev, agstate->kafreq) == -1) {
@@ -940,7 +983,7 @@ static int has_handover_changed(mediator_state_t *state,
                         "OpenLI: disabled keep-alives for LEA %s",
                         existing->agencyid);
             }
-            halt_keepalive_timer(state, ho->aliveev);
+            halt_mediator_timer(state, ho->aliveev);
             if (ho->aliveev) {
                 if (ho->aliveev->fd != -1) {
                     close(ho->aliveev->fd);
@@ -1216,7 +1259,7 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
     }
 
     /* Reset the keep alive timer */
-    halt_keepalive_timer(state, mas->parent->aliveev);
+    halt_mediator_timer(state, mas->parent->aliveev);
     if (start_keepalive_timer(state, mas->parent->aliveev,
                 mas->kafreq) == -1) {
         logger(LOG_DAEMON, "OpenLI: unable to reset keepalive timer for handover %s:%s HI%d.",
@@ -1254,6 +1297,8 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
 
     logger(LOG_DAEMON, "OpenLI mediator: removed agency mapping for LIID %s.",
             liid);
+
+    /* TODO end any pcap trace for this LIID */
 
     HASH_DEL(state->liids, m);
     free(liid);
@@ -1466,10 +1511,12 @@ static int receive_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
                         mas->lastkaseq, recvseq);
                 return -1;
             }
+            /*
             logger(LOG_DAEMON, "OpenLI mediator -- received KA response for %ld from LEA handover %s:%s HI%d",
                     recvseq, mas->parent->ipstr, mas->parent->portstr,
                     mas->parent->handover_type);
-            halt_keepalive_timer(state, mas->parent->aliverespev);
+            */
+            halt_mediator_timer(state, mas->parent->aliverespev);
             libtrace_scb_advance_read(mas->incoming, reclen);
             mas->karesptimer_fd = -1;
         } else {
@@ -1564,6 +1611,10 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 			logger(LOG_DAEMON,
                     "OpenLI Mediator: main epoll timer has failed.");
             return -1;
+        case MED_EPOLL_PCAP_TIMER:
+            assert(ev->events == EPOLLIN);
+            ret = trigger_pcap_flush(state, mev);
+            break;
         case MED_EPOLL_SIGNAL:
             ret = process_signal(state, mev->fd);
             break;
@@ -1886,6 +1937,8 @@ static void run(mediator_state_t *state) {
 	struct epoll_event evs[64];
 	struct epoll_event ev;
     int provfail = 0;
+    struct timeval tv;
+    uint32_t firstflush;
 
 	ev.data.ptr = state->signalev;
 	ev.events = EPOLLIN;
@@ -1898,8 +1951,26 @@ static void run(mediator_state_t *state) {
 		return;
 	}
 
+    logger(LOG_DAEMON,
+            "OpenLI: rotating pcap output files every %d minutes.",
+            state->pcaprotatefreq);
 
+    gettimeofday(&tv, NULL);
 	state->timerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+	state->pcaptimerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+
+    firstflush = (((tv.tv_sec / 60) * 60) + 60) - tv.tv_sec;
+
+    timerfd = epoll_add_timer(state->epoll_fd, firstflush, state->pcaptimerev);
+    if (timerfd == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI mediator: failed to create pcap rotation timer");
+        return;
+    }
+    state->pcaptimerev->fd = timerfd;
+    state->pcaptimerev->fdtype = MED_EPOLL_PCAP_TIMER;
+    state->pcaptimerev->state = NULL;
+
 	while (!mediator_halt) {
         if (reload_config) {
             if (reload_mediator_config(state) == -1) {
@@ -1987,13 +2058,13 @@ static void halt_pcap_outputs(pcap_thread_state_t *pstate) {
     }
 }
 
-static active_pcap_output_t *create_new_pcap_output(pcap_thread_state_t *pstate,
-        char *liid) {
+static int open_pcap_output_file(pcap_thread_state_t *pstate,
+        active_pcap_output_t *act) {
 
-    active_pcap_output_t *act;
-    char uri[2048];
+    char uri[4096];
     int compressmethod = TRACE_OPTION_COMPRESSTYPE_ZLIB;
     int compresslevel = 1;
+    struct timeval tv;
 
     if (pstate->dir == NULL) {
         if (!pstate->dirwarned) {
@@ -2001,14 +2072,19 @@ static active_pcap_output_t *create_new_pcap_output(pcap_thread_state_t *pstate,
                     "OpenLI mediator: pcap directory is not configured so will not write any pcap files.");
             pstate->dirwarned = 1;
         }
-        return NULL;
+        return -1;
     }
 
-    act = (active_pcap_output_t *)malloc(sizeof(active_pcap_output_t));
-    act->liid = strdup(liid);
+    if (act == NULL || act->liid == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI mediator: attempted to open a pcap trace file for an invalid pcap output.");
+        return -1;
+    }
 
-    snprintf(uri, 2048, "pcapfile:%s/openli-%s.pcap.gz", pstate->dir,
-            liid);
+    gettimeofday(&tv, NULL);
+
+    snprintf(uri, 4096, "pcapfile:%s/openli-%s-%u.pcap.gz", pstate->dir,
+            act->liid, tv.tv_sec);
     act->out = trace_create_output(uri);
     if (trace_is_err_output(act->out)) {
         libtrace_err_t err;
@@ -2050,14 +2126,30 @@ static active_pcap_output_t *create_new_pcap_output(pcap_thread_state_t *pstate,
 
     logger(LOG_DAEMON, "OpenLI mediator: opened new trace file %s for LIID %s",
             uri, act->liid);
-    HASH_ADD_KEYPTR(hh, pstate->active, act->liid, strlen(act->liid), act);
-    return act;
+
+    return 0;
 
 pcaptraceerr:
     trace_destroy_output(act->out);
-    free(act->liid);
-    free(act);
-    return NULL;
+    act->out = NULL;
+    return -1;
+}
+
+static active_pcap_output_t *create_new_pcap_output(pcap_thread_state_t *pstate,
+        char *liid) {
+
+    active_pcap_output_t *act;
+
+    act = (active_pcap_output_t *)malloc(sizeof(active_pcap_output_t));
+    act->liid = strdup(liid);
+
+    if (open_pcap_output_file(pstate, act) == -1) {
+        free(act->liid);
+        free(act);
+        return NULL;
+    }
+    HASH_ADD_KEYPTR(hh, pstate->active, act->liid, strlen(act->liid), act);
+    return act;
 }
 
 static void write_pcap_packet(pcap_thread_state_t *pstate,
@@ -2067,6 +2159,10 @@ static void write_pcap_packet(pcap_thread_state_t *pstate,
     char liidspace[1024];
     char ccname[128];
     active_pcap_output_t *pcapout;
+
+    if (pcapmsg->msgbody == NULL) {
+        return;
+    }
 
     if (pstate->decoder == NULL) {
         pstate->decoder = wandder_create_etsili_decoder();
@@ -2127,6 +2223,41 @@ static void write_pcap_packet(pcap_thread_state_t *pstate,
     free(pcapmsg->msgbody);
 }
 
+static void pcap_flush_traces(pcap_thread_state_t *pstate) {
+    active_pcap_output_t *pcapout, *tmp;
+
+    HASH_ITER(hh, pstate->active, pcapout, tmp) {
+        if (trace_flush_output(pcapout->out) < 0) {
+            libtrace_err_t err = trace_get_err_output(pcapout->out);
+            logger(LOG_DAEMON,
+                    "OpenLI mediator: error while flushing pcap trace file: %s",
+                    err.problem);
+            trace_destroy_output(pcapout->out);
+            HASH_DELETE(hh, pstate->active, pcapout);
+            free(pcapout->liid);
+            free(pcapout);
+        }
+    }
+}
+
+static void pcap_rotate_traces(pcap_thread_state_t *pstate) {
+    active_pcap_output_t *pcapout, *tmp, *rotated;
+
+    HASH_ITER(hh, pstate->active, pcapout, tmp) {
+        HASH_DELETE(hh, pstate->active, pcapout);
+        trace_destroy_output(pcapout->out);
+        if (open_pcap_output_file(pstate, pcapout) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI mediator: error while rotating pcap trace file");
+
+            trace_destroy_output(pcapout->out);
+            HASH_DELETE(hh, pstate->active, pcapout);
+            free(pcapout->liid);
+            free(pcapout);
+        }
+    }
+}
+
 static void *start_pcap_thread(void *params) {
 
     pcap_thread_state_t pstate;
@@ -2148,6 +2279,16 @@ static void *start_pcap_thread(void *params) {
 
         if (pcapmsg.msgtype == PCAP_MESSAGE_HALT) {
             break;
+        }
+
+        if (pcapmsg.msgtype == PCAP_MESSAGE_FLUSH) {
+            pcap_flush_traces(&pstate);
+            continue;
+        }
+
+        if (pcapmsg.msgtype == PCAP_MESSAGE_ROTATE) {
+            pcap_rotate_traces(&pstate);
+            continue;
         }
 
         if (pcapmsg.msgtype == PCAP_MESSAGE_CHANGE_DIR) {
@@ -2190,6 +2331,7 @@ int main(int argc, char *argv[]) {
     char *configfile = NULL;
     char *mediatorid = NULL;
     sigset_t sigblock;
+    int todaemon = 0;
 
     mediator_state_t medstate;
     mediator_pcap_msg_t pcapmsg;
@@ -2199,10 +2341,11 @@ int main(int argc, char *argv[]) {
         struct option long_options[] = {
             { "help", 0, 0, 'h' },
             { "config", 1, 0, 'c'},
+            { "daemonise", 0, 0, 'd'},
             { NULL, 0, 0, 0},
         };
 
-        int c = getopt_long(argc, argv, "c:m:h", long_options, &optind);
+        int c = getopt_long(argc, argv, "c:dm:h", long_options, &optind);
         if (c == -1) {
             break;
         }
@@ -2213,6 +2356,9 @@ int main(int argc, char *argv[]) {
                 break;
             case 'm':
                 mediatorid = optarg;
+                break;
+            case 'd':
+                todaemon = 1;
                 break;
             case 'h':
                 usage(argv[0]);
@@ -2230,6 +2376,10 @@ int main(int argc, char *argv[]) {
                 "OpenLI: no config file specified. Use -c to specify one.");
         usage(argv[0]);
         return 1;
+    }
+
+    if (todaemon) {
+        daemonise(argv[0]);
     }
 
     if (mediatorid == NULL) {

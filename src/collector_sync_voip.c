@@ -85,6 +85,11 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
     sync->knowncallids = NULL;
     sync->sipparser = NULL;
 
+    if (glob->sipdebugfile) {
+        sync->sipdebugfile = glob->sipdebugfile;
+        glob->sipdebugfile = NULL;
+    }
+
     return sync;
 }
 
@@ -116,6 +121,18 @@ void clean_sync_voip_data(collector_sync_voip_t *sync) {
                 strerror(errno));
     }
     pthread_mutex_unlock(&(sync->glob->mutex));
+
+    if (sync->sipdebugupdate) {
+        trace_destroy_output(sync->sipdebugupdate);
+    }
+
+    if (sync->sipdebugout) {
+        trace_destroy_output(sync->sipdebugout);
+    }
+
+    if (sync->sipdebugfile) {
+        free(sync->sipdebugfile);
+    }
 
 }
 
@@ -307,7 +324,7 @@ static inline voipsdpmap_t *update_cin_sdp_map(voipintercept_t *vint,
 
     voipsdpmap_t *newsdpmap;
 
-    newsdpmap = (voipsdpmap_t *)malloc(sizeof(voipsdpmap_t));
+    newsdpmap = (voipsdpmap_t *)calloc(1, sizeof(voipsdpmap_t));
     if (!newsdpmap) {
         logger(LOG_DAEMON,
                 "OpenLI: out of memory in collector_sync thread.");
@@ -315,6 +332,11 @@ static inline voipsdpmap_t *update_cin_sdp_map(voipintercept_t *vint,
     }
     newsdpmap->sdpkey.sessionid = sdpo->sessionid;
     newsdpmap->sdpkey.version = sdpo->version;
+    strncpy(newsdpmap->sdpkey.address, sdpo->address,
+            sizeof(newsdpmap->sdpkey.address) - 1);
+    strncpy(newsdpmap->sdpkey.username, sdpo->username,
+            sizeof(newsdpmap->sdpkey.username) - 1);
+
     newsdpmap->shared = vshared;
     if (newsdpmap->shared) {
         newsdpmap->shared->refs ++;
@@ -404,14 +426,12 @@ static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
         return NULL;
     }
 
-    if (sdpo->sessionid != 0 || sdpo->version != 0) {
-        if (update_cin_sdp_map(vint, sdpo, vshared) == NULL) {
-            remove_cin_callid_from_map(&(vint->cin_callid_map), callid);
-            remove_cin_callid_from_map(&(sync->knowncallids), callid);
+    if (update_cin_sdp_map(vint, sdpo, vshared) == NULL) {
+        remove_cin_callid_from_map(&(vint->cin_callid_map), callid);
+        remove_cin_callid_from_map(&(sync->knowncallids), callid);
 
-            free(vshared);
-            return NULL;
-        }
+        free(vshared);
+        return NULL;
     }
     return vshared;
 }
@@ -637,26 +657,16 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         HASH_FIND(hh_callid, vint->cin_callid_map, callid, strlen(callid),
                 findcin);
 
-        /* NOTE: some SIP clients don't set version or sessionid properly,
-         * just leaving them as zeroes. To avoid issues with duplicate
-         * sessionids, we're going to assume any packets with a sessionid
-         * AND version of 0 are one of the lazy clients and just ignore the
-         * session info.
-         */
-        if (sdpo->version != 0 || sdpo->sessionid != 0) {
-            HASH_FIND(hh_sdp, vint->cin_sdp_map, sdpo, sizeof(sdpo),
-                    findsdp);
-        }
+        HASH_FIND(hh_sdp, vint->cin_sdp_map, sdpo, sizeof(sdpo),
+                findsdp);
 
         if (findcin) {
             if (findsdp) {
                 assert(findsdp->shared->cin == findcin->shared->cin); // XXX
-            } else if (sdpo->version != 0 || sdpo->sessionid != 0) {
-                /* New session ID for this call ID */
-                if (update_cin_sdp_map(vint, sdpo, findcin->shared) == NULL) {
-                    // XXX ERROR
+            } else if (update_cin_sdp_map(vint, sdpo, findcin->shared) == NULL)
+            {
+                // XXX ERROR
 
-                }
             }
 
             vshared = findcin->shared;
@@ -743,7 +753,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
 static int update_sip_state(collector_sync_voip_t *sync,
         libtrace_packet_t *pkt) {
 
-    char *callid, *sessid, *sessversion;
+    char *callid, *sessid, *sessversion, *sessaddr, *sessuser;
     openli_sip_identity_t authid, touriid;
     sip_sdp_identifier_t sdpo;
     int iserr = 0;
@@ -753,6 +763,8 @@ static int update_sip_state(collector_sync_voip_t *sync,
     callid = get_sip_callid(sync->sipparser);
     sessid = get_sip_session_id(sync->sipparser);
     sessversion = get_sip_session_version(sync->sipparser);
+    sessaddr = get_sip_session_address(sync->sipparser);
+    sessuser = get_sip_session_username(sync->sipparser);
 
     if (callid == NULL) {
         logger(LOG_DAEMON, "OpenLI: SIP packet has no Call ID?");
@@ -784,6 +796,18 @@ static int update_sip_state(collector_sync_voip_t *sync,
         }
     } else {
         sdpo.version = 0;
+    }
+
+    if (sessaddr != NULL) {
+        strncpy(sdpo.address, sessaddr, sizeof(sdpo.address) - 1);
+    } else {
+        strncpy(sdpo.address, callid, sizeof(sdpo.address) - 1);
+    }
+
+    if (sessuser != NULL) {
+        strncpy(sdpo.username, sessaddr, sizeof(sdpo.username) - 1);
+    } else {
+        strncpy(sdpo.username, "unknown", sizeof(sdpo.username) - 1);
     }
 
     memset(sync->export_used, 0, sizeof(uint8_t) * sync->exportqueues->numqueues);
@@ -1153,6 +1177,47 @@ static void touch_all_voipintercepts(voipintercept_t *vints) {
     }
 }
 
+static libtrace_out_t *open_debug_output(char *basename, char *ext) {
+
+    libtrace_out_t *out = NULL;
+    char fname[1024];
+    int compressmethod = TRACE_OPTION_COMPRESSTYPE_ZLIB;
+    int compresslevel = 1;
+
+    snprintf(fname, 1024, "pcapfile:%s-%s.pcap.gz", basename, ext);
+    out = trace_create_output(fname);
+    if (trace_is_err_output(out)) {
+        trace_perror_output(out, "trace_create_output");
+        goto debugfail;
+    }
+
+    if (trace_config_output(out, TRACE_OPTION_OUTPUT_COMPRESSTYPE,
+            &compressmethod) == -1) {
+        trace_perror_output(out, "config compress type");
+        goto debugfail;
+    }
+
+    if (trace_config_output(out, TRACE_OPTION_OUTPUT_COMPRESS,
+                    &compresslevel) == -1) {
+        trace_perror_output(out, "config compress level");
+        goto debugfail;
+    }
+
+    if (trace_start_output(out) == -1) {
+        trace_perror_output(out, "trace_start_output");
+        goto debugfail;
+    }
+
+    return out;
+
+debugfail:
+    if (out) {
+        trace_destroy_output(out);
+    }
+    return NULL;
+}
+
+
 static inline void process_colthread_message(collector_sync_voip_t *sync,
         sync_epoll_t *syncev) {
 
@@ -1198,10 +1263,30 @@ static inline void process_colthread_message(collector_sync_voip_t *sync,
             if (update_sip_state(sync, recvd.data.pkt) < 0) {
                 logger(LOG_DAEMON,
                         "OpenLI: error while updating SIP state in collector.");
+                if (sync->sipdebugfile) {
+                    if (!sync->sipdebugupdate) {
+                        sync->sipdebugupdate = open_debug_output(
+                                sync->sipdebugfile,
+                                "update");
+                    }
+                    if (sync->sipdebugupdate) {
+                        trace_write_packet(sync->sipdebugupdate,
+                                recvd.data.pkt);
+                    }
+                }
             }
         } else if (ret < 0) {
             logger(LOG_DAEMON,
                     "OpenLI: sync thread received an invalid SIP packet?");
+            if (sync->sipdebugfile) {
+                if (!sync->sipdebugout) {
+                    sync->sipdebugout = open_debug_output(sync->sipdebugfile,
+                            "invalid");
+                }
+                if (sync->sipdebugout) {
+                    trace_write_packet(sync->sipdebugout, recvd.data.pkt);
+                }
+            }
         }
 
         trace_decrement_packet_refcount(recvd.data.pkt);

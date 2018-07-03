@@ -228,6 +228,7 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->pushaddr = NULL;
 
     if (parse_provisioning_config(configfile, state) == -1) {
+        logger(LOG_DAEMON, "OpenLI provisioner: error while parsing provisioner config in %s", configfile);
         return -1;
     }
 
@@ -2289,12 +2290,14 @@ static void run(provision_state_t *state) {
 }
 
 static void usage(char *prog) {
-    fprintf(stderr, "Usage: %s -c configfile\n", prog);
+    fprintf(stderr, "Usage: %s [ -d ] -c configfile\n", prog);
+    fprintf(stderr, "\nSet the -d flag to run this program as a daemon.");
 }
 
 int main(int argc, char *argv[]) {
     char *configfile = NULL;
     sigset_t sigblock;
+    int daemonmode = 0;
 
     provision_state_t provstate;
 
@@ -2303,10 +2306,11 @@ int main(int argc, char *argv[]) {
         struct option long_options[] = {
             { "help", 0, 0, 'h' },
             { "config", 1, 0, 'c'},
+            { "daemonise", 0, 0, 'd'},
             { NULL, 0, 0, 0},
         };
 
-        int c = getopt_long(argc, argv, "c:h", long_options, &optind);
+        int c = getopt_long(argc, argv, "c:dh", long_options, &optind);
         if (c == -1) {
             break;
         }
@@ -2314,6 +2318,9 @@ int main(int argc, char *argv[]) {
         switch (c) {
             case 'c':
                 configfile = optarg;
+                break;
+            case 'd':
+                daemonmode = 1;
                 break;
             case 'h':
                 usage(argv[0]);
@@ -2331,6 +2338,10 @@ int main(int argc, char *argv[]) {
                 "OpenLI: no config file specified. Use -c to specify one.");
         usage(argv[0]);
         return 1;
+    }
+
+    if (daemonmode) {
+        daemonise(argv[0]);
     }
 
     sigemptyset(&sigblock);

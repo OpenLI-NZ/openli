@@ -50,6 +50,10 @@ typedef struct collector_sync_voip_data {
 
     openli_sip_parser_t *sipparser;
 
+    char *sipdebugfile;
+    libtrace_out_t *sipdebugout;
+    libtrace_out_t *sipdebugupdate;
+
 } collector_sync_voip_t;
 
 collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob);
