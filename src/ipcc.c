@@ -156,6 +156,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
             make_ipcc_job(&msg, sess, pkt, 0, info);
+            trace_increment_packet_refcount(pkt);
             queueused = export_queue_put_by_liid(loc->exportqueues,
                     &msg, sess->common.liid);
             loc->export_used[queueused] = 1;
@@ -170,7 +171,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            make_ipcc_job(&msg, sess, pkt, 0, info);
+            make_ipcc_job(&msg, sess, pkt, 1, info);
             trace_increment_packet_refcount(pkt);
             queueused = export_queue_put_by_liid(loc->exportqueues,
                     &msg, sess->common.liid);
