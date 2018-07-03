@@ -406,6 +406,30 @@ char *get_sip_session_id(openli_sip_parser_t *parser) {
     return sessid;
 }
 
+char *get_sip_session_address(openli_sip_parser_t *parser) {
+    char *sessaddr;
+
+    if (!parser->sdp) {
+        if (parse_sdp_body(parser) == -1) {
+            return NULL;
+        }
+    }
+    sessaddr = sdp_message_o_addr_get(parser->sdp);
+    return sessaddr;
+}
+
+char *get_sip_session_username(openli_sip_parser_t *parser) {
+    char *sessuname;
+
+    if (!parser->sdp) {
+        if (parse_sdp_body(parser) == -1) {
+            return NULL;
+        }
+    }
+    sessuname = sdp_message_o_username_get(parser->sdp);
+    return sessuname;
+}
+
 char *get_sip_session_version(openli_sip_parser_t *parser) {
 
     char *sessv;

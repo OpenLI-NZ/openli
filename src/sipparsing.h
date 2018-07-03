@@ -84,6 +84,8 @@ int get_sip_proxy_auth_identity(openli_sip_parser_t *parser, int index,
 char *get_sip_cseq(openli_sip_parser_t *parser);
 char *get_sip_callid(openli_sip_parser_t *parser);
 char *get_sip_session_id(openli_sip_parser_t *parser);
+char *get_sip_session_address(openli_sip_parser_t *parser);
+char *get_sip_session_username(openli_sip_parser_t *parser);
 char *get_sip_session_version(openli_sip_parser_t *parser);
 char *get_sip_media_ipaddr(openli_sip_parser_t *parser);
 char *get_sip_media_port(openli_sip_parser_t *parser);
