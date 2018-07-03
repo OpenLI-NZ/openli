@@ -324,7 +324,7 @@ static inline voipsdpmap_t *update_cin_sdp_map(voipintercept_t *vint,
 
     voipsdpmap_t *newsdpmap;
 
-    newsdpmap = (voipsdpmap_t *)malloc(sizeof(voipsdpmap_t));
+    newsdpmap = (voipsdpmap_t *)calloc(1, sizeof(voipsdpmap_t));
     if (!newsdpmap) {
         logger(LOG_DAEMON,
                 "OpenLI: out of memory in collector_sync thread.");
@@ -332,6 +332,11 @@ static inline voipsdpmap_t *update_cin_sdp_map(voipintercept_t *vint,
     }
     newsdpmap->sdpkey.sessionid = sdpo->sessionid;
     newsdpmap->sdpkey.version = sdpo->version;
+    strncpy(newsdpmap->sdpkey.address, sdpo->address,
+            sizeof(newsdpmap->sdpkey.address) - 1);
+    strncpy(newsdpmap->sdpkey.username, sdpo->username,
+            sizeof(newsdpmap->sdpkey.username) - 1);
+
     newsdpmap->shared = vshared;
     if (newsdpmap->shared) {
         newsdpmap->shared->refs ++;
@@ -421,14 +426,12 @@ static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
         return NULL;
     }
 
-    if (sdpo->sessionid != 0 || sdpo->version != 0) {
-        if (update_cin_sdp_map(vint, sdpo, vshared) == NULL) {
-            remove_cin_callid_from_map(&(vint->cin_callid_map), callid);
-            remove_cin_callid_from_map(&(sync->knowncallids), callid);
+    if (update_cin_sdp_map(vint, sdpo, vshared) == NULL) {
+        remove_cin_callid_from_map(&(vint->cin_callid_map), callid);
+        remove_cin_callid_from_map(&(sync->knowncallids), callid);
 
-            free(vshared);
-            return NULL;
-        }
+        free(vshared);
+        return NULL;
     }
     return vshared;
 }
@@ -654,26 +657,16 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         HASH_FIND(hh_callid, vint->cin_callid_map, callid, strlen(callid),
                 findcin);
 
-        /* NOTE: some SIP clients don't set version or sessionid properly,
-         * just leaving them as zeroes. To avoid issues with duplicate
-         * sessionids, we're going to assume any packets with a sessionid
-         * AND version of 0 are one of the lazy clients and just ignore the
-         * session info.
-         */
-        if (sdpo->version != 0 || sdpo->sessionid != 0) {
-            HASH_FIND(hh_sdp, vint->cin_sdp_map, sdpo, sizeof(sdpo),
-                    findsdp);
-        }
+        HASH_FIND(hh_sdp, vint->cin_sdp_map, sdpo, sizeof(sdpo),
+                findsdp);
 
         if (findcin) {
             if (findsdp) {
                 assert(findsdp->shared->cin == findcin->shared->cin); // XXX
-            } else if (sdpo->version != 0 || sdpo->sessionid != 0) {
-                /* New session ID for this call ID */
-                if (update_cin_sdp_map(vint, sdpo, findcin->shared) == NULL) {
-                    // XXX ERROR
+            } else if (update_cin_sdp_map(vint, sdpo, findcin->shared) == NULL)
+            {
+                // XXX ERROR
 
-                }
             }
 
             vshared = findcin->shared;
@@ -760,7 +753,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
 static int update_sip_state(collector_sync_voip_t *sync,
         libtrace_packet_t *pkt) {
 
-    char *callid, *sessid, *sessversion;
+    char *callid, *sessid, *sessversion, *sessaddr, *sessuser;
     openli_sip_identity_t authid, touriid;
     sip_sdp_identifier_t sdpo;
     int iserr = 0;
@@ -770,6 +763,8 @@ static int update_sip_state(collector_sync_voip_t *sync,
     callid = get_sip_callid(sync->sipparser);
     sessid = get_sip_session_id(sync->sipparser);
     sessversion = get_sip_session_version(sync->sipparser);
+    sessaddr = get_sip_session_address(sync->sipparser);
+    sessuser = get_sip_session_username(sync->sipparser);
 
     if (callid == NULL) {
         logger(LOG_DAEMON, "OpenLI: SIP packet has no Call ID?");
@@ -801,6 +796,18 @@ static int update_sip_state(collector_sync_voip_t *sync,
         }
     } else {
         sdpo.version = 0;
+    }
+
+    if (sessaddr != NULL) {
+        strncpy(sdpo.address, sessaddr, sizeof(sdpo.address) - 1);
+    } else {
+        strncpy(sdpo.address, callid, sizeof(sdpo.address) - 1);
+    }
+
+    if (sessuser != NULL) {
+        strncpy(sdpo.username, sessaddr, sizeof(sdpo.username) - 1);
+    } else {
+        strncpy(sdpo.username, "unknown", sizeof(sdpo.username) - 1);
     }
 
     memset(sync->export_used, 0, sizeof(uint8_t) * sync->exportqueues->numqueues);
