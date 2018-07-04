@@ -23,6 +23,7 @@ typedef void (*void_fn_t)();
 #define BIT_TEST(f, b)  ((f) & (b))
 /* } */
 
+#define HAVE_IPV6
 #define addroute make_and_lookup
 
 #include <sys/types.h> /* for u_* definitions (on FreeBSD 5) */
@@ -36,6 +37,7 @@ typedef void (*void_fn_t)();
 #endif
 
 #include <sys/socket.h> /* for AF_INET */
+
 
 /* { from mrt.h */
 
