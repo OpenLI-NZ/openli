@@ -30,7 +30,8 @@ AC_CHECK_LIB([yaml], [yaml_document_get_node],,libyaml_found=0)
 
 AC_CHECK_HEADERS([syslog.h])
 
-AC_CONFIG_FILES([Makefile src/Makefile])
+AC_CONFIG_FILES([Makefile src/Makefile extlib/Makefile
+                extlib/libpatricia/Makefile])
 
 if test "x$enable_collector" != "xno"; then
         AC_CHECK_LIB([osipparser2], [osip_message_init],,libosip2_found=0)
