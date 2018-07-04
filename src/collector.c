@@ -143,7 +143,8 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->activealuintercepts = NULL;
     loc->radiusservers = NULL;
     loc->sipservers = NULL;
-    loc->staticranges = New_Patricia(128);
+    loc->staticv4ranges = New_Patricia(32);
+    loc->staticv6ranges = New_Patricia(128);
 
     loc->exportqueues = create_export_queue_set(glob->exportthreads);
     loc->export_used = (uint8_t *)malloc(sizeof(uint8_t) * glob->exportthreads);
@@ -215,7 +216,8 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     free_coreserver_list(loc->radiusservers);
     free_coreserver_list(loc->sipservers);
 
-    Destroy_Patricia(loc->staticranges, free_staticrange_data);
+    Destroy_Patricia(loc->staticv4ranges, free_staticrange_data);
+    Destroy_Patricia(loc->staticv6ranges, free_staticrange_data);
 
     free(loc);
 }

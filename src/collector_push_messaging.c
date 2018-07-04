@@ -368,8 +368,24 @@ void handle_iprange(libtrace_thread_t *t, colthread_local_t *loc,
 
     patricia_node_t *node = NULL;
     liid_set_t **all, *found;
+    prefix_t *prefix;
 
-    node = make_and_lookup(loc->staticranges, ipr->rangestr);
+    prefix = ascii2prefix(0, ipr->rangestr);
+    if (prefix == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI: error converting %s into a valid IP prefix in thread %d",
+                ipr->rangestr, trace_get_perpkt_thread_id(t));
+        free(ipr->liid);
+        free(ipr->rangestr);
+        return;
+    }
+
+    if (prefix->family == AF_INET) {
+        node = patricia_lookup(loc->staticv4ranges, prefix);
+    } else if (prefix->family == AF_INET6) {
+        node = patricia_lookup(loc->staticv6ranges, prefix);
+    }
+
     if (!node) {
         logger(LOG_DAEMON,
                 "OpenLI: error while adding static IP prefix %s to LIID %s for thread %d",
@@ -412,7 +428,12 @@ void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
         goto bailremoverange;
     }
 
-    node = patricia_search_exact(loc->staticranges, prefix);
+    if (prefix->family == AF_INET) {
+        node = patricia_search_exact(loc->staticv4ranges, prefix);
+    } else if (prefix->family == AF_INET6) {
+        node = patricia_search_exact(loc->staticv6ranges, prefix);
+    }
+
     if (!node) {
         logger(LOG_DAEMON,
                 "OpenLI: thread %d was supposed to remove IP prefix %s for LIID %s but no such prefix exists in the tree.",
@@ -435,7 +456,11 @@ void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
             ipr->liid, ipr->rangestr, HASH_CNT(hh, *all));
     if (*all == NULL) {
         printf("removing from tree\n");
-        patricia_remove(loc->staticranges, node);
+        if (prefix->family == AF_INET) {
+            patricia_remove(loc->staticv4ranges, node);
+        } else {
+            patricia_remove(loc->staticv6ranges, node);
+        }
     }
     free(found->liid);
     free(found);

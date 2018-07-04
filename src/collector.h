@@ -186,7 +186,8 @@ typedef struct colthread_local {
      */
     coreserver_t *sipservers;
 
-    patricia_tree_t *staticranges;
+    patricia_tree_t *staticv4ranges;
+    patricia_tree_t *staticv6ranges;
 
 } colthread_local_t;
 
