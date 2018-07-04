@@ -143,6 +143,8 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->activealuintercepts = NULL;
     loc->radiusservers = NULL;
     loc->sipservers = NULL;
+    loc->staticranges = New_Patricia(128);
+
     loc->exportqueues = create_export_queue_set(glob->exportthreads);
     loc->export_used = (uint8_t *)malloc(sizeof(uint8_t) * glob->exportthreads);
 
@@ -153,6 +155,17 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     register_export_queues(glob->exporters, loc->exportqueues);
 
     return loc;
+}
+
+static void free_staticrange_data(void *data) {
+    liid_set_t *all, *iter, *tmp;
+
+    all = (liid_set_t *)data;
+    HASH_ITER(hh, all, iter, tmp) {
+        HASH_DELETE(hh, all, iter);
+        free(iter->liid);
+        free(iter);
+    }
 }
 
 static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
@@ -201,6 +214,8 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     free_all_aluintercepts(loc->activealuintercepts);
     free_coreserver_list(loc->radiusservers);
     free_coreserver_list(loc->sipservers);
+
+    Destroy_Patricia(loc->staticranges, free_staticrange_data);
 
     free(loc);
 }
@@ -311,6 +326,14 @@ static void process_incoming_messages(libtrace_thread_t *t,
 
     if (syncpush->type == OPENLI_PUSH_HALT_ALUINTERCEPT) {
         handle_halt_aluintercept(t, loc, syncpush->data.aluint);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_IPRANGE) {
+        handle_iprange(t, loc, &(syncpush->data.iprange));
+    }
+
+    if (syncpush->type == OPENLI_PUSH_REMOVE_IPRANGE) {
+        handle_remove_iprange(t, loc, &(syncpush->data.iprange));
     }
 
 }

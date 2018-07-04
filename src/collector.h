@@ -35,6 +35,7 @@
 #include <uthash.h>
 #include <libwandder.h>
 
+#include "patricia.h"
 #include "coreserver.h"
 #include "intercept.h"
 #include "etsili_core.h"
@@ -48,6 +49,8 @@ enum {
     OPENLI_PUSH_REMOVE_CORESERVER = 8,
     OPENLI_PUSH_ALUINTERCEPT = 9,
     OPENLI_PUSH_HALT_ALUINTERCEPT = 10,
+    OPENLI_PUSH_IPRANGE = 11,
+    OPENLI_PUSH_REMOVE_IPRANGE = 12,
 };
 
 enum {
@@ -82,6 +85,7 @@ typedef struct openli_ii_msg {
         aluintercept_t *aluint;
         char *rtpstreamkey;
         coreserver_t *coreserver;
+        static_ipranges_t iprange;
     } data;
 
 } PACKED openli_pushed_t;
@@ -140,6 +144,11 @@ typedef struct sync_sendq {
 } sync_sendq_t;
 
 
+typedef struct liid_set {
+    char *liid;
+    UT_hash_handle hh;
+} liid_set_t;
+
 typedef struct colthread_local {
 
     /* Message queue for pushing updates to sync IP thread */
@@ -177,7 +186,7 @@ typedef struct colthread_local {
      */
     coreserver_t *sipservers;
 
-    char *inputidentifier;
+    patricia_tree_t *staticranges;
 
 } colthread_local_t;
 

@@ -48,6 +48,13 @@ typedef enum {
     INTERNET_ACCESS_TYPE_WIRELESS_OTHER = 9,
 } internet_access_method_t;
 
+typedef struct static_ipranges {
+    char *rangestr;
+    char *liid;
+    uint8_t awaitingconfirm;
+    UT_hash_handle hh;
+} static_ipranges_t;
+
 typedef struct intercept_common {
     char *liid;
     char *authcc;
@@ -67,8 +74,11 @@ typedef struct ipintercept {
 
     internet_access_method_t accesstype;
 
+
     /* Special case for converting ALU intercepts into ETSI ones */
     uint32_t alushimid;
+
+    static_ipranges_t *statics;
 
     uint8_t awaitingconfirm;
     UT_hash_handle hh_liid;

@@ -1536,6 +1536,72 @@ static inline int reload_leas(provision_state_t *currstate,
     return 0;
 }
 
+static void add_new_staticip_range(provision_state_t *state,
+        ipintercept_t *ipint, static_ipranges_t *ipr) {
+
+    libtrace_list_node_t *n;
+    prov_collector_t *col;
+    prov_sock_state_t *sock;
+
+    n = state->collectors->head;
+    while (n) {
+        col = (prov_collector_t *)(n->data);
+        n = n->next;
+
+        sock = (prov_sock_state_t *)(col->commev->state);
+        if (!sock->trusted || sock->halted) {
+            continue;
+        }
+
+        if (push_static_ipranges_onto_net_buffer(sock->outgoing,
+                ipint, ipr) < 0) {
+            drop_collector(state, col->commev);
+            continue;
+        }
+
+        if (enable_epoll_write(state, col->commev) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
+                    sock->mainfd, strerror(errno));
+            drop_collector(state, col->commev);
+        }
+
+    }
+}
+
+static void remove_existing_staticip_range(provision_state_t *state,
+        ipintercept_t *ipint, static_ipranges_t *ipr) {
+
+    libtrace_list_node_t *n;
+    prov_collector_t *col;
+    prov_sock_state_t *sock;
+
+    n = state->collectors->head;
+    while (n) {
+        col = (prov_collector_t *)(n->data);
+        n = n->next;
+
+        sock = (prov_sock_state_t *)(col->commev->state);
+        if (!sock->trusted || sock->halted) {
+            continue;
+        }
+
+        if (push_static_ipranges_removal_onto_net_buffer(sock->outgoing,
+                ipint, ipr) < 0) {
+            drop_collector(state, col->commev);
+            continue;
+        }
+
+        if (enable_epoll_write(state, col->commev) == -1) {
+            logger(LOG_DAEMON,
+                    "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
+                    sock->mainfd, strerror(errno));
+            drop_collector(state, col->commev);
+        }
+
+    }
+}
+
 static int halt_existing_intercept(provision_state_t *state,
         void *cept, openli_proto_msgtype_t wdtype) {
 
@@ -2080,6 +2146,31 @@ static inline int ip_intercept_equal(ipintercept_t *a, ipintercept_t *b) {
     return 1;
 }
 
+static inline int reload_staticips(provision_state_t *currstate,
+        ipintercept_t *ipint, ipintercept_t *newequiv) {
+
+    static_ipranges_t *ipr, *tmp, *found;
+
+    HASH_ITER(hh, ipint->statics, ipr, tmp) {
+        HASH_FIND(hh, newequiv->statics, ipr->rangestr, strlen(ipr->rangestr),
+                found);
+        if (!found) {
+            remove_existing_staticip_range(currstate, ipint, ipr);
+        } else {
+            found->awaitingconfirm = 0;
+        }
+    }
+
+    HASH_ITER(hh, newequiv->statics, ipr, tmp) {
+        if (ipr->awaitingconfirm == 0) {
+            continue;
+        }
+        add_new_staticip_range(currstate, ipint, ipr);
+    }
+
+    return 0;
+}
+
 static inline int reload_ipintercepts(provision_state_t *currstate,
         provision_state_t *newstate, int droppedcols, int droppedmeds) {
 
@@ -2117,6 +2208,7 @@ static inline int reload_ipintercepts(provision_state_t *currstate,
             remove_liid_mapping(currstate, ipint->common.liid,
                     ipint->common.liid_len, droppedmeds);
         } else {
+            reload_staticips(currstate, ipint, newequiv);
             newequiv->awaitingconfirm = 0;
         }
     }

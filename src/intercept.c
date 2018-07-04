@@ -165,9 +165,22 @@ static inline void free_intercept_common(intercept_common_t *cept) {
 }
 
 void free_single_ipintercept(ipintercept_t *cept) {
+    static_ipranges_t *ipr, *tmp;
+
     free_intercept_common(&(cept->common));
     if (cept->username) {
         free(cept->username);
+    }
+
+    HASH_ITER(hh, cept->statics, ipr, tmp) {
+        HASH_DELETE(hh, cept->statics, ipr);
+        if (ipr->rangestr) {
+            free(ipr->rangestr);
+        }
+        if (ipr->liid) {
+            free(ipr->liid);
+        }
+        free(ipr);
     }
 
     free(cept);

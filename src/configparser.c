@@ -261,6 +261,44 @@ static int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
     return 0;
 }
 
+static int add_intercept_static_ips(static_ipranges_t **statics,
+        yaml_document_t *doc, yaml_node_t *ipseq) {
+
+    yaml_node_item_t *item;
+    static_ipranges_t *newr, *existing;
+
+    for (item = ipseq->data.sequence.items.start;
+            item != ipseq->data.sequence.items.top; item ++) {
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+
+        newr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
+        newr->rangestr = NULL;
+        newr->liid = NULL;
+        newr->awaitingconfirm = 1;
+
+        if (node->type == YAML_SCALAR_NODE) {
+            newr->rangestr = strdup((char *)node->data.scalar.value);
+        }
+
+        if (newr->rangestr) {
+            HASH_FIND(hh, *statics, newr->rangestr, strlen(newr->rangestr),
+                    existing);
+            if (!existing) {
+                HASH_ADD_KEYPTR(hh, *statics, newr->rangestr,
+                        strlen(newr->rangestr), newr);
+            } else {
+                free(newr->rangestr);
+                newr->rangestr = NULL;
+            }
+        }
+
+        if (!newr->rangestr) {
+            free(newr);
+        }
+    }
+    return 0;
+}
+
 static int parse_agency_list(provision_state_t *state, yaml_document_t *doc,
         yaml_node_t *inputs) {
 
@@ -501,6 +539,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->common.delivcc_len = 0;
         newcept->alushimid = OPENLI_ALUSHIM_NONE;
         newcept->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED; 
+        newcept->statics = NULL;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -525,6 +564,13 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                     newcept->common.authcc == NULL) {
                 newcept->common.authcc = strdup((char *)value->data.scalar.value);
                 newcept->common.authcc_len = strlen(newcept->common.authcc);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SEQUENCE_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                            "staticips") == 0) {
+                add_intercept_static_ips(&(newcept->statics), doc, value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -584,11 +630,16 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
                 newcept->common.delivcc != NULL &&
                 (newcept->username != NULL ||
-                 newcept->alushimid != OPENLI_ALUSHIM_NONE) &&
+                 newcept->alushimid != OPENLI_ALUSHIM_NONE ||
+                 newcept->statics != NULL) &&
                 newcept->common.destid > 0 &&
                 newcept->common.targetagency != NULL) {
-            HASH_ADD_KEYPTR(hh_liid, *ipints, newcept->common.liid, newcept->common.liid_len,
-                    newcept);
+            HASH_ADD_KEYPTR(hh_liid, *ipints, newcept->common.liid,
+                    newcept->common.liid_len, newcept);
+
+            if (newcept->username && newcept->statics) {
+                logger(LOG_DAEMON, "OpenLI: IP intercept %s specifies both a username and a set of static IPs -- is this intentional?");
+            }
         } else {
             logger(LOG_DAEMON, "OpenLI: IP Intercept configuration was incomplete -- skipping.");
         }
