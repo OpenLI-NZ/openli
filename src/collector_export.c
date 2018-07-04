@@ -191,6 +191,7 @@ static inline void remove_all_destinations(collector_export_t *exp) {
 void destroy_exporter(collector_export_t *exp) {
     libtrace_list_t *evlist;
     libtrace_list_node_t *n;
+    exporter_intercept_state_t *intstate, *tmpexp;
 
     remove_all_destinations(exp);
 
@@ -210,6 +211,13 @@ void destroy_exporter(collector_export_t *exp) {
 
     if (exp->encoder) {
         free_wandder_encoder(exp->encoder);
+    }
+
+    HASH_ITER(hh, exp->intercepts, intstate, tmpexp) {
+        HASH_DELETE(hh, exp->intercepts, intstate);
+        free_intercept_msg(intstate->details);
+        free_cinsequencing(intstate);
+        free(intstate);
     }
 
     /* Don't free evlist, this will be done when the main thread
@@ -488,8 +496,6 @@ static void exporter_new_intercept(collector_export_t *exp,
     HASH_FIND(hh, exp->intercepts, msg->liid, strlen(msg->liid), intstate);
 
     if (intstate) {
-        logger(LOG_DAEMON, "Exporter thread has observed duplicate LIID %s",
-                msg->liid);
         free_intercept_msg(intstate->details);
         /* leave the CIN seqno state as is for now */
         intstate->details = msg;
