@@ -270,14 +270,33 @@ static int add_intercept_static_ips(static_ipranges_t **statics,
     for (item = ipseq->data.sequence.items.start;
             item != ipseq->data.sequence.items.top; item ++) {
         yaml_node_t *node = yaml_document_get_node(doc, *item);
+        yaml_node_pair_t *pair;
 
         newr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
         newr->rangestr = NULL;
         newr->liid = NULL;
         newr->awaitingconfirm = 1;
+        newr->cin = 1;
 
-        if (node->type == YAML_SCALAR_NODE) {
-            newr->rangestr = strdup((char *)node->data.scalar.value);
+        for (pair = node->data.mapping.pairs.start;
+                pair < node->data.mapping.pairs.top; pair ++) {
+            yaml_node_t *key, *value;
+
+            key = yaml_document_get_node(doc, pair->key);
+            value = yaml_document_get_node(doc, pair->value);
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "iprange") == 0 &&
+                    newr->rangestr == NULL) {
+                newr->rangestr = strdup((char *)value->data.scalar.value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "sessionid") == 0) {
+                newr->cin = strtoul((char *)value->data.scalar.value, NULL, 10);
+            }
         }
 
         if (newr->rangestr) {

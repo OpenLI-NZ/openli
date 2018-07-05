@@ -124,6 +124,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_SIP_USER,
     OPENLI_PROTO_FIELD_SIP_REALM,
     OPENLI_PROTO_FIELD_STATICIP_RANGE,
+    OPENLI_PROTO_FIELD_CIN,
 } openli_proto_fieldtype_t;
 
 

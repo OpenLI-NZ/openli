@@ -114,6 +114,13 @@ typedef struct ipv6_target {
     UT_hash_handle hh;
 } ipv6_target_t;
 
+typedef struct iprange_target {
+    intercept_common_t common;  /* LIID is used as the key */
+    uint32_t cin;
+    uint32_t nextseqno;
+    UT_hash_handle hh;
+} iprange_target_t;
+
 enum {
     SYNC_EVENT_PROC_QUEUE,
     SYNC_EVENT_PROVISIONER,
@@ -146,6 +153,7 @@ typedef struct sync_sendq {
 
 typedef struct liid_set {
     char *liid;
+    uint32_t cin;
     UT_hash_handle hh;
 } liid_set_t;
 
@@ -171,6 +179,8 @@ typedef struct colthread_local {
 
     rtpstreaminf_t *activertpintercepts;
     aluintercept_t *activealuintercepts;
+
+    iprange_target_t *activestaticintercepts;
 
     /* Message queues for exporting LI records */
     export_queue_set_t *exportqueues;

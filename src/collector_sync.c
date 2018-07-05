@@ -169,6 +169,7 @@ static inline void push_static_iprange_to_collectors(
     msg.type = OPENLI_PUSH_IPRANGE;
     msg.data.iprange.rangestr = strdup(ipr->rangestr);
     msg.data.iprange.liid = strdup(ipr->liid);
+    msg.data.iprange.cin = ipr->cin;
 
     libtrace_message_queue_put(q, (void *)(&msg));
 
@@ -189,6 +190,7 @@ static inline void push_static_iprange_remove_to_collectors(
     msg.type = OPENLI_PUSH_REMOVE_IPRANGE;
     msg.data.iprange.rangestr = strdup(ipr->rangestr);
     msg.data.iprange.liid = strdup(ipr->liid);
+    msg.data.iprange.cin = ipr->cin;
 
     libtrace_message_queue_put(q, (void *)(&msg));
 

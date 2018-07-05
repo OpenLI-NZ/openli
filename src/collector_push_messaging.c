@@ -404,11 +404,12 @@ void handle_iprange(libtrace_thread_t *t, colthread_local_t *loc,
 
     found = (liid_set_t *)malloc(sizeof(liid_set_t));
     found->liid = ipr->liid;
+    found->cin = ipr->cin;
 
     HASH_ADD_KEYPTR(hh, *all, found->liid, strlen(found->liid), found);
     logger(LOG_DAEMON,
-            "OpenLI: added LIID %s to prefix %s (%d refs total)",
-            ipr->liid, ipr->rangestr, HASH_CNT(hh, *all));
+            "OpenLI: added LIID %s:%u to prefix %s (%d refs total)",
+            ipr->liid, ipr->cin, ipr->rangestr, HASH_CNT(hh, *all));
     free(ipr->rangestr);
 
 }

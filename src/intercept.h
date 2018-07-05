@@ -51,6 +51,7 @@ typedef enum {
 typedef struct static_ipranges {
     char *rangestr;
     char *liid;
+    uint32_t cin;
     uint8_t awaitingconfirm;
     UT_hash_handle hh;
 } static_ipranges_t;

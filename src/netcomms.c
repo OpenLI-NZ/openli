@@ -554,7 +554,8 @@ int push_sip_target_withdrawal_onto_net_buffer(net_buffer_t *nb,
 }
 
 #define STATICIP_RANGE_BODY_LEN(ipint, ipr) \
-        (strlen(ipr->rangestr) + ipint->common.liid_len + (2 * 4))
+        (strlen(ipr->rangestr) + sizeof(ipr->cin) + \
+        ipint->common.liid_len + (3 * 4))
 
 static int push_static_ipranges_generic(net_buffer_t *nb, ipintercept_t *ipint,
         static_ipranges_t *ipr, openli_proto_msgtype_t msgtype) {
@@ -587,6 +588,11 @@ static int push_static_ipranges_generic(net_buffer_t *nb, ipintercept_t *ipint,
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID,
                     ipint->common.liid, ipint->common.liid_len)) == -1) {
+        goto pushstaticipfail;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_CIN,
+                    (uint8_t *)(&(ipr->cin)), sizeof(ipr->cin))) == -1) {
         goto pushstaticipfail;
     }
 
@@ -1254,6 +1260,7 @@ int decode_staticip_announcement(uint8_t *msgbody, uint16_t len,
     ipr->rangestr = NULL;
     ipr->awaitingconfirm = 0;
     ipr->liid = NULL;
+    ipr->cin = 1;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -1267,6 +1274,8 @@ int decode_staticip_announcement(uint8_t *msgbody, uint16_t len,
             DECODE_STRING_FIELD(ipr->liid, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_STATICIP_RANGE) {
             DECODE_STRING_FIELD(ipr->rangestr, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_CIN) {
+            ipr->cin = *((uint32_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_DAEMON,
