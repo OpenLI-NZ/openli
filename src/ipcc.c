@@ -144,8 +144,26 @@ static inline void make_static_ipcc_job(openli_export_recv_t *msg,
 
 }
 
-static inline int lookup_static_ranges(struct sockaddr_in *cmp,
-        libtrace_packet_t *pkt, uint8_t dir,
+/*
+static void dump_ptree(patricia_node_t *ptree) {
+    char foo[128];
+    if (ptree->l) {
+        dump_ptree(ptree->l);
+    }
+
+    if (ptree->prefix) {
+        inet_ntop(AF_INET6, &(ptree->prefix->add.sin6), foo, 128);
+        printf("%s/%u\n", foo, ptree->prefix->bitlen);
+    }
+
+    if (ptree->r) {
+        dump_ptree(ptree->r);
+    }
+}
+*/
+
+static inline int lookup_static_ranges(struct sockaddr *cmp,
+        int family, libtrace_packet_t *pkt, uint8_t dir,
         shared_global_info_t *info, colthread_local_t *loc) {
 
     int matched = 0, queueused = 0;
@@ -153,10 +171,23 @@ static inline int lookup_static_ranges(struct sockaddr_in *cmp,
     prefix_t prefix;
     openli_export_recv_t msg;
 
-    if (New_Prefix2(AF_INET, (void *)&(cmp->sin_addr), 32, &prefix) == NULL) {
-        return 0;
+    if (family == AF_INET) {
+        struct sockaddr_in *in = (struct sockaddr_in *)cmp;
+        if (New_Prefix2(AF_INET, (void *)&(in->sin_addr), 32,
+                &prefix) == NULL) {
+            return 0;
+        }
+        pnode = patricia_search_best2(loc->staticv4ranges, &prefix, 1);
+    } else {
+        struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)cmp;
+        if (New_Prefix2(AF_INET6, (void *)&(in6->sin6_addr.s6_addr), 128,
+                &prefix) == NULL) {
+            return 0;
+        }
+        pnode = patricia_search_best2(loc->staticv6ranges, &prefix, 1);
     }
-    pnode = patricia_search_best2(loc->staticv4ranges, &prefix, 1);
+
+
 
     while (pnode) {
         liid_set_t **all, *sliid, *tmp2;
@@ -187,6 +218,72 @@ static inline int lookup_static_ranges(struct sockaddr_in *cmp,
 
     return matched;
 }
+
+int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
+        libtrace_ip6_t *ip, uint32_t rem, shared_global_info_t *info,
+        colthread_local_t *loc) {
+
+    struct sockaddr_in6 *intaddr, *cmp;
+    openli_export_recv_t msg;
+    int matched = 0, queueused = 0;
+    ipv6_target_t *tgt;
+    ipsession_t *sess, *tmp;
+
+    if (rem < sizeof(libtrace_ip6_t)) {
+        /* Truncated IP header */
+        logger(LOG_DAEMON, "OpenLI: Got IPv6 packet with truncated header?");
+        return 0;
+    }
+
+    /* Check if ipsrc or ipdst match any of our active intercepts.
+     * NOTE: a packet can match multiple intercepts so don't break early.
+     */
+
+    cmp = (struct sockaddr_in6 *)(&pinfo->srcip);
+    HASH_FIND(hh, loc->activeipv6intercepts, &(cmp->sin6_addr.s6_addr),
+            sizeof(cmp->sin6_addr.s6_addr), tgt);
+
+    if (tgt) {
+        HASH_ITER(hh, tgt->intercepts, sess, tmp) {
+            matched ++;
+            make_ipcc_job(&msg, sess, pkt, 0, info);
+            trace_increment_packet_refcount(pkt);
+            queueused = export_queue_put_by_liid(loc->exportqueues,
+                    &msg, sess->common.liid);
+            loc->export_used[queueused] = 1;
+        }
+    }
+
+    cmp = (struct sockaddr_in6 *)(&pinfo->destip);
+    HASH_FIND(hh, loc->activeipv6intercepts, &(cmp->sin6_addr.s6_addr),
+            sizeof(cmp->sin6_addr.s6_addr), tgt);
+
+    if (tgt) {
+        HASH_ITER(hh, tgt->intercepts, sess, tmp) {
+            matched ++;
+            make_ipcc_job(&msg, sess, pkt, 1, info);
+            trace_increment_packet_refcount(pkt);
+            queueused = export_queue_put_by_liid(loc->exportqueues,
+                    &msg, sess->common.liid);
+            loc->export_used[queueused] = 1;
+        }
+    }
+
+    if (loc->staticv6ranges == NULL) {
+        goto ipv6ccdone;
+    }
+
+    matched += lookup_static_ranges((struct sockaddr *)(&pinfo->srcip),
+            AF_INET6, pkt, 0, info, loc);
+    matched += lookup_static_ranges((struct sockaddr *)(&pinfo->destip),
+            AF_INET6, pkt, 1, info, loc);
+
+
+ipv6ccdone:
+    return matched;
+
+}
+
 
 int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip_t *ip,
@@ -242,10 +339,10 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         goto ipv4ccdone;
     }
 
-    matched += lookup_static_ranges((struct sockaddr_in *)(&pinfo->srcip),
-            pkt, 0, info, loc);
-    matched += lookup_static_ranges((struct sockaddr_in *)(&pinfo->destip),
-            pkt, 1, info, loc);
+    matched += lookup_static_ranges((struct sockaddr *)(&pinfo->srcip),
+            AF_INET, pkt, 0, info, loc);
+    matched += lookup_static_ranges((struct sockaddr *)(&pinfo->destip),
+            AF_INET, pkt, 1, info, loc);
 
 
 ipv4ccdone:
