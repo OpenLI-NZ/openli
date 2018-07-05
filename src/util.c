@@ -204,6 +204,32 @@ void convert_ipstr_to_sockaddr(char *knownip,
     freeaddrinfo(res);
 }
 
+int sockaddr_match(int family, struct sockaddr *a, struct sockaddr *b) {
+
+    if (family == AF_INET) {
+        struct sockaddr_in *sa, *sb;
+        sa = (struct sockaddr_in *)a;
+        sb = (struct sockaddr_in *)b;
+
+        if (sa->sin_addr.s_addr == sb->sin_addr.s_addr) {
+            return 1;
+        }
+        return 0;
+    }
+
+    if (family == AF_INET) {
+        struct sockaddr_in6 *s6a, *s6b;
+        s6a = (struct sockaddr_in6 *)a;
+        s6b = (struct sockaddr_in6 *)b;
+
+        if (memcmp(s6a->sin6_addr.s6_addr, s6b->sin6_addr.s6_addr, 16) == 0) {
+            return 1;
+        }
+        return 0;
+    }
+
+    return 0;
+}
 
 int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr) {
     int timerfd;

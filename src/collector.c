@@ -503,9 +503,20 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             }
         }
 
-    }
+    } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
+        /* Is this an IP packet? -- if yes, possible IP CC */
+        if (ipv6_comm_contents(pkt, &pinfo, (libtrace_ip6_t *)l3, iprem,
+                    &(glob->sharedinfo), loc)) {
+            forwarded = 1;
+        }
 
-    /* TODO IPV6 CC */
+        if (proto == TRACE_IPPROTO_UDP) {
+            if (ip6mm_comm_contents(pkt, &pinfo, (libtrace_ip6_t *)l3, iprem,
+                        &(glob->sharedinfo), loc)) {
+                forwarded = 1;
+            }
+        }
+    }
 
 processdone:
     if (forwarded || synced) {
