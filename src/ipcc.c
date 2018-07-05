@@ -128,6 +128,66 @@ static inline void make_ipcc_job(openli_export_recv_t *msg,
 
 }
 
+static inline void make_static_ipcc_job(openli_export_recv_t *msg,
+        staticipsession_t *sess, libtrace_packet_t *pkt, uint8_t dir,
+        shared_global_info_t *info) {
+
+    memset(msg, 0, sizeof(openli_export_recv_t));
+
+    msg->type = OPENLI_EXPORT_IPCC;
+    msg->destid = sess->common.destid;
+    msg->data.ipcc.liid = strdup(sess->common.liid);
+    msg->data.ipcc.packet = pkt;
+    msg->data.ipcc.cin = sess->cin;
+    msg->data.ipcc.dir = dir;
+    msg->data.ipcc.colinfo = info;
+
+}
+
+static inline int lookup_static_ranges(struct sockaddr_in *cmp,
+        libtrace_packet_t *pkt, uint8_t dir,
+        shared_global_info_t *info, colthread_local_t *loc) {
+
+    int matched = 0, queueused = 0;
+    patricia_node_t *pnode;
+    prefix_t prefix;
+    openli_export_recv_t msg;
+
+    if (New_Prefix2(AF_INET, (void *)&(cmp->sin_addr), 32, &prefix) == NULL) {
+        return 0;
+    }
+    pnode = patricia_search_best2(loc->staticv4ranges, &prefix, 1);
+
+    while (pnode) {
+        liid_set_t **all, *sliid, *tmp2;
+
+        all = (liid_set_t **)(&(pnode->data));
+        HASH_ITER(hh, *all, sliid, tmp2) {
+            staticipsession_t *matchsess;
+            char key[128];
+
+            snprintf(key, 127, "%s-%u", sliid->liid, sliid->cin);
+            HASH_FIND(hh, loc->activestaticintercepts, key, strlen(key),
+                    matchsess);
+            if (!matchsess) {
+                logger(LOG_DAEMON,
+                        "OpenLI: matched an IP range for intercept %s but this is not present in activestaticintercepts",
+                        key);
+            } else {
+                matched ++;
+                make_static_ipcc_job(&msg, matchsess, pkt, dir, info);
+                trace_increment_packet_refcount(pkt);
+                queueused = export_queue_put_by_liid(loc->exportqueues,
+                        &msg, sliid->liid);
+                loc->export_used[queueused] = 1;
+            }
+        }
+        pnode = pnode->parent;
+    }
+
+    return matched;
+}
+
 int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip_t *ip,
         uint32_t rem, shared_global_info_t *info, colthread_local_t *loc) {
@@ -161,7 +221,6 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
                     &msg, sess->common.liid);
             loc->export_used[queueused] = 1;
         }
-        goto ipv4ccdone;
     }
 
     cmp = (struct sockaddr_in *)(&pinfo->destip);
@@ -178,6 +237,16 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             loc->export_used[queueused] = 1;
         }
     }
+
+    if (loc->staticv4ranges == NULL) {
+        goto ipv4ccdone;
+    }
+
+    matched += lookup_static_ranges((struct sockaddr_in *)(&pinfo->srcip),
+            pkt, 0, info, loc);
+    matched += lookup_static_ranges((struct sockaddr_in *)(&pinfo->destip),
+            pkt, 1, info, loc);
+
 
 ipv4ccdone:
     return matched;

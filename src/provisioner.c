@@ -463,8 +463,8 @@ static void clear_prov_state(provision_state_t *state) {
         free(h2);
     }
 
-    free_all_ipintercepts(state->ipintercepts);
-    free_all_voipintercepts(state->voipintercepts);
+    free_all_ipintercepts(&(state->ipintercepts));
+    free_all_voipintercepts(&(state->voipintercepts));
     stop_all_collectors(state->collectors);
     free_all_mediators(state->mediators);
     free_coreserver_list(state->radiusservers);
@@ -2154,7 +2154,7 @@ static inline int reload_staticips(provision_state_t *currstate,
     HASH_ITER(hh, ipint->statics, ipr, tmp) {
         HASH_FIND(hh, newequiv->statics, ipr->rangestr, strlen(ipr->rangestr),
                 found);
-        if (!found) {
+        if (!found || found->cin != ipr->cin) {
             remove_existing_staticip_range(currstate, ipint, ipr);
         } else {
             found->awaitingconfirm = 0;

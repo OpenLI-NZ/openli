@@ -48,9 +48,9 @@ void handle_push_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
 void handle_remove_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
         coreserver_t *cs);
 void handle_iprange(libtrace_thread_t *t, colthread_local_t *loc,
-        static_ipranges_t *ipr);
+        staticipsession_t *ipr);
 void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
-        static_ipranges_t *ipr);
+        staticipsession_t *ipr);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

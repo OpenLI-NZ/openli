@@ -90,7 +90,7 @@ void clean_sync_data(collector_sync_t *sync) {
     free_export_queue_set(sync->exportqueues);
     free_all_users(sync->allusers);
     clear_user_intercept_list(sync->userintercepts);
-    free_all_ipintercepts(sync->ipintercepts);
+    free_all_ipintercepts(&(sync->ipintercepts));
     free_coreserver_list(sync->coreservers);
 
     if (sync->outgoing) {
@@ -155,9 +155,11 @@ static inline void push_coreserver_msg(collector_sync_t *sync,
 }
 
 static inline void push_static_iprange_to_collectors(
-        libtrace_message_queue_t *q, static_ipranges_t *ipr) {
+        libtrace_message_queue_t *q, ipintercept_t *ipint,
+        static_ipranges_t *ipr) {
 
     openli_pushed_t msg;
+    staticipsession_t *staticsess = NULL;
 
     if (ipr->liid == NULL || ipr->rangestr == NULL) {
         logger(LOG_DAEMON,
@@ -165,20 +167,22 @@ static inline void push_static_iprange_to_collectors(
         return;
     }
 
+    staticsess = create_staticipsession(ipint, ipr->rangestr, ipr->cin);
+
     memset(&msg, 0, sizeof(openli_pushed_t));
     msg.type = OPENLI_PUSH_IPRANGE;
-    msg.data.iprange.rangestr = strdup(ipr->rangestr);
-    msg.data.iprange.liid = strdup(ipr->liid);
-    msg.data.iprange.cin = ipr->cin;
+    msg.data.iprange = staticsess;
 
     libtrace_message_queue_put(q, (void *)(&msg));
 
 }
 
 static inline void push_static_iprange_remove_to_collectors(
-        libtrace_message_queue_t *q, static_ipranges_t *ipr) {
+        libtrace_message_queue_t *q, ipintercept_t *ipint,
+        static_ipranges_t *ipr) {
 
     openli_pushed_t msg;
+    staticipsession_t *staticsess = NULL;
 
     if (ipr->liid == NULL || ipr->rangestr == NULL) {
         logger(LOG_DAEMON,
@@ -186,11 +190,10 @@ static inline void push_static_iprange_remove_to_collectors(
         return;
     }
 
+    staticsess = create_staticipsession(ipint, ipr->rangestr, ipr->cin);
     memset(&msg, 0, sizeof(openli_pushed_t));
     msg.type = OPENLI_PUSH_REMOVE_IPRANGE;
-    msg.data.iprange.rangestr = strdup(ipr->rangestr);
-    msg.data.iprange.liid = strdup(ipr->liid);
-    msg.data.iprange.cin = ipr->cin;
+    msg.data.iprange = staticsess;
 
     libtrace_message_queue_put(q, (void *)(&msg));
 
@@ -327,13 +330,10 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
 
     HASH_ADD_KEYPTR(hh, ipint->statics, ipr->rangestr,
             strlen(ipr->rangestr), ipr);
-    logger(LOG_DAEMON,
-            "OpenLI: added IP range %s for LIID %s", ipr->rangestr,
-            ipr->liid);
 
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
             sendq, tmp) {
-        push_static_iprange_to_collectors(sendq->q, ipr);
+        push_static_iprange_to_collectors(sendq->q, ipint, ipr);
     }
 
     return 1;
@@ -358,13 +358,9 @@ static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
 
     HASH_FIND(hh, ipint->statics, ipr->rangestr, strlen(ipr->rangestr), found);
     if (found) {
-        logger(LOG_DAEMON,
-                "OpenLI: removed IP range %s for LIID %s", ipr->rangestr,
-                ipr->liid);
-
         HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                 sendq, tmp) {
-            push_static_iprange_remove_to_collectors(sendq->q, ipr);
+            push_static_iprange_remove_to_collectors(sendq->q, ipint, ipr);
         }
 
         HASH_DELETE(hh, ipint->statics, found);
@@ -1026,7 +1022,7 @@ static void push_all_active_intercepts(internet_user_t *allusers,
             push_single_alushimid(q, orig, 0);
         }
         HASH_ITER(hh, orig->statics, ipr, tmpr) {
-            push_static_iprange_to_collectors(q, ipr);
+            push_static_iprange_to_collectors(q, orig, ipr);
         }
     }
 }

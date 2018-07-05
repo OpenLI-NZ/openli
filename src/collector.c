@@ -141,6 +141,7 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->activeipv6intercepts = NULL;
     loc->activertpintercepts = NULL;
     loc->activealuintercepts = NULL;
+    loc->activestaticintercepts = NULL;
     loc->radiusservers = NULL;
     loc->sipservers = NULL;
     loc->staticv4ranges = New_Patricia(32);
@@ -200,19 +201,20 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     }
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
-        free_all_ipsessions(v4->intercepts);
+        free_all_ipsessions(&(v4->intercepts));
         HASH_DELETE(hh, loc->activeipv4intercepts, v4);
         free(v4);
     }
 
     HASH_ITER(hh, loc->activeipv6intercepts, v6, tmp2) {
-        free_all_ipsessions(v6->intercepts);
+        free_all_ipsessions(&(v6->intercepts));
         HASH_DELETE(hh, loc->activeipv6intercepts, v6);
         free(v6);
     }
 
-    free_all_rtpstreams(loc->activertpintercepts);
-    free_all_aluintercepts(loc->activealuintercepts);
+    free_all_staticipsessions(&(loc->activestaticintercepts));
+    free_all_rtpstreams(&(loc->activertpintercepts));
+    free_all_aluintercepts(&(loc->activealuintercepts));
     free_coreserver_list(loc->radiusservers);
     free_coreserver_list(loc->sipservers);
 
@@ -331,11 +333,11 @@ static void process_incoming_messages(libtrace_thread_t *t,
     }
 
     if (syncpush->type == OPENLI_PUSH_IPRANGE) {
-        handle_iprange(t, loc, &(syncpush->data.iprange));
+        handle_iprange(t, loc, syncpush->data.iprange);
     }
 
     if (syncpush->type == OPENLI_PUSH_REMOVE_IPRANGE) {
-        handle_remove_iprange(t, loc, &(syncpush->data.iprange));
+        handle_remove_iprange(t, loc, syncpush->data.iprange);
     }
 
 }

@@ -186,12 +186,12 @@ void free_single_ipintercept(ipintercept_t *cept) {
     free(cept);
 }
 
-void free_all_ipintercepts(ipintercept_t *interceptlist) {
+void free_all_ipintercepts(ipintercept_t **interceptlist) {
 
     ipintercept_t *cept, *tmp;
 
-    HASH_ITER(hh_liid, interceptlist, cept, tmp) {
-        HASH_DELETE(hh_liid, interceptlist, cept);
+    HASH_ITER(hh_liid, *interceptlist, cept, tmp) {
+        HASH_DELETE(hh_liid, *interceptlist, cept);
         free_single_ipintercept(cept);
     }
 }
@@ -289,21 +289,21 @@ void free_single_voipintercept(voipintercept_t *v) {
     free(v);
 }
 
-void free_all_voipintercepts(voipintercept_t *vints) {
+void free_all_voipintercepts(voipintercept_t **vints) {
 
     voipintercept_t *v, *tmp;
-    HASH_ITER(hh_liid, vints, v, tmp) {
-        HASH_DELETE(hh_liid, vints, v);
+    HASH_ITER(hh_liid, *vints, v, tmp) {
+        HASH_DELETE(hh_liid, *vints, v);
         free_single_voipintercept(v);
     }
 
 }
 
-void free_all_rtpstreams(rtpstreaminf_t *streams) {
+void free_all_rtpstreams(rtpstreaminf_t **streams) {
     rtpstreaminf_t *rtp, *tmp;
 
-    HASH_ITER(hh, streams, rtp, tmp) {
-        HASH_DELETE(hh, streams, rtp);
+    HASH_ITER(hh, *streams, rtp, tmp) {
+        HASH_DELETE(hh, *streams, rtp);
         free_intercept_common(&(rtp->common));
         if (rtp->targetaddr) {
             free(rtp->targetaddr);
@@ -339,11 +339,55 @@ void free_single_aluintercept(aluintercept_t *alu) {
     free(alu);
 }
 
-void free_all_aluintercepts(aluintercept_t *aluints) {
+void free_all_aluintercepts(aluintercept_t **aluints) {
     aluintercept_t *alu, *tmp;
-    HASH_ITER(hh, aluints, alu, tmp) {
-        HASH_DELETE(hh, aluints, alu);
+    HASH_ITER(hh, *aluints, alu, tmp) {
+        HASH_DELETE(hh, *aluints, alu);
         free_single_aluintercept(alu);
+    }
+}
+
+staticipsession_t *create_staticipsession(ipintercept_t *ipint, char *rangestr,
+        uint32_t cin) {
+
+    staticipsession_t *statint;
+
+    statint = (staticipsession_t *)malloc(sizeof(staticipsession_t));
+    if (statint == NULL) {
+        return NULL;
+    }
+
+    if (rangestr) {
+        statint->rangestr = strdup(rangestr);
+    } else {
+        statint = NULL;
+    }
+
+    statint->references = 0;
+    statint->cin = cin;
+    statint->nextseqno = 0;
+    copy_intercept_common(&(ipint->common), &(statint->common));
+    statint->key = (char *)calloc(1, 128);
+    snprintf(statint->key, 127, "%s-%u", ipint->common.liid, cin);
+
+    return statint;
+}
+
+void free_single_staticipsession(staticipsession_t *statint) {
+
+    free_intercept_common(&(statint->common));
+    if (statint->rangestr) {
+        free(statint->rangestr);
+    }
+    free(statint->key);
+    free(statint);
+}
+
+void free_all_staticipsessions(staticipsession_t **statintercepts) {
+    staticipsession_t *statint, *tmp;
+    HASH_ITER(hh, *statintercepts, statint, tmp) {
+        HASH_DELETE(hh, *statintercepts, statint);
+        free_single_staticipsession(statint);
     }
 }
 
@@ -393,10 +437,10 @@ void free_single_ipsession(ipsession_t *sess) {
     free(sess);
 }
 
-void free_all_ipsessions(ipsession_t *sessions) {
+void free_all_ipsessions(ipsession_t **sessions) {
     ipsession_t *s, *tmp;
-    HASH_ITER(hh, sessions, s, tmp) {
-        HASH_DELETE(hh, sessions, s);
+    HASH_ITER(hh, *sessions, s, tmp) {
+        HASH_DELETE(hh, *sessions, s);
         free_single_ipsession(s);
     }
 }

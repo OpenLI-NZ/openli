@@ -261,6 +261,35 @@ static int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
     return 0;
 }
 
+static inline int parse_iprange_option(static_ipranges_t *newr,
+        yaml_node_t *value) {
+
+    char *confrange = (char *)value->data.scalar.value;
+    int family = 0;
+
+    if (strchr(confrange, ':') != NULL) {
+        family = AF_INET6;
+    } else if (strchr(confrange, '.') != NULL) {
+        family = AF_INET;
+    } else {
+        logger(LOG_DAEMON,
+                "OpenLI: '%s' is not a valid prefix or IP address, skipping.",
+                confrange);
+        return -1;
+    }
+    if (strchr(confrange, '/') == NULL) {
+        /* No slash, so assume /32 or /128 */
+        int rlen = strlen(confrange) + 5;   /* '/128' + nul */
+        newr->rangestr = (char *)calloc(1, rlen);
+        snprintf(newr->rangestr, rlen - 1, "%s/%u", confrange,
+                family == AF_INET ? 32 : 128);
+
+    } else {
+        newr->rangestr = strdup((char *)value->data.scalar.value);
+    }
+    return 0;
+}
+
 static int add_intercept_static_ips(static_ipranges_t **statics,
         yaml_document_t *doc, yaml_node_t *ipseq) {
 
@@ -289,7 +318,9 @@ static int add_intercept_static_ips(static_ipranges_t **statics,
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value, "iprange") == 0 &&
                     newr->rangestr == NULL) {
-                newr->rangestr = strdup((char *)value->data.scalar.value);
+                if (parse_iprange_option(newr, value) < 0) {
+                    continue;
+                }
             }
 
             if (key->type == YAML_SCALAR_NODE &&

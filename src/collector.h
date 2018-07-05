@@ -85,7 +85,7 @@ typedef struct openli_ii_msg {
         aluintercept_t *aluint;
         char *rtpstreamkey;
         coreserver_t *coreserver;
-        static_ipranges_t iprange;
+        staticipsession_t *iprange;
     } data;
 
 } PACKED openli_pushed_t;
@@ -113,13 +113,6 @@ typedef struct ipv6_target {
 
     UT_hash_handle hh;
 } ipv6_target_t;
-
-typedef struct iprange_target {
-    intercept_common_t common;  /* LIID is used as the key */
-    uint32_t cin;
-    uint32_t nextseqno;
-    UT_hash_handle hh;
-} iprange_target_t;
 
 enum {
     SYNC_EVENT_PROC_QUEUE,
@@ -180,7 +173,7 @@ typedef struct colthread_local {
     rtpstreaminf_t *activertpintercepts;
     aluintercept_t *activealuintercepts;
 
-    iprange_target_t *activestaticintercepts;
+    staticipsession_t *activestaticintercepts;
 
     /* Message queues for exporting LI records */
     export_queue_set_t *exportqueues;
