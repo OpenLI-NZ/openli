@@ -83,6 +83,8 @@ used to identify the intercept target.
 * ALU Shim ID -- if you are using OpenLI to convert Alcatel-Lucent intercepts
   to ETSI-compliant records, this is the value that will be in the intercept-id
   fields of the packets emitted by the mirror.
+* Static IPs -- if the target has a static IP (range), you can use this
+  parameter to tell OpenLI which IPs belong to the target.
 
 If you have using User as the target identification method, you will need to
 ensure that the OpenLI collectors receive a copy of all RADIUS traffic
@@ -172,6 +174,8 @@ An IP intercept must contain the following key-value elements:
 * user                  -- the AAA username for the target
 * alushimid             -- the intercept ID from the ALU intercept packets
                            (only for re-encoding ALU intercepts as ETSI)
+* staticips             -- a list of IP ranges that are known to have been
+                           assigned to the target.
 * mediator              -- the ID of the mediator which will forward the
                            intercept
 * agencyid              -- the internal identifier of the agency that requested
@@ -184,6 +188,19 @@ Valid access types are:
   'cable' and 'wireless-other'.
 
 
+`staticips:` are expressed as a YAML list: one list item per IP range that
+is associated with the target. Each list item is a YAML map containing the
+following key-value elements:
+
+* iprange               -- the IP range, expressed in CIDR notation. If a
+                           single address (i.e. no subnet) is given, a /32
+                           or /128 mask will be added automatically.
+* sessionid             -- the session ID (also known as CIN) to associate with
+                           intercepts for this address range. See example
+                           config for more information about the meaning of
+                           this field.
+
+---
 A VOIP intercept must contain the following key-value elements:
 
 * liid                  -- the LIID

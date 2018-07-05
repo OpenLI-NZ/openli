@@ -53,14 +53,12 @@ agencies:
 # To change intercepts for a running OpenLI process, modify the intercept list
 # in the config file, then send a SIGHUP to the provisioner process.
 #
-# In this example, we have two IP intercepts running: one for the "Police"
-# intercepting all IP traffic for the user 'imacriminal' and one for the
-# "Spooks" that is translating an Alcatel-Lucent native intercept into an
-# ETSI-compliant one. For the latter, all ALU intercept packets with an
-# Intercept ID of 522781 will be converted to have the ETSI LIID of NAPP9321HN
-# and the resulting records will be forwarded to the "Spooks" agency.
 
 ipintercepts:
+
+# This first intercept will intercept all IP traffic for the user 'imacriminal'
+# and forward the resulting ETSI records to the "Police" agency.
+
  - liid:  LP45NNST3             # LIID, should be provided by requesting agency
    authcountrycode: NZ          # Authorisation country code
    deliverycountrycode: NZ      # Delivery country code
@@ -70,7 +68,12 @@ ipintercepts:
    accesstype: "Fiber"          # Access tech used by the target to access IP
 
 
- - liid: NAPP9321HN
+# This second intercept is translating an Alcatel-Lucent native intercept into
+# an ETSI-compliant one. All ALU intercept packets with an
+# Intercept ID of 522781 will be converted to have the ETSI LIID of NAPP9321HN
+# and the resulting records will be forwarded to the "Spooks" agency.
+
+ - liid: NAPP9321HN             # LIID, should be provided by requesting agency
    authcountrycode: NZ          # Authorisation country code
    deliverycountrycode: NZ      # Delivery country code
    alushimid: 522781            # Intercept-ID number used by the ALU
@@ -78,6 +81,40 @@ ipintercepts:
    mediator: 6001               # ID of the mediator to send intercept via
    agencyid: "Spooks"           # ID of agency to send intercept to
    accesstype: "ADSL"           # Access tech used by the target to access IP
+
+
+# This intercept demonstrates how to configure an intercept for a target that
+# has static IP allocations. The target has both an IPv4 and IPv6 allocation
+# that we want to intercept any traffic to or from; each is specified using
+# a list item in the 'staticips' list.
+#
+# Note that both IP ranges have been assigned a session ID of 7. This means
+# that any traffic intercepted from either range will be encoded as though
+# they are part of the same communication session; this is probably what you
+# want in most circumstances.
+#
+# If, during the course of an intercept, the IP ranges assigned to the
+# target are modified somehow, you should change the session ID and tell
+# the provisioner to reload its configuration (even for IP ranges that remain
+# the same as before). This will allow the LEAs to recognise points where the
+# target's connectivity has changed.
+
+# If in doubt, talk to your LEA about what value they would like to see in the
+# session ID (CIN, as it is known in ETSI) for a target with a static IP and
+# what you should do if the static IP assignment changes during the intercept.
+
+ - liid:  XP45NN710T
+   authcountrycode: NZ          # Authorisation country code
+   deliverycountrycode: NZ      # Delivery country code
+   mediator: 6001               # ID of the mediator to send intercept via
+   agencyid: "Police"           # ID of agency to send intercept to
+   accesstype: "LAN"            # Access tech used by the target to access IP
+   staticips:
+     - iprange: "192.168.10.0/26"
+       sessionid: 7
+     - iprange: "2001:db8::/56"
+       sessionid: 7
+
 
 
 # List of active VOIP intercepts.
