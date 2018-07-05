@@ -36,7 +36,7 @@
 #include "collector.h"
 #include "collector_export.h"
 #include "etsili_core.h"
-
+#include "util.h"
 
 int encode_ipmmcc(wandder_encoder_t **encoder, openli_ipmmcc_job_t *job,
         exporter_intercept_msg_t *intdetails, uint32_t seqno,
@@ -102,16 +102,78 @@ static inline int form_ipmmcc_job(openli_export_recv_t *msg,
     loc->export_used[queueused] = 1;
 }
 
+static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
+        packet_info_t *pinfo, shared_global_info_t *info,
+        colthread_local_t *loc) {
+
+    openli_export_recv_t msg;
+    rtpstreaminf_t *rtp, *tmp;
+    int matched = 0, queueused;
+    struct sockaddr *cmp, *tgt, *other;
+
+    memset(&msg, 0, sizeof(openli_export_recv_t));
+
+    /* TODO change active RTP so we can look up by 5 tuple? */
+    HASH_ITER(hh, loc->activertpintercepts, rtp, tmp) {
+        if (!rtp->active) {
+            continue;
+        }
+
+        if (rtp->targetaddr == NULL || rtp->otheraddr == NULL) {
+            continue;
+        }
+
+        if (pinfo->srcip.ss_family != rtp->ai_family) {
+            continue;
+        }
+
+        tgt = (struct sockaddr *)(rtp->targetaddr);
+        other = (struct sockaddr *)(rtp->otheraddr);
+
+        /* Check for src = target, dst = other */
+        if ((pinfo->srcport == rtp->targetport &&
+                pinfo->destport == rtp->otherport) ||
+                (pinfo->srcport == rtp->targetport + 1 &&
+                 pinfo->destport == rtp->otherport + 1)) {
+            cmp = (struct sockaddr *)(&pinfo->srcip);
+
+            if (sockaddr_match(family, cmp, tgt)) {
+                cmp = (struct sockaddr *)(&pinfo->destip);
+                if (sockaddr_match(family, cmp, other)) {
+                    form_ipmmcc_job(&msg, rtp->common.liid, info, pkt, rtp->cin,
+                            ETSI_DIR_FROM_TARGET, loc, rtp->common.destid);
+                    matched ++;
+                    continue;
+                }
+            }
+        }
+
+        /* Check for dst = target, src = other */
+        if ((pinfo->destport == rtp->targetport &&
+                    pinfo->srcport == rtp->otherport) ||
+                    (pinfo->destport == rtp->targetport + 1 &&
+                     pinfo->srcport == rtp->otherport + 1)) {
+            cmp = (struct sockaddr *)(&pinfo->srcip);
+
+            if (sockaddr_match(family, cmp, other)) {
+                cmp = (struct sockaddr *)(&pinfo->destip);
+                if (sockaddr_match(family, cmp, tgt)) {
+                    form_ipmmcc_job(&msg, rtp->common.liid, info, pkt, rtp->cin,
+                            ETSI_DIR_TO_TARGET, loc, rtp->common.destid);
+                    matched ++;
+                    continue;
+                }
+            }
+        }
+
+    }
+    return matched;
+}
+
 int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip_t *ip,
         uint32_t rem, shared_global_info_t *info, colthread_local_t *loc) {
 
-    struct sockaddr_in *targetaddr, *cmp, *otheraddr;
-    openli_export_recv_t msg;
-    rtpstreaminf_t *rtp, *tmp;
-    int matched = 0, queueused;
-
-    memset(&msg, 0, sizeof(openli_export_recv_t));
 
     if (rem < sizeof(libtrace_ip_t)) {
         logger(LOG_DAEMON, "OpenLI: Got IPv4 RTP packet with truncated header?");
@@ -127,61 +189,31 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         return 0;
     }
 
-    /* TODO change active RTP so we can look up by 5 tuple? */
-    HASH_ITER(hh, loc->activertpintercepts, rtp, tmp) {
-        if (!rtp->active) {
-            continue;
-        }
-        targetaddr = (struct sockaddr_in *)(rtp->targetaddr);
-        otheraddr = (struct sockaddr_in *)(rtp->otheraddr);
 
-        if (targetaddr == NULL || otheraddr == NULL) {
-            continue;
-        }
+    return generic_mm_comm_contents(AF_INET, pkt, pinfo, info, loc);
+}
 
-        if (pinfo->srcip.ss_family != rtp->ai_family) {
-            continue;
-        }
+int ip6mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
+        libtrace_ip6_t *ip6,
+        uint32_t rem, shared_global_info_t *info, colthread_local_t *loc) {
 
-        /* Check for src = target, dst = other */
-        if ((pinfo->srcport == rtp->targetport &&
-                pinfo->destport == rtp->otherport) ||
-                (pinfo->srcport == rtp->targetport + 1 &&
-                 pinfo->destport == rtp->otherport + 1)) {
-            cmp = (struct sockaddr_in *)(&pinfo->srcip);
 
-            if (targetaddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
-                cmp = (struct sockaddr_in *)(&pinfo->destip);
-                if (otheraddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
-                    form_ipmmcc_job(&msg, rtp->common.liid, info, pkt, rtp->cin,
-                            ETSI_DIR_FROM_TARGET, loc, rtp->common.destid);
-                    matched ++;
-                    continue;
-                }
-            }
-        }
-
-        /* Check for dst = target, src = other */
-        if ((pinfo->destport == rtp->targetport &&
-                    pinfo->srcport == rtp->otherport) ||
-                    (pinfo->destport == rtp->targetport + 1 &&
-                     pinfo->srcport == rtp->otherport + 1)) {
-            cmp = (struct sockaddr_in *)(&pinfo->srcip);
-
-            if (otheraddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
-                cmp = (struct sockaddr_in *)(&pinfo->destip);
-                if (targetaddr->sin_addr.s_addr == cmp->sin_addr.s_addr) {
-                    form_ipmmcc_job(&msg, rtp->common.liid, info, pkt, rtp->cin,
-                            ETSI_DIR_TO_TARGET, loc, rtp->common.destid);
-                    matched ++;
-                    continue;
-                }
-            }
-        }
-
+    if (rem < sizeof(libtrace_ip6_t)) {
+        logger(LOG_DAEMON, "OpenLI: Got IPv6 RTP packet with truncated header?");
+        return 0;
     }
 
-    return matched;
+    if (ip6->nxt != TRACE_IPPROTO_UDP) {
+        return 0;
+    }
+
+    if (pinfo->srcport == 0 || pinfo->destport == 0) {
+        logger(LOG_DAEMON, "OpenLI: IPv6 RTP packet is missing a port number.");
+        return 0;
+    }
+
+
+    return generic_mm_comm_contents(AF_INET6, pkt, pinfo, info, loc);
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

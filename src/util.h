@@ -36,6 +36,7 @@ char *sockaddr_to_string(struct sockaddr *sa, char *str, int len);
 uint8_t *sockaddr_to_key(struct sockaddr *sa, int *socklen);
 void convert_ipstr_to_sockaddr(char *knownip, struct sockaddr_storage **saddr,
         int *family);
+int sockaddr_match(int family, struct sockaddr *a, struct sockaddr *b);
 
 uint32_t hashlittle( const void *key, size_t length, uint32_t initval);
 

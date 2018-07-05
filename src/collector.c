@@ -509,6 +509,13 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                     &(glob->sharedinfo), loc)) {
             forwarded = 1;
         }
+
+        if (proto == TRACE_IPPROTO_UDP) {
+            if (ip6mm_comm_contents(pkt, &pinfo, (libtrace_ip6_t *)l3, iprem,
+                        &(glob->sharedinfo), loc)) {
+                forwarded = 1;
+            }
+        }
     }
 
 processdone:
