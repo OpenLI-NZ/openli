@@ -90,7 +90,7 @@ void clean_sync_data(collector_sync_t *sync) {
     free_export_queue_set(sync->exportqueues);
     free_all_users(sync->allusers);
     clear_user_intercept_list(sync->userintercepts);
-    free_all_ipintercepts(sync->ipintercepts);
+    free_all_ipintercepts(&(sync->ipintercepts));
     free_coreserver_list(sync->coreservers);
 
     if (sync->outgoing) {
@@ -152,6 +152,51 @@ static inline void push_coreserver_msg(collector_sync_t *sync,
         libtrace_message_queue_put(sendq->q, (void *)(&msg));
     }
     pthread_mutex_unlock(&(sync->glob->mutex));
+}
+
+static inline void push_static_iprange_to_collectors(
+        libtrace_message_queue_t *q, ipintercept_t *ipint,
+        static_ipranges_t *ipr) {
+
+    openli_pushed_t msg;
+    staticipsession_t *staticsess = NULL;
+
+    if (ipr->liid == NULL || ipr->rangestr == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI: attempted to send invalid static IP range to collectors");
+        return;
+    }
+
+    staticsess = create_staticipsession(ipint, ipr->rangestr, ipr->cin);
+
+    memset(&msg, 0, sizeof(openli_pushed_t));
+    msg.type = OPENLI_PUSH_IPRANGE;
+    msg.data.iprange = staticsess;
+
+    libtrace_message_queue_put(q, (void *)(&msg));
+
+}
+
+static inline void push_static_iprange_remove_to_collectors(
+        libtrace_message_queue_t *q, ipintercept_t *ipint,
+        static_ipranges_t *ipr) {
+
+    openli_pushed_t msg;
+    staticipsession_t *staticsess = NULL;
+
+    if (ipr->liid == NULL || ipr->rangestr == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI: attempted to send invalid static IP range to collectors");
+        return;
+    }
+
+    staticsess = create_staticipsession(ipint, ipr->rangestr, ipr->cin);
+    memset(&msg, 0, sizeof(openli_pushed_t));
+    msg.type = OPENLI_PUSH_REMOVE_IPRANGE;
+    msg.data.iprange = staticsess;
+
+    libtrace_message_queue_put(q, (void *)(&msg));
+
 }
 
 static inline void push_single_ipintercept(libtrace_message_queue_t *q,
@@ -249,6 +294,84 @@ static int send_to_provisioner(collector_sync_t *sync) {
     return 1;
 }
 
+static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
+        uint16_t msglen) {
+
+    static_ipranges_t *ipr, *found;
+    ipintercept_t *ipint;
+    sync_sendq_t *tmp, *sendq;
+
+    ipr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
+
+    if (decode_staticip_announcement(intmsg, msglen, ipr) == -1) {
+        logger(LOG_DAEMON,
+                "OpenLI: received invalid static IP range from provisioner.");
+        free(ipr);
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, sync->ipintercepts, ipr->liid, strlen(ipr->liid), ipint);
+    if (!ipint) {
+        logger(LOG_DAEMON,
+                "OpenLI: received static IP range for LIID %s, but this LIID is unknown?",
+                ipr->liid);
+        free(ipr);
+        return -1;
+    }
+
+    HASH_FIND(hh, ipint->statics, ipr->rangestr, strlen(ipr->rangestr), found);
+    if (found) {
+        found->awaitingconfirm = 0;
+        free(ipr->liid);
+        free(ipr->rangestr);
+        free(ipr);
+        return 0;
+    }
+
+    HASH_ADD_KEYPTR(hh, ipint->statics, ipr->rangestr,
+            strlen(ipr->rangestr), ipr);
+
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
+            sendq, tmp) {
+        push_static_iprange_to_collectors(sendq->q, ipint, ipr);
+    }
+
+    return 1;
+}
+
+static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
+{
+
+    static_ipranges_t *found;
+    ipintercept_t *ipint;
+    sync_sendq_t *tmp, *sendq;
+
+
+    HASH_FIND(hh_liid, sync->ipintercepts, ipr->liid, strlen(ipr->liid), ipint);
+    if (!ipint) {
+        logger(LOG_DAEMON,
+                "OpenLI: received static IP range to remove for LIID %s, but this LIID is unknown?",
+                ipr->liid);
+        free(ipr);
+        return -1;
+    }
+
+    HASH_FIND(hh, ipint->statics, ipr->rangestr, strlen(ipr->rangestr), found);
+    if (found) {
+        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
+                sendq, tmp) {
+            push_static_iprange_remove_to_collectors(sendq->q, ipint, ipr);
+        }
+
+        HASH_DELETE(hh, ipint->statics, found);
+        free(found->liid);
+        free(found->rangestr);
+        free(found);
+    }
+
+    return 0;
+}
+
 static inline void push_session_halt_to_threads(void *sendqs,
         access_session_t *sess, ipintercept_t *ipint) {
 
@@ -278,6 +401,7 @@ static inline void push_session_halt_to_threads(void *sendqs,
         pmsg.data.ipsess = sessdup;
 
         libtrace_message_queue_put(sendq->q, &pmsg);
+
     }
 }
 
@@ -287,8 +411,14 @@ static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
     sync_sendq_t *sendq, *tmp;
     internet_user_t *user;
     access_session_t *sess, *tmp2;
+    static_ipranges_t *ipr, *tmpr;
 
     logger(LOG_DAEMON, "OpenLI: collector will stop intercepting traffic for LIID %s", ipint->common.liid);
+
+    /* Remove all static IP ranges for this intercept -- its over */
+    HASH_ITER(hh, ipint->statics, ipr, tmpr) {
+        remove_staticiprange(sync, ipr);
+    }
 
     HASH_FIND(hh, sync->allusers, ipint->username, ipint->username_len,
             user);
@@ -304,6 +434,7 @@ static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
         push_session_halt_to_threads(sync->glob->collector_queues, sess,
                 ipint);
     }
+
 }
 
 static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
@@ -311,6 +442,7 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
     coreserver_t *cs, *tmp3;
     ipintercept_t *ipint, *tmp;
     internet_user_t *user;
+    static_ipranges_t *ipr, *tmpr;
 
     HASH_ITER(hh_liid, sync->ipintercepts, ipint, tmp) {
 
@@ -325,6 +457,13 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
                         ipint);
             }
             free_single_ipintercept(ipint);
+        } else {
+            /* Deal with any unconfirmed static IP ranges */
+            HASH_ITER(hh, ipint->statics, ipr, tmpr) {
+                if (ipr->awaitingconfirm) {
+                    remove_staticiprange(sync, ipr);
+                }
+            }
         }
     }
 
@@ -597,9 +736,6 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             }
         }
         add_intercept_to_user_intercept_list(&sync->userintercepts, cept);
-        logger(LOG_DAEMON,
-                "OpenLI: received IP intercept from provisioner (LIID %s, authCC %s)",
-                cept->username, cept->common.liid, cept->common.authcc);
     }
 
     if (cept->alushimid != OPENLI_ALUSHIM_NONE) {
@@ -620,6 +756,10 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
                 sendq, tmp) {
             push_single_alushimid(sendq->q, cept, 0);
         }
+    } else {
+        logger(LOG_DAEMON,
+                "OpenLI: received IP intercept from provisioner (LIID %s, authCC %s)",
+                cept->common.liid, cept->common.authcc);
     }
 
     HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
@@ -649,7 +789,7 @@ static int recv_from_provisioner(collector_sync_t *sync) {
     uint8_t *provmsg;
     uint16_t msglen = 0;
     uint64_t intid = 0;
-
+    static_ipranges_t *ipr;
     openli_proto_msgtype_t msgtype;
 
     do {
@@ -679,6 +819,29 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 if (ret == -1) {
                     return -1;
                 }
+                break;
+            case OPENLI_PROTO_ADD_STATICIPS:
+                ret = new_staticiprange(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_REMOVE_STATICIPS:
+                ipr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
+
+                if (decode_staticip_removal(provmsg, msglen, ipr) == -1) {
+                    logger(LOG_DAEMON,
+                            "OpenLI: received invalid static IP range from provisioner for removal.");
+                    free(ipr);
+                    return -1;
+                }
+                ret = remove_staticiprange(sync, ipr);
+                if (ret == -1) {
+                    return -1;
+                }
+                free(ipr->liid);
+                free(ipr->rangestr);
+                free(ipr);
                 break;
             case OPENLI_PROTO_HALT_IPINTERCEPT:
                 ret = halt_ipintercept(sync, provmsg, msglen);
@@ -781,6 +944,7 @@ static inline void touch_all_coreservers(coreserver_t *servers) {
 
 static inline void touch_all_intercepts(ipintercept_t *intlist) {
     ipintercept_t *ipint, *tmp;
+    static_ipranges_t *ipr, *tmpr;
 
     /* Set all intercepts to be "awaiting confirmation", i.e. if the
      * provisioner doesn't announce them in its initial batch of
@@ -788,6 +952,9 @@ static inline void touch_all_intercepts(ipintercept_t *intlist) {
      */
     HASH_ITER(hh_liid, intlist, ipint, tmp) {
         ipint->awaitingconfirm = 1;
+        HASH_ITER(hh, ipint->statics, ipr, tmpr) {
+            ipr->awaitingconfirm = 1;
+        }
     }
 }
 
@@ -839,6 +1006,7 @@ static void push_all_active_intercepts(internet_user_t *allusers,
     ipintercept_t *orig, *tmp;
     internet_user_t *user;
     access_session_t *sess, *tmp2;
+    static_ipranges_t *ipr, *tmpr;
 
     HASH_ITER(hh_liid, intlist, orig, tmp) {
         /* Do we have a valid user that matches the target username? */
@@ -852,6 +1020,9 @@ static void push_all_active_intercepts(internet_user_t *allusers,
         }
         if (orig->alushimid != OPENLI_ALUSHIM_NONE) {
             push_single_alushimid(q, orig, 0);
+        }
+        HASH_ITER(hh, orig->statics, ipr, tmpr) {
+            push_static_iprange_to_collectors(q, orig, ipr);
         }
     }
 }

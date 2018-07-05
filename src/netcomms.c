@@ -553,6 +553,70 @@ int push_sip_target_withdrawal_onto_net_buffer(net_buffer_t *nb,
             OPENLI_PROTO_WITHDRAW_SIP_TARGET);
 }
 
+#define STATICIP_RANGE_BODY_LEN(ipint, ipr) \
+        (strlen(ipr->rangestr) + sizeof(ipr->cin) + \
+        ipint->common.liid_len + (3 * 4))
+
+static int push_static_ipranges_generic(net_buffer_t *nb, ipintercept_t *ipint,
+        static_ipranges_t *ipr, openli_proto_msgtype_t msgtype) {
+
+    ii_header_t hdr;
+    int totallen;
+    int ret;
+
+    if (ipr == NULL) {
+        return 0;
+    }
+
+    totallen = STATICIP_RANGE_BODY_LEN(ipint, ipr);
+    if (totallen > 65535) {
+        logger(LOG_DAEMON,
+                "OpenLI: static IP range is too long to fit in a single message (%d).", totallen);
+        return -1;
+    }
+
+    populate_header(&hdr, msgtype, totallen, 0);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+                    sizeof(ii_header_t))) == -1) {
+        goto pushstaticipfail;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_STATICIP_RANGE,
+                    ipr->rangestr, strlen(ipr->rangestr))) == -1) {
+        goto pushstaticipfail;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID,
+                    ipint->common.liid, ipint->common.liid_len)) == -1) {
+        goto pushstaticipfail;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_CIN,
+                    (uint8_t *)(&(ipr->cin)), sizeof(ipr->cin))) == -1) {
+        goto pushstaticipfail;
+    }
+
+    return 0;
+
+pushstaticipfail:
+    logger(LOG_DAEMON,
+            "OpenLI: unable to push static IP range to collector %d.", nb->fd);
+    return -1;
+}
+
+int push_static_ipranges_removal_onto_net_buffer(net_buffer_t *nb,
+        ipintercept_t *ipint, static_ipranges_t *ipr) {
+
+    return push_static_ipranges_generic(nb, ipint, ipr,
+            OPENLI_PROTO_REMOVE_STATICIPS);
+}
+
+int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
+        ipintercept_t *ipint, static_ipranges_t *ipr) {
+
+    return push_static_ipranges_generic(nb, ipint, ipr,
+            OPENLI_PROTO_ADD_STATICIPS);
+}
 
 #define IPINTERCEPT_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
@@ -570,9 +634,10 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
     /* Pre-compute our body length so we can write it in the header */
     ii_header_t hdr;
-    uint16_t totallen;
+    int totallen;
     int ret;
     ipintercept_t *ipint = (ipintercept_t *)data;
+    static_ipranges_t *ipr, *tmpr;
 
     if (ipint->alushimid != OPENLI_ALUSHIM_NONE) {
         totallen = ALUSHIM_IPINTERCEPT_BODY_LEN(ipint);
@@ -636,6 +701,11 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
         goto pushipintfail;
     }
 
+    HASH_ITER(hh, ipint->statics, ipr, tmpr) {
+        if (push_static_ipranges_onto_net_buffer(nb, ipint, ipr) < 0) {
+            return -1;
+        }
+    }
 
     return (int)totallen;
 
@@ -980,6 +1050,7 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->awaitingconfirm = 0;
     ipint->alushimid = OPENLI_ALUSHIM_NONE;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
+    ipint->statics = NULL;
 
     ipint->common.liid_len = 0;
     ipint->common.authcc_len = 0;
@@ -1180,6 +1251,48 @@ int decode_coreserver_announcement(uint8_t *msgbody, uint16_t len,
 int decode_coreserver_withdraw(uint8_t *msgbody, uint16_t len,
         coreserver_t *cs) {
     return decode_coreserver_announcement(msgbody, len, cs);
+}
+
+int decode_staticip_announcement(uint8_t *msgbody, uint16_t len,
+        static_ipranges_t *ipr) {
+
+    uint8_t *msgend = msgbody + len;
+    ipr->rangestr = NULL;
+    ipr->awaitingconfirm = 0;
+    ipr->liid = NULL;
+    ipr->cin = 1;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+        if (f == OPENLI_PROTO_FIELD_LIID) {
+            DECODE_STRING_FIELD(ipr->liid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_STATICIP_RANGE) {
+            DECODE_STRING_FIELD(ipr->rangestr, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_CIN) {
+            ipr->cin = *((uint32_t *)valptr);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_DAEMON,
+                "OpenLI: invalid field in received LEA announcement: %d.",
+                f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+
+    return 0;
+
+}
+
+int decode_staticip_removal(uint8_t *msgbody, uint16_t len,
+        static_ipranges_t *ipr) {
+    return decode_staticip_announcement(msgbody, len, ipr);
 }
 
 int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {

@@ -85,6 +85,9 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
     sync->knowncallids = NULL;
     sync->sipparser = NULL;
 
+    sync->sipdebugupdate = NULL;
+    sync->sipdebugout = NULL;
+
     if (glob->sipdebugfile) {
         sync->sipdebugfile = glob->sipdebugfile;
         glob->sipdebugfile = NULL;
@@ -98,7 +101,7 @@ void clean_sync_voip_data(collector_sync_voip_t *sync) {
 
     free_voip_cinmap(sync->knowncallids);
     if (sync->voipintercepts) {
-        free_all_voipintercepts(sync->voipintercepts);
+        free_all_voipintercepts(&(sync->voipintercepts));
     }
     if (sync->sipparser) {
         release_sip_parser(sync->sipparser);

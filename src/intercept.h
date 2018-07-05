@@ -48,6 +48,14 @@ typedef enum {
     INTERNET_ACCESS_TYPE_WIRELESS_OTHER = 9,
 } internet_access_method_t;
 
+typedef struct static_ipranges {
+    char *rangestr;
+    char *liid;
+    uint32_t cin;
+    uint8_t awaitingconfirm;
+    UT_hash_handle hh;
+} static_ipranges_t;
+
 typedef struct intercept_common {
     char *liid;
     char *authcc;
@@ -67,8 +75,11 @@ typedef struct ipintercept {
 
     internet_access_method_t accesstype;
 
+
     /* Special case for converting ALU intercepts into ETSI ones */
     uint32_t alushimid;
+
+    static_ipranges_t *statics;
 
     uint8_t awaitingconfirm;
     UT_hash_handle hh_liid;
@@ -126,6 +137,7 @@ typedef struct voipsdpmap {
 typedef struct rtpstreaminf rtpstreaminf_t;
 typedef struct ipsession ipsession_t;
 typedef struct aluintercept aluintercept_t;
+typedef struct staticipsession staticipsession_t;
 
 #define voip_intercept_equal(a,b) \
     ((strcmp(a->common.authcc, b->common.authcc) == 0) && \
@@ -190,17 +202,30 @@ struct aluintercept {
     UT_hash_handle hh;
 };
 
-void free_all_ipintercepts(ipintercept_t *interceptlist);
-void free_all_voipintercepts(voipintercept_t *vintercepts);
-void free_all_rtpstreams(rtpstreaminf_t *streams);
-void free_all_ipsessions(ipsession_t *sessions);
-void free_all_aluintercepts(aluintercept_t *aluintercepts);
+struct staticipsession {
+    char *key;
+    char *rangestr;
+    intercept_common_t common;
+    uint32_t cin;
+    uint32_t nextseqno;
+    uint32_t references;
+    UT_hash_handle hh;
+};
+
+void free_all_ipintercepts(ipintercept_t **interceptlist);
+void free_all_voipintercepts(voipintercept_t **vintercepts);
+void free_all_rtpstreams(rtpstreaminf_t **streams);
+void free_all_ipsessions(ipsession_t **sessions);
+void free_all_aluintercepts(aluintercept_t **aluintercepts);
+void free_all_staticipsessions(staticipsession_t **statintercepts);
+
 void free_voip_cinmap(voipcinmap_t *cins);
 void free_single_voip_cin(rtpstreaminf_t *rtp);
 void free_single_ipintercept(ipintercept_t *cept);
 void free_single_voipintercept(voipintercept_t *v);
 void free_single_ipsession(ipsession_t *sess);
 void free_single_aluintercept(aluintercept_t *alu);
+void free_single_staticipsession(staticipsession_t *statint);
 
 rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin);
 rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *rtp);
@@ -209,6 +234,9 @@ ipsession_t *create_ipsession(ipintercept_t *ipint, uint32_t cin,
         int ipfamily, struct sockaddr *assignedip);
 
 aluintercept_t *create_aluintercept(ipintercept_t *ipint);
+
+staticipsession_t *create_staticipsession(ipintercept_t *ipint, char *rangestr,
+        uint32_t cin);
 
 int are_sip_identities_same(openli_sip_identity_t *a,
         openli_sip_identity_t *b);

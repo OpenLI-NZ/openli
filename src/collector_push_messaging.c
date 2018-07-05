@@ -363,4 +363,146 @@ void handle_remove_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
     free_single_coreserver(cs);
 }
 
+void handle_iprange(libtrace_thread_t *t, colthread_local_t *loc,
+        staticipsession_t *ipr) {
+
+    patricia_node_t *node = NULL;
+    liid_set_t **all, *found;
+    prefix_t *prefix = NULL;
+    staticipsession_t *newsess, *ipr_exist;
+
+    prefix = ascii2prefix(0, ipr->rangestr);
+    if (prefix == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI: error converting %s into a valid IP prefix in thread %d",
+                ipr->rangestr, trace_get_perpkt_thread_id(t));
+        free_single_staticipsession(ipr);
+        return;
+    }
+
+    if (prefix->family == AF_INET) {
+        node = patricia_lookup(loc->staticv4ranges, prefix);
+    } else if (prefix->family == AF_INET6) {
+        node = patricia_lookup(loc->staticv6ranges, prefix);
+    }
+
+    if (!node) {
+        logger(LOG_DAEMON,
+                "OpenLI: error while adding static IP prefix %s to LIID %s for thread %d",
+                ipr->rangestr, ipr->common.liid, trace_get_perpkt_thread_id(t));
+        free_single_staticipsession(ipr);
+        return;
+    }
+
+    all = (liid_set_t **)&(node->data);
+    if (*all != NULL && prefix) {
+        free(prefix);
+    }
+
+    HASH_FIND(hh, *all, ipr->common.liid, ipr->common.liid_len, found);
+    if (found) {
+        free_single_staticipsession(ipr);
+    } else {
+        found = (liid_set_t *)malloc(sizeof(liid_set_t));
+        found->liid = strdup(ipr->common.liid);
+        found->cin = ipr->cin;
+
+        HASH_ADD_KEYPTR(hh, *all, found->liid, strlen(found->liid), found);
+        /*
+        logger(LOG_DAEMON,
+                "OpenLI: added LIID %s:%u to prefix %s (%d refs total)",
+                ipr->common.liid, ipr->cin, ipr->rangestr, HASH_CNT(hh, *all));
+        */
+
+        HASH_FIND(hh, loc->activestaticintercepts, ipr->key,
+                strlen(ipr->key), ipr_exist);
+        if (!ipr_exist) {
+            ipr->references = 1;
+            HASH_ADD_KEYPTR(hh, loc->activestaticintercepts, ipr->key,
+                    strlen(ipr->key), ipr);
+        } else {
+            ipr_exist->references ++;
+            free_single_staticipsession(ipr);
+        }
+    }
+}
+
+void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
+        staticipsession_t *ipr) {
+
+    patricia_node_t *node = NULL;
+    prefix_t *prefix;
+    liid_set_t **all, *found;
+    liid_set_t *a, *b;
+    staticipsession_t *sessrec;
+
+    prefix = ascii2prefix(0, ipr->rangestr);
+    if (prefix == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI: error converting %s into a valid IP prefix in thread %d",
+                ipr->rangestr, trace_get_perpkt_thread_id(t));
+        goto bailremoverange;
+    }
+
+    if (prefix->family == AF_INET) {
+        node = patricia_search_exact(loc->staticv4ranges, prefix);
+    } else if (prefix->family == AF_INET6) {
+        node = patricia_search_exact(loc->staticv6ranges, prefix);
+    }
+
+    if (!node) {
+        logger(LOG_DAEMON,
+                "OpenLI: thread %d was supposed to remove IP prefix %s for LIID %s but no such prefix exists in the tree.",
+                trace_get_perpkt_thread_id(t), ipr->rangestr, ipr->common.liid);
+        goto bailremoverange;
+    }
+
+    all = (liid_set_t **)&(node->data);
+    HASH_FIND(hh, *all, ipr->common.liid, ipr->common.liid_len, found);
+    if (!found) {
+        logger(LOG_DAEMON,
+                "OpenLI: thread %d was supposed to remove IP prefix %s for LIID %s but the LIID is not associated with that prefix.",
+                trace_get_perpkt_thread_id(t), ipr->rangestr, ipr->common.liid);
+        goto bailremoverange;
+    }
+
+    HASH_DELETE(hh, *all, found);
+    /*
+    logger(LOG_DAEMON,
+            "OpenLI: removed LIID %s from prefix %s (%d refs remaining)",
+            ipr->common.liid, ipr->rangestr, HASH_CNT(hh, *all));
+    */
+    if (*all == NULL) {
+        if (prefix->family == AF_INET) {
+            patricia_remove(loc->staticv4ranges, node);
+        } else {
+            patricia_remove(loc->staticv6ranges, node);
+        }
+    }
+    free(found->liid);
+    free(found);
+
+    HASH_FIND(hh, loc->activestaticintercepts, ipr->key, strlen(ipr->key),
+            sessrec);
+    if (sessrec) {
+        sessrec->references --;
+        if (sessrec->references == 0) {
+            HASH_DELETE(hh, loc->activestaticintercepts, sessrec);
+            free_single_staticipsession(sessrec);
+        }
+    } else {
+        logger(LOG_DAEMON,
+                "OpenLI: no static IP session exists for key %s, but we are supposed to be removing a range for it.",
+                ipr->key);
+    }
+
+
+bailremoverange:
+    if (prefix) {
+        free(prefix);
+    }
+    free_single_staticipsession(ipr);
+    return;
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -17,9 +17,9 @@ openlicollector_SOURCES=collector.c configparser.c configparser.h collector.h \
                 ipiri.c ipiri.h collector_sync_voip.c collector_sync_voip.h \
                 $(PLUGIN_SRCS)
 
-openlicollector_LDADD = @ADD_LIBS@
-openlicollector_LDFLAGS=-lpthread
-openlicollector_CFLAGS=
+openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs
+openlicollector_LDFLAGS=-lpthread -lpatricia
+openlicollector_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/
 endif
 
 if BUILD_PROVISIONER
@@ -32,7 +32,7 @@ openliprovisioner_SOURCES=provisioner.c provisioner.h byteswap.c \
 
 openliprovisioner_LDADD = @ADD_LIBS@
 openliprovisioner_LDFLAGS=-lpthread
-openliprovisioner_CFLAGS=
+openliprovisioner_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/
 endif
 
 if BUILD_MEDIATOR
@@ -44,6 +44,6 @@ openlimediator_SOURCES=mediator.c mediator.h byteswap.c byteswap.h \
                 coreserver.h
 openlimediator_LDADD = @ADD_LIBS@
 openlimediator_LDFLAGS=-lpthread
-openlimediator_CFLAGS=
+openlimediator_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/
 endif
 
