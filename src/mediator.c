@@ -570,7 +570,7 @@ static int connect_handover(mediator_state_t *state, handover_t *ho) {
         return 0;
     }
 
-    ho->outev->fd = connect_socket(ho->ipstr, ho->portstr, agstate->failmsg);
+    ho->outev->fd = connect_socket(ho->ipstr, ho->portstr, agstate->failmsg, 1);
     if (ho->outev->fd == -1) {
         return -1;
     }
@@ -1981,7 +1981,8 @@ static void run(mediator_state_t *state) {
 
 	    /* Attempt to connect to the provisioner */
         if (state->provisioner.provev == NULL) {
-            int s = connect_socket(state->provaddr, state->provport, provfail);
+            int s = connect_socket(state->provaddr, state->provport, provfail,
+                    0);
             if (s == -1) {
                 logger(LOG_DAEMON,
                         "OpenLI mediator: unable to connect to provisioner.");

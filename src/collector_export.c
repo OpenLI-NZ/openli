@@ -81,7 +81,7 @@ static int connect_single_target(export_dest_t *dest) {
     }
 
     sockfd = connect_socket(dest->details.ipstr, dest->details.portstr,
-            dest->failmsg);
+            dest->failmsg, 0);
 
     if (sockfd == -1) {
         /* TODO should probably bail completely on this dest if this

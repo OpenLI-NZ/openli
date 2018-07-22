@@ -39,10 +39,13 @@
 #include "logger.h"
 #include "util.h"
 
-int connect_socket(char *ipstr, char *portstr, uint8_t isretry) {
+int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
+        uint8_t setkeepalive) {
 
     struct addrinfo hints, *res;
     int sockfd;
+    int optval;
+    socklen_t optlen;
 
     if (ipstr == NULL || portstr == NULL) {
         logger(LOG_DAEMON,
@@ -66,6 +69,17 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry) {
         logger(LOG_DAEMON, "OpenLI: Error while creating connecting socket: %s.",
                 strerror(errno));
         goto endconnect;
+    }
+
+    if (setkeepalive) {
+        optval = 1;
+        optlen = sizeof(optval);
+
+        if (setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &optval, optlen) < 0) {
+            logger(LOG_DAEMON, "OpenLI: Unable to set keep alive SO for socket: %s.",
+                    strerror(errno));
+            goto endconnect;
+        }
     }
 
     if (connect(sockfd, res->ai_addr, res->ai_addrlen) == -1) {

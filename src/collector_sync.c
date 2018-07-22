@@ -889,7 +889,7 @@ int sync_connect_provisioner(collector_sync_t *sync) {
 
 
     sockfd = connect_socket(sync->info->provisionerip,
-            sync->info->provisionerport, sync->instruct_fail);
+            sync->info->provisionerport, sync->instruct_fail, 0);
 
     if (sockfd == -1) {
         return -1;

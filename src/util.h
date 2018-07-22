@@ -29,7 +29,8 @@
 
 #include <sys/epoll.h>
 
-int connect_socket(char *ipstr, char *portstr, uint8_t isretry);
+int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
+        uint8_t setkeepalive);
 int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr);
 int create_listener(char *addr, char *port, char *name);
 char *sockaddr_to_string(struct sockaddr *sa, char *str, int len);
