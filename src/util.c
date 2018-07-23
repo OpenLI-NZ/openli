@@ -34,6 +34,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <netinet/tcp.h>
 #include <stdio.h>
 
 #include "logger.h"
@@ -80,6 +81,20 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
                     strerror(errno));
             goto endconnect;
         }
+
+        optval = 30;
+        if (setsockopt(sockfd, SOL_TCP, TCP_KEEPIDLE, &optval, optlen) < 0) {
+            logger(LOG_DAEMON, "OpenLI: Unable to set keep alive idle SO for socket: %s.",
+                    strerror(errno));
+            goto endconnect;
+        }
+
+        if (setsockopt(sockfd, SOL_TCP, TCP_KEEPINTVL, &optval, optlen) < 0) {
+            logger(LOG_DAEMON, "OpenLI: Unable to set keep alive interval SO for socket: %s.",
+                    strerror(errno));
+            goto endconnect;
+        }
+
     }
 
     if (connect(sockfd, res->ai_addr, res->ai_addrlen) == -1) {
