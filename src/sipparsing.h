@@ -34,6 +34,7 @@
 #include <osipparser2/sdp_message.h>
 
 #include "intercept.h"
+#include "reassembler.h"
 
 typedef enum {
     SIP_IPV4_TCP,
@@ -46,6 +47,14 @@ enum {
     SIP_MATCH_FROMURI,
     SIP_MATCH_TOURI,
     SIP_MATCH_VIAURI
+};
+
+enum {
+    SIP_ACTION_ERROR,
+    SIP_ACTION_IGNORE,
+    SIP_ACTION_USE_PACKET,
+    SIP_ACTION_REASSEMBLE_TCP,
+    SIP_ACTION_REASSEMBLE_IPFRAG,
 };
 
 typedef struct sipserverdetails {
@@ -66,11 +75,23 @@ typedef struct openli_sip_parser {
 
     osip_message_t *osip;
     sdp_message_t *sdp;
+    tcp_reassembler_t *tcpreass;
+
+    uint8_t sipalloced;
+    char *sipmessage;
+    uint16_t siplen;
+    tcp_reassemble_stream_t *thisstream;
 
 } openli_sip_parser_t;
 
-int parse_sip_packet(openli_sip_parser_t **parser, libtrace_packet_t *packet);
+int add_sip_packet_to_parser(openli_sip_parser_t **parser,
+        libtrace_packet_t *packet);
+int parse_next_sip_message(openli_sip_parser_t *parser,
+        libtrace_packet_t *packet);
 void release_sip_parser(openli_sip_parser_t *parser);
+
+char *get_sip_contents(openli_sip_parser_t *parser, uint16_t *siplen);
+
 char *get_sip_from_uri(openli_sip_parser_t *parser);
 char *get_sip_to_uri(openli_sip_parser_t *parser);
 char *get_sip_to_uri_username(openli_sip_parser_t *parser);

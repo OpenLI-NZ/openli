@@ -58,46 +58,15 @@ int ipmm_iri(libtrace_packet_t *pkt, openli_export_recv_t *irimsg,
 
 int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
         exporter_intercept_msg_t *intdetails, uint32_t seqno,
-        openli_exportmsg_t *msg) {
+        openli_exportmsg_t *msg, struct timeval *ts) {
 
-    void *l3, *content, *transport;
-    uint16_t ethertype;
-    uint32_t rem;
-    uint8_t proto;
     wandder_etsipshdr_data_t hdrdata;
-    struct timeval tv;
-
-    content = NULL;
-    l3 = trace_get_layer3(job->packet, &ethertype, &rem);
-    if (l3 == NULL || rem < sizeof(libtrace_ip_t)) {
-        logger(LOG_DAEMON, "OpenLI: packet intended for IPMM IRI is invalid.");
-        return -1;
-    }
-
-    transport = trace_get_transport(job->packet, &proto, &rem);
-    if (transport) {
-        if (proto == TRACE_IPPROTO_UDP) {
-            content = trace_get_payload_from_udp((libtrace_udp_t *)transport,
-                    &rem);
-            if (rem == 0) {
-                content = NULL;
-            }
-        } else if (proto == TRACE_IPPROTO_TCP) {
-            content = trace_get_payload_from_tcp((libtrace_tcp_t *)transport,
-                    &rem);
-            if (rem == 0) {
-                content = NULL;
-            }
-        }
-    }
 
     if (*encoder == NULL) {
         *encoder = init_wandder_encoder();
     } else {
         reset_wandder_encoder(*encoder);
     }
-
-    tv = trace_get_timeval(job->packet);
 
     hdrdata.liid = intdetails->liid;
     hdrdata.liid_len = intdetails->liid_len;
@@ -114,23 +83,18 @@ int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
 
     memset(msg, 0, sizeof(openli_exportmsg_t));
 
-    if (job->ipmmiri_style == OPENLI_IPMMIRI_ORIGINAL) {
-        msg->msgbody = encode_etsi_ipmmiri(*encoder, &hdrdata,
-                (int64_t)(job->cin), (int64_t)seqno, job->iritype, &tv, l3,
-                rem);
-        msg->ipcontents = (uint8_t *)l3;
-        msg->ipclen = rem;
-    } else if (job->ipmmiri_style == OPENLI_IPMMIRI_SIP) {
-        if (content == NULL) {
+    if (job->ipmmiri_style == OPENLI_IPMMIRI_SIP) {
+        if (job->content == NULL) {
             logger(LOG_DAEMON, "OpenLI: trying to create SIP IRI but packet has no SIP payload?");
             return -1;
         }
 
         msg->msgbody = encode_etsi_sipiri(*encoder, &hdrdata,
-                (int64_t)(job->cin), (int64_t)seqno, job->iritype, &tv,
-                l3, ethertype, content, rem);
-        msg->ipcontents = (uint8_t *)content;
-        msg->ipclen = rem;
+                (int64_t)(job->cin), (int64_t)seqno, job->iritype, ts,
+                job->ipsrc, job->ipdest, job->ipfamily, job->content,
+                job->contentlen);
+        msg->ipcontents = (uint8_t *)(job->content);
+        msg->ipclen = job->contentlen;
     }
     /* TODO style == H323 */
 

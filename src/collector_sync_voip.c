@@ -407,7 +407,7 @@ static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
     voipintshared_t *vshared = NULL;
     uint32_t cin_id = 0;
 
-    cin_id = hashlittle(callid, strlen(callid), 0xbeefface);
+    cin_id = hashlittle(callid, strlen(callid), 0xceefface);
     if (create_new_voipcin(&(vint->active_cins), cin_id, vint) == -1) {
         return NULL;
     }
@@ -548,7 +548,7 @@ static int process_sip_200ok(collector_sync_voip_t *sync, rtpstreaminf_t *thisrt
 }
 
 static int process_sip_other(collector_sync_voip_t *sync, char *callid,
-        sip_sdp_identifier_t *sdpo, libtrace_packet_t *pkt) {
+        sip_sdp_identifier_t *sdpo, openli_export_recv_t *irimsg) {
 
     voipintercept_t *vint, *tmp;
     voipcinmap_t *findcin;
@@ -560,8 +560,6 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
     int ret;
 
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
-        openli_export_recv_t irimsg;
-        memset(&irimsg, 0, sizeof(openli_export_recv_t));
         int queueused;
 
         /* Is this call ID associated with this intercept? */
@@ -611,16 +609,15 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
         }
 
         /* Wrap this packet up in an IRI and forward it on to the exporter */
-        ret = ipmm_iri(pkt, &irimsg, vint, vshared, iritype,
-                OPENLI_IPMMIRI_SIP, sync->info);
-        if (ret < 0) {
-            logger(LOG_DAEMON,
-                    "OpenLI: error while trying to export IRI containing SIP packet.");
-            return -1;
-        }
+        irimsg->data.ipmmiri.liid = strdup(vint->common.liid);
+        irimsg->destid = vint->common.destid;
+        irimsg->data.ipmmiri.iritype = iritype;
+        irimsg->data.ipmmiri.cin = vshared->cin;
 
-        trace_increment_packet_refcount(pkt);
-        queueused = export_queue_put_by_liid(sync->exportqueues, &irimsg,
+        if (irimsg->data.ipmmiri.packet) {
+            trace_increment_packet_refcount(irimsg->data.ipmmiri.packet);
+        }
+        queueused = export_queue_put_by_liid(sync->exportqueues, irimsg,
                 vint->common.liid);
         sync->export_used[queueused] = 1;
         exportcount += ret;
@@ -630,7 +627,7 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
 }
 
 static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
-        sip_sdp_identifier_t *sdpo, libtrace_packet_t *pkt) {
+        sip_sdp_identifier_t *sdpo, openli_export_recv_t *irimsg) {
 
     voipintercept_t *vint, *tmp;
     voipcinmap_t *findcin;
@@ -651,11 +648,9 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     }
 
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
-        openli_export_recv_t irimsg;
         int queueused;
         vshared = NULL;
 
-        memset(&irimsg, 0, sizeof(openli_export_recv_t));
         /* Is this a call ID we've seen already? */
         HASH_FIND(hh_callid, vint->cin_callid_map, callid, strlen(callid),
                 findcin);
@@ -736,15 +731,15 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
 
 
         /* Wrap this packet up in an IRI and forward it on to the exporter */
-        ret = ipmm_iri(pkt, &irimsg, vint, vshared, iritype,
-                OPENLI_IPMMIRI_SIP, sync->info);
-        if (ret == -1) {
-            logger(LOG_DAEMON,
-                    "OpenLI: error while trying to export IRI containing SIP packet.");
-            continue;
+        irimsg->data.ipmmiri.liid = strdup(vint->common.liid);
+        irimsg->destid = vint->common.destid;
+        irimsg->data.ipmmiri.iritype = iritype;
+        irimsg->data.ipmmiri.cin = vshared->cin;
+
+        if (irimsg->data.ipmmiri.packet) {
+            trace_increment_packet_refcount(irimsg->data.ipmmiri.packet);
         }
-        trace_increment_packet_refcount(pkt);
-        queueused = export_queue_put_by_liid(sync->exportqueues, &irimsg,
+        queueused = export_queue_put_by_liid(sync->exportqueues, irimsg,
                 vint->common.liid);
         sync->export_used[queueused] = 1;
         exportcount += ret;
@@ -754,7 +749,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
 }
 
 static int update_sip_state(collector_sync_voip_t *sync,
-        libtrace_packet_t *pkt) {
+        libtrace_packet_t *pkt, openli_export_recv_t *irimsg) {
 
     char *callid, *sessid, *sessversion, *sessaddr, *sessuser;
     openli_sip_identity_t authid, touriid;
@@ -816,14 +811,14 @@ static int update_sip_state(collector_sync_voip_t *sync,
     memset(sync->export_used, 0, sizeof(uint8_t) * sync->exportqueues->numqueues);
     ret = 0;
     if (sip_is_invite(sync->sipparser)) {
-        if ((ret = process_sip_invite(sync, callid, &sdpo, pkt)) < 0) {
+        if ((ret = process_sip_invite(sync, callid, &sdpo, irimsg)) < 0) {
             iserr = 1;
             logger(LOG_DAEMON, "OpenLI: error while processing SIP invite");
             goto sipgiveup;
         }
     } else if (lookup_sip_callid(sync, callid) != 0) {
         /* SIP packet matches a "known" call of interest */
-        if ((ret = process_sip_other(sync, callid, &sdpo, pkt)) < 0) {
+        if ((ret = process_sip_other(sync, callid, &sdpo, irimsg)) < 0) {
             iserr = 1;
             logger(LOG_DAEMON, "OpenLI: error while processing non-invite SIP");
             goto sipgiveup;
@@ -1220,6 +1215,120 @@ debugfail:
     return NULL;
 }
 
+static inline void get_ip_addresses(libtrace_packet_t *pkt,
+        openli_ipmmiri_job_t *job) {
+
+    void *ipheader;
+    uint16_t ethertype;
+    uint32_t  rem;
+
+    job->ipfamily = 0;
+
+    ipheader = trace_get_layer3(pkt, &ethertype, &rem);
+    if (!ipheader || rem == 0) {
+        return;
+    }
+
+    if (ethertype == TRACE_ETHERTYPE_IP) {
+        libtrace_ip_t *ip4 = (libtrace_ip_t *)ipheader;
+
+        job->ipfamily = AF_INET;
+        memcpy(job->ipsrc, &(ip4->ip_src.s_addr), sizeof(uint32_t));
+        memcpy(job->ipdest, &(ip4->ip_dst.s_addr), sizeof(uint32_t));
+    } else {
+        libtrace_ip6_t *ip6 = (libtrace_ip6_t *)ipheader;
+        job->ipfamily = AF_INET;
+        memcpy(job->ipsrc, &(ip6->ip_src.s6_addr), sizeof(struct in6_addr));
+        memcpy(job->ipdest, &(ip6->ip_dst.s6_addr), sizeof(struct in6_addr));
+    }
+
+}
+
+
+static void examine_sip_update(collector_sync_voip_t *sync,
+        libtrace_packet_t *recvdpkt) {
+
+    int ret, doonce;
+    libtrace_packet_t *pktref;
+    openli_export_recv_t irimsg;
+
+    ret = add_sip_packet_to_parser(&(sync->sipparser), recvdpkt);
+
+    if (ret == SIP_ACTION_ERROR) {
+        logger(LOG_DAEMON,
+                "OpenLI: sync thread received an invalid SIP packet?");
+        if (sync->sipdebugfile) {
+            if (!sync->sipdebugout) {
+                sync->sipdebugout = open_debug_output(sync->sipdebugfile,
+                        "invalid");
+            }
+            if (sync->sipdebugout) {
+                trace_write_packet(sync->sipdebugout, recvdpkt);
+            }
+        }
+    } else if (ret == SIP_ACTION_USE_PACKET) {
+        pktref = recvdpkt;
+        doonce = 1;
+    } else if (ret == SIP_ACTION_REASSEMBLE_TCP) {
+        pktref = NULL;
+        doonce = 0;
+    }
+
+    memset(&irimsg, 0, sizeof(irimsg));
+
+    irimsg.type = OPENLI_EXPORT_IPMMIRI;
+    irimsg.data.ipmmiri.packet = pktref;
+    irimsg.data.ipmmiri.ipmmiri_style = OPENLI_IPMMIRI_SIP;
+    irimsg.data.ipmmiri.colinfo = sync->info;
+    irimsg.ts = trace_get_timeval(recvdpkt);
+    get_ip_addresses(recvdpkt, &(irimsg.data.ipmmiri));
+
+    if (ret == SIP_ACTION_USE_PACKET || ret == SIP_ACTION_REASSEMBLE_TCP) {
+        /* reassembled TCP streams can contain multiple messages, so
+         * we need to keep trying until we have no new usable messages. */
+        do {
+            ret = parse_next_sip_message(sync->sipparser, pktref);
+            if (ret == 0) {
+                break;
+            }
+
+            if (ret < 0) {
+                logger(LOG_DAEMON,
+                        "OpenLI: sync thread parsed an invalid SIP packet?");
+                if (sync->sipdebugfile && pktref) {
+                    if (!sync->sipdebugout) {
+                        sync->sipdebugout = open_debug_output(
+                                sync->sipdebugfile, "invalid");
+                    }
+                    if (sync->sipdebugout) {
+                        trace_write_packet(sync->sipdebugout, pktref);
+                    }
+                }
+            }
+
+            irimsg.data.ipmmiri.content = get_sip_contents(sync->sipparser,
+                    &(irimsg.data.ipmmiri.contentlen));
+
+            if (ret > 0 && update_sip_state(sync, pktref, &irimsg) < 0) {
+                logger(LOG_DAEMON,
+                        "OpenLI: error while updating SIP state in collector.");
+                if (sync->sipdebugfile && pktref) {
+                    if (!sync->sipdebugupdate) {
+                        sync->sipdebugupdate = open_debug_output(
+                                sync->sipdebugfile,
+                                "update");
+                    }
+                    if (sync->sipdebugupdate) {
+                        trace_write_packet(sync->sipdebugupdate, pktref);
+                    }
+                }
+            }
+        } while (!doonce);
+    }
+
+    trace_decrement_packet_refcount(recvdpkt);
+
+}
 
 static inline void process_colthread_message(collector_sync_voip_t *sync,
         sync_epoll_t *syncev) {
@@ -1255,44 +1364,7 @@ static inline void process_colthread_message(collector_sync_voip_t *sync,
     /* If this relates to an active intercept, create IRI and export */
 
     if (recvd.type == OPENLI_UPDATE_SIP) {
-
-        /* The error checking / reporting in here is a bit meaningless,
-         * as I'm not really sure what action I can take here if something
-         * goes wrong aside from just ignoring the SIP update.
-         */
-        int ret;
-        if ((ret = parse_sip_packet(&(sync->sipparser),
-                        recvd.data.pkt)) > 0) {
-            if (update_sip_state(sync, recvd.data.pkt) < 0) {
-                logger(LOG_DAEMON,
-                        "OpenLI: error while updating SIP state in collector.");
-                if (sync->sipdebugfile) {
-                    if (!sync->sipdebugupdate) {
-                        sync->sipdebugupdate = open_debug_output(
-                                sync->sipdebugfile,
-                                "update");
-                    }
-                    if (sync->sipdebugupdate) {
-                        trace_write_packet(sync->sipdebugupdate,
-                                recvd.data.pkt);
-                    }
-                }
-            }
-        } else if (ret < 0) {
-            logger(LOG_DAEMON,
-                    "OpenLI: sync thread received an invalid SIP packet?");
-            if (sync->sipdebugfile) {
-                if (!sync->sipdebugout) {
-                    sync->sipdebugout = open_debug_output(sync->sipdebugfile,
-                            "invalid");
-                }
-                if (sync->sipdebugout) {
-                    trace_write_packet(sync->sipdebugout, recvd.data.pkt);
-                }
-            }
-        }
-
-        trace_decrement_packet_refcount(recvd.data.pkt);
+        examine_sip_update(sync, recvd.data.pkt);
     }
 
 }

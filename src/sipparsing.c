@@ -24,6 +24,7 @@
  *
  */
 
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <libtrace.h>
@@ -34,13 +35,156 @@
 #include "logger.h"
 
 
-int parse_sip_packet(openli_sip_parser_t **parser, libtrace_packet_t *packet) {
+static int parse_tcp_sip_packet(openli_sip_parser_t *p,
+        libtrace_packet_t *packet, libtrace_tcp_t *tcp, uint32_t tcprem) {
+
+    tcp_reassemble_stream_t *stream;
+    void *payload = NULL;
+    uint16_t plen = trace_get_payload_length(packet);
+    int ret;
+
+    stream = get_tcp_reassemble_stream(p->tcpreass, packet);
+    if (stream == NULL) {
+        return -1;
+    }
+
+    p->thisstream = stream;
+    payload = trace_get_payload_from_tcp(tcp, &tcprem);
+    if (payload == NULL || plen == 0) {
+        return -1;
+    }
+
+    if (tcprem < plen) {
+        plen = tcprem;
+    }
+
+    /* Check for a CRLF keep alive */
+    if (memcmp(payload, "\x0d\x0a\x0d\x0a", 4) == 0 && plen == 4) {
+        return -1;
+    }
+
+    if (memcmp(payload, "\x0d\x0a", 2) == 0 && plen == 2) {
+        return -1;
+    }
+
+    /* 00 00 00 00 seems to be some sort of keep alive as well? */
+    if (plen == 4 && memcmp(payload, "\x00\x00\x00\x00", 4) == 0) {
+        return -1;
+    }
+
+    ret = update_tcp_reassemble_stream(stream, (uint8_t *)payload, plen,
+            ntohl(tcp->seq));
+
+    if (ret == 1) {
+        if (p->sipalloced) {
+            free(p->sipmessage);
+            p->sipalloced = 0;
+        }
+        p->sipmessage = (char *)payload;
+        p->siplen = plen;
+    }
+
+    return ret;
+
+}
+
+static int parse_udp_sip_packet(openli_sip_parser_t *p,
+        libtrace_packet_t *packet, libtrace_udp_t *udp, uint32_t udprem) {
+
+    void *payload = NULL;
+    uint16_t plen = trace_get_payload_length(packet);
+    int ret;
+
+    payload = trace_get_payload_from_udp(udp, &udprem);
+    if (payload == NULL || plen == 0) {
+        return -1;
+    }
+
+    if (udprem < plen) {
+        plen = udprem;
+    }
+
+    /* Check for a CRLF keep alive */
+    if (memcmp(payload, "\x0d\x0a\x0d\x0a", 4) == 0 && plen == 4) {
+        return -1;
+    }
+
+    if (memcmp(payload, "\x0d\x0a", 2) == 0 && plen == 2) {
+        return -1;
+    }
+
+    /* 00 00 00 00 seems to be some sort of keep alive as well? */
+    if (plen == 4 && memcmp(payload, "\x00\x00\x00\x00", 4) == 0) {
+        return -1;
+    }
+
+    if (p->sipalloced) {
+        free(p->sipmessage);
+        p->sipalloced = 0;
+    }
+
+    p->sipmessage = (char *)payload;
+    p->siplen = plen;
+
+    return 1;
+}
+
+char *get_sip_contents(openli_sip_parser_t *p, uint16_t *siplen) {
+    *siplen = p->siplen;
+    return p->sipmessage;
+}
+
+int parse_next_sip_message(openli_sip_parser_t *p,
+        libtrace_packet_t *packet) {
+
+    int ret;
+
+    if (p->osip) {
+        osip_message_free(p->osip);
+        p->osip = NULL;
+    }
+
+    if (p->sdp) {
+        sdp_message_free(p->sdp);
+        p->sdp = NULL;
+    }
+
+    if (!packet) {
+
+        if (!p->sipalloced) {
+            p->sipmessage = NULL;
+        }
+
+        ret = get_next_tcp_reassembled(p->thisstream, &(p->sipmessage),
+                &(p->siplen));
+        p->sipalloced = 1;
+
+        if (ret <= 0) {
+            return ret;
+        }
+    }
+
+    osip_message_init(&(p->osip));
+    ret = osip_message_parse(p->osip, (const char *)(p->sipmessage),
+            p->siplen);
+    if (ret != 0) {
+        return -1;
+    }
+
+    /* Don't do an SDP parse until it is required -- collector processing
+     * threads won't need to look at SDP, for instance. */
+    return 1;
+}
+
+
+int add_sip_packet_to_parser(openli_sip_parser_t **parser,
+        libtrace_packet_t *packet) {
 
     void *transport;
     char *payload = NULL;
     uint8_t proto;
     uint32_t rem, plen;
-    int i;
+    int i, ret;
     openli_sip_parser_t *p;
 
     if (*parser == NULL) {
@@ -48,77 +192,45 @@ int parse_sip_packet(openli_sip_parser_t **parser, libtrace_packet_t *packet) {
 
         p->osip = NULL;
         p->sdp = NULL;
+        p->tcpreass = create_new_tcp_reassembler(OPENLI_REASSEMBLE_SIP);
+        p->sipmessage = NULL;
+        p->siplen = 0;
+        p->thisstream = NULL;
+        p->sipalloced = 0;
         *parser = p;
-    } else if (p->osip) {
+    } else {
         p = *parser;
-        osip_message_free(p->osip);
-
-        if (p->sdp) {
-            sdp_message_free(p->sdp);
-            p->sdp = NULL;
-        }
+        p->thisstream = NULL;
     }
-
-	osip_message_init(&(p->osip));
 
     transport = trace_get_transport(packet, &proto, &rem);
     if (transport == NULL) {
-        return -1;
+        return SIP_ACTION_ERROR;
     }
+
     if (proto == TRACE_IPPROTO_TCP) {
-        libtrace_tcp_t *tcp = (libtrace_tcp_t *)transport;
+
         if (rem < sizeof(libtrace_tcp_t)) {
-            return 0;
+            return SIP_ACTION_IGNORE;
         }
-        payload = trace_get_payload_from_tcp(tcp, &rem);
-        if (payload == NULL || rem == 0) {
-            return 0;
+        ret = parse_tcp_sip_packet(p, packet, (libtrace_tcp_t *)transport, rem);
+        if (ret == -1) {
+            return SIP_ACTION_IGNORE;
+        } else if (ret == 0) {
+            return SIP_ACTION_REASSEMBLE_TCP;
+        } else {
+            return SIP_ACTION_USE_PACKET;
         }
     } else if (proto == TRACE_IPPROTO_UDP) {
-        libtrace_udp_t *udp = (libtrace_udp_t *)transport;
-        if (rem < sizeof(libtrace_udp_t)) {
-            return 0;
+        ret = parse_udp_sip_packet(p, packet, (libtrace_udp_t *)transport, rem);
+        if (ret < 0) {
+            return SIP_ACTION_IGNORE;
+        } else {
+            return SIP_ACTION_USE_PACKET;
         }
-        payload = trace_get_payload_from_udp(udp, &rem);
-        if (payload == NULL || rem == 0) {
-            return 0;
-        }
-    } else {
-        return -1;
     }
 
-    plen = trace_get_payload_length(packet);
-    if (plen == 0) {
-        return 0;
-    }
-
-    /* Check for a CRLF keep alive */
-    if (memcmp(payload, "\x0d\x0a\x0d\x0a", 4) == 0) {
-        return 0;
-    }
-
-    if (memcmp(payload, "\x0d\x0a", 2) == 0 && plen == 2) {
-        return 0;
-    }
-
-    /* 00 00 00 00 seems to be some sort of keep alive as well? */
-    if (plen == 4 && memcmp(payload, "\x00\x00\x00\x00", 4) == 0) {
-        return 0;
-    }
-
-    if (plen < rem) {
-        rem = plen;
-    }
-
-    i = osip_message_parse(p->osip, (const char *)payload, rem);
-    if (i != 0) {
-        return -1;
-    }
-
-    /* Don't do an SDP parse until it is required -- collector processing
-     * threads won't need to look at SDP, for instance. */
-
-    return 1;
+    return SIP_ACTION_IGNORE;
 }
 
 void release_sip_parser(openli_sip_parser_t *parser) {
@@ -128,6 +240,12 @@ void release_sip_parser(openli_sip_parser_t *parser) {
     }
     if (parser->sdp) {
         sdp_message_free(parser->sdp);
+    }
+    if (parser->tcpreass) {
+        destroy_tcp_reassembler(parser->tcpreass);
+    }
+    if (parser->sipmessage && parser->sipalloced) {
+        free(parser->sipmessage);
     }
     free(parser);
 

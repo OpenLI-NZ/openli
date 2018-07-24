@@ -167,36 +167,32 @@ static inline void encode_ipmmiri_body(wandder_encoder_t *encoder,
 }
 
 static inline void encode_sipiri_body(wandder_encoder_t *encoder,
-        etsili_iri_type_t iritype, void *ipheader, uint16_t ethertype,
-        void *sipcontent, uint32_t siplen) {
+        etsili_iri_type_t iritype, uint8_t *ipsrc, uint8_t *ipdest,
+        int ipfamily, void *sipcontent, uint32_t siplen) {
 
-    etsili_ipaddress_t ipsrc, ipdst;
+    etsili_ipaddress_t encipsrc, encipdst;
 
-    if (ethertype == TRACE_ETHERTYPE_IP) {
-        libtrace_ip_t *ip4 = (libtrace_ip_t *)ipheader;
+    if (ipfamily == AF_INET) {
+        encipsrc.iptype = ETSILI_IPADDRESS_VERSION_4;
+        encipsrc.assignment = ETSILI_IPADDRESS_ASSIGNED_UNKNOWN;
+        encipsrc.v6prefixlen = 0;
+        encipsrc.v4subnetmask = 0xffffffff;
+        encipsrc.valtype = ETSILI_IPADDRESS_REP_BINARY;
+        encipsrc.ipvalue = ipsrc;
 
-        ipsrc.iptype = ETSILI_IPADDRESS_VERSION_4;
-        ipsrc.assignment = ETSILI_IPADDRESS_ASSIGNED_UNKNOWN;
-        ipsrc.v6prefixlen = 0;
-        ipsrc.v4subnetmask = 0xffffffff;
-        ipsrc.valtype = ETSILI_IPADDRESS_REP_BINARY;
-        ipsrc.ipvalue = (uint8_t *)(&(ip4->ip_src.s_addr));
+        encipdst = encipsrc;
+        encipdst.ipvalue = ipdest;
+    } else if (ipfamily == AF_INET6) {
+        encipsrc.iptype = ETSILI_IPADDRESS_VERSION_6;
+        encipsrc.assignment = ETSILI_IPADDRESS_ASSIGNED_UNKNOWN;
+        encipsrc.v6prefixlen = 0;
+        encipsrc.v4subnetmask = 0;
+        encipsrc.valtype = ETSILI_IPADDRESS_REP_BINARY;
 
-        ipdst = ipsrc;
-        ipdst.ipvalue = (uint8_t *)(&(ip4->ip_dst.s_addr));
-    } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
-        libtrace_ip6_t *ip6 = (libtrace_ip6_t *)ipheader;
+        encipsrc.ipvalue = ipsrc;
 
-        ipsrc.iptype = ETSILI_IPADDRESS_VERSION_6;
-        ipsrc.assignment = ETSILI_IPADDRESS_ASSIGNED_UNKNOWN;
-        ipsrc.v6prefixlen = 0;
-        ipsrc.v4subnetmask = 0;
-        ipsrc.valtype = ETSILI_IPADDRESS_REP_BINARY;
-
-        ipsrc.ipvalue = (uint8_t *)(&(ip6->ip_src.s6_addr));
-
-        ipdst = ipsrc;
-        ipdst.ipvalue = (uint8_t *)(&(ip6->ip_dst.s6_addr));
+        encipdst = encipsrc;
+        encipdst.ipvalue = ipdest;
     } else {
         wandder_encode_endseq(encoder);    // ends outermost sequence
         return;
@@ -205,9 +201,9 @@ static inline void encode_sipiri_body(wandder_encoder_t *encoder,
     encode_ipmmiri_body_common(encoder, iritype);
     ENC_CSEQUENCE(encoder, 1);      // SIPMessage
     ENC_CSEQUENCE(encoder, 0);
-    encode_ipaddress(encoder, &ipsrc);
+    encode_ipaddress(encoder, &encipsrc);
     ENC_CSEQUENCE(encoder, 1);
-    encode_ipaddress(encoder, &ipdst);
+    encode_ipaddress(encoder, &encipdst);
     wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, sipcontent, siplen);
     wandder_encode_endseq(encoder); // end SIPMessage
@@ -498,11 +494,11 @@ wandder_encoded_result_t *encode_etsi_ipiri(wandder_encoder_t *encoder,
 
 wandder_encoded_result_t *encode_etsi_sipiri(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
-        etsili_iri_type_t iritype, struct timeval *tv, void *ipheader,
-        uint16_t ethertype, void *sipcontents, uint32_t siplen) {
+        etsili_iri_type_t iritype, struct timeval *tv, uint8_t *ipsrc,
+        uint8_t *ipdest, int ipfamily, void *sipcontents, uint32_t siplen) {
 
     encode_etsili_pshdr(encoder, hdrdata, cin, seqno, tv);
-    encode_sipiri_body(encoder, iritype, ipheader, ethertype, sipcontents,
+    encode_sipiri_body(encoder, iritype, ipsrc, ipdest, ipfamily, sipcontents,
             siplen);
     return wandder_encode_finish(encoder);
 }

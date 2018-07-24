@@ -42,12 +42,7 @@ enum {
 
 int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
         exporter_intercept_msg_t *intdetails, uint32_t seqno,
-                openli_exportmsg_t *msg);
-
-int ipmm_iri(libtrace_packet_t *pkt, openli_export_recv_t *irimsg,
-        voipintercept_t *vint, voipintshared_t *cin,
-        etsili_iri_type_t iritype, uint8_t ipmmiri_style,
-        shared_global_info_t *info);
+        openli_exportmsg_t *msg, struct timeval *ts);
 
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
