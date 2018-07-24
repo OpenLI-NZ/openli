@@ -661,7 +661,7 @@ static inline void free_support_thread_data(support_thread_global_t *sup) {
 		free(sup->collector_queues);
 	}
 	if (sup->epollevs) {
-		free(sup->epollevs);
+        libtrace_list_deinit((libtrace_list_t *)(sup->epollevs));
 	}
 }
 
