@@ -136,6 +136,9 @@ int get_next_ip_reassembled(ip_reassemble_stream_t *stream, char **content,
         uint16_t *len, uint8_t *proto);
 int update_ipfrag_reassemble_stream(ip_reassemble_stream_t *stream,
         libtrace_packet_t *pkt, uint16_t fragoff, uint8_t moreflag);
+int is_ip_reassembled(ip_reassemble_stream_t *stream);
+int get_ipfrag_ports(ip_reassemble_stream_t *stream, uint16_t *src,
+        uint16_t *dest);
 
 #endif
 

@@ -409,10 +409,15 @@ int update_ipfrag_reassemble_stream(ip_reassemble_stream_t *stream,
     }
 
     /* This is a fragment, add it to our fragment list */
-    transport = trace_get_transport(pkt, &proto, &rem);
+    if (rem <= 4 * ipheader->ip_hl) {
+        return -1;
+    }
+
+    transport = ((char *)ipheader) + (4 * ipheader->ip_hl);
+
     if (ipheader->ip_len == 0) {
         /* XXX can we tell if there is a FCS present and remove that? */
-        iprem = rem;
+        iprem = rem - (4 * ipheader->ip_hl);
     } else {
         iprem = ntohs(ipheader->ip_len) - 4 * (ipheader->ip_hl);
     }
@@ -488,6 +493,69 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
             seg);
     stream->sorted = 0;
     return 0;
+}
+
+int get_ipfrag_ports(ip_reassemble_stream_t *stream, uint16_t *src,
+        uint16_t *dest) {
+
+    ip_reass_fragment_t *first;
+
+    if (stream == NULL) {
+        return -1;
+    }
+
+    if (!stream->sorted) {
+        HASH_SORT(stream->fragments, ipfrag_sort);
+        stream->sorted = 1;
+    }
+
+    *src = 0;
+    *dest = 0;
+
+    first = stream->fragments;
+    if (first->fragoff > 0) {
+        return 0;
+    }
+
+    if (first->length < 4) {
+        logger(LOG_DAEMON,
+                "OpenLI: initial IP fragment is less than four bytes?");
+        return 0;
+    }
+
+    *src = ntohs(*((uint16_t *)first->content));
+    *dest = ntohs(*((uint16_t *)(first->content + 2)));
+    return 1;
+
+}
+
+int is_ip_reassembled(ip_reassemble_stream_t *stream) {
+    ip_reass_fragment_t *iter, *tmp;
+    uint16_t expfrag = 0;
+
+    if (stream == NULL) {
+        return 0;
+    }
+
+    if (!stream->sorted) {
+        HASH_SORT(stream->fragments, ipfrag_sort);
+        stream->sorted = 1;
+    }
+
+    HASH_ITER(hh, stream->fragments, iter, tmp) {
+        assert(iter->fragoff >= expfrag);
+        if (iter->fragoff != expfrag) {
+            return 0;
+        }
+
+        expfrag += iter->length;
+    }
+
+    if (expfrag != stream->endfrag || stream->endfrag == 0) {
+        /* Still not seen the last fragment */
+        return 0;
+    }
+    return 1;
 }
 
 int get_next_ip_reassembled(ip_reassemble_stream_t *stream, char **content,
