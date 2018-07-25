@@ -282,5 +282,51 @@ int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr) {
 
     return timerfd;
 }
+
+int extract_ip_addresses(libtrace_packet_t *pkt, uint8_t *srcip,
+        uint8_t *destip, int *ipfamily) {
+
+    void *ipheader;
+    uint16_t ethertype;
+    uint32_t  rem;
+    /* Pre-requisite: srcip and destip point to at least 16 bytes of
+     * usable memory.
+     */
+    if (srcip == NULL || destip == NULL) {
+        return -1;
+    }
+
+    *ipfamily = 0;
+
+    ipheader = trace_get_layer3(pkt, &ethertype, &rem);
+    if (!ipheader || rem == 0) {
+        return -1;
+    }
+
+    if (ethertype == TRACE_ETHERTYPE_IP) {
+        libtrace_ip_t *ip4 = (libtrace_ip_t *)ipheader;
+
+        if (rem < sizeof(libtrace_ip_t)) {
+            return -1;
+        }
+
+        *ipfamily = AF_INET;
+        memcpy(srcip, &(ip4->ip_src.s_addr), sizeof(uint32_t));
+        memcpy(destip, &(ip4->ip_dst.s_addr), sizeof(uint32_t));
+    } else {
+        libtrace_ip6_t *ip6 = (libtrace_ip6_t *)ipheader;
+
+        if (rem < sizeof(libtrace_ip6_t)) {
+            return -1;
+        }
+
+        *ipfamily = AF_INET;
+        memcpy(srcip, &(ip6->ip_src.s6_addr), sizeof(struct in6_addr));
+        memcpy(destip, &(ip6->ip_dst.s6_addr), sizeof(struct in6_addr));
+    }
+
+    return 0;
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 

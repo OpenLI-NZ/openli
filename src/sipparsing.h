@@ -76,9 +76,11 @@ typedef struct openli_sip_parser {
     osip_message_t *osip;
     sdp_message_t *sdp;
     tcp_reassembler_t *tcpreass;
+    ipfrag_reassembler_t *ipreass;
 
     uint8_t sipalloced;
     char *sipmessage;
+    uint16_t sipoffset;
     uint16_t siplen;
     tcp_reassemble_stream_t *thisstream;
 

@@ -1266,12 +1266,18 @@ static void examine_sip_update(collector_sync_voip_t *sync,
                 trace_write_packet(sync->sipdebugout, recvdpkt);
             }
         }
+        goto endsipexam;
     } else if (ret == SIP_ACTION_USE_PACKET) {
         pktref = recvdpkt;
         doonce = 1;
     } else if (ret == SIP_ACTION_REASSEMBLE_TCP) {
         pktref = NULL;
         doonce = 0;
+    } else if (ret == SIP_ACTION_REASSEMBLE_IPFRAG) {
+        doonce = 1;
+        pktref = NULL;
+    } else {
+        goto endsipexam;
     }
 
     memset(&irimsg, 0, sizeof(irimsg));
@@ -1281,51 +1287,56 @@ static void examine_sip_update(collector_sync_voip_t *sync,
     irimsg.data.ipmmiri.ipmmiri_style = OPENLI_IPMMIRI_SIP;
     irimsg.data.ipmmiri.colinfo = sync->info;
     irimsg.ts = trace_get_timeval(recvdpkt);
-    get_ip_addresses(recvdpkt, &(irimsg.data.ipmmiri));
 
-    if (ret == SIP_ACTION_USE_PACKET || ret == SIP_ACTION_REASSEMBLE_TCP) {
-        /* reassembled TCP streams can contain multiple messages, so
-         * we need to keep trying until we have no new usable messages. */
-        do {
-            ret = parse_next_sip_message(sync->sipparser, pktref);
-            if (ret == 0) {
-                break;
-            }
-
-            if (ret < 0) {
-                logger(LOG_DAEMON,
-                        "OpenLI: sync thread parsed an invalid SIP packet?");
-                if (sync->sipdebugfile && pktref) {
-                    if (!sync->sipdebugout) {
-                        sync->sipdebugout = open_debug_output(
-                                sync->sipdebugfile, "invalid");
-                    }
-                    if (sync->sipdebugout) {
-                        trace_write_packet(sync->sipdebugout, pktref);
-                    }
-                }
-            }
-
-            irimsg.data.ipmmiri.content = get_sip_contents(sync->sipparser,
-                    &(irimsg.data.ipmmiri.contentlen));
-
-            if (ret > 0 && update_sip_state(sync, pktref, &irimsg) < 0) {
-                logger(LOG_DAEMON,
-                        "OpenLI: error while updating SIP state in collector.");
-                if (sync->sipdebugfile && pktref) {
-                    if (!sync->sipdebugupdate) {
-                        sync->sipdebugupdate = open_debug_output(
-                                sync->sipdebugfile,
-                                "update");
-                    }
-                    if (sync->sipdebugupdate) {
-                        trace_write_packet(sync->sipdebugupdate, pktref);
-                    }
-                }
-            }
-        } while (!doonce);
+    if (extract_ip_addresses(recvdpkt, irimsg.data.ipmmiri.ipsrc,
+            irimsg.data.ipmmiri.ipdest, &(irimsg.data.ipmmiri.ipfamily)) != 0) {
+        logger(LOG_DAEMON,
+                "OpenLI: error while extracting IP addresses from SIP packet");
+        ret = SIP_ACTION_IGNORE;
     }
 
+    /* reassembled TCP streams can contain multiple messages, so
+     * we need to keep trying until we have no new usable messages. */
+    do {
+        ret = parse_next_sip_message(sync->sipparser, pktref);
+        if (ret == 0) {
+            break;
+        }
+
+        if (ret < 0) {
+            logger(LOG_DAEMON,
+                    "OpenLI: sync thread parsed an invalid SIP packet?");
+            if (sync->sipdebugfile && pktref) {
+                if (!sync->sipdebugout) {
+                    sync->sipdebugout = open_debug_output(
+                            sync->sipdebugfile, "invalid");
+                }
+                if (sync->sipdebugout) {
+                    trace_write_packet(sync->sipdebugout, pktref);
+                }
+            }
+        }
+
+        irimsg.data.ipmmiri.content = get_sip_contents(sync->sipparser,
+                &(irimsg.data.ipmmiri.contentlen));
+
+        if (ret > 0 && update_sip_state(sync, pktref, &irimsg) < 0) {
+            logger(LOG_DAEMON,
+                    "OpenLI: error while updating SIP state in collector.");
+            if (sync->sipdebugfile && pktref) {
+                if (!sync->sipdebugupdate) {
+                    sync->sipdebugupdate = open_debug_output(
+                            sync->sipdebugfile,
+                            "update");
+                }
+                if (sync->sipdebugupdate) {
+                    trace_write_packet(sync->sipdebugupdate, pktref);
+                }
+            }
+        }
+    } while (!doonce);
+
+endsipexam:
     trace_decrement_packet_refcount(recvdpkt);
 
 }

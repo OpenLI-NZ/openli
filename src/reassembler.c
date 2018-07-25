@@ -31,6 +31,7 @@
 
 #include "reassembler.h"
 #include "logger.h"
+#include "util.h"
 
 const char *SIP_END_SEQUENCE = "\x0d\x0a\x0d\x0a";
 const char *SIP_CONTENT_LENGTH_FIELD = "Content-Length: ";
@@ -61,6 +62,10 @@ static int tcpseg_sort(tcp_reass_segment_t *a, tcp_reass_segment_t *b) {
     return seq_cmp(a->seqno, b->seqno);
 }
 
+static int ipfrag_sort(ip_reass_fragment_t *a, ip_reass_fragment_t *b) {
+    return ((int)(a->fragoff) - (int)(b->fragoff));
+}
+
 tcp_reassembler_t *create_new_tcp_reassembler(reassembly_method_t method) {
 
     tcp_reassembler_t *reass;
@@ -73,12 +78,31 @@ tcp_reassembler_t *create_new_tcp_reassembler(reassembly_method_t method) {
     return reass;
 }
 
+ipfrag_reassembler_t *create_new_ipfrag_reassembler(void) {
+    ipfrag_reassembler_t *reass;
+    reass = (ipfrag_reassembler_t *)calloc(1, sizeof(ipfrag_reassembler_t));
+    reass->knownstreams = NULL;
+    reass->nextpurge = 0;
+
+    return reass;
+}
+
 void destroy_tcp_reassembler(tcp_reassembler_t *reass) {
     tcp_reassemble_stream_t *iter, *tmp;
 
     HASH_ITER(hh, reass->knownstreams, iter, tmp) {
         HASH_DELETE(hh, reass->knownstreams, iter);
         destroy_tcp_reassemble_stream(iter);
+    }
+    free(reass);
+}
+
+void destroy_ipfrag_reassembler(ipfrag_reassembler_t *reass) {
+    ip_reassemble_stream_t *iter, *tmp;
+
+    HASH_ITER(hh, reass->knownstreams, iter, tmp) {
+        HASH_DELETE(hh, reass->knownstreams, iter);
+        destroy_ip_reassemble_stream(iter);
     }
     free(reass);
 }
@@ -100,7 +124,22 @@ void remove_tcp_reassemble_stream(tcp_reassembler_t *reass,
 
 }
 
-static void purge_inactive_streams(tcp_reassembler_t *reass, uint32_t ts) {
+void remove_ipfrag_reassemble_stream(ipfrag_reassembler_t *reass,
+        ip_reassemble_stream_t *stream) {
+    ip_reassemble_stream_t *existing;
+
+    HASH_FIND(hh, reass->knownstreams, &(stream->streamid),
+            sizeof(stream->streamid), existing);
+    if (existing) {
+        HASH_DELETE(hh, reass->knownstreams, existing);
+        destroy_ip_reassemble_stream(existing);
+    } else {
+        destroy_ip_reassemble_stream(stream);
+    }
+}
+
+
+static void purge_inactive_tcp_streams(tcp_reassembler_t *reass, uint32_t ts) {
 
     tcp_reassemble_stream_t *iter, *tmp;
     /* Not overly fine-grained, but we only really need this to
@@ -132,39 +171,45 @@ static void purge_inactive_streams(tcp_reassembler_t *reass, uint32_t ts) {
     reass->nextpurge = ts + 300;
 }
 
-tcp_reassemble_stream_t *get_tcp_reassemble_stream(tcp_reassembler_t *reass,
-        libtrace_packet_t *pkt) {
+static void purge_inactive_ip_streams(ipfrag_reassembler_t *reass,
+        uint32_t ts) {
 
-    tcp_streamid_t id;
-    void *transport;
-    libtrace_tcp_t *tcp;
+    ip_reassemble_stream_t *iter, *tmp;
+    /* Not overly fine-grained, but we only really need this to
+     * periodically prune obviously dead or idle streams so we don't
+     * slowly use up memory over time.
+     */
+
+    if (reass->nextpurge == 0) {
+        reass->nextpurge = ts + 300;
+        return;
+    }
+
+    if (ts < reass->nextpurge) {
+        return;
+    }
+
+    HASH_ITER(hh, reass->knownstreams, iter, tmp) {
+        if (iter->lastts < reass->nextpurge - 300) {
+            HASH_DELETE(hh, reass->knownstreams, iter);
+            destroy_ip_reassemble_stream(iter);
+        }
+    }
+
+    reass->nextpurge = ts + 300;
+}
+
+tcp_reassemble_stream_t *get_tcp_reassemble_stream(tcp_reassembler_t *reass,
+        tcp_streamid_t *id, libtrace_tcp_t *tcp, struct timeval *tv,
+        uint32_t tcprem) {
+
     uint32_t rem;
     uint8_t proto;
     tcp_reassemble_stream_t *existing;
-    struct timeval tv;
-
-    memset(&id, 0, sizeof(id));
-    if (trace_get_source_address(pkt, (struct sockaddr *)(&id.srcip)) == NULL) {
-        return NULL;
-    }
-
-    if (trace_get_destination_address(pkt,
-            (struct sockaddr *)(&id.destip)) == NULL) {
-        return NULL;
-    }
-
-    transport = trace_get_transport(pkt, &proto, &rem);
-    if (rem < sizeof(libtrace_tcp_t) || transport == NULL ||
-            proto != TRACE_IPPROTO_TCP) {
-        return NULL;
-    }
-
-    tcp = (libtrace_tcp_t *)transport;
-    tv = trace_get_timeval(pkt);
 
     HASH_FIND(hh, reass->knownstreams, &id, sizeof(id), existing);
     if (existing) {
-        if (trace_get_payload_length(pkt) > 0 && !tcp->syn &&
+        if (tcprem > 0 && !tcp->syn &&
                 existing->established == TCP_STATE_OPENING) {
             existing->established = TCP_STATE_ESTAB;
         }
@@ -174,8 +219,8 @@ tcp_reassemble_stream_t *get_tcp_reassemble_stream(tcp_reassembler_t *reass,
             existing->established = TCP_STATE_CLOSING;
         }
 
-        existing->lastts = tv.tv_sec;
-        purge_inactive_streams(reass, tv.tv_sec);
+        existing->lastts = tv->tv_sec;
+        purge_inactive_tcp_streams(reass, tv->tv_sec);
         return existing;
     }
 
@@ -184,10 +229,10 @@ tcp_reassemble_stream_t *get_tcp_reassemble_stream(tcp_reassembler_t *reass,
     }
 
     if (tcp->syn) {
-        existing = create_new_tcp_reassemble_stream(reass->method, &id,
+        existing = create_new_tcp_reassemble_stream(reass->method, id,
                 ntohl(tcp->seq));
     } else {
-        existing = create_new_tcp_reassemble_stream(reass->method, &id,
+        existing = create_new_tcp_reassemble_stream(reass->method, id,
                 ntohl(tcp->seq) - 1);
         if (tcp->fin) {
             existing->established = TCP_STATE_CLOSING;
@@ -196,13 +241,83 @@ tcp_reassemble_stream_t *get_tcp_reassemble_stream(tcp_reassembler_t *reass,
         }
     }
 
-    purge_inactive_streams(reass, tv.tv_sec);
+    purge_inactive_tcp_streams(reass, tv->tv_sec);
+    HASH_ADD_KEYPTR(hh, reass->knownstreams, &(existing->streamid),
+            sizeof(existing->streamid), existing);
+    existing->lastts = tv->tv_sec;
+    return existing;
+}
+
+ip_reassemble_stream_t *create_new_ipfrag_reassemble_stream(
+        ip_streamid_t *ipid, uint8_t proto) {
+
+    ip_reassemble_stream_t *stream;
+
+    stream = (ip_reassemble_stream_t *)calloc(1,
+            sizeof(ip_reassemble_stream_t));
+    stream->streamid = *ipid;
+    stream->lastts = 0;
+    stream->nextfrag = 0;
+    stream->sorted = 0;
+    stream->endfrag = 0;
+    stream->fragments = NULL;
+    stream->subproto = proto;
+
+    return stream;
+}
+
+void destroy_ip_reassemble_stream(ip_reassemble_stream_t *stream) {
+    ip_reass_fragment_t *seg, *tmp;
+
+    HASH_ITER(hh, stream->fragments, seg, tmp) {
+        HASH_DELETE(hh, stream->fragments, seg);
+        free(seg->content);
+        free(seg);
+    }
+    free(stream);
+}
+
+ip_reassemble_stream_t *get_ipfrag_reassemble_stream(
+        ipfrag_reassembler_t *reass, libtrace_packet_t *pkt) {
+
+    ip_streamid_t ipid;
+    libtrace_ip_t *iphdr;
+    ip_reassemble_stream_t *existing;
+    struct timeval tv;
+
+    memset(&ipid, 0, sizeof(ipid));
+    if (extract_ip_addresses(pkt, ipid.srcip, ipid.destip, &(ipid.ipfamily))
+            != 0) {
+        logger(LOG_DAEMON,
+                "OpenLI: error while extracting IP addresses from fragment.");
+        return NULL;
+    }
+
+    iphdr = trace_get_ip(pkt);
+    if (!iphdr) {
+        logger(LOG_DAEMON,
+                "OpenLI: trace_get_ip() failed for IP fragment?");
+        return NULL;
+    }
+
+    ipid.ipid = ntohs(iphdr->ip_id);
+
+    tv = trace_get_timeval(pkt);
+    HASH_FIND(hh, reass->knownstreams, &ipid, sizeof(ipid), existing);
+    if (existing) {
+        existing->lastts = tv.tv_sec;
+        purge_inactive_ip_streams(reass, tv.tv_sec);
+        return existing;
+    }
+
+    existing = create_new_ipfrag_reassemble_stream(&ipid, iphdr->ip_p);
+
+    purge_inactive_ip_streams(reass, tv.tv_sec);
     HASH_ADD_KEYPTR(hh, reass->knownstreams, &(existing->streamid),
             sizeof(existing->streamid), existing);
     existing->lastts = tv.tv_sec;
     return existing;
 }
-
 
 tcp_reassemble_stream_t *create_new_tcp_reassemble_stream(
         reassembly_method_t method, tcp_streamid_t *streamid, uint32_t synseq) {
@@ -267,6 +382,57 @@ static uint8_t *find_sip_message_end(uint8_t *content, uint16_t contlen) {
     return crlf + clenval;
 }
 
+int update_ipfrag_reassemble_stream(ip_reassemble_stream_t *stream,
+        libtrace_packet_t *pkt, uint16_t fragoff, uint8_t moreflag) {
+
+    libtrace_ip_t *ipheader;
+    uint16_t ethertype, iprem;
+    uint32_t rem;
+    void *ippayload, *transport;
+    uint8_t proto;
+    ip_reass_fragment_t *newfrag;
+
+    /* assumes we already know pkt is IPv4 */
+    ipheader = (libtrace_ip_t *)trace_get_layer3(pkt, &ethertype, &rem);
+
+    if (rem < sizeof(libtrace_ip_t) || ipheader == NULL) {
+        return -1;
+    }
+
+    if (ethertype == TRACE_ETHERTYPE_IPV6) {
+        return 1;
+    }
+
+    if (moreflag == 0 && fragoff == 0) {
+        /* No fragmentation, just use packet as is */
+        return 1;
+    }
+
+    /* This is a fragment, add it to our fragment list */
+    transport = trace_get_transport(pkt, &proto, &rem);
+    if (ipheader->ip_len == 0) {
+        /* XXX can we tell if there is a FCS present and remove that? */
+        iprem = rem;
+    } else {
+        iprem = ntohs(ipheader->ip_len) - 4 * (ipheader->ip_hl);
+    }
+
+    newfrag = (ip_reass_fragment_t *)calloc(1, sizeof(ip_reass_fragment_t));
+    newfrag->fragoff = fragoff;
+    newfrag->length = iprem;
+    newfrag->content = (uint8_t *)malloc(iprem);
+    memcpy(newfrag->content, transport, iprem);
+
+    HASH_ADD_KEYPTR(hh, stream->fragments, &(newfrag->fragoff),
+            sizeof(newfrag->fragoff), newfrag);
+    if (!moreflag) {
+        stream->endfrag = newfrag->fragoff + newfrag->length;
+    }
+    stream->sorted = 0;
+    return 0;
+}
+
+
 int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
         uint8_t *content, uint16_t plen, uint32_t seqno) {
 
@@ -322,6 +488,56 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
             seg);
     stream->sorted = 0;
     return 0;
+}
+
+int get_next_ip_reassembled(ip_reassemble_stream_t *stream, char **content,
+        uint16_t *len, uint8_t *proto) {
+
+    ip_reass_fragment_t *iter, *tmp;
+    uint16_t expfrag = 0;
+    uint16_t contalloced = 0;
+
+    if (stream == NULL) {
+        return 0;
+    }
+
+    if (!stream->sorted) {
+        HASH_SORT(stream->fragments, ipfrag_sort);
+        stream->sorted = 1;
+    }
+
+    *proto = 0;
+    *len = 0;
+    HASH_ITER(hh, stream->fragments, iter, tmp) {
+        assert(iter->fragoff >= expfrag);
+        if (iter->fragoff != expfrag) {
+            *len = 0;
+            return 0;
+        }
+
+        if (*content == NULL || contalloced < expfrag + iter->length) {
+            *content = realloc(*content, expfrag + (iter->length * 2));
+            contalloced = expfrag + (iter->length * 2);
+
+            if (*content == NULL) {
+                logger(LOG_DAEMON, "OpenLI: OOM while allocating %u bytes to store reassembled IP fragments.", contalloced);
+                return -1;
+            }
+        }
+
+        memcpy((*content) + expfrag, iter->content, iter->length);
+        *len += iter->length;
+        expfrag += iter->length;
+    }
+
+    if (expfrag != stream->endfrag || stream->endfrag == 0) {
+        /* Still not seen the last fragment */
+        *len = 0;
+        return 0;
+    }
+
+    *proto = stream->subproto;
+    return 1;
 }
 
 int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
