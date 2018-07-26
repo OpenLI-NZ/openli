@@ -24,6 +24,7 @@
  *
  */
 
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <libtrace.h>
@@ -32,93 +33,352 @@
 #include <osipparser2/sdp_message.h>
 #include "sipparsing.h"
 #include "logger.h"
+#include "util.h"
 
 
-int parse_sip_packet(openli_sip_parser_t **parser, libtrace_packet_t *packet) {
+static int parse_tcp_sip_packet(openli_sip_parser_t *p,
+        libtrace_tcp_t *tcp, uint32_t tcprem, tcp_streamid_t *tcpid,
+        struct timeval *tv) {
+
+    tcp_reassemble_stream_t *stream;
+    void *payload = NULL;
+    int ret;
+
+    stream = get_tcp_reassemble_stream(p->tcpreass, tcpid, tcp, tv, tcprem);
+    if (stream == NULL) {
+        return -1;
+    }
+
+    p->thisstream = stream;
+    payload = trace_get_payload_from_tcp(tcp, &tcprem);
+    if (payload == NULL || tcprem == 0) {
+        return -1;
+    }
+
+    /* Check for a CRLF keep alive */
+    if (memcmp(payload, "\x0d\x0a\x0d\x0a", 4) == 0 && tcprem == 4) {
+        return -1;
+    }
+
+    if (memcmp(payload, "\x0d\x0a", 2) == 0 && tcprem == 2) {
+        return -1;
+    }
+
+    /* 00 00 00 00 seems to be some sort of keep alive as well? */
+    if (tcprem == 4 && memcmp(payload, "\x00\x00\x00\x00", 4) == 0) {
+        return -1;
+    }
+
+    ret = update_tcp_reassemble_stream(stream, (uint8_t *)payload, tcprem,
+            ntohl(tcp->seq));
+
+    return ret;
+
+}
+
+static int parse_udp_sip_packet(openli_sip_parser_t *p, libtrace_udp_t *udp,
+        uint32_t udprem) {
+
+    void *payload = NULL;
+    int ret;
+
+    payload = trace_get_payload_from_udp(udp, &udprem);
+    if (payload == NULL || udprem == 0) {
+        return -1;
+    }
+
+    /* Check for a CRLF keep alive */
+    if (memcmp(payload, "\x0d\x0a\x0d\x0a", 4) == 0 && udprem == 4) {
+        return -1;
+    }
+
+    if (memcmp(payload, "\x0d\x0a", 2) == 0 && udprem == 2) {
+        return -1;
+    }
+
+    /* 00 00 00 00 seems to be some sort of keep alive as well? */
+    if (udprem == 4 && memcmp(payload, "\x00\x00\x00\x00", 4) == 0) {
+        return -1;
+    }
+
+
+    return 1;
+}
+
+char *get_sip_contents(openli_sip_parser_t *p, uint16_t *siplen) {
+    *siplen = p->siplen;
+    return p->sipmessage + p->sipoffset;
+}
+
+int parse_next_sip_message(openli_sip_parser_t *p,
+        libtrace_packet_t *packet) {
+
+    int ret;
+
+    if (p->osip) {
+        osip_message_free(p->osip);
+        p->osip = NULL;
+    }
+
+    if (p->sdp) {
+        sdp_message_free(p->sdp);
+        p->sdp = NULL;
+    }
+
+    if (!packet) {
+
+        if (!p->sipalloced) {
+            p->sipmessage = NULL;
+        }
+
+        ret = get_next_tcp_reassembled(p->thisstream, &(p->sipmessage),
+                &(p->siplen));
+        p->sipalloced = 1;
+        p->sipoffset = 0;
+
+        if (ret <= 0) {
+            return ret;
+        }
+    }
+
+    osip_message_init(&(p->osip));
+    ret = osip_message_parse(p->osip,
+            (const char *)(p->sipmessage + p->sipoffset), p->siplen);
+    if (ret != 0) {
+        return -1;
+    }
+
+    /* Don't do an SDP parse until it is required -- collector processing
+     * threads won't need to look at SDP, for instance. */
+    return 1;
+}
+
+
+static int _add_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *packet,
+        struct timeval *tv) {
+
+    uint32_t rem, plen;
+    void *transport;
+    uint8_t proto;
+    int ret;
+
+    transport = trace_get_transport(packet, &proto, &rem);
+    if (transport == NULL) {
+        return SIP_ACTION_ERROR;
+    }
+    plen = trace_get_payload_length(packet);
+
+    if (proto == TRACE_IPPROTO_UDP) {
+        if (plen + sizeof(libtrace_udp_t) < rem) {
+            rem = plen + sizeof(libtrace_udp_t);
+        }
+        ret = parse_udp_sip_packet(p, (libtrace_udp_t *)transport, rem);
+        if (ret < 0) {
+            return SIP_ACTION_IGNORE;
+        }
+
+        if (p->sipalloced) {
+            free(p->sipmessage);
+            p->sipalloced = 0;
+        }
+
+        p->sipmessage = ((char *)transport);
+        p->siplen = rem - sizeof(libtrace_udp_t);
+        p->sipoffset = sizeof(libtrace_udp_t);
+        return SIP_ACTION_USE_PACKET;
+    }
+
+    if (proto == TRACE_IPPROTO_TCP) {
+        libtrace_tcp_t *tcp = (libtrace_tcp_t *)transport;
+        tcp_streamid_t tcpid;
+
+        if (rem < sizeof(libtrace_tcp_t)) {
+            return SIP_ACTION_IGNORE;
+        }
+
+        memset(&tcpid, 0, sizeof(tcpid));
+        tcpid.srcport = ntohs(tcp->source);
+        tcpid.destport = ntohs(tcp->dest);
+        if (extract_ip_addresses(packet, tcpid.srcip, tcpid.destip,
+                &(tcpid.ipfamily)) != 0) {
+            logger(LOG_DAEMON,
+                    "OpenLI: error while extracting IP addresses from SIP packet.");
+            return SIP_ACTION_ERROR;
+        }
+
+        if (plen + (tcp->doff * 4) < rem) {
+            rem = plen + (tcp->doff * 4);
+        }
+        ret = parse_tcp_sip_packet(p, tcp, rem, &tcpid, tv);
+        if (ret == -1) {
+            return SIP_ACTION_IGNORE;
+        } else if (ret == 0) {
+            return SIP_ACTION_REASSEMBLE_TCP;
+        } else {
+            if (p->sipalloced) {
+                free(p->sipmessage);
+                p->sipalloced = 0;
+            }
+            p->sipmessage = (char *)tcp;
+            p->siplen = rem - (tcp->doff * 4);
+            p->sipoffset = (tcp->doff * 4);
+            return SIP_ACTION_USE_PACKET;
+        }
+    }
+
+    return SIP_ACTION_IGNORE;
+}
+
+static int _add_sip_fragment(openli_sip_parser_t *p,
+        ip_reassemble_stream_t *stream, char *completefrag, uint16_t fraglen,
+        struct timeval *tv) {
+
+    int ret;
+
+    if (stream->subproto == TRACE_IPPROTO_UDP) {
+        ret = parse_udp_sip_packet(p, (libtrace_udp_t *)completefrag,
+                fraglen);
+        if (ret < 0) {
+            return SIP_ACTION_IGNORE;
+        }
+
+        if (p->sipalloced) {
+            free(p->sipmessage);
+        }
+        p->sipmessage = completefrag;
+        p->siplen = fraglen - sizeof(libtrace_udp_t);
+        p->sipoffset = sizeof(libtrace_udp_t);
+        return SIP_ACTION_REASSEMBLE_IPFRAG;
+    }
+
+    if (stream->subproto == TRACE_IPPROTO_TCP) {
+        libtrace_tcp_t *tcp = (libtrace_tcp_t *)completefrag;
+        tcp_streamid_t tcpid;
+
+        if (fraglen < sizeof(libtrace_tcp_t)) {
+            return SIP_ACTION_IGNORE;
+        }
+
+        memset(&tcpid, 0, sizeof(tcpid));
+        tcpid.srcport = ntohs(tcp->source);
+        tcpid.destport = ntohs(tcp->dest);
+        tcpid.ipfamily = stream->streamid.ipfamily;
+        memcpy(tcpid.srcip, stream->streamid.srcip, 16);
+        memcpy(tcpid.destip, stream->streamid.destip, 16);
+
+        ret = parse_tcp_sip_packet(p, tcp, fraglen, &tcpid, tv);
+        if (ret == -1) {
+            return SIP_ACTION_IGNORE;
+        } else if (ret == 0) {
+            return SIP_ACTION_REASSEMBLE_TCP;
+        }
+        if (p->sipalloced) {
+            free(p->sipmessage);
+        }
+        p->sipmessage = (char *)tcp;
+        p->siplen = fraglen - (tcp->doff * 4);
+        p->sipoffset = (tcp->doff * 4);
+        return SIP_ACTION_REASSEMBLE_IPFRAG;
+    }
+
+    return SIP_ACTION_IGNORE;
+
+}
+
+int add_sip_packet_to_parser(openli_sip_parser_t **parser,
+        libtrace_packet_t *packet) {
 
     void *transport;
-    char *payload = NULL;
-    uint8_t proto;
+    char *completefrag = NULL;
+    uint8_t proto, moreflag, isfrag;
     uint32_t rem, plen;
-    int i;
+    int i, ret;
     openli_sip_parser_t *p;
+    uint16_t fragoff, fraglen;
+    struct timeval tstamp;
+    ip_reassemble_stream_t *ipstream = NULL;
 
     if (*parser == NULL) {
     	p = (openli_sip_parser_t *)malloc(sizeof(openli_sip_parser_t));
 
         p->osip = NULL;
         p->sdp = NULL;
+        p->tcpreass = create_new_tcp_reassembler(OPENLI_REASSEMBLE_SIP);
+        p->ipreass = create_new_ipfrag_reassembler();
+        p->sipmessage = NULL;
+        p->siplen = 0;
+        p->sipoffset = 0;
+        p->thisstream = NULL;
+        p->sipalloced = 0;
         *parser = p;
-    } else if (p->osip) {
-        p = *parser;
-        osip_message_free(p->osip);
-
-        if (p->sdp) {
-            sdp_message_free(p->sdp);
-            p->sdp = NULL;
-        }
-    }
-
-	osip_message_init(&(p->osip));
-
-    transport = trace_get_transport(packet, &proto, &rem);
-    if (transport == NULL) {
-        return -1;
-    }
-    if (proto == TRACE_IPPROTO_TCP) {
-        libtrace_tcp_t *tcp = (libtrace_tcp_t *)transport;
-        if (rem < sizeof(libtrace_tcp_t)) {
-            return 0;
-        }
-        payload = trace_get_payload_from_tcp(tcp, &rem);
-        if (payload == NULL || rem == 0) {
-            return 0;
-        }
-    } else if (proto == TRACE_IPPROTO_UDP) {
-        libtrace_udp_t *udp = (libtrace_udp_t *)transport;
-        if (rem < sizeof(libtrace_udp_t)) {
-            return 0;
-        }
-        payload = trace_get_payload_from_udp(udp, &rem);
-        if (payload == NULL || rem == 0) {
-            return 0;
-        }
     } else {
-        return -1;
+        p = *parser;
+        p->thisstream = NULL;
     }
 
-    plen = trace_get_payload_length(packet);
-    if (plen == 0) {
-        return 0;
+    /* First step, is this packet a fragment and if so, have we got enough
+     * to complete the original frame? */
+
+    /* Simple case: packet == message,
+     *      return USE_PACKET
+     * Others:
+     *      packet is not fragment, but requires TCP assembly:
+     *          update TCP assembler, return REASSEMBLE_TCP
+     *      packet is a fragment, but no TCP assembly required:
+     *          set p->sipmessage to contain reass fragment
+     *          return REASSEMBLE_IPFRAG
+     *      packet is a fragment and THEN requires TCP assembly:
+     *          update TCP assembler using complete fragment
+     *          return REASSEMBLE_TCP
+     */
+
+    isfrag = 0;
+    fragoff = trace_get_fragment_offset(packet, &moreflag);
+    if (moreflag != 0 || fragoff > 0) {
+
+        ipstream = get_ipfrag_reassemble_stream(p->ipreass, packet);
+        if (ipstream == NULL) {
+            logger(LOG_DAEMON, "OpenLI: unable to find IP stream for received SIP packet.");
+            return SIP_ACTION_ERROR;
+        }
+
+        ret = update_ipfrag_reassemble_stream(ipstream, packet, fragoff,
+                moreflag);
+        if (ret < 0) {
+            logger(LOG_DAEMON, "OpenLI: unable to update IP stream for received SIP packet.");
+            return SIP_ACTION_ERROR;
+        }
+        if (ret == 0) {
+            ret = get_next_ip_reassembled(ipstream, &completefrag, &fraglen,
+                    &proto);
+            if (ret < 0) {
+                return SIP_ACTION_ERROR;
+            } else if (ret == 0) {
+                /* incomplete fragment */
+                if (completefrag) {
+                    free(completefrag);
+                }
+                return SIP_ACTION_IGNORE;
+            }
+            /* complete fragment in completefrag */
+            isfrag = 1;
+            transport = completefrag;
+        }
     }
 
-    /* Check for a CRLF keep alive */
-    if (memcmp(payload, "\x0d\x0a\x0d\x0a", 4) == 0) {
-        return 0;
+    tstamp = trace_get_timeval(packet);
+
+    if (!isfrag) {
+        return _add_sip_packet(p, packet, &tstamp);
+    } else {
+        assert(ipstream != NULL);
+        ret = _add_sip_fragment(p, ipstream, completefrag, fraglen, &tstamp);
+        remove_ipfrag_reassemble_stream(p->ipreass, ipstream);
+        return ret;
     }
 
-    if (memcmp(payload, "\x0d\x0a", 2) == 0 && plen == 2) {
-        return 0;
-    }
+    return SIP_ACTION_ERROR;
 
-    /* 00 00 00 00 seems to be some sort of keep alive as well? */
-    if (plen == 4 && memcmp(payload, "\x00\x00\x00\x00", 4) == 0) {
-        return 0;
-    }
-
-    if (plen < rem) {
-        rem = plen;
-    }
-
-    i = osip_message_parse(p->osip, (const char *)payload, rem);
-    if (i != 0) {
-        return -1;
-    }
-
-    /* Don't do an SDP parse until it is required -- collector processing
-     * threads won't need to look at SDP, for instance. */
-
-    return 1;
 }
 
 void release_sip_parser(openli_sip_parser_t *parser) {
@@ -128,6 +388,15 @@ void release_sip_parser(openli_sip_parser_t *parser) {
     }
     if (parser->sdp) {
         sdp_message_free(parser->sdp);
+    }
+    if (parser->tcpreass) {
+        destroy_tcp_reassembler(parser->tcpreass);
+    }
+    if (parser->ipreass) {
+        destroy_ipfrag_reassembler(parser->ipreass);
+    }
+    if (parser->sipmessage && parser->sipalloced) {
+        free(parser->sipmessage);
     }
     free(parser);
 

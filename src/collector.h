@@ -39,6 +39,7 @@
 #include "coreserver.h"
 #include "intercept.h"
 #include "etsili_core.h"
+#include "reassembler.h"
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
@@ -191,6 +192,8 @@ typedef struct colthread_local {
 
     patricia_tree_t *staticv4ranges;
     patricia_tree_t *staticv6ranges;
+
+    ipfrag_reassembler_t *fragreass;
 
 } colthread_local_t;
 

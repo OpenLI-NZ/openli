@@ -128,6 +128,11 @@ typedef struct openli_ipmmiri_job {
     etsili_iri_type_t iritype;
     uint8_t ipmmiri_style;
     shared_global_info_t *colinfo;
+    char *content;
+    uint16_t contentlen;
+    uint8_t ipsrc[16];
+    uint8_t ipdest[16];
+    int ipfamily;
 } openli_ipmmiri_job_t;
 
 typedef struct openli_ipiri_job {
@@ -148,6 +153,7 @@ typedef struct openli_ipiri_job {
 typedef struct openli_export_recv {
     uint8_t type;
     uint32_t destid;
+    struct timeval ts;
     union {
         openli_mediator_t med;
         libtrace_packet_t *packet;

@@ -28,6 +28,7 @@
 #define OPENLI_UTIL_H_
 
 #include <sys/epoll.h>
+#include <libtrace.h>
 
 int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
         uint8_t setkeepalive);
@@ -38,6 +39,8 @@ uint8_t *sockaddr_to_key(struct sockaddr *sa, int *socklen);
 void convert_ipstr_to_sockaddr(char *knownip, struct sockaddr_storage **saddr,
         int *family);
 int sockaddr_match(int family, struct sockaddr *a, struct sockaddr *b);
+int extract_ip_addresses(libtrace_packet_t *pkt, uint8_t *srcip,
+        uint8_t *destip, int *ipfamily);
 
 uint32_t hashlittle( const void *key, size_t length, uint32_t initval);
 

@@ -685,9 +685,12 @@ static int run_encoding_job(collector_export_t *exp,
                 break;
             case OPENLI_EXPORT_IPMMIRI:
                 ret = encode_ipmmiri(&(exp->encoder), &(recvd->data.ipmmiri),
-                        intstate->details, cinseq->iri_seqno, tosend);
+                        intstate->details, cinseq->iri_seqno, tosend,
+                        &(recvd->ts));
                 cinseq->iri_seqno ++;
-                trace_decrement_packet_refcount(recvd->data.ipmmiri.packet);
+                if (recvd->data.ipmmiri.packet) {
+                    trace_decrement_packet_refcount(recvd->data.ipmmiri.packet);
+                }
                 break;
             case OPENLI_EXPORT_IPIRI:
                 ret = encode_ipiri(&(exp->freegenerics),
