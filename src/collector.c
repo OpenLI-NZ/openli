@@ -149,6 +149,7 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     loc->exportqueues = create_export_queue_set(glob->exportthreads);
     loc->export_used = (uint8_t *)malloc(sizeof(uint8_t) * glob->exportthreads);
+    loc->fragreass = create_new_ipfrag_reassembler();
 
     register_sync_queues(&(glob->syncip), &(loc->tosyncq_ip),
 			&(loc->fromsyncq_ip), t);
@@ -218,6 +219,8 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     free_coreserver_list(loc->radiusservers);
     free_coreserver_list(loc->sipservers);
 
+    destroy_ipfrag_reassembler(loc->fragreass);
+
     Destroy_Patricia(loc->staticv4ranges, free_staticrange_data);
     Destroy_Patricia(loc->staticv6ranges, free_staticrange_data);
 
@@ -236,7 +239,8 @@ static inline void send_packet_to_sync(libtrace_packet_t *pkt,
 
 }
 
-static inline uint8_t check_for_invalid_sip(libtrace_packet_t *pkt) {
+static inline uint8_t check_for_invalid_sip(libtrace_packet_t *pkt,
+        uint16_t fragoff) {
 
     void *transport, *payload;
     uint32_t plen, fourbytes;
@@ -249,6 +253,9 @@ static inline uint8_t check_for_invalid_sip(libtrace_packet_t *pkt) {
      * Typical examples so far: 20 byte UDP, with payload beginning with
      * 00 01 00 00.
      */
+    if (fragoff > 0) {
+        return 0;
+    }
     transport = trace_get_transport(pkt, &proto, &rem);
 
     if (transport == NULL || rem == 0) {
@@ -398,9 +405,10 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     void *l3, *transport;
     uint16_t ethertype;
     uint32_t rem, iprem;
-    uint8_t proto;
-    int forwarded = 0, i;
+    uint8_t proto, isfrag;
+    int forwarded = 0, i, ret;
     int synced = 0;
+    uint16_t fragoff = 0;
 
     openli_pushed_t syncpush;
     packet_info_t pinfo;
@@ -433,26 +441,72 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         return pkt;
     }
 
+    isfrag = 0;
+    iprem = rem;
     if (ethertype == TRACE_ETHERTYPE_IP) {
-        pinfo.srcport = ntohs(((struct sockaddr_in *)(&pinfo.srcip))->sin_port);
-        pinfo.destport = ntohs(((struct sockaddr_in *)(&pinfo.destip))->sin_port);
+        uint8_t moreflag;
+        ip_reassemble_stream_t *ipstream;
+        libtrace_ip_t *ipheader = (libtrace_ip_t *)l3;
+
+        fragoff = trace_get_fragment_offset(pkt, &moreflag);
+        if (moreflag || fragoff > 0) {
+            ipstream = get_ipfrag_reassemble_stream(loc->fragreass, pkt);
+            if (!ipstream) {
+                logger(LOG_DAEMON, "OpenLI: error trying to reassemble IP fragment in collector.");
+                return pkt;
+            }
+
+            ret = update_ipfrag_reassemble_stream(ipstream, pkt, fragoff,
+                    moreflag);
+            if (ret < 0) {
+                logger(LOG_DAEMON, "OpenLI: error while trying to reassemble IP fragment in collector.");
+                return pkt;
+            }
+
+            if (get_ipfrag_ports(ipstream, &(pinfo.srcport), &(pinfo.destport))
+                    < 0) {
+                logger(LOG_DAEMON, "OpenLI: unable to get port numbers from fragmented IP.");
+                return pkt;
+            }
+
+            isfrag = 1;
+            if (is_ip_reassembled(ipstream)) {
+                remove_ipfrag_reassemble_stream(loc->fragreass, ipstream);
+            }
+            
+            if (rem <= ipheader->ip_hl * 4) {
+                transport = NULL;
+                proto = 0;
+            } else {
+                transport = l3 + (ipheader->ip_hl * 4);
+                proto = ipheader->ip_p;
+            }
+
+        } else {
+
+            pinfo.srcport = ntohs(((struct sockaddr_in *)(&pinfo.srcip))->sin_port);
+            pinfo.destport = ntohs(((struct sockaddr_in *)(&pinfo.destip))->sin_port);
+            isfrag = 0;
+            transport = trace_get_transport(pkt, &proto, &rem);
+        }
     } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
         pinfo.srcport = ntohs(((struct sockaddr_in6 *)(&pinfo.srcip))->sin6_port);
         pinfo.destport = ntohs(((struct sockaddr_in6 *)(&pinfo.destip))->sin6_port);
+        transport = trace_get_transport(pkt, &proto, &rem);
     } else {
         pinfo.srcport = 0;
         pinfo.destport = 0;
+        transport = NULL;
+        proto = 0;
     }
 
     pinfo.family = pinfo.srcip.ss_family;
     memset(loc->export_used, 0, sizeof(uint8_t) * loc->exportqueues->numqueues);
 
-    iprem = rem;
 
     /* All these special packets are UDP, so we can avoid a whole bunch
      * of these checks for TCP traffic */
-    if ((transport = trace_get_transport(pkt, &proto, &rem)) != NULL &&
-            proto == TRACE_IPPROTO_UDP) {
+    if (transport != NULL && proto == TRACE_IPPROTO_UDP) {
 
         /* Is this from one of our ALU mirrors -- if yes, parse + strip it
          * for conversion to an ETSI record */
@@ -472,7 +526,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         /* Is this a SIP packet? -- if yes, create a state update */
         if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
                     loc->sipservers)) {
-            if (!check_for_invalid_sip(pkt)) {
+            if (!check_for_invalid_sip(pkt, fragoff)) {
                 send_packet_to_sync(pkt, &(loc->tosyncq_voip),
                         OPENLI_UPDATE_SIP);
                 synced = 1;
