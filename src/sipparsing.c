@@ -157,7 +157,7 @@ int parse_next_sip_message(openli_sip_parser_t *p,
 static int _add_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *packet,
         struct timeval *tv) {
 
-    uint32_t rem;
+    uint32_t rem, plen;
     void *transport;
     uint8_t proto;
     int ret;
@@ -166,8 +166,12 @@ static int _add_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *packet,
     if (transport == NULL) {
         return SIP_ACTION_ERROR;
     }
+    plen = trace_get_payload_length(packet);
 
     if (proto == TRACE_IPPROTO_UDP) {
+        if (plen + sizeof(libtrace_udp_t) < rem) {
+            rem = plen + sizeof(libtrace_udp_t);
+        }
         ret = parse_udp_sip_packet(p, (libtrace_udp_t *)transport, rem);
         if (ret < 0) {
             return SIP_ACTION_IGNORE;
@@ -202,6 +206,9 @@ static int _add_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *packet,
             return SIP_ACTION_ERROR;
         }
 
+        if (plen + (tcp->doff * 4) < rem) {
+            rem = plen + (tcp->doff * 4);
+        }
         ret = parse_tcp_sip_packet(p, tcp, rem, &tcpid, tv);
         if (ret == -1) {
             return SIP_ACTION_IGNORE;
