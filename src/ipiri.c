@@ -103,8 +103,8 @@ int encode_ipiri(etsili_generic_t **freegenerics,
         HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum),
                 np);
     } else if (job->special == OPENLI_IPIRI_STARTWHILEACTIVE) {
-        uint32_t evtype = IPIRI_END_WHILE_ACTIVE;
-        iritype = ETSILI_IRI_REPORT;
+        uint32_t evtype = IPIRI_START_WHILE_ACTIVE;
+        iritype = ETSILI_IRI_BEGIN;
 
         np = create_etsili_generic(freegenerics,
                 IPIRI_CONTENTS_ACCESS_EVENT_TYPE, sizeof(uint32_t),
@@ -145,7 +145,7 @@ int encode_ipiri(etsili_generic_t **freegenerics,
             struct sockaddr_in *in = (struct sockaddr_in *)&(job->assignedip);
             etsili_create_ipaddress_v4(
                     (uint32_t *)(&(in->sin_addr.s_addr)),
-                    ETSILI_IPV4_SUBNET_UNKNOWN,
+                    job->assignedip_prefixbits,
                     etsiipmethod, &targetip);
             ipversion = IPIRI_IPVERSION_4;
         } else if (job->ipfamily == AF_INET6) {
@@ -153,7 +153,7 @@ int encode_ipiri(etsili_generic_t **freegenerics,
                     &(job->assignedip);
             etsili_create_ipaddress_v6(
                     (uint8_t *)(&(in6->sin6_addr.s6_addr)),
-                    ETSILI_IPV6_SUBNET_UNKNOWN,
+                    job->assignedip_prefixbits,
                     etsiipmethod, &targetip);
             ipversion = IPIRI_IPVERSION_6;
         }

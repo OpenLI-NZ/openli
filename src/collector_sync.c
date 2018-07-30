@@ -154,6 +154,115 @@ static inline void push_coreserver_msg(collector_sync_t *sync,
     pthread_mutex_unlock(&(sync->glob->mutex));
 }
 
+static int create_ipiri_from_iprange(collector_sync_t *sync,
+        static_ipranges_t *staticsess, ipintercept_t *ipint, uint8_t special) {
+
+    openli_export_recv_t irimsg;
+    int queueused = 0;
+    struct timeval tv;
+    prefix_t *prefix = NULL;
+
+    prefix = ascii2prefix(0, staticsess->rangestr);
+    if (prefix == NULL) {
+        logger(LOG_DAEMON,
+                "OpenLI: error converting %s into a valid IP prefix in sync thread",
+                staticsess->rangestr);
+        return -1;
+    }
+
+    memset(&irimsg, 0, sizeof(irimsg));
+    irimsg.type = OPENLI_EXPORT_IPIRI;
+    irimsg.destid = ipint->common.destid;
+    irimsg.data.ipiri.special = special;
+    irimsg.data.ipiri.liid = strdup(ipint->common.liid);
+    irimsg.data.ipiri.plugin = NULL;
+    irimsg.data.ipiri.plugin_data = NULL;
+    irimsg.data.ipiri.access_tech = ipint->accesstype;
+    irimsg.data.ipiri.cin = staticsess->cin;
+    irimsg.data.ipiri.colinfo = sync->info;
+    irimsg.data.ipiri.username = NULL;
+    irimsg.data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_STATIC;
+
+    if (special == OPENLI_IPIRI_STARTWHILEACTIVE) {
+        /* TODO check if this is correct behaviour? */
+        gettimeofday(&tv, NULL);
+        irimsg.data.ipiri.sessionstartts = tv;
+    } else {
+        irimsg.data.ipiri.sessionstartts.tv_sec = 0;
+        irimsg.data.ipiri.sessionstartts.tv_usec = 0;
+    }
+
+    irimsg.data.ipiri.ipfamily = prefix->family;
+    irimsg.data.ipiri.assignedip_prefixbits = prefix->bitlen;
+    if (prefix->family == AF_INET) {
+        struct sockaddr_in *sin;
+
+        sin = (struct sockaddr_in *)&(irimsg.data.ipiri.assignedip);
+        memcpy(&(sin->sin_addr), &(prefix->add.sin), sizeof(struct in_addr));
+        sin->sin_family = AF_INET;
+        sin->sin_port = 0;
+    } else if (prefix->family == AF_INET6) {
+        struct sockaddr_in6 *sin6;
+
+        sin6 = (struct sockaddr_in6 *)&(irimsg.data.ipiri.assignedip);
+        memcpy(&(sin6->sin6_addr), &(prefix->add.sin6),
+                sizeof(struct in6_addr));
+        sin6->sin6_family = AF_INET6;
+        sin6->sin6_port = 0;
+        sin6->sin6_flowinfo = 0;
+        sin6->sin6_scope_id = 0;
+    }
+
+    queueused = export_queue_put_by_liid(sync->exportqueues, &irimsg,
+            ipint->common.liid);
+    sync->export_used[queueused] = 1;
+    return queueused;
+
+}
+
+static int create_ipiri_from_session(collector_sync_t *sync,
+        access_session_t *sess, ipintercept_t *ipint, access_plugin_t *p,
+        void *parseddata, uint8_t special) {
+
+    openli_export_recv_t irimsg;
+    int queueused = 0;
+
+    memset(&irimsg, 0, sizeof(irimsg));
+    irimsg.type = OPENLI_EXPORT_IPIRI;
+    irimsg.destid = ipint->common.destid;
+    irimsg.data.ipiri.special = special;
+    irimsg.data.ipiri.liid = strdup(ipint->common.liid);
+    irimsg.data.ipiri.plugin = p;
+    irimsg.data.ipiri.plugin_data = parseddata;
+    irimsg.data.ipiri.access_tech = ipint->accesstype;
+    irimsg.data.ipiri.cin = sess->cin;
+    irimsg.data.ipiri.colinfo = sync->info;
+    irimsg.data.ipiri.username = strdup(ipint->username);
+    irimsg.data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_UNKNOWN;
+    irimsg.data.ipiri.assignedip_prefixbits = sess->prefixbits;
+
+    if (sess->ipfamily) {
+        irimsg.data.ipiri.sessionstartts = sess->started;
+        irimsg.data.ipiri.ipfamily = sess->ipfamily;
+        memcpy(&(irimsg.data.ipiri.assignedip), sess->assignedip,
+                (sess->ipfamily == AF_INET) ?
+                sizeof(struct sockaddr_in) :
+                sizeof(struct sockaddr_in6));
+    } else {
+        irimsg.data.ipiri.ipfamily = 0;
+        irimsg.data.ipiri.sessionstartts.tv_sec = 0;
+        irimsg.data.ipiri.sessionstartts.tv_usec = 0;
+        memset(&(irimsg.data.ipiri.assignedip), 0,
+                sizeof(struct sockaddr_storage));
+    }
+
+    queueused = export_queue_put_by_liid(sync->exportqueues, &irimsg,
+            ipint->common.liid);
+    sync->export_used[queueused] = 1;
+    return queueused;
+
+}
+
 static inline void push_static_iprange_to_collectors(
         libtrace_message_queue_t *q, ipintercept_t *ipint,
         static_ipranges_t *ipr) {
@@ -331,6 +440,8 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
     HASH_ADD_KEYPTR(hh, ipint->statics, ipr->rangestr,
             strlen(ipr->rangestr), ipr);
 
+    create_ipiri_from_iprange(sync, ipr, ipint, OPENLI_IPIRI_STARTWHILEACTIVE);
+
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
             sendq, tmp) {
         push_static_iprange_to_collectors(sendq->q, ipint, ipr);
@@ -358,6 +469,8 @@ static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
 
     HASH_FIND(hh, ipint->statics, ipr->rangestr, strlen(ipr->rangestr), found);
     if (found) {
+        create_ipiri_from_iprange(sync, found, ipint,
+                OPENLI_IPIRI_ENDWHILEACTIVE);
         HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                 sendq, tmp) {
             push_static_iprange_remove_to_collectors(sendq->q, ipint, ipr);
@@ -403,48 +516,6 @@ static inline void push_session_halt_to_threads(void *sendqs,
         libtrace_message_queue_put(sendq->q, &pmsg);
 
     }
-}
-
-static int create_ipiri_from_session(collector_sync_t *sync,
-        access_session_t *sess, ipintercept_t *ipint, access_plugin_t *p,
-        void *parseddata, uint8_t special) {
-
-    openli_export_recv_t irimsg;
-    int queueused = 0;
-
-    memset(&irimsg, 0, sizeof(irimsg));
-    irimsg.type = OPENLI_EXPORT_IPIRI;
-    irimsg.destid = ipint->common.destid;
-    irimsg.data.ipiri.special = special;
-    irimsg.data.ipiri.liid = strdup(ipint->common.liid);
-    irimsg.data.ipiri.plugin = p;
-    irimsg.data.ipiri.plugin_data = parseddata;
-    irimsg.data.ipiri.access_tech = ipint->accesstype;
-    irimsg.data.ipiri.cin = sess->cin;
-    irimsg.data.ipiri.colinfo = sync->info;
-    irimsg.data.ipiri.username = strdup(ipint->username);
-    irimsg.data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_UNKNOWN;
-
-    if (sess->ipfamily) {
-        irimsg.data.ipiri.sessionstartts = sess->started;
-        irimsg.data.ipiri.ipfamily = sess->ipfamily;
-        memcpy(&(irimsg.data.ipiri.assignedip), sess->assignedip,
-                (sess->ipfamily == AF_INET) ?
-                sizeof(struct sockaddr_in) :
-                sizeof(struct sockaddr_in6));
-    } else {
-        irimsg.data.ipiri.ipfamily = 0;
-        irimsg.data.ipiri.sessionstartts.tv_sec = 0;
-        irimsg.data.ipiri.sessionstartts.tv_usec = 0;
-        memset(&(irimsg.data.ipiri.assignedip), 0,
-                sizeof(struct sockaddr_storage));
-    }
-
-    queueused = export_queue_put_by_liid(sync->exportqueues, &irimsg,
-            ipint->common.liid);
-    sync->export_used[queueused] = 1;
-    return queueused;
-
 }
 
 static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
@@ -1044,7 +1115,8 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
 
 }
 
-static void push_all_active_intercepts(internet_user_t *allusers,
+static void push_all_active_intercepts(collector_sync_t *sync,
+        internet_user_t *allusers,
         ipintercept_t *intlist, libtrace_message_queue_t *q) {
 
     ipintercept_t *orig, *tmp;
@@ -1286,7 +1358,7 @@ int sync_thread_main(collector_sync_t *sync) {
 
         /* If a hello from a thread, push all active intercepts back */
         if (recvd.type == OPENLI_UPDATE_HELLO) {
-            push_all_active_intercepts(sync->allusers, sync->ipintercepts,
+            push_all_active_intercepts(sync, sync->allusers, sync->ipintercepts,
                     recvd.data.replyq);
             push_all_coreservers(sync->coreservers, recvd.data.replyq);
         }

@@ -161,6 +161,7 @@ typedef struct openli_ipiri_job {
     shared_global_info_t *colinfo;
     uint8_t special;
     uint8_t ipassignmentmethod;
+    uint8_t assignedip_prefixbits;
 } openli_ipiri_job_t;
 
 
