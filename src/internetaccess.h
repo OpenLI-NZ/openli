@@ -74,6 +74,7 @@ struct access_session {
     uint32_t cin;
     int ipfamily;
     struct sockaddr *assignedip;
+    uint8_t prefixbits;
     uint32_t iriseqno;
 
     struct timeval started;

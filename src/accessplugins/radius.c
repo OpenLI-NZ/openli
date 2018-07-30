@@ -67,6 +67,7 @@ enum {
     RADIUS_ATTR_ACCT_OUTOCTETS = 43,
     RADIUS_ATTR_ACCT_SESSION_ID = 44,
     RADIUS_ATTR_ACCT_TERMINATE_CAUSE = 49,
+    RADIUS_ATTR_FRAMED_IPV6_PREFIX = 97,
     RADIUS_ATTR_FRAMED_IPV6_ADDRESS = 168,
 };
 
@@ -87,6 +88,12 @@ typedef struct radius_user {
     UT_hash_handle hh_username;
 
 } radius_user_t;
+
+typedef struct radius_v6_prefix_attr {
+    uint8_t reserved;
+    uint8_t preflength;
+    uint8_t address[16];
+} PACKED radius_v6_prefix_attr_t;
 
 typedef struct radius_attribute radius_attribute_t;
 
@@ -234,6 +241,7 @@ static inline int interesting_attribute(uint8_t attrnum) {
         case RADIUS_ATTR_NASPORT:
         case RADIUS_ATTR_FRAMED_IP_ADDRESS:
         case RADIUS_ATTR_FRAMED_IPV6_ADDRESS:
+        case RADIUS_ATTR_FRAMED_IPV6_PREFIX:
         case RADIUS_ATTR_ACCT_INOCTETS:
         case RADIUS_ATTR_ACCT_OUTOCTETS:
         case RADIUS_ATTR_ACCT_SESSION_ID:
@@ -919,6 +927,7 @@ static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
             assert(sess->assignedip == NULL);
             sess->ipfamily = AF_INET;
             sess->assignedip = (struct sockaddr *)sa;
+            sess->prefixbits = 32;
             return;
         }
 
@@ -938,6 +947,29 @@ static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
 
             sess->ipfamily = AF_INET6;
             sess->assignedip = (struct sockaddr *)sa;
+            sess->prefixbits = 128;
+            return;
+        }
+
+        if (attr->att_type == RADIUS_ATTR_FRAMED_IPV6_PREFIX) {
+            struct sockaddr_in6 *in6;
+            radius_v6_prefix_attr_t *prefattr;
+
+            sa = (struct sockaddr_storage *)malloc(
+                    sizeof(struct sockaddr_storage));
+            memset(sa, 0, sizeof(struct sockaddr_storage));
+            in6 = (struct sockaddr_in6 *)sa;
+
+            in6->sin6_family = AF_INET6;
+            in6->sin6_port = 0;
+            in6->sin6_flowinfo = 0;
+
+            prefattr = (radius_v6_prefix_attr_t *)(attr->att_val);
+            memcpy(&(in6->sin6_addr.s6_addr), prefattr->address, 16);
+
+            sess->ipfamily = AF_INET6;
+            sess->assignedip = (struct sockaddr *)sa;
+            sess->prefixbits = prefattr->preflength;
             return;
         }
 
@@ -1260,6 +1292,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         thissess->iriseqno = 0;
         thissess->started.tv_sec = 0;
         thissess->started.tv_usec = 0;
+        thissess->prefixbits = 0;
 
         thissess->next = *sesslist;
         *sesslist = thissess;
