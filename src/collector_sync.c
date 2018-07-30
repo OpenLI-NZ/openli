@@ -183,14 +183,9 @@ static int create_ipiri_from_iprange(collector_sync_t *sync,
     irimsg.data.ipiri.username = NULL;
     irimsg.data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_STATIC;
 
-    if (special == OPENLI_IPIRI_STARTWHILEACTIVE) {
-        /* TODO check if this is correct behaviour? */
-        gettimeofday(&tv, NULL);
-        irimsg.data.ipiri.sessionstartts = tv;
-    } else {
-        irimsg.data.ipiri.sessionstartts.tv_sec = 0;
-        irimsg.data.ipiri.sessionstartts.tv_usec = 0;
-    }
+    /* We generally have no idea when a static session would have started. */
+    irimsg.data.ipiri.sessionstartts.tv_sec = 0;
+    irimsg.data.ipiri.sessionstartts.tv_usec = 0;
 
     irimsg.data.ipiri.ipfamily = prefix->family;
     irimsg.data.ipiri.assignedip_prefixbits = prefix->bitlen;
