@@ -85,6 +85,7 @@ static inline void encode_ipaddress(wandder_encoder_t *encoder,
     uint32_t addrlen = 4;
     uint32_t iptype = addr->iptype;
     uint32_t assign = addr->assignment;
+    uint32_t prefbits = addr->v6prefixlen;
 
     if (addr->iptype == ETSILI_IPADDRESS_VERSION_6) {
         addrlen = 16;
@@ -113,8 +114,7 @@ static inline void encode_ipaddress(wandder_encoder_t *encoder,
     // iPv6PrefixLength
     if (addr->v6prefixlen > 0) {
         wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, &(addr->v6prefixlen),
-            sizeof(addr->v6prefixlen));
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, &(prefbits), sizeof(prefbits));
     }
 
     // iPv4SubnetMask
