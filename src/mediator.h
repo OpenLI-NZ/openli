@@ -50,6 +50,7 @@ enum {
     MED_EPOLL_SIGNAL,
     MED_EPOLL_SIGCHECK_TIMER,
     MED_EPOLL_PCAP_TIMER,
+    MED_EPOLL_CEASE_LIID_TIMER,
 };
 
 typedef struct med_coll_state {
@@ -175,6 +176,7 @@ typedef struct mediator_pcap_message {
 struct liidmapping {
     char *liid;
     mediator_agency_t *agency;
+    med_epoll_ev_t *ceasetimer;
     UT_hash_handle hh;
 };
 

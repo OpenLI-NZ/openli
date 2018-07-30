@@ -571,6 +571,18 @@ void free_etsili_generics(etsili_generic_t *freelist) {
     }
 }
 
+void etsili_create_ipaddress_v6(uint8_t *addrnum,
+        uint8_t slashbits, uint8_t assigned, etsili_ipaddress_t *ip) {
+
+    ip->iptype = ETSILI_IPADDRESS_VERSION_6;
+    ip->assignment = assigned;
+    ip->v6prefixlen = slashbits;
+    ip->v4subnetmask = 0;
+
+    ip->valtype = ETSILI_IPADDRESS_REP_BINARY;
+    ip->ipvalue = addrnum;
+}
+
 void etsili_create_ipaddress_v4(uint32_t *addrnum,
         uint8_t slashbits, uint8_t assigned, etsili_ipaddress_t *ip) {
 

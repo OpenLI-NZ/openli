@@ -86,6 +86,7 @@ enum {
 };
 
 #define ETSILI_IPV4_SUBNET_UNKNOWN 255
+#define ETSILI_IPV6_SUBNET_UNKNOWN 128
 
 typedef struct wandder_etsipshdr_data {
 
@@ -138,6 +139,8 @@ void free_etsili_generics(etsili_generic_t *freelist);
 
 void etsili_create_ipaddress_v4(uint32_t *addrnum, uint8_t slashbits,
         uint8_t assigned, etsili_ipaddress_t *ip);
+void etsili_create_ipaddress_v6(uint8_t *addrnum,
+        uint8_t slashbits, uint8_t assigned, etsili_ipaddress_t *ip);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

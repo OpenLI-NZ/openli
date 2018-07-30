@@ -576,9 +576,11 @@ static inline void free_job_request(openli_export_recv_t *recvd) {
         case OPENLI_EXPORT_IPIRI:
             free(recvd->data.ipiri.liid);
             free(recvd->data.ipiri.username);
-            recvd->data.ipiri.plugin->destroy_parsed_data(
-                    recvd->data.ipiri.plugin,
-                    recvd->data.ipiri.plugin_data);
+            if (recvd->data.ipiri.plugin) {
+                recvd->data.ipiri.plugin->destroy_parsed_data(
+                        recvd->data.ipiri.plugin,
+                        recvd->data.ipiri.plugin_data);
+            }
             break;
         case OPENLI_EXPORT_IPMMIRI:
             free(recvd->data.ipmmiri.liid);

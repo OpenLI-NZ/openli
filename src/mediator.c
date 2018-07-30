@@ -160,7 +160,7 @@ static void halt_mediator_timer(mediator_state_t *state,
     }
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, timerev->fd, &ev) == -1) {
-        logger(LOG_DAEMON, "OpenLI: warning -- keep alive timer was not able to be disabled for agency connection: %s.", strerror(errno));
+        logger(LOG_DAEMON, "OpenLI: warning -- timer was not able to be disabled for agency connection: %s.", strerror(errno));
     }
 
     close(timerev->fd);
@@ -312,6 +312,10 @@ static void clear_med_state(mediator_state_t *state) {
 
     HASH_ITER(hh, state->liids, m, tmp) {
         HASH_DEL(state->liids, m);
+        if (m->ceasetimer) {
+            halt_mediator_timer(state, m->ceasetimer);
+            free(m->ceasetimer);
+        }
         free(m->liid);
         free(m);
     }
@@ -1277,6 +1281,7 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
 
     char *liid = NULL;
     liid_map_t *m;
+    int sock;
 
     if (decode_cease_mediation(msgbody, msglen, &liid) == -1) {
         logger(LOG_DAEMON, "OpenLI mediator: received invalid cease mediation command from provisioner.");
@@ -1295,13 +1300,44 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
         return 0;
     }
 
-    logger(LOG_DAEMON, "OpenLI mediator: removed agency mapping for LIID %s.",
-            liid);
 
     /* TODO end any pcap trace for this LIID */
 
+    if (m->ceasetimer != NULL) {
+        /* This LIID has already been scheduled to cease? */
+        free(liid);
+        return 0;
+    }
+
+    logger(LOG_DAEMON,
+            "OpenLI mediator: scheduled removal of agency mapping for LIID %s.",
+            m->liid);
+    m->ceasetimer = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+    m->ceasetimer->fd = -1;
+    m->ceasetimer->fdtype = MED_EPOLL_CEASE_LIID_TIMER;
+    m->ceasetimer->state = m;
+
+    if ((sock = epoll_add_timer(state->epoll_fd, 15, m->ceasetimer)) == -1) {
+        logger(LOG_DAEMON, "OpenLI: warning -- cease timer was not able to be set for LIID %s: %s", liid, strerror(errno));
+        return -1;
+    }
+    m->ceasetimer->fd = sock;
+
+    return 0;
+}
+
+static inline int remove_liid_mapping(mediator_state_t *state,
+        med_epoll_ev_t *mev) {
+
+    struct epoll_event ev;
+    liid_map_t *m = (liid_map_t *)(mev->state);
+
+    logger(LOG_DAEMON, "OpenLI mediator: removed agency mapping for LIID %s.",
+            m->liid);
     HASH_DEL(state->liids, m);
-    free(liid);
+
+    halt_mediator_timer(state, mev);
+    free(m->ceasetimer);
     free(m->liid);
     free(m);
     return 0;
@@ -1353,6 +1389,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     m = (liid_map_t *)malloc(sizeof(liid_map_t));
     m->liid = liid;
     m->agency = agency;
+    m->ceasetimer = NULL;
     free(agencyid);
 
     HASH_ADD_STR(state->liids, liid, m);
@@ -1621,6 +1658,10 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
         case MED_EPOLL_COLL_CONN:
             ret = accept_collector(state);
             break;
+        case MED_EPOLL_CEASE_LIID_TIMER:
+            assert(ev->events == EPOLLIN);
+            ret = remove_liid_mapping(state, mev);
+            break;
         case MED_EPOLL_KA_TIMER:
             assert(ev->events == EPOLLIN);
             ret = trigger_keepalive(state, mev);
@@ -1799,6 +1840,10 @@ static int reload_provisioner_socket_config(mediator_state_t *currstate,
 
         HASH_ITER(hh, currstate->liids, m, tmp) {
             HASH_DEL(currstate->liids, m);
+            if (m->ceasetimer) {
+                halt_mediator_timer(currstate, m->ceasetimer);
+                free(m->ceasetimer);
+            }
             free(m->liid);
             free(m);
         }

@@ -135,6 +135,18 @@ typedef struct openli_ipmmiri_job {
     int ipfamily;
 } openli_ipmmiri_job_t;
 
+enum {
+    OPENLI_IPIRI_STANDARD,
+    OPENLI_IPIRI_ENDWHILEACTIVE,
+    OPENLI_IPIRI_STARTWHILEACTIVE,
+};
+
+enum {
+    OPENLI_IPIRI_IPMETHOD_STATIC,
+    OPENLI_IPIRI_IPMETHOD_DYNAMIC,
+    OPENLI_IPIRI_IPMETHOD_UNKNOWN,
+};
+
 typedef struct openli_ipiri_job {
     char *liid;
     access_plugin_t *plugin;
@@ -147,6 +159,8 @@ typedef struct openli_ipiri_job {
     struct timeval sessionstartts;
     internet_access_method_t access_tech;
     shared_global_info_t *colinfo;
+    uint8_t special;
+    uint8_t ipassignmentmethod;
 } openli_ipiri_job_t;
 
 
