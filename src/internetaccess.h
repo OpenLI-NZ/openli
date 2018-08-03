@@ -62,20 +62,32 @@ typedef enum {
 } access_action_t;
 
 typedef struct access_plugin access_plugin_t;
-
+typedef struct internet_user internet_user_t;
 typedef struct access_session access_session_t;
+
+typedef struct internetaccess_ip {
+    int ipfamily;
+    struct sockaddr_storage assignedip;
+    uint8_t prefixbits;
+} internetaccess_ip_t;
+
+typedef struct ip_to_session {
+    internetaccess_ip_t *ip;
+    access_session_t *session;
+    internet_user_t *owner;
+    UT_hash_handle hh;
+} ip_to_session_t;
 
 struct access_session {
 
+    internetaccess_ip_t sessionip;
     access_plugin_t *plugin;
     void *sessionid;
     void *statedata;
     int idlength;
     uint32_t cin;
-    int ipfamily;
-    struct sockaddr *assignedip;
-    uint8_t prefixbits;
     uint32_t iriseqno;
+    ip_to_session_t *activeipentry;
 
     struct timeval started;
 
@@ -83,11 +95,11 @@ struct access_session {
     UT_hash_handle hh;
 } ;
 
-typedef struct internet_user {
+struct internet_user {
     char *userid;
     access_session_t *sessions;
     UT_hash_handle hh;
-} internet_user_t;
+};
 
 
 struct access_plugin {

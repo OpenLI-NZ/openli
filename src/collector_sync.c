@@ -70,6 +70,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
     sync->radiusplugin = init_access_plugin(ACCESS_RADIUS);
     sync->freegenerics = NULL;
+    sync->activeips = NULL;
     return sync;
 
 }
@@ -77,6 +78,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 void clean_sync_data(collector_sync_t *sync) {
 
     int i = 0;
+    ip_to_session_t *iter, *tmp;
 
 	if (sync->instruct_fd != -1) {
 		close(sync->instruct_fd);
@@ -85,6 +87,11 @@ void clean_sync_data(collector_sync_t *sync) {
 
     if (sync->export_used) {
         free(sync->export_used);
+    }
+
+    HASH_ITER(hh, sync->activeips, iter, tmp) {
+        HASH_DELETE(hh, sync->activeips, iter);
+        free(iter);
     }
 
     free_export_queue_set(sync->exportqueues);
@@ -120,6 +127,7 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->incoming = NULL;
     sync->ii_ev = NULL;
     sync->radiusplugin = NULL;
+    sync->activeips = NULL;
 
 }
 
@@ -234,13 +242,13 @@ static int create_ipiri_from_session(collector_sync_t *sync,
     irimsg.data.ipiri.colinfo = sync->info;
     irimsg.data.ipiri.username = strdup(ipint->username);
     irimsg.data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_UNKNOWN;
-    irimsg.data.ipiri.assignedip_prefixbits = sess->prefixbits;
+    irimsg.data.ipiri.assignedip_prefixbits = sess->sessionip.prefixbits;
 
-    if (sess->ipfamily) {
+    if (sess->sessionip.ipfamily) {
         irimsg.data.ipiri.sessionstartts = sess->started;
-        irimsg.data.ipiri.ipfamily = sess->ipfamily;
-        memcpy(&(irimsg.data.ipiri.assignedip), sess->assignedip,
-                (sess->ipfamily == AF_INET) ?
+        irimsg.data.ipiri.ipfamily = sess->sessionip.ipfamily;
+        memcpy(&(irimsg.data.ipiri.assignedip), &(sess->sessionip.assignedip),
+                (sess->sessionip.ipfamily == AF_INET) ?
                 sizeof(struct sockaddr_in) :
                 sizeof(struct sockaddr_in6));
     } else {
@@ -310,12 +318,12 @@ static inline void push_single_ipintercept(libtrace_message_queue_t *q,
     openli_pushed_t msg;
 
     /* No assigned IP, session is not fully active yet. Don't push yet */
-    if (session->assignedip == NULL) {
+    if (session->sessionip.ipfamily == 0) {
         return;
     }
 
-    ipsess = create_ipsession(ipint, session->cin, session->ipfamily,
-            session->assignedip);
+    ipsess = create_ipsession(ipint, session->cin, session->sessionip.ipfamily,
+            (struct sockaddr *)&(session->sessionip.assignedip));
 
     if (!ipsess) {
         logger(LOG_DAEMON,
@@ -484,18 +492,10 @@ static inline void push_session_halt_to_threads(void *sendqs,
         access_session_t *sess, ipintercept_t *ipint) {
 
     sync_sendq_t *sendq, *tmp;
-    char ipstr[128];
 
-    if (sess->assignedip == NULL) {
+    if (sess->sessionip.ipfamily == 0) {
         return;
     }
-
-    /* XXX no error checking because this logging should not reach
-     * the production version... */
-    getnameinfo((struct sockaddr *)(sess->assignedip),
-            (sess->ipfamily == AF_INET) ? sizeof(struct sockaddr_in) :
-                sizeof(struct sockaddr_in6),
-                ipstr, sizeof(ipstr), 0, 0, NI_NUMERICHOST);
 
     HASH_ITER(hh, (sync_sendq_t *)sendqs, sendq, tmp) {
         openli_pushed_t pmsg;
@@ -503,8 +503,8 @@ static inline void push_session_halt_to_threads(void *sendqs,
 
         memset(&pmsg, 0, sizeof(openli_pushed_t));
         pmsg.type = OPENLI_PUSH_HALT_IPINTERCEPT;
-        sessdup = create_ipsession(ipint, sess->cin, sess->ipfamily,
-                sess->assignedip);
+        sessdup = create_ipsession(ipint, sess->cin, sess->sessionip.ipfamily,
+                (struct sockaddr *)&(sess->sessionip.assignedip));
 
         pmsg.data.ipsess = sessdup;
 
@@ -1138,6 +1138,154 @@ static void push_all_active_intercepts(collector_sync_t *sync,
     }
 }
 
+static int remove_ip_to_session_mapping(collector_sync_t *sync,
+        access_session_t *sess) {
+
+    ip_to_session_t *mapping;
+    char ipstr[128];
+
+    if (sess->sessionip.ipfamily == 0) {
+        return 0;
+    }
+
+    HASH_FIND(hh, sync->activeips, &(sess->sessionip),
+            sizeof(internetaccess_ip_t), mapping);
+
+    if (!mapping) {
+        logger(LOG_DAEMON,
+            "OpenLI: attempt to remove session mapping for IP %s, but the mapping doesn't exist?",
+            sockaddr_to_string((struct sockaddr *)&(sess->sessionip.assignedip),
+                ipstr, 128));
+        return -1;
+    }
+
+    HASH_DELETE(hh, sync->activeips, mapping);
+    free(mapping);
+    return 0;
+}
+
+static int add_ip_to_session_mapping(collector_sync_t *sync,
+        access_session_t *sess, internet_user_t *iuser,
+        ip_to_session_t **prev) {
+
+    char ipstr[128];
+
+    *prev = NULL;
+    ip_to_session_t *newmap;
+
+    if (sess->sessionip.ipfamily == 0) {
+        logger(LOG_DAEMON, "OpenLI: called add_ip_to_session_mapping() but no IP has been assigned for this session.");
+        return -1;
+    }
+
+    HASH_FIND(hh, sync->activeips, &(sess->sessionip),
+            sizeof(internetaccess_ip_t), *prev);
+
+    newmap = (ip_to_session_t *)malloc(sizeof(ip_to_session_t));
+    newmap->ip = &(sess->sessionip);
+    newmap->session = sess;
+    newmap->owner = iuser;
+
+    if (*prev) {
+        HASH_DELETE(hh, sync->activeips, *prev);
+    }
+    HASH_ADD_KEYPTR(hh, sync->activeips, newmap->ip,
+            sizeof(internetaccess_ip_t), newmap);
+
+    if (*prev) {
+        return 1;
+    }
+    return 0;
+}
+
+static inline internet_user_t *lookup_userid(collector_sync_t *sync,
+        char *userid) {
+
+    internet_user_t *iuser;
+
+    HASH_FIND(hh, sync->allusers, userid, strlen(userid), iuser);
+    if (iuser == NULL) {
+        iuser = (internet_user_t *)malloc(sizeof(internet_user_t));
+
+        if (!iuser) {
+            logger(LOG_DAEMON, "OpenLI: unable to allocate memory for new Internet user");
+            return NULL;
+        }
+        iuser->userid = strdup(userid);
+        iuser->sessions = NULL;
+
+        HASH_ADD_KEYPTR(hh, sync->allusers, iuser->userid,
+                strlen(iuser->userid), iuser);
+    }
+    return iuser;
+}
+
+static int newly_active_session(collector_sync_t *sync,
+        user_intercept_list_t *userint, internet_user_t *iuser,
+        access_session_t *sess) {
+
+    int mapret;
+    ip_to_session_t *prevmapping = NULL;
+    user_intercept_list_t *prevuser;
+    ipintercept_t *ipint, *tmp;
+    int expcount = 0;
+    sync_sendq_t *sendq, *tmpq;
+
+    if (sess->sessionip.ipfamily != 0) {
+        mapret = add_ip_to_session_mapping(sync, sess, iuser, &prevmapping);
+        if (mapret < 0) {
+            logger(LOG_DAEMON,
+                "OpenLI: error while updating IP->session map in sync thread.");
+            printf("%s\n", iuser->userid);
+            return -1;
+        }
+    }
+
+    if (mapret == 1) {
+        /* This new session has the same IP as an existing one, so
+         * the existing one must have silently logged off.
+         *
+         * TODO test this somehow?
+         */
+        HASH_FIND(hh, sync->userintercepts, prevmapping->owner->userid,
+                strlen(prevmapping->owner->userid), prevuser);
+        if (prevuser) {
+            char ipstr[128];
+            logger(LOG_DAEMON,
+                    "OpenLI: detected silent owner change for IP %s",
+                    sockaddr_to_string(
+                        (struct sockaddr *)&(prevmapping->ip->assignedip),
+                        ipstr, 128));
+
+            HASH_ITER(hh_user, prevuser->intlist, ipint, tmp) {
+                int queueused = 0;
+                queueused = create_ipiri_from_session(sync,
+                        prevmapping->session,
+                        ipint, NULL, NULL, OPENLI_IPIRI_SILENTLOGOFF);
+                expcount ++;
+            }
+        }
+        free_single_session(prevmapping->owner, prevmapping->session);
+    }
+
+
+    if (!userint) {
+        return expcount;
+    }
+
+    /* Session has been confirmed for a target; time to start intercepting
+     * packets involving the session IP.
+     */
+    HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
+        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
+                sendq, tmpq) {
+            push_single_ipintercept(sendq->q, ipint, sess);
+        }
+    }
+    return expcount;
+
+
+}
 
 static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         uint8_t accesstype) {
@@ -1151,10 +1299,9 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     user_intercept_list_t *userint;
     ipintercept_t *ipint, *tmp;
     openli_export_recv_t msg;
-    sync_sendq_t *sendq, *tmpq;
     int expcount = 0;
     void *parseddata = NULL;
-    int i;
+    int i, ret;
 
     if (accesstype == ACCESS_RADIUS) {
         p = sync->radiusplugin;
@@ -1178,20 +1325,10 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         goto endupdate;
     }
 
-    HASH_FIND(hh, sync->allusers, userid, strlen(userid), iuser);
-    if (iuser == NULL) {
-        iuser = (internet_user_t *)malloc(sizeof(internet_user_t));
-
-        if (!iuser) {
-            logger(LOG_DAEMON, "OpenLI: unable to allocate memory for new Internet user");
-            p->destroy_parsed_data(p, parseddata);
-            return -1;
-        }
-        iuser->userid = strdup(userid);
-        iuser->sessions = NULL;
-
-        HASH_ADD_KEYPTR(hh, sync->allusers, iuser->userid,
-                strlen(iuser->userid), iuser);
+    iuser = lookup_userid(sync, userid);
+    if (!iuser) {
+        p->destroy_parsed_data(p, parseddata);
+        return -1;
     }
 
     sess = p->update_session_state(p, parseddata, &(iuser->sessions), &oldstate,
@@ -1202,25 +1339,16 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         return -1;
     }
 
-    /* TODO keep track of ip->user mappings so that we can recognise when
-     * an IP has been re-assigned silently.
-     *
-     * In this case, we want to find and withdraw any intercepts for the
-     * old owner.
-     */
-
     HASH_FIND(hh, sync->userintercepts, userid, strlen(userid), userint);
 
     if (oldstate != newstate) {
-        if (userint && newstate == SESSION_STATE_ACTIVE) {
-            /* Session has been confirmed, time to start intercepting
-             * packets involving the session IP.
-             */
-            HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
-                HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
-                        sendq, tmpq) {
-                    push_single_ipintercept(sendq->q, ipint, sess);
-                }
+        if (newstate == SESSION_STATE_ACTIVE) {
+            ret = newly_active_session(sync, userint, iuser, sess);
+            if (ret < 0) {
+                logger(LOG_DAEMON, "OpenLI: error while processing new active IP session in sync thread.");
+                p->destroy_parsed_data(p, parseddata);
+                assert(0);
+                return -1;
             }
 
         } else if (newstate == SESSION_STATE_OVER) {
@@ -1231,6 +1359,10 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
                     push_session_halt_to_threads(sync->glob->collector_queues,
                             sess, ipint);
                 }
+            }
+
+            if (remove_ip_to_session_mapping(sync, sess) < 0) {
+                logger(LOG_DAEMON, "OpenLI: error while removing IP->session mapping in sync thread.");
             }
         }
     }
@@ -1262,22 +1394,6 @@ endupdate:
         return 0;
     }
 
-    memset(&msg, 0, sizeof(openli_export_recv_t));
-    msg.type = OPENLI_EXPORT_PACKET_FIN;
-    msg.data.packet = pkt;
-    
-    trace_increment_packet_refcount(pkt);
-    for (i = 0; i < sync->exportqueues->numqueues; i++) {
-        if (sync->export_used[i] == 0) {
-            continue;
-        }
-
-        /* Increment ref count for the packet and send a packet fin message
-         * so the exporter knows when to decrease the ref count */
-        trace_increment_packet_refcount(pkt);
-        export_queue_put_by_queueid(sync->exportqueues, (&msg), i);
-    }
-    trace_decrement_packet_refcount(pkt);
     return 1;
 }
 

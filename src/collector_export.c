@@ -689,7 +689,9 @@ static int run_encoding_job(collector_export_t *exp,
                 ret = encode_ipmmiri(&(exp->encoder), &(recvd->data.ipmmiri),
                         intstate->details, cinseq->iri_seqno, tosend,
                         &(recvd->ts));
-                cinseq->iri_seqno ++;
+                if (ret >= 0) {
+                    cinseq->iri_seqno ++;
+                }
                 if (recvd->data.ipmmiri.packet) {
                     trace_decrement_packet_refcount(recvd->data.ipmmiri.packet);
                 }
@@ -698,8 +700,10 @@ static int run_encoding_job(collector_export_t *exp,
                 ret = encode_ipiri(&(exp->freegenerics),
                         &(exp->encoder), &(recvd->data.ipiri),
                         intstate->details, cinseq->iri_seqno, tosend, ind);
-                cinseq->iri_seqno ++;
-                ind ++;
+                if (ret >= 0) {
+                    cinseq->iri_seqno ++;
+                    ind ++;
+                }
                 break;
         }
         if (ret < 0) {

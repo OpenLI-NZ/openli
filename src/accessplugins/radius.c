@@ -174,6 +174,9 @@ typedef struct radius_parsed {
     access_action_t firstaction;
     access_action_t secondaction;
 
+    radius_attribute_t *firstattrs;
+    radius_attribute_t *secondattrs;
+
 } radius_parsed_t;
 
 typedef struct radius_global {
@@ -215,7 +218,9 @@ static inline void reset_parsed_packet(radius_parsed_t *parsed) {
     memset(&(parsed->radiusip), 0, sizeof(struct sockaddr_storage));
 
     parsed->firstaction = ACCESS_ACTION_NONE;
+    parsed->firstattrs = NULL;
     parsed->secondaction = ACCESS_ACTION_NONE;
+    parsed->secondattrs = NULL;
 
 }
 
@@ -923,8 +928,9 @@ static inline void process_nasport_attribute(radius_parsed_t *raddata) {
     raddata->nasport = *((uint32_t *)nasattr->att_val);
 }
 
-static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
-        radius_attribute_t *attrlist, access_session_t *sess) {
+static inline void extract_assigned_ip_address(radius_global_t *glob,
+        radius_parsed_t *raddata, radius_attribute_t *attrlist,
+        access_session_t *sess) {
 
     uint8_t attrnum;
     radius_attribute_t *attr;
@@ -943,29 +949,21 @@ static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
         if (attr->att_type == RADIUS_ATTR_FRAMED_IP_ADDRESS) {
             struct sockaddr_in *in;
 
-            sa = (struct sockaddr_storage *)malloc(
-                    sizeof(struct sockaddr_storage));
-            memset(sa, 0, sizeof(struct sockaddr_storage));
-            in = (struct sockaddr_in *)sa;
+            in = (struct sockaddr_in *)&(sess->sessionip.assignedip);
 
             in->sin_family = AF_INET;
             in->sin_port = 0;
             in->sin_addr.s_addr = *((uint32_t *)attr->att_val);
 
-            assert(sess->assignedip == NULL);
-            sess->ipfamily = AF_INET;
-            sess->assignedip = (struct sockaddr *)sa;
-            sess->prefixbits = 32;
+            sess->sessionip.ipfamily = AF_INET;
+            sess->sessionip.prefixbits = 32;
             return;
         }
 
         if (attr->att_type == RADIUS_ATTR_FRAMED_IPV6_ADDRESS) {
             struct sockaddr_in6 *in6;
 
-            sa = (struct sockaddr_storage *)malloc(
-                    sizeof(struct sockaddr_storage));
-            memset(sa, 0, sizeof(struct sockaddr_storage));
-            in6 = (struct sockaddr_in6 *)sa;
+            in6 = (struct sockaddr_in6 *)&(sess->sessionip.assignedip);
 
             in6->sin6_family = AF_INET6;
             in6->sin6_port = 0;
@@ -973,9 +971,8 @@ static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
 
             memcpy(&(in6->sin6_addr.s6_addr), attr->att_val, 16);
 
-            sess->ipfamily = AF_INET6;
-            sess->assignedip = (struct sockaddr *)sa;
-            sess->prefixbits = 128;
+            sess->sessionip.ipfamily = AF_INET6;
+            sess->sessionip.prefixbits = 128;
             return;
         }
 
@@ -983,10 +980,7 @@ static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
             struct sockaddr_in6 *in6;
             radius_v6_prefix_attr_t *prefattr;
 
-            sa = (struct sockaddr_storage *)malloc(
-                    sizeof(struct sockaddr_storage));
-            memset(sa, 0, sizeof(struct sockaddr_storage));
-            in6 = (struct sockaddr_in6 *)sa;
+            in6 = (struct sockaddr_in6 *)&(sess->sessionip.assignedip);
 
             in6->sin6_family = AF_INET6;
             in6->sin6_port = 0;
@@ -995,9 +989,8 @@ static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
             prefattr = (radius_v6_prefix_attr_t *)(attr->att_val);
             memcpy(&(in6->sin6_addr.s6_addr), prefattr->address, 16);
 
-            sess->ipfamily = AF_INET6;
-            sess->assignedip = (struct sockaddr *)sa;
-            sess->prefixbits = prefattr->preflength;
+            sess->sessionip.ipfamily = AF_INET6;
+            sess->sessionip.prefixbits = prefattr->preflength;
             return;
         }
 
@@ -1315,12 +1308,15 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         thissess->statedata = NULL;
         thissess->idlength = strlen(sessionid);
         thissess->cin = assign_cin(raddata);
-        thissess->ipfamily = AF_UNSPEC;
-        thissess->assignedip = NULL;
+        thissess->sessionip.ipfamily = AF_UNSPEC;
+        memset(&(thissess->sessionip.assignedip), 0,
+                sizeof(struct sockaddr_storage));
+        thissess->sessionip.prefixbits = 0;
+
         thissess->iriseqno = 0;
         thissess->started.tv_sec = 0;
         thissess->started.tv_usec = 0;
-        thissess->prefixbits = 0;
+        thissess->activeipentry = NULL;
 
         thissess->next = *sesslist;
         *sesslist = thissess;
@@ -1344,9 +1340,6 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
                 DERIVE_REQUEST_ID(raddata, raddata->msgtype), raddata->tvsec);
         if (orphan) {
             raddata->savedresp = orphan;
-            logger(LOG_DAEMON,
-                    "OpenLI RADIUS: found request for access orphan: %s",
-                    (char *)thissess->sessionid);
         } else {
 
             if (glob->freeaccreqs == NULL) {
@@ -1394,27 +1387,44 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
 
     if (raddata->firstaction == ACCESS_ACTION_ACCEPT) {
         /* Session is now active: make sure we get the IP address */
-        extract_assigned_ip_address(raddata, raddata->attrs, thissess);
+        raddata->firstattrs = raddata->attrs;
+        extract_assigned_ip_address(glob, raddata, raddata->attrs, thissess);
         TIMESTAMP_TO_TV((&(thissess->started)), raddata->tvsec);
     }
 
     if (raddata->firstaction == ACCESS_ACTION_ALREADY_ACTIVE) {
-        extract_assigned_ip_address(raddata, raddata->savedreq->attrs,
+        raddata->firstattrs = raddata->savedreq->attrs;
+        extract_assigned_ip_address(glob, raddata, raddata->savedreq->attrs,
                 thissess);
         TIMESTAMP_TO_TV((&(thissess->started)), raddata->savedreq->tvsec);
     }
 
-    if (raddata->secondaction == ACCESS_ACTION_ACCEPT) {
+    if (raddata->secondaction == ACCESS_ACTION_ACCEPT &&
+            raddata->savedresp->resptype == RADIUS_CODE_ACCESS_ACCEPT) {
         /* Use saved orphan attributes to get IP address */
-        extract_assigned_ip_address(raddata,
+        raddata->secondattrs = raddata->savedresp->savedattrs;
+        extract_assigned_ip_address(glob, raddata,
             raddata->savedresp->savedattrs, thissess);
+        TIMESTAMP_TO_TV((&(thissess->started)), raddata->savedresp->tvsec);
+    }
+
+    if ((raddata->secondaction == ACCESS_ACTION_ACCEPT ||
+            raddata->secondaction == ACCESS_ACTION_ALREADY_ACTIVE) &&
+            raddata->savedresp->resptype == RADIUS_CODE_ACCOUNT_RESPONSE) {
+        /* Use our "request" attributes to get IP address */
+        raddata->secondattrs = raddata->attrs;
+        extract_assigned_ip_address(glob, raddata, raddata->attrs, thissess);
         TIMESTAMP_TO_TV((&(thissess->started)), raddata->savedresp->tvsec);
     }
 
     if (raddata->firstaction != ACCESS_ACTION_NONE) {
         *action = raddata->firstaction;
-    } else {
+    } else if (raddata->secondaction != ACCESS_ACTION_NONE) {
         *action = raddata->secondaction;
+        raddata->firstaction = raddata->secondaction;
+        raddata->secondaction = ACCESS_ACTION_NONE;
+        raddata->firstattrs = raddata->secondattrs;
+        raddata->secondattrs = NULL;
     }
     return thissess;
 }
@@ -1676,17 +1686,13 @@ static int radius_generate_iri_data(access_plugin_t *p, void *parseddata,
     radglob = (radius_global_t *)(p->plugindata);
     raddata = (radius_parsed_t *)parseddata;
 
-    if (raddata->firstaction != ACCESS_ACTION_NONE && iteration == 0) {
-        radius_attribute_t *attrs;
-
-        if (raddata->savedreq) {
-            attrs = raddata->savedreq->attrs;
-        } else {
-            attrs = raddata->attrs;
+    if (iteration == 0) {
+        if (raddata->firstaction == ACCESS_ACTION_NONE) {
+            return -1;
         }
 
         if (action_to_iri(params, freelist, raddata, raddata->firstaction,
-                attrs, iritype) < 0) {
+                raddata->firstattrs, iritype) < 0) {
             return -1;
         }
 
@@ -1696,9 +1702,9 @@ static int radius_generate_iri_data(access_plugin_t *p, void *parseddata,
         return 0;
     }
 
-    if (raddata->secondaction != ACCESS_ACTION_NONE && iteration == 1) {
+    if (iteration == 1 && raddata->secondaction != ACCESS_ACTION_NONE) {
         if (action_to_iri(params, freelist, raddata, raddata->secondaction,
-                raddata->attrs, iritype) < 0) {
+                raddata->secondattrs, iritype) < 0) {
             return -1;
         }
         return 0;
@@ -1709,33 +1715,6 @@ static int radius_generate_iri_data(access_plugin_t *p, void *parseddata,
             iteration);
     return -1;
 }
-
-#if 0
-static int radius_create_iri_from_packet(access_plugin_t *p,
-        shared_global_info_t *info, etsili_generic_t **freegenerics,
-        openli_export_recv_t *irimsg, access_session_t *sess,
-        ipintercept_t *ipint, void *parsed, access_action_t action) {
-
-    radius_global_t *radglob;
-    radius_parsed_t *raddata;
-
-    radglob = (radius_global_t *)(p->plugindata);
-    raddata = (radius_parsed_t *)parsed;
-
-    if (raddata->firstaction != ACCESS_ACTION_NONE) {
-        action_to_iri(info, freegenerics, encoder, mqueue, sess, ipint, raddata,
-                raddata->firstaction);
-    }
-
-    if (raddata->secondaction != ACCESS_ACTION_NONE) {
-        action_to_iri(info, freegenerics, encoder, mqueue, sess, ipint, raddata,
-                raddata->secondaction);
-    }
-
-
-    return 0;
-}
-#endif
 
 static void radius_destroy_session_data(access_plugin_t *p,
         access_session_t *sess) {

@@ -57,10 +57,6 @@ static inline void free_session(access_session_t *sess) {
         return;
     }
 
-    if (sess->assignedip) {
-        free(sess->assignedip);
-    }
-
     /* session id and state data should be handled by the appropriate plugin */
     if (sess->plugin) {
         sess->plugin->destroy_session_data(sess->plugin, sess);

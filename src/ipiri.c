@@ -111,7 +111,21 @@ int encode_ipiri(etsili_generic_t **freegenerics,
                 (uint8_t *)(&evtype));
         HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum),
                 np);
+    } else if (job->special == OPENLI_IPIRI_SILENTLOGOFF) {
+        uint32_t evtype = IPIRI_ACCESS_END;     // unsure if correct?
+        iritype = ETSILI_IRI_END;
+
+        np = create_etsili_generic(freegenerics,
+                IPIRI_CONTENTS_ACCESS_EVENT_TYPE, sizeof(uint32_t),
+                (uint8_t *)(&evtype));
+        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum),
+                np);
+
+        /* TODO probably need to set an endReason in here, but not sure
+         * what is the right reason to use.
+         */
     }
+
 
     np = create_etsili_generic(freegenerics,
             IPIRI_CONTENTS_INTERNET_ACCESS_TYPE, sizeof(uint32_t),

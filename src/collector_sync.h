@@ -66,6 +66,8 @@ typedef struct colsync_data {
     access_plugin_t *radiusplugin;
     etsili_generic_t *freegenerics;
 
+    ip_to_session_t *activeips;
+
 } collector_sync_t;
 
 collector_sync_t *init_sync_data(collector_global_t *glob);
