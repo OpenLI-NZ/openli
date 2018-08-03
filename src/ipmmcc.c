@@ -185,7 +185,9 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     }
 
     if (pinfo->srcport == 0 || pinfo->destport == 0) {
-        logger(LOG_DAEMON, "OpenLI: IPv4 RTP packet is missing a port number.");
+        /* IPv4 RTP packet is missing a port number, probably a fragment
+         * for a frame where we've missed the first fragment.
+         */
         return 0;
     }
 
