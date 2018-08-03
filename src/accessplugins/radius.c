@@ -794,7 +794,6 @@ static inline void process_username_attribute(radius_parsed_t *raddata) {
     HASH_FIND(hh_username, raddata->matchednas->users, userkey,
             strlen(userkey), user);
 
-    printf("%s\n", userkey);
     if (user) {
         raddata->matcheduser = user;
         return;
