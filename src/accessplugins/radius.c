@@ -27,6 +27,7 @@
 #include <assert.h>
 #include <uthash.h>
 #include <libtrace_parallel.h>
+#include <pthread.h>
 
 #include "ipiri.h"
 #include "logger.h"
@@ -180,6 +181,7 @@ typedef struct radius_global {
     radius_saved_req_t *freeaccreqs;
     radius_parsed_t *parsedpkt;
 
+    pthread_mutex_t mutex;
     radius_server_t *servers;
 } radius_global_t;
 
@@ -224,6 +226,8 @@ static void radius_init_plugin_data(access_plugin_t *p) {
     glob->freeattrs = NULL;
     glob->freeaccreqs = NULL;
     glob->servers = NULL;
+
+    pthread_mutex_init(&(glob->mutex), NULL);
 
     glob->parsedpkt = (radius_parsed_t *)malloc(sizeof(radius_parsed_t));
     reset_parsed_packet(glob->parsedpkt);
@@ -274,12 +278,21 @@ static inline radius_attribute_t *create_new_attribute(radius_global_t *glob,
         uint8_t type, uint8_t len, uint8_t *valptr) {
 
     radius_attribute_t *attr;
+    int gotlock = 0;
+    
+    if (pthread_mutex_trylock(&(glob->mutex)) == 0) {
+        gotlock = 1;
+    }
 
-    if (glob->freeattrs) {
+    if (gotlock && glob->freeattrs) {
         attr = glob->freeattrs;
         glob->freeattrs = attr->next;
     } else {
         attr = (radius_attribute_t *)calloc(1, sizeof(radius_attribute_t));
+    }
+
+    if (gotlock) {
+        pthread_mutex_unlock(&(glob->mutex));
     }
 
     attr->next = NULL;
@@ -373,6 +386,8 @@ static void radius_destroy_plugin_data(access_plugin_t *p) {
         free_attribute_list(glob->parsedpkt->attrs);
         free(glob->parsedpkt);
     }
+
+    pthread_mutex_destroy(&(glob->mutex));
     free(glob);
     return;
 }
@@ -389,16 +404,24 @@ static inline void release_attribute(radius_attribute_t **freelist,
     }
 }
 
-static inline void release_attribute_list(radius_attribute_t **freelist,
-        radius_attribute_t *attrlist) {
+static inline void release_attribute_list(pthread_mutex_t *mutex,
+        radius_attribute_t **freelist, radius_attribute_t *attrlist) {
 
     radius_attribute_t *at, *tmp;
+
     at = attrlist;
+
+    if (pthread_mutex_trylock(mutex) != 0) {
+        free_attribute_list(attrlist);
+    }
+
     while (at != NULL) {
         tmp = at;
         at = at->next;
         release_attribute(freelist, tmp);
     }
+
+    pthread_mutex_unlock(mutex);
 }
 
 static inline void release_saved_request(radius_saved_req_t **freelist,
@@ -427,7 +450,8 @@ static void radius_destroy_parsed_data(access_plugin_t *p, void *parsed) {
     if (rparsed->msgtype == RADIUS_CODE_ACCESS_REQUEST ||
                     rparsed->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
         if (rparsed->savedresp) {
-            release_attribute_list(&(glob->freeattrs), rparsed->attrs);
+            release_attribute_list(&(glob->mutex),
+                    &(glob->freeattrs), rparsed->attrs);
         }
     }
     else if (rparsed->msgtype == RADIUS_CODE_ACCESS_ACCEPT ||
@@ -435,22 +459,25 @@ static void radius_destroy_parsed_data(access_plugin_t *p, void *parsed) {
             rparsed->msgtype == RADIUS_CODE_ACCESS_CHALLENGE ||
             rparsed->msgtype == RADIUS_CODE_ACCOUNT_RESPONSE) {
         if (rparsed->savedreq) {
-            release_attribute_list(&(glob->freeattrs), rparsed->attrs);
+            release_attribute_list(&(glob->mutex),
+                    &(glob->freeattrs), rparsed->attrs);
         }
     }
     else {
-        release_attribute_list(&(glob->freeattrs), rparsed->attrs);
+        release_attribute_list(&(glob->mutex),
+                &(glob->freeattrs), rparsed->attrs);
     }
 
 
     if (rparsed->savedreq) {
-        release_attribute_list(&(glob->freeattrs), rparsed->savedreq->attrs);
+        release_attribute_list(&(glob->mutex),
+                &(glob->freeattrs), rparsed->savedreq->attrs);
         release_saved_request(&(glob->freeaccreqs), rparsed->savedreq);
         rparsed->savedreq = NULL;
     }
 
     if (rparsed->savedresp) {
-        release_attribute_list(&(glob->freeattrs),
+        release_attribute_list(&(glob->mutex), &(glob->freeattrs),
                 rparsed->savedresp->savedattrs);
         free(rparsed->savedresp);
     }
@@ -762,6 +789,7 @@ static inline void process_username_attribute(radius_parsed_t *raddata) {
     HASH_FIND(hh_username, raddata->matchednas->users, userkey,
             strlen(userkey), user);
 
+    printf("%s\n", userkey);
     if (user) {
         raddata->matcheduser = user;
         return;
@@ -1342,7 +1370,8 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
                     /* The old one is probably an unanswered request, replace
                      * it with this one instead. */
                     HASH_DELETE(hh, raddata->matchednas->requests, check);
-                    release_attribute_list(&(glob->freeattrs), check->attrs);
+                    release_attribute_list(&(glob->mutex), &(glob->freeattrs),
+                            check->attrs);
                     release_saved_request(&(glob->freeaccreqs), check);
                 }
 
