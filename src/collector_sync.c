@@ -219,6 +219,7 @@ static int create_ipiri_from_iprange(collector_sync_t *sync,
     queueused = export_queue_put_by_liid(sync->exportqueues, &irimsg,
             ipint->common.liid);
     sync->export_used[queueused] = 1;
+    free(prefix);
     return queueused;
 
 }
@@ -1224,7 +1225,7 @@ static int newly_active_session(collector_sync_t *sync,
         user_intercept_list_t *userint, internet_user_t *iuser,
         access_session_t *sess) {
 
-    int mapret;
+    int mapret = 0;
     ip_to_session_t *prevmapping = NULL;
     user_intercept_list_t *prevuser;
     ipintercept_t *ipint, *tmp;
@@ -1371,13 +1372,13 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
             sync->exportqueues->numqueues);
 
     if (userint && accessaction != ACCESS_ACTION_NONE) {
+        p->uncouple_parsed_data(p);
         HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
             int queueused = 0;
             queueused = create_ipiri_from_session(sync, sess, ipint, p,
                     parseddata, OPENLI_IPIRI_STANDARD);
             expcount ++;
         }
-        p->uncouple_parsed_data(p);
         parseddata = NULL;
     }
 

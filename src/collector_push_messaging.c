@@ -391,12 +391,15 @@ void handle_iprange(libtrace_thread_t *t, colthread_local_t *loc,
                 "OpenLI: error while adding static IP prefix %s to LIID %s for thread %d",
                 ipr->rangestr, ipr->common.liid, trace_get_perpkt_thread_id(t));
         free_single_staticipsession(ipr);
+        free(prefix);
         return;
     }
 
     all = (liid_set_t **)&(node->data);
-    if (*all != NULL && prefix) {
+    if (*all != NULL) {
         free(prefix);
+    } else {
+        prefix->ref_count --;
     }
 
     HASH_FIND(hh, *all, ipr->common.liid, ipr->common.liid_len, found);
