@@ -1259,6 +1259,85 @@ static inline char *quickcat(char *ptr, int *rem, char *toadd) {
     return (ptr + 1);
 }
 
+/* Set firstattrs and secondattrs correctly for all possible
+ * state changes. Possibly do as part of apply_fsm_logic?
+ *
+ * Have to account for savedresp, i.e. out of order exchanges.
+ *
+ * firstaction:
+ * attempt = attrs
+ * accept = attrs
+ * already active = savedreq
+ * interim update = savedreq
+ * end = savedreq
+ *
+ * secondaction:
+ * attempt = impossible?
+ * accept = savedresp
+ * interim update = attrs
+ * already active = attrs
+ * end = attrs
+ */
+
+static inline void update_first_action(radius_global_t *glob,
+        radius_parsed_t *raddata, access_session_t *sess) {
+
+    switch(raddata->firstaction) {
+        case ACCESS_ACTION_ACCEPT:
+            raddata->firstattrs = raddata->attrs;
+            TIMESTAMP_TO_TV((&(sess->started)), raddata->tvsec);
+            extract_assigned_ip_address(glob, raddata, raddata->attrs, sess);
+            break;
+        case ACCESS_ACTION_ALREADY_ACTIVE:
+            raddata->firstattrs = raddata->savedreq->attrs;
+            extract_assigned_ip_address(glob, raddata, raddata->savedreq->attrs,
+                    sess);
+            TIMESTAMP_TO_TV((&(sess->started)), raddata->savedreq->tvsec);
+            break;
+        case ACCESS_ACTION_ATTEMPT:
+            raddata->firstattrs = raddata->attrs;
+            break;
+        case ACCESS_ACTION_INTERIM_UPDATE:
+        case ACCESS_ACTION_END:
+            raddata->firstattrs = raddata->savedreq->attrs;
+            break;
+        default:
+            raddata->firstattrs = NULL;
+    }
+}
+
+static inline void update_second_action(radius_global_t *glob,
+        radius_parsed_t *raddata, access_session_t *sess) {
+
+
+    if (raddata->secondaction == ACCESS_ACTION_ACCEPT &&
+            raddata->savedresp->resptype == RADIUS_CODE_ACCESS_ACCEPT) {
+
+        raddata->secondattrs = raddata->savedresp->savedattrs;
+        extract_assigned_ip_address(glob, raddata, raddata->secondattrs, sess);
+        TIMESTAMP_TO_TV((&(sess->started)), raddata->savedresp->tvsec);
+        return;
+
+    } else if ((raddata->secondaction == ACCESS_ACTION_ACCEPT ||
+            raddata->secondaction == ACCESS_ACTION_ALREADY_ACTIVE) &&
+            raddata->savedresp->resptype == RADIUS_CODE_ACCOUNT_RESPONSE) {
+
+        raddata->secondattrs = raddata->attrs;
+        extract_assigned_ip_address(glob, raddata, raddata->secondattrs, sess);
+        TIMESTAMP_TO_TV((&(sess->started)), raddata->savedresp->tvsec);
+        return;
+    }
+
+    switch(raddata->secondaction) {
+        case ACCESS_ACTION_INTERIM_UPDATE:
+        case ACCESS_ACTION_END:
+        case ACCESS_ACTION_ALREADY_ACTIVE:
+            raddata->secondattrs = raddata->attrs;
+            break;
+        default:
+            raddata->secondattrs = NULL;
+    }
+}
 static access_session_t *radius_update_session_state(access_plugin_t *p,
         void *parsed, access_session_t **sesslist,
         session_state_t *oldstate, session_state_t *newstate,
@@ -1381,37 +1460,8 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
                 raddata->accttype, newstate, &(raddata->secondaction));
     }
 
-    if (raddata->firstaction == ACCESS_ACTION_ACCEPT) {
-        /* Session is now active: make sure we get the IP address */
-        raddata->firstattrs = raddata->attrs;
-        extract_assigned_ip_address(glob, raddata, raddata->attrs, thissess);
-        TIMESTAMP_TO_TV((&(thissess->started)), raddata->tvsec);
-    }
-
-    if (raddata->firstaction == ACCESS_ACTION_ALREADY_ACTIVE) {
-        raddata->firstattrs = raddata->savedreq->attrs;
-        extract_assigned_ip_address(glob, raddata, raddata->savedreq->attrs,
-                thissess);
-        TIMESTAMP_TO_TV((&(thissess->started)), raddata->savedreq->tvsec);
-    }
-
-    if (raddata->secondaction == ACCESS_ACTION_ACCEPT &&
-            raddata->savedresp->resptype == RADIUS_CODE_ACCESS_ACCEPT) {
-        /* Use saved orphan attributes to get IP address */
-        raddata->secondattrs = raddata->savedresp->savedattrs;
-        extract_assigned_ip_address(glob, raddata,
-            raddata->savedresp->savedattrs, thissess);
-        TIMESTAMP_TO_TV((&(thissess->started)), raddata->savedresp->tvsec);
-    }
-
-    if ((raddata->secondaction == ACCESS_ACTION_ACCEPT ||
-            raddata->secondaction == ACCESS_ACTION_ALREADY_ACTIVE) &&
-            raddata->savedresp->resptype == RADIUS_CODE_ACCOUNT_RESPONSE) {
-        /* Use our "request" attributes to get IP address */
-        raddata->secondattrs = raddata->attrs;
-        extract_assigned_ip_address(glob, raddata, raddata->attrs, thissess);
-        TIMESTAMP_TO_TV((&(thissess->started)), raddata->savedresp->tvsec);
-    }
+    update_first_action(glob, raddata, thissess);
+    update_second_action(glob, raddata, thissess);
 
     if (raddata->firstaction != ACCESS_ACTION_NONE) {
         *action = raddata->firstaction;
