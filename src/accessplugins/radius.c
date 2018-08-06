@@ -1307,10 +1307,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         thissess->statedata = NULL;
         thissess->idlength = strlen(sessionid);
         thissess->cin = assign_cin(raddata);
-        thissess->sessionip.ipfamily = AF_UNSPEC;
-        memset(&(thissess->sessionip.assignedip), 0,
-                sizeof(struct sockaddr_storage));
-        thissess->sessionip.prefixbits = 0;
+        memset(&(thissess->sessionip), 0, sizeof(thissess->sessionip));
 
         thissess->iriseqno = 0;
         thissess->started.tv_sec = 0;
@@ -1424,6 +1421,8 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         raddata->secondaction = ACCESS_ACTION_NONE;
         raddata->firstattrs = raddata->secondattrs;
         raddata->secondattrs = NULL;
+    } else {
+        *action = ACCESS_ACTION_NONE;
     }
     return thissess;
 }
