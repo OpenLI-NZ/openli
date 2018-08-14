@@ -36,6 +36,7 @@
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 #include <stdio.h>
+#include <fcntl.h>
 
 #include "logger.h"
 #include "util.h"
@@ -46,7 +47,12 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
     struct addrinfo hints, *res;
     int sockfd;
     int optval;
+    int flags;
+    int success = 0;
+    fd_set fdset;
     socklen_t optlen;
+    struct timeval tv;
+    int so_error = 0;
 
     if (ipstr == NULL || portstr == NULL) {
         logger(LOG_DAEMON,
@@ -69,7 +75,7 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
     if (sockfd == -1) {
         logger(LOG_DAEMON, "OpenLI: Error while creating connecting socket: %s.",
                 strerror(errno));
-        goto endconnect;
+        goto failconnect;
     }
 
     if (setkeepalive) {
@@ -79,29 +85,62 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
         if (setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &optval, optlen) < 0) {
             logger(LOG_DAEMON, "OpenLI: Unable to set keep alive SO for socket: %s.",
                     strerror(errno));
-            goto endconnect;
+            goto failconnect;
         }
 
         optval = 30;
         if (setsockopt(sockfd, SOL_TCP, TCP_KEEPIDLE, &optval, optlen) < 0) {
             logger(LOG_DAEMON, "OpenLI: Unable to set keep alive idle SO for socket: %s.",
                     strerror(errno));
-            goto endconnect;
+            goto failconnect;
         }
 
         if (setsockopt(sockfd, SOL_TCP, TCP_KEEPINTVL, &optval, optlen) < 0) {
             logger(LOG_DAEMON, "OpenLI: Unable to set keep alive interval SO for socket: %s.",
                     strerror(errno));
-            goto endconnect;
+            goto failconnect;
         }
 
     }
 
-    if (connect(sockfd, res->ai_addr, res->ai_addrlen) == -1) {
+    if ((flags = fcntl(sockfd, F_GETFL, 0)) < 0) {
+        logger(LOG_DAEMON, "OpenLI: unable to get socket flags for new socket.");
+        goto failconnect;
+    }
+
+
+    if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        logger(LOG_DAEMON, "OpenLI: unable to set non-blocking socket flags for new socket.");
+        goto failconnect;
+    }
+
+    connect(sockfd, res->ai_addr, res->ai_addrlen);
+
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    FD_ZERO(&fdset);
+    FD_SET(sockfd, &fdset);
+
+    if (select(sockfd + 1, NULL, &fdset, NULL, &tv) == 1) {
+        socklen_t len = sizeof(so_error);
+
+        getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &so_error, &len);
+
+        if (so_error == 0) {
+            success = 1;
+        } else {
+            success = 0;
+        }
+    } else {
+        so_error = ETIMEDOUT;
+        success = 0;
+    }
+
+    if (!success) {
         if (!isretry) {
             logger(LOG_DAEMON,
                     "OpenLI: Failed to connect to %s:%s -- %s.",
-                    ipstr, portstr, strerror(errno));
+                    ipstr, portstr, strerror(so_error));
             logger(LOG_DAEMON, "OpenLI: Will retry connection periodically.");
         }
 
@@ -110,8 +149,22 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
         goto endconnect;
     }
 
+
+    if (fcntl(sockfd, F_SETFL, flags) < 0) {
+        logger(LOG_DAEMON, "OpenLI: unable to reset socket flags for new socket.");
+        goto failconnect;
+    }
+
     logger(LOG_DAEMON, "OpenLI: connected to %s:%s successfully.",
             ipstr, portstr);
+    goto endconnect;
+
+failconnect:
+    if (sockfd >= 0) {
+        close(sockfd);
+        sockfd = -1;
+    }
+
 endconnect:
     freeaddrinfo(res);
     return sockfd;
