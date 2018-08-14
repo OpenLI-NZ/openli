@@ -368,6 +368,10 @@ static void clear_med_state(mediator_state_t *state) {
 
     libtrace_message_queue_destroy(&(state->pcapqueue));
 
+    if (state->etsidecoder) {
+        wandder_free_etsili_decoder(state->etsidecoder);
+    }
+
 }
 
 static int init_med_state(mediator_state_t *state, char *configfile,
@@ -387,6 +391,7 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->pcapdirectory = NULL;
     state->pcapthread = -1;
     state->pcaprotatefreq = 30;
+    state->etsidecoder = NULL;
 
     state->collectors = libtrace_list_init(sizeof(mediator_collector_t));
     state->agencies = libtrace_list_init(sizeof(mediator_agency_t));
@@ -1151,20 +1156,18 @@ static liid_map_t *match_etsi_to_agency(mediator_state_t *state,
         uint8_t *etsimsg, uint16_t msglen) {
 
     char liidstr[1024];
-    wandder_etsispec_t *etsidec;
     liid_map_t *match = NULL;
 
-    etsidec = wandder_create_etsili_decoder();
-    wandder_attach_etsili_buffer(etsidec, etsimsg, msglen, false);
+    if (state->etsidecoder == NULL) {
+        state->etsidecoder = wandder_create_etsili_decoder();
+    }
+    wandder_attach_etsili_buffer(state->etsidecoder, etsimsg, msglen, false);
 
-    if (wandder_etsili_get_liid(etsidec, liidstr, 1024) == NULL) {
+    if (wandder_etsili_get_liid(state->etsidecoder, liidstr, 1024) == NULL) {
         logger(LOG_DAEMON,
                 "OpenLI: unable to find LIID in ETSI record received from collector.");
-        wandder_free_etsili_decoder(etsidec);
         return NULL;
     }
-
-    wandder_free_etsili_decoder(etsidec);
 
     HASH_FIND_STR(state->liids, liidstr, match);
     if (match == NULL) {

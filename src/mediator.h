@@ -138,6 +138,7 @@ typedef struct med_state {
     uint32_t pcaprotatefreq;
     pthread_t pcapthread;
     libtrace_message_queue_t pcapqueue;
+    wandder_etsispec_t *etsidecoder;
 
 } mediator_state_t;
 
