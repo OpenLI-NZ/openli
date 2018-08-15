@@ -1153,11 +1153,21 @@ static mediator_agency_t *lookup_agency(libtrace_list_t *alist, char *id) {
 }
 
 static liid_map_t *match_etsi_to_agency(mediator_state_t *state,
-        uint8_t *etsimsg, uint16_t msglen) {
+        uint8_t *etsimsg, uint16_t msglen, uint16_t *liidlen) {
 
-    char liidstr[1024];
+    char liidstr[65536];
     liid_map_t *match = NULL;
+    uint16_t l;
+    
+    l = *(uint16_t *)(etsimsg);
+    *liidlen = ntohs(l);
 
+    memcpy(liidstr, etsimsg + 2, *liidlen);
+    liidstr[*liidlen] = '\0';
+
+    *liidlen += sizeof(l);
+
+#if 0
     if (state->etsidecoder == NULL) {
         state->etsidecoder = wandder_create_etsili_decoder();
     }
@@ -1168,7 +1178,7 @@ static liid_map_t *match_etsi_to_agency(mediator_state_t *state,
                 "OpenLI: unable to find LIID in ETSI record received from collector.");
         return NULL;
     }
-
+#endif
     HASH_FIND_STR(state->liids, liidstr, match);
     if (match == NULL) {
         logger(LOG_DAEMON, "OpenLI: mediator was unable to find LIID %s in its set of mappings.", liidstr);
@@ -1579,6 +1589,7 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
     med_coll_state_t *cs = (med_coll_state_t *)(mev->state);
     openli_proto_msgtype_t msgtype;
     mediator_pcap_msg_t pcapmsg;
+    uint16_t liidlen;
 
     do {
         msgtype = receive_net_buffer(cs->incoming, &msgbody,
@@ -1593,7 +1604,8 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                 break;
             case OPENLI_PROTO_ETSI_CC:
                 /* msgbody should contain a full ETSI record */
-                thisint = match_etsi_to_agency(state, msgbody, msglen);
+                thisint = match_etsi_to_agency(state, msgbody, msglen,
+                        &liidlen);
                 if (thisint == NULL) {
                     return -1;
                 }
@@ -1606,14 +1618,15 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                     memcpy(pcapmsg.msgbody, msgbody, msglen);
                     pcapmsg.msglen = msglen;
                     libtrace_message_queue_put(&(state->pcapqueue), &pcapmsg);
-                } else if (enqueue_etsi(state, thisint->agency->hi3, msgbody,
-                            msglen) == -1) {
+                } else if (enqueue_etsi(state, thisint->agency->hi3,
+                        msgbody + liidlen, msglen - liidlen) == -1) {
                     return -1;
                 }
                 break;
             case OPENLI_PROTO_ETSI_IRI:
                 /* msgbody should contain a full ETSI record */
-                thisint = match_etsi_to_agency(state, msgbody, msglen);
+                thisint = match_etsi_to_agency(state, msgbody, msglen,
+                        &liidlen);
                 if (thisint == NULL) {
                     return -1;
                 }
@@ -1622,8 +1635,8 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                     /* IRIs don't make sense for a pcap, so just ignore it */
                     break;
                 }
-                if (enqueue_etsi(state, thisint->agency->hi2, msgbody,
-                            msglen) == -1) {
+                if (enqueue_etsi(state, thisint->agency->hi2, msgbody + liidlen,
+                            msglen - liidlen) == -1) {
                     return -1;
                 }
                 break;

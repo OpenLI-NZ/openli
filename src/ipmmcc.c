@@ -75,10 +75,13 @@ int encode_ipmmcc(wandder_encoder_t **encoder, openli_ipmmcc_job_t *job,
 
     /* Unfortunately, the packet body is not the last item in our message so
      * we can't easily use our zero-copy shortcut :( */
+    msg->liid = intdetails->liid;
+    msg->liidlen = intdetails->liid_len;
     msg->encoder = *encoder;
     msg->ipcontents = NULL;
     msg->ipclen = 0;
-    msg->header = construct_netcomm_protocol_header(msg->msgbody->len,
+    msg->header = construct_netcomm_protocol_header(
+            msg->msgbody->len + msg->liidlen + sizeof(msg->liidlen),
                 OPENLI_PROTO_ETSI_CC, 0, &(msg->hdrlen));
 
     return 0;

@@ -48,6 +48,9 @@ typedef struct openli_exp_msg {
     wandder_encoded_result_t *msgbody;
     uint8_t *ipcontents;
 
+    char *liid;
+    uint16_t liidlen;
+
 } openli_exportmsg_t;
 
 

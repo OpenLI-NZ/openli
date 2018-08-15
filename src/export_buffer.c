@@ -158,7 +158,7 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
         buf->partialfront = beensent;
     }
 
-    while (spaceleft < msg->msgbody->len + msg->hdrlen) {
+    while (spaceleft < msg->msgbody->len + msg->hdrlen + msg->liidlen + 2) {
         spaceleft = extend_buffer(buf);
         if (spaceleft == 0) {
             return 0;
@@ -171,6 +171,14 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
         memcpy(buf->buftail, msg->header, msg->hdrlen);
         buf->buftail += msg->hdrlen;
     }
+
+    if (msg->liid) {
+        uint16_t l = htons(msg->liidlen);
+        memcpy(buf->buftail, &l, sizeof(uint16_t));
+        memcpy(buf->buftail + 2, msg->liid, msg->liidlen);
+        buf->buftail += (msg->liidlen + 2);
+    }
+
     memcpy(buf->buftail, msg->msgbody->encoded, enclen);
 
     buf->buftail += enclen;

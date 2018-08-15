@@ -221,11 +221,14 @@ int encode_ipiri(etsili_generic_t **freegenerics,
     memset(msg, 0, sizeof(openli_exportmsg_t));
     msg->msgbody = encode_etsi_ipiri(*encoder, &hdrdata,
             (int64_t)(job->cin), (int64_t)seqno, iritype, &tv, params);
+    msg->liid = intdetails->liid;
+    msg->liidlen = intdetails->liid_len;
 
     msg->encoder = *encoder;
     msg->ipcontents = NULL;
     msg->ipclen = 0;
-    msg->header = construct_netcomm_protocol_header(msg->msgbody->len,
+    msg->header = construct_netcomm_protocol_header(
+            msg->msgbody->len + msg->liidlen + sizeof(msg->liidlen),
             OPENLI_PROTO_ETSI_IRI, 0, &(msg->hdrlen));
 
     free_ipiri_parameters(params, freegenerics);
