@@ -43,6 +43,7 @@ void init_export_buffer(export_buffer_t *buf, uint8_t hasnetcomm) {
     buf->buftail = NULL;
     buf->alloced = 0;
     buf->partialfront = 0;
+    buf->deadfront = 0;
     buf->hasnetcomm = hasnetcomm;
 }
 
@@ -51,24 +52,24 @@ void release_export_buffer(export_buffer_t *buf) {
 }
 
 uint64_t get_buffered_amount(export_buffer_t *buf) {
-    return (buf->buftail - buf->bufhead);
+    return (buf->buftail - (buf->bufhead + buf->deadfront));
 }
 
 
 static void validate_buffer(export_buffer_t *buf) {
     uint64_t sent = 0;
-    uint64_t tocheck = buf->buftail - buf->bufhead;
+    uint64_t tocheck = buf->buftail - (buf->bufhead + buf->deadfront);
     wandder_etsispec_t *dec = wandder_create_etsili_decoder();
     int ret;
 
     printf("\nVALIDATING %lu\n\n", tocheck);
 
-    while (buf->bufhead + sent < buf->buftail) {
+    while (buf->bufhead + buf->deadfront + sent < buf->buftail) {
         uint32_t attachlen = 0;
         uint32_t pdulen = 0;
 
-        if (buf->buftail - (buf->bufhead + sent) < 10000) {
-            attachlen = buf->buftail - (buf->bufhead + sent);
+        if (buf->buftail - (buf->bufhead + buf->deadfront+ sent) < 10000) {
+            attachlen = buf->buftail - (buf->bufhead + buf->deadfront + sent);
         } else {
             attachlen = 10000;
         }
@@ -76,9 +77,10 @@ static void validate_buffer(export_buffer_t *buf) {
         printf("%lu ", sent);
 
         for (ret = 0; ret < 4; ret ++) {
-            printf("%02x ", *(buf->bufhead + sent + ret));
+            printf("%02x ", *(buf->bufhead + buf->deadfront + sent + ret));
         }
-        wandder_attach_etsili_buffer(dec, buf->bufhead + sent, attachlen, 0);
+        wandder_attach_etsili_buffer(dec, buf->bufhead + buf->deadfront + sent,
+                attachlen, 0);
         pdulen = wandder_etsili_get_pdu_length(dec);
 
         printf("%u\n", pdulen);
@@ -98,9 +100,14 @@ static inline uint64_t extend_buffer(export_buffer_t *buf) {
 
     /* Add some space to the buffer */
     uint8_t *space = NULL;
-    uint64_t bufused = buf->buftail - buf->bufhead;
+    uint64_t bufused = buf->buftail - (buf->bufhead + buf->deadfront);
+
+    if (buf->deadfront > 0) {
+        memmove(buf->bufhead, buf->bufhead + buf->deadfront, bufused);
+    }
 
     space = (uint8_t *)realloc(buf->bufhead, buf->alloced + BUFFER_ALLOC_SIZE);
+
     if (space == NULL) {
         /* OOM -- bad! */
         /* TODO: maybe dump to disk at this point? */
@@ -109,6 +116,8 @@ static inline uint64_t extend_buffer(export_buffer_t *buf) {
         return 0;
     }
 
+
+    buf->deadfront = 0;
     buf->bufhead = space;
     buf->buftail = space + bufused;
     buf->alloced = buf->alloced + BUFFER_ALLOC_SIZE;
@@ -118,13 +127,14 @@ static inline uint64_t extend_buffer(export_buffer_t *buf) {
         /* TODO add email alerts */
         logger(LOG_DAEMON, "OpenLI: buffer space for missing mediator has exceeded warning threshold.");
     }
+
     return buf->alloced - bufused;
 }
 
 uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
         uint8_t *pdustart, uint32_t pdulen, uint32_t beensent) {
 
-    uint64_t bufused = buf->buftail - buf->bufhead;
+    uint64_t bufused = buf->buftail - (buf->bufhead);
     uint64_t spaceleft = buf->alloced - bufused;
 
     if (bufused == 0) {
@@ -141,8 +151,6 @@ uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
     memcpy(buf->buftail, (void *)pdustart, pdulen);
 
     buf->buftail += pdulen;
-
-    //validate_buffer(buf);
     return (buf->buftail - buf->bufhead);
 
 }
@@ -151,7 +159,7 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
         openli_exportmsg_t *msg, uint32_t beensent) {
 
     uint32_t enclen = msg->msgbody->len - msg->ipclen;
-    uint64_t bufused = buf->buftail - buf->bufhead;
+    uint64_t bufused = buf->buftail - (buf->bufhead + buf->deadfront);
     uint64_t spaceleft = buf->alloced - bufused;
 
     if (bufused == 0) {
@@ -187,7 +195,6 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
         buf->buftail += msg->ipclen;
     }
 
-    //validate_buffer(buf);
     return (buf->buftail - buf->bufhead);
 }
 
@@ -196,6 +203,7 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
 
     uint64_t sent = 0;
     uint64_t rem = 0;
+    uint8_t *bhead = buf->bufhead + buf->deadfront;
     uint64_t offset = buf->partialfront;
     wandder_etsispec_t *dec;
     int ret;
@@ -205,22 +213,26 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         dec = wandder_create_etsili_decoder();
     }
 
+/*
+    printf("transmit: deadfront=%lu partialfront=%lu\n",
+            buf->deadfront, buf->partialfront);
+*/
     /* Try to maintain record alignment */
-    while (buf->bufhead + sent < buf->buftail) {
+    while (bhead + sent < buf->buftail) {
         uint32_t attachlen = 0;
         uint32_t pdulen = 0;
 
-        if (buf->buftail - (buf->bufhead + sent) < 10000) {
-            attachlen = buf->buftail - (buf->bufhead + sent);
+        if (buf->buftail - (bhead + sent) < 10000) {
+            attachlen = buf->buftail - (bhead + sent);
         } else {
             attachlen = 10000;
         }
 
         if (buf->hasnetcomm) {
-            header = (ii_header_t *)(buf->bufhead + sent);
+            header = (ii_header_t *)(bhead + sent);
             pdulen = ntohs(header->bodylen) + sizeof(ii_header_t);
         } else {
-            wandder_attach_etsili_buffer(dec, buf->bufhead + sent,
+            wandder_attach_etsili_buffer(dec, bhead + sent,
                     attachlen, 0);
             pdulen = wandder_etsili_get_pdu_length(dec);
             if (pdulen == 0) {
@@ -242,7 +254,7 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
 
     sent -= offset;
     if (sent != 0) {
-        ret = send(fd, buf->bufhead + offset, (int)sent, MSG_DONTWAIT);
+        ret = send(fd, bhead + offset, (int)sent, MSG_DONTWAIT);
         if (ret < 0) {
             if (errno != EAGAIN) {
                 logger(LOG_DAEMON,
@@ -256,9 +268,11 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
             buf->partialfront += (uint32_t)ret;
             return ret;
         }
+        buf->deadfront += ((uint32_t)ret + buf->partialfront);
     }
 
-    rem = (buf->buftail - (buf->bufhead + sent + offset));
+    assert(buf->buftail >= buf->bufhead + buf->deadfront);
+    rem = (buf->buftail - (buf->bufhead + buf->deadfront));
 
     /* Consider shrinking buffer if it is now way too large */
     if (rem < buf->alloced / 2 && buf->alloced > 10 * BUFFER_ALLOC_SIZE) {
@@ -267,14 +281,17 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         uint64_t resize = 0;
         resize = ((rem / BUFFER_ALLOC_SIZE) + 1) * BUFFER_ALLOC_SIZE;
 
-        memmove(buf->bufhead, buf->bufhead + sent + offset, rem);
+        memmove(buf->bufhead, bhead + sent + offset, rem);
         newbuf = (uint8_t *)realloc(buf->bufhead, resize);
         buf->buftail = newbuf + rem;
         buf->bufhead = newbuf;
         buf->alloced = resize;
-    } else {
-        memmove(buf->bufhead, buf->bufhead + sent + offset, rem);
+        buf->deadfront = 0;
+    } else if (buf->alloced - (buf->buftail - buf->bufhead) <
+            0.25 * buf->alloced) {
+        memmove(buf->bufhead, bhead + sent + offset, rem);
         buf->buftail = buf->bufhead + rem;
+        buf->deadfront = 0;
     }
 
     buf->partialfront = 0;

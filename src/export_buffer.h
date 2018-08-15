@@ -34,6 +34,7 @@ typedef struct export_buffer {
     uint8_t *buftail;
     uint64_t alloced;
 
+    uint32_t deadfront;
     uint32_t partialfront;
     uint8_t hasnetcomm;
 } export_buffer_t;
