@@ -1614,9 +1614,10 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                     /* Destined for a pcap file rather than an agency */
                     /* TODO freelist rather than repeated malloc/free */
                     pcapmsg.msgtype = PCAP_MESSAGE_PACKET;
-                    pcapmsg.msgbody = (uint8_t *)malloc(msglen);
-                    memcpy(pcapmsg.msgbody, msgbody, msglen);
-                    pcapmsg.msglen = msglen;
+                    pcapmsg.msgbody = (uint8_t *)malloc(msglen - liidlen);
+                    memcpy(pcapmsg.msgbody, msgbody + liidlen,
+                            msglen - liidlen);
+                    pcapmsg.msglen = msglen - liidlen;
                     libtrace_message_queue_put(&(state->pcapqueue), &pcapmsg);
                 } else if (enqueue_etsi(state, thisint->agency->hi3,
                         msgbody + liidlen, msglen - liidlen) == -1) {
