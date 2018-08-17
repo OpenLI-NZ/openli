@@ -56,46 +56,6 @@ uint64_t get_buffered_amount(export_buffer_t *buf) {
 }
 
 
-static void validate_buffer(export_buffer_t *buf) {
-    uint64_t sent = 0;
-    uint64_t tocheck = buf->buftail - (buf->bufhead + buf->deadfront);
-    wandder_etsispec_t *dec = wandder_create_etsili_decoder();
-    int ret;
-
-    printf("\nVALIDATING %lu\n\n", tocheck);
-
-    while (buf->bufhead + buf->deadfront + sent < buf->buftail) {
-        uint32_t attachlen = 0;
-        uint32_t pdulen = 0;
-
-        if (buf->buftail - (buf->bufhead + buf->deadfront+ sent) < 10000) {
-            attachlen = buf->buftail - (buf->bufhead + buf->deadfront + sent);
-        } else {
-            attachlen = 10000;
-        }
-
-        printf("%lu ", sent);
-
-        for (ret = 0; ret < 4; ret ++) {
-            printf("%02x ", *(buf->bufhead + buf->deadfront + sent + ret));
-        }
-        wandder_attach_etsili_buffer(dec, buf->bufhead + buf->deadfront + sent,
-                attachlen, 0);
-        pdulen = wandder_etsili_get_pdu_length(dec);
-
-        printf("%u\n", pdulen);
-
-        if (pdulen == 0) {
-            logger(LOG_DAEMON, "OpenLI: failed to decode buffered ETSI record.");
-            assert(0);
-            break;
-        }
-        sent += pdulen;
-    }
-
-    printf("\n");
-}
-
 static inline uint64_t extend_buffer(export_buffer_t *buf) {
 
     /* Add some space to the buffer */
@@ -159,7 +119,7 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
         openli_exportmsg_t *msg, uint32_t beensent) {
 
     uint32_t enclen = msg->msgbody->len - msg->ipclen;
-    uint64_t bufused = buf->buftail - (buf->bufhead + buf->deadfront);
+    uint64_t bufused = buf->buftail - buf->bufhead;
     uint64_t spaceleft = buf->alloced - bufused;
 
     if (bufused == 0) {
@@ -213,10 +173,6 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         dec = wandder_create_etsili_decoder();
     }
 
-/*
-    printf("transmit: deadfront=%lu partialfront=%lu\n",
-            buf->deadfront, buf->partialfront);
-*/
     /* Try to maintain record alignment */
     while (bhead + sent < buf->buftail) {
         uint32_t attachlen = 0;
@@ -288,9 +244,12 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         buf->alloced = resize;
         buf->deadfront = 0;
     } else if (buf->alloced - (buf->buftail - buf->bufhead) <
-            0.25 * buf->alloced) {
-        memmove(buf->bufhead, bhead + sent + offset, rem);
+            0.25 * buf->alloced && buf->deadfront >= 0.25 * buf->alloced) {
+        if (rem > 0) {
+            memmove(buf->bufhead, bhead + sent + offset, rem);
+        }
         buf->buftail = buf->bufhead + rem;
+        assert(buf->buftail < buf->bufhead + buf->alloced);
         buf->deadfront = 0;
     }
 
