@@ -232,10 +232,11 @@ static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
 
     uint32_t enclen = msg->msgbody->len - msg->ipclen;
     int ret;
-    struct iovec iov[3];
+    struct iovec iov[4];
     struct msghdr mh;
     int ind = 0;
     int total = 0;
+    char liidbuf[65542];
 
     if (msg->header) {
 
@@ -243,6 +244,21 @@ static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
         iov[ind].iov_len = msg->hdrlen;
         ind ++;
         total += msg->hdrlen;
+    }
+
+    if (msg->liid) {
+        int used = 0;
+        uint16_t etsiwraplen = 0;
+        uint16_t l = htons(msg->liidlen);
+
+        memcpy(liidbuf + used, &l, sizeof(uint16_t));
+        used += sizeof(uint16_t);
+        memcpy(liidbuf + used, msg->liid, msg->liidlen);
+
+        iov[ind].iov_base = liidbuf;
+        iov[ind].iov_len = msg->liidlen + used;
+        total += (msg->liidlen + used);
+        ind ++;
     }
 
     iov[ind].iov_base = msg->msgbody->encoded;

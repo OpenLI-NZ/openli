@@ -98,8 +98,11 @@ int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
     }
     /* TODO style == H323 */
 
+    msg->liid = intdetails->liid;
+    msg->liidlen = intdetails->liid_len;
     msg->encoder = *encoder;
-    msg->header = construct_netcomm_protocol_header(msg->msgbody->len,
+    msg->header = construct_netcomm_protocol_header(
+            msg->msgbody->len + msg->liidlen + sizeof(msg->liidlen),
             OPENLI_PROTO_ETSI_IRI, 0, &(msg->hdrlen));
 
     return 0;

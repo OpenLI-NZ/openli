@@ -83,9 +83,15 @@ static inline int extend_net_buffer(net_buffer_t *nb) {
         return -1;
     }
 
-    nb->actptr = nb->buf + frontfree;
-    nb->appendptr = nb->actptr + contsize;
     nb->alloced += NETBUF_ALLOC_SIZE;
+    if (frontfree >= 0.75 * nb->alloced) {
+        memmove(nb->buf, nb->buf + frontfree, contsize);
+        nb->actptr = nb->buf;
+        nb->appendptr = nb->actptr + contsize;
+    } else {
+        nb->actptr = nb->buf + frontfree;
+        nb->appendptr = nb->actptr + contsize;
+    }
     return 0;
 
 }
@@ -155,14 +161,14 @@ uint8_t *construct_netcomm_protocol_header(uint32_t contentlen,
 static inline int push_tlv(net_buffer_t *nb, openli_proto_fieldtype_t type,
         uint8_t *value, uint16_t vallen) {
 
-    char tmp[NETBUF_ALLOC_SIZE];
+    char tmp[4096];
     char *ptr = tmp;
     uint16_t shorttype, swaplen;
 
-    if (vallen > NETBUF_ALLOC_SIZE - 4) {
+    if (vallen > 4096 - 4) {
         logger(LOG_DAEMON,
                 "OpenLI: internal protocol does not support value fields larger than %u bytes.",
-                NETBUF_ALLOC_SIZE - 4);
+                4096 - 4);
         logger(LOG_DAEMON, "Supplied field was %u bytes.", vallen);
         return -1;
     }
@@ -916,7 +922,7 @@ static openli_proto_msgtype_t parse_received_message(net_buffer_t *nb,
 
     if (ntohl(hdr->magic) != OPENLI_PROTO_MAGIC) {
         logger(LOG_DAEMON, "OpenLI: bogus message received via net buffer.");
-        dump_buffer_contents(nb->actptr, NETBUF_CONTENT_SIZE(nb));
+        dump_buffer_contents(nb->actptr, 64);
         assert(0);
         return OPENLI_PROTO_DISCONNECT;
     }

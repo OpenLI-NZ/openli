@@ -124,6 +124,7 @@ typedef struct med_state {
 
     libtrace_list_t *collectors;
     libtrace_list_t *agencies;
+    pthread_mutex_t agency_mutex;
 
     int epoll_fd;
     med_epoll_ev_t *listenerev;
@@ -137,6 +138,7 @@ typedef struct med_state {
 
     uint32_t pcaprotatefreq;
     pthread_t pcapthread;
+    pthread_t connectthread;
     libtrace_message_queue_t pcapqueue;
     wandder_etsispec_t *etsidecoder;
 

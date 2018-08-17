@@ -34,6 +34,7 @@ typedef struct export_buffer {
     uint8_t *buftail;
     uint64_t alloced;
 
+    uint32_t deadfront;
     uint32_t partialfront;
     uint8_t hasnetcomm;
 } export_buffer_t;
@@ -47,6 +48,9 @@ typedef struct openli_exp_msg {
     uint8_t *header;
     wandder_encoded_result_t *msgbody;
     uint8_t *ipcontents;
+
+    char *liid;
+    uint16_t liidlen;
 
 } openli_exportmsg_t;
 

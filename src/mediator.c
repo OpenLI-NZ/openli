@@ -290,20 +290,17 @@ static void drop_all_collectors(libtrace_list_t *c) {
 
 static void drop_all_agencies(libtrace_list_t *a) {
     libtrace_list_node_t *n;
-    mediator_agency_t *ag;
+    mediator_agency_t ag;
 
-    n = a->head;
-    while (n) {
-        ag = (mediator_agency_t *)n->data;
-        free_handover(ag->hi2);
-        free_handover(ag->hi3);
-        if (ag->agencyid) {
-            free(ag->agencyid);
+    while (libtrace_list_get_size(a) > 0) {
+        libtrace_list_pop_back(a, &ag);
+        free_handover(ag.hi2);
+        free_handover(ag.hi3);
+        if (ag.agencyid) {
+            free(ag.agencyid);
         }
-        n = n->next;
     }
 
-    libtrace_list_deinit(a);
 }
 
 static void clear_med_state(mediator_state_t *state) {
@@ -322,7 +319,9 @@ static void clear_med_state(mediator_state_t *state) {
 
     free_provisioner(state->epoll_fd, &(state->provisioner));
     drop_all_collectors(state->collectors);
+    pthread_mutex_lock(&(state->agency_mutex));
     drop_all_agencies(state->agencies);
+    pthread_mutex_unlock(&(state->agency_mutex));
 
     close(state->epoll_fd);
 
@@ -359,6 +358,7 @@ static void clear_med_state(mediator_state_t *state) {
 		free(state->timerev);
 	}
 
+    pthread_join(state->pcapthread, NULL);
     if (state->pcaptimerev) {
         if (state->pcaptimerev->fd != -1) {
             close(state->pcaptimerev->fd);
@@ -371,6 +371,12 @@ static void clear_med_state(mediator_state_t *state) {
     if (state->etsidecoder) {
         wandder_free_etsili_decoder(state->etsidecoder);
     }
+
+    if (state->connectthread != -1) {
+        pthread_join(state->connectthread, NULL);
+    }
+    libtrace_list_deinit(state->agencies);
+    pthread_mutex_destroy(&(state->agency_mutex));
 
 }
 
@@ -395,6 +401,8 @@ static int init_med_state(mediator_state_t *state, char *configfile,
 
     state->collectors = libtrace_list_init(sizeof(mediator_collector_t));
     state->agencies = libtrace_list_init(sizeof(mediator_agency_t));
+    pthread_mutex_init(&(state->agency_mutex), NULL);
+    state->connectthread = -1;
 
     state->liids = NULL;
     libtrace_message_queue_init(&(state->pcapqueue),
@@ -584,6 +592,7 @@ static int connect_handover(mediator_state_t *state, handover_t *ho) {
         return -1;
     }
 
+
     if (ho->outev->fd == 0) {
         ho->outev->fd = -1;
         agstate->failmsg = 1;
@@ -642,6 +651,7 @@ static void connect_agencies(mediator_state_t *state) {
     mediator_agency_t *ag;
     int ret;
 
+    /* Must have agency_mutex at this point! */
     n = state->agencies->head;
     while (n) {
         ag = (mediator_agency_t *)(n->data);
@@ -889,6 +899,28 @@ static handover_t *create_new_handover(char *ipstr, char *portstr,
     return ho;
 }
 
+static void *start_connect_thread(void *params) {
+
+    mediator_state_t *state = (mediator_state_t *)params;
+
+    while (1) {
+        pthread_mutex_lock(&(state->agency_mutex));
+
+        if (libtrace_list_get_size(state->agencies) == 0) {
+            pthread_mutex_unlock(&(state->agency_mutex));
+            break;
+        }
+
+        connect_agencies(state);
+        pthread_mutex_unlock(&(state->agency_mutex));
+        usleep(500000);
+    }
+
+    logger(LOG_DAEMON, "OpenLI: mediator has ended agency connection thread.");
+    pthread_exit(NULL);
+
+}
+
 static void create_new_agency(mediator_state_t *state, liagency_t *lea) {
 
     mediator_agency_t newagency;
@@ -901,7 +933,14 @@ static void create_new_agency(mediator_state_t *state, liagency_t *lea) {
     newagency.hi3 = create_new_handover(lea->hi3_ipstr, lea->hi3_portstr,
             HANDOVER_HI3, lea->keepalivefreq, lea->keepalivewait);
 
+    pthread_mutex_lock(&(state->agency_mutex));
     libtrace_list_push_back(state->agencies, &newagency);
+
+    if (libtrace_list_get_size(state->agencies) == 1) {
+        pthread_create(&(state->connectthread), NULL, start_connect_thread,
+                state);
+    }
+    pthread_mutex_unlock(&(state->agency_mutex));
 
 }
 
@@ -1049,6 +1088,7 @@ static int receive_lea_withdrawal(mediator_state_t *state, uint8_t *msgbody,
     logger(LOG_DAEMON, "OpenLI: mediator received LEA withdrawal for %s.",
             lea.agencyid);
 
+    pthread_mutex_lock(&(state->agency_mutex));
     n = state->agencies->head;
     while (n) {
         mediator_agency_t *x = (mediator_agency_t *)(n->data);
@@ -1059,6 +1099,7 @@ static int receive_lea_withdrawal(mediator_state_t *state, uint8_t *msgbody,
             break;
         }
     }
+    pthread_mutex_unlock(&(state->agency_mutex));
 
     return 0;
 }
@@ -1080,6 +1121,7 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
     logger(LOG_DAEMON, "OpenLI: HI2 = %s:%s    HI3 = %s:%s",
             lea.hi2_ipstr, lea.hi2_portstr, lea.hi3_ipstr, lea.hi3_portstr);
 
+    pthread_mutex_lock(&(state->agency_mutex));
     n = state->agencies->head;
     while (n) {
         mediator_agency_t *x = (mediator_agency_t *)(n->data);
@@ -1121,10 +1163,12 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
         }
     }
 
+    pthread_mutex_unlock(&(state->agency_mutex));
     create_new_agency(state, &lea);
     return 0;
 
 freelea:
+    pthread_mutex_unlock(&(state->agency_mutex));
     free(lea.hi2_portstr);
     free(lea.hi2_ipstr);
     free(lea.hi3_portstr);
@@ -1153,11 +1197,21 @@ static mediator_agency_t *lookup_agency(libtrace_list_t *alist, char *id) {
 }
 
 static liid_map_t *match_etsi_to_agency(mediator_state_t *state,
-        uint8_t *etsimsg, uint16_t msglen) {
+        uint8_t *etsimsg, uint16_t msglen, uint16_t *liidlen) {
 
-    char liidstr[1024];
+    char liidstr[65536];
     liid_map_t *match = NULL;
+    uint16_t l;
+    
+    l = *(uint16_t *)(etsimsg);
+    *liidlen = ntohs(l);
 
+    memcpy(liidstr, etsimsg + 2, *liidlen);
+    liidstr[*liidlen] = '\0';
+
+    *liidlen += sizeof(l);
+
+#if 0
     if (state->etsidecoder == NULL) {
         state->etsidecoder = wandder_create_etsili_decoder();
     }
@@ -1168,7 +1222,7 @@ static liid_map_t *match_etsi_to_agency(mediator_state_t *state,
                 "OpenLI: unable to find LIID in ETSI record received from collector.");
         return NULL;
     }
-
+#endif
     HASH_FIND_STR(state->liids, liidstr, match);
     if (match == NULL) {
         logger(LOG_DAEMON, "OpenLI: mediator was unable to find LIID %s in its set of mappings.", liidstr);
@@ -1372,7 +1426,9 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         agency = NULL;
     } else {
         /* Try to find the agency in our agency list */
+        pthread_mutex_lock(&(state->agency_mutex));
         agency = lookup_agency(state->agencies, agencyid);
+        pthread_mutex_unlock(&(state->agency_mutex));
 
         /* We *could* consider waiting for an LEA announcement that will resolve
          * this discrepancy, but any relevant announcement should have been sent
@@ -1579,6 +1635,7 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
     med_coll_state_t *cs = (med_coll_state_t *)(mev->state);
     openli_proto_msgtype_t msgtype;
     mediator_pcap_msg_t pcapmsg;
+    uint16_t liidlen;
 
     do {
         msgtype = receive_net_buffer(cs->incoming, &msgbody,
@@ -1593,7 +1650,8 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                 break;
             case OPENLI_PROTO_ETSI_CC:
                 /* msgbody should contain a full ETSI record */
-                thisint = match_etsi_to_agency(state, msgbody, msglen);
+                thisint = match_etsi_to_agency(state, msgbody, msglen,
+                        &liidlen);
                 if (thisint == NULL) {
                     return -1;
                 }
@@ -1602,18 +1660,20 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                     /* Destined for a pcap file rather than an agency */
                     /* TODO freelist rather than repeated malloc/free */
                     pcapmsg.msgtype = PCAP_MESSAGE_PACKET;
-                    pcapmsg.msgbody = (uint8_t *)malloc(msglen);
-                    memcpy(pcapmsg.msgbody, msgbody, msglen);
-                    pcapmsg.msglen = msglen;
+                    pcapmsg.msgbody = (uint8_t *)malloc(msglen - liidlen);
+                    memcpy(pcapmsg.msgbody, msgbody + liidlen,
+                            msglen - liidlen);
+                    pcapmsg.msglen = msglen - liidlen;
                     libtrace_message_queue_put(&(state->pcapqueue), &pcapmsg);
-                } else if (enqueue_etsi(state, thisint->agency->hi3, msgbody,
-                            msglen) == -1) {
+                } else if (enqueue_etsi(state, thisint->agency->hi3,
+                        msgbody + liidlen, msglen - liidlen) == -1) {
                     return -1;
                 }
                 break;
             case OPENLI_PROTO_ETSI_IRI:
                 /* msgbody should contain a full ETSI record */
-                thisint = match_etsi_to_agency(state, msgbody, msglen);
+                thisint = match_etsi_to_agency(state, msgbody, msglen,
+                        &liidlen);
                 if (thisint == NULL) {
                     return -1;
                 }
@@ -1622,8 +1682,8 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                     /* IRIs don't make sense for a pcap, so just ignore it */
                     break;
                 }
-                if (enqueue_etsi(state, thisint->agency->hi2, msgbody,
-                            msglen) == -1) {
+                if (enqueue_etsi(state, thisint->agency->hi2, msgbody + liidlen,
+                            msglen - liidlen) == -1) {
                     return -1;
                 }
                 break;
@@ -1854,8 +1914,9 @@ static int reload_provisioner_socket_config(mediator_state_t *currstate,
 
         free_provisioner(currstate->epoll_fd, &(currstate->provisioner));
 
+        pthread_mutex_lock(&(currstate->agency_mutex));
         drop_all_agencies(currstate->agencies);
-        currstate->agencies = libtrace_list_init(sizeof(mediator_agency_t));
+        pthread_mutex_unlock(&(currstate->agency_mutex));
 
         /* Replace existing IP and port strings */
         free(currstate->provaddr);
@@ -2051,9 +2112,6 @@ static void run(mediator_state_t *state) {
             }
         }
 
-        /* Attempt to connect to the LEAs, if not already connected. */
-        connect_agencies(state);
-
         timerfd = epoll_add_timer(state->epoll_fd, 1, state->timerev);
         if (timerfd == -1) {
             logger(LOG_DAEMON,
@@ -2075,6 +2133,7 @@ static void run(mediator_state_t *state) {
             }
 
             for (i = 0; i < nfds; i++) {
+	            med_epoll_ev_t *mev = (med_epoll_ev_t *)(evs[i].data.ptr);
                 timerexpired = check_epoll_fd(state, &(evs[i]));
                 if (timerexpired == -1) {
                     break;
@@ -2467,7 +2526,6 @@ int main(int argc, char *argv[]) {
     run(&medstate);
     clear_med_state(&medstate);
 
-    pthread_join(medstate.pcapthread, NULL);
     logger(LOG_DAEMON, "OpenLI: Mediator '%s' has exited.", mediatorid);
     return 0;
 }

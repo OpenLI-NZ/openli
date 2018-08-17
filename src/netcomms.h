@@ -30,7 +30,7 @@
 #include "config.h"
 #include <inttypes.h>
 
-#define NETBUF_ALLOC_SIZE (4096)
+#define NETBUF_ALLOC_SIZE (10 * 1024 * 1024)
 
 #define OPENLI_PROTO_MAGIC 0x5c4c6c5c
 #define OPENLI_COLLECTOR_MAGIC 0x00180014202042a8
