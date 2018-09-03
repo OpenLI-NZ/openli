@@ -582,7 +582,8 @@ processdone:
 
 }
 
-static int start_input(collector_global_t *glob, colinput_t *inp) {
+static int start_input(collector_global_t *glob, colinput_t *inp,
+        int todaemon, char *progname) {
 
     if (inp->running == 1) {
         /* Trace is already running */
@@ -598,6 +599,16 @@ static int start_input(collector_global_t *glob, colinput_t *inp) {
 
     assert(!inp->trace);
     inp->trace = trace_create(inp->uri);
+
+    /* Stupid DPDK will "steal" our syslog logid, so we need to reset it
+     * after we call trace_create() to ensure our logs have the right
+     * program name associated with them.
+     */
+
+    if (todaemon) {
+        daemonise(progname);
+    }
+
     if (trace_is_err(inp->trace)) {
         libtrace_err_t lterr = trace_get_err(inp->trace);
         logger(LOG_DAEMON, "OpenLI: Failed to create trace for input %s: %s",
@@ -1120,7 +1131,7 @@ int main(int argc, char *argv[]) {
         struct option long_options[] = {
             { "help", 0, 0, 'h' },
             { "config", 1, 0, 'c'},
-            { "config", 0, 0, 'd'},
+            { "daemonise", 0, 0, 'd'},
             { NULL, 0, 0, 0 }
         };
 
@@ -1231,7 +1242,7 @@ int main(int argc, char *argv[]) {
 
         pthread_rwlock_rdlock(&(glob->config_mutex));
         HASH_ITER(hh, glob->inputs, inp, tmp) {
-            if (start_input(glob, inp) == 0) {
+            if (start_input(glob, inp, todaemon, argv[0]) == 0) {
                 logger(LOG_DAEMON, "OpenLI: failed to start input %s\n",
                         inp->uri);
             }
