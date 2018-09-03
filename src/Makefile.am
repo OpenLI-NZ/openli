@@ -38,7 +38,7 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs
 openlicollector_LDFLAGS=-lpthread -lpatricia
-openlicollector_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/
+openlicollector_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/
 endif
 
 if BUILD_MEDIATOR
