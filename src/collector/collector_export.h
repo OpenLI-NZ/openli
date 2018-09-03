@@ -32,7 +32,7 @@
 
 #include "collector.h"
 #include "export_buffer.h"
-#include "mediator.h"
+#include "netcomms.h"
 #include "internetaccess.h"
 
 typedef struct export_dest {

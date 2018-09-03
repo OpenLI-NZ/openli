@@ -29,7 +29,7 @@
 #include <libtrace.h>
 #include <libwandder_etsili.h>
 #include "etsili_core.h"
-#include "ipiri.h"
+#include "collector/ipiri.h"
 
 uint8_t etsi_ipccoid[4] = {0x05, 0x03, 0x0a, 0x02};
 uint8_t etsi_ipirioid[4] = {0x05, 0x03, 0x0a, 0x01};

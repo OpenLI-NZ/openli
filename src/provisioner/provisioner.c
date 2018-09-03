@@ -47,7 +47,6 @@
 #include "util.h"
 #include "agency.h"
 #include "netcomms.h"
-#include "mediator.h"
 #include "coreserver.h"
 
 volatile int provisioner_halt = 0;

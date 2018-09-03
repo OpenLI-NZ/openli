@@ -36,8 +36,6 @@
 
 #include "configparser.h"
 #include "logger.h"
-#include "provisioner.h"
-#include "mediator.h"
 #include "agency.h"
 #include "coreserver.h"
 

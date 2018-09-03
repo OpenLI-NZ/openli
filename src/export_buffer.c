@@ -30,8 +30,6 @@
 #include <libwandder_etsili.h>
 
 #include "logger.h"
-#include "collector.h"
-#include "collector_export.h"
 #include "export_buffer.h"
 #include "netcomms.h"
 

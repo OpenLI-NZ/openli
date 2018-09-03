@@ -27,9 +27,9 @@
 #ifndef OPENLI_CONFIGPARSER_H_
 #define OPENLI_CONFIGPARSER_H_
 
-#include "collector.h"
-#include "provisioner.h"
-#include "mediator.h"
+#include "collector/collector.h"
+#include "provisioner/provisioner.h"
+#include "mediator/mediator.h"
 #include <yaml.h>
 
 
