@@ -70,28 +70,37 @@ void destroy_net_buffer(net_buffer_t *nb) {
     free(nb);
 }
 
-static inline int extend_net_buffer(net_buffer_t *nb) {
+static inline int extend_net_buffer(net_buffer_t *nb, int musthave) {
 
     int bufused = nb->alloced - NETBUF_SPACE_REM(nb);
     int frontfree = NETBUF_FRONT_FREE(nb);
     int contsize = NETBUF_CONTENT_SIZE(nb);
+    char *tmp = NULL;
 
-    nb->buf = (char *)realloc(nb->buf, nb->alloced + NETBUF_ALLOC_SIZE);
-    if (nb->buf == NULL) {
+    if (frontfree >= 0.75 * nb->alloced) {
+        memmove(nb->buf, nb->buf + frontfree, contsize);
+        nb->actptr = nb->buf;
+        nb->appendptr = nb->actptr + contsize;
+
+        if (NETBUF_SPACE_REM(nb) >= musthave) {
+            return 0;
+        }
+        frontfree = 0;
+        bufused = nb->alloced - NETBUF_SPACE_REM(nb);
+    }
+
+    tmp = (char *)realloc(nb->buf, nb->alloced + NETBUF_ALLOC_SIZE);
+    if (tmp == NULL) {
         /* OOM */
         logger(LOG_DAEMON, "OpenLI: unable to allocate larger net buffer.");
         return -1;
     }
 
+    nb->buf = tmp;
     nb->alloced += NETBUF_ALLOC_SIZE;
-    if (frontfree >= 0.75 * nb->alloced) {
-        memmove(nb->buf, nb->buf + frontfree, contsize);
-        nb->actptr = nb->buf;
-        nb->appendptr = nb->actptr + contsize;
-    } else {
-        nb->actptr = nb->buf + frontfree;
-        nb->appendptr = nb->actptr + contsize;
-    }
+    nb->actptr = nb->buf + frontfree;
+    nb->appendptr = nb->actptr + contsize;
+
     return 0;
 
 }
@@ -104,7 +113,7 @@ static int push_generic_onto_net_buffer(net_buffer_t *nb,
     }
 
     while (NETBUF_SPACE_REM(nb) < len) {
-        if (extend_net_buffer(nb) == -1) {
+        if (extend_net_buffer(nb, len) == -1) {
             return -1;
         }
     }
@@ -1438,7 +1447,7 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
 
     /* Not enough data in the buffer for a complete message, read some more. */
     if (NETBUF_SPACE_REM(nb) < NETBUF_ALLOC_SIZE) {
-        if (extend_net_buffer(nb) == -1) {
+        if (extend_net_buffer(nb, NETBUF_ALLOC_SIZE) == -1) {
             return OPENLI_PROTO_DISCONNECT;
         }
     }
