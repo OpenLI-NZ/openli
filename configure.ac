@@ -3,7 +3,7 @@
 AC_INIT(openli, 0.0.1, salcock@waikato.ac.nz)
 
 AM_INIT_AUTOMAKE([subdir-objects])
-AC_CONFIG_SRCDIR(src/collector.c)
+AC_CONFIG_SRCDIR(src/collector/collector.c)
 AM_CONFIG_HEADER(config.h)
 AC_CONFIG_MACRO_DIR([m4])
 
