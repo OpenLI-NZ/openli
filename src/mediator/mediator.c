@@ -72,14 +72,14 @@ static void disconnect_handover(mediator_state_t *state, handover_t *ho) {
 
     agstate = (med_agency_state_t *)(ho->outev->state);
 
-    logger(LOG_DAEMON,
+    logger(LOG_INFO,
         "OpenLI: mediator is disconnecting from handover %s:%s HI%d",
         ho->ipstr, ho->portstr, ho->handover_type);
 
     if (agstate->main_fd != -1) {
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, agstate->main_fd, &ev)
                 == -1) {
-            logger(LOG_DAEMON, "OpenLI: unable to remove handover fd from epoll: %s.", strerror(errno));
+            logger(LOG_INFO, "OpenLI: unable to remove handover fd from epoll: %s.", strerror(errno));
         }
         close(agstate->main_fd);
         agstate->main_fd = -1;
@@ -89,7 +89,7 @@ static void disconnect_handover(mediator_state_t *state, handover_t *ho) {
     if (agstate->katimer_fd != -1) {
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, agstate->katimer_fd, &ev)
                 == -1) {
-            logger(LOG_DAEMON, "OpenLI: unable to remove keepalive timer fd from epoll: %s.", strerror(errno));
+            logger(LOG_INFO, "OpenLI: unable to remove keepalive timer fd from epoll: %s.", strerror(errno));
         }
         close(agstate->katimer_fd);
         agstate->katimer_fd = -1;
@@ -101,7 +101,7 @@ static void disconnect_handover(mediator_state_t *state, handover_t *ho) {
     if (agstate->karesptimer_fd != -1) {
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, agstate->karesptimer_fd,
                 &ev) == -1) {
-            logger(LOG_DAEMON, "OpenLI: unable to remove keepalive response timer fd from epoll: %s.", strerror(errno));
+            logger(LOG_INFO, "OpenLI: unable to remove keepalive response timer fd from epoll: %s.", strerror(errno));
         }
         close(agstate->karesptimer_fd);
         agstate->karesptimer_fd = -1;
@@ -141,7 +141,7 @@ static int start_keepalive_timer(mediator_state_t *state,
     }
 
     if ((sock = epoll_add_timer(state->epoll_fd, timeoutval, timerev)) == -1) {
-        logger(LOG_DAEMON, "OpenLI: warning -- keep alive timer was not able to be set for handover: %s", strerror(errno));
+        logger(LOG_INFO, "OpenLI: warning -- keep alive timer was not able to be set for handover: %s", strerror(errno));
         return -1;
     }
 
@@ -160,7 +160,7 @@ static void halt_mediator_timer(mediator_state_t *state,
     }
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, timerev->fd, &ev) == -1) {
-        logger(LOG_DAEMON, "OpenLI: warning -- timer was not able to be disabled for agency connection: %s.", strerror(errno));
+        logger(LOG_INFO, "OpenLI: warning -- timer was not able to be disabled for agency connection: %s.", strerror(errno));
     }
 
     close(timerev->fd);
@@ -174,7 +174,7 @@ static void free_provisioner(int epollfd, mediator_prov_t *prov) {
         if (prov->provev->fd != -1) {
             if (epoll_ctl(epollfd, EPOLL_CTL_DEL, prov->provev->fd,
                         &ev) == -1) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI mediator: problem removing provisioner fd from epoll: %s.",
                         strerror(errno));
             }
@@ -413,7 +413,7 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     }
 
     if (state->mediatorid == 0) {
-        logger(LOG_DAEMON, "OpenLI: mediator ID is not present in the config file or is set to zero.");
+        logger(LOG_INFO, "OpenLI: mediator ID is not present in the config file or is set to zero.");
         return -1;
     }
 
@@ -471,7 +471,7 @@ static int trigger_pcap_flush(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     timerfd = epoll_add_timer(state->epoll_fd, 60, state->pcaptimerev);
     if (timerfd == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI mediator: failed to create pcap rotation timer");
         return -1;
     }
@@ -525,7 +525,7 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
         kamsg = encode_etsi_keepalive(ms->encoder, &hdrdata,
                 ms->lastkaseq + 1);
         if (kamsg == NULL) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: mediator failed to construct a keep-alive.");
             return -1;
         }
@@ -539,7 +539,7 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
             ev.events = EPOLLRDHUP | EPOLLIN | EPOLLOUT;
             if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, ms->main_fd,
                         &ev) == -1) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                     "OpenLI: error while trying to enable xmit for handover %s:%s HI%d -- %s",
                     ms->parent->ipstr, ms->parent->portstr,
                     ms->parent->handover_type, strerror(errno));
@@ -549,13 +549,13 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
         }
 
     /*
-        logger(LOG_DAEMON, "OpenLI: queued keep alive %ld for %s:%s HI%d",
+        logger(LOG_INFO, "OpenLI: queued keep alive %ld for %s:%s HI%d",
                 ms->lastkaseq, ms->parent->ipstr, ms->parent->portstr,
                 ms->parent->handover_type);
     */
         if (start_keepalive_timer(state, ms->parent->aliverespev,
                 ms->kawait) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: unable to start keepalive response timer.");
             return -1;
         }
@@ -567,7 +567,7 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     halt_mediator_timer(state, mev);
     if (start_keepalive_timer(state, mev, ms->kafreq) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: unable to reset keepalive timer for  %s:%s HI%d.",
                 ms->parent->ipstr, ms->parent->portstr,
                 ms->parent->handover_type);
@@ -610,7 +610,7 @@ static int connect_handover(mediator_state_t *state, handover_t *ho) {
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, ho->outev->fd, &ev) == -1
             && agstate->failmsg == 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: unable to add agency handover fd %d to epoll.",
                 ho->outev->fd);
         agstate->failmsg = 1;
@@ -670,7 +670,7 @@ static void connect_agencies(mediator_state_t *state) {
         }
 
         if (ret == 1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: mediator has connected to agency %s on HI2 %s:%s.",
                     ag->agencyid, ag->hi2->ipstr, ag->hi2->portstr);
         }
@@ -682,7 +682,7 @@ static void connect_agencies(mediator_state_t *state) {
         }
 
         if (ret == 1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: mediator has connected to agency %s on HI3 %s:%s.",
                     ag->agencyid, ag->hi3->ipstr, ag->hi3->portstr);
         }
@@ -709,7 +709,7 @@ static int start_collector_listener(mediator_state_t *state) {
     ev.events = EPOLLIN;
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Failed to register mediator listening socket: %s.",
                 strerror(errno));
         close(sockfd);
@@ -726,14 +726,14 @@ static int process_signal(mediator_state_t *state, int sigfd) {
 
     ret = read(sigfd, &si, sizeof(si));
     if (ret < 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI mediator: unable to read from signal fd: %s.",
                 strerror(errno));
         return ret;
     }
 
     if (ret != sizeof(si)) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI mediator: unexpected partial read from signal fd.");
         return -1;
     }
@@ -767,10 +767,10 @@ static int accept_collector(mediator_state_t *state) {
 
     if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, sizeof(strbuf),
                 0, 0, NI_NUMERICHOST) != 0) {
-        logger(LOG_DAEMON, "OpenLI: getnameinfo error in provisioner: %s.",
+        logger(LOG_INFO, "OpenLI: getnameinfo error in provisioner: %s.",
                 strerror(errno));
     } else {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: mediator accepted connection from collector %s.",
                 strbuf);
     }
@@ -792,7 +792,7 @@ static int accept_collector(mediator_state_t *state) {
 
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, col.colev->fd,
                     &ev) < 0) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI mediator: unable to add collector fd to epoll: %s.",
                     strerror(errno));
             drop_collector(col.colev);
@@ -816,7 +816,7 @@ static handover_t *create_new_handover(char *ipstr, char *portstr,
     handover_t *ho = (handover_t *)malloc(sizeof(handover_t));
 
     if (ho == NULL) {
-        logger(LOG_DAEMON, "OpenLI: ran out of memory while allocating handover structure.");
+        logger(LOG_INFO, "OpenLI: ran out of memory while allocating handover structure.");
         return NULL;
     }
 
@@ -828,7 +828,7 @@ static handover_t *create_new_handover(char *ipstr, char *portstr,
         timerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
     } else {
         if (handover_type == HANDOVER_HI2) {
-            logger(LOG_DAEMON, "OpenLI: warning, keep alive timer has been disabled for agency %s:%s", ipstr, portstr);
+            logger(LOG_INFO, "OpenLI: warning, keep alive timer has been disabled for agency %s:%s", ipstr, portstr);
         }
         timerev = NULL;
     }
@@ -841,7 +841,7 @@ static handover_t *create_new_handover(char *ipstr, char *portstr,
 
     if (agev == NULL || agstate == NULL || (kafreq > 0 && timerev == NULL) ||
             (kawait > 0 && respev == NULL)) {
-        logger(LOG_DAEMON, "OpenLI: ran out of memory while allocating handover structure.");
+        logger(LOG_INFO, "OpenLI: ran out of memory while allocating handover structure.");
         if (agev) {
             free(agev);
         }
@@ -916,7 +916,7 @@ static void *start_connect_thread(void *params) {
         usleep(500000);
     }
 
-    logger(LOG_DAEMON, "OpenLI: mediator has ended agency connection thread.");
+    logger(LOG_INFO, "OpenLI: mediator has ended agency connection thread.");
     pthread_exit(NULL);
 
 }
@@ -993,13 +993,13 @@ static int has_handover_changed(mediator_state_t *state,
     }
 
     if (changedloc) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: %s connection info for LEA %s has changed from %s:%s to %s:%s.",
                 hitypestr, existing->agencyid, ho->ipstr, ho->portstr, ipstr, portstr);
     } else if (changedkaresp) {
         if (newag->keepalivewait == 0) {
             if (ho->handover_type == HANDOVER_HI2) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: disabled keep-alive response requirement for LEA %s",
                         existing->agencyid);
             }
@@ -1012,7 +1012,7 @@ static int has_handover_changed(mediator_state_t *state,
             }
         } else {
             if (ho->handover_type == HANDOVER_HI2) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: enabled keep-alive response requirement for LEA %s",
                         existing->agencyid);
             }
@@ -1027,7 +1027,7 @@ static int has_handover_changed(mediator_state_t *state,
     } else if (changedkafreq) {
         if (newag->keepalivefreq == 0) {
             if (ho->handover_type == HANDOVER_HI2) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: disabled keep-alives for LEA %s",
                         existing->agencyid);
             }
@@ -1041,7 +1041,7 @@ static int has_handover_changed(mediator_state_t *state,
             }
         } else {
             if (ho->handover_type == HANDOVER_HI2) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: enabled keep-alives for LEA %s",
                         existing->agencyid);
             }
@@ -1054,7 +1054,7 @@ static int has_handover_changed(mediator_state_t *state,
 
             if (start_keepalive_timer(state, ho->aliveev,
                         newag->keepalivefreq) == -1) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: unable to restart keepalive timer for handover %s:%s HI%d.",
                         ho->ipstr, ho->portstr, ho->handover_type,
                         strerror(errno));
@@ -1081,11 +1081,11 @@ static int receive_lea_withdrawal(mediator_state_t *state, uint8_t *msgbody,
     libtrace_list_node_t *n;
 
     if (decode_lea_withdrawal(msgbody, msglen, &lea) == -1) {
-        logger(LOG_DAEMON, "OpenLI: received invalid LEA withdrawal from provisioner.");
+        logger(LOG_INFO, "OpenLI: received invalid LEA withdrawal from provisioner.");
         return -1;
     }
 
-    logger(LOG_DAEMON, "OpenLI: mediator received LEA withdrawal for %s.",
+    logger(LOG_INFO, "OpenLI: mediator received LEA withdrawal for %s.",
             lea.agencyid);
 
     pthread_mutex_lock(&(state->agency_mutex));
@@ -1112,13 +1112,13 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
     int ret;
 
     if (decode_lea_announcement(msgbody, msglen, &lea) == -1) {
-        logger(LOG_DAEMON, "OpenLI: received invalid LEA announcement from provisioner.");
+        logger(LOG_INFO, "OpenLI: received invalid LEA announcement from provisioner.");
         return -1;
     }
 
-    logger(LOG_DAEMON, "OpenLI: mediator received LEA announcement for %s.",
+    logger(LOG_INFO, "OpenLI: mediator received LEA announcement for %s.",
             lea.agencyid);
-    logger(LOG_DAEMON, "OpenLI: HI2 = %s:%s    HI3 = %s:%s",
+    logger(LOG_INFO, "OpenLI: HI2 = %s:%s    HI3 = %s:%s",
             lea.hi2_ipstr, lea.hi2_portstr, lea.hi3_ipstr, lea.hi3_portstr);
 
     pthread_mutex_lock(&(state->agency_mutex));
@@ -1218,14 +1218,14 @@ static liid_map_t *match_etsi_to_agency(mediator_state_t *state,
     wandder_attach_etsili_buffer(state->etsidecoder, etsimsg, msglen, false);
 
     if (wandder_etsili_get_liid(state->etsidecoder, liidstr, 1024) == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: unable to find LIID in ETSI record received from collector.");
         return NULL;
     }
 #endif
     HASH_FIND_STR(state->liids, liidstr, match);
     if (match == NULL) {
-        logger(LOG_DAEMON, "OpenLI: mediator was unable to find LIID %s in its set of mappings.", liidstr);
+        logger(LOG_INFO, "OpenLI: mediator was unable to find LIID %s in its set of mappings.", liidstr);
 
         /* TODO what do we do in this case -- buffer it somewhere in case
          * a mapping turns up later? drop it? */
@@ -1244,7 +1244,7 @@ static int enqueue_etsi(mediator_state_t *state, handover_t *ho,
 
     if (append_etsipdu_to_buffer(&(mas->buf), etsimsg, (uint32_t)msglen, 0)
             == 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
             "OpenLI: mediator was unable to enqueue ETSI PDU for handover %s:%s HI%d",
             ho->ipstr, ho->portstr, ho->handover_type);
         return -1;
@@ -1257,7 +1257,7 @@ static int enqueue_etsi(mediator_state_t *state, handover_t *ho,
         ev.events = EPOLLRDHUP | EPOLLIN | EPOLLOUT;
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, ho->outev->fd, &ev) == -1)
         {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                 "OpenLI: error while trying to enable xmit for handover %s:%s HI%d -- %s",
                 ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
             return -1;
@@ -1278,7 +1278,7 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
         ret = send(mev->fd, mas->pending_ka->encoded, mas->pending_ka->len,
                 MSG_DONTWAIT);
         if (ret < 0) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: error while transmitting keepalive for handover %s:%s HI%d -- %s",
                     ho->ipstr, ho->portstr, ho->handover_type,
                     strerror(errno));
@@ -1311,7 +1311,7 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
         ev.events = EPOLLIN | EPOLLRDHUP;
 
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, mev->fd, &ev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                 "OpenLI: error while trying to disable xmit for handover %s:%s HI%d -- %s",
                 ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
             return -1;
@@ -1323,7 +1323,7 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
     halt_mediator_timer(state, mas->parent->aliveev);
     if (start_keepalive_timer(state, mas->parent->aliveev,
                 mas->kafreq) == -1) {
-        logger(LOG_DAEMON, "OpenLI: unable to reset keepalive timer for handover %s:%s HI%d.",
+        logger(LOG_INFO, "OpenLI: unable to reset keepalive timer for handover %s:%s HI%d.",
                 ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
         return -1;
     }
@@ -1341,7 +1341,7 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     int sock;
 
     if (decode_cease_mediation(msgbody, msglen, &liid) == -1) {
-        logger(LOG_DAEMON, "OpenLI mediator: received invalid cease mediation command from provisioner.");
+        logger(LOG_INFO, "OpenLI mediator: received invalid cease mediation command from provisioner.");
         return -1;
     }
 
@@ -1351,7 +1351,7 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
 
     HASH_FIND_STR(state->liids, liid, m);
     if (m == NULL) {
-        logger(LOG_DAEMON, "OpenLI mediator: asked to cease mediation for LIID %s, but we have no record of this LIID?",
+        logger(LOG_INFO, "OpenLI mediator: asked to cease mediation for LIID %s, but we have no record of this LIID?",
                 liid);
         free(liid);
         return 0;
@@ -1366,7 +1366,7 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
         return 0;
     }
 
-    logger(LOG_DAEMON,
+    logger(LOG_INFO,
             "OpenLI mediator: scheduled removal of agency mapping for LIID %s.",
             m->liid);
     m->ceasetimer = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
@@ -1375,7 +1375,7 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     m->ceasetimer->state = m;
 
     if ((sock = epoll_add_timer(state->epoll_fd, 15, m->ceasetimer)) == -1) {
-        logger(LOG_DAEMON, "OpenLI: warning -- cease timer was not able to be set for LIID %s: %s", liid, strerror(errno));
+        logger(LOG_INFO, "OpenLI: warning -- cease timer was not able to be set for LIID %s: %s", liid, strerror(errno));
         return -1;
     }
     m->ceasetimer->fd = sock;
@@ -1389,7 +1389,7 @@ static inline int remove_liid_mapping(mediator_state_t *state,
     struct epoll_event ev;
     liid_map_t *m = (liid_map_t *)(mev->state);
 
-    logger(LOG_DAEMON, "OpenLI mediator: removed agency mapping for LIID %s.",
+    logger(LOG_INFO, "OpenLI mediator: removed agency mapping for LIID %s.",
             m->liid);
     HASH_DEL(state->liids, m);
 
@@ -1411,7 +1411,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     liid = NULL;
 
     if (decode_liid_mapping(msgbody, msglen, &agencyid, &liid) == -1) {
-        logger(LOG_DAEMON, "OpenLI: receive invalid LIID mapping from provisioner.");
+        logger(LOG_INFO, "OpenLI: receive invalid LIID mapping from provisioner.");
         return -1;
     }
 
@@ -1439,7 +1439,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
          * somewhere else to store them. Drop them?
          */
         if (agency == NULL) {
-            logger(LOG_DAEMON, "OpenLI: agency %s is not recognised by the mediator, yet LIID %s is intended for it?",
+            logger(LOG_INFO, "OpenLI: agency %s is not recognised by the mediator, yet LIID %s is intended for it?",
                     agencyid, liid);
             return -1;
         }
@@ -1454,10 +1454,10 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     HASH_ADD_STR(state->liids, liid, m);
 
     if (agency) {
-        logger(LOG_DAEMON, "OpenLI mediator: added %s -> %s to LIID map",
+        logger(LOG_DEBUG, "OpenLI mediator: added %s -> %s to LIID map",
                 m->liid, m->agency->agencyid);
     } else {
-        logger(LOG_DAEMON, "OpenLI mediator: added %s -> pcapdisk to LIID map",
+        logger(LOG_INFO, "OpenLI mediator: added %s -> pcapdisk to LIID map",
                 m->liid);
     }
     return 0;
@@ -1472,7 +1472,7 @@ static int transmit_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     ret = transmit_net_buffer(prov->outgoing);
     if (ret == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: error sending message from mediator to provisioner.");
         return -1;
     }
@@ -1482,7 +1482,7 @@ static int transmit_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
         ev.data.ptr = mev;
         ev.events = EPOLLIN | EPOLLRDHUP;
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, mev->fd, &ev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: error disabling EPOLLOUT for provisioner fd: %s.",
                     strerror(errno));
             return -1;
@@ -1495,7 +1495,7 @@ static int transmit_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
 static int trigger_ka_failure(mediator_state_t *state, med_epoll_ev_t *mev) {
     med_agency_state_t *ms = (med_agency_state_t *)(mev->state);
 
-    logger(LOG_DAEMON, "OpenLI mediator: failed to receive KA response from LEA on handover %s:%s HI%d, dropping connection.",
+    logger(LOG_INFO, "OpenLI mediator: failed to receive KA response from LEA on handover %s:%s HI%d, dropping connection.",
             ms->parent->ipstr, ms->parent->portstr, ms->parent->handover_type);
 
 
@@ -1516,7 +1516,7 @@ static int receive_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
                 &msglen, &internalid);
         switch(msgtype) {
             case OPENLI_PROTO_DISCONNECT:
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: error receiving message from collector.");
                 return -1;
             case OPENLI_PROTO_NO_MESSAGE:
@@ -1542,7 +1542,7 @@ static int receive_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
                 }
                 break;
             default:
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI mediator: unexpected message type %d received from provisioner.",
                         msgtype);
                 return -1;
@@ -1564,14 +1564,14 @@ static int receive_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             return 0;
         }
-        logger(LOG_DAEMON, "OpenLI mediator: error receiving data from LEA on handover %s:%s HI%d: %s\n",
+        logger(LOG_INFO, "OpenLI mediator: error receiving data from LEA on handover %s:%s HI%d: %s\n",
                 mas->parent->ipstr, mas->parent->portstr,
                 mas->parent->handover_type, strerror(errno));
         return -1;
     }
 
     if (ret == 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI mediator: disconnect on LEA handover %s:%s HI%d\n",
                 mas->parent->ipstr, mas->parent->portstr,
                 mas->parent->handover_type);
@@ -1600,15 +1600,15 @@ static int receive_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
             recvseq = wandder_etsili_get_sequence_number(mas->decoder);
 
             if (recvseq != mas->lastkaseq) {
-                logger(LOG_DAEMON, "OpenLI mediator -- unexpected KA response from handover %s:%s HI%d",
+                logger(LOG_INFO, "OpenLI mediator -- unexpected KA response from handover %s:%s HI%d",
                         mas->parent->ipstr, mas->parent->portstr,
                         mas->parent->handover_type);
-                logger(LOG_DAEMON, "OpenLI mediator -- expected %ld, got %ld",
+                logger(LOG_INFO, "OpenLI mediator -- expected %ld, got %ld",
                         mas->lastkaseq, recvseq);
                 return -1;
             }
             /*
-            logger(LOG_DAEMON, "OpenLI mediator -- received KA response for %ld from LEA handover %s:%s HI%d",
+            logger(LOG_INFO, "OpenLI mediator -- received KA response for %ld from LEA handover %s:%s HI%d",
                     recvseq, mas->parent->ipstr, mas->parent->portstr,
                     mas->parent->handover_type);
             */
@@ -1616,7 +1616,7 @@ static int receive_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
             libtrace_scb_advance_read(mas->incoming, reclen);
             mas->karesptimer_fd = -1;
         } else {
-            logger(LOG_DAEMON, "OpenLI mediator -- received unknown data from LEA handover %s:%s HI%d",
+            logger(LOG_INFO, "OpenLI mediator -- received unknown data from LEA handover %s:%s HI%d",
                     mas->parent->ipstr, mas->parent->portstr,
                     mas->parent->handover_type);
             return -1;
@@ -1643,7 +1643,7 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
         switch(msgtype) {
 
             case OPENLI_PROTO_DISCONNECT:
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: error receiving message from collector.");
                 return -1;
             case OPENLI_PROTO_NO_MESSAGE:
@@ -1688,7 +1688,7 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                 }
                 break;
             default:
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI mediator: unexpected message type %d received from collector.",
                         msgtype);
                 return -1;
@@ -1708,7 +1708,7 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 			if (ev->events & EPOLLIN) {
 				return 1;
 			}
-			logger(LOG_DAEMON,
+			logger(LOG_INFO,
                     "OpenLI Mediator: main epoll timer has failed.");
             return -1;
         case MED_EPOLL_PCAP_TIMER:
@@ -1762,7 +1762,7 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             }
 
             if (ret == -1) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI mediator: disconnecting from provisioner.");
                 free_provisioner(state->epoll_fd, &(state->provisioner));
             }
@@ -1774,14 +1774,14 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
                 ret = receive_collector(state, mev);
             }
             if (ret == -1) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI mediator: disconnecting from collector %d.",
                         mev->fd);
                 drop_collector(mev);
             }
             break;
         default:
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI Mediator: invalid fd triggering epoll event.");
             assert(0);
             return -1;
@@ -1812,14 +1812,14 @@ static int send_mediator_listen_details(mediator_state_t *state,
      */
     if (getsockname(state->listenerev->fd, (struct sockaddr *)(&sa),
                 &salen) < 0) {
-        logger(LOG_DAEMON, "OpenLI mediator: getsockname() failed for listener socket: %s.",
+        logger(LOG_INFO, "OpenLI mediator: getsockname() failed for listener socket: %s.",
                 strerror(errno));
         return -1;
     }
 
     if ((ret = getnameinfo((struct sockaddr *)(&sa), salen, listenname,
             sizeof(listenname), NULL, 0, NI_NUMERICHOST)) < 0) {
-        logger(LOG_DAEMON, "OpenLI mediator: getnameinfo() failed for listener socket: %s.",
+        logger(LOG_INFO, "OpenLI mediator: getnameinfo() failed for listener socket: %s.",
                 gai_strerror(ret));
         return -1;
     }
@@ -1829,7 +1829,7 @@ static int send_mediator_listen_details(mediator_state_t *state,
     meddeets.portstr = state->listenport;
 
     if (push_mediator_onto_net_buffer(prov->outgoing, &meddeets) == -1) {
-        logger(LOG_DAEMON, "OpenLI mediator: unable to push mediator details to provisioner.");
+        logger(LOG_INFO, "OpenLI mediator: unable to push mediator details to provisioner.");
         return -1;
     }
 
@@ -1842,7 +1842,7 @@ static int send_mediator_listen_details(mediator_state_t *state,
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, prov->provev->fd, &ev)
             == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI mediator: failed to re-enable transmit on provisioner socket: %s.",
                 strerror(errno));
         return -1;
@@ -1873,7 +1873,7 @@ static int init_provisioner_connection(mediator_state_t *state, int sock) {
     ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, sock, &ev) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI mediator: failed to register provisioner socket: %s.",
                 strerror(errno));
         return -1;
@@ -1881,7 +1881,7 @@ static int init_provisioner_connection(mediator_state_t *state, int sock) {
 
     if (push_auth_onto_net_buffer(prov->outgoing,
                 OPENLI_PROTO_MEDIATOR_AUTH) == -1) {
-        logger(LOG_DAEMON, "OpenLI mediator: unable to push auth message for provisioner.");
+        logger(LOG_INFO, "OpenLI mediator: unable to push auth message for provisioner.");
         return -1;
     }
 
@@ -1931,7 +1931,7 @@ static int reload_provisioner_socket_config(mediator_state_t *currstate,
     }
 
     if (!changed) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI mediator: provisioner socket configuration is unchanged.");
     }
 
@@ -1956,11 +1956,11 @@ static int reload_listener_socket_config(mediator_state_t *currstate,
         /* Close listen socket */
         if (currstate->listenerev) {
             if (currstate->listenerev->fd != -1) {
-                logger(LOG_DAEMON, "OpenLI mediator: closing listening socket on %s:%s",
+                logger(LOG_INFO, "OpenLI mediator: closing listening socket on %s:%s",
                         currstate->listenaddr, currstate->listenport);
                 if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
                         currstate->listenerev->fd, &ev) == -1) {
-                    logger(LOG_DAEMON,
+                    logger(LOG_INFO,
                             "OpenLI mediator: failed to remove listener fd %d from epoll: %s",
                             currstate->listenerev->fd, strerror(errno));
                 }
@@ -1979,14 +1979,14 @@ static int reload_listener_socket_config(mediator_state_t *currstate,
 
         /* Open new listen socket */
         if (start_collector_listener(currstate) < 0) {
-            logger(LOG_DAEMON, "OpenLI mediator: Warning, listening socket did not restart. Will not be able to accept connections from collectors.");
+            logger(LOG_INFO, "OpenLI mediator: Warning, listening socket did not restart. Will not be able to accept connections from collectors.");
             return -1;
         }
         changed = 1;
     }
 
     if (currstate->mediatorid != newstate->mediatorid) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI mediator: changing mediator ID from %u to %u",
                 currstate->mediatorid, newstate->mediatorid);
         currstate->mediatorid = newstate->mediatorid;
@@ -1994,7 +1994,7 @@ static int reload_listener_socket_config(mediator_state_t *currstate,
     }
 
     if (!changed) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI mediator: inbound connection listening socket configuration is unchanged.");
     }
 
@@ -2009,7 +2009,7 @@ static int reload_mediator_config(mediator_state_t *currstate) {
 
     if (init_med_state(&newstate, currstate->conffile,
             currstate->mediatorname) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: error reloading config file for mediator.");
         return -1;
     }
@@ -2054,13 +2054,13 @@ static void run(mediator_state_t *state) {
 
 	if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, state->signalev->fd, &ev)
 			== -1) {
-		logger(LOG_DAEMON,
+		logger(LOG_INFO,
 				"OpenLI: Failed to register signal socket: %s.",
 				strerror(errno));
 		return;
 	}
 
-    logger(LOG_DAEMON,
+    logger(LOG_INFO,
             "OpenLI: rotating pcap output files every %d minutes.",
             state->pcaprotatefreq);
 
@@ -2072,7 +2072,7 @@ static void run(mediator_state_t *state) {
 
     timerfd = epoll_add_timer(state->epoll_fd, firstflush, state->pcaptimerev);
     if (timerfd == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI mediator: failed to create pcap rotation timer");
         return;
     }
@@ -2093,7 +2093,7 @@ static void run(mediator_state_t *state) {
             int s = connect_socket(state->provaddr, state->provport, provfail,
                     0);
             if (s == -1) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI mediator: unable to connect to provisioner.");
                 break;
             }
@@ -2114,7 +2114,7 @@ static void run(mediator_state_t *state) {
 
         timerfd = epoll_add_timer(state->epoll_fd, 1, state->timerev);
         if (timerfd == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                 "OpenLI: Failed to add timer to epoll in mediator.");
             break;
         }
@@ -2126,7 +2126,7 @@ static void run(mediator_state_t *state) {
         while (!timerexpired) {
             nfds = epoll_wait(state->epoll_fd, evs, 64, -1);
             if (nfds < 0) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
 						"OpenLI: error while waiting for epoll events in mediator: %s.",
                         strerror(errno));
                 return;
@@ -2142,7 +2142,7 @@ static void run(mediator_state_t *state) {
         }
 
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, timerfd, &ev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                 "OpenLI: unable to remove mediator timer from epoll set: %s",
                 strerror(errno));
             return;
@@ -2176,7 +2176,7 @@ static int open_pcap_output_file(pcap_thread_state_t *pstate,
 
     if (pstate->dir == NULL) {
         if (!pstate->dirwarned) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI mediator: pcap directory is not configured so will not write any pcap files.");
             pstate->dirwarned = 1;
         }
@@ -2184,7 +2184,7 @@ static int open_pcap_output_file(pcap_thread_state_t *pstate,
     }
 
     if (act == NULL || act->liid == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI mediator: attempted to open a pcap trace file for an invalid pcap output.");
         return -1;
     }
@@ -2197,7 +2197,7 @@ static int open_pcap_output_file(pcap_thread_state_t *pstate,
     if (trace_is_err_output(act->out)) {
         libtrace_err_t err;
         err = trace_get_err_output(act->out);
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI mediator: Error opening %s for writing trace file: %s",
                 uri, err.problem);
         goto pcaptraceerr;
@@ -2207,7 +2207,7 @@ static int open_pcap_output_file(pcap_thread_state_t *pstate,
             &compressmethod) == -1) {
         libtrace_err_t err;
         err = trace_get_err_output(act->out);
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI mediator: Error configuring compression for writing trace file %s: %s",
                 uri, err.problem);
         goto pcaptraceerr;
@@ -2217,7 +2217,7 @@ static int open_pcap_output_file(pcap_thread_state_t *pstate,
             &compresslevel) == -1) {
         libtrace_err_t err;
         err = trace_get_err_output(act->out);
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI mediator: Error configuring compression for writing trace file %s: %s",
                 uri, err.problem);
         goto pcaptraceerr;
@@ -2226,13 +2226,13 @@ static int open_pcap_output_file(pcap_thread_state_t *pstate,
     if (trace_start_output(act->out) == -1) {
         libtrace_err_t err;
         err = trace_get_err_output(act->out);
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI mediator: Error starting output trace file %s: %s",
                 uri, err.problem);
         goto pcaptraceerr;
     }
 
-    logger(LOG_DAEMON, "OpenLI mediator: opened new trace file %s for LIID %s",
+    logger(LOG_INFO, "OpenLI mediator: opened new trace file %s for LIID %s",
             uri, act->liid);
 
     return 0;
@@ -2280,13 +2280,13 @@ static void write_pcap_packet(pcap_thread_state_t *pstate,
             pcapmsg->msglen, false);
     pdulen = wandder_etsili_get_pdu_length(pstate->decoder);
     if (pdulen == 0 || pcapmsg->msglen < pdulen) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI mediator: pcap thread received incomplete ETSI CC?");
         return;
     }
 
     if (wandder_etsili_get_liid(pstate->decoder, liidspace, 1024) == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI mediator: unable to find LIID for ETSI CC in pcap thread");
         return;
     }
@@ -2308,7 +2308,7 @@ static void write_pcap_packet(pcap_thread_state_t *pstate,
         rawip = wandder_etsili_get_cc_contents(pstate->decoder, &cclen,
                 ccname, 128);
         if (cclen > 65535) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI mediator: ETSI CC record is too large to write as a pcap packet -- possibly corrupt.");
         } else {
             trace_construct_packet(pstate->packet, TRACE_TYPE_NONE,
@@ -2317,7 +2317,7 @@ static void write_pcap_packet(pcap_thread_state_t *pstate,
             /* write resulting packet to libtrace output */
             if (trace_write_packet(pcapout->out, pstate->packet) < 0) {
                 libtrace_err_t err = trace_get_err_output(pcapout->out);
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI mediator: error while writing packet to pcap trace file: %s",
                         err.problem);
                 trace_destroy_output(pcapout->out);
@@ -2337,7 +2337,7 @@ static void pcap_flush_traces(pcap_thread_state_t *pstate) {
     HASH_ITER(hh, pstate->active, pcapout, tmp) {
         if (trace_flush_output(pcapout->out) < 0) {
             libtrace_err_t err = trace_get_err_output(pcapout->out);
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI mediator: error while flushing pcap trace file: %s",
                     err.problem);
             trace_destroy_output(pcapout->out);
@@ -2355,7 +2355,7 @@ static void pcap_rotate_traces(pcap_thread_state_t *pstate) {
         HASH_DELETE(hh, pstate->active, pcapout);
         trace_destroy_output(pcapout->out);
         if (open_pcap_output_file(pstate, pcapout) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI mediator: error while rotating pcap trace file");
 
             trace_destroy_output(pcapout->out);
@@ -2408,11 +2408,11 @@ static void *start_pcap_thread(void *params) {
             }
             pstate.dir = (char *)pcapmsg.msgbody;
             if (pstate.dir) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI mediator: pcap trace files are now being written to %s",
                         pstate.dir);
             } else {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI mediator: pcap trace file directory has been set to NULL");
             }
             continue;
@@ -2431,7 +2431,7 @@ static void *start_pcap_thread(void *params) {
     if (pstate.packet) {
         trace_destroy_packet(pstate.packet);
     }
-    logger(LOG_DAEMON, "OpenLI mediator: exiting pcap thread.");
+    logger(LOG_INFO, "OpenLI mediator: exiting pcap thread.");
     pthread_exit(NULL);
 }
 
@@ -2472,7 +2472,7 @@ int main(int argc, char *argv[]) {
                 usage(argv[0]);
                 return 1;
             default:
-                logger(LOG_DAEMON, "OpenLI: unsupported option: %c",
+                logger(LOG_INFO, "OpenLI: unsupported option: %c",
                         c);
                 usage(argv[0]);
                 return 1;
@@ -2480,7 +2480,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (configfile == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: no config file specified. Use -c to specify one.");
         usage(argv[0]);
         return 1;
@@ -2501,7 +2501,7 @@ int main(int argc, char *argv[]) {
     sigprocmask(SIG_BLOCK, &sigblock, NULL);
 
     if (init_med_state(&medstate, configfile, mediatorid) == -1) {
-        logger(LOG_DAEMON, "OpenLI: Error initialising mediator.");
+        logger(LOG_INFO, "OpenLI: Error initialising mediator.");
         return 1;
     }
 
@@ -2518,7 +2518,7 @@ int main(int argc, char *argv[]) {
             &(medstate.pcapqueue));
 
     if (start_collector_listener(&medstate) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI Mediator: could not start collector listener socket.");
         return 1;
     }
@@ -2526,7 +2526,7 @@ int main(int argc, char *argv[]) {
     run(&medstate);
     clear_med_state(&medstate);
 
-    logger(LOG_DAEMON, "OpenLI: Mediator '%s' has exited.", mediatorid);
+    logger(LOG_INFO, "OpenLI: Mediator '%s' has exited.", mediatorid);
     return 0;
 }
 

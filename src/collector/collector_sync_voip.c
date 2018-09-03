@@ -72,7 +72,7 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
     pthread_mutex_lock(&(sync->glob->mutex));
     if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_ADD, sync->intersync_ev.fd,
             &ev) == -1) {
-        logger(LOG_DAEMON, "OpenLI: failed to register epoll event for receiving on intersync queue: %s",
+        logger(LOG_INFO, "OpenLI: failed to register epoll event for receiving on intersync queue: %s",
                 strerror(errno));
         pthread_mutex_unlock(&(sync->glob->mutex));
         free(sync);
@@ -120,7 +120,7 @@ void clean_sync_voip_data(collector_sync_voip_t *sync) {
     pthread_mutex_lock(&(sync->glob->mutex));
     if (sync->glob->epoll_fd != -1 && epoll_ctl(sync->glob->epoll_fd,
                 EPOLL_CTL_DEL, sync->intersync_ev.fd, &ev) == -1) {
-        logger(LOG_DAEMON, "OpenLI: failed to de-register epoll event for receiving on intersync queue: %s",
+        logger(LOG_INFO, "OpenLI: failed to de-register epoll event for receiving on intersync queue: %s",
                 strerror(errno));
     }
     pthread_mutex_unlock(&(sync->glob->mutex));
@@ -147,7 +147,7 @@ static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
 
     copy = deep_copy_rtpstream(orig);
     if (!copy) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: unable to copy RTP stream in sync thread.");
         return;
     }
@@ -188,7 +188,7 @@ static void push_halt_active_voipstreams(libtrace_message_queue_t *q,
             struct epoll_event ev;
             sync_epoll_t *timerev = (sync_epoll_t *)(cin->timeout_ev);
             if (epoll_ctl(epollfd, EPOLL_CTL_DEL, timerev->fd, &ev) == -1) {
-                logger(LOG_DAEMON, "OpenLI: unable to remove RTP stream timeout event for %s from epoll: %s",
+                logger(LOG_INFO, "OpenLI: unable to remove RTP stream timeout event for %s from epoll: %s",
                         cin->streamkey, strerror(errno));
             }
             close(timerev->fd);
@@ -242,7 +242,7 @@ static int update_rtp_stream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp,
     port = strtoul(portstr, NULL, 0);
 
     if (errno != 0 || port > 65535) {
-        logger(LOG_DAEMON, "OpenLI: invalid RTP port number: %s", portstr);
+        logger(LOG_INFO, "OpenLI: invalid RTP port number: %s", portstr);
         return -1;
     }
 
@@ -307,7 +307,7 @@ static inline voipcinmap_t *update_cin_callid_map(voipcinmap_t **cinmap,
 
     newcinmap = (voipcinmap_t *)malloc(sizeof(voipcinmap_t));
     if (!newcinmap) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: out of memory in collector_sync thread.");
         return NULL;
     }
@@ -329,7 +329,7 @@ static inline voipsdpmap_t *update_cin_sdp_map(voipintercept_t *vint,
 
     newsdpmap = (voipsdpmap_t *)calloc(1, sizeof(voipsdpmap_t));
     if (!newsdpmap) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: out of memory in collector_sync thread.");
         return NULL;
     }
@@ -359,7 +359,7 @@ static int create_new_voipcin(rtpstreaminf_t **activecins, uint32_t cin_id,
     newcin = create_rtpstream(vint, cin_id);
 
     if (!newcin) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: out of memory while creating new RTP stream");
         return -1;
     }
@@ -489,7 +489,7 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
         if (ipstr && portstr) {
             if (update_rtp_stream(sync, thisrtp, vint, ipstr,
                         portstr, 1) == -1) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
                         vint->common.liid, ipstr, portstr);
                 free(cseqstr);
@@ -519,7 +519,7 @@ static int process_sip_200ok(collector_sync_voip_t *sync, rtpstreaminf_t *thisrt
         if (ipstr && portstr) {
             if (update_rtp_stream(sync, thisrtp, vint, ipstr,
                         portstr, 1) == -1) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
                         vint->common.liid, ipstr, portstr);
                 free(cseqstr);
@@ -575,7 +575,7 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
         snprintf(rtpkey, 256, "%s-%u", vint->common.liid, vshared->cin);
         HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
         if (thisrtp == NULL) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: unable to find %u in the active call list for %s",
                     vshared->cin, vint->common.liid);
             continue;
@@ -642,7 +642,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     int ret;
 
     if (get_sip_to_uri_identity(sync->sipparser, &touriid) < 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: unable to derive SIP identity from To: URI");
         return -1;
     }
@@ -705,7 +705,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         snprintf(rtpkey, 256, "%s-%u", vint->common.liid, vshared->cin);
         HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
         if (thisrtp == NULL) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: unable to find %u in the active call list for %s",
                     vshared->cin, vint->common.liid);
             continue;
@@ -717,7 +717,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         if (ipstr && portstr) {
             if (update_rtp_stream(sync, thisrtp, vint, ipstr, portstr,
                         0) == -1) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
                         vint->common.liid, ipstr, portstr);
                 continue;
@@ -765,7 +765,7 @@ static int update_sip_state(collector_sync_voip_t *sync,
     sessuser = get_sip_session_username(sync->sipparser);
 
     if (callid == NULL) {
-        logger(LOG_DAEMON, "OpenLI: SIP packet has no Call ID?");
+        logger(LOG_INFO, "OpenLI: SIP packet has no Call ID?");
         iserr = 1;
         goto sipgiveup;
     }
@@ -774,7 +774,7 @@ static int update_sip_state(collector_sync_voip_t *sync,
         errno = 0;
         sdpo.sessionid = strtoul(sessid, NULL, 0);
         if (errno != 0) {
-            logger(LOG_DAEMON, "OpenLI: invalid session ID in SIP packet %s",
+            logger(LOG_INFO, "OpenLI: invalid session ID in SIP packet %s",
                     sessid);
             sessid = NULL;
             sdpo.sessionid = 0;
@@ -787,7 +787,7 @@ static int update_sip_state(collector_sync_voip_t *sync,
         errno = 0;
         sdpo.version = strtoul(sessversion, NULL, 0);
         if (errno != 0) {
-            logger(LOG_DAEMON, "OpenLI: invalid version in SIP packet %s",
+            logger(LOG_INFO, "OpenLI: invalid version in SIP packet %s",
                     sessid);
             sessversion = NULL;
             sdpo.version = 0;
@@ -813,14 +813,14 @@ static int update_sip_state(collector_sync_voip_t *sync,
     if (sip_is_invite(sync->sipparser)) {
         if ((ret = process_sip_invite(sync, callid, &sdpo, irimsg)) < 0) {
             iserr = 1;
-            logger(LOG_DAEMON, "OpenLI: error while processing SIP invite");
+            logger(LOG_INFO, "OpenLI: error while processing SIP invite");
             goto sipgiveup;
         }
     } else if (lookup_sip_callid(sync, callid) != 0) {
         /* SIP packet matches a "known" call of interest */
         if ((ret = process_sip_other(sync, callid, &sdpo, irimsg)) < 0) {
             iserr = 1;
-            logger(LOG_DAEMON, "OpenLI: error while processing non-invite SIP");
+            logger(LOG_INFO, "OpenLI: error while processing non-invite SIP");
             goto sipgiveup;
         }
     }
@@ -846,7 +846,7 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     openli_export_recv_t expmsg;
 
     if (decode_voipintercept_halt(intmsg, msglen, &torem) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: received invalid VOIP intercept withdrawal from provisioner.");
         return -1;
     }
@@ -854,13 +854,13 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     HASH_FIND(hh_liid, sync->voipintercepts, torem.common.liid,
             torem.common.liid_len, vint);
     if (!vint) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: received withdrawal for VOIP intercept %s but it is not present in the sync intercept list?",
                 torem.common.liid);
         return 0;
     }
 
-    logger(LOG_DAEMON, "OpenLI: sync thread withdrawing VOIP intercept %s",
+    logger(LOG_INFO, "OpenLI: sync thread withdrawing VOIP intercept %s",
             torem.common.liid);
 
     push_voipintercept_halt_to_threads(sync, vint);
@@ -897,7 +897,7 @@ static int halt_single_rtpstream(collector_sync_voip_t *sync, rtpstreaminf_t *rt
         sync_epoll_t *timerev = (sync_epoll_t *)(rtp->timeout_ev);
         if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_DEL, timerev->fd,
                 &ev) == -1) {
-            logger(LOG_DAEMON, "OpenLI: unable to remove RTP stream timeout event for %s from epoll: %s",
+            logger(LOG_INFO, "OpenLI: unable to remove RTP stream timeout event for %s from epoll: %s",
                     rtp->streamkey, strerror(errno));
         }
         close(timerev->fd);
@@ -969,11 +969,11 @@ static inline void disable_sip_target(voipintercept_t *vint,
             iter->active = 0;
             iter->awaitingconfirm = 0;
             if (iter->realm) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: collector is withdrawing SIP target %s@%s for LIID %s.",
                         iter->username, iter->realm, vint->common.liid);
             } else {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: collector is withdrawing SIP target %s@* for LIID %s.",
                         iter->username, vint->common.liid);
             }
@@ -1003,11 +1003,11 @@ static inline void add_new_sip_target_to_list(voipintercept_t *vint,
         if (are_sip_identities_same(iter, sipid)) {
             if (iter->active == 0) {
                 if (iter->realm) {
-                    logger(LOG_DAEMON,
+                    logger(LOG_INFO,
                             "OpenLI: collector re-enabled SIP target %s@%s for LIID %s.",
                             iter->username, iter->realm, vint->common.liid);
                 } else {
-                    logger(LOG_DAEMON,
+                    logger(LOG_INFO,
                             "OpenLI: collector re-enabled SIP target %s@* for LIID %s.",
                             iter->username, vint->common.liid);
                 }
@@ -1034,11 +1034,11 @@ static inline void add_new_sip_target_to_list(voipintercept_t *vint,
     libtrace_list_push_back(vint->targets, &newid);
 
     if (newid->realm) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: collector received new SIP target %s@%s for LIID %s.",
                 newid->username, newid->realm, vint->common.liid);
     } else {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: collector received new SIP target %s@* for LIID %s.",
                 newid->username, vint->common.liid);
     }
@@ -1054,7 +1054,7 @@ static int new_voip_sip_target(collector_sync_voip_t *sync, uint8_t *intmsg,
 
     if (decode_sip_target_announcement(intmsg, msglen, &sipid, liidspace,
             1024) < 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: received invalid SIP target from provisioner.");
         return -1;
     }
@@ -1062,7 +1062,7 @@ static int new_voip_sip_target(collector_sync_voip_t *sync, uint8_t *intmsg,
     HASH_FIND(hh_liid, sync->voipintercepts, liidspace, strlen(liidspace),
             vint);
     if (!vint) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: received SIP target for unknown VOIP LIID %s.",
                 liidspace);
         return -1;
@@ -1082,7 +1082,7 @@ static int withdraw_voip_sip_target(collector_sync_voip_t *sync,
 
     if (decode_sip_target_announcement(intmsg, msglen, &sipid, liidspace,
             1024) < 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: received invalid SIP target withdrawal from provisioner.");
         return -1;
     }
@@ -1090,7 +1090,7 @@ static int withdraw_voip_sip_target(collector_sync_voip_t *sync,
     HASH_FIND(hh_liid, sync->voipintercepts, liidspace, strlen(liidspace),
             vint);
     if (!vint) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: received SIP target withdrawal for unknown VOIP LIID %s.",
                 liidspace);
         return -1;
@@ -1108,7 +1108,7 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     openli_export_recv_t expmsg;
 
     if (decode_voipintercept_start(intmsg, msglen, &toadd) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: received invalid VOIP intercept from provisioner.");
         return -1;
     }
@@ -1124,7 +1124,7 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
 
     vint = (voipintercept_t *)malloc(sizeof(voipintercept_t));
     memcpy(vint, &toadd, sizeof(voipintercept_t));
-    logger(LOG_DAEMON,
+    logger(LOG_INFO,
             "OpenLI: received VOIP intercept %s from provisioner.",
             vint->common.liid);
 
@@ -1255,7 +1255,7 @@ static void examine_sip_update(collector_sync_voip_t *sync,
     ret = add_sip_packet_to_parser(&(sync->sipparser), recvdpkt);
 
     if (ret == SIP_ACTION_ERROR) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: sync thread received an invalid SIP packet?");
         if (sync->sipdebugfile) {
             if (!sync->sipdebugout) {
@@ -1290,7 +1290,7 @@ static void examine_sip_update(collector_sync_voip_t *sync,
 
     if (extract_ip_addresses(recvdpkt, irimsg.data.ipmmiri.ipsrc,
             irimsg.data.ipmmiri.ipdest, &(irimsg.data.ipmmiri.ipfamily)) != 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: error while extracting IP addresses from SIP packet");
         ret = SIP_ACTION_IGNORE;
     }
@@ -1304,7 +1304,7 @@ static void examine_sip_update(collector_sync_voip_t *sync,
         }
 
         if (ret < 0) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: sync thread parsed an invalid SIP packet?");
             if (sync->sipdebugfile && pktref) {
                 if (!sync->sipdebugout) {
@@ -1321,7 +1321,7 @@ static void examine_sip_update(collector_sync_voip_t *sync,
                 &(irimsg.data.ipmmiri.contentlen));
 
         if (ret > 0 && update_sip_state(sync, pktref, &irimsg) < 0) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: error while updating SIP state in collector.");
             if (sync->sipdebugfile && pktref) {
                 if (!sync->sipdebugupdate) {
@@ -1408,11 +1408,11 @@ static void disable_unconfirmed_voip_intercepts(collector_sync_voip_t *sync) {
                 if (sipid->active && sipid->awaitingconfirm) {
                     sipid->active = 0;
                     if (sipid->realm) {
-                        logger(LOG_DAEMON, "OpenLI: removing unconfirmed SIP target %s@%s for LIID %s",
+                        logger(LOG_INFO, "OpenLI: removing unconfirmed SIP target %s@%s for LIID %s",
                                 sipid->username, sipid->realm,
                                 v->common.liid);
                     } else {
-                        logger(LOG_DAEMON, "OpenLI: removing unconfirmed SIP target %s@* for LIID %s",
+                        logger(LOG_INFO, "OpenLI: removing unconfirmed SIP target %s@* for LIID %s",
                                 sipid->username, v->common.liid);
                     }
                 }
@@ -1489,11 +1489,11 @@ int sync_voip_thread_main(collector_sync_voip_t *sync) {
                 (evs[i].events & EPOLLRDHUP)) {
 
             if (syncev->fd == sync->intersync_ev.fd) {
-                logger(LOG_DAEMON, "OpenLI: intersync message queue has failed");
+                logger(LOG_INFO, "OpenLI: intersync message queue has failed");
                 return -1;
             }
 
-            logger(LOG_DAEMON, "OpenLI: processor->sync message queue pipe has broken down.");
+            logger(LOG_INFO, "OpenLI: processor->sync message queue pipe has broken down.");
             epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_DEL,
                     syncev->fd, NULL);
             continue;

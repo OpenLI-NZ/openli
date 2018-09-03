@@ -38,7 +38,7 @@ access_plugin_t *init_access_plugin(uint8_t accessmethod) {
     }
 
     if (p == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: invalid access method %d observed in init_access_plugin()");
         return NULL;
     }
@@ -96,7 +96,7 @@ int free_single_session(internet_user_t *user, access_session_t *sess) {
     access_session_t *prev, *tmp;
 
     if (user == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: called free_single_session() for a NULL user!");
         return -1;
     }

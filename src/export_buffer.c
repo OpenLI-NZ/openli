@@ -69,8 +69,8 @@ static inline uint64_t extend_buffer(export_buffer_t *buf) {
     if (space == NULL) {
         /* OOM -- bad! */
         /* TODO: maybe dump to disk at this point? */
-        logger(LOG_DAEMON, "OpenLI: no more free memory to use as buffer space!");
-        logger(LOG_DAEMON, "OpenLI: fix the connection between your collector and your mediator.");
+        logger(LOG_INFO, "OpenLI: no more free memory to use as buffer space!");
+        logger(LOG_INFO, "OpenLI: fix the connection between your collector and your mediator.");
         return 0;
     }
 
@@ -83,7 +83,7 @@ static inline uint64_t extend_buffer(export_buffer_t *buf) {
     if (buf->alloced - BUFFER_ALLOC_SIZE < BUFFER_WARNING_THRESH &&
             buf->alloced >= BUFFER_WARNING_THRESH) {
         /* TODO add email alerts */
-        logger(LOG_DAEMON, "OpenLI: buffer space for missing mediator has exceeded warning threshold.");
+        logger(LOG_INFO, "OpenLI: buffer space for missing mediator has exceeded warning threshold.");
     }
 
     return buf->alloced - bufused;
@@ -190,7 +190,7 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
                     attachlen, 0);
             pdulen = wandder_etsili_get_pdu_length(dec);
             if (pdulen == 0) {
-                logger(LOG_DAEMON, "OpenLI: failed to decode buffered ETSI record.");
+                logger(LOG_INFO, "OpenLI: failed to decode buffered ETSI record.");
                 break;
             }
         }
@@ -211,7 +211,7 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         ret = send(fd, bhead + offset, (int)sent, MSG_DONTWAIT);
         if (ret < 0) {
             if (errno != EAGAIN) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: Error exporting to target from buffer: %s.",
                         strerror(errno));
                 return -1;

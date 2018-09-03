@@ -204,7 +204,7 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
             HASH_FIND(hh, loc->activestaticintercepts, key, strlen(key),
                     matchsess);
             if (!matchsess) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: matched an IP range for intercept %s but this is not present in activestaticintercepts",
                         key);
             } else {
@@ -234,7 +234,7 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
 
     if (rem < sizeof(libtrace_ip6_t)) {
         /* Truncated IP header */
-        logger(LOG_DAEMON, "OpenLI: Got IPv6 packet with truncated header?");
+        logger(LOG_INFO, "OpenLI: Got IPv6 packet with truncated header?");
         return 0;
     }
 
@@ -300,7 +300,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
 
     if (rem < sizeof(libtrace_ip_t)) {
         /* Truncated IP header */
-        logger(LOG_DAEMON, "OpenLI: Got IPv4 packet with truncated header?");
+        logger(LOG_INFO, "OpenLI: Got IPv4 packet with truncated header?");
         return 0;
     }
 

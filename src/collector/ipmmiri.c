@@ -85,7 +85,7 @@ int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
 
     if (job->ipmmiri_style == OPENLI_IPMMIRI_SIP) {
         if (job->content == NULL) {
-            logger(LOG_DAEMON, "OpenLI: trying to create SIP IRI but packet has no SIP payload?");
+            logger(LOG_INFO, "OpenLI: trying to create SIP IRI but packet has no SIP payload?");
             return -1;
         }
 

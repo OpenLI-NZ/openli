@@ -201,7 +201,7 @@ static int _add_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *packet,
         tcpid.destport = ntohs(tcp->dest);
         if (extract_ip_addresses(packet, tcpid.srcip, tcpid.destip,
                 &(tcpid.ipfamily)) != 0) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: error while extracting IP addresses from SIP packet.");
             return SIP_ACTION_ERROR;
         }
@@ -338,14 +338,14 @@ int add_sip_packet_to_parser(openli_sip_parser_t **parser,
 
         ipstream = get_ipfrag_reassemble_stream(p->ipreass, packet);
         if (ipstream == NULL) {
-            logger(LOG_DAEMON, "OpenLI: unable to find IP stream for received SIP packet.");
+            logger(LOG_INFO, "OpenLI: unable to find IP stream for received SIP packet.");
             return SIP_ACTION_ERROR;
         }
 
         ret = update_ipfrag_reassemble_stream(ipstream, packet, fragoff,
                 moreflag);
         if (ret < 0) {
-            logger(LOG_DAEMON, "OpenLI: unable to update IP stream for received SIP packet.");
+            logger(LOG_INFO, "OpenLI: unable to update IP stream for received SIP packet.");
             return SIP_ACTION_ERROR;
         }
         if (ret == 0) {
@@ -580,14 +580,14 @@ int get_sip_auth_identity(openli_sip_parser_t *parser, int index,
     }
 
     if (index >= *authcount) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Error, requested auth username %d but packet only has %d auth headers.",
                 index, *authcount);
         return -1;
     }
 
     if (osip_message_get_authorization(parser->osip, index, &auth) != 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Error while extracting auth header from SIP packet.");
         return -1;
     }
@@ -615,14 +615,14 @@ int get_sip_proxy_auth_identity(openli_sip_parser_t *parser, int index,
     }
 
     if (index >= *authcount) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Error, requested proxy auth username %d but packet only has %d auth headers.",
                 index, *authcount);
         return -1;
     }
 
     if (osip_message_get_proxy_authorization(parser->osip, index, &auth) != 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Error while extracting proxy auth header from SIP packet.");
         return -1;
     }

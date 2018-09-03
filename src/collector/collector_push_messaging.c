@@ -42,7 +42,7 @@ static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
             rtp);
 
     if (rtp == NULL) {
-        logger(LOG_DAEMON, "OpenLI: collector thread was unable to remove RTP stream %s, as it was not present in its intercept set.",
+        logger(LOG_INFO, "OpenLI: collector thread was unable to remove RTP stream %s, as it was not present in its intercept set.",
                 rtpstreamkey);
         return 0;
     }
@@ -61,7 +61,7 @@ static int add_ipv4_intercept(colthread_local_t *loc, ipsession_t *sess) {
 
     sin = (struct sockaddr_in *)(sess->targetip);
     if (sin == NULL) {
-        logger(LOG_DAEMON, "OpenLI: attempted to add IPv4 intercept but target IP was NULL?");
+        logger(LOG_INFO, "OpenLI: attempted to add IPv4 intercept but target IP was NULL?");
         return -1;
     }
 
@@ -71,7 +71,7 @@ static int add_ipv4_intercept(colthread_local_t *loc, ipsession_t *sess) {
     if (tgt == NULL) {
         tgt = (ipv4_target_t *)malloc(sizeof(ipv4_target_t));
         if (!tgt) {
-            logger(LOG_DAEMON, "OpenLI: ran out of memory while adding IPv4 intercept address.");
+            logger(LOG_INFO, "OpenLI: ran out of memory while adding IPv4 intercept address.");
             return -1;
         }
         tgt->address = v4addr;
@@ -98,7 +98,7 @@ static int add_ipv6_intercept(colthread_local_t *loc, ipsession_t *sess) {
 
     sin6 = (struct sockaddr_in6 *)(sess->targetip);
     if (sin6 == NULL) {
-        logger(LOG_DAEMON, "OpenLI: attempted to add IPv6 intercept but target IP was NULL?");
+        logger(LOG_INFO, "OpenLI: attempted to add IPv6 intercept but target IP was NULL?");
         return -1;
     }
 
@@ -108,7 +108,7 @@ static int add_ipv6_intercept(colthread_local_t *loc, ipsession_t *sess) {
     if (tgt == NULL) {
         tgt = (ipv6_target_t *)malloc(sizeof(ipv6_target_t));
         if (!tgt) {
-            logger(LOG_DAEMON, "OpenLI: ran out of memory while adding IPv6 intercept address.");
+            logger(LOG_INFO, "OpenLI: ran out of memory while adding IPv6 intercept address.");
             return -1;
         }
         memcpy(tgt->address, v6addr, 16);
@@ -134,7 +134,7 @@ static int remove_ipv4_intercept(colthread_local_t *loc, ipsession_t *torem) {
 
     sin = (struct sockaddr_in *)(torem->targetip);
     if (sin == NULL) {
-        logger(LOG_DAEMON, "OpenLI: attempted to remove IPv4 intercept but target IP was NULL?");
+        logger(LOG_INFO, "OpenLI: attempted to remove IPv4 intercept but target IP was NULL?");
         return -1;
     }
 
@@ -170,7 +170,7 @@ static int remove_ipv6_intercept(colthread_local_t *loc, ipsession_t *torem) {
 
     sin6 = (struct sockaddr_in6 *)(torem->targetip);
     if (sin6 == NULL) {
-        logger(LOG_DAEMON, "OpenLI: attempted to remove IPv6 intercept but target IP was NULL?");
+        logger(LOG_INFO, "OpenLI: attempted to remove IPv6 intercept but target IP was NULL?");
         return -1;
     }
 
@@ -213,7 +213,7 @@ void handle_halt_aluintercept(libtrace_thread_t *t, colthread_local_t *loc,
             sizeof(alu->aluinterceptid), found);
 
     if (found == NULL) {
-        logger(LOG_DAEMON, "OpenLI: collector thread was unable to remove ALU intercept %u, as it was not present in its intercept set.",
+        logger(LOG_INFO, "OpenLI: collector thread was unable to remove ALU intercept %u, as it was not present in its intercept set.",
                 alu->aluinterceptid);
     } else {
         HASH_DELETE(hh, loc->activealuintercepts, found);
@@ -234,14 +234,14 @@ void handle_push_ipintercept(libtrace_thread_t *t, colthread_local_t *loc,
             return;
         }
     } else {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                  "OpenLI: invalid address family for new IP intercept: %d",
                  sess->ai_family);
         free_single_ipsession(sess);
         return;
     }
     /*
-    logger(LOG_DAEMON,
+    logger(LOG_INFO,
             "OpenLI: collector thread %d has started intercepting %s IP session %s",
             trace_get_perpkt_thread_id(t),
             accesstype_to_string(sess->accesstype), sess->streamkey);
@@ -254,7 +254,7 @@ void handle_push_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
     HASH_ADD_KEYPTR(hh, loc->activertpintercepts, rtp->streamkey,
             strlen(rtp->streamkey), rtp);
     /*
-    logger(LOG_DAEMON,
+    logger(LOG_INFO,
             "OpenLI: collector thread %d has started intercepting RTP stream %s",
             trace_get_perpkt_thread_id(t), rtp->streamkey);
     */
@@ -264,7 +264,7 @@ void handle_halt_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
         char *streamkey) {
     if (remove_rtp_stream(loc, streamkey) != 0) {
         /*
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: collector thread %d has stopped intercepting RTP stream %s",
                 trace_get_perpkt_thread_id(t), streamkey);
         */
@@ -278,7 +278,7 @@ void handle_halt_ipintercept(libtrace_thread_t *t , colthread_local_t *loc,
     if (sess->ai_family == AF_INET) {
         if (remove_ipv4_intercept(loc, sess) > 0) {
             /*
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: collector thread %d has stopped intercepting IP session %s",
                     trace_get_perpkt_thread_id(t), sess->streamkey);
             */
@@ -287,14 +287,14 @@ void handle_halt_ipintercept(libtrace_thread_t *t , colthread_local_t *loc,
     } else if (sess->ai_family == AF_INET6) {
         if (remove_ipv6_intercept(loc, sess) > 0) {
             /*
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: collector thread %d has stopped intercepting IP session %s",
                     trace_get_perpkt_thread_id(t), sess->streamkey);
             */
 
         }
     } else {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                  "OpenLI: invalid address family for new IP intercept: %d",
                  sess->ai_family);
     }
@@ -313,7 +313,7 @@ void handle_push_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
             servlist = &(loc->sipservers);
             break;
         default:
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: unexpected core server type received by collector thread %d: %d",
                     trace_get_perpkt_thread_id(t), cs->servertype);
             return;
@@ -323,7 +323,7 @@ void handle_push_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
         HASH_ADD_KEYPTR(hh, *servlist, cs->serverkey, strlen(cs->serverkey),
                 cs);
         /*
-        logger(LOG_DAEMON, "OpenLI: collector thread %d has added %s to its %s core server list.",
+        logger(LOG_INFO, "OpenLI: collector thread %d has added %s to its %s core server list.",
                 trace_get_perpkt_thread_id(t),
                 cs->serverkey, coreserver_type_to_string(cs->servertype));
         */
@@ -345,7 +345,7 @@ void handle_remove_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
             servlist = &(loc->sipservers);
             break;
         default:
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: unexpected core server type received by collector thread %d: %d",
                     trace_get_perpkt_thread_id(t), cs->servertype);
             return;
@@ -354,7 +354,7 @@ void handle_remove_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
     if (found) {
         HASH_DELETE(hh, *servlist, found);
         /*
-        logger(LOG_DAEMON, "OpenLI: collector thread %d has removed %s from its %s core server list.",
+        logger(LOG_INFO, "OpenLI: collector thread %d has removed %s from its %s core server list.",
                 trace_get_perpkt_thread_id(t),
                 cs->serverkey, coreserver_type_to_string(cs->servertype));
         */
@@ -373,7 +373,7 @@ void handle_iprange(libtrace_thread_t *t, colthread_local_t *loc,
 
     prefix = ascii2prefix(0, ipr->rangestr);
     if (prefix == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: error converting %s into a valid IP prefix in thread %d",
                 ipr->rangestr, trace_get_perpkt_thread_id(t));
         free_single_staticipsession(ipr);
@@ -387,7 +387,7 @@ void handle_iprange(libtrace_thread_t *t, colthread_local_t *loc,
     }
 
     if (!node) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: error while adding static IP prefix %s to LIID %s for thread %d",
                 ipr->rangestr, ipr->common.liid, trace_get_perpkt_thread_id(t));
         free_single_staticipsession(ipr);
@@ -412,7 +412,7 @@ void handle_iprange(libtrace_thread_t *t, colthread_local_t *loc,
 
         HASH_ADD_KEYPTR(hh, *all, found->liid, strlen(found->liid), found);
         /*
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: added LIID %s:%u to prefix %s (%d refs total)",
                 ipr->common.liid, ipr->cin, ipr->rangestr, HASH_CNT(hh, *all));
         */
@@ -441,7 +441,7 @@ void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
 
     prefix = ascii2prefix(0, ipr->rangestr);
     if (prefix == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: error converting %s into a valid IP prefix in thread %d",
                 ipr->rangestr, trace_get_perpkt_thread_id(t));
         goto bailremoverange;
@@ -454,7 +454,7 @@ void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
     }
 
     if (!node) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: thread %d was supposed to remove IP prefix %s for LIID %s but no such prefix exists in the tree.",
                 trace_get_perpkt_thread_id(t), ipr->rangestr, ipr->common.liid);
         goto bailremoverange;
@@ -463,7 +463,7 @@ void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
     all = (liid_set_t **)&(node->data);
     HASH_FIND(hh, *all, ipr->common.liid, ipr->common.liid_len, found);
     if (!found) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: thread %d was supposed to remove IP prefix %s for LIID %s but the LIID is not associated with that prefix.",
                 trace_get_perpkt_thread_id(t), ipr->rangestr, ipr->common.liid);
         goto bailremoverange;
@@ -471,7 +471,7 @@ void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
 
     HASH_DELETE(hh, *all, found);
     /*
-    logger(LOG_DAEMON,
+    logger(LOG_INFO,
             "OpenLI: removed LIID %s from prefix %s (%d refs remaining)",
             ipr->common.liid, ipr->rangestr, HASH_CNT(hh, *all));
     */
@@ -494,7 +494,7 @@ void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
             free_single_staticipsession(sessrec);
         }
     } else {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: no static IP session exists for key %s, but we are supposed to be removing a range for it.",
                 ipr->key);
     }

@@ -139,7 +139,7 @@ static inline liid_hash_t *add_liid_mapping(provision_state_t *state,
     if (strcmp(agency, "pcapdisk") != 0) {
         HASH_FIND_STR(state->leas, agency, lea);
         if (!lea) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: intercept %s is destined for an unknown agency: %s -- skipping.",
                     liid, agency);
             free(h);
@@ -227,7 +227,7 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->pushaddr = NULL;
 
     if (parse_provisioning_config(configfile, state) == -1) {
-        logger(LOG_DAEMON, "OpenLI provisioner: error while parsing provisioner config in %s", configfile);
+        logger(LOG_INFO, "OpenLI provisioner: error while parsing provisioner config in %s", configfile);
         return -1;
     }
 
@@ -235,7 +235,7 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
      * XXX could also sanity check intercept->mediator mappings too...
      */
     if ((ret = map_intercepts_to_leas(state)) != 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: failed to map %d intercepts to agencies. Exiting.",
                 ret);
         return -1;
@@ -284,7 +284,7 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
     int ret = 0;
 
     if (decode_mediator_announcement(medmsg, msglen, med) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: provisioner received bogus mediator announcement.");
         free(med);
         return -1;
@@ -339,7 +339,7 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
              */
             if (push_mediator_withdraw_onto_net_buffer(cs->outgoing,
                     prevmed) < 0) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI provisioner: error pushing mediator withdrawal %s:%s onto buffer for writing to collector.",
                         prevmed->ipstr, prevmed->portstr);
                 ret = -1;
@@ -348,7 +348,7 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
         }
 
         if (push_mediator_onto_net_buffer(cs->outgoing, provmed->details) < 0) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: error pushing mediator %s:%s onto buffer for writing to collector.",
                     provmed->details->ipstr, provmed->details->portstr);
             ret = -1;
@@ -356,7 +356,7 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
         }
 
         if (enable_epoll_write(state, col->commev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: cannot enable epoll write event to transmit mediator update to collector: %s.",
                     strerror(errno));
             ret = -1;
@@ -400,7 +400,7 @@ static void halt_auth_timer(provision_state_t *state, prov_sock_state_t *cs) {
 
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, cs->authfd, &ev) < 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: unable to remove collector fd from epoll: %s.",
                 strerror(errno));
     }
@@ -521,7 +521,7 @@ static int push_coreservers(coreserver_t *servers, uint8_t cstype,
 
     HASH_ITER(hh, servers, cs, tmp) {
         if (push_coreserver_onto_net_buffer(nb, cs, cstype) < 0) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: error pushing %s server %s onto buffer for writing to collector.",
                     coreserver_type_to_string(cstype), cs->ipstr);
             return -1;
@@ -543,7 +543,7 @@ static int push_all_mediators(libtrace_list_t *mediators, net_buffer_t *nb) {
             continue;
         }
         if (push_mediator_onto_net_buffer(nb, pmed->details) < 0) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: error pushing mediator %s:%s onto buffer for writing to collector.",
                     pmed->details->ipstr, pmed->details->portstr);
             return -1;
@@ -582,14 +582,14 @@ static int push_all_voipintercepts(voipintercept_t *voipintercepts,
         }
     
         if (push_voipintercept_onto_net_buffer(nb, v) < 0) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: error pushing VOIP intercept %s onto buffer for writing to collector.",
                     v->common.liid);
             return -1;
         }
 
         if (push_all_sip_targets(nb, v->targets, v) < 0) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: error pushing SIP targets for VOIP intercept %s onto buffer.", v->common.liid);
             return -1;
         }
@@ -604,7 +604,7 @@ static int push_all_ipintercepts(ipintercept_t *ipintercepts,
 
     for (cept = ipintercepts; cept != NULL; cept = cept->hh_liid.next) {
         if (push_ipintercept_onto_net_buffer(nb, cept) < 0) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: error pushing IP intercept %s onto buffer for writing to collector.",
                     cept->common.liid);
             return -1;
@@ -630,7 +630,7 @@ static int respond_collector_auth(provision_state_t *state,
     }
 
     if (push_all_mediators(state->mediators, outgoing) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: unable to queue mediators to be sent to new collector on fd %d",
                 pev->fd);
         return -1;
@@ -638,40 +638,40 @@ static int respond_collector_auth(provision_state_t *state,
 
     if (push_coreservers(state->radiusservers, OPENLI_CORE_SERVER_RADIUS,
             outgoing) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: unable to queue RADIUS server details to be sent to new collector on fd %d", pev->fd);
         return -1;
     }
 
     if (push_coreservers(state->sipservers, OPENLI_CORE_SERVER_SIP,
             outgoing) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: unable to queue RADIUS server details to be sent to new collector on fd %d", pev->fd);
         return -1;
     }
 
     if (push_all_ipintercepts(state->ipintercepts, outgoing) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: unable to queue IP intercepts to be sent to new collector on fd %d",
                 pev->fd);
         return -1;
     }
 
     if (push_all_voipintercepts(state->voipintercepts, outgoing) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: unable to queue VOIP IP intercepts to be sent to new collector on fd %d",
                 pev->fd);
         return -1;
     }
 
     if (push_nomore_intercepts(outgoing) < 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI provisioner: error pushing end of intercepts onto buffer for writing to collector.");
         return -1;
     }
 
     if (enable_epoll_write(state, pev) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: unable to enable epoll write event for newly authed collector on fd %d: %s",
                 pev->fd, strerror(errno));
         return -1;
@@ -692,7 +692,7 @@ static int respond_mediator_auth(provision_state_t *state,
      * on any LEAs that we know about */
     HASH_ITER(hh, state->leas, ag, tmp) {
         if (push_lea_onto_net_buffer(outgoing, ag->ag) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: error while buffering LEA details to send from provisioner to mediator.");
             return -1;
         }
@@ -702,7 +702,7 @@ static int respond_mediator_auth(provision_state_t *state,
     while (h != NULL) {
         if (push_liid_mapping_onto_net_buffer(outgoing, h->agency, h->liid)
                 == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: error while buffering LIID mappings to send to mediator.");
             return -1;
         }
@@ -714,7 +714,7 @@ static int respond_mediator_auth(provision_state_t *state,
 
     /* Update our epoll event for this mediator to allow transmit. */
     if (enable_epoll_write(state, pev) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: unable to enable epoll write event for newly authed mediator on fd %d: %s",
                 pev->fd, strerror(errno));
         return -1;
@@ -737,19 +737,19 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 &internalid);
         switch(msgtype) {
             case OPENLI_PROTO_DISCONNECT:
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: error receiving message from collector.");
                 return -1;
             case OPENLI_PROTO_NO_MESSAGE:
                 break;
             case OPENLI_PROTO_COLLECTOR_AUTH:
                 if (internalid != OPENLI_COLLECTOR_MAGIC) {
-                    logger(LOG_DAEMON,
+                    logger(LOG_INFO,
                             "OpenLI: invalid auth code from collector.");
                     return -1;
                 }
                 if (cs->trusted == 1) {
-                    logger(LOG_DAEMON,
+                    logger(LOG_INFO,
                             "OpenLI: warning -- double auth from collector.");
                     assert(0);
                     break;
@@ -758,7 +758,7 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 justauthed = 1;
                 break;
             default:
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: unexpected message type %d received from collector.",
                         msgtype);
                 return -1;
@@ -766,7 +766,7 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
     } while (msgtype != OPENLI_PROTO_NO_MESSAGE);
 
     if (justauthed) {
-        logger(LOG_DAEMON, "OpenLI: collector on fd %d auth success.",
+        logger(LOG_INFO, "OpenLI: collector on fd %d auth success.",
                 pev->fd);
         halt_auth_timer(state, cs);
         return respond_collector_auth(state, pev, cs->outgoing);
@@ -788,19 +788,19 @@ static int receive_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
                 &internalid);
         switch(msgtype) {
             case OPENLI_PROTO_DISCONNECT:
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: error receiving message from mediator.");
                 return -1;
             case OPENLI_PROTO_NO_MESSAGE:
                 break;
             case OPENLI_PROTO_MEDIATOR_AUTH:
                 if (internalid != OPENLI_MEDIATOR_MAGIC) {
-                    logger(LOG_DAEMON,
+                    logger(LOG_INFO,
                             "OpenLI: invalid auth code from mediator.");
                     return -1;
                 }
                 if (cs->trusted == 1) {
-                    logger(LOG_DAEMON,
+                    logger(LOG_INFO,
                             "OpenLI: warning -- double auth from mediator.");
                     assert(0);
                     break;
@@ -815,7 +815,7 @@ static int receive_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
                 }
                 break;
             default:
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: unexpected message type %d received from mediator.",
                         msgtype);
                 return -1;
@@ -823,7 +823,7 @@ static int receive_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
     } while (msgtype != OPENLI_PROTO_NO_MESSAGE);
 
     if (justauthed) {
-        logger(LOG_DAEMON, "OpenLI: mediator on fd %d auth success.",
+        logger(LOG_INFO, "OpenLI: mediator on fd %d auth success.",
                 pev->fd);
         halt_auth_timer(state, cs);
         return respond_mediator_auth(state, pev, cs->outgoing);
@@ -840,7 +840,7 @@ static int transmit_socket(provision_state_t *state, prov_epoll_ev_t *pev) {
 
     ret = transmit_net_buffer(cs->outgoing);
     if (ret == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: error sending message from provisioner to %s.",
                 get_event_description(pev));
         return -1;
@@ -852,7 +852,7 @@ static int transmit_socket(provision_state_t *state, prov_epoll_ev_t *pev) {
         ev.events = EPOLLIN | EPOLLRDHUP;
 
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, pev->fd, &ev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: error disabling EPOLLOUT for %s fd %d: %s.",
                     get_event_description(pev), pev->fd, strerror(errno));
             return -1;
@@ -874,7 +874,7 @@ static inline int drop_generic_socket(provision_state_t *state,
     }
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, cs->mainfd, &ev) < 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: unable to remove collector fd from epoll: %s.",
                 strerror(errno));
     }
@@ -929,11 +929,11 @@ static int accept_collector(provision_state_t *state) {
 
     if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, sizeof(strbuf),
             0, 0, NI_NUMERICHOST) != 0) {
-        logger(LOG_DAEMON, "OpenLI: getnameinfo error in provisioner: %s.",
+        logger(LOG_INFO, "OpenLI: getnameinfo error in provisioner: %s.",
                 strerror(errno));
     } else {
-        logger(LOG_DAEMON, "OpenLI: provisioner accepted connection from collector %s.",
-                strbuf);
+        logger(LOG_INFO, "OpenLI: provisioner accepted connection from collector %s on %d.",
+                strbuf, newfd);
     }
 
     if (newfd >= 0) {
@@ -958,7 +958,7 @@ static int accept_collector(provision_state_t *state) {
 
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, col.commev->fd,
                     &ev) < 0) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: unable to add collector fd to epoll: %s.",
                     strerror(errno));
             close(newfd);
@@ -990,11 +990,11 @@ static int accept_mediator(provision_state_t *state) {
 
     if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, sizeof(strbuf),
             0, 0, NI_NUMERICHOST) != 0) {
-        logger(LOG_DAEMON, "OpenLI: getnameinfo error in provisioner: %s.",
+        logger(LOG_INFO, "OpenLI: getnameinfo error in provisioner: %s.",
                 strerror(errno));
     } else {
-        logger(LOG_DAEMON, "OpenLI: provisioner accepted connection from mediator %s.",
-                strbuf);
+        logger(LOG_INFO, "OpenLI: provisioner accepted connection from mediator %s on %d.",
+                strbuf, newfd);
     }
 
     if (newfd >= 0) {
@@ -1019,7 +1019,7 @@ static int accept_mediator(provision_state_t *state) {
         ev.events = EPOLLIN | EPOLLRDHUP; /* recv only until we trust the mediator */
 
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, med.fd, &ev) < 0) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: unable to add mediator fd to epoll: %s.",
                     strerror(errno));
             close(newfd);
@@ -1058,7 +1058,7 @@ static int start_main_listener(provision_state_t *state) {
     ev.events = EPOLLIN;
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Failed to register main listening socket: %s.",
                 strerror(errno));
         close(sockfd);
@@ -1083,7 +1083,7 @@ static int start_push_listener(provision_state_t *state) {
         return -1;
     }
 
-    logger(LOG_DAEMON,
+    logger(LOG_INFO,
             "OpenLI provisioner: listening for updates on %s:%s",
             state->pushaddr, state->pushport);
 
@@ -1095,7 +1095,7 @@ static int start_push_listener(provision_state_t *state) {
     ev.events = EPOLLIN;
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Failed to register push listening socket: %s.",
                 strerror(errno));
         close(sockfd);
@@ -1117,7 +1117,7 @@ static int start_mediator_listener(provision_state_t *state) {
         return -1;
     }
 
-    logger(LOG_DAEMON,
+    logger(LOG_INFO,
             "OpenLI provisioner: listening for mediators on %s:%s",
             state->mediateaddr, state->mediateport);
 
@@ -1129,7 +1129,7 @@ static int start_mediator_listener(provision_state_t *state) {
     ev.events = EPOLLIN;
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Failed to register push listening socket: %s.",
                 strerror(errno));
         close(sockfd);
@@ -1146,14 +1146,14 @@ static int process_signal(provision_state_t *state, int sigfd) {
 
     ret = read(sigfd, &si, sizeof(si));
     if (ret < 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI provisioner: unable to read from signal fd: %s.",
                 strerror(errno));
         return ret;
     }
 
     if (ret != sizeof(si)) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI provisioner: unexpected partial read from signal fd.");
         return -1;
     }
@@ -1173,13 +1173,13 @@ static void expire_unauthed(provision_state_t *state, prov_epoll_ev_t *pev) {
     prov_sock_state_t *cs = (prov_sock_state_t *)(pev->state);
 
     if (cs->clientrole == PROV_EPOLL_COLLECTOR) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI Provisioner: dropping unauthed collector.");
         drop_collector(state, pev);
     }
 
     if (cs->clientrole == PROV_EPOLL_MEDIATOR) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI Provisioner: dropping unauthed mediator.");
         drop_mediator(state, pev);
     }
@@ -1205,7 +1205,7 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
             if (ev->events & EPOLLIN) {
                 return 1;
             }
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI Provisioner: main epoll timer has failed.");
             return -1;
         case PROV_EPOLL_SIGNAL:
@@ -1224,7 +1224,7 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
             }
 
             if (ret == -1) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI Provisioner: disconnecting collector %d.",
                         pev->fd);
                 drop_collector(state, pev);
@@ -1234,7 +1234,7 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
             if (ev->events & EPOLLIN) {
                 expire_unauthed(state, pev);
             } else {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI Provisioner: collector auth timer has failed.");
                 return -1;
             }
@@ -1251,7 +1251,7 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
                 ret = -1;
             }
             if (ret == -1) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI Provisioner: disconnecting mediator %d.",
                         pev->fd);
                 drop_mediator(state, pev);
@@ -1262,7 +1262,7 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
             break;
 
         default:
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI Provisioner: invalid fd triggering epoll event,");
             return -1;
     }
@@ -1285,7 +1285,7 @@ static inline int reload_push_socket_config(provision_state_t *currstate,
 
             if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
                     currstate->updatefd->fd, &ev) == -1) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI provisioner: Failed to remove update fd from epoll: %s.",
                         strerror(errno));
                 return -1;
@@ -1314,13 +1314,13 @@ static inline int reload_push_socket_config(provision_state_t *currstate,
 
     if (changed) {
         if (currstate->pushaddr && start_push_listener(currstate) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: Warning, update socket did not restart. Will not be able to receive live updates.");
             return -1;
         }
         return 1;
     } else {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI provisioner: update socket configuration is unchanged.");
     }
     return 0;
@@ -1341,7 +1341,7 @@ static inline int reload_mediator_socket_config(provision_state_t *currstate,
 
         if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
                 currstate->mediatorfd->fd, &ev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: Failed to remove mediator fd from epoll: %s.",
                     strerror(errno));
             return -1;
@@ -1356,13 +1356,13 @@ static inline int reload_mediator_socket_config(provision_state_t *currstate,
         currstate->dropped_mediators = 0;
 
         if (start_mediator_listener(currstate) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: Warning, mediation socket did not restart. Will not be able to control mediators.");
             return -1;
         }
         return 1;
     } else {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI provisioner: mediation socket configuration is unchanged.");
     }
     return 0;
@@ -1382,7 +1382,7 @@ static inline int reload_collector_socket_config(provision_state_t *currstate,
 
         if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
                 currstate->clientfd->fd, &ev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: Failed to remove mediator fd from epoll: %s.",
                     strerror(errno));
             return -1;
@@ -1397,13 +1397,13 @@ static inline int reload_collector_socket_config(provision_state_t *currstate,
         currstate->dropped_collectors = 0;
 
         if (start_main_listener(currstate) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: Warning, listening socket did not restart. Will not be able to accept collector clients.");
             return -1;
         }
         return 1;
     } else {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI provisioner: collector listening socket configuration is unchanged.");
     }
     return 0;
@@ -1427,7 +1427,7 @@ static int announce_lea_to_mediators(provision_state_t *state,
         }
 
         if (push_lea_onto_net_buffer(sock->outgoing, lea->ag) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: unable to send LEA %s to mediator %d.",
                     lea->ag->agencyid, med->fd);
             drop_mediator(state, med->commev);
@@ -1435,7 +1435,7 @@ static int announce_lea_to_mediators(provision_state_t *state,
         }
 
         if (enable_epoll_write(state, med->commev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: unable to enable epoll write event for mediator on fd %d: %s",
                     med->fd, strerror(errno));
             drop_mediator(state, med->commev);
@@ -1465,7 +1465,7 @@ static int withdraw_agency_from_mediators(provision_state_t *state,
 
         if (push_lea_withdrawal_onto_net_buffer(sock->outgoing,
                     lea->ag) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: unable to send withdrawal of LEA %s to mediator %d.",
                     lea->ag->agencyid, med->fd);
             drop_mediator(state, med->commev);
@@ -1473,7 +1473,7 @@ static int withdraw_agency_from_mediators(provision_state_t *state,
         }
 
         if (enable_epoll_write(state, med->commev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: unable to enable epoll write event for mediator on fd %d: %s",
                     med->fd, strerror(errno));
             drop_mediator(state, med->commev);
@@ -1514,7 +1514,7 @@ static inline int reload_leas(provision_state_t *currstate,
         HASH_ITER(hh, newstate->leas, lea, tmp) {
             if (lea->announcereq) {
                 if (announce_lea_to_mediators(currstate, lea) == -1) {
-                    logger(LOG_DAEMON,
+                    logger(LOG_INFO,
                             "OpenLI provisioner: unable to announce new LEA to existing mediators.");
                     return -1;
                 }
@@ -1559,7 +1559,7 @@ static void add_new_staticip_range(provision_state_t *state,
         }
 
         if (enable_epoll_write(state, col->commev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
                     sock->mainfd, strerror(errno));
             drop_collector(state, col->commev);
@@ -1592,7 +1592,7 @@ static void remove_existing_staticip_range(provision_state_t *state,
         }
 
         if (enable_epoll_write(state, col->commev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
                     sock->mainfd, strerror(errno));
             drop_collector(state, col->commev);
@@ -1625,7 +1625,7 @@ static int halt_existing_intercept(provision_state_t *state,
         }
 
         if (enable_epoll_write(state, col->commev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
                     sock->mainfd, strerror(errno));
             drop_collector(state, col->commev);
@@ -1658,7 +1658,7 @@ static int disconnect_mediators_from_collectors(provision_state_t *state) {
         }
 
         if (push_disconnect_mediators_onto_net_buffer(sock->outgoing) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: unable to send 'disconnect mediators' to collector %d.",
                     sock->mainfd);
             drop_collector(state, col->commev);
@@ -1666,7 +1666,7 @@ static int disconnect_mediators_from_collectors(provision_state_t *state) {
         }
 
         if (enable_epoll_write(state, col->commev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
                     sock->mainfd, strerror(errno));
             drop_collector(state, col->commev);
@@ -1707,7 +1707,7 @@ static int remove_liid_mapping(provision_state_t *state,
 
         if (push_cease_mediation_onto_net_buffer(sock->outgoing,
                     liid, liid_len) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: unable to halt mediation of intercept %s on mediator %d.",
                     liid, sock->mainfd);
             drop_mediator(state, med->commev);
@@ -1715,7 +1715,7 @@ static int remove_liid_mapping(provision_state_t *state,
         }
 
         if (enable_epoll_write(state, med->commev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: unable to enable epoll write event for mediator on fd %d: %s",
                     sock->mainfd, strerror(errno));
             drop_mediator(state, med->commev);
@@ -1748,7 +1748,7 @@ static int announce_liidmapping_to_mediators(provision_state_t *state,
 
         if (push_liid_mapping_onto_net_buffer(sock->outgoing, liidmap->agency,
                 liidmap->liid) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: unable to send mapping for LIID %s to mediator %d.",
                     liidmap->liid, med->fd);
             drop_mediator(state, med->commev);
@@ -1756,7 +1756,7 @@ static int announce_liidmapping_to_mediators(provision_state_t *state,
         }
 
         if (enable_epoll_write(state, med->commev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: unable to enable epoll write event for mediator on fd %d: %s",
                     med->fd, strerror(errno));
             drop_mediator(state, med->commev);
@@ -1786,7 +1786,7 @@ static int announce_coreserver_change(provision_state_t *state,
         if (isnew) {
             if (push_coreserver_onto_net_buffer(sock->outgoing, cs,
                         cs->servertype) == -1) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: Unable to push new %s server to collector on fd %d",
                         coreserver_type_to_string(cs->servertype),
                         sock->mainfd);
@@ -1796,7 +1796,7 @@ static int announce_coreserver_change(provision_state_t *state,
         } else {
             if (push_coreserver_withdraw_onto_net_buffer(sock->outgoing,
                         cs, cs->servertype) == -1) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: Unable to push removal of %s server to collector on fd %d",
                         coreserver_type_to_string(cs->servertype),
                         sock->mainfd);
@@ -1806,7 +1806,7 @@ static int announce_coreserver_change(provision_state_t *state,
         }
 
         if (enable_epoll_write(state, col->commev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
                     sock->mainfd, strerror(errno));
             drop_collector(state, col->commev);
@@ -1835,7 +1835,7 @@ static int announce_sip_target_change(provision_state_t *state,
         if (isnew) {
             if (push_sip_target_onto_net_buffer(sock->outgoing, sipid,
                         vint) == -1) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: Unable to push SIP target to collector on fd %d",
                         sock->mainfd);
                 drop_collector(state, col->commev);
@@ -1844,7 +1844,7 @@ static int announce_sip_target_change(provision_state_t *state,
         } else {
             if (push_sip_target_withdrawal_onto_net_buffer(sock->outgoing,
                         sipid, vint) == -1) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: Unable to push removal of SIP target to collector on fd %d",
                         sock->mainfd);
                 drop_collector(state, col->commev);
@@ -1853,7 +1853,7 @@ static int announce_sip_target_change(provision_state_t *state,
         }
 
         if (enable_epoll_write(state, col->commev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
                     sock->mainfd, strerror(errno));
             drop_collector(state, col->commev);
@@ -1885,7 +1885,7 @@ static int announce_single_intercept(provision_state_t *state,
         }
 
         if (enable_epoll_write(state, col->commev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
                     sock->mainfd, strerror(errno));
             drop_collector(state, col->commev);
@@ -1996,7 +1996,7 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
             /* VOIP intercept has changed somehow -- this probably
              * shouldn't happen but deal with it anyway
              */
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: Details for VOIP intercept %s have changed?",
                     voipint->common.liid);
 
@@ -2027,21 +2027,21 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
 
         if (!droppedmeds && announce_liidmapping_to_mediators(currstate,
                 h) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: unable to announce new VOIP intercept to mediators.");
             return -1;
         }
 
         if (!droppedcols && announce_single_intercept(currstate,
                 (void *)voipint, push_voipintercept_onto_net_buffer) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: unable to announce new VOIP intercept to collectors.");
             return -1;
         }
 
         if (!droppedcols && announce_all_sip_targets(currstate,
                     voipint->targets, voipint) < 0) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: error pushing SIP targets for VOIP intercept %s onto buffer.", voipint->common.liid);
             return -1;
         }
@@ -2190,14 +2190,14 @@ static inline int reload_ipintercepts(provision_state_t *currstate,
             }
             remove_liid_mapping(currstate, ipint->common.liid,
                     ipint->common.liid_len, droppedmeds);
-            logger(LOG_DAEMON, "OpenLI provisioner: LIID %s has been withdrawn",
+            logger(LOG_INFO, "OpenLI provisioner: LIID %s has been withdrawn",
                     ipint->common.liid);
             continue;
         } else if (!ip_intercept_equal(ipint, newequiv)) {
             /* IP intercept has changed somehow -- this probably
              * shouldn't happen but deal with it anyway
              */
-            logger(LOG_DAEMON, "OpenLI provisioner: Details for IP intercept %s have changed?",
+            logger(LOG_INFO, "OpenLI provisioner: Details for IP intercept %s have changed?",
                     ipint->common.liid);
 
             if (!droppedcols) {
@@ -2224,14 +2224,14 @@ static inline int reload_ipintercepts(provision_state_t *currstate,
 
         if (!droppedmeds && announce_liidmapping_to_mediators(currstate,
                 h) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: unable to announce new IP intercept to mediators.");
             return -1;
         }
 
         if (!droppedcols && announce_single_intercept(currstate,
                 (void *)ipint, push_ipintercept_onto_net_buffer) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI provisioner: unable to announce new IP intercept to collectors.");
             return -1;
         }
@@ -2253,7 +2253,7 @@ static int reload_provisioner_config(provision_state_t *currstate) {
     int leachanged = 0;
 
     if (init_prov_state(&newstate, currstate->conffile) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Error reloading config file for provisioner.");
         return -1;
     }
@@ -2324,7 +2324,7 @@ static void run(provision_state_t *state) {
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, state->signalfd->fd, &ev)
                 == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Failed to register signal socket: %s.",
                 strerror(errno));
         return;
@@ -2342,7 +2342,7 @@ static void run(provision_state_t *state) {
 
         timerfd = epoll_add_timer(state->epoll_fd, 1, state->timerfd);
         if (timerfd == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                 "OpenLI: Failed to add timer to epoll in provisioner.");
             break;
         }
@@ -2354,7 +2354,7 @@ static void run(provision_state_t *state) {
         while (!timerexpired) {
             nfds = epoll_wait(state->epoll_fd, evs, 64, -1);
             if (nfds < 0) {
-                logger(LOG_DAEMON, "OpenLI: error while checking for incoming connections on the provisioner: %s.",
+                logger(LOG_INFO, "OpenLI: error while checking for incoming connections on the provisioner: %s.",
                         strerror(errno));
                 return;
             }
@@ -2368,7 +2368,7 @@ static void run(provision_state_t *state) {
         }
 
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, timerfd, &ev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                 "OpenLI: unable to remove provisioner timer from epoll set: %s",
                 strerror(errno));
             return;
@@ -2417,7 +2417,7 @@ int main(int argc, char *argv[]) {
                 usage(argv[0]);
                 return 1;
             default:
-                logger(LOG_DAEMON, "OpenLI: unsupported option: %c",
+                logger(LOG_INFO, "OpenLI: unsupported option: %c",
                         c);
                 usage(argv[0]);
                 return 1;
@@ -2425,7 +2425,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (configfile == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: no config file specified. Use -c to specify one.");
         usage(argv[0]);
         return 1;
@@ -2443,27 +2443,27 @@ int main(int argc, char *argv[]) {
 
 
     if (init_prov_state(&provstate, configfile) == -1) {
-        logger(LOG_DAEMON, "OpenLI: Error initialising provisioner.");
+        logger(LOG_INFO, "OpenLI: Error initialising provisioner.");
         return 1;
     }
 
     if (start_main_listener(&provstate) == -1) {
-        logger(LOG_DAEMON, "OpenLI: Error, could not start listening socket.");
+        logger(LOG_INFO, "OpenLI: Error, could not start listening socket.");
         return 1;
     }
 
     if (start_push_listener(&provstate) == -1) {
-        logger(LOG_DAEMON, "OpenLI: Warning, push socket did not start. New intercepts cannot be received.");
+        logger(LOG_INFO, "OpenLI: Warning, push socket did not start. New intercepts cannot be received.");
     }
 
     if (start_mediator_listener(&provstate) == -1) {
-        logger(LOG_DAEMON, "OpenLI: Warning, mediation socket did not start. Will not be able to control mediators.");
+        logger(LOG_INFO, "OpenLI: Warning, mediation socket did not start. Will not be able to control mediators.");
     }
 
     run(&provstate);
 
     clear_prov_state(&provstate);
-    logger(LOG_DAEMON, "OpenLI: Provisioner has exited.");
+    logger(LOG_INFO, "OpenLI: Provisioner has exited.");
 }
 
 

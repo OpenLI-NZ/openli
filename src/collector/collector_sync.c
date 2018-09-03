@@ -172,7 +172,7 @@ static int create_ipiri_from_iprange(collector_sync_t *sync,
 
     prefix = ascii2prefix(0, staticsess->rangestr);
     if (prefix == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: error converting %s into a valid IP prefix in sync thread",
                 staticsess->rangestr);
         return -1;
@@ -275,7 +275,7 @@ static inline void push_static_iprange_to_collectors(
     staticipsession_t *staticsess = NULL;
 
     if (ipr->liid == NULL || ipr->rangestr == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: attempted to send invalid static IP range to collectors");
         return;
     }
@@ -298,7 +298,7 @@ static inline void push_static_iprange_remove_to_collectors(
     staticipsession_t *staticsess = NULL;
 
     if (ipr->liid == NULL || ipr->rangestr == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: attempted to send invalid static IP range to collectors");
         return;
     }
@@ -327,7 +327,7 @@ static inline void push_single_ipintercept(libtrace_message_queue_t *q,
             (struct sockaddr *)&(session->sessionip.assignedip));
 
     if (!ipsess) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: ran out of memory while creating IP session message.");
         return;
     }
@@ -350,7 +350,7 @@ static inline void push_single_alushimid(libtrace_message_queue_t *q,
 
     alu = create_aluintercept(ipint);
     if (!alu) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: ran out of memory while creating ALU intercept message.");
         return;
     }
@@ -385,7 +385,7 @@ static int send_to_provisioner(collector_sync_t *sync) {
     ret = transmit_net_buffer(sync->outgoing);
     if (ret == -1) {
         /* Something went wrong */
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: error sending message from collector to provisioner.");
         return -1;
     }
@@ -397,7 +397,7 @@ static int send_to_provisioner(collector_sync_t *sync) {
 
         if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_MOD,
                     sync->instruct_fd, &ev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: error disabling EPOLLOUT on provisioner fd: %s.",
                     strerror(errno));
             return -1;
@@ -417,7 +417,7 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
     ipr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
 
     if (decode_staticip_announcement(intmsg, msglen, ipr) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: received invalid static IP range from provisioner.");
         free(ipr);
         return -1;
@@ -425,7 +425,7 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
 
     HASH_FIND(hh_liid, sync->ipintercepts, ipr->liid, strlen(ipr->liid), ipint);
     if (!ipint) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: received static IP range for LIID %s, but this LIID is unknown?",
                 ipr->liid);
         free(ipr);
@@ -464,7 +464,7 @@ static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
 
     HASH_FIND(hh_liid, sync->ipintercepts, ipr->liid, strlen(ipr->liid), ipint);
     if (!ipint) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: received static IP range to remove for LIID %s, but this LIID is unknown?",
                 ipr->liid);
         free(ipr);
@@ -522,7 +522,7 @@ static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
     access_session_t *sess, *tmp2;
     static_ipranges_t *ipr, *tmpr;
 
-    logger(LOG_DAEMON, "OpenLI: collector will stop intercepting traffic for LIID %s", ipint->common.liid);
+    logger(LOG_INFO, "OpenLI: collector will stop intercepting traffic for LIID %s", ipint->common.liid);
 
     /* Remove all static IP ranges for this intercept -- its over */
     HASH_ITER(hh, ipint->statics, ipr, tmpr) {
@@ -582,7 +582,7 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
     HASH_ITER(hh, sync->coreservers, cs, tmp3) {
         if (cs->awaitingconfirm) {
             push_coreserver_msg(sync, cs, OPENLI_PUSH_REMOVE_CORESERVER);
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: collector has removed %s from its %s core server list.",
                     cs->serverkey, coreserver_type_to_string(cs->servertype));
             HASH_DELETE(hh, sync->coreservers, cs);
@@ -599,7 +599,7 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
     openli_export_recv_t expmsg;
 
     if (decode_mediator_announcement(provmsg, msglen, &med) == -1) {
-        logger(LOG_DAEMON, "OpenLI: received invalid mediator announcement from provisioner.");
+        logger(LOG_INFO, "OpenLI: received invalid mediator announcement from provisioner.");
         return -1;
     }
 
@@ -624,7 +624,7 @@ static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
     openli_export_recv_t expmsg;
 
     if (decode_mediator_withdraw(provmsg, msglen, &med) == -1) {
-        logger(LOG_DAEMON, "OpenLI: received invalid mediator withdrawal from provisioner.");
+        logger(LOG_INFO, "OpenLI: received invalid mediator withdrawal from provisioner.");
         return -1;
     }
 
@@ -650,7 +650,7 @@ static int forward_new_coreserver(collector_sync_t *sync, uint8_t *provmsg,
     cs = (coreserver_t *)calloc(1, sizeof(coreserver_t));
 
     if (decode_coreserver_announcement(provmsg, msglen, cs) == -1) {
-        logger(LOG_DAEMON, "OpenLI: received invalid core server announcement from provisioner.");
+        logger(LOG_INFO, "OpenLI: received invalid core server announcement from provisioner.");
         free_single_coreserver(cs);
         return -1;
     }
@@ -666,7 +666,7 @@ static int forward_new_coreserver(collector_sync_t *sync, uint8_t *provmsg,
         HASH_ADD_KEYPTR(hh, sync->coreservers, cs->serverkey,
                 strlen(cs->serverkey), cs);
         push_coreserver_msg(sync, cs, OPENLI_PUSH_CORESERVER);
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: collector has added %s to its %s core server list.",
                 cs->serverkey, coreserver_type_to_string(cs->servertype));
     }
@@ -680,7 +680,7 @@ static int forward_remove_coreserver(collector_sync_t *sync, uint8_t *provmsg,
 
     cs = (coreserver_t *)calloc(1, sizeof(coreserver_t));
     if (decode_coreserver_withdraw(provmsg, msglen, cs) == -1) {
-        logger(LOG_DAEMON, "OpenLI: received invalid core server withdrawal from provisioner.");
+        logger(LOG_INFO, "OpenLI: received invalid core server withdrawal from provisioner.");
         free_single_coreserver(cs);
         return -1;
     }
@@ -688,11 +688,11 @@ static int forward_remove_coreserver(collector_sync_t *sync, uint8_t *provmsg,
     HASH_FIND(hh, sync->coreservers, cs->serverkey, strlen(cs->serverkey),
             found);
     if (!found) {
-        logger(LOG_DAEMON, "OpenLI sync: asked to remove %s server %s, but we don't have any record of it?",
+        logger(LOG_INFO, "OpenLI sync: asked to remove %s server %s, but we don't have any record of it?",
                 coreserver_type_to_string(cs->servertype), cs->serverkey);
     } else {
         push_coreserver_msg(sync, cs, OPENLI_PUSH_REMOVE_CORESERVER);
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: collector has removed %s from its %s core server list.",
                 cs->serverkey, coreserver_type_to_string(cs->servertype));
         HASH_DELETE(hh, sync->coreservers, found);
@@ -705,7 +705,7 @@ static int forward_remove_coreserver(collector_sync_t *sync, uint8_t *provmsg,
 static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
 
     if (!ipint) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: received withdrawal for IP intercept %s but it is not present in the sync intercept list?",
                 ipint->common.liid);
         return;
@@ -730,7 +730,7 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     memset(&expmsg, 0, sizeof(openli_export_recv_t));
 
     if (decode_ipintercept_halt(intmsg, msglen, &torem) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: received invalid IP intercept withdrawal from provisioner.");
         return -1;
     }
@@ -779,7 +779,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     cept = (ipintercept_t *)malloc(sizeof(ipintercept_t));
     if (decode_ipintercept_start(intmsg, msglen, cept) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: received invalid IP intercept from provisioner.");
         free(cept);
         return -1;
@@ -808,14 +808,14 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
          */
         if (x->username && cept->username) {
             if (strcmp(x->username, cept->username) != 0) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
                         x->common.liid, x->username, cept->username);
                 free(cept);
                 return -1;
             }
         } else if (cept->alushimid != x->alushimid) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: duplicate IP ID %s seen, but ALU intercept IDs are different (was %u, now %u).",
                     x->common.liid, x->alushimid, cept->alushimid);
             free(cept);
@@ -823,7 +823,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         }
 
         if (cept->accesstype != x->accesstype) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: duplicate IP ID %s seen, but access type has changed to %s.", x->common.liid, accesstype_to_string(cept->accesstype));
             /* Only affects IRIs so don't need to modify collector threads */
             x->accesstype = cept->accesstype;
@@ -850,7 +850,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     }
 
     if (cept->alushimid != OPENLI_ALUSHIM_NONE) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: received IP intercept from provisioner for ALU shim ID %u (LIID %s, authCC %s)",
                 cept->alushimid, cept->common.liid, cept->common.authcc);
 
@@ -868,7 +868,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             push_single_alushimid(sendq->q, cept, 0);
         }
     } else {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: received IP intercept from provisioner (LIID %s, authCC %s)",
                 cept->common.liid, cept->common.authcc);
     }
@@ -941,7 +941,7 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 ipr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
 
                 if (decode_staticip_removal(provmsg, msglen, ipr) == -1) {
-                    logger(LOG_DAEMON,
+                    logger(LOG_INFO,
                             "OpenLI: received invalid static IP range from provisioner for removal.");
                     free(ipr);
                     return -1;
@@ -1022,7 +1022,7 @@ int sync_connect_provisioner(collector_sync_t *sync) {
     /* Put our auth message onto the outgoing buffer */
     if (push_auth_onto_net_buffer(sync->outgoing, OPENLI_PROTO_COLLECTOR_AUTH)
             < 0) {
-        logger(LOG_DAEMON,"OpenLI: collector is unable to queue auth message.");
+        logger(LOG_INFO,"OpenLI: collector is unable to queue auth message.");
         return -1;
     }
 
@@ -1036,7 +1036,7 @@ int sync_connect_provisioner(collector_sync_t *sync) {
 
     if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
         /* TODO Do something? */
-        logger(LOG_DAEMON, "OpenLI: failed to register provisioner fd: %s",
+        logger(LOG_INFO, "OpenLI: failed to register provisioner fd: %s",
                 strerror(errno));
         return -1;
     }
@@ -1083,7 +1083,7 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
     if (sync->instruct_fd != -1) {
         if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_DEL,
                 sync->instruct_fd, &ev) == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: error de-registering provisioner fd: %s.",
                     strerror(errno));
         }
@@ -1153,7 +1153,7 @@ static int remove_ip_to_session_mapping(collector_sync_t *sync,
             sizeof(internetaccess_ip_t), mapping);
 
     if (!mapping) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
             "OpenLI: attempt to remove session mapping for IP %s, but the mapping doesn't exist?",
             sockaddr_to_string((struct sockaddr *)&(sess->sessionip.assignedip),
                 ipstr, 128));
@@ -1175,7 +1175,7 @@ static int add_ip_to_session_mapping(collector_sync_t *sync,
     ip_to_session_t *newmap;
 
     if (sess->sessionip.ipfamily == 0) {
-        logger(LOG_DAEMON, "OpenLI: called add_ip_to_session_mapping() but no IP has been assigned for this session.");
+        logger(LOG_INFO, "OpenLI: called add_ip_to_session_mapping() but no IP has been assigned for this session.");
         return -1;
     }
 
@@ -1209,7 +1209,7 @@ static inline internet_user_t *lookup_userid(collector_sync_t *sync,
         iuser = (internet_user_t *)malloc(sizeof(internet_user_t));
 
         if (!iuser) {
-            logger(LOG_DAEMON, "OpenLI: unable to allocate memory for new Internet user");
+            logger(LOG_INFO, "OpenLI: unable to allocate memory for new Internet user");
             return NULL;
         }
         iuser->userid = strdup(userid);
@@ -1235,7 +1235,7 @@ static int newly_active_session(collector_sync_t *sync,
     if (sess->sessionip.ipfamily != 0) {
         mapret = add_ip_to_session_mapping(sync, sess, iuser, &prevmapping);
         if (mapret < 0) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                 "OpenLI: error while updating IP->session map in sync thread.");
             printf("%s\n", iuser->userid);
             return -1;
@@ -1252,7 +1252,7 @@ static int newly_active_session(collector_sync_t *sync,
                 strlen(prevmapping->owner->userid), prevuser);
         if (prevuser) {
             char ipstr[128];
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: detected silent owner change for IP %s",
                     sockaddr_to_string(
                         (struct sockaddr *)&(prevmapping->ip->assignedip),
@@ -1309,14 +1309,14 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     }
 
     if (!p) {
-        logger(LOG_DAEMON, "OpenLI: tried to update user sessions using an unsupported access type: %u", accesstype);
+        logger(LOG_INFO, "OpenLI: tried to update user sessions using an unsupported access type: %u", accesstype);
         return -1;
     }
 
     parseddata = p->process_packet(p, pkt);
 
     if (parseddata == NULL) {
-        logger(LOG_DAEMON, "OpenLI: unable to parse %s packet", p->name);
+        logger(LOG_INFO, "OpenLI: unable to parse %s packet", p->name);
         return -1;
     }
 
@@ -1335,7 +1335,7 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     sess = p->update_session_state(p, parseddata, &(iuser->sessions), &oldstate,
             &newstate, &accessaction);
     if (!sess) {
-        logger(LOG_DAEMON, "OpenLI: error while assigning packet to a Internet access session");
+        logger(LOG_INFO, "OpenLI: error while assigning packet to a Internet access session");
         p->destroy_parsed_data(p, parseddata);
         return -1;
     }
@@ -1346,7 +1346,7 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         if (newstate == SESSION_STATE_ACTIVE) {
             ret = newly_active_session(sync, userint, iuser, sess);
             if (ret < 0) {
-                logger(LOG_DAEMON, "OpenLI: error while processing new active IP session in sync thread.");
+                logger(LOG_INFO, "OpenLI: error while processing new active IP session in sync thread.");
                 p->destroy_parsed_data(p, parseddata);
                 assert(0);
                 return -1;
@@ -1363,7 +1363,7 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
             }
 
             if (remove_ip_to_session_mapping(sync, sess) < 0) {
-                logger(LOG_DAEMON, "OpenLI: error while removing IP->session mapping in sync thread.");
+                logger(LOG_INFO, "OpenLI: error while removing IP->session mapping in sync thread.");
             }
         }
     }
@@ -1425,12 +1425,12 @@ int sync_thread_main(collector_sync_t *sync) {
 
 
             if (syncev->fd == sync->instruct_fd) {
-                logger(LOG_DAEMON, "OpenLI: collector lost connection to central provisioner");
+                logger(LOG_INFO, "OpenLI: collector lost connection to central provisioner");
                 sync_disconnect_provisioner(sync);
                 return 0;
 
             } else {
-                logger(LOG_DAEMON, "OpenLI: processor->sync message queue pipe has broken down.");
+                logger(LOG_INFO, "OpenLI: processor->sync message queue pipe has broken down.");
                 epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_DEL,
                         syncev->fd, NULL);
             }
@@ -1486,7 +1486,7 @@ int sync_thread_main(collector_sync_t *sync) {
             int ret;
             if ((ret = update_user_sessions(sync, recvd.data.pkt,
                         ACCESS_RADIUS)) < 0) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: sync thread received an invalid RADIUS packet");
             }
 

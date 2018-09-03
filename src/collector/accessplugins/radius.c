@@ -545,9 +545,9 @@ static void create_orphan(radius_global_t *glob, radius_orphaned_resp_t **head,
         free(iter);
         iter = *head;
         if (!warned) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                 "OpenLI RADIUS: expired orphaned response packet.");
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                 "OpenLI RADIUS: capture is possibly dropping RADIUS packets?");
             warned = 1;
         }
@@ -586,13 +586,13 @@ static inline int grab_nas_details_from_packet(radius_parsed_t *parsed,
         case RADIUS_CODE_ACCOUNT_REQUEST:
             if (trace_get_source_address(pkt,
                     (struct sockaddr *)&ipaddr_nas) == NULL) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "Unable to get NAS address from RADIUS packet");
                 return -1;
             }
             if (trace_get_destination_address(pkt,
                     (struct sockaddr *)&ipaddr_rad) == NULL) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "Unable to get server address from RADIUS packet");
                 return -1;
             }
@@ -604,13 +604,13 @@ static inline int grab_nas_details_from_packet(radius_parsed_t *parsed,
         case RADIUS_CODE_ACCESS_CHALLENGE:
             if (trace_get_destination_address(pkt,
                     (struct sockaddr *)&ipaddr_nas) == NULL) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "Unable to get NAS address from RADIUS packet");
                 return -1;
             }
             if (trace_get_source_address(pkt,
                     (struct sockaddr *)&ipaddr_rad) == NULL) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "Unable to get server address from RADIUS packet");
                 return -1;
             }
@@ -697,7 +697,7 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
     }
 
     if (rem < sizeof(radius_header_t)) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: RADIUS packet did not have a complete header");
         return NULL;
     }
@@ -706,9 +706,9 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
     len = ntohs(hdr->length);
 
     if (len > rem) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: RADIUS packet was truncated, some attributes may be missed.");
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: RADIUS length was %u but we only had %u bytes of payload.",
                 len, rem);
     }
@@ -786,7 +786,7 @@ static inline void process_username_attribute(radius_parsed_t *raddata) {
     } else {
         memcpy(userkey, userattr->att_val, 255);
         userkey[255] = '\0';
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI RADIUS: User-Name is too long, truncated to %s",
                 userkey);
     }
@@ -884,7 +884,7 @@ static inline void process_nasid_attribute(radius_parsed_t *raddata) {
     } else {
         memcpy(nasid, nasattr->att_val, 255);
         nasid[255] = '\0';
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI RADIUS: NAS-Identifier is too long, truncated to %s",
                 nasid);
     }
@@ -892,7 +892,7 @@ static inline void process_nasid_attribute(radius_parsed_t *raddata) {
     if (raddata->matcheduser->nasidentifier) {
         if (strcmp(nasid, raddata->matcheduser->nasidentifier) != 0) {
             /*
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI RADIUS: NAS-Identifier for user %s has changed from %s to %s",
                     raddata->matcheduser->userid,
                     raddata->matcheduser->nasidentifier,
@@ -1049,7 +1049,7 @@ static char *radius_get_userid(access_plugin_t *p, void *parsed) {
     }
 
     if (!raddata->matchednas) {
-        logger(LOG_DAEMON, "OpenLI RADIUS: please parse the packet before attempting to get the user id.");
+        logger(LOG_INFO, "OpenLI RADIUS: please parse the packet before attempting to get the user id.");
         return NULL;
     }
 
@@ -1059,7 +1059,7 @@ static char *radius_get_userid(access_plugin_t *p, void *parsed) {
     if (!raddata->matcheduser && (
             raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST ||
             raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST)) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI RADIUS: got a request with no User-Name field?");
         return NULL;
     }
@@ -1168,9 +1168,9 @@ static radius_orphaned_resp_t *search_orphans(radius_orphaned_resp_t **head,
             iter = iter->next;
             free(tmp);
             if (!warned) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                     "OpenLI RADIUS: expired orphaned response packet.");
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                     "OpenLI RADIUS: capture is possibly dropping RADIUS packets?");
                 warned = 1;
             }
@@ -1537,7 +1537,7 @@ static int generate_iri(etsili_generic_t **paramlist,
                 iriattr = IPIRI_CONTENTS_POP_IDENTIFIER;
                 if (ipiri_create_id_printable((char *)(attr->att_val),
                         attr->att_len, &nasid) < 0) {
-                    logger(LOG_DAEMON, "OpenLI: Unable to convert RADIUS NAS Identifier attribute into a printable POP Identifier");
+                    logger(LOG_INFO, "OpenLI: Unable to convert RADIUS NAS Identifier attribute into a printable POP Identifier");
                     break;
                 }
                 attrlen = sizeof(ipiri_id_t);
@@ -1714,7 +1714,7 @@ static inline int action_to_iri(etsili_generic_t **params,
             }
             break;
         default:
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI RADIUS: cannot generate IRI for unknown action %u",
                     action);
             return -1;
@@ -1758,7 +1758,7 @@ static int radius_generate_iri_data(access_plugin_t *p, void *parseddata,
         return 0;
     }
 
-    logger(LOG_DAEMON,
+    logger(LOG_INFO,
             "OpenLI RADIUS: invalid iteration in radius_generate_iri_data (%d)",
             iteration);
     return -1;

@@ -55,7 +55,7 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
     int so_error = 0;
 
     if (ipstr == NULL || portstr == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Error trying to connect to remote host -- host IP or port is not set.");
         return -1;
     }
@@ -65,7 +65,7 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
     hints.ai_socktype = SOCK_STREAM;
 
     if (getaddrinfo(ipstr, portstr, &hints, &res) == -1) {
-        logger(LOG_DAEMON, "OpenLI: Error while trying to look up %s:%s -- %s.",
+        logger(LOG_INFO, "OpenLI: Error while trying to look up %s:%s -- %s.",
                 ipstr, portstr, strerror(errno));
         return -1;
     }
@@ -73,7 +73,7 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
     sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 
     if (sockfd == -1) {
-        logger(LOG_DAEMON, "OpenLI: Error while creating connecting socket: %s.",
+        logger(LOG_INFO, "OpenLI: Error while creating connecting socket: %s.",
                 strerror(errno));
         goto failconnect;
     }
@@ -83,20 +83,20 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
         optlen = sizeof(optval);
 
         if (setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &optval, optlen) < 0) {
-            logger(LOG_DAEMON, "OpenLI: Unable to set keep alive SO for socket: %s.",
+            logger(LOG_INFO, "OpenLI: Unable to set keep alive SO for socket: %s.",
                     strerror(errno));
             goto failconnect;
         }
 
         optval = 30;
         if (setsockopt(sockfd, SOL_TCP, TCP_KEEPIDLE, &optval, optlen) < 0) {
-            logger(LOG_DAEMON, "OpenLI: Unable to set keep alive idle SO for socket: %s.",
+            logger(LOG_INFO, "OpenLI: Unable to set keep alive idle SO for socket: %s.",
                     strerror(errno));
             goto failconnect;
         }
 
         if (setsockopt(sockfd, SOL_TCP, TCP_KEEPINTVL, &optval, optlen) < 0) {
-            logger(LOG_DAEMON, "OpenLI: Unable to set keep alive interval SO for socket: %s.",
+            logger(LOG_INFO, "OpenLI: Unable to set keep alive interval SO for socket: %s.",
                     strerror(errno));
             goto failconnect;
         }
@@ -104,13 +104,13 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
     }
 
     if ((flags = fcntl(sockfd, F_GETFL, 0)) < 0) {
-        logger(LOG_DAEMON, "OpenLI: unable to get socket flags for new socket.");
+        logger(LOG_INFO, "OpenLI: unable to get socket flags for new socket.");
         goto failconnect;
     }
 
 
     if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) < 0) {
-        logger(LOG_DAEMON, "OpenLI: unable to set non-blocking socket flags for new socket.");
+        logger(LOG_INFO, "OpenLI: unable to set non-blocking socket flags for new socket.");
         goto failconnect;
     }
 
@@ -138,10 +138,10 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
 
     if (!success) {
         if (!isretry) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: Failed to connect to %s:%s -- %s.",
                     ipstr, portstr, strerror(so_error));
-            logger(LOG_DAEMON, "OpenLI: Will retry connection periodically.");
+            logger(LOG_INFO, "OpenLI: Will retry connection periodically.");
         }
 
         close(sockfd);
@@ -151,11 +151,11 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
 
 
     if (fcntl(sockfd, F_SETFL, flags) < 0) {
-        logger(LOG_DAEMON, "OpenLI: unable to reset socket flags for new socket.");
+        logger(LOG_INFO, "OpenLI: unable to reset socket flags for new socket.");
         goto failconnect;
     }
 
-    logger(LOG_DAEMON, "OpenLI: connected to %s:%s successfully.",
+    logger(LOG_DEBUG, "OpenLI: connected to %s:%s successfully.",
             ipstr, portstr);
     goto endconnect;
 
@@ -184,21 +184,21 @@ int create_listener(char *addr, char *port, char *name) {
 
     if (getaddrinfo(addr, port, &hints, &res) == -1)
     {
-        logger(LOG_DAEMON, "OpenLI: Error while trying to getaddrinfo for %s listening socket.", name);
+        logger(LOG_INFO, "OpenLI: Error while trying to getaddrinfo for %s listening socket.", name);
         return -1;
     }
 
     sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 
     if (sockfd == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Error while creating %s listening socket: %s.",
                 name, strerror(errno));
         goto endlistener;
     }
 
     if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Error while setting options on %s listening socket: %s",
 				name, strerror(errno));
         close(sockfd);
@@ -208,7 +208,7 @@ int create_listener(char *addr, char *port, char *name) {
 
 
     if (bind(sockfd, res->ai_addr, res->ai_addrlen) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Error while trying to bind %s listening socket: %s.",
                 name, strerror(errno));
         close(sockfd);
@@ -217,14 +217,14 @@ int create_listener(char *addr, char *port, char *name) {
     }
 
     if (listen(sockfd, 10) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Error while listening on %s socket: %s.",
                 name, strerror(errno));
         close(sockfd);
         sockfd = -1;
         goto endlistener;
     }
-    logger(LOG_DAEMON, "OpenLI: %s listening on %s:%s successfully.",
+    logger(LOG_INFO, "OpenLI: %s listening on %s:%s successfully.",
             name, addr, port);
 endlistener:
     freeaddrinfo(res);
@@ -274,7 +274,7 @@ void convert_ipstr_to_sockaddr(char *knownip,
     hints.ai_family = AF_UNSPEC;
 
     if (getaddrinfo(knownip, NULL, &hints, &res) != 0) {
-        logger(LOG_DAEMON, "OpenLI: getaddrinfo cannot parse IP address %s: %s",
+        logger(LOG_INFO, "OpenLI: getaddrinfo cannot parse IP address %s: %s",
                 knownip, gai_strerror(errno));
     }
 

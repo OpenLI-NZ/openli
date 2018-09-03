@@ -92,7 +92,7 @@ static inline int extend_net_buffer(net_buffer_t *nb, int musthave) {
     tmp = (char *)realloc(nb->buf, nb->alloced + NETBUF_ALLOC_SIZE);
     if (tmp == NULL) {
         /* OOM */
-        logger(LOG_DAEMON, "OpenLI: unable to allocate larger net buffer.");
+        logger(LOG_INFO, "OpenLI: unable to allocate larger net buffer.");
         return -1;
     }
 
@@ -144,13 +144,13 @@ uint8_t *construct_netcomm_protocol_header(uint32_t contentlen,
     ii_header_t *newhdr = (ii_header_t *)malloc(sizeof(ii_header_t));
 
     if (newhdr == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OOM while trying to create a netcomm protocol header.");
         return NULL;
     }
 
     if (contentlen > 65535) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "Content of size %u cannot fit in a single netcomm PDU.",
                 contentlen);
         free(newhdr);
@@ -175,10 +175,10 @@ static inline int push_tlv(net_buffer_t *nb, openli_proto_fieldtype_t type,
     uint16_t shorttype, swaplen;
 
     if (vallen > 4096 - 4) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: internal protocol does not support value fields larger than %u bytes.",
                 4096 - 4);
-        logger(LOG_DAEMON, "Supplied field was %u bytes.", vallen);
+        logger(LOG_INFO, "Supplied field was %u bytes.", vallen);
         return -1;
     }
 
@@ -204,7 +204,7 @@ int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype)
     } else if (msgtype == OPENLI_PROTO_MEDIATOR_AUTH) {
         populate_header(&hdr, msgtype, 0, OPENLI_MEDIATOR_MAGIC);
     } else {
-        logger(LOG_DAEMON, "OpenLI: invalid auth message type: %d.", msgtype);
+        logger(LOG_INFO, "OpenLI: invalid auth message type: %d.", msgtype);
         return -1;
     }
 
@@ -378,7 +378,7 @@ int push_intercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
         liid = ipint->common.liid;
         authcc = ipint->common.authcc;
     } else {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: invalid withdrawal type: %d\n", wdtype);
         return -1;
     }
@@ -386,7 +386,7 @@ int push_intercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
     /* Pre-compute our body length so we can write it in the header */
     totallen = INTERCEPT_WITHDRAW_BODY_LEN(liid, authcc);
     if (totallen > 65535) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: intercept withdrawal is too long to fit in a single message (%d).",
                 totallen);
         return -1;
@@ -413,7 +413,7 @@ int push_intercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
     return (int)totallen;
 
 pushwdfail:
-    logger(LOG_DAEMON,
+    logger(LOG_INFO,
             "OpenLI: unable to push intercept withdraw for %s to collector fd %d",
             liid, nb->fd);
     return -1;
@@ -428,7 +428,7 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
     /* Pre-compute our body length so we can write it in the header */
     if (VOIPINTERCEPT_BODY_LEN(vint) > 65535) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: VOIP intercept announcement is too long to fit in a single message (%d).",
                 VOIPINTERCEPT_BODY_LEN(vint));
         return -1;
@@ -468,7 +468,7 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     return (int)totallen;
 
 pushvoipintfail:
-    logger(LOG_DAEMON,
+    logger(LOG_INFO,
             "OpenLI: unable to push new VOIP intercept %s to collector fd %d",
             vint->common.liid, nb->fd);
     return -1;
@@ -491,7 +491,7 @@ static inline int push_sip_target_onto_net_buffer_generic(net_buffer_t *nb,
 
     if (msgtype != OPENLI_PROTO_ANNOUNCE_SIP_TARGET &&
             msgtype != OPENLI_PROTO_WITHDRAW_SIP_TARGET) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: push_sip_target_onto_net_buffer_generic() called with invalid message type: %d",
                 msgtype);
         return -1;
@@ -504,7 +504,7 @@ static inline int push_sip_target_onto_net_buffer_generic(net_buffer_t *nb,
     }
 
     if (totallen > 65535) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: SIP target announcement is too long to fit in a single message (%d).",
                 totallen);
         return -1;
@@ -543,11 +543,11 @@ static inline int push_sip_target_onto_net_buffer_generic(net_buffer_t *nb,
 
 pushsiptargetfail:
     if (sipid->realm) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: unable to push new SIP target %s@%s to collector fd %d",
             sipid->username, sipid->realm, nb->fd);
     } else {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: unable to push new SIP target %s@* to collector fd %d",
             sipid->username, nb->fd);
     }
@@ -585,7 +585,7 @@ static int push_static_ipranges_generic(net_buffer_t *nb, ipintercept_t *ipint,
 
     totallen = STATICIP_RANGE_BODY_LEN(ipint, ipr);
     if (totallen > 65535) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: static IP range is too long to fit in a single message (%d).", totallen);
         return -1;
     }
@@ -614,7 +614,7 @@ static int push_static_ipranges_generic(net_buffer_t *nb, ipintercept_t *ipint,
     return 0;
 
 pushstaticipfail:
-    logger(LOG_DAEMON,
+    logger(LOG_INFO,
             "OpenLI: unable to push static IP range to collector %d.", nb->fd);
     return -1;
 }
@@ -661,7 +661,7 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     }
 
     if (totallen > 65535) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: intercept announcement is too long to fit in a single message (%d).",
                 totallen);
         return -1;
@@ -725,7 +725,7 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     return (int)totallen;
 
 pushipintfail:
-    logger(LOG_DAEMON,
+    logger(LOG_INFO,
             "OpenLI: unable to push new IP intercept %s to collector fd %d",
             ipint->common.liid, nb->fd);
     return -1;
@@ -744,7 +744,7 @@ static inline int push_mediator_msg_onto_net_buffer(net_buffer_t *nb,
 
     /* Pre-compute our body length so we can write it in the header */
     if (MEDIATOR_BODY_LEN(med) > 65535) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: mediator announcement is too long to fit in a single message (%d).",
                 MEDIATOR_BODY_LEN(med));
         return -1;
@@ -805,7 +805,7 @@ static int push_coreserver_msg_onto_net_buffer(net_buffer_t *nb,
     /* Pre-compute our body length so we can write it in the header */
     totallen = CORESERVER_BODY_LEN(cs);
     if (totallen > 65535) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: %s server announcement is too long to fit in a single message (%d).",
                 coreserver_type_to_string(cstype), totallen);
         return -1;
@@ -865,13 +865,13 @@ int transmit_net_buffer(net_buffer_t *nb) {
     int ret;
 
     if (nb == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: attempted to transmit using a NULL buffer.");
         return -1;
     }
 
     if (nb->buftype != NETBUF_SEND) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: attempted to transmit using a receive buffer.");
         return -1;
     }
@@ -888,7 +888,7 @@ int transmit_net_buffer(net_buffer_t *nb) {
             /* Socket not available right now... */
             return 1;
         }
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: error while sending net buffer contents: %s.",
                 strerror(errno));
         return -1;
@@ -930,7 +930,7 @@ static openli_proto_msgtype_t parse_received_message(net_buffer_t *nb,
     hdr = (ii_header_t *)(nb->actptr);
 
     if (ntohl(hdr->magic) != OPENLI_PROTO_MAGIC) {
-        logger(LOG_DAEMON, "OpenLI: bogus message received via net buffer.");
+        logger(LOG_INFO, "OpenLI: bogus message received via net buffer.");
         dump_buffer_contents(nb->actptr, 64);
         assert(0);
         return OPENLI_PROTO_DISCONNECT;
@@ -959,19 +959,19 @@ static int decode_tlv(uint8_t *start, uint8_t *end,
 
     start += 2;
     if (start >= end) {
-        logger(LOG_DAEMON, "OpenLI: truncated TLV.");
+        logger(LOG_INFO, "OpenLI: truncated TLV.");
         return -1;
     }
 
     *l = ntohs(*((uint16_t *)start));
     start += 2;
     if (start >= end) {
-        logger(LOG_DAEMON, "OpenLI: truncated TLV.");
+        logger(LOG_INFO, "OpenLI: truncated TLV.");
         return -1;
     }
 
     if (start + *l > end) {
-        logger(LOG_DAEMON, "OpenLI: truncated TLV -- value is %u bytes, length field says %u\n",
+        logger(LOG_INFO, "OpenLI: truncated TLV -- value is %u bytes, length field says %u\n",
                 end - start, *l);
         return -1;
     }
@@ -1031,7 +1031,7 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
             vint->internalid = *((uint64_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                 "OpenLI: invalid field in received VOIP intercept: %d.", f);
             return -1;
         }
@@ -1105,7 +1105,7 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
             ipint->username_len = vallen;
         } else {
             dump_buffer_contents(msgbody, len);
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                 "OpenLI: invalid field in received IP intercept: %d.", f);
             return -1;
         }
@@ -1142,7 +1142,7 @@ int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
             DECODE_STRING_FIELD(med->portstr, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                 "OpenLI: invalid field in received mediator announcement: %d.",
                 f);
             return -1;
@@ -1186,7 +1186,7 @@ int decode_sip_target_announcement(uint8_t *msgbody, uint16_t len,
             sipid->realm_len = strlen(sipid->realm);
         } else if (f == OPENLI_PROTO_FIELD_LIID) {
             if (vallen >= spacelen) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: not enough space to save LIID from SIP target message -- space provided %d, required %u\n", spacelen, vallen);
                 return -1;
             }
@@ -1194,7 +1194,7 @@ int decode_sip_target_announcement(uint8_t *msgbody, uint16_t len,
             liidspace[vallen] = '\0';
         } else {
             dump_buffer_contents(msgbody, len);
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                 "OpenLI: invalid field in received core server announcement: %d.",
                 f);
             return -1;
@@ -1203,7 +1203,7 @@ int decode_sip_target_announcement(uint8_t *msgbody, uint16_t len,
     }
 
     if (sipid->username == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: received a SIP target message with no username?");
         return -1;
     }
@@ -1245,7 +1245,7 @@ int decode_coreserver_announcement(uint8_t *msgbody, uint16_t len,
             DECODE_STRING_FIELD(cs->portstr, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                 "OpenLI: invalid field in received core server announcement: %d.",
                 f);
             return -1;
@@ -1255,7 +1255,7 @@ int decode_coreserver_announcement(uint8_t *msgbody, uint16_t len,
 
     construct_coreserver_key(cs);
     if (cs->serverkey == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: core server announcement is missing an IP address");
         return -1;
     }
@@ -1293,7 +1293,7 @@ int decode_staticip_announcement(uint8_t *msgbody, uint16_t len,
             ipr->cin = *((uint32_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                 "OpenLI: invalid field in received LEA announcement: %d.",
                 f);
             return -1;
@@ -1347,7 +1347,7 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
             lea->keepalivewait = *((uint32_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                 "OpenLI: invalid field in received LEA announcement: %d.",
                 f);
             return -1;
@@ -1382,7 +1382,7 @@ int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
             DECODE_STRING_FIELD(*agency, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: invalid field in received LIID mapping: %d.",
                     f);
             return -1;
@@ -1409,7 +1409,7 @@ int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid) {
             DECODE_STRING_FIELD(*liid, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: invalid field in received cease mediation: %d.",
                     f);
             return -1;
@@ -1429,13 +1429,13 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
     int ret;
 
     if (nb == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: attempted to receive using a NULL buffer.");
         return OPENLI_PROTO_DISCONNECT;
     }
 
     if (nb->buftype != NETBUF_RECV) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: attempted to receive using a transmit buffer.");
         return OPENLI_PROTO_DISCONNECT;
     }
@@ -1461,7 +1461,7 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
             /* Other end disconnected */
             return OPENLI_PROTO_DISCONNECT;
         }
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: error while receiving data into net buffer: %s,",
                 strerror(errno));
         return OPENLI_PROTO_DISCONNECT;

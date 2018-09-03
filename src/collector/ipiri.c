@@ -243,7 +243,7 @@ int ipiri_create_id_printable(char *idstr, int length, ipiri_id_t *iriid) {
     }
 
     if (length > 128) {
-        logger(LOG_DAEMON, "OpenLI: Printable IPIRI ID is too long, truncating to 128 characters.");
+        logger(LOG_INFO, "OpenLI: Printable IPIRI ID is too long, truncating to 128 characters.");
         length = 128;
     }
 

@@ -289,7 +289,7 @@ static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
 
         }
         if (errno != EAGAIN) {
-            logger(LOG_DAEMON, "OpenLI: Error exporting to target %s:%s -- %s.",
+            logger(LOG_INFO, "OpenLI: Error exporting to target %s:%s -- %s.",
                 dest->details.ipstr, dest->details.portstr, strerror(errno));
             return -1;
         }
@@ -388,7 +388,7 @@ static void remove_destination(collector_export_t *exp,
             continue;
         }
 
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI exporter: removing mediator %u from export destination list",
                 med->mediatorid);
 
@@ -426,7 +426,7 @@ static int add_new_destination(collector_export_t *exp,
              * panic just yet. */
             if (strcmp(dest->details.ipstr, med->ipstr) != 0 ||
                     strcmp(dest->details.portstr, med->portstr) != 0) {
-                logger(LOG_DAEMON, "OpenLI: mediator %u has changed location from %s:%s to %s:%s.",
+                logger(LOG_INFO, "OpenLI: mediator %u has changed location from %s:%s to %s:%s.",
                         med->mediatorid, dest->details.ipstr,
                         dest->details.portstr, med->ipstr, med->portstr);
 
@@ -468,7 +468,7 @@ destepoll:
         exp->flagtimerfd = epoll_add_timer(exp->glob->epoll_fd, 10,
                 exp->flag_timer_ev);
         if (exp->flagtimerfd == -1) {
-            logger(LOG_DAEMON, "OpenLI: failed to add export timer fd to epoll set: %s.", strerror(errno));
+            logger(LOG_INFO, "OpenLI: failed to add export timer fd to epoll set: %s.", strerror(errno));
             return -1;
         }
     } else {
@@ -476,7 +476,7 @@ destepoll:
         its.it_value.tv_nsec = 0;
 
         if (timerfd_settime(exp->flagtimerfd, 0, &its, NULL) == -1) {
-            logger(LOG_DAEMON, "OpenLI: exporter has failed to reset the export timer fd: %s", strerror(errno));
+            logger(LOG_INFO, "OpenLI: exporter has failed to reset the export timer fd: %s", strerror(errno));
             return -1;
         }
     }
@@ -492,7 +492,7 @@ static void purge_unconfirmed_mediators(collector_export_t *exp) {
         dest = (export_dest_t *)(n->data);
         if (dest->awaitingconfirm) {
             if (dest->fd != -1) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI exporter: closing connection to unwanted mediator on fd %d", dest->fd);
                 close(dest->fd);
                 dest->fd = -1;
@@ -535,7 +535,7 @@ static int exporter_end_intercept(collector_export_t *exp,
     HASH_FIND(hh, exp->intercepts, msg->liid, strlen(msg->liid), intstate);
 
     if (!intstate) {
-        logger(LOG_DAEMON, "Exporter thread was told to end intercept LIID %s, but it is not a valid ID?",
+        logger(LOG_INFO, "Exporter thread was told to end intercept LIID %s, but it is not a valid ID?",
                 msg->liid);
         return -1;
     }
@@ -575,7 +575,7 @@ static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
         case OPENLI_EXPORT_IPMMIRI:
             return recvd->data.ipmmiri.cin;
     }
-    logger(LOG_DAEMON,
+    logger(LOG_INFO,
             "OpenLI: invalid message type in extract_cin_from_job: %u",
             recvd->type);
     return 0;
@@ -664,7 +664,7 @@ static int run_encoding_job(collector_export_t *exp,
 
     HASH_FIND(hh, exp->intercepts, liid, strlen(liid), intstate);
     if (!intstate) {
-        logger(LOG_DAEMON, "Received encoding job for an unknown LIID: %s??",
+        logger(LOG_INFO, "Received encoding job for an unknown LIID: %s??",
                 liid);
         return -1;
     }
@@ -674,7 +674,7 @@ static int run_encoding_job(collector_export_t *exp,
         cinseq = (cin_seqno_t *)malloc(sizeof(cin_seqno_t));
 
         if (!cinseq) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: out of memory when creating CIN seqno tracker in exporter thread");
             return -1;
         }
@@ -769,7 +769,7 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
             return 0;
 
         case OPENLI_EXPORT_DROP_ALL_MEDIATORS:
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI exporter: dropping connections to all known mediators.");
             remove_all_destinations(exp);
             exp->dests = libtrace_list_init(sizeof(export_dest_t));
@@ -804,7 +804,7 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
             return 0;
     }
 
-    logger(LOG_DAEMON,
+    logger(LOG_INFO,
             "OpenLI: invalid message type %d received from export queue.",
             recvd.type);
     return -1;
@@ -825,7 +825,7 @@ static int check_epoll_fd(collector_export_t *exp, struct epoll_event *ev) {
          * on for now.
          */
 
-        logger(LOG_DAEMON, "OpenLI: Thread lost connection to exporter?");
+        logger(LOG_INFO, "OpenLI: Thread lost connection to exporter?");
         return 0;
     }
 
@@ -859,7 +859,7 @@ static int check_epoll_fd(collector_export_t *exp, struct epoll_event *ev) {
         if (ev->events & EPOLLIN) {
             return 1;
         }
-        logger(LOG_DAEMON, "OpenLI: export thread timer has misbehaved.");
+        logger(LOG_INFO, "OpenLI: export thread timer has misbehaved.");
         return -1;
     }
 
@@ -889,7 +889,7 @@ int exporter_thread_main(collector_export_t *exp) {
 
     timerfd = epoll_add_timer(exp->glob->epoll_fd, 1, epoll_ev);
     if (timerfd == -1) {
-        logger(LOG_DAEMON, "OpenLI: failed to add export timer fd to epoll set: %s.", strerror(errno));
+        logger(LOG_INFO, "OpenLI: failed to add export timer fd to epoll set: %s.", strerror(errno));
         return -1;
     }
 
@@ -901,7 +901,7 @@ int exporter_thread_main(collector_export_t *exp) {
     	nfds = epoll_wait(exp->glob->epoll_fd, evs, 64, -1);
 
         if (nfds < 0) {
-            logger(LOG_DAEMON, "OpenLI: error while checking for messages to export: %s.", strerror(errno));
+            logger(LOG_INFO, "OpenLI: error while checking for messages to export: %s.", strerror(errno));
             return -1;
         }
 
@@ -915,7 +915,7 @@ int exporter_thread_main(collector_export_t *exp) {
 
     if (epoll_ctl(exp->glob->epoll_fd, EPOLL_CTL_DEL, timerfd, NULL) == -1)
     {
-        logger(LOG_DAEMON, "OpenLI: failed to remove export timer fd to epoll set: %s.", strerror(errno));
+        logger(LOG_INFO, "OpenLI: failed to remove export timer fd to epoll set: %s.", strerror(errno));
         return -1;
     }
 
@@ -957,7 +957,7 @@ void register_export_queues(support_thread_global_t *glob,
                     libtrace_message_queue_get_fd(&(qset->queues[i])),
                     &ev) == -1) {
             /* TODO Do something? */
-            logger(LOG_DAEMON, "OpenLI: failed to register export queue: %s",
+            logger(LOG_INFO, "OpenLI: failed to register export queue: %s",
                     strerror(errno));
         }
     }
@@ -1018,7 +1018,7 @@ int export_queue_put_by_queueid(export_queue_set_t *qset,
         openli_export_recv_t *msg, int queueid) {
 
     if (queueid < 0 || queueid >= qset->numqueues) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: bad export queue passed into export_queue_put_by_queueid: %d",
                 queueid);
         return -1;

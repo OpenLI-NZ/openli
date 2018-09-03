@@ -151,7 +151,7 @@ int check_alu_intercept(shared_global_info_t *info, colthread_local_t *loc,
         }
 
         if (ret == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "Removing %s:%s from ALU mirrors", cs->ipstr, cs->portstr);
             HASH_DELETE(hh, alusources, cs);
         }
@@ -171,7 +171,7 @@ int check_alu_intercept(shared_global_info_t *info, colthread_local_t *loc,
     /* See if the intercept ID is in our set of intercepts */
     HASH_FIND(hh, aluints, &shimintid, sizeof(shimintid), alu);
     if (alu == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "Warning: received packet from ALU mirror %s:%s with intercept ID %u, but that ID does not match an OpenLI intercept...",
                 cs->ipstr, cs->portstr, shimintid);
         return 0;
@@ -209,7 +209,7 @@ int check_alu_intercept(shared_global_info_t *info, colthread_local_t *loc,
     }
 
     if (!l3 || rem == 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "Warning: unable to find IP header of ALU-intercepted packet from mirror %s:%s (ID: %u)",
                 cs->ipstr, cs->portstr, shimintid);
         return -1;

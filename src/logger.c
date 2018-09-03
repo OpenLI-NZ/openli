@@ -60,6 +60,7 @@ void daemonise(char *name) {
     name = strrchr(name,'/') ? strrchr(name,'/') + 1 : name;
 
     openlog(name, LOG_PID, LOG_DAEMON);
+    setlogmask(LOG_UPTO(LOG_INFO));
 #endif
 
 }
@@ -72,8 +73,6 @@ void logger(int priority, const char *fmt, ...) {
     if (daemonised) {
         vsnprintf(buffer, sizeof(buffer), fmt, ap);
 #if HAVE_SYSLOG_H
-        /* Ensure logs have an appropriate priority */
-        priority |= LOG_INFO;
         syslog(priority, "%s", buffer);
 #endif
     } else {

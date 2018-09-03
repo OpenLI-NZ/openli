@@ -288,14 +288,14 @@ ip_reassemble_stream_t *get_ipfrag_reassemble_stream(
     memset(&ipid, 0, sizeof(ipid));
     if (extract_ip_addresses(pkt, ipid.srcip, ipid.destip, &(ipid.ipfamily))
             != 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: error while extracting IP addresses from fragment.");
         return NULL;
     }
 
     iphdr = trace_get_ip(pkt);
     if (!iphdr) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: trace_get_ip() failed for IP fragment?");
         return NULL;
     }
@@ -518,7 +518,7 @@ int get_ipfrag_ports(ip_reassemble_stream_t *stream, uint16_t *src,
     }
 
     if (first->length < 4) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: initial IP fragment is less than four bytes?");
         return 0;
     }
@@ -588,7 +588,7 @@ int get_next_ip_reassembled(ip_reassemble_stream_t *stream, char **content,
             contalloced = expfrag + (iter->length * 2);
 
             if (*content == NULL) {
-                logger(LOG_DAEMON, "OpenLI: OOM while allocating %u bytes to store reassembled IP fragments.", contalloced);
+                logger(LOG_INFO, "OpenLI: OOM while allocating %u bytes to store reassembled IP fragments.", contalloced);
                 return -1;
             }
         }
@@ -645,7 +645,7 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
             *len = contused + (iter->length * 2);
 
             if (*content == NULL) {
-                logger(LOG_DAEMON, "OpenLI: OOM while allocating %u bytes to store reassembled TCP stream.", *len);
+                logger(LOG_INFO, "OpenLI: OOM while allocating %u bytes to store reassembled TCP stream.", *len);
                 return -1;
             }
         }

@@ -179,7 +179,7 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
 
 
     if (rem < sizeof(libtrace_ip_t)) {
-        logger(LOG_DAEMON, "OpenLI: Got IPv4 RTP packet with truncated header?");
+        logger(LOG_INFO, "OpenLI: Got IPv4 RTP packet with truncated header?");
         return 0;
     }
 
@@ -204,7 +204,7 @@ int ip6mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
 
 
     if (rem < sizeof(libtrace_ip6_t)) {
-        logger(LOG_DAEMON, "OpenLI: Got IPv6 RTP packet with truncated header?");
+        logger(LOG_INFO, "OpenLI: Got IPv6 RTP packet with truncated header?");
         return 0;
     }
 
@@ -213,7 +213,7 @@ int ip6mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     }
 
     if (pinfo->srcport == 0 || pinfo->destport == 0) {
-        logger(LOG_DAEMON, "OpenLI: IPv6 RTP packet is missing a port number.");
+        logger(LOG_INFO, "OpenLI: IPv6 RTP packet is missing a port number.");
         return 0;
     }
 

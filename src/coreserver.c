@@ -58,7 +58,7 @@ static struct addrinfo *populate_addrinfo(char *ipstr, char *portstr,
 
     s = getaddrinfo(ipstr, portstr, &hints, &res);
     if (s != 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: error calling getaddrinfo on %s:%s: %s",
                 ipstr, portstr, gai_strerror(s));
         return NULL;

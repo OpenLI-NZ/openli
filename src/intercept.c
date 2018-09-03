@@ -452,7 +452,7 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
     ipintercept_t *check;
 
     if (ipint->username == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: attempted to add non-user-based IP intercept to user intercept list.");
         return -1;
     }
@@ -461,14 +461,14 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
     if (!found) {
         found = (user_intercept_list_t *)malloc(sizeof(user_intercept_list_t));
         if (!found) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: out of memory in add_intercept_to_userlist()");
             return -1;
         }
         found->username = strdup(ipint->username);
         if (!found->username) {
             free(found);
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: out of memory in add_intercept_to_userlist()");
             return -1;
         }
@@ -480,7 +480,7 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
     HASH_FIND(hh_user, found->intlist, ipint->common.liid,
             ipint->common.liid_len, check);
     if (check) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: user %s already has an intercept with ID %s?",
                 found->username, ipint->common.liid);
         return -1;
@@ -498,7 +498,7 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
     ipintercept_t *existing;
 
     if (ipint->username == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: attempted to remove non-user-based IP intercept from user intercept list.");
         return -1;
     }

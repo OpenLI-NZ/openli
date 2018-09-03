@@ -181,7 +181,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     if (trace_is_err(trace)) {
         libtrace_err_t err = trace_get_err(trace);
-        logger(LOG_DAEMON, "OpenLI: halting input due to error: %s",
+        logger(LOG_INFO, "OpenLI: halting input due to error: %s",
                 err.problem);
     }
 
@@ -366,7 +366,7 @@ static inline int is_core_server_packet(libtrace_packet_t *pkt,
         }
 
         if (ret == -1) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "Removing %s:%s from %s server list due to getaddrinfo error",
                     rad->ipstr, rad->portstr,
                     coreserver_type_to_string(rad->servertype));
@@ -382,7 +382,7 @@ static inline int is_core_server_packet(libtrace_packet_t *pkt,
 
         if (ret == -1) {
             /* should never happen at this point? */
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "Removing %s:%s from %s server list due to getaddrinfo error",
                     rad->ipstr, rad->portstr,
                     coreserver_type_to_string(rad->servertype));
@@ -452,20 +452,20 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         if (moreflag || fragoff > 0) {
             ipstream = get_ipfrag_reassemble_stream(loc->fragreass, pkt);
             if (!ipstream) {
-                logger(LOG_DAEMON, "OpenLI: error trying to reassemble IP fragment in collector.");
+                logger(LOG_INFO, "OpenLI: error trying to reassemble IP fragment in collector.");
                 return pkt;
             }
 
             ret = update_ipfrag_reassemble_stream(ipstream, pkt, fragoff,
                     moreflag);
             if (ret < 0) {
-                logger(LOG_DAEMON, "OpenLI: error while trying to reassemble IP fragment in collector.");
+                logger(LOG_INFO, "OpenLI: error while trying to reassemble IP fragment in collector.");
                 return pkt;
             }
 
             if (get_ipfrag_ports(ipstream, &(pinfo.srcport), &(pinfo.destport))
                     < 0) {
-                logger(LOG_DAEMON, "OpenLI: unable to get port numbers from fragmented IP.");
+                logger(LOG_INFO, "OpenLI: unable to get port numbers from fragmented IP.");
                 return pkt;
             }
 
@@ -611,7 +611,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
 
     if (trace_is_err(inp->trace)) {
         libtrace_err_t lterr = trace_get_err(inp->trace);
-        logger(LOG_DAEMON, "OpenLI: Failed to create trace for input %s: %s",
+        logger(LOG_INFO, "OpenLI: Failed to create trace for input %s: %s",
                 inp->uri, lterr.problem);
         return 0;
     }
@@ -621,12 +621,12 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
 
     if (trace_pstart(inp->trace, glob, inp->pktcbs, NULL) == -1) {
         libtrace_err_t lterr = trace_get_err(inp->trace);
-        logger(LOG_DAEMON, "OpenLI: Failed to start trace for input %s: %s",
+        logger(LOG_INFO, "OpenLI: Failed to start trace for input %s: %s",
                 inp->uri, lterr.problem);
         return 0;
     }
 
-    logger(LOG_DAEMON,
+    logger(LOG_INFO,
             "OpenLI: collector has started reading packets from %s using %d threads.",
             inp->uri, inp->threadcount);
     inp->running = 1;
@@ -643,7 +643,7 @@ static void reload_inputs(collector_global_t *glob,
                 newinp);
         if (!newinp || newinp->threadcount != oldinp->threadcount) {
             /* This input is no longer wanted at all */
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI collector: stop reading packets from %s\n",
                     oldinp->uri);
             trace_pstop(oldinp->trace);
@@ -675,7 +675,7 @@ static void *start_export_thread(void *params) {
     int connected = 0;
 
     if (exp == NULL) {
-        logger(LOG_DAEMON, "OpenLI: exporting thread is not functional!");
+        logger(LOG_INFO, "OpenLI: exporting thread is not functional!");
         collector_halt = 1;
         pthread_exit(NULL);
     }
@@ -687,7 +687,7 @@ static void *start_export_thread(void *params) {
     }
 
     destroy_exporter(exp);
-    logger(LOG_DAEMON, "OpenLI: exiting export thread.");
+    logger(LOG_DEBUG, "OpenLI: exiting export thread.");
     pthread_exit(NULL);
 }
 
@@ -830,7 +830,7 @@ int register_sync_queues(support_thread_global_t *glob,
     if (epoll_ctl(glob->epoll_fd, EPOLL_CTL_ADD, syncev->fd,
                 &ev) == -1) {
         /* TODO Do something? */
-        logger(LOG_DAEMON, "OpenLI: failed to register processor->sync queue: %s",
+        logger(LOG_INFO, "OpenLI: failed to register processor->sync queue: %s",
                 strerror(errno));
         pthread_mutex_unlock(&(glob->mutex));
         return -1;
@@ -873,7 +873,7 @@ void deregister_sync_queues(support_thread_global_t *glob,
     if (syncev) {
         if (glob->epoll_fd != -1 && epoll_ctl(glob->epoll_fd,
                     EPOLL_CTL_DEL, syncev->fd, &ev) == -1) {
-            logger(LOG_DAEMON, "OpenLI: failed to de-register processor->sync queue %d: %s", syncev->fd, strerror(errno));
+            logger(LOG_INFO, "OpenLI: failed to de-register processor->sync queue %d: %s", syncev->fd, strerror(errno));
         }
         HASH_DELETE(hh, syncev_hash, syncev);
         free(syncev);
@@ -926,19 +926,19 @@ static collector_global_t *parse_global_config(char *configfile) {
     }
 
     if (glob->sharedinfo.networkelemid == NULL) {
-        logger(LOG_DAEMON, "OpenLI: No network element ID specified in config file. Exiting.");
+        logger(LOG_INFO, "OpenLI: No network element ID specified in config file. Exiting.");
         clear_global_config(glob);
         glob = NULL;
     }
 
     else if (glob->sharedinfo.operatorid == NULL) {
-        logger(LOG_DAEMON, "OpenLI: No operator ID specified in config file. Exiting.");
+        logger(LOG_INFO, "OpenLI: No operator ID specified in config file. Exiting.");
         clear_global_config(glob);
         glob = NULL;
     }
 
     else if (glob->sharedinfo.provisionerip == NULL) {
-        logger(LOG_DAEMON, "OpenLI collector: no provisioner IP address specified in config file. Exiting.");
+        logger(LOG_INFO, "OpenLI collector: no provisioner IP address specified in config file. Exiting.");
         clear_global_config(glob);
         glob = NULL;
     }
@@ -954,7 +954,7 @@ static int reload_collector_config(collector_global_t *glob,
 
     newstate = parse_global_config(glob->configfile);
     if (newstate == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: error reloading config file for collector.");
         return -1;
     }
@@ -963,7 +963,7 @@ static int reload_collector_config(collector_global_t *glob,
                 glob->sharedinfo.provisionerip) != 0 ||
             strcmp(newstate->sharedinfo.provisionerport,
                     glob->sharedinfo.provisionerport) != 0) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI collector: disconnecting from provisioner due to config change.");
         sync_disconnect_provisioner(sync);
         free(glob->sharedinfo.provisionerip);
@@ -971,7 +971,7 @@ static int reload_collector_config(collector_global_t *glob,
         glob->sharedinfo.provisionerip = strdup(newstate->sharedinfo.provisionerip);
         glob->sharedinfo.provisionerport = strdup(newstate->sharedinfo.provisionerport);
     } else {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI collector: provisioner socket configuration is unchanged.");
     }
 
@@ -1038,7 +1038,7 @@ static void *start_voip_sync_thread(void *params) {
     } while (1);
 
     free(sync);
-    logger(LOG_DAEMON, "OpenLI: exiting VOIP sync thread.");
+    logger(LOG_DEBUG, "OpenLI: exiting VOIP sync thread.");
     pthread_exit(NULL);
 }
 
@@ -1075,7 +1075,7 @@ static void *start_ip_sync_thread(void *params) {
             ret = sync_connect_provisioner(sync);
             if (ret < 0) {
                 /* Fatal error */
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: collector is unable to reach provisioner.");
                 break;
             }
@@ -1110,7 +1110,7 @@ static void *start_ip_sync_thread(void *params) {
     } while (1);
 
     free(sync);
-    logger(LOG_DAEMON, "OpenLI: exiting sync thread.");
+    logger(LOG_DEBUG, "OpenLI: exiting sync thread.");
     pthread_exit(NULL);
 
 }
@@ -1152,14 +1152,14 @@ int main(int argc, char *argv[]) {
                 usage(argv[0]);
                 return 1;
             default:
-                logger(LOG_DAEMON, "OpenLI: unsupported option: %c", c);
+                logger(LOG_INFO, "OpenLI: unsupported option: %c", c);
                 usage(argv[0]);
                 return 1;
         }
     }
 
     if (configfile == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: no config file specified. Use -c to specify one.");
         usage(argv[0]);
         return 1;
@@ -1194,7 +1194,7 @@ int main(int argc, char *argv[]) {
 
     sigemptyset(&sig_block_all);
     if (pthread_sigmask(SIG_SETMASK, &sig_block_all, &sig_before) < 0) {
-        logger(LOG_DAEMON, "Unable to disable signals before starting threads.");
+        logger(LOG_INFO, "Unable to disable signals before starting threads.");
         return 1;
     }
     /* Start export threads */
@@ -1206,7 +1206,7 @@ int main(int argc, char *argv[]) {
         ret = pthread_create(&(glob->exporters[i].threadid), NULL,
                 start_export_thread, (void *)&(glob->exporters[i]));
         if (ret != 0) {
-            logger(LOG_DAEMON, "OpenLI: error creating exporter. Exiting.");
+            logger(LOG_INFO, "OpenLI: error creating exporter. Exiting.");
             return 1;
         }
     }
@@ -1215,7 +1215,7 @@ int main(int argc, char *argv[]) {
     ret = pthread_create(&(glob->syncip.threadid), NULL, start_ip_sync_thread,
             (void *)glob);
     if (ret != 0) {
-        logger(LOG_DAEMON, "OpenLI: error creating IP sync thread. Exiting.");
+        logger(LOG_INFO, "OpenLI: error creating IP sync thread. Exiting.");
         return 1;
     }
 
@@ -1223,12 +1223,12 @@ int main(int argc, char *argv[]) {
     ret = pthread_create(&(glob->syncvoip.threadid), NULL,
             start_voip_sync_thread, (void *)glob);
     if (ret != 0) {
-        logger(LOG_DAEMON, "OpenLI: error creating VOIP sync thread. Exiting.");
+        logger(LOG_INFO, "OpenLI: error creating VOIP sync thread. Exiting.");
         return 1;
     }
 
     if (pthread_sigmask(SIG_SETMASK, &sig_before, NULL)) {
-        logger(LOG_DAEMON, "Unable to re-enable signals after starting threads.");
+        logger(LOG_INFO, "Unable to re-enable signals after starting threads.");
         return 1;
     }
 
@@ -1236,21 +1236,21 @@ int main(int argc, char *argv[]) {
     while (!collector_halt) {
         sigemptyset(&sig_block_all);
         if (pthread_sigmask(SIG_SETMASK, &sig_block_all, &sig_before) < 0) {
-            logger(LOG_DAEMON, "Unable to disable signals before starting threads.");
+            logger(LOG_INFO, "Unable to disable signals before starting threads.");
             return 1;
         }
 
         pthread_rwlock_rdlock(&(glob->config_mutex));
         HASH_ITER(hh, glob->inputs, inp, tmp) {
             if (start_input(glob, inp, todaemon, argv[0]) == 0) {
-                logger(LOG_DAEMON, "OpenLI: failed to start input %s\n",
+                logger(LOG_INFO, "OpenLI: failed to start input %s\n",
                         inp->uri);
             }
         }
         pthread_rwlock_unlock(&(glob->config_mutex));
 
         if (pthread_sigmask(SIG_SETMASK, &sig_before, NULL)) {
-            logger(LOG_DAEMON, "Unable to re-enable signals after starting threads.");
+            logger(LOG_INFO, "Unable to re-enable signals after starting threads.");
             return 1;
         }
         usleep(1000);
@@ -1270,7 +1270,7 @@ int main(int argc, char *argv[]) {
         pthread_join(glob->exporters[i].threadid, NULL);
     }
 
-    logger(LOG_DAEMON, "OpenLI: exiting OpenLI Collector.");
+    logger(LOG_INFO, "OpenLI: exiting OpenLI Collector.");
     /* Tidy up, exit */
     clear_global_config(glob);
 
