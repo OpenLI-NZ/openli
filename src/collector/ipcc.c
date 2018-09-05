@@ -211,9 +211,8 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
                 matched ++;
                 make_static_ipcc_job(&msg, matchsess, pkt, dir, info);
                 trace_increment_packet_refcount(pkt);
-                queueused = export_queue_put_by_liid(loc->exportqueues,
-                        &msg, sliid->liid);
-                loc->export_used[queueused] = 1;
+                export_queue_put_by_liid(loc->zmq_pubsock, &msg,
+                        matchsess->common.liid, loc->numexporters);
             }
         }
         pnode = pnode->parent;
@@ -251,9 +250,8 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             make_ipcc_job(&msg, sess, pkt, 0, info);
             trace_increment_packet_refcount(pkt);
-            queueused = export_queue_put_by_liid(loc->exportqueues,
-                    &msg, sess->common.liid);
-            loc->export_used[queueused] = 1;
+            export_queue_put_by_liid(loc->zmq_pubsock, &msg,
+                    sess->common.liid, loc->numexporters);
         }
     }
 
@@ -266,9 +264,8 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             make_ipcc_job(&msg, sess, pkt, 1, info);
             trace_increment_packet_refcount(pkt);
-            queueused = export_queue_put_by_liid(loc->exportqueues,
-                    &msg, sess->common.liid);
-            loc->export_used[queueused] = 1;
+            export_queue_put_by_liid(loc->zmq_pubsock, &msg,
+                    sess->common.liid, loc->numexporters);
         }
     }
 
@@ -317,9 +314,8 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             make_ipcc_job(&msg, sess, pkt, 0, info);
             trace_increment_packet_refcount(pkt);
-            queueused = export_queue_put_by_liid(loc->exportqueues,
-                    &msg, sess->common.liid);
-            loc->export_used[queueused] = 1;
+            export_queue_put_by_liid(loc->zmq_pubsock, &msg,
+                    sess->common.liid, loc->numexporters);
         }
     }
 
@@ -332,9 +328,8 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             make_ipcc_job(&msg, sess, pkt, 1, info);
             trace_increment_packet_refcount(pkt);
-            queueused = export_queue_put_by_liid(loc->exportqueues,
-                    &msg, sess->common.liid);
-            loc->export_used[queueused] = 1;
+            export_queue_put_by_liid(loc->zmq_pubsock, &msg,
+                    sess->common.liid, loc->numexporters);
         }
     }
 

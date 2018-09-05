@@ -44,14 +44,6 @@ typedef struct export_dest {
     export_buffer_t buffer;
 } export_dest_t;
 
-typedef struct exporter_epoll {
-    uint8_t type;
-    union {
-        libtrace_message_queue_t *q;
-        export_dest_t *dest;
-    } data;
-} exporter_epoll_t;
-
 typedef struct exporter_intercept_msg {
     char *liid;
     int liid_len;
@@ -77,7 +69,7 @@ typedef struct intercept_state {
 
 typedef struct colexp_data {
 
-    support_thread_global_t *glob;
+    export_thread_data_t *glob;
     libtrace_list_t *dests;     // if dests gets large, replace with map?
     exporter_intercept_state_t *intercepts;
     wandder_encoder_t *encoder;
@@ -85,8 +77,9 @@ typedef struct colexp_data {
 
     uint8_t flagged;
     int failed_conns;
-    exporter_epoll_t *flag_timer_ev;
     int flagtimerfd;
+
+    void *zmq_subsock;
 
 } collector_export_t;
 
@@ -182,19 +175,18 @@ typedef struct openli_export_recv {
 } PACKED openli_export_recv_t;
 
 
-collector_export_t *init_exporter(support_thread_global_t *glob);
+collector_export_t *init_exporter(export_thread_data_t *glob);
 int connect_export_targets(collector_export_t *exp);
 void destroy_exporter(collector_export_t *exp);
 int exporter_thread_main(collector_export_t *exp);
 void register_export_queues(support_thread_global_t *glob,
         export_queue_set_t *qset);
 
-export_queue_set_t *create_export_queue_set(int numqueues);
-void free_export_queue_set(export_queue_set_t *qset);
-void export_queue_put_all(export_queue_set_t *qset, openli_export_recv_t *msg);
-int export_queue_put_by_liid(export_queue_set_t *qset,
-        openli_export_recv_t *msg, char *liid);
-int export_queue_put_by_queueid(export_queue_set_t *qset,
+void export_queue_put_all(void *pubsock, openli_export_recv_t *msg,
+        int numexporters);
+int export_queue_put_by_liid(void *pubsock,
+        openli_export_recv_t *msg, char *liid, int numexporters);
+int export_queue_put_by_queueid(void *pubsock,
         openli_export_recv_t *msg, int queueid);
 
 

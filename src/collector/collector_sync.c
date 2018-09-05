@@ -61,8 +61,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->instruct_fd = -1;
     sync->instruct_fail = 0;
     sync->ii_ev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
-    sync->exportqueues = create_export_queue_set(glob->exportthreads);
-    sync->export_used = (uint8_t *)malloc(sizeof(uint8_t) * glob->exportthreads);
+    sync->numexporters = glob->exportthreads;
 
     sync->outgoing = NULL;
     sync->incoming = NULL;
@@ -71,6 +70,10 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->radiusplugin = init_access_plugin(ACCESS_RADIUS);
     sync->freegenerics = NULL;
     sync->activeips = NULL;
+
+    sync->zmq_pubsock = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
+    zmq_connect(sync->zmq_pubsock, "inproc://subproxy");
+
     return sync;
 
 }
@@ -85,16 +88,11 @@ void clean_sync_data(collector_sync_t *sync) {
         sync->instruct_fd = -1;
 	}
 
-    if (sync->export_used) {
-        free(sync->export_used);
-    }
-
     HASH_ITER(hh, sync->activeips, iter, tmp) {
         HASH_DELETE(hh, sync->activeips, iter);
         free(iter);
     }
 
-    free_export_queue_set(sync->exportqueues);
     free_all_users(sync->allusers);
     clear_user_intercept_list(sync->userintercepts);
     free_all_ipintercepts(&(sync->ipintercepts));
@@ -128,6 +126,10 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->ii_ev = NULL;
     sync->radiusplugin = NULL;
     sync->activeips = NULL;
+
+    if (sync->zmq_pubsock) {
+        zmq_close(sync->zmq_pubsock);
+    }
 
 }
 
@@ -216,9 +218,8 @@ static int create_ipiri_from_iprange(collector_sync_t *sync,
         sin6->sin6_scope_id = 0;
     }
 
-    queueused = export_queue_put_by_liid(sync->exportqueues, &irimsg,
-            ipint->common.liid);
-    sync->export_used[queueused] = 1;
+    queueused = export_queue_put_by_liid(sync->zmq_pubsock, &irimsg,
+            ipint->common.liid, sync->numexporters);
     free(prefix);
     return queueused;
 
@@ -260,9 +261,8 @@ static int create_ipiri_from_session(collector_sync_t *sync,
                 sizeof(struct sockaddr_storage));
     }
 
-    queueused = export_queue_put_by_liid(sync->exportqueues, &irimsg,
-            ipint->common.liid);
-    sync->export_used[queueused] = 1;
+    queueused = export_queue_put_by_liid(sync->zmq_pubsock, &irimsg,
+            ipint->common.liid, sync->numexporters);
     return queueused;
 
 }
@@ -603,13 +603,13 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
         return -1;
     }
 
-    for (i = 0; i < sync->exportqueues->numqueues; i++) {
+    for (i = 0; i < sync->numexporters; i++) {
         memset(&expmsg, 0, sizeof(openli_export_recv_t));
         expmsg.type = OPENLI_EXPORT_MEDIATOR;
         expmsg.data.med.ipstr = strdup(med.ipstr);
         expmsg.data.med.portstr = strdup(med.portstr);
         expmsg.data.med.mediatorid = med.mediatorid;
-        export_queue_put_by_queueid(sync->exportqueues, &expmsg, i);
+        export_queue_put_by_queueid(sync->zmq_pubsock, &expmsg, i);
     }
     free(med.ipstr);
     free(med.portstr);
@@ -628,14 +628,14 @@ static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
         return -1;
     }
 
-    for (i = 0; i < sync->exportqueues->numqueues; i++) {
+    for (i = 0; i < sync->numexporters; i++) {
         memset(&expmsg, 0, sizeof(openli_export_recv_t));
         expmsg.type = OPENLI_EXPORT_DROP_SINGLE_MEDIATOR;
         expmsg.data.med.mediatorid = med.mediatorid;
         expmsg.data.med.ipstr = NULL;
         expmsg.data.med.portstr = NULL;
 
-        export_queue_put_by_queueid(sync->exportqueues, &expmsg, i);
+        export_queue_put_by_queueid(sync->zmq_pubsock, &expmsg, i);
     }
     free(med.ipstr);
     free(med.portstr);
@@ -739,7 +739,7 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             torem.common.liid_len, ipint);
 
     remove_ip_intercept(sync, ipint);
-    for (i = 0; i < sync->exportqueues->numqueues; i++) {
+    for (i = 0; i < sync->numexporters; i++) {
         expmsg.type = OPENLI_EXPORT_INTERCEPT_OVER;
         expmsg.data.cept = (exporter_intercept_msg_t *)malloc(
                 sizeof(exporter_intercept_msg_t));
@@ -750,7 +750,7 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         expmsg.data.cept->authcc_len = ipint->common.authcc_len;
         expmsg.data.cept->delivcc_len = ipint->common.delivcc_len;
 
-        export_queue_put_by_queueid(sync->exportqueues, &expmsg, i);
+        export_queue_put_by_queueid(sync->zmq_pubsock, &expmsg, i);
     }
     free_single_ipintercept(ipint);
 
@@ -763,7 +763,7 @@ static inline void drop_all_mediators(collector_sync_t *sync) {
     memset(&expmsg, 0, sizeof(openli_export_recv_t));
     expmsg.type = OPENLI_EXPORT_DROP_ALL_MEDIATORS;
     expmsg.data.packet = NULL;
-    export_queue_put_all(sync->exportqueues, &expmsg);
+    export_queue_put_all(sync->zmq_pubsock, &expmsg, sync->numexporters);
 }
 
 static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
@@ -876,7 +876,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
             cept->common.liid_len, cept);
 
-    for (i = 0; i < sync->exportqueues->numqueues; i++) {
+    for (i = 0; i < sync->numexporters; i++) {
         expmsg.type = OPENLI_EXPORT_INTERCEPT_DETAILS;
         expmsg.data.cept = (exporter_intercept_msg_t *)malloc(
                 sizeof(exporter_intercept_msg_t));
@@ -887,7 +887,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         expmsg.data.cept->authcc_len = cept->common.authcc_len;
         expmsg.data.cept->delivcc_len = cept->common.delivcc_len;
 
-        export_queue_put_by_queueid(sync->exportqueues, &expmsg, i);
+        export_queue_put_by_queueid(sync->zmq_pubsock, &expmsg, i);
     }
 
     return 0;
@@ -1106,7 +1106,7 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
     expmsg.type = OPENLI_EXPORT_FLAG_MEDIATORS;
     expmsg.data.packet = NULL;
 
-    export_queue_put_all(sync->exportqueues, &expmsg);
+    export_queue_put_all(sync->zmq_pubsock, &expmsg, sync->numexporters);
 
 
 }
@@ -1367,9 +1367,6 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
             }
         }
     }
-
-    memset(sync->export_used, 0, sizeof(uint8_t) *
-            sync->exportqueues->numqueues);
 
     if (userint && accessaction != ACCESS_ACTION_NONE) {
         p->uncouple_parsed_data(p);

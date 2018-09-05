@@ -57,8 +57,9 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
     sync->glob = &(glob->syncvoip);
     sync->info = &(glob->sharedinfo);
 
-    sync->exportqueues = create_export_queue_set(glob->exportthreads);
-    sync->export_used = (uint8_t *)malloc(sizeof(uint8_t)*glob->exportthreads);
+    sync->numexporters = glob->exportthreads;
+    sync->zmq_pubsock = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
+    zmq_connect(sync->zmq_pubsock, "inproc://subproxy");
 
     sync->intersyncq = &(glob->intersyncq);
     sync->intersync_ev.fdtype = SYNC_EVENT_INTERSYNC;
@@ -107,12 +108,6 @@ void clean_sync_voip_data(collector_sync_voip_t *sync) {
         release_sip_parser(sync->sipparser);
     }
 
-    if (sync->export_used) {
-        free(sync->export_used);
-    }
-
-    free_export_queue_set(sync->exportqueues);
-
     sync->voipintercepts = NULL;
     sync->knowncallids = NULL;
     sync->sipparser = NULL;
@@ -135,6 +130,10 @@ void clean_sync_voip_data(collector_sync_voip_t *sync) {
 
     if (sync->sipdebugfile) {
         free(sync->sipdebugfile);
+    }
+
+    if (sync->zmq_pubsock) {
+        zmq_close(sync->zmq_pubsock);
     }
 
 }
@@ -557,7 +556,6 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
     rtpstreaminf_t *thisrtp;
     etsili_iri_type_t iritype = ETSILI_IRI_REPORT;
     int exportcount = 0;
-    int ret;
 
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
         int queueused;
@@ -617,10 +615,9 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
         if (irimsg->data.ipmmiri.packet) {
             trace_increment_packet_refcount(irimsg->data.ipmmiri.packet);
         }
-        queueused = export_queue_put_by_liid(sync->exportqueues, irimsg,
-                vint->common.liid);
-        sync->export_used[queueused] = 1;
-        exportcount += ret;
+        export_queue_put_by_liid(sync->zmq_pubsock, irimsg,
+                vint->common.liid, sync->numexporters);
+        exportcount += 1;
     }
     return exportcount;
 
@@ -639,7 +636,6 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     char *ipstr, *portstr, *cseqstr;
     int exportcount = 0;
     etsili_iri_type_t iritype = ETSILI_IRI_REPORT;
-    int ret;
 
     if (get_sip_to_uri_identity(sync->sipparser, &touriid) < 0) {
         logger(LOG_INFO,
@@ -739,10 +735,9 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         if (irimsg->data.ipmmiri.packet) {
             trace_increment_packet_refcount(irimsg->data.ipmmiri.packet);
         }
-        queueused = export_queue_put_by_liid(sync->exportqueues, irimsg,
-                vint->common.liid);
-        sync->export_used[queueused] = 1;
-        exportcount += ret;
+        export_queue_put_by_liid(sync->zmq_pubsock, irimsg,
+                vint->common.liid, sync->numexporters);
+        exportcount += 1;
     }
     return exportcount;
 
@@ -808,7 +803,6 @@ static int update_sip_state(collector_sync_voip_t *sync,
         strncpy(sdpo.username, "unknown", sizeof(sdpo.username) - 1);
     }
 
-    memset(sync->export_used, 0, sizeof(uint8_t) * sync->exportqueues->numqueues);
     ret = 0;
     if (sip_is_invite(sync->sipparser)) {
         if ((ret = process_sip_invite(sync, callid, &sdpo, irimsg)) < 0) {
@@ -865,7 +859,7 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
 
     push_voipintercept_halt_to_threads(sync, vint);
 
-    for (i = 0; i < sync->exportqueues->numqueues; i++) {
+    for (i = 0; i < sync->numexporters; i++) {
         memset(&expmsg, 0, sizeof(openli_export_recv_t));
         expmsg.type = OPENLI_EXPORT_INTERCEPT_OVER;
         expmsg.data.cept = (exporter_intercept_msg_t *)malloc(
@@ -877,7 +871,7 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         expmsg.data.cept->authcc_len = vint->common.authcc_len;
         expmsg.data.cept->delivcc_len = vint->common.delivcc_len;
 
-        export_queue_put_by_queueid(sync->exportqueues, &expmsg, i);
+        export_queue_put_by_queueid(sync->zmq_pubsock, &expmsg, i);
     }
 
     HASH_DELETE(hh_liid, sync->voipintercepts, vint);
@@ -1131,7 +1125,7 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     HASH_ADD_KEYPTR(hh_liid, sync->voipintercepts, vint->common.liid,
             vint->common.liid_len, vint);
 
-    for (i = 0; i < sync->exportqueues->numqueues; i++) {
+    for (i = 0; i < sync->numexporters; i++) {
         memset(&expmsg, 0, sizeof(openli_export_recv_t));
         expmsg.type = OPENLI_EXPORT_INTERCEPT_DETAILS;
         expmsg.data.cept = (exporter_intercept_msg_t *)malloc(
@@ -1143,7 +1137,7 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         expmsg.data.cept->authcc_len = vint->common.authcc_len;
         expmsg.data.cept->delivcc_len = vint->common.delivcc_len;
 
-        export_queue_put_by_queueid(sync->exportqueues, &expmsg, i);
+        export_queue_put_by_queueid(sync->zmq_pubsock, &expmsg, i);
     }
 
     pthread_mutex_lock(&(sync->glob->mutex));

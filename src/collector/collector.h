@@ -34,6 +34,7 @@
 #include <libtrace/linked_list.h>
 #include <uthash.h>
 #include <libwandder.h>
+#include <zmq.h>
 
 #include "patricia.h"
 #include "coreserver.h"
@@ -176,9 +177,9 @@ typedef struct colthread_local {
 
     staticipsession_t *activestaticintercepts;
 
-    /* Message queues for exporting LI records */
-    export_queue_set_t *exportqueues;
-    uint8_t *export_used;
+    /* Message queue for exporting LI records */
+    int numexporters;
+    void *zmq_pubsock;
 
     /* Known RADIUS servers, i.e. if we see traffic to or from these
      * servers, we assume it is RADIUS.
@@ -220,16 +221,28 @@ typedef struct supporting_thread_global {
 
 } support_thread_global_t;
 
+typedef struct export_thread_data {
+    pthread_t threadid;
+    void *zmq_ctxt;
+    int exportlabel;
+} export_thread_data_t;
+
+
 typedef struct collector_global {
 
+    void *zmq_ctxt;
     colinput_t *inputs;
     int exportthreads;
 
     pthread_rwlock_t config_mutex;
 
+    pthread_t zmq_proxy_threadid;
     support_thread_global_t syncip;
     support_thread_global_t syncvoip;
-    support_thread_global_t *exporters;
+
+    //support_thread_global_t *exporters;
+
+    export_thread_data_t *exporters;
 
     libtrace_message_queue_t intersyncq;
 

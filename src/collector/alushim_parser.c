@@ -116,9 +116,8 @@ static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
     msg.data.ipcc.cin = alu->cin;
     msg.data.ipcc.dir = dir;
 
-    queueused = export_queue_put_by_liid(loc->exportqueues, &msg,
-            alu->common.liid);
-    loc->export_used[queueused] = 1;
+    queueused = export_queue_put_by_liid(loc->zmq_pubsock, &msg,
+            alu->common.liid, loc->numexporters);
 
 }
 

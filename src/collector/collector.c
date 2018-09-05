@@ -146,16 +146,19 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->sipservers = NULL;
     loc->staticv4ranges = New_Patricia(32);
     loc->staticv6ranges = New_Patricia(128);
+    loc->numexporters = glob->exportthreads;
 
-    loc->exportqueues = create_export_queue_set(glob->exportthreads);
-    loc->export_used = (uint8_t *)malloc(sizeof(uint8_t) * glob->exportthreads);
+    loc->zmq_pubsock = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
+    zmq_connect(loc->zmq_pubsock, "inproc://subproxy");
+
+
     loc->fragreass = create_new_ipfrag_reassembler();
 
     register_sync_queues(&(glob->syncip), &(loc->tosyncq_ip),
 			&(loc->fromsyncq_ip), t);
     register_sync_queues(&(glob->syncvoip), &(loc->tosyncq_voip),
 			&(loc->fromsyncq_voip), t);
-    register_export_queues(glob->exporters, loc->exportqueues);
+    //register_export_queues(glob->exporters, loc->exportqueues);
 
     return loc;
 }
@@ -178,6 +181,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     colthread_local_t *loc = (colthread_local_t *)tls;
     ipv4_target_t *v4, *tmp;
     ipv6_target_t *v6, *tmp2;
+    int zero = 0;
 
     if (trace_is_err(trace)) {
         libtrace_err_t err = trace_get_err(trace);
@@ -196,9 +200,12 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_message_queue_destroy(&(loc->fromsyncq_ip));
     libtrace_message_queue_destroy(&(loc->tosyncq_voip));
     libtrace_message_queue_destroy(&(loc->fromsyncq_voip));
-    free_export_queue_set(loc->exportqueues);
-    if (loc->export_used) {
-        free(loc->export_used);
+    if (loc->zmq_pubsock) {
+        if (zmq_setsockopt(loc->zmq_pubsock, ZMQ_LINGER, &zero,
+                sizeof(zero)) != 0) {
+            logger(LOG_INFO, "OpenLI: unable to set linger period on publishing zeromq socket.");
+        }
+        zmq_close(loc->zmq_pubsock);
     }
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
@@ -501,8 +508,6 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     }
 
     pinfo.family = pinfo.srcip.ss_family;
-    memset(loc->export_used, 0, sizeof(uint8_t) * loc->exportqueues->numqueues);
-
 
     /* All these special packets are UDP, so we can avoid a whole bunch
      * of these checks for TCP traffic */
@@ -670,7 +675,7 @@ static void reload_inputs(collector_global_t *glob,
 }
 
 static void *start_export_thread(void *params) {
-    support_thread_global_t *glob = (support_thread_global_t *)params;
+    export_thread_data_t *glob = (export_thread_data_t *)params;
     collector_export_t *exp = init_exporter(glob);
     int connected = 0;
 
@@ -781,13 +786,19 @@ static void clear_global_config(collector_global_t *glob) {
 	free_support_thread_data(&(glob->syncvoip));
 
     if (glob->exporters) {
-        for (i = 0; i < glob->exportthreads; i++) {
-    	    free_support_thread_data(&(glob->exporters[i]));
-        }
         free(glob->exporters);
     }
 
     libtrace_message_queue_destroy(&(glob->intersyncq));
+    logger(LOG_INFO, "OpenLI: waiting for zeromq context to be destroyed.");
+    if (glob->zmq_ctxt) {
+        zmq_ctx_destroy(glob->zmq_ctxt);
+    }
+
+    /* Our proxy thread will only exit once the zeromq context is
+     * destroyed, so we have to join now */
+    logger(LOG_INFO, "OpenLI: waiting for zeromq proxy to terminate.");
+    pthread_join(glob->zmq_proxy_threadid, NULL);
 
     free(glob);
 }
@@ -890,6 +901,7 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     glob = (collector_global_t *)malloc(sizeof(collector_global_t));
 
+    glob->zmq_ctxt = zmq_ctx_new();
     glob->inputs = NULL;
     glob->exportthreads = 1;
     glob->sharedinfo.intpointid = NULL;
@@ -1016,7 +1028,7 @@ static void *start_voip_sync_thread(void *params) {
     collector_sync_voip_t *sync = init_voip_sync_data(glob);
     sync_sendq_t *sq;
 
-    register_export_queues(glob->exporters, sync->exportqueues);
+    //register_export_queues(glob->exporters, sync->exportqueues);
 
     while (collector_halt == 0) {
         ret = sync_voip_thread_main(sync);
@@ -1049,6 +1061,85 @@ void halt_processing_threads(collector_global_t *glob) {
     }
 }
 
+static void *span_thread(void *zmq_ctxt) {
+    void *recvr = zmq_socket(zmq_ctxt, ZMQ_PAIR);
+    char envelope[24];
+    char body[1024];
+    int x, zero=0, more=0;
+    size_t optlen;
+    int done = 0;
+
+    zmq_connect(recvr, "inproc://span");
+    while (!done) {
+        if ((x = zmq_recv(recvr, envelope, 23, 0)) < 0) {
+            done = 1;
+            continue;
+        }
+
+        envelope[x] = '\0';
+
+        do {
+            optlen = sizeof(more);
+            zmq_getsockopt(recvr, ZMQ_RCVMORE, &more, &optlen);
+            if (more == 0) {
+                break;
+            }
+
+            if ((x = zmq_recv(recvr, body, 1024, 0)) < 0) {
+                done = 1;
+                break;
+            }
+        } while (more);
+    }
+
+    zmq_setsockopt(recvr, ZMQ_LINGER, &zero, sizeof(zero));
+    zmq_close(recvr);
+    pthread_exit(NULL);
+}
+
+static void *start_zmq_proxy(void *zmq_ctxt) {
+
+    int zero = 0;
+    pthread_t pid;
+    void *subside = zmq_socket(zmq_ctxt, ZMQ_XSUB);
+    void *pubside = zmq_socket(zmq_ctxt, ZMQ_XPUB);
+
+    void *paira = zmq_socket(zmq_ctxt, ZMQ_PAIR);
+
+    if (!subside || !pubside) {
+        goto proxyfail;
+    }
+
+    if (zmq_bind(subside, "inproc://subproxy") != 0) {
+        logger(LOG_INFO, "OpenLI: failed to bind zeromq subscriber proxy socket");
+        goto proxyfail;
+    }
+
+    if (zmq_bind(pubside, "inproc://pubproxy") != 0) {
+        logger(LOG_INFO, "OpenLI: failed to bind zeromq publisher proxy socket");
+        goto proxyfail;
+    }
+
+    if (zmq_bind(paira, "inproc://span") != 0) {
+        logger(LOG_INFO, "OpenLI: failed to bind zeromq span socket");
+        goto proxyfail;
+    }
+
+    pthread_create(&pid, NULL, span_thread, zmq_ctxt);
+    zmq_proxy(subside, pubside, paira);
+
+    pthread_join(pid, NULL);
+
+    zmq_setsockopt(subside, ZMQ_LINGER, &zero, sizeof(zero));
+    zmq_setsockopt(pubside, ZMQ_LINGER, &zero, sizeof(zero));
+    zmq_setsockopt(paira, ZMQ_LINGER, &zero, sizeof(zero));
+    zmq_close(subside);
+    zmq_close(pubside);
+    zmq_close(paira);
+
+proxyfail:
+    pthread_exit(NULL);
+}
 
 static void *start_ip_sync_thread(void *params) {
 
@@ -1062,7 +1153,7 @@ static void *start_ip_sync_thread(void *params) {
      * instructions that are received via a network interface.
      */
 
-    register_export_queues(glob->exporters, sync->exportqueues);
+    //register_export_queues(glob->exporters, sync->exportqueues);
 
     while (collector_halt == 0) {
         if (reload_config) {
@@ -1197,11 +1288,22 @@ int main(int argc, char *argv[]) {
         logger(LOG_INFO, "Unable to disable signals before starting threads.");
         return 1;
     }
+
+    /* Start zeromq proxy thread */
+    ret = pthread_create(&(glob->zmq_proxy_threadid), NULL,
+            start_zmq_proxy, glob->zmq_ctxt);
+    if (ret != 0) {
+        logger(LOG_INFO,
+                "OpenLI: error starting zeromq proxy thread. Exiting.");
+        return 1;
+    }
+
     /* Start export threads */
-    glob->exporters = (support_thread_global_t *)malloc(
-            sizeof(support_thread_global_t) * glob->exportthreads);
+    glob->exporters = (export_thread_data_t *)malloc(
+            sizeof(export_thread_data_t) * glob->exportthreads);
     for (i = 0; i < glob->exportthreads; i++) {
-        init_support_thread_data(&(glob->exporters[i]));
+        glob->exporters[i].zmq_ctxt = glob->zmq_ctxt;
+        glob->exporters[i].exportlabel = i;
 
         ret = pthread_create(&(glob->exporters[i].threadid), NULL,
                 start_export_thread, (void *)&(glob->exporters[i]));
@@ -1259,7 +1361,24 @@ int main(int argc, char *argv[]) {
     pthread_rwlock_rdlock(&(glob->config_mutex));
     HASH_ITER(hh, glob->inputs, inp, tmp) {
         if (inp->trace) {
+            libtrace_stat_t *stat;
             trace_join(inp->trace);
+            stat = trace_create_statistics();
+            trace_get_statistics(inp->trace, stat);
+
+            if (stat->dropped_valid) {
+                logger(LOG_DEBUG, "OpenLI: dropped %lu packets on input %s\n",
+                        stat->dropped, inp->uri);
+            }
+            if (stat->received_valid) {
+                logger(LOG_DEBUG, "OpenLI: received %lu packets on input %s\n",
+                        stat->received, inp->uri);
+            }
+            if (stat->accepted_valid) {
+                logger(LOG_DEBUG, "OpenLI: accepted %lu packets on input %s\n",
+                        stat->accepted, inp->uri);
+            }
+            free(stat);
         }
     }
     pthread_rwlock_unlock(&(glob->config_mutex));
