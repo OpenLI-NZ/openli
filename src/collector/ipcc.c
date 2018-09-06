@@ -208,10 +208,10 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
         shared_global_info_t *info, colthread_local_t *loc) {
 
     int matched = 0, queueused = 0;
-    patricia_node_t *pnode;
+    patricia_node_t *pnode = NULL;
     prefix_t prefix;
     openli_export_recv_t msg;
-    static_ipcache_t *cached;
+    static_ipcache_t *cached = NULL;
 
     memset(&prefix, 0, sizeof(prefix_t));
 
@@ -229,7 +229,8 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
         prefix.ref_count = 0;
     }
 
-    cached = find_static_cached(&prefix, loc);
+
+    //cached = find_static_cached(&prefix, loc);
     if (cached) {
         pnode = cached->pnode;
     } else {
@@ -238,7 +239,7 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
         } else {
             pnode = patricia_search_best2(loc->staticv6ranges, &prefix, 1);
         }
-        add_static_cached(&prefix, pnode, loc);
+        //add_static_cached(&prefix, pnode, loc);
     }
 
     while (pnode) {
@@ -247,15 +248,12 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
         all = (liid_set_t **)(&(pnode->data));
         HASH_ITER(hh, *all, sliid, tmp2) {
             staticipsession_t *matchsess;
-            char key[128];
-
-            snprintf(key, 127, "%s-%u", sliid->liid, sliid->cin);
-            HASH_FIND(hh, loc->activestaticintercepts, key, strlen(key),
-                    matchsess);
+            HASH_FIND(hh, loc->activestaticintercepts, sliid->key,
+                    sliid->keylen, matchsess);
             if (!matchsess) {
                 logger(LOG_INFO,
                         "OpenLI: matched an IP range for intercept %s but this is not present in activestaticintercepts",
-                        key);
+                        sliid->key);
             } else {
                 matched ++;
                 make_static_ipcc_job(&msg, matchsess, pkt, dir, info);
@@ -266,7 +264,6 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
         }
         pnode = pnode->parent;
     }
-
     return matched;
 }
 

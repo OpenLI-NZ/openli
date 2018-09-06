@@ -149,6 +149,8 @@ typedef struct sync_sendq {
 typedef struct liid_set {
     char *liid;
     uint32_t cin;
+    char *key;
+    size_t keylen;
     UT_hash_handle hh;
 } liid_set_t;
 
