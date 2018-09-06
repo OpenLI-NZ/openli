@@ -408,7 +408,6 @@ static inline int is_core_server_packet(libtrace_packet_t *pkt,
     return 0;
 }
 
-
 static libtrace_packet_t *process_packet(libtrace_t *trace,
         libtrace_thread_t *t, void *global, void *tls,
         libtrace_packet_t *pkt) {
@@ -446,19 +445,22 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     }
 
     trace_increment_packet_refcount(pkt);
-    if (!trace_get_source_address(pkt, (struct sockaddr *)(&pinfo.srcip))) {
-        return pkt;
-    }
-    if (!trace_get_destination_address(pkt,
-            (struct sockaddr *)(&pinfo.destip))) {
-        return pkt;
-    }
 
     iprem = rem;
     if (ethertype == TRACE_ETHERTYPE_IP) {
         uint8_t moreflag;
         ip_reassemble_stream_t *ipstream;
         libtrace_ip_t *ipheader = (libtrace_ip_t *)l3;
+        struct sockaddr_in *in4;
+
+        if (rem < ipheader->ip_hl * 4) {
+            return pkt;
+        }
+
+        in4 = (struct sockaddr_in *)(&(pinfo.srcip));
+        in4->sin_addr = ipheader->ip_src;
+        in4 = (struct sockaddr_in *)(&(pinfo.destip));
+        in4->sin_addr = ipheader->ip_dst;
 
         fragoff = trace_get_fragment_offset(pkt, &moreflag);
         if (moreflag || fragoff > 0) {
@@ -491,24 +493,28 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             }
 
         } else {
+            uint8_t *postip = ((uint8_t *)l3) + ipheader->ip_hl * 4;
 
-            pinfo.srcport = ntohs(((struct sockaddr_in *)(&pinfo.srcip))->sin_port);
-            pinfo.destport = ntohs(((struct sockaddr_in *)(&pinfo.destip))->sin_port);
+            pinfo.srcport = ntohs(*((uint16_t *)postip));
+            pinfo.destport = ntohs(*((uint16_t *)(postip + 2)));
             proto = ipheader->ip_p;
         }
+        pinfo.family = AF_INET;
     } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
         libtrace_ip6_t *ip6header = (libtrace_ip6_t *)l3;
+        uint8_t *postip6 = (uint8_t *)(trace_get_payload_from_ip6(ip6header,
+                &proto, &rem));
 
-        pinfo.srcport = ntohs(((struct sockaddr_in6 *)(&pinfo.srcip))->sin6_port);
-        pinfo.destport = ntohs(((struct sockaddr_in6 *)(&pinfo.destip))->sin6_port);
+        pinfo.srcport = ntohs(*((uint16_t *)postip6));
+        pinfo.destport = ntohs(*((uint16_t *)(postip6 + 2)));
         proto = ip6header->nxt;
+        pinfo.family = AF_INET6;
     } else {
         pinfo.srcport = 0;
         pinfo.destport = 0;
         proto = 0;
+        pinfo.family = 0;
     }
-
-    pinfo.family = pinfo.srcip.ss_family;
 
     /* All these special packets are UDP, so we can avoid a whole bunch
      * of these checks for TCP traffic */
@@ -1315,7 +1321,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* XXX temporary to prevent exporters from missing early sync messages */
-    usleep(10000);
+    usleep(100000);
 
     /* Start IP intercept sync thread */
     ret = pthread_create(&(glob->syncip.threadid), NULL, start_ip_sync_thread,
