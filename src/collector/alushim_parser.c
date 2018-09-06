@@ -34,6 +34,7 @@
 #include "logger.h"
 #include "etsili_core.h"
 #include "collector_export.h"
+#include "util.h"
 
 typedef struct alushimhdr {
     uint32_t interceptid;
@@ -142,17 +143,30 @@ int check_alu_intercept(shared_global_info_t *info, colthread_local_t *loc,
 
     /* Is this packet from any of our known ALU mirrors? */
     HASH_ITER(hh, alusources, cs, tmp) {
-        int ret = 0;
-        if ((ret = coreserver_match(cs, &(pinfo->destip),
-                pinfo->destport)) > 0) {
-            alumatched = 1;
-            break;
+       	if (cs->info == NULL) {
+            cs->info = populate_addrinfo(cs->ipstr, cs->portstr, SOCK_DGRAM);
+            if (!cs->info) {
+                logger(LOG_INFO,
+                        "Removing %s:%s from %s ALU source list due to getaddrinfo error",
+                        cs->ipstr, cs->portstr,
+                        coreserver_type_to_string(cs->servertype));
+                HASH_DELETE(hh, alusources, cs);
+                continue;
+            }
         }
 
-        if (ret == -1) {
-            logger(LOG_INFO,
-                    "Removing %s:%s from ALU mirrors", cs->ipstr, cs->portstr);
-            HASH_DELETE(hh, alusources, cs);
+        if (cs->info->ai_family == AF_INET) {
+            struct sockaddr_in *sa;
+            sa = (struct sockaddr_in *)(&(pinfo->destip));
+            if (CORESERVER_MATCH_V4(cs, sa, pinfo->destport)) {
+                alumatched = 1;
+            }
+        } else if (cs->info->ai_family == AF_INET6) {
+            struct sockaddr_in6 *sa6;
+            sa6 = (struct sockaddr_in6 *)(&(pinfo->destip));
+            if (CORESERVER_MATCH_V6(cs, sa6, pinfo->destport)) {
+                alumatched = 1;
+            }
         }
     }
 

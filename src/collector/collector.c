@@ -51,6 +51,7 @@
 #include "ipmmcc.h"
 #include "sipparsing.h"
 #include "alushim_parser.h"
+#include "util.h"
 
 volatile int collector_halt = 0;
 volatile int reload_config = 0;
@@ -366,35 +367,40 @@ static inline int is_core_server_packet(libtrace_packet_t *pkt,
     }
 
     HASH_ITER(hh, servers, rad, tmp) {
-        int ret;
-        if ((ret = coreserver_match(rad, &(pinfo->srcip),
-                    pinfo->srcport)) > 0) {
-            return 1;
+        if (rad->info == NULL) {
+            rad->info = populate_addrinfo(rad->ipstr, rad->portstr,
+                    SOCK_DGRAM);
+            if (!rad->info) {
+                logger(LOG_INFO,
+                        "Removing %s:%s from %s server list due to getaddrinfo error",
+                        rad->ipstr, rad->portstr,
+                        coreserver_type_to_string(rad->servertype));
+
+                HASH_DELETE(hh, servers, rad);
+                continue;
+            }
         }
 
-        if (ret == -1) {
-            logger(LOG_INFO,
-                    "Removing %s:%s from %s server list due to getaddrinfo error",
-                    rad->ipstr, rad->portstr,
-                    coreserver_type_to_string(rad->servertype));
-
-            HASH_DELETE(hh, servers, rad);
-            continue;
-        }
-
-        if ((ret = coreserver_match(rad, &(pinfo->destip),
-                    pinfo->destport)) > 0) {
-            return 1;
-        }
-
-        if (ret == -1) {
-            /* should never happen at this point? */
-            logger(LOG_INFO,
-                    "Removing %s:%s from %s server list due to getaddrinfo error",
-                    rad->ipstr, rad->portstr,
-                    coreserver_type_to_string(rad->servertype));
-            HASH_DELETE(hh, servers, rad);
-            continue;
+        if (rad->info->ai_family == AF_INET) {
+            struct sockaddr_in *sa;
+            sa = (struct sockaddr_in *)(&(pinfo->srcip));
+            if (CORESERVER_MATCH_V4(rad, sa, pinfo->srcport)) {
+                return 1;
+            }
+            sa = (struct sockaddr_in *)(&(pinfo->destip));
+            if (CORESERVER_MATCH_V4(rad, sa, pinfo->destport)) {
+                return 1;
+            }
+        } else if (rad->info->ai_family == AF_INET6) {
+            struct sockaddr_in6 *sa6;
+            sa6 = (struct sockaddr_in6 *)(&(pinfo->srcip));
+            if (CORESERVER_MATCH_V6(rad, sa6, pinfo->srcport)) {
+                return 1;
+            }
+            sa6 = (struct sockaddr_in6 *)(&(pinfo->destip));
+            if (CORESERVER_MATCH_V6(rad, sa6, pinfo->destport)) {
+                return 1;
+            }
         }
     }
 
@@ -1307,6 +1313,9 @@ int main(int argc, char *argv[]) {
             return 1;
         }
     }
+
+    /* XXX temporary to prevent exporters from missing early sync messages */
+    usleep(10000);
 
     /* Start IP intercept sync thread */
     ret = pthread_create(&(glob->syncip.threadid), NULL, start_ip_sync_thread,

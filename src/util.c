@@ -381,5 +381,27 @@ int extract_ip_addresses(libtrace_packet_t *pkt, uint8_t *srcip,
     return 0;
 }
 
+struct addrinfo *populate_addrinfo(char *ipstr, char *portstr,
+        int socktype) {
+    struct addrinfo hints, *res;
+    int s;
+
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = socktype;
+    hints.ai_flags = AI_PASSIVE;
+
+    s = getaddrinfo(ipstr, portstr, &hints, &res);
+    if (s != 0) {
+        logger(LOG_INFO,
+                "OpenLI: error calling getaddrinfo on %s:%s: %s",
+                ipstr, portstr, gai_strerror(s));
+        return NULL;
+    }
+
+    return res;
+}
+
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 
