@@ -147,6 +147,7 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->sipservers = NULL;
     loc->staticv4ranges = New_Patricia(32);
     loc->staticv6ranges = New_Patricia(128);
+    loc->staticcache = NULL;
     loc->numexporters = glob->exportthreads;
 
     loc->zmq_pubsock = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
@@ -172,6 +173,15 @@ static void free_staticrange_data(void *data) {
         HASH_DELETE(hh, all, iter);
         free(iter->liid);
         free(iter);
+    }
+}
+
+static void free_staticcache(static_ipcache_t *cache) {
+    static_ipcache_t *ent, *tmp;
+
+    HASH_ITER(hh, cache, ent, tmp) {
+        HASH_DELETE(hh, cache, ent);
+        free(ent);
     }
 }
 
@@ -232,6 +242,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     Destroy_Patricia(loc->staticv4ranges, free_staticrange_data);
     Destroy_Patricia(loc->staticv6ranges, free_staticrange_data);
 
+    free_staticcache(loc->staticcache);
     free(loc);
 }
 

@@ -165,6 +165,44 @@ static void dump_ptree(patricia_node_t *ptree) {
 }
 */
 
+static inline static_ipcache_t *find_static_cached(prefix_t *prefix,
+        colthread_local_t *loc) {
+
+    static_ipcache_t *found;
+    HASH_FIND(hh, loc->staticcache, prefix, sizeof(prefix_t), found);
+
+    if (found) {
+        /* Push it back to the front of the queue so it doesn't expire */
+        HASH_DELETE(hh, loc->staticcache, found);
+        HASH_ADD_KEYPTR(hh, loc->staticcache, &(found->prefix),
+                sizeof(prefix_t), found);
+    }
+    return found;
+
+}
+
+static inline int add_static_cached(prefix_t *prefix, patricia_node_t *pnode,
+        colthread_local_t *loc) {
+
+    static_ipcache_t *ent, *tmp;
+
+    ent = (static_ipcache_t *)malloc(sizeof(static_ipcache_t));
+    memcpy(&(ent->prefix), prefix, sizeof(prefix_t));
+    ent->pnode = pnode;
+
+    HASH_ADD_KEYPTR(hh, loc->staticcache, &(ent->prefix), sizeof(prefix_t),
+            ent);
+
+    if (HASH_COUNT(loc->staticcache) >= 1000000) {
+        HASH_ITER(hh, loc->staticcache, ent, tmp) {
+            HASH_DELETE(hh, loc->staticcache, ent);
+            free(ent);
+            break;
+        }
+    }
+    return 0;
+}
+
 static inline int lookup_static_ranges(struct sockaddr *cmp,
         int family, libtrace_packet_t *pkt, uint8_t dir,
         shared_global_info_t *info, colthread_local_t *loc) {
@@ -173,24 +211,35 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
     patricia_node_t *pnode;
     prefix_t prefix;
     openli_export_recv_t msg;
+    static_ipcache_t *cached;
+
+    memset(&prefix, 0, sizeof(prefix_t));
 
     if (family == AF_INET) {
         struct sockaddr_in *in = (struct sockaddr_in *)cmp;
-        if (New_Prefix2(AF_INET, (void *)&(in->sin_addr), 32,
-                &prefix) == NULL) {
-            return 0;
-        }
-        pnode = patricia_search_best2(loc->staticv4ranges, &prefix, 1);
+        memcpy(&(prefix.add.sin), &(in->sin_addr), 4);
+        prefix.bitlen = 32;
+        prefix.family = AF_INET;
+        prefix.ref_count = 0;
     } else {
         struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)cmp;
-        if (New_Prefix2(AF_INET6, (void *)&(in6->sin6_addr.s6_addr), 128,
-                &prefix) == NULL) {
-            return 0;
-        }
-        pnode = patricia_search_best2(loc->staticv6ranges, &prefix, 1);
+        memcpy(&(prefix.add.sin6), &(in6->sin6_addr), 16);
+        prefix.bitlen = 128;
+        prefix.family = AF_INET6;
+        prefix.ref_count = 0;
     }
 
-
+    cached = find_static_cached(&prefix, loc);
+    if (cached) {
+        pnode = cached->pnode;
+    } else {
+        if (family == AF_INET) {
+            pnode = patricia_search_best2(loc->staticv4ranges, &prefix, 1);
+        } else {
+            pnode = patricia_search_best2(loc->staticv6ranges, &prefix, 1);
+        }
+        add_static_cached(&prefix, pnode, loc);
+    }
 
     while (pnode) {
         liid_set_t **all, *sliid, *tmp2;

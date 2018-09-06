@@ -152,6 +152,12 @@ typedef struct liid_set {
     UT_hash_handle hh;
 } liid_set_t;
 
+typedef struct staticip_cacheentry {
+    prefix_t prefix;
+    patricia_node_t *pnode;
+    UT_hash_handle hh;
+} static_ipcache_t;
+
 typedef struct colthread_local {
 
     /* Message queue for pushing updates to sync IP thread */
@@ -193,6 +199,7 @@ typedef struct colthread_local {
 
     patricia_tree_t *staticv4ranges;
     patricia_tree_t *staticv6ranges;
+    static_ipcache_t *staticcache;
 
     ipfrag_reassembler_t *fragreass;
 
