@@ -42,7 +42,7 @@ static char copyright[] =
  */
 
 #define PREFIX_TOCHAR(pfx) \
-        (pfx == NULL) ? NULL : ((u_char *) & (prefix->add.sin))
+        (pfx == NULL) ? NULL : ((u_char *) & (pfx->add.sin))
 
 static inline int
 comp_with_mask (void *addr, void *dest, u_int mask)
