@@ -409,10 +409,10 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     collector_global_t *glob = (collector_global_t *)global;
     colthread_local_t *loc = (colthread_local_t *)tls;
-    void *l3, *transport;
+    void *l3;
     uint16_t ethertype;
     uint32_t rem, iprem;
-    uint8_t proto, isfrag;
+    uint8_t proto;
     int forwarded = 0, i, ret;
     int synced = 0;
     uint16_t fragoff = 0;
@@ -448,7 +448,6 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         return pkt;
     }
 
-    isfrag = 0;
     iprem = rem;
     if (ethertype == TRACE_ETHERTYPE_IP) {
         uint8_t moreflag;
@@ -476,16 +475,12 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                 return pkt;
             }
 
-            isfrag = 1;
             if (is_ip_reassembled(ipstream)) {
                 remove_ipfrag_reassemble_stream(loc->fragreass, ipstream);
             }
-            
             if (rem <= ipheader->ip_hl * 4) {
-                transport = NULL;
                 proto = 0;
             } else {
-                transport = l3 + (ipheader->ip_hl * 4);
                 proto = ipheader->ip_p;
             }
 
@@ -493,17 +488,17 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
             pinfo.srcport = ntohs(((struct sockaddr_in *)(&pinfo.srcip))->sin_port);
             pinfo.destport = ntohs(((struct sockaddr_in *)(&pinfo.destip))->sin_port);
-            isfrag = 0;
-            transport = trace_get_transport(pkt, &proto, &rem);
+            proto = ipheader->ip_p;
         }
     } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
+        libtrace_ip6_t *ip6header = (libtrace_ip6_t *)l3;
+
         pinfo.srcport = ntohs(((struct sockaddr_in6 *)(&pinfo.srcip))->sin6_port);
         pinfo.destport = ntohs(((struct sockaddr_in6 *)(&pinfo.destip))->sin6_port);
-        transport = trace_get_transport(pkt, &proto, &rem);
+        proto = ip6header->nxt;
     } else {
         pinfo.srcport = 0;
         pinfo.destport = 0;
-        transport = NULL;
         proto = 0;
     }
 
@@ -511,7 +506,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     /* All these special packets are UDP, so we can avoid a whole bunch
      * of these checks for TCP traffic */
-    if (transport != NULL && proto == TRACE_IPPROTO_UDP) {
+    if (proto == TRACE_IPPROTO_UDP) {
 
         /* Is this from one of our ALU mirrors -- if yes, parse + strip it
          * for conversion to an ETSI record */
@@ -537,7 +532,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                 synced = 1;
             }
         }
-    } else if (transport != NULL && proto == TRACE_IPPROTO_TCP) {
+    } else if (proto == TRACE_IPPROTO_TCP) {
         /* Is this a SIP packet? -- if yes, create a state update */
         if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
                     loc->sipservers)) {
