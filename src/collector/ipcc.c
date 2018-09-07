@@ -204,8 +204,8 @@ static inline int add_static_cached(prefix_t *prefix, patricia_node_t *pnode,
 }
 
 static inline int lookup_static_ranges(struct sockaddr *cmp,
-        int family, libtrace_packet_t *pkt, uint8_t dir,
-        shared_global_info_t *info, colthread_local_t *loc) {
+        int family, libtrace_packet_t *pkt, libtrace_packet_t **copy,
+        uint8_t dir, shared_global_info_t *info, colthread_local_t *loc) {
 
     int matched = 0, queueused = 0;
     patricia_node_t *pnode = NULL;
@@ -256,8 +256,13 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
                         sliid->key);
             } else {
                 matched ++;
-                make_static_ipcc_job(&msg, matchsess, pkt, dir, info);
-                trace_increment_packet_refcount(pkt);
+                if (!(*copy)) {
+                    if (((*copy) = trace_copy_packet(pkt)) == NULL) {
+                        return 0;
+                    }
+                    //printf("copied packet %p -> %p\n", pkt, *copy);
+                }
+                make_static_ipcc_job(&msg, matchsess, *copy, dir, info);
                 export_queue_put_by_liid(loc->zmq_pubsock, &msg,
                         matchsess->common.liid, loc->numexporters);
             }
@@ -276,6 +281,7 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     int matched = 0, queueused = 0;
     ipv6_target_t *tgt;
     ipsession_t *sess, *tmp;
+    libtrace_packet_t *copy = NULL;
 
     if (rem < sizeof(libtrace_ip6_t)) {
         /* Truncated IP header */
@@ -294,8 +300,12 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            make_ipcc_job(&msg, sess, pkt, 0, info);
-            trace_increment_packet_refcount(pkt);
+            if (!copy) {
+                if ((copy = trace_copy_packet(pkt)) == NULL) {
+                    return 0;
+                }
+            }
+            make_ipcc_job(&msg, sess, copy, 0, info);
             export_queue_put_by_liid(loc->zmq_pubsock, &msg,
                     sess->common.liid, loc->numexporters);
         }
@@ -308,8 +318,12 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            make_ipcc_job(&msg, sess, pkt, 1, info);
-            trace_increment_packet_refcount(pkt);
+            if (!copy) {
+                if ((copy = trace_copy_packet(pkt)) == NULL) {
+                    return 0;
+                }
+            }
+            make_ipcc_job(&msg, sess, copy, 1, info);
             export_queue_put_by_liid(loc->zmq_pubsock, &msg,
                     sess->common.liid, loc->numexporters);
         }
@@ -320,9 +334,9 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     }
 
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->srcip),
-            AF_INET6, pkt, 0, info, loc);
+            AF_INET6, pkt, &copy, 0, info, loc);
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->destip),
-            AF_INET6, pkt, 1, info, loc);
+            AF_INET6, pkt, &copy, 1, info, loc);
 
 
 ipv6ccdone:
@@ -340,6 +354,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     int matched = 0, queueused = 0;
     ipv4_target_t *tgt;
     ipsession_t *sess, *tmp;
+    libtrace_packet_t *copy = NULL;
 
     if (rem < sizeof(libtrace_ip_t)) {
         /* Truncated IP header */
@@ -358,8 +373,13 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            make_ipcc_job(&msg, sess, pkt, 0, info);
-            trace_increment_packet_refcount(pkt);
+            if (!copy) {
+                if ((copy = trace_copy_packet(pkt)) == NULL) {
+                    return 0;
+                }
+            }
+            make_ipcc_job(&msg, sess, copy, 0, info);
+            //trace_increment_packet_refcount(pkt);
             export_queue_put_by_liid(loc->zmq_pubsock, &msg,
                     sess->common.liid, loc->numexporters);
         }
@@ -371,9 +391,13 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
 
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
+            if (!copy) {
+                if ((copy = trace_copy_packet(pkt)) == NULL) {
+                    return 0;
+                }
+            }
             matched ++;
-            make_ipcc_job(&msg, sess, pkt, 1, info);
-            trace_increment_packet_refcount(pkt);
+            make_ipcc_job(&msg, sess, copy, 1, info);
             export_queue_put_by_liid(loc->zmq_pubsock, &msg,
                     sess->common.liid, loc->numexporters);
         }
@@ -384,9 +408,9 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     }
 
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->srcip),
-            AF_INET, pkt, 0, info, loc);
+            AF_INET, pkt, &copy, 0, info, loc);
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->destip),
-            AF_INET, pkt, 1, info, loc);
+            AF_INET, pkt, &copy, 1, info, loc);
 
 
 ipv4ccdone:

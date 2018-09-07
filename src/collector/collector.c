@@ -255,7 +255,7 @@ static inline void send_packet_to_sync(libtrace_packet_t *pkt,
     syncup.type = updatetype;
     syncup.data.pkt = pkt;
 
-    trace_increment_packet_refcount(pkt);
+    //trace_increment_packet_refcount(pkt);
     libtrace_message_queue_put(q, (void *)(&syncup));
 
 }
@@ -394,9 +394,10 @@ static inline int is_core_server_packet(libtrace_packet_t *pkt,
             }
         }
 
-        if (rad->info->ai_family == AF_INET) {
+        if (pinfo->family == AF_INET) {
             struct sockaddr_in *sa;
             sa = (struct sockaddr_in *)(&(pinfo->srcip));
+
             if (CORESERVER_MATCH_V4(rad, sa, pinfo->srcport)) {
                 return 1;
             }
@@ -404,7 +405,7 @@ static inline int is_core_server_packet(libtrace_packet_t *pkt,
             if (CORESERVER_MATCH_V4(rad, sa, pinfo->destport)) {
                 return 1;
             }
-        } else if (rad->info->ai_family == AF_INET6) {
+        } else if (pinfo->family == AF_INET6) {
             struct sockaddr_in6 *sa6;
             sa6 = (struct sockaddr_in6 *)(&(pinfo->srcip));
             if (CORESERVER_MATCH_V6(rad, sa6, pinfo->srcport)) {
@@ -457,7 +458,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         return pkt;
     }
 
-    trace_increment_packet_refcount(pkt);
+    //trace_increment_packet_refcount(pkt);
 
     iprem = rem;
     if (ethertype == TRACE_ETHERTYPE_IP) {
@@ -598,6 +599,9 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     }
 
 processdone:
+    return pkt;
+
+
     if (forwarded || synced) {
         trace_decrement_packet_refcount(pkt);
         return NULL;
