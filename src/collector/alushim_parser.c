@@ -108,16 +108,26 @@ alushimhdr_t *get_alushim_header(libtrace_packet_t *packet, uint32_t *rem) {
 static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
         aluintercept_t *alu, uint8_t dir) {
 
-    openli_export_recv_t msg;
+    openli_export_recv_t *msg;
     int queueused;
+    void *l3;
+    uint32_t rem;
+    uint16_t ethertype;
 
-    msg.type = OPENLI_EXPORT_IPCC;
-    msg.data.ipcc.liid = strdup(alu->common.liid);
-    msg.data.ipcc.packet = packet;
-    msg.data.ipcc.cin = alu->cin;
-    msg.data.ipcc.dir = dir;
+    msg = calloc(1, sizeof(openli_export_recv_t));
+    l3 = trace_get_layer3(packet, &ethertype, &rem);
 
-    queueused = export_queue_put_by_liid(loc->zmq_pubsock, &msg,
+    msg->type = OPENLI_EXPORT_IPCC;
+    msg->data.ipcc.liid = strdup(alu->common.liid);
+    msg->data.ipcc.cin = alu->cin;
+    msg->data.ipcc.dir = dir;
+    msg->data.ipcc.ipcontent = (uint8_t *)calloc(1, rem);
+    msg->data.ipcc.ipclen = rem;
+    msg->data.ipcc.tv = trace_get_timeval(packet);
+
+    memcpy(msg->data.ipcc.ipcontent, l3, rem);
+
+    queueused = export_queue_put_by_liid(loc->zmq_pubsock, msg,
             alu->common.liid, loc->numexporters);
 
 }

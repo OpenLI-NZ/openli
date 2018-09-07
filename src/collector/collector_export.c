@@ -576,6 +576,7 @@ static inline void free_job_request(openli_export_recv_t *recvd) {
             break;
         case OPENLI_EXPORT_IPCC:
             free(recvd->data.ipcc.liid);
+            free(recvd->data.ipcc.ipcontent);
             break;
         case OPENLI_EXPORT_IPIRI:
             free(recvd->data.ipiri.liid);
@@ -590,6 +591,7 @@ static inline void free_job_request(openli_export_recv_t *recvd) {
             free(recvd->data.ipmmiri.liid);
             break;
     }
+    free(recvd);
 }
 
 static int export_encoded_record(collector_export_t *exp,
@@ -692,8 +694,7 @@ static int run_encoding_job(collector_export_t *exp,
                 */
                 //printf("%d got ipcc job for %p\n", exp->glob->exportlabel,
                 //       recvd->data.ipcc.packet);
-                //trace_destroy_packet(recvd->data.ipcc.packet);
-                trace_decrement_packet_refcount(recvd->data.ipcc.packet);
+                //trace_decrement_packet_refcount(recvd->data.ipcc.packet);
                 free_job_request(recvd);
                 return 0;
                 break;
@@ -738,12 +739,10 @@ static int run_encoding_job(collector_export_t *exp,
 static int read_exported_message(collector_export_t *exp) {
     int x, ret;
     char envelope[24];
-	openli_export_recv_t recvd;
+	openli_export_recv_t *recvd = NULL;
     openli_exportmsg_t tosend;
     libtrace_list_node_t *n;
     export_dest_t *dest;
-
-    memset(&recvd, 0, sizeof(openli_export_recv_t));
 
     x = zmq_recv(exp->zmq_subsock, envelope, 23, ZMQ_DONTWAIT);
     if (x < 0) {
@@ -754,7 +753,7 @@ static int read_exported_message(collector_export_t *exp) {
     }
     envelope[x] = '\0';
     x = zmq_recv(exp->zmq_subsock, (char *)(&recvd),
-            sizeof(openli_export_recv_t), ZMQ_DONTWAIT);
+            sizeof(openli_export_recv_t *), ZMQ_DONTWAIT);
     if (x < 0) {
         if (errno == EAGAIN) {
             return 0;
@@ -762,19 +761,19 @@ static int read_exported_message(collector_export_t *exp) {
         return -1;
     }
 
-    switch(recvd.type) {
+    switch(recvd->type) {
         case OPENLI_EXPORT_INTERCEPT_DETAILS:
-            exporter_new_intercept(exp, recvd.data.cept);
+            exporter_new_intercept(exp, recvd->data.cept);
             return 1;
 
         case OPENLI_EXPORT_INTERCEPT_OVER:
-            return exporter_end_intercept(exp, recvd.data.cept);
+            return exporter_end_intercept(exp, recvd->data.cept);
 
         case OPENLI_EXPORT_MEDIATOR:
-            return add_new_destination(exp, &(recvd.data.med));
+            return add_new_destination(exp, &(recvd->data.med));
 
         case OPENLI_EXPORT_DROP_SINGLE_MEDIATOR:
-            remove_destination(exp, &(recvd.data.med));
+            remove_destination(exp, &(recvd->data.med));
             return 1;
 
         case OPENLI_EXPORT_DROP_ALL_MEDIATORS:
@@ -796,13 +795,11 @@ static int read_exported_message(collector_export_t *exp) {
             return 1;
 
         case OPENLI_EXPORT_IPCC:
-            trace_decrement_packet_refcount(recvd.data.ipcc.packet);
-
         case OPENLI_EXPORT_IPMMCC:
         case OPENLI_EXPORT_IPMMIRI:
         case OPENLI_EXPORT_IPIRI:
             ret = 1;
-            free_job_request(&recvd);
+            free_job_request(recvd);
             /*
             if (run_encoding_job(exp, &recvd, &tosend) < 0) {
                 ret = -1;
@@ -814,13 +811,13 @@ static int read_exported_message(collector_export_t *exp) {
             /* All ETSI records relating to this packet have been seen, so
              * we can safely free the packet.
              */
-            trace_decrement_packet_refcount(recvd.data.packet);
+            trace_decrement_packet_refcount(recvd->data.packet);
             return 1;
     }
 
     logger(LOG_INFO,
             "OpenLI: invalid message type %d received from export queue.",
-            recvd.type);
+            recvd->type);
     return -1;
 }
 
@@ -959,7 +956,7 @@ static inline int _publish_openli_msg(void *pubsock, openli_export_recv_t *msg,
         return -1;
     }
 
-    rc = zmq_send(pubsock, (char *)msg, sizeof(openli_export_recv_t), 0);
+    rc = zmq_send(pubsock, (char *)(&msg), sizeof(openli_export_recv_t *), 0);
     if (rc < 0) {
         logger(LOG_INFO, "Error while publishing OpenLI export message: %s",
                 strerror(errno));

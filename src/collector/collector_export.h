@@ -108,7 +108,10 @@ typedef struct openli_ipmmcc_job {
 
 typedef struct openli_ipcc_job {
     char *liid;
-    libtrace_packet_t *packet;
+    uint8_t *ipcontent;
+    uint32_t ipclen;
+    struct timeval tv;
+    //libtrace_packet_t *packet;
     uint32_t cin;
     uint8_t dir;
     shared_global_info_t *colinfo;
