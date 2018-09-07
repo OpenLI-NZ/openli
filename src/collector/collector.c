@@ -126,6 +126,7 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     collector_global_t *glob = (collector_global_t *)global;
     colthread_local_t *loc = NULL;
+    int zero = 0;
 
     loc = (colthread_local_t *)malloc(sizeof(colthread_local_t));
 
@@ -150,9 +151,10 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->staticcache = NULL;
     loc->numexporters = glob->exportthreads;
 
-    loc->zmq_pubsock = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
+    loc->zmq_pubsock = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
     zmq_connect(loc->zmq_pubsock, "inproc://subproxy");
 
+    zmq_setsockopt(loc->zmq_pubsock, ZMQ_SNDHWM, &zero, sizeof(zero));
 
     loc->fragreass = create_new_ipfrag_reassembler();
 
@@ -1119,8 +1121,8 @@ static void *start_zmq_proxy(void *zmq_ctxt) {
 
     int zero = 0;
     pthread_t pid;
-    void *subside = zmq_socket(zmq_ctxt, ZMQ_XSUB);
-    void *pubside = zmq_socket(zmq_ctxt, ZMQ_XPUB);
+    void *subside = zmq_socket(zmq_ctxt, ZMQ_PULL);
+    void *pubside = zmq_socket(zmq_ctxt, ZMQ_PUB);
 
     void *paira = zmq_socket(zmq_ctxt, ZMQ_PAIR);
 
@@ -1143,13 +1145,15 @@ static void *start_zmq_proxy(void *zmq_ctxt) {
         goto proxyfail;
     }
 
-    pthread_create(&pid, NULL, span_thread, zmq_ctxt);
-    zmq_proxy(subside, pubside, paira);
+    //pthread_create(&pid, NULL, span_thread, zmq_ctxt);
+    zmq_proxy(subside, pubside, NULL);
 
-    pthread_join(pid, NULL);
+    //pthread_join(pid, NULL);
 
     zmq_setsockopt(subside, ZMQ_LINGER, &zero, sizeof(zero));
+    //zmq_setsockopt(subside, ZMQ_RCVHWM, &zero, sizeof(zero));
     zmq_setsockopt(pubside, ZMQ_LINGER, &zero, sizeof(zero));
+    zmq_setsockopt(pubside, ZMQ_SNDHWM, &zero, sizeof(zero));
     zmq_setsockopt(paira, ZMQ_LINGER, &zero, sizeof(zero));
     zmq_close(subside);
     zmq_close(pubside);
