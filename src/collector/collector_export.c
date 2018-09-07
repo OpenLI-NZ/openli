@@ -690,8 +690,10 @@ static int run_encoding_job(collector_export_t *exp,
                         intstate->details, cinseq->cc_seqno, tosend);
                 cinseq->cc_seqno ++;
                 */
-                //printf("got ipcc job for %p\n", recvd->data.ipcc.packet);
-                trace_destroy_packet(recvd->data.ipcc.packet);
+                //printf("%d got ipcc job for %p\n", exp->glob->exportlabel,
+                //       recvd->data.ipcc.packet);
+                //trace_destroy_packet(recvd->data.ipcc.packet);
+                trace_decrement_packet_refcount(recvd->data.ipcc.packet);
                 free_job_request(recvd);
                 return 0;
                 break;
@@ -793,14 +795,19 @@ static int read_exported_message(collector_export_t *exp) {
             exp->flagged = 1;
             return 1;
 
-        case OPENLI_EXPORT_IPMMCC:
         case OPENLI_EXPORT_IPCC:
+            trace_decrement_packet_refcount(recvd.data.ipcc.packet);
+
+        case OPENLI_EXPORT_IPMMCC:
         case OPENLI_EXPORT_IPMMIRI:
         case OPENLI_EXPORT_IPIRI:
             ret = 1;
+            free_job_request(&recvd);
+            /*
             if (run_encoding_job(exp, &recvd, &tosend) < 0) {
                 ret = -1;
             }
+            */
             return ret;
 
         case OPENLI_EXPORT_PACKET_FIN:
@@ -897,12 +904,14 @@ int exporter_thread_main(collector_export_t *exp) {
     }
 
     while (timerexpired == 0) {
+        int processed = 0;
 
         zmq_poll(items, itemcount, -1);
         if (items[0].revents & ZMQ_POLLIN) {
             do {
                 ret = read_exported_message(exp);
-            } while (ret > 0);
+                processed ++;
+            } while (ret > 0 && processed < 1000);
 
             if (ret == -1) {
                 return -1;
@@ -926,14 +935,24 @@ int exporter_thread_main(collector_export_t *exp) {
 
 }
 
+static const char * const predefined_envelopes[] = {
+    "0X", "1X", "2X", "3X", "4X", "5X", "6X", "7X", "8X", "9X", "10X",
+     "11X", "12X", "13X", "14X", "15X", NULL };
+
 static inline int _publish_openli_msg(void *pubsock, openli_export_recv_t *msg,
         int queueid) {
 
-    char envelope[24];
     int rc;
 
-    snprintf(envelope, 24, "%dX", queueid);
-    rc = zmq_send(pubsock, envelope, strlen(envelope), ZMQ_SNDMORE);
+    if (queueid > 15) {
+        char envelope[24];
+        snprintf(envelope, 24, "%dX", queueid);
+        rc = zmq_send(pubsock, envelope, strlen(envelope), ZMQ_SNDMORE);
+    } else {
+        rc = zmq_send(pubsock, predefined_envelopes[queueid],
+                strlen(predefined_envelopes[queueid]), ZMQ_SNDMORE);
+    }
+
     if (rc < 0) {
         logger(LOG_INFO, "Error while publishing OpenLI export message: %s",
                 strerror(errno));
