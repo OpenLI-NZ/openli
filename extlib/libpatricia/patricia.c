@@ -634,8 +634,10 @@ patricia_search_best2 (patricia_tree_t *patricia, prefix_t *prefix, int inclusiv
         fprintf (stderr, "patricia_search_best: stop at %d\n", node->bit);
 #endif /* PATRICIA_DEBUG */
 
+/*
     if (cnt <= 0)
 	return (NULL);
+*/
 
     while (--cnt >= 0) {
 	node = stack[cnt];
