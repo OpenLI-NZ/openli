@@ -65,14 +65,12 @@ coreserver_t *deep_copy_coreserver(coreserver_t *cs);
 #define CS_TO_V6(cs) ((struct sockaddr_in6 *)(cs->info->ai_addr))
 
 #define CORESERVER_MATCH_V4(cs, sa, port) \
-    ((sa->sin_family == AF_INET) && \
-     (port == ntohs(CS_TO_V4(cs)->sin_port)) && \
+    ((port == ntohs(CS_TO_V4(cs)->sin_port)) && \
      (memcmp(&(sa->sin_addr), &(CS_TO_V4(cs)->sin_addr), \
             sizeof(struct in_addr)) == 0))
 
 #define CORESERVER_MATCH_V6(cs, sa, port) \
-    ((sa->sin6_family == AF_INET6) && \
-     (port == ntohs(CS_TO_V6(cs)->sin6_port)) && \
+    ((port == ntohs(CS_TO_V6(cs)->sin6_port)) && \
      (memcmp(&(sa->sin6_addr), &(CS_TO_V6(cs)->sin6_addr), \
             sizeof(struct in6_addr)) == 0))
 
