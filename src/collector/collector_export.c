@@ -451,7 +451,7 @@ static int add_new_destination(collector_export_t *exp,
 
 destepoll:
     if (!exp->flagged) {
-        return 0;
+        return 1;
     }
 
     its.it_interval.tv_sec = 0;
@@ -468,7 +468,7 @@ destepoll:
         }
     }
     timerfd_settime(exp->flagtimerfd, 0, &its, NULL);
-    return 0;
+    return 1;
 }
 
 static void purge_unconfirmed_mediators(collector_export_t *exp) {
@@ -533,7 +533,7 @@ static int exporter_end_intercept(collector_export_t *exp,
     free_intercept_msg(intstate->details);
     free_cinsequencing(intstate);
     free(intstate);
-    return 0;
+    return 1;
 }
 
 static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
@@ -654,7 +654,8 @@ static int run_encoding_job(collector_export_t *exp,
     if (!intstate) {
         logger(LOG_INFO, "Received encoding job for an unknown LIID: %s??",
                 liid);
-        return -1;
+        free_job_request(recvd);
+        return 0;
     }
 
     HASH_FIND(hh, intstate->cinsequencing, &cin, sizeof(cin), cinseq);
@@ -689,7 +690,10 @@ static int run_encoding_job(collector_export_t *exp,
                         intstate->details, cinseq->cc_seqno, tosend);
                 cinseq->cc_seqno ++;
                 */
-                trace_decrement_packet_refcount(recvd->data.ipcc.packet);
+                //printf("got ipcc job for %p\n", recvd->data.ipcc.packet);
+                trace_destroy_packet(recvd->data.ipcc.packet);
+                free_job_request(recvd);
+                return 0;
                 break;
             case OPENLI_EXPORT_IPMMIRI:
                 ret = encode_ipmmiri(&(exp->encoder), &(recvd->data.ipmmiri),
@@ -739,21 +743,27 @@ static int read_exported_message(collector_export_t *exp) {
 
     memset(&recvd, 0, sizeof(openli_export_recv_t));
 
-    x = zmq_recv(exp->zmq_subsock, envelope, 23, 0);
+    x = zmq_recv(exp->zmq_subsock, envelope, 23, ZMQ_DONTWAIT);
     if (x < 0) {
-        return 0;
+        if (errno == EAGAIN) {
+            return 0;
+        }
+        return -1;
     }
     envelope[x] = '\0';
     x = zmq_recv(exp->zmq_subsock, (char *)(&recvd),
-            sizeof(openli_export_recv_t), 0);
+            sizeof(openli_export_recv_t), ZMQ_DONTWAIT);
     if (x < 0) {
-        return 0;
+        if (errno == EAGAIN) {
+            return 0;
+        }
+        return -1;
     }
 
     switch(recvd.type) {
         case OPENLI_EXPORT_INTERCEPT_DETAILS:
             exporter_new_intercept(exp, recvd.data.cept);
-            return 0;
+            return 1;
 
         case OPENLI_EXPORT_INTERCEPT_OVER:
             return exporter_end_intercept(exp, recvd.data.cept);
@@ -763,14 +773,14 @@ static int read_exported_message(collector_export_t *exp) {
 
         case OPENLI_EXPORT_DROP_SINGLE_MEDIATOR:
             remove_destination(exp, &(recvd.data.med));
-            return 0;
+            return 1;
 
         case OPENLI_EXPORT_DROP_ALL_MEDIATORS:
             logger(LOG_INFO,
                     "OpenLI exporter: dropping connections to all known mediators.");
             remove_all_destinations(exp);
             exp->dests = libtrace_list_init(sizeof(export_dest_t));
-            return 0;
+            return 1;
 
          case OPENLI_EXPORT_FLAG_MEDIATORS:
             n = exp->dests->head;
@@ -781,13 +791,13 @@ static int read_exported_message(collector_export_t *exp) {
             }
 
             exp->flagged = 1;
-            return 0;
+            return 1;
 
         case OPENLI_EXPORT_IPMMCC:
         case OPENLI_EXPORT_IPCC:
         case OPENLI_EXPORT_IPMMIRI:
         case OPENLI_EXPORT_IPIRI:
-            ret = 0;
+            ret = 1;
             if (run_encoding_job(exp, &recvd, &tosend) < 0) {
                 ret = -1;
             }
@@ -798,7 +808,7 @@ static int read_exported_message(collector_export_t *exp) {
              * we can safely free the packet.
              */
             trace_decrement_packet_refcount(recvd.data.packet);
-            return 0;
+            return 1;
     }
 
     logger(LOG_INFO,
@@ -837,7 +847,7 @@ static inline int connect_zmq_socket(collector_export_t *exp) {
 
 int exporter_thread_main(collector_export_t *exp) {
 
-	int i, nfds, timerfd, itemcount;
+	int i, nfds, timerfd, itemcount, ret;
 	struct epoll_event evs[64];
     int timerexpired = 0;
     struct itimerspec its;
@@ -890,7 +900,11 @@ int exporter_thread_main(collector_export_t *exp) {
 
         zmq_poll(items, itemcount, -1);
         if (items[0].revents & ZMQ_POLLIN) {
-            if (read_exported_message(exp) < 0) {
+            do {
+                ret = read_exported_message(exp);
+            } while (ret > 0);
+
+            if (ret == -1) {
                 return -1;
             }
         }
