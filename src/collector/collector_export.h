@@ -185,11 +185,13 @@ int exporter_thread_main(collector_export_t *exp);
 void register_export_queues(support_thread_global_t *glob,
         export_queue_set_t *qset);
 
-void export_queue_put_all(void *pubsock, openli_export_recv_t *msg,
+void **connect_exporter_queues(int queuecount, void *zmq_ctxt);
+void disconnect_exporter_queues(void **pubsocks, int queuecount);
+void export_queue_put_all(void **pubsocks, openli_export_recv_t *msg,
         int numexporters);
-int export_queue_put_by_liid(void *pubsock,
+int export_queue_put_by_liid(void **pubsocks,
         openli_export_recv_t *msg, char *liid, int numexporters);
-int export_queue_put_by_queueid(void *pubsock,
+int export_queue_put_by_queueid(void **pubsocks,
         openli_export_recv_t *msg, int queueid);
 
 

@@ -275,7 +275,7 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
             } else {
                 matched ++;
                 msg = make_static_ipcc_job(matchsess, pkt, dir, info);
-                export_queue_put_by_liid(loc->zmq_pubsock, msg,
+                export_queue_put_by_liid(loc->zmq_pubsocks, msg,
                         matchsess->common.liid, loc->numexporters);
             }
         }
@@ -312,7 +312,7 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
             msg = make_ipcc_job(sess, pkt, 0, info);
-            export_queue_put_by_liid(loc->zmq_pubsock, msg,
+            export_queue_put_by_liid(loc->zmq_pubsocks, msg,
                     sess->common.liid, loc->numexporters);
         }
     }
@@ -325,7 +325,7 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
             msg = make_ipcc_job(sess, pkt, 1, info);
-            export_queue_put_by_liid(loc->zmq_pubsock, msg,
+            export_queue_put_by_liid(loc->zmq_pubsocks, msg,
                     sess->common.liid, loc->numexporters);
         }
     }
@@ -374,7 +374,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
             msg = make_ipcc_job(sess, pkt, 0, info);
-            export_queue_put_by_liid(loc->zmq_pubsock, msg,
+            export_queue_put_by_liid(loc->zmq_pubsocks, msg,
                     sess->common.liid, loc->numexporters);
         }
     }
@@ -387,7 +387,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
             msg = make_ipcc_job(sess, pkt, 1, info);
-            export_queue_put_by_liid(loc->zmq_pubsock, msg,
+            export_queue_put_by_liid(loc->zmq_pubsocks, msg,
                     sess->common.liid, loc->numexporters);
         }
     }

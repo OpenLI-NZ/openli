@@ -39,7 +39,7 @@ typedef struct collector_sync_voip_data {
 
     support_thread_global_t *glob;
     shared_global_info_t *info;
-    void *zmq_pubsock;
+    void **zmq_pubsocks;
     int numexporters;
 
     voipintercept_t *voipintercepts;

@@ -126,7 +126,7 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     collector_global_t *glob = (collector_global_t *)global;
     colthread_local_t *loc = NULL;
-    int zero = 0;
+    int zero = 0, i;
 
     loc = (colthread_local_t *)malloc(sizeof(colthread_local_t));
 
@@ -151,10 +151,8 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->staticcache = NULL;
     loc->numexporters = glob->exportthreads;
 
-    loc->zmq_pubsock = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
-    zmq_connect(loc->zmq_pubsock, "inproc://subproxy");
-
-    zmq_setsockopt(loc->zmq_pubsock, ZMQ_SNDHWM, &zero, sizeof(zero));
+    loc->zmq_pubsocks = connect_exporter_queues(loc->numexporters,
+            glob->zmq_ctxt);
 
     loc->fragreass = create_new_ipfrag_reassembler();
 
@@ -194,7 +192,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     colthread_local_t *loc = (colthread_local_t *)tls;
     ipv4_target_t *v4, *tmp;
     ipv6_target_t *v6, *tmp2;
-    int zero = 0;
+    int zero = 0, i;
 
     if (trace_is_err(trace)) {
         libtrace_err_t err = trace_get_err(trace);
@@ -213,13 +211,8 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_message_queue_destroy(&(loc->fromsyncq_ip));
     libtrace_message_queue_destroy(&(loc->tosyncq_voip));
     libtrace_message_queue_destroy(&(loc->fromsyncq_voip));
-    if (loc->zmq_pubsock) {
-        if (zmq_setsockopt(loc->zmq_pubsock, ZMQ_LINGER, &zero,
-                sizeof(zero)) != 0) {
-            logger(LOG_INFO, "OpenLI: unable to set linger period on publishing zeromq socket.");
-        }
-        zmq_close(loc->zmq_pubsock);
-    }
+
+    disconnect_exporter_queues(loc->zmq_pubsocks, loc->numexporters);
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
         free_all_ipsessions(&(v4->intercepts));
@@ -819,11 +812,6 @@ static void clear_global_config(collector_global_t *glob) {
         zmq_ctx_destroy(glob->zmq_ctxt);
     }
 
-    /* Our proxy thread will only exit once the zeromq context is
-     * destroyed, so we have to join now */
-    logger(LOG_INFO, "OpenLI: waiting for zeromq proxy to terminate.");
-    pthread_join(glob->zmq_proxy_threadid, NULL);
-
     free(glob);
 }
 
@@ -1121,52 +1109,6 @@ static void *span_thread(void *zmq_ctxt) {
     pthread_exit(NULL);
 }
 
-static void *start_zmq_proxy(void *zmq_ctxt) {
-
-    int zero = 0;
-    pthread_t pid;
-    void *subside = zmq_socket(zmq_ctxt, ZMQ_PULL);
-    void *pubside = zmq_socket(zmq_ctxt, ZMQ_PUB);
-
-    void *paira = zmq_socket(zmq_ctxt, ZMQ_PAIR);
-
-    if (!subside || !pubside) {
-        goto proxyfail;
-    }
-
-    if (zmq_bind(subside, "inproc://subproxy") != 0) {
-        logger(LOG_INFO, "OpenLI: failed to bind zeromq subscriber proxy socket");
-        goto proxyfail;
-    }
-
-    if (zmq_bind(pubside, "inproc://pubproxy") != 0) {
-        logger(LOG_INFO, "OpenLI: failed to bind zeromq publisher proxy socket");
-        goto proxyfail;
-    }
-
-    if (zmq_bind(paira, "inproc://span") != 0) {
-        logger(LOG_INFO, "OpenLI: failed to bind zeromq span socket");
-        goto proxyfail;
-    }
-
-    //pthread_create(&pid, NULL, span_thread, zmq_ctxt);
-    zmq_proxy(subside, pubside, NULL);
-
-    //pthread_join(pid, NULL);
-
-    zmq_setsockopt(subside, ZMQ_LINGER, &zero, sizeof(zero));
-    //zmq_setsockopt(subside, ZMQ_RCVHWM, &zero, sizeof(zero));
-    zmq_setsockopt(pubside, ZMQ_LINGER, &zero, sizeof(zero));
-    zmq_setsockopt(pubside, ZMQ_SNDHWM, &zero, sizeof(zero));
-    zmq_setsockopt(paira, ZMQ_LINGER, &zero, sizeof(zero));
-    zmq_close(subside);
-    zmq_close(pubside);
-    zmq_close(paira);
-
-proxyfail:
-    pthread_exit(NULL);
-}
-
 static void *start_ip_sync_thread(void *params) {
 
     collector_global_t *glob = (collector_global_t *)params;
@@ -1312,15 +1254,6 @@ int main(int argc, char *argv[]) {
     sigemptyset(&sig_block_all);
     if (pthread_sigmask(SIG_SETMASK, &sig_block_all, &sig_before) < 0) {
         logger(LOG_INFO, "Unable to disable signals before starting threads.");
-        return 1;
-    }
-
-    /* Start zeromq proxy thread */
-    ret = pthread_create(&(glob->zmq_proxy_threadid), NULL,
-            start_zmq_proxy, glob->zmq_ctxt);
-    if (ret != 0) {
-        logger(LOG_INFO,
-                "OpenLI: error starting zeromq proxy thread. Exiting.");
         return 1;
     }
 

@@ -687,17 +687,11 @@ static int run_encoding_job(collector_export_t *exp,
                 trace_decrement_packet_refcount(recvd->data.ipmmcc.packet);
                 break;
             case OPENLI_EXPORT_IPCC:
-                /*
                 ret = encode_ipcc(&(exp->encoder), &(recvd->data.ipcc),
                         intstate->details, cinseq->cc_seqno, tosend);
                 cinseq->cc_seqno ++;
-                */
-                //printf("%d got ipcc job for %p\n", exp->glob->exportlabel,
-                //       recvd->data.ipcc.packet);
-                //trace_decrement_packet_refcount(recvd->data.ipcc.packet);
-                free_job_request(recvd);
-                return 0;
                 break;
+                //return 0;
             case OPENLI_EXPORT_IPMMIRI:
                 ret = encode_ipmmiri(&(exp->encoder), &(recvd->data.ipmmiri),
                         intstate->details, cinseq->iri_seqno, tosend,
@@ -730,7 +724,7 @@ static int run_encoding_job(collector_export_t *exp,
         }
     }
 
-    free_job_request(recvd);
+    //free_job_request(recvd);
     return ret;
 }
 
@@ -760,20 +754,27 @@ static int read_exported_message(collector_export_t *exp) {
         }
         return -1;
     }
+    //printf("%d envelope=%s %d\n", exp->glob->exportlabel, envelope, recvd->type);
 
     switch(recvd->type) {
         case OPENLI_EXPORT_INTERCEPT_DETAILS:
             exporter_new_intercept(exp, recvd->data.cept);
+            free(recvd);
             return 1;
 
         case OPENLI_EXPORT_INTERCEPT_OVER:
-            return exporter_end_intercept(exp, recvd->data.cept);
+            ret = exporter_end_intercept(exp, recvd->data.cept);
+            free(recvd);
+            return ret;
 
         case OPENLI_EXPORT_MEDIATOR:
-            return add_new_destination(exp, &(recvd->data.med));
+            ret = add_new_destination(exp, &(recvd->data.med));
+            free(recvd);
+            return ret;
 
         case OPENLI_EXPORT_DROP_SINGLE_MEDIATOR:
             remove_destination(exp, &(recvd->data.med));
+            free(recvd);
             return 1;
 
         case OPENLI_EXPORT_DROP_ALL_MEDIATORS:
@@ -781,6 +782,7 @@ static int read_exported_message(collector_export_t *exp) {
                     "OpenLI exporter: dropping connections to all known mediators.");
             remove_all_destinations(exp);
             exp->dests = libtrace_list_init(sizeof(export_dest_t));
+            free(recvd);
             return 1;
 
          case OPENLI_EXPORT_FLAG_MEDIATORS:
@@ -792,6 +794,7 @@ static int read_exported_message(collector_export_t *exp) {
             }
 
             exp->flagged = 1;
+            free(recvd);
             return 1;
 
         case OPENLI_EXPORT_IPCC:
@@ -799,12 +802,10 @@ static int read_exported_message(collector_export_t *exp) {
         case OPENLI_EXPORT_IPMMIRI:
         case OPENLI_EXPORT_IPIRI:
             ret = 1;
-            free_job_request(recvd);
-            /*
-            if (run_encoding_job(exp, &recvd, &tosend) < 0) {
+            if (run_encoding_job(exp, recvd, &tosend) < 0) {
                 ret = -1;
             }
-            */
+            free_job_request(recvd);
             return ret;
 
         case OPENLI_EXPORT_PACKET_FIN:
@@ -812,12 +813,14 @@ static int read_exported_message(collector_export_t *exp) {
              * we can safely free the packet.
              */
             trace_decrement_packet_refcount(recvd->data.packet);
+            free(recvd);
             return 1;
     }
 
     logger(LOG_INFO,
             "OpenLI: invalid message type %d received from export queue.",
             recvd->type);
+    free(recvd);
     return -1;
 }
 
@@ -825,17 +828,17 @@ static inline int connect_zmq_socket(collector_export_t *exp) {
 
     int rc;
     int zero = 0;
-    char subfilter[12];
+    char subname[128];
 
+    snprintf(subname, 128, "inproc://exporter%d", exp->glob->exportlabel);
     exp->zmq_subsock = zmq_socket(exp->glob->zmq_ctxt, ZMQ_SUB);
-    rc = zmq_connect(exp->zmq_subsock, "inproc://pubproxy");
+    rc = zmq_bind(exp->zmq_subsock, subname);
+
     if (rc != 0) {
-        logger(LOG_INFO, "OpenLI: exporter thread %d was unable to connect to zeromq proxy", exp->glob->exportlabel);
+        logger(LOG_INFO, "OpenLI: exporter thread %d was unable to start zmq socket", exp->glob->exportlabel);
         return -1;
     }
-    snprintf(subfilter, 12, "%dX", exp->glob->exportlabel);
-    rc = zmq_setsockopt(exp->zmq_subsock, ZMQ_SUBSCRIBE, subfilter,
-            strlen(subfilter));
+    rc = zmq_setsockopt(exp->zmq_subsock, ZMQ_SUBSCRIBE, "", 0);
     if (rc != 0) {
         logger(LOG_INFO, "OpenLI: exporter thread %d was unable to set subscription filter for zeromq", exp->glob->exportlabel);
         return -1;
@@ -902,7 +905,6 @@ int exporter_thread_main(collector_export_t *exp) {
 
     while (timerexpired == 0) {
         int processed = 0;
-
         zmq_poll(items, itemcount, -1);
         if (items[0].revents & ZMQ_POLLIN) {
             do {
@@ -936,19 +938,45 @@ static const char * const predefined_envelopes[] = {
     "0X", "1X", "2X", "3X", "4X", "5X", "6X", "7X", "8X", "9X", "10X",
      "11X", "12X", "13X", "14X", "15X", NULL };
 
-static inline int _publish_openli_msg(void *pubsock, openli_export_recv_t *msg,
-        int queueid) {
+void **connect_exporter_queues(int queuecount, void *zmq_ctxt) {
+    void **pubsocks = malloc(sizeof(void *) * queuecount);
+    int i, zero = 0;
+
+    memset(pubsocks, 0, sizeof(void *) * queuecount);
+    for (i = 0; i < queuecount; i++) {
+        char sockname[128];
+        void *psock = zmq_socket(zmq_ctxt, ZMQ_PUSH);
+
+        snprintf(sockname, 128, "inproc://exporter%d", i);
+        zmq_connect(psock, sockname);
+
+        zmq_setsockopt(psock, ZMQ_SNDHWM, &zero, sizeof(zero));
+        pubsocks[i] = psock;
+    }
+
+    return pubsocks;
+}
+
+void disconnect_exporter_queues(void **pubsocks, int queuecount) {
+    int i, zero = 0;
+    for (i = 0; i < queuecount; i++) {
+        if (pubsocks[i]) {
+            if (zmq_setsockopt(pubsocks[i], ZMQ_LINGER, &zero,
+                        sizeof(zero)) != 0) {
+                logger(LOG_INFO,
+                        "OpenLI: unable to set linger period on publishing zeromq socket.");
+            }
+            zmq_close(pubsocks[i]);
+        }
+    }
+    free(pubsocks);
+}
+
+static inline int _publish_openli_msg(void *pubsock, openli_export_recv_t *msg) {
 
     int rc;
-
-    if (queueid > 15) {
-        char envelope[24];
-        snprintf(envelope, 24, "%dX", queueid);
-        rc = zmq_send(pubsock, envelope, strlen(envelope), ZMQ_SNDMORE);
-    } else {
-        rc = zmq_send(pubsock, predefined_envelopes[queueid],
-                strlen(predefined_envelopes[queueid]), ZMQ_SNDMORE);
-    }
+    char *envelope = "X";
+    rc = zmq_send(pubsock, envelope, strlen(envelope), ZMQ_SNDMORE);
 
     if (rc < 0) {
         logger(LOG_INFO, "Error while publishing OpenLI export message: %s",
@@ -966,19 +994,19 @@ static inline int _publish_openli_msg(void *pubsock, openli_export_recv_t *msg,
     return 0;
 }
 
-void export_queue_put_all(void *pubsock, openli_export_recv_t *msg,
+void export_queue_put_all(void **pubsocks, openli_export_recv_t *msg,
         int numexporters) {
 
     int i;
 
     for (i = 0; i < numexporters; i++) {
-        if (_publish_openli_msg(pubsock, msg, i) < 0) {
+        if (_publish_openli_msg(pubsocks[i], msg) < 0) {
             continue;
         }
     }
 }
 
-int export_queue_put_by_liid(void *pubsock,
+int export_queue_put_by_liid(void **pubsocks,
         openli_export_recv_t *msg, char *liid, int numexporters) {
 
     uint32_t hash;
@@ -986,10 +1014,10 @@ int export_queue_put_by_liid(void *pubsock,
 
     hash = hashlittle(liid, strlen(liid), 0x188532fa);
     queueid = hash % numexporters;
-    return _publish_openli_msg(pubsock, msg, queueid);
+    return _publish_openli_msg(pubsocks[queueid], msg);
 }
 
-int export_queue_put_by_queueid(void *pubsock,
+int export_queue_put_by_queueid(void **pubsocks,
         openli_export_recv_t *msg, int queueid) {
 
     if (queueid < 0) {
@@ -999,6 +1027,7 @@ int export_queue_put_by_queueid(void *pubsock,
         return -1;
     }
 
-    return _publish_openli_msg(pubsock, msg, queueid);
+    //printf("sending message type %d to %d\n", msg->type, queueid);
+    return _publish_openli_msg(pubsocks[queueid], msg);
 }
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

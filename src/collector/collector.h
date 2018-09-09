@@ -187,7 +187,7 @@ typedef struct colthread_local {
 
     /* Message queue for exporting LI records */
     int numexporters;
-    void *zmq_pubsock;
+    void **zmq_pubsocks;
 
     /* Known RADIUS servers, i.e. if we see traffic to or from these
      * servers, we assume it is RADIUS.

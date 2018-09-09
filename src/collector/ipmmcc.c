@@ -101,7 +101,7 @@ static inline int form_ipmmcc_job(openli_export_recv_t *msg,
     msg->data.ipmmcc.dir = dir;
     msg->data.ipmmcc.colinfo = info;
     trace_increment_packet_refcount(packet);
-    queueused = export_queue_put_by_liid(loc->zmq_pubsock, msg, liid,
+    queueused = export_queue_put_by_liid(loc->zmq_pubsocks, msg, liid,
             loc->numexporters);
 }
 
