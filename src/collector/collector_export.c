@@ -306,7 +306,8 @@ static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
 
 #define BUF_BATCH_SIZE (10 * 1024 * 1024)
 
-static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
+static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg,
+        wandder_encoder_t *enc) {
 
     int ret = 0;
     if (dest->fd == -1) {
@@ -344,7 +345,7 @@ static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
     }
 
 endforward:
-    wandder_release_encoded_result(NULL, msg->msgbody);
+    wandder_release_encoded_result(enc, msg->msgbody);
 
     return ret;
 }
@@ -608,7 +609,7 @@ static int export_encoded_record(collector_export_t *exp,
         dest = (export_dest_t *)(n->data);
 
         if (dest->details.mediatorid == tosend->destid) {
-            x = forward_message(dest, tosend);
+            x = forward_message(dest, tosend, exp->encoder);
             if (x == -1) {
                 close(dest->fd);
                 dest->fd = -1;
@@ -629,7 +630,7 @@ static int export_encoded_record(collector_export_t *exp,
          * is NOT coming so we don't buffer forever...
          */
         dest = add_unknown_destination(exp, tosend->destid);
-        x = forward_message(dest, tosend);
+        x = forward_message(dest, tosend, exp->encoder);
         if (x == -1) {
             return -1;
         }
@@ -738,6 +739,7 @@ static int read_exported_message(collector_export_t *exp) {
     libtrace_list_node_t *n;
     export_dest_t *dest;
 
+    /*
     x = zmq_recv(exp->zmq_subsock, envelope, 23, ZMQ_DONTWAIT);
     if (x < 0) {
         if (errno == EAGAIN) {
@@ -746,6 +748,7 @@ static int read_exported_message(collector_export_t *exp) {
         return -1;
     }
     envelope[x] = '\0';
+    */
     x = zmq_recv(exp->zmq_subsock, (char *)(&recvd),
             sizeof(openli_export_recv_t *), ZMQ_DONTWAIT);
     if (x < 0) {
@@ -945,7 +948,7 @@ void **connect_exporter_queues(int queuecount, void *zmq_ctxt) {
     memset(pubsocks, 0, sizeof(void *) * queuecount);
     for (i = 0; i < queuecount; i++) {
         char sockname[128];
-        void *psock = zmq_socket(zmq_ctxt, ZMQ_PUSH);
+        void *psock = zmq_socket(zmq_ctxt, ZMQ_PUB);
 
         snprintf(sockname, 128, "inproc://exporter%d", i);
         zmq_connect(psock, sockname);
@@ -976,6 +979,7 @@ static inline int _publish_openli_msg(void *pubsock, openli_export_recv_t *msg) 
 
     int rc;
     char *envelope = "X";
+    /*
     rc = zmq_send(pubsock, envelope, strlen(envelope), ZMQ_SNDMORE);
 
     if (rc < 0) {
@@ -983,6 +987,7 @@ static inline int _publish_openli_msg(void *pubsock, openli_export_recv_t *msg) 
                 strerror(errno));
         return -1;
     }
+    */
 
     rc = zmq_send(pubsock, (char *)(&msg), sizeof(openli_export_recv_t *), 0);
     if (rc < 0) {
