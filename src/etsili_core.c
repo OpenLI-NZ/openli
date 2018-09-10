@@ -434,15 +434,26 @@ static inline void encode_etsili_pshdr(wandder_encoder_t *encoder,
     wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, &(seqno),
             sizeof(int64_t));
+    /*
     wandder_encode_next(encoder, WANDDER_TAG_GENERALTIME,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 5, tv,
             sizeof(struct timeval));
+    */
 
     if (hdrdata->intpointid) {
         wandder_encode_next(encoder, WANDDER_TAG_PRINTABLE,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 6, hdrdata->intpointid,
                 hdrdata->intpointid_len);
     }
+
+    ENC_CSEQUENCE(encoder, 7);
+    wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &(tv->tv_sec),
+            sizeof(tv->tv_sec));
+    wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(tv->tv_usec),
+            sizeof(tv->tv_usec));
+    wandder_encode_endseq(encoder);
 
     wandder_encode_next(encoder, WANDDER_TAG_ENUM,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 8, &tvclass, sizeof(tvclass));
