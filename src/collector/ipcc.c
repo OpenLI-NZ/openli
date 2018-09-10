@@ -71,9 +71,6 @@ int encode_ipcc(wandder_encoder_t **encoder, openli_ipcc_job_t *job,
         openli_exportmsg_t *msg) {
 
     wandder_etsipshdr_data_t hdrdata;
-   	void *l3;
-    uint32_t rem;
-    uint16_t ethertype;
 
     if (*encoder == NULL) {
         *encoder = init_wandder_encoder();
@@ -103,8 +100,8 @@ int encode_ipcc(wandder_encoder_t **encoder, openli_ipcc_job_t *job,
     msg->liid = intdetails->liid;
     msg->liidlen = intdetails->liid_len;
     msg->encoder = *encoder;
-    msg->ipcontents = (uint8_t *)l3;
-    msg->ipclen = rem;
+    msg->ipcontents = (uint8_t *)job->ipcontent;
+    msg->ipclen = job->ipclen;
     msg->header = construct_netcomm_protocol_header(
             msg->msgbody->len + msg->liidlen + sizeof(msg->liidlen),
             OPENLI_PROTO_ETSI_CC, 0, &(msg->hdrlen));
