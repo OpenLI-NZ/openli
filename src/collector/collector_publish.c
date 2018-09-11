@@ -33,6 +33,7 @@
 #include "logger.h"
 #include "util.h"
 #include "collector_publish.h"
+#include "internal.pb-c.h"
 
 void **connect_exporter_queues(int queuecount, void *zmq_ctxt) {
     void **pubsocks = malloc(sizeof(void *) * queuecount);
@@ -102,61 +103,31 @@ static int _publish_mediator(void *pubsock, openli_export_recv_t *msg) {
 
 static int _publish_ipcc_job(void *pubsock, openli_export_recv_t *msg) {
 
-    if (zmq_send(pubsock, (char *)&(msg->destid), sizeof(msg->destid),
-            ZMQ_SNDMORE) < 0) {
+    IPCCJob job = IPCCJOB__INIT;
+    void *buf;
+    unsigned len;
 
+    job.destid = msg->destid;
+    job.cin = msg->data.ipcc.cin;
+    job.dir = msg->data.ipcc.dir;
+    job.tvsec = msg->data.ipcc.tv.tv_sec;
+    job.tvusec = msg->data.ipcc.tv.tv_usec;
+    job.liid = msg->data.ipcc.liid;
+    job.ipcontent.data = msg->data.ipcc.ipcontent;
+    job.ipcontent.len = msg->data.ipcc.ipclen;
+
+    len = ipccjob__get_packed_size(&job);
+    buf = malloc(len);
+    ipccjob__pack(&job, buf);
+
+    if (zmq_send(pubsock, (char *)buf, len, 0) < 0) {
         logger(LOG_INFO, "Error while publishing OpenLI export message: %s",
                 strerror(errno));
         return -1;
     }
+    return 0;
 
-    if (zmq_send(pubsock, (char *)&(msg->data.ipcc.cin),
-            sizeof(msg->data.ipcc.cin), ZMQ_SNDMORE) < 0) {
 
-        logger(LOG_INFO, "Error while publishing OpenLI export message: %s",
-                strerror(errno));
-        return -1;
-    }
-
-    if (zmq_send(pubsock, (char *)&(msg->data.ipcc.dir),
-            sizeof(msg->data.ipcc.dir), ZMQ_SNDMORE) < 0) {
-
-        logger(LOG_INFO, "Error while publishing OpenLI export message: %s",
-                strerror(errno));
-        return -1;
-    }
-
-    if (zmq_send(pubsock, (char *)&(msg->data.ipcc.tv.tv_sec),
-            sizeof(msg->data.ipcc.tv.tv_sec), ZMQ_SNDMORE) < 0) {
-
-        logger(LOG_INFO, "Error while publishing OpenLI export message: %s",
-                strerror(errno));
-        return -1;
-    }
-
-    if (zmq_send(pubsock, (char *)&(msg->data.ipcc.tv.tv_usec),
-            sizeof(msg->data.ipcc.tv.tv_usec), ZMQ_SNDMORE) < 0) {
-
-        logger(LOG_INFO, "Error while publishing OpenLI export message: %s",
-                strerror(errno));
-        return -1;
-    }
-
-    if (zmq_send(pubsock, msg->data.ipcc.liid, strlen(msg->data.ipcc.liid),
-            ZMQ_SNDMORE) < 0) {
-
-        logger(LOG_INFO, "Error while publishing OpenLI export message: %s",
-                strerror(errno));
-        return -1;
-    }
-
-    if (zmq_send(pubsock, msg->data.ipcc.ipcontent, msg->data.ipcc.ipclen,
-            0) < 0) {
-
-        logger(LOG_INFO, "Error while publishing OpenLI export message: %s",
-                strerror(errno));
-        return -1;
-    }
 }
 
 static int _publish_ipiri_job(void *pubsock, openli_export_recv_t *msg) {

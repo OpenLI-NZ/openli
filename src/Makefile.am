@@ -13,6 +13,13 @@ openliprovisioner_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/
 endif
 
 if BUILD_COLLECTOR
+MOSTLYCLEANFILES = internal.pb-c.c internal.pb-c.h
+BUILT_SOURCES = internal.pb-c.h internal.pb-c.c
+
+internal.pb-c.c internal.pb-c.h : Makefile
+	$(PROTOC) --c_out=. collector/internal.proto
+
+dist_noinst_DATA = collector/internal.proto
 PLUGIN_SRCS=collector/accessplugins/radius.c
 bin_PROGRAMS +=openlicollector
 openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
@@ -35,11 +42,13 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
 		collector/collector_sync_voip.h \
                 collector/reassembler.h collector/reassembler.c \
                 collector/collector_publish.c collector/collector_publish.h \
+                collector/internal.pb-c.c collector/internal.pb-c.h \
                 $(PLUGIN_SRCS)
 
-openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs
-openlicollector_LDFLAGS=-lpthread -lpatricia
-openlicollector_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/
+openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 
+openlicollector_LDFLAGS=-lpthread -lpatricia @PROTOBUF_C_LIBS@
+openlicollector_CFLAGS=@PROTOBUF_C_CFLAGS@ -I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/ -I$(builddir)
+
 endif
 
 if BUILD_MEDIATOR
@@ -67,8 +76,9 @@ standaloneexporter_SOURCES=standaloneexporter.c etsili_core.h \
                 collector/ipcc.c collector/ipcc.h \
                 collector/ipiri.c collector/ipiri.h \
                 collector/collector_publish.c collector/collector_publish.h \
+                collector/internal.pb-c.c collector/internal.pb-c.h \
                 coreserver.c coreserver.h 
 standaloneexporter_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs
-standaloneexporter_LDFLAGS=-lpthread -lpatricia
-standaloneexporter_CFLAGS=-Icollector/ -I$(abs_top_srcdir)/extlib/libpatricia/ 
+standaloneexporter_LDFLAGS=-lpthread -lpatricia @PROTOBUF_C_LIBS@
+standaloneexporter_CFLAGS=-Icollector/ -I$(abs_top_srcdir)/extlib/libpatricia/  @PROTOBUF_C_CFLAGS@ -I$(builddir)
 

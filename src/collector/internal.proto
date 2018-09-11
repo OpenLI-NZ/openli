@@ -1,0 +1,12 @@
+
+message IPCCJob {
+    required uint32 destid = 1;
+    required uint32 cin = 2;
+    required uint32 dir = 3;
+    required uint32 tvsec = 4;
+    required uint32 tvusec = 5;
+    required string liid = 6;
+    required bytes ipcontent = 7;
+}
+
+// vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
