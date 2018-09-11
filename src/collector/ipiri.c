@@ -67,7 +67,8 @@ int sort_generics(etsili_generic_t *a, etsili_generic_t *b) {
 
 
 int encode_ipiri(etsili_generic_t **freegenerics,
-        wandder_encoder_t **encoder, openli_ipiri_job_t *job,
+        wandder_encoder_t **encoder, shared_global_info_t *shared,
+        openli_ipiri_job_t *job,
         exporter_intercept_msg_t *intdetails, uint32_t seqno,
         openli_exportmsg_t *msg, int iteration) {
 
@@ -78,7 +79,7 @@ int encode_ipiri(etsili_generic_t **freegenerics,
     int64_t ipversion = 0;
     struct timeval tv;
     int ret = 0;
-
+#if 0
 
     /* Conventional IRIs will have an attached plugin which knows how
      * to convert the current "IP session state" into sensible IRI
@@ -93,7 +94,10 @@ int encode_ipiri(etsili_generic_t **freegenerics,
                 &params, &iritype, freegenerics, iteration)) < 0) {
             return -1;
         }
-    } else if (job->special == OPENLI_IPIRI_ENDWHILEACTIVE) {
+    }
+#endif
+
+    if (job->special == OPENLI_IPIRI_ENDWHILEACTIVE) {
         uint32_t evtype = IPIRI_END_WHILE_ACTIVE;
         iritype = ETSILI_IRI_REPORT;
 
@@ -211,12 +215,12 @@ int encode_ipiri(etsili_generic_t **freegenerics,
     hdrdata.authcc_len = intdetails->authcc_len;
     hdrdata.delivcc = intdetails->delivcc;
     hdrdata.delivcc_len = intdetails->delivcc_len;
-    hdrdata.operatorid = job->colinfo->operatorid;
-    hdrdata.operatorid_len = job->colinfo->operatorid_len;
-    hdrdata.networkelemid = job->colinfo->networkelemid;
-    hdrdata.networkelemid_len = job->colinfo->networkelemid_len;
-    hdrdata.intpointid = job->colinfo->intpointid;
-    hdrdata.intpointid_len = job->colinfo->intpointid_len;
+    hdrdata.operatorid = shared->operatorid;
+    hdrdata.operatorid_len = shared->operatorid_len;
+    hdrdata.networkelemid = shared->networkelemid;
+    hdrdata.networkelemid_len = shared->networkelemid_len;
+    hdrdata.intpointid = shared->intpointid;
+    hdrdata.intpointid_len = shared->intpointid_len;
 
     memset(msg, 0, sizeof(openli_exportmsg_t));
     msg->msgbody = encode_etsi_ipiri(*encoder, &hdrdata,
@@ -232,7 +236,6 @@ int encode_ipiri(etsili_generic_t **freegenerics,
             OPENLI_PROTO_ETSI_IRI, 0, &(msg->hdrlen));
 
     free_ipiri_parameters(params, freegenerics);
-
     return ret;
 }
 

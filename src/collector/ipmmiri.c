@@ -51,7 +51,6 @@ int ipmm_iri(libtrace_packet_t *pkt, openli_export_recv_t *irimsg,
     irimsg->data.ipmmiri.cin = cin->cin;
     irimsg->data.ipmmiri.iritype = iritype;
     irimsg->data.ipmmiri.ipmmiri_style = ipmmiri_style;
-    irimsg->data.ipmmiri.colinfo = info;
 
     return 1;
 }
@@ -67,7 +66,7 @@ int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
     } else {
         reset_wandder_encoder(*encoder);
     }
-
+#if 0
     hdrdata.liid = intdetails->liid;
     hdrdata.liid_len = intdetails->liid_len;
     hdrdata.authcc = intdetails->authcc;
@@ -105,6 +104,7 @@ int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
             msg->msgbody->len + msg->liidlen + sizeof(msg->liidlen),
             OPENLI_PROTO_ETSI_IRI, 0, &(msg->hdrlen));
 
+#endif
     return 0;
 }
 

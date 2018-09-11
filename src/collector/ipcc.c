@@ -34,6 +34,7 @@
 #include "logger.h"
 #include "collector.h"
 #include "collector_export.h"
+#include "collector_publish.h"
 #include "etsili_core.h"
 
 static void dump_export_msg(openli_exportmsg_t *msg) {
@@ -77,7 +78,7 @@ int encode_ipcc(wandder_encoder_t **encoder, openli_ipcc_job_t *job,
     } else {
         reset_wandder_encoder(*encoder);
     }
-
+#if 0
     hdrdata.liid = intdetails->liid;
     hdrdata.liid_len = intdetails->liid_len;
     hdrdata.authcc = intdetails->authcc;
@@ -105,61 +106,32 @@ int encode_ipcc(wandder_encoder_t **encoder, openli_ipcc_job_t *job,
     msg->header = construct_netcomm_protocol_header(
             msg->msgbody->len + msg->liidlen + sizeof(msg->liidlen),
             OPENLI_PROTO_ETSI_CC, 0, &(msg->hdrlen));
-
+#endif
     return 0;
 
 }
 
-static inline openli_export_recv_t *make_ipcc_job(
-        ipsession_t *sess, libtrace_packet_t *pkt, uint8_t dir,
-        shared_global_info_t *info) {
+static inline void make_ipcc_job(uint32_t cin,
+        char *liid, uint32_t destid, libtrace_packet_t *pkt, uint8_t dir,
+        openli_export_recv_t *msg) {
 
    	void *l3;
     uint32_t rem;
     uint16_t ethertype;
-    openli_export_recv_t *msg;
 
-    msg = calloc(1, sizeof(openli_export_recv_t));
+    memset(msg, 0, sizeof(msg));
     l3 = trace_get_layer3(pkt, &ethertype, &rem);
 
     msg->type = OPENLI_EXPORT_IPCC;
-    msg->destid = sess->common.destid;
-    msg->data.ipcc.liid = strdup(sess->common.liid);
-    msg->data.ipcc.ipcontent = (uint8_t *)calloc(1, rem);
+    msg->destid = destid;
+    msg->data.ipcc.liid = liid;
+    msg->data.ipcc.ipcontent = l3;
     msg->data.ipcc.ipclen = rem;
-    msg->data.ipcc.cin = sess->cin;
+    msg->data.ipcc.cin = cin;
     msg->data.ipcc.dir = dir;
-    msg->data.ipcc.colinfo = info;
     msg->data.ipcc.tv = trace_get_timeval(pkt);
 
-    memcpy(msg->data.ipcc.ipcontent, l3, rem);
-    return msg;
-}
-
-static inline openli_export_recv_t *make_static_ipcc_job(
-        staticipsession_t *sess, libtrace_packet_t *pkt, uint8_t dir,
-        shared_global_info_t *info) {
-
-   	void *l3;
-    uint32_t rem;
-    uint16_t ethertype;
-    openli_export_recv_t *msg;
-
-    msg = calloc(1, sizeof(openli_export_recv_t));
-    l3 = trace_get_layer3(pkt, &ethertype, &rem);
-
-    msg->type = OPENLI_EXPORT_IPCC;
-    msg->destid = sess->common.destid;
-    msg->data.ipcc.liid = strdup(sess->common.liid);
-    msg->data.ipcc.ipcontent = (uint8_t *)calloc(1, rem);
-    msg->data.ipcc.ipclen = rem;
-    msg->data.ipcc.cin = sess->cin;
-    msg->data.ipcc.dir = dir;
-    msg->data.ipcc.colinfo = info;
-    msg->data.ipcc.tv = trace_get_timeval(pkt);
-
-    memcpy(msg->data.ipcc.ipcontent, l3, rem);
-    return msg;
+    //memcpy(msg->data.ipcc.ipcontent, l3, rem);
 }
 
 /*
@@ -219,13 +191,13 @@ static inline int add_static_cached(prefix_t *prefix, patricia_node_t *pnode,
 }
 
 static inline int lookup_static_ranges(struct sockaddr *cmp,
-        int family, libtrace_packet_t *pkt,
-        uint8_t dir, shared_global_info_t *info, colthread_local_t *loc) {
+        int family, libtrace_packet_t *pkt, uint8_t dir,
+        colthread_local_t *loc) {
 
     int matched = 0, queueused = 0;
     patricia_node_t *pnode = NULL;
     prefix_t prefix;
-    openli_export_recv_t *msg;
+    openli_export_recv_t msg;
     static_ipcache_t *cached = NULL;
 
     memset(&prefix, 0, sizeof(prefix_t));
@@ -271,8 +243,9 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
                         sliid->key);
             } else {
                 matched ++;
-                msg = make_static_ipcc_job(matchsess, pkt, dir, info);
-                export_queue_put_by_liid(loc->zmq_pubsocks, msg,
+                make_ipcc_job(matchsess->cin, matchsess->common.liid,
+                        matchsess->common.destid, pkt, dir, &msg);
+                export_queue_put_by_liid(loc->zmq_pubsocks, &msg,
                         matchsess->common.liid, loc->numexporters);
             }
         }
@@ -282,11 +255,10 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
 }
 
 int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
-        libtrace_ip6_t *ip, uint32_t rem, shared_global_info_t *info,
-        colthread_local_t *loc) {
+        libtrace_ip6_t *ip, uint32_t rem, colthread_local_t *loc) {
 
     struct sockaddr_in6 *intaddr, *cmp;
-    openli_export_recv_t *msg = NULL;
+    openli_export_recv_t msg;
     int matched = 0, queueused = 0;
     ipv6_target_t *tgt;
     ipsession_t *sess, *tmp;
@@ -308,8 +280,9 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = make_ipcc_job(sess, pkt, 0, info);
-            export_queue_put_by_liid(loc->zmq_pubsocks, msg,
+            make_ipcc_job(sess->cin, sess->common.liid, sess->common.destid,
+                    pkt, 0, &msg);
+            export_queue_put_by_liid(loc->zmq_pubsocks, &msg,
                     sess->common.liid, loc->numexporters);
         }
     }
@@ -321,8 +294,9 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = make_ipcc_job(sess, pkt, 1, info);
-            export_queue_put_by_liid(loc->zmq_pubsocks, msg,
+            make_ipcc_job(sess->cin, sess->common.liid, sess->common.destid,
+                    pkt, 1, &msg);
+            export_queue_put_by_liid(loc->zmq_pubsocks, &msg,
                     sess->common.liid, loc->numexporters);
         }
     }
@@ -332,9 +306,9 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     }
 
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->srcip),
-            AF_INET6, pkt, 0, info, loc);
+            AF_INET6, pkt, 0, loc);
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->destip),
-            AF_INET6, pkt, 1, info, loc);
+            AF_INET6, pkt, 1, loc);
 
 
 ipv6ccdone:
@@ -344,11 +318,10 @@ ipv6ccdone:
 
 
 int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
-        libtrace_ip_t *ip,
-        uint32_t rem, shared_global_info_t *info, colthread_local_t *loc) {
+        libtrace_ip_t *ip, uint32_t rem, colthread_local_t *loc) {
 
     struct sockaddr_in *intaddr, *cmp;
-    openli_export_recv_t *msg = NULL;
+    openli_export_recv_t msg;
     int matched = 0, queueused = 0;
     ipv4_target_t *tgt;
     ipsession_t *sess, *tmp;
@@ -370,8 +343,9 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = make_ipcc_job(sess, pkt, 0, info);
-            export_queue_put_by_liid(loc->zmq_pubsocks, msg,
+            make_ipcc_job(sess->cin, sess->common.liid, sess->common.destid,
+                    pkt, 0, &msg);
+            export_queue_put_by_liid(loc->zmq_pubsocks, &msg,
                     sess->common.liid, loc->numexporters);
         }
     }
@@ -383,8 +357,9 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = make_ipcc_job(sess, pkt, 1, info);
-            export_queue_put_by_liid(loc->zmq_pubsocks, msg,
+            make_ipcc_job(sess->cin, sess->common.liid, sess->common.destid,
+                    pkt, 1, &msg);
+            export_queue_put_by_liid(loc->zmq_pubsocks, &msg,
                     sess->common.liid, loc->numexporters);
         }
     }
@@ -394,9 +369,9 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     }
 
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->srcip),
-            AF_INET, pkt, 0, info, loc);
+            AF_INET, pkt, 0, loc);
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->destip),
-            AF_INET, pkt, 1, info, loc);
+            AF_INET, pkt, 1, loc);
 
 
 ipv4ccdone:

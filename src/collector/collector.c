@@ -564,14 +564,14 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     if (ethertype == TRACE_ETHERTYPE_IP) {
         /* Is this an IP packet? -- if yes, possible IP CC */
         if (ipv4_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, iprem,
-                    &(glob->sharedinfo), loc)) {
+                    loc)) {
             forwarded = 1;
         }
 
         /* Is this an RTP packet? -- if yes, possible IPMM CC */
         if (proto == TRACE_IPPROTO_UDP) {
             if (ip4mm_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, iprem,
-                        &(glob->sharedinfo), loc)) {
+                        loc)) {
                 forwarded = 1;
             }
         }
@@ -579,13 +579,13 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
         /* Is this an IP packet? -- if yes, possible IP CC */
         if (ipv6_comm_contents(pkt, &pinfo, (libtrace_ip6_t *)l3, iprem,
-                    &(glob->sharedinfo), loc)) {
+                    loc)) {
             forwarded = 1;
         }
 
         if (proto == TRACE_IPPROTO_UDP) {
             if (ip6mm_comm_contents(pkt, &pinfo, (libtrace_ip6_t *)l3, iprem,
-                        &(glob->sharedinfo), loc)) {
+                        loc)) {
                 forwarded = 1;
             }
         }
@@ -1257,12 +1257,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+#if 0
     /* Start export threads */
     glob->exporters = (export_thread_data_t *)malloc(
             sizeof(export_thread_data_t) * glob->exportthreads);
     for (i = 0; i < glob->exportthreads; i++) {
         glob->exporters[i].zmq_ctxt = glob->zmq_ctxt;
         glob->exporters[i].exportlabel = i;
+        glob->exporters[i].shared = glob->sharedinfo;
 
         ret = pthread_create(&(glob->exporters[i].threadid), NULL,
                 start_export_thread, (void *)&(glob->exporters[i]));
@@ -1271,6 +1273,7 @@ int main(int argc, char *argv[]) {
             return 1;
         }
     }
+#endif
 
     /* XXX temporary to prevent exporters from missing early sync messages */
     usleep(100000);
@@ -1347,9 +1350,11 @@ int main(int argc, char *argv[]) {
 
     pthread_join(glob->syncip.threadid, NULL);
     pthread_join(glob->syncvoip.threadid, NULL);
+#if 0
     for (i = 0; i < glob->exportthreads; i++) {
         pthread_join(glob->exporters[i].threadid, NULL);
     }
+#endif
 
     logger(LOG_INFO, "OpenLI: exiting OpenLI Collector.");
     /* Tidy up, exit */

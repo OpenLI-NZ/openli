@@ -34,6 +34,7 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
 		collector/collector_sync_voip.c \
 		collector/collector_sync_voip.h \
                 collector/reassembler.h collector/reassembler.c \
+                collector/collector_publish.c collector/collector_publish.h \
                 $(PLUGIN_SRCS)
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs
@@ -54,4 +55,20 @@ openlimediator_LDADD = @ADD_LIBS@
 openlimediator_LDFLAGS=-lpthread
 openlimediator_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/
 endif
+
+bin_PROGRAMS += standaloneexporter
+standaloneexporter_SOURCES=standaloneexporter.c etsili_core.h \
+                collector/collector_export.c collector/collector_export.h \
+                export_buffer.h export_buffer.c logger.c logger.h \
+                util.c util.h intercept.c intercept.h \
+                netcomms.c netcomms.h byteswap.c byteswap.h etsili_core.c \
+                collector/jenkinshash.c collector/ipmmcc.c collector/ipmmcc.h \
+                collector/ipmmiri.c collector/ipmmiri.h \
+                collector/ipcc.c collector/ipcc.h \
+                collector/ipiri.c collector/ipiri.h \
+                collector/collector_publish.c collector/collector_publish.h \
+                coreserver.c coreserver.h 
+standaloneexporter_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs
+standaloneexporter_LDFLAGS=-lpthread -lpatricia
+standaloneexporter_CFLAGS=-Icollector/ -I$(abs_top_srcdir)/extlib/libpatricia/ 
 

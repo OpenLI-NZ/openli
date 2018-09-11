@@ -234,6 +234,7 @@ typedef struct export_thread_data {
     pthread_t threadid;
     void *zmq_ctxt;
     int exportlabel;
+    shared_global_info_t *shared;
 } export_thread_data_t;
 
 

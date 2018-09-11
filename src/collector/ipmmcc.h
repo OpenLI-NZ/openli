@@ -35,12 +35,10 @@ int encode_ipmmcc(wandder_encoder_t **encoder, openli_ipmmcc_job_t *job,
                 openli_exportmsg_t *msg);
 
 int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
-        libtrace_ip_t *ip,
-        uint32_t rem, shared_global_info_t *info, colthread_local_t *loc);
+        libtrace_ip_t *ip, uint32_t rem, colthread_local_t *loc);
 
 int ip6mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
-        libtrace_ip6_t *ip6,
-        uint32_t rem, shared_global_info_t *info, colthread_local_t *loc);
+        libtrace_ip6_t *ip6, uint32_t rem, colthread_local_t *loc);
 
 #endif
 

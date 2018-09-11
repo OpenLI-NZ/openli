@@ -135,7 +135,8 @@ int ip_iri(shared_global_info_t *info, wandder_encoder_t **encoder,
                 struct timeval *tv, etsili_generic_t *params);
 
 int encode_ipiri(etsili_generic_t **freegenerics,
-        wandder_encoder_t **encoder, openli_ipiri_job_t *job,
+        wandder_encoder_t **encoder, shared_global_info_t *shared,
+        openli_ipiri_job_t *job,
         exporter_intercept_msg_t *intdetails, uint32_t seqno,
         openli_exportmsg_t *msg, int iteration);
 

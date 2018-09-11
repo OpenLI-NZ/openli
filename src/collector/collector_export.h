@@ -34,6 +34,7 @@
 #include "export_buffer.h"
 #include "netcomms.h"
 #include "internetaccess.h"
+#include "collector_publish.h"
 
 typedef struct export_dest {
     int failmsg;
@@ -80,121 +81,14 @@ typedef struct colexp_data {
     int flagtimerfd;
 
     void *zmq_subsock;
+    int count;
 
 } collector_export_t;
-
-enum {
-    OPENLI_EXPORT_PACKET_FIN = 2,
-    OPENLI_EXPORT_MEDIATOR = 3,
-    OPENLI_EXPORT_FLAG_MEDIATORS = 4,
-    OPENLI_EXPORT_DROP_ALL_MEDIATORS = 6,
-    OPENLI_EXPORT_DROP_SINGLE_MEDIATOR = 7,
-    OPENLI_EXPORT_IPCC = 8,
-    OPENLI_EXPORT_IPMMCC = 9,
-    OPENLI_EXPORT_IPIRI = 10,
-    OPENLI_EXPORT_IPMMIRI = 11,
-    OPENLI_EXPORT_INTERCEPT_DETAILS = 12,
-    OPENLI_EXPORT_INTERCEPT_OVER = 13,
-
-};
-
-typedef struct openli_ipmmcc_job {
-    char *liid;
-    libtrace_packet_t *packet;
-    uint32_t cin;
-    uint8_t dir;
-    shared_global_info_t *colinfo;
-} openli_ipmmcc_job_t;
-
-typedef struct openli_ipcc_job {
-    char *liid;
-    uint8_t *ipcontent;
-    uint32_t ipclen;
-    struct timeval tv;
-    //libtrace_packet_t *packet;
-    uint32_t cin;
-    uint8_t dir;
-    shared_global_info_t *colinfo;
-} openli_ipcc_job_t;
-
-typedef struct openli_ipmmiri_job {
-    char *liid;
-    libtrace_packet_t *packet;
-    uint32_t cin;
-    etsili_iri_type_t iritype;
-    uint8_t ipmmiri_style;
-    shared_global_info_t *colinfo;
-    char *content;
-    uint16_t contentlen;
-    uint8_t ipsrc[16];
-    uint8_t ipdest[16];
-    int ipfamily;
-} openli_ipmmiri_job_t;
-
-enum {
-    OPENLI_IPIRI_STANDARD,
-    OPENLI_IPIRI_ENDWHILEACTIVE,
-    OPENLI_IPIRI_STARTWHILEACTIVE,
-    OPENLI_IPIRI_SILENTLOGOFF,
-};
-
-enum {
-    OPENLI_IPIRI_IPMETHOD_STATIC,
-    OPENLI_IPIRI_IPMETHOD_DYNAMIC,
-    OPENLI_IPIRI_IPMETHOD_UNKNOWN,
-};
-
-typedef struct openli_ipiri_job {
-    char *liid;
-    access_plugin_t *plugin;
-    void *plugin_data;
-
-    uint32_t cin;
-    char *username;
-    struct sockaddr_storage assignedip;
-    int ipfamily;
-    struct timeval sessionstartts;
-    internet_access_method_t access_tech;
-    shared_global_info_t *colinfo;
-    uint8_t special;
-    uint8_t ipassignmentmethod;
-    uint8_t assignedip_prefixbits;
-} openli_ipiri_job_t;
-
-
-typedef struct openli_export_recv {
-    uint8_t type;
-    uint32_t destid;
-    struct timeval ts;
-    union {
-        openli_mediator_t med;
-        libtrace_packet_t *packet;
-        exporter_intercept_msg_t *cept;
-        openli_ipcc_job_t ipcc;
-        openli_ipmmcc_job_t ipmmcc;
-        openli_ipmmiri_job_t ipmmiri;
-        openli_ipiri_job_t ipiri;
-    } data;
-} PACKED openli_export_recv_t;
-
 
 collector_export_t *init_exporter(export_thread_data_t *glob);
 int connect_export_targets(collector_export_t *exp);
 void destroy_exporter(collector_export_t *exp);
 int exporter_thread_main(collector_export_t *exp);
-void register_export_queues(support_thread_global_t *glob,
-        export_queue_set_t *qset);
-
-void **connect_exporter_queues(int queuecount, void *zmq_ctxt);
-void disconnect_exporter_queues(void **pubsocks, int queuecount);
-void export_queue_put_all(void **pubsocks, openli_export_recv_t *msg,
-        int numexporters);
-int export_queue_put_by_liid(void **pubsocks,
-        openli_export_recv_t *msg, char *liid, int numexporters);
-int export_queue_put_by_queueid(void **pubsocks,
-        openli_export_recv_t *msg, int queueid);
-
-
 
 #endif
 
