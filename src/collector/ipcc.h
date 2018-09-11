@@ -30,7 +30,8 @@
 #include "collector.h"
 #include "collector_export.h"
 
-int encode_ipcc(wandder_encoder_t **encoder, openli_ipcc_job_t *job,
+int encode_ipcc(wandder_encoder_t **encoder, shared_global_info_t *shared,
+        openli_ipcc_job_t *job,
         exporter_intercept_msg_t *intdetails, uint32_t seqno,
         openli_exportmsg_t *msg);
 int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,

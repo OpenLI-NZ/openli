@@ -46,6 +46,7 @@
 #include "ipiri.h"
 #include "logger.h"
 #include "util.h"
+#include "internal.pb-c.h"
 
 #define BUF_BATCH_SIZE (10 * 1024 * 1024)
 enum {
@@ -289,9 +290,6 @@ static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
     mh.msg_control = NULL;
     mh.msg_controllen = 0;
     mh.msg_flags = 0;
-
-    printf("sending message for %s to %s:%s\n", msg->liid, dest->details.ipstr,
-            dest->details.portstr);
 
     ret = sendmsg(dest->fd, &mh, MSG_DONTWAIT);
     if (ret < 0) {
@@ -708,7 +706,8 @@ static int run_encoding_job(collector_export_t *exp,
                 trace_decrement_packet_refcount(recvd->data.ipmmcc.packet);
                 break;
             case OPENLI_EXPORT_IPCC:
-                ret = encode_ipcc(&(exp->encoder), &(recvd->data.ipcc),
+                ret = encode_ipcc(&(exp->encoder), exp->glob->shared,
+                        &(recvd->data.ipcc),
                         intstate->details, cinseq->cc_seqno, &tosend);
                 cinseq->cc_seqno ++;
                 break;
@@ -842,6 +841,48 @@ static int read_ipiri_job(collector_export_t *exp, openli_export_recv_t *job) {
     return 1;
 }
 
+static int read_ipcc_job(collector_export_t *exp, openli_export_recv_t *job) {
+    int x;
+    void *ptr;
+    size_t msglen = 0;
+    zmq_msg_t part;
+    IPCCJob *unpacked;
+
+    memset(job, 0, sizeof(openli_export_recv_t));
+    job->type = OPENLI_EXPORT_IPCC;
+    zmq_msg_init(&part);
+    x = zmq_msg_recv(&part, exp->zmq_subsock, ZMQ_DONTWAIT);
+    if (x < 0) {
+        if (errno == EAGAIN) {
+            return 0;
+        }
+        return -1;
+    }
+    ptr = zmq_msg_data(&part);
+    msglen = zmq_msg_size(&part);
+
+    unpacked = ipccjob__unpack(NULL, msglen, (uint8_t *)ptr);
+    if (unpacked == NULL) {
+        logger(LOG_INFO, "OpenLI: Unable to unpack IPCC Job.");
+        return -1;
+    }
+
+    zmq_msg_close(&part);
+
+    job->destid = unpacked->destid;
+    job->data.ipcc.cin = unpacked->cin;
+    job->data.ipcc.dir = unpacked->dir;
+    job->data.ipcc.tv.tv_sec = unpacked->tvsec;
+    job->data.ipcc.tv.tv_usec = unpacked->tvusec;
+    job->data.ipcc.liid = strdup(unpacked->liid);
+    job->data.ipcc.ipcontent = (uint8_t *)malloc(unpacked->ipcontent.len);
+    memcpy(job->data.ipcc.ipcontent, unpacked->ipcontent.data,
+            unpacked->ipcontent.len);
+    job->data.ipcc.ipclen = unpacked->ipcontent.len;
+    return 1;
+
+}
+
 static int read_new_mediator_message(collector_export_t *exp,
         openli_mediator_t *med) {
 
@@ -950,9 +991,7 @@ static int read_exported_message(collector_export_t *exp) {
 
     zmq_msg_t part;
 
-    zmq_msg_init(&part);
-
-    x = zmq_msg_recv(&part, exp->zmq_subsock, ZMQ_DONTWAIT);
+    x = zmq_recv(exp->zmq_subsock, &msgtype, 1, ZMQ_DONTWAIT);
     if (x < 0) {
         if (errno == EAGAIN) {
             return 0;
@@ -960,12 +999,7 @@ static int read_exported_message(collector_export_t *exp) {
         return -1;
     }
 
-    ptr = zmq_msg_data(&part);
-    msgtype = *(uint8_t *)ptr;
-
     //printf("%d got message of type %u\n", exp->glob->exportlabel, msgtype);
-
-    zmq_msg_close(&part);
     ret = 0;
 
     switch(msgtype) {
@@ -996,6 +1030,13 @@ static int read_exported_message(collector_export_t *exp) {
         case OPENLI_EXPORT_IPIRI:
             ret = read_ipiri_job(exp, &job);
             if (ret == 1) {
+                ret = run_encoding_job(exp, &job);
+            }
+            break;
+        case OPENLI_EXPORT_IPCC:
+            ret = read_ipcc_job(exp, &job);
+            if (ret == 1) {
+                exp->count ++;
                 ret = run_encoding_job(exp, &job);
             }
             break;

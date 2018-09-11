@@ -125,6 +125,7 @@ static int _publish_ipcc_job(void *pubsock, openli_export_recv_t *msg) {
                 strerror(errno));
         return -1;
     }
+    free(buf);
     return 0;
 
 

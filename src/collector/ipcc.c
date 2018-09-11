@@ -67,7 +67,8 @@ static void dump_export_msg(openli_exportmsg_t *msg) {
 
 }
 
-int encode_ipcc(wandder_encoder_t **encoder, openli_ipcc_job_t *job,
+int encode_ipcc(wandder_encoder_t **encoder, shared_global_info_t *shared,
+        openli_ipcc_job_t *job,
         exporter_intercept_msg_t *intdetails, uint32_t seqno,
         openli_exportmsg_t *msg) {
 
@@ -78,19 +79,18 @@ int encode_ipcc(wandder_encoder_t **encoder, openli_ipcc_job_t *job,
     } else {
         reset_wandder_encoder(*encoder);
     }
-#if 0
     hdrdata.liid = intdetails->liid;
     hdrdata.liid_len = intdetails->liid_len;
     hdrdata.authcc = intdetails->authcc;
     hdrdata.authcc_len = intdetails->authcc_len;
     hdrdata.delivcc = intdetails->delivcc;
     hdrdata.delivcc_len = intdetails->delivcc_len;
-    hdrdata.operatorid = job->colinfo->operatorid;
-    hdrdata.operatorid_len = job->colinfo->operatorid_len;
-    hdrdata.networkelemid = job->colinfo->networkelemid;
-    hdrdata.networkelemid_len = job->colinfo->networkelemid_len;
-    hdrdata.intpointid = job->colinfo->intpointid;
-    hdrdata.intpointid_len = job->colinfo->intpointid_len;
+    hdrdata.operatorid = shared->operatorid;
+    hdrdata.operatorid_len = shared->operatorid_len;
+    hdrdata.networkelemid = shared->networkelemid;
+    hdrdata.networkelemid_len = shared->networkelemid_len;
+    hdrdata.intpointid = shared->intpointid;
+    hdrdata.intpointid_len = shared->intpointid_len;
 
     memset(msg, 0, sizeof(openli_exportmsg_t));
 
@@ -106,7 +106,6 @@ int encode_ipcc(wandder_encoder_t **encoder, openli_ipcc_job_t *job,
     msg->header = construct_netcomm_protocol_header(
             msg->msgbody->len + msg->liidlen + sizeof(msg->liidlen),
             OPENLI_PROTO_ETSI_CC, 0, &(msg->hdrlen));
-#endif
     return 0;
 
 }
