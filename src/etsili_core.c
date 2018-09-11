@@ -603,7 +603,7 @@ void etsili_create_ipaddress_v4(uint32_t *addrnum,
     ip->v6prefixlen = 0;
 
     if (slashbits < 32) {
-        ip->v4subnetmask = ~((1 << (32 - slashbits)) - 1);
+        ip->v4subnetmask = htonl(~((1 << (32 - slashbits)) - 1));
     }
 
     ip->valtype = ETSILI_IPADDRESS_REP_BINARY;
