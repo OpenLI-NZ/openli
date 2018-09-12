@@ -55,36 +55,41 @@ static inline void encode_ipcc_body(wandder_encoder_t *encoder,
         uint8_t dir) {
 
     uint32_t dir32 = dir;
+    wandder_encode_job_t *jobarray[8];
+    int nextjob = 0;
 
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]));
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]));
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_USEQUENCE]));
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
+    jobarray[2] = &(precomputed[OPENLI_PREENCODE_USEQUENCE]);
 
     if (dir == 0) {
-        wandder_encode_next_preencoded(encoder,
-                &(precomputed[OPENLI_PREENCODE_DIRFROM]));
+        jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRFROM]);
+        nextjob = 4;
     } else if (dir == 1) {
-        wandder_encode_next_preencoded(encoder,
-                &(precomputed[OPENLI_PREENCODE_DIRTO]));
+        jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRTO]);
+        nextjob = 4;
     } else if (dir == 2) {
-        wandder_encode_next_preencoded(encoder,
-                &(precomputed[OPENLI_PREENCODE_DIRUNKNOWN]));
+        jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRUNKNOWN]);
+        nextjob = 4;
     } else {
+        wandder_encode_next_preencoded(encoder, jobarray, 4);
+        nextjob = 0;
         wandder_encode_next(encoder, WANDDER_TAG_ENUM,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &dir32,
                 sizeof(uint32_t));
     }
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]));
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]));
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_IPCCOID]));
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]));
+
+    jobarray[nextjob] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
+    nextjob ++;
+    jobarray[nextjob] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
+    nextjob ++;
+    jobarray[nextjob] = &(precomputed[OPENLI_PREENCODE_IPCCOID]);
+    nextjob ++;
+    jobarray[nextjob] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
+    nextjob ++;
+
+    wandder_encode_next_preencoded(encoder, jobarray, nextjob);
+
     wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, ipcontent, iplen);
 
@@ -413,32 +418,27 @@ static inline void encode_etsili_pshdr_pc(wandder_encoder_t *encoder,
      * into separate parameters.
      */
 
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_USEQUENCE]));
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]));
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_PSDOMAINID]));
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_LIID]));
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_AUTHCC]));
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_3]));
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_0]));
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_OPERATORID]));
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_NETWORKELEMID]));
+    wandder_encode_job_t *jobarray[9];
 
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_USEQUENCE]);
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
+    jobarray[2] = &(precomputed[OPENLI_PREENCODE_PSDOMAINID]);
+    jobarray[3] = &(precomputed[OPENLI_PREENCODE_LIID]);
+    jobarray[4] = &(precomputed[OPENLI_PREENCODE_AUTHCC]);
+    jobarray[5] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_3]);
+    jobarray[6] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_0]);
+    jobarray[7] = &(precomputed[OPENLI_PREENCODE_OPERATORID]);
+    jobarray[8] = &(precomputed[OPENLI_PREENCODE_NETWORKELEMID]);
+
+    wandder_encode_next_preencoded(encoder, jobarray, 9);
     END_ENCODED_SEQUENCE(encoder)
 
     wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(cin),
             sizeof(int64_t));
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_DELIVCC]));
+
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_DELIVCC]);
+    wandder_encode_next_preencoded(encoder, jobarray, 1);
 
     END_ENCODED_SEQUENCE(encoder)
 
@@ -447,12 +447,14 @@ static inline void encode_etsili_pshdr_pc(wandder_encoder_t *encoder,
             sizeof(int64_t));
 
     if (precomputed[OPENLI_PREENCODE_INTPOINTID].valspace) {
-        wandder_encode_next_preencoded(encoder,
-                &(precomputed[OPENLI_PREENCODE_INTPOINTID]));
+        jobarray[0] = &(precomputed[OPENLI_PREENCODE_DELIVCC]);
+        jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_7]);
+        wandder_encode_next_preencoded(encoder, jobarray, 2);
+    } else {
+        jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_7]);
+        wandder_encode_next_preencoded(encoder, jobarray, 1);
     }
 
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_7]));
     wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &(tv->tv_sec),
             sizeof(tv->tv_sec));
@@ -461,8 +463,8 @@ static inline void encode_etsili_pshdr_pc(wandder_encoder_t *encoder,
             sizeof(tv->tv_usec));
     END_ENCODED_SEQUENCE(encoder)
 
-    wandder_encode_next_preencoded(encoder,
-            &(precomputed[OPENLI_PREENCODE_TVCLASS]));
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_TVCLASS]);
+    wandder_encode_next_preencoded(encoder, jobarray, 1);
     END_ENCODED_SEQUENCE(encoder)
 
 }
