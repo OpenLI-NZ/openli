@@ -35,6 +35,7 @@
 #include "netcomms.h"
 #include "internetaccess.h"
 #include "collector_publish.h"
+#include "etsili_core.h"
 
 typedef struct export_dest {
     int failmsg;
@@ -65,6 +66,7 @@ typedef struct intercept_state {
     exporter_intercept_msg_t *details;
     cin_seqno_t *cinsequencing;
     UT_hash_handle hh;
+    wandder_encode_job_t preencoded[OPENLI_PREENCODE_LAST];
 } exporter_intercept_state_t;
 
 

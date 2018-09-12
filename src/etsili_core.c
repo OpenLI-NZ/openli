@@ -36,6 +36,9 @@ uint8_t etsi_ipirioid[4] = {0x05, 0x03, 0x0a, 0x01};
 uint8_t etsi_ipmmccoid[4] = {0x05, 0x05, 0x06, 0x02};
 uint8_t etsi_ipmmirioid[4] = {0x05, 0x05, 0x06, 0x01};
 
+#define END_ENCODED_SEQUENCE(enc) \
+        wandder_encode_endseq(enc);
+
 static inline void encode_tri_body(wandder_encoder_t *encoder) {
     ENC_CSEQUENCE(encoder, 2);          // Payload
     ENC_CSEQUENCE(encoder, 2);          // TRIPayload
@@ -48,34 +51,50 @@ static inline void encode_tri_body(wandder_encoder_t *encoder) {
 
 
 static inline void encode_ipcc_body(wandder_encoder_t *encoder,
-        void *ipcontent, uint32_t iplen, uint8_t dir) {
+        wandder_encode_job_t *precomputed, void *ipcontent, uint32_t iplen,
+        uint8_t dir) {
 
     uint32_t dir32 = dir;
 
-    ENC_CSEQUENCE(encoder, 2);
-    ENC_CSEQUENCE(encoder, 1);
-    ENC_USEQUENCE(encoder);
-    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &dir32,
-            sizeof(uint32_t));
-    ENC_CSEQUENCE(encoder, 2);
-    ENC_CSEQUENCE(encoder, 2);
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]));
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]));
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_USEQUENCE]));
 
-    wandder_encode_next(encoder, WANDDER_TAG_RELATIVEOID,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, etsi_ipccoid,
-            sizeof(etsi_ipccoid));
-    ENC_CSEQUENCE(encoder, 1);
+    if (dir == 0) {
+        wandder_encode_preencoded(encoder,
+                &(precomputed[OPENLI_PREENCODE_DIRFROM]));
+    } else if (dir == 1) {
+        wandder_encode_preencoded(encoder,
+                &(precomputed[OPENLI_PREENCODE_DIRTO]));
+    } else if (dir == 2) {
+        wandder_encode_preencoded(encoder,
+                &(precomputed[OPENLI_PREENCODE_DIRUNKNOWN]));
+    } else {
+        wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &dir32,
+                sizeof(uint32_t));
+    }
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]));
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]));
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_IPCCOID]));
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]));
     wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, ipcontent, iplen);
 
-
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);    // ends outermost sequence
+    END_ENCODED_SEQUENCE(encoder);
+    END_ENCODED_SEQUENCE(encoder);
+    END_ENCODED_SEQUENCE(encoder);
+    END_ENCODED_SEQUENCE(encoder);
+    END_ENCODED_SEQUENCE(encoder);
+    END_ENCODED_SEQUENCE(encoder);
+    END_ENCODED_SEQUENCE(encoder);
 
 }
 
@@ -384,6 +403,69 @@ static inline void encode_ipmmcc_body(wandder_encoder_t *encoder,
     wandder_encode_endseq(encoder);
 }
 
+static inline void encode_etsili_pshdr_pc(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, int64_t cin,
+        int64_t seqno, struct timeval *tv) {
+
+    /* hdrdata should be pretty static for each ETSI LI record, so
+     * you can populate it once and repeatedly use it.
+     * CIN, seqno and tv will change for each record, so I've made them
+     * into separate parameters.
+     */
+
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_USEQUENCE]));
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]));
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_PSDOMAINID]));
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_LIID]));
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_AUTHCC]));
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_3]));
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_0]));
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_OPERATORID]));
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_NETWORKELEMID]));
+
+    END_ENCODED_SEQUENCE(encoder)
+
+    wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(cin),
+            sizeof(int64_t));
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_DELIVCC]));
+
+    END_ENCODED_SEQUENCE(encoder)
+
+    wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, &(seqno),
+            sizeof(int64_t));
+
+    if (precomputed[OPENLI_PREENCODE_INTPOINTID].valspace) {
+        wandder_encode_preencoded(encoder,
+                &(precomputed[OPENLI_PREENCODE_INTPOINTID]));
+    }
+
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_CSEQUENCE_7]));
+    wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &(tv->tv_sec),
+            sizeof(tv->tv_sec));
+    wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(tv->tv_usec),
+            sizeof(tv->tv_usec));
+    END_ENCODED_SEQUENCE(encoder)
+
+    wandder_encode_preencoded(encoder,
+            &(precomputed[OPENLI_PREENCODE_TVCLASS]));
+    END_ENCODED_SEQUENCE(encoder)
+
+}
 
 static inline void encode_etsili_pshdr(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t cin,
@@ -462,12 +544,12 @@ static inline void encode_etsili_pshdr(wandder_encoder_t *encoder,
 }
 
 wandder_encoded_result_t *encode_etsi_ipcc(wandder_encoder_t *encoder,
-        wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
+        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
         struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir) {
 
 
-    encode_etsili_pshdr(encoder, hdrdata, cin, seqno, tv);
-    encode_ipcc_body(encoder, ipcontents, iplen, dir);
+    encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
+    encode_ipcc_body(encoder, precomputed, ipcontents, iplen, dir);
     return wandder_encode_finish(encoder);
 
 }
@@ -608,6 +690,179 @@ void etsili_create_ipaddress_v4(uint32_t *addrnum,
 
     ip->valtype = ETSILI_IPADDRESS_REP_BINARY;
     ip->ipvalue = (uint8_t *)addrnum;
+}
+
+void etsili_preencode_static_fields(
+        wandder_encode_job_t *pendarray, etsili_intercept_details_t *details) {
+
+    wandder_encode_job_t *p;
+    int tvclass = 1;
+    uint32_t dirin = 0, dirout = 1, dirunk = 2;
+
+    memset(pendarray, 0, sizeof(wandder_encode_job_t) * OPENLI_PREENCODE_LAST);
+
+    p = &(pendarray[OPENLI_PREENCODE_USEQUENCE]);
+    p->identclass = WANDDER_CLASS_UNIVERSAL_CONSTRUCT;
+    p->identifier = WANDDER_TAG_SEQUENCE;
+    p->encodeas = WANDDER_TAG_SEQUENCE;
+    p->valspace = NULL;
+    p->vallen = 0;
+
+    p = &(pendarray[OPENLI_PREENCODE_CSEQUENCE_0]);
+    p->identclass = WANDDER_CLASS_CONTEXT_CONSTRUCT;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_SEQUENCE;
+    p->valspace = NULL;
+    p->vallen = 0;
+
+    p = &(pendarray[OPENLI_PREENCODE_CSEQUENCE_1]);
+    p->identclass = WANDDER_CLASS_CONTEXT_CONSTRUCT;
+    p->identifier = 1;
+    p->encodeas = WANDDER_TAG_SEQUENCE;
+    p->valspace = NULL;
+    p->vallen = 0;
+
+    p = &(pendarray[OPENLI_PREENCODE_CSEQUENCE_2]);
+    p->identclass = WANDDER_CLASS_CONTEXT_CONSTRUCT;
+    p->identifier = 2;
+    p->encodeas = WANDDER_TAG_SEQUENCE;
+    p->valspace = NULL;
+    p->vallen = 0;
+
+    p = &(pendarray[OPENLI_PREENCODE_CSEQUENCE_3]);
+    p->identclass = WANDDER_CLASS_CONTEXT_CONSTRUCT;
+    p->identifier = 3;
+    p->encodeas = WANDDER_TAG_SEQUENCE;
+    p->valspace = NULL;
+    p->vallen = 0;
+
+    p = &(pendarray[OPENLI_PREENCODE_CSEQUENCE_7]);
+    p->identclass = WANDDER_CLASS_CONTEXT_CONSTRUCT;
+    p->identifier = 7;
+    p->encodeas = WANDDER_TAG_SEQUENCE;
+    p->valspace = NULL;
+    p->vallen = 0;
+
+    p = &(pendarray[OPENLI_PREENCODE_CSEQUENCE_11]);
+    p->identclass = WANDDER_CLASS_CONTEXT_CONSTRUCT;
+    p->identifier = 11;
+    p->encodeas = WANDDER_TAG_SEQUENCE;
+    p->valspace = NULL;
+    p->vallen = 0;
+
+    p = &(pendarray[OPENLI_PREENCODE_CSEQUENCE_12]);
+    p->identclass = WANDDER_CLASS_CONTEXT_CONSTRUCT;
+    p->identifier = 12;
+    p->encodeas = WANDDER_TAG_SEQUENCE;
+    p->valspace = NULL;
+    p->vallen = 0;
+
+    p = &(pendarray[OPENLI_PREENCODE_PSDOMAINID]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_OID;
+    wandder_encode_value_only(p, (uint8_t *)WANDDER_ETSILI_PSDOMAINID,
+            sizeof(WANDDER_ETSILI_PSDOMAINID));
+
+    p = &(pendarray[OPENLI_PREENCODE_LIID]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 1;
+    p->encodeas = WANDDER_TAG_OCTETSTRING;
+    wandder_encode_value_only(p, details->liid, strlen(details->liid));
+
+    p = &(pendarray[OPENLI_PREENCODE_AUTHCC]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 2;
+    p->encodeas = WANDDER_TAG_OCTETSTRING;
+    wandder_encode_value_only(p, details->authcc, strlen(details->authcc));
+
+    p = &(pendarray[OPENLI_PREENCODE_OPERATORID]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_OCTETSTRING;
+    wandder_encode_value_only(p, details->operatorid, strlen(details->operatorid));
+
+    p = &(pendarray[OPENLI_PREENCODE_NETWORKELEMID]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 1;
+    p->encodeas = WANDDER_TAG_OCTETSTRING;
+    wandder_encode_value_only(p, details->networkelemid, strlen(details->networkelemid));
+
+    p = &(pendarray[OPENLI_PREENCODE_DELIVCC]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 2;
+    p->encodeas = WANDDER_TAG_OCTETSTRING;
+    wandder_encode_value_only(p, details->delivcc, strlen(details->delivcc));
+
+    p = &(pendarray[OPENLI_PREENCODE_INTPOINTID]);
+    if (details->intpointid) {
+        p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+        p->identifier = 6;
+        p->encodeas = WANDDER_TAG_OCTETSTRING;
+        wandder_encode_value_only(p, details->intpointid, strlen(details->intpointid));
+    }
+
+    p = &(pendarray[OPENLI_PREENCODE_TVCLASS]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 8;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_value_only(p, &tvclass, sizeof(tvclass));
+
+    p = &(pendarray[OPENLI_PREENCODE_IPMMIRIOID]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_RELATIVEOID;
+    wandder_encode_value_only(p, etsi_ipmmirioid, sizeof(etsi_ipmmirioid));
+
+    p = &(pendarray[OPENLI_PREENCODE_IPCCOID]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_RELATIVEOID;
+    wandder_encode_value_only(p, etsi_ipccoid, sizeof(etsi_ipccoid));
+
+    p = &(pendarray[OPENLI_PREENCODE_IPIRIOID]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_RELATIVEOID;
+    wandder_encode_value_only(p, etsi_ipirioid, sizeof(etsi_ipirioid));
+
+    p = &(pendarray[OPENLI_PREENCODE_IPMMCCOID]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_RELATIVEOID;
+    wandder_encode_value_only(p, etsi_ipmmccoid, sizeof(etsi_ipmmccoid));
+
+    p = &(pendarray[OPENLI_PREENCODE_DIRFROM]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_value_only(p, &dirin, sizeof(dirin));
+
+    p = &(pendarray[OPENLI_PREENCODE_DIRTO]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_value_only(p, &dirout, sizeof(dirout));
+
+    p = &(pendarray[OPENLI_PREENCODE_DIRUNKNOWN]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_value_only(p, &dirunk, sizeof(dirunk));
+
+}
+
+void etsili_clear_preencoded_fields(wandder_encode_job_t *pendarray) {
+
+    preencode_index_t i;
+
+    for (i = 0; i < OPENLI_PREENCODE_LAST; i++) {
+        if (pendarray[i].valspace) {
+            free(pendarray[i].valspace);
+        }
+    }
+
+
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -512,12 +512,14 @@ static void exporter_new_intercept(collector_export_t *exp,
         exporter_intercept_msg_t *msg) {
 
     exporter_intercept_state_t *intstate;
+    etsili_intercept_details_t intdetails;
 
     /* If this LIID already exists, we'll need to replace it */
     HASH_FIND(hh, exp->intercepts, msg->liid, strlen(msg->liid), intstate);
 
     if (intstate) {
         free_intercept_msg(intstate->details);
+        etsili_clear_preencoded_fields(intstate->preencoded);
         /* leave the CIN seqno state as is for now */
         intstate->details = msg;
         return;
@@ -528,6 +530,16 @@ static void exporter_new_intercept(collector_export_t *exp,
             sizeof(exporter_intercept_state_t));
     intstate->details = msg;
     intstate->cinsequencing = NULL;
+
+    intdetails.liid = msg->liid;
+    intdetails.authcc = msg->authcc;
+    intdetails.delivcc = msg->delivcc;
+    intdetails.operatorid = exp->glob->shared->operatorid;
+    intdetails.networkelemid = exp->glob->shared->networkelemid;
+    intdetails.intpointid = exp->glob->shared->intpointid;
+
+    etsili_preencode_static_fields(intstate->preencoded, &intdetails);
+
     HASH_ADD_KEYPTR(hh, exp->intercepts, msg->liid, strlen(msg->liid),
             intstate);
 }
@@ -548,6 +560,7 @@ static int exporter_end_intercept(collector_export_t *exp,
     HASH_DELETE(hh, exp->intercepts, intstate);
     free_intercept_msg(msg);
     free_intercept_msg(intstate->details);
+    etsili_clear_preencoded_fields(intstate->preencoded);
     free_cinsequencing(intstate);
     free(intstate);
     return 1;
@@ -706,9 +719,8 @@ static int run_encoding_job(collector_export_t *exp,
                 trace_decrement_packet_refcount(recvd->data.ipmmcc.packet);
                 break;
             case OPENLI_EXPORT_IPCC:
-                ret = encode_ipcc(&(exp->encoder), exp->glob->shared,
-                        &(recvd->data.ipcc),
-                        intstate->details, cinseq->cc_seqno, &tosend);
+                ret = encode_ipcc(&(exp->encoder), intstate->preencoded,
+                        &(recvd->data.ipcc), cinseq->cc_seqno, &tosend);
                 cinseq->cc_seqno ++;
                 break;
                 //return 0;
@@ -879,6 +891,8 @@ static int read_ipcc_job(collector_export_t *exp, openli_export_recv_t *job) {
     memcpy(job->data.ipcc.ipcontent, unpacked->ipcontent.data,
             unpacked->ipcontent.len);
     job->data.ipcc.ipclen = unpacked->ipcontent.len;
+
+    ipccjob__free_unpacked(unpacked, NULL);
     return 1;
 
 }
@@ -936,7 +950,7 @@ static int read_new_intercept_message(collector_export_t *exp,
     int x;
     void *ptr;
     zmq_msg_t part;
-    int next = 0;
+    int next = 0, size;
 
     *cept = (exporter_intercept_msg_t *)calloc(1,
             sizeof(exporter_intercept_msg_t));
@@ -952,19 +966,26 @@ static int read_new_intercept_message(collector_export_t *exp,
         }
         zmq_getsockopt(exp->zmq_subsock, ZMQ_RCVMORE, &more, &moresize);
         ptr = zmq_msg_data(&part);
+        size = zmq_msg_size(&part);
 
         switch(next) {
             case 0:
-                (*cept)->liid = strdup((char *)ptr);
-                (*cept)->liid_len = strlen((*cept)->liid);
+                (*cept)->liid = malloc(size + 1);
+                memcpy((*cept)->liid, ptr, size);
+                ((*cept)->liid)[size] = '\0';
+                (*cept)->liid_len = size;
                 break;
             case 1:
-                (*cept)->authcc = strdup((char *)ptr);
-                (*cept)->authcc_len = strlen((*cept)->liid);
+                (*cept)->authcc = malloc(size + 1);
+                memcpy((*cept)->authcc, ptr, size);
+                ((*cept)->authcc)[size] = '\0';
+                (*cept)->authcc_len = size;
                 break;
             case 2:
-                (*cept)->delivcc = strdup((char *)ptr);
-                (*cept)->delivcc_len = strlen((*cept)->liid);
+                (*cept)->delivcc = malloc(size + 1);
+                memcpy((*cept)->delivcc, ptr, size);
+                ((*cept)->delivcc)[size] = '\0';
+                (*cept)->delivcc_len = size;
                 break;
             default:
                 assert(0);
@@ -1038,6 +1059,7 @@ static int read_exported_message(collector_export_t *exp) {
             if (ret == 1) {
                 exp->count ++;
                 ret = run_encoding_job(exp, &job);
+                //free_job_request(&job);
             }
             break;
         default:

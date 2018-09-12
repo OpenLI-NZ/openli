@@ -67,39 +67,23 @@ static void dump_export_msg(openli_exportmsg_t *msg) {
 
 }
 
-int encode_ipcc(wandder_encoder_t **encoder, shared_global_info_t *shared,
-        openli_ipcc_job_t *job,
-        exporter_intercept_msg_t *intdetails, uint32_t seqno,
-        openli_exportmsg_t *msg) {
-
-    wandder_etsipshdr_data_t hdrdata;
+int encode_ipcc(wandder_encoder_t **encoder, wandder_encode_job_t *precomputed,
+        openli_ipcc_job_t *job, uint32_t seqno, openli_exportmsg_t *msg) {
 
     if (*encoder == NULL) {
         *encoder = init_wandder_encoder();
     } else {
         reset_wandder_encoder(*encoder);
     }
-    hdrdata.liid = intdetails->liid;
-    hdrdata.liid_len = intdetails->liid_len;
-    hdrdata.authcc = intdetails->authcc;
-    hdrdata.authcc_len = intdetails->authcc_len;
-    hdrdata.delivcc = intdetails->delivcc;
-    hdrdata.delivcc_len = intdetails->delivcc_len;
-    hdrdata.operatorid = shared->operatorid;
-    hdrdata.operatorid_len = shared->operatorid_len;
-    hdrdata.networkelemid = shared->networkelemid;
-    hdrdata.networkelemid_len = shared->networkelemid_len;
-    hdrdata.intpointid = shared->intpointid;
-    hdrdata.intpointid_len = shared->intpointid_len;
 
     memset(msg, 0, sizeof(openli_exportmsg_t));
 
-    msg->msgbody = encode_etsi_ipcc(*encoder, &hdrdata,
+    msg->msgbody = encode_etsi_ipcc(*encoder, precomputed,
             (int64_t)job->cin, (int64_t)seqno, &(job->tv), job->ipcontent,
             job->ipclen, job->dir);
 
-    msg->liid = intdetails->liid;
-    msg->liidlen = intdetails->liid_len;
+    msg->liid = precomputed[OPENLI_PREENCODE_LIID].valspace;
+    msg->liidlen = precomputed[OPENLI_PREENCODE_LIID].vallen;
     msg->encoder = *encoder;
     msg->ipcontents = (uint8_t *)job->ipcontent;
     msg->ipclen = job->ipclen;
