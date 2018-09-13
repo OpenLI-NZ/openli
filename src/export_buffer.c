@@ -132,11 +132,8 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
         /* Add some space to the buffer */
     }
 
-    if (msg->header) {
-        ii_header_t *ii = (ii_header_t *)(msg->header);
-        memcpy(buf->buftail, msg->header, msg->hdrlen);
-        buf->buftail += msg->hdrlen;
-    }
+    memcpy(buf->buftail, &msg->header, msg->hdrlen);
+    buf->buftail += msg->hdrlen;
 
     if (msg->liid) {
         uint16_t l = htons(msg->liidlen);

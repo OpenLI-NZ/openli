@@ -87,9 +87,14 @@ int encode_ipcc(wandder_encoder_t **encoder, wandder_encode_job_t *precomputed,
     msg->encoder = *encoder;
     msg->ipcontents = (uint8_t *)job->ipcontent;
     msg->ipclen = job->ipclen;
-    msg->header = construct_netcomm_protocol_header(
-            msg->msgbody->len + msg->liidlen + sizeof(msg->liidlen),
-            OPENLI_PROTO_ETSI_CC, 0, &(msg->hdrlen));
+
+    msg->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    msg->header.bodylen = htons(msg->msgbody->len + msg->liidlen +
+            sizeof(msg->liidlen));
+    msg->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
+    msg->header.internalid = 0;
+    msg->hdrlen = sizeof(msg->header);
+
     return 0;
 
 }

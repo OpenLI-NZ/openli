@@ -248,13 +248,10 @@ static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
     int total = 0;
     char liidbuf[65542];
 
-    if (msg->header) {
-
-        iov[ind].iov_base = msg->header;
-        iov[ind].iov_len = msg->hdrlen;
-        ind ++;
-        total += msg->hdrlen;
-    }
+    iov[ind].iov_base = &msg->header;
+    iov[ind].iov_len = msg->hdrlen;
+    ind ++;
+    total += msg->hdrlen;
 
     if (msg->liid) {
         int used = 0;
@@ -665,9 +662,6 @@ static int export_encoded_record(collector_export_t *exp,
             return -1;
         }
     }
-    if (tosend->header) {
-        free(tosend->header);
-    }
     return 1;
 }
 static int run_encoding_job(collector_export_t *exp,
@@ -1058,7 +1052,9 @@ static int read_exported_message(collector_export_t *exp) {
             ret = read_ipcc_job(exp, &job);
             if (ret == 1) {
                 exp->count ++;
-                ret = run_encoding_job(exp, &job);
+                if (run_encoding_job(exp, &job) < 0) {
+                    ret = -1;
+                }
                 //free_job_request(&job);
             }
             break;
@@ -1269,7 +1265,7 @@ int exporter_thread_main(collector_export_t *exp) {
             do {
                 ret = read_exported_message(exp);
                 processed ++;
-            } while (ret > 0 && processed < 1000);
+            } while (ret > 0 && processed < 100);
 
             if (ret == -1) {
                 return -1;

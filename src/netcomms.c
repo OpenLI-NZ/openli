@@ -138,32 +138,21 @@ static inline void populate_header(ii_header_t *hdr,
  * which use the collector export API rather than net buffer, but will
  * use net buffer on the mediator side for receiving and decoding).
  */
-uint8_t *construct_netcomm_protocol_header(uint32_t contentlen,
+int construct_netcomm_protocol_header(ii_header_t *newhdr,
+        uint32_t contentlen,
         uint16_t msgtype, uint64_t internalid, uint32_t *hdrlen) {
-
-    ii_header_t *newhdr = (ii_header_t *)malloc(sizeof(ii_header_t));
-
-    if (newhdr == NULL) {
-        logger(LOG_INFO,
-                "OOM while trying to create a netcomm protocol header.");
-        return NULL;
-    }
 
     if (contentlen > 65535) {
         logger(LOG_INFO,
                 "Content of size %u cannot fit in a single netcomm PDU.",
                 contentlen);
-        free(newhdr);
-        return NULL;
+        return -1;
     }
 
     populate_header(newhdr, (openli_proto_msgtype_t)msgtype,
             (uint16_t)contentlen, internalid);
     *hdrlen = sizeof(ii_header_t);
-
-    /* NOTE: the caller must free the header when they are finished with it!
-     */
-    return (uint8_t *)newhdr;
+    return 0;
 
 }
 
