@@ -36,8 +36,8 @@ uint8_t etsi_ipirioid[4] = {0x05, 0x03, 0x0a, 0x01};
 uint8_t etsi_ipmmccoid[4] = {0x05, 0x05, 0x06, 0x02};
 uint8_t etsi_ipmmirioid[4] = {0x05, 0x05, 0x06, 0x01};
 
-#define END_ENCODED_SEQUENCE(enc) \
-        wandder_encode_endseq(enc);
+#define END_ENCODED_SEQUENCE(enc, x) \
+        wandder_encode_endseq_repeat(enc, x);
 
 static inline void encode_tri_body(wandder_encoder_t *encoder) {
     ENC_CSEQUENCE(encoder, 2);          // Payload
@@ -93,13 +93,7 @@ static inline void encode_ipcc_body(wandder_encoder_t *encoder,
     wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, ipcontent, iplen);
 
-    END_ENCODED_SEQUENCE(encoder);
-    END_ENCODED_SEQUENCE(encoder);
-    END_ENCODED_SEQUENCE(encoder);
-    END_ENCODED_SEQUENCE(encoder);
-    END_ENCODED_SEQUENCE(encoder);
-    END_ENCODED_SEQUENCE(encoder);
-    END_ENCODED_SEQUENCE(encoder);
+    END_ENCODED_SEQUENCE(encoder, 7);
 
 }
 
@@ -431,7 +425,7 @@ static inline void encode_etsili_pshdr_pc(wandder_encoder_t *encoder,
     jobarray[8] = &(precomputed[OPENLI_PREENCODE_NETWORKELEMID]);
 
     wandder_encode_next_preencoded(encoder, jobarray, 9);
-    END_ENCODED_SEQUENCE(encoder)
+    END_ENCODED_SEQUENCE(encoder, 1)
 
     wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(cin),
@@ -440,7 +434,7 @@ static inline void encode_etsili_pshdr_pc(wandder_encoder_t *encoder,
     jobarray[0] = &(precomputed[OPENLI_PREENCODE_DELIVCC]);
     wandder_encode_next_preencoded(encoder, jobarray, 1);
 
-    END_ENCODED_SEQUENCE(encoder)
+    END_ENCODED_SEQUENCE(encoder, 1)
 
     wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, &(seqno),
@@ -461,11 +455,11 @@ static inline void encode_etsili_pshdr_pc(wandder_encoder_t *encoder,
     wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(tv->tv_usec),
             sizeof(tv->tv_usec));
-    END_ENCODED_SEQUENCE(encoder)
+    END_ENCODED_SEQUENCE(encoder, 1)
 
     jobarray[0] = &(precomputed[OPENLI_PREENCODE_TVCLASS]);
     wandder_encode_next_preencoded(encoder, jobarray, 1);
-    END_ENCODED_SEQUENCE(encoder)
+    END_ENCODED_SEQUENCE(encoder, 1)
 
 }
 
