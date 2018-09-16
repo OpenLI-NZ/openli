@@ -32,7 +32,7 @@
 
 int encode_ipmmcc(wandder_encoder_t **encoder, openli_ipmmcc_job_t *job,
         exporter_intercept_msg_t *intdetails, uint32_t seqno,
-                openli_exportmsg_t *msg);
+                openli_encoded_result_t *res);
 
 int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip_t *ip, uint32_t rem, colthread_local_t *loc);

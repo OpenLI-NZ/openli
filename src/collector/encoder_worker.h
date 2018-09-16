@@ -24,60 +24,60 @@
  *
  */
 
-#ifndef OPENLI_COLLECTOR_EXPORT_H_
-#define OPENLI_COLLECTOR_EXPORT_H_
+#ifndef OPENLI_ENCODER_WORKER_H_
+#define OPENLI_ENCODER_WORKER_H_
 
+#include <time.h>
+#include <pthread.h>
 #include <libwandder.h>
-#include <sys/epoll.h>
 
-#include "collector.h"
-#include "export_buffer.h"
-#include "netcomms.h"
-#include "encoder_worker.h"
-#include "internetaccess.h"
 #include "collector_publish.h"
+#include "collector.h"
+#include "netcomms.h"
 #include "etsili_core.h"
 #include "export_shared.h"
 
-typedef struct export_dest {
-    int failmsg;
-    int fd;
-    int awaitingconfirm;
-    int halted;
-    openli_mediator_t details;
-    export_buffer_t buffer;
-} export_dest_t;
-
-typedef struct colexp_data {
-
-    export_thread_data_t *glob;
-    libtrace_list_t *dests;     // if dests gets large, replace with map?
-    exporter_intercept_state_t *intercepts;
-    wandder_encoded_result_t *freeresults;
-    //wandder_encoder_t *encoder;
-    //etsili_generic_t *freegenerics;
-
-    uint8_t flagged;
-    int failed_conns;
-    int flagtimerfd;
-
-    void *zmq_subsock;
-    void *zmq_pushjobsock;
-    void *zmq_pullressock;
-
+typedef struct encoder_state {
+    void *zmq_ctxt;
+    void *zmq_recvjob;
+    void *zmq_pushresult;
     void *zmq_control;
-    openli_encoder_t *workers;
-    int workercount;
 
-    int count;
+    pthread_t threadid;
+    int workerid;
+    shared_global_info_t *shared;
+	wandder_encoder_t *encoder;
+    etsili_generic_t *freegenerics;
+} openli_encoder_t;
 
-} collector_export_t;
+typedef struct encoder_job {
+    exporter_intercept_state_t *intstate;
+    uint8_t type;
+    uint32_t seqno;
+    struct timeval ts;
+    wandder_encoded_result_t *toreturn;
+    union {
+        openli_ipcc_job_t ipcc;
+        openli_ipmmcc_job_t ipmmcc;
+        openli_ipmmiri_job_t ipmmiri;
+        openli_ipiri_job_t ipiri;
+    } data;
+} PACKED openli_encoding_job_t;
 
-collector_export_t *init_exporter(export_thread_data_t *glob);
-int connect_export_targets(collector_export_t *exp);
-void destroy_exporter(collector_export_t *exp);
-int exporter_thread_main(collector_export_t *exp);
+typedef struct encoder_result {
+    exporter_intercept_state_t *intstate;
+
+    ii_header_t header;
+    wandder_encoded_result_t *msgbody;
+    uint8_t *ipcontents;
+    uint32_t ipclen;
+    uint32_t seqno;
+} PACKED openli_encoded_result_t;
+
+void destroy_encoder_worker(openli_encoder_t *enc);
+void *run_encoder_worker(void *encstate);
 
 #endif
+
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

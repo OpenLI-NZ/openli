@@ -41,7 +41,7 @@
 
 int encode_ipmmcc(wandder_encoder_t **encoder, openli_ipmmcc_job_t *job,
         exporter_intercept_msg_t *intdetails, uint32_t seqno,
-        openli_exportmsg_t *msg) {
+        openli_encoded_result_t *res) {
 
     struct timeval tv = trace_get_timeval(job->packet);
     wandder_etsipshdr_data_t hdrdata;
@@ -95,6 +95,7 @@ static inline int form_ipmmcc_job(openli_export_recv_t *msg,
 
     int queueused;
 
+/*
     msg->type = OPENLI_EXPORT_IPMMCC;
     msg->destid = destid;
     msg->data.ipmmcc.liid = strdup(liid);
@@ -104,6 +105,7 @@ static inline int form_ipmmcc_job(openli_export_recv_t *msg,
     trace_increment_packet_refcount(packet);
     queueused = export_queue_put_by_liid(loc->zmq_pubsocks, msg, liid,
             loc->numexporters);
+    */
 }
 
 static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,

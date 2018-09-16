@@ -37,63 +37,26 @@
 #include "collector_publish.h"
 #include "etsili_core.h"
 
-static void dump_export_msg(openli_exportmsg_t *msg) {
+int encode_ipcc(wandder_encoder_t *encoder, wandder_encode_job_t *precomputed,
+        openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
+        openli_encoded_result_t *msg) {
 
-    uint32_t enclen = msg->msgbody->len - msg->ipclen;
-    uint32_t i;
+    uint32_t liidlen = precomputed[OPENLI_PREENCODE_LIID].vallen;
+    reset_wandder_encoder(encoder);
 
-    for (i = 0; i < enclen; i++) {
-        printf("%02x ", msg->msgbody->encoded[i]);
-        if ((i % 16) == 15) {
-            printf("\n");
-        }
-    }
+    memset(msg, 0, sizeof(openli_encoded_result_t));
 
-    if ((i % 16) != 15) {
-        printf("\n");
-    }
-
-    if (msg->ipcontents != NULL) {
-        for (i = 0; i < msg->ipclen; i++) {
-            printf("%02x ", msg->ipcontents[i]);
-            if ((i % 16) == 15) {
-                printf("\n");
-            }
-        }
-        if ((i % 16) != 15) {
-            printf("\n");
-        }
-    }
-
-}
-
-int encode_ipcc(wandder_encoder_t **encoder, wandder_encode_job_t *precomputed,
-        openli_ipcc_job_t *job, uint32_t seqno, openli_exportmsg_t *msg) {
-
-    if (*encoder == NULL) {
-        *encoder = init_wandder_encoder();
-    } else {
-        reset_wandder_encoder(*encoder);
-    }
-
-    memset(msg, 0, sizeof(openli_exportmsg_t));
-
-    msg->msgbody = encode_etsi_ipcc(*encoder, precomputed,
-            (int64_t)job->cin, (int64_t)seqno, &(job->tv), job->ipcontent,
+    msg->msgbody = encode_etsi_ipcc(encoder, precomputed,
+            (int64_t)job->cin, (int64_t)seqno, tv, job->ipcontent,
             job->ipclen, job->dir);
 
-    msg->liid = precomputed[OPENLI_PREENCODE_LIID].valspace;
-    msg->liidlen = precomputed[OPENLI_PREENCODE_LIID].vallen;
-    msg->encoder = *encoder;
     msg->ipcontents = (uint8_t *)job->ipcontent;
     msg->ipclen = job->ipclen;
 
     msg->header.magic = htonl(OPENLI_PROTO_MAGIC);
-    msg->header.bodylen = htons(msg->msgbody->len + msg->liidlen +
-            sizeof(msg->liidlen));
+    msg->header.bodylen = htons(msg->msgbody->len + liidlen + sizeof(liidlen));
     msg->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
     msg->header.internalid = 0;
-    msg->hdrlen = sizeof(msg->header);
 
     return 0;
 
@@ -112,12 +75,12 @@ static inline void make_ipcc_job(uint32_t cin,
 
     msg->type = OPENLI_EXPORT_IPCC;
     msg->destid = destid;
+    msg->ts = trace_get_timeval(pkt);
     msg->data.ipcc.liid = liid;
     msg->data.ipcc.ipcontent = l3;
     msg->data.ipcc.ipclen = rem;
     msg->data.ipcc.cin = cin;
     msg->data.ipcc.dir = dir;
-    msg->data.ipcc.tv = trace_get_timeval(pkt);
 
     //memcpy(msg->data.ipcc.ipcontent, l3, rem);
 }
@@ -233,8 +196,7 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
                 matched ++;
                 make_ipcc_job(matchsess->cin, matchsess->common.liid,
                         matchsess->common.destid, pkt, dir, &msg);
-                export_queue_put_by_liid(loc->zmq_pubsocks, &msg,
-                        matchsess->common.liid, loc->numexporters);
+                publish_openli_msg(loc->zmq_pubsock, &msg);
             }
         }
         pnode = pnode->parent;
@@ -270,8 +232,7 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             make_ipcc_job(sess->cin, sess->common.liid, sess->common.destid,
                     pkt, 0, &msg);
-            export_queue_put_by_liid(loc->zmq_pubsocks, &msg,
-                    sess->common.liid, loc->numexporters);
+            publish_openli_msg(loc->zmq_pubsock, &msg);
         }
     }
 
@@ -284,8 +245,7 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             make_ipcc_job(sess->cin, sess->common.liid, sess->common.destid,
                     pkt, 1, &msg);
-            export_queue_put_by_liid(loc->zmq_pubsocks, &msg,
-                    sess->common.liid, loc->numexporters);
+            publish_openli_msg(loc->zmq_pubsock, &msg);
         }
     }
 
@@ -333,8 +293,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             make_ipcc_job(sess->cin, sess->common.liid, sess->common.destid,
                     pkt, 0, &msg);
-            export_queue_put_by_liid(loc->zmq_pubsocks, &msg,
-                    sess->common.liid, loc->numexporters);
+            publish_openli_msg(loc->zmq_pubsock, &msg);
         }
     }
 
@@ -347,8 +306,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             make_ipcc_job(sess->cin, sess->common.liid, sess->common.destid,
                     pkt, 1, &msg);
-            export_queue_put_by_liid(loc->zmq_pubsocks, &msg,
-                    sess->common.liid, loc->numexporters);
+            publish_openli_msg(loc->zmq_pubsock, &msg);
         }
     }
 

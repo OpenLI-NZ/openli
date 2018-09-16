@@ -149,10 +149,12 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->staticv4ranges = New_Patricia(32);
     loc->staticv6ranges = New_Patricia(128);
     loc->staticcache = NULL;
-    loc->numexporters = glob->exportthreads;
 
-    loc->zmq_pubsocks = connect_exporter_queues(loc->numexporters,
-            glob->zmq_ctxt);
+    loc->zmq_pubsock = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+
+    /* TODO replace with inproc */
+    zmq_connect(loc->zmq_pubsock, "ipc:///tmp/openliipc");
+    zmq_setsockopt(loc->zmq_pubsock, ZMQ_SNDHWM, &zero, sizeof(zero));
 
     loc->fragreass = create_new_ipfrag_reassembler();
 
@@ -160,7 +162,6 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 			&(loc->fromsyncq_ip), t);
     register_sync_queues(&(glob->syncvoip), &(loc->tosyncq_voip),
 			&(loc->fromsyncq_voip), t);
-    //register_export_queues(glob->exporters, loc->exportqueues);
 
     return loc;
 }
@@ -212,7 +213,8 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_message_queue_destroy(&(loc->tosyncq_voip));
     libtrace_message_queue_destroy(&(loc->fromsyncq_voip));
 
-    disconnect_exporter_queues(loc->zmq_pubsocks, loc->numexporters);
+    zmq_setsockopt(loc->zmq_pubsock, ZMQ_LINGER, &zero, sizeof(zero));
+    zmq_close(loc->zmq_pubsock);
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
         free_all_ipsessions(&(v4->intercepts));
@@ -696,10 +698,9 @@ static void *start_export_thread(void *params) {
     collector_export_t *exp = init_exporter(glob);
     int connected = 0;
 
-    if (exp == NULL) {
+    if (exp->workers == NULL) {
         logger(LOG_INFO, "OpenLI: exporting thread is not functional!");
         collector_halt = 1;
-        pthread_exit(NULL);
     }
 
     while (collector_halt == 0) {
@@ -802,8 +803,8 @@ static void clear_global_config(collector_global_t *glob) {
 	free_support_thread_data(&(glob->syncip));
 	free_support_thread_data(&(glob->syncvoip));
 
-    if (glob->exporters) {
-        free(glob->exporters);
+    if (glob->exporter) {
+        free(glob->exporter);
     }
 
     libtrace_message_queue_destroy(&(glob->intersyncq));
@@ -925,8 +926,6 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     init_support_thread_data(&(glob->syncip));
     init_support_thread_data(&(glob->syncvoip));
-    glob->exporters = NULL;
-    //init_support_thread_data(&(glob->exporter));
 
     glob->configfile = configfile;
     glob->sharedinfo.provisionerip = NULL;
@@ -1040,8 +1039,6 @@ static void *start_voip_sync_thread(void *params) {
     collector_sync_voip_t *sync = init_voip_sync_data(glob);
     sync_sendq_t *sq;
 
-    //register_export_queues(glob->exporters, sync->exportqueues);
-
     while (collector_halt == 0) {
         ret = sync_voip_thread_main(sync);
         if (ret == -1) {
@@ -1120,8 +1117,6 @@ static void *start_ip_sync_thread(void *params) {
      * from a config file. Eventually this should be replaced with
      * instructions that are received via a network interface.
      */
-
-    //register_export_queues(glob->exporters, sync->exportqueues);
 
     while (collector_halt == 0) {
         if (reload_config) {
@@ -1257,26 +1252,21 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    glob->exporter = NULL;
 #if 0
-    /* Start export threads */
-    glob->exporters = (export_thread_data_t *)malloc(
-            sizeof(export_thread_data_t) * glob->exportthreads);
-    for (i = 0; i < glob->exportthreads; i++) {
-        glob->exporters[i].zmq_ctxt = glob->zmq_ctxt;
-        glob->exporters[i].exportlabel = i;
-        glob->exporters[i].shared = glob->sharedinfo;
+    glob->exporter = (export_thread_data_t *)calloc(1,
+            sizeof(export_thread_data_t));
+    glob->exporter->zmq_ctxt = glob->zmq_ctxt;
+    glob->exporter->shared = glob->sharedinfo;
+    glob->exporter->workers = glob->exportthreads;
 
-        ret = pthread_create(&(glob->exporters[i].threadid), NULL,
-                start_export_thread, (void *)&(glob->exporters[i]));
-        if (ret != 0) {
-            logger(LOG_INFO, "OpenLI: error creating exporter. Exiting.");
-            return 1;
-        }
+    ret = pthread_create(&(glob->exporter->threadid), NULL,
+            start_export_thread, (void *)glob->exporters);
+    if (ret != 0) {
+        logger(LOG_INFO, "OpenLI: error creating exporter. Exiting.");
+        return 1;
     }
 #endif
-
-    /* XXX temporary to prevent exporters from missing early sync messages */
-    usleep(100000);
 
     /* Start IP intercept sync thread */
     ret = pthread_create(&(glob->syncip.threadid), NULL, start_ip_sync_thread,
@@ -1351,8 +1341,7 @@ int main(int argc, char *argv[]) {
     pthread_join(glob->syncip.threadid, NULL);
     pthread_join(glob->syncvoip.threadid, NULL);
 #if 0
-    for (i = 0; i < glob->exportthreads; i++) {
-        pthread_join(glob->exporters[i].threadid, NULL);
+    pthread_join(glob->exporter.threadid, NULL);
     }
 #endif
 

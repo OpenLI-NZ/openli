@@ -186,8 +186,7 @@ typedef struct colthread_local {
     staticipsession_t *activestaticintercepts;
 
     /* Message queue for exporting LI records */
-    int numexporters;
-    void **zmq_pubsocks;
+    void *zmq_pubsock;
 
     /* Known RADIUS servers, i.e. if we see traffic to or from these
      * servers, we assume it is RADIUS.
@@ -233,7 +232,7 @@ typedef struct supporting_thread_global {
 typedef struct export_thread_data {
     pthread_t threadid;
     void *zmq_ctxt;
-    int exportlabel;
+    int workers;
     shared_global_info_t *shared;
 } export_thread_data_t;
 
@@ -252,7 +251,7 @@ typedef struct collector_global {
 
     //support_thread_global_t *exporters;
 
-    export_thread_data_t *exporters;
+    export_thread_data_t *exporter;
 
     libtrace_message_queue_t intersyncq;
 

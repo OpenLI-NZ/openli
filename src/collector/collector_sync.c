@@ -63,7 +63,6 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->instruct_fd = -1;
     sync->instruct_fail = 0;
     sync->ii_ev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
-    sync->numexporters = glob->exportthreads;
 
     sync->outgoing = NULL;
     sync->incoming = NULL;
@@ -73,9 +72,8 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->freegenerics = NULL;
     sync->activeips = NULL;
 
-    sync->numexporters = glob->exportthreads;
-    sync->zmq_pubsocks = connect_exporter_queues(sync->numexporters,
-            glob->zmq_ctxt);
+    sync->zmq_pubsock = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+    zmq_connect(sync->zmq_pubsock, "ipc:///tmp/openliipc");
 
     return sync;
 
@@ -83,7 +81,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
 void clean_sync_data(collector_sync_t *sync) {
 
-    int i = 0;
+    int i = 0, zero=0;
     ip_to_session_t *iter, *tmp;
 
 	if (sync->instruct_fd != -1) {
@@ -130,7 +128,9 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->radiusplugin = NULL;
     sync->activeips = NULL;
 
-    disconnect_exporter_queues(sync->zmq_pubsocks, sync->numexporters);
+    zmq_setsockopt(sync->zmq_pubsock, ZMQ_LINGER, &zero, sizeof(zero));
+    zmq_close(sync->zmq_pubsock);
+
 
 }
 
@@ -218,10 +218,9 @@ static int create_ipiri_from_iprange(collector_sync_t *sync,
         sin6->sin6_scope_id = 0;
     }
 
-    queueused = export_queue_put_by_liid(sync->zmq_pubsocks, &irimsg,
-            ipint->common.liid, sync->numexporters);
+    publish_openli_msg(sync->zmq_pubsock, &irimsg);
     free(prefix);
-    return queueused;
+    return 0;
 
 }
 
@@ -260,9 +259,8 @@ static int create_ipiri_from_session(collector_sync_t *sync,
                 sizeof(struct sockaddr_storage));
     }
 
-    queueused = export_queue_put_by_liid(sync->zmq_pubsocks, &irimsg,
-            ipint->common.liid, sync->numexporters);
-    return queueused;
+    publish_openli_msg(sync->zmq_pubsock, &irimsg);
+    return 0;
 
 }
 
@@ -608,7 +606,7 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
     expmsg.data.med.ipstr = med.ipstr;
     expmsg.data.med.portstr = med.portstr;
 
-    export_queue_put_all(sync->zmq_pubsocks, &expmsg, sync->numexporters);
+    publish_openli_msg(sync->zmq_pubsock, &expmsg);
     return 0;
 }
 
@@ -630,7 +628,7 @@ static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
     expmsg.data.med.ipstr = NULL;
     expmsg.data.med.portstr = NULL;
 
-    export_queue_put_all(sync->zmq_pubsocks, &expmsg, sync->numexporters);
+    publish_openli_msg(sync->zmq_pubsock, &expmsg);
 
     free(med.ipstr);
     free(med.portstr);
@@ -742,7 +740,7 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     //expmsg.data.cept.delivcc_len = ipint->common.delivcc_len;
 
 
-    export_queue_put_all(sync->zmq_pubsocks, &expmsg, sync->numexporters);
+    publish_openli_msg(sync->zmq_pubsock, &expmsg);
     free_single_ipintercept(ipint);
 
     return 0;
@@ -753,7 +751,7 @@ static inline void drop_all_mediators(collector_sync_t *sync) {
 
     expmsg.type = OPENLI_EXPORT_DROP_ALL_MEDIATORS;
     expmsg.data.packet = NULL;
-    export_queue_put_all(sync->zmq_pubsocks, &expmsg, sync->numexporters);
+    publish_openli_msg(sync->zmq_pubsock, &expmsg);
 }
 
 static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
@@ -870,7 +868,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     expmsg.data.cept.authcc = cept->common.authcc;
     expmsg.data.cept.delivcc = cept->common.delivcc;
 
-    export_queue_put_all(sync->zmq_pubsocks, &expmsg, sync->numexporters);
+    publish_openli_msg(sync->zmq_pubsock, &expmsg);
 
     return 0;
 
@@ -1088,7 +1086,7 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
     expmsg.type = OPENLI_EXPORT_FLAG_MEDIATORS;
     expmsg.data.packet = NULL;
 
-    export_queue_put_all(sync->zmq_pubsocks, &expmsg, sync->numexporters);
+    publish_openli_msg(sync->zmq_pubsock, &expmsg);
 }
 
 static void push_all_active_intercepts(collector_sync_t *sync,

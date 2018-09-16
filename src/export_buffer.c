@@ -114,8 +114,9 @@ uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
 }
 
 uint64_t append_message_to_buffer(export_buffer_t *buf,
-        openli_exportmsg_t *msg, uint32_t beensent) {
+        openli_encoded_result_t *res, uint32_t beensent) {
 
+#if 0
     uint32_t enclen = msg->msgbody->len - msg->ipclen;
     uint64_t bufused = buf->buftail - buf->bufhead;
     uint64_t spaceleft = buf->alloced - bufused;
@@ -151,6 +152,8 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     }
 
     return (buf->buftail - buf->bufhead);
+#endif
+    return 0;
 }
 
 int transmit_buffered_records(export_buffer_t *buf, int fd,

@@ -118,17 +118,16 @@ static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
     l3 = trace_get_layer3(packet, &ethertype, &rem);
 
     msg->type = OPENLI_EXPORT_IPCC;
+    msg->ts = trace_get_timeval(packet);
     msg->data.ipcc.liid = strdup(alu->common.liid);
     msg->data.ipcc.cin = alu->cin;
     msg->data.ipcc.dir = dir;
     msg->data.ipcc.ipcontent = (uint8_t *)calloc(1, rem);
     msg->data.ipcc.ipclen = rem;
-    msg->data.ipcc.tv = trace_get_timeval(packet);
 
     memcpy(msg->data.ipcc.ipcontent, l3, rem);
 
-    queueused = export_queue_put_by_liid(loc->zmq_pubsocks, msg,
-            alu->common.liid, loc->numexporters);
+    publish_openli_msg(loc->zmq_pubsock, msg);
 
 }
 

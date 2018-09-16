@@ -50,6 +50,7 @@
 collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
 
     struct epoll_event ev;
+    int zero = 0;
 
     collector_sync_voip_t *sync = (collector_sync_voip_t *)
             malloc(sizeof(collector_sync_voip_t));
@@ -58,9 +59,9 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
     sync->glob = &(glob->syncvoip);
     sync->info = &(glob->sharedinfo);
 
-    sync->numexporters = glob->exportthreads;
-    sync->zmq_pubsocks = connect_exporter_queues(sync->numexporters,
-            glob->zmq_ctxt);
+    sync->zmq_pubsock = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+    zmq_connect(sync->zmq_pubsock, "ipc:///tmp/openliipc");
+    zmq_setsockopt(sync->zmq_pubsock, ZMQ_SNDHWM, &zero, sizeof(zero));
 
     sync->intersyncq = &(glob->intersyncq);
     sync->intersync_ev.fdtype = SYNC_EVENT_INTERSYNC;
@@ -100,6 +101,7 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
 
 void clean_sync_voip_data(collector_sync_voip_t *sync) {
     struct epoll_event ev;
+    int zero = 0;
 
     free_voip_cinmap(sync->knowncallids);
     if (sync->voipintercepts) {
@@ -133,7 +135,9 @@ void clean_sync_voip_data(collector_sync_voip_t *sync) {
         free(sync->sipdebugfile);
     }
 
-    disconnect_exporter_queues(sync->zmq_pubsocks, sync->numexporters);
+    zmq_setsockopt(sync->zmq_pubsock, ZMQ_LINGER, &zero, sizeof(zero));
+    zmq_close(sync->zmq_pubsock);
+
 
 }
 
@@ -614,8 +618,7 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
         if (irimsg->data.ipmmiri.packet) {
             trace_increment_packet_refcount(irimsg->data.ipmmiri.packet);
         }
-        export_queue_put_by_liid(sync->zmq_pubsocks, irimsg,
-                vint->common.liid, sync->numexporters);
+        publish_openli_msg(sync->zmq_pubsock, irimsg);
         exportcount += 1;
     }
     return exportcount;
@@ -734,8 +737,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         if (irimsg->data.ipmmiri.packet) {
             trace_increment_packet_refcount(irimsg->data.ipmmiri.packet);
         }
-        export_queue_put_by_liid(sync->zmq_pubsocks, irimsg,
-                vint->common.liid, sync->numexporters);
+        publish_openli_msg(sync->zmq_pubsock, irimsg);
         exportcount += 1;
     }
     return exportcount;
@@ -863,7 +865,7 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     expmsg.data.cept.authcc = vint->common.authcc;
     expmsg.data.cept.delivcc = vint->common.delivcc;
 
-    export_queue_put_all(sync->zmq_pubsocks, &expmsg, sync->numexporters);
+    publish_openli_msg(sync->zmq_pubsock, &expmsg);
 
     HASH_DELETE(hh_liid, sync->voipintercepts, vint);
     free_single_voipintercept(vint);
@@ -1122,7 +1124,7 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     expmsg.data.cept.liid = vint->common.liid;
     expmsg.data.cept.authcc = vint->common.authcc;
     expmsg.data.cept.delivcc = vint->common.delivcc;
-    export_queue_put_all(sync->zmq_pubsocks, &expmsg, sync->numexporters);
+    publish_openli_msg(sync->zmq_pubsock, &expmsg);
 
     pthread_mutex_lock(&(sync->glob->mutex));
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {

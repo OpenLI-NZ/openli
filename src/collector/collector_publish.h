@@ -36,6 +36,7 @@
 
 
 enum {
+    OPENLI_EXPORT_HALT_WORKER = 1,
     OPENLI_EXPORT_PACKET_FIN = 2,
     OPENLI_EXPORT_MEDIATOR = 3,
     OPENLI_EXPORT_FLAG_MEDIATORS = 4,
@@ -55,16 +56,15 @@ typedef struct openli_ipmmcc_job {
     libtrace_packet_t *packet;
     uint32_t cin;
     uint8_t dir;
-} openli_ipmmcc_job_t;
+} PACKED openli_ipmmcc_job_t;
 
 typedef struct openli_ipcc_job {
     char *liid;
     uint8_t *ipcontent;
     uint32_t ipclen;
-    struct timeval tv;
     uint32_t cin;
     uint8_t dir;
-} openli_ipcc_job_t;
+} PACKED openli_ipcc_job_t;
 
 typedef struct openli_ipmmiri_job {
     char *liid;
@@ -77,7 +77,7 @@ typedef struct openli_ipmmiri_job {
     uint8_t ipsrc[16];
     uint8_t ipdest[16];
     int ipfamily;
-} openli_ipmmiri_job_t;
+} PACKED openli_ipmmiri_job_t;
 
 typedef struct openli_ipiri_job {
     char *liid;
@@ -93,7 +93,7 @@ typedef struct openli_ipiri_job {
     uint8_t special;
     uint8_t ipassignmentmethod;
     uint8_t assignedip_prefixbits;
-} openli_ipiri_job_t;
+} PACKED openli_ipiri_job_t;
 
 enum {
     OPENLI_IPIRI_STANDARD,
@@ -114,8 +114,9 @@ typedef struct published_intercept_msg {
     char *delivcc;
 } published_intercept_msg_t;
 
+typedef struct openli_export_recv openli_export_recv_t;
 
-typedef struct openli_export_recv {
+struct openli_export_recv {
     uint8_t type;
     uint32_t destid;
     struct timeval ts;
@@ -128,17 +129,9 @@ typedef struct openli_export_recv {
         openli_ipmmiri_job_t ipmmiri;
         openli_ipiri_job_t ipiri;
     } data;
-} PACKED openli_export_recv_t;
+} PACKED;
 
-void **connect_exporter_queues(int queuecount, void *zmq_ctxt);
-void disconnect_exporter_queues(void **pubsocks, int queuecount);
-void export_queue_put_all(void **pubsocks, openli_export_recv_t *msg,
-        int numexporters);
-int export_queue_put_by_liid(void **pubsocks,
-        openli_export_recv_t *msg, char *liid, int numexporters);
-int export_queue_put_by_queueid(void **pubsocks,
-        openli_export_recv_t *msg, int queueid);
-
+int publish_openli_msg(void *pubsock, openli_export_recv_t *msg);
 
 #endif
 

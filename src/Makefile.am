@@ -39,9 +39,10 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
 		collector/alushim_parser.c collector/alushim_parser.h \
                 collector/ipiri.c collector/ipiri.h \
 		collector/collector_sync_voip.c \
-		collector/collector_sync_voip.h \
+		collector/collector_sync_voip.h collector/export_shared.h \
                 collector/reassembler.h collector/reassembler.c \
                 collector/collector_publish.c collector/collector_publish.h \
+                collector/encoder_worker.c collector/encoder_worker.h \
                 collector/internal.pb-c.c collector/internal.pb-c.h \
                 $(PLUGIN_SRCS)
 
@@ -76,6 +77,7 @@ standaloneexporter_SOURCES=standaloneexporter.c etsili_core.h \
                 collector/ipcc.c collector/ipcc.h \
                 collector/ipiri.c collector/ipiri.h \
                 collector/collector_publish.c collector/collector_publish.h \
+                collector/encoder_worker.c collector/encoder_worker.h \
                 collector/internal.pb-c.c collector/internal.pb-c.h \
                 coreserver.c coreserver.h 
 standaloneexporter_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs

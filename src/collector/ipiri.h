@@ -134,11 +134,10 @@ int ip_iri(shared_global_info_t *info, wandder_encoder_t **encoder,
                 ipintercept_t *ipint, etsili_iri_type_t iritype,
                 struct timeval *tv, etsili_generic_t *params);
 
-int encode_ipiri(etsili_generic_t **freegenerics,
-        wandder_encoder_t **encoder, shared_global_info_t *shared,
-        openli_ipiri_job_t *job,
-        exporter_intercept_msg_t *intdetails, uint32_t seqno,
-        openli_exportmsg_t *msg, int iteration);
+int encode_ipiri(wandder_encoder_t *encoder,
+        etsili_generic_t **freegenerics, wandder_encode_job_t *precomputed,
+        openli_ipiri_job_t *job, uint32_t seqno,
+        openli_encoded_result_t *res);
 
 /* TODO consider adding free lists to these APIs to avoid excess mallocs */
 int ipiri_create_id_printable(char *idstr, int length, ipiri_id_t *ipiriid);

@@ -47,6 +47,7 @@
 #include "logger.h"
 #include "util.h"
 #include "internal.pb-c.h"
+#include "encoder_worker.h"
 
 #define BUF_BATCH_SIZE (10 * 1024 * 1024)
 enum {
@@ -59,12 +60,12 @@ collector_export_t *init_exporter(export_thread_data_t *glob) {
 
     collector_export_t *exp = (collector_export_t *)malloc(
             sizeof(collector_export_t));
+    int ret, i;
 
     exp->glob = glob;
     exp->dests = libtrace_list_init(sizeof(export_dest_t));
     exp->intercepts = NULL;
-    exp->encoder = NULL;
-    exp->freegenerics = NULL;
+    exp->freeresults = NULL;
 
     exp->failed_conns = 0;
     exp->flagged = 0;
@@ -72,6 +73,39 @@ collector_export_t *init_exporter(export_thread_data_t *glob) {
 
     exp->count = 0;
     exp->zmq_subsock = NULL;
+    exp->zmq_pushjobsock = NULL;
+    exp->zmq_pullressock = NULL;
+
+    exp->zmq_control = zmq_socket(exp->glob->zmq_ctxt, ZMQ_PUB);
+    if (zmq_bind(exp->zmq_control, "inproc://openliexportercontrol") != 0) {
+        logger(LOG_INFO, "OpenLI: unable to create control socket for encoding threads");
+        logger(LOG_INFO, "OpenLI: no export worker threads will be started");
+        exp->zmq_control = NULL;
+        exp->workercount = 0;
+        exp->workers = NULL;
+        return exp;
+    }
+
+    exp->workers = (openli_encoder_t *)calloc(exp->glob->workers,
+            sizeof(openli_encoder_t));
+    exp->workercount = exp->glob->workers;
+    for (i = 0; i < exp->workercount; i++) {
+        exp->workers[i].zmq_ctxt = exp->glob->zmq_ctxt;
+        exp->workers[i].zmq_recvjob = NULL;
+        exp->workers[i].zmq_pushresult = NULL;
+        exp->workers[i].zmq_control = NULL;
+        exp->workers[i].workerid = i;
+        exp->workers[i].shared = exp->glob->shared;
+        exp->workers[i].encoder = NULL;
+        exp->workers[i].freegenerics = NULL;
+
+        ret = pthread_create(&(exp->workers[i].threadid), NULL,
+                run_encoder_worker, &(exp->workers[i]));
+        if (ret != 0) {
+            logger(LOG_INFO, "Warning: unable to start encoder worker thread %d\n", i);
+            continue;
+        }
+    }
 
     return exp;
 }
@@ -202,19 +236,28 @@ static inline void remove_all_destinations(collector_export_t *exp) {
 }
 
 void destroy_exporter(collector_export_t *exp) {
-    libtrace_list_t *evlist;
-    libtrace_list_node_t *n;
     exporter_intercept_state_t *intstate, *tmpexp;
+    int i;
+
+    /* push halt messages to all workers */
+
+    if (exp->zmq_control) {
+        if (zmq_send(exp->zmq_control, NULL, 0, 0) < 0) {
+            logger(LOG_INFO, "OpenLI: error while sending halt message to export worker thread %d", i);
+        }
+        zmq_close(exp->zmq_control);
+    }
+
+    /* join on all workers, then delete worker array */
+    for (i = 0; i < exp->workercount; i++) {
+        pthread_join(exp->workers[i].threadid, NULL);
+        destroy_encoder_worker(&(exp->workers[i]));
+    }
+    if (exp->workers) {
+        free(exp->workers);
+    }
 
     remove_all_destinations(exp);
-
-    if (exp->freegenerics) {
-        free_etsili_generics(exp->freegenerics);
-    }
-
-    if (exp->encoder) {
-        free_wandder_encoder(exp->encoder);
-    }
 
     HASH_ITER(hh, exp->intercepts, intstate, tmpexp) {
         HASH_DELETE(hh, exp->intercepts, intstate);
@@ -223,23 +266,35 @@ void destroy_exporter(collector_export_t *exp) {
         free(intstate);
     }
 
+    while (exp->freeresults) {
+        wandder_encoded_result_t *r = exp->freeresults;
+        exp->freeresults = exp->freeresults->next;
+
+        free(r->encoded);
+        free(r);
+    }
+
     if (exp->zmq_subsock) {
         zmq_close(exp->zmq_subsock);
     }
 
-    printf("exporter %d received %d messages\n", exp->glob->exportlabel,
-            exp->count);
+    if (exp->zmq_pushjobsock) {
+        zmq_close(exp->zmq_pushjobsock);
+    }
 
-    /* Don't free evlist, this will be done when the main thread
-     * frees the exporter support data. */
-    //libtrace_list_deinit(evlist);
+    if (exp->zmq_pullressock) {
+        zmq_close(exp->zmq_pullressock);
+    }
+
+    printf("exporter sent %d messages\n", exp->count);
 
     free(exp);
 }
 
 
-static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
+static int forward_fd(export_dest_t *dest, openli_encoded_result_t *msg) {
 
+#if 0
     uint32_t enclen = msg->msgbody->len - msg->ipclen;
     int ret;
     struct iovec iov[4];
@@ -248,7 +303,7 @@ static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
     int total = 0;
     char liidbuf[65542];
 
-    iov[ind].iov_base = &msg->header;
+    iov[ind].iov_base = &(msg->header);
     iov[ind].iov_len = msg->hdrlen;
     ind ++;
     total += msg->hdrlen;
@@ -311,15 +366,16 @@ static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
             /* TODO do something if we run out of memory? */
         }
     }
-
+#endif
     return 0;
 }
 
 
-static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg,
+static int forward_message(export_dest_t *dest, openli_encoded_result_t *msg,
         wandder_encoder_t *enc) {
 
     int ret = 0;
+#if 0
     if (dest->fd == -1) {
         /* buffer this message for when we are able to connect */
         if (append_message_to_buffer(&(dest->buffer), msg, 0) == 0) {
@@ -356,6 +412,7 @@ static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg,
 
 endforward:
     wandder_release_encoded_result(enc, msg->msgbody);
+#endif
 
     return ret;
 }
@@ -603,11 +660,9 @@ static inline void free_job_request(openli_export_recv_t *recvd) {
             break;
         case OPENLI_EXPORT_IPCC:
             free(recvd->data.ipcc.liid);
-            free(recvd->data.ipcc.ipcontent);
             break;
         case OPENLI_EXPORT_IPIRI:
             free(recvd->data.ipiri.liid);
-            free(recvd->data.ipiri.username);
             /*
             if (recvd->data.ipiri.plugin) {
                 recvd->data.ipiri.plugin->destroy_parsed_data(
@@ -622,6 +677,7 @@ static inline void free_job_request(openli_export_recv_t *recvd) {
     }
 }
 
+#if 0
 static int export_encoded_record(collector_export_t *exp,
         openli_exportmsg_t *tosend) {
 
@@ -664,6 +720,8 @@ static int export_encoded_record(collector_export_t *exp,
     }
     return 1;
 }
+
+#endif
 static int run_encoding_job(collector_export_t *exp,
         openli_export_recv_t *recvd) {
 
@@ -671,9 +729,9 @@ static int run_encoding_job(collector_export_t *exp,
     uint32_t cin;
     cin_seqno_t *cinseq;
     exporter_intercept_state_t *intstate;
-    int ret = -1;
+    int ret = 0;
     int ind = 0;
-    openli_exportmsg_t tosend;
+    openli_encoding_job_t job;
 
     liid = extract_liid_from_job(recvd);
     cin = extract_cin_from_job(recvd);
@@ -704,6 +762,53 @@ static int run_encoding_job(collector_export_t *exp,
                 sizeof(cin), cinseq);
     }
 
+    job.intstate = intstate;
+    job.type = recvd->type;
+    job.seqno = cinseq->cc_seqno;
+    job.ts = recvd->ts;
+
+    if (exp->freeresults) {
+        job.toreturn = exp->freeresults;
+        exp->freeresults = exp->freeresults->next;
+        job.toreturn->next = NULL;
+    } else {
+        job.toreturn = NULL;
+    }
+
+    switch (recvd->type) {
+        case OPENLI_EXPORT_IPCC:
+            job.data.ipcc = recvd->data.ipcc;
+            break;
+        case OPENLI_EXPORT_IPMMCC:
+            job.data.ipmmcc = recvd->data.ipmmcc;
+            break;
+        case OPENLI_EXPORT_IPIRI:
+            job.data.ipiri = recvd->data.ipiri;
+            break;
+        case OPENLI_EXPORT_IPMMIRI:
+            job.data.ipmmiri = recvd->data.ipmmiri;
+            break;
+    }
+
+    if (zmq_send(exp->zmq_pushjobsock, (char *)&job,
+            sizeof(openli_encoding_job_t), 0) < 0) {
+        logger(LOG_INFO,
+                "Error while pushing encoding job to worker threads: %s",
+                strerror(errno));
+        return -1;
+    }
+
+    /* TODO deal with RADIUS multi-iteration jobs... */
+
+    if (recvd->type == OPENLI_EXPORT_IPMMCC ||
+            recvd->type == OPENLI_EXPORT_IPCC) {
+        cinseq->cc_seqno ++;
+    } else {
+        cinseq->iri_seqno ++;
+    }
+    ind ++;
+
+#if 0
     while (ret != 0) {
         switch(recvd->type) {
             case OPENLI_EXPORT_IPMMCC:
@@ -750,8 +855,8 @@ static int run_encoding_job(collector_export_t *exp,
             break;
         }
     }
+#endif
 
-    free_job_request(recvd);
     return ret;
 }
 
@@ -876,10 +981,10 @@ static int read_ipcc_job(collector_export_t *exp, openli_export_recv_t *job) {
     zmq_msg_close(&part);
 
     job->destid = unpacked->destid;
+    job->ts.tv_sec = unpacked->tvsec;
+    job->ts.tv_usec = unpacked->tvusec;
     job->data.ipcc.cin = unpacked->cin;
     job->data.ipcc.dir = unpacked->dir;
-    job->data.ipcc.tv.tv_sec = unpacked->tvsec;
-    job->data.ipcc.tv.tv_usec = unpacked->tvusec;
     job->data.ipcc.liid = strdup(unpacked->liid);
     job->data.ipcc.ipcontent = (uint8_t *)malloc(unpacked->ipcontent.len);
     memcpy(job->data.ipcc.ipcontent, unpacked->ipcontent.data,
@@ -993,7 +1098,37 @@ static int read_new_intercept_message(collector_export_t *exp,
     return 1;
 }
 
-static int read_exported_message(collector_export_t *exp) {
+static int handle_returned_result(collector_export_t *exp) {
+    int x;
+    openli_encoded_result_t res;
+
+    x = zmq_recv(exp->zmq_pullressock, &res, sizeof(res), ZMQ_DONTWAIT);
+    if (x < 0) {
+        if (errno == EAGAIN) {
+            return 0;
+        }
+        return -1;
+    }
+
+    /* TODO actually forward the message to mediator */
+
+    if (res.msgbody) {
+        if (exp->freeresults == NULL) {
+            exp->freeresults = res.msgbody;
+            exp->freeresults->next = NULL;
+        } else {
+            res.msgbody->next = exp->freeresults;
+            exp->freeresults = res.msgbody;
+        }
+    }
+
+    if (res.ipcontents) {
+        free(res.ipcontents);
+    }
+    return 1;
+}
+
+static int handle_published_message(collector_export_t *exp) {
 
     uint8_t msgtype;
     int64_t more;
@@ -1055,7 +1190,6 @@ static int read_exported_message(collector_export_t *exp) {
                 if (run_encoding_job(exp, &job) < 0) {
                     ret = -1;
                 }
-                //free_job_request(&job);
             }
             break;
         default:
@@ -1073,6 +1207,7 @@ static int read_exported_message(collector_export_t *exp) {
             } while (more);
     }
 
+    free_job_request(&job);
     return ret;
 }
 
@@ -1176,32 +1311,20 @@ static int read_exported_message(collector_export_t *exp) {
 
 #endif
 
-static inline int connect_zmq_socket(collector_export_t *exp) {
-
+static inline int connect_zmq_sock(void *ctxt, void **sock, char *name,
+        int socktype) {
     int rc;
     int zero = 0;
-    char subname[128];
-
-    snprintf(subname, 128, "ipc:///tmp/exporter%d", exp->glob->exportlabel + 6000);
-    //snprintf(subname, 128, "inproc://exporter%d", exp->glob->exportlabel);
-    exp->zmq_subsock = zmq_socket(exp->glob->zmq_ctxt, ZMQ_PULL);
-    rc = zmq_bind(exp->zmq_subsock, subname);
+    *sock = zmq_socket(ctxt, socktype);
+    rc = zmq_bind(*sock, name);
 
     if (rc != 0) {
-        logger(LOG_INFO, "OpenLI: exporter thread %d was unable to start zmq socket", exp->glob->exportlabel);
+        logger(LOG_INFO, "OpenLI: exporter thread was unable to start zmq socket");
         return -1;
     }
-    /*
-    rc = zmq_setsockopt(exp->zmq_subsock, ZMQ_SUBSCRIBE, "", 0);
+    rc = zmq_setsockopt(*sock, ZMQ_LINGER, &zero, sizeof(zero));
     if (rc != 0) {
-        logger(LOG_INFO, "OpenLI: exporter thread %d was unable to set subscription filter for zeromq", exp->glob->exportlabel);
-        return -1;
-    }
-    */
-    rc = zmq_setsockopt(exp->zmq_subsock, ZMQ_LINGER, &zero,
-            sizeof(zero));
-    if (rc != 0) {
-        logger(LOG_INFO, "OpenLI: exporter thread %d was unable to set linger period for zeromq", exp->glob->exportlabel);
+        logger(LOG_INFO, "OpenLI: exporter thread was unable to set linger period for zeromq");
         return -1;
     }
     return 0;
@@ -1210,15 +1333,29 @@ static inline int connect_zmq_socket(collector_export_t *exp) {
 int exporter_thread_main(collector_export_t *exp) {
 
 	int i, nfds, timerfd, itemcount, ret;
-	struct epoll_event evs[64];
     int timerexpired = 0;
     struct itimerspec its;
-    zmq_pollitem_t items[3];
+    zmq_pollitem_t items[4];
 
     /* XXX this could probably be static, but just to be safe... */
 
     if (exp->zmq_subsock == NULL) {
-        if (connect_zmq_socket(exp) < 0) {
+        if (connect_zmq_sock(exp->glob->zmq_ctxt, &(exp->zmq_subsock),
+                "ipc:///tmp/openliipc", ZMQ_PULL) < 0) {
+            return -1;
+        }
+    }
+
+    if (exp->zmq_pushjobsock == NULL) {
+        if (connect_zmq_sock(exp->glob->zmq_ctxt, &(exp->zmq_pushjobsock),
+                "inproc://openliexporterpush", ZMQ_PUSH) < 0) {
+            return -1;
+        }
+    }
+
+    if (exp->zmq_pullressock == NULL) {
+        if (connect_zmq_sock(exp->glob->zmq_ctxt, &(exp->zmq_pullressock),
+                "inproc://openliexporterpull", ZMQ_PULL) < 0) {
             return -1;
         }
     }
@@ -1249,12 +1386,17 @@ int exporter_thread_main(collector_export_t *exp) {
     items[1].events = ZMQ_POLLIN;
     items[1].revents = 0;
 
-    itemcount = 2;
+    items[2].socket = exp->zmq_pullressock;
+    items[2].fd = 0;
+    items[2].events = ZMQ_POLLIN;
+    items[2].revents = 0;
+
+    itemcount = 3;
     if (exp->flagtimerfd != -1) {
-        items[2].socket = NULL;
-        items[2].fd = exp->flagtimerfd;
-        items[2].events = ZMQ_POLLIN;
-        items[2].revents = 0;
+        items[3].socket = NULL;
+        items[3].fd = exp->flagtimerfd;
+        items[3].events = ZMQ_POLLIN;
+        items[3].revents = 0;
         itemcount ++;
     }
 
@@ -1263,7 +1405,7 @@ int exporter_thread_main(collector_export_t *exp) {
         zmq_poll(items, itemcount, -1);
         if (items[0].revents & ZMQ_POLLIN) {
             do {
-                ret = read_exported_message(exp);
+                ret = handle_published_message(exp);
                 processed ++;
             } while (ret > 0 && processed < 100);
 
@@ -1276,7 +1418,19 @@ int exporter_thread_main(collector_export_t *exp) {
             timerexpired = 1;
         }
 
-        if (itemcount > 2 && items[2].revents & ZMQ_POLLIN) {
+        if (items[2].revents & ZMQ_POLLIN) {
+            /* TODO process encoded result and forward to destination */
+            processed = 0;
+            do {
+                ret = handle_returned_result(exp);
+                processed ++;
+            } while (ret > 0 && processed < 100);
+            if (ret == -1) {
+                return -1;
+            }
+        }
+
+        if (itemcount > 3 && items[3].revents & ZMQ_POLLIN) {
             purge_unconfirmed_mediators(exp);
             exp->flagged = 0;
             close(exp->flagtimerfd);

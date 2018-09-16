@@ -35,43 +35,6 @@
 #include "collector_publish.h"
 #include "internal.pb-c.h"
 
-void **connect_exporter_queues(int queuecount, void *zmq_ctxt) {
-    void **pubsocks = malloc(sizeof(void *) * queuecount);
-    int i, zero = 0;
-
-    memset(pubsocks, 0, sizeof(void *) * queuecount);
-    for (i = 0; i < queuecount; i++) {
-        char sockname[128];
-        void *psock = zmq_socket(zmq_ctxt, ZMQ_PUSH);
-
-        //snprintf(sockname, 128, "inproc://exporter%d", i);
-        snprintf(sockname, 128, "ipc:///tmp/exporter%d", i + 6000);
-        if (zmq_connect(psock, sockname) < 0) {
-            printf("zmq_connect error: %s\n", strerror(errno));
-        }
-
-        zmq_setsockopt(psock, ZMQ_SNDHWM, &zero, sizeof(zero));
-        pubsocks[i] = psock;
-    }
-
-    return pubsocks;
-}
-
-void disconnect_exporter_queues(void **pubsocks, int queuecount) {
-    int i, zero = 0;
-    for (i = 0; i < queuecount; i++) {
-        if (pubsocks[i]) {
-            if (zmq_setsockopt(pubsocks[i], ZMQ_LINGER, &zero,
-                        sizeof(zero)) != 0) {
-                logger(LOG_INFO,
-                        "OpenLI: unable to set linger period on publishing zeromq socket.");
-            }
-            zmq_close(pubsocks[i]);
-        }
-    }
-    free(pubsocks);
-}
-
 
 static int _publish_mediator(void *pubsock, openli_export_recv_t *msg) {
 
@@ -110,8 +73,8 @@ static int _publish_ipcc_job(void *pubsock, openli_export_recv_t *msg) {
     job.destid = msg->destid;
     job.cin = msg->data.ipcc.cin;
     job.dir = msg->data.ipcc.dir;
-    job.tvsec = msg->data.ipcc.tv.tv_sec;
-    job.tvusec = msg->data.ipcc.tv.tv_usec;
+    job.tvsec = msg->ts.tv_sec;
+    job.tvusec = msg->ts.tv_usec;
     job.liid = msg->data.ipcc.liid;
     job.ipcontent.data = msg->data.ipcc.ipcontent;
     job.ipcontent.len = msg->data.ipcc.ipclen;
@@ -127,8 +90,6 @@ static int _publish_ipcc_job(void *pubsock, openli_export_recv_t *msg) {
     }
     free(buf);
     return 0;
-
-
 }
 
 static int _publish_ipiri_job(void *pubsock, openli_export_recv_t *msg) {
@@ -299,7 +260,7 @@ static int _publish_intercept(void *pubsock, openli_export_recv_t *msg) {
 
 
 
-static inline int _publish_openli_msg(void *pubsock, openli_export_recv_t *msg) {
+int publish_openli_msg(void *pubsock, openli_export_recv_t *msg) {
 
     if (zmq_send(pubsock, (char *)&(msg->type), sizeof(msg->type),
             ZMQ_SNDMORE) < 0) {
@@ -332,43 +293,6 @@ static inline int _publish_openli_msg(void *pubsock, openli_export_recv_t *msg) 
     }
 
     return 0;
-}
-
-void export_queue_put_all(void **pubsocks, openli_export_recv_t *msg,
-        int numexporters) {
-
-    int i;
-
-    for (i = 0; i < numexporters; i++) {
-        if (_publish_openli_msg(pubsocks[i], msg) < 0) {
-            continue;
-        }
-    }
-}
-
-int export_queue_put_by_liid(void **pubsocks,
-        openli_export_recv_t *msg, char *liid, int numexporters) {
-
-    uint32_t hash;
-    int queueid;
-
-    hash = hashlittle(liid, strlen(liid), 0x188532fa);
-    queueid = hash % numexporters;
-    return _publish_openli_msg(pubsocks[queueid], msg);
-}
-
-int export_queue_put_by_queueid(void **pubsocks,
-        openli_export_recv_t *msg, int queueid) {
-
-    if (queueid < 0) {
-        logger(LOG_INFO,
-                "OpenLI: bad export queue passed into export_queue_put_by_queueid: %d",
-                queueid);
-        return -1;
-    }
-
-    //printf("sending message type %d to %d\n", msg->type, queueid);
-    return _publish_openli_msg(pubsocks[queueid], msg);
 }
 
 

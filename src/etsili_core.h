@@ -157,7 +157,7 @@ wandder_encoded_result_t *encode_etsi_ipmmiri(wandder_encoder_t *encoder,
         uint32_t iplen);
 
 wandder_encoded_result_t *encode_etsi_ipiri(wandder_encoder_t *encoder,
-        wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
+        wandder_encode_job_t*precomputed, int64_t cin, int64_t seqno,
         etsili_iri_type_t iritype, struct timeval *tv,
         etsili_generic_t *params);
 

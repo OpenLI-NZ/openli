@@ -24,25 +24,34 @@
  *
  */
 
-#include <libtrace/message_queue.h>
-#include <libtrace.h>
+#ifndef OPENLI_EXPORT_SHARED_H_
+#define OPENLI_EXPORT_SHARED_H_
+
+#include <uthash.h>
 #include <libwandder.h>
-#include <libwandder_etsili.h>
 
-#include "collector.h"
-#include "intercept.h"
-#include "collector_export.h"
-#include "etsili_core.h"
+typedef struct exporter_intercept_msg {
+    char *liid;
+    int liid_len;
+    char *authcc;
+    int authcc_len;
+    char *delivcc;
+    int delivcc_len;
+} exporter_intercept_msg_t;
 
-enum {
-    OPENLI_IPMMIRI_ORIGINAL,
-    OPENLI_IPMMIRI_SIP,
-    OPENLI_IPMMIRI_H323,
-};
+typedef struct cin_seqno {
+    uint32_t cin;
+    uint32_t cc_seqno;
+    uint32_t iri_seqno;
+    UT_hash_handle hh;
+} cin_seqno_t;
 
-int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
-        exporter_intercept_msg_t *intdetails, uint32_t seqno,
-        openli_encoded_result_t *res, struct timeval *ts);
-
+typedef struct intercept_state {
+    exporter_intercept_msg_t *details;
+    cin_seqno_t *cinsequencing;
+    UT_hash_handle hh;
+    wandder_encode_job_t preencoded[OPENLI_PREENCODE_LAST];
+} exporter_intercept_state_t;
+#endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

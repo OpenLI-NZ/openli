@@ -51,7 +51,7 @@ static void *start_export_thread(void *params) {
 
 int main(int argc, char *argv[]) {
 
-    export_thread_data_t exporters[2];
+    export_thread_data_t exporter;
     void *zmq_ctxt = NULL;
     struct sigaction sigact;
     sigset_t sig_before, sig_block_all;
@@ -83,17 +83,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    for (i = 0; i < 2; i++) {
-        memset(&exporters[i], 0, sizeof(exporters[i]));
-        exporters[i].zmq_ctxt = zmq_ctxt;
-        exporters[i].exportlabel = i;
-        exporters[i].shared = &shared;
-
-        ret = pthread_create(&(exporters[i].threadid), NULL,
-                start_export_thread, (void *)&(exporters[i]));
-        if (ret != 0) {
-            return 1;
-        }
+    memset(&exporter, 0, sizeof(exporter));
+    exporter.zmq_ctxt = zmq_ctxt;
+    exporter.workers = 2;
+    exporter.shared = &shared;
+    ret = pthread_create(&(exporter.threadid), NULL,
+                start_export_thread, (void *)&(exporter));
+    if (ret != 0) {
+        return 1;
     }
 
     if (pthread_sigmask(SIG_SETMASK, &sig_before, NULL)) {
@@ -105,9 +102,7 @@ int main(int argc, char *argv[]) {
         sleep(1);
     }
 
-    for (i = 0; i < 2; i++) {
-        pthread_join(exporters[i].threadid, NULL);
-    }
+    pthread_join(exporter.threadid, NULL);
 
     printf("done?\n");
     zmq_ctx_destroy(zmq_ctxt);

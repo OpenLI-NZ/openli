@@ -259,22 +259,26 @@ static int sort_etsili_generic(etsili_generic_t *a, etsili_generic_t *b) {
 
 
 static inline void encode_ipiri_body(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed,
         etsili_iri_type_t iritype, etsili_generic_t *params) {
 
     etsili_generic_t *p, *tmp;
+    wandder_encode_job_t *jobarray[4];
 
-    ENC_CSEQUENCE(encoder, 2);      // Payload
-    ENC_CSEQUENCE(encoder, 0);      // IRIPayload
-    ENC_USEQUENCE(encoder);         // IRIPayload sequence
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_0]);
+    jobarray[2] = &(precomputed[OPENLI_PREENCODE_USEQUENCE]);
+    wandder_encode_next_preencoded(encoder, jobarray, 3);
+
     wandder_encode_next(encoder, WANDDER_TAG_ENUM,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &iritype,
             sizeof(iritype));
-    ENC_CSEQUENCE(encoder, 2);      // IRIContents
-    ENC_CSEQUENCE(encoder, 2);      // IPIRI
-    wandder_encode_next(encoder, WANDDER_TAG_RELATIVEOID,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, etsi_ipirioid,
-            sizeof(etsi_ipmmirioid));
-    ENC_CSEQUENCE(encoder, 1);      // IPIRIContents
+
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
+    jobarray[2] = &(precomputed[OPENLI_PREENCODE_IPIRIOID]);
+    jobarray[3] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
+    wandder_encode_next_preencoded(encoder, jobarray, 4);
 
     /* Sort the parameter list by item ID, since we have to provide the
      * IRI contents in order.
@@ -353,13 +357,7 @@ static inline void encode_ipiri_body(wandder_encoder_t *encoder,
         }
     }
 
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);    // ends outermost sequence
+    END_ENCODED_SEQUENCE(encoder, 7);
 }
 
 static inline void encode_ipmmcc_body(wandder_encoder_t *encoder,
@@ -571,12 +569,12 @@ wandder_encoded_result_t *encode_etsi_ipmmiri(wandder_encoder_t *encoder,
 }
 
 wandder_encoded_result_t *encode_etsi_ipiri(wandder_encoder_t *encoder,
-        wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
+        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
         etsili_iri_type_t iritype, struct timeval *tv,
         etsili_generic_t *params) {
 
-    encode_etsili_pshdr(encoder, hdrdata, cin, seqno, tv);
-    encode_ipiri_body(encoder, iritype, params);
+    encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
+    encode_ipiri_body(encoder, precomputed, iritype, params);
     return wandder_encode_finish(encoder);
 
 }

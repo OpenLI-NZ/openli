@@ -66,19 +66,18 @@ int sort_generics(etsili_generic_t *a, etsili_generic_t *b) {
 }
 
 
-int encode_ipiri(etsili_generic_t **freegenerics,
-        wandder_encoder_t **encoder, shared_global_info_t *shared,
-        openli_ipiri_job_t *job,
-        exporter_intercept_msg_t *intdetails, uint32_t seqno,
-        openli_exportmsg_t *msg, int iteration) {
+int encode_ipiri(wandder_encoder_t *encoder,
+        etsili_generic_t **freegenerics, wandder_encode_job_t *precomputed,
+        openli_ipiri_job_t *job, uint32_t seqno,
+        openli_encoded_result_t *res) {
 
-    wandder_etsipshdr_data_t hdrdata;
     etsili_generic_t *np, *params = NULL;
     etsili_iri_type_t iritype;
     etsili_ipaddress_t targetip;
     int64_t ipversion = 0;
     struct timeval tv;
     int ret = 0;
+    uint32_t liidlen = precomputed[OPENLI_PREENCODE_LIID].vallen;
 #if 0
 
     /* Conventional IRIs will have an attached plugin which knows how
@@ -199,44 +198,20 @@ int encode_ipiri(etsili_generic_t **freegenerics,
                 np);
     }
 
-    HASH_SORT(params, sort_generics);
-
-
-    if (*encoder == NULL) {
-        *encoder = init_wandder_encoder();
-    } else {
-        reset_wandder_encoder(*encoder);
-    }
+    reset_wandder_encoder(encoder);
 
     gettimeofday(&tv, NULL);
-    hdrdata.liid = intdetails->liid;
-    hdrdata.liid_len = intdetails->liid_len;
-    hdrdata.authcc = intdetails->authcc;
-    hdrdata.authcc_len = intdetails->authcc_len;
-    hdrdata.delivcc = intdetails->delivcc;
-    hdrdata.delivcc_len = intdetails->delivcc_len;
-    hdrdata.operatorid = shared->operatorid;
-    hdrdata.operatorid_len = shared->operatorid_len;
-    hdrdata.networkelemid = shared->networkelemid;
-    hdrdata.networkelemid_len = shared->networkelemid_len;
-    hdrdata.intpointid = shared->intpointid;
-    hdrdata.intpointid_len = shared->intpointid_len;
 
-    memset(msg, 0, sizeof(openli_exportmsg_t));
-    msg->msgbody = encode_etsi_ipiri(*encoder, &hdrdata,
+    memset(res, 0, sizeof(openli_encoded_result_t));
+    res->msgbody = encode_etsi_ipiri(encoder, precomputed,
             (int64_t)(job->cin), (int64_t)seqno, iritype, &tv, params);
-    msg->liid = intdetails->liid;
-    msg->liidlen = intdetails->liid_len;
 
-    msg->encoder = *encoder;
-    msg->ipcontents = NULL;
-    msg->ipclen = 0;
-    msg->header.magic = htonl(OPENLI_PROTO_MAGIC);
-    msg->header.bodylen = htons(msg->msgbody->len + msg->liidlen +
-            sizeof(msg->liidlen));
-    msg->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
-    msg->header.internalid = 0;
-    msg->hdrlen = sizeof(msg->header);
+    res->ipcontents = NULL;
+    res->ipclen = 0;
+    res->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    res->header.bodylen = htons(res->msgbody->len + liidlen + sizeof(liidlen));
+    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
+    res->header.internalid = 0;
 
     free_ipiri_parameters(params, freegenerics);
     return ret;
