@@ -422,14 +422,18 @@ int update_ipfrag_reassemble_stream(ip_reassemble_stream_t *stream,
         iprem = ntohs(ipheader->ip_len) - 4 * (ipheader->ip_hl);
     }
 
-    newfrag = (ip_reass_fragment_t *)calloc(1, sizeof(ip_reass_fragment_t));
-    newfrag->fragoff = fragoff;
-    newfrag->length = iprem;
-    newfrag->content = (uint8_t *)malloc(iprem);
-    memcpy(newfrag->content, transport, iprem);
+    HASH_FIND(hh, stream->fragments, &(fragoff), sizeof(fragoff), newfrag);
+    if (!newfrag) {
+        newfrag = (ip_reass_fragment_t *)calloc(1, sizeof(ip_reass_fragment_t));
+        newfrag->fragoff = fragoff;
+        newfrag->length = iprem;
+        newfrag->content = (uint8_t *)malloc(iprem);
+        memcpy(newfrag->content, transport, iprem);
 
-    HASH_ADD_KEYPTR(hh, stream->fragments, &(newfrag->fragoff),
-            sizeof(newfrag->fragoff), newfrag);
+        HASH_ADD_KEYPTR(hh, stream->fragments, &(newfrag->fragoff),
+                sizeof(newfrag->fragoff), newfrag);
+    }
+
     if (!moreflag) {
         stream->endfrag = newfrag->fragoff + newfrag->length;
     }
