@@ -43,9 +43,13 @@ void init_export_buffer(export_buffer_t *buf, uint8_t hasnetcomm) {
     buf->partialfront = 0;
     buf->deadfront = 0;
     buf->hasnetcomm = hasnetcomm;
+    buf->decoder = NULL;
 }
 
 void release_export_buffer(export_buffer_t *buf) {
+    if (buf->decoder) {
+        wandder_free_etsili_decoder(buf->decoder);
+    }
     free(buf->bufhead);
 }
 
@@ -163,12 +167,11 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
     uint64_t rem = 0;
     uint8_t *bhead = buf->bufhead + buf->deadfront;
     uint64_t offset = buf->partialfront;
-    wandder_etsispec_t *dec;
     int ret;
     ii_header_t *header = NULL;
 
-    if (!buf->hasnetcomm) {
-        dec = wandder_create_etsili_decoder();
+    if (!buf->hasnetcomm && buf->decoder == NULL) {
+        buf->decoder = wandder_create_etsili_decoder();
     }
 
     /* Try to maintain record alignment */
@@ -186,9 +189,9 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
             header = (ii_header_t *)(bhead + sent);
             pdulen = ntohs(header->bodylen) + sizeof(ii_header_t);
         } else {
-            wandder_attach_etsili_buffer(dec, bhead + sent,
+            wandder_attach_etsili_buffer(buf->decoder, bhead + sent,
                     attachlen, 0);
-            pdulen = wandder_etsili_get_pdu_length(dec);
+            pdulen = wandder_etsili_get_pdu_length(buf->decoder);
             if (pdulen == 0) {
                 logger(LOG_INFO, "OpenLI: failed to decode buffered ETSI record.");
                 break;
@@ -200,10 +203,6 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         }
 
         sent += pdulen;
-    }
-
-    if (!buf->hasnetcomm) {
-        wandder_free_etsili_decoder(dec);
     }
 
     sent -= offset;

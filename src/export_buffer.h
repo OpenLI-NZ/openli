@@ -28,6 +28,7 @@
 #define OPENLI_COLLECTOR_BUFFER_H_
 
 #include <libwandder.h>
+#include <libwandder_etsili.h>
 
 typedef struct export_buffer {
     uint8_t *bufhead;
@@ -37,6 +38,7 @@ typedef struct export_buffer {
     uint32_t deadfront;
     uint32_t partialfront;
     uint8_t hasnetcomm;
+    wandder_etsispec_t *decoder;
 } export_buffer_t;
 
 typedef struct openli_exp_msg {
