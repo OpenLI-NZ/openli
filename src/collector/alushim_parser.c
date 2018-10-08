@@ -105,17 +105,20 @@ alushimhdr_t *get_alushim_header(libtrace_packet_t *packet, uint32_t *rem) {
 }
 
 static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
-        aluintercept_t *alu, uint8_t dir) {
+        aluintercept_t *alu, uint8_t dir, shared_global_info_t *info) {
 
     openli_export_recv_t msg;
     int queueused;
 
     msg.type = OPENLI_EXPORT_IPCC;
+    msg.destid = alu->common.destid;
     msg.data.ipcc.liid = strdup(alu->common.liid);
     msg.data.ipcc.packet = packet;
     msg.data.ipcc.cin = alu->cin;
     msg.data.ipcc.dir = dir;
+    msg.data.ipcc.colinfo = info;
 
+    trace_increment_packet_refcount(packet);
     queueused = export_queue_put_by_liid(loc->exportqueues, &msg,
             alu->common.liid);
     loc->export_used[queueused] = 1;
@@ -222,7 +225,7 @@ int check_alu_intercept(shared_global_info_t *info, colthread_local_t *loc,
     alu->cin = ntohl(aluhdr->sessionid);
 
     /* Create an appropriate IPCC and export it */
-    push_alu_ipcc_job(loc, packet, alu, alushim_get_direction(aluhdr));
+    push_alu_ipcc_job(loc, packet, alu, alushim_get_direction(aluhdr), info);
 
     return 1;
 }
