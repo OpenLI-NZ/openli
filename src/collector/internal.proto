@@ -1,3 +1,4 @@
+syntax = "proto2";
 
 message IPCCJob {
     required uint32 destid = 1;
