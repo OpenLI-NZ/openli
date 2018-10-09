@@ -54,7 +54,7 @@ int encode_ipcc(wandder_encoder_t *encoder, wandder_encode_job_t *precomputed,
     msg->ipclen = job->ipclen;
 
     msg->header.magic = htonl(OPENLI_PROTO_MAGIC);
-    msg->header.bodylen = htons(msg->msgbody->len + liidlen + sizeof(liidlen));
+    msg->header.bodylen = htons(msg->msgbody->len + liidlen + sizeof(uint16_t));
     msg->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
     msg->header.internalid = 0;
 

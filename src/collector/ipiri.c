@@ -209,7 +209,7 @@ int encode_ipiri(wandder_encoder_t *encoder,
     res->ipcontents = NULL;
     res->ipclen = 0;
     res->header.magic = htonl(OPENLI_PROTO_MAGIC);
-    res->header.bodylen = htons(res->msgbody->len + liidlen + sizeof(liidlen));
+    res->header.bodylen = htons(res->msgbody->len + liidlen + sizeof(uint16_t));
     res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
     res->header.internalid = 0;
 
