@@ -196,9 +196,6 @@ void *run_encoder_worker(void *encstate) {
             continue;
         }
 
-        result.intstate = nextjob.intstate;
-        result.seqno = nextjob.seqno;
-
         if (encode_etsi(enc, &nextjob, &result) < 0) {
             /* What do we do in the event of an error? */
             logger(LOG_INFO,
@@ -207,6 +204,10 @@ void *run_encoder_worker(void *encstate) {
 
             continue;
         }
+
+        result.intstate = nextjob.intstate;
+        result.seqno = nextjob.seqno;
+        result.destid = nextjob.destid;
 
         if (zmq_send(enc->zmq_pushresult, &result, sizeof(result), 0) < 0) {
             logger(LOG_INFO, "OpenLI: error while pushing encoded result back to exporter (worker=%d)", enc->workerid);

@@ -120,8 +120,7 @@ uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
 uint64_t append_message_to_buffer(export_buffer_t *buf,
         openli_encoded_result_t *res, uint32_t beensent) {
 
-#if 0
-    uint32_t enclen = msg->msgbody->len - msg->ipclen;
+    uint32_t enclen = res->msgbody->len - res->ipclen;
     uint64_t bufused = buf->buftail - buf->bufhead;
     uint64_t spaceleft = buf->alloced - bufused;
 
@@ -129,7 +128,8 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
         buf->partialfront = beensent;
     }
 
-    while (spaceleft < msg->msgbody->len + msg->hdrlen + msg->liidlen + 2) {
+    while (spaceleft < res->msgbody->len + sizeof(res->header) +
+            res->intstate->details->liid_len + 2) {
         spaceleft = extend_buffer(buf);
         if (spaceleft == 0) {
             return 0;
@@ -137,27 +137,26 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
         /* Add some space to the buffer */
     }
 
-    memcpy(buf->buftail, &msg->header, msg->hdrlen);
-    buf->buftail += msg->hdrlen;
+    memcpy(buf->buftail, &res->header, sizeof(res->header));
+    buf->buftail += sizeof(res->header);
 
-    if (msg->liid) {
-        uint16_t l = htons(msg->liidlen);
+    if (res->intstate->details->liid) {
+        uint16_t l = htons(res->intstate->details->liid_len);
         memcpy(buf->buftail, &l, sizeof(uint16_t));
-        memcpy(buf->buftail + 2, msg->liid, msg->liidlen);
-        buf->buftail += (msg->liidlen + 2);
+        memcpy(buf->buftail + 2, res->intstate->details->liid,
+                res->intstate->details->liid_len);
+        buf->buftail += (res->intstate->details->liid_len + 2);
     }
 
-    memcpy(buf->buftail, msg->msgbody->encoded, enclen);
+    memcpy(buf->buftail, res->msgbody->encoded, enclen);
 
     buf->buftail += enclen;
-    if (msg->ipclen > 0) {
-        memcpy(buf->buftail, msg->ipcontents, msg->ipclen);
-        buf->buftail += msg->ipclen;
+    if (res->ipclen > 0) {
+        memcpy(buf->buftail, res->ipcontents, res->ipclen);
+        buf->buftail += res->ipclen;
     }
 
     return (buf->buftail - buf->bufhead);
-#endif
-    return 0;
 }
 
 int transmit_buffered_records(export_buffer_t *buf, int fd,
@@ -178,17 +177,18 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
     while (bhead + sent < buf->buftail) {
         uint32_t attachlen = 0;
         uint32_t pdulen = 0;
-
-        if (buf->buftail - (bhead + sent) < 10000) {
-            attachlen = buf->buftail - (bhead + sent);
-        } else {
-            attachlen = 10000;
-        }
+        uint16_t liidlen = 0;
 
         if (buf->hasnetcomm) {
             header = (ii_header_t *)(bhead + sent);
             pdulen = ntohs(header->bodylen) + sizeof(ii_header_t);
         } else {
+            if (buf->buftail - (bhead + sent) < 10000) {
+                attachlen = buf->buftail - (bhead + sent);
+            } else {
+                attachlen = 10000;
+            }
+
             wandder_attach_etsili_buffer(buf->decoder, bhead + sent,
                     attachlen, 0);
             pdulen = wandder_etsili_get_pdu_length(buf->decoder);

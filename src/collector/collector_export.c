@@ -237,7 +237,8 @@ static inline void remove_all_destinations(collector_export_t *exp) {
 
 void destroy_exporter(collector_export_t *exp) {
     exporter_intercept_state_t *intstate, *tmpexp;
-    int i;
+    int i, x;
+    openli_encoded_result_t res;
 
     /* push halt messages to all workers */
 
@@ -247,6 +248,26 @@ void destroy_exporter(collector_export_t *exp) {
         }
         zmq_close(exp->zmq_control);
     }
+
+    /* purge all incoming results */
+    do {
+        x = zmq_recv(exp->zmq_pullressock, &res, sizeof(res), ZMQ_DONTWAIT);
+        if (x < 0) {
+            if (errno == EAGAIN) {
+                continue;
+            }
+            break;
+        }
+
+        if (res.msgbody) {
+            free(res.msgbody->encoded);
+            free(res.msgbody);
+        }
+
+        if (res.ipcontents) {
+            free(res.ipcontents);
+        }
+    } while (x > 0);
 
     /* join on all workers, then delete worker array */
     for (i = 0; i < exp->workercount; i++) {
@@ -294,7 +315,6 @@ void destroy_exporter(collector_export_t *exp) {
 
 static int forward_fd(export_dest_t *dest, openli_encoded_result_t *msg) {
 
-#if 0
     uint32_t enclen = msg->msgbody->len - msg->ipclen;
     int ret;
     struct iovec iov[4];
@@ -304,22 +324,23 @@ static int forward_fd(export_dest_t *dest, openli_encoded_result_t *msg) {
     char liidbuf[65542];
 
     iov[ind].iov_base = &(msg->header);
-    iov[ind].iov_len = msg->hdrlen;
+    iov[ind].iov_len = sizeof(msg->header);
     ind ++;
-    total += msg->hdrlen;
+    total += sizeof(msg->header);
 
-    if (msg->liid) {
+    if (msg->intstate->details->liid) {
         int used = 0;
         uint16_t etsiwraplen = 0;
-        uint16_t l = htons(msg->liidlen);
+        uint16_t l = htons(msg->intstate->details->liid_len);
 
         memcpy(liidbuf + used, &l, sizeof(uint16_t));
         used += sizeof(uint16_t);
-        memcpy(liidbuf + used, msg->liid, msg->liidlen);
+        memcpy(liidbuf + used, msg->intstate->details->liid,
+                msg->intstate->details->liid_len);
 
         iov[ind].iov_base = liidbuf;
-        iov[ind].iov_len = msg->liidlen + used;
-        total += (msg->liidlen + used);
+        iov[ind].iov_len = msg->intstate->details->liid_len + used;
+        total += iov[ind].iov_len;
         ind ++;
     }
 
@@ -366,16 +387,14 @@ static int forward_fd(export_dest_t *dest, openli_encoded_result_t *msg) {
             /* TODO do something if we run out of memory? */
         }
     }
-#endif
     return 0;
 }
 
 
-static int forward_message(export_dest_t *dest, openli_encoded_result_t *msg,
-        wandder_encoder_t *enc) {
+static int forward_message(export_dest_t *dest, openli_encoded_result_t *msg) {
 
     int ret = 0;
-#if 0
+
     if (dest->fd == -1) {
         /* buffer this message for when we are able to connect */
         if (append_message_to_buffer(&(dest->buffer), msg, 0) == 0) {
@@ -411,9 +430,6 @@ static int forward_message(export_dest_t *dest, openli_encoded_result_t *msg,
     }
 
 endforward:
-    wandder_release_encoded_result(enc, msg->msgbody);
-#endif
-
     return ret;
 }
 
@@ -677,9 +693,8 @@ static inline void free_job_request(openli_export_recv_t *recvd) {
     }
 }
 
-#if 0
 static int export_encoded_record(collector_export_t *exp,
-        openli_exportmsg_t *tosend) {
+        openli_encoded_result_t *tosend) {
 
     libtrace_list_node_t *n;
     export_dest_t *dest;
@@ -692,7 +707,7 @@ static int export_encoded_record(collector_export_t *exp,
         dest = (export_dest_t *)(n->data);
 
         if (dest->details.mediatorid == tosend->destid) {
-            x = forward_message(dest, tosend, exp->encoder);
+            x = forward_message(dest, tosend);
             if (x == -1) {
                 close(dest->fd);
                 dest->fd = -1;
@@ -713,15 +728,13 @@ static int export_encoded_record(collector_export_t *exp,
          * is NOT coming so we don't buffer forever...
          */
         dest = add_unknown_destination(exp, tosend->destid);
-        x = forward_message(dest, tosend, exp->encoder);
-        if (x == -1) {
+        if (forward_message(dest, tosend) < 0) {
             return -1;
         }
     }
     return 1;
 }
 
-#endif
 static int run_encoding_job(collector_export_t *exp,
         openli_export_recv_t *recvd) {
 
@@ -766,6 +779,7 @@ static int run_encoding_job(collector_export_t *exp,
     job.type = recvd->type;
     job.seqno = cinseq->cc_seqno;
     job.ts = recvd->ts;
+    job.destid = recvd->destid;
 
     if (exp->freeresults) {
         job.toreturn = exp->freeresults;
@@ -1047,7 +1061,7 @@ static int read_new_intercept_message(collector_export_t *exp,
     int64_t more;
     size_t moresize = sizeof(more);
     int x;
-    void *ptr;
+    char *ptr;
     zmq_msg_t part;
     int next = 0, size;
 
@@ -1069,22 +1083,16 @@ static int read_new_intercept_message(collector_export_t *exp,
 
         switch(next) {
             case 0:
-                (*cept)->liid = malloc(size + 1);
-                memcpy((*cept)->liid, ptr, size);
-                ((*cept)->liid)[size] = '\0';
-                (*cept)->liid_len = size;
+                (*cept)->liid = strdup(ptr);
+                (*cept)->liid_len = strlen(ptr);
                 break;
             case 1:
-                (*cept)->authcc = malloc(size + 1);
-                memcpy((*cept)->authcc, ptr, size);
-                ((*cept)->authcc)[size] = '\0';
-                (*cept)->authcc_len = size;
+                (*cept)->authcc = strdup(ptr);
+                (*cept)->authcc_len = strlen(ptr);
                 break;
             case 2:
-                (*cept)->delivcc = malloc(size + 1);
-                memcpy((*cept)->delivcc, ptr, size);
-                ((*cept)->delivcc)[size] = '\0';
-                (*cept)->delivcc_len = size;
+                (*cept)->delivcc = strdup(ptr);
+                (*cept)->delivcc_len = strlen(ptr);
                 break;
             default:
                 assert(0);
@@ -1099,7 +1107,7 @@ static int read_new_intercept_message(collector_export_t *exp,
 }
 
 static int handle_returned_result(collector_export_t *exp) {
-    int x;
+    int x, ret = 0;
     openli_encoded_result_t res;
 
     x = zmq_recv(exp->zmq_pullressock, &res, sizeof(res), ZMQ_DONTWAIT);
@@ -1110,7 +1118,11 @@ static int handle_returned_result(collector_export_t *exp) {
         return -1;
     }
 
-    /* TODO actually forward the message to mediator */
+    if (export_encoded_record(exp, &res) < 0) {
+        ret = -1;
+    } else {
+        ret = 1;
+    }
 
     if (res.msgbody) {
         if (exp->freeresults == NULL) {
@@ -1125,7 +1137,7 @@ static int handle_returned_result(collector_export_t *exp) {
     if (res.ipcontents) {
         free(res.ipcontents);
     }
-    return 1;
+    return ret;
 }
 
 static int handle_published_message(collector_export_t *exp) {

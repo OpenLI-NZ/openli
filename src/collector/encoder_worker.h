@@ -54,6 +54,7 @@ typedef struct encoder_job {
     exporter_intercept_state_t *intstate;
     uint8_t type;
     uint32_t seqno;
+    uint32_t destid;
     struct timeval ts;
     wandder_encoded_result_t *toreturn;
     union {
@@ -72,6 +73,7 @@ typedef struct encoder_result {
     uint8_t *ipcontents;
     uint32_t ipclen;
     uint32_t seqno;
+    uint32_t destid;
 } PACKED openli_encoded_result_t;
 
 void destroy_encoder_worker(openli_encoder_t *enc);

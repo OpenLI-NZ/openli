@@ -1252,21 +1252,18 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    glob->exporter = NULL;
-#if 0
     glob->exporter = (export_thread_data_t *)calloc(1,
             sizeof(export_thread_data_t));
     glob->exporter->zmq_ctxt = glob->zmq_ctxt;
-    glob->exporter->shared = glob->sharedinfo;
+    glob->exporter->shared = &(glob->sharedinfo);
     glob->exporter->workers = glob->exportthreads;
 
     ret = pthread_create(&(glob->exporter->threadid), NULL,
-            start_export_thread, (void *)glob->exporters);
+            start_export_thread, (void *)glob->exporter);
     if (ret != 0) {
         logger(LOG_INFO, "OpenLI: error creating exporter. Exiting.");
         return 1;
     }
-#endif
 
     /* Start IP intercept sync thread */
     ret = pthread_create(&(glob->syncip.threadid), NULL, start_ip_sync_thread,
@@ -1340,10 +1337,7 @@ int main(int argc, char *argv[]) {
 
     pthread_join(glob->syncip.threadid, NULL);
     pthread_join(glob->syncvoip.threadid, NULL);
-#if 0
-    pthread_join(glob->exporter.threadid, NULL);
-    }
-#endif
+    pthread_join(glob->exporter->threadid, NULL);
 
     logger(LOG_INFO, "OpenLI: exiting OpenLI Collector.");
     /* Tidy up, exit */
