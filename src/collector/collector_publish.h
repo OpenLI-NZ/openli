@@ -33,7 +33,6 @@
 #include "netcomms.h"
 #include "etsili_core.h"
 #include "intercept.h"
-#include "collector.h"
 
 enum {
     OPENLI_EXPORT_HALT_WORKER = 1,
@@ -73,6 +72,8 @@ typedef struct openli_ipcc_job {
     char *liid;
     uint8_t *ipcontent;
     uint32_t ipclen;
+    uint32_t ipcalloc;
+    uint16_t liidalloc;
     uint32_t cin;
     uint8_t dir;
 } PACKED openli_ipcc_job_t;
@@ -126,6 +127,7 @@ typedef struct published_intercept_msg {
 } published_intercept_msg_t;
 
 typedef struct openli_export_recv openli_export_recv_t;
+typedef struct openli_exportmsg_freelist openli_exportmsg_freelist_t;
 
 struct openli_export_recv {
     uint8_t type;
@@ -140,9 +142,25 @@ struct openli_export_recv {
         openli_ipmmiri_job_t ipmmiri;
         openli_ipiri_job_t ipiri;
     } data;
+    openli_export_recv_t *nextfree;
+    openli_exportmsg_freelist_t *owner;
 } PACKED;
 
+struct openli_exportmsg_freelist {
+    pthread_mutex_t mutex;
+    openli_export_recv_t *available;
+    uint32_t created;
+    uint32_t freed;
+    uint32_t recycled;
+};
+
 int publish_openli_msg(void *pubsock, openli_export_recv_t *msg);
+void free_published_message(openli_export_recv_t *msg);
+void release_published_message(openli_export_recv_t *msg);
+
+openli_export_recv_t *create_ipcc_job(openli_exportmsg_freelist_t *flist,
+        uint32_t cin, char *liid, uint32_t destid, libtrace_packet_t *pkt,
+        uint8_t dir);
 
 #endif
 

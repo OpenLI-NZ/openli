@@ -52,17 +52,9 @@ typedef struct encoder_state {
 
 typedef struct encoder_job {
     exporter_intercept_state_t *intstate;
-    uint8_t type;
     uint32_t seqno;
-    uint32_t destid;
-    struct timeval ts;
+    openli_export_recv_t *origreq;
     wandder_encoded_result_t *toreturn;
-    union {
-        openli_ipcc_job_t ipcc;
-        openli_ipmmcc_job_t ipmmcc;
-        openli_ipmmiri_job_t ipmmiri;
-        openli_ipiri_job_t ipiri;
-    } data;
 } PACKED openli_encoding_job_t;
 
 typedef struct encoder_result {
@@ -74,6 +66,7 @@ typedef struct encoder_result {
     uint32_t ipclen;
     uint32_t seqno;
     uint32_t destid;
+    openli_export_recv_t *origreq;
 } PACKED openli_encoded_result_t;
 
 void destroy_encoder_worker(openli_encoder_t *enc);

@@ -28,6 +28,7 @@
 #include <string.h>
 #include <assert.h>
 
+#include <pthread.h>
 #include <zmq.h>
 
 #include "logger.h"
@@ -43,6 +44,108 @@ int publish_openli_msg(void *pubsock, openli_export_recv_t *msg) {
     }
 
     return 0;
+}
+
+static inline openli_export_recv_t *_get_available_message(
+        openli_exportmsg_freelist_t *flist) {
+    openli_export_recv_t *msg = NULL;
+
+    if (pthread_mutex_trylock(&(flist->mutex)) == 0) {
+        if (flist->available) {
+            msg = flist->available;
+            flist->available = msg->nextfree;
+            msg->nextfree = NULL;
+        }
+        pthread_mutex_unlock(&(flist->mutex));
+    }
+
+    if (msg != NULL) {
+        return msg;
+    }
+
+    msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    flist->created ++;
+    return msg;
+}
+
+void free_published_message(openli_export_recv_t *msg) {
+
+    if (msg->type == OPENLI_EXPORT_IPCC) {
+        if (msg->data.ipcc.liid) {
+            free(msg->data.ipcc.liid);
+        }
+        if (msg->data.ipcc.ipcontent) {
+            free(msg->data.ipcc.ipcontent);
+        }
+    }
+
+    free(msg);
+}
+
+void release_published_message(openli_export_recv_t *msg) {
+
+    if (pthread_mutex_trylock(&(msg->owner->mutex)) == 0) {
+        msg->nextfree = msg->owner->available;
+        msg->owner->available = msg;
+        msg->owner->recycled ++;
+        pthread_mutex_unlock(&(msg->owner->mutex));
+    } else {
+        msg->owner->freed ++;
+        free_published_message(msg);
+    }
+}
+
+openli_export_recv_t *create_ipcc_job(openli_exportmsg_freelist_t *flist,
+        uint32_t cin, char *liid, uint32_t destid, libtrace_packet_t *pkt,
+        uint8_t dir) {
+
+    void *l3;
+    uint32_t rem;
+    uint16_t ethertype;
+    openli_export_recv_t *msg = NULL;
+    uint32_t x;
+    size_t liidlen = strlen(liid);
+
+    msg = _get_available_message(flist);
+    if (msg == NULL) {
+        return msg;
+    }
+
+    l3 = trace_get_layer3(pkt, &ethertype, &rem);
+
+    msg->type = OPENLI_EXPORT_IPCC;
+    msg->destid = destid;
+    msg->ts = trace_get_timeval(pkt);
+
+    if (liidlen + 1 > msg->data.ipcc.liidalloc) {
+        if (liidlen + 1 < 32) {
+            x = 32;
+        } else {
+            x = liidlen + 1;
+        }
+        msg->data.ipcc.liid = realloc(msg->data.ipcc.liid, x);
+        msg->data.ipcc.liidalloc = x;
+    }
+    memcpy(msg->data.ipcc.liid, liid, liidlen);
+    msg->data.ipcc.liid[liidlen] = '\0';
+
+    if (rem > msg->data.ipcc.ipcalloc) {
+        if (rem < 512) {
+            x = 512;
+        } else {
+            x = rem;
+        }
+        msg->data.ipcc.ipcontent = realloc(msg->data.ipcc.ipcontent, x);
+        msg->data.ipcc.ipcalloc = x;
+    }
+
+    memcpy(msg->data.ipcc.ipcontent, l3, rem);
+    msg->data.ipcc.ipclen = rem;
+    msg->data.ipcc.cin = cin;
+    msg->data.ipcc.dir = dir;
+
+    msg->owner = flist;
+    return msg;
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

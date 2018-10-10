@@ -41,6 +41,7 @@
 #include "intercept.h"
 #include "etsili_core.h"
 #include "reassembler.h"
+#include "collector_publish.h"
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
@@ -203,6 +204,8 @@ typedef struct colthread_local {
     static_ipcache_t *staticcache;
 
     ipfrag_reassembler_t *fragreass;
+
+    openli_exportmsg_freelist_t ipcc_freemessages;
 
 } colthread_local_t;
 

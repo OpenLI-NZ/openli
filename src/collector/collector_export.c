@@ -256,6 +256,7 @@ void destroy_exporter(collector_export_t *exp) {
     exporter_intercept_state_t *intstate, *tmpexp;
     int i, x;
     openli_encoded_result_t res;
+    openli_export_recv_t *incoming;
 
     /* push halt messages to all workers */
 
@@ -285,6 +286,27 @@ void destroy_exporter(collector_export_t *exp) {
             free(res.ipcontents);
         }
     } while (x > 0);
+
+    /* drain all jobs that we haven't managed to get to yet */
+    uint32_t drained = 0;
+    do {
+        x = zmq_recv(exp->zmq_subsock, &incoming, sizeof(incoming),
+                ZMQ_DONTWAIT);
+        if (x < 0) {
+            if (errno == EAGAIN) {
+                continue;
+            }
+            break;
+        }
+        if (incoming->type == OPENLI_EXPORT_IPCC) {
+            free_published_message(incoming);
+        } else {
+            free(incoming);
+        }
+        drained ++;
+    } while (x > 0);
+
+    printf("drained %u messages from subsock queue\n", drained);
 
     /* join on all workers, then delete worker array */
     for (i = 0; i < exp->workercount; i++) {
@@ -696,30 +718,6 @@ static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
     return 0;
 }
 
-static inline void free_job_request(openli_export_recv_t *recvd) {
-    switch(recvd->type) {
-        case OPENLI_EXPORT_IPMMCC:
-            free(recvd->data.ipmmcc.liid);
-            break;
-        case OPENLI_EXPORT_IPCC:
-            free(recvd->data.ipcc.liid);
-            break;
-        case OPENLI_EXPORT_IPIRI:
-            free(recvd->data.ipiri.liid);
-            /*
-            if (recvd->data.ipiri.plugin) {
-                recvd->data.ipiri.plugin->destroy_parsed_data(
-                        recvd->data.ipiri.plugin,
-                        recvd->data.ipiri.plugin_data);
-            }
-            */
-            break;
-        case OPENLI_EXPORT_IPMMIRI:
-            free(recvd->data.ipmmiri.liid);
-            break;
-    }
-}
-
 static int export_encoded_record(collector_export_t *exp,
         openli_encoded_result_t *tosend) {
 
@@ -780,7 +778,7 @@ static int run_encoding_job(collector_export_t *exp,
     if (!intstate) {
         logger(LOG_INFO, "Received encoding job for an unknown LIID: %s??",
                 liid);
-        free_job_request(recvd);
+        release_published_message(recvd);
         return 0;
     }
 
@@ -803,10 +801,8 @@ static int run_encoding_job(collector_export_t *exp,
     }
 
     job.intstate = intstate;
-    job.type = recvd->type;
+    job.origreq = recvd;
     job.seqno = cinseq->cc_seqno;
-    job.ts = recvd->ts;
-    job.destid = recvd->destid;
 
     if (exp->freeresults) {
         job.toreturn = exp->freeresults;
@@ -814,21 +810,6 @@ static int run_encoding_job(collector_export_t *exp,
         job.toreturn->next = NULL;
     } else {
         job.toreturn = NULL;
-    }
-
-    switch (recvd->type) {
-        case OPENLI_EXPORT_IPCC:
-            job.data.ipcc = recvd->data.ipcc;
-            break;
-        case OPENLI_EXPORT_IPMMCC:
-            job.data.ipmmcc = recvd->data.ipmmcc;
-            break;
-        case OPENLI_EXPORT_IPIRI:
-            job.data.ipiri = recvd->data.ipiri;
-            break;
-        case OPENLI_EXPORT_IPMMIRI:
-            job.data.ipmmiri = recvd->data.ipmmiri;
-            break;
     }
 
     if (zmq_send(exp->zmq_pushjobsock, (char *)&job,
@@ -843,6 +824,7 @@ static int run_encoding_job(collector_export_t *exp,
 
     if (recvd->type == OPENLI_EXPORT_IPMMCC ||
             recvd->type == OPENLI_EXPORT_IPCC) {
+        exp->count ++;
         cinseq->cc_seqno ++;
     } else {
         cinseq->iri_seqno ++;
@@ -852,7 +834,8 @@ static int run_encoding_job(collector_export_t *exp,
     return ret;
 }
 
-static int handle_returned_result(collector_export_t *exp) {
+static int handle_returned_result(collector_export_t *exp,
+        volatile int *halted) {
     int x, ret = 0;
     openli_encoded_result_t res;
 
@@ -880,9 +863,18 @@ static int handle_returned_result(collector_export_t *exp) {
         }
     }
 
-    if (res.ipcontents) {
-        free(res.ipcontents);
+    if (res.origreq) {
+        if (res.origreq->type == OPENLI_EXPORT_IPCC) {
+            if (!(*halted)) {
+                release_published_message(res.origreq);
+            } else {
+                free_published_message(res.origreq);
+            }
+        } else {
+            free(res.origreq);
+        }
     }
+
     return ret;
 }
 
@@ -936,7 +928,6 @@ static int handle_published_message(collector_export_t *exp) {
             break;
     }
 
-    free(job);
 	zmq_msg_close(&incoming);
     return ret;
 }
@@ -1060,7 +1051,7 @@ static inline int connect_zmq_sock(void *ctxt, void **sock, char *name,
     return 0;
 }
 
-int exporter_thread_main(collector_export_t *exp) {
+int exporter_thread_main(collector_export_t *exp, volatile int *halted) {
 
 	int i, nfds, timerfd, itemcount, ret;
     int timerexpired = 0;
@@ -1149,10 +1140,9 @@ int exporter_thread_main(collector_export_t *exp) {
         }
 
         if (items[2].revents & ZMQ_POLLIN) {
-            /* TODO process encoded result and forward to destination */
             processed = 0;
             do {
-                ret = handle_returned_result(exp);
+                ret = handle_returned_result(exp, halted);
                 processed ++;
             } while (ret > 0 && processed < 100);
             if (ret == -1) {

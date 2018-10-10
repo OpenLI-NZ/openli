@@ -79,6 +79,9 @@ static int init_worker(openli_encoder_t *enc) {
 }
 
 void destroy_encoder_worker(openli_encoder_t *enc) {
+    int x;
+    openli_encoding_job_t job;
+    uint32_t drained = 0;
 
     if (enc->encoder) {
         free_wandder_encoder(enc->encoder);
@@ -87,6 +90,27 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
     if (enc->freegenerics) {
         free_etsili_generics(enc->freegenerics);
     }
+
+    do {
+        x = zmq_recv(enc->zmq_recvjob, &job, sizeof(openli_encoding_job_t),
+                ZMQ_DONTWAIT);
+        if (x < 0) {
+            if (errno == EAGAIN) {
+                continue;
+            }
+            break;
+        }
+
+        if (job.origreq->type == OPENLI_EXPORT_IPCC) {
+            free_published_message(job.origreq);
+        } else {
+            free(job.origreq);
+        }
+        drained ++;
+
+    } while (x > 0);
+
+    printf("encoder worker drained %u messages\n", drained);
 
     if (enc->zmq_recvjob) {
         zmq_close(enc->zmq_recvjob);
@@ -149,17 +173,20 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
         wandder_release_encoded_result(enc->encoder, job->toreturn);
     }
 
-    switch(job->type) {
+    switch(job->origreq->type) {
         case OPENLI_EXPORT_IPCC:
             ret = encode_ipcc(enc->encoder, job->intstate->preencoded,
-                    &(job->data.ipcc), job->seqno, &job->ts, res);
+                    &(job->origreq->data.ipcc), job->seqno,
+                    &(job->origreq->ts), res);
             break;
         case OPENLI_EXPORT_IPIRI:
             ret = encode_ipiri(enc->encoder, &(enc->freegenerics),
                     job->intstate->preencoded,
-                    &(job->data.ipiri), job->seqno, res);
-            if (job->data.ipiri.username) {
-                free(job->data.ipiri.username);
+                    &(job->origreq->data.ipiri), job->seqno, res);
+
+            /* TODO this will be handled by releasing the iri message */
+            if (job->origreq->data.ipiri.username) {
+                free(job->origreq->data.ipiri.username);
             }
             break;
         case OPENLI_EXPORT_IPMMIRI:
@@ -200,14 +227,15 @@ void *run_encoder_worker(void *encstate) {
             /* What do we do in the event of an error? */
             logger(LOG_INFO,
                     "OpenLI: encoder worker had an error when encoding %d record",
-                    nextjob.type);
+                    nextjob.origreq->type);
 
             continue;
         }
 
         result.intstate = nextjob.intstate;
         result.seqno = nextjob.seqno;
-        result.destid = nextjob.destid;
+        result.destid = nextjob.origreq->destid;
+        result.origreq = nextjob.origreq;
 
         if (zmq_send(enc->zmq_pushresult, &result, sizeof(result), 0) < 0) {
             logger(LOG_INFO, "OpenLI: error while pushing encoded result back to exporter (worker=%d)", enc->workerid);

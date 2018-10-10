@@ -38,7 +38,7 @@ static void *start_export_thread(void *params) {
     }
 
     while (collector_halt == 0) {
-        if (exporter_thread_main(exp) <= 0) {
+        if (exporter_thread_main(exp, &collector_halt) <= 0) {
             break;
         }
     }

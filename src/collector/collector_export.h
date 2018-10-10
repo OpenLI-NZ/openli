@@ -76,7 +76,7 @@ typedef struct colexp_data {
 collector_export_t *init_exporter(export_thread_data_t *glob);
 int connect_export_targets(collector_export_t *exp);
 void destroy_exporter(collector_export_t *exp);
-int exporter_thread_main(collector_export_t *exp);
+int exporter_thread_main(collector_export_t *exp, volatile int *halted);
 
 #endif
 

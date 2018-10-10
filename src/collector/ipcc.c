@@ -62,31 +62,6 @@ int encode_ipcc(wandder_encoder_t *encoder, wandder_encode_job_t *precomputed,
 
 }
 
-static inline openli_export_recv_t *make_ipcc_job(uint32_t cin,
-        char *liid, uint32_t destid, libtrace_packet_t *pkt, uint8_t dir) {
-
-   	void *l3;
-    uint32_t rem;
-    uint16_t ethertype;
-    openli_export_recv_t *msg;
-
-    msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
-
-    l3 = trace_get_layer3(pkt, &ethertype, &rem);
-
-    msg->type = OPENLI_EXPORT_IPCC;
-    msg->destid = destid;
-    msg->ts = trace_get_timeval(pkt);
-    msg->data.ipcc.liid = strdup(liid);
-    msg->data.ipcc.ipcontent = malloc(rem);
-    memcpy(msg->data.ipcc.ipcontent, l3, rem);
-    msg->data.ipcc.ipclen = rem;
-    msg->data.ipcc.cin = cin;
-    msg->data.ipcc.dir = dir;
-
-    return msg;
-}
-
 /*
 static void dump_ptree(patricia_node_t *ptree) {
     char foo[128];
@@ -196,7 +171,8 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
                         sliid->key);
             } else {
                 matched ++;
-                msg = make_ipcc_job(matchsess->cin, matchsess->common.liid,
+                msg = create_ipcc_job(&(loc->ipcc_freemessages),
+                        matchsess->cin, matchsess->common.liid,
                         matchsess->common.destid, pkt, dir);
                 publish_openli_msg(loc->zmq_pubsock, msg);
             }
@@ -232,7 +208,8 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = make_ipcc_job(sess->cin, sess->common.liid,
+            msg = create_ipcc_job(&(loc->ipcc_freemessages),
+                    sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 0);
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsock, msg);
@@ -247,7 +224,8 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = make_ipcc_job(sess->cin, sess->common.liid,
+            msg = create_ipcc_job(&(loc->ipcc_freemessages),
+                    sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 1);
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsock, msg);
@@ -297,7 +275,8 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = make_ipcc_job(sess->cin, sess->common.liid,
+            msg = create_ipcc_job(&(loc->ipcc_freemessages),
+                    sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 0);
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsock, msg);
@@ -312,7 +291,8 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = make_ipcc_job(sess->cin, sess->common.liid,
+            msg = create_ipcc_job(&(loc->ipcc_freemessages),
+                    sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 1);
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsock, msg);
