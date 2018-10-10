@@ -60,7 +60,7 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
     sync->info = &(glob->sharedinfo);
 
     sync->zmq_pubsock = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
-    zmq_connect(sync->zmq_pubsock, "ipc:///tmp/openliipc");
+    zmq_connect(sync->zmq_pubsock, "inproc://openliipc");
     zmq_setsockopt(sync->zmq_pubsock, ZMQ_SNDHWM, &zero, sizeof(zero));
 
     sync->intersyncq = &(glob->intersyncq);

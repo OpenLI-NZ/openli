@@ -31,6 +31,7 @@
 
 static int init_worker(openli_encoder_t *enc) {
     int zero = 0;
+    int hwm = 1000000;
 
     enc->encoder = init_wandder_encoder();
     enc->freegenerics = NULL;
@@ -52,6 +53,12 @@ static int init_worker(openli_encoder_t *enc) {
         return -1;
     }
     if (zmq_setsockopt(enc->zmq_pushresult, ZMQ_LINGER, &zero, sizeof(zero))
+            != 0) {
+        logger(LOG_INFO, "OpenLI: error configuring connection to exporter push socket");
+        return -1;
+    }
+
+    if (zmq_setsockopt(enc->zmq_pushresult, ZMQ_SNDHWM, &hwm, sizeof(hwm))
             != 0) {
         logger(LOG_INFO, "OpenLI: error configuring connection to exporter push socket");
         return -1;
@@ -223,6 +230,7 @@ void *run_encoder_worker(void *encstate) {
             continue;
         }
 
+#if 0
         if (encode_etsi(enc, &nextjob, &result) < 0) {
             /* What do we do in the event of an error? */
             logger(LOG_INFO,
@@ -231,7 +239,7 @@ void *run_encoder_worker(void *encstate) {
 
             continue;
         }
-
+#endif
         result.intstate = nextjob.intstate;
         result.seqno = nextjob.seqno;
         result.destid = nextjob.origreq->destid;
@@ -241,6 +249,13 @@ void *run_encoder_worker(void *encstate) {
             logger(LOG_INFO, "OpenLI: error while pushing encoded result back to exporter (worker=%d)", enc->workerid);
             break;
         }
+#if 0
+        if (nextjob.origreq->type == OPENLI_EXPORT_IPCC) {
+            release_published_message(nextjob.origreq);
+        } else {
+            free(nextjob.origreq);
+        }
+#endif
     }
 
     logger(LOG_INFO, "OpenLI: halting encoding worker %d", enc->workerid);

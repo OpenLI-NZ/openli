@@ -767,7 +767,7 @@ static int run_encoding_job(collector_export_t *exp,
     uint32_t cin;
     cin_seqno_t *cinseq;
     exporter_intercept_state_t *intstate;
-    int ret = 0;
+    int ret = 1;
     int ind = 0;
     openli_encoding_job_t job;
 
@@ -778,6 +778,7 @@ static int run_encoding_job(collector_export_t *exp,
     if (!intstate) {
         logger(LOG_INFO, "Received encoding job for an unknown LIID: %s??",
                 liid);
+        assert(0);
         release_published_message(recvd);
         return 0;
     }
@@ -824,7 +825,6 @@ static int run_encoding_job(collector_export_t *exp,
 
     if (recvd->type == OPENLI_EXPORT_IPMMCC ||
             recvd->type == OPENLI_EXPORT_IPCC) {
-        exp->count ++;
         cinseq->cc_seqno ++;
     } else {
         cinseq->iri_seqno ++;
@@ -847,11 +847,13 @@ static int handle_returned_result(collector_export_t *exp,
         return -1;
     }
 
+/*
     if (export_encoded_record(exp, &res) < 0) {
         ret = -1;
     } else {
         ret = 1;
     }
+*/
 
     if (res.msgbody) {
         if (exp->freeresults == NULL) {
@@ -913,10 +915,12 @@ static int handle_published_message(collector_export_t *exp) {
             ret = exporter_end_intercept(exp, &(job->data.cept));
             break;
         case OPENLI_EXPORT_IPIRI:
-        case OPENLI_EXPORT_IPCC:
 			ret = run_encoding_job(exp, job);
             break;
-
+        case OPENLI_EXPORT_IPCC:
+			ret = run_encoding_job(exp, job);
+            exp->count ++;
+            break;
 		case OPENLI_EXPORT_FLAG_MEDIATORS:
 		case OPENLI_EXPORT_DROP_ALL_MEDIATORS:
 		case OPENLI_EXPORT_IPMMCC:
@@ -1062,7 +1066,7 @@ int exporter_thread_main(collector_export_t *exp, volatile int *halted) {
 
     if (exp->zmq_subsock == NULL) {
         if (connect_zmq_sock(exp->glob->zmq_ctxt, &(exp->zmq_subsock),
-                "ipc:///tmp/openliipc", ZMQ_PULL) < 0) {
+                "inproc://openliipc", ZMQ_PULL) < 0) {
             return -1;
         }
     }
@@ -1128,7 +1132,7 @@ int exporter_thread_main(collector_export_t *exp, volatile int *halted) {
             do {
                 ret = handle_published_message(exp);
                 processed ++;
-            } while (ret > 0 && processed < 100);
+            } while (ret > 0 && processed < 10000);
 
             if (ret == -1) {
                 return -1;
@@ -1144,7 +1148,7 @@ int exporter_thread_main(collector_export_t *exp, volatile int *halted) {
             do {
                 ret = handle_returned_result(exp, halted);
                 processed ++;
-            } while (ret > 0 && processed < 100);
+            } while (ret > 0 && processed < 10000);
             if (ret == -1) {
                 return -1;
             }

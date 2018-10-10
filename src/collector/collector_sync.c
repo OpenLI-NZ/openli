@@ -73,7 +73,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->activeips = NULL;
 
     sync->zmq_pubsock = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
-    zmq_connect(sync->zmq_pubsock, "ipc:///tmp/openliipc");
+    zmq_connect(sync->zmq_pubsock, "inproc://openliipc");
 
     return sync;
 

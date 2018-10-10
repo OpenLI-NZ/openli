@@ -158,8 +158,7 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     loc->zmq_pubsock = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
 
-    /* TODO replace with inproc */
-    zmq_connect(loc->zmq_pubsock, "ipc:///tmp/openliipc");
+    zmq_connect(loc->zmq_pubsock, "inproc://openliipc");
     zmq_setsockopt(loc->zmq_pubsock, ZMQ_SNDHWM, &zero, sizeof(zero));
 
     loc->fragreass = create_new_ipfrag_reassembler();
