@@ -188,11 +188,28 @@ int connect_export_targets(collector_export_t *exp) {
 
 }
 
+static inline void free_published_intercept(published_intercept_msg_t *cept) {
+	if (cept->liid) {
+	    free(cept->liid);
+	}
+	if (cept->authcc) {
+	    free(cept->authcc);
+	}
+	if (cept->delivcc) {
+	    free(cept->delivcc);
+	}
+}
+
 static inline void free_intercept_msg(exporter_intercept_msg_t *msg) {
-    free(msg->liid);
-    free(msg->authcc);
-    free(msg->delivcc);
-    free(msg);
+	if (msg->liid) {
+	    free(msg->liid);
+	}
+	if (msg->authcc) {
+	    free(msg->authcc);
+	}
+	if (msg->delivcc) {
+	    free(msg->delivcc);
+	}
 }
 
 static inline void free_cinsequencing(exporter_intercept_state_t *intstate) {
@@ -282,7 +299,7 @@ void destroy_exporter(collector_export_t *exp) {
 
     HASH_ITER(hh, exp->intercepts, intstate, tmpexp) {
         HASH_DELETE(hh, exp->intercepts, intstate);
-        free_intercept_msg(intstate->details);
+        free_intercept_msg(&(intstate->details));
         free_cinsequencing(intstate);
         free(intstate);
     }
@@ -328,18 +345,18 @@ static int forward_fd(export_dest_t *dest, openli_encoded_result_t *msg) {
     ind ++;
     total += sizeof(msg->header);
 
-    if (msg->intstate->details->liid) {
+    if (msg->intstate->details.liid) {
         int used = 0;
         uint16_t etsiwraplen = 0;
-        uint16_t l = htons(msg->intstate->details->liid_len);
+        uint16_t l = htons(msg->intstate->details.liid_len);
 
         memcpy(liidbuf + used, &l, sizeof(uint16_t));
         used += sizeof(uint16_t);
-        memcpy(liidbuf + used, msg->intstate->details->liid,
-                msg->intstate->details->liid_len);
+        memcpy(liidbuf + used, msg->intstate->details.liid,
+                msg->intstate->details.liid_len);
 
         iov[ind].iov_base = liidbuf;
-        iov[ind].iov_len = msg->intstate->details->liid_len + used;
+        iov[ind].iov_len = msg->intstate->details.liid_len + used;
         total += iov[ind].iov_len;
         ind ++;
     }
@@ -579,43 +596,53 @@ static void purge_unconfirmed_mediators(collector_export_t *exp) {
 }
 
 static void exporter_new_intercept(collector_export_t *exp,
-        exporter_intercept_msg_t *msg) {
+        published_intercept_msg_t *cept) {
 
     exporter_intercept_state_t *intstate;
     etsili_intercept_details_t intdetails;
 
     /* If this LIID already exists, we'll need to replace it */
-    HASH_FIND(hh, exp->intercepts, msg->liid, strlen(msg->liid), intstate);
+    HASH_FIND(hh, exp->intercepts, cept->liid, strlen(cept->liid), intstate);
 
     if (intstate) {
-        free_intercept_msg(intstate->details);
+        free_intercept_msg(&(intstate->details));
         etsili_clear_preencoded_fields(intstate->preencoded);
         /* leave the CIN seqno state as is for now */
-        intstate->details = msg;
+		intstate->details.liid = cept->liid;
+		intstate->details.authcc = cept->authcc;
+		intstate->details.delivcc = cept->delivcc;
+		intstate->details.liid_len = strlen(cept->liid);
+		intstate->details.authcc_len = strlen(cept->authcc);
+		intstate->details.delivcc_len = strlen(cept->delivcc);
         return;
     }
 
     /* New LIID, create fresh intercept state */
     intstate = (exporter_intercept_state_t *)malloc(
             sizeof(exporter_intercept_state_t));
-    intstate->details = msg;
+    intstate->details.liid = cept->liid;
+    intstate->details.authcc = cept->authcc;
+    intstate->details.delivcc = cept->delivcc;
+    intstate->details.liid_len = strlen(cept->liid);
+    intstate->details.authcc_len = strlen(cept->authcc);
+    intstate->details.delivcc_len = strlen(cept->delivcc);
     intstate->cinsequencing = NULL;
 
-    intdetails.liid = msg->liid;
-    intdetails.authcc = msg->authcc;
-    intdetails.delivcc = msg->delivcc;
+    intdetails.liid = cept->liid;
+    intdetails.authcc = cept->authcc;
+    intdetails.delivcc = cept->delivcc;
     intdetails.operatorid = exp->glob->shared->operatorid;
     intdetails.networkelemid = exp->glob->shared->networkelemid;
     intdetails.intpointid = exp->glob->shared->intpointid;
 
     etsili_preencode_static_fields(intstate->preencoded, &intdetails);
 
-    HASH_ADD_KEYPTR(hh, exp->intercepts, msg->liid, strlen(msg->liid),
-            intstate);
+    HASH_ADD_KEYPTR(hh, exp->intercepts, intstate->details.liid,
+			intstate->details.liid_len, intstate);
 }
 
 static int exporter_end_intercept(collector_export_t *exp,
-        exporter_intercept_msg_t *msg) {
+        published_intercept_msg_t *msg) {
 
     exporter_intercept_state_t *intstate;
 
@@ -628,8 +655,8 @@ static int exporter_end_intercept(collector_export_t *exp,
     }
 
     HASH_DELETE(hh, exp->intercepts, intstate);
-    free_intercept_msg(msg);
-    free_intercept_msg(intstate->details);
+    free_published_intercept(msg);
+    free_intercept_msg(&(intstate->details));
     etsili_clear_preencoded_fields(intstate->preencoded);
     free_cinsequencing(intstate);
     free(intstate);
@@ -822,288 +849,7 @@ static int run_encoding_job(collector_export_t *exp,
     }
     ind ++;
 
-#if 0
-    while (ret != 0) {
-        switch(recvd->type) {
-            case OPENLI_EXPORT_IPMMCC:
-                ret = encode_ipmmcc(&(exp->encoder), &(recvd->data.ipmmcc),
-                        intstate->details, cinseq->cc_seqno, &tosend);
-                cinseq->cc_seqno ++;
-                trace_decrement_packet_refcount(recvd->data.ipmmcc.packet);
-                break;
-            case OPENLI_EXPORT_IPCC:
-                ret = encode_ipcc(&(exp->encoder), intstate->preencoded,
-                        &(recvd->data.ipcc), cinseq->cc_seqno, &tosend);
-                cinseq->cc_seqno ++;
-                break;
-                //return 0;
-            case OPENLI_EXPORT_IPMMIRI:
-                ret = encode_ipmmiri(&(exp->encoder), &(recvd->data.ipmmiri),
-                        intstate->details, cinseq->iri_seqno, &tosend,
-                        &(recvd->ts));
-                if (ret >= 0) {
-                    cinseq->iri_seqno ++;
-                }
-                if (recvd->data.ipmmiri.packet) {
-                    trace_decrement_packet_refcount(recvd->data.ipmmiri.packet);
-                }
-                break;
-            case OPENLI_EXPORT_IPIRI:
-                ret = encode_ipiri(&(exp->freegenerics),
-                        &(exp->encoder), exp->glob->shared,
-                        &(recvd->data.ipiri),
-                        intstate->details, cinseq->iri_seqno, &tosend, ind);
-                if (ret >= 0) {
-                    cinseq->iri_seqno ++;
-                    ind ++;
-                }
-                break;
-        }
-        if (ret < 0) {
-            break;
-        }
-
-        tosend.destid = recvd->destid;
-        if (export_encoded_record(exp, &tosend) < 0) {
-            ret = -1;
-            break;
-        }
-    }
-#endif
-
     return ret;
-}
-
-#define ZMQ_READ_NEXT_PART \
-    zmq_msg_init(&part); \
-    x = zmq_msg_recv(&part, exp->zmq_subsock, ZMQ_DONTWAIT); \
-    if (x < 0) { \
-        if (errno == EAGAIN) { \
-            return 0; \
-        } \
-        return -1; \
-    } \
-    zmq_getsockopt(exp->zmq_subsock, ZMQ_RCVMORE, &more, &moresize); \
-    ptr = zmq_msg_data(&part);
-
-static int read_ipiri_job(collector_export_t *exp, openli_export_recv_t *job) {
-
-    int64_t more;
-    size_t moresize = sizeof(more);
-    int x;
-    void *ptr;
-    zmq_msg_t part;
-    int next = 0;
-
-    memset(job, 0, sizeof(openli_export_recv_t));
-    job->type = OPENLI_EXPORT_IPIRI;
-
-    do {
-        ZMQ_READ_NEXT_PART
-        switch(next) {
-            case 0:
-                assert(zmq_msg_size(&part) == sizeof(uint32_t));
-                job->destid = *(uint32_t *)ptr;
-                break;
-            case 1:
-                assert(zmq_msg_size(&part) == sizeof(uint8_t));
-                job->data.ipiri.special = *(uint8_t *)ptr;
-                break;
-            case 2:
-                assert(zmq_msg_size(&part) == sizeof(uint32_t));
-                job->data.ipiri.cin = *(uint32_t *)ptr;
-                break;
-            case 3:
-                assert(zmq_msg_size(&part) == sizeof(internet_access_method_t));
-                job->data.ipiri.access_tech = *(internet_access_method_t *)ptr;
-                break;
-            case 4:
-                assert(zmq_msg_size(&part) == sizeof(uint8_t));
-                job->data.ipiri.ipassignmentmethod = *(uint8_t *)ptr;
-                break;
-            case 5:
-                assert(zmq_msg_size(&part) == sizeof(int));
-                job->data.ipiri.ipfamily = *(int *)ptr;
-                break;
-            case 6:
-                assert(zmq_msg_size(&part) == sizeof(uint8_t));
-                job->data.ipiri.assignedip_prefixbits = *(uint8_t *)ptr;
-                break;
-            case 7:
-                if (job->data.ipiri.ipfamily == AF_INET) {
-                    struct sockaddr_in *in;
-                    in = (struct sockaddr_in *)&(job->data.ipiri.assignedip);
-                    in->sin_addr.s_addr = *(uint32_t *)ptr;
-                } else if (job->data.ipiri.ipfamily == AF_INET6) {
-                    struct sockaddr_in6 *in6;
-                    in6 = (struct sockaddr_in6 *)&(job->data.ipiri.assignedip);
-                    memcpy(&(in6->sin6_addr.s6_addr), ptr,
-                            sizeof(in6->sin6_addr.s6_addr));
-                }
-                break;
-            case 8:
-                job->data.ipiri.sessionstartts.tv_sec = *(time_t *)ptr;
-                break;
-            case 9:
-                job->data.ipiri.sessionstartts.tv_usec = *(suseconds_t *)ptr;
-                break;
-            case 10:
-                job->data.ipiri.liid = strdup((char *)ptr);
-                break;
-            case 11:
-                job->data.ipiri.username = strdup((char *)ptr);
-                break;
-            /* TODO plugin data */
-            default:
-                assert(0);
-        }
-
-        next++;
-
-        zmq_msg_close(&part);
-    } while (more);
-
-    return 1;
-}
-
-static int read_ipcc_job(collector_export_t *exp, openli_export_recv_t *job) {
-    int x;
-    void *ptr;
-    size_t msglen = 0;
-    zmq_msg_t part;
-    IPCCJob *unpacked;
-
-    memset(job, 0, sizeof(openli_export_recv_t));
-    job->type = OPENLI_EXPORT_IPCC;
-    zmq_msg_init(&part);
-    x = zmq_msg_recv(&part, exp->zmq_subsock, ZMQ_DONTWAIT);
-    if (x < 0) {
-        if (errno == EAGAIN) {
-            return 0;
-        }
-        return -1;
-    }
-    ptr = zmq_msg_data(&part);
-    msglen = zmq_msg_size(&part);
-
-    unpacked = ipccjob__unpack(NULL, msglen, (uint8_t *)ptr);
-    if (unpacked == NULL) {
-        logger(LOG_INFO, "OpenLI: Unable to unpack IPCC Job.");
-        return -1;
-    }
-
-    zmq_msg_close(&part);
-
-    job->destid = unpacked->destid;
-    job->ts.tv_sec = unpacked->tvsec;
-    job->ts.tv_usec = unpacked->tvusec;
-    job->data.ipcc.cin = unpacked->cin;
-    job->data.ipcc.dir = unpacked->dir;
-    job->data.ipcc.liid = strdup(unpacked->liid);
-    job->data.ipcc.ipcontent = (uint8_t *)malloc(unpacked->ipcontent.len);
-    memcpy(job->data.ipcc.ipcontent, unpacked->ipcontent.data,
-            unpacked->ipcontent.len);
-    job->data.ipcc.ipclen = unpacked->ipcontent.len;
-
-    ipccjob__free_unpacked(unpacked, NULL);
-    return 1;
-
-}
-
-static int read_new_mediator_message(collector_export_t *exp,
-        openli_mediator_t *med) {
-
-    int64_t more;
-    size_t moresize = sizeof(more);
-    int x;
-    void *ptr;
-    zmq_msg_t part;
-    int next = 0;
-
-    do {
-        zmq_msg_init(&part);
-        x = zmq_msg_recv(&part, exp->zmq_subsock, ZMQ_DONTWAIT);
-        if (x < 0) {
-            if (errno == EAGAIN) {
-                return 0;
-            }
-            return -1;
-        }
-        zmq_getsockopt(exp->zmq_subsock, ZMQ_RCVMORE, &more, &moresize);
-        ptr = zmq_msg_data(&part);
-
-        switch(next) {
-            case 0:
-                assert(zmq_msg_size(&part) == sizeof(uint32_t));
-                med->mediatorid = *(uint32_t *)ptr;
-                break;
-            case 1:
-                med->ipstr = strdup((char *)ptr);
-                break;
-            case 2:
-                med->portstr = strdup((char *)ptr);
-                break;
-            default:
-                assert(0);
-        }
-
-        next++;
-
-        zmq_msg_close(&part);
-    } while (more);
-
-    return 1;
-}
-
-static int read_new_intercept_message(collector_export_t *exp,
-        exporter_intercept_msg_t **cept) {
-
-    int64_t more;
-    size_t moresize = sizeof(more);
-    int x;
-    char *ptr;
-    zmq_msg_t part;
-    int next = 0, size;
-
-    *cept = (exporter_intercept_msg_t *)calloc(1,
-            sizeof(exporter_intercept_msg_t));
-
-    do {
-        zmq_msg_init(&part);
-        x = zmq_msg_recv(&part, exp->zmq_subsock, ZMQ_DONTWAIT);
-        if (x < 0) {
-            if (errno == EAGAIN) {
-                return 0;
-            }
-            return -1;
-        }
-        zmq_getsockopt(exp->zmq_subsock, ZMQ_RCVMORE, &more, &moresize);
-        ptr = zmq_msg_data(&part);
-        size = zmq_msg_size(&part);
-
-        switch(next) {
-            case 0:
-                (*cept)->liid = strdup(ptr);
-                (*cept)->liid_len = strlen(ptr);
-                break;
-            case 1:
-                (*cept)->authcc = strdup(ptr);
-                (*cept)->authcc_len = strlen(ptr);
-                break;
-            case 2:
-                (*cept)->delivcc = strdup(ptr);
-                (*cept)->delivcc_len = strlen(ptr);
-                break;
-            default:
-                assert(0);
-        }
-
-        next++;
-
-        zmq_msg_close(&part);
-    } while (more);
-
-    return 1;
 }
 
 static int handle_returned_result(collector_export_t *exp) {
@@ -1142,18 +888,13 @@ static int handle_returned_result(collector_export_t *exp) {
 
 static int handle_published_message(collector_export_t *exp) {
 
-    uint8_t msgtype;
-    int64_t more;
-    size_t moresize = sizeof(more);
+    zmq_msg_t incoming;
     int x, ret;
-    void *ptr;
+    openli_export_recv_t *job = NULL;
     openli_mediator_t med;
-    exporter_intercept_msg_t *cept = NULL;
-    openli_export_recv_t job;
 
-    zmq_msg_t part;
-
-    x = zmq_recv(exp->zmq_subsock, &msgtype, 1, ZMQ_DONTWAIT);
+    zmq_msg_init(&incoming);
+    x = zmq_msg_recv(&incoming, exp->zmq_subsock, ZMQ_DONTWAIT);
     if (x < 0) {
         if (errno == EAGAIN) {
             return 0;
@@ -1161,65 +902,42 @@ static int handle_published_message(collector_export_t *exp) {
         return -1;
     }
 
-    //printf("%d got message of type %u\n", exp->glob->exportlabel, msgtype);
-    ret = 0;
+	ret = 1;
+    job = *((openli_export_recv_t **)(zmq_msg_data(&incoming)));
 
-    switch(msgtype) {
+    switch(job->type) {
         case OPENLI_EXPORT_MEDIATOR:
-            ret = read_new_mediator_message(exp, &med);
-            if (ret == 1) {
-                ret = add_new_destination(exp, &med);
-            }
+			med = job->data.med;
+            ret = add_new_destination(exp, &med);
             break;
         case OPENLI_EXPORT_DROP_SINGLE_MEDIATOR:
-            ret = read_new_mediator_message(exp, &med);
-            if (ret == 1) {
-                remove_destination(exp, &med);
-            }
+			med = job->data.med;
+            remove_destination(exp, &med);
             break;
         case OPENLI_EXPORT_INTERCEPT_DETAILS:
-            ret = read_new_intercept_message(exp, &cept);
-            if (ret == 1) {
-                exporter_new_intercept(exp, cept);
-            }
+            exporter_new_intercept(exp, &(job->data.cept));
             break;
         case OPENLI_EXPORT_INTERCEPT_OVER:
-            ret = read_new_intercept_message(exp, &cept);
-            if (ret == 1) {
-                ret = exporter_end_intercept(exp, cept);
-            }
+            ret = exporter_end_intercept(exp, &(job->data.cept));
             break;
         case OPENLI_EXPORT_IPIRI:
-            ret = read_ipiri_job(exp, &job);
-            if (ret == 1) {
-                ret = run_encoding_job(exp, &job);
-            }
-            break;
         case OPENLI_EXPORT_IPCC:
-            ret = read_ipcc_job(exp, &job);
-            if (ret == 1) {
-                exp->count ++;
-                if (run_encoding_job(exp, &job) < 0) {
-                    ret = -1;
-                }
-            }
+			ret = run_encoding_job(exp, job);
             break;
+
+		case OPENLI_EXPORT_FLAG_MEDIATORS:
+		case OPENLI_EXPORT_DROP_ALL_MEDIATORS:
+		case OPENLI_EXPORT_IPMMCC:
+		case OPENLI_EXPORT_IPMMIRI:
+
         default:
-            do {
-                zmq_msg_init(&part);
-                x = zmq_msg_recv(&part, exp->zmq_subsock, ZMQ_DONTWAIT);
-                if (x < 0) {
-                    if (errno == EAGAIN) {
-                        return 0;
-                    }
-                    return -1;
-                }
-                zmq_getsockopt(exp->zmq_subsock, ZMQ_RCVMORE, &more, &moresize);
-                zmq_msg_close(&part);
-            } while (more);
+            printf("got unexpected job: %u\n", job->type);
+			assert(0);
+            break;
     }
 
-    free_job_request(&job);
+    free(job);
+	zmq_msg_close(&incoming);
     return ret;
 }
 

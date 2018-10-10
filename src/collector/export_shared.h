@@ -47,7 +47,7 @@ typedef struct cin_seqno {
 } cin_seqno_t;
 
 typedef struct intercept_state {
-    exporter_intercept_msg_t *details;
+    exporter_intercept_msg_t details;
     cin_seqno_t *cinsequencing;
     UT_hash_handle hh;
     wandder_encode_job_t preencoded[OPENLI_PREENCODE_LAST];

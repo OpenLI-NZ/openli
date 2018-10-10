@@ -129,7 +129,7 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     }
 
     while (spaceleft < res->msgbody->len + sizeof(res->header) +
-            res->intstate->details->liid_len + 2) {
+            res->intstate->details.liid_len + 2) {
         spaceleft = extend_buffer(buf);
         if (spaceleft == 0) {
             return 0;
@@ -140,12 +140,12 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     memcpy(buf->buftail, &res->header, sizeof(res->header));
     buf->buftail += sizeof(res->header);
 
-    if (res->intstate->details->liid) {
-        uint16_t l = htons(res->intstate->details->liid_len);
+    if (res->intstate->details.liid) {
+        uint16_t l = htons(res->intstate->details.liid_len);
         memcpy(buf->buftail, &l, sizeof(uint16_t));
-        memcpy(buf->buftail + 2, res->intstate->details->liid,
-                res->intstate->details->liid_len);
-        buf->buftail += (res->intstate->details->liid_len + 2);
+        memcpy(buf->buftail + 2, res->intstate->details.liid,
+                res->intstate->details.liid_len);
+        buf->buftail += (res->intstate->details.liid_len + 2);
     }
 
     memcpy(buf->buftail, res->msgbody->encoded, enclen);

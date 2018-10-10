@@ -33,7 +33,7 @@
 #include "netcomms.h"
 #include "etsili_core.h"
 #include "intercept.h"
-
+#include "collector.h"
 
 enum {
     OPENLI_EXPORT_HALT_WORKER = 1,
@@ -50,6 +50,17 @@ enum {
     OPENLI_EXPORT_INTERCEPT_OVER = 13,
 
 };
+
+typedef struct openli_ipcc_job_header {
+    uint8_t type;
+    uint32_t destid;
+    uint32_t cin;
+    uint8_t dir;
+    uint32_t tvsec;
+    uint32_t tvusec;
+    uint16_t liid_len;
+    uint16_t ipc_len;
+} PACKED openli_ipcc_job_header_t;
 
 typedef struct openli_ipmmcc_job {
     char *liid;

@@ -94,6 +94,7 @@ void clean_sync_data(collector_sync_t *sync) {
         free(iter);
     }
 
+
     free_all_users(sync->allusers);
     clear_user_intercept_list(sync->userintercepts);
     free_all_ipintercepts(&(sync->ipintercepts));
@@ -131,7 +132,6 @@ void clean_sync_data(collector_sync_t *sync) {
     zmq_setsockopt(sync->zmq_pubsock, ZMQ_LINGER, &zero, sizeof(zero));
     zmq_close(sync->zmq_pubsock);
 
-
 }
 
 static int forward_provmsg_to_voipsync(collector_sync_t *sync,
@@ -165,13 +165,31 @@ static inline void push_coreserver_msg(collector_sync_t *sync,
     pthread_mutex_unlock(&(sync->glob->mutex));
 }
 
+static inline openli_export_recv_t *_create_ipiri_basic(collector_sync_t *sync,
+        ipintercept_t *ipint, char *username, uint32_t cin) {
+
+    openli_export_recv_t *irimsg;
+
+    irimsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+
+    irimsg->type = OPENLI_EXPORT_IPIRI;
+    irimsg->destid = ipint->common.destid;
+    irimsg->data.ipiri.liid = strdup(ipint->common.liid);
+    irimsg->data.ipiri.access_tech = ipint->accesstype;
+    irimsg->data.ipiri.cin = cin;
+    irimsg->data.ipiri.username = strdup(username);
+
+    return irimsg;
+}
+
+
 static int create_ipiri_from_iprange(collector_sync_t *sync,
         static_ipranges_t *staticsess, ipintercept_t *ipint, uint8_t special) {
 
-    openli_export_recv_t irimsg;
     int queueused = 0;
     struct timeval tv;
     prefix_t *prefix = NULL;
+    openli_export_recv_t *irimsg;
 
     prefix = ascii2prefix(0, staticsess->rangestr);
     if (prefix == NULL) {
@@ -181,35 +199,28 @@ static int create_ipiri_from_iprange(collector_sync_t *sync,
         return -1;
     }
 
-    memset(&irimsg, 0, sizeof(irimsg));
-    irimsg.type = OPENLI_EXPORT_IPIRI;
-    irimsg.destid = ipint->common.destid;
-    irimsg.data.ipiri.special = special;
-    irimsg.data.ipiri.liid = strdup(ipint->common.liid);
-    //irimsg.data.ipiri.plugin = NULL;
-    //irimsg.data.ipiri.plugin_data = NULL;
-    irimsg.data.ipiri.access_tech = ipint->accesstype;
-    irimsg.data.ipiri.cin = staticsess->cin;
-    irimsg.data.ipiri.username = "unknownuser";
-    irimsg.data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_STATIC;
+    irimsg = _create_ipiri_basic(sync, ipint, "unknownuser", staticsess->cin);
+
+    irimsg->data.ipiri.special = special;
+    irimsg->data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_STATIC;
 
     /* We generally have no idea when a static session would have started. */
-    irimsg.data.ipiri.sessionstartts.tv_sec = 0;
-    irimsg.data.ipiri.sessionstartts.tv_usec = 0;
+    irimsg->data.ipiri.sessionstartts.tv_sec = 0;
+    irimsg->data.ipiri.sessionstartts.tv_usec = 0;
 
-    irimsg.data.ipiri.ipfamily = prefix->family;
-    irimsg.data.ipiri.assignedip_prefixbits = prefix->bitlen;
+    irimsg->data.ipiri.ipfamily = prefix->family;
+    irimsg->data.ipiri.assignedip_prefixbits = prefix->bitlen;
     if (prefix->family == AF_INET) {
         struct sockaddr_in *sin;
 
-        sin = (struct sockaddr_in *)&(irimsg.data.ipiri.assignedip);
+        sin = (struct sockaddr_in *)&(irimsg->data.ipiri.assignedip);
         memcpy(&(sin->sin_addr), &(prefix->add.sin), sizeof(struct in_addr));
         sin->sin_family = AF_INET;
         sin->sin_port = 0;
     } else if (prefix->family == AF_INET6) {
         struct sockaddr_in6 *sin6;
 
-        sin6 = (struct sockaddr_in6 *)&(irimsg.data.ipiri.assignedip);
+        sin6 = (struct sockaddr_in6 *)&(irimsg->data.ipiri.assignedip);
         memcpy(&(sin6->sin6_addr), &(prefix->add.sin6),
                 sizeof(struct in6_addr));
         sin6->sin6_family = AF_INET6;
@@ -218,7 +229,7 @@ static int create_ipiri_from_iprange(collector_sync_t *sync,
         sin6->sin6_scope_id = 0;
     }
 
-    publish_openli_msg(sync->zmq_pubsock, &irimsg);
+    publish_openli_msg(sync->zmq_pubsock, irimsg);
     free(prefix);
     return 0;
 
@@ -228,38 +239,32 @@ static int create_ipiri_from_session(collector_sync_t *sync,
         access_session_t *sess, ipintercept_t *ipint, access_plugin_t *p,
         void *parseddata, uint8_t special) {
 
-    openli_export_recv_t irimsg;
-    int queueused = 0;
+    openli_export_recv_t *irimsg;
 
-    memset(&irimsg, 0, sizeof(irimsg));
-    irimsg.type = OPENLI_EXPORT_IPIRI;
-    irimsg.destid = ipint->common.destid;
-    irimsg.data.ipiri.special = special;
-    irimsg.data.ipiri.liid = strdup(ipint->common.liid);
+    irimsg = _create_ipiri_basic(sync, ipint, ipint->username, sess->cin);
+
+    irimsg->data.ipiri.special = special;
     //irimsg.data.ipiri.plugin = p;
     //irimsg.data.ipiri.plugin_data = parseddata;
-    irimsg.data.ipiri.access_tech = ipint->accesstype;
-    irimsg.data.ipiri.cin = sess->cin;
-    irimsg.data.ipiri.username = strdup(ipint->username);
-    irimsg.data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_UNKNOWN;
-    irimsg.data.ipiri.assignedip_prefixbits = sess->sessionip.prefixbits;
+    irimsg->data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_UNKNOWN;
+    irimsg->data.ipiri.assignedip_prefixbits = sess->sessionip.prefixbits;
 
     if (sess->sessionip.ipfamily) {
-        irimsg.data.ipiri.sessionstartts = sess->started;
-        irimsg.data.ipiri.ipfamily = sess->sessionip.ipfamily;
-        memcpy(&(irimsg.data.ipiri.assignedip), &(sess->sessionip.assignedip),
+        irimsg->data.ipiri.sessionstartts = sess->started;
+        irimsg->data.ipiri.ipfamily = sess->sessionip.ipfamily;
+        memcpy(&(irimsg->data.ipiri.assignedip), &(sess->sessionip.assignedip),
                 (sess->sessionip.ipfamily == AF_INET) ?
                 sizeof(struct sockaddr_in) :
                 sizeof(struct sockaddr_in6));
     } else {
-        irimsg.data.ipiri.ipfamily = 0;
-        irimsg.data.ipiri.sessionstartts.tv_sec = 0;
-        irimsg.data.ipiri.sessionstartts.tv_usec = 0;
-        memset(&(irimsg.data.ipiri.assignedip), 0,
+        irimsg->data.ipiri.ipfamily = 0;
+        irimsg->data.ipiri.sessionstartts.tv_sec = 0;
+        irimsg->data.ipiri.sessionstartts.tv_usec = 0;
+        memset(&(irimsg->data.ipiri.assignedip), 0,
                 sizeof(struct sockaddr_storage));
     }
 
-    publish_openli_msg(sync->zmq_pubsock, &irimsg);
+    publish_openli_msg(sync->zmq_pubsock, irimsg);
     return 0;
 
 }
@@ -593,20 +598,20 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
 
     int i;
     openli_mediator_t med;
-    openli_export_recv_t expmsg;
+    openli_export_recv_t *expmsg;
 
     if (decode_mediator_announcement(provmsg, msglen, &med) == -1) {
         logger(LOG_INFO, "OpenLI: received invalid mediator announcement from provisioner.");
         return -1;
     }
 
-    memset(&expmsg, 0, sizeof(expmsg));
-    expmsg.type = OPENLI_EXPORT_MEDIATOR;
-    expmsg.data.med.mediatorid = med.mediatorid;
-    expmsg.data.med.ipstr = med.ipstr;
-    expmsg.data.med.portstr = med.portstr;
+    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    expmsg->type = OPENLI_EXPORT_MEDIATOR;
+    expmsg->data.med.mediatorid = med.mediatorid;
+    expmsg->data.med.ipstr = strdup(med.ipstr);
+    expmsg->data.med.portstr = strdup(med.portstr);
 
-    publish_openli_msg(sync->zmq_pubsock, &expmsg);
+    publish_openli_msg(sync->zmq_pubsock, expmsg);
     return 0;
 }
 
@@ -615,20 +620,20 @@ static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
 
     int i;
     openli_mediator_t med;
-    openli_export_recv_t expmsg;
+    openli_export_recv_t *expmsg;
 
     if (decode_mediator_withdraw(provmsg, msglen, &med) == -1) {
         logger(LOG_INFO, "OpenLI: received invalid mediator withdrawal from provisioner.");
         return -1;
     }
 
-    memset(&expmsg, 0, sizeof(expmsg));
-    expmsg.type = OPENLI_EXPORT_DROP_SINGLE_MEDIATOR;
-    expmsg.data.med.mediatorid = med.mediatorid;
-    expmsg.data.med.ipstr = NULL;
-    expmsg.data.med.portstr = NULL;
+    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    expmsg->type = OPENLI_EXPORT_DROP_SINGLE_MEDIATOR;
+    expmsg->data.med.mediatorid = med.mediatorid;
+    expmsg->data.med.ipstr = NULL;
+    expmsg->data.med.portstr = NULL;
 
-    publish_openli_msg(sync->zmq_pubsock, &expmsg);
+    publish_openli_msg(sync->zmq_pubsock, expmsg);
 
     free(med.ipstr);
     free(med.portstr);
@@ -718,7 +723,7 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     ipintercept_t *ipint, torem;
     sync_sendq_t *sendq, *tmp;
     int i;
-    openli_export_recv_t expmsg;
+    openli_export_recv_t *expmsg;
 
     if (decode_ipintercept_halt(intmsg, msglen, &torem) == -1) {
         logger(LOG_INFO,
@@ -730,28 +735,27 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             torem.common.liid_len, ipint);
 
     remove_ip_intercept(sync, ipint);
-    memset(&expmsg, 0, sizeof(expmsg));
-    expmsg.type = OPENLI_EXPORT_INTERCEPT_OVER;
-    expmsg.data.cept.liid = ipint->common.liid;
-    expmsg.data.cept.authcc = ipint->common.authcc;
-    expmsg.data.cept.delivcc = ipint->common.delivcc;
-    //expmsg.data.cept.liid_len = ipint->common.liid_len;
-    //expmsg.data.cept.authcc_len = ipint->common.authcc_len;
-    //expmsg.data.cept.delivcc_len = ipint->common.delivcc_len;
+    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    expmsg->type = OPENLI_EXPORT_INTERCEPT_OVER;
+    expmsg->data.cept.liid = strdup(ipint->common.liid);
+    expmsg->data.cept.authcc = strdup(ipint->common.authcc);
+    expmsg->data.cept.delivcc = strdup(ipint->common.delivcc);
 
 
-    publish_openli_msg(sync->zmq_pubsock, &expmsg);
+    publish_openli_msg(sync->zmq_pubsock, expmsg);
     free_single_ipintercept(ipint);
 
     return 0;
 }
 
 static inline void drop_all_mediators(collector_sync_t *sync) {
-    openli_export_recv_t expmsg;
+    openli_export_recv_t *expmsg;
 
-    expmsg.type = OPENLI_EXPORT_DROP_ALL_MEDIATORS;
-    expmsg.data.packet = NULL;
-    publish_openli_msg(sync->zmq_pubsock, &expmsg);
+    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+
+    expmsg->type = OPENLI_EXPORT_DROP_ALL_MEDIATORS;
+    expmsg->data.packet = NULL;
+    publish_openli_msg(sync->zmq_pubsock, expmsg);
 }
 
 static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
@@ -760,7 +764,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     ipintercept_t *cept, *x;
     sync_sendq_t *tmp, *sendq;
     internet_user_t *user;
-    openli_export_recv_t expmsg;
+    openli_export_recv_t *expmsg;
     int i;
 
     cept = (ipintercept_t *)malloc(sizeof(ipintercept_t));
@@ -862,13 +866,13 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
             cept->common.liid_len, cept);
 
-    memset(&expmsg, 0, sizeof(expmsg));
-    expmsg.type = OPENLI_EXPORT_INTERCEPT_DETAILS;
-    expmsg.data.cept.liid = cept->common.liid;
-    expmsg.data.cept.authcc = cept->common.authcc;
-    expmsg.data.cept.delivcc = cept->common.delivcc;
+    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    expmsg->type = OPENLI_EXPORT_INTERCEPT_DETAILS;
+    expmsg->data.cept.liid = strdup(cept->common.liid);
+    expmsg->data.cept.authcc = strdup(cept->common.authcc);
+    expmsg->data.cept.delivcc = strdup(cept->common.delivcc);
 
-    publish_openli_msg(sync->zmq_pubsock, &expmsg);
+    publish_openli_msg(sync->zmq_pubsock, expmsg);
 
     return 0;
 
@@ -1052,7 +1056,7 @@ static inline void touch_all_intercepts(ipintercept_t *intlist) {
 void sync_disconnect_provisioner(collector_sync_t *sync) {
 
     struct epoll_event ev;
-    openli_export_recv_t expmsg;
+    openli_export_recv_t *expmsg;
 
     destroy_net_buffer(sync->outgoing);
     destroy_net_buffer(sync->incoming);
@@ -1082,11 +1086,11 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
 
     /* Same with mediators -- keep exporting to them, but flag them to be
      * disconnected if they are not announced after we reconnect. */
-    memset(&expmsg, 0, sizeof(expmsg));
-    expmsg.type = OPENLI_EXPORT_FLAG_MEDIATORS;
-    expmsg.data.packet = NULL;
+    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    expmsg->type = OPENLI_EXPORT_FLAG_MEDIATORS;
+    expmsg->data.packet = NULL;
 
-    publish_openli_msg(sync->zmq_pubsock, &expmsg);
+    publish_openli_msg(sync->zmq_pubsock, expmsg);
 }
 
 static void push_all_active_intercepts(collector_sync_t *sync,
