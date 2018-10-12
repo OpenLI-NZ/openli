@@ -183,6 +183,8 @@ void etsili_create_ipaddress_v6(uint8_t *addrnum,
 void etsili_preencode_static_fields(wandder_encode_job_t *pendarray,
         etsili_intercept_details_t *details);
 void etsili_clear_preencoded_fields(wandder_encode_job_t *pendarray);
+void etsili_copy_preencoded(wandder_encode_job_t *dest,
+        wandder_encode_job_t *src);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

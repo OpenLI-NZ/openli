@@ -44,6 +44,7 @@ int extract_ip_addresses(libtrace_packet_t *pkt, uint8_t *srcip,
 struct addrinfo *populate_addrinfo(char *ipstr, char *portstr,
         int socktype);
 
+uint32_t hash_liid(char *liid);
 uint32_t hashlittle( const void *key, size_t length, uint32_t initval);
 
 #endif

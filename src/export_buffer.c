@@ -124,12 +124,19 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     uint64_t bufused = buf->buftail - buf->bufhead;
     uint64_t spaceleft = buf->alloced - bufused;
 
+    int liidlen;
+
+    if (res->liid == NULL) {
+        return 0;
+    }
+
+    liidlen = strlen(res->liid);
+
     if (bufused == 0) {
         buf->partialfront = beensent;
     }
 
-    while (spaceleft < res->msgbody->len + sizeof(res->header) +
-            res->intstate->details.liid_len + 2) {
+    while (spaceleft < res->msgbody->len + sizeof(res->header) + liidlen + 2) {
         spaceleft = extend_buffer(buf);
         if (spaceleft == 0) {
             return 0;
@@ -140,12 +147,11 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     memcpy(buf->buftail, &res->header, sizeof(res->header));
     buf->buftail += sizeof(res->header);
 
-    if (res->intstate->details.liid) {
-        uint16_t l = htons(res->intstate->details.liid_len);
+    if (res->liid) {
+        uint16_t l = htons(liidlen);
         memcpy(buf->buftail, &l, sizeof(uint16_t));
-        memcpy(buf->buftail + 2, res->intstate->details.liid,
-                res->intstate->details.liid_len);
-        buf->buftail += (res->intstate->details.liid_len + 2);
+        memcpy(buf->buftail + 2, res->liid, liidlen);
+        buf->buftail += (liidlen + 2);
     }
 
     memcpy(buf->buftail, res->msgbody->encoded, enclen);

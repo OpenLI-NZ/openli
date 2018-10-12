@@ -39,7 +39,6 @@
 #include "collector.h"
 #include "collector_sync.h"
 #include "collector_sync_voip.h"
-#include "collector_export.h"
 #include "collector_publish.h"
 #include "configparser.h"
 #include "logger.h"
@@ -53,6 +52,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 	collector_sync_t *sync = (collector_sync_t *)
 			malloc(sizeof(collector_sync_t));
     int i;
+    char sockname[128];
 
     sync->glob = &(glob->syncip);
     sync->intersyncq = &(glob->intersyncq);
@@ -69,11 +69,38 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->info = &(glob->sharedinfo);
 
     sync->radiusplugin = init_access_plugin(ACCESS_RADIUS);
-    sync->freegenerics = NULL;
     sync->activeips = NULL;
 
-    sync->zmq_pubsock = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
-    zmq_connect(sync->zmq_pubsock, "inproc://openliipc");
+    sync->pubsockcount = glob->seqtracker_threads;
+    sync->forwardcount = glob->forwarding_threads;
+
+    sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
+    sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
+
+    for (i = 0; i < sync->forwardcount; i++) {
+        sync->zmq_fwdctrlsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+        snprintf(sockname, 128, "inproc://openliforwardercontrol_sync-%d", i);
+        if (zmq_connect(sync->zmq_fwdctrlsocks[i], sockname) != 0) {
+            logger(LOG_INFO, "OpenLI: colsync thread unable to connect to zmq control socket for forwarding threads: %s",
+                    strerror(errno));
+            zmq_close(sync->zmq_fwdctrlsocks[i]);
+            sync->zmq_fwdctrlsocks[i] = NULL;
+        }
+    }
+
+    for (i = 0; i < sync->pubsockcount; i++) {
+        sync->zmq_pubsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+        snprintf(sockname, 128, "inproc://openlipub-%d", i);
+        if (zmq_connect(sync->zmq_pubsocks[i], sockname) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: colsync thread failed to bind to publishing zmq: %s",
+                    strerror(errno));
+            zmq_close(sync->zmq_pubsocks[i]);
+            sync->zmq_pubsocks[i] = NULL;
+        }
+
+        /* Do we need to set a HWM? */
+    }
 
     return sync;
 
@@ -83,6 +110,7 @@ void clean_sync_data(collector_sync_t *sync) {
 
     int i = 0, zero=0;
     ip_to_session_t *iter, *tmp;
+    openli_export_recv_t *haltmsg;
 
 	if (sync->instruct_fd != -1) {
 		close(sync->instruct_fd);
@@ -116,10 +144,6 @@ void clean_sync_data(collector_sync_t *sync) {
         destroy_access_plugin(sync->radiusplugin);
     }
 
-    if (sync->freegenerics) {
-        free_etsili_generics(sync->freegenerics);
-    }
-
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
     sync->userintercepts = NULL;
@@ -129,8 +153,39 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->radiusplugin = NULL;
     sync->activeips = NULL;
 
-    zmq_setsockopt(sync->zmq_pubsock, ZMQ_LINGER, &zero, sizeof(zero));
-    zmq_close(sync->zmq_pubsock);
+    for (i = 0; i < sync->pubsockcount; i++) {
+        if (sync->zmq_pubsocks[i] == NULL) {
+            continue;
+        }
+
+        /* Send a halt message to get the tracker thread to stop */
+        haltmsg = (openli_export_recv_t *)calloc(1,
+                sizeof(openli_export_recv_t));
+        haltmsg->type = OPENLI_EXPORT_HALT;
+        zmq_send(sync->zmq_pubsocks[i], &haltmsg, sizeof(haltmsg), 0);
+
+        zmq_setsockopt(sync->zmq_pubsocks[i], ZMQ_LINGER, &zero, sizeof(zero));
+        zmq_close(sync->zmq_pubsocks[i]);
+    }
+
+    for (i = 0; i < sync->forwardcount; i++) {
+        if (sync->zmq_fwdctrlsocks[i] == NULL) {
+            continue;
+        }
+
+        /* Send a halt message to get the forwarder thread to stop */
+        haltmsg = (openli_export_recv_t *)calloc(1,
+                sizeof(openli_export_recv_t));
+        haltmsg->type = OPENLI_EXPORT_HALT;
+        zmq_send(sync->zmq_fwdctrlsocks[i], &haltmsg, sizeof(haltmsg), 0);
+
+        zmq_setsockopt(sync->zmq_fwdctrlsocks[i], ZMQ_LINGER, &zero,
+                sizeof(zero));
+        zmq_close(sync->zmq_fwdctrlsocks[i]);
+    }
+
+    free(sync->zmq_pubsocks);
+    free(sync->zmq_fwdctrlsocks);
 
 }
 
@@ -229,7 +284,7 @@ static int create_ipiri_from_iprange(collector_sync_t *sync,
         sin6->sin6_scope_id = 0;
     }
 
-    publish_openli_msg(sync->zmq_pubsock, irimsg);
+    publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], irimsg);
     free(prefix);
     return 0;
 
@@ -264,7 +319,7 @@ static int create_ipiri_from_session(collector_sync_t *sync,
                 sizeof(struct sockaddr_storage));
     }
 
-    publish_openli_msg(sync->zmq_pubsock, irimsg);
+    publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], irimsg);
     return 0;
 
 }
@@ -605,13 +660,16 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
         return -1;
     }
 
-    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
-    expmsg->type = OPENLI_EXPORT_MEDIATOR;
-    expmsg->data.med.mediatorid = med.mediatorid;
-    expmsg->data.med.ipstr = strdup(med.ipstr);
-    expmsg->data.med.portstr = strdup(med.portstr);
+    for (i = 0; i < sync->forwardcount; i++) {
+        expmsg = (openli_export_recv_t *)calloc(1,
+                sizeof(openli_export_recv_t));
+        expmsg->type = OPENLI_EXPORT_MEDIATOR;
+        expmsg->data.med.mediatorid = med.mediatorid;
+        expmsg->data.med.ipstr = strdup(med.ipstr);
+        expmsg->data.med.portstr = strdup(med.portstr);
 
-    publish_openli_msg(sync->zmq_pubsock, expmsg);
+        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+    }
     return 0;
 }
 
@@ -627,13 +685,16 @@ static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
         return -1;
     }
 
-    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
-    expmsg->type = OPENLI_EXPORT_DROP_SINGLE_MEDIATOR;
-    expmsg->data.med.mediatorid = med.mediatorid;
-    expmsg->data.med.ipstr = NULL;
-    expmsg->data.med.portstr = NULL;
+    for (i = 0; i < sync->forwardcount; i++) {
+        expmsg = (openli_export_recv_t *)calloc(1,
+                sizeof(openli_export_recv_t));
+        expmsg->type = OPENLI_EXPORT_DROP_SINGLE_MEDIATOR;
+        expmsg->data.med.mediatorid = med.mediatorid;
+        expmsg->data.med.ipstr = NULL;
+        expmsg->data.med.portstr = NULL;
 
-    publish_openli_msg(sync->zmq_pubsock, expmsg);
+        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+    }
 
     free(med.ipstr);
     free(med.portstr);
@@ -740,9 +801,9 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     expmsg->data.cept.liid = strdup(ipint->common.liid);
     expmsg->data.cept.authcc = strdup(ipint->common.authcc);
     expmsg->data.cept.delivcc = strdup(ipint->common.delivcc);
+    expmsg->data.cept.seqtrackerid = ipint->common.seqtrackerid;
 
-
-    publish_openli_msg(sync->zmq_pubsock, expmsg);
+    publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], expmsg);
     free_single_ipintercept(ipint);
 
     return 0;
@@ -750,12 +811,16 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
 static inline void drop_all_mediators(collector_sync_t *sync) {
     openli_export_recv_t *expmsg;
+    int i;
 
-    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    for (i = 0; i < sync->forwardcount; i++) {
+        expmsg = (openli_export_recv_t *)calloc(1,
+                sizeof(openli_export_recv_t));
 
-    expmsg->type = OPENLI_EXPORT_DROP_ALL_MEDIATORS;
-    expmsg->data.packet = NULL;
-    publish_openli_msg(sync->zmq_pubsock, expmsg);
+        expmsg->type = OPENLI_EXPORT_DROP_ALL_MEDIATORS;
+        expmsg->data.packet = NULL;
+        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+    }
 }
 
 static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
@@ -863,6 +928,12 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
                 cept->common.liid, cept->common.authcc);
     }
 
+    if (sync->pubsockcount <= 1) {
+        cept->common.seqtrackerid = 0;
+    } else {
+        cept->common.seqtrackerid = hash_liid(cept->common.liid) % sync->pubsockcount;
+    }
+
     HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
             cept->common.liid_len, cept);
 
@@ -871,8 +942,9 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     expmsg->data.cept.liid = strdup(cept->common.liid);
     expmsg->data.cept.authcc = strdup(cept->common.authcc);
     expmsg->data.cept.delivcc = strdup(cept->common.delivcc);
+    expmsg->data.cept.seqtrackerid = cept->common.seqtrackerid;
 
-    publish_openli_msg(sync->zmq_pubsock, expmsg);
+    publish_openli_msg(sync->zmq_pubsocks[cept->common.seqtrackerid], expmsg);
 
     return 0;
 
@@ -1057,6 +1129,7 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
 
     struct epoll_event ev;
     openli_export_recv_t *expmsg;
+    int i;
 
     destroy_net_buffer(sync->outgoing);
     destroy_net_buffer(sync->incoming);
@@ -1086,11 +1159,14 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
 
     /* Same with mediators -- keep exporting to them, but flag them to be
      * disconnected if they are not announced after we reconnect. */
-    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
-    expmsg->type = OPENLI_EXPORT_FLAG_MEDIATORS;
-    expmsg->data.packet = NULL;
+    for ( i = 0; i < sync->forwardcount; i++) {
+        expmsg = (openli_export_recv_t *)calloc(1,
+                sizeof(openli_export_recv_t));
+        expmsg->type = OPENLI_EXPORT_FLAG_MEDIATORS;
+        expmsg->data.packet = NULL;
 
-    publish_openli_msg(sync->zmq_pubsock, expmsg);
+        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+    }
 }
 
 static void push_all_active_intercepts(collector_sync_t *sync,

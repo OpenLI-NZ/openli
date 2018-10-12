@@ -1,0 +1,142 @@
+/*
+ *
+ * Copyright (c) 2018 The University of Waikato, Hamilton, New Zealand.
+ * All rights reserved.
+ *
+ * This file is part of OpenLI.
+ *
+ * This code has been developed by the University of Waikato WAND
+ * research group. For further information please see http://www.wand.net.nz/
+ *
+ * OpenLI is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * OpenLI is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ *
+ */
+
+#ifndef OPENLI_COLLECTOR_BASE_H_
+#define OPENLI_COLLECTOR_BASE_H_
+
+#include <pthread.h>
+#include <libwandder_etsili.h>
+#include <libwandder.h>
+#include <zmq.h>
+
+#include "export_shared.h"
+#include "etsili_core.h"
+#include "collector_publish.h"
+
+typedef struct sync_thread_global {
+
+    pthread_t threadid;
+    pthread_mutex_t mutex;
+    void *collector_queues;
+    void *epollevs;
+    int epoll_fd;
+
+} sync_thread_global_t;
+
+typedef struct collector_identity {
+    char *operatorid;
+    char *networkelemid;
+    char *intpointid;
+    char *provisionerip;
+    char *provisionerport;
+
+    int operatorid_len;
+    int networkelemid_len;
+    int intpointid_len;
+
+} collector_identity_t;
+
+typedef struct old_intercept removed_intercept_t;
+
+struct old_intercept {
+    void *preencoded;
+    uint32_t haltedat;
+    removed_intercept_t *next;
+};
+
+typedef struct seqtracker_thread_data {
+    void *zmq_ctxt;
+    pthread_t threadid;
+    int trackerid;
+    collector_identity_t *colident;
+
+    void *zmq_pushjobsock;
+    void *zmq_recvpublished;
+
+    exporter_intercept_state_t *intercepts;
+    removed_intercept_t *removedints;
+
+} seqtracker_thread_data_t;
+
+typedef struct forwarding_thread_data {
+    void *zmq_ctxt;
+    pthread_t threadid;
+    int forwardid;
+
+    void *zmq_ctrlsock;
+    void *zmq_pullressock;
+
+    zmq_pollitem_t *topoll;
+    int pollsize;
+    int nextpoll;
+
+} forwarding_thread_data_t;
+
+typedef struct encoder_state {
+    void *zmq_ctxt;
+    void **zmq_recvjobs;
+    void **zmq_pushresults;
+    void *zmq_control;
+
+    pthread_t threadid;
+    int workerid;
+    collector_identity_t *shared;
+    wandder_encoder_t *encoder;
+    etsili_generic_t *freegenerics;
+
+    int seqtrackers;
+    int forwarders;
+} openli_encoder_t;
+
+typedef struct encoder_job {
+    wandder_encode_job_t *preencoded;
+    uint32_t seqno;
+    openli_export_recv_t *origreq;
+    char *liid;
+} PACKED openli_encoding_job_t;
+
+typedef struct encoder_result {
+    ii_header_t header;
+    wandder_encoded_result_t *msgbody;
+    uint8_t *ipcontents;
+    uint32_t ipclen;
+    uint32_t seqno;
+    uint32_t destid;
+    char *liid;
+    openli_export_recv_t *origreq;
+} PACKED openli_encoded_result_t;
+
+void destroy_encoder_worker(openli_encoder_t *enc);
+void *run_encoder_worker(void *encstate);
+
+void *start_seqtracker_thread(void *data);
+void clean_seqtracker(seqtracker_thread_data_t *seqdata);
+
+void *start_forwarding_thread(void *data);
+
+#endif
+
+// vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

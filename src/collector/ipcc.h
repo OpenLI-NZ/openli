@@ -28,8 +28,6 @@
 
 #include <libtrace.h>
 #include "collector.h"
-#include "collector_export.h"
-#include "encoder_worker.h"
 
 int encode_ipcc(wandder_encoder_t *encoder, wandder_encode_job_t *precomputed,
         openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,

@@ -32,7 +32,6 @@
 #include <libwandder.h>
 #include <libwandder_etsili.h>
 #include "collector.h"
-#include "collector_export.h"
 #include "intercept.h"
 #include "internetaccess.h"
 #include "etsili_core.h"
@@ -129,7 +128,7 @@ typedef struct ipiri_id {
     } content;
 } ipiri_id_t;
 
-int ip_iri(shared_global_info_t *info, wandder_encoder_t **encoder,
+int ip_iri(collector_identity_t *info, wandder_encoder_t **encoder,
                 libtrace_message_queue_t *q, access_session_t *sess,
                 ipintercept_t *ipint, etsili_iri_type_t iritype,
                 struct timeval *tv, etsili_generic_t *params);

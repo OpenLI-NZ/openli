@@ -34,7 +34,6 @@
 #include "logger.h"
 #include "collector.h"
 #include "intercept.h"
-#include "collector_export.h"
 #include "etsili_core.h"
 #include "ipiri.h"
 #include "internetaccess.h"

@@ -45,7 +45,6 @@
 #include "configparser.h"
 #include "collector_sync_voip.h"
 #include "collector_sync.h"
-#include "collector_export.h"
 #include "collector_push_messaging.h"
 #include "ipcc.h"
 #include "ipmmcc.h"
@@ -156,10 +155,15 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->ipcc_freemessages.recycled = 0;
     pthread_mutex_init(&(loc->ipcc_freemessages.mutex), NULL);
 
-    loc->zmq_pubsock = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+    loc->zmq_pubsocks = calloc(glob->seqtracker_threads, sizeof(void *));
+    for (i = 0; i < glob->seqtracker_threads; i++) {
+        char pubsockname[128];
 
-    zmq_connect(loc->zmq_pubsock, "inproc://openliipc");
-    zmq_setsockopt(loc->zmq_pubsock, ZMQ_SNDHWM, &zero, sizeof(zero));
+        snprintf(pubsockname, 128, "inproc://openlipub-%d", i);
+        loc->zmq_pubsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+        zmq_connect(loc->zmq_pubsocks[i], pubsockname);
+        zmq_setsockopt(loc->zmq_pubsocks[i], ZMQ_SNDHWM, &zero, sizeof(zero));
+    }
 
     loc->fragreass = create_new_ipfrag_reassembler();
 
@@ -219,8 +223,12 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_message_queue_destroy(&(loc->tosyncq_voip));
     libtrace_message_queue_destroy(&(loc->fromsyncq_voip));
 
-    zmq_setsockopt(loc->zmq_pubsock, ZMQ_LINGER, &zero, sizeof(zero));
-    zmq_close(loc->zmq_pubsock);
+    for (i = 0; i < glob->seqtracker_threads; i++) {
+        zmq_setsockopt(loc->zmq_pubsocks[i], ZMQ_LINGER, &zero, sizeof(zero));
+        zmq_close(loc->zmq_pubsocks[i]);
+    }
+
+    free(loc->zmq_pubsocks);
 
     while (loc->ipcc_freemessages.available) {
         openli_export_recv_t *msg = loc->ipcc_freemessages.available;
@@ -451,7 +459,6 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     openli_pushed_t syncpush;
     packet_info_t pinfo;
-    openli_export_recv_t finmsg;
 
     /* Check for any messages from the sync threads */
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
@@ -711,6 +718,7 @@ static void reload_inputs(collector_global_t *glob,
 
 }
 
+#if 0
 static void *start_export_thread(void *params) {
     export_thread_data_t *glob = (export_thread_data_t *)params;
     collector_export_t *exp = init_exporter(glob);
@@ -731,6 +739,7 @@ static void *start_export_thread(void *params) {
     logger(LOG_DEBUG, "OpenLI: exiting export thread.");
     pthread_exit(NULL);
 }
+#endif
 
 static void clear_input(colinput_t *input) {
 
@@ -748,7 +757,7 @@ static void clear_input(colinput_t *input) {
     }
 }
 
-static inline void init_support_thread_data(support_thread_global_t *sup) {
+static inline void init_sync_thread_data(sync_thread_global_t *sup) {
 
     sup->threadid = 0;
     pthread_mutex_init(&(sup->mutex), NULL);
@@ -758,7 +767,7 @@ static inline void init_support_thread_data(support_thread_global_t *sup) {
 
 }
 
-static inline void free_support_thread_data(support_thread_global_t *sup) {
+static inline void free_sync_thread_data(sync_thread_global_t *sup) {
 	pthread_mutex_destroy(&(sup->mutex));
 	if (sup->epoll_fd != -1) {
 		close(sup->epoll_fd);
@@ -818,19 +827,31 @@ static void clear_global_config(collector_global_t *glob) {
 
     pthread_rwlock_destroy(&glob->config_mutex);
 
-	free_support_thread_data(&(glob->syncip));
-	free_support_thread_data(&(glob->syncvoip));
-
-    if (glob->exporter) {
-        free(glob->exporter);
-    }
+	free_sync_thread_data(&(glob->syncip));
+	free_sync_thread_data(&(glob->syncvoip));
 
     libtrace_message_queue_destroy(&(glob->intersyncq));
+
+    if (glob->zmq_forwarder_ctrl) {
+        zmq_close(glob->zmq_forwarder_ctrl);
+    }
+
+    if (glob->zmq_encoder_ctrl) {
+        zmq_close(glob->zmq_encoder_ctrl);
+    }
+
     logger(LOG_INFO, "OpenLI: waiting for zeromq context to be destroyed.");
     if (glob->zmq_ctxt) {
         zmq_ctx_destroy(glob->zmq_ctxt);
     }
 
+    for (i = 0; i < glob->seqtracker_threads; i++) {
+        clean_seqtracker(&(glob->seqtrackers[i]));
+    }
+
+    free(glob->seqtrackers);
+    free(glob->encoders);
+    free(glob->forwarders);
     free(glob);
 }
 
@@ -846,7 +867,7 @@ static inline void push_hello_message(libtrace_message_queue_t *atob,
     libtrace_message_queue_put(atob, (void *)(&hello));
 }
 
-int register_sync_queues(support_thread_global_t *glob,
+int register_sync_queues(sync_thread_global_t *glob,
         libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq,
         libtrace_thread_t *parent) {
 
@@ -892,7 +913,7 @@ int register_sync_queues(support_thread_global_t *glob,
     return 0;
 }
 
-void deregister_sync_queues(support_thread_global_t *glob,
+void deregister_sync_queues(sync_thread_global_t *glob,
 		libtrace_thread_t *t) {
 
     sync_epoll_t *syncev, *syncev_hash;
@@ -930,11 +951,13 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     collector_global_t *glob = NULL;
 
-    glob = (collector_global_t *)malloc(sizeof(collector_global_t));
+    glob = (collector_global_t *)calloc(1, sizeof(collector_global_t));
 
     glob->zmq_ctxt = zmq_ctx_new();
     glob->inputs = NULL;
-    glob->exportthreads = 1;
+    glob->seqtracker_threads = 1;
+    glob->forwarding_threads = 1;
+    glob->encoding_threads = 2;
     glob->sharedinfo.intpointid = NULL;
     glob->sharedinfo.intpointid_len = 0;
     glob->sharedinfo.operatorid = NULL;
@@ -942,8 +965,8 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->sharedinfo.networkelemid = NULL;
     glob->sharedinfo.networkelemid_len = 0;
 
-    init_support_thread_data(&(glob->syncip));
-    init_support_thread_data(&(glob->syncvoip));
+    init_sync_thread_data(&(glob->syncip));
+    init_sync_thread_data(&(glob->syncvoip));
 
     glob->configfile = configfile;
     glob->sharedinfo.provisionerip = NULL;
@@ -962,6 +985,23 @@ static collector_global_t *parse_global_config(char *configfile) {
         return NULL;
     }
 
+    glob->zmq_forwarder_ctrl = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
+    if (zmq_connect(glob->zmq_forwarder_ctrl,
+            "inproc://openliforwardercontrol") != 0) {
+        logger(LOG_INFO, "OpenLI: unable to connect to zmq control socket for forwarding threads. Exiting.");
+        clear_global_config(glob);
+        return NULL;
+    }
+
+    glob->zmq_encoder_ctrl = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
+    if (zmq_bind(glob->zmq_encoder_ctrl,
+            "inproc://openliencodercontrol") != 0) {
+        logger(LOG_INFO, "OpenLI: unable to connect to zmq control socket for encoding threads. Exiting.");
+        clear_global_config(glob);
+        return NULL;
+    }
+
+    
     if (glob->sharedinfo.provisionerport == NULL) {
         glob->sharedinfo.provisionerport = strdup("8993");
     }
@@ -983,6 +1023,7 @@ static collector_global_t *parse_global_config(char *configfile) {
         clear_global_config(glob);
         glob = NULL;
     }
+
 
     return glob;
 
@@ -1086,42 +1127,6 @@ void halt_processing_threads(collector_global_t *glob) {
     HASH_ITER(hh, glob->inputs, inp, tmp) {
         trace_pstop(inp->trace);
     }
-}
-
-static void *span_thread(void *zmq_ctxt) {
-    void *recvr = zmq_socket(zmq_ctxt, ZMQ_PAIR);
-    char envelope[24];
-    char body[1024];
-    int x, zero=0, more=0;
-    size_t optlen;
-    int done = 0;
-
-    zmq_connect(recvr, "inproc://span");
-    while (!done) {
-        if ((x = zmq_recv(recvr, envelope, 23, 0)) < 0) {
-            done = 1;
-            continue;
-        }
-
-        envelope[x] = '\0';
-
-        do {
-            optlen = sizeof(more);
-            zmq_getsockopt(recvr, ZMQ_RCVMORE, &more, &optlen);
-            if (more == 0) {
-                break;
-            }
-
-            if ((x = zmq_recv(recvr, body, 1024, 0)) < 0) {
-                done = 1;
-                break;
-            }
-        } while (more);
-    }
-
-    zmq_setsockopt(recvr, ZMQ_LINGER, &zero, sizeof(zero));
-    zmq_close(recvr);
-    pthread_exit(NULL);
 }
 
 static void *start_ip_sync_thread(void *params) {
@@ -1270,17 +1275,54 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    glob->exporter = (export_thread_data_t *)calloc(1,
-            sizeof(export_thread_data_t));
-    glob->exporter->zmq_ctxt = glob->zmq_ctxt;
-    glob->exporter->shared = &(glob->sharedinfo);
-    glob->exporter->workers = glob->exportthreads;
+    /* TODO check pthread_create return values... */
 
-    ret = pthread_create(&(glob->exporter->threadid), NULL,
-            start_export_thread, (void *)glob->exporter);
-    if (ret != 0) {
-        logger(LOG_INFO, "OpenLI: error creating exporter. Exiting.");
-        return 1;
+    glob->forwarders = calloc(glob->forwarding_threads,
+            sizeof(forwarding_thread_data_t));
+
+    for (i = 0; i < glob->forwarding_threads; i++) {
+        glob->forwarders[i].zmq_ctxt = glob->zmq_ctxt;
+        glob->forwarders[i].forwardid = i;
+        glob->forwarders[i].zmq_ctrlsock = NULL;
+        glob->forwarders[i].zmq_pullressock = NULL;
+
+        pthread_create(&(glob->forwarders[i].threadid), NULL,
+                start_forwarding_thread, (void *)&(glob->forwarders[i]));
+    }
+
+    glob->seqtrackers = calloc(glob->seqtracker_threads,
+            sizeof(seqtracker_thread_data_t));
+
+    for (i = 0; i < glob->seqtracker_threads; i++) {
+        glob->seqtrackers[i].zmq_ctxt = glob->zmq_ctxt;
+        glob->seqtrackers[i].trackerid = i;
+        glob->seqtrackers[i].zmq_pushjobsock = NULL;
+        glob->seqtrackers[i].zmq_recvpublished = NULL;
+        glob->seqtrackers[i].intercepts = NULL;
+        glob->seqtrackers[i].colident = &(glob->sharedinfo);
+
+        pthread_create(&(glob->seqtrackers[i].threadid), NULL,
+                start_seqtracker_thread, (void *)&(glob->seqtrackers[i]));
+    }
+
+    glob->encoders = calloc(glob->encoding_threads, sizeof(openli_encoder_t));
+
+    for (i = 0; i < glob->encoding_threads; i++) {
+        glob->encoders[i].zmq_ctxt = glob->zmq_ctxt;
+        glob->encoders[i].zmq_recvjobs = NULL;
+        glob->encoders[i].zmq_pushresults = NULL;
+        glob->encoders[i].zmq_control = NULL;
+
+        glob->encoders[i].workerid = i;
+        glob->encoders[i].shared = &(glob->sharedinfo);
+        glob->encoders[i].encoder = NULL;
+        glob->encoders[i].freegenerics = NULL;
+
+        glob->encoders[i].seqtrackers = glob->seqtracker_threads;
+        glob->encoders[i].forwarders = glob->forwarding_threads;
+
+        pthread_create(&(glob->encoders[i].threadid), NULL,
+                run_encoder_worker, (void *)&(glob->encoders[i]));
     }
 
     /* Start IP intercept sync thread */
@@ -1337,15 +1379,15 @@ int main(int argc, char *argv[]) {
             trace_get_statistics(inp->trace, stat);
 
             if (stat->dropped_valid) {
-                logger(LOG_DEBUG, "OpenLI: dropped %lu packets on input %s\n",
+                logger(LOG_DEBUG, "OpenLI: dropped %lu packets on input %s",
                         stat->dropped, inp->uri);
             }
             if (stat->received_valid) {
-                logger(LOG_DEBUG, "OpenLI: received %lu packets on input %s\n",
+                logger(LOG_DEBUG, "OpenLI: received %lu packets on input %s",
                         stat->received, inp->uri);
             }
             if (stat->accepted_valid) {
-                logger(LOG_DEBUG, "OpenLI: accepted %lu packets on input %s\n",
+                logger(LOG_DEBUG, "OpenLI: accepted %lu packets on input %s",
                         stat->accepted, inp->uri);
             }
             free(stat);
@@ -1353,9 +1395,30 @@ int main(int argc, char *argv[]) {
     }
     pthread_rwlock_unlock(&(glob->config_mutex));
 
+    if (glob->zmq_encoder_ctrl) {
+        /* The only control message required for encoding threads is the
+         * "halt" message, so we can just send an empty message and the
+         * recipients should treat that as a "halt" command.
+         */
+        if (zmq_send(glob->zmq_encoder_ctrl, NULL, 0, 0) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: error sending halt to encoding threads: %s",
+                    strerror(errno));
+        }
+    }
+
     pthread_join(glob->syncip.threadid, NULL);
     pthread_join(glob->syncvoip.threadid, NULL);
-    pthread_join(glob->exporter->threadid, NULL);
+    for (i = 0; i < glob->seqtracker_threads; i++) {
+        pthread_join(glob->seqtrackers[i].threadid, NULL);
+    }
+    for (i = 0; i < glob->encoding_threads; i++) {
+        pthread_join(glob->encoders[i].threadid, NULL);
+        destroy_encoder_worker(&(glob->encoders[i]));
+    }
+    for (i = 0; i < glob->forwarding_threads; i++) {
+        pthread_join(glob->forwarders[i].threadid, NULL);
+    }
 
     logger(LOG_INFO, "OpenLI: exiting OpenLI Collector.");
     /* Tidy up, exit */

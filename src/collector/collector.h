@@ -42,6 +42,7 @@
 #include "etsili_core.h"
 #include "reassembler.h"
 #include "collector_publish.h"
+#include "collector_base.h"
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
@@ -187,7 +188,7 @@ typedef struct colthread_local {
     staticipsession_t *activestaticintercepts;
 
     /* Message queue for exporting LI records */
-    void *zmq_pubsock;
+    void **zmq_pubsocks;
 
     /* Known RADIUS servers, i.e. if we see traffic to or from these
      * servers, we assume it is RADIUS.
@@ -209,62 +210,40 @@ typedef struct colthread_local {
 
 } colthread_local_t;
 
-typedef struct shared_global_info {
-    char *operatorid;
-    char *networkelemid;
-    char *intpointid;
-    char *provisionerip;
-    char *provisionerport;
-
-    int operatorid_len;
-    int networkelemid_len;
-    int intpointid_len;
-
-} shared_global_info_t;
-
-typedef struct supporting_thread_global {
-
-    pthread_t threadid;
-    pthread_mutex_t mutex;
-    void *collector_queues;
-    void *epollevs;
-    int epoll_fd;
-
-} support_thread_global_t;
-
-typedef struct export_thread_data {
-    pthread_t threadid;
-    void *zmq_ctxt;
-    int workers;
-    shared_global_info_t *shared;
-} export_thread_data_t;
-
-
 typedef struct collector_global {
 
     void *zmq_ctxt;
     colinput_t *inputs;
-    int exportthreads;
+
+    int seqtracker_threads;
+    int encoding_threads;
+    int forwarding_threads;
+
+    void *zmq_forwarder_ctrl;
+    void *zmq_encoder_ctrl;
 
     pthread_rwlock_t config_mutex;
 
-    pthread_t zmq_proxy_threadid;
-    support_thread_global_t syncip;
-    support_thread_global_t syncvoip;
+    sync_thread_global_t syncip;
+    sync_thread_global_t syncvoip;
 
     //support_thread_global_t *exporters;
 
-    export_thread_data_t *exporter;
+    seqtracker_thread_data_t *seqtrackers;
+    openli_encoder_t *encoders;
+    forwarding_thread_data_t *forwarders;
 
     libtrace_message_queue_t intersyncq;
 
     char *configfile;
-    shared_global_info_t sharedinfo;
+    collector_identity_t sharedinfo;
     libtrace_list_t *expired_inputs;
 
     coreserver_t *alumirrors;
 
     char *sipdebugfile;
+
+    pthread_t seqproxy_tid;
 
 } collector_global_t;
 
@@ -276,10 +255,10 @@ typedef struct packetinfo {
     uint16_t destport;
 } packet_info_t;
 
-int register_sync_queues(support_thread_global_t *glob,
+int register_sync_queues(sync_thread_global_t *glob,
         libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq,
         libtrace_thread_t *parent);
-void deregister_sync_queues(support_thread_global_t *glob,
+void deregister_sync_queues(sync_thread_global_t *glob,
         libtrace_thread_t *t);
 
 

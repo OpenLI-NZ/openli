@@ -24,48 +24,72 @@
  *
  */
 
+#include <unistd.h>
+
 #include "ipiri.h"
 #include "ipcc.h"
-#include "encoder_worker.h"
+#include "collector_base.h"
 #include "logger.h"
 
 static int init_worker(openli_encoder_t *enc) {
     int zero = 0;
     int hwm = 1000000;
+    int i;
+    char sockname[128];
 
     enc->encoder = init_wandder_encoder();
     enc->freegenerics = NULL;
-    enc->zmq_recvjob = zmq_socket(enc->zmq_ctxt, ZMQ_PULL);
-    if (zmq_connect(enc->zmq_recvjob, "inproc://openliexporterpush") != 0) {
-        logger(LOG_INFO, "OpenLI: error connecting to exporter push socket");
-        return -1;
+
+    enc->zmq_recvjobs = calloc(enc->seqtrackers, sizeof(void *));
+    for (i = 0; i < enc->seqtrackers; i++) {
+        enc->zmq_recvjobs[i] = zmq_socket(enc->zmq_ctxt, ZMQ_PULL);
+        snprintf(sockname, 128, "inproc://openliseqpush-%d", i);
+        if (zmq_connect(enc->zmq_recvjobs[i], sockname) != 0) {
+            logger(LOG_INFO, "OpenLI: error connecting to zmq pull socket");
+            return -1;
+        }
+
+        if (zmq_setsockopt(enc->zmq_recvjobs[i], ZMQ_LINGER, &zero,
+                sizeof(zero)) != 0) {
+            logger(LOG_INFO, "OpenLI: error configuring connection to exporter push socket");
+            return -1;
+        }
     }
 
-    if (zmq_setsockopt(enc->zmq_recvjob, ZMQ_LINGER, &zero, sizeof(zero))
-            != 0) {
-        logger(LOG_INFO, "OpenLI: error configuring connection to exporter push socket");
-        return -1;
-    }
-
-    enc->zmq_pushresult = zmq_socket(enc->zmq_ctxt, ZMQ_PUSH);
-    if (zmq_connect(enc->zmq_pushresult, "inproc://openliexporterpull") != 0) {
-        logger(LOG_INFO, "OpenLI: error connecting to exporter result socket");
-        return -1;
-    }
-    if (zmq_setsockopt(enc->zmq_pushresult, ZMQ_LINGER, &zero, sizeof(zero))
-            != 0) {
-        logger(LOG_INFO, "OpenLI: error configuring connection to exporter push socket");
-        return -1;
-    }
-
-    if (zmq_setsockopt(enc->zmq_pushresult, ZMQ_SNDHWM, &hwm, sizeof(hwm))
-            != 0) {
-        logger(LOG_INFO, "OpenLI: error configuring connection to exporter push socket");
-        return -1;
+    enc->zmq_pushresults = calloc(enc->forwarders, sizeof(void *));
+    for (i = 0; i < enc->forwarders; i++) {
+        snprintf(sockname, 128, "inproc://openlirespush-%d", i);
+        enc->zmq_pushresults[i] = zmq_socket(enc->zmq_ctxt, ZMQ_PUSH);
+        if (zmq_connect(enc->zmq_pushresults[i], sockname) != 0) {
+            logger(LOG_INFO,
+                    "OpenLI: error connecting to exporter result socket%s: %s",
+                    sockname, strerror(errno));
+            zmq_close(enc->zmq_pushresults[i]);
+            enc->zmq_pushresults[i] = NULL;
+            continue;
+        }
+        if (zmq_setsockopt(enc->zmq_pushresults[i], ZMQ_LINGER, &zero,
+                sizeof(zero)) != 0) {
+            logger(LOG_INFO,
+                    "OpenLI: error configuring connection to exporter push socket %s: %s",
+                    sockname, strerror(errno));
+            zmq_close(enc->zmq_pushresults[i]);
+            enc->zmq_pushresults[i] = NULL;
+            continue;
+        }
+        if (zmq_setsockopt(enc->zmq_pushresults[i], ZMQ_SNDHWM, &hwm,
+                sizeof(hwm)) != 0) {
+            logger(LOG_INFO,
+                    "OpenLI: error configuring connection to exporter push socket %s: %s",
+                    sockname, strerror(errno));
+            zmq_close(enc->zmq_pushresults[i]);
+            enc->zmq_pushresults[i] = NULL;
+            continue;
+        }
     }
 
     enc->zmq_control = zmq_socket(enc->zmq_ctxt, ZMQ_SUB);
-    if (zmq_connect(enc->zmq_control, "inproc://openliexportercontrol") != 0) {
+    if (zmq_connect(enc->zmq_control, "inproc://openliencodercontrol") != 0) {
         logger(LOG_INFO, "OpenLI: error connecting to exporter control socket");
         return -1;
     }
@@ -86,7 +110,7 @@ static int init_worker(openli_encoder_t *enc) {
 }
 
 void destroy_encoder_worker(openli_encoder_t *enc) {
-    int x;
+    int x, i;
     openli_encoding_job_t job;
     uint32_t drained = 0;
 
@@ -98,77 +122,79 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
         free_etsili_generics(enc->freegenerics);
     }
 
-    do {
-        x = zmq_recv(enc->zmq_recvjob, &job, sizeof(openli_encoding_job_t),
-                ZMQ_DONTWAIT);
-        if (x < 0) {
-            if (errno == EAGAIN) {
-                continue;
+    for (i = 0; i < enc->seqtrackers; i++) {
+        do {
+            x = zmq_recv(enc->zmq_recvjobs[i], &job,
+                    sizeof(openli_encoding_job_t), ZMQ_DONTWAIT);
+            if (x < 0) {
+                if (errno == EAGAIN) {
+                    continue;
+                }
+                break;
             }
-            break;
-        }
 
-        if (job.origreq->type == OPENLI_EXPORT_IPCC) {
-            free_published_message(job.origreq);
-        } else {
-            free(job.origreq);
-        }
-        drained ++;
+            if (job.origreq->type == OPENLI_EXPORT_IPCC) {
+                free_published_message(job.origreq);
+            } else {
+                free(job.origreq);
+            }
+            drained ++;
 
-    } while (x > 0);
-
-    printf("encoder worker drained %u messages\n", drained);
-
-    if (enc->zmq_recvjob) {
-        zmq_close(enc->zmq_recvjob);
+        } while (x > 0);
+        zmq_close(enc->zmq_recvjobs[i]);
     }
+
+    printf("encoder worker %d drained %u messages\n", enc->workerid, drained);
 
     if (enc->zmq_control) {
         zmq_close(enc->zmq_control);
     }
 
-    if (enc->zmq_pushresult) {
-        zmq_close(enc->zmq_pushresult);
+    for (i = 0; i < enc->forwarders; i++) {
+        if (enc->zmq_pushresults[i]) {
+            zmq_close(enc->zmq_pushresults[i]);
+        }
     }
+    free(enc->zmq_recvjobs);
+    free(enc->zmq_pushresults);
 
 }
 
-static int poll_nextjob(openli_encoder_t *enc, openli_encoding_job_t *job) {
-    zmq_pollitem_t items[2];
+static int poll_nextjob(openli_encoder_t *enc, openli_encoding_job_t *job,
+        int trypoll) {
     int x;
 
-    items[0].socket = enc->zmq_recvjob;
-    items[0].fd = 0;
-    items[0].events = ZMQ_POLLIN;
-    items[0].revents = 0;
+    if (trypoll) {
+        int tmpbuf;
+        x = zmq_recv(enc->zmq_control, &tmpbuf, sizeof(tmpbuf), ZMQ_DONTWAIT);
 
-    items[1].socket = enc->zmq_control;
-    items[1].fd = 0;
-    items[1].events = ZMQ_POLLIN;
-    items[1].revents = 0;
-
-    zmq_poll(items, 2, -1);
-
-    if (items[1].revents & ZMQ_POLLIN) {
-        return 0;
-    }
-
-    if (items[0].revents & ZMQ_POLLIN) {
-        x = zmq_recv(enc->zmq_recvjob, job, sizeof(openli_encoding_job_t),
-                ZMQ_DONTWAIT);
         if (x < 0) {
-            if (errno == EAGAIN) {
-                return -1;
+            if (errno != EAGAIN) {
+                logger(LOG_INFO,
+                        "OpenLI: error reading ctrl msg in encoder worker %d",
+                        enc->workerid);
+                return 0;
             }
-            logger(LOG_INFO,
-                    "OpenLI: error reading job in encoder worker %d",
-                    enc->workerid);
+        } else {
             return 0;
         }
-        return 1;
     }
 
-    return -1;
+    x = zmq_recv(enc->zmq_recvjobs[0], job, sizeof(openli_encoding_job_t),
+            ZMQ_DONTWAIT);
+    if (x < 0) {
+        if (errno == EAGAIN) {
+            return -1;
+        }
+        logger(LOG_INFO,
+                "OpenLI: error reading job in encoder worker %d",
+                enc->workerid);
+        return 0;
+    }
+    if (x == 0) {
+        return 0;
+    }
+    return 1;
 }
 
 static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
@@ -176,19 +202,15 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
 
     int ret = -1;
 
-    if (job->toreturn) {
-        wandder_release_encoded_result(enc->encoder, job->toreturn);
-    }
-
     switch(job->origreq->type) {
         case OPENLI_EXPORT_IPCC:
-            ret = encode_ipcc(enc->encoder, job->intstate->preencoded,
+            ret = encode_ipcc(enc->encoder, job->preencoded,
                     &(job->origreq->data.ipcc), job->seqno,
                     &(job->origreq->ts), res);
             break;
         case OPENLI_EXPORT_IPIRI:
             ret = encode_ipiri(enc->encoder, &(enc->freegenerics),
-                    job->intstate->preencoded,
+                    job->preencoded,
                     &(job->origreq->data.ipiri), job->seqno, res);
 
             /* TODO this will be handled by releasing the iri message */
@@ -204,6 +226,7 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             break;
     }
 
+
     return ret;
 }
 
@@ -211,6 +234,7 @@ void *run_encoder_worker(void *encstate) {
     openli_encoder_t *enc = (openli_encoder_t *)encstate;
     openli_encoding_job_t nextjob;
     openli_encoded_result_t result;
+    int trypoll = 1, sincelastpoll;
 
     if (init_worker(enc) == -1) {
         logger(LOG_INFO,
@@ -219,18 +243,23 @@ void *run_encoder_worker(void *encstate) {
         pthread_exit(NULL);
     }
 
+    logger(LOG_INFO, "OpenLI: starting encoding thread %d", enc->workerid);
+
+    sincelastpoll = 0;
     while (1) {
         int ret;
-        ret = poll_nextjob(enc, &nextjob);
+        ret = poll_nextjob(enc, &nextjob, trypoll);
 
         if (ret == 0) {
             break;
         }
         if (ret == -1) {
+            trypoll = 1;
+            sincelastpoll = 0;
+            usleep(10);
             continue;
         }
 
-#if 0
         if (encode_etsi(enc, &nextjob, &result) < 0) {
             /* What do we do in the event of an error? */
             logger(LOG_INFO,
@@ -239,25 +268,41 @@ void *run_encoder_worker(void *encstate) {
 
             continue;
         }
-#endif
-        result.intstate = nextjob.intstate;
+        result.liid = nextjob.liid;
         result.seqno = nextjob.seqno;
         result.destid = nextjob.origreq->destid;
         result.origreq = nextjob.origreq;
 
-        if (zmq_send(enc->zmq_pushresult, &result, sizeof(result), 0) < 0) {
+        // FIXME -- hash result based on LIID (and CIN?)
+#if 0
+        assert(enc->zmq_pushresults[0] != NULL);
+        if (zmq_send(enc->zmq_pushresults[0], &result, sizeof(result), 0) < 0) {
             logger(LOG_INFO, "OpenLI: error while pushing encoded result back to exporter (worker=%d)", enc->workerid);
             break;
         }
-#if 0
+#endif
+        sincelastpoll ++;
+
+        /* If we've done a pile of jobs without polling, force one anyway
+         * just in case we've been told to halt via the control socket.
+         */
+        if (sincelastpoll > 10000) {
+            trypoll = 1;
+            sincelastpoll = 0;
+        } else {
+            trypoll = 0;
+        }
+
+        // XXX temporary
         if (nextjob.origreq->type == OPENLI_EXPORT_IPCC) {
             release_published_message(nextjob.origreq);
+            free(result.msgbody->encoded);
+            free(result.msgbody);
         } else {
             free(nextjob.origreq);
         }
-#endif
+        free(nextjob.liid);
     }
-
     logger(LOG_INFO, "OpenLI: halting encoding worker %d", enc->workerid);
     pthread_exit(NULL);
 }

@@ -402,6 +402,9 @@ struct addrinfo *populate_addrinfo(char *ipstr, char *portstr,
     return res;
 }
 
+uint32_t hash_liid(char *liid) {
+    return hashlittle(liid, strlen(liid), 1572869);
+}
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 

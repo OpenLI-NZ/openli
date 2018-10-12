@@ -37,38 +37,6 @@
 #include "etsili_core.h"
 #include "export_shared.h"
 
-typedef struct encoder_state {
-    void *zmq_ctxt;
-    void *zmq_recvjob;
-    void *zmq_pushresult;
-    void *zmq_control;
-
-    pthread_t threadid;
-    int workerid;
-    shared_global_info_t *shared;
-	wandder_encoder_t *encoder;
-    etsili_generic_t *freegenerics;
-} openli_encoder_t;
-
-typedef struct encoder_job {
-    exporter_intercept_state_t *intstate;
-    uint32_t seqno;
-    openli_export_recv_t *origreq;
-    wandder_encoded_result_t *toreturn;
-} PACKED openli_encoding_job_t;
-
-typedef struct encoder_result {
-    exporter_intercept_state_t *intstate;
-
-    ii_header_t header;
-    wandder_encoded_result_t *msgbody;
-    uint8_t *ipcontents;
-    uint32_t ipclen;
-    uint32_t seqno;
-    uint32_t destid;
-    openli_export_recv_t *origreq;
-} PACKED openli_encoded_result_t;
-
 void destroy_encoder_worker(openli_encoder_t *enc);
 void *run_encoder_worker(void *encstate);
 

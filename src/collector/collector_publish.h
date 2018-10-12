@@ -47,6 +47,7 @@ enum {
     OPENLI_EXPORT_IPMMIRI = 11,
     OPENLI_EXPORT_INTERCEPT_DETAILS = 12,
     OPENLI_EXPORT_INTERCEPT_OVER = 13,
+    OPENLI_EXPORT_HALT = 14,
 
 };
 
@@ -124,6 +125,7 @@ typedef struct published_intercept_msg {
     char *liid;
     char *authcc;
     char *delivcc;
+    int seqtrackerid;
 } published_intercept_msg_t;
 
 typedef struct openli_export_recv openli_export_recv_t;

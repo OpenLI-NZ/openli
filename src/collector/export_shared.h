@@ -30,6 +30,8 @@
 #include <uthash.h>
 #include <libwandder.h>
 
+#include "etsili_core.h"
+
 typedef struct exporter_intercept_msg {
     char *liid;
     int liid_len;

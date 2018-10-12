@@ -34,14 +34,13 @@
 #include "logger.h"
 #include "collector.h"
 #include "intercept.h"
-#include "collector_export.h"
 #include "etsili_core.h"
 #include "ipmmiri.h"
 
 int ipmm_iri(libtrace_packet_t *pkt, openli_export_recv_t *irimsg,
         voipintercept_t *vint, voipintshared_t *cin,
         etsili_iri_type_t iritype, uint8_t ipmmiri_style,
-        shared_global_info_t *info) {
+        collector_identity_t *info) {
 
     irimsg->type = OPENLI_EXPORT_IPMMIRI;
 
@@ -56,8 +55,7 @@ int ipmm_iri(libtrace_packet_t *pkt, openli_export_recv_t *irimsg,
 }
 
 int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
-        exporter_intercept_msg_t *intdetails, uint32_t seqno,
-        openli_encoded_result_t *res, struct timeval *ts) {
+        uint32_t seqno, openli_encoded_result_t *res, struct timeval *ts) {
 
     wandder_etsipshdr_data_t hdrdata;
 

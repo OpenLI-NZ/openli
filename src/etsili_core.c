@@ -858,8 +858,26 @@ void etsili_clear_preencoded_fields(wandder_encode_job_t *pendarray) {
             free(pendarray[i].valspace);
         }
     }
+}
 
+void etsili_copy_preencoded(wandder_encode_job_t *dest,
+        wandder_encode_job_t *src) {
 
+    preencode_index_t i;
+
+    for (i = 0; i < OPENLI_PREENCODE_LAST; i++) {
+        memcpy(&(dest[i]), &(src[i]), sizeof(wandder_encode_job_t));
+
+        /* Don't technically need to copy this, but other wandder functions
+         * currently assume valspace is freeable memory so will do so for now
+         * just to avoid issues.
+         */
+        dest[i].valspace = malloc(src[i].valalloced);
+        memcpy(dest[i].valspace, src[i].valspace, src[i].vallen);
+
+        dest[i].encodedspace = malloc(src[i].encodedlen);
+        memcpy(dest[i].encodedspace, src[i].encodedspace, src[i].encodedlen);
+    }
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

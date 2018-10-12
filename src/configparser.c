@@ -755,6 +755,7 @@ yamlfail:
 static int global_parser(void *arg, yaml_document_t *doc,
         yaml_node_t *key, yaml_node_t *value) {
     collector_global_t *glob = (collector_global_t *)arg;
+
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SEQUENCE_NODE &&
             strcmp((char *)key->data.scalar.value, "inputs") == 0) {
@@ -833,12 +834,34 @@ static int global_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
-            strcmp((char *)key->data.scalar.value, "exportthreads") == 0) {
-        glob->exportthreads = strtoul((char *) value->data.scalar.value, NULL,
-                10);
-        if (glob->exportthreads <= 0) {
-            glob->exportthreads = 1;
-            logger(LOG_INFO, "OpenLI: must have at least one export thread per collector!");
+            strcmp((char *)key->data.scalar.value, "seqtrackerthreads") == 0) {
+        glob->seqtracker_threads = strtoul((char *) value->data.scalar.value,
+                NULL, 10);
+        if (glob->seqtracker_threads <= 0) {
+            glob->seqtracker_threads = 1;
+            logger(LOG_INFO, "OpenLI: must have at least one sequence tracker thread per collector!");
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "encoderthreads") == 0) {
+        glob->encoding_threads = strtoul((char *) value->data.scalar.value,
+                NULL, 10);
+        if (glob->encoding_threads <= 0) {
+            glob->encoding_threads = 1;
+            logger(LOG_INFO, "OpenLI: must have at least one encoder thread per collector!");
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "forwardingthreads") == 0) {
+        glob->forwarding_threads = strtoul((char *) value->data.scalar.value,
+                NULL, 10);
+        if (glob->forwarding_threads <= 0) {
+            glob->forwarding_threads = 1;
+            logger(LOG_INFO, "OpenLI: must have at least one forwarding thread per collector!");
         }
     }
 

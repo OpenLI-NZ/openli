@@ -65,6 +65,7 @@ typedef struct intercept_common {
     int delivcc_len;
     uint32_t destid;
     char *targetagency;
+    int seqtrackerid;
 } intercept_common_t;
 
 typedef struct ipintercept {
@@ -74,7 +75,6 @@ typedef struct ipintercept {
     int username_len;
 
     internet_access_method_t accesstype;
-
 
     /* Special case for converting ALU intercepts into ETSI ones */
     uint32_t alushimid;

@@ -33,7 +33,6 @@
 #include "coreserver.h"
 #include "logger.h"
 #include "etsili_core.h"
-#include "collector_export.h"
 #include "util.h"
 
 typedef struct alushimhdr {
@@ -106,7 +105,7 @@ alushimhdr_t *get_alushim_header(libtrace_packet_t *packet, uint32_t *rem) {
 }
 
 static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
-        aluintercept_t *alu, uint8_t dir, shared_global_info_t *info) {
+        aluintercept_t *alu, uint8_t dir, collector_identity_t *info) {
 
     openli_export_recv_t *msg;
     int queueused;
@@ -128,11 +127,11 @@ static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
 
     memcpy(msg->data.ipcc.ipcontent, l3, rem);
 
-    publish_openli_msg(loc->zmq_pubsock, msg);
+    publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
 
 }
 
-int check_alu_intercept(shared_global_info_t *info, colthread_local_t *loc,
+int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
         coreserver_t *alusources, aluintercept_t *aluints) {
 

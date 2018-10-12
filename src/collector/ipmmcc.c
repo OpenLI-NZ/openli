@@ -34,14 +34,13 @@
 
 #include "logger.h"
 #include "collector.h"
-#include "collector_export.h"
 #include "collector_publish.h"
 #include "etsili_core.h"
 #include "util.h"
+#include "ipmmcc.h"
 
 int encode_ipmmcc(wandder_encoder_t **encoder, openli_ipmmcc_job_t *job,
-        exporter_intercept_msg_t *intdetails, uint32_t seqno,
-        openli_encoded_result_t *res) {
+        uint32_t seqno, openli_encoded_result_t *res) {
 
     struct timeval tv = trace_get_timeval(job->packet);
     wandder_etsipshdr_data_t hdrdata;

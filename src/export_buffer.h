@@ -30,7 +30,7 @@
 #include <libwandder.h>
 #include <libwandder_etsili.h>
 #include "netcomms.h"
-#include "collector/encoder_worker.h"
+#include "collector/collector_base.h"
 
 typedef struct export_buffer {
     uint8_t *bufhead;

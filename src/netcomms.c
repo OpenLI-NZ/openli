@@ -1079,6 +1079,7 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
         } else if (f == OPENLI_PROTO_FIELD_LIID) {
             DECODE_STRING_FIELD(ipint->common.liid, valptr, vallen);
             ipint->common.liid_len = vallen;
+            ipint->common.seqtrackerid = 0;
         } else if (f == OPENLI_PROTO_FIELD_AUTHCC) {
             DECODE_STRING_FIELD(ipint->common.authcc, valptr, vallen);
             ipint->common.authcc_len = vallen;

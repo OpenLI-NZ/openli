@@ -37,7 +37,6 @@
 #include "etsili_core.h"
 #include "collector.h"
 #include "collector_sync_voip.h"
-#include "collector_export.h"
 #include "collector_publish.h"
 #include "configparser.h"
 #include "logger.h"
@@ -50,7 +49,8 @@
 collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
 
     struct epoll_event ev;
-    int zero = 0;
+    int zero = 0, i;
+    char sockname[128];
 
     collector_sync_voip_t *sync = (collector_sync_voip_t *)
             malloc(sizeof(collector_sync_voip_t));
@@ -59,9 +59,22 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
     sync->glob = &(glob->syncvoip);
     sync->info = &(glob->sharedinfo);
 
-    sync->zmq_pubsock = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
-    zmq_connect(sync->zmq_pubsock, "inproc://openliipc");
-    zmq_setsockopt(sync->zmq_pubsock, ZMQ_SNDHWM, &zero, sizeof(zero));
+    sync->pubsockcount = glob->seqtracker_threads;
+    sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
+
+    for (i = 0; i < sync->pubsockcount; i++) {
+        sync->zmq_pubsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+        snprintf(sockname, 128, "inproc://openlipub-%d", i);
+        if (zmq_connect(sync->zmq_pubsocks[i], sockname) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: colsync thread failed to bind to publishing zmq: %s",
+                    strerror(errno));
+            zmq_close(sync->zmq_pubsocks[i]);
+            sync->zmq_pubsocks[i] = NULL;
+        }
+
+        /* Do we need to set a HWM? */
+    }
 
     sync->intersyncq = &(glob->intersyncq);
     sync->intersync_ev.fdtype = SYNC_EVENT_INTERSYNC;
@@ -101,7 +114,7 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
 
 void clean_sync_voip_data(collector_sync_voip_t *sync) {
     struct epoll_event ev;
-    int zero = 0;
+    int zero = 0, i;
 
     free_voip_cinmap(sync->knowncallids);
     if (sync->voipintercepts) {
@@ -135,8 +148,17 @@ void clean_sync_voip_data(collector_sync_voip_t *sync) {
         free(sync->sipdebugfile);
     }
 
-    zmq_setsockopt(sync->zmq_pubsock, ZMQ_LINGER, &zero, sizeof(zero));
-    zmq_close(sync->zmq_pubsock);
+    for (i = 0; i < sync->pubsockcount; i++) {
+        if (sync->zmq_pubsocks[i] == NULL) {
+            continue;
+        }
+
+        zmq_setsockopt(sync->zmq_pubsocks[i], ZMQ_LINGER, &zero, sizeof(zero));
+        zmq_close(sync->zmq_pubsocks[i]);
+    }
+
+    free(sync->zmq_pubsocks);
+
 
 }
 
@@ -617,7 +639,8 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
         if (irimsg->data.ipmmiri.packet) {
             trace_increment_packet_refcount(irimsg->data.ipmmiri.packet);
         }
-        publish_openli_msg(sync->zmq_pubsock, irimsg);
+        publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid],
+                irimsg);
         exportcount += 1;
     }
     return exportcount;
@@ -736,7 +759,8 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         if (irimsg->data.ipmmiri.packet) {
             trace_increment_packet_refcount(irimsg->data.ipmmiri.packet);
         }
-        publish_openli_msg(sync->zmq_pubsock, irimsg);
+        publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid],
+                irimsg);
         exportcount += 1;
     }
     return exportcount;
@@ -864,7 +888,7 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     expmsg->data.cept.authcc = strdup(vint->common.authcc);
     expmsg->data.cept.delivcc = strdup(vint->common.delivcc);
 
-    publish_openli_msg(sync->zmq_pubsock, expmsg);
+    publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], expmsg);
 
     HASH_DELETE(hh_liid, sync->voipintercepts, vint);
     free_single_voipintercept(vint);
@@ -1113,6 +1137,8 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     logger(LOG_INFO,
             "OpenLI: received VOIP intercept %s from provisioner.",
             vint->common.liid);
+    vint->common.seqtrackerid = hash_liid(vint->common.liid) %
+            sync->pubsockcount;
 
     HASH_ADD_KEYPTR(hh_liid, sync->voipintercepts, vint->common.liid,
             vint->common.liid_len, vint);
@@ -1122,7 +1148,7 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     expmsg->data.cept.liid = strdup(vint->common.liid);
     expmsg->data.cept.authcc = strdup(vint->common.authcc);
     expmsg->data.cept.delivcc = strdup(vint->common.delivcc);
-    publish_openli_msg(sync->zmq_pubsock, expmsg);
+    publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], expmsg);
 
     pthread_mutex_lock(&(sync->glob->mutex));
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {

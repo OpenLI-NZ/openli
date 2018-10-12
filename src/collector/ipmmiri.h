@@ -31,7 +31,6 @@
 
 #include "collector.h"
 #include "intercept.h"
-#include "collector_export.h"
 #include "etsili_core.h"
 
 enum {
@@ -41,7 +40,7 @@ enum {
 };
 
 int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
-        exporter_intercept_msg_t *intdetails, uint32_t seqno,
+        uint32_t seqno,
         openli_encoded_result_t *res, struct timeval *ts);
 
 
