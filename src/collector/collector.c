@@ -153,7 +153,13 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->ipcc_freemessages.created = 0;
     loc->ipcc_freemessages.freed = 0;
     loc->ipcc_freemessages.recycled = 0;
-    pthread_mutex_init(&(loc->ipcc_freemessages.mutex), NULL);
+
+    pthread_mutex_lock(&(glob->mutexmutex));
+    loc->ipcc_freemessages.mutex = &(glob->available_mutexes[glob->nextmutex]);
+    glob->nextmutex ++;
+    assert(glob->nextmutex <= glob->total_col_threads);
+    pthread_mutex_unlock(&(glob->mutexmutex));
+
 
     loc->zmq_pubsocks = calloc(glob->seqtracker_threads, sizeof(void *));
     for (i = 0; i < glob->seqtracker_threads; i++) {
@@ -240,7 +246,6 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     printf("created a total of %u messages\n", loc->ipcc_freemessages.created);
     printf("recycled %u messages\n", loc->ipcc_freemessages.recycled);
     printf("destroyed %u messages\n", loc->ipcc_freemessages.freed);
-    pthread_mutex_destroy(&(loc->ipcc_freemessages.mutex));
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
         free_all_ipsessions(&(v4->intercepts));
@@ -849,9 +854,16 @@ static void clear_global_config(collector_global_t *glob) {
         clean_seqtracker(&(glob->seqtrackers[i]));
     }
 
+    for (i = 0; i < glob->total_col_threads; i++) {
+        pthread_mutex_destroy(&(glob->available_mutexes[i]));
+    }
+
+    pthread_mutex_destroy(&(glob->mutexmutex));
+
     free(glob->seqtrackers);
     free(glob->encoders);
     free(glob->forwarders);
+    free(glob->available_mutexes);
     free(glob);
 }
 
@@ -950,6 +962,7 @@ void deregister_sync_queues(sync_thread_global_t *glob,
 static collector_global_t *parse_global_config(char *configfile) {
 
     collector_global_t *glob = NULL;
+    int i;
 
     glob = (collector_global_t *)calloc(1, sizeof(collector_global_t));
 
@@ -964,6 +977,9 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->sharedinfo.operatorid_len = 0;
     glob->sharedinfo.networkelemid = NULL;
     glob->sharedinfo.networkelemid_len = 0;
+    glob->total_col_threads = 0;
+    glob->available_mutexes = NULL;
+    glob->nextmutex = 0;
 
     init_sync_thread_data(&(glob->syncip));
     init_sync_thread_data(&(glob->syncvoip));
@@ -978,11 +994,19 @@ static collector_global_t *parse_global_config(char *configfile) {
     libtrace_message_queue_init(&glob->intersyncq,
             sizeof(openli_intersync_msg_t));
 
+    pthread_mutex_init(&(glob->mutexmutex), NULL);
     pthread_rwlock_init(&glob->config_mutex, NULL);
 
     if (parse_collector_config(configfile, glob) == -1) {
         clear_global_config(glob);
         return NULL;
+    }
+
+    glob->available_mutexes = (pthread_mutex_t *)calloc(glob->total_col_threads,
+            sizeof(pthread_mutex_t));
+
+    for (i = 0; i < glob->total_col_threads; i++) {
+        pthread_mutex_init(&(glob->available_mutexes[i]), NULL);
     }
 
     glob->zmq_forwarder_ctrl = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
@@ -1283,6 +1307,8 @@ int main(int argc, char *argv[]) {
     for (i = 0; i < glob->forwarding_threads; i++) {
         glob->forwarders[i].zmq_ctxt = glob->zmq_ctxt;
         glob->forwarders[i].forwardid = i;
+        glob->forwarders[i].encoders = glob->encoding_threads;
+        glob->forwarders[i].colthreads = glob->total_col_threads;
         glob->forwarders[i].zmq_ctrlsock = NULL;
         glob->forwarders[i].zmq_pullressock = NULL;
 

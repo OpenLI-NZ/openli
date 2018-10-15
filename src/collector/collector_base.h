@@ -35,6 +35,21 @@
 #include "export_shared.h"
 #include "etsili_core.h"
 #include "collector_publish.h"
+#include "export_buffer.h"
+
+typedef struct export_dest {
+    int failmsg;
+    int fd;
+    int awaitingconfirm;
+    int halted;
+    uint32_t mediatorid;
+    char *ipstr;
+    char *portstr;
+    export_buffer_t buffer;
+
+    UT_hash_handle hh_fd;
+    UT_hash_handle hh_medid;
+} export_dest_t;
 
 typedef struct sync_thread_global {
 
@@ -85,6 +100,8 @@ typedef struct forwarding_thread_data {
     void *zmq_ctxt;
     pthread_t threadid;
     int forwardid;
+    int encoders;
+    int colthreads;
 
     void *zmq_ctrlsock;
     void *zmq_pullressock;
@@ -92,6 +109,21 @@ typedef struct forwarding_thread_data {
     zmq_pollitem_t *topoll;
     int pollsize;
     int nextpoll;
+    int awaitingconfirm;
+
+    int conntimerfd;
+    int flagtimerfd;
+
+    export_dest_t *destinations_by_fd;
+    export_dest_t *destinations_by_id;
+
+    wandder_encoded_result_t **freeresults;
+    wandder_encoded_result_t **freeresults_tail;
+    int *freerescount;
+
+    openli_export_recv_t **freepubs;
+    openli_export_recv_t **freepubs_tail;
+    int *freepubcount;
 
 } forwarding_thread_data_t;
 
@@ -117,17 +149,6 @@ typedef struct encoder_job {
     openli_export_recv_t *origreq;
     char *liid;
 } PACKED openli_encoding_job_t;
-
-typedef struct encoder_result {
-    ii_header_t header;
-    wandder_encoded_result_t *msgbody;
-    uint8_t *ipcontents;
-    uint32_t ipclen;
-    uint32_t seqno;
-    uint32_t destid;
-    char *liid;
-    openli_export_recv_t *origreq;
-} PACKED openli_encoded_result_t;
 
 void destroy_encoder_worker(openli_encoder_t *enc);
 void *run_encoder_worker(void *encstate);

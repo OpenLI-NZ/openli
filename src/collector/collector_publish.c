@@ -50,13 +50,13 @@ static inline openli_export_recv_t *_get_available_message(
         openli_exportmsg_freelist_t *flist) {
     openli_export_recv_t *msg = NULL;
 
-    if (pthread_mutex_trylock(&(flist->mutex)) == 0) {
+    if (pthread_mutex_trylock(flist->mutex) == 0) {
         if (flist->available) {
             msg = flist->available;
             flist->available = msg->nextfree;
             msg->nextfree = NULL;
         }
-        pthread_mutex_unlock(&(flist->mutex));
+        pthread_mutex_unlock(flist->mutex);
     }
 
     if (msg != NULL) {
@@ -82,13 +82,21 @@ void free_published_message(openli_export_recv_t *msg) {
     free(msg);
 }
 
+void release_published_messages(openli_export_recv_t *head, openli_export_recv_t *tail) {
+    pthread_mutex_lock(head->owner->mutex);
+    tail->nextfree = head->owner->available;
+    head->owner->available = head;
+    head->owner->recycled += 100;        // approx
+    pthread_mutex_unlock(head->owner->mutex);
+}
+
 void release_published_message(openli_export_recv_t *msg) {
 
-    if (pthread_mutex_trylock(&(msg->owner->mutex)) == 0) {
+    if (pthread_mutex_trylock(msg->owner->mutex) == 0) {
         msg->nextfree = msg->owner->available;
         msg->owner->available = msg;
         msg->owner->recycled ++;
-        pthread_mutex_unlock(&(msg->owner->mutex));
+        pthread_mutex_unlock(msg->owner->mutex);
     } else {
         msg->owner->freed ++;
         free_published_message(msg);

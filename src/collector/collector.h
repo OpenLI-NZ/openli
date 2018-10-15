@@ -215,6 +215,7 @@ typedef struct collector_global {
     void *zmq_ctxt;
     colinput_t *inputs;
 
+    int total_col_threads;
     int seqtracker_threads;
     int encoding_threads;
     int forwarding_threads;
@@ -228,6 +229,11 @@ typedef struct collector_global {
     sync_thread_global_t syncvoip;
 
     //support_thread_global_t *exporters;
+
+    pthread_mutex_t mutexmutex;
+
+    pthread_mutex_t *available_mutexes;
+    int nextmutex;
 
     seqtracker_thread_data_t *seqtrackers;
     openli_encoder_t *encoders;

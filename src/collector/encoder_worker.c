@@ -25,6 +25,7 @@
  */
 
 #include <unistd.h>
+#include <assert.h>
 
 #include "ipiri.h"
 #include "ipcc.h"
@@ -256,7 +257,7 @@ void *run_encoder_worker(void *encstate) {
         if (ret == -1) {
             trypoll = 1;
             sincelastpoll = 0;
-            usleep(10);
+            usleep(100);
             continue;
         }
 
@@ -274,13 +275,12 @@ void *run_encoder_worker(void *encstate) {
         result.origreq = nextjob.origreq;
 
         // FIXME -- hash result based on LIID (and CIN?)
-#if 0
         assert(enc->zmq_pushresults[0] != NULL);
         if (zmq_send(enc->zmq_pushresults[0], &result, sizeof(result), 0) < 0) {
             logger(LOG_INFO, "OpenLI: error while pushing encoded result back to exporter (worker=%d)", enc->workerid);
             break;
         }
-#endif
+
         sincelastpoll ++;
 
         /* If we've done a pile of jobs without polling, force one anyway
@@ -293,15 +293,6 @@ void *run_encoder_worker(void *encstate) {
             trypoll = 0;
         }
 
-        // XXX temporary
-        if (nextjob.origreq->type == OPENLI_EXPORT_IPCC) {
-            release_published_message(nextjob.origreq);
-            free(result.msgbody->encoded);
-            free(result.msgbody);
-        } else {
-            free(nextjob.origreq);
-        }
-        free(nextjob.liid);
     }
     logger(LOG_INFO, "OpenLI: halting encoding worker %d", enc->workerid);
     pthread_exit(NULL);

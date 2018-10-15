@@ -108,7 +108,8 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
 void clean_sync_data(collector_sync_t *sync) {
 
-    int i = 0, zero=0;
+    int i = 0, zero=0, ret;
+    int haltattempts = 0, haltfails = 0;
     ip_to_session_t *iter, *tmp;
     openli_export_recv_t *haltmsg;
 
@@ -153,35 +154,67 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->radiusplugin = NULL;
     sync->activeips = NULL;
 
-    for (i = 0; i < sync->pubsockcount; i++) {
-        if (sync->zmq_pubsocks[i] == NULL) {
-            continue;
+    while (haltattempts < 10) {
+        haltfails = 0;
+
+        for (i = 0; i < sync->pubsockcount; i++) {
+            if (sync->zmq_pubsocks[i] == NULL) {
+                continue;
+            }
+
+            /* Send a halt message to get the tracker thread to stop */
+            haltmsg = (openli_export_recv_t *)calloc(1,
+                    sizeof(openli_export_recv_t));
+            haltmsg->type = OPENLI_EXPORT_HALT;
+            ret = zmq_send(sync->zmq_pubsocks[i], &haltmsg, sizeof(haltmsg),
+                    ZMQ_NOBLOCK);
+            if (ret < 0 && errno == EAGAIN) {
+                haltfails ++;
+                free(haltmsg);
+                if (haltattempts < 9) {
+                    continue;
+                }
+            } else if (ret <= 0) {
+                free(haltmsg);
+            }
+
+            zmq_setsockopt(sync->zmq_pubsocks[i], ZMQ_LINGER, &zero,
+                    sizeof(zero));
+            zmq_close(sync->zmq_pubsocks[i]);
+            sync->zmq_pubsocks[i] = NULL;
         }
 
-        /* Send a halt message to get the tracker thread to stop */
-        haltmsg = (openli_export_recv_t *)calloc(1,
-                sizeof(openli_export_recv_t));
-        haltmsg->type = OPENLI_EXPORT_HALT;
-        zmq_send(sync->zmq_pubsocks[i], &haltmsg, sizeof(haltmsg), 0);
+        for (i = 0; i < sync->forwardcount; i++) {
+            if (sync->zmq_fwdctrlsocks[i] == NULL) {
+                continue;
+            }
 
-        zmq_setsockopt(sync->zmq_pubsocks[i], ZMQ_LINGER, &zero, sizeof(zero));
-        zmq_close(sync->zmq_pubsocks[i]);
-    }
-
-    for (i = 0; i < sync->forwardcount; i++) {
-        if (sync->zmq_fwdctrlsocks[i] == NULL) {
-            continue;
+            /* Send a halt message to get the forwarder thread to stop */
+            haltmsg = (openli_export_recv_t *)calloc(1,
+                    sizeof(openli_export_recv_t));
+            haltmsg->type = OPENLI_EXPORT_HALT;
+            ret = zmq_send(sync->zmq_fwdctrlsocks[i], &haltmsg, sizeof(haltmsg),
+                    ZMQ_NOBLOCK);
+            if (ret < 0 && errno == EAGAIN) {
+                haltfails ++;
+                free(haltmsg);
+                if (haltattempts < 9) {
+                    continue;
+                }
+            } else if (ret <= 0) {
+                free(haltmsg);
+            }
+            zmq_setsockopt(sync->zmq_fwdctrlsocks[i], ZMQ_LINGER, &zero,
+                    sizeof(zero));
+            zmq_close(sync->zmq_fwdctrlsocks[i]);
+            sync->zmq_fwdctrlsocks[i] = NULL;
         }
 
-        /* Send a halt message to get the forwarder thread to stop */
-        haltmsg = (openli_export_recv_t *)calloc(1,
-                sizeof(openli_export_recv_t));
-        haltmsg->type = OPENLI_EXPORT_HALT;
-        zmq_send(sync->zmq_fwdctrlsocks[i], &haltmsg, sizeof(haltmsg), 0);
-
-        zmq_setsockopt(sync->zmq_fwdctrlsocks[i], ZMQ_LINGER, &zero,
-                sizeof(zero));
-        zmq_close(sync->zmq_fwdctrlsocks[i]);
+        if (haltfails == 0) {
+            break;
+        }
+        haltattempts ++;
+        usleep(250000);
     }
 
     free(sync->zmq_pubsocks);

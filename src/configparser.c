@@ -145,6 +145,7 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
             continue;
         }
         HASH_ADD_KEYPTR(hh, glob->inputs, inp->uri, strlen(inp->uri), inp);
+        glob->total_col_threads += inp->threadcount;
     }
 
     return 0;

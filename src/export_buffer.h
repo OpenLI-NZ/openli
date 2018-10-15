@@ -30,7 +30,19 @@
 #include <libwandder.h>
 #include <libwandder_etsili.h>
 #include "netcomms.h"
-#include "collector/collector_base.h"
+#include "collector/collector_publish.h"
+
+typedef struct encoder_result {
+    ii_header_t header;
+    wandder_encoded_result_t *msgbody;
+    uint8_t *ipcontents;
+    uint32_t ipclen;
+    uint32_t seqno;
+    uint32_t destid;
+    char *liid;
+    openli_export_recv_t *origreq;
+} PACKED openli_encoded_result_t;
+
 
 typedef struct export_buffer {
     uint8_t *bufhead;

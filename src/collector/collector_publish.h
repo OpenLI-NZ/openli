@@ -149,7 +149,7 @@ struct openli_export_recv {
 } PACKED;
 
 struct openli_exportmsg_freelist {
-    pthread_mutex_t mutex;
+    pthread_mutex_t *mutex;
     openli_export_recv_t *available;
     uint32_t created;
     uint32_t freed;
@@ -159,6 +159,7 @@ struct openli_exportmsg_freelist {
 int publish_openli_msg(void *pubsock, openli_export_recv_t *msg);
 void free_published_message(openli_export_recv_t *msg);
 void release_published_message(openli_export_recv_t *msg);
+void release_published_messages(openli_export_recv_t *head, openli_export_recv_t *tail);
 
 openli_export_recv_t *create_ipcc_job(openli_exportmsg_freelist_t *flist,
         uint32_t cin, char *liid, uint32_t destid, libtrace_packet_t *pkt,
