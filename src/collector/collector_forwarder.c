@@ -37,6 +37,8 @@
 #include "collector_base.h"
 #include "collector_publish.h"
 
+#define BUF_BATCH_SIZE (10 * 1024 * 1024)
+
 static int add_new_destination(forwarding_thread_data_t *fwd,
         openli_export_recv_t *msg) {
 
@@ -50,6 +52,7 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
         newdest = (export_dest_t *)calloc(1, sizeof(export_dest_t));
 
         newdest->fd = -1;
+        newdest->pollindex = -1;
         newdest->failmsg = 0;
         newdest->awaitingconfirm = 0;
         newdest->halted = 0;
@@ -71,8 +74,8 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
             found->fd = -1;
             found->failmsg = 0;
         } else {
-            if (strcmp(newdest->ipstr, msg->data.med.ipstr) != 0 ||
-                    strcmp(newdest->portstr, msg->data.med.portstr) != 0) {
+            if (strcmp(found->ipstr, msg->data.med.ipstr) != 0 ||
+                    strcmp(found->portstr, msg->data.med.portstr) != 0) {
                 /* Mediator has changed IP or port */
                 logger(LOG_INFO, "OpenLI: mediator %u has changed location from %s:%s to %s:%s",
                         found->ipstr, found->portstr, msg->data.med.ipstr,
@@ -152,6 +155,19 @@ static void remove_destination(forwarding_thread_data_t *fwd,
     free(med);
 }
 
+static void disconnect_mediator(forwarding_thread_data_t *fwd,
+        export_dest_t *med) {
+
+    close(med->fd);
+    med->fd = -1;
+
+    if (med->pollindex >= 0) {
+        fwd->topoll[med->pollindex].fd = 0;
+        fwd->topoll[med->pollindex].events = 0;
+    }
+
+}
+
 static inline void enqueue_result(forwarding_thread_data_t *fwd,
         export_dest_t *med, openli_encoded_result_t *res) {
 
@@ -161,6 +177,9 @@ static inline void enqueue_result(forwarding_thread_data_t *fwd,
 
     if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
         /* TODO drop mediator since we've filled our buffer */
+        logger(LOG_INFO,
+                "OpenLI: forced to drop mediator %s:%s because we cannot buffer any more records for it -- please investigate asap!",
+                med->ipstr, med->portstr);
         remove_destination(fwd, med);
     }
 
@@ -195,7 +214,7 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
     }
 
     /* TODO enqueue this result to be forwarded */
-    //enqueue_result(fwd, med, res);
+    enqueue_result(fwd, med, res);
 
     if (res->liid) {
         free(res->liid);
@@ -312,6 +331,7 @@ static int connect_single_target(export_dest_t *dest) {
 static void connect_export_targets(forwarding_thread_data_t *fwd) {
 
     export_dest_t *dest, *tmp;
+    int ind;
 
     HASH_ITER(hh_medid, fwd->destinations_by_id, dest, tmp) {
 
@@ -331,18 +351,23 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
         HASH_ADD_KEYPTR(hh_fd, fwd->destinations_by_fd, &(dest->fd),
                 sizeof(dest->fd), dest);
 
-        if (fwd->nextpoll == fwd->pollsize - 1) {
-            fwd->topoll = realloc(fwd->topoll, (fwd->pollsize + 10) *
-                    sizeof(zmq_pollitem_t));
-            fwd->pollsize += 10;
+        if (dest->pollindex == -1) {
+            if (fwd->nextpoll == fwd->pollsize - 1) {
+                fwd->topoll = realloc(fwd->topoll, (fwd->pollsize + 10) *
+                        sizeof(zmq_pollitem_t));
+                fwd->pollsize += 10;
+            }
+            ind = fwd->nextpoll;
+            fwd->nextpoll ++;
+            dest->pollindex = ind;
+        } else {
+            ind = dest->pollindex;
         }
 
-        fwd->topoll[fwd->nextpoll].socket = NULL;
-        fwd->topoll[fwd->nextpoll].fd = dest->fd;
-        fwd->topoll[fwd->nextpoll].events = ZMQ_POLLOUT;
-
-        fwd->nextpoll ++;
-
+        fwd->topoll[ind].socket = NULL;
+        fwd->topoll[ind].fd = dest->fd;
+        fwd->topoll[ind].events = ZMQ_POLLOUT;
+        fwd->topoll[ind].revents = 0;
     }
 
 }
@@ -401,11 +426,98 @@ static int process_control_message(forwarding_thread_data_t *fwd) {
     return 1;
 }
 
+static int forwarder_main_loop(forwarding_thread_data_t *fwd) {
+    int topollc, x, i;
+
+    /* Add the mediator confirmation timer to our poll item list, if
+     * required.
+     */
+    if (fwd->awaitingconfirm) {
+        fwd->topoll[fwd->nextpoll].socket = NULL;
+        fwd->topoll[fwd->nextpoll].fd = fwd->flagtimerfd;
+        fwd->topoll[fwd->nextpoll].events = ZMQ_POLLIN;
+
+        topollc = fwd->nextpoll + 1;
+    } else {
+        topollc = fwd->nextpoll;
+    }
+
+    if (zmq_poll(fwd->topoll, topollc, -1) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error while polling in forwarder %d: %s",
+                fwd->forwardid, strerror(errno));
+        return -1;
+    }
+
+    if (fwd->topoll[0].revents & ZMQ_POLLIN) {
+        x = process_control_message(fwd);
+        if (x < 0) {
+            return 0;
+        }
+    }
+
+    if (fwd->topoll[2].revents & ZMQ_POLLIN) {
+        struct itimerspec its;
+
+        connect_export_targets(fwd);
+        its.it_interval.tv_sec = 0;
+        its.it_interval.tv_nsec = 0;
+        its.it_value.tv_sec = 1;
+        its.it_value.tv_nsec = 0;
+
+        timerfd_settime(fwd->conntimerfd, 0, &its, NULL);
+    }
+
+    if (fwd->topoll[1].revents & ZMQ_POLLIN) {
+        x = receive_incoming_etsi(fwd);
+        if (x < 0) {
+            return 0;
+        }
+    }
+
+    if (fwd->awaitingconfirm) {
+        if (fwd->topoll[fwd->nextpoll].revents & ZMQ_POLLIN) {
+            purge_unconfirmed_mediators(fwd);
+            fwd->awaitingconfirm = 0;
+            close(fwd->flagtimerfd);
+            fwd->flagtimerfd = -1;
+        }
+    }
+
+    for (i = 2; i < fwd->nextpoll; i++) {
+        export_dest_t *dest;
+        /* check if any destinations can received any buffered data */
+        if (!(fwd->topoll[i].revents & ZMQ_POLLOUT)) {
+            continue;
+        }
+        HASH_FIND(hh_fd, fwd->destinations_by_fd, &(fwd->topoll[i].fd),
+                sizeof(fwd->topoll[i].fd), dest);
+        if (dest == NULL) {
+            logger(LOG_INFO, "OpenLI: no matching destination for fd %d?",
+                    fwd->topoll[i].fd);
+            return -1;
+        }
+
+        if (get_buffered_amount(&(dest->buffer)) == 0) {
+            /* Nothing available to send */
+            continue;
+        }
+
+        if (transmit_buffered_records(&(dest->buffer), dest->fd,
+                BUF_BATCH_SIZE) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: error transmitting records to mediator %s:%s, dropping",
+                    dest->ipstr, dest->portstr);
+            disconnect_mediator(fwd, dest);
+        }
+
+    }
+    return 1;
+}
+
 static void forwarder_main(forwarding_thread_data_t *fwd) {
 
     int halted = 0, x, i;
-    int topollc;
-    openli_export_recv_t *msg;
     struct itimerspec its;
 
     fwd->destinations_by_id = NULL;
@@ -452,71 +564,9 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
     fwd->topoll[2].fd = fwd->conntimerfd;
     fwd->topoll[2].events = ZMQ_POLLIN;
 
-
-    while (!halted) {
-
-        /* Add the mediator confirmation timer to our poll item list, if
-         * required.
-         */
-        if (fwd->awaitingconfirm) {
-            fwd->topoll[fwd->nextpoll].socket = NULL;
-            fwd->topoll[fwd->nextpoll].fd = fwd->flagtimerfd;
-            fwd->topoll[fwd->nextpoll].events = ZMQ_POLLIN;
-
-            topollc = fwd->nextpoll + 1;
-        } else {
-            topollc = fwd->nextpoll;
-        }
-
-        if (zmq_poll(fwd->topoll, 3, -1) < 0) {
-            logger(LOG_INFO,
-                    "OpenLI: error while polling in forwarder %d: %s",
-                    fwd->forwardid, strerror(errno));
-            break;
-        }
-
-        if (fwd->topoll[0].revents & ZMQ_POLLIN) {
-            x = process_control_message(fwd);
-            if (x < 0) {
-                halted = 1;
-                break;
-            }
-        }
-
-        if (halted) {
-            break;
-        }
-
-        if (fwd->topoll[2].revents & ZMQ_POLLIN) {
-            connect_export_targets(fwd);
-            timerfd_settime(fwd->conntimerfd, 0, &its, NULL);
-        }
-
-        if (fwd->topoll[1].revents & ZMQ_POLLIN) {
-            x = receive_incoming_etsi(fwd);
-            if (x < 0) {
-                halted = 1;
-                break;
-            }
-        }
-
-        if (halted) {
-            break;
-        }
-
-        if (fwd->awaitingconfirm) {
-            if (fwd->topoll[fwd->nextpoll].revents & ZMQ_POLLIN) {
-                purge_unconfirmed_mediators(fwd);
-                fwd->awaitingconfirm = 0;
-                close(fwd->flagtimerfd);
-                fwd->flagtimerfd = -1;
-            }
-        }
-
-        for (i = 2; i < fwd->nextpoll; i++) {
-            /* check if any destinations can received any buffered data */
-        }
-    }
+    do {
+        x = forwarder_main_loop(fwd);
+    } while (x == 1);
 
     for (i = 0; i < fwd->encoders; i++) {
         if (fwd->freeresults[i] != NULL) {
@@ -544,7 +594,6 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
     if (fwd->flagtimerfd != -1) {
         close(fwd->flagtimerfd);
     }
-    
 
 }
 
@@ -615,7 +664,6 @@ void *start_forwarding_thread(void *data) {
     } while (x > 0);
 
 haltforwarder:
-    zmq_close(fwd->zmq_pullressock);
     zmq_close(fwd->zmq_ctrlsock);
     logger(LOG_DEBUG, "OpenLI: halting forwarding thread %d",
             fwd->forwardid);

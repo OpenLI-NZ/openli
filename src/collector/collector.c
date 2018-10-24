@@ -154,6 +154,9 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->ipcc_freemessages.freed = 0;
     loc->ipcc_freemessages.recycled = 0;
 
+    loc->accepted = 0;
+    loc->dropped = 0;
+
     pthread_mutex_lock(&(glob->mutexmutex));
     loc->ipcc_freemessages.mutex = &(glob->available_mutexes[glob->nextmutex]);
     glob->nextmutex ++;
@@ -236,6 +239,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     free(loc->zmq_pubsocks);
 
+    pthread_mutex_lock((loc->ipcc_freemessages.mutex));
     while (loc->ipcc_freemessages.available) {
         openli_export_recv_t *msg = loc->ipcc_freemessages.available;
         loc->ipcc_freemessages.available = msg->nextfree;
@@ -246,6 +250,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     printf("created a total of %u messages\n", loc->ipcc_freemessages.created);
     printf("recycled %u messages\n", loc->ipcc_freemessages.recycled);
     printf("destroyed %u messages\n", loc->ipcc_freemessages.freed);
+    pthread_mutex_unlock((loc->ipcc_freemessages.mutex));
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
         free_all_ipsessions(&(v4->intercepts));
@@ -446,6 +451,28 @@ static inline int is_core_server_packet(libtrace_packet_t *pkt,
 
     /* Doesn't match any of our known core servers */
     return 0;
+}
+
+static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
+        void *global, void *local, uint64_t tick) {
+
+    collector_global_t *glob = (collector_global_t *)global;
+    colthread_local_t *loc = (colthread_local_t *)local;
+    libtrace_stat_t *stats;
+
+    stats = trace_create_statistics();
+    trace_get_statistics(trace, stats);
+
+    if (stats->dropped > loc->dropped) {
+        logger(LOG_INFO,
+                "thread %d dropped %lu packets in last second (accepted %lu)",
+                trace_get_perpkt_thread_id(t),
+                stats->dropped - loc->dropped,
+                stats->accepted - loc->accepted);
+        loc->dropped = stats->dropped;
+    }
+    loc->accepted = stats->accepted;
+    free(stats);
 }
 
 static libtrace_packet_t *process_packet(libtrace_t *trace,
@@ -649,6 +676,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
         trace_set_starting_cb(inp->pktcbs, start_processing_thread);
         trace_set_stopping_cb(inp->pktcbs, stop_processing_thread);
         trace_set_packet_cb(inp->pktcbs, process_packet);
+        trace_set_tick_interval_cb(inp->pktcbs, process_tick);
     }
 
     assert(!inp->trace);
@@ -672,6 +700,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
 
     trace_set_perpkt_threads(inp->trace, inp->threadcount);
     trace_set_hasher(inp->trace, HASHER_BIDIRECTIONAL, NULL, NULL);
+    trace_set_tick_interval(inp->trace, 1000);
 
     if (trace_pstart(inp->trace, glob, inp->pktcbs, NULL) == -1) {
         libtrace_err_t lterr = trace_get_err(inp->trace);
@@ -843,6 +872,10 @@ static void clear_global_config(collector_global_t *glob) {
 
     if (glob->zmq_encoder_ctrl) {
         zmq_close(glob->zmq_encoder_ctrl);
+    }
+
+    for (i = 0; i < glob->forwarding_threads; i++) {
+        zmq_close(glob->forwarders[i].zmq_pullressock);
     }
 
     logger(LOG_INFO, "OpenLI: waiting for zeromq context to be destroyed.");

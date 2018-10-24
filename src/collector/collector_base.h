@@ -42,6 +42,7 @@ typedef struct export_dest {
     int fd;
     int awaitingconfirm;
     int halted;
+    int pollindex;
     uint32_t mediatorid;
     char *ipstr;
     char *portstr;

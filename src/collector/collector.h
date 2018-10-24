@@ -208,6 +208,9 @@ typedef struct colthread_local {
 
     openli_exportmsg_freelist_t ipcc_freemessages;
 
+    uint64_t accepted;
+    uint64_t dropped;
+
 } colthread_local_t;
 
 typedef struct collector_global {
