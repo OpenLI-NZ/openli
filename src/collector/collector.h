@@ -241,6 +241,7 @@ typedef struct collector_global {
     seqtracker_thread_data_t *seqtrackers;
     openli_encoder_t *encoders;
     forwarding_thread_data_t *forwarders;
+    colthread_local_t *collocals;
 
     libtrace_message_queue_t intersyncq;
 

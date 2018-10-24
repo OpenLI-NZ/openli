@@ -120,15 +120,31 @@ static void dump_rtp_intercept(rtpstreaminf_t *rtp) {
     printf("------\n");
 }
 
-static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
-        void *global) {
+static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
+        void *global, void *local, uint64_t tick) {
 
     collector_global_t *glob = (collector_global_t *)global;
-    colthread_local_t *loc = NULL;
+    colthread_local_t *loc = (colthread_local_t *)local;
+    libtrace_stat_t *stats;
+
+    stats = trace_create_statistics();
+    trace_get_statistics(trace, stats);
+
+    if (stats->dropped > loc->dropped) {
+        logger(LOG_INFO,
+                "thread %d dropped %lu packets in last second (accepted %lu)",
+                trace_get_perpkt_thread_id(t),
+                stats->dropped - loc->dropped,
+                stats->accepted - loc->accepted);
+        loc->dropped = stats->dropped;
+    }
+    loc->accepted = stats->accepted;
+    free(stats);
+}
+
+static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
+
     int zero = 0, i;
-
-    loc = (colthread_local_t *)malloc(sizeof(colthread_local_t));
-
     libtrace_message_queue_init(&(loc->tosyncq_ip),
             sizeof(openli_state_update_t));
     libtrace_message_queue_init(&(loc->fromsyncq_ip),
@@ -157,12 +173,6 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->accepted = 0;
     loc->dropped = 0;
 
-    pthread_mutex_lock(&(glob->mutexmutex));
-    loc->ipcc_freemessages.mutex = &(glob->available_mutexes[glob->nextmutex]);
-    glob->nextmutex ++;
-    assert(glob->nextmutex <= glob->total_col_threads);
-    pthread_mutex_unlock(&(glob->mutexmutex));
-
 
     loc->zmq_pubsocks = calloc(glob->seqtracker_threads, sizeof(void *));
     for (i = 0; i < glob->seqtracker_threads; i++) {
@@ -175,6 +185,22 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     }
 
     loc->fragreass = create_new_ipfrag_reassembler();
+
+}
+
+static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
+        void *global) {
+
+    collector_global_t *glob = (collector_global_t *)global;
+    colthread_local_t *loc = NULL;
+
+
+    pthread_mutex_lock(&(glob->mutexmutex));
+    loc = &(glob->collocals[glob->nextmutex]);
+    loc->ipcc_freemessages.mutex = &(glob->available_mutexes[glob->nextmutex]);
+    glob->nextmutex ++;
+    assert(glob->nextmutex <= glob->total_col_threads);
+    pthread_mutex_unlock(&(glob->mutexmutex));
 
     register_sync_queues(&(glob->syncip), &(loc->tosyncq_ip),
 			&(loc->fromsyncq_ip), t);
@@ -276,7 +302,6 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     Destroy_Patricia(loc->staticv6ranges, free_staticrange_data);
 
     free_staticcache(loc->staticcache);
-    free(loc);
 }
 
 static inline void send_packet_to_sync(libtrace_packet_t *pkt,
@@ -451,28 +476,6 @@ static inline int is_core_server_packet(libtrace_packet_t *pkt,
 
     /* Doesn't match any of our known core servers */
     return 0;
-}
-
-static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
-        void *global, void *local, uint64_t tick) {
-
-    collector_global_t *glob = (collector_global_t *)global;
-    colthread_local_t *loc = (colthread_local_t *)local;
-    libtrace_stat_t *stats;
-
-    stats = trace_create_statistics();
-    trace_get_statistics(trace, stats);
-
-    if (stats->dropped > loc->dropped) {
-        logger(LOG_INFO,
-                "thread %d dropped %lu packets in last second (accepted %lu)",
-                trace_get_perpkt_thread_id(t),
-                stats->dropped - loc->dropped,
-                stats->accepted - loc->accepted);
-        loc->dropped = stats->dropped;
-    }
-    loc->accepted = stats->accepted;
-    free(stats);
 }
 
 static libtrace_packet_t *process_packet(libtrace_t *trace,
@@ -652,15 +655,6 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
 processdone:
     return pkt;
-
-
-    if (forwarded || synced) {
-        trace_decrement_packet_refcount(pkt);
-        return NULL;
-    }
-    return pkt;
-
-
 }
 
 static int start_input(collector_global_t *glob, colinput_t *inp,
@@ -896,6 +890,7 @@ static void clear_global_config(collector_global_t *glob) {
     free(glob->seqtrackers);
     free(glob->encoders);
     free(glob->forwarders);
+    free(glob->collocals);
     free(glob->available_mutexes);
     free(glob);
 }
@@ -1012,6 +1007,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->sharedinfo.networkelemid_len = 0;
     glob->total_col_threads = 0;
     glob->available_mutexes = NULL;
+    glob->collocals = NULL;
     glob->nextmutex = 0;
 
     init_sync_thread_data(&(glob->syncip));
@@ -1035,11 +1031,15 @@ static collector_global_t *parse_global_config(char *configfile) {
         return NULL;
     }
 
+    glob->collocals = (colthread_local_t *)calloc(glob->total_col_threads,
+            sizeof(colthread_local_t));
+
     glob->available_mutexes = (pthread_mutex_t *)calloc(glob->total_col_threads,
             sizeof(pthread_mutex_t));
 
     for (i = 0; i < glob->total_col_threads; i++) {
         pthread_mutex_init(&(glob->available_mutexes[i]), NULL);
+        init_collocal(&(glob->collocals[i]), glob);
     }
 
     glob->zmq_forwarder_ctrl = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
