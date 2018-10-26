@@ -224,6 +224,7 @@ void free_single_voip_cin(rtpstreaminf_t *rtp);
 void free_single_ipintercept(ipintercept_t *cept);
 void free_single_voipintercept(voipintercept_t *v);
 void free_single_ipsession(ipsession_t *sess);
+void free_single_rtpstream(rtpstreaminf_t *rtp);
 void free_single_aluintercept(aluintercept_t *alu);
 void free_single_staticipsession(staticipsession_t *statint);
 
