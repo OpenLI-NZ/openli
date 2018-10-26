@@ -142,53 +142,49 @@ static inline void encode_ipaddress(wandder_encoder_t *encoder,
             sizeof(addr->v4subnetmask));
     }
 
-    wandder_encode_endseq(encoder);    // ends IPAddress sequence
 }
 
 static inline void encode_ipmmiri_body_common(wandder_encoder_t *encoder,
-        etsili_iri_type_t iritype) {
+        wandder_encode_job_t *precomputed, etsili_iri_type_t iritype) {
 
-    ENC_CSEQUENCE(encoder, 2);      // Payload
-    ENC_CSEQUENCE(encoder, 0);      // IRIPayload
-    ENC_USEQUENCE(encoder);         // IRIPayload sequence
+    wandder_encode_job_t *jobarray[4];
+
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]); // Payload
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_0]); // IRIPayload
+    jobarray[2] = &(precomputed[OPENLI_PREENCODE_USEQUENCE]);
+
+    wandder_encode_next_preencoded(encoder, jobarray, 3);
+
     wandder_encode_next(encoder, WANDDER_TAG_ENUM,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &iritype,
             sizeof(iritype));
-    ENC_CSEQUENCE(encoder, 2);      // IRIContents
-    ENC_CSEQUENCE(encoder, 11);     // IPMMIRI
-    wandder_encode_next(encoder, WANDDER_TAG_RELATIVEOID,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, etsi_ipmmirioid,
-            sizeof(etsi_ipmmirioid));
-    ENC_CSEQUENCE(encoder, 1);      // IPMMIRIContents
 
-}
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);  // IRIContents
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_11]); // IPMMIRI
+    jobarray[2] = &(precomputed[OPENLI_PREENCODE_IPMMIRIOID]);   // IPMMIRI OID
+    jobarray[3] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);  // IRIContents
 
-static inline void encode_ipmmiri_body_common_end(wandder_encoder_t *encoder) {
-
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);    // ends outermost sequence
+    wandder_encode_next_preencoded(encoder, jobarray, 4);
 }
 
 static inline void encode_ipmmiri_body(wandder_encoder_t *encoder,
-        etsili_iri_type_t iritype, void *ipcontent, uint32_t iplen) {
+        wandder_encode_job_t *precomputed, etsili_iri_type_t iritype,
+        void *ipcontent, uint32_t iplen) {
 
-    encode_ipmmiri_body_common(encoder, iritype);
+    encode_ipmmiri_body_common(encoder, precomputed, iritype);
     wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, ipcontent, iplen);
-    encode_ipmmiri_body_common_end(encoder);
+    END_ENCODED_SEQUENCE(encoder, 7);
 
 }
 
 static inline void encode_sipiri_body(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed,
         etsili_iri_type_t iritype, uint8_t *ipsrc, uint8_t *ipdest,
         int ipfamily, void *sipcontent, uint32_t siplen) {
 
     etsili_ipaddress_t encipsrc, encipdst;
+    wandder_encode_job_t *jobarray[2];
 
     if (ipfamily == AF_INET) {
         encipsrc.iptype = ETSILI_IPADDRESS_VERSION_4;
@@ -212,20 +208,24 @@ static inline void encode_sipiri_body(wandder_encoder_t *encoder,
         encipdst = encipsrc;
         encipdst.ipvalue = ipdest;
     } else {
-        wandder_encode_endseq(encoder);    // ends outermost sequence
+        END_ENCODED_SEQUENCE(encoder, 1);  // ends outermost sequence
         return;
     }
 
-    encode_ipmmiri_body_common(encoder, iritype);
-    ENC_CSEQUENCE(encoder, 1);      // SIPMessage
-    ENC_CSEQUENCE(encoder, 0);
+    encode_ipmmiri_body_common(encoder, precomputed, iritype);
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]); // SIPMessage
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_0]); // Src IP
+    wandder_encode_next_preencoded(encoder, jobarray, 2);
     encode_ipaddress(encoder, &encipsrc);
-    ENC_CSEQUENCE(encoder, 1);
+    END_ENCODED_SEQUENCE(encoder, 1);
+
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]); // Dest IP
+    wandder_encode_next_preencoded(encoder, jobarray, 1);
     encode_ipaddress(encoder, &encipdst);
+    END_ENCODED_SEQUENCE(encoder, 1);
     wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, sipcontent, siplen);
-    wandder_encode_endseq(encoder); // end SIPMessage
-    encode_ipmmiri_body_common_end(encoder);
+    END_ENCODED_SEQUENCE(encoder, 8);
 }
 
 static inline void encode_ipiri_id(wandder_encoder_t *encoder,
@@ -241,6 +241,7 @@ static inline void encode_ipiri_id(wandder_encoder_t *encoder,
     } else if (iriid->type == IPIRI_ID_IPADDR) {
         ENC_CSEQUENCE(encoder, 2);
         encode_ipaddress(encoder, iriid->content.ip);
+        END_ENCODED_SEQUENCE(encoder, 1);
     }
 
     wandder_encode_endseq(encoder);
@@ -309,6 +310,7 @@ static inline void encode_ipiri_body(wandder_encoder_t *encoder,
             case IPIRI_CONTENTS_ADDITIONAL_IPADDRESS:
                 ENC_CSEQUENCE(encoder, p->itemnum);
                 encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
+                END_ENCODED_SEQUENCE(encoder, 1);
                 break;
 
             case IPIRI_CONTENTS_POP_IDENTIFIER:
@@ -361,27 +363,49 @@ static inline void encode_ipiri_body(wandder_encoder_t *encoder,
 }
 
 static inline void encode_ipmmcc_body(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed,
         void *ipcontent, uint32_t iplen, uint8_t dir) {
 
-    uint32_t frametype, mmccproto, dir32;
+    uint32_t frametype, mmccproto;
+    wandder_encode_job_t *jobarray[7];
+    int nextjob = 0;
 
-    dir32 = dir;
     frametype = 0;      //  ipFrame
     mmccproto = 0;      //  RTP  -- consider others in future?
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
+    jobarray[2] = &(precomputed[OPENLI_PREENCODE_USEQUENCE]);
 
-    ENC_CSEQUENCE(encoder, 2);      // Payload
-    ENC_CSEQUENCE(encoder, 1);      // CCPayload
-    ENC_USEQUENCE(encoder);         // CCpayload sequence
-    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &dir32,
-            sizeof(uint32_t));
-    ENC_CSEQUENCE(encoder, 2);      // CCContents
-    ENC_CSEQUENCE(encoder, 12);     // IPMMCC
-    wandder_encode_next(encoder, WANDDER_TAG_RELATIVEOID,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, etsi_ipmmccoid,
-            sizeof(etsi_ipmmccoid));
+    if (dir == 0) {
+        jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRFROM]);
+        nextjob = 4;
+    } else if (dir == 1) {
+        jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRTO]);
+        nextjob = 4;
+    } else if (dir == 2) {
+        jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRUNKNOWN]);
+        nextjob = 4;
+    } else {
+        uint32_t dir32 = dir;
+        wandder_encode_next_preencoded(encoder, jobarray, 4);
+        nextjob = 0;
+        wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &dir32,
+                sizeof(uint32_t));
+    }
+
+    jobarray[nextjob] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
+    nextjob ++;
+    jobarray[nextjob] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_12]);
+    nextjob ++;
+    jobarray[nextjob] = &(precomputed[OPENLI_PREENCODE_IPMMCCOID]);
+    nextjob ++;
+
+    wandder_encode_next_preencoded(encoder, jobarray, nextjob);
     wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, ipcontent, iplen);
+
+    /* Consider pre-encoding common frame types and protocols */
     wandder_encode_next(encoder, WANDDER_TAG_ENUM,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, &frametype,
             sizeof(uint32_t));
@@ -392,12 +416,7 @@ static inline void encode_ipmmcc_body(wandder_encoder_t *encoder,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, &mmccproto,
             sizeof(uint32_t));
 
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
-    wandder_encode_endseq(encoder);
+    END_ENCODED_SEQUENCE(encoder, 6);
 }
 
 static inline void encode_etsili_pshdr_pc(wandder_encoder_t *encoder,
@@ -549,22 +568,22 @@ wandder_encoded_result_t *encode_etsi_ipcc(wandder_encoder_t *encoder,
 }
 
 wandder_encoded_result_t *encode_etsi_ipmmcc(wandder_encoder_t *encoder,
-        wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
+        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
         struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir) {
 
-    encode_etsili_pshdr(encoder, hdrdata, cin, seqno, tv);
-    encode_ipmmcc_body(encoder, ipcontents, iplen, dir);
+    encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
+    encode_ipmmcc_body(encoder, precomputed, ipcontents, iplen, dir);
     return wandder_encode_finish(encoder);
 
 }
 
 wandder_encoded_result_t *encode_etsi_ipmmiri(wandder_encoder_t *encoder,
-        wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
+        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
         etsili_iri_type_t iritype, struct timeval *tv, void *ipcontents,
         uint32_t iplen) {
 
-    encode_etsili_pshdr(encoder, hdrdata, cin, seqno, tv);
-    encode_ipmmiri_body(encoder, iritype, ipcontents, iplen);
+    encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
+    encode_ipmmiri_body(encoder, precomputed, iritype, ipcontents, iplen);
     return wandder_encode_finish(encoder);
 }
 
@@ -580,13 +599,13 @@ wandder_encoded_result_t *encode_etsi_ipiri(wandder_encoder_t *encoder,
 }
 
 wandder_encoded_result_t *encode_etsi_sipiri(wandder_encoder_t *encoder,
-        wandder_etsipshdr_data_t *hdrdata, int64_t cin, int64_t seqno,
+        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
         etsili_iri_type_t iritype, struct timeval *tv, uint8_t *ipsrc,
         uint8_t *ipdest, int ipfamily, void *sipcontents, uint32_t siplen) {
 
-    encode_etsili_pshdr(encoder, hdrdata, cin, seqno, tv);
-    encode_sipiri_body(encoder, iritype, ipsrc, ipdest, ipfamily, sipcontents,
-            siplen);
+    encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
+    encode_sipiri_body(encoder, precomputed, iritype, ipsrc, ipdest, ipfamily,
+            sipcontents, siplen);
     return wandder_encode_finish(encoder);
 }
 
