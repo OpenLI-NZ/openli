@@ -188,13 +188,14 @@ static inline void enqueue_result(forwarding_thread_data_t *fwd,
 static int handle_encoded_result(forwarding_thread_data_t *fwd,
         openli_encoded_result_t *res) {
 
-    int ret = 0;
+    int ret = 0, ownerid = -1;
     export_dest_t *med;
 
     /* Check if this result is for a mediator we know about. If not,
      * create a destination for that mediator and buffer results until
      * we get a corresponding announcement. */
 
+    //goto naivetidy;
     HASH_FIND(hh_medid, fwd->destinations_by_id, &(res->destid),
             sizeof(res->destid), med);
 
@@ -216,78 +217,93 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
     /* TODO enqueue this result to be forwarded */
     enqueue_result(fwd, med, res);
 
+tidy:
     if (res->liid) {
         free(res->liid);
     }
 
+    if (res->origreq && res->origreq->owner) {
+        ownerid = res->origreq->owner->ownerid;
+    }
+
     if (res->msgbody) {
-        int freeind = -1, i;
-        for (i = 0; i < fwd->encoders; i++) {
-            if (fwd->freeresults[i] == NULL) {
-                fwd->freeresults_tail[i] = res->msgbody;
-                freeind = i;
-                break;
-            } else if (fwd->freeresults[i]->encoder == res->msgbody->encoder) {
-                freeind = i;
-                break;
+        int i;
+        if (ownerid < 0) {
+            for (i = 0; i < fwd->encoders; i++) {
+                if (fwd->freeresults[i] == NULL) {
+                    ownerid = i;
+                    break;
+                } else if (fwd->freeresults[i]->encoder ==
+                        res->msgbody->encoder) {
+                    ownerid = i;
+                    break;
+                }
             }
         }
 
-        if (freeind == -1) {
-            assert(0);
+        res->msgbody->next = fwd->freeresults[ownerid];
+        fwd->freeresults[ownerid] = res->msgbody;
+        if (fwd->freeresults_tail[ownerid] == NULL) {
+            fwd->freeresults_tail[ownerid] = res->msgbody;
         }
+        fwd->freerescount[ownerid] ++;
 
-        res->msgbody->next = fwd->freeresults[freeind];
-        fwd->freeresults[freeind] = res->msgbody;
-        fwd->freerescount[freeind] ++;
-
-        if (fwd->freerescount[freeind] > 100) {
-            wandder_release_encoded_results(fwd->freeresults[freeind]->encoder,
-                    fwd->freeresults[freeind]->next,
-                    fwd->freeresults_tail[freeind]);
-            fwd->freeresults_tail[freeind] = fwd->freeresults[freeind];
-            fwd->freeresults[freeind]->next = NULL;
-            fwd->freerescount[freeind] = 1;
+        if (fwd->freerescount[ownerid] > 100) {
+            wandder_release_encoded_results(fwd->freeresults[ownerid]->encoder,
+                    fwd->freeresults[ownerid]->next,
+                    fwd->freeresults_tail[ownerid]);
+            fwd->freeresults_tail[ownerid] = fwd->freeresults[ownerid];
+            fwd->freeresults[ownerid]->next = NULL;
+            fwd->freerescount[ownerid] = 1;
         }
 
     }
 
     if (res->origreq) {
-        int freeind = -1, i;
-
-        if (res->origreq->type != OPENLI_EXPORT_IPCC) {
-            free(res->origreq);
+        if (res->origreq->type != OPENLI_EXPORT_IPCC &&
+                res->origreq->type != OPENLI_EXPORT_IPMMCC) {
+            free_published_message(res->origreq);
             return ret;
         }
 
-        for (i = 0; i < fwd->colthreads; i++) {
-            if (fwd->freepubs[i] == NULL) {
-                fwd->freepubs_tail[i] = res->origreq;
-                freeind = i;
-                break;
-            } else if (fwd->freepubs[i]->owner == res->origreq->owner) {
-                freeind = i;
-                break;
-            }
+        if (ownerid == -1) {
+            release_published_message(res->origreq);
+            return ret;
         }
 
-        if (freeind == -1) {
-            assert(0);
+        res->origreq->nextfree = fwd->freepubs[ownerid];
+        fwd->freepubs[ownerid] = res->origreq;
+        if (fwd->freepubs_tail[ownerid] == NULL) {
+            fwd->freepubs_tail[ownerid] = res->origreq;
         }
+        fwd->freepubcount[ownerid] ++;
 
-        res->origreq->nextfree = fwd->freepubs[freeind];
-        fwd->freepubs[freeind] = res->origreq;
-        fwd->freepubcount[freeind] ++;
-
-        if (fwd->freepubcount[freeind] > 100) {
-            release_published_messages(fwd->freepubs[freeind]->nextfree,
-                    fwd->freepubs_tail[freeind]);
-            fwd->freepubs_tail[freeind] = fwd->freepubs[freeind];
-            fwd->freepubs[freeind]->nextfree = NULL;
-            fwd->freepubcount[freeind] = 1;
+        if (fwd->freepubcount[ownerid] > 100) {
+            release_published_messages(fwd->freepubs[ownerid]->nextfree,
+                    fwd->freepubs_tail[ownerid]);
+            fwd->freepubs_tail[ownerid] = fwd->freepubs[ownerid];
+            fwd->freepubs[ownerid]->nextfree = NULL;
+            fwd->freepubcount[ownerid] = 1;
         }
     }
 
+    return ret;
+
+naivetidy:
+    if (res->origreq) {
+        if (res->origreq->type != OPENLI_EXPORT_IPCC &&
+                res->origreq->type != OPENLI_EXPORT_IPMMCC) {
+            free_published_message(res->origreq);
+        } else {
+            release_published_message(res->origreq);
+        }
+    }
+    if (res->msgbody) {
+        wandder_release_encoded_result(res->msgbody->encoder, res->msgbody);
+    }
+    if (res->liid) {
+        free(res->liid);
+    }
     return ret;
 
 }
