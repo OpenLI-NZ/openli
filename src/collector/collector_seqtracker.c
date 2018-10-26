@@ -141,13 +141,38 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
             intstate->details.liid_len, intstate);
 }
 
+static inline void free_intercept_state(seqtracker_thread_data_t *seqdata,
+        exporter_intercept_state_t *intstate) {
+
+	removed_intercept_t *rem;
+	struct timeval tv;
+
+    free_intercept_msg(&(intstate->details));
+
+	/* TODO we might still need preencoded to exist for the encoding threads
+     * to finish the last few jobs for this liid
+	 */
+	rem = calloc(1, sizeof(removed_intercept_t));
+	rem->next = NULL;
+
+	gettimeofday(&tv, NULL);
+	rem->haltedat = tv.tv_sec;
+	rem->preencoded = intstate->preencoded;
+
+	if (seqdata->removedints == NULL) {
+		seqdata->removedints = rem;
+	} else {
+		rem->next = seqdata->removedints;
+		seqdata->removedints = rem;
+	}
+    free_cinsequencing(intstate);
+    free(intstate);
+}
+
 static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
         published_intercept_msg_t *msg) {
 
     exporter_intercept_state_t *intstate;
-	removed_intercept_t *rem;
-	struct timeval tv;
-
     HASH_FIND(hh, seqdata->intercepts, msg->liid, strlen(msg->liid), intstate);
 
     if (!intstate) {
@@ -168,27 +193,7 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
 	if (msg->delivcc) {
 		free(msg->delivcc);
 	}
-    free_intercept_msg(&(intstate->details));
-
-	/* TODO we might still need preencoded to exist for the encoding threads
-     * to finish the last few jobs for this liid
-	 */
-	rem = calloc(1, sizeof(removed_intercept_t));
-	rem->next = NULL;
-
-	gettimeofday(&tv, NULL);
-	rem->haltedat = tv.tv_sec;
-	rem->preencoded = intstate->preencoded;
-
-	if (seqdata->removedints == NULL) {
-		seqdata->removedints = rem;
-	} else {
-		rem->next = seqdata->removedints;
-		seqdata->removedints = rem;
-	}
-
-    free_cinsequencing(intstate);
-    free(intstate);
+    free_intercept_state(seqdata, intstate);
     return 1;
 }
 
@@ -382,9 +387,7 @@ void *start_seqtracker_thread(void *data) {
 haltseqtracker:
     HASH_ITER(hh, seqdata->intercepts, intstate, tmpexp) {
         HASH_DELETE(hh, seqdata->intercepts, intstate);
-        free_intercept_msg(&(intstate->details));
-        free_cinsequencing(intstate);
-        free(intstate);
+        free_intercept_state(seqdata, intstate);
     }
 
 
