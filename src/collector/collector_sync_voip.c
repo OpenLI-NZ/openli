@@ -1270,7 +1270,7 @@ static void examine_sip_update(collector_sync_voip_t *sync,
                 trace_write_packet(sync->sipdebugout, recvdpkt);
             }
         }
-        goto endsipexam;
+        return;
     } else if (ret == SIP_ACTION_USE_PACKET) {
         pktref = recvdpkt;
         doonce = 1;
@@ -1281,7 +1281,7 @@ static void examine_sip_update(collector_sync_voip_t *sync,
         doonce = 1;
         pktref = NULL;
     } else {
-        goto endsipexam;
+        return;
     }
 
     irimsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
@@ -1340,9 +1340,6 @@ static void examine_sip_update(collector_sync_voip_t *sync,
         }
     } while (!doonce);
 
-endsipexam:
-    trace_decrement_packet_refcount(recvdpkt);
-
 }
 
 static inline void process_colthread_message(collector_sync_voip_t *sync,
@@ -1380,6 +1377,7 @@ static inline void process_colthread_message(collector_sync_voip_t *sync,
 
     if (recvd.type == OPENLI_UPDATE_SIP) {
         examine_sip_update(sync, recvd.data.pkt);
+        trace_decrement_packet_refcount(recvd.data.pkt);
     }
 
 }

@@ -648,6 +648,9 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     }
 
 processdone:
+    if (synced) {
+        return NULL;
+    }
     return pkt;
 }
 
