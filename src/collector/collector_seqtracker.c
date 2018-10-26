@@ -59,7 +59,6 @@ static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
 
     switch(recvd->type) {
         case OPENLI_EXPORT_IPMMCC:
-            return recvd->data.ipmmcc.liid;
         case OPENLI_EXPORT_IPCC:
             return recvd->data.ipcc.liid;
         case OPENLI_EXPORT_IPIRI:
@@ -74,7 +73,6 @@ static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
 
     switch(recvd->type) {
         case OPENLI_EXPORT_IPMMCC:
-            return recvd->data.ipmmcc.cin;
         case OPENLI_EXPORT_IPCC:
             return recvd->data.ipcc.cin;
         case OPENLI_EXPORT_IPIRI:
