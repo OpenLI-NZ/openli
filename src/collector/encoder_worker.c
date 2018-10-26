@@ -40,6 +40,7 @@ static int init_worker(openli_encoder_t *enc) {
 
     enc->encoder = init_wandder_encoder();
     enc->freegenerics = NULL;
+    enc->halted = 0;
 
     enc->zmq_recvjobs = calloc(enc->seqtrackers, sizeof(void *));
     for (i = 0; i < enc->seqtrackers; i++) {
@@ -106,6 +107,18 @@ static int init_worker(openli_encoder_t *enc) {
         return -1;
     }
 
+    enc->topoll = calloc(enc->seqtrackers + 1, sizeof(zmq_pollitem_t));
+
+    enc->topoll[0].socket = enc->zmq_control;
+    enc->topoll[0].fd = 0;
+    enc->topoll[0].events = ZMQ_POLLIN;
+
+    for (i = 0; i < enc->seqtrackers; i++) {
+        enc->topoll[i + 1].socket = enc->zmq_recvjobs[i];
+        enc->topoll[i + 1].fd = 0;
+        enc->topoll[i + 1].events = ZMQ_POLLIN;
+    }
+
     return 0;
 
 }
@@ -158,44 +171,8 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
     }
     free(enc->zmq_recvjobs);
     free(enc->zmq_pushresults);
+    free(enc->topoll);
 
-}
-
-static int poll_nextjob(openli_encoder_t *enc, openli_encoding_job_t *job,
-        int trypoll) {
-    int x;
-
-    if (trypoll) {
-        int tmpbuf;
-        x = zmq_recv(enc->zmq_control, &tmpbuf, sizeof(tmpbuf), ZMQ_DONTWAIT);
-
-        if (x < 0) {
-            if (errno != EAGAIN) {
-                logger(LOG_INFO,
-                        "OpenLI: error reading ctrl msg in encoder worker %d",
-                        enc->workerid);
-                return 0;
-            }
-        } else {
-            return 0;
-        }
-    }
-
-    x = zmq_recv(enc->zmq_recvjobs[0], job, sizeof(openli_encoding_job_t),
-            ZMQ_DONTWAIT);
-    if (x < 0) {
-        if (errno == EAGAIN) {
-            return -1;
-        }
-        logger(LOG_INFO,
-                "OpenLI: error reading job in encoder worker %d",
-                enc->workerid);
-        return 0;
-    }
-    if (x == 0) {
-        return 0;
-    }
-    return 1;
 }
 
 static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
@@ -214,10 +191,6 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
                     job->preencoded,
                     &(job->origreq->data.ipiri), job->seqno, res);
 
-            /* TODO this will be handled by releasing the iri message */
-            if (job->origreq->data.ipiri.username) {
-                free(job->origreq->data.ipiri.username);
-            }
             break;
         case OPENLI_EXPORT_IPMMIRI:
             ret = 0;        /* TODO */
@@ -231,11 +204,91 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
     return ret;
 }
 
+
+static int process_job(openli_encoder_t *enc, void *socket) {
+    int x;
+    int batch = 0;
+    openli_encoding_job_t job;
+    openli_encoded_result_t result;
+
+    while (batch < 50) {
+        x = zmq_recv(socket, &job, sizeof(openli_encoding_job_t), ZMQ_DONTWAIT);
+        if (x < 0 && errno != EAGAIN) {
+            logger(LOG_INFO,
+                    "OpenLI: error reading job in encoder worker %d",
+                    enc->workerid);
+            return 0;
+        }
+        if (x < 0) {
+            break;
+        }
+        if (x == 0) {
+            return 0;
+        }
+
+        if (job.origreq->type == OPENLI_EXPORT_IPCC) {
+            free(job.liid);
+            //wandder_release_encoded_result(enc->encoder, result.msgbody);
+            release_published_message(job.origreq);
+            batch ++;
+            continue;
+        }
+        if (encode_etsi(enc, &job, &result) < 0) {
+            /* What do we do in the event of an error? */
+            logger(LOG_INFO,
+                    "OpenLI: encoder worker had an error when encoding %d record",
+                    job.origreq->type);
+
+            continue;
+        }
+
+        result.liid = job.liid;
+        result.seqno = job.seqno;
+        result.destid = job.origreq->destid;
+        result.origreq = job.origreq;
+
+        // FIXME -- hash result based on LIID (and CIN?)
+        assert(enc->zmq_pushresults[0] != NULL);
+        if (zmq_send(enc->zmq_pushresults[0], &result, sizeof(result), 0) < 0) {
+            logger(LOG_INFO, "OpenLI: error while pushing encoded result back to exporter (worker=%d)", enc->workerid);
+            break;
+        }
+        batch++;
+    }
+    return batch;
+}
+
+static inline void poll_nextjob(openli_encoder_t *enc) {
+    int x, i;
+
+    x = zmq_poll(enc->topoll, enc->seqtrackers + 1, 5);
+
+    if (enc->topoll[0].revents & ZMQ_POLLIN) {
+        int tmpbuf;
+        x = zmq_recv(enc->zmq_control, &tmpbuf, sizeof(tmpbuf), 0);
+
+        if (x < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: error reading ctrl msg in encoder worker %d",
+                    enc->workerid);
+        }
+        enc->halted = 1;
+        return;
+    }
+
+    /* TODO better error checking / handling for multiple seqtrackers */
+    for (i = 0; i < enc->seqtrackers; i++) {
+
+        if (enc->topoll[i + 1].revents & ZMQ_POLLIN) {
+            x = process_job(enc, enc->topoll[i+1].socket);
+        }
+    }
+
+    return;
+}
+
 void *run_encoder_worker(void *encstate) {
     openli_encoder_t *enc = (openli_encoder_t *)encstate;
-    openli_encoding_job_t nextjob;
-    openli_encoded_result_t result;
-    int trypoll = 1, sincelastpoll;
 
     if (init_worker(enc) == -1) {
         logger(LOG_INFO,
@@ -246,53 +299,8 @@ void *run_encoder_worker(void *encstate) {
 
     logger(LOG_INFO, "OpenLI: starting encoding thread %d", enc->workerid);
 
-    sincelastpoll = 0;
-    while (1) {
-        int ret;
-        ret = poll_nextjob(enc, &nextjob, trypoll);
-
-        if (ret == 0) {
-            break;
-        }
-        if (ret == -1) {
-            trypoll = 1;
-            sincelastpoll = 0;
-            usleep(100);
-            continue;
-        }
-
-        if (encode_etsi(enc, &nextjob, &result) < 0) {
-            /* What do we do in the event of an error? */
-            logger(LOG_INFO,
-                    "OpenLI: encoder worker had an error when encoding %d record",
-                    nextjob.origreq->type);
-
-            continue;
-        }
-        result.liid = nextjob.liid;
-        result.seqno = nextjob.seqno;
-        result.destid = nextjob.origreq->destid;
-        result.origreq = nextjob.origreq;
-
-        // FIXME -- hash result based on LIID (and CIN?)
-        assert(enc->zmq_pushresults[0] != NULL);
-        if (zmq_send(enc->zmq_pushresults[0], &result, sizeof(result), 0) < 0) {
-            logger(LOG_INFO, "OpenLI: error while pushing encoded result back to exporter (worker=%d)", enc->workerid);
-            break;
-        }
-
-        sincelastpoll ++;
-
-        /* If we've done a pile of jobs without polling, force one anyway
-         * just in case we've been told to halt via the control socket.
-         */
-        if (sincelastpoll > 10000) {
-            trypoll = 1;
-            sincelastpoll = 0;
-        } else {
-            trypoll = 0;
-        }
-
+    while (!enc->halted) {
+        poll_nextjob(enc);
     }
     logger(LOG_INFO, "OpenLI: halting encoding worker %d", enc->workerid);
     pthread_exit(NULL);

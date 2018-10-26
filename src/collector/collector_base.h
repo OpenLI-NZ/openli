@@ -133,6 +133,7 @@ typedef struct encoder_state {
     void **zmq_recvjobs;
     void **zmq_pushresults;
     void *zmq_control;
+    zmq_pollitem_t *topoll;
 
     pthread_t threadid;
     int workerid;
@@ -142,6 +143,7 @@ typedef struct encoder_state {
 
     int seqtrackers;
     int forwarders;
+    uint8_t halted;
 } openli_encoder_t;
 
 typedef struct encoder_job {
