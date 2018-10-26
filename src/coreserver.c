@@ -59,6 +59,7 @@ coreserver_t *deep_copy_coreserver(coreserver_t *cs) {
     }
     cscopy->servertype = cs->servertype;
     cscopy->info = NULL;
+    cscopy->portswapped = cs->portswapped;
     cscopy->awaitingconfirm = 0;
     return cscopy;
 }

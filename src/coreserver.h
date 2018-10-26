@@ -50,6 +50,7 @@ typedef struct coreserver {
     char *ipstr;
     char *portstr;
     struct addrinfo *info;
+    uint16_t portswapped;
     uint8_t awaitingconfirm;
 
     UT_hash_handle hh;
@@ -65,12 +66,12 @@ coreserver_t *deep_copy_coreserver(coreserver_t *cs);
 #define CS_TO_V6(cs) ((struct sockaddr_in6 *)(cs->info->ai_addr))
 
 #define CORESERVER_MATCH_V4(cs, sa, port) \
-    ((port == ntohs(CS_TO_V4(cs)->sin_port)) && \
+    ((port == cs->portswapped) && \
      (memcmp(&(sa->sin_addr), &(CS_TO_V4(cs)->sin_addr), \
             sizeof(struct in_addr)) == 0))
 
 #define CORESERVER_MATCH_V6(cs, sa, port) \
-    ((port == ntohs(CS_TO_V6(cs)->sin6_port)) && \
+    ((port == cs->portswapped) && \
      (memcmp(&(sa->sin6_addr), &(CS_TO_V6(cs)->sin6_addr), \
             sizeof(struct in6_addr)) == 0))
 
