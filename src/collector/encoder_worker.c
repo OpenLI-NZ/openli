@@ -28,7 +28,9 @@
 #include <assert.h>
 
 #include "ipiri.h"
+#include "ipmmcc.h"
 #include "ipcc.h"
+#include "ipmmiri.h"
 #include "collector_base.h"
 #include "logger.h"
 
@@ -193,10 +195,14 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
 
             break;
         case OPENLI_EXPORT_IPMMIRI:
-            ret = 0;        /* TODO */
+            ret = encode_ipmmiri(enc->encoder, job->preencoded,
+                    &(job->origreq->data.ipmmiri), job->seqno, res,
+                    &(job->origreq->ts));
             break;
         case OPENLI_EXPORT_IPMMCC:
-            ret = 0;        /* TODO */
+            ret = encode_ipmmcc(enc->encoder, job->preencoded,
+                    &(job->origreq->data.ipcc), job->seqno,
+                    &(job->origreq->ts), res);
             break;
     }
 
