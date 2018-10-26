@@ -52,7 +52,7 @@ typedef struct intercept_state {
     exporter_intercept_msg_t details;
     cin_seqno_t *cinsequencing;
     UT_hash_handle hh;
-    wandder_encode_job_t preencoded[OPENLI_PREENCODE_LAST];
+    wandder_encode_job_t *preencoded;
 } exporter_intercept_state_t;
 #endif
 

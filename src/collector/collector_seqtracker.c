@@ -123,6 +123,8 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
     intstate->details.authcc_len = strlen(cept->authcc);
     intstate->details.delivcc_len = strlen(cept->delivcc);
     intstate->cinsequencing = NULL;
+    intstate->preencoded = calloc(OPENLI_PREENCODE_LAST,
+            sizeof(wandder_encode_job_t));
 
     logger(LOG_INFO, "tracker thread %d started new intercept %s",
             seqdata->trackerid, cept->liid);
@@ -400,7 +402,7 @@ void clean_seqtracker(seqtracker_thread_data_t *seqdata) {
 		rem = seqdata->removedints;
 		etsili_clear_preencoded_fields((wandder_encode_job_t *)rem->preencoded);
 		seqdata->removedints = seqdata->removedints->next;
-
+        free(rem->preencoded);
 		free(rem);
 	}
 }
