@@ -450,7 +450,7 @@ static int process_control_message(forwarding_thread_data_t *fwd) {
     return 1;
 }
 
-static int forwarder_main_loop(forwarding_thread_data_t *fwd) {
+static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
     int topollc, x, i;
 
     /* Add the mediator confirmation timer to our poll item list, if
