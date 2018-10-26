@@ -268,19 +268,20 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 
 static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
 
-    zmq_msg_t incoming;
     openli_export_recv_t *job = NULL;
-    int halted = 0;
+    int halted = 0, x;
 
     while (!halted) {
-        zmq_msg_init(&incoming);
-        if (zmq_msg_recv(&incoming, seqdata->zmq_recvpublished, 0) < 0) {
+        x = zmq_recv(seqdata->zmq_recvpublished, &job, sizeof(job), 0);
+        if (x < 0) {
             logger(LOG_INFO, "OpenLI: tracker thread %d got an error receiving from publish queue: %s",
                     seqdata->trackerid, strerror(errno));
             break;
         }
+        if (x == 0) {
+            break;
+        }
 
-        job = *((openli_export_recv_t **)(zmq_msg_data(&incoming)));
         if (job) {
             switch(job->type) {
                 case OPENLI_EXPORT_HALT:
@@ -311,7 +312,6 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
                     assert(0);
             }
         }
-        zmq_msg_close(&incoming);
 
 		/* TODO purge any longstanding members of removedints every 1000K
 		 * or so messages.
