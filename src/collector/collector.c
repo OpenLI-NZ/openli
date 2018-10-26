@@ -219,6 +219,7 @@ static void free_staticrange_data(void *data) {
     HASH_ITER(hh, all, iter, tmp) {
         HASH_DELETE(hh, all, iter);
         free(iter->liid);
+        free(iter->key);
         free(iter);
     }
 }
