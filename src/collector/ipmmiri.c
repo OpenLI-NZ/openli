@@ -37,48 +37,14 @@
 #include "etsili_core.h"
 #include "ipmmiri.h"
 
-int ipmm_iri(libtrace_packet_t *pkt, openli_export_recv_t *irimsg,
-        voipintercept_t *vint, voipintshared_t *cin,
-        etsili_iri_type_t iritype, uint8_t ipmmiri_style,
-        collector_identity_t *info) {
-
-    irimsg->type = OPENLI_EXPORT_IPMMIRI;
-
-    irimsg->destid = vint->common.destid;
-    irimsg->data.ipmmiri.liid = strdup(vint->common.liid);
-    irimsg->data.ipmmiri.packet = pkt;
-    irimsg->data.ipmmiri.cin = cin->cin;
-    irimsg->data.ipmmiri.iritype = iritype;
-    irimsg->data.ipmmiri.ipmmiri_style = ipmmiri_style;
-
-    return 1;
-}
-
-int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
+int encode_ipmmiri(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, openli_ipmmiri_job_t *job,
         uint32_t seqno, openli_encoded_result_t *res, struct timeval *ts) {
 
-    wandder_etsipshdr_data_t hdrdata;
+    uint32_t liidlen = precomputed[OPENLI_PREENCODE_LIID].vallen;
+    reset_wandder_encoder(encoder);
 
-    if (*encoder == NULL) {
-        *encoder = init_wandder_encoder();
-    } else {
-        reset_wandder_encoder(*encoder);
-    }
-#if 0
-    hdrdata.liid = intdetails->liid;
-    hdrdata.liid_len = intdetails->liid_len;
-    hdrdata.authcc = intdetails->authcc;
-    hdrdata.authcc_len = intdetails->authcc_len;
-    hdrdata.delivcc = intdetails->delivcc;
-    hdrdata.delivcc_len = intdetails->delivcc_len;
-    hdrdata.operatorid = job->colinfo->operatorid;
-    hdrdata.operatorid_len = job->colinfo->operatorid_len;
-    hdrdata.networkelemid = job->colinfo->networkelemid;
-    hdrdata.networkelemid_len = job->colinfo->networkelemid_len;
-    hdrdata.intpointid = job->colinfo->intpointid;
-    hdrdata.intpointid_len = job->colinfo->intpointid_len;
-
-    memset(msg, 0, sizeof(openli_exportmsg_t));
+    memset(res, 0, sizeof(openli_encoded_result_t));
 
     if (job->ipmmiri_style == OPENLI_IPMMIRI_SIP) {
         if (job->content == NULL) {
@@ -86,23 +52,20 @@ int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
             return -1;
         }
 
-        msg->msgbody = encode_etsi_sipiri(*encoder, &hdrdata,
+        res->msgbody = encode_etsi_sipiri(encoder, precomputed,
                 (int64_t)(job->cin), (int64_t)seqno, job->iritype, ts,
                 job->ipsrc, job->ipdest, job->ipfamily, job->content,
                 job->contentlen);
-        msg->ipcontents = (uint8_t *)(job->content);
-        msg->ipclen = job->contentlen;
+        res->ipcontents = (uint8_t *)(job->content);
+        res->ipclen = job->contentlen;
     }
     /* TODO style == H323 */
 
-    msg->liid = intdetails->liid;
-    msg->liidlen = intdetails->liid_len;
-    msg->encoder = *encoder;
-    msg->header = construct_netcomm_protocol_header(
-            msg->msgbody->len + msg->liidlen + sizeof(msg->liidlen),
-            OPENLI_PROTO_ETSI_IRI, 0, &(msg->hdrlen));
+    res->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    res->header.bodylen = htons(res->msgbody->len + liidlen + sizeof(uint16_t));
+    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
+    res->header.internalid = 0;
 
-#endif
     return 0;
 }
 

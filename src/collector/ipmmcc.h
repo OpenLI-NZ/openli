@@ -29,8 +29,9 @@
 #include <libtrace.h>
 #include "collector.h"
 
-int encode_ipmmcc(wandder_encoder_t **encoder, openli_ipmmcc_job_t *job,
-        uint32_t seqno, openli_encoded_result_t *res);
+int encode_ipmmcc(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, openli_ipcc_job_t *job,
+        uint32_t seqno, struct timeval *tv, openli_encoded_result_t *msg);
 
 int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip_t *ip, uint32_t rem, colthread_local_t *loc);

@@ -39,7 +39,8 @@ enum {
     OPENLI_IPMMIRI_H323,
 };
 
-int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
+int encode_ipmmiri(wandder_encoder_t *encoder,
+        wandder_encode_job_t *preencoded, openli_ipmmiri_job_t *job,
         uint32_t seqno,
         openli_encoded_result_t *res, struct timeval *ts);
 
