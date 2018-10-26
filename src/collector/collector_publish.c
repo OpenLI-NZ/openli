@@ -70,12 +70,26 @@ static inline openli_export_recv_t *_get_available_message(
 
 void free_published_message(openli_export_recv_t *msg) {
 
-    if (msg->type == OPENLI_EXPORT_IPCC) {
+    if (msg->type == OPENLI_EXPORT_IPCC || msg->type == OPENLI_EXPORT_IPMMCC) {
         if (msg->data.ipcc.liid) {
             free(msg->data.ipcc.liid);
         }
         if (msg->data.ipcc.ipcontent) {
             free(msg->data.ipcc.ipcontent);
+        }
+    } else if (msg->type == OPENLI_EXPORT_IPMMIRI) {
+        if (msg->data.ipmmiri.liid) {
+            free(msg->data.ipmmiri.liid);
+        }
+        if (msg->data.ipmmiri.content) {
+            free(msg->data.ipmmiri.content);
+        }
+    } else if (msg->type == OPENLI_EXPORT_IPIRI) {
+        if (msg->data.ipiri.liid) {
+            free(msg->data.ipiri.liid);
+        }
+        if (msg->data.ipiri.username) {
+            free(msg->data.ipiri.username);
         }
     }
 

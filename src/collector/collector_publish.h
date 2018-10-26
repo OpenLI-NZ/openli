@@ -51,24 +51,9 @@ enum {
 
 };
 
-typedef struct openli_ipcc_job_header {
-    uint8_t type;
-    uint32_t destid;
-    uint32_t cin;
-    uint8_t dir;
-    uint32_t tvsec;
-    uint32_t tvusec;
-    uint16_t liid_len;
-    uint16_t ipc_len;
-} PACKED openli_ipcc_job_header_t;
-
-typedef struct openli_ipmmcc_job {
-    char *liid;
-    libtrace_packet_t *packet;
-    uint32_t cin;
-    uint8_t dir;
-} PACKED openli_ipmmcc_job_t;
-
+/* This structure is also used for IPMMCCs since they require the same
+ * raw information.
+ */
 typedef struct openli_ipcc_job {
     char *liid;
     uint8_t *ipcontent;
@@ -81,7 +66,6 @@ typedef struct openli_ipcc_job {
 
 typedef struct openli_ipmmiri_job {
     char *liid;
-    libtrace_packet_t *packet;
     uint32_t cin;
     etsili_iri_type_t iritype;
     uint8_t ipmmiri_style;
@@ -140,7 +124,6 @@ struct openli_export_recv {
         libtrace_packet_t *packet;
         published_intercept_msg_t cept;
         openli_ipcc_job_t ipcc;
-        openli_ipmmcc_job_t ipmmcc;
         openli_ipmmiri_job_t ipmmiri;
         openli_ipiri_job_t ipiri;
     } data;
@@ -154,6 +137,7 @@ struct openli_exportmsg_freelist {
     uint32_t created;
     uint32_t freed;
     uint32_t recycled;
+    int ownerid;
 };
 
 int publish_openli_msg(void *pubsock, openli_export_recv_t *msg);
