@@ -142,7 +142,8 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
     free(stats);
 }
 
-static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
+static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
+        int threadid) {
 
     int zero = 0, i;
     libtrace_message_queue_init(&(loc->tosyncq_ip),
@@ -169,6 +170,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
     loc->ipcc_freemessages.created = 0;
     loc->ipcc_freemessages.freed = 0;
     loc->ipcc_freemessages.recycled = 0;
+    loc->ipcc_freemessages.ownerid = threadid;
 
     loc->accepted = 0;
     loc->dropped = 0;
@@ -1044,7 +1046,7 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     for (i = 0; i < glob->total_col_threads; i++) {
         pthread_mutex_init(&(glob->available_mutexes[i]), NULL);
-        init_collocal(&(glob->collocals[i]), glob);
+        init_collocal(&(glob->collocals[i]), glob, i);
     }
 
     glob->zmq_forwarder_ctrl = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
