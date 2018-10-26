@@ -448,6 +448,11 @@ static inline int is_core_server_packet(libtrace_packet_t *pkt,
                 HASH_DELETE(hh, servers, rad);
                 continue;
             }
+            if (rad->info->ai_family == AF_INET) {
+                rad->portswapped = ntohs(CS_TO_V4(rad)->sin_port);
+            } else if (rad->info->ai_family == AF_INET6) {
+                rad->portswapped = ntohs(CS_TO_V6(rad)->sin6_port);
+            }
         }
 
         if (pinfo->family == AF_INET) {
