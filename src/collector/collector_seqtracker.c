@@ -251,6 +251,12 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         cinseq->iri_seqno ++;
 	}
 
+/*
+    if (recvd->type == OPENLI_EXPORT_IPCC) {
+        goto nosend;
+    }
+*/
+
     if (zmq_send(seqdata->zmq_pushjobsock, (char *)&job,
             sizeof(openli_encoding_job_t), 0) < 0) {
         logger(LOG_INFO,
@@ -262,6 +268,11 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     /* TODO deal with RADIUS multi-iteration jobs... */
     ind ++;
 
+    return ret;
+
+nosend:
+    release_published_message(job.origreq);
+    free(job.liid);
     return ret;
 }
 
@@ -299,13 +310,14 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
 					free(job);
 					break;
 
+                case OPENLI_EXPORT_IPMMCC:
+                case OPENLI_EXPORT_IPMMIRI:
                 case OPENLI_EXPORT_IPIRI:
+					run_encoding_job(seqdata, job);
+                    break;
                 case OPENLI_EXPORT_IPCC:
 					run_encoding_job(seqdata, job);
 					break;
-
-                case OPENLI_EXPORT_IPMMCC:
-                case OPENLI_EXPORT_IPMMIRI:
 
                 default:
                     printf("got unexpected job: %u\n", job->type);
