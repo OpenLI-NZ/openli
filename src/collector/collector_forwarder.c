@@ -155,6 +155,14 @@ static void remove_destination(forwarding_thread_data_t *fwd,
     free(med);
 }
 
+static void remove_all_destinations(forwarding_thread_data_t *fwd) {
+    export_dest_t *med, *tmp;
+
+    HASH_ITER(hh_medid, fwd->destinations_by_id, med, tmp) {
+        remove_destination(fwd, med);
+    }
+}
+
 static void disconnect_mediator(forwarding_thread_data_t *fwd,
         export_dest_t *med) {
 
@@ -681,6 +689,7 @@ void *start_forwarding_thread(void *data) {
 
 haltforwarder:
     zmq_close(fwd->zmq_ctrlsock);
+    remove_all_destinations(fwd);
     logger(LOG_DEBUG, "OpenLI: halting forwarding thread %d",
             fwd->forwardid);
     pthread_exit(NULL);
