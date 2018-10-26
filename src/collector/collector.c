@@ -241,7 +241,6 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     ipv4_target_t *v4, *tmp;
     ipv6_target_t *v6, *tmp2;
     int zero = 0, i;
-    uint32_t released = 0;
 
     if (trace_is_err(trace)) {
         libtrace_err_t err = trace_get_err(trace);
@@ -267,19 +266,6 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     }
 
     free(loc->zmq_pubsocks);
-
-    pthread_mutex_lock((loc->ipcc_freemessages.mutex));
-    while (loc->ipcc_freemessages.available) {
-        openli_export_recv_t *msg = loc->ipcc_freemessages.available;
-        loc->ipcc_freemessages.available = msg->nextfree;
-
-        free_published_message(msg);
-        released ++;
-    }
-    printf("created a total of %u messages\n", loc->ipcc_freemessages.created);
-    printf("recycled %u messages\n", loc->ipcc_freemessages.recycled);
-    printf("destroyed %u messages\n", loc->ipcc_freemessages.freed);
-    pthread_mutex_unlock((loc->ipcc_freemessages.mutex));
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
         free_all_ipsessions(&(v4->intercepts));
@@ -890,7 +876,15 @@ static void clear_global_config(collector_global_t *glob) {
     }
 
     for (i = 0; i < glob->total_col_threads; i++) {
-        pthread_mutex_destroy(&(glob->available_mutexes[i]));
+        colthread_local_t *loc = &(glob->collocals[i]);
+        pthread_mutex_lock((loc->ipcc_freemessages.mutex));
+        while (loc->ipcc_freemessages.available) {
+            openli_export_recv_t *msg = loc->ipcc_freemessages.available;
+            loc->ipcc_freemessages.available = msg->nextfree;
+            free_published_message(msg);
+        }
+        pthread_mutex_unlock((loc->ipcc_freemessages.mutex));
+        pthread_mutex_destroy(loc->ipcc_freemessages.mutex);
     }
 
     pthread_mutex_destroy(&(glob->mutexmutex));
