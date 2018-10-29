@@ -78,9 +78,6 @@ typedef struct openli_ipmmiri_job {
 
 typedef struct openli_ipiri_job {
     char *liid;
-    //access_plugin_t *plugin;
-    //void *plugin_data;
-
     uint32_t cin;
     char *username;
     struct sockaddr_storage assignedip;
@@ -90,6 +87,9 @@ typedef struct openli_ipiri_job {
     uint8_t special;
     uint8_t ipassignmentmethod;
     uint8_t assignedip_prefixbits;
+    etsili_iri_type_t iritype;
+    etsili_generic_t *customparams;
+
 } PACKED openli_ipiri_job_t;
 
 enum {

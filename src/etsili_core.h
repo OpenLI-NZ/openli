@@ -41,6 +41,7 @@
 #define ETSI_DIR_TO_TARGET 1
 
 typedef struct etsili_generic etsili_generic_t;
+typedef struct etsili_generic_freelist etsili_generic_freelist_t;
 
 struct etsili_generic {
     uint8_t itemnum;
@@ -50,6 +51,13 @@ struct etsili_generic {
 
     UT_hash_handle hh;
     etsili_generic_t *nextfree;
+    etsili_generic_freelist_t *owner;
+};
+
+struct etsili_generic_freelist {
+    etsili_generic_t *first;
+    pthread_mutex_t mutex;
+    uint8_t needmutex;
 };
 
 typedef struct etsili_intercept_details {
@@ -170,10 +178,11 @@ wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t seqno);
 
 
-etsili_generic_t *create_etsili_generic(etsili_generic_t **freelist,
+etsili_generic_freelist_t *create_etsili_generic_freelist(uint8_t needmutex);
+etsili_generic_t *create_etsili_generic(etsili_generic_freelist_t *freelist,
         uint8_t itemnum, uint16_t itemlen, uint8_t *itemvalptr);
-void release_etsili_generic(etsili_generic_t **freelist, etsili_generic_t *gen);
-void free_etsili_generics(etsili_generic_t *freelist);
+void release_etsili_generic(etsili_generic_t *gen);
+void free_etsili_generics(etsili_generic_freelist_t *freelist);
 
 void etsili_create_ipaddress_v4(uint32_t *addrnum, uint8_t slashbits,
         uint8_t assigned, etsili_ipaddress_t *ip);

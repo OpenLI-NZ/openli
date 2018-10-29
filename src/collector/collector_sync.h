@@ -66,7 +66,7 @@ typedef struct colsync_data {
     wandder_encoder_t *encoder;
 
     access_plugin_t *radiusplugin;
-    etsili_generic_t *freegenerics;
+    etsili_generic_freelist_t *freegenerics;
 
     ip_to_session_t *activeips;
 

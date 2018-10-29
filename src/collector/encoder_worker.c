@@ -41,7 +41,7 @@ static int init_worker(openli_encoder_t *enc) {
     char sockname[128];
 
     enc->encoder = init_wandder_encoder();
-    enc->freegenerics = NULL;
+    enc->freegenerics = create_etsili_generic_freelist(0);
     enc->halted = 0;
 
     enc->zmq_recvjobs = calloc(enc->seqtrackers, sizeof(void *));
@@ -189,7 +189,7 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
                     &(job->origreq->ts), res);
             break;
         case OPENLI_EXPORT_IPIRI:
-            ret = encode_ipiri(enc->encoder, &(enc->freegenerics),
+            ret = encode_ipiri(enc->encoder, enc->freegenerics,
                     job->preencoded,
                     &(job->origreq->data.ipiri), job->seqno, res);
 

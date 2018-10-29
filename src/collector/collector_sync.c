@@ -69,6 +69,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->info = &(glob->sharedinfo);
 
     sync->radiusplugin = init_access_plugin(ACCESS_RADIUS);
+    sync->freegenerics = glob->syncgenericfreelist;
     sync->activeips = NULL;
 
     sync->pubsockcount = glob->seqtracker_threads;
@@ -266,6 +267,8 @@ static inline openli_export_recv_t *_create_ipiri_basic(collector_sync_t *sync,
     irimsg->data.ipiri.access_tech = ipint->accesstype;
     irimsg->data.ipiri.cin = cin;
     irimsg->data.ipiri.username = strdup(username);
+    irimsg->data.ipiri.iritype = ETSILI_IRI_REPORT;
+    irimsg->data.ipiri.customparams = NULL;
 
     return irimsg;
 }
@@ -328,31 +331,47 @@ static int create_ipiri_from_session(collector_sync_t *sync,
         void *parseddata, uint8_t special) {
 
     openli_export_recv_t *irimsg;
+    int ret, iter = 0;
 
-    irimsg = _create_ipiri_basic(sync, ipint, ipint->username, sess->cin);
+    do {
+        irimsg = _create_ipiri_basic(sync, ipint, ipint->username, sess->cin);
 
-    irimsg->data.ipiri.special = special;
-    //irimsg.data.ipiri.plugin = p;
-    //irimsg.data.ipiri.plugin_data = parseddata;
-    irimsg->data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_UNKNOWN;
-    irimsg->data.ipiri.assignedip_prefixbits = sess->sessionip.prefixbits;
+        irimsg->data.ipiri.special = special;
+        irimsg->data.ipiri.customparams = NULL;
 
-    if (sess->sessionip.ipfamily) {
-        irimsg->data.ipiri.sessionstartts = sess->started;
-        irimsg->data.ipiri.ipfamily = sess->sessionip.ipfamily;
-        memcpy(&(irimsg->data.ipiri.assignedip), &(sess->sessionip.assignedip),
-                (sess->sessionip.ipfamily == AF_INET) ?
-                sizeof(struct sockaddr_in) :
-                sizeof(struct sockaddr_in6));
-    } else {
-        irimsg->data.ipiri.ipfamily = 0;
-        irimsg->data.ipiri.sessionstartts.tv_sec = 0;
-        irimsg->data.ipiri.sessionstartts.tv_usec = 0;
-        memset(&(irimsg->data.ipiri.assignedip), 0,
-                sizeof(struct sockaddr_storage));
-    }
+        ret = p->generate_iri_data(p, parseddata,
+                &(irimsg->data.ipiri.customparams),
+                &(irimsg->data.ipiri.iritype),
+                sync->freegenerics, iter);
 
-    publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], irimsg);
+        if (ret == -1) {
+            logger(LOG_INFO,
+                    "OpenLI: error while creating IPIRI from session state change.");
+            return -1;
+        }
+
+        irimsg->data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_UNKNOWN;
+        irimsg->data.ipiri.assignedip_prefixbits = sess->sessionip.prefixbits;
+
+        if (sess->sessionip.ipfamily) {
+            irimsg->data.ipiri.sessionstartts = sess->started;
+            irimsg->data.ipiri.ipfamily = sess->sessionip.ipfamily;
+            memcpy(&(irimsg->data.ipiri.assignedip),
+                    &(sess->sessionip.assignedip),
+                    (sess->sessionip.ipfamily == AF_INET) ?
+                    sizeof(struct sockaddr_in) :
+                    sizeof(struct sockaddr_in6));
+        } else {
+            irimsg->data.ipiri.ipfamily = 0;
+            irimsg->data.ipiri.sessionstartts.tv_sec = 0;
+            irimsg->data.ipiri.sessionstartts.tv_usec = 0;
+            memset(&(irimsg->data.ipiri.assignedip), 0,
+                    sizeof(struct sockaddr_storage));
+        }
+
+        publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], irimsg);
+        iter ++;
+    } while (ret > 0);
     return 0;
 
 }
@@ -1459,14 +1478,12 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     }
 
     if (userint && accessaction != ACCESS_ACTION_NONE) {
-        p->uncouple_parsed_data(p);
         HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
             int queueused = 0;
             queueused = create_ipiri_from_session(sync, sess, ipint, p,
                     parseddata, OPENLI_IPIRI_STANDARD);
             expcount ++;
         }
-        parseddata = NULL;
     }
 
     if (oldstate != newstate && newstate == SESSION_STATE_OVER) {

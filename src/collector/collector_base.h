@@ -139,7 +139,7 @@ typedef struct encoder_state {
     int workerid;
     collector_identity_t *shared;
     wandder_encoder_t *encoder;
-    etsili_generic_t *freegenerics;
+    etsili_generic_freelist_t *freegenerics;
 
     int seqtrackers;
     int forwarders;

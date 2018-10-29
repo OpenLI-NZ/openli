@@ -502,6 +502,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         process_incoming_messages(t, glob, loc, &syncpush);
     }
 
+
     l3 = trace_get_layer3(pkt, &ethertype, &rem);
     if (l3 == NULL || rem == 0) {
         return pkt;
@@ -865,6 +866,8 @@ static void clear_global_config(collector_global_t *glob) {
         zmq_close(glob->zmq_encoder_ctrl);
     }
 
+    free_etsili_generics(glob->syncgenericfreelist);
+
     for (i = 0; i < glob->forwarding_threads; i++) {
         zmq_close(glob->forwarders[i].zmq_pullressock);
     }
@@ -1046,6 +1049,8 @@ static collector_global_t *parse_global_config(char *configfile) {
         pthread_mutex_init(&(glob->available_mutexes[i]), NULL);
         init_collocal(&(glob->collocals[i]), glob, i);
     }
+
+    glob->syncgenericfreelist = create_etsili_generic_freelist(1);
 
     glob->zmq_forwarder_ctrl = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
     if (zmq_connect(glob->zmq_forwarder_ctrl,

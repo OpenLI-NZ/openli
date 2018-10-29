@@ -230,6 +230,7 @@ typedef struct collector_global {
 
     sync_thread_global_t syncip;
     sync_thread_global_t syncvoip;
+    etsili_generic_freelist_t *syncgenericfreelist;
 
     //support_thread_global_t *exporters;
 

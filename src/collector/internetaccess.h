@@ -124,7 +124,7 @@ struct access_plugin {
 
     int (*generate_iri_data)(access_plugin_t *p, void *parseddata,
             etsili_generic_t **params, etsili_iri_type_t *iritype,
-            etsili_generic_t **freegenerics, int iteration);
+            etsili_generic_freelist_t *freegenerics, int iteration);
 
 /*
     int (*create_iri_from_packet)(access_plugin_t *p,

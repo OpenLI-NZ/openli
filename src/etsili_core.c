@@ -622,16 +622,36 @@ wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
     return wandder_encode_finish(encoder);
 }
 
+etsili_generic_freelist_t *create_etsili_generic_freelist(uint8_t needmutex) {
+    etsili_generic_freelist_t *flist;
 
-etsili_generic_t *create_etsili_generic(etsili_generic_t **freelist,
+    flist = (etsili_generic_freelist_t *)calloc(1,
+            sizeof(etsili_generic_freelist_t));
+
+    pthread_mutex_init(&(flist->mutex), NULL);
+    flist->first = NULL;
+    flist->needmutex = needmutex;
+    return flist;
+}
+
+etsili_generic_t *create_etsili_generic(etsili_generic_freelist_t *freelist,
         uint8_t itemnum, uint16_t itemlen, uint8_t *itemvalptr) {
 
-    etsili_generic_t *gen;
+    etsili_generic_t *gen = NULL;
 
-    if (*freelist) {
-        gen = *freelist;
-        *freelist = (*freelist)->nextfree;
-    } else {
+    if (!freelist->needmutex ||
+            pthread_mutex_trylock(&(freelist->mutex)) == 0) {
+        if (freelist->first) {
+            gen = freelist->first;
+            freelist->first = gen->nextfree;
+        }
+
+        if (freelist->needmutex) {
+            pthread_mutex_unlock(&(freelist->mutex));
+        }
+    }
+
+    if (gen == NULL) {
         gen = (etsili_generic_t *)malloc(sizeof(etsili_generic_t));
         gen->itemptr = (uint8_t *)malloc(64);
         gen->alloced = 64;
@@ -650,31 +670,44 @@ etsili_generic_t *create_etsili_generic(etsili_generic_t **freelist,
     gen->itemlen = itemlen;
     memcpy(gen->itemptr, itemvalptr, itemlen);
     gen->nextfree = NULL;
+    gen->owner = freelist;
     return gen;
 }
 
-void release_etsili_generic(etsili_generic_t **freelist, etsili_generic_t *gen) {
+void release_etsili_generic(etsili_generic_t *gen) {
 
-    if (*freelist) {
-        gen->nextfree = *freelist;
-        *freelist = gen;
+    etsili_generic_freelist_t *freelist = gen->owner;
+
+    if (!freelist->needmutex ||
+            pthread_mutex_trylock(&(freelist->mutex)) == 0) {
+
+        gen->nextfree = freelist->first;
+        freelist->first = gen;
+        if (freelist->needmutex) {
+            pthread_mutex_unlock(&(freelist->mutex));
+        }
     } else {
-        gen->nextfree = NULL;
-        *freelist = gen;
+        free(gen->itemptr);
+        free(gen);
     }
 
 }
 
-void free_etsili_generics(etsili_generic_t *freelist) {
+void free_etsili_generics(etsili_generic_freelist_t *freelist) {
     etsili_generic_t *gen, *tmp;
 
-    gen = freelist;
+    /* XXX make sure this is called *after* the encoding thread exit */
+    pthread_mutex_lock(&(freelist->mutex));
+    gen = freelist->first;
     while (gen) {
         tmp = gen;
         gen = gen->nextfree;
         free(tmp->itemptr);
         free(tmp);
     }
+    pthread_mutex_unlock(&(freelist->mutex));
+    pthread_mutex_destroy(&(freelist->mutex));
+    free(freelist);
 }
 
 void etsili_create_ipaddress_v6(uint8_t *addrnum,
