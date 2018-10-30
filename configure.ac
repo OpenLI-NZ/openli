@@ -25,9 +25,6 @@ AC_ARG_ENABLE([provisioner], AS_HELP_STRING([--disable-provisioner],
 AC_ARG_ENABLE([collector], AS_HELP_STRING([--disable-collector],
         [Disable building the OpenLI collector]))
 
-AC_CHECK_PROG([PROTOC],[protoc-c],[protoc-c])
-AS_IF([test "x${PROTOC}" == "x"], [AC_MSG_ERROR([ProtoBuf C compiler not found.])])
-
 AC_CHECK_LIB([trace], [trace_increment_packet_refcount],,libtrace_found=0)
 AC_CHECK_LIB([yaml], [yaml_document_get_node],,libyaml_found=0)
 AC_CHECK_LIB([zmq], [zmq_poll],,libzmq_found=0)
@@ -38,7 +35,6 @@ AC_CONFIG_FILES([Makefile src/Makefile extlib/Makefile
                 extlib/libpatricia/Makefile])
 
 if test "x$enable_collector" != "xno"; then
-        PKG_CHECK_MODULES([PROTOBUF_C], [libprotobuf-c >= 1.0.0])
         AC_CHECK_LIB([osipparser2], [osip_message_init],,libosip2_found=0)
         if test "$libosip2_found" = 0; then
                 AC_MSG_ERROR(Required library libosipparser2 not found; use LDFLAGS to specify library location)
