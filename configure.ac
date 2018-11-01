@@ -28,6 +28,7 @@ AC_ARG_ENABLE([collector], AS_HELP_STRING([--disable-collector],
 AC_CHECK_LIB([trace], [trace_increment_packet_refcount],,libtrace_found=0)
 AC_CHECK_LIB([yaml], [yaml_document_get_node],,libyaml_found=0)
 AC_CHECK_LIB([zmq], [zmq_poll],,libzmq_found=0)
+AC_CHECK_LIB([tcmalloc], [tc_version],,libtcmalloc_found=0)
 
 AC_CHECK_HEADERS([syslog.h])
 
