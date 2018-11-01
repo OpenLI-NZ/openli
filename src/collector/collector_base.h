@@ -118,14 +118,6 @@ typedef struct forwarding_thread_data {
     export_dest_t *destinations_by_fd;
     export_dest_t *destinations_by_id;
 
-    wandder_encoded_result_t **freeresults;
-    wandder_encoded_result_t **freeresults_tail;
-    int *freerescount;
-
-    openli_export_recv_t **freepubs;
-    openli_export_recv_t **freepubs_tail;
-    int *freepubcount;
-
 } forwarding_thread_data_t;
 
 typedef struct encoder_state {

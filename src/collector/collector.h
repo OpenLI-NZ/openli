@@ -206,8 +206,6 @@ typedef struct colthread_local {
 
     ipfrag_reassembler_t *fragreass;
 
-    openli_exportmsg_freelist_t ipcc_freemessages;
-
     uint64_t accepted;
     uint64_t dropped;
 
@@ -234,15 +232,11 @@ typedef struct collector_global {
 
     //support_thread_global_t *exporters;
 
-    pthread_mutex_t mutexmutex;
-
-    pthread_mutex_t *available_mutexes;
-    int nextmutex;
-
     seqtracker_thread_data_t *seqtrackers;
     openli_encoder_t *encoders;
     forwarding_thread_data_t *forwarders;
     colthread_local_t *collocals;
+    int nextloc;
 
     libtrace_message_queue_t intersyncq;
 

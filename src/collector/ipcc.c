@@ -171,8 +171,7 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
                         sliid->key);
             } else {
                 matched ++;
-                msg = create_ipcc_job(&(loc->ipcc_freemessages),
-                        matchsess->cin, matchsess->common.liid,
+                msg = create_ipcc_job(matchsess->cin, matchsess->common.liid,
                         matchsess->common.destid, pkt, dir);
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
             }
@@ -208,8 +207,7 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = create_ipcc_job(&(loc->ipcc_freemessages),
-                    sess->cin, sess->common.liid,
+            msg = create_ipcc_job(sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 0);
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
@@ -224,8 +222,7 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = create_ipcc_job(&(loc->ipcc_freemessages),
-                    sess->cin, sess->common.liid,
+            msg = create_ipcc_job(sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 1);
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
@@ -275,8 +272,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = create_ipcc_job(&(loc->ipcc_freemessages),
-                    sess->cin, sess->common.liid,
+            msg = create_ipcc_job(sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 0);
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
@@ -291,8 +287,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
             matched ++;
-            msg = create_ipcc_job(&(loc->ipcc_freemessages),
-                    sess->cin, sess->common.liid,
+            msg = create_ipcc_job(sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 1);
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME

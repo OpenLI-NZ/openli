@@ -130,10 +130,10 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
     stats = trace_create_statistics();
     trace_get_statistics(trace, stats);
 
-    if (stats->dropped > loc->dropped) {
+    if (stats->dropped > loc->dropped && trace_get_perpkt_thread_id(t) == 0) {
         logger(LOG_INFO,
-                "thread %d dropped %lu packets in last second (accepted %lu)",
-                trace_get_perpkt_thread_id(t),
+                "%lu dropped %lu packets in last second (accepted %lu)",
+                (tick >> 32),
                 stats->dropped - loc->dropped,
                 stats->accepted - loc->accepted);
         loc->dropped = stats->dropped;
@@ -166,12 +166,6 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
     loc->staticv6ranges = New_Patricia(128);
     loc->staticcache = NULL;
 
-    loc->ipcc_freemessages.available = NULL;
-    loc->ipcc_freemessages.created = 0;
-    loc->ipcc_freemessages.freed = 0;
-    loc->ipcc_freemessages.recycled = 0;
-    loc->ipcc_freemessages.ownerid = threadid;
-
     loc->accepted = 0;
     loc->dropped = 0;
 
@@ -196,13 +190,10 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     collector_global_t *glob = (collector_global_t *)global;
     colthread_local_t *loc = NULL;
 
-
-    pthread_mutex_lock(&(glob->mutexmutex));
-    loc = &(glob->collocals[glob->nextmutex]);
-    loc->ipcc_freemessages.mutex = &(glob->available_mutexes[glob->nextmutex]);
-    glob->nextmutex ++;
-    assert(glob->nextmutex <= glob->total_col_threads);
-    pthread_mutex_unlock(&(glob->mutexmutex));
+    pthread_rwlock_wrlock(&(glob->config_mutex));
+    loc = &(glob->collocals[glob->nextloc]);
+    glob->nextloc ++;
+    pthread_rwlock_unlock(&(glob->config_mutex));
 
     register_sync_queues(&(glob->syncip), &(loc->tosyncq_ip),
 			&(loc->fromsyncq_ip), t);
@@ -881,25 +872,10 @@ static void clear_global_config(collector_global_t *glob) {
         clean_seqtracker(&(glob->seqtrackers[i]));
     }
 
-    for (i = 0; i < glob->total_col_threads; i++) {
-        colthread_local_t *loc = &(glob->collocals[i]);
-        pthread_mutex_lock((loc->ipcc_freemessages.mutex));
-        while (loc->ipcc_freemessages.available) {
-            openli_export_recv_t *msg = loc->ipcc_freemessages.available;
-            loc->ipcc_freemessages.available = msg->nextfree;
-            free_published_message(msg);
-        }
-        pthread_mutex_unlock((loc->ipcc_freemessages.mutex));
-        pthread_mutex_destroy(loc->ipcc_freemessages.mutex);
-    }
-
-    pthread_mutex_destroy(&(glob->mutexmutex));
-
     free(glob->seqtrackers);
     free(glob->encoders);
     free(glob->forwarders);
     free(glob->collocals);
-    free(glob->available_mutexes);
     free(glob);
 }
 
@@ -1014,9 +990,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->sharedinfo.networkelemid = NULL;
     glob->sharedinfo.networkelemid_len = 0;
     glob->total_col_threads = 0;
-    glob->available_mutexes = NULL;
     glob->collocals = NULL;
-    glob->nextmutex = 0;
 
     init_sync_thread_data(&(glob->syncip));
     init_sync_thread_data(&(glob->syncvoip));
@@ -1027,11 +1001,11 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->alumirrors = NULL;
     glob->expired_inputs = libtrace_list_init(sizeof(colinput_t *));
     glob->sipdebugfile = NULL;
+    glob->nextloc = 0;
 
     libtrace_message_queue_init(&glob->intersyncq,
             sizeof(openli_intersync_msg_t));
 
-    pthread_mutex_init(&(glob->mutexmutex), NULL);
     pthread_rwlock_init(&glob->config_mutex, NULL);
 
     if (parse_collector_config(configfile, glob) == -1) {
@@ -1042,11 +1016,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->collocals = (colthread_local_t *)calloc(glob->total_col_threads,
             sizeof(colthread_local_t));
 
-    glob->available_mutexes = (pthread_mutex_t *)calloc(glob->total_col_threads,
-            sizeof(pthread_mutex_t));
-
     for (i = 0; i < glob->total_col_threads; i++) {
-        pthread_mutex_init(&(glob->available_mutexes[i]), NULL);
         init_collocal(&(glob->collocals[i]), glob, i);
     }
 

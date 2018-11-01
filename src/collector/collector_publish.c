@@ -46,28 +46,6 @@ int publish_openli_msg(void *pubsock, openli_export_recv_t *msg) {
     return 0;
 }
 
-static inline openli_export_recv_t *_get_available_message(
-        openli_exportmsg_freelist_t *flist) {
-    openli_export_recv_t *msg = NULL;
-
-    if (pthread_mutex_trylock(flist->mutex) == 0) {
-        if (flist->available) {
-            msg = flist->available;
-            flist->available = msg->nextfree;
-            msg->nextfree = NULL;
-        }
-        pthread_mutex_unlock(flist->mutex);
-    }
-
-    if (msg != NULL) {
-        return msg;
-    }
-
-    msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
-    flist->created ++;
-    return msg;
-}
-
 void free_published_message(openli_export_recv_t *msg) {
 
     if (msg->type == OPENLI_EXPORT_IPCC || msg->type == OPENLI_EXPORT_IPMMCC) {
@@ -96,30 +74,8 @@ void free_published_message(openli_export_recv_t *msg) {
     free(msg);
 }
 
-void release_published_messages(openli_export_recv_t *head, openli_export_recv_t *tail) {
-    pthread_mutex_lock(head->owner->mutex);
-    tail->nextfree = head->owner->available;
-    head->owner->available = head;
-    head->owner->recycled += 100;        // approx
-    pthread_mutex_unlock(head->owner->mutex);
-}
-
-void release_published_message(openli_export_recv_t *msg) {
-
-    if (pthread_mutex_trylock(msg->owner->mutex) == 0) {
-        msg->nextfree = msg->owner->available;
-        msg->owner->available = msg;
-        msg->owner->recycled ++;
-        pthread_mutex_unlock(msg->owner->mutex);
-    } else {
-        msg->owner->freed ++;
-        free_published_message(msg);
-    }
-}
-
-openli_export_recv_t *create_ipcc_job(openli_exportmsg_freelist_t *flist,
-        uint32_t cin, char *liid, uint32_t destid, libtrace_packet_t *pkt,
-        uint8_t dir) {
+openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,
+        uint32_t destid, libtrace_packet_t *pkt, uint8_t dir) {
 
     void *l3;
     uint32_t rem;
@@ -128,7 +84,7 @@ openli_export_recv_t *create_ipcc_job(openli_exportmsg_freelist_t *flist,
     uint32_t x;
     size_t liidlen = strlen(liid);
 
-    msg = _get_available_message(flist);
+    msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
     if (msg == NULL) {
         return msg;
     }
@@ -166,7 +122,6 @@ openli_export_recv_t *create_ipcc_job(openli_exportmsg_freelist_t *flist,
     msg->data.ipcc.cin = cin;
     msg->data.ipcc.dir = dir;
 
-    msg->owner = flist;
     return msg;
 }
 

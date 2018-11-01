@@ -196,14 +196,13 @@ static inline void enqueue_result(forwarding_thread_data_t *fwd,
 static int handle_encoded_result(forwarding_thread_data_t *fwd,
         openli_encoded_result_t *res) {
 
-    int ret = 0, ownerid = -1;
+    int ret = 0;
     export_dest_t *med;
 
     /* Check if this result is for a mediator we know about. If not,
      * create a destination for that mediator and buffer results until
      * we get a corresponding announcement. */
 
-    //goto naivetidy;
     HASH_FIND(hh_medid, fwd->destinations_by_id, &(res->destid),
             sizeof(res->destid), med);
 
@@ -225,95 +224,20 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
     /* TODO enqueue this result to be forwarded */
     enqueue_result(fwd, med, res);
 
-tidy:
     if (res->liid) {
         free(res->liid);
     }
 
-    if (res->origreq && res->origreq->owner) {
-        ownerid = res->origreq->owner->ownerid;
-    }
-
     if (res->msgbody) {
-        int i;
-        if (ownerid < 0) {
-            for (i = 0; i < fwd->encoders; i++) {
-                if (fwd->freeresults[i] == NULL) {
-                    ownerid = i;
-                    break;
-                } else if (fwd->freeresults[i]->encoder ==
-                        res->msgbody->encoder) {
-                    ownerid = i;
-                    break;
-                }
-            }
-        }
-
-        res->msgbody->next = fwd->freeresults[ownerid];
-        fwd->freeresults[ownerid] = res->msgbody;
-        if (fwd->freeresults_tail[ownerid] == NULL) {
-            fwd->freeresults_tail[ownerid] = res->msgbody;
-        }
-        fwd->freerescount[ownerid] ++;
-
-        if (fwd->freerescount[ownerid] > 100) {
-            wandder_release_encoded_results(fwd->freeresults[ownerid]->encoder,
-                    fwd->freeresults[ownerid]->next,
-                    fwd->freeresults_tail[ownerid]);
-            fwd->freeresults_tail[ownerid] = fwd->freeresults[ownerid];
-            fwd->freeresults[ownerid]->next = NULL;
-            fwd->freerescount[ownerid] = 1;
-        }
-
+        free(res->msgbody->encoded);
+        free(res->msgbody);
     }
 
     if (res->origreq) {
-        if (res->origreq->type != OPENLI_EXPORT_IPCC &&
-                res->origreq->type != OPENLI_EXPORT_IPMMCC) {
-            free_published_message(res->origreq);
-            return ret;
-        }
-
-        if (ownerid == -1) {
-            release_published_message(res->origreq);
-            return ret;
-        }
-
-        res->origreq->nextfree = fwd->freepubs[ownerid];
-        fwd->freepubs[ownerid] = res->origreq;
-        if (fwd->freepubs_tail[ownerid] == NULL) {
-            fwd->freepubs_tail[ownerid] = res->origreq;
-        }
-        fwd->freepubcount[ownerid] ++;
-
-        if (fwd->freepubcount[ownerid] > 100) {
-            release_published_messages(fwd->freepubs[ownerid]->nextfree,
-                    fwd->freepubs_tail[ownerid]);
-            fwd->freepubs_tail[ownerid] = fwd->freepubs[ownerid];
-            fwd->freepubs[ownerid]->nextfree = NULL;
-            fwd->freepubcount[ownerid] = 1;
-        }
+        free_published_message(res->origreq);
     }
 
     return ret;
-
-naivetidy:
-    if (res->origreq) {
-        if (res->origreq->type != OPENLI_EXPORT_IPCC &&
-                res->origreq->type != OPENLI_EXPORT_IPMMCC) {
-            free_published_message(res->origreq);
-        } else {
-            release_published_message(res->origreq);
-        }
-    }
-    if (res->msgbody) {
-        wandder_release_encoded_result(res->msgbody->encoder, res->msgbody);
-    }
-    if (res->liid) {
-        free(res->liid);
-    }
-    return ret;
-
 }
 
 static void purge_unconfirmed_mediators(forwarding_thread_data_t *fwd) {
@@ -414,6 +338,7 @@ static int receive_incoming_etsi(forwarding_thread_data_t *fwd) {
         if (x <= 0) {
             break;
         }
+
         if (handle_encoded_result(fwd, &res) < 0) {
             return -1;
         }
@@ -549,17 +474,6 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
     fwd->awaitingconfirm = 0;
     fwd->flagtimerfd = -1;
 
-    fwd->freeresults = calloc(fwd->encoders,
-            sizeof(wandder_encoded_result_t *));
-    fwd->freeresults_tail = calloc(fwd->encoders,
-            sizeof(wandder_encoded_result_t *));
-    fwd->freerescount = calloc(fwd->encoders,sizeof(int));
-
-    fwd->freepubs = calloc(fwd->colthreads, sizeof(openli_export_recv_t *));
-    fwd->freepubs_tail = calloc(fwd->colthreads,
-            sizeof(openli_export_recv_t *));
-    fwd->freepubcount = calloc(fwd->colthreads, sizeof(int));
-
     fwd->conntimerfd = timerfd_create(CLOCK_MONOTONIC, 0);
     if (fwd->conntimerfd == -1) {
         logger(LOG_INFO, "OpenLI: failed to create export connection timer: %s",
@@ -591,27 +505,6 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
     do {
         x = forwarder_main_loop(fwd);
     } while (x == 1);
-
-    for (i = 0; i < fwd->encoders; i++) {
-        if (fwd->freeresults[i] != NULL) {
-            wandder_release_encoded_results(fwd->freeresults[i]->encoder,
-                    fwd->freeresults[i], fwd->freeresults_tail[i]);
-        }
-    }
-    free(fwd->freeresults);
-    free(fwd->freeresults_tail);
-    free(fwd->freerescount);
-
-    for (i = 0; i < fwd->colthreads; i++) {
-        if (fwd->freepubs[i] != NULL) {
-            release_published_messages(fwd->freepubs[i],
-                    fwd->freepubs_tail[i]);
-        }
-    }
-
-    free(fwd->freepubs);
-    free(fwd->freepubs_tail);
-    free(fwd->freepubcount);
 
     free(fwd->topoll);
     close(fwd->conntimerfd);
@@ -680,6 +573,10 @@ void *start_forwarding_thread(void *data) {
         if (res.msgbody) {
             free(res.msgbody->encoded);
             free(res.msgbody);
+        }
+
+        if (res.liid) {
+            free(res.liid);
         }
 
         if (res.ipcontents) {

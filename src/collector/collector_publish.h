@@ -113,7 +113,6 @@ typedef struct published_intercept_msg {
 } published_intercept_msg_t;
 
 typedef struct openli_export_recv openli_export_recv_t;
-typedef struct openli_exportmsg_freelist openli_exportmsg_freelist_t;
 
 struct openli_export_recv {
     uint8_t type;
@@ -127,25 +126,12 @@ struct openli_export_recv {
         openli_ipmmiri_job_t ipmmiri;
         openli_ipiri_job_t ipiri;
     } data;
-    openli_export_recv_t *nextfree;
-    openli_exportmsg_freelist_t *owner;
 } PACKED;
-
-struct openli_exportmsg_freelist {
-    pthread_mutex_t *mutex;
-    openli_export_recv_t *available;
-    uint32_t created;
-    uint32_t freed;
-    uint32_t recycled;
-    int ownerid;
-};
 
 int publish_openli_msg(void *pubsock, openli_export_recv_t *msg);
 void free_published_message(openli_export_recv_t *msg);
-void release_published_message(openli_export_recv_t *msg);
-void release_published_messages(openli_export_recv_t *head, openli_export_recv_t *tail);
 
-openli_export_recv_t *create_ipcc_job(openli_exportmsg_freelist_t *flist,
+openli_export_recv_t *create_ipcc_job(
         uint32_t cin, char *liid, uint32_t destid, libtrace_packet_t *pkt,
         uint8_t dir);
 

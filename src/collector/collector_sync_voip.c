@@ -588,8 +588,6 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
     copy->destid = vint->common.destid;
     copy->data.ipmmiri.iritype = iritype;
     copy->data.ipmmiri.cin = cin;
-    copy->owner = NULL;
-    copy->nextfree = NULL;
 
     copy->data.ipmmiri.content = malloc(copy->data.ipmmiri.contentlen);
     memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,

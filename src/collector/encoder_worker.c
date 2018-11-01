@@ -35,7 +35,7 @@
 #include "logger.h"
 
 static int init_worker(openli_encoder_t *enc) {
-    int zero = 0;
+    int zero = 0, rto = 10;
     int hwm = 1000000;
     int i;
     char sockname[128];
@@ -55,7 +55,13 @@ static int init_worker(openli_encoder_t *enc) {
 
         if (zmq_setsockopt(enc->zmq_recvjobs[i], ZMQ_LINGER, &zero,
                 sizeof(zero)) != 0) {
-            logger(LOG_INFO, "OpenLI: error configuring connection to exporter push socket");
+            logger(LOG_INFO, "OpenLI: error configuring connection to zmq pull socket");
+            return -1;
+        }
+
+        if (zmq_setsockopt(enc->zmq_recvjobs[i], ZMQ_RCVTIMEO, &rto,
+                sizeof(rto)) != 0) {
+            logger(LOG_INFO, "OpenLI: error configuring connection to zmq pull socket");
             return -1;
         }
     }
@@ -218,26 +224,16 @@ static int process_job(openli_encoder_t *enc, void *socket) {
     openli_encoded_result_t result;
 
     while (batch < 50) {
-        x = zmq_recv(socket, &job, sizeof(openli_encoding_job_t), ZMQ_DONTWAIT);
+        x = zmq_recv(socket, &job, sizeof(openli_encoding_job_t), 0);
         if (x < 0 && errno != EAGAIN) {
             logger(LOG_INFO,
                     "OpenLI: error reading job in encoder worker %d",
                     enc->workerid);
             return 0;
-        }
-        if (x < 0) {
+        } else if (x < 0) {
             break;
-        }
-        if (x == 0) {
+        } else if (x == 0) {
             return 0;
-        }
-
-        if (job.origreq->type == OPENLI_EXPORT_IPCC) {
-            free(job.liid);
-            //wandder_release_encoded_result(enc->encoder, result.msgbody);
-            release_published_message(job.origreq);
-            batch ++;
-            continue;
         }
         if (encode_etsi(enc, &job, &result) < 0) {
             /* What do we do in the event of an error? */
@@ -253,6 +249,15 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         result.destid = job.origreq->destid;
         result.origreq = job.origreq;
 
+        /*
+        if (job.origreq->type == OPENLI_EXPORT_IPCC) {
+            free(job.liid);
+            wandder_release_encoded_result(enc->encoder, result.msgbody);
+            release_published_message(job.origreq);
+            batch ++;
+            continue;
+        }
+        */
         // FIXME -- hash result based on LIID (and CIN?)
         assert(enc->zmq_pushresults[0] != NULL);
         if (zmq_send(enc->zmq_pushresults[0], &result, sizeof(result), 0) < 0) {
@@ -266,28 +271,24 @@ static int process_job(openli_encoder_t *enc, void *socket) {
 
 static inline void poll_nextjob(openli_encoder_t *enc) {
     int x, i;
+    int tmpbuf;
 
-    x = zmq_poll(enc->topoll, enc->seqtrackers + 1, 5);
+    x = zmq_recv(enc->zmq_control, &tmpbuf, sizeof(tmpbuf), ZMQ_DONTWAIT);
 
-    if (enc->topoll[0].revents & ZMQ_POLLIN) {
-        int tmpbuf;
-        x = zmq_recv(enc->zmq_control, &tmpbuf, sizeof(tmpbuf), 0);
+    if (x < 0 && errno != EAGAIN) {
+        logger(LOG_INFO,
+                "OpenLI: error reading ctrl msg in encoder worker %d",
+                enc->workerid);
+    }
 
-        if (x < 0) {
-            logger(LOG_INFO,
-                    "OpenLI: error reading ctrl msg in encoder worker %d",
-                    enc->workerid);
-        }
+    if (x >= 0) {
         enc->halted = 1;
         return;
     }
 
     /* TODO better error checking / handling for multiple seqtrackers */
     for (i = 0; i < enc->seqtrackers; i++) {
-
-        if (enc->topoll[i + 1].revents & ZMQ_POLLIN) {
-            x = process_job(enc, enc->topoll[i+1].socket);
-        }
+        x = process_job(enc, enc->topoll[i+1].socket);
     }
 
     return;

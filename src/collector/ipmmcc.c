@@ -97,8 +97,7 @@ static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
             if (sockaddr_match(family, cmp, tgt)) {
                 cmp = (struct sockaddr *)(&pinfo->destip);
                 if (sockaddr_match(family, cmp, other)) {
-                    msg = create_ipcc_job(&(loc->ipcc_freemessages),
-                            rtp->cin, rtp->common.liid,
+                    msg = create_ipcc_job(rtp->cin, rtp->common.liid,
                             rtp->common.destid, pkt, ETSI_DIR_FROM_TARGET);
                     msg->type = OPENLI_EXPORT_IPMMCC;
                     publish_openli_msg(loc->zmq_pubsocks[0], msg); // FIXME
@@ -118,8 +117,7 @@ static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
             if (sockaddr_match(family, cmp, other)) {
                 cmp = (struct sockaddr *)(&pinfo->destip);
                 if (sockaddr_match(family, cmp, tgt)) {
-                    msg = create_ipcc_job(&(loc->ipcc_freemessages),
-                            rtp->cin, rtp->common.liid,
+                    msg = create_ipcc_job(rtp->cin, rtp->common.liid,
                             rtp->common.destid, pkt, ETSI_DIR_TO_TARGET);
                     msg->type = OPENLI_EXPORT_IPMMCC;
                     publish_openli_msg(loc->zmq_pubsocks[0], msg); // FIXME
