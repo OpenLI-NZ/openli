@@ -37,7 +37,8 @@
 #include "collector_base.h"
 #include "collector_publish.h"
 
-#define BUF_BATCH_SIZE (10 * 1024 * 1024)
+#define BUF_BATCH_SIZE (100 * 1024 * 1024)
+#define MIN_SEND_AMOUNT (1 * 1024 * 1024)
 
 static int add_new_destination(forwarding_thread_data_t *fwd,
         openli_export_recv_t *msg) {
@@ -303,6 +304,9 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
             if (fwd->nextpoll == fwd->pollsize - 1) {
                 fwd->topoll = realloc(fwd->topoll, (fwd->pollsize + 10) *
                         sizeof(zmq_pollitem_t));
+                fwd->forcesend = realloc(fwd->forcesend,
+                        (fwd->pollsize + 10) * sizeof(uint8_t));
+
                 fwd->pollsize += 10;
             }
             ind = fwd->nextpoll;
@@ -312,6 +316,7 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
             ind = dest->pollindex;
         }
 
+        fwd->forcesend[ind] = 0;
         fwd->topoll[ind].socket = NULL;
         fwd->topoll[ind].fd = dest->fd;
         fwd->topoll[ind].events = ZMQ_POLLOUT;
@@ -409,6 +414,11 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         struct itimerspec its;
 
         connect_export_targets(fwd);
+
+        for (i = 2; i < fwd->nextpoll; i++) {
+            fwd->forcesend[i] = 1;
+        }
+
         its.it_interval.tv_sec = 0;
         its.it_interval.tv_nsec = 0;
         its.it_value.tv_sec = 1;
@@ -435,6 +445,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
 
     for (i = 2; i < fwd->nextpoll; i++) {
         export_dest_t *dest;
+        uint64_t availsend = 0;
         /* check if any destinations can received any buffered data */
         if (!(fwd->topoll[i].revents & ZMQ_POLLOUT)) {
             continue;
@@ -447,8 +458,13 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             return -1;
         }
 
-        if (get_buffered_amount(&(dest->buffer)) == 0) {
+        if ((availsend = get_buffered_amount(&(dest->buffer))) == 0) {
             /* Nothing available to send */
+            continue;
+        }
+
+        if (fwd->forcesend[i] == 0 && availsend < MIN_SEND_AMOUNT) {
+            /* Not enough data to warrant a send right now */
             continue;
         }
 
@@ -459,6 +475,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
                     dest->ipstr, dest->portstr);
             disconnect_mediator(fwd, dest);
         }
+        fwd->forcesend[i] = 0;
 
     }
     return 1;
@@ -489,6 +506,8 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
     timerfd_settime(fwd->conntimerfd, 0, &its, NULL);
 
     fwd->topoll = (zmq_pollitem_t *)calloc(10, sizeof(zmq_pollitem_t));
+    fwd->forcesend = (uint8_t *)calloc(10, sizeof(uint8_t));
+
     fwd->pollsize = 10;
     fwd->nextpoll = 3;
 
@@ -507,6 +526,7 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
     } while (x == 1);
 
     free(fwd->topoll);
+    free(fwd->forcesend);
     close(fwd->conntimerfd);
     if (fwd->flagtimerfd != -1) {
         close(fwd->flagtimerfd);

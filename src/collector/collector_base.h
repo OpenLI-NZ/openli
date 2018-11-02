@@ -107,6 +107,7 @@ typedef struct forwarding_thread_data {
     void *zmq_ctrlsock;
     void *zmq_pullressock;
 
+    uint8_t *forcesend;
     zmq_pollitem_t *topoll;
     int pollsize;
     int nextpoll;
