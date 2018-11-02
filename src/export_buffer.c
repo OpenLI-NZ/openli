@@ -33,7 +33,7 @@
 #include "export_buffer.h"
 #include "netcomms.h"
 
-#define BUFFER_ALLOC_SIZE (1024 * 1024 * 10)
+#define BUFFER_ALLOC_SIZE (1024 * 1024 * 50)
 #define BUFFER_WARNING_THRESH (1024 * 1024 * 1024)
 
 void init_export_buffer(export_buffer_t *buf, uint8_t hasnetcomm) {
@@ -137,11 +137,11 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     }
 
     while (spaceleft < res->msgbody->len + sizeof(res->header) + liidlen + 2) {
+        /* Add some space to the buffer */
         spaceleft = extend_buffer(buf);
         if (spaceleft == 0) {
             return 0;
         }
-        /* Add some space to the buffer */
     }
 
     memcpy(buf->buftail, &res->header, sizeof(res->header));
@@ -179,39 +179,8 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         buf->decoder = wandder_create_etsili_decoder();
     }
 
-    /* Try to maintain record alignment */
-    while (bhead + sent < buf->buftail) {
-        uint32_t attachlen = 0;
-        uint32_t pdulen = 0;
-        uint16_t liidlen = 0;
+    sent = (buf->buftail - (bhead + offset));
 
-        if (buf->hasnetcomm) {
-            header = (ii_header_t *)(bhead + sent);
-            pdulen = ntohs(header->bodylen) + sizeof(ii_header_t);
-        } else {
-            if (buf->buftail - (bhead + sent) < 10000) {
-                attachlen = buf->buftail - (bhead + sent);
-            } else {
-                attachlen = 10000;
-            }
-
-            wandder_attach_etsili_buffer(buf->decoder, bhead + sent,
-                    attachlen, 0);
-            pdulen = wandder_etsili_get_pdu_length(buf->decoder);
-            if (pdulen == 0) {
-                logger(LOG_INFO, "OpenLI: failed to decode buffered ETSI record.");
-                break;
-            }
-        }
-
-        if (sent + pdulen > bytelimit) {
-            break;
-        }
-
-        sent += pdulen;
-    }
-
-    sent -= offset;
     if (sent != 0) {
         ret = send(fd, bhead + offset, (int)sent, MSG_DONTWAIT);
         if (ret < 0) {
