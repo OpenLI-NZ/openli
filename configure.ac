@@ -28,7 +28,6 @@ AC_ARG_ENABLE([collector], AS_HELP_STRING([--disable-collector],
 AC_CHECK_LIB([trace], [trace_increment_packet_refcount],,libtrace_found=0)
 AC_CHECK_LIB([yaml], [yaml_document_get_node],,libyaml_found=0)
 AC_CHECK_LIB([zmq], [zmq_poll],,libzmq_found=0)
-AC_CHECK_LIB([tcmalloc], [tc_version],,libtcmalloc_found=0)
 
 AC_CHECK_HEADERS([syslog.h])
 
@@ -36,6 +35,7 @@ AC_CONFIG_FILES([Makefile src/Makefile extlib/Makefile
                 extlib/libpatricia/Makefile])
 
 if test "x$enable_collector" != "xno"; then
+        AC_CHECK_LIB([tcmalloc], [tc_version],,libtcmalloc_found=0)
         AC_CHECK_LIB([osipparser2], [osip_message_init],,libosip2_found=0)
         if test "$libosip2_found" = 0; then
                 AC_MSG_ERROR(Required library libosipparser2 not found; use LDFLAGS to specify library location)
@@ -47,6 +47,13 @@ if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then
         AC_CHECK_LIB([wandder], [init_wandder_encoder],,libwandder_found=0)
         if test "$libwandder_found" = 0; then
                 AC_MSG_ERROR(Required library libwandder not found; use LDFLAGS to specify library location)
+        fi
+fi
+
+if test "x$enable_mediator" != "xno"; then
+        AC_CHECK_LIB([Judy], [JudySLGet],,libjudy_found=0)
+        if test "$libjudy_found" = 0; then
+                AC_MSG_ERROR(Required library libjudy not found; use LDFLAGS to specify library location)
         fi
 fi
 

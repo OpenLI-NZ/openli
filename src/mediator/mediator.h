@@ -27,6 +27,7 @@
 #ifndef OPENLI_MEDIATOR_H_
 #define OPENLI_MEDIATOR_H_
 
+#include <Judy.h>
 #include <libwandder.h>
 #include <libwandder_etsili.h>
 #include <libtrace/simple_circular_buffer.h>
@@ -134,7 +135,8 @@ typedef struct med_state {
 
     mediator_prov_t provisioner;
 
-    liid_map_t *liids;
+    Pvoid_t liid_array;
+//    liid_map_t *liids;
 
     uint32_t pcaprotatefreq;
     pthread_t pcapthread;

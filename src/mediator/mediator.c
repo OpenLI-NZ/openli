@@ -40,6 +40,7 @@
 #include <unistd.h>
 #include <assert.h>
 #include <libwandder_etsili.h>
+#include <Judy.h>
 
 #include "configparser.h"
 #include "logger.h"
@@ -306,7 +307,26 @@ static void drop_all_agencies(libtrace_list_t *a) {
 static void clear_med_state(mediator_state_t *state) {
 
     liid_map_t *m, *tmp;
+    PWord_t jval;
+    Word_t bytes;
+    char index[1024];
 
+    index[0] = '\0';
+
+    JSLF(jval, state->liid_array, index);
+    while (jval != NULL) {
+        m = (liid_map_t *)(*jval);
+        if (m->ceasetimer) {
+            halt_mediator_timer(state, m->ceasetimer);
+            free(m->ceasetimer);
+        }
+        JSLN(jval, state->liid_array, index);
+        free(m->liid);
+        free(m);
+    }
+    JSLFA(bytes, state->liid_array);
+
+    /*
     HASH_ITER(hh, state->liids, m, tmp) {
         HASH_DEL(state->liids, m);
         if (m->ceasetimer) {
@@ -316,6 +336,8 @@ static void clear_med_state(mediator_state_t *state) {
         free(m->liid);
         free(m);
     }
+    */
+
 
     free_provisioner(state->epoll_fd, &(state->provisioner));
     drop_all_collectors(state->collectors);
@@ -404,7 +426,8 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     pthread_mutex_init(&(state->agency_mutex), NULL);
     state->connectthread = -1;
 
-    state->liids = NULL;
+    state->liid_array = NULL;
+    //state->liids = NULL;
     libtrace_message_queue_init(&(state->pcapqueue),
             sizeof(mediator_pcap_msg_t));
 
@@ -1202,7 +1225,9 @@ static liid_map_t *match_etsi_to_agency(mediator_state_t *state,
     char liidstr[65536];
     liid_map_t *match = NULL;
     uint16_t l;
-    
+    PWord_t jval;
+
+
     l = *(uint16_t *)(etsimsg);
     *liidlen = ntohs(l);
 
@@ -1211,19 +1236,18 @@ static liid_map_t *match_etsi_to_agency(mediator_state_t *state,
 
     *liidlen += sizeof(l);
 
-#if 0
-    if (state->etsidecoder == NULL) {
-        state->etsidecoder = wandder_create_etsili_decoder();
-    }
-    wandder_attach_etsili_buffer(state->etsidecoder, etsimsg, msglen, false);
+    JSLG(jval, state->liid_array, liidstr);
+    if (jval == NULL) {
+        logger(LOG_INFO, "OpenLI: mediator was unable to find LIID %s in its set of mappings.", liidstr);
 
-    if (wandder_etsili_get_liid(state->etsidecoder, liidstr, 1024) == NULL) {
-        logger(LOG_INFO,
-                "OpenLI: unable to find LIID in ETSI record received from collector.");
+        /* TODO what do we do in this case -- buffer it somewhere in case
+         * a mapping turns up later? drop it? */
         return NULL;
     }
-#endif
-    HASH_FIND_STR(state->liids, liidstr, match);
+    return (liid_map_t *)(*jval);
+    
+#if 0
+    HASH_FIND(hh, state->liids, liidstr, *liidlen - sizeof(l), match);
     if (match == NULL) {
         logger(LOG_INFO, "OpenLI: mediator was unable to find LIID %s in its set of mappings.", liidstr);
 
@@ -1233,6 +1257,7 @@ static liid_map_t *match_etsi_to_agency(mediator_state_t *state,
     }
 
     return match;
+#endif
 }
 
 static int enqueue_etsi(mediator_state_t *state, handover_t *ho,
@@ -1242,6 +1267,7 @@ static int enqueue_etsi(mediator_state_t *state, handover_t *ho,
 
     mas = (med_agency_state_t *)(ho->outev->state);
 
+#if 0
     if (append_etsipdu_to_buffer(&(mas->buf), etsimsg, (uint32_t)msglen, 0)
             == 0) {
         logger(LOG_INFO,
@@ -1264,6 +1290,7 @@ static int enqueue_etsi(mediator_state_t *state, handover_t *ho,
         }
         mas->outenabled = 1;
     }
+#endif
 
     return 0;
 }
@@ -1339,6 +1366,7 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     char *liid = NULL;
     liid_map_t *m;
     int sock;
+    PWord_t jval;
 
     if (decode_cease_mediation(msgbody, msglen, &liid) == -1) {
         logger(LOG_INFO, "OpenLI mediator: received invalid cease mediation command from provisioner.");
@@ -1349,14 +1377,18 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
         return -1;
     }
 
-    HASH_FIND_STR(state->liids, liid, m);
-    if (m == NULL) {
+    JSLG(jval, state->liid_array, liid);
+    if (jval == NULL) {
+
+//    HASH_FIND_STR(state->liids, liid, m);
+//    if (m == NULL) {
         logger(LOG_INFO, "OpenLI mediator: asked to cease mediation for LIID %s, but we have no record of this LIID?",
                 liid);
         free(liid);
         return 0;
     }
 
+    m = (liid_map_t *)(*jval);
 
     /* TODO end any pcap trace for this LIID */
 
@@ -1388,10 +1420,12 @@ static inline int remove_liid_mapping(mediator_state_t *state,
 
     struct epoll_event ev;
     liid_map_t *m = (liid_map_t *)(mev->state);
+    int err;
 
     logger(LOG_INFO, "OpenLI mediator: removed agency mapping for LIID %s.",
             m->liid);
-    HASH_DEL(state->liids, m);
+    JSLD(err, state->liid_array, m->liid);
+    //HASH_DEL(state->liids, m);
 
     halt_mediator_timer(state, mev);
     free(m->ceasetimer);
@@ -1406,6 +1440,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     char *agencyid, *liid;
     mediator_agency_t *agency;
     liid_map_t *m;
+    PWord_t jval;
 
     agencyid = NULL;
     liid = NULL;
@@ -1445,13 +1480,24 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         }
     }
 
+    JSLI(jval, state->liid_array, liid);
+    if (jval == NULL) {
+        logger(LOG_INFO, "OpenLI mediator: OOM when allocating memory for new LIID.");
+        return -1;
+    }
+
     m = (liid_map_t *)malloc(sizeof(liid_map_t));
+    if (m == NULL) {
+        logger(LOG_INFO, "OpenLI mediator: OOM when allocating memory for new LIID.");
+        return -1;
+    }
+    *jval = (Word_t)m;
     m->liid = liid;
     m->agency = agency;
     m->ceasetimer = NULL;
     free(agencyid);
 
-    HASH_ADD_STR(state->liids, liid, m);
+    //HASH_ADD_STR(state->liids, liid, m);
 
     if (agency) {
         logger(LOG_DEBUG, "OpenLI mediator: added %s -> %s to LIID map",
@@ -1656,6 +1702,7 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                     return -1;
                 }
 
+                assert(thisint->agency);
                 if (thisint->agency == NULL) {
                     /* Destined for a pcap file rather than an agency */
                     /* TODO freelist rather than repeated malloc/free */
@@ -1894,13 +1941,30 @@ static int reload_provisioner_socket_config(mediator_state_t *currstate,
     struct epoll_event ev;
     int changed = 0;
     liid_map_t *m, *tmp;
+    PWord_t pval;
+    char index[1024];
+    Word_t bytes;
 
     if (strcmp(newstate->provaddr, currstate->provaddr) != 0 ||
             strcmp(newstate->provport, currstate->provport) != 0) {
 
         /* Disconnect from provisioner and reset all state received
          * from the old provisioner (just to be safe). */
+        index[0] = '\0';
+        JSLF(pval, currstate->liid_array, index);
+        while (pval != NULL) {
+            m = (liid_map_t *)pval;
 
+            if (m->ceasetimer) {
+                halt_mediator_timer(currstate, m->ceasetimer);
+                free(m->ceasetimer);
+            }
+            JSLN(pval, currstate->liid_array, index);
+            free(m->liid);
+            free(m);
+        }
+        JSLFA(bytes, currstate->liid_array);
+/*
         HASH_ITER(hh, currstate->liids, m, tmp) {
             HASH_DEL(currstate->liids, m);
             if (m->ceasetimer) {
@@ -1911,6 +1975,8 @@ static int reload_provisioner_socket_config(mediator_state_t *currstate,
             free(m);
         }
         currstate->liids = NULL;
+*/
+
 
         free_provisioner(currstate->epoll_fd, &(currstate->provisioner));
 
