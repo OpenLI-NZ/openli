@@ -220,6 +220,8 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 
     HASH_FIND(hh, intstate->cinsequencing, &cin, sizeof(cin), cinseq);
     if (!cinseq) {
+        char cinstr[1024];
+
         cinseq = (cin_seqno_t *)malloc(sizeof(cin_seqno_t));
 
         if (!cinseq) {
@@ -228,9 +230,12 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
             return -1;
         }
 
+        snprintf(cinstr, 1024, "%s-%u", liid, cin);
+
         cinseq->cin = cin;
         cinseq->iri_seqno = 0;
         cinseq->cc_seqno = 0;
+        cinseq->cin_string = strdup(cinstr);
 
         HASH_ADD_KEYPTR(hh, intstate->cinsequencing, &(cinseq->cin),
                 sizeof(cin), cinseq);
@@ -240,6 +245,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 	job.preencoded = intstate->preencoded;
 	job.origreq = recvd;
 	job.liid = strdup(liid);
+    job.cinstr = strdup(cinseq->cin_string);
 
 	if (recvd->type == OPENLI_EXPORT_IPMMCC ||
 			recvd->type == OPENLI_EXPORT_IPCC) {

@@ -45,6 +45,7 @@ typedef struct cin_seqno {
     uint32_t cin;
     uint32_t cc_seqno;
     uint32_t iri_seqno;
+    char *cin_string;
     UT_hash_handle hh;
 } cin_seqno_t;
 

@@ -98,6 +98,15 @@ typedef struct seqtracker_thread_data {
 
 } seqtracker_thread_data_t;
 
+typedef struct intercept_reorderer {
+
+    char *liid;
+    char *key;
+    Pvoid_t pending;
+
+    uint32_t expectedseqno;
+} int_reorderer_t;
+
 typedef struct forwarding_thread_data {
     void *zmq_ctxt;
     pthread_t threadid;
@@ -146,6 +155,7 @@ typedef struct encoder_state {
 typedef struct encoder_job {
     wandder_encode_job_t *preencoded;
     uint32_t seqno;
+    char *cinstr;
     openli_export_recv_t *origreq;
     char *liid;
 } PACKED openli_encoding_job_t;

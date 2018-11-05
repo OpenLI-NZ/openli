@@ -218,21 +218,116 @@ static void disconnect_mediator(forwarding_thread_data_t *fwd,
 
 }
 
-static inline void enqueue_result(forwarding_thread_data_t *fwd,
+static inline void free_encoded_result(openli_encoded_result_t *res) {
+    if (res->liid) {
+        free(res->liid);
+    }
+
+    if (res->cinstr) {
+        free(res->cinstr);
+    }
+
+    if (res->msgbody) {
+        free(res->msgbody->encoded);
+        free(res->msgbody);
+    }
+
+    if (res->origreq) {
+        free_published_message(res->origreq);
+    }
+}
+
+static inline int enqueue_result(forwarding_thread_data_t *fwd,
         export_dest_t *med, openli_encoded_result_t *res) {
 
-    /* TODO reordering of results if required for each LIID/CIN */
+    PWord_t jval;
+    int_reorderer_t *reord;
+    PWord_t jval2;
+    Word_t index = 0;
+    int err;
+    openli_encoded_result_t *rescopy;
+    Pvoid_t *reorderer;
+
+    if (res->origreq->type == OPENLI_EXPORT_IPCC ||
+            res->origreq->type == OPENLI_EXPORT_IPMMCC) {
+
+        reorderer = &(fwd->intreorderer_cc);
+    } else {
+        reorderer = &(fwd->intreorderer_iri);
+    }
 
 
+    /* reordering of results if required for each LIID/CIN */
+    JSLG(jval, *reorderer, res->cinstr);
+    if (jval == NULL) {
+        JSLI(jval, *reorderer, res->cinstr);
 
+        if (jval == NULL) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to create new intercept record reorderer due to lack of memory"
+                    );
+            return 1;
+        }
+
+        reord = (int_reorderer_t *)calloc(1, sizeof(int_reorderer_t));
+        reord->liid = strdup(res->liid);
+        reord->key = strdup(res->cinstr);
+        reord->pending = NULL;
+        reord->expectedseqno = 0;
+
+        *jval = (Word_t)reord;
+    } else {
+        reord = (int_reorderer_t *)(*jval);
+    }
+
+    if (res->seqno != reord->expectedseqno) {
+
+        JLI(jval2, reord->pending, res->seqno);
+
+        rescopy = (openli_encoded_result_t *)calloc(1,
+                sizeof(openli_encoded_result_t));
+        memcpy(rescopy, res, sizeof(openli_encoded_result_t));
+
+        *jval2 = (Word_t)rescopy;
+
+        return 0;
+    }
+
+    /*
     if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
-        /* TODO drop mediator since we've filled our buffer */
         logger(LOG_INFO,
                 "OpenLI: forced to drop mediator %s:%s because we cannot buffer any more records for it -- please investigate asap!",
                 med->ipstr, med->portstr);
         remove_destination(fwd, med);
+        return 1;
+    }
+    */
+
+    reord->expectedseqno = res->seqno + 1;
+    JLF(jval2, reord->pending, index);
+
+    while (jval2 != NULL && index == reord->expectedseqno) {
+        res = (openli_encoded_result_t *)(*jval2);
+
+        JLD(err, reord->pending, index);
+        JLN(jval2, reord->pending, index);
+
+        /*
+        if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
+            logger(LOG_INFO,
+                    "OpenLI: forced to drop mediator %s:%s because we cannot buffer any more records for it -- please investigate asap!",
+                    med->ipstr, med->portstr);
+            remove_destination(fwd, med);
+            break;
+        }
+        */
+        reord->expectedseqno = res->seqno + 1;
+
+        free_encoded_result(res);
+        free(res);
     }
 
+    return 1;
 }
 
 static int handle_encoded_result(forwarding_thread_data_t *fwd,
@@ -274,19 +369,10 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
     }
 
     /* TODO enqueue this result to be forwarded */
-    enqueue_result(fwd, med, res);
+    ret = enqueue_result(fwd, med, res);
 
-    if (res->liid) {
-        free(res->liid);
-    }
-
-    if (res->msgbody) {
-        free(res->msgbody->encoded);
-        free(res->msgbody);
-    }
-
-    if (res->origreq) {
-        free_published_message(res->origreq);
+    if (ret == 1) {
+        free_encoded_result(res);
     }
 
     return ret;

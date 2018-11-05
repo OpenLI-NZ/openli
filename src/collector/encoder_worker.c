@@ -244,10 +244,12 @@ static int process_job(openli_encoder_t *enc, void *socket) {
             continue;
         }
 
+        result.cinstr = job.cinstr;
         result.liid = job.liid;
         result.seqno = job.seqno;
         result.destid = job.origreq->destid;
         result.origreq = job.origreq;
+        result.encodedby = enc->workerid;
 
         /*
         if (job.origreq->type == OPENLI_EXPORT_IPCC) {
