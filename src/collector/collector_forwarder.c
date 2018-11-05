@@ -242,11 +242,9 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
     PWord_t jval;
     int_reorderer_t *reord;
-    PWord_t jval2;
-    Word_t index = 0;
-    int err;
     openli_encoded_result_t *rescopy;
     Pvoid_t *reorderer;
+    stored_result_t *stored, *tmp;
 
     if (res->origreq->type == OPENLI_EXPORT_IPCC ||
             res->origreq->type == OPENLI_EXPORT_IPMMCC) {
@@ -282,13 +280,11 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
     if (res->seqno != reord->expectedseqno) {
 
-        JLI(jval2, reord->pending, res->seqno);
+        stored = (stored_result_t *)calloc(1, sizeof(stored_result_t));
+        memcpy(&(stored->res), res, sizeof(openli_encoded_result_t));
 
-        rescopy = (openli_encoded_result_t *)calloc(1,
-                sizeof(openli_encoded_result_t));
-        memcpy(rescopy, res, sizeof(openli_encoded_result_t));
-
-        *jval2 = (Word_t)rescopy;
+        HASH_ADD_KEYPTR(hh, reord->pending, &(stored->res.seqno),
+                sizeof(stored->res.seqno), stored);
 
         return 0;
     }
@@ -304,13 +300,13 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
     */
 
     reord->expectedseqno = res->seqno + 1;
-    JLF(jval2, reord->pending, index);
 
-    while (jval2 != NULL && index == reord->expectedseqno) {
-        res = (openli_encoded_result_t *)(*jval2);
+    HASH_ITER(hh, reord->pending, stored, tmp) {
+        if (stored->res.seqno != reord->expectedseqno) {
+            break;
+        }
 
-        JLD(err, reord->pending, index);
-        JLN(jval2, reord->pending, index);
+        HASH_DELETE(hh, reord->pending, stored);
 
         /*
         if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
@@ -321,10 +317,11 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
             break;
         }
         */
-        reord->expectedseqno = res->seqno + 1;
+        reord->expectedseqno = stored->res.seqno + 1;
 
-        free_encoded_result(res);
-        free(res);
+        free_encoded_result(&(stored->res));
+        free(stored);
+
     }
 
     return 1;
