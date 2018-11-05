@@ -45,11 +45,11 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
 
     export_dest_t *newdest, *found;
     struct itimerspec its;
+    PWord_t jval;
 
-    HASH_FIND(hh_medid, fwd->destinations_by_id, &(msg->data.med.mediatorid),
-            sizeof(msg->data.med.mediatorid), found);
+    JLG(jval, fwd->destinations_by_id, msg->data.med.mediatorid);
 
-    if (!found) {
+    if (jval == NULL) {
         newdest = (export_dest_t *)calloc(1, sizeof(export_dest_t));
 
         newdest->fd = -1;
@@ -60,14 +60,16 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
         newdest->mediatorid = msg->data.med.mediatorid;
         newdest->ipstr = msg->data.med.ipstr;
         newdest->portstr = msg->data.med.portstr;
-        init_export_buffer(&(newdest->buffer), 1);
+        init_export_buffer(&(newdest->buffer));
 
-        HASH_ADD_KEYPTR(hh_medid, fwd->destinations_by_id,
-                &(newdest->mediatorid), sizeof(newdest->mediatorid), newdest);
+        JLI(jval, fwd->destinations_by_id, newdest->mediatorid);
+        *jval = (Word_t)newdest;
+
         logger(LOG_INFO, "OpenLI: adding new mediator %u at %s:%s",
                 newdest->mediatorid, newdest->ipstr, newdest->portstr);
-
     } else {
+        found = (export_dest_t *)(*jval);
+
         if (found->ipstr == NULL) {
             /* Announcement for a previously unknown mediator */
             found->ipstr = msg->data.med.ipstr;
@@ -117,30 +119,15 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
     return 1;
 }
 
-static int handle_ctrl_message(forwarding_thread_data_t *fwd,
-        openli_export_recv_t *msg) {
-
-    if (msg->type == OPENLI_EXPORT_HALT) {
-        free(msg);
-        return 0;
-    }
-
-    /* TODO handle mediator announcements and withdrawals */
-
-    if (msg->type == OPENLI_EXPORT_MEDIATOR) {
-        return add_new_destination(fwd, msg);
-    }
-
-    return 1;
-}
-
 static void remove_destination(forwarding_thread_data_t *fwd,
         export_dest_t *med) {
 
-    HASH_DELETE(hh_medid, fwd->destinations_by_id, med);
+    int err;
+
+    JLD(err, fwd->destinations_by_id, med->mediatorid);
 
     if (med->fd != -1) {
-        HASH_DELETE(hh_fd, fwd->destinations_by_fd, med);
+        JLD(err, fwd->destinations_by_fd, med->fd);
         close(med->fd);
         med->fd = -1;
     }
@@ -157,11 +144,65 @@ static void remove_destination(forwarding_thread_data_t *fwd,
 }
 
 static void remove_all_destinations(forwarding_thread_data_t *fwd) {
-    export_dest_t *med, *tmp;
+    export_dest_t *med;
+    PWord_t *jval;
+    Word_t index;
 
-    HASH_ITER(hh_medid, fwd->destinations_by_id, med, tmp) {
+    index = 0;
+    JLF(jval, fwd->destinations_by_id, index);
+    while (jval != NULL) {
+        med = (export_dest_t *)(*jval);
+        JLN(jval, fwd->destinations_by_id, index);
+
         remove_destination(fwd, med);
     }
+}
+
+static void flag_all_destinations(forwarding_thread_data_t *fwd) {
+    export_dest_t *med;
+    PWord_t *jval;
+    Word_t index;
+
+    index = 0;
+    JLF(jval, fwd->destinations_by_id, index);
+    while (jval != NULL) {
+        med = (export_dest_t *)(*jval);
+        JLN(jval, fwd->destinations_by_id, index);
+
+        med->awaitingconfirm = 1;
+    }
+    fwd->awaitingconfirm = 1;
+}
+
+static int handle_ctrl_message(forwarding_thread_data_t *fwd,
+        openli_export_recv_t *msg) {
+
+    if (msg->type == OPENLI_EXPORT_HALT) {
+        free(msg);
+        return 0;
+    }
+
+    if (msg->type == OPENLI_EXPORT_MEDIATOR) {
+        return add_new_destination(fwd, msg);
+    } else if (msg->type == OPENLI_EXPORT_DROP_SINGLE_MEDIATOR) {
+        PWord_t jval;
+        export_dest_t *med;
+
+        JLG(jval, fwd->destinations_by_id, msg->data.med.mediatorid);
+        if (jval == NULL) {
+            logger(LOG_DEBUG, "asked to remove mediator %d but cannot find it?",
+                    msg->data.med.mediatorid);
+            return 1;
+        }
+        med = (export_dest_t *)(*jval);
+        remove_destination(fwd, med);
+    } else if (msg->type == OPENLI_EXPORT_DROP_ALL_MEDIATORS) {
+        remove_all_destinations(fwd);
+    } else if (msg->type == OPENLI_EXPORT_FLAG_MEDIATORS) {
+
+    }
+
+    return 1;
 }
 
 static void disconnect_mediator(forwarding_thread_data_t *fwd,
@@ -199,15 +240,24 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
 
     int ret = 0;
     export_dest_t *med;
+    PWord_t jval;
 
     /* Check if this result is for a mediator we know about. If not,
      * create a destination for that mediator and buffer results until
      * we get a corresponding announcement. */
 
-    HASH_FIND(hh_medid, fwd->destinations_by_id, &(res->destid),
-            sizeof(res->destid), med);
 
-    if (!med) {
+    JLG(jval, fwd->destinations_by_id, res->destid);
+    if (jval == NULL) {
+        JLI(jval, fwd->destinations_by_id, res->destid);
+
+        if (jval == NULL) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to allocate memory for unknown mediator %u",
+                    res->destid);
+            return -1;
+        }
+
         med = (export_dest_t *)calloc(1, sizeof(export_dest_t));
         med->failmsg = 0;
         med->fd = -1;
@@ -218,8 +268,9 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
         med->mediatorid = res->destid;
         init_export_buffer(&(med->buffer));
 
-        HASH_ADD_KEYPTR(hh_medid, fwd->destinations_by_id, &(med->mediatorid),
-                sizeof(med->mediatorid), med);
+        *jval = (Word_t) med;
+    } else {
+        med = (export_dest_t *)jval;
     }
 
     /* TODO enqueue this result to be forwarded */
@@ -242,6 +293,21 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
 }
 
 static void purge_unconfirmed_mediators(forwarding_thread_data_t *fwd) {
+
+    export_dest_t *med;
+    PWord_t *jval;
+    Word_t index;
+
+    index = 0;
+    JLF(jval, fwd->destinations_by_id, index);
+    while (jval != NULL) {
+        med = (export_dest_t *)(*jval);
+        JLN(jval, fwd->destinations_by_id, index);
+
+        if (med->awaitingconfirm) {
+            remove_destination(fwd, med);
+        }
+    }
 
 }
 
@@ -281,8 +347,16 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
 
     export_dest_t *dest, *tmp;
     int ind;
+    PWord_t jval, jval2;
+    Word_t index;
 
-    HASH_ITER(hh_medid, fwd->destinations_by_id, dest, tmp) {
+    index = 0;
+    JLF(jval, fwd->destinations_by_id, index);
+
+    while (jval != NULL) {
+        dest = (export_dest_t *)(*jval);
+
+        JLN(jval, fwd->destinations_by_id, index);
 
         if (dest->fd != -1) {
             continue;
@@ -297,8 +371,15 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
             continue;
         }
 
-        HASH_ADD_KEYPTR(hh_fd, fwd->destinations_by_fd, &(dest->fd),
-                sizeof(dest->fd), dest);
+        JLI(jval2, fwd->destinations_by_fd, dest->fd);
+        if (jval2 == NULL) {
+            logger(LOG_INFO, "memory issue while connecting to export target");
+            close(dest->fd);
+            dest->fd = -1;
+            return;
+        }
+
+        *jval2 = (Word_t)dest;
 
         if (dest->pollindex == -1) {
             if (fwd->nextpoll == fwd->pollsize - 1) {
@@ -445,18 +526,21 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
 
     for (i = 2; i < fwd->nextpoll; i++) {
         export_dest_t *dest;
+        PWord_t jval;
         uint64_t availsend = 0;
         /* check if any destinations can received any buffered data */
         if (!(fwd->topoll[i].revents & ZMQ_POLLOUT)) {
             continue;
         }
-        HASH_FIND(hh_fd, fwd->destinations_by_fd, &(fwd->topoll[i].fd),
-                sizeof(fwd->topoll[i].fd), dest);
-        if (dest == NULL) {
+
+        JLG(jval, fwd->destinations_by_fd, fwd->topoll[i].fd);
+        if (jval == NULL) {
             logger(LOG_INFO, "OpenLI: no matching destination for fd %d?",
                     fwd->topoll[i].fd);
             return -1;
         }
+
+        dest = (export_dest_t *)(*jval);
 
         if ((availsend = get_buffered_amount(&(dest->buffer))) == 0) {
             /* Nothing available to send */
@@ -490,6 +574,9 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
     fwd->destinations_by_fd = NULL;
     fwd->awaitingconfirm = 0;
     fwd->flagtimerfd = -1;
+
+    fwd->intreorderer_cc = NULL;
+    fwd->intreorderer_iri = NULL;
 
     fwd->conntimerfd = timerfd_create(CLOCK_MONOTONIC, 0);
     if (fwd->conntimerfd == -1) {

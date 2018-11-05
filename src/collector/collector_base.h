@@ -31,6 +31,7 @@
 #include <libwandder_etsili.h>
 #include <libwandder.h>
 #include <zmq.h>
+#include <Judy.h>
 
 #include "export_shared.h"
 #include "etsili_core.h"
@@ -116,8 +117,11 @@ typedef struct forwarding_thread_data {
     int conntimerfd;
     int flagtimerfd;
 
-    export_dest_t *destinations_by_fd;
-    export_dest_t *destinations_by_id;
+    Pvoid_t destinations_by_fd;
+    Pvoid_t destinations_by_id;
+
+    Pvoid_t intreorderer_cc;
+    Pvoid_t intreorderer_iri;
 
 } forwarding_thread_data_t;
 

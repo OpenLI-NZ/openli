@@ -48,9 +48,7 @@ if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then
         if test "$libwandder_found" = 0; then
                 AC_MSG_ERROR(Required library libwandder not found; use LDFLAGS to specify library location)
         fi
-fi
 
-if test "x$enable_mediator" != "xno"; then
         AC_CHECK_LIB([Judy], [JudySLGet],,libjudy_found=0)
         if test "$libjudy_found" = 0; then
                 AC_MSG_ERROR(Required library libjudy not found; use LDFLAGS to specify library location)
