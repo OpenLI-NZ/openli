@@ -51,12 +51,10 @@ typedef struct export_buffer {
 
     uint32_t deadfront;
     uint32_t partialfront;
-    uint8_t hasnetcomm;
-    wandder_etsispec_t *decoder;
 } export_buffer_t;
 
 
-void init_export_buffer(export_buffer_t *buf, uint8_t hasnetcomm);
+void init_export_buffer(export_buffer_t *buf);
 void release_export_buffer(export_buffer_t *buf);
 uint64_t get_buffered_amount(export_buffer_t *buf);
 uint64_t append_message_to_buffer(export_buffer_t *buf,

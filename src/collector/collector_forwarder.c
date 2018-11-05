@@ -216,7 +216,7 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
         med->awaitingconfirm = 0;
         med->halted = 0;
         med->mediatorid = res->destid;
-        init_export_buffer(&(med->buffer), 1);
+        init_export_buffer(&(med->buffer));
 
         HASH_ADD_KEYPTR(hh_medid, fwd->destinations_by_id, &(med->mediatorid),
                 sizeof(med->mediatorid), med);

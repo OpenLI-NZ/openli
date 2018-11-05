@@ -36,20 +36,15 @@
 #define BUFFER_ALLOC_SIZE (1024 * 1024 * 50)
 #define BUFFER_WARNING_THRESH (1024 * 1024 * 1024)
 
-void init_export_buffer(export_buffer_t *buf, uint8_t hasnetcomm) {
+void init_export_buffer(export_buffer_t *buf) {
     buf->bufhead = NULL;
     buf->buftail = NULL;
     buf->alloced = 0;
     buf->partialfront = 0;
     buf->deadfront = 0;
-    buf->hasnetcomm = hasnetcomm;
-    buf->decoder = NULL;
 }
 
 void release_export_buffer(export_buffer_t *buf) {
-    if (buf->decoder) {
-        wandder_free_etsili_decoder(buf->decoder);
-    }
     free(buf->bufhead);
 }
 
@@ -174,10 +169,6 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
     uint64_t offset = buf->partialfront;
     int ret;
     ii_header_t *header = NULL;
-
-    if (!buf->hasnetcomm && buf->decoder == NULL) {
-        buf->decoder = wandder_create_etsili_decoder();
-    }
 
     sent = (buf->buftail - (bhead + offset));
 

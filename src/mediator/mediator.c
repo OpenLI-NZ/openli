@@ -882,7 +882,7 @@ static handover_t *create_new_handover(char *ipstr, char *portstr,
     }
 
 
-    init_export_buffer(&(agstate->buf), 0);
+    init_export_buffer(&(agstate->buf));
     agstate->failmsg = 0;
     agstate->main_fd = -1;
     agstate->outenabled = 0;
@@ -1245,19 +1245,6 @@ static liid_map_t *match_etsi_to_agency(mediator_state_t *state,
         return NULL;
     }
     return (liid_map_t *)(*jval);
-    
-#if 0
-    HASH_FIND(hh, state->liids, liidstr, *liidlen - sizeof(l), match);
-    if (match == NULL) {
-        logger(LOG_INFO, "OpenLI: mediator was unable to find LIID %s in its set of mappings.", liidstr);
-
-        /* TODO what do we do in this case -- buffer it somewhere in case
-         * a mapping turns up later? drop it? */
-        return NULL;
-    }
-
-    return match;
-#endif
 }
 
 static int enqueue_etsi(mediator_state_t *state, handover_t *ho,
@@ -1702,7 +1689,6 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                     return -1;
                 }
 
-                assert(thisint->agency);
                 if (thisint->agency == NULL) {
                     /* Destined for a pcap file rather than an agency */
                     /* TODO freelist rather than repeated malloc/free */
@@ -1953,7 +1939,7 @@ static int reload_provisioner_socket_config(mediator_state_t *currstate,
         index[0] = '\0';
         JSLF(pval, currstate->liid_array, index);
         while (pval != NULL) {
-            m = (liid_map_t *)pval;
+            m = (liid_map_t *)(*pval);
 
             if (m->ceasetimer) {
                 halt_mediator_timer(currstate, m->ceasetimer);
@@ -1964,19 +1950,6 @@ static int reload_provisioner_socket_config(mediator_state_t *currstate,
             free(m);
         }
         JSLFA(bytes, currstate->liid_array);
-/*
-        HASH_ITER(hh, currstate->liids, m, tmp) {
-            HASH_DEL(currstate->liids, m);
-            if (m->ceasetimer) {
-                halt_mediator_timer(currstate, m->ceasetimer);
-                free(m->ceasetimer);
-            }
-            free(m->liid);
-            free(m);
-        }
-        currstate->liids = NULL;
-*/
-
 
         free_provisioner(currstate->epoll_fd, &(currstate->provisioner));
 
