@@ -5,7 +5,8 @@ bin_PROGRAMS += openliprovisioner
 openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
 		byteswap.c byteswap.h intercept.h intercept.c configparser.c \
                 configparser.h util.c util.h agency.h logger.c logger.h \
-		netcomms.h netcomms.c coreserver.h coreserver.c
+		netcomms.h netcomms.c coreserver.h coreserver.c \
+                collector/jenkinshash.c
 
 openliprovisioner_LDADD = @ADD_LIBS@
 openliprovisioner_LDFLAGS=-lpthread
@@ -18,8 +19,7 @@ bin_PROGRAMS +=openlicollector
 openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/collector.h logger.c logger.h \
 		collector/collector_sync.c collector/collector_sync.h \
-		etsili_core.h collector/collector_export.c \
-                collector/collector_export.h export_buffer.h export_buffer.c \
+		etsili_core.h export_buffer.h export_buffer.c \
                 util.c util.h intercept.c intercept.h \
                 netcomms.c netcomms.h byteswap.c byteswap.h etsili_core.c \
                 collector/sipparsing.c collector/sipparsing.h \
@@ -32,13 +32,18 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
 		collector/alushim_parser.c collector/alushim_parser.h \
                 collector/ipiri.c collector/ipiri.h \
 		collector/collector_sync_voip.c \
-		collector/collector_sync_voip.h \
+		collector/collector_sync_voip.h collector/export_shared.h \
                 collector/reassembler.h collector/reassembler.c \
+                collector/collector_publish.c collector/collector_publish.h \
+                collector/encoder_worker.c collector/encoder_worker.h \
+                collector/collector_seqtracker.c \
+                collector/collector_forwarder.c \
                 $(PLUGIN_SRCS)
 
-openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs
+openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 
 openlicollector_LDFLAGS=-lpthread -lpatricia
-openlicollector_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/
+openlicollector_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/ -I$(builddir)
+
 endif
 
 if BUILD_MEDIATOR
@@ -49,6 +54,7 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
                 agency.h logger.c logger.h netcomms.c \
                 netcomms.h export_buffer.c \
                 export_buffer.h etsili_core.h etsili_core.c \
+                collector/jenkinshash.c \
                 coreserver.c coreserver.h
 openlimediator_LDADD = @ADD_LIBS@
 openlimediator_LDFLAGS=-lpthread

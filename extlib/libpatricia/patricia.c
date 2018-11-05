@@ -40,16 +40,11 @@ static char copyright[] =
 /* prefix_tochar
  * convert prefix information to bytes
  */
-u_char *
-prefix_tochar (prefix_t * prefix)
-{
-    if (prefix == NULL)
-	return (NULL);
 
-    return ((u_char *) & prefix->add.sin);
-}
+#define PREFIX_TOCHAR(pfx) \
+        (pfx == NULL) ? NULL : ((u_char *) & (pfx->add.sin))
 
-int
+static inline int
 comp_with_mask (void *addr, void *dest, u_int mask)
 {
 
@@ -556,7 +551,7 @@ patricia_search_exact (patricia_tree_t *patricia, prefix_t *prefix)
 	return (NULL);
     assert (node->bit == bitlen);
     assert (node->bit == node->prefix->bitlen);
-    if (comp_with_mask (prefix_tochar (node->prefix), prefix_tochar (prefix),
+    if (comp_with_mask (PREFIX_TOCHAR (node->prefix), PREFIX_TOCHAR (prefix),
 			bitlen)) {
 #ifdef PATRICIA_DEBUG
         fprintf (stderr, "patricia_search_exact: found %s/%d\n",
@@ -639,8 +634,10 @@ patricia_search_best2 (patricia_tree_t *patricia, prefix_t *prefix, int inclusiv
         fprintf (stderr, "patricia_search_best: stop at %d\n", node->bit);
 #endif /* PATRICIA_DEBUG */
 
+/*
     if (cnt <= 0)
 	return (NULL);
+*/
 
     while (--cnt >= 0) {
 	node = stack[cnt];
@@ -648,8 +645,8 @@ patricia_search_best2 (patricia_tree_t *patricia, prefix_t *prefix, int inclusiv
         fprintf (stderr, "patricia_search_best: pop %s/%d\n",
 	         prefix_toa (node->prefix), node->prefix->bitlen);
 #endif /* PATRICIA_DEBUG */
-	if (comp_with_mask (prefix_tochar (node->prefix),
-			    prefix_tochar (prefix),
+	if (comp_with_mask (PREFIX_TOCHAR (node->prefix),
+			    PREFIX_TOCHAR (prefix),
 			    node->prefix->bitlen)) {
 #ifdef PATRICIA_DEBUG
             fprintf (stderr, "patricia_search_best: found %s/%d\n",

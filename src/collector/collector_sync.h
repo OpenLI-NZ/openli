@@ -41,10 +41,13 @@
 
 typedef struct colsync_data {
 
-    support_thread_global_t *glob;
-    shared_global_info_t *info;
-    export_queue_set_t *exportqueues;
-    uint8_t *export_used;
+    sync_thread_global_t *glob;
+    collector_identity_t *info;
+
+    int pubsockcount;
+    int forwardcount;
+    void **zmq_pubsocks;
+    void **zmq_fwdctrlsocks;
 
     internet_user_t *allusers;
     ipintercept_t *ipintercepts;
@@ -60,11 +63,10 @@ typedef struct colsync_data {
     net_buffer_t *incoming;
 
     libtrace_message_queue_t *intersyncq;
-    libtrace_message_queue_t exportq;
     wandder_encoder_t *encoder;
 
     access_plugin_t *radiusplugin;
-    etsili_generic_t *freegenerics;
+    etsili_generic_freelist_t *freegenerics;
 
     ip_to_session_t *activeips;
 

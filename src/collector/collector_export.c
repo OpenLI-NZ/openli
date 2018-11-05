@@ -46,28 +46,67 @@
 #include "ipiri.h"
 #include "logger.h"
 #include "util.h"
+#include "internal.pb-c.h"
+#include "encoder_worker.h"
 
+#define BUF_BATCH_SIZE (10 * 1024 * 1024)
 enum {
     EXP_EPOLL_MQUEUE = 0,
     EXP_EPOLL_TIMER = 1,
     EXP_EPOLL_FLAG_TIMEOUT = 2,
 };
 
-collector_export_t *init_exporter(support_thread_global_t *glob) {
+collector_export_t *init_exporter(export_thread_data_t *glob) {
 
     collector_export_t *exp = (collector_export_t *)malloc(
             sizeof(collector_export_t));
+    int ret, i;
 
     exp->glob = glob;
     exp->dests = libtrace_list_init(sizeof(export_dest_t));
     exp->intercepts = NULL;
-    exp->encoder = NULL;
-    exp->freegenerics = NULL;
+    exp->freeresults = NULL;
 
     exp->failed_conns = 0;
     exp->flagged = 0;
-    exp->flag_timer_ev = NULL;
     exp->flagtimerfd = -1;
+
+    exp->count = 0;
+    exp->zmq_subsock = NULL;
+    exp->zmq_pushjobsock = NULL;
+    exp->zmq_pullressock = NULL;
+
+    exp->zmq_control = zmq_socket(exp->glob->zmq_ctxt, ZMQ_PUB);
+    if (zmq_bind(exp->zmq_control, "inproc://openliexportercontrol") != 0) {
+        logger(LOG_INFO, "OpenLI: unable to create control socket for encoding threads");
+        logger(LOG_INFO, "OpenLI: no export worker threads will be started");
+        exp->zmq_control = NULL;
+        exp->workercount = 0;
+        exp->workers = NULL;
+        return exp;
+    }
+
+    exp->workers = (openli_encoder_t *)calloc(exp->glob->workers,
+            sizeof(openli_encoder_t));
+    exp->workercount = exp->glob->workers;
+    for (i = 0; i < exp->workercount; i++) {
+        exp->workers[i].zmq_ctxt = exp->glob->zmq_ctxt;
+        exp->workers[i].zmq_recvjob = NULL;
+        exp->workers[i].zmq_pushresult = NULL;
+        exp->workers[i].zmq_control = NULL;
+        exp->workers[i].workerid = i;
+        exp->workers[i].shared = exp->glob->shared;
+        exp->workers[i].encoder = NULL;
+        exp->workers[i].freegenerics = NULL;
+
+        ret = pthread_create(&(exp->workers[i].threadid), NULL,
+                run_encoder_worker, &(exp->workers[i]));
+        if (ret != 0) {
+            logger(LOG_INFO, "Warning: unable to start encoder worker thread %d\n", i);
+            continue;
+        }
+    }
+
     return exp;
 }
 
@@ -129,7 +168,16 @@ int connect_export_targets(collector_export_t *exp) {
 
         d->fd = connect_single_target(d);
         if (d->fd != -1) {
-            success ++;
+            if (get_buffered_amount(&(d->buffer)) > 0 &&
+                    transmit_buffered_records(&(d->buffer), d->fd,
+                            BUF_BATCH_SIZE) == -1) {
+                close(d->fd);
+                d->fd = -1;
+                exp->failed_conns ++;
+            } else {
+                success ++;
+            }
+
         } else {
             exp->failed_conns ++;
         }
@@ -140,11 +188,28 @@ int connect_export_targets(collector_export_t *exp) {
 
 }
 
+static inline void free_published_intercept(published_intercept_msg_t *cept) {
+	if (cept->liid) {
+	    free(cept->liid);
+	}
+	if (cept->authcc) {
+	    free(cept->authcc);
+	}
+	if (cept->delivcc) {
+	    free(cept->delivcc);
+	}
+}
+
 static inline void free_intercept_msg(exporter_intercept_msg_t *msg) {
-    free(msg->liid);
-    free(msg->authcc);
-    free(msg->delivcc);
-    free(msg);
+	if (msg->liid) {
+	    free(msg->liid);
+	}
+	if (msg->authcc) {
+	    free(msg->authcc);
+	}
+	if (msg->delivcc) {
+	    free(msg->delivcc);
+	}
 }
 
 static inline void free_cinsequencing(exporter_intercept_state_t *intstate) {
@@ -167,7 +232,6 @@ static inline void remove_all_destinations(collector_export_t *exp) {
         d = (export_dest_t *)n->data;
 
         if (d->fd != -1) {
-            epoll_ctl(exp->glob->epoll_fd, EPOLL_CTL_DEL, d->fd, &ev);
             close(d->fd);
         }
         /* Don't free d->details, let the sync thread tidy this up */
@@ -189,46 +253,106 @@ static inline void remove_all_destinations(collector_export_t *exp) {
 }
 
 void destroy_exporter(collector_export_t *exp) {
-    libtrace_list_t *evlist;
-    libtrace_list_node_t *n;
     exporter_intercept_state_t *intstate, *tmpexp;
+    int i, x;
+    openli_encoded_result_t res;
+    openli_export_recv_t *incoming;
+
+    /* push halt messages to all workers */
+
+    if (exp->zmq_control) {
+        if (zmq_send(exp->zmq_control, NULL, 0, 0) < 0) {
+            logger(LOG_INFO, "OpenLI: error while sending halt message to export worker thread %d", i);
+        }
+        zmq_close(exp->zmq_control);
+    }
+
+    /* purge all incoming results */
+    do {
+        x = zmq_recv(exp->zmq_pullressock, &res, sizeof(res), ZMQ_DONTWAIT);
+        if (x < 0) {
+            if (errno == EAGAIN) {
+                continue;
+            }
+            break;
+        }
+
+        if (res.msgbody) {
+            free(res.msgbody->encoded);
+            free(res.msgbody);
+        }
+
+        if (res.ipcontents) {
+            free(res.ipcontents);
+        }
+    } while (x > 0);
+
+    /* drain all jobs that we haven't managed to get to yet */
+    uint32_t drained = 0;
+    do {
+        x = zmq_recv(exp->zmq_subsock, &incoming, sizeof(incoming),
+                ZMQ_DONTWAIT);
+        if (x < 0) {
+            if (errno == EAGAIN) {
+                continue;
+            }
+            break;
+        }
+        if (incoming->type == OPENLI_EXPORT_IPCC) {
+            free_published_message(incoming);
+        } else {
+            free(incoming);
+        }
+        drained ++;
+    } while (x > 0);
+
+    printf("drained %u messages from subsock queue\n", drained);
+
+    /* join on all workers, then delete worker array */
+    for (i = 0; i < exp->workercount; i++) {
+        pthread_join(exp->workers[i].threadid, NULL);
+        destroy_encoder_worker(&(exp->workers[i]));
+    }
+    if (exp->workers) {
+        free(exp->workers);
+    }
 
     remove_all_destinations(exp);
 
-    pthread_mutex_lock(&(exp->glob->mutex));
-    evlist = (libtrace_list_t *)(exp->glob->epollevs);
-    n = evlist->head;
-    while (n) {
-        exporter_epoll_t *ev = *((exporter_epoll_t **)n->data);
-        free(ev);
-        n = n->next;
-    }
-    pthread_mutex_unlock(&(exp->glob->mutex));
-
-    if (exp->freegenerics) {
-        free_etsili_generics(exp->freegenerics);
-    }
-
-    if (exp->encoder) {
-        free_wandder_encoder(exp->encoder);
-    }
-
     HASH_ITER(hh, exp->intercepts, intstate, tmpexp) {
         HASH_DELETE(hh, exp->intercepts, intstate);
-        free_intercept_msg(intstate->details);
+        free_intercept_msg(&(intstate->details));
         free_cinsequencing(intstate);
         free(intstate);
     }
 
-    /* Don't free evlist, this will be done when the main thread
-     * frees the exporter support data. */
-    //libtrace_list_deinit(evlist);
+    while (exp->freeresults) {
+        wandder_encoded_result_t *r = exp->freeresults;
+        exp->freeresults = exp->freeresults->next;
+
+        free(r->encoded);
+        free(r);
+    }
+
+    if (exp->zmq_subsock) {
+        zmq_close(exp->zmq_subsock);
+    }
+
+    if (exp->zmq_pushjobsock) {
+        zmq_close(exp->zmq_pushjobsock);
+    }
+
+    if (exp->zmq_pullressock) {
+        zmq_close(exp->zmq_pullressock);
+    }
+
+    printf("exporter sent %d messages\n", exp->count);
 
     free(exp);
 }
 
 
-static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
+static int forward_fd(export_dest_t *dest, openli_encoded_result_t *msg) {
 
     uint32_t enclen = msg->msgbody->len - msg->ipclen;
     int ret;
@@ -238,26 +362,24 @@ static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
     int total = 0;
     char liidbuf[65542];
 
-    if (msg->header) {
+    iov[ind].iov_base = &(msg->header);
+    iov[ind].iov_len = sizeof(msg->header);
+    ind ++;
+    total += sizeof(msg->header);
 
-        iov[ind].iov_base = msg->header;
-        iov[ind].iov_len = msg->hdrlen;
-        ind ++;
-        total += msg->hdrlen;
-    }
-
-    if (msg->liid) {
+    if (msg->intstate->details.liid) {
         int used = 0;
         uint16_t etsiwraplen = 0;
-        uint16_t l = htons(msg->liidlen);
+        uint16_t l = htons(msg->intstate->details.liid_len);
 
         memcpy(liidbuf + used, &l, sizeof(uint16_t));
         used += sizeof(uint16_t);
-        memcpy(liidbuf + used, msg->liid, msg->liidlen);
+        memcpy(liidbuf + used, msg->intstate->details.liid,
+                msg->intstate->details.liid_len);
 
         iov[ind].iov_base = liidbuf;
-        iov[ind].iov_len = msg->liidlen + used;
-        total += (msg->liidlen + used);
+        iov[ind].iov_len = msg->intstate->details.liid_len + used;
+        total += iov[ind].iov_len;
         ind ++;
     }
 
@@ -304,15 +426,14 @@ static int forward_fd(export_dest_t *dest, openli_exportmsg_t *msg) {
             /* TODO do something if we run out of memory? */
         }
     }
-
     return 0;
 }
 
-#define BUF_BATCH_SIZE (10 * 1024 * 1024)
 
-static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
+static int forward_message(export_dest_t *dest, openli_encoded_result_t *msg) {
 
     int ret = 0;
+
     if (dest->fd == -1) {
         /* buffer this message for when we are able to connect */
         if (append_message_to_buffer(&(dest->buffer), msg, 0) == 0) {
@@ -348,8 +469,6 @@ static int forward_message(export_dest_t *dest, openli_exportmsg_t *msg) {
     }
 
 endforward:
-    wandder_release_encoded_result(NULL, msg->msgbody);
-
     return ret;
 }
 
@@ -393,12 +512,14 @@ static void remove_destination(collector_export_t *exp,
                 med->mediatorid);
 
         if (dest->fd != -1) {
-            epoll_ctl(exp->glob->epoll_fd, EPOLL_CTL_DEL, dest->fd, &ev);
             close(dest->fd);
             dest->fd = -1;
         }
         dest->halted = 1;
     }
+
+    free(med->ipstr);
+    free(med->portstr);
 }
 
 static int add_new_destination(collector_export_t *exp,
@@ -456,31 +577,24 @@ static int add_new_destination(collector_export_t *exp,
 
 destepoll:
     if (!exp->flagged) {
-        return 0;
+        return 1;
     }
 
-    exp->flag_timer_ev = (exporter_epoll_t *)malloc(
-            sizeof(exporter_epoll_t));
-    exp->flag_timer_ev->type = EXP_EPOLL_FLAG_TIMEOUT;
-    exp->flag_timer_ev->data.q = NULL;
+    its.it_interval.tv_sec = 0;
+    its.it_interval.tv_nsec = 0;
+    its.it_value.tv_sec = 10;
+    its.it_value.tv_nsec = 0;
 
     if (exp->flagtimerfd == -1) {
-        exp->flagtimerfd = epoll_add_timer(exp->glob->epoll_fd, 10,
-                exp->flag_timer_ev);
+        exp->flagtimerfd = timerfd_create(CLOCK_MONOTONIC, 0);
         if (exp->flagtimerfd == -1) {
-            logger(LOG_INFO, "OpenLI: failed to add export timer fd to epoll set: %s.", strerror(errno));
-            return -1;
-        }
-    } else {
-        its.it_value.tv_sec = 10;
-        its.it_value.tv_nsec = 0;
-
-        if (timerfd_settime(exp->flagtimerfd, 0, &its, NULL) == -1) {
-            logger(LOG_INFO, "OpenLI: exporter has failed to reset the export timer fd: %s", strerror(errno));
+            logger(LOG_INFO, "OpenLI: failed to create export timer fd: %s.",
+                    strerror(errno));
             return -1;
         }
     }
-    return 0;
+    timerfd_settime(exp->flagtimerfd, 0, &its, NULL);
+    return 1;
 }
 
 static void purge_unconfirmed_mediators(collector_export_t *exp) {
@@ -504,31 +618,53 @@ static void purge_unconfirmed_mediators(collector_export_t *exp) {
 }
 
 static void exporter_new_intercept(collector_export_t *exp,
-        exporter_intercept_msg_t *msg) {
+        published_intercept_msg_t *cept) {
 
     exporter_intercept_state_t *intstate;
+    etsili_intercept_details_t intdetails;
 
     /* If this LIID already exists, we'll need to replace it */
-    HASH_FIND(hh, exp->intercepts, msg->liid, strlen(msg->liid), intstate);
+    HASH_FIND(hh, exp->intercepts, cept->liid, strlen(cept->liid), intstate);
 
     if (intstate) {
-        free_intercept_msg(intstate->details);
+        free_intercept_msg(&(intstate->details));
+        etsili_clear_preencoded_fields(intstate->preencoded);
         /* leave the CIN seqno state as is for now */
-        intstate->details = msg;
+		intstate->details.liid = cept->liid;
+		intstate->details.authcc = cept->authcc;
+		intstate->details.delivcc = cept->delivcc;
+		intstate->details.liid_len = strlen(cept->liid);
+		intstate->details.authcc_len = strlen(cept->authcc);
+		intstate->details.delivcc_len = strlen(cept->delivcc);
         return;
     }
 
     /* New LIID, create fresh intercept state */
     intstate = (exporter_intercept_state_t *)malloc(
             sizeof(exporter_intercept_state_t));
-    intstate->details = msg;
+    intstate->details.liid = cept->liid;
+    intstate->details.authcc = cept->authcc;
+    intstate->details.delivcc = cept->delivcc;
+    intstate->details.liid_len = strlen(cept->liid);
+    intstate->details.authcc_len = strlen(cept->authcc);
+    intstate->details.delivcc_len = strlen(cept->delivcc);
     intstate->cinsequencing = NULL;
-    HASH_ADD_KEYPTR(hh, exp->intercepts, msg->liid, strlen(msg->liid),
-            intstate);
+
+    intdetails.liid = cept->liid;
+    intdetails.authcc = cept->authcc;
+    intdetails.delivcc = cept->delivcc;
+    intdetails.operatorid = exp->glob->shared->operatorid;
+    intdetails.networkelemid = exp->glob->shared->networkelemid;
+    intdetails.intpointid = exp->glob->shared->intpointid;
+
+    etsili_preencode_static_fields(intstate->preencoded, &intdetails);
+
+    HASH_ADD_KEYPTR(hh, exp->intercepts, intstate->details.liid,
+			intstate->details.liid_len, intstate);
 }
 
 static int exporter_end_intercept(collector_export_t *exp,
-        exporter_intercept_msg_t *msg) {
+        published_intercept_msg_t *msg) {
 
     exporter_intercept_state_t *intstate;
 
@@ -541,11 +677,12 @@ static int exporter_end_intercept(collector_export_t *exp,
     }
 
     HASH_DELETE(hh, exp->intercepts, intstate);
-    free_intercept_msg(msg);
-    free_intercept_msg(intstate->details);
+    free_published_intercept(msg);
+    free_intercept_msg(&(intstate->details));
+    etsili_clear_preencoded_fields(intstate->preencoded);
     free_cinsequencing(intstate);
     free(intstate);
-    return 0;
+    return 1;
 }
 
 static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
@@ -581,31 +718,8 @@ static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
     return 0;
 }
 
-static inline void free_job_request(openli_export_recv_t *recvd) {
-    switch(recvd->type) {
-        case OPENLI_EXPORT_IPMMCC:
-            free(recvd->data.ipmmcc.liid);
-            break;
-        case OPENLI_EXPORT_IPCC:
-            free(recvd->data.ipcc.liid);
-            break;
-        case OPENLI_EXPORT_IPIRI:
-            free(recvd->data.ipiri.liid);
-            free(recvd->data.ipiri.username);
-            if (recvd->data.ipiri.plugin) {
-                recvd->data.ipiri.plugin->destroy_parsed_data(
-                        recvd->data.ipiri.plugin,
-                        recvd->data.ipiri.plugin_data);
-            }
-            break;
-        case OPENLI_EXPORT_IPMMIRI:
-            free(recvd->data.ipmmiri.liid);
-            break;
-    }
-}
-
 static int export_encoded_record(collector_export_t *exp,
-        openli_exportmsg_t *tosend) {
+        openli_encoded_result_t *tosend) {
 
     libtrace_list_node_t *n;
     export_dest_t *dest;
@@ -639,25 +753,23 @@ static int export_encoded_record(collector_export_t *exp,
          * is NOT coming so we don't buffer forever...
          */
         dest = add_unknown_destination(exp, tosend->destid);
-        x = forward_message(dest, tosend);
-        if (x == -1) {
+        if (forward_message(dest, tosend) < 0) {
             return -1;
         }
     }
-    if (tosend->header) {
-        free(tosend->header);
-    }
     return 1;
 }
+
 static int run_encoding_job(collector_export_t *exp,
-        openli_export_recv_t *recvd, openli_exportmsg_t *tosend) {
+        openli_export_recv_t *recvd) {
 
     char *liid;
     uint32_t cin;
     cin_seqno_t *cinseq;
     exporter_intercept_state_t *intstate;
-    int ret = -1;
+    int ret = 1;
     int ind = 0;
+    openli_encoding_job_t job;
 
     liid = extract_liid_from_job(recvd);
     cin = extract_cin_from_job(recvd);
@@ -666,7 +778,9 @@ static int run_encoding_job(collector_export_t *exp,
     if (!intstate) {
         logger(LOG_INFO, "Received encoding job for an unknown LIID: %s??",
                 liid);
-        return -1;
+        assert(0);
+        release_published_message(recvd);
+        return 0;
     }
 
     HASH_FIND(hh, intstate->cinsequencing, &cin, sizeof(cin), cinseq);
@@ -687,93 +801,198 @@ static int run_encoding_job(collector_export_t *exp,
                 sizeof(cin), cinseq);
     }
 
-    while (ret != 0) {
-        switch(recvd->type) {
-            case OPENLI_EXPORT_IPMMCC:
-                ret = encode_ipmmcc(&(exp->encoder), &(recvd->data.ipmmcc),
-                        intstate->details, cinseq->cc_seqno, tosend);
-                cinseq->cc_seqno ++;
-                trace_decrement_packet_refcount(recvd->data.ipmmcc.packet);
-                break;
-            case OPENLI_EXPORT_IPCC:
-                ret = encode_ipcc(&(exp->encoder), &(recvd->data.ipcc),
-                        intstate->details, cinseq->cc_seqno, tosend);
-                cinseq->cc_seqno ++;
-                trace_decrement_packet_refcount(recvd->data.ipcc.packet);
-                break;
-            case OPENLI_EXPORT_IPMMIRI:
-                ret = encode_ipmmiri(&(exp->encoder), &(recvd->data.ipmmiri),
-                        intstate->details, cinseq->iri_seqno, tosend,
-                        &(recvd->ts));
-                if (ret >= 0) {
-                    cinseq->iri_seqno ++;
-                }
-                if (recvd->data.ipmmiri.packet) {
-                    trace_decrement_packet_refcount(recvd->data.ipmmiri.packet);
-                }
-                break;
-            case OPENLI_EXPORT_IPIRI:
-                ret = encode_ipiri(&(exp->freegenerics),
-                        &(exp->encoder), &(recvd->data.ipiri),
-                        intstate->details, cinseq->iri_seqno, tosend, ind);
-                if (ret >= 0) {
-                    cinseq->iri_seqno ++;
-                    ind ++;
-                }
-                break;
-        }
-        if (ret < 0) {
-            break;
-        }
+    job.intstate = intstate;
+    job.origreq = recvd;
+    job.seqno = cinseq->cc_seqno;
 
-        tosend->destid = recvd->destid;
-        if (export_encoded_record(exp, tosend) < 0) {
-            ret = -1;
-            break;
-        }
+    if (exp->freeresults) {
+        job.toreturn = exp->freeresults;
+        exp->freeresults = exp->freeresults->next;
+        job.toreturn->next = NULL;
+    } else {
+        job.toreturn = NULL;
     }
 
-    free_job_request(recvd);
+    if (zmq_send(exp->zmq_pushjobsock, (char *)&job,
+            sizeof(openli_encoding_job_t), 0) < 0) {
+        logger(LOG_INFO,
+                "Error while pushing encoding job to worker threads: %s",
+                strerror(errno));
+        return -1;
+    }
+
+    /* TODO deal with RADIUS multi-iteration jobs... */
+
+    if (recvd->type == OPENLI_EXPORT_IPMMCC ||
+            recvd->type == OPENLI_EXPORT_IPCC) {
+        cinseq->cc_seqno ++;
+    } else {
+        cinseq->iri_seqno ++;
+    }
+    ind ++;
+
     return ret;
 }
 
-#define MAX_READ_BATCH 25
+static int handle_returned_result(collector_export_t *exp,
+        volatile int *halted) {
+    int x, ret = 0;
+    openli_encoded_result_t res;
 
-static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
-{
+    x = zmq_recv(exp->zmq_pullressock, &res, sizeof(res), ZMQ_DONTWAIT);
+    if (x < 0) {
+        if (errno == EAGAIN) {
+            return 0;
+        }
+        return -1;
+    }
+
+/*
+    if (export_encoded_record(exp, &res) < 0) {
+        ret = -1;
+    } else {
+        ret = 1;
+    }
+*/
+
+    if (res.msgbody) {
+        if (exp->freeresults == NULL) {
+            exp->freeresults = res.msgbody;
+            exp->freeresults->next = NULL;
+        } else {
+            res.msgbody->next = exp->freeresults;
+            exp->freeresults = res.msgbody;
+        }
+    }
+
+    if (res.origreq) {
+        if (res.origreq->type == OPENLI_EXPORT_IPCC) {
+            if (!(*halted)) {
+                release_published_message(res.origreq);
+            } else {
+                free_published_message(res.origreq);
+            }
+        } else {
+            free(res.origreq);
+        }
+    }
+
+    return ret;
+}
+
+static int handle_published_message(collector_export_t *exp) {
+
+    zmq_msg_t incoming;
     int x, ret;
-	openli_export_recv_t recvd;
+    openli_export_recv_t *job = NULL;
+    openli_mediator_t med;
+
+    zmq_msg_init(&incoming);
+    x = zmq_msg_recv(&incoming, exp->zmq_subsock, ZMQ_DONTWAIT);
+    if (x < 0) {
+        if (errno == EAGAIN) {
+            return 0;
+        }
+        return -1;
+    }
+
+	ret = 1;
+    job = *((openli_export_recv_t **)(zmq_msg_data(&incoming)));
+
+    switch(job->type) {
+        case OPENLI_EXPORT_MEDIATOR:
+			med = job->data.med;
+            ret = add_new_destination(exp, &med);
+            break;
+        case OPENLI_EXPORT_DROP_SINGLE_MEDIATOR:
+			med = job->data.med;
+            remove_destination(exp, &med);
+            break;
+        case OPENLI_EXPORT_INTERCEPT_DETAILS:
+            exporter_new_intercept(exp, &(job->data.cept));
+            break;
+        case OPENLI_EXPORT_INTERCEPT_OVER:
+            ret = exporter_end_intercept(exp, &(job->data.cept));
+            break;
+        case OPENLI_EXPORT_IPIRI:
+			ret = run_encoding_job(exp, job);
+            break;
+        case OPENLI_EXPORT_IPCC:
+			ret = run_encoding_job(exp, job);
+            exp->count ++;
+            break;
+		case OPENLI_EXPORT_FLAG_MEDIATORS:
+		case OPENLI_EXPORT_DROP_ALL_MEDIATORS:
+		case OPENLI_EXPORT_IPMMCC:
+		case OPENLI_EXPORT_IPMMIRI:
+
+        default:
+            printf("got unexpected job: %u\n", job->type);
+			assert(0);
+            break;
+    }
+
+	zmq_msg_close(&incoming);
+    return ret;
+}
+
+#if 0
+static int read_exported_message(collector_export_t *exp) {
+    int x, ret;
+    char envelope[24];
+	openli_export_recv_t *recvd = NULL;
     openli_exportmsg_t tosend;
     libtrace_list_node_t *n;
     export_dest_t *dest;
 
-    memset(&recvd, 0, sizeof(openli_export_recv_t));
-    x = libtrace_message_queue_get(srcq, (void *)(&recvd));
-    if (x == LIBTRACE_MQ_FAILED) {
-        return 0;
-    }
-
-    switch(recvd.type) {
-        case OPENLI_EXPORT_INTERCEPT_DETAILS:
-            exporter_new_intercept(exp, recvd.data.cept);
+    /*
+    x = zmq_recv(exp->zmq_subsock, envelope, 23, ZMQ_DONTWAIT);
+    if (x < 0) {
+        if (errno == EAGAIN) {
             return 0;
+        }
+        return -1;
+    }
+    envelope[x] = '\0';
+    */
+    x = zmq_recv(exp->zmq_subsock, (char *)(&recvd),
+            sizeof(openli_export_recv_t *), ZMQ_DONTWAIT);
+    if (x < 0) {
+        if (errno == EAGAIN) {
+            return 0;
+        }
+        return -1;
+    }
+    //printf("%d envelope=%s %d\n", exp->glob->exportlabel, envelope, recvd->type);
+
+    switch(recvd->type) {
+        case OPENLI_EXPORT_INTERCEPT_DETAILS:
+            exporter_new_intercept(exp, recvd->data.cept);
+            free(recvd);
+            return 1;
 
         case OPENLI_EXPORT_INTERCEPT_OVER:
-            return exporter_end_intercept(exp, recvd.data.cept);
+            ret = exporter_end_intercept(exp, recvd->data.cept);
+            free(recvd);
+            return ret;
 
         case OPENLI_EXPORT_MEDIATOR:
-            return add_new_destination(exp, &(recvd.data.med));
+            ret = add_new_destination(exp, &(recvd->data.med));
+            free(recvd);
+            return ret;
 
         case OPENLI_EXPORT_DROP_SINGLE_MEDIATOR:
-            remove_destination(exp, &(recvd.data.med));
-            return 0;
+            remove_destination(exp, &(recvd->data.med));
+            free(recvd);
+            return 1;
 
         case OPENLI_EXPORT_DROP_ALL_MEDIATORS:
             logger(LOG_INFO,
                     "OpenLI exporter: dropping connections to all known mediators.");
             remove_all_destinations(exp);
             exp->dests = libtrace_list_init(sizeof(export_dest_t));
-            return 0;
+            free(recvd);
+            return 1;
 
          case OPENLI_EXPORT_FLAG_MEDIATORS:
             n = exp->dests->head;
@@ -784,246 +1003,168 @@ static int read_mqueue(collector_export_t *exp, libtrace_message_queue_t *srcq)
             }
 
             exp->flagged = 1;
-            return 0;
+            free(recvd);
+            return 1;
 
-        case OPENLI_EXPORT_IPMMCC:
         case OPENLI_EXPORT_IPCC:
+        case OPENLI_EXPORT_IPMMCC:
         case OPENLI_EXPORT_IPMMIRI:
         case OPENLI_EXPORT_IPIRI:
-            ret = 0;
-            if (run_encoding_job(exp, &recvd, &tosend) < 0) {
+            exp->count ++;
+            ret = 1;
+            if (run_encoding_job(exp, recvd, &tosend) < 0) {
                 ret = -1;
             }
+            free_job_request(recvd);
             return ret;
 
         case OPENLI_EXPORT_PACKET_FIN:
             /* All ETSI records relating to this packet have been seen, so
              * we can safely free the packet.
              */
-            trace_decrement_packet_refcount(recvd.data.packet);
-            return 0;
+            trace_decrement_packet_refcount(recvd->data.packet);
+            free(recvd);
+            return 1;
     }
 
     logger(LOG_INFO,
             "OpenLI: invalid message type %d received from export queue.",
-            recvd.type);
+            recvd->type);
+    free(recvd);
     return -1;
 }
 
-static int check_epoll_fd(collector_export_t *exp, struct epoll_event *ev) {
+#endif
 
-    libtrace_message_queue_t *srcq = NULL;
-    exporter_epoll_t *epptr = NULL;
-    int ret = 0;
-    int readmsgs = 0;
+static inline int connect_zmq_sock(void *ctxt, void **sock, char *name,
+        int socktype) {
+    int rc;
+    int zero = 0;
+    *sock = zmq_socket(ctxt, socktype);
+    rc = zmq_bind(*sock, name);
 
-    /* Got a message to export */
-    if ((ev->events & EPOLLERR) || (ev->events & EPOLLHUP) ||
-            !(ev->events & EPOLLIN)) {
-        /* Something has gone wrong with a thread -> exporter message
-         * queue. This is probably very bad, but we'll try to carry
-         * on for now.
-         */
-
-        logger(LOG_INFO, "OpenLI: Thread lost connection to exporter?");
-        return 0;
-    }
-
-    /* TODO mediator fds should be part of epoll as well, so we can
-     *   a) check for mediator disconnections
-     *   b) check if we can send buffered data again
-     * without requiring a new MQUEUE event.
-     */
-
-
-    epptr = (exporter_epoll_t *)(ev->data.ptr);
-
-    if (epptr->type == EXP_EPOLL_MQUEUE) {
-        srcq = epptr->data.q;
-
-        while (readmsgs < MAX_READ_BATCH) {
-            ret = read_mqueue(exp, srcq);
-            if (ret == -1) {
-                break;
-            }
-            if (ret == 0) {
-                break;
-            }
-            if (ret > 0) {
-                readmsgs ++;
-            }
-        }
-    }
-
-    if (epptr->type == EXP_EPOLL_TIMER) {
-        if (ev->events & EPOLLIN) {
-            return 1;
-        }
-        logger(LOG_INFO, "OpenLI: export thread timer has misbehaved.");
+    if (rc != 0) {
+        logger(LOG_INFO, "OpenLI: exporter thread was unable to start zmq socket");
         return -1;
     }
-
-    if (epptr->type == EXP_EPOLL_FLAG_TIMEOUT) {
-        purge_unconfirmed_mediators(exp);
-        exp->flagged = 0;
-        free(exp->flag_timer_ev);
-        exp->flag_timer_ev = NULL;
-        close(exp->flagtimerfd);
-        exp->flagtimerfd = -1;
+    rc = zmq_setsockopt(*sock, ZMQ_LINGER, &zero, sizeof(zero));
+    if (rc != 0) {
+        logger(LOG_INFO, "OpenLI: exporter thread was unable to set linger period for zeromq");
+        return -1;
     }
-
-    return ret;
+    return 0;
 }
 
-int exporter_thread_main(collector_export_t *exp) {
+int exporter_thread_main(collector_export_t *exp, volatile int *halted) {
 
-	int i, nfds, timerfd;
-	struct epoll_event evs[64];
+	int i, nfds, timerfd, itemcount, ret;
     int timerexpired = 0;
-    exporter_epoll_t *epoll_ev = NULL;
+    struct itimerspec its;
+    zmq_pollitem_t items[4];
 
     /* XXX this could probably be static, but just to be safe... */
-    epoll_ev = (exporter_epoll_t *)malloc(sizeof(exporter_epoll_t));
-    epoll_ev->type = EXP_EPOLL_TIMER;
-    epoll_ev->data.q = NULL;
 
-    timerfd = epoll_add_timer(exp->glob->epoll_fd, 1, epoll_ev);
+    if (exp->zmq_subsock == NULL) {
+        if (connect_zmq_sock(exp->glob->zmq_ctxt, &(exp->zmq_subsock),
+                "inproc://openliipc", ZMQ_PULL) < 0) {
+            return -1;
+        }
+    }
+
+    if (exp->zmq_pushjobsock == NULL) {
+        if (connect_zmq_sock(exp->glob->zmq_ctxt, &(exp->zmq_pushjobsock),
+                "inproc://openliexporterpush", ZMQ_PUSH) < 0) {
+            return -1;
+        }
+    }
+
+    if (exp->zmq_pullressock == NULL) {
+        if (connect_zmq_sock(exp->glob->zmq_ctxt, &(exp->zmq_pullressock),
+                "inproc://openliexporterpull", ZMQ_PULL) < 0) {
+            return -1;
+        }
+    }
+
+    its.it_interval.tv_sec = 0;
+    its.it_interval.tv_nsec = 0;
+    its.it_value.tv_sec = 1;
+    its.it_value.tv_nsec = 0;
+
+    timerfd = timerfd_create(CLOCK_MONOTONIC, 0);
+    timerfd_settime(timerfd, 0, &its, NULL);
+
     if (timerfd == -1) {
-        logger(LOG_INFO, "OpenLI: failed to add export timer fd to epoll set: %s.", strerror(errno));
+        logger(LOG_INFO, "OpenLI: failed to create export timer fd: %s.", strerror(errno));
         return -1;
     }
 
     /* Try to connect to any targets which we have buffered records for */
     connect_export_targets(exp);
 
+    items[0].socket = exp->zmq_subsock;
+    items[0].fd = 0;
+    items[0].events = ZMQ_POLLIN;
+    items[0].revents = 0;
+
+    items[1].socket = NULL;
+    items[1].fd = timerfd;
+    items[1].events = ZMQ_POLLIN;
+    items[1].revents = 0;
+
+    items[2].socket = exp->zmq_pullressock;
+    items[2].fd = 0;
+    items[2].events = ZMQ_POLLIN;
+    items[2].revents = 0;
+
+    itemcount = 3;
+    if (exp->flagtimerfd != -1) {
+        items[3].socket = NULL;
+        items[3].fd = exp->flagtimerfd;
+        items[3].events = ZMQ_POLLIN;
+        items[3].revents = 0;
+        itemcount ++;
+    }
 
     while (timerexpired == 0) {
-    	nfds = epoll_wait(exp->glob->epoll_fd, evs, 64, -1);
+        int processed = 0;
+        zmq_poll(items, itemcount, -1);
+        if (items[0].revents & ZMQ_POLLIN) {
+            do {
+                ret = handle_published_message(exp);
+                processed ++;
+            } while (ret > 0 && processed < 10000);
 
-        if (nfds < 0) {
-            logger(LOG_INFO, "OpenLI: error while checking for messages to export: %s.", strerror(errno));
-            return -1;
-        }
-
-        for (i = 0; i < nfds; i++) {
-            timerexpired = check_epoll_fd(exp, &(evs[i]));
-            if (timerexpired == -1) {
-                break;
+            if (ret == -1) {
+                return -1;
             }
         }
+
+        if (items[1].revents & ZMQ_POLLIN) {
+            timerexpired = 1;
+        }
+
+        if (items[2].revents & ZMQ_POLLIN) {
+            processed = 0;
+            do {
+                ret = handle_returned_result(exp, halted);
+                processed ++;
+            } while (ret > 0 && processed < 10000);
+            if (ret == -1) {
+                return -1;
+            }
+        }
+
+        if (itemcount > 3 && items[3].revents & ZMQ_POLLIN) {
+            purge_unconfirmed_mediators(exp);
+            exp->flagged = 0;
+            close(exp->flagtimerfd);
+            exp->flagtimerfd = -1;
+        }
     }
 
-    if (epoll_ctl(exp->glob->epoll_fd, EPOLL_CTL_DEL, timerfd, NULL) == -1)
-    {
-        logger(LOG_INFO, "OpenLI: failed to remove export timer fd to epoll set: %s.", strerror(errno));
-        return -1;
-    }
-
-    free(epoll_ev);
     close(timerfd);
     return 1;
 
 }
 
-void register_export_queues(support_thread_global_t *glob,
-        export_queue_set_t *qset) {
-
-    struct epoll_event ev;
-    int i;
-    exporter_epoll_t *epoll_ev;
-
-    for (i = 0; i < qset->numqueues; i++) {
-
-        epoll_ev = (exporter_epoll_t *)malloc(
-                sizeof(exporter_epoll_t));
-
-        epoll_ev->type = EXP_EPOLL_MQUEUE;
-        epoll_ev->data.q = &(qset->queues[i]);
-
-        ev.data.ptr = (void *)epoll_ev;
-        ev.events = EPOLLIN | EPOLLRDHUP;
-
-        pthread_mutex_lock(&(glob[i].mutex));
-
-        if (glob[i].epollevs == NULL) {
-            glob[i].epollevs = libtrace_list_init(
-                    sizeof(exporter_epoll_t **));
-        }
-
-        libtrace_list_push_back(glob[i].epollevs, &epoll_ev);
-        pthread_mutex_unlock(&(glob[i].mutex));
-
-        if (epoll_ctl(glob[i].epoll_fd, EPOLL_CTL_ADD,
-                    libtrace_message_queue_get_fd(&(qset->queues[i])),
-                    &ev) == -1) {
-            /* TODO Do something? */
-            logger(LOG_INFO, "OpenLI: failed to register export queue: %s",
-                    strerror(errno));
-        }
-    }
-}
-
-export_queue_set_t *create_export_queue_set(int numqueues) {
-
-    int i;
-    export_queue_set_t *qset;
-
-    qset = (export_queue_set_t *)malloc(sizeof(export_queue_set_t));
-    qset->numqueues = numqueues;
-
-    qset->queues = (libtrace_message_queue_t *)malloc(numqueues *
-            sizeof(libtrace_message_queue_t));
-
-    for (i = 0; i < numqueues; i++) {
-        libtrace_message_queue_init(&(qset->queues[i]),
-                sizeof(openli_export_recv_t));
-    }
-    return qset;
-}
-
-void free_export_queue_set(export_queue_set_t *qset) {
-
-    int i;
-
-    for (i = 0; i < qset->numqueues; i++) {
-        libtrace_message_queue_destroy(&(qset->queues[i]));
-    }
-    free(qset->queues);
-    free(qset);
-}
-
-void export_queue_put_all(export_queue_set_t *qset, openli_export_recv_t *msg) {
-
-    int i;
-
-    for (i = 0; i < qset->numqueues; i++) {
-        libtrace_message_queue_put(&(qset->queues[i]), (void *)msg);
-    }
-}
-
-int export_queue_put_by_liid(export_queue_set_t *qset,
-        openli_export_recv_t *msg, char *liid) {
-
-    uint32_t hash;
-    int queueid;
-
-    hash = hashlittle(liid, strlen(liid), 0x188532fa);
-    queueid = hash % qset->numqueues;
-
-    libtrace_message_queue_put(&(qset->queues[queueid]), (void *)msg);
-    return 0;
-}
-
-int export_queue_put_by_queueid(export_queue_set_t *qset,
-        openli_export_recv_t *msg, int queueid) {
-
-    if (queueid < 0 || queueid >= qset->numqueues) {
-        logger(LOG_INFO,
-                "OpenLI: bad export queue passed into export_queue_put_by_queueid: %d",
-                queueid);
-        return -1;
-    }
-    libtrace_message_queue_put(&(qset->queues[queueid]), (void *)msg);
-    return 0;
-}
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

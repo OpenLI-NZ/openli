@@ -31,7 +31,6 @@
 
 #include "collector.h"
 #include "intercept.h"
-#include "collector_export.h"
 #include "etsili_core.h"
 
 enum {
@@ -40,9 +39,10 @@ enum {
     OPENLI_IPMMIRI_H323,
 };
 
-int encode_ipmmiri(wandder_encoder_t **encoder, openli_ipmmiri_job_t *job,
-        exporter_intercept_msg_t *intdetails, uint32_t seqno,
-        openli_exportmsg_t *msg, struct timeval *ts);
+int encode_ipmmiri(wandder_encoder_t *encoder,
+        wandder_encode_job_t *preencoded, openli_ipmmiri_job_t *job,
+        uint32_t seqno,
+        openli_encoded_result_t *res, struct timeval *ts);
 
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

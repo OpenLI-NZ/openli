@@ -34,87 +34,41 @@
 
 #include "logger.h"
 #include "collector.h"
-#include "collector_export.h"
+#include "collector_publish.h"
 #include "etsili_core.h"
 #include "util.h"
+#include "ipmmcc.h"
 
-int encode_ipmmcc(wandder_encoder_t **encoder, openli_ipmmcc_job_t *job,
-        exporter_intercept_msg_t *intdetails, uint32_t seqno,
-        openli_exportmsg_t *msg) {
+int encode_ipmmcc(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, openli_ipcc_job_t *job,
+        uint32_t seqno, struct timeval *tv,  openli_encoded_result_t *msg) {
 
-    struct timeval tv = trace_get_timeval(job->packet);
-    wandder_etsipshdr_data_t hdrdata;
-    void *l3;
-    uint32_t rem;
-    uint16_t ethertype;
+    uint32_t liidlen = precomputed[OPENLI_PREENCODE_LIID].vallen;
+    reset_wandder_encoder(encoder);
 
-    if (*encoder == NULL) {
-        *encoder = init_wandder_encoder();
-    } else {
-        reset_wandder_encoder(*encoder);
-    }
-
-    l3 = trace_get_layer3(job->packet, &ethertype, &rem);
-
-    hdrdata.liid = intdetails->liid;
-    hdrdata.liid_len = intdetails->liid_len;
-    hdrdata.authcc = intdetails->authcc;
-    hdrdata.authcc_len = intdetails->authcc_len;
-    hdrdata.delivcc = intdetails->delivcc;
-    hdrdata.delivcc_len = intdetails->delivcc_len;
-    hdrdata.operatorid = job->colinfo->operatorid;
-    hdrdata.operatorid_len = job->colinfo->operatorid_len;
-    hdrdata.networkelemid = job->colinfo->networkelemid;
-    hdrdata.networkelemid_len = job->colinfo->networkelemid_len;
-    hdrdata.intpointid = job->colinfo->intpointid;
-    hdrdata.intpointid_len = job->colinfo->intpointid_len;
-
-    memset(msg, 0, sizeof(openli_exportmsg_t));
-    msg->msgbody = encode_etsi_ipmmcc(*encoder, &hdrdata,
-                (int64_t)job->cin, (int64_t)seqno, &tv, l3, rem, job->dir);
+    memset(msg, 0, sizeof(openli_encoded_result_t));
+    msg->msgbody = encode_etsi_ipmmcc(encoder, precomputed,
+            (int64_t)job->cin, (int64_t)seqno, tv, job->ipcontent,
+            job->ipclen, job->dir);
 
     /* Unfortunately, the packet body is not the last item in our message so
      * we can't easily use our zero-copy shortcut :( */
-    msg->liid = intdetails->liid;
-    msg->liidlen = intdetails->liid_len;
-    msg->encoder = *encoder;
     msg->ipcontents = NULL;
     msg->ipclen = 0;
-    msg->header = construct_netcomm_protocol_header(
-            msg->msgbody->len + msg->liidlen + sizeof(msg->liidlen),
-                OPENLI_PROTO_ETSI_CC, 0, &(msg->hdrlen));
-
+    msg->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    msg->header.bodylen = htons(msg->msgbody->len + liidlen + sizeof(uint16_t));
+    msg->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
+    msg->header.internalid = 0;
     return 0;
 }
 
-static inline int form_ipmmcc_job(openli_export_recv_t *msg,
-        char *liid, shared_global_info_t *info, libtrace_packet_t *packet,
-        uint32_t cin, uint8_t dir, colthread_local_t *loc, uint32_t destid) {
-
-    int queueused;
-
-    msg->type = OPENLI_EXPORT_IPMMCC;
-    msg->destid = destid;
-    msg->data.ipmmcc.liid = strdup(liid);
-    msg->data.ipmmcc.packet = packet;
-    msg->data.ipmmcc.cin = cin;
-    msg->data.ipmmcc.dir = dir;
-    msg->data.ipmmcc.colinfo = info;
-    trace_increment_packet_refcount(packet);
-    queueused = export_queue_put_by_liid(loc->exportqueues, msg, liid);
-    loc->export_used[queueused] = 1;
-}
-
 static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
-        packet_info_t *pinfo, shared_global_info_t *info,
-        colthread_local_t *loc) {
+        packet_info_t *pinfo, colthread_local_t *loc) {
 
-    openli_export_recv_t msg;
+    openli_export_recv_t *msg;
     rtpstreaminf_t *rtp, *tmp;
     int matched = 0, queueused;
     struct sockaddr *cmp, *tgt, *other;
-
-    memset(&msg, 0, sizeof(openli_export_recv_t));
 
     /* TODO change active RTP so we can look up by 5 tuple? */
     HASH_ITER(hh, loc->activertpintercepts, rtp, tmp) {
@@ -126,7 +80,7 @@ static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
             continue;
         }
 
-        if (pinfo->srcip.ss_family != rtp->ai_family) {
+        if (pinfo->family != rtp->ai_family) {
             continue;
         }
 
@@ -143,8 +97,10 @@ static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
             if (sockaddr_match(family, cmp, tgt)) {
                 cmp = (struct sockaddr *)(&pinfo->destip);
                 if (sockaddr_match(family, cmp, other)) {
-                    form_ipmmcc_job(&msg, rtp->common.liid, info, pkt, rtp->cin,
-                            ETSI_DIR_FROM_TARGET, loc, rtp->common.destid);
+                    msg = create_ipcc_job(rtp->cin, rtp->common.liid,
+                            rtp->common.destid, pkt, ETSI_DIR_FROM_TARGET);
+                    msg->type = OPENLI_EXPORT_IPMMCC;
+                    publish_openli_msg(loc->zmq_pubsocks[0], msg); // FIXME
                     matched ++;
                     continue;
                 }
@@ -161,8 +117,10 @@ static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
             if (sockaddr_match(family, cmp, other)) {
                 cmp = (struct sockaddr *)(&pinfo->destip);
                 if (sockaddr_match(family, cmp, tgt)) {
-                    form_ipmmcc_job(&msg, rtp->common.liid, info, pkt, rtp->cin,
-                            ETSI_DIR_TO_TARGET, loc, rtp->common.destid);
+                    msg = create_ipcc_job(rtp->cin, rtp->common.liid,
+                            rtp->common.destid, pkt, ETSI_DIR_TO_TARGET);
+                    msg->type = OPENLI_EXPORT_IPMMCC;
+                    publish_openli_msg(loc->zmq_pubsocks[0], msg); // FIXME
                     matched ++;
                     continue;
                 }
@@ -174,8 +132,7 @@ static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
 }
 
 int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
-        libtrace_ip_t *ip,
-        uint32_t rem, shared_global_info_t *info, colthread_local_t *loc) {
+        libtrace_ip_t *ip, uint32_t rem, colthread_local_t *loc) {
 
 
     if (rem < sizeof(libtrace_ip_t)) {
@@ -195,12 +152,11 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     }
 
 
-    return generic_mm_comm_contents(AF_INET, pkt, pinfo, info, loc);
+    return generic_mm_comm_contents(AF_INET, pkt, pinfo, loc);
 }
 
 int ip6mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
-        libtrace_ip6_t *ip6,
-        uint32_t rem, shared_global_info_t *info, colthread_local_t *loc) {
+        libtrace_ip6_t *ip6, uint32_t rem, colthread_local_t *loc) {
 
 
     if (rem < sizeof(libtrace_ip6_t)) {
@@ -218,7 +174,7 @@ int ip6mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     }
 
 
-    return generic_mm_comm_contents(AF_INET6, pkt, pinfo, info, loc);
+    return generic_mm_comm_contents(AF_INET6, pkt, pinfo, loc);
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

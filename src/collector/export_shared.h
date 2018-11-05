@@ -23,21 +23,38 @@
  *
  *
  */
-#ifndef OPENLI_IPCC_H_
-#define OPENLI_IPCC_H_
 
-#include <libtrace.h>
-#include "collector.h"
+#ifndef OPENLI_EXPORT_SHARED_H_
+#define OPENLI_EXPORT_SHARED_H_
 
-int encode_ipcc(wandder_encoder_t *encoder, wandder_encode_job_t *precomputed,
-        openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
-        openli_encoded_result_t *msg);
-int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
-        libtrace_ip_t *ip, uint32_t rem, colthread_local_t *loc);
-int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
-        libtrace_ip6_t *ip, uint32_t rem, colthread_local_t *loc);
+#include <uthash.h>
+#include <libwandder.h>
 
+#include "etsili_core.h"
+
+typedef struct exporter_intercept_msg {
+    char *liid;
+    int liid_len;
+    char *authcc;
+    int authcc_len;
+    char *delivcc;
+    int delivcc_len;
+} exporter_intercept_msg_t;
+
+typedef struct cin_seqno {
+    uint32_t cin;
+    uint32_t cc_seqno;
+    uint32_t iri_seqno;
+    char *cin_string;
+    UT_hash_handle hh;
+} cin_seqno_t;
+
+typedef struct intercept_state {
+    exporter_intercept_msg_t details;
+    cin_seqno_t *cinsequencing;
+    UT_hash_handle hh;
+    wandder_encode_job_t *preencoded;
+} exporter_intercept_state_t;
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
-

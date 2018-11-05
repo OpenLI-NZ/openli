@@ -34,12 +34,15 @@
 #include <libtrace/linked_list.h>
 #include <uthash.h>
 #include <libwandder.h>
+#include <zmq.h>
 
 #include "patricia.h"
 #include "coreserver.h"
 #include "intercept.h"
 #include "etsili_core.h"
 #include "reassembler.h"
+#include "collector_publish.h"
+#include "collector_base.h"
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
@@ -148,8 +151,16 @@ typedef struct sync_sendq {
 typedef struct liid_set {
     char *liid;
     uint32_t cin;
+    char *key;
+    size_t keylen;
     UT_hash_handle hh;
 } liid_set_t;
+
+typedef struct staticip_cacheentry {
+    prefix_t prefix;
+    patricia_node_t *pnode;
+    UT_hash_handle hh;
+} static_ipcache_t;
 
 typedef struct colthread_local {
 
@@ -176,9 +187,8 @@ typedef struct colthread_local {
 
     staticipsession_t *activestaticintercepts;
 
-    /* Message queues for exporting LI records */
-    export_queue_set_t *exportqueues;
-    uint8_t *export_used;
+    /* Message queue for exporting LI records */
+    void **zmq_pubsocks;
 
     /* Known RADIUS servers, i.e. if we see traffic to or from these
      * servers, we assume it is RADIUS.
@@ -192,54 +202,53 @@ typedef struct colthread_local {
 
     patricia_tree_t *staticv4ranges;
     patricia_tree_t *staticv6ranges;
+    static_ipcache_t *staticcache;
 
     ipfrag_reassembler_t *fragreass;
 
+    uint64_t accepted;
+    uint64_t dropped;
+
 } colthread_local_t;
-
-typedef struct shared_global_info {
-    char *operatorid;
-    char *networkelemid;
-    char *intpointid;
-    char *provisionerip;
-    char *provisionerport;
-
-    int operatorid_len;
-    int networkelemid_len;
-    int intpointid_len;
-
-} shared_global_info_t;
-
-typedef struct supporting_thread_global {
-
-    pthread_t threadid;
-    pthread_mutex_t mutex;
-    void *collector_queues;
-    void *epollevs;
-    int epoll_fd;
-
-} support_thread_global_t;
 
 typedef struct collector_global {
 
+    void *zmq_ctxt;
     colinput_t *inputs;
-    int exportthreads;
+
+    int total_col_threads;
+    int seqtracker_threads;
+    int encoding_threads;
+    int forwarding_threads;
+
+    void *zmq_forwarder_ctrl;
+    void *zmq_encoder_ctrl;
 
     pthread_rwlock_t config_mutex;
 
-    support_thread_global_t syncip;
-    support_thread_global_t syncvoip;
-    support_thread_global_t *exporters;
+    sync_thread_global_t syncip;
+    sync_thread_global_t syncvoip;
+    etsili_generic_freelist_t *syncgenericfreelist;
+
+    //support_thread_global_t *exporters;
+
+    seqtracker_thread_data_t *seqtrackers;
+    openli_encoder_t *encoders;
+    forwarding_thread_data_t *forwarders;
+    colthread_local_t *collocals;
+    int nextloc;
 
     libtrace_message_queue_t intersyncq;
 
     char *configfile;
-    shared_global_info_t sharedinfo;
+    collector_identity_t sharedinfo;
     libtrace_list_t *expired_inputs;
 
     coreserver_t *alumirrors;
 
     char *sipdebugfile;
+
+    pthread_t seqproxy_tid;
 
 } collector_global_t;
 
@@ -251,10 +260,10 @@ typedef struct packetinfo {
     uint16_t destport;
 } packet_info_t;
 
-int register_sync_queues(support_thread_global_t *glob,
+int register_sync_queues(sync_thread_global_t *glob,
         libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq,
         libtrace_thread_t *parent);
-void deregister_sync_queues(support_thread_global_t *glob,
+void deregister_sync_queues(sync_thread_global_t *glob,
         libtrace_thread_t *t);
 
 

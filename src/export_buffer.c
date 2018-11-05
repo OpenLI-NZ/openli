@@ -33,23 +33,18 @@
 #include "export_buffer.h"
 #include "netcomms.h"
 
-#define BUFFER_ALLOC_SIZE (1024 * 1024 * 10)
+#define BUFFER_ALLOC_SIZE (1024 * 1024 * 50)
 #define BUFFER_WARNING_THRESH (1024 * 1024 * 1024)
 
-void init_export_buffer(export_buffer_t *buf, uint8_t hasnetcomm) {
+void init_export_buffer(export_buffer_t *buf) {
     buf->bufhead = NULL;
     buf->buftail = NULL;
     buf->alloced = 0;
     buf->partialfront = 0;
     buf->deadfront = 0;
-    buf->hasnetcomm = hasnetcomm;
-    buf->decoder = NULL;
 }
 
 void release_export_buffer(export_buffer_t *buf) {
-    if (buf->decoder) {
-        wandder_free_etsili_decoder(buf->decoder);
-    }
     free(buf->bufhead);
 }
 
@@ -118,43 +113,48 @@ uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
 }
 
 uint64_t append_message_to_buffer(export_buffer_t *buf,
-        openli_exportmsg_t *msg, uint32_t beensent) {
+        openli_encoded_result_t *res, uint32_t beensent) {
 
-    uint32_t enclen = msg->msgbody->len - msg->ipclen;
+    uint32_t enclen = res->msgbody->len - res->ipclen;
     uint64_t bufused = buf->buftail - buf->bufhead;
     uint64_t spaceleft = buf->alloced - bufused;
+
+    int liidlen;
+
+    if (res->liid == NULL) {
+        return 0;
+    }
+
+    liidlen = strlen(res->liid);
 
     if (bufused == 0) {
         buf->partialfront = beensent;
     }
 
-    while (spaceleft < msg->msgbody->len + msg->hdrlen + msg->liidlen + 2) {
+    while (spaceleft < res->msgbody->len + sizeof(res->header) + liidlen + 2) {
+        /* Add some space to the buffer */
         spaceleft = extend_buffer(buf);
         if (spaceleft == 0) {
             return 0;
         }
-        /* Add some space to the buffer */
     }
 
-    if (msg->header) {
-        ii_header_t *ii = (ii_header_t *)(msg->header);
-        memcpy(buf->buftail, msg->header, msg->hdrlen);
-        buf->buftail += msg->hdrlen;
-    }
+    memcpy(buf->buftail, &res->header, sizeof(res->header));
+    buf->buftail += sizeof(res->header);
 
-    if (msg->liid) {
-        uint16_t l = htons(msg->liidlen);
+    if (res->liid) {
+        uint16_t l = htons(liidlen);
         memcpy(buf->buftail, &l, sizeof(uint16_t));
-        memcpy(buf->buftail + 2, msg->liid, msg->liidlen);
-        buf->buftail += (msg->liidlen + 2);
+        memcpy(buf->buftail + 2, res->liid, liidlen);
+        buf->buftail += (liidlen + 2);
     }
 
-    memcpy(buf->buftail, msg->msgbody->encoded, enclen);
+    memcpy(buf->buftail, res->msgbody->encoded, enclen);
 
     buf->buftail += enclen;
-    if (msg->ipclen > 0) {
-        memcpy(buf->buftail, msg->ipcontents, msg->ipclen);
-        buf->buftail += msg->ipclen;
+    if (res->ipclen > 0) {
+        memcpy(buf->buftail, res->ipcontents, res->ipclen);
+        buf->buftail += res->ipclen;
     }
 
     return (buf->buftail - buf->bufhead);
@@ -170,42 +170,8 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
     int ret;
     ii_header_t *header = NULL;
 
-    if (!buf->hasnetcomm && buf->decoder == NULL) {
-        buf->decoder = wandder_create_etsili_decoder();
-    }
+    sent = (buf->buftail - (bhead + offset));
 
-    /* Try to maintain record alignment */
-    while (bhead + sent < buf->buftail) {
-        uint32_t attachlen = 0;
-        uint32_t pdulen = 0;
-
-        if (buf->buftail - (bhead + sent) < 10000) {
-            attachlen = buf->buftail - (bhead + sent);
-        } else {
-            attachlen = 10000;
-        }
-
-        if (buf->hasnetcomm) {
-            header = (ii_header_t *)(bhead + sent);
-            pdulen = ntohs(header->bodylen) + sizeof(ii_header_t);
-        } else {
-            wandder_attach_etsili_buffer(buf->decoder, bhead + sent,
-                    attachlen, 0);
-            pdulen = wandder_etsili_get_pdu_length(buf->decoder);
-            if (pdulen == 0) {
-                logger(LOG_INFO, "OpenLI: failed to decode buffered ETSI record.");
-                break;
-            }
-        }
-
-        if (sent + pdulen > bytelimit) {
-            break;
-        }
-
-        sent += pdulen;
-    }
-
-    sent -= offset;
     if (sent != 0) {
         ret = send(fd, bhead + offset, (int)sent, MSG_DONTWAIT);
         if (ret < 0) {

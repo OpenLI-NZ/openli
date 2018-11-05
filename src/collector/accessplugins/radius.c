@@ -956,6 +956,7 @@ static inline void extract_assigned_ip_address(radius_global_t *glob,
 
             sess->sessionip.ipfamily = AF_INET;
             sess->sessionip.prefixbits = 32;
+
             return;
         }
 
@@ -1478,7 +1479,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
 }
 
 static int generate_iri(etsili_generic_t **paramlist,
-        etsili_generic_t **freegenerics, radius_parsed_t *raddata,
+        etsili_generic_freelist_t *freegenerics, radius_parsed_t *raddata,
         radius_attribute_t *attr,
         struct timeval *tv, uint32_t eventtype, etsili_iri_type_t *iritype) {
 
@@ -1585,7 +1586,7 @@ static int generate_iri(etsili_generic_t **paramlist,
 }
 
 static int radius_generate_access_attempt_iri(etsili_generic_t **params,
-        etsili_generic_t **freelist, radius_parsed_t *raddata,
+        etsili_generic_freelist_t *freelist, radius_parsed_t *raddata,
         radius_attribute_t *attrs, struct timeval *tv,
         etsili_iri_type_t *iritype) {
 
@@ -1597,7 +1598,7 @@ static int radius_generate_access_attempt_iri(etsili_generic_t **params,
 
 
 static int radius_generate_access_accept_iri(etsili_generic_t **params,
-        etsili_generic_t **freelist, radius_parsed_t *raddata,
+        etsili_generic_freelist_t *freelist, radius_parsed_t *raddata,
         radius_attribute_t *attrs, struct timeval *tv,
         etsili_iri_type_t *iritype) {
 
@@ -1608,7 +1609,7 @@ static int radius_generate_access_accept_iri(etsili_generic_t **params,
 }
 
 static int radius_generate_interim_iri(etsili_generic_t **params,
-        etsili_generic_t **freelist, radius_parsed_t *raddata,
+        etsili_generic_freelist_t *freelist, radius_parsed_t *raddata,
         radius_attribute_t *attrs, struct timeval *tv,
         etsili_iri_type_t *iritype) {
 
@@ -1619,7 +1620,7 @@ static int radius_generate_interim_iri(etsili_generic_t **params,
 }
 
 static int radius_generate_access_end_iri(etsili_generic_t **params,
-        etsili_generic_t **freelist, radius_parsed_t *raddata,
+        etsili_generic_freelist_t *freelist, radius_parsed_t *raddata,
         radius_attribute_t *attrs, struct timeval *tv,
         etsili_iri_type_t *iritype) {
 
@@ -1630,7 +1631,7 @@ static int radius_generate_access_end_iri(etsili_generic_t **params,
 }
 
 static int radius_generate_access_reject_iri(etsili_generic_t **params,
-        etsili_generic_t **freelist, radius_parsed_t *raddata,
+        etsili_generic_freelist_t *freelist, radius_parsed_t *raddata,
         radius_attribute_t *attrs, struct timeval *tv,
         etsili_iri_type_t *iritype) {
 
@@ -1641,7 +1642,7 @@ static int radius_generate_access_reject_iri(etsili_generic_t **params,
 }
 
 static int radius_generate_access_failed_iri(etsili_generic_t **params,
-        etsili_generic_t **freelist, radius_parsed_t *raddata,
+        etsili_generic_freelist_t *freelist, radius_parsed_t *raddata,
         radius_attribute_t *attrs, struct timeval *tv,
         etsili_iri_type_t *iritype) {
 
@@ -1652,7 +1653,7 @@ static int radius_generate_access_failed_iri(etsili_generic_t **params,
 }
 
 static int radius_generate_already_active_iri(etsili_generic_t **params,
-        etsili_generic_t **freelist, radius_parsed_t *raddata,
+        etsili_generic_freelist_t *freelist, radius_parsed_t *raddata,
         radius_attribute_t *attrs, struct timeval *tv,
         etsili_iri_type_t *iritype) {
 
@@ -1663,7 +1664,7 @@ static int radius_generate_already_active_iri(etsili_generic_t **params,
 }
 
 static inline int action_to_iri(etsili_generic_t **params,
-        etsili_generic_t **freegenerics, radius_parsed_t *raddata,
+        etsili_generic_freelist_t *freegenerics, radius_parsed_t *raddata,
         access_action_t action, radius_attribute_t *attrs,
         etsili_iri_type_t *iritype) {
 
@@ -1726,7 +1727,7 @@ static inline int action_to_iri(etsili_generic_t **params,
 
 static int radius_generate_iri_data(access_plugin_t *p, void *parseddata,
         etsili_generic_t **params, etsili_iri_type_t *iritype,
-        etsili_generic_t **freelist, int iteration) {
+        etsili_generic_freelist_t *freelist, int iteration) {
 
     radius_global_t *radglob;
     radius_parsed_t *raddata;

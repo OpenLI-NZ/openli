@@ -48,7 +48,7 @@ static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
     }
 
     HASH_DELETE(hh, loc->activertpintercepts, rtp);
-    free(rtp);
+    free_single_rtpstream(rtp);
     return 1;
 }
 
@@ -406,9 +406,16 @@ void handle_iprange(libtrace_thread_t *t, colthread_local_t *loc,
     if (found) {
         free_single_staticipsession(ipr);
     } else {
+        char key[128];
+
         found = (liid_set_t *)malloc(sizeof(liid_set_t));
         found->liid = strdup(ipr->common.liid);
         found->cin = ipr->cin;
+
+        snprintf(key, 127, "%s-%u", found->liid, found->cin);
+        found->key = strdup(key);
+        found->keylen = strlen(found->key);
+
 
         HASH_ADD_KEYPTR(hh, *all, found->liid, strlen(found->liid), found);
         /*
@@ -483,6 +490,7 @@ void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
         }
     }
     free(found->liid);
+    free(found->key);
     free(found);
 
     HASH_FIND(hh, loc->activestaticintercepts, ipr->key, strlen(ipr->key),

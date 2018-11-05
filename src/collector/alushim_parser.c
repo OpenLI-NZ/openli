@@ -33,7 +33,7 @@
 #include "coreserver.h"
 #include "logger.h"
 #include "etsili_core.h"
-#include "collector_export.h"
+#include "util.h"
 
 typedef struct alushimhdr {
     uint32_t interceptid;
@@ -105,27 +105,33 @@ alushimhdr_t *get_alushim_header(libtrace_packet_t *packet, uint32_t *rem) {
 }
 
 static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
-        aluintercept_t *alu, uint8_t dir, shared_global_info_t *info) {
+        aluintercept_t *alu, uint8_t dir, collector_identity_t *info) {
 
-    openli_export_recv_t msg;
+    openli_export_recv_t *msg;
     int queueused;
+    void *l3;
+    uint32_t rem;
+    uint16_t ethertype;
 
-    msg.type = OPENLI_EXPORT_IPCC;
-    msg.destid = alu->common.destid;
-    msg.data.ipcc.liid = strdup(alu->common.liid);
-    msg.data.ipcc.packet = packet;
-    msg.data.ipcc.cin = alu->cin;
-    msg.data.ipcc.dir = dir;
-    msg.data.ipcc.colinfo = info;
+    msg = calloc(1, sizeof(openli_export_recv_t));
+    l3 = trace_get_layer3(packet, &ethertype, &rem);
 
-    trace_increment_packet_refcount(packet);
-    queueused = export_queue_put_by_liid(loc->exportqueues, &msg,
-            alu->common.liid);
-    loc->export_used[queueused] = 1;
+    msg->type = OPENLI_EXPORT_IPCC;
+    msg->ts = trace_get_timeval(packet);
+    msg->destid = alu->common.destid;
+    msg->data.ipcc.liid = strdup(alu->common.liid);
+    msg->data.ipcc.cin = alu->cin;
+    msg->data.ipcc.dir = dir;
+    msg->data.ipcc.ipcontent = (uint8_t *)calloc(1, rem);
+    msg->data.ipcc.ipclen = rem;
+
+    memcpy(msg->data.ipcc.ipcontent, l3, rem);
+
+    publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
 
 }
 
-int check_alu_intercept(shared_global_info_t *info, colthread_local_t *loc,
+int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
         coreserver_t *alusources, aluintercept_t *aluints) {
 
@@ -146,17 +152,30 @@ int check_alu_intercept(shared_global_info_t *info, colthread_local_t *loc,
 
     /* Is this packet from any of our known ALU mirrors? */
     HASH_ITER(hh, alusources, cs, tmp) {
-        int ret = 0;
-        if ((ret = coreserver_match(cs, &(pinfo->destip),
-                pinfo->destport)) > 0) {
-            alumatched = 1;
-            break;
+       	if (cs->info == NULL) {
+            cs->info = populate_addrinfo(cs->ipstr, cs->portstr, SOCK_DGRAM);
+            if (!cs->info) {
+                logger(LOG_INFO,
+                        "Removing %s:%s from %s ALU source list due to getaddrinfo error",
+                        cs->ipstr, cs->portstr,
+                        coreserver_type_to_string(cs->servertype));
+                HASH_DELETE(hh, alusources, cs);
+                continue;
+            }
         }
 
-        if (ret == -1) {
-            logger(LOG_INFO,
-                    "Removing %s:%s from ALU mirrors", cs->ipstr, cs->portstr);
-            HASH_DELETE(hh, alusources, cs);
+        if (cs->info->ai_family == AF_INET) {
+            struct sockaddr_in *sa;
+            sa = (struct sockaddr_in *)(&(pinfo->destip));
+            if (CORESERVER_MATCH_V4(cs, sa, pinfo->destport)) {
+                alumatched = 1;
+            }
+        } else if (cs->info->ai_family == AF_INET6) {
+            struct sockaddr_in6 *sa6;
+            sa6 = (struct sockaddr_in6 *)(&(pinfo->destip));
+            if (CORESERVER_MATCH_V6(cs, sa6, pinfo->destport)) {
+                alumatched = 1;
+            }
         }
     }
 

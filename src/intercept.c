@@ -299,22 +299,27 @@ void free_all_voipintercepts(voipintercept_t **vints) {
 
 }
 
+void free_single_rtpstream(rtpstreaminf_t *rtp) {
+    free_intercept_common(&(rtp->common));
+    if (rtp->targetaddr) {
+        free(rtp->targetaddr);
+    }
+    if (rtp->otheraddr) {
+        free(rtp->otheraddr);
+    }
+    if (rtp->streamkey) {
+        free(rtp->streamkey);
+    }
+    free(rtp);
+
+}
+
 void free_all_rtpstreams(rtpstreaminf_t **streams) {
     rtpstreaminf_t *rtp, *tmp;
 
     HASH_ITER(hh, *streams, rtp, tmp) {
         HASH_DELETE(hh, *streams, rtp);
-        free_intercept_common(&(rtp->common));
-        if (rtp->targetaddr) {
-            free(rtp->targetaddr);
-        }
-        if (rtp->otheraddr) {
-            free(rtp->otheraddr);
-        }
-        if (rtp->streamkey) {
-            free(rtp->streamkey);
-        }
-        free(rtp);
+        free_single_rtpstream(rtp);
     }
 }
 

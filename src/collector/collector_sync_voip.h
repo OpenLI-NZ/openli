@@ -37,10 +37,11 @@
 
 typedef struct collector_sync_voip_data {
 
-    support_thread_global_t *glob;
-    shared_global_info_t *info;
-    export_queue_set_t *exportqueues;
-    uint8_t *export_used;
+    sync_thread_global_t *glob;
+    collector_identity_t *info;
+
+    int pubsockcount;
+    void **zmq_pubsocks;
 
     voipintercept_t *voipintercepts;
     voipcinmap_t *knowncallids;

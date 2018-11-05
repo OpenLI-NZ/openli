@@ -45,12 +45,12 @@
 #include "configparser.h"
 #include "collector_sync_voip.h"
 #include "collector_sync.h"
-#include "collector_export.h"
 #include "collector_push_messaging.h"
 #include "ipcc.h"
 #include "ipmmcc.h"
 #include "sipparsing.h"
 #include "alushim_parser.h"
+#include "util.h"
 
 volatile int collector_halt = 0;
 volatile int reload_config = 0;
@@ -120,14 +120,32 @@ static void dump_rtp_intercept(rtpstreaminf_t *rtp) {
     printf("------\n");
 }
 
-static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
-        void *global) {
+static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
+        void *global, void *local, uint64_t tick) {
 
     collector_global_t *glob = (collector_global_t *)global;
-    colthread_local_t *loc = NULL;
+    colthread_local_t *loc = (colthread_local_t *)local;
+    libtrace_stat_t *stats;
 
-    loc = (colthread_local_t *)malloc(sizeof(colthread_local_t));
+    stats = trace_create_statistics();
+    trace_get_statistics(trace, stats);
 
+    if (stats->dropped > loc->dropped && trace_get_perpkt_thread_id(t) == 0) {
+        logger(LOG_INFO,
+                "%lu dropped %lu packets in last second (accepted %lu)",
+                (tick >> 32),
+                stats->dropped - loc->dropped,
+                stats->accepted - loc->accepted);
+        loc->dropped = stats->dropped;
+    }
+    loc->accepted = stats->accepted;
+    free(stats);
+}
+
+static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
+        int threadid) {
+
+    int zero = 0, i;
     libtrace_message_queue_init(&(loc->tosyncq_ip),
             sizeof(openli_state_update_t));
     libtrace_message_queue_init(&(loc->fromsyncq_ip),
@@ -146,16 +164,41 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     loc->sipservers = NULL;
     loc->staticv4ranges = New_Patricia(32);
     loc->staticv6ranges = New_Patricia(128);
+    loc->staticcache = NULL;
 
-    loc->exportqueues = create_export_queue_set(glob->exportthreads);
-    loc->export_used = (uint8_t *)malloc(sizeof(uint8_t) * glob->exportthreads);
+    loc->accepted = 0;
+    loc->dropped = 0;
+
+
+    loc->zmq_pubsocks = calloc(glob->seqtracker_threads, sizeof(void *));
+    for (i = 0; i < glob->seqtracker_threads; i++) {
+        char pubsockname[128];
+
+        snprintf(pubsockname, 128, "inproc://openlipub-%d", i);
+        loc->zmq_pubsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+        zmq_connect(loc->zmq_pubsocks[i], pubsockname);
+        zmq_setsockopt(loc->zmq_pubsocks[i], ZMQ_SNDHWM, &zero, sizeof(zero));
+    }
+
     loc->fragreass = create_new_ipfrag_reassembler();
+
+}
+
+static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
+        void *global) {
+
+    collector_global_t *glob = (collector_global_t *)global;
+    colthread_local_t *loc = NULL;
+
+    pthread_rwlock_wrlock(&(glob->config_mutex));
+    loc = &(glob->collocals[glob->nextloc]);
+    glob->nextloc ++;
+    pthread_rwlock_unlock(&(glob->config_mutex));
 
     register_sync_queues(&(glob->syncip), &(loc->tosyncq_ip),
 			&(loc->fromsyncq_ip), t);
     register_sync_queues(&(glob->syncvoip), &(loc->tosyncq_voip),
 			&(loc->fromsyncq_voip), t);
-    register_export_queues(glob->exporters, loc->exportqueues);
 
     return loc;
 }
@@ -167,7 +210,17 @@ static void free_staticrange_data(void *data) {
     HASH_ITER(hh, all, iter, tmp) {
         HASH_DELETE(hh, all, iter);
         free(iter->liid);
+        free(iter->key);
         free(iter);
+    }
+}
+
+static void free_staticcache(static_ipcache_t *cache) {
+    static_ipcache_t *ent, *tmp;
+
+    HASH_ITER(hh, cache, ent, tmp) {
+        HASH_DELETE(hh, cache, ent);
+        free(ent);
     }
 }
 
@@ -178,6 +231,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     colthread_local_t *loc = (colthread_local_t *)tls;
     ipv4_target_t *v4, *tmp;
     ipv6_target_t *v6, *tmp2;
+    int zero = 0, i;
 
     if (trace_is_err(trace)) {
         libtrace_err_t err = trace_get_err(trace);
@@ -196,10 +250,13 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_message_queue_destroy(&(loc->fromsyncq_ip));
     libtrace_message_queue_destroy(&(loc->tosyncq_voip));
     libtrace_message_queue_destroy(&(loc->fromsyncq_voip));
-    free_export_queue_set(loc->exportqueues);
-    if (loc->export_used) {
-        free(loc->export_used);
+
+    for (i = 0; i < glob->seqtracker_threads; i++) {
+        zmq_setsockopt(loc->zmq_pubsocks[i], ZMQ_LINGER, &zero, sizeof(zero));
+        zmq_close(loc->zmq_pubsocks[i]);
     }
+
+    free(loc->zmq_pubsocks);
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
         free_all_ipsessions(&(v4->intercepts));
@@ -224,7 +281,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     Destroy_Patricia(loc->staticv4ranges, free_staticrange_data);
     Destroy_Patricia(loc->staticv6ranges, free_staticrange_data);
 
-    free(loc);
+    free_staticcache(loc->staticcache);
 }
 
 static inline void send_packet_to_sync(libtrace_packet_t *pkt,
@@ -234,7 +291,7 @@ static inline void send_packet_to_sync(libtrace_packet_t *pkt,
     syncup.type = updatetype;
     syncup.data.pkt = pkt;
 
-    trace_increment_packet_refcount(pkt);
+    //trace_increment_packet_refcount(pkt);
     libtrace_message_queue_put(q, (void *)(&syncup));
 
 }
@@ -359,35 +416,46 @@ static inline int is_core_server_packet(libtrace_packet_t *pkt,
     }
 
     HASH_ITER(hh, servers, rad, tmp) {
-        int ret;
-        if ((ret = coreserver_match(rad, &(pinfo->srcip),
-                    pinfo->srcport)) > 0) {
-            return 1;
+        if (rad->info == NULL) {
+            rad->info = populate_addrinfo(rad->ipstr, rad->portstr,
+                    SOCK_DGRAM);
+            if (!rad->info) {
+                logger(LOG_INFO,
+                        "Removing %s:%s from %s server list due to getaddrinfo error",
+                        rad->ipstr, rad->portstr,
+                        coreserver_type_to_string(rad->servertype));
+
+                HASH_DELETE(hh, servers, rad);
+                continue;
+            }
+            if (rad->info->ai_family == AF_INET) {
+                rad->portswapped = ntohs(CS_TO_V4(rad)->sin_port);
+            } else if (rad->info->ai_family == AF_INET6) {
+                rad->portswapped = ntohs(CS_TO_V6(rad)->sin6_port);
+            }
         }
 
-        if (ret == -1) {
-            logger(LOG_INFO,
-                    "Removing %s:%s from %s server list due to getaddrinfo error",
-                    rad->ipstr, rad->portstr,
-                    coreserver_type_to_string(rad->servertype));
+        if (pinfo->family == AF_INET) {
+            struct sockaddr_in *sa;
+            sa = (struct sockaddr_in *)(&(pinfo->srcip));
 
-            HASH_DELETE(hh, servers, rad);
-            continue;
-        }
-
-        if ((ret = coreserver_match(rad, &(pinfo->destip),
-                    pinfo->destport)) > 0) {
-            return 1;
-        }
-
-        if (ret == -1) {
-            /* should never happen at this point? */
-            logger(LOG_INFO,
-                    "Removing %s:%s from %s server list due to getaddrinfo error",
-                    rad->ipstr, rad->portstr,
-                    coreserver_type_to_string(rad->servertype));
-            HASH_DELETE(hh, servers, rad);
-            continue;
+            if (CORESERVER_MATCH_V4(rad, sa, pinfo->srcport)) {
+                return 1;
+            }
+            sa = (struct sockaddr_in *)(&(pinfo->destip));
+            if (CORESERVER_MATCH_V4(rad, sa, pinfo->destport)) {
+                return 1;
+            }
+        } else if (pinfo->family == AF_INET6) {
+            struct sockaddr_in6 *sa6;
+            sa6 = (struct sockaddr_in6 *)(&(pinfo->srcip));
+            if (CORESERVER_MATCH_V6(rad, sa6, pinfo->srcport)) {
+                return 1;
+            }
+            sa6 = (struct sockaddr_in6 *)(&(pinfo->destip));
+            if (CORESERVER_MATCH_V6(rad, sa6, pinfo->destport)) {
+                return 1;
+            }
         }
     }
 
@@ -395,24 +463,22 @@ static inline int is_core_server_packet(libtrace_packet_t *pkt,
     return 0;
 }
 
-
 static libtrace_packet_t *process_packet(libtrace_t *trace,
         libtrace_thread_t *t, void *global, void *tls,
         libtrace_packet_t *pkt) {
 
     collector_global_t *glob = (collector_global_t *)global;
     colthread_local_t *loc = (colthread_local_t *)tls;
-    void *l3, *transport;
+    void *l3;
     uint16_t ethertype;
     uint32_t rem, iprem;
-    uint8_t proto, isfrag;
+    uint8_t proto;
     int forwarded = 0, i, ret;
     int synced = 0;
     uint16_t fragoff = 0;
 
     openli_pushed_t syncpush;
     packet_info_t pinfo;
-    openli_export_recv_t finmsg;
 
     /* Check for any messages from the sync threads */
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
@@ -427,26 +493,29 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         process_incoming_messages(t, glob, loc, &syncpush);
     }
 
+
     l3 = trace_get_layer3(pkt, &ethertype, &rem);
     if (l3 == NULL || rem == 0) {
         return pkt;
     }
 
-    trace_increment_packet_refcount(pkt);
-    if (!trace_get_source_address(pkt, (struct sockaddr *)(&pinfo.srcip))) {
-        return pkt;
-    }
-    if (!trace_get_destination_address(pkt,
-            (struct sockaddr *)(&pinfo.destip))) {
-        return pkt;
-    }
+    //trace_increment_packet_refcount(pkt);
 
-    isfrag = 0;
     iprem = rem;
     if (ethertype == TRACE_ETHERTYPE_IP) {
         uint8_t moreflag;
         ip_reassemble_stream_t *ipstream;
         libtrace_ip_t *ipheader = (libtrace_ip_t *)l3;
+        struct sockaddr_in *in4;
+
+        if (rem < ipheader->ip_hl * 4) {
+            return pkt;
+        }
+
+        in4 = (struct sockaddr_in *)(&(pinfo.srcip));
+        in4->sin_addr = ipheader->ip_src;
+        in4 = (struct sockaddr_in *)(&(pinfo.destip));
+        in4->sin_addr = ipheader->ip_dst;
 
         fragoff = trace_get_fragment_offset(pkt, &moreflag);
         if (moreflag || fragoff > 0) {
@@ -469,44 +538,42 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                 return pkt;
             }
 
-            isfrag = 1;
             if (is_ip_reassembled(ipstream)) {
                 remove_ipfrag_reassemble_stream(loc->fragreass, ipstream);
             }
-            
             if (rem <= ipheader->ip_hl * 4) {
-                transport = NULL;
                 proto = 0;
             } else {
-                transport = l3 + (ipheader->ip_hl * 4);
                 proto = ipheader->ip_p;
             }
 
         } else {
+            uint8_t *postip = ((uint8_t *)l3) + ipheader->ip_hl * 4;
 
-            pinfo.srcport = ntohs(((struct sockaddr_in *)(&pinfo.srcip))->sin_port);
-            pinfo.destport = ntohs(((struct sockaddr_in *)(&pinfo.destip))->sin_port);
-            isfrag = 0;
-            transport = trace_get_transport(pkt, &proto, &rem);
+            pinfo.srcport = ntohs(*((uint16_t *)postip));
+            pinfo.destport = ntohs(*((uint16_t *)(postip + 2)));
+            proto = ipheader->ip_p;
         }
+        pinfo.family = AF_INET;
     } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
-        pinfo.srcport = ntohs(((struct sockaddr_in6 *)(&pinfo.srcip))->sin6_port);
-        pinfo.destport = ntohs(((struct sockaddr_in6 *)(&pinfo.destip))->sin6_port);
-        transport = trace_get_transport(pkt, &proto, &rem);
+        libtrace_ip6_t *ip6header = (libtrace_ip6_t *)l3;
+        uint8_t *postip6 = (uint8_t *)(trace_get_payload_from_ip6(ip6header,
+                &proto, &rem));
+
+        pinfo.srcport = ntohs(*((uint16_t *)postip6));
+        pinfo.destport = ntohs(*((uint16_t *)(postip6 + 2)));
+        proto = ip6header->nxt;
+        pinfo.family = AF_INET6;
     } else {
         pinfo.srcport = 0;
         pinfo.destport = 0;
-        transport = NULL;
         proto = 0;
+        pinfo.family = 0;
     }
-
-    pinfo.family = pinfo.srcip.ss_family;
-    memset(loc->export_used, 0, sizeof(uint8_t) * loc->exportqueues->numqueues);
-
 
     /* All these special packets are UDP, so we can avoid a whole bunch
      * of these checks for TCP traffic */
-    if (transport != NULL && proto == TRACE_IPPROTO_UDP) {
+    if (proto == TRACE_IPPROTO_UDP) {
 
         /* Is this from one of our ALU mirrors -- if yes, parse + strip it
          * for conversion to an ETSI record */
@@ -532,7 +599,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                 synced = 1;
             }
         }
-    } else if (transport != NULL && proto == TRACE_IPPROTO_TCP) {
+    } else if (proto == TRACE_IPPROTO_TCP) {
         /* Is this a SIP packet? -- if yes, create a state update */
         if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
                     loc->sipservers)) {
@@ -545,14 +612,14 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     if (ethertype == TRACE_ETHERTYPE_IP) {
         /* Is this an IP packet? -- if yes, possible IP CC */
         if (ipv4_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, iprem,
-                    &(glob->sharedinfo), loc)) {
+                    loc)) {
             forwarded = 1;
         }
 
         /* Is this an RTP packet? -- if yes, possible IPMM CC */
         if (proto == TRACE_IPPROTO_UDP) {
             if (ip4mm_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, iprem,
-                        &(glob->sharedinfo), loc)) {
+                        loc)) {
                 forwarded = 1;
             }
         }
@@ -560,26 +627,23 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
         /* Is this an IP packet? -- if yes, possible IP CC */
         if (ipv6_comm_contents(pkt, &pinfo, (libtrace_ip6_t *)l3, iprem,
-                    &(glob->sharedinfo), loc)) {
+                    loc)) {
             forwarded = 1;
         }
 
         if (proto == TRACE_IPPROTO_UDP) {
             if (ip6mm_comm_contents(pkt, &pinfo, (libtrace_ip6_t *)l3, iprem,
-                        &(glob->sharedinfo), loc)) {
+                        loc)) {
                 forwarded = 1;
             }
         }
     }
 
 processdone:
-    if (forwarded || synced) {
-        trace_decrement_packet_refcount(pkt);
+    if (synced) {
         return NULL;
     }
     return pkt;
-
-
 }
 
 static int start_input(collector_global_t *glob, colinput_t *inp,
@@ -595,6 +659,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
         trace_set_starting_cb(inp->pktcbs, start_processing_thread);
         trace_set_stopping_cb(inp->pktcbs, stop_processing_thread);
         trace_set_packet_cb(inp->pktcbs, process_packet);
+        trace_set_tick_interval_cb(inp->pktcbs, process_tick);
     }
 
     assert(!inp->trace);
@@ -618,6 +683,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
 
     trace_set_perpkt_threads(inp->trace, inp->threadcount);
     trace_set_hasher(inp->trace, HASHER_BIDIRECTIONAL, NULL, NULL);
+    trace_set_tick_interval(inp->trace, 1000);
 
     if (trace_pstart(inp->trace, glob, inp->pktcbs, NULL) == -1) {
         libtrace_err_t lterr = trace_get_err(inp->trace);
@@ -669,19 +735,19 @@ static void reload_inputs(collector_global_t *glob,
 
 }
 
+#if 0
 static void *start_export_thread(void *params) {
-    support_thread_global_t *glob = (support_thread_global_t *)params;
+    export_thread_data_t *glob = (export_thread_data_t *)params;
     collector_export_t *exp = init_exporter(glob);
     int connected = 0;
 
-    if (exp == NULL) {
+    if (exp->workers == NULL) {
         logger(LOG_INFO, "OpenLI: exporting thread is not functional!");
         collector_halt = 1;
-        pthread_exit(NULL);
     }
 
     while (collector_halt == 0) {
-        if (exporter_thread_main(exp) <= 0) {
+        if (exporter_thread_main(exp, &collector_halt) <= 0) {
             break;
         }
     }
@@ -690,6 +756,7 @@ static void *start_export_thread(void *params) {
     logger(LOG_DEBUG, "OpenLI: exiting export thread.");
     pthread_exit(NULL);
 }
+#endif
 
 static void clear_input(colinput_t *input) {
 
@@ -707,7 +774,7 @@ static void clear_input(colinput_t *input) {
     }
 }
 
-static inline void init_support_thread_data(support_thread_global_t *sup) {
+static inline void init_sync_thread_data(sync_thread_global_t *sup) {
 
     sup->threadid = 0;
     pthread_mutex_init(&(sup->mutex), NULL);
@@ -717,7 +784,7 @@ static inline void init_support_thread_data(support_thread_global_t *sup) {
 
 }
 
-static inline void free_support_thread_data(support_thread_global_t *sup) {
+static inline void free_sync_thread_data(sync_thread_global_t *sup) {
 	pthread_mutex_destroy(&(sup->mutex));
 	if (sup->epoll_fd != -1) {
 		close(sup->epoll_fd);
@@ -777,18 +844,38 @@ static void clear_global_config(collector_global_t *glob) {
 
     pthread_rwlock_destroy(&glob->config_mutex);
 
-	free_support_thread_data(&(glob->syncip));
-	free_support_thread_data(&(glob->syncvoip));
-
-    if (glob->exporters) {
-        for (i = 0; i < glob->exportthreads; i++) {
-    	    free_support_thread_data(&(glob->exporters[i]));
-        }
-        free(glob->exporters);
-    }
+	free_sync_thread_data(&(glob->syncip));
+	free_sync_thread_data(&(glob->syncvoip));
 
     libtrace_message_queue_destroy(&(glob->intersyncq));
 
+    if (glob->zmq_forwarder_ctrl) {
+        zmq_close(glob->zmq_forwarder_ctrl);
+    }
+
+    if (glob->zmq_encoder_ctrl) {
+        zmq_close(glob->zmq_encoder_ctrl);
+    }
+
+    free_etsili_generics(glob->syncgenericfreelist);
+
+    for (i = 0; i < glob->forwarding_threads; i++) {
+        zmq_close(glob->forwarders[i].zmq_pullressock);
+    }
+
+    logger(LOG_INFO, "OpenLI: waiting for zeromq context to be destroyed.");
+    if (glob->zmq_ctxt) {
+        zmq_ctx_destroy(glob->zmq_ctxt);
+    }
+
+    for (i = 0; i < glob->seqtracker_threads; i++) {
+        clean_seqtracker(&(glob->seqtrackers[i]));
+    }
+
+    free(glob->seqtrackers);
+    free(glob->encoders);
+    free(glob->forwarders);
+    free(glob->collocals);
     free(glob);
 }
 
@@ -804,7 +891,7 @@ static inline void push_hello_message(libtrace_message_queue_t *atob,
     libtrace_message_queue_put(atob, (void *)(&hello));
 }
 
-int register_sync_queues(support_thread_global_t *glob,
+int register_sync_queues(sync_thread_global_t *glob,
         libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq,
         libtrace_thread_t *parent) {
 
@@ -850,7 +937,7 @@ int register_sync_queues(support_thread_global_t *glob,
     return 0;
 }
 
-void deregister_sync_queues(support_thread_global_t *glob,
+void deregister_sync_queues(sync_thread_global_t *glob,
 		libtrace_thread_t *t) {
 
     sync_epoll_t *syncev, *syncev_hash;
@@ -887,22 +974,26 @@ void deregister_sync_queues(support_thread_global_t *glob,
 static collector_global_t *parse_global_config(char *configfile) {
 
     collector_global_t *glob = NULL;
+    int i;
 
-    glob = (collector_global_t *)malloc(sizeof(collector_global_t));
+    glob = (collector_global_t *)calloc(1, sizeof(collector_global_t));
 
+    glob->zmq_ctxt = zmq_ctx_new();
     glob->inputs = NULL;
-    glob->exportthreads = 1;
+    glob->seqtracker_threads = 1;
+    glob->forwarding_threads = 1;
+    glob->encoding_threads = 2;
     glob->sharedinfo.intpointid = NULL;
     glob->sharedinfo.intpointid_len = 0;
     glob->sharedinfo.operatorid = NULL;
     glob->sharedinfo.operatorid_len = 0;
     glob->sharedinfo.networkelemid = NULL;
     glob->sharedinfo.networkelemid_len = 0;
+    glob->total_col_threads = 0;
+    glob->collocals = NULL;
 
-    init_support_thread_data(&(glob->syncip));
-    init_support_thread_data(&(glob->syncvoip));
-    glob->exporters = NULL;
-    //init_support_thread_data(&(glob->exporter));
+    init_sync_thread_data(&(glob->syncip));
+    init_sync_thread_data(&(glob->syncvoip));
 
     glob->configfile = configfile;
     glob->sharedinfo.provisionerip = NULL;
@@ -910,6 +1001,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->alumirrors = NULL;
     glob->expired_inputs = libtrace_list_init(sizeof(colinput_t *));
     glob->sipdebugfile = NULL;
+    glob->nextloc = 0;
 
     libtrace_message_queue_init(&glob->intersyncq,
             sizeof(openli_intersync_msg_t));
@@ -921,6 +1013,32 @@ static collector_global_t *parse_global_config(char *configfile) {
         return NULL;
     }
 
+    glob->collocals = (colthread_local_t *)calloc(glob->total_col_threads,
+            sizeof(colthread_local_t));
+
+    for (i = 0; i < glob->total_col_threads; i++) {
+        init_collocal(&(glob->collocals[i]), glob, i);
+    }
+
+    glob->syncgenericfreelist = create_etsili_generic_freelist(1);
+
+    glob->zmq_forwarder_ctrl = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
+    if (zmq_connect(glob->zmq_forwarder_ctrl,
+            "inproc://openliforwardercontrol") != 0) {
+        logger(LOG_INFO, "OpenLI: unable to connect to zmq control socket for forwarding threads. Exiting.");
+        clear_global_config(glob);
+        return NULL;
+    }
+
+    glob->zmq_encoder_ctrl = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
+    if (zmq_bind(glob->zmq_encoder_ctrl,
+            "inproc://openliencodercontrol") != 0) {
+        logger(LOG_INFO, "OpenLI: unable to connect to zmq control socket for encoding threads. Exiting.");
+        clear_global_config(glob);
+        return NULL;
+    }
+
+    
     if (glob->sharedinfo.provisionerport == NULL) {
         glob->sharedinfo.provisionerport = strdup("8993");
     }
@@ -942,6 +1060,7 @@ static collector_global_t *parse_global_config(char *configfile) {
         clear_global_config(glob);
         glob = NULL;
     }
+
 
     return glob;
 
@@ -1016,8 +1135,6 @@ static void *start_voip_sync_thread(void *params) {
     collector_sync_voip_t *sync = init_voip_sync_data(glob);
     sync_sendq_t *sq;
 
-    register_export_queues(glob->exporters, sync->exportqueues);
-
     while (collector_halt == 0) {
         ret = sync_voip_thread_main(sync);
         if (ret == -1) {
@@ -1049,7 +1166,6 @@ void halt_processing_threads(collector_global_t *glob) {
     }
 }
 
-
 static void *start_ip_sync_thread(void *params) {
 
     collector_global_t *glob = (collector_global_t *)params;
@@ -1061,8 +1177,6 @@ static void *start_ip_sync_thread(void *params) {
      * from a config file. Eventually this should be replaced with
      * instructions that are received via a network interface.
      */
-
-    register_export_queues(glob->exporters, sync->exportqueues);
 
     while (collector_halt == 0) {
         if (reload_config) {
@@ -1197,18 +1311,57 @@ int main(int argc, char *argv[]) {
         logger(LOG_INFO, "Unable to disable signals before starting threads.");
         return 1;
     }
-    /* Start export threads */
-    glob->exporters = (support_thread_global_t *)malloc(
-            sizeof(support_thread_global_t) * glob->exportthreads);
-    for (i = 0; i < glob->exportthreads; i++) {
-        init_support_thread_data(&(glob->exporters[i]));
 
-        ret = pthread_create(&(glob->exporters[i].threadid), NULL,
-                start_export_thread, (void *)&(glob->exporters[i]));
-        if (ret != 0) {
-            logger(LOG_INFO, "OpenLI: error creating exporter. Exiting.");
-            return 1;
-        }
+    /* TODO check pthread_create return values... */
+
+    glob->forwarders = calloc(glob->forwarding_threads,
+            sizeof(forwarding_thread_data_t));
+
+    for (i = 0; i < glob->forwarding_threads; i++) {
+        glob->forwarders[i].zmq_ctxt = glob->zmq_ctxt;
+        glob->forwarders[i].forwardid = i;
+        glob->forwarders[i].encoders = glob->encoding_threads;
+        glob->forwarders[i].colthreads = glob->total_col_threads;
+        glob->forwarders[i].zmq_ctrlsock = NULL;
+        glob->forwarders[i].zmq_pullressock = NULL;
+
+        pthread_create(&(glob->forwarders[i].threadid), NULL,
+                start_forwarding_thread, (void *)&(glob->forwarders[i]));
+    }
+
+    glob->seqtrackers = calloc(glob->seqtracker_threads,
+            sizeof(seqtracker_thread_data_t));
+
+    for (i = 0; i < glob->seqtracker_threads; i++) {
+        glob->seqtrackers[i].zmq_ctxt = glob->zmq_ctxt;
+        glob->seqtrackers[i].trackerid = i;
+        glob->seqtrackers[i].zmq_pushjobsock = NULL;
+        glob->seqtrackers[i].zmq_recvpublished = NULL;
+        glob->seqtrackers[i].intercepts = NULL;
+        glob->seqtrackers[i].colident = &(glob->sharedinfo);
+
+        pthread_create(&(glob->seqtrackers[i].threadid), NULL,
+                start_seqtracker_thread, (void *)&(glob->seqtrackers[i]));
+    }
+
+    glob->encoders = calloc(glob->encoding_threads, sizeof(openli_encoder_t));
+
+    for (i = 0; i < glob->encoding_threads; i++) {
+        glob->encoders[i].zmq_ctxt = glob->zmq_ctxt;
+        glob->encoders[i].zmq_recvjobs = NULL;
+        glob->encoders[i].zmq_pushresults = NULL;
+        glob->encoders[i].zmq_control = NULL;
+
+        glob->encoders[i].workerid = i;
+        glob->encoders[i].shared = &(glob->sharedinfo);
+        glob->encoders[i].encoder = NULL;
+        glob->encoders[i].freegenerics = NULL;
+
+        glob->encoders[i].seqtrackers = glob->seqtracker_threads;
+        glob->encoders[i].forwarders = glob->forwarding_threads;
+
+        pthread_create(&(glob->encoders[i].threadid), NULL,
+                run_encoder_worker, (void *)&(glob->encoders[i]));
     }
 
     /* Start IP intercept sync thread */
@@ -1259,15 +1412,51 @@ int main(int argc, char *argv[]) {
     pthread_rwlock_rdlock(&(glob->config_mutex));
     HASH_ITER(hh, glob->inputs, inp, tmp) {
         if (inp->trace) {
+            libtrace_stat_t *stat;
             trace_join(inp->trace);
+            stat = trace_create_statistics();
+            trace_get_statistics(inp->trace, stat);
+
+            if (stat->dropped_valid) {
+                logger(LOG_DEBUG, "OpenLI: dropped %lu packets on input %s",
+                        stat->dropped, inp->uri);
+            }
+            if (stat->received_valid) {
+                logger(LOG_DEBUG, "OpenLI: received %lu packets on input %s",
+                        stat->received, inp->uri);
+            }
+            if (stat->accepted_valid) {
+                logger(LOG_DEBUG, "OpenLI: accepted %lu packets on input %s",
+                        stat->accepted, inp->uri);
+            }
+            free(stat);
         }
     }
     pthread_rwlock_unlock(&(glob->config_mutex));
 
+    if (glob->zmq_encoder_ctrl) {
+        /* The only control message required for encoding threads is the
+         * "halt" message, so we can just send an empty message and the
+         * recipients should treat that as a "halt" command.
+         */
+        if (zmq_send(glob->zmq_encoder_ctrl, NULL, 0, 0) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: error sending halt to encoding threads: %s",
+                    strerror(errno));
+        }
+    }
+
     pthread_join(glob->syncip.threadid, NULL);
     pthread_join(glob->syncvoip.threadid, NULL);
-    for (i = 0; i < glob->exportthreads; i++) {
-        pthread_join(glob->exporters[i].threadid, NULL);
+    for (i = 0; i < glob->seqtracker_threads; i++) {
+        pthread_join(glob->seqtrackers[i].threadid, NULL);
+    }
+    for (i = 0; i < glob->encoding_threads; i++) {
+        pthread_join(glob->encoders[i].threadid, NULL);
+        destroy_encoder_worker(&(glob->encoders[i]));
+    }
+    for (i = 0; i < glob->forwarding_threads; i++) {
+        pthread_join(glob->forwarders[i].threadid, NULL);
     }
 
     logger(LOG_INFO, "OpenLI: exiting OpenLI Collector.");

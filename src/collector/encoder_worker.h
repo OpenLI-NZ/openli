@@ -23,21 +23,24 @@
  *
  *
  */
-#ifndef OPENLI_IPCC_H_
-#define OPENLI_IPCC_H_
 
-#include <libtrace.h>
+#ifndef OPENLI_ENCODER_WORKER_H_
+#define OPENLI_ENCODER_WORKER_H_
+
+#include <time.h>
+#include <pthread.h>
+#include <libwandder.h>
+
+#include "collector_publish.h"
 #include "collector.h"
+#include "netcomms.h"
+#include "etsili_core.h"
+#include "export_shared.h"
 
-int encode_ipcc(wandder_encoder_t *encoder, wandder_encode_job_t *precomputed,
-        openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
-        openli_encoded_result_t *msg);
-int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
-        libtrace_ip_t *ip, uint32_t rem, colthread_local_t *loc);
-int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
-        libtrace_ip6_t *ip, uint32_t rem, colthread_local_t *loc);
+void destroy_encoder_worker(openli_encoder_t *enc);
+void *run_encoder_worker(void *encstate);
 
 #endif
 
-// vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 
+// vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
