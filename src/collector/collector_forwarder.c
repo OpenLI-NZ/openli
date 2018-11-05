@@ -119,6 +119,19 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
     return 1;
 }
 
+static inline void disconnect_mediator(forwarding_thread_data_t *fwd,
+        export_dest_t *med) {
+
+    close(med->fd);
+    med->fd = -1;
+
+    if (med->pollindex >= 0) {
+        fwd->topoll[med->pollindex].fd = 0;
+        fwd->topoll[med->pollindex].events = 0;
+    }
+
+}
+
 static void remove_destination(forwarding_thread_data_t *fwd,
         export_dest_t *med) {
 
@@ -128,8 +141,7 @@ static void remove_destination(forwarding_thread_data_t *fwd,
 
     if (med->fd != -1) {
         JLD(err, fwd->destinations_by_fd, med->fd);
-        close(med->fd);
-        med->fd = -1;
+        disconnect_mediator(fwd, med);
     }
 
     release_export_buffer(&(med->buffer));
@@ -196,26 +208,15 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         }
         med = (export_dest_t *)(*jval);
         remove_destination(fwd, med);
+        logger(LOG_DEBUG, "removed mediator %d due to provisioner request",
+                msg->data.med.mediatorid);
     } else if (msg->type == OPENLI_EXPORT_DROP_ALL_MEDIATORS) {
         remove_all_destinations(fwd);
     } else if (msg->type == OPENLI_EXPORT_FLAG_MEDIATORS) {
-
+        flag_all_destinations(fwd);
     }
 
     return 1;
-}
-
-static void disconnect_mediator(forwarding_thread_data_t *fwd,
-        export_dest_t *med) {
-
-    close(med->fd);
-    med->fd = -1;
-
-    if (med->pollindex >= 0) {
-        fwd->topoll[med->pollindex].fd = 0;
-        fwd->topoll[med->pollindex].events = 0;
-    }
-
 }
 
 static inline void free_encoded_result(openli_encoded_result_t *res) {
@@ -289,7 +290,6 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
         return 0;
     }
 
-    /*
     if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
         logger(LOG_INFO,
                 "OpenLI: forced to drop mediator %s:%s because we cannot buffer any more records for it -- please investigate asap!",
@@ -297,7 +297,6 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
         remove_destination(fwd, med);
         return 1;
     }
-    */
 
     reord->expectedseqno = res->seqno + 1;
 
@@ -308,15 +307,13 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
         HASH_DELETE(hh, reord->pending, stored);
 
-        /*
-        if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
+        if (append_message_to_buffer(&(med->buffer), &(stored->res), 0) == 0) {
             logger(LOG_INFO,
                     "OpenLI: forced to drop mediator %s:%s because we cannot buffer any more records for it -- please investigate asap!",
                     med->ipstr, med->portstr);
             remove_destination(fwd, med);
             break;
         }
-        */
         reord->expectedseqno = stored->res.seqno + 1;
 
         free_encoded_result(&(stored->res));
@@ -362,7 +359,7 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
 
         *jval = (Word_t) med;
     } else {
-        med = (export_dest_t *)jval;
+        med = (export_dest_t *)(*jval);
     }
 
     /* TODO enqueue this result to be forwarded */
@@ -579,7 +576,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
 
         connect_export_targets(fwd);
 
-        for (i = 2; i < fwd->nextpoll; i++) {
+        for (i = 3; i < fwd->nextpoll; i++) {
             fwd->forcesend[i] = 1;
         }
 
@@ -607,12 +604,16 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         }
     }
 
-    for (i = 2; i < fwd->nextpoll; i++) {
+    for (i = 3; i < fwd->nextpoll; i++) {
         export_dest_t *dest;
         PWord_t jval;
         uint64_t availsend = 0;
         /* check if any destinations can received any buffered data */
         if (!(fwd->topoll[i].revents & ZMQ_POLLOUT)) {
+            continue;
+        }
+
+        if (fwd->topoll[i].events == 0) {
             continue;
         }
 
