@@ -251,15 +251,6 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         result.origreq = job.origreq;
         result.encodedby = enc->workerid;
 
-        /*
-        if (job.origreq->type == OPENLI_EXPORT_IPCC) {
-            free(job.liid);
-            wandder_release_encoded_result(enc->encoder, result.msgbody);
-            release_published_message(job.origreq);
-            batch ++;
-            continue;
-        }
-        */
         // FIXME -- hash result based on LIID (and CIN?)
         assert(enc->zmq_pushresults[0] != NULL);
         if (zmq_send(enc->zmq_pushresults[0], &result, sizeof(result), 0) < 0) {

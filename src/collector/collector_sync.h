@@ -76,7 +76,9 @@ collector_sync_t *init_sync_data(collector_global_t *glob);
 void clean_sync_data(collector_sync_t *sync);
 void sync_disconnect_provisioner(collector_sync_t *sync);
 int sync_connect_provisioner(collector_sync_t *sync);
+void sync_thread_publish_reload(collector_sync_t *sync);
 int sync_thread_main(collector_sync_t *sync);
+
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

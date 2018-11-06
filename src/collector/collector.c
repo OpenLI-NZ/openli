@@ -1180,6 +1180,7 @@ static void *start_ip_sync_thread(void *params) {
             if (reload_collector_config(glob, sync) == -1) {
                 break;
             }
+            sync_thread_publish_reload(sync);
             reload_config = 0;
         }
         if (sync->instruct_fd == -1) {

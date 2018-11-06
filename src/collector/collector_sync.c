@@ -273,6 +273,20 @@ static inline openli_export_recv_t *_create_ipiri_basic(collector_sync_t *sync,
     return irimsg;
 }
 
+void sync_thread_publish_reload(collector_sync_t *sync) {
+
+    int i;
+    openli_export_recv_t *expmsg;
+
+    for (i = 0; i < sync->pubsockcount; i++) {
+        expmsg = (openli_export_recv_t *)calloc(1,
+                sizeof(openli_export_recv_t));
+        expmsg->type = OPENLI_EXPORT_RECONFIGURE_INTERCEPTS;
+        expmsg->data.packet = NULL;
+
+        publish_openli_msg(sync->zmq_pubsocks[i], expmsg);
+    }
+}
 
 static int create_ipiri_from_iprange(collector_sync_t *sync,
         static_ipranges_t *staticsess, ipintercept_t *ipint, uint8_t special) {

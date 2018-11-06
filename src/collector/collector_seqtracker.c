@@ -86,72 +86,41 @@ static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
     return 0;
 }
 
+static void purge_removedints(seqtracker_thread_data_t *seqdata) {
+    struct timeval tv;
+    removed_intercept_t *rem, *prev, *tmp;
 
-static void track_new_intercept(seqtracker_thread_data_t *seqdata,
-        published_intercept_msg_t *cept) {
+    rem = seqdata->removedints;
+    gettimeofday(&tv, NULL);
+    prev = NULL;
 
-    exporter_intercept_state_t *intstate;
-    etsili_intercept_details_t intdetails;
+    while (rem) {
+        if (tv.tv_sec - rem->haltedat < 15) {
+            prev = rem;
+            rem = rem->next;
+            continue;
+        }
 
-    /* If this LIID already exists, we'll need to replace it */
-    HASH_FIND(hh, seqdata->intercepts, cept->liid, strlen(cept->liid),
-			intstate);
+        if (prev == NULL) {
+            seqdata->removedints = rem->next;
+        } else {
+            prev->next = rem->next;
+        }
 
-    if (intstate) {
-        free_intercept_msg(&(intstate->details));
-        etsili_clear_preencoded_fields(intstate->preencoded);
-
-        /* leave the CIN seqno state as is for now */
-        intstate->details.liid = cept->liid;
-        intstate->details.authcc = cept->authcc;
-        intstate->details.delivcc = cept->delivcc;
-        intstate->details.liid_len = strlen(cept->liid);
-        intstate->details.authcc_len = strlen(cept->authcc);
-        intstate->details.delivcc_len = strlen(cept->delivcc);
-        return;
+        etsili_clear_preencoded_fields(rem->preencoded);
+        tmp = rem;
+        rem = rem->next;
+        free(tmp->preencoded);
+        free(tmp);
     }
-
-    /* New LIID, create fresh intercept state */
-    intstate = (exporter_intercept_state_t *)malloc(
-            sizeof(exporter_intercept_state_t));
-    intstate->details.liid = cept->liid;
-    intstate->details.authcc = cept->authcc;
-    intstate->details.delivcc = cept->delivcc;
-    intstate->details.liid_len = strlen(cept->liid);
-    intstate->details.authcc_len = strlen(cept->authcc);
-    intstate->details.delivcc_len = strlen(cept->delivcc);
-    intstate->cinsequencing = NULL;
-    intstate->preencoded = calloc(OPENLI_PREENCODE_LAST,
-            sizeof(wandder_encode_job_t));
-
-    logger(LOG_INFO, "tracker thread %d started new intercept %s",
-            seqdata->trackerid, cept->liid);
-
-    intdetails.liid = cept->liid;
-    intdetails.authcc = cept->authcc;
-    intdetails.delivcc = cept->delivcc;
-
-    intdetails.operatorid = seqdata->colident->operatorid;
-    intdetails.networkelemid = seqdata->colident->networkelemid;
-    intdetails.intpointid = seqdata->colident->intpointid;
-
-    etsili_preencode_static_fields(intstate->preencoded, &intdetails);
-
-    HASH_ADD_KEYPTR(hh, seqdata->intercepts, intstate->details.liid,
-            intstate->details.liid_len, intstate);
 }
 
-static inline void free_intercept_state(seqtracker_thread_data_t *seqdata,
+static inline void remove_preencoded(seqtracker_thread_data_t *seqdata,
         exporter_intercept_state_t *intstate) {
 
 	removed_intercept_t *rem;
 	struct timeval tv;
 
-    free_intercept_msg(&(intstate->details));
-
-	/* TODO we might still need preencoded to exist for the encoding threads
-     * to finish the last few jobs for this liid
-	 */
 	rem = calloc(1, sizeof(removed_intercept_t));
 	rem->next = NULL;
 
@@ -165,6 +134,93 @@ static inline void free_intercept_state(seqtracker_thread_data_t *seqdata,
 		rem->next = seqdata->removedints;
 		seqdata->removedints = rem;
 	}
+
+}
+
+
+static void track_new_intercept(seqtracker_thread_data_t *seqdata,
+        published_intercept_msg_t *cept) {
+
+    exporter_intercept_state_t *intstate;
+    etsili_intercept_details_t intdetails;
+
+    /* If this LIID already exists, we'll need to replace it */
+    HASH_FIND(hh, seqdata->intercepts, cept->liid, strlen(cept->liid),
+			intstate);
+
+    if (intstate) {
+        remove_preencoded(seqdata, intstate);
+        free_intercept_msg(&(intstate->details));
+
+        /* leave the CIN seqno state as is for now */
+        intstate->details.liid = cept->liid;
+        intstate->details.authcc = cept->authcc;
+        intstate->details.delivcc = cept->delivcc;
+        intstate->details.liid_len = strlen(cept->liid);
+        intstate->details.authcc_len = strlen(cept->authcc);
+        intstate->details.delivcc_len = strlen(cept->delivcc);
+    } else {
+
+        /* New LIID, create fresh intercept state */
+        intstate = (exporter_intercept_state_t *)malloc(
+                sizeof(exporter_intercept_state_t));
+        intstate->details.liid = cept->liid;
+        intstate->details.authcc = cept->authcc;
+        intstate->details.delivcc = cept->delivcc;
+        intstate->details.liid_len = strlen(cept->liid);
+        intstate->details.authcc_len = strlen(cept->authcc);
+        intstate->details.delivcc_len = strlen(cept->delivcc);
+        intstate->cinsequencing = NULL;
+
+        HASH_ADD_KEYPTR(hh, seqdata->intercepts, intstate->details.liid,
+                intstate->details.liid_len, intstate);
+    }
+
+    intdetails.liid = cept->liid;
+    intdetails.authcc = cept->authcc;
+    intdetails.delivcc = cept->delivcc;
+
+    intdetails.operatorid = seqdata->colident->operatorid;
+    intdetails.networkelemid = seqdata->colident->networkelemid;
+    intdetails.intpointid = seqdata->colident->intpointid;
+
+    intstate->preencoded = calloc(OPENLI_PREENCODE_LAST,
+            sizeof(wandder_encode_job_t));
+    etsili_preencode_static_fields(intstate->preencoded, &intdetails);
+
+}
+
+static void reconfigure_intercepts(seqtracker_thread_data_t *seqdata) {
+
+    exporter_intercept_state_t *intstate, *tmp;
+    etsili_intercept_details_t intdetails;
+
+    logger(LOG_INFO, "OpenLI configuration reloaded -- updating pre-encoded intercept fields");
+
+    HASH_ITER(hh, seqdata->intercepts, intstate, tmp) {
+        remove_preencoded(seqdata, intstate);
+
+        intdetails.liid = intstate->details.liid;
+        intdetails.authcc = intstate->details.authcc;
+        intdetails.delivcc = intstate->details.delivcc;
+
+        intdetails.operatorid = seqdata->colident->operatorid;
+        intdetails.networkelemid = seqdata->colident->networkelemid;
+        intdetails.intpointid = seqdata->colident->intpointid;
+
+        intstate->preencoded = calloc(OPENLI_PREENCODE_LAST,
+                sizeof(wandder_encode_job_t));
+        etsili_preencode_static_fields(intstate->preencoded, &intdetails);
+    }
+
+}
+
+static inline void free_intercept_state(seqtracker_thread_data_t *seqdata,
+        exporter_intercept_state_t *intstate) {
+
+    remove_preencoded(seqdata, intstate);
+    free_intercept_msg(&(intstate->details));
+
     free_cinsequencing(intstate);
     free(intstate);
 }
@@ -272,6 +328,7 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
 
     openli_export_recv_t *job = NULL;
     int halted = 0, x;
+    int sincepurge = 0;
 
     while (!halted) {
         x = zmq_recv(seqdata->zmq_recvpublished, &job, sizeof(job), 0);
@@ -291,6 +348,11 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
                     free(job);
                     break;
 
+                case OPENLI_EXPORT_RECONFIGURE_INTERCEPTS:
+                    reconfigure_intercepts(seqdata);
+                    free(job);
+                    break;
+
                 case OPENLI_EXPORT_INTERCEPT_DETAILS:
                     track_new_intercept(seqdata, &(job->data.cept));
                     free(job);
@@ -305,9 +367,11 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
                 case OPENLI_EXPORT_IPMMIRI:
                 case OPENLI_EXPORT_IPIRI:
 					run_encoding_job(seqdata, job);
+                    sincepurge ++;
                     break;
                 case OPENLI_EXPORT_IPCC:
 					run_encoding_job(seqdata, job);
+                    sincepurge ++;
 					break;
 
                 default:
@@ -316,9 +380,12 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
             }
         }
 
-		/* TODO purge any longstanding members of removedints every 1000K
+		/* purge any longstanding members of removedints every 10K
 		 * or so messages.
 		 */
+        if (sincepurge >= 10000) {
+            purge_removedints(seqdata);
+        }
     }
 
 }
