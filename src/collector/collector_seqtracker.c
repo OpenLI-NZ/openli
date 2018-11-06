@@ -385,6 +385,7 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
 		 */
         if (sincepurge >= 10000) {
             purge_removedints(seqdata);
+            sincepurge = 0;
         }
     }
 
