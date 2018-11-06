@@ -458,7 +458,7 @@ static inline void encode_etsili_pshdr_pc(wandder_encoder_t *encoder,
             sizeof(int64_t));
 
     if (precomputed[OPENLI_PREENCODE_INTPOINTID].valspace) {
-        jobarray[0] = &(precomputed[OPENLI_PREENCODE_DELIVCC]);
+        jobarray[0] = &(precomputed[OPENLI_PREENCODE_INTPOINTID]);
         jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_7]);
         wandder_encode_next_preencoded(encoder, jobarray, 2);
     } else {
@@ -846,6 +846,9 @@ void etsili_preencode_static_fields(
         p->identifier = 6;
         p->encodeas = WANDDER_TAG_OCTETSTRING;
         wandder_encode_preencoded_value(p, details->intpointid, strlen(details->intpointid));
+    } else {
+        p->valspace = NULL;
+        p->vallen = 0;
     }
 
     p = &(pendarray[OPENLI_PREENCODE_TVCLASS]);
