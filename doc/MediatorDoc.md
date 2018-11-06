@@ -7,6 +7,17 @@ available [here](https://learnxinyminutes.com/docs/yaml/).
 An example configuration file (with in-line documentation) can found in
 `doc/exampleconfigs/mediator-example.yaml`.
 
+### Operator ID
+This option should contain a string that uniquely identifies your network.
+This is a mandatory field for ETSI compliance and will be used to set the
+operatorIdentifier field in the ETSI header. The operator ID should be no
+more than 16 characters in length. The operator ID specified here is
+used to populate ETSI keep-alive messages that maintain the connection
+between your mediator and the law enforcement agencies.
+
+Ideally, the operator ID configured for your mediator(s) should match
+the operator ID that you are using for your collectors.
+
 ### Mediator ID
 Each mediator that you are running needs to be assigned a unique mediator
 ID. The mediator ID should be a number between 0 and 1,000,000.
@@ -52,6 +63,7 @@ All of the mediator config options are standard YAML key-value pairs, where
 the key is the option name and the value is your chosen value for that option.
 
 The supported option keys are:
+* operatorid       -- set the operator ID
 * mediatorid       -- sets the mediator ID number
 * provisioneraddr  -- connect to a provisioner at this IP address
 * provisionerport  -- connect to a provisioner listening on this port

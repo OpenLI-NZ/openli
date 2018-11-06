@@ -1,5 +1,8 @@
 # Example configuration file for an OpenLI mediator
 
+# Unique ID string for my network (16 chars max)
+operatorid: WAND
+
 # Set a unique ID for this mediator (between 1 and 1,000,000)
 mediatorid: 6001
 

@@ -115,7 +115,11 @@ performing any VOIP intercepts. A SIP server is configured using two parameters:
 RADIUS servers are defined using the radiusservers option. The configuration
 works much the same as for SIP, except that most RADIUS deployments will need
 TWO server entries: one for the auth service and one for the accounting service,
-as these are usually listening on different ports.
+as these are usually listening on different ports. A RADIUS server entry is
+configured using two parameters:
+* ip -- the IP address of the RADIUS server
+* port -- the port that the RADIUS server is communicating on.
+
 
 
 ### Pcap Output Mode

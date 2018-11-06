@@ -15,6 +15,19 @@ networkelementid: OpenLIdevlab
 # (8 chars max)
 interceptpointid: test01
 
+# Number of threads to use to track sequence numbers for each intercept.
+# You probably don't need to change this.
+seqtrackerthreads: 1
+
+# Number of threads to use to encode intercepted packets as ETSI records.
+# Increasing this number *may* improve performance if encoding is a
+# bottleneck for your collector deployment.
+encoderthreads: 2
+
+# Number of threads to use to forward encoded ETSI records to the
+# mediators. You probably don't need to change this.
+forwardingthreads: 1
+
 # List of interfaces to capture packets on
 inputs:
  - uri: eth1            # capture on interface eth1
