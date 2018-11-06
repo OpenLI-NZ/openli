@@ -735,29 +735,6 @@ static void reload_inputs(collector_global_t *glob,
 
 }
 
-#if 0
-static void *start_export_thread(void *params) {
-    export_thread_data_t *glob = (export_thread_data_t *)params;
-    collector_export_t *exp = init_exporter(glob);
-    int connected = 0;
-
-    if (exp->workers == NULL) {
-        logger(LOG_INFO, "OpenLI: exporting thread is not functional!");
-        collector_halt = 1;
-    }
-
-    while (collector_halt == 0) {
-        if (exporter_thread_main(exp, &collector_halt) <= 0) {
-            break;
-        }
-    }
-
-    destroy_exporter(exp);
-    logger(LOG_DEBUG, "OpenLI: exiting export thread.");
-    pthread_exit(NULL);
-}
-#endif
-
 static void clear_input(colinput_t *input) {
 
     if (!input) {
@@ -797,18 +774,77 @@ static inline void free_sync_thread_data(sync_thread_global_t *sup) {
 	}
 }
 
+static void destroy_collector_state(collector_global_t *glob) {
+
+    colinput_t *inp, *tmp;
+    int i;
+
+    if (glob->expired_inputs) {
+        libtrace_list_node_t *n;
+        n = glob->expired_inputs->head;
+        while (n) {
+            inp = *((colinput_t **)(n->data));
+            clear_input(inp);
+            free(inp);
+            n = n->next;
+        }
+        libtrace_list_deinit(glob->expired_inputs);
+    }
+
+    free_coreserver_list(glob->alumirrors);
+	free_sync_thread_data(&(glob->syncip));
+	free_sync_thread_data(&(glob->syncvoip));
+
+    libtrace_message_queue_destroy(&(glob->intersyncq));
+
+    if (glob->zmq_forwarder_ctrl) {
+        zmq_close(glob->zmq_forwarder_ctrl);
+    }
+
+    if (glob->zmq_encoder_ctrl) {
+        zmq_close(glob->zmq_encoder_ctrl);
+    }
+
+    free_etsili_generics(glob->syncgenericfreelist);
+
+    if (glob->forwarders) {
+        for (i = 0; i < glob->forwarding_threads; i++) {
+            zmq_close(glob->forwarders[i].zmq_pullressock);
+        }
+        free(glob->forwarders);
+    }
+
+    if (glob->zmq_ctxt) {
+        logger(LOG_INFO, "OpenLI: waiting for zeromq context to be destroyed.");
+        zmq_ctx_destroy(glob->zmq_ctxt);
+    }
+
+    if (glob->seqtrackers) {
+        for (i = 0; i < glob->seqtracker_threads; i++) {
+            clean_seqtracker(&(glob->seqtrackers[i]));
+        }
+
+        free(glob->seqtrackers);
+    }
+
+    if (glob->encoders) {
+        free(glob->encoders);
+    }
+
+    if (glob->collocals) {
+        free(glob->collocals);
+    }
+    free(glob);
+}
 
 static void clear_global_config(collector_global_t *glob) {
     colinput_t *inp, *tmp;
-    int i;
 
     HASH_ITER(hh, glob->inputs, inp, tmp) {
         HASH_DELETE(hh, glob->inputs, inp);
         clear_input(inp);
         free(inp);
     }
-
-    free_coreserver_list(glob->alumirrors);
 
     if (glob->sharedinfo.operatorid) {
         free(glob->sharedinfo.operatorid);
@@ -830,53 +866,7 @@ static void clear_global_config(collector_global_t *glob) {
         free(glob->sharedinfo.provisionerport);
     }
 
-    if (glob->expired_inputs) {
-        libtrace_list_node_t *n;
-        n = glob->expired_inputs->head;
-        while (n) {
-            inp = *((colinput_t **)(n->data));
-            clear_input(inp);
-            free(inp);
-            n = n->next;
-        }
-        libtrace_list_deinit(glob->expired_inputs);
-    }
-
     pthread_rwlock_destroy(&glob->config_mutex);
-
-	free_sync_thread_data(&(glob->syncip));
-	free_sync_thread_data(&(glob->syncvoip));
-
-    libtrace_message_queue_destroy(&(glob->intersyncq));
-
-    if (glob->zmq_forwarder_ctrl) {
-        zmq_close(glob->zmq_forwarder_ctrl);
-    }
-
-    if (glob->zmq_encoder_ctrl) {
-        zmq_close(glob->zmq_encoder_ctrl);
-    }
-
-    free_etsili_generics(glob->syncgenericfreelist);
-
-    for (i = 0; i < glob->forwarding_threads; i++) {
-        zmq_close(glob->forwarders[i].zmq_pullressock);
-    }
-
-    logger(LOG_INFO, "OpenLI: waiting for zeromq context to be destroyed.");
-    if (glob->zmq_ctxt) {
-        zmq_ctx_destroy(glob->zmq_ctxt);
-    }
-
-    for (i = 0; i < glob->seqtracker_threads; i++) {
-        clean_seqtracker(&(glob->seqtrackers[i]));
-    }
-
-    free(glob->seqtrackers);
-    free(glob->encoders);
-    free(glob->forwarders);
-    free(glob->collocals);
-    free(glob);
 }
 
 static inline void push_hello_message(libtrace_message_queue_t *atob,
@@ -971,47 +961,15 @@ void deregister_sync_queues(sync_thread_global_t *glob,
 }
 
 
-static collector_global_t *parse_global_config(char *configfile) {
-
-    collector_global_t *glob = NULL;
+static int prepare_collector_glob(collector_global_t *glob) {
     int i;
 
-    glob = (collector_global_t *)calloc(1, sizeof(collector_global_t));
-
     glob->zmq_ctxt = zmq_ctx_new();
-    glob->inputs = NULL;
-    glob->seqtracker_threads = 1;
-    glob->forwarding_threads = 1;
-    glob->encoding_threads = 2;
-    glob->sharedinfo.intpointid = NULL;
-    glob->sharedinfo.intpointid_len = 0;
-    glob->sharedinfo.operatorid = NULL;
-    glob->sharedinfo.operatorid_len = 0;
-    glob->sharedinfo.networkelemid = NULL;
-    glob->sharedinfo.networkelemid_len = 0;
-    glob->total_col_threads = 0;
-    glob->collocals = NULL;
+
+    glob->expired_inputs = libtrace_list_init(sizeof(colinput_t *));
 
     init_sync_thread_data(&(glob->syncip));
     init_sync_thread_data(&(glob->syncvoip));
-
-    glob->configfile = configfile;
-    glob->sharedinfo.provisionerip = NULL;
-    glob->sharedinfo.provisionerport = NULL;
-    glob->alumirrors = NULL;
-    glob->expired_inputs = libtrace_list_init(sizeof(colinput_t *));
-    glob->sipdebugfile = NULL;
-    glob->nextloc = 0;
-
-    libtrace_message_queue_init(&glob->intersyncq,
-            sizeof(openli_intersync_msg_t));
-
-    pthread_rwlock_init(&glob->config_mutex, NULL);
-
-    if (parse_collector_config(configfile, glob) == -1) {
-        clear_global_config(glob);
-        return NULL;
-    }
 
     glob->collocals = (colthread_local_t *)calloc(glob->total_col_threads,
             sizeof(colthread_local_t));
@@ -1026,19 +984,58 @@ static collector_global_t *parse_global_config(char *configfile) {
     if (zmq_connect(glob->zmq_forwarder_ctrl,
             "inproc://openliforwardercontrol") != 0) {
         logger(LOG_INFO, "OpenLI: unable to connect to zmq control socket for forwarding threads. Exiting.");
-        clear_global_config(glob);
-        return NULL;
+        return -1;
     }
 
     glob->zmq_encoder_ctrl = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
     if (zmq_bind(glob->zmq_encoder_ctrl,
             "inproc://openliencodercontrol") != 0) {
         logger(LOG_INFO, "OpenLI: unable to connect to zmq control socket for encoding threads. Exiting.");
+        return -1;
+    }
+
+    return 0;
+}
+
+static collector_global_t *parse_global_config(char *configfile) {
+
+    collector_global_t *glob = NULL;
+
+    glob = (collector_global_t *)calloc(1, sizeof(collector_global_t));
+
+    glob->zmq_ctxt = NULL;
+    glob->inputs = NULL;
+    glob->seqtracker_threads = 1;
+    glob->forwarding_threads = 1;
+    glob->encoding_threads = 2;
+    glob->sharedinfo.intpointid = NULL;
+    glob->sharedinfo.intpointid_len = 0;
+    glob->sharedinfo.operatorid = NULL;
+    glob->sharedinfo.operatorid_len = 0;
+    glob->sharedinfo.networkelemid = NULL;
+    glob->sharedinfo.networkelemid_len = 0;
+    glob->total_col_threads = 0;
+    glob->collocals = NULL;
+    glob->expired_inputs = NULL;
+
+    glob->configfile = configfile;
+    glob->sharedinfo.provisionerip = NULL;
+    glob->sharedinfo.provisionerport = NULL;
+    glob->alumirrors = NULL;
+    glob->sipdebugfile = NULL;
+    glob->nextloc = 0;
+    glob->syncgenericfreelist = NULL;
+
+    libtrace_message_queue_init(&glob->intersyncq,
+            sizeof(openli_intersync_msg_t));
+
+    pthread_rwlock_init(&glob->config_mutex, NULL);
+
+    if (parse_collector_config(configfile, glob) == -1) {
         clear_global_config(glob);
         return NULL;
     }
 
-    
     if (glob->sharedinfo.provisionerport == NULL) {
         glob->sharedinfo.provisionerport = strdup("8993");
     }
@@ -1306,6 +1303,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    if (prepare_collector_glob(glob) < 0) {
+        clear_global_config(glob);
+        return 1;
+    }
+
     sigemptyset(&sig_block_all);
     if (pthread_sigmask(SIG_SETMASK, &sig_block_all, &sig_before) < 0) {
         logger(LOG_INFO, "Unable to disable signals before starting threads.");
@@ -1462,6 +1464,7 @@ int main(int argc, char *argv[]) {
     logger(LOG_INFO, "OpenLI: exiting OpenLI Collector.");
     /* Tidy up, exit */
     clear_global_config(glob);
+    destroy_collector_state(glob);
 
     return 0;
 }
