@@ -304,7 +304,30 @@ static void drop_all_agencies(libtrace_list_t *a) {
 
 }
 
-static void clear_med_state(mediator_state_t *state) {
+static void clear_med_config(mediator_state_t *state) {
+
+    if (state->listenport) {
+        free(state->listenport);
+    }
+    if (state->listenaddr) {
+        free(state->listenaddr);
+    }
+    if (state->provport) {
+        free(state->provport);
+    }
+    if (state->provaddr) {
+        free(state->provaddr);
+    }
+    if (state->pcapdirectory) {
+        free(state->pcapdirectory);
+    }
+    if (state->operatorid) {
+        free(state->operatorid);
+    }
+    pthread_mutex_destroy(&(state->agency_mutex));
+}
+
+static void destroy_med_state(mediator_state_t *state) {
 
     liid_map_t *m, *tmp;
     PWord_t jval;
@@ -326,45 +349,23 @@ static void clear_med_state(mediator_state_t *state) {
     }
     JSLFA(bytes, state->liid_array);
 
-    /*
-    HASH_ITER(hh, state->liids, m, tmp) {
-        HASH_DEL(state->liids, m);
-        if (m->ceasetimer) {
-            halt_mediator_timer(state, m->ceasetimer);
-            free(m->ceasetimer);
-        }
-        free(m->liid);
-        free(m);
+    if (state->etsidecoder) {
+        wandder_free_etsili_decoder(state->etsidecoder);
     }
-    */
-
 
     free_provisioner(state->epoll_fd, &(state->provisioner));
     drop_all_collectors(state->collectors);
+
     pthread_mutex_lock(&(state->agency_mutex));
     drop_all_agencies(state->agencies);
     pthread_mutex_unlock(&(state->agency_mutex));
 
-    close(state->epoll_fd);
+    libtrace_list_deinit(state->agencies);
 
-    if (state->listenport) {
-        free(state->listenport);
+    if (state->epoll_fd != -1) {
+        close(state->epoll_fd);
     }
-    if (state->listenaddr) {
-        free(state->listenaddr);
-    }
-    if (state->provport) {
-        free(state->provport);
-    }
-    if (state->provaddr) {
-        free(state->provaddr);
-    }
-    if (state->pcapdirectory) {
-        free(state->pcapdirectory);
-    }
-    if (state->operatorid) {
-        free(state->operatorid);
-    }
+
     if (state->signalev) {
         close(state->signalev->fd);
         free(state->signalev);
@@ -390,27 +391,17 @@ static void clear_med_state(mediator_state_t *state) {
 
     libtrace_message_queue_destroy(&(state->pcapqueue));
 
-    if (state->etsidecoder) {
-        wandder_free_etsili_decoder(state->etsidecoder);
-    }
-
     if (state->connectthread != -1) {
         pthread_join(state->connectthread, NULL);
     }
-    libtrace_list_deinit(state->agencies);
-    pthread_mutex_destroy(&(state->agency_mutex));
-
 }
 
 static int init_med_state(mediator_state_t *state, char *configfile,
         char *mediatorname) {
 
-    sigset_t sigmask;
-
     state->mediatorid = 0;
     state->conffile = configfile;
     state->mediatorname = mediatorname;
-    state->epoll_fd = epoll_create1(0);
     state->listenaddr = NULL;
     state->listenport = NULL;
     state->operatorid = NULL;
@@ -420,9 +411,16 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->pcapthread = -1;
     state->pcaprotatefreq = 30;
     state->etsidecoder = NULL;
+    state->listenerev = NULL;
+    state->timerev = NULL;
+    state->pcaptimerev = NULL;
+    state->provisioner.provev = NULL;
+    state->provisioner.incoming = NULL;
+    state->provisioner.outgoing = NULL;
+    state->collectors = NULL;
+    state->agencies = NULL;
+    state->epoll_fd = -1;
 
-    state->collectors = libtrace_list_init(sizeof(mediator_collector_t));
-    state->agencies = libtrace_list_init(sizeof(mediator_agency_t));
     pthread_mutex_init(&(state->agency_mutex), NULL);
     state->connectthread = -1;
 
@@ -448,6 +446,16 @@ static int init_med_state(mediator_state_t *state, char *configfile,
         state->provport = strdup("8993");
     }
 
+    return 0;
+}
+
+
+static void prepare_mediator_state(mediator_state_t *state) {
+    sigset_t sigmask;
+
+    state->epoll_fd = epoll_create1(0);
+    state->collectors = libtrace_list_init(sizeof(mediator_collector_t));
+    state->agencies = libtrace_list_init(sizeof(mediator_agency_t));
     /* Use an fd to catch signals during our main epoll loop, so that we
      * can provide our own signal handling without causing epoll_wait to
      * return EINTR.
@@ -461,14 +469,7 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->signalev->fdtype = MED_EPOLL_SIGNAL;
     state->signalev->fd = signalfd(-1, &sigmask, 0);
 
-    state->listenerev = NULL;
-    state->timerev = NULL;
-    state->pcaptimerev = NULL;
-    state->provisioner.provev = NULL;
-    state->provisioner.incoming = NULL;
-    state->provisioner.outgoing = NULL;
-
-    return 0;
+    return;
 }
 
 static int trigger_pcap_flush(mediator_state_t *state, med_epoll_ev_t *mev) {
@@ -1254,7 +1255,6 @@ static int enqueue_etsi(mediator_state_t *state, handover_t *ho,
 
     mas = (med_agency_state_t *)(ho->outev->state);
 
-#if 0
     if (append_etsipdu_to_buffer(&(mas->buf), etsimsg, (uint32_t)msglen, 0)
             == 0) {
         logger(LOG_INFO,
@@ -1277,7 +1277,6 @@ static int enqueue_etsi(mediator_state_t *state, handover_t *ho,
         }
         mas->outenabled = 1;
     }
-#endif
 
     return 0;
 }
@@ -2071,7 +2070,7 @@ static int reload_mediator_config(mediator_state_t *currstate) {
 
     }
 
-    clear_med_state(&newstate);
+    clear_med_config(&newstate);
     return 0;
 
 }
@@ -2165,6 +2164,9 @@ static void run(mediator_state_t *state) {
         while (!timerexpired) {
             nfds = epoll_wait(state->epoll_fd, evs, 64, -1);
             if (nfds < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
                 logger(LOG_INFO,
 						"OpenLI: error while waiting for epoll events in mediator: %s.",
                         strerror(errno));
@@ -2544,6 +2546,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    prepare_mediator_state(&medstate);
+
     if (medstate.pcapdirectory != NULL) {
         memset(&pcapmsg, 0, sizeof(pcapmsg));
         pcapmsg.msgtype = PCAP_MESSAGE_CHANGE_DIR;
@@ -2563,7 +2567,9 @@ int main(int argc, char *argv[]) {
     }
 
     run(&medstate);
-    clear_med_state(&medstate);
+
+    destroy_med_state(&medstate);
+    clear_med_config(&medstate);
 
     logger(LOG_INFO, "OpenLI: Mediator '%s' has exited.", mediatorid);
     return 0;
