@@ -1,3 +1,40 @@
+## Hardware Recommendations for Collectors
+
+OpenLI is designed to run on a typical Linux install on commodity server
+hardware, such as a 1U Supermicro or similar. The actual hardware
+requirements will depend on the amount of traffic you expect to be
+intercepting, whether you expect to be doing VOIP and IP intercepts on
+the same collector, and how much you are willing to trade off against
+the possibility of a "worst case" intercept scenario (e.g. a user with
+a 1Gb connection which they are flooding with 64 byte packets).
+
+Please note that the OpenLI developers take no responsibility for any
+interception failures due to underprovisioned collector hardware.
+
+Having said that, here are some recommendations for a "typical"
+collector where we define typical as having to conduct <= 3 concurrent
+intercepts for users that are NOT saturating their 1Gbps connection
+(and even if they are saturating them, they are using larger packets to do
+so).
+  * CPU: Intel Xeon or equivalent, at least 8 logical cores but preferably
+         more cores if possible.
+  * RAM: At least 16 GB -- more RAM will help with buffering if a
+         connection to a mediator fails but won't improve speed.
+  * NIC: A standard 4 port 1G NIC + an Intel DPDK-capable 10G NIC. The
+         standard NIC will be used for management and capturing special
+         traffic types (such as RADIUS, SIP and/or RTP).
+
+         The DPDK NIC will be used for IP traffic capture and intercept.
+         If the collector is handling VOIP intercepts only, you can
+         probably manage without the DPDK NIC.
+
+         See https://core.dpdk.org/supported/ for a list of DPDK-supported
+         hardware.
+  * Disk: Enough to fit a Linux install + some extra software components.
+          If you are anticipating a spotty connection to the mediator(s),
+          then extra disk space for buffering may be useful. SSDs are
+          not required; a traditional spinning disk should be fine.
+
 ## Collector Configuration
 Like all OpenLI components, the collector uses YAML as its configuration
 file format. If you are unfamiliar with YAML, a decent crash course is
