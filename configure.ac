@@ -29,10 +29,15 @@ AC_CHECK_LIB([trace], [trace_increment_packet_refcount],,libtrace_found=0)
 AC_CHECK_LIB([yaml], [yaml_document_get_node],,libyaml_found=0)
 AC_CHECK_LIB([zmq], [zmq_poll],,libzmq_found=0)
 
+
+AC_CHECK_HEADERS([uthash.h], [uthash_avail=yes; break;])
 AC_CHECK_HEADERS([syslog.h])
 
 AC_CONFIG_FILES([Makefile src/Makefile extlib/Makefile
                 extlib/libpatricia/Makefile])
+
+AS_IF([test "x$uthash_avail" != "xyes"],
+        [AC_MSG_ERROR([Required header uthash.h not found; install uthash and try again])])
 
 if test "x$enable_collector" != "xno"; then
         AC_CHECK_LIB([tcmalloc], [tc_version],,libtcmalloc_found=0)
