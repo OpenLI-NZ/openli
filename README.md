@@ -17,9 +17,9 @@ This code has been developed by the University of Waikato WAND research group. F
   (packages for Debian / Ubuntu are available
   [from WAND](http://packages.wand.net.nz) as well).
 
-* [libwandder](https://github.com/wanduow/libwandder/) -- if you installed
-  the libtrace package for Debian or Ubuntu, you should already have
-  libwandder, otherwise download and install from the link.
+* [libwandder 1.0.1 or later](https://github.com/wanduow/libwandder/)
+  (packages for Debian / Ubuntu are available
+  [from WAND](http://packages.wand.net.nz) as well).
 
 * libyaml -- Debian / Ubuntu users can install the libyaml-dev package.
   Required for all components.
