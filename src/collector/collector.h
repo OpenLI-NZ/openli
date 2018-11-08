@@ -100,6 +100,7 @@ typedef struct colinput {
     libtrace_t *trace;
     libtrace_callback_set_t *pktcbs;
 
+    uint8_t report_drops;
     uint8_t running;
     UT_hash_handle hh;
 } colinput_t;

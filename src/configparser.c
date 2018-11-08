@@ -41,6 +41,43 @@
 
 uint64_t nextid = 0;
 
+static int check_onoff(char *value) {
+
+    if (strcasecmp(value, "yes") == 0) {
+        return 1;
+    }
+
+    if (strcasecmp(value, "on") == 0) {
+        return 1;
+    }
+
+    if (strcasecmp(value, "true") == 0) {
+        return 1;
+    }
+
+    if (strcasecmp(value, "enabled") == 0) {
+        return 1;
+    }
+
+    if (strcasecmp(value, "no") == 0) {
+        return 0;
+    }
+
+    if (strcasecmp(value, "off") == 0) {
+        return 0;
+    }
+
+    if (strcasecmp(value, "false") == 0) {
+        return 0;
+    }
+
+    if (strcasecmp(value, "disabled") == 0) {
+        return 0;
+    }
+
+    return -1;
+}
+
 static internet_access_method_t map_access_type_string(char *confstr) {
 
     if (strcasecmp(confstr, "dialup") == 0 ||
@@ -117,6 +154,7 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         inp->trace = NULL;
         inp->pktcbs = NULL;
         inp->running = 0;
+        inp->report_drops = 1;
 
         /* Mappings describe the parameters for each input */
         for (pair = node->data.mapping.pairs.start;
@@ -131,6 +169,17 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
                     strcmp((char *)key->data.scalar.value, "uri") == 0 &&
                     inp->uri == NULL) {
                 inp->uri = strdup((char *)value->data.scalar.value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                        "reportdrops") == 0) {
+                if (check_onoff((char *)value->data.scalar.value) == 0) {
+                    inp->report_drops = 0;
+                } else {
+                    inp->report_drops = 1;
+                }
             }
 
             if (key->type == YAML_SCALAR_NODE &&

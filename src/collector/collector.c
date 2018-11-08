@@ -656,9 +656,12 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
 
     if (!inp->pktcbs) {
         inp->pktcbs = trace_create_callback_set();
-        trace_set_starting_cb(inp->pktcbs, start_processing_thread);
-        trace_set_stopping_cb(inp->pktcbs, stop_processing_thread);
-        trace_set_packet_cb(inp->pktcbs, process_packet);
+    }
+    trace_set_starting_cb(inp->pktcbs, start_processing_thread);
+    trace_set_stopping_cb(inp->pktcbs, stop_processing_thread);
+    trace_set_packet_cb(inp->pktcbs, process_packet);
+
+    if (inp->report_drops) {
         trace_set_tick_interval_cb(inp->pktcbs, process_tick);
     }
 
