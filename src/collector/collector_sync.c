@@ -347,21 +347,24 @@ static int create_ipiri_from_session(collector_sync_t *sync,
     openli_export_recv_t *irimsg;
     int ret, iter = 0;
 
+    ret = 0;
     do {
         irimsg = _create_ipiri_basic(sync, ipint, ipint->username, sess->cin);
 
         irimsg->data.ipiri.special = special;
         irimsg->data.ipiri.customparams = NULL;
 
-        ret = p->generate_iri_data(p, parseddata,
-                &(irimsg->data.ipiri.customparams),
-                &(irimsg->data.ipiri.iritype),
-                sync->freegenerics, iter);
+        if (p) {
+            ret = p->generate_iri_data(p, parseddata,
+                    &(irimsg->data.ipiri.customparams),
+                    &(irimsg->data.ipiri.iritype),
+                    sync->freegenerics, iter);
 
-        if (ret == -1) {
-            logger(LOG_INFO,
-                    "OpenLI: error while creating IPIRI from session state change.");
-            return -1;
+            if (ret == -1) {
+                logger(LOG_INFO,
+                        "OpenLI: error while creating IPIRI from session state change.");
+                return -1;
+            }
         }
 
         irimsg->data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_UNKNOWN;
