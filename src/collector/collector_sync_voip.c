@@ -431,6 +431,8 @@ static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
     uint32_t cin_id = 0;
 
     cin_id = hashlittle(callid, strlen(callid), 0xceefface);
+    cin_id = (cin_id % (uint32_t)(pow(2, 31)));
+
     if (create_new_voipcin(&(vint->active_cins), cin_id, vint) == -1) {
         return NULL;
     }

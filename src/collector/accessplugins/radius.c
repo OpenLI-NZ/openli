@@ -832,17 +832,22 @@ static uint32_t assign_cin(radius_parsed_t *raddata) {
 
     struct timeval tv;
     radius_attribute_t *attr;
+    uint32_t hashval = 0;
 
     attr = raddata->attrs;
     while (attr) {
         if (attr->att_type == RADIUS_ATTR_ACCT_SESSION_ID) {
-            return hashlittle(attr->att_val, attr->att_len, 0xfacebeef);
+            hashval = hashlittle(attr->att_val, attr->att_len, 0xfacebeef);
+            hashval = hashval % (uint32_t)(pow(2, 31));
+            return hashval;
         }
         attr = attr->next;
     }
 
     if (raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST) {
-        return hashlittle(raddata->authptr, 16, 0xfacebeef);
+        hashval = hashlittle(raddata->authptr, 16, 0xfacebeef);
+        hashval = hashval % (uint32_t)(pow(2, 31));
+        return hashval;
     }
 
     /* We really shouldn't get here, but just in case... */
@@ -852,7 +857,7 @@ static uint32_t assign_cin(radius_parsed_t *raddata) {
      * second AND they're not using one of the other supported ID methods??
      */
     gettimeofday(&tv, NULL);
-    return tv.tv_sec;
+    return (tv.tv_sec % (uint32_t)(pow(2, 31)));
 
 }
 

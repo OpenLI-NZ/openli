@@ -33,6 +33,7 @@
 #include <libtrace_parallel.h>
 #include <unistd.h>
 #include <sys/epoll.h>
+#include <math.h>
 
 #include "configparser.h"
 #include "logger.h"
@@ -376,6 +377,15 @@ static int add_intercept_static_ips(static_ipranges_t **statics,
                     strcmp((char *)key->data.scalar.value, "sessionid") == 0) {
                 newr->cin = strtoul((char *)value->data.scalar.value, NULL, 10);
             }
+        }
+
+        if (newr->cin >= (uint32_t)(pow(2, 31))) {
+            logger(LOG_INFO,
+                    "OpenLI: CIN %u for static IP range %s is too large.",
+                    newr->cin);
+            newr->cin = newr->cin % (uint32_t)(pow(2, 31));
+            logger(LOG_INFO, "OpenLI: replaced CIN with %u.",
+                    newr->cin);
         }
 
         if (newr->rangestr) {

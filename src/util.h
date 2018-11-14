@@ -27,6 +27,7 @@
 #ifndef OPENLI_UTIL_H_
 #define OPENLI_UTIL_H_
 
+#include <math.h>
 #include <sys/epoll.h>
 #include <libtrace.h>
 
