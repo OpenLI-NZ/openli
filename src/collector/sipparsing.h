@@ -113,6 +113,7 @@ char *get_sip_session_version(openli_sip_parser_t *parser);
 char *get_sip_media_ipaddr(openli_sip_parser_t *parser);
 char *get_sip_media_port(openli_sip_parser_t *parser);
 int sip_is_invite(openli_sip_parser_t *parser);
+int sip_is_register(openli_sip_parser_t *parser);
 int sip_is_200ok(openli_sip_parser_t *parser);
 int sip_is_183sessprog(openli_sip_parser_t *parser);
 int sip_is_bye(openli_sip_parser_t *parser);

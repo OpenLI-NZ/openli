@@ -111,7 +111,6 @@ typedef struct sdpidentifier {
 
 typedef struct voipintshared {
     uint32_t cin;
-    uint32_t iriseqno;
     int refs;
 } voipintshared_t;
 
@@ -138,6 +137,7 @@ typedef struct rtpstreaminf rtpstreaminf_t;
 typedef struct ipsession ipsession_t;
 typedef struct aluintercept aluintercept_t;
 typedef struct staticipsession staticipsession_t;
+typedef struct sipregister sipregister_t;
 
 #define voip_intercept_equal(a,b) \
     ((strcmp(a->common.authcc, b->common.authcc) == 0) && \
@@ -155,9 +155,20 @@ typedef struct voipintercept {
     voipcinmap_t *cin_callid_map;
     voipsdpmap_t *cin_sdp_map;
     rtpstreaminf_t *active_cins;
+    sipregister_t *active_registrations;
 
     UT_hash_handle hh_liid;
 } voipintercept_t;
+
+struct sipregister {
+    char *callid;
+    uint32_t cin;
+
+    intercept_common_t common;
+    voipintercept_t *parent;
+
+    UT_hash_handle hh;
+};
 
 struct rtpstreaminf {
     char *streamkey;
@@ -227,6 +238,9 @@ void free_single_ipsession(ipsession_t *sess);
 void free_single_rtpstream(rtpstreaminf_t *rtp);
 void free_single_aluintercept(aluintercept_t *alu);
 void free_single_staticipsession(staticipsession_t *statint);
+
+sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
+        uint32_t cin);
 
 rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin);
 rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *rtp);

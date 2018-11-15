@@ -424,6 +424,34 @@ static inline int lookup_sip_callid(collector_sync_voip_t *sync, char *callid) {
     return 1;
 }
 
+static sipregister_t *create_new_voip_registration(collector_sync_voip_t *sync,
+        voipintercept_t *vint, char *callid) {
+
+    sipregister_t *newreg = NULL;
+    uint32_t cin_id = 0;
+
+    HASH_FIND(hh, vint->active_registrations, callid, strlen(callid), newreg);
+
+    if (!newreg) {
+
+        if (update_cin_callid_map(&(sync->knowncallids), callid, NULL)
+                    == NULL) {
+            remove_cin_callid_from_map(&(vint->cin_callid_map), callid);
+            return NULL;
+        }
+
+        cin_id = hashlittle(callid, strlen(callid), 0xceefface);
+        cin_id = (cin_id % (uint32_t)(pow(2, 31)));
+        newreg = create_sipregister(vint, callid, cin_id);
+
+        HASH_ADD_KEYPTR(hh, vint->active_registrations, newreg->callid,
+                strlen(newreg->callid), newreg);
+
+    }
+
+    return newreg;
+}
+
 static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
         char *callid, sip_sdp_identifier_t *sdpo, voipintercept_t *vint) {
 
@@ -439,7 +467,6 @@ static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
 
     vshared = (voipintshared_t *)malloc(sizeof(voipintshared_t));
     vshared->cin = cin_id;
-    vshared->iriseqno = 0;
     vshared->refs = 0;
 
     if (update_cin_callid_map(&(vint->cin_callid_map), callid,
@@ -454,7 +481,7 @@ static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
         return NULL;
     }
 
-    if (update_cin_sdp_map(vint, sdpo, vshared) == NULL) {
+    if (sdpo && update_cin_sdp_map(vint, sdpo, vshared) == NULL) {
         remove_cin_callid_from_map(&(vint->cin_callid_map), callid);
         remove_cin_callid_from_map(&(sync->knowncallids), callid);
 
@@ -464,13 +491,11 @@ static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
     return vshared;
 }
 
-static inline voipintshared_t *check_sip_auth_fields(collector_sync_voip_t *sync,
-        voipintercept_t *vint, char *callid, sip_sdp_identifier_t *sdpo,
-        uint8_t isproxy) {
+static inline int check_sip_auth_fields(collector_sync_voip_t *sync,
+        voipintercept_t *vint, char *callid, uint8_t isproxy) {
 
     int i, authcount, ret;
     openli_sip_identity_t authid;
-    voipintshared_t *vshared = NULL;
 
     i = authcount = 0;
     do {
@@ -487,14 +512,12 @@ static inline voipintshared_t *check_sip_auth_fields(collector_sync_voip_t *sync
         }
         if (ret > 0) {
             if (sipid_matches_target(vint->targets, &authid)) {
-                vshared = create_new_voip_session(sync, callid, sdpo,
-                        vint);
-                break;
+                return 1;
             }
         }
         i ++;
     } while (i < authcount);
-    return vshared;
+    return 0;
 }
 
 static int process_sip_183sessprog(collector_sync_voip_t *sync,
@@ -598,11 +621,21 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
     publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], copy);
 }
 
+static int process_sip_register_followup(collector_sync_voip_t *sync,
+        voipintercept_t *vint, sipregister_t *sipreg,
+        openli_export_recv_t *irimsg) {
+
+
+    create_sip_ipiri(sync, vint, irimsg, ETSILI_IRI_REPORT, sipreg->cin);
+    return 1;
+}
+
 static int process_sip_other(collector_sync_voip_t *sync, char *callid,
         sip_sdp_identifier_t *sdpo, openli_export_recv_t *irimsg) {
 
     voipintercept_t *vint, *tmp;
     voipcinmap_t *findcin;
+    sipregister_t *findreg;
     voipintshared_t *vshared;
     char rtpkey[256];
     rtpstreaminf_t *thisrtp;
@@ -617,6 +650,12 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
                 findcin);
 
         if (!findcin) {
+            HASH_FIND(hh, vint->active_registrations, callid,
+                    strlen(callid), findreg);
+            if (findreg) {
+                exportcount += process_sip_register_followup(sync, vint,
+                        findreg, irimsg);
+            }
             continue;
         }
 
@@ -664,6 +703,46 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
     }
     return exportcount;
 
+}
+
+static int process_sip_register(collector_sync_voip_t *sync, char *callid,
+        openli_export_recv_t *irimsg) {
+
+    openli_sip_identity_t touriid, authid;
+    voipintercept_t *vint, *tmp;
+    sipregister_t *sipreg;
+    int exportcount = 0;
+
+    if (get_sip_to_uri_identity(sync->sipparser, &touriid) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: unable to derive SIP identity from To: URI");
+        return -1;
+    }
+
+    HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
+        sipreg = NULL;
+
+        /* Try the To: uri first */
+        if (sipid_matches_target(vint->targets, &touriid)) {
+            sipreg = create_new_voip_registration(sync, vint, callid);
+        } else {
+            int found;
+            found = check_sip_auth_fields(sync, vint, callid, 1);
+            if (!found) {
+                found = check_sip_auth_fields(sync, vint, callid, 0);
+            }
+            if (found) {
+                sipreg = create_new_voip_registration(sync, vint, callid);
+            }
+        }
+
+        if (!sipreg) {
+            continue;
+        }
+        create_sip_ipiri(sync, vint, irimsg, ETSILI_IRI_REPORT, sipreg->cin);
+        exportcount += 1;
+    }
+    return exportcount;
 }
 
 static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
@@ -728,11 +807,15 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
                 vshared = create_new_voip_session(sync, callid, sdpo,
                         vint);
             } else {
-                vshared = check_sip_auth_fields(sync, vint, callid, sdpo, 1);
-                if (!vshared) {
-                    vshared = check_sip_auth_fields(sync, vint, callid, sdpo,
-                            0);
+                int found;
+                found = check_sip_auth_fields(sync, vint, callid, 1);
+                if (!found) {
+                    found = check_sip_auth_fields(sync, vint, callid, 0);
                 }
+                if (found) {
+                    vshared = create_new_voip_session(sync, callid, sdpo, vint);
+                }
+
             }
             iritype = ETSILI_IRI_BEGIN;
         }
@@ -838,6 +921,12 @@ static int update_sip_state(collector_sync_voip_t *sync,
         if ((ret = process_sip_invite(sync, callid, &sdpo, irimsg)) < 0) {
             iserr = 1;
             logger(LOG_INFO, "OpenLI: error while processing SIP invite");
+            goto sipgiveup;
+        }
+    } else if (sip_is_register(sync->sipparser)) {
+        if ((ret = process_sip_register(sync, callid, irimsg)) < 0) {
+            iserr = 1;
+            logger(LOG_INFO, "OpenLI: error while processing SIP register");
             goto sipgiveup;
         }
     } else if (lookup_sip_callid(sync, callid) != 0) {

@@ -68,6 +68,20 @@ int are_sip_identities_same(openli_sip_identity_t *a,
     return 0;
 }
 
+sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
+        uint32_t cin) {
+    sipregister_t *newreg;
+
+    newreg = (sipregister_t *)calloc(1, sizeof(sipregister_t));
+
+    newreg->callid = strdup(callid);
+    newreg->cin = cin;
+    copy_intercept_common(&(vint->common), &(newreg->common));
+    newreg->parent = vint;
+
+    return newreg;
+}
+
 rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
 
     rtpstreaminf_t *newcin = NULL;
@@ -252,6 +266,24 @@ static void free_voip_cins(rtpstreaminf_t *cins) {
 
 }
 
+static void free_single_register(sipregister_t *sipr) {
+    free_intercept_common(&(sipr->common));
+    if (sipr->callid) {
+        free(sipr->callid);
+    }
+    free(sipr);
+}
+
+static void free_voip_registrations(sipregister_t *sipregs) {
+    sipregister_t *r, *tmp;
+
+    HASH_ITER(hh, sipregs, r, tmp) {
+        HASH_DEL(sipregs, r);
+        free_single_register(r);
+    }
+
+}
+
 static void free_sip_targets(libtrace_list_t *targets) {
 
     libtrace_list_node_t *n;
@@ -281,6 +313,9 @@ void free_single_voipintercept(voipintercept_t *v) {
     }
     if (v->active_cins) {
         free_voip_cins(v->active_cins);
+    }
+    if (v->active_registrations) {
+        free_voip_registrations(v->active_registrations);
     }
 
     if (v->targets) {
