@@ -542,6 +542,7 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         newcept->common.destid = 0;
         newcept->common.targetagency = NULL;
         newcept->awaitingconfirm = 1;
+        newcept->options = 0;
 
 
         /* Mappings describe the parameters for each intercept */
@@ -1042,6 +1043,14 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
             return -1;
         }
     }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "voip-ignorecomfort") == 0) {
+        state->ignorertpcomfort =
+                check_onoff((char *)(value->data.scalar.value));
+    }
+
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&

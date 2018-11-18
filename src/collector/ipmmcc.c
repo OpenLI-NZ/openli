@@ -62,6 +62,62 @@ int encode_ipmmcc(wandder_encoder_t *encoder,
     return 0;
 }
 
+static inline uint8_t is_rtp_comfort_noise(libtrace_packet_t *packet) {
+
+    void *transport, *payload;
+    uint8_t proto;
+    uint8_t *pl;
+    uint32_t rem;
+
+    transport = trace_get_transport(packet, &proto, &rem);
+
+    if (transport == NULL || proto != TRACE_IPPROTO_UDP) {
+        return 0;
+    }
+
+    payload = trace_get_payload_from_udp((libtrace_udp_t *)transport, &rem);
+    if (payload == NULL || rem < 12) {
+        return 0;
+    }
+
+    pl = (uint8_t *)payload;
+
+    /* 0x0d == Payload type: Comfort Noise */
+    if (pl[1] == 0x0d) {
+        return 1;
+    }
+    return 0;
+}
+
+static inline int match_rtp_stream(rtpstreaminf_t *rtp, uint16_t porta,
+        uint16_t portb, struct sockaddr *ipa, struct sockaddr *ipb,
+        uint8_t *is_comfort, libtrace_packet_t *pkt) {
+
+    struct sockaddr *tgt, *other;
+    tgt = (struct sockaddr *)(rtp->targetaddr);
+    other = (struct sockaddr *)(rtp->otheraddr);
+
+    if ((rtp->targetport == porta && rtp->otherport == portb) ||
+            (rtp->targetport + 1 == porta && rtp->otherport + 1 == portb)) {
+
+        if (sockaddr_match(rtp->ai_family, ipa, tgt) &&
+                sockaddr_match(rtp->ai_family, ipb, other)) {
+
+            if (rtp->skip_comfort) {
+                if (*is_comfort == 255) {
+                    *is_comfort = is_rtp_comfort_noise(pkt);
+                }
+                if (*is_comfort == 1) {
+                    return 0;
+                }
+            }
+
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
         packet_info_t *pinfo, colthread_local_t *loc) {
 
@@ -69,6 +125,7 @@ static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
     rtpstreaminf_t *rtp, *tmp;
     int matched = 0, queueused;
     struct sockaddr *cmp, *tgt, *other;
+    uint8_t is_comfort = 255;
 
     /* TODO change active RTP so we can look up by 5 tuple? */
     HASH_ITER(hh, loc->activertpintercepts, rtp, tmp) {
@@ -84,49 +141,31 @@ static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
             continue;
         }
 
-        tgt = (struct sockaddr *)(rtp->targetaddr);
-        other = (struct sockaddr *)(rtp->otheraddr);
+        /* Check for src = target, dest = other */
+        if (match_rtp_stream(rtp, pinfo->srcport, pinfo->destport,
+                (struct sockaddr *)(&pinfo->srcip),
+                (struct sockaddr *)(&pinfo->destip), &is_comfort, pkt)) {
 
-        /* Check for src = target, dst = other */
-        if ((pinfo->srcport == rtp->targetport &&
-                pinfo->destport == rtp->otherport) ||
-                (pinfo->srcport == rtp->targetport + 1 &&
-                 pinfo->destport == rtp->otherport + 1)) {
-            cmp = (struct sockaddr *)(&pinfo->srcip);
-
-            if (sockaddr_match(family, cmp, tgt)) {
-                cmp = (struct sockaddr *)(&pinfo->destip);
-                if (sockaddr_match(family, cmp, other)) {
-                    msg = create_ipcc_job(rtp->cin, rtp->common.liid,
-                            rtp->common.destid, pkt, ETSI_DIR_FROM_TARGET);
-                    msg->type = OPENLI_EXPORT_IPMMCC;
-                    publish_openli_msg(loc->zmq_pubsocks[0], msg); // FIXME
-                    matched ++;
-                    continue;
-                }
-            }
+            msg = create_ipcc_job(rtp->cin, rtp->common.liid,
+                    rtp->common.destid, pkt, ETSI_DIR_FROM_TARGET);
+            msg->type = OPENLI_EXPORT_IPMMCC;
+            publish_openli_msg(loc->zmq_pubsocks[0], msg); // FIXME
+            matched ++;
+            continue;
         }
 
         /* Check for dst = target, src = other */
-        if ((pinfo->destport == rtp->targetport &&
-                    pinfo->srcport == rtp->otherport) ||
-                    (pinfo->destport == rtp->targetport + 1 &&
-                     pinfo->srcport == rtp->otherport + 1)) {
-            cmp = (struct sockaddr *)(&pinfo->srcip);
+        if (match_rtp_stream(rtp, pinfo->destport, pinfo->srcport,
+                (struct sockaddr *)(&pinfo->destip),
+                (struct sockaddr *)(&pinfo->srcip), &is_comfort, pkt)) {
 
-            if (sockaddr_match(family, cmp, other)) {
-                cmp = (struct sockaddr *)(&pinfo->destip);
-                if (sockaddr_match(family, cmp, tgt)) {
-                    msg = create_ipcc_job(rtp->cin, rtp->common.liid,
-                            rtp->common.destid, pkt, ETSI_DIR_TO_TARGET);
-                    msg->type = OPENLI_EXPORT_IPMMCC;
-                    publish_openli_msg(loc->zmq_pubsocks[0], msg); // FIXME
-                    matched ++;
-                    continue;
-                }
-            }
+            msg = create_ipcc_job(rtp->cin, rtp->common.liid,
+                    rtp->common.destid, pkt, ETSI_DIR_TO_TARGET);
+            msg->type = OPENLI_EXPORT_IPMMCC;
+            publish_openli_msg(loc->zmq_pubsocks[0], msg); // FIXME
+            matched ++;
+            continue;
         }
-
     }
     return matched;
 }

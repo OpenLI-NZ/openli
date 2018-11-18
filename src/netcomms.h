@@ -88,6 +88,7 @@ typedef enum {
     OPENLI_PROTO_WITHDRAW_SIP_TARGET,
     OPENLI_PROTO_ADD_STATICIPS,
     OPENLI_PROTO_REMOVE_STATICIPS,
+    OPENLI_PROTO_MODIFY_VOIPINTERCEPT,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -125,6 +126,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_SIP_REALM,
     OPENLI_PROTO_FIELD_STATICIP_RANGE,
     OPENLI_PROTO_FIELD_CIN,
+    OPENLI_PROTO_FIELD_INTOPTIONS,
 } openli_proto_fieldtype_t;
 
 
@@ -142,6 +144,8 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb,
         void *vint);
 int push_intercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
         void *cept, openli_proto_msgtype_t wdtype);
+int push_intercept_modify_onto_net_buffer(net_buffer_t *nb,
+        void *cept, openli_proto_msgtype_t modtype);
 int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
@@ -181,6 +185,8 @@ int decode_ipintercept_halt(uint8_t *msgbody, uint16_t len,
 int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
         voipintercept_t *vint);
 int decode_voipintercept_halt(uint8_t *msgbody, uint16_t len,
+        voipintercept_t *vint);
+int decode_voipintercept_modify(uint8_t *msgbody, uint16_t len,
         voipintercept_t *vint);
 int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_lea_withdrawal(uint8_t *msgbody, uint16_t len, liagency_t *lea);

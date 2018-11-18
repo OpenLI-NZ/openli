@@ -950,6 +950,42 @@ sipgiveup:
 
 }
 
+static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
+        uint16_t msglen) {
+
+    voipintercept_t *vint, tomod;
+    sync_sendq_t *sendq, *tmp;
+    int i;
+    openli_export_recv_t *expmsg;
+
+    if (decode_voipintercept_modify(intmsg, msglen, &tomod) == -1) {
+        logger(LOG_INFO,
+                "OpenLI: received invalid VOIP intercept modification from provisioner.");
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, sync->voipintercepts, tomod.common.liid,
+            tomod.common.liid_len, vint);
+    if (!vint) {
+        logger(LOG_INFO,
+                "OpenLI: received modification for VOIP intercept %s but it is not present in the sync intercept list?",
+                tomod.common.liid);
+        return 0;
+    }
+
+    logger(LOG_INFO, "OpenLI: sync thread modifying options for VOIP intercept %s",
+            tomod.common.liid);
+
+    vint->options = tomod.options;
+
+    /* Don't need to push anything to the collectors or seqtrackers.
+     * Existing RTP sessions will continue using the same options as before,
+     * but new sessions will have the options applied.
+     */
+    return 0;
+
+}
+
 static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
@@ -1225,6 +1261,7 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         vint->internalid = toadd.internalid;
         vint->awaitingconfirm = 0;
         vint->active = 1;
+        vint->options = toadd.options;
         return 0;
     }
 
@@ -1534,6 +1571,12 @@ static inline int process_intersync_msg(collector_sync_voip_t *sync,
             break;
         case OPENLI_PROTO_HALT_VOIPINTERCEPT:
             if (halt_voipintercept(sync, syncmsg.msgbody, syncmsg.msglen) < 0) {
+                /* error, do something XXX */
+            }
+            break;
+        case OPENLI_PROTO_MODIFY_VOIPINTERCEPT:
+            if (modify_voipintercept(sync, syncmsg.msgbody, syncmsg.msglen)
+                    < 0) {
                 /* error, do something XXX */
             }
             break;
