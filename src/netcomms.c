@@ -337,13 +337,76 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
     return (int)totallen;
 }
 
+#define VOIPINTERCEPT_MODIFY_BODY_LEN(vint) \
+        (vint->common.liid_len + vint->common.authcc_len + \
+         sizeof(vint->options) + (3 * 4))
 
+static int _push_voipintercept_modify(net_buffer_t *nb, voipintercept_t *vint)
+{
+    ii_header_t hdr;
+    uint16_t totallen;
+    int ret;
+
+    /* Pre-compute our body length so we can write it in the header */
+    totallen = VOIPINTERCEPT_MODIFY_BODY_LEN(vint);
+    if (totallen > 65535) {
+        logger(LOG_INFO,
+                "OpenLI: intercept modifcation is too long to fit in a single message (%d).",
+                totallen);
+        return -1;
+    }
+
+
+    /* Push on header */
+    populate_header(&hdr, OPENLI_PROTO_MODIFY_VOIPINTERCEPT, totallen, 0);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t))) == -1) {
+        goto pushmodfail;
+    }
+
+    /* Push on each intercept field */
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTOPTIONS,
+            (uint8_t *)(&vint->options), sizeof(vint->options)) == -1) {
+        goto pushmodfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID, vint->common.liid,
+                strlen(vint->common.liid)) == -1) {
+        goto pushmodfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, vint->common.authcc,
+            strlen(vint->common.authcc)) == -1) {
+        goto pushmodfail;
+    }
+
+
+    return (int)totallen;
+
+pushmodfail:
+    logger(LOG_INFO,
+            "OpenLI: unable to push VOIP intercept modify for %s to collector fd %d",
+            vint->common.liid, nb->fd);
+    return -1;
+}
+
+int push_intercept_modify_onto_net_buffer(net_buffer_t *nb, void *data,
+        openli_proto_msgtype_t modtype) {
+
+    if (modtype == OPENLI_PROTO_MODIFY_VOIPINTERCEPT) {
+        return _push_voipintercept_modify(nb, (voipintercept_t *)data);
+    }
+
+    logger(LOG_INFO, "OpenLI: bad modtype in push_intercept_modify_onto_net_buffer: %d\n", modtype);
+    return -1;
+}
 
 #define VOIPINTERCEPT_BODY_LEN(vint) \
         (vint->common.liid_len + vint->common.authcc_len + \
          vint->common.delivcc_len + \
-         sizeof(vint->common.destid) + \
-         + (4 * 4))
+         sizeof(vint->common.destid) + sizeof(vint->options) \
+         + (5 * 4))
 
 #define INTERCEPT_WITHDRAW_BODY_LEN(liid, authcc) \
         (strlen(liid) + strlen(authcc) + (2 * 4))
@@ -453,6 +516,12 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
             sizeof(vint->common.destid))) == -1) {
         goto pushvoipintfail;
     }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_INTOPTIONS,
+            (uint8_t *)&(vint->options), sizeof(vint->options))) == -1) {
+        goto pushvoipintfail;
+    }
+
 
     return (int)totallen;
 
@@ -992,6 +1061,7 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
     vint->common.targetagency = NULL;
     vint->active = 1;
     vint->awaitingconfirm = 0;
+    vint->options = 0;
 
     vint->common.liid_len = 0;
     vint->common.authcc_len = 0;
@@ -1008,6 +1078,8 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
 
         if (f == OPENLI_PROTO_FIELD_MEDIATORID) {
             vint->common.destid = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTOPTIONS) {
+            vint->options = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_LIID) {
             DECODE_STRING_FIELD(vint->common.liid, valptr, vallen);
             vint->common.liid_len = vallen;
@@ -1032,6 +1104,11 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
 }
 
 int decode_voipintercept_halt(uint8_t *msgbody, uint16_t len,
+        voipintercept_t *vint) {
+    return decode_voipintercept_start(msgbody, len, vint);
+}
+
+int decode_voipintercept_modify(uint8_t *msgbody, uint16_t len,
         voipintercept_t *vint) {
     return decode_voipintercept_start(msgbody, len, vint);
 }

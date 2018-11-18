@@ -226,6 +226,8 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->pushport = NULL;
     state->pushaddr = NULL;
 
+    state->ignorertpcomfort = 0;
+
     if (parse_provisioning_config(configfile, state) == -1) {
         logger(LOG_INFO, "OpenLI provisioner: error while parsing provisioner config in %s", configfile);
         return -1;
@@ -571,8 +573,8 @@ static int push_all_sip_targets(net_buffer_t *nb, libtrace_list_t *targets,
     return 0;
 }
 
-static int push_all_voipintercepts(voipintercept_t *voipintercepts,
-        net_buffer_t *nb) {
+static int push_all_voipintercepts(provision_state_t *state,
+        voipintercept_t *voipintercepts, net_buffer_t *nb) {
 
     voipintercept_t *v;
 
@@ -580,7 +582,12 @@ static int push_all_voipintercepts(voipintercept_t *voipintercepts,
         if (v->active == 0) {
             continue;
         }
-    
+
+        v->options = 0;
+        if (state->ignorertpcomfort == 1) {
+            v->options |= (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
+        }
+
         if (push_voipintercept_onto_net_buffer(nb, v) < 0) {
             logger(LOG_INFO,
                     "OpenLI provisioner: error pushing VOIP intercept %s onto buffer for writing to collector.",
@@ -657,7 +664,7 @@ static int respond_collector_auth(provision_state_t *state,
         return -1;
     }
 
-    if (push_all_voipintercepts(state->voipintercepts, outgoing) == -1) {
+    if (push_all_voipintercepts(state, state->voipintercepts, outgoing) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue VOIP IP intercepts to be sent to new collector on fd %d",
                 pev->fd);
@@ -1637,6 +1644,42 @@ static int halt_existing_intercept(provision_state_t *state,
 
 }
 
+static int modify_existing_intercept_options(provision_state_t *state,
+        void *cept, openli_proto_msgtype_t modtype) {
+
+    libtrace_list_node_t *n;
+    prov_collector_t *col;
+    prov_sock_state_t *sock;
+
+    n = state->collectors->head;
+    while (n) {
+        col = (prov_collector_t *)(n->data);
+        n = n->next;
+
+        sock = (prov_sock_state_t *)(col->commev->state);
+        if (!sock->trusted || sock->halted) {
+            continue;
+        }
+
+        if (push_intercept_modify_onto_net_buffer(sock->outgoing,
+                cept, modtype) == -1) {
+            drop_collector(state, col->commev);
+            continue;
+        }
+
+        if (enable_epoll_write(state, col->commev) == -1) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
+                    sock->mainfd, strerror(errno));
+            drop_collector(state, col->commev);
+        }
+
+    }
+
+    return 0;
+
+}
+
 /* TODO replace all these functions with a single generic version, much
  * like announce_single_intercept but even more generic.
  */
@@ -1983,6 +2026,11 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
     HASH_ITER(hh_liid, currstate->voipintercepts, voipint, tmp) {
         HASH_FIND(hh_liid, newstate->voipintercepts, voipint->common.liid,
                 voipint->common.liid_len, newequiv);
+
+        if (newstate->ignorertpcomfort) {
+            newequiv->options |= (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
+        }
+
         if (!newequiv) {
             /* Intercept has been withdrawn entirely */
             if (!droppedcols) {
@@ -2007,6 +2055,15 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
             remove_liid_mapping(currstate, voipint->common.liid,
                     voipint->common.liid_len, droppedmeds);
 
+        } else if (voipint->options != newequiv->options) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: Options for VOIP intercept %s have changed",
+                    voipint->common.liid);
+            if (!droppedcols) {
+                modify_existing_intercept_options(currstate, (void *)voipint,
+                        OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
+            }
+
         } else {
             if (compare_sip_targets(currstate, voipint, newequiv) < 0) {
                 return -1;
@@ -2019,6 +2076,10 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
         liid_hash_t *h = NULL;
         if (!voipint->awaitingconfirm) {
             continue;
+        }
+
+        if (newstate->ignorertpcomfort) {
+            newequiv->options |= (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
         }
 
         /* Add the LIID mapping */

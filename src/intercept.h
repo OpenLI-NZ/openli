@@ -48,6 +48,10 @@ typedef enum {
     INTERNET_ACCESS_TYPE_WIRELESS_OTHER = 9,
 } internet_access_method_t;
 
+typedef enum {
+    OPENLI_VOIPINT_OPTION_IGNORE_COMFORT = 0,
+} voipintercept_options_t;
+
 typedef struct static_ipranges {
     char *rangestr;
     char *liid;
@@ -144,12 +148,14 @@ typedef struct sipregister sipregister_t;
      (strcmp(a->common.delivcc, b->common.delivcc) == 0) && \
      (strcmp(a->common.targetagency, b->common.targetagency) == 0))
 
+
 typedef struct voipintercept {
 
     uint64_t internalid;
     intercept_common_t common;
     libtrace_list_t *targets;
 
+    uint32_t options;
     uint8_t awaitingconfirm;
     uint8_t active;
     voipcinmap_t *cin_callid_map;
@@ -185,6 +191,7 @@ struct rtpstreaminf {
     char *invitecseq;
     char *byecseq;
 
+    uint8_t skip_comfort;
     intercept_common_t common;
     voipintercept_t *parent;
 

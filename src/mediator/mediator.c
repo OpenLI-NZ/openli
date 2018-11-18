@@ -1466,18 +1466,30 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         }
     }
 
-    JSLI(jval, state->liid_array, liid);
-    if (jval == NULL) {
-        logger(LOG_INFO, "OpenLI mediator: OOM when allocating memory for new LIID.");
-        return -1;
-    }
+    JSLG(jval, state->liid_array, liid);
+    if (jval != NULL) {
+        m = (liid_map_t *)(*jval);
 
-    m = (liid_map_t *)malloc(sizeof(liid_map_t));
-    if (m == NULL) {
-        logger(LOG_INFO, "OpenLI mediator: OOM when allocating memory for new LIID.");
-        return -1;
+        if (m->ceasetimer) {
+            /* was scheduled to be ceased, so halt the timer */
+            halt_mediator_timer(state, m->ceasetimer);
+            free(m->ceasetimer);
+        }
+        free(m->liid);
+    } else {
+        JSLI(jval, state->liid_array, liid);
+        if (jval == NULL) {
+            logger(LOG_INFO, "OpenLI mediator: OOM when allocating memory for new LIID.");
+            return -1;
+        }
+
+        m = (liid_map_t *)malloc(sizeof(liid_map_t));
+        if (m == NULL) {
+            logger(LOG_INFO, "OpenLI mediator: OOM when allocating memory for new LIID.");
+            return -1;
+        }
+        *jval = (Word_t)m;
     }
-    *jval = (Word_t)m;
     m->liid = liid;
     m->agency = agency;
     m->ceasetimer = NULL;

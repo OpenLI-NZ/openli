@@ -110,6 +110,12 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
     newcin->timeout_ev = NULL;
     newcin->byematched = 0;
 
+    if (vint->options & (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
+        newcin->skip_comfort = 1;
+    } else {
+        newcin->skip_comfort = 0;
+    }
+
     copy_intercept_common(&(vint->common), &(newcin->common));
     snprintf(newcin->streamkey, 256, "%s-%u", vint->common.liid, cin);
     return newcin;
@@ -148,6 +154,7 @@ rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *orig) {
     memcpy(copy->otheraddr, orig->otheraddr, sizeof(struct sockaddr_storage));
     copy->targetport = orig->targetport;
     copy->otherport = orig->otherport;
+    copy->skip_comfort = orig->skip_comfort;
     copy->seqno = 0;
     copy->active = 1;
     copy->invitecseq = NULL;

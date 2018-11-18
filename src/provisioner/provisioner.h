@@ -101,6 +101,7 @@ typedef struct prov_state {
     prov_agency_t *leas;
     liid_hash_t *liid_map;
 
+    int ignorertpcomfort;
     /*
     int activeupdatefd;
     int updatetimerfd;

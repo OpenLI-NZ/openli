@@ -1099,6 +1099,7 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 break;
             case OPENLI_PROTO_START_VOIPINTERCEPT:
             case OPENLI_PROTO_HALT_VOIPINTERCEPT:
+            case OPENLI_PROTO_MODIFY_VOIPINTERCEPT:
             case OPENLI_PROTO_ANNOUNCE_SIP_TARGET:
             case OPENLI_PROTO_WITHDRAW_SIP_TARGET:
                 ret = forward_provmsg_to_voipsync(sync, provmsg, msglen,
