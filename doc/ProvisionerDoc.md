@@ -57,6 +57,13 @@ each intercept must be configured with the following six parameters:
 * SIP targets -- a list of identities that can be used to recognise
   activity in the SIP stream that is related to the intercept target.
 
+Some VOIP vendors have been known to generate RTP comfort noise packets that
+are not considered valid by the LEA decoders. If this problem occurs on your
+VOIP network, you can tell OpenLI to avoid intercepting RTP comfort noise
+packets by setting the 'voip-ignorecomfort' option to 'yes' at the top level
+of your configuration. Please confirm with your LEAs that this is acceptable
+before doing so, of course!
+
 ### IP Data Intercepts
 
 All IP intercepts are specified using the ipintercepts option. As with VOIP
@@ -148,6 +155,13 @@ The socket option keys are:
                            connections
 * mediationport         -- the port to listen on for incoming mediator
                            connections
+
+If you need to disable interception of RTP comfort noise packets (because
+they are considered invalid by the agency decoders), you can do so using
+the following option key:
+
+* voip-ignorecomfort    -- if set to 'yes', RTP comfort noise packets are
+                           ignored by OpenLI.
 
 Agencies are expressed as a YAML sequence with a key of `agencies:`. Each
 sequence item represents a single agency and must contain the following

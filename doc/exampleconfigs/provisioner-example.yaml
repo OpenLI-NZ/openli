@@ -13,6 +13,10 @@ sipservers:
   - ip: 192.168.110.100
     port: 5060
 
+# If set to 'yes', RTP comfort noise packets will NOT be intercepted by
+# all collectors associated with this provisioner. Only enable this option
+# if an LEA reports difficulty with decoding your intercepted RTP streams.
+voip-ignorecomfort: no
 
 # List of RADIUS servers on our network (for managing IP intercepts).
 # NOTE: we have two entries with the same IP -- one for the Auth service
