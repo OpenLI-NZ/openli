@@ -7,9 +7,18 @@ Version: pre-release
 Copyright (c) 2018 The University of Waikato, Hamilton, New Zealand.
 All rights reserved.
 
-This code has been developed by the University of Waikato WAND research group. For further information please see http://www.wand.net.nz/.
+This code has been developed by the University of Waikato WAND research group.
+For further information please see http://www.wand.net.nz/.
 
 ---------------------------------------------------------------------------
+
+## IMPORTANT
+This software is currently in a pre-release state and should not be relied
+upon to satisfy your lawful intercept requirements. We still have more testing
+and refinement to complete before a formal release will occur, but we have
+made the code available now to allow people to experiment with OpenLI
+and figure out how to integrate it properly into their production network
+once the software is complete.
 
 ## Dependencies
 
