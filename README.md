@@ -161,6 +161,7 @@ A. Unfortunately there are plenty of reasons why this might happen. Here are
   If all else fails, send us an email at contact@wand.net.nz and someone
   will try to help you.
 
+---
 
 Q. My collector keeps logging messages "dropped X packets in last second".
 
