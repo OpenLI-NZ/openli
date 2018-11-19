@@ -10,6 +10,19 @@ All rights reserved.
 This code has been developed by the University of Waikato WAND research group.
 For further information please see http://www.wand.net.nz/.
 
+OpenLI is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 ---------------------------------------------------------------------------
 
 ## IMPORTANT
@@ -145,23 +158,23 @@ Q. OpenLI doesn't build or complains about unresolved symbols when I try to
 A. Unfortunately there are plenty of reasons why this might happen. Here are
    a few things you can try that might resolve your issue:
 
-    * If you've installed any dependencies from source, then it may be that
-      your system is having trouble finding them. Try running:
-                sudo ldconfig
-      then try again.
+* If you've installed any dependencies from source, then it may be that
+  your system is having trouble finding them. Try running
+  `sudo ldconfig` then try again.
 
-    * Try installing the latest 'develop' branch of libtrace from
-      https://github.com/LibtraceTeam/libtrace
+* Try installing the latest 'develop' branch of libtrace from
+  https://github.com/LibtraceTeam/libtrace
 
-    * Try installing the latest 'develop' branch of libwandder from
-      https://github.com/wanduow/libwandder
+* Try installing the latest 'develop' branch of libwandder from
+  https://github.com/wanduow/libwandder
 
-    * Try installing the latest 'develop' branch of openli itself from
-      https://git.cms.waikato.ac.nz/WAND/OpenLI
+* Try installing the latest 'develop' branch of openli itself from
+  https://git.cms.waikato.ac.nz/WAND/OpenLI
 
   If all else fails, send us an email at contact@wand.net.nz and someone
   will try to help you.
 
+---
 
 Q. My collector keeps logging messages "dropped X packets in last second".
 
@@ -180,12 +193,14 @@ A. This means that your collector is not keeping up with the number of
    configure a DPDK interface for use with OpenLI.
 
    Otherwise, your options are:
-     * use more powerful hardware for your collector (more CPU cores
-       generally helps most).
-     * find a way to split the interception workload across multiple
-       collectors (only if the workload is coming from multiple intercepts).
-     * accept that your LI needs are too large to be handled by a simple
-       open-source project and ask your vendors if they can supply you with
-       a better solution.
+* use more powerful hardware for your collector (more CPU cores
+  generally helps most).
+
+* find a way to split the interception workload across multiple
+  collectors (only if the workload is coming from multiple intercepts).
+
+* accept that your LI needs are too large to be handled by a simple
+  open-source project and ask your vendors if they can supply you with
+  a better solution.
 
 
