@@ -297,8 +297,6 @@ void *run_encoder_worker(void *encstate) {
         pthread_exit(NULL);
     }
 
-    logger(LOG_INFO, "OpenLI: starting encoding thread %d", enc->workerid);
-
     while (!enc->halted) {
         poll_nextjob(enc);
     }

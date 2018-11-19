@@ -773,7 +773,7 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
     } while (msgtype != OPENLI_PROTO_NO_MESSAGE);
 
     if (justauthed) {
-        logger(LOG_INFO, "OpenLI: collector on fd %d auth success.",
+        logger(LOG_DEBUG, "OpenLI: collector on fd %d auth success.",
                 pev->fd);
         halt_auth_timer(state, cs);
         return respond_collector_auth(state, pev, cs->outgoing);
@@ -939,7 +939,7 @@ static int accept_collector(provision_state_t *state) {
         logger(LOG_INFO, "OpenLI: getnameinfo error in provisioner: %s.",
                 strerror(errno));
     } else {
-        logger(LOG_INFO, "OpenLI: provisioner accepted connection from collector %s on %d.",
+        logger(LOG_INFO, "OpenLI: provisioner accepted connection from collector %s on fd %d.",
                 strbuf, newfd);
     }
 
@@ -1231,8 +1231,8 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
             }
 
             if (ret == -1) {
-                logger(LOG_INFO,
-                        "OpenLI Provisioner: disconnecting collector %d.",
+                logger(LOG_DEBUG,
+                        "OpenLI Provisioner: disconnecting collector on fd %d.",
                         pev->fd);
                 drop_collector(state, pev);
             }
@@ -1258,8 +1258,8 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
                 ret = -1;
             }
             if (ret == -1) {
-                logger(LOG_INFO,
-                        "OpenLI Provisioner: disconnecting mediator %d.",
+                logger(LOG_DEBUG,
+                        "OpenLI Provisioner: disconnecting mediator on fd %d.",
                         pev->fd);
                 drop_mediator(state, pev);
             }
@@ -1320,15 +1320,14 @@ static inline int reload_push_socket_config(provision_state_t *currstate,
     }
 
     if (changed) {
+        logger(LOG_INFO,
+                "OpenLI provisioner: update socket configuration has changed.");
         if (currstate->pushaddr && start_push_listener(currstate) == -1) {
             logger(LOG_INFO,
                     "OpenLI provisioner: Warning, update socket did not restart. Will not be able to receive live updates.");
             return -1;
         }
         return 1;
-    } else {
-        logger(LOG_INFO,
-                "OpenLI provisioner: update socket configuration is unchanged.");
     }
     return 0;
 
@@ -1362,15 +1361,14 @@ static inline int reload_mediator_socket_config(provision_state_t *currstate,
         currstate->mediateport = strdup(newstate->mediateport);
         currstate->dropped_mediators = 0;
 
+        logger(LOG_INFO,
+                "OpenLI provisioner: mediation socket configuration has changed.");
         if (start_mediator_listener(currstate) == -1) {
             logger(LOG_INFO,
                     "OpenLI provisioner: Warning, mediation socket did not restart. Will not be able to control mediators.");
             return -1;
         }
         return 1;
-    } else {
-        logger(LOG_INFO,
-                "OpenLI provisioner: mediation socket configuration is unchanged.");
     }
     return 0;
 }
@@ -1384,6 +1382,8 @@ static inline int reload_collector_socket_config(provision_state_t *currstate,
     if (strcmp(newstate->listenaddr, currstate->listenaddr) != 0 ||
             strcmp(newstate->listenport, currstate->listenport) != 0) {
 
+        logger(LOG_INFO,
+                "OpenLI provisioner: collector listening socket configuration has changed.");
         stop_all_collectors(currstate->collectors);
         currstate->collectors = libtrace_list_init(sizeof(prov_collector_t));
 
@@ -1409,9 +1409,6 @@ static inline int reload_collector_socket_config(provision_state_t *currstate,
             return -1;
         }
         return 1;
-    } else {
-        logger(LOG_INFO,
-                "OpenLI provisioner: collector listening socket configuration is unchanged.");
     }
     return 0;
 }
@@ -2513,9 +2510,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+/*
     if (start_push_listener(&provstate) == -1) {
         logger(LOG_INFO, "OpenLI: Warning, push socket did not start. New intercepts cannot be received.");
     }
+*/
 
     if (start_mediator_listener(&provstate) == -1) {
         logger(LOG_INFO, "OpenLI: Warning, mediation socket did not start. Will not be able to control mediators.");

@@ -2111,7 +2111,7 @@ static void run(mediator_state_t *state) {
 	}
 
     logger(LOG_INFO,
-            "OpenLI: rotating pcap output files every %d minutes.",
+            "OpenLI: pcap output file rotation frequency is set to %d minutes.",
             state->pcaprotatefreq);
 
     gettimeofday(&tv, NULL);
@@ -2462,7 +2462,7 @@ static void *start_pcap_thread(void *params) {
             pstate.dir = (char *)pcapmsg.msgbody;
             if (pstate.dir) {
                 logger(LOG_INFO,
-                        "OpenLI mediator: pcap trace files are now being written to %s",
+                        "OpenLI mediator: any pcap trace files will be written to %s",
                         pstate.dir);
             } else {
                 logger(LOG_INFO,

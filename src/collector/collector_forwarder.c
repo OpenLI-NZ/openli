@@ -712,9 +712,6 @@ void *start_forwarding_thread(void *data) {
     int zero = 0, x;
     openli_encoded_result_t res;
 
-    logger(LOG_DEBUG, "OpenLI: starting forwarding thread %d",
-            fwd->forwardid);
-
     fwd->zmq_ctrlsock = zmq_socket(fwd->zmq_ctxt, ZMQ_PULL);
     snprintf(sockname, 128, "inproc://openliforwardercontrol_sync-%d",
             fwd->forwardid);

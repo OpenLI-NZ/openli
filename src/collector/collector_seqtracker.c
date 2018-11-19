@@ -399,8 +399,6 @@ void *start_seqtracker_thread(void *data) {
     int x, zero = 0, large=1000000;
     exporter_intercept_state_t *intstate, *tmpexp;
 
-    logger(LOG_INFO, "OpenLI: starting tracker thread %d", seqdata->trackerid);
-
     seqdata->zmq_recvpublished = zmq_socket(seqdata->zmq_ctxt, ZMQ_PULL);
     snprintf(sockname, 128, "inproc://openlipub-%d", seqdata->trackerid);
     if (zmq_bind(seqdata->zmq_recvpublished, sockname) < 0) {
