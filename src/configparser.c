@@ -33,15 +33,51 @@
 #include <libtrace_parallel.h>
 #include <unistd.h>
 #include <sys/epoll.h>
+#include <math.h>
 
 #include "configparser.h"
 #include "logger.h"
-#include "provisioner.h"
-#include "mediator.h"
 #include "agency.h"
 #include "coreserver.h"
 
 uint64_t nextid = 0;
+
+static int check_onoff(char *value) {
+
+    if (strcasecmp(value, "yes") == 0) {
+        return 1;
+    }
+
+    if (strcasecmp(value, "on") == 0) {
+        return 1;
+    }
+
+    if (strcasecmp(value, "true") == 0) {
+        return 1;
+    }
+
+    if (strcasecmp(value, "enabled") == 0) {
+        return 1;
+    }
+
+    if (strcasecmp(value, "no") == 0) {
+        return 0;
+    }
+
+    if (strcasecmp(value, "off") == 0) {
+        return 0;
+    }
+
+    if (strcasecmp(value, "false") == 0) {
+        return 0;
+    }
+
+    if (strcasecmp(value, "disabled") == 0) {
+        return 0;
+    }
+
+    return -1;
+}
 
 static internet_access_method_t map_access_type_string(char *confstr) {
 
@@ -119,6 +155,7 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         inp->trace = NULL;
         inp->pktcbs = NULL;
         inp->running = 0;
+        inp->report_drops = 1;
 
         /* Mappings describe the parameters for each input */
         for (pair = node->data.mapping.pairs.start;
@@ -137,16 +174,28 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                        "reportdrops") == 0) {
+                if (check_onoff((char *)value->data.scalar.value) == 0) {
+                    inp->report_drops = 0;
+                } else {
+                    inp->report_drops = 1;
+                }
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value, "threads") == 0) {
                 inp->threadcount = strtoul(
                         (char *)value->data.scalar.value, NULL, 10);
             }
         }
         if (!inp->uri) {
-            logger(LOG_DAEMON, "OpenLI collector: input is missing a URI?");
+            logger(LOG_INFO, "OpenLI collector: input is missing a URI?");
             continue;
         }
         HASH_ADD_KEYPTR(hh, glob->inputs, inp->uri, strlen(inp->uri), inp);
+        glob->total_col_threads += inp->threadcount;
     }
 
     return 0;
@@ -194,7 +243,7 @@ static void parse_sip_targets(libtrace_list_t *targets, yaml_document_t *doc,
         if (newtgt->username) {
             libtrace_list_push_back(targets, &newtgt);
         } else {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: a SIP target requires a username, skipping.");
             if (newtgt->realm) {
                 free(newtgt->realm);
@@ -252,10 +301,107 @@ static int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
             HASH_ADD_KEYPTR(hh, *servlist, cs->serverkey,
                     strlen(cs->serverkey), cs);
         } else {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: %s server configuration was incomplete -- skipping.",
                     coreserver_type_to_string(cstype));
             free_single_coreserver(cs);
+        }
+    }
+    return 0;
+}
+
+static inline int parse_iprange_option(static_ipranges_t *newr,
+        yaml_node_t *value) {
+
+    char *confrange = (char *)value->data.scalar.value;
+    int family = 0;
+
+    if (strchr(confrange, ':') != NULL) {
+        family = AF_INET6;
+    } else if (strchr(confrange, '.') != NULL) {
+        family = AF_INET;
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: '%s' is not a valid prefix or IP address, skipping.",
+                confrange);
+        return -1;
+    }
+    if (strchr(confrange, '/') == NULL) {
+        /* No slash, so assume /32 or /128 */
+        int rlen = strlen(confrange) + 5;   /* '/128' + nul */
+        newr->rangestr = (char *)calloc(1, rlen);
+        snprintf(newr->rangestr, rlen - 1, "%s/%u", confrange,
+                family == AF_INET ? 32 : 128);
+
+    } else {
+        newr->rangestr = strdup((char *)value->data.scalar.value);
+    }
+    return 0;
+}
+
+static int add_intercept_static_ips(static_ipranges_t **statics,
+        yaml_document_t *doc, yaml_node_t *ipseq) {
+
+    yaml_node_item_t *item;
+    static_ipranges_t *newr, *existing;
+
+    for (item = ipseq->data.sequence.items.start;
+            item != ipseq->data.sequence.items.top; item ++) {
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+        yaml_node_pair_t *pair;
+
+        newr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
+        newr->rangestr = NULL;
+        newr->liid = NULL;
+        newr->awaitingconfirm = 1;
+        newr->cin = 1;
+
+        for (pair = node->data.mapping.pairs.start;
+                pair < node->data.mapping.pairs.top; pair ++) {
+            yaml_node_t *key, *value;
+
+            key = yaml_document_get_node(doc, pair->key);
+            value = yaml_document_get_node(doc, pair->value);
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "iprange") == 0 &&
+                    newr->rangestr == NULL) {
+                if (parse_iprange_option(newr, value) < 0) {
+                    continue;
+                }
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "sessionid") == 0) {
+                newr->cin = strtoul((char *)value->data.scalar.value, NULL, 10);
+            }
+        }
+
+        if (newr->cin >= (uint32_t)(pow(2, 31))) {
+            logger(LOG_INFO,
+                    "OpenLI: CIN %u for static IP range %s is too large.",
+                    newr->cin);
+            newr->cin = newr->cin % (uint32_t)(pow(2, 31));
+            logger(LOG_INFO, "OpenLI: replaced CIN with %u.",
+                    newr->cin);
+        }
+
+        if (newr->rangestr) {
+            HASH_FIND(hh, *statics, newr->rangestr, strlen(newr->rangestr),
+                    existing);
+            if (!existing) {
+                HASH_ADD_KEYPTR(hh, *statics, newr->rangestr,
+                        strlen(newr->rangestr), newr);
+            } else {
+                free(newr->rangestr);
+                newr->rangestr = NULL;
+            }
+        }
+
+        if (!newr->rangestr) {
+            free(newr);
         }
     }
     return 0;
@@ -344,7 +490,7 @@ static int parse_agency_list(provision_state_t *state, yaml_document_t *doc,
          * be written to pcap files instead of live streamed to an
          * ETSI-capable agency. */
         if (strcmp(newag->agencyid, "pcapdisk") == 0) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: 'pcapdisk' is a reserved agencyid, please rename to something else.");
             free(newag->agencyid);
             newag->agencyid = NULL;
@@ -362,7 +508,7 @@ static int parse_agency_list(provision_state_t *state, yaml_document_t *doc,
 
         } else {
             free(newag);
-            logger(LOG_DAEMON, "OpenLI: LEA configuration was incomplete -- skipping.");
+            logger(LOG_INFO, "OpenLI: LEA configuration was incomplete -- skipping.");
         }
     }
     return 0;
@@ -396,6 +542,7 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         newcept->common.destid = 0;
         newcept->common.targetagency = NULL;
         newcept->awaitingconfirm = 1;
+        newcept->options = 0;
 
 
         /* Mappings describe the parameters for each intercept */
@@ -444,7 +591,7 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
                 newcept->common.destid = strtoul((char *)value->data.scalar.value,
                         NULL, 10);
                 if (newcept->common.destid == 0) {
-                    logger(LOG_DAEMON, "OpenLI: 0 is not a valid value for the 'mediator' config option.");
+                    logger(LOG_INFO, "OpenLI: 0 is not a valid value for the 'mediator' config option.");
                 }
             }
             if (key->type == YAML_SCALAR_NODE &&
@@ -464,7 +611,7 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
             HASH_ADD_KEYPTR(hh_liid, *voipints, newcept->common.liid,
                     newcept->common.liid_len, newcept);
         } else {
-            logger(LOG_DAEMON, "OpenLI: VOIP Intercept configuration was incomplete -- skipping.");
+            logger(LOG_INFO, "OpenLI: VOIP Intercept configuration was incomplete -- skipping.");
         }
     }
 
@@ -501,6 +648,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->common.delivcc_len = 0;
         newcept->alushimid = OPENLI_ALUSHIM_NONE;
         newcept->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED; 
+        newcept->statics = NULL;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -525,6 +673,13 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                     newcept->common.authcc == NULL) {
                 newcept->common.authcc = strdup((char *)value->data.scalar.value);
                 newcept->common.authcc_len = strlen(newcept->common.authcc);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SEQUENCE_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                            "staticips") == 0) {
+                add_intercept_static_ips(&(newcept->statics), doc, value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -557,7 +712,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                 newcept->accesstype = map_access_type_string(
                         (char *)value->data.scalar.value);
                 if (newcept->accesstype == INTERNET_ACCESS_TYPE_UNDEFINED) {
-                    logger(LOG_DAEMON, "OpenLI Warning: %s is not a valid access type for an IP intercept, falling back to 'undefined'",
+                    logger(LOG_INFO, "OpenLI Warning: %s is not a valid access type for an IP intercept, falling back to 'undefined'",
                             (char *)value->data.scalar.value);
                 }
             }
@@ -569,7 +724,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                 newcept->common.destid = strtoul((char *)value->data.scalar.value,
                         NULL, 10);
                 if (newcept->common.destid == 0) {
-                    logger(LOG_DAEMON, "OpenLI: 0 is not a valid value for the 'mediator' config option.");
+                    logger(LOG_INFO, "OpenLI: 0 is not a valid value for the 'mediator' config option.");
                 }
             }
             if (key->type == YAML_SCALAR_NODE &&
@@ -584,13 +739,18 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
                 newcept->common.delivcc != NULL &&
                 (newcept->username != NULL ||
-                 newcept->alushimid != OPENLI_ALUSHIM_NONE) &&
+                 newcept->alushimid != OPENLI_ALUSHIM_NONE ||
+                 newcept->statics != NULL) &&
                 newcept->common.destid > 0 &&
                 newcept->common.targetagency != NULL) {
-            HASH_ADD_KEYPTR(hh_liid, *ipints, newcept->common.liid, newcept->common.liid_len,
-                    newcept);
+            HASH_ADD_KEYPTR(hh_liid, *ipints, newcept->common.liid,
+                    newcept->common.liid_len, newcept);
+
+            if (newcept->username && newcept->statics) {
+                logger(LOG_INFO, "OpenLI: IP intercept %s specifies both a username and a set of static IPs -- is this intentional?");
+            }
         } else {
-            logger(LOG_DAEMON, "OpenLI: IP Intercept configuration was incomplete -- skipping.");
+            logger(LOG_INFO, "OpenLI: IP Intercept configuration was incomplete -- skipping.");
         }
     }
 
@@ -608,7 +768,7 @@ static int yaml_parser(char *configfile, void *arg,
     int ret = -1;
 
     if ((in = fopen(configfile, "r")) == NULL) {
-        logger(LOG_DAEMON, "OpenLI: Failed to open config file: %s",
+        logger(LOG_INFO, "OpenLI: Failed to open config file: %s",
                 strerror(errno));
         return -1;
     }
@@ -617,18 +777,18 @@ static int yaml_parser(char *configfile, void *arg,
     yaml_parser_set_input_file(&parser, in);
 
     if (!yaml_parser_load(&parser, &document)) {
-        logger(LOG_DAEMON, "OpenLI: Malformed config file");
+        logger(LOG_INFO, "OpenLI: Malformed config file");
         goto yamlfail;
     }
 
     root = yaml_document_get_root_node(&document);
     if (!root) {
-        logger(LOG_DAEMON, "OpenLI: Config file is empty!");
+        logger(LOG_INFO, "OpenLI: Config file is empty!");
         goto endconfig;
     }
 
     if (root->type != YAML_MAPPING_NODE) {
-        logger(LOG_DAEMON, "OpenLI: Top level of config should be a map");
+        logger(LOG_INFO, "OpenLI: Top level of config should be a map");
         goto endconfig;
     }
     for (pair = root->data.mapping.pairs.start;
@@ -656,6 +816,7 @@ yamlfail:
 static int global_parser(void *arg, yaml_document_t *doc,
         yaml_node_t *key, yaml_node_t *value) {
     collector_global_t *glob = (collector_global_t *)arg;
+
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SEQUENCE_NODE &&
             strcmp((char *)key->data.scalar.value, "inputs") == 0) {
@@ -672,7 +833,7 @@ static int global_parser(void *arg, yaml_document_t *doc,
 
         /* Limited to 16 chars */
         if (glob->sharedinfo.operatorid_len > 16) {
-            logger(LOG_DAEMON, "OpenLI: Operator ID must be 16 characters or less!");
+            logger(LOG_INFO, "OpenLI: Operator ID must be 16 characters or less!");
             return -1;
         }
     }
@@ -686,7 +847,7 @@ static int global_parser(void *arg, yaml_document_t *doc,
 
         /* Limited to 16 chars */
         if (glob->sharedinfo.networkelemid_len > 16) {
-            logger(LOG_DAEMON, "OpenLI: Network Element ID must be 16 characters or less!");
+            logger(LOG_INFO, "OpenLI: Network Element ID must be 16 characters or less!");
             return -1;
         }
     }
@@ -700,7 +861,7 @@ static int global_parser(void *arg, yaml_document_t *doc,
 
         /* Limited to 8 chars */
         if (glob->sharedinfo.intpointid_len > 8) {
-            logger(LOG_DAEMON, "OpenLI: Intercept Point ID must be 8 characters or less!");
+            logger(LOG_INFO, "OpenLI: Intercept Point ID must be 8 characters or less!");
             return -1;
         }
     }
@@ -718,6 +879,12 @@ static int global_parser(void *arg, yaml_document_t *doc,
     }
 
     if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "sipdebugfile") == 0) {
+        glob->sipdebugfile = strdup((char *) value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SEQUENCE_NODE &&
             strcmp((char *)key->data.scalar.value, "alumirrors") == 0) {
         if (parse_core_server_list(&glob->alumirrors,
@@ -728,12 +895,34 @@ static int global_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
-            strcmp((char *)key->data.scalar.value, "exportthreads") == 0) {
-        glob->exportthreads = strtoul((char *) value->data.scalar.value, NULL,
-                10);
-        if (glob->exportthreads <= 0) {
-            glob->exportthreads = 1;
-            logger(LOG_DAEMON, "OpenLI: must have at least one export thread per collector!");
+            strcmp((char *)key->data.scalar.value, "seqtrackerthreads") == 0) {
+        glob->seqtracker_threads = strtoul((char *) value->data.scalar.value,
+                NULL, 10);
+        if (glob->seqtracker_threads <= 0) {
+            glob->seqtracker_threads = 1;
+            logger(LOG_INFO, "OpenLI: must have at least one sequence tracker thread per collector!");
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "encoderthreads") == 0) {
+        glob->encoding_threads = strtoul((char *) value->data.scalar.value,
+                NULL, 10);
+        if (glob->encoding_threads <= 0) {
+            glob->encoding_threads = 1;
+            logger(LOG_INFO, "OpenLI: must have at least one encoder thread per collector!");
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "forwardingthreads") == 0) {
+        glob->forwarding_threads = strtoul((char *) value->data.scalar.value,
+                NULL, 10);
+        if (glob->forwarding_threads <= 0) {
+            glob->forwarding_threads = 1;
+            logger(LOG_INFO, "OpenLI: must have at least one forwarding thread per collector!");
         }
     }
 
@@ -787,7 +976,7 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
         state->mediatorid = strtoul((char *)value->data.scalar.value,
                 NULL, 10);
         if (state->mediatorid == 0) {
-            logger(LOG_DAEMON, "OpenLI: 0 is not a valid value for the 'mediatorid' config option.");
+            logger(LOG_INFO, "OpenLI: 0 is not a valid value for the 'mediatorid' config option.");
             return -1;
         }
     }
@@ -798,7 +987,7 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
         state->pcaprotatefreq = strtoul((char *)value->data.scalar.value,
                 NULL, 10);
         if (state->pcaprotatefreq == 0) {
-            logger(LOG_DAEMON, "OpenLI: 0 is not a valid value for the 'pcaprotatefreq' config option.");
+            logger(LOG_INFO, "OpenLI: 0 is not a valid value for the 'pcaprotatefreq' config option.");
             return -1;
         }
     }
@@ -854,6 +1043,14 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
             return -1;
         }
     }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "voip-ignorecomfort") == 0) {
+        state->ignorertpcomfort =
+                check_onoff((char *)(value->data.scalar.value));
+    }
+
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&

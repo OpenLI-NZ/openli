@@ -19,7 +19,7 @@ int daemonised = 0;
 void daemonise(char *name) {
 
     int rv;
-
+#if 0
     switch (fork()) {
         case 0:
             break;
@@ -53,12 +53,14 @@ void daemonise(char *name) {
     assert(rv == 1);
     rv = dup(rv);
     assert(rv == 2);
+#endif
 
+#if HAVE_SYSLOG_H
     daemonised = 1;
     name = strrchr(name,'/') ? strrchr(name,'/') + 1 : name;
 
-#if HAVE_SYSLOG_H
     openlog(name, LOG_PID, LOG_DAEMON);
+    setlogmask(LOG_UPTO(LOG_INFO));
 #endif
 
 }
@@ -71,8 +73,6 @@ void logger(int priority, const char *fmt, ...) {
     if (daemonised) {
         vsnprintf(buffer, sizeof(buffer), fmt, ap);
 #if HAVE_SYSLOG_H
-        /* Ensure logs have an appropriate priority */
-        priority |= LOG_INFO;
         syslog(priority, "%s", buffer);
 #endif
     } else {

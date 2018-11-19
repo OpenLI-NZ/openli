@@ -57,6 +57,13 @@ each intercept must be configured with the following six parameters:
 * SIP targets -- a list of identities that can be used to recognise
   activity in the SIP stream that is related to the intercept target.
 
+Some VOIP vendors have been known to generate RTP comfort noise packets that
+are not considered valid by the LEA decoders. If this problem occurs on your
+VOIP network, you can tell OpenLI to avoid intercepting RTP comfort noise
+packets by setting the 'voip-ignorecomfort' option to 'yes' at the top level
+of your configuration. Please confirm with your LEAs that this is acceptable
+before doing so, of course!
+
 ### IP Data Intercepts
 
 All IP intercepts are specified using the ipintercepts option. As with VOIP
@@ -83,6 +90,8 @@ used to identify the intercept target.
 * ALU Shim ID -- if you are using OpenLI to convert Alcatel-Lucent intercepts
   to ETSI-compliant records, this is the value that will be in the intercept-id
   fields of the packets emitted by the mirror.
+* Static IPs -- if the target has a static IP (range), you can use this
+  parameter to tell OpenLI which IPs belong to the target.
 
 If you have using User as the target identification method, you will need to
 ensure that the OpenLI collectors receive a copy of all RADIUS traffic
@@ -113,7 +122,11 @@ performing any VOIP intercepts. A SIP server is configured using two parameters:
 RADIUS servers are defined using the radiusservers option. The configuration
 works much the same as for SIP, except that most RADIUS deployments will need
 TWO server entries: one for the auth service and one for the accounting service,
-as these are usually listening on different ports.
+as these are usually listening on different ports. A RADIUS server entry is
+configured using two parameters:
+* ip -- the IP address of the RADIUS server
+* port -- the port that the RADIUS server is communicating on.
+
 
 
 ### Pcap Output Mode
@@ -142,6 +155,13 @@ The socket option keys are:
                            connections
 * mediationport         -- the port to listen on for incoming mediator
                            connections
+
+If you need to disable interception of RTP comfort noise packets (because
+they are considered invalid by the agency decoders), you can do so using
+the following option key:
+
+* voip-ignorecomfort    -- if set to 'yes', RTP comfort noise packets are
+                           ignored by OpenLI.
 
 Agencies are expressed as a YAML sequence with a key of `agencies:`. Each
 sequence item represents a single agency and must contain the following
@@ -172,6 +192,8 @@ An IP intercept must contain the following key-value elements:
 * user                  -- the AAA username for the target
 * alushimid             -- the intercept ID from the ALU intercept packets
                            (only for re-encoding ALU intercepts as ETSI)
+* staticips             -- a list of IP ranges that are known to have been
+                           assigned to the target.
 * mediator              -- the ID of the mediator which will forward the
                            intercept
 * agencyid              -- the internal identifier of the agency that requested
@@ -184,6 +206,19 @@ Valid access types are:
   'cable' and 'wireless-other'.
 
 
+`staticips:` are expressed as a YAML list: one list item per IP range that
+is associated with the target. Each list item is a YAML map containing the
+following key-value elements:
+
+* iprange               -- the IP range, expressed in CIDR notation. If a
+                           single address (i.e. no subnet) is given, a /32
+                           or /128 mask will be added automatically.
+* sessionid             -- the session ID (also known as CIN) to associate with
+                           intercepts for this address range. See example
+                           config for more information about the meaning of
+                           this field.
+
+---
 A VOIP intercept must contain the following key-value elements:
 
 * liid                  -- the LIID

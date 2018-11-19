@@ -30,20 +30,18 @@
 #include <libwandder_etsili.h>
 
 #include "logger.h"
-#include "collector.h"
-#include "collector_export.h"
 #include "export_buffer.h"
 #include "netcomms.h"
 
-#define BUFFER_ALLOC_SIZE (1024 * 1024 * 10)
+#define BUFFER_ALLOC_SIZE (1024 * 1024 * 50)
 #define BUFFER_WARNING_THRESH (1024 * 1024 * 1024)
 
-void init_export_buffer(export_buffer_t *buf, uint8_t hasnetcomm) {
+void init_export_buffer(export_buffer_t *buf) {
     buf->bufhead = NULL;
     buf->buftail = NULL;
     buf->alloced = 0;
     buf->partialfront = 0;
-    buf->hasnetcomm = hasnetcomm;
+    buf->deadfront = 0;
 }
 
 void release_export_buffer(export_buffer_t *buf) {
@@ -51,64 +49,32 @@ void release_export_buffer(export_buffer_t *buf) {
 }
 
 uint64_t get_buffered_amount(export_buffer_t *buf) {
-    return (buf->buftail - buf->bufhead);
+    return (buf->buftail - (buf->bufhead + buf->deadfront));
 }
 
-
-static void validate_buffer(export_buffer_t *buf) {
-    uint64_t sent = 0;
-    uint64_t tocheck = buf->buftail - buf->bufhead;
-    wandder_etsispec_t *dec = wandder_create_etsili_decoder();
-    int ret;
-
-    printf("\nVALIDATING %lu\n\n", tocheck);
-
-    while (buf->bufhead + sent < buf->buftail) {
-        uint32_t attachlen = 0;
-        uint32_t pdulen = 0;
-
-        if (buf->buftail - (buf->bufhead + sent) < 10000) {
-            attachlen = buf->buftail - (buf->bufhead + sent);
-        } else {
-            attachlen = 10000;
-        }
-
-        printf("%lu ", sent);
-
-        for (ret = 0; ret < 4; ret ++) {
-            printf("%02x ", *(buf->bufhead + sent + ret));
-        }
-        wandder_attach_etsili_buffer(dec, buf->bufhead + sent, attachlen, 0);
-        pdulen = wandder_etsili_get_pdu_length(dec);
-
-        printf("%u\n", pdulen);
-
-        if (pdulen == 0) {
-            logger(LOG_DAEMON, "OpenLI: failed to decode buffered ETSI record.");
-            assert(0);
-            break;
-        }
-        sent += pdulen;
-    }
-
-    printf("\n");
-}
 
 static inline uint64_t extend_buffer(export_buffer_t *buf) {
 
     /* Add some space to the buffer */
     uint8_t *space = NULL;
-    uint64_t bufused = buf->buftail - buf->bufhead;
+    uint64_t bufused = buf->buftail - (buf->bufhead + buf->deadfront);
+
+    if (buf->deadfront > 0) {
+        memmove(buf->bufhead, buf->bufhead + buf->deadfront, bufused);
+    }
 
     space = (uint8_t *)realloc(buf->bufhead, buf->alloced + BUFFER_ALLOC_SIZE);
+
     if (space == NULL) {
         /* OOM -- bad! */
         /* TODO: maybe dump to disk at this point? */
-        logger(LOG_DAEMON, "OpenLI: no more free memory to use as buffer space!");
-        logger(LOG_DAEMON, "OpenLI: fix the connection between your collector and your mediator.");
+        logger(LOG_INFO, "OpenLI: no more free memory to use as buffer space!");
+        logger(LOG_INFO, "OpenLI: fix the connection between your collector and your mediator.");
         return 0;
     }
 
+
+    buf->deadfront = 0;
     buf->bufhead = space;
     buf->buftail = space + bufused;
     buf->alloced = buf->alloced + BUFFER_ALLOC_SIZE;
@@ -116,15 +82,16 @@ static inline uint64_t extend_buffer(export_buffer_t *buf) {
     if (buf->alloced - BUFFER_ALLOC_SIZE < BUFFER_WARNING_THRESH &&
             buf->alloced >= BUFFER_WARNING_THRESH) {
         /* TODO add email alerts */
-        logger(LOG_DAEMON, "OpenLI: buffer space for missing mediator has exceeded warning threshold.");
+        logger(LOG_INFO, "OpenLI: buffer space for missing mediator has exceeded warning threshold.");
     }
+
     return buf->alloced - bufused;
 }
 
 uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
         uint8_t *pdustart, uint32_t pdulen, uint32_t beensent) {
 
-    uint64_t bufused = buf->buftail - buf->bufhead;
+    uint64_t bufused = buf->buftail - (buf->bufhead);
     uint64_t spaceleft = buf->alloced - bufused;
 
     if (bufused == 0) {
@@ -141,45 +108,55 @@ uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
     memcpy(buf->buftail, (void *)pdustart, pdulen);
 
     buf->buftail += pdulen;
-
-    //validate_buffer(buf);
     return (buf->buftail - buf->bufhead);
 
 }
 
 uint64_t append_message_to_buffer(export_buffer_t *buf,
-        openli_exportmsg_t *msg, uint32_t beensent) {
+        openli_encoded_result_t *res, uint32_t beensent) {
 
-    uint32_t enclen = msg->msgbody->len - msg->ipclen;
+    uint32_t enclen = res->msgbody->len - res->ipclen;
     uint64_t bufused = buf->buftail - buf->bufhead;
     uint64_t spaceleft = buf->alloced - bufused;
+
+    int liidlen;
+
+    if (res->liid == NULL) {
+        return 0;
+    }
+
+    liidlen = strlen(res->liid);
 
     if (bufused == 0) {
         buf->partialfront = beensent;
     }
 
-    while (spaceleft < msg->msgbody->len + msg->hdrlen) {
+    while (spaceleft < res->msgbody->len + sizeof(res->header) + liidlen + 2) {
+        /* Add some space to the buffer */
         spaceleft = extend_buffer(buf);
         if (spaceleft == 0) {
             return 0;
         }
-        /* Add some space to the buffer */
     }
 
-    if (msg->header) {
-        ii_header_t *ii = (ii_header_t *)(msg->header);
-        memcpy(buf->buftail, msg->header, msg->hdrlen);
-        buf->buftail += msg->hdrlen;
+    memcpy(buf->buftail, &res->header, sizeof(res->header));
+    buf->buftail += sizeof(res->header);
+
+    if (res->liid) {
+        uint16_t l = htons(liidlen);
+        memcpy(buf->buftail, &l, sizeof(uint16_t));
+        memcpy(buf->buftail + 2, res->liid, liidlen);
+        buf->buftail += (liidlen + 2);
     }
-    memcpy(buf->buftail, msg->msgbody->encoded, enclen);
+
+    memcpy(buf->buftail, res->msgbody->encoded, enclen);
 
     buf->buftail += enclen;
-    if (msg->ipclen > 0) {
-        memcpy(buf->buftail, msg->ipcontents, msg->ipclen);
-        buf->buftail += msg->ipclen;
+    if (res->ipclen > 0) {
+        memcpy(buf->buftail, res->ipcontents, res->ipclen);
+        buf->buftail += res->ipclen;
     }
 
-    //validate_buffer(buf);
     return (buf->buftail - buf->bufhead);
 }
 
@@ -188,56 +165,18 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
 
     uint64_t sent = 0;
     uint64_t rem = 0;
+    uint8_t *bhead = buf->bufhead + buf->deadfront;
     uint64_t offset = buf->partialfront;
-    wandder_etsispec_t *dec;
     int ret;
     ii_header_t *header = NULL;
 
-    if (!buf->hasnetcomm) {
-        dec = wandder_create_etsili_decoder();
-    }
+    sent = (buf->buftail - (bhead + offset));
 
-    /* Try to maintain record alignment */
-    while (buf->bufhead + sent < buf->buftail) {
-        uint32_t attachlen = 0;
-        uint32_t pdulen = 0;
-
-        if (buf->buftail - (buf->bufhead + sent) < 10000) {
-            attachlen = buf->buftail - (buf->bufhead + sent);
-        } else {
-            attachlen = 10000;
-        }
-
-        if (buf->hasnetcomm) {
-            header = (ii_header_t *)(buf->bufhead + sent);
-            pdulen = ntohs(header->bodylen) + sizeof(ii_header_t);
-        } else {
-            wandder_attach_etsili_buffer(dec, buf->bufhead + sent,
-                    attachlen, 0);
-            pdulen = wandder_etsili_get_pdu_length(dec);
-            if (pdulen == 0) {
-                logger(LOG_DAEMON, "OpenLI: failed to decode buffered ETSI record.");
-                break;
-            }
-        }
-
-        if (sent + pdulen > bytelimit) {
-            break;
-        }
-
-        sent += pdulen;
-    }
-
-    if (!buf->hasnetcomm) {
-        wandder_free_etsili_decoder(dec);
-    }
-
-    sent -= offset;
     if (sent != 0) {
-        ret = send(fd, buf->bufhead + offset, (int)sent, MSG_DONTWAIT);
+        ret = send(fd, bhead + offset, (int)sent, MSG_DONTWAIT);
         if (ret < 0) {
             if (errno != EAGAIN) {
-                logger(LOG_DAEMON,
+                logger(LOG_INFO,
                         "OpenLI: Error exporting to target from buffer: %s.",
                         strerror(errno));
                 return -1;
@@ -248,9 +187,11 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
             buf->partialfront += (uint32_t)ret;
             return ret;
         }
+        buf->deadfront += ((uint32_t)ret + buf->partialfront);
     }
 
-    rem = (buf->buftail - (buf->bufhead + sent + offset));
+    assert(buf->buftail >= buf->bufhead + buf->deadfront);
+    rem = (buf->buftail - (buf->bufhead + buf->deadfront));
 
     /* Consider shrinking buffer if it is now way too large */
     if (rem < buf->alloced / 2 && buf->alloced > 10 * BUFFER_ALLOC_SIZE) {
@@ -259,14 +200,20 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         uint64_t resize = 0;
         resize = ((rem / BUFFER_ALLOC_SIZE) + 1) * BUFFER_ALLOC_SIZE;
 
-        memmove(buf->bufhead, buf->bufhead + sent + offset, rem);
+        memmove(buf->bufhead, bhead + sent + offset, rem);
         newbuf = (uint8_t *)realloc(buf->bufhead, resize);
         buf->buftail = newbuf + rem;
         buf->bufhead = newbuf;
         buf->alloced = resize;
-    } else {
-        memmove(buf->bufhead, buf->bufhead + sent + offset, rem);
+        buf->deadfront = 0;
+    } else if (buf->alloced - (buf->buftail - buf->bufhead) <
+            0.25 * buf->alloced && buf->deadfront >= 0.25 * buf->alloced) {
+        if (rem > 0) {
+            memmove(buf->bufhead, bhead + sent + offset, rem);
+        }
         buf->buftail = buf->bufhead + rem;
+        assert(buf->buftail < buf->bufhead + buf->alloced);
+        buf->deadfront = 0;
     }
 
     buf->partialfront = 0;

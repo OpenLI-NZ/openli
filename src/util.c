@@ -34,18 +34,28 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <netinet/tcp.h>
 #include <stdio.h>
+#include <fcntl.h>
 
 #include "logger.h"
 #include "util.h"
 
-int connect_socket(char *ipstr, char *portstr, uint8_t isretry) {
+int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
+        uint8_t setkeepalive) {
 
     struct addrinfo hints, *res;
     int sockfd;
+    int optval;
+    int flags;
+    int success = 0;
+    fd_set fdset;
+    socklen_t optlen;
+    struct timeval tv;
+    int so_error = 0;
 
     if (ipstr == NULL || portstr == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Error trying to connect to remote host -- host IP or port is not set.");
         return -1;
     }
@@ -55,7 +65,7 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry) {
     hints.ai_socktype = SOCK_STREAM;
 
     if (getaddrinfo(ipstr, portstr, &hints, &res) == -1) {
-        logger(LOG_DAEMON, "OpenLI: Error while trying to look up %s:%s -- %s.",
+        logger(LOG_INFO, "OpenLI: Error while trying to look up %s:%s -- %s.",
                 ipstr, portstr, strerror(errno));
         return -1;
     }
@@ -63,17 +73,75 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry) {
     sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 
     if (sockfd == -1) {
-        logger(LOG_DAEMON, "OpenLI: Error while creating connecting socket: %s.",
+        logger(LOG_INFO, "OpenLI: Error while creating connecting socket: %s.",
                 strerror(errno));
-        goto endconnect;
+        goto failconnect;
     }
 
-    if (connect(sockfd, res->ai_addr, res->ai_addrlen) == -1) {
+    if (setkeepalive) {
+        optval = 1;
+        optlen = sizeof(optval);
+
+        if (setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &optval, optlen) < 0) {
+            logger(LOG_INFO, "OpenLI: Unable to set keep alive SO for socket: %s.",
+                    strerror(errno));
+            goto failconnect;
+        }
+
+        optval = 30;
+        if (setsockopt(sockfd, SOL_TCP, TCP_KEEPIDLE, &optval, optlen) < 0) {
+            logger(LOG_INFO, "OpenLI: Unable to set keep alive idle SO for socket: %s.",
+                    strerror(errno));
+            goto failconnect;
+        }
+
+        if (setsockopt(sockfd, SOL_TCP, TCP_KEEPINTVL, &optval, optlen) < 0) {
+            logger(LOG_INFO, "OpenLI: Unable to set keep alive interval SO for socket: %s.",
+                    strerror(errno));
+            goto failconnect;
+        }
+
+    }
+
+    if ((flags = fcntl(sockfd, F_GETFL, 0)) < 0) {
+        logger(LOG_INFO, "OpenLI: unable to get socket flags for new socket.");
+        goto failconnect;
+    }
+
+
+    if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        logger(LOG_INFO, "OpenLI: unable to set non-blocking socket flags for new socket.");
+        goto failconnect;
+    }
+
+    connect(sockfd, res->ai_addr, res->ai_addrlen);
+
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    FD_ZERO(&fdset);
+    FD_SET(sockfd, &fdset);
+
+    if (select(sockfd + 1, NULL, &fdset, NULL, &tv) == 1) {
+        socklen_t len = sizeof(so_error);
+
+        getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &so_error, &len);
+
+        if (so_error == 0) {
+            success = 1;
+        } else {
+            success = 0;
+        }
+    } else {
+        so_error = ETIMEDOUT;
+        success = 0;
+    }
+
+    if (!success) {
         if (!isretry) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: Failed to connect to %s:%s -- %s.",
-                    ipstr, portstr, strerror(errno));
-            logger(LOG_DAEMON, "OpenLI: Will retry connection periodically.");
+                    ipstr, portstr, strerror(so_error));
+            logger(LOG_INFO, "OpenLI: Will retry connection periodically.");
         }
 
         close(sockfd);
@@ -81,8 +149,22 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry) {
         goto endconnect;
     }
 
-    logger(LOG_DAEMON, "OpenLI: connected to %s:%s successfully.",
+
+    if (fcntl(sockfd, F_SETFL, flags) < 0) {
+        logger(LOG_INFO, "OpenLI: unable to reset socket flags for new socket.");
+        goto failconnect;
+    }
+
+    logger(LOG_DEBUG, "OpenLI: connected to %s:%s successfully.",
             ipstr, portstr);
+    goto endconnect;
+
+failconnect:
+    if (sockfd >= 0) {
+        close(sockfd);
+        sockfd = -1;
+    }
+
 endconnect:
     freeaddrinfo(res);
     return sockfd;
@@ -102,21 +184,21 @@ int create_listener(char *addr, char *port, char *name) {
 
     if (getaddrinfo(addr, port, &hints, &res) == -1)
     {
-        logger(LOG_DAEMON, "OpenLI: Error while trying to getaddrinfo for %s listening socket.", name);
+        logger(LOG_INFO, "OpenLI: Error while trying to getaddrinfo for %s listening socket.", name);
         return -1;
     }
 
     sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 
     if (sockfd == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Error while creating %s listening socket: %s.",
                 name, strerror(errno));
         goto endlistener;
     }
 
     if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Error while setting options on %s listening socket: %s",
 				name, strerror(errno));
         close(sockfd);
@@ -126,7 +208,7 @@ int create_listener(char *addr, char *port, char *name) {
 
 
     if (bind(sockfd, res->ai_addr, res->ai_addrlen) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Error while trying to bind %s listening socket: %s.",
                 name, strerror(errno));
         close(sockfd);
@@ -135,14 +217,14 @@ int create_listener(char *addr, char *port, char *name) {
     }
 
     if (listen(sockfd, 10) == -1) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: Error while listening on %s socket: %s.",
                 name, strerror(errno));
         close(sockfd);
         sockfd = -1;
         goto endlistener;
     }
-    logger(LOG_DAEMON, "OpenLI: %s listening on %s:%s successfully.",
+    logger(LOG_INFO, "OpenLI: %s listening on %s:%s successfully.",
             name, addr, port);
 endlistener:
     freeaddrinfo(res);
@@ -192,7 +274,7 @@ void convert_ipstr_to_sockaddr(char *knownip,
     hints.ai_family = AF_UNSPEC;
 
     if (getaddrinfo(knownip, NULL, &hints, &res) != 0) {
-        logger(LOG_DAEMON, "OpenLI: getaddrinfo cannot parse IP address %s: %s",
+        logger(LOG_INFO, "OpenLI: getaddrinfo cannot parse IP address %s: %s",
                 knownip, gai_strerror(errno));
     }
 
@@ -204,6 +286,32 @@ void convert_ipstr_to_sockaddr(char *knownip,
     freeaddrinfo(res);
 }
 
+int sockaddr_match(int family, struct sockaddr *a, struct sockaddr *b) {
+
+    if (family == AF_INET) {
+        struct sockaddr_in *sa, *sb;
+        sa = (struct sockaddr_in *)a;
+        sb = (struct sockaddr_in *)b;
+
+        if (sa->sin_addr.s_addr == sb->sin_addr.s_addr) {
+            return 1;
+        }
+        return 0;
+    }
+
+    if (family == AF_INET) {
+        struct sockaddr_in6 *s6a, *s6b;
+        s6a = (struct sockaddr_in6 *)a;
+        s6b = (struct sockaddr_in6 *)b;
+
+        if (memcmp(s6a->sin6_addr.s6_addr, s6b->sin6_addr.s6_addr, 16) == 0) {
+            return 1;
+        }
+        return 0;
+    }
+
+    return 0;
+}
 
 int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr) {
     int timerfd;
@@ -227,5 +335,76 @@ int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr) {
 
     return timerfd;
 }
+
+int extract_ip_addresses(libtrace_packet_t *pkt, uint8_t *srcip,
+        uint8_t *destip, int *ipfamily) {
+
+    void *ipheader;
+    uint16_t ethertype;
+    uint32_t  rem;
+    /* Pre-requisite: srcip and destip point to at least 16 bytes of
+     * usable memory.
+     */
+    if (srcip == NULL || destip == NULL) {
+        return -1;
+    }
+
+    *ipfamily = 0;
+
+    ipheader = trace_get_layer3(pkt, &ethertype, &rem);
+    if (!ipheader || rem == 0) {
+        return -1;
+    }
+
+    if (ethertype == TRACE_ETHERTYPE_IP) {
+        libtrace_ip_t *ip4 = (libtrace_ip_t *)ipheader;
+
+        if (rem < sizeof(libtrace_ip_t)) {
+            return -1;
+        }
+
+        *ipfamily = AF_INET;
+        memcpy(srcip, &(ip4->ip_src.s_addr), sizeof(uint32_t));
+        memcpy(destip, &(ip4->ip_dst.s_addr), sizeof(uint32_t));
+    } else {
+        libtrace_ip6_t *ip6 = (libtrace_ip6_t *)ipheader;
+
+        if (rem < sizeof(libtrace_ip6_t)) {
+            return -1;
+        }
+
+        *ipfamily = AF_INET;
+        memcpy(srcip, &(ip6->ip_src.s6_addr), sizeof(struct in6_addr));
+        memcpy(destip, &(ip6->ip_dst.s6_addr), sizeof(struct in6_addr));
+    }
+
+    return 0;
+}
+
+struct addrinfo *populate_addrinfo(char *ipstr, char *portstr,
+        int socktype) {
+    struct addrinfo hints, *res;
+    int s;
+
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = socktype;
+    hints.ai_flags = AI_PASSIVE;
+
+    s = getaddrinfo(ipstr, portstr, &hints, &res);
+    if (s != 0) {
+        logger(LOG_INFO,
+                "OpenLI: error calling getaddrinfo on %s:%s: %s",
+                ipstr, portstr, gai_strerror(s));
+        return NULL;
+    }
+
+    return res;
+}
+
+uint32_t hash_liid(char *liid) {
+    return hashlittle(liid, strlen(liid), 1572869);
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 

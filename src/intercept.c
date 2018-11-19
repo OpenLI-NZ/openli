@@ -68,6 +68,20 @@ int are_sip_identities_same(openli_sip_identity_t *a,
     return 0;
 }
 
+sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
+        uint32_t cin) {
+    sipregister_t *newreg;
+
+    newreg = (sipregister_t *)calloc(1, sizeof(sipregister_t));
+
+    newreg->callid = strdup(callid);
+    newreg->cin = cin;
+    copy_intercept_common(&(vint->common), &(newreg->common));
+    newreg->parent = vint;
+
+    return newreg;
+}
+
 rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
 
     rtpstreaminf_t *newcin = NULL;
@@ -95,6 +109,12 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
     newcin->byecseq = NULL;
     newcin->timeout_ev = NULL;
     newcin->byematched = 0;
+
+    if (vint->options & (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
+        newcin->skip_comfort = 1;
+    } else {
+        newcin->skip_comfort = 0;
+    }
 
     copy_intercept_common(&(vint->common), &(newcin->common));
     snprintf(newcin->streamkey, 256, "%s-%u", vint->common.liid, cin);
@@ -134,6 +154,7 @@ rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *orig) {
     memcpy(copy->otheraddr, orig->otheraddr, sizeof(struct sockaddr_storage));
     copy->targetport = orig->targetport;
     copy->otherport = orig->otherport;
+    copy->skip_comfort = orig->skip_comfort;
     copy->seqno = 0;
     copy->active = 1;
     copy->invitecseq = NULL;
@@ -165,20 +186,33 @@ static inline void free_intercept_common(intercept_common_t *cept) {
 }
 
 void free_single_ipintercept(ipintercept_t *cept) {
+    static_ipranges_t *ipr, *tmp;
+
     free_intercept_common(&(cept->common));
     if (cept->username) {
         free(cept->username);
     }
 
+    HASH_ITER(hh, cept->statics, ipr, tmp) {
+        HASH_DELETE(hh, cept->statics, ipr);
+        if (ipr->rangestr) {
+            free(ipr->rangestr);
+        }
+        if (ipr->liid) {
+            free(ipr->liid);
+        }
+        free(ipr);
+    }
+
     free(cept);
 }
 
-void free_all_ipintercepts(ipintercept_t *interceptlist) {
+void free_all_ipintercepts(ipintercept_t **interceptlist) {
 
     ipintercept_t *cept, *tmp;
 
-    HASH_ITER(hh_liid, interceptlist, cept, tmp) {
-        HASH_DELETE(hh_liid, interceptlist, cept);
+    HASH_ITER(hh_liid, *interceptlist, cept, tmp) {
+        HASH_DELETE(hh_liid, *interceptlist, cept);
         free_single_ipintercept(cept);
     }
 }
@@ -239,6 +273,24 @@ static void free_voip_cins(rtpstreaminf_t *cins) {
 
 }
 
+static void free_single_register(sipregister_t *sipr) {
+    free_intercept_common(&(sipr->common));
+    if (sipr->callid) {
+        free(sipr->callid);
+    }
+    free(sipr);
+}
+
+static void free_voip_registrations(sipregister_t *sipregs) {
+    sipregister_t *r, *tmp;
+
+    HASH_ITER(hh, sipregs, r, tmp) {
+        HASH_DEL(sipregs, r);
+        free_single_register(r);
+    }
+
+}
+
 static void free_sip_targets(libtrace_list_t *targets) {
 
     libtrace_list_node_t *n;
@@ -269,6 +321,9 @@ void free_single_voipintercept(voipintercept_t *v) {
     if (v->active_cins) {
         free_voip_cins(v->active_cins);
     }
+    if (v->active_registrations) {
+        free_voip_registrations(v->active_registrations);
+    }
 
     if (v->targets) {
         free_sip_targets(v->targets);
@@ -276,32 +331,37 @@ void free_single_voipintercept(voipintercept_t *v) {
     free(v);
 }
 
-void free_all_voipintercepts(voipintercept_t *vints) {
+void free_all_voipintercepts(voipintercept_t **vints) {
 
     voipintercept_t *v, *tmp;
-    HASH_ITER(hh_liid, vints, v, tmp) {
-        HASH_DELETE(hh_liid, vints, v);
+    HASH_ITER(hh_liid, *vints, v, tmp) {
+        HASH_DELETE(hh_liid, *vints, v);
         free_single_voipintercept(v);
     }
 
 }
 
-void free_all_rtpstreams(rtpstreaminf_t *streams) {
+void free_single_rtpstream(rtpstreaminf_t *rtp) {
+    free_intercept_common(&(rtp->common));
+    if (rtp->targetaddr) {
+        free(rtp->targetaddr);
+    }
+    if (rtp->otheraddr) {
+        free(rtp->otheraddr);
+    }
+    if (rtp->streamkey) {
+        free(rtp->streamkey);
+    }
+    free(rtp);
+
+}
+
+void free_all_rtpstreams(rtpstreaminf_t **streams) {
     rtpstreaminf_t *rtp, *tmp;
 
-    HASH_ITER(hh, streams, rtp, tmp) {
-        HASH_DELETE(hh, streams, rtp);
-        free_intercept_common(&(rtp->common));
-        if (rtp->targetaddr) {
-            free(rtp->targetaddr);
-        }
-        if (rtp->otheraddr) {
-            free(rtp->otheraddr);
-        }
-        if (rtp->streamkey) {
-            free(rtp->streamkey);
-        }
-        free(rtp);
+    HASH_ITER(hh, *streams, rtp, tmp) {
+        HASH_DELETE(hh, *streams, rtp);
+        free_single_rtpstream(rtp);
     }
 }
 
@@ -326,11 +386,55 @@ void free_single_aluintercept(aluintercept_t *alu) {
     free(alu);
 }
 
-void free_all_aluintercepts(aluintercept_t *aluints) {
+void free_all_aluintercepts(aluintercept_t **aluints) {
     aluintercept_t *alu, *tmp;
-    HASH_ITER(hh, aluints, alu, tmp) {
-        HASH_DELETE(hh, aluints, alu);
+    HASH_ITER(hh, *aluints, alu, tmp) {
+        HASH_DELETE(hh, *aluints, alu);
         free_single_aluintercept(alu);
+    }
+}
+
+staticipsession_t *create_staticipsession(ipintercept_t *ipint, char *rangestr,
+        uint32_t cin) {
+
+    staticipsession_t *statint;
+
+    statint = (staticipsession_t *)malloc(sizeof(staticipsession_t));
+    if (statint == NULL) {
+        return NULL;
+    }
+
+    if (rangestr) {
+        statint->rangestr = strdup(rangestr);
+    } else {
+        statint = NULL;
+    }
+
+    statint->references = 0;
+    statint->cin = cin;
+    statint->nextseqno = 0;
+    copy_intercept_common(&(ipint->common), &(statint->common));
+    statint->key = (char *)calloc(1, 128);
+    snprintf(statint->key, 127, "%s-%u", ipint->common.liid, cin);
+
+    return statint;
+}
+
+void free_single_staticipsession(staticipsession_t *statint) {
+
+    free_intercept_common(&(statint->common));
+    if (statint->rangestr) {
+        free(statint->rangestr);
+    }
+    free(statint->key);
+    free(statint);
+}
+
+void free_all_staticipsessions(staticipsession_t **statintercepts) {
+    staticipsession_t *statint, *tmp;
+    HASH_ITER(hh, *statintercepts, statint, tmp) {
+        HASH_DELETE(hh, *statintercepts, statint);
+        free_single_staticipsession(statint);
     }
 }
 
@@ -380,10 +484,10 @@ void free_single_ipsession(ipsession_t *sess) {
     free(sess);
 }
 
-void free_all_ipsessions(ipsession_t *sessions) {
+void free_all_ipsessions(ipsession_t **sessions) {
     ipsession_t *s, *tmp;
-    HASH_ITER(hh, sessions, s, tmp) {
-        HASH_DELETE(hh, sessions, s);
+    HASH_ITER(hh, *sessions, s, tmp) {
+        HASH_DELETE(hh, *sessions, s);
         free_single_ipsession(s);
     }
 }
@@ -395,7 +499,7 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
     ipintercept_t *check;
 
     if (ipint->username == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: attempted to add non-user-based IP intercept to user intercept list.");
         return -1;
     }
@@ -404,14 +508,14 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
     if (!found) {
         found = (user_intercept_list_t *)malloc(sizeof(user_intercept_list_t));
         if (!found) {
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: out of memory in add_intercept_to_userlist()");
             return -1;
         }
         found->username = strdup(ipint->username);
         if (!found->username) {
             free(found);
-            logger(LOG_DAEMON,
+            logger(LOG_INFO,
                     "OpenLI: out of memory in add_intercept_to_userlist()");
             return -1;
         }
@@ -423,7 +527,7 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
     HASH_FIND(hh_user, found->intlist, ipint->common.liid,
             ipint->common.liid_len, check);
     if (check) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: user %s already has an intercept with ID %s?",
                 found->username, ipint->common.liid);
         return -1;
@@ -441,7 +545,7 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
     ipintercept_t *existing;
 
     if (ipint->username == NULL) {
-        logger(LOG_DAEMON,
+        logger(LOG_INFO,
                 "OpenLI: attempted to remove non-user-based IP intercept from user intercept list.");
         return -1;
     }

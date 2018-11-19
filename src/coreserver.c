@@ -46,85 +46,6 @@ const char *coreserver_type_to_string(uint8_t cstype) {
     return "Unknown";
 }
 
-static struct addrinfo *populate_addrinfo(char *ipstr, char *portstr,
-        int socktype) {
-    struct addrinfo hints, *res;
-    int s;
-
-    memset(&hints, 0, sizeof(struct addrinfo));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = socktype;
-    hints.ai_flags = AI_PASSIVE;
-
-    s = getaddrinfo(ipstr, portstr, &hints, &res);
-    if (s != 0) {
-        logger(LOG_DAEMON,
-                "OpenLI: error calling getaddrinfo on %s:%s: %s",
-                ipstr, portstr, gai_strerror(s));
-        return NULL;
-    }
-
-    return res;
-}
-
-int coreserver_match(coreserver_t *cs, struct sockaddr_storage *sa,
-        uint16_t port) {
-
-    struct sockaddr_in *in, *csin;
-    struct sockaddr_in6 *in6, *csin6;
-
-    /* XXX for now, all supported server types are UDP so no need to
-     * set socktype to be anything other than SOCK_DGRAM */
-
-    /* TCP SIP?? TODO */
-    if (cs->info == NULL) {
-        cs->info = populate_addrinfo(cs->ipstr, cs->portstr, SOCK_DGRAM);
-    }
-
-    if (!cs->info) {
-        return -1;
-    }
-
-    if (sa->ss_family != cs->info->ai_family) {
-        return 0;
-    }
-
-    if (sa->ss_family == AF_INET) {
-        in = (struct sockaddr_in *)sa;
-        csin = (struct sockaddr_in *)(cs->info->ai_addr);
-
-        if (port != ntohs(csin->sin_port)) {
-            return 0;
-        }
-
-        if (memcmp(&(in->sin_addr), &(csin->sin_addr), sizeof(struct in_addr))
-                != 0) {
-            return 0;
-        }
-
-        return 1;
-    }
-
-    if (sa->ss_family == AF_INET6) {
-        in6 = (struct sockaddr_in6 *)sa;
-        csin6 = (struct sockaddr_in6 *)(cs->info->ai_addr);
-
-        if (port != ntohs(csin6->sin6_port)) {
-            return 0;
-        }
-
-        if (memcmp(&(in6->sin6_addr), &(csin6->sin6_addr),
-                sizeof(struct in6_addr)) != 0) {
-            return 0;
-        }
-
-        return 1;
-    }
-
-    /* Unsupported family */
-    return 0;
-}
-
 coreserver_t *deep_copy_coreserver(coreserver_t *cs) {
     coreserver_t *cscopy;
 
@@ -138,6 +59,7 @@ coreserver_t *deep_copy_coreserver(coreserver_t *cs) {
     }
     cscopy->servertype = cs->servertype;
     cscopy->info = NULL;
+    cscopy->portswapped = cs->portswapped;
     cscopy->awaitingconfirm = 0;
     return cscopy;
 }

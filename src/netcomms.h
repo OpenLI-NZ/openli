@@ -30,7 +30,7 @@
 #include "config.h"
 #include <inttypes.h>
 
-#define NETBUF_ALLOC_SIZE (4096)
+#define NETBUF_ALLOC_SIZE (10 * 1024 * 1024)
 
 #define OPENLI_PROTO_MAGIC 0x5c4c6c5c
 #define OPENLI_COLLECTOR_MAGIC 0x00180014202042a8
@@ -86,6 +86,9 @@ typedef enum {
     OPENLI_PROTO_WITHDRAW_CORESERVER,
     OPENLI_PROTO_ANNOUNCE_SIP_TARGET,
     OPENLI_PROTO_WITHDRAW_SIP_TARGET,
+    OPENLI_PROTO_ADD_STATICIPS,
+    OPENLI_PROTO_REMOVE_STATICIPS,
+    OPENLI_PROTO_MODIFY_VOIPINTERCEPT,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -121,13 +124,16 @@ typedef enum {
     OPENLI_PROTO_FIELD_ACCESSTYPE,
     OPENLI_PROTO_FIELD_SIP_USER,
     OPENLI_PROTO_FIELD_SIP_REALM,
+    OPENLI_PROTO_FIELD_STATICIP_RANGE,
+    OPENLI_PROTO_FIELD_CIN,
+    OPENLI_PROTO_FIELD_INTOPTIONS,
 } openli_proto_fieldtype_t;
 
 
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd);
 void destroy_net_buffer(net_buffer_t *nb);
 
-uint8_t *construct_netcomm_protocol_header(uint32_t contentlen,
+int construct_netcomm_protocol_header(ii_header_t *hdr, uint32_t contentlen,
         uint16_t msgtype, uint64_t internalid, uint32_t *hdrlen);
 
 int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med);
@@ -138,6 +144,8 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb,
         void *vint);
 int push_intercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
         void *cept, openli_proto_msgtype_t wdtype);
+int push_intercept_modify_onto_net_buffer(net_buffer_t *nb,
+        void *cept, openli_proto_msgtype_t modtype);
 int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
@@ -159,6 +167,10 @@ int push_sip_target_withdrawal_onto_net_buffer(net_buffer_t *nb,
         openli_sip_identity_t *sipid, voipintercept_t *vint);
 int push_nomore_intercepts(net_buffer_t *nb);
 int transmit_net_buffer(net_buffer_t *nb);
+int push_static_ipranges_removal_onto_net_buffer(net_buffer_t *nb,
+        ipintercept_t *ipint, static_ipranges_t *ipr);
+int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
+        ipintercept_t *ipint, static_ipranges_t *ipr);
 
 openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
         uint16_t *msglen, uint64_t *intid);
@@ -174,6 +186,8 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
         voipintercept_t *vint);
 int decode_voipintercept_halt(uint8_t *msgbody, uint16_t len,
         voipintercept_t *vint);
+int decode_voipintercept_modify(uint8_t *msgbody, uint16_t len,
+        voipintercept_t *vint);
 int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_lea_withdrawal(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
@@ -187,6 +201,10 @@ int decode_sip_target_announcement(uint8_t *msgbody, uint16_t len,
         openli_sip_identity_t *sipid, char *liidspace, int spacelen);
 int decode_sip_target_withdraw(uint8_t *msgbody, uint16_t len,
         openli_sip_identity_t *sipid, char *liidspace, int spacelen);
+int decode_staticip_announcement(uint8_t *msgbody, uint16_t len,
+        static_ipranges_t *ipr);
+int decode_staticip_removal(uint8_t *msgbody, uint16_t len,
+        static_ipranges_t *ipr);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
