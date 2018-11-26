@@ -2493,6 +2493,7 @@ int main(int argc, char *argv[]) {
     char *mediatorid = NULL;
     sigset_t sigblock;
     int todaemon = 0;
+    char *pidfile = NULL;
 
     mediator_state_t medstate;
     mediator_pcap_msg_t pcapmsg;
@@ -2503,10 +2504,11 @@ int main(int argc, char *argv[]) {
             { "help", 0, 0, 'h' },
             { "config", 1, 0, 'c'},
             { "daemonise", 0, 0, 'd'},
+            { "pidfile", 1, 0, 'p'},
             { NULL, 0, 0, 0},
         };
 
-        int c = getopt_long(argc, argv, "c:dm:h", long_options, &optind);
+        int c = getopt_long(argc, argv, "c:dm:p:h", long_options, &optind);
         if (c == -1) {
             break;
         }
@@ -2524,6 +2526,9 @@ int main(int argc, char *argv[]) {
             case 'h':
                 usage(argv[0]);
                 return 1;
+            case 'p':
+                pidfile = optarg;
+                break;
             default:
                 logger(LOG_INFO, "OpenLI: unsupported option: %c",
                         c);
@@ -2540,7 +2545,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (todaemon) {
-        daemonise(argv[0]);
+        daemonise(argv[0], pidfile);
     }
 
     if (mediatorid == NULL) {
@@ -2582,6 +2587,10 @@ int main(int argc, char *argv[]) {
 
     destroy_med_state(&medstate);
     clear_med_config(&medstate);
+
+    if (todaemon && pidfile) {
+        remove_pidfile(pidfile);
+    }
 
     logger(LOG_INFO, "OpenLI: Mediator '%s' has exited.", mediatorid);
     return 0;

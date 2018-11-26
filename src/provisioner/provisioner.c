@@ -2447,6 +2447,7 @@ int main(int argc, char *argv[]) {
     char *configfile = NULL;
     sigset_t sigblock;
     int daemonmode = 0;
+    char *pidfile = NULL;
 
     provision_state_t provstate;
 
@@ -2456,10 +2457,11 @@ int main(int argc, char *argv[]) {
             { "help", 0, 0, 'h' },
             { "config", 1, 0, 'c'},
             { "daemonise", 0, 0, 'd'},
+            { "pidfile", 1, 0, 'p'},
             { NULL, 0, 0, 0},
         };
 
-        int c = getopt_long(argc, argv, "c:dh", long_options, &optind);
+        int c = getopt_long(argc, argv, "c:p:dh", long_options, &optind);
         if (c == -1) {
             break;
         }
@@ -2474,6 +2476,9 @@ int main(int argc, char *argv[]) {
             case 'h':
                 usage(argv[0]);
                 return 1;
+            case 'p':
+                pidfile = optarg;
+                break;
             default:
                 logger(LOG_INFO, "OpenLI: unsupported option: %c",
                         c);
@@ -2490,7 +2495,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (daemonmode) {
-        daemonise(argv[0]);
+        daemonise(argv[0], pidfile);
     }
 
     sigemptyset(&sigblock);
@@ -2523,6 +2528,10 @@ int main(int argc, char *argv[]) {
     run(&provstate);
 
     clear_prov_state(&provstate);
+
+    if (daemonmode && pidfile) {
+        remove_pidfile(pidfile);
+    }
     logger(LOG_INFO, "OpenLI: Provisioner has exited.");
 }
 
