@@ -18,6 +18,7 @@ PLUGIN_SRCS=collector/accessplugins/radius.c
 bin_PROGRAMS +=openlicollector
 openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/collector.h logger.c logger.h \
+                collector/collector_base.h \
 		collector/collector_sync.c collector/collector_sync.h \
 		etsili_core.h export_buffer.h export_buffer.c \
                 util.c util.h intercept.c intercept.h \
