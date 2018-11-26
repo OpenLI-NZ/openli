@@ -1,0 +1,3 @@
+usr/bin/openliprovisioner
+etc/openli/provisioner*
+usr/share/openli/rsyslog/10-openli-provisioner.conf etc/rsyslog.d

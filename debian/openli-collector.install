@@ -1,0 +1,3 @@
+usr/bin/openlicollector
+etc/openli/collector*
+usr/share/openli/rsyslog/10-openli-collector.conf etc/rsyslog.d
