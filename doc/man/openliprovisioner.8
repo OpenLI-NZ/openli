@@ -1,0 +1,54 @@
+.TH OPENLI-PROVISIONER 8 "2018-12-03" "openli-provisioner" "OpenLI"
+
+.SH NAME
+openli-provisioner \- provisioner daemon for OpenLI
+
+.SH SYNOPSIS
+\fBopenliprovisioner\fR \fB-c\fR \fIconfigfile\fR [\fB-hd\fR] [\fB-p \fIpidfile\fR]
+
+.SH DESCRIPTION
+\fBopenli-provisioner\fR is the provisioner component of the \fBOpenLI\fR
+lawful interception system. The provisioner is used to manage and orchestrate
+intercepts within the OpenLI system. Intercepts configured on the provisioner
+are pushed out to all of the active OpenLI collectors. The provisioner is
+also responsible for communicating how to connect to the Law Enforcement
+Agencies (LEAs) to any OpenLI mediators.
+
+.SH OPTIONS
+.TP
+\fB-h, --help\fR
+Show summary of supported command-line options
+
+.TP
+\fB-c, --config \fIconfigfile\fR
+Specifies the location of the file containing the configuration to
+use when running this openli-provisioner instance. See ProvisionerDoc.md
+(most likely installed in /usr/share/doc/openli) for details on the
+configuration file format.
+
+.TP
+\fB-d, --daemonise\fR
+Run the openli-provisioner as a detached daemon.
+
+.TP
+\fB-p, --pidfile \fIpidfile\fR
+Create a pidfile for the provisioner process at \fIpidfile\fR.
+
+
+.SH FILES
+.TP
+.I /etc/openli/provisioner-example.yaml
+Example OpenLI provisioner configuration file
+
+
+.SH SECURITY
+\fBopenli-provisioner\fR should be able to run unprivileged. However, it
+is very important that you ensure only suitable individuals have access
+to the host on which the OpenLI provisioner is running.
+
+.SH AUTHOR
+OpenLI was originally written by Shane Alcock <shane.alcock@waikato.ac.nz>
+while working for the University of Waikato WAND Network Research Group.
+
+.PP
+This manual page was written by Shane Alcock <shane.alcock@waikato.ac.nz>
