@@ -873,7 +873,7 @@ static int update_sip_state(collector_sync_voip_t *sync,
     sessuser = get_sip_session_username(sync->sipparser);
 
     if (callid == NULL) {
-        logger(LOG_INFO, "OpenLI: SIP packet has no Call ID?");
+        logger(LOG_DEBUG, "OpenLI: SIP packet has no Call ID?");
         iserr = 1;
         goto sipgiveup;
     }
@@ -882,7 +882,7 @@ static int update_sip_state(collector_sync_voip_t *sync,
         errno = 0;
         sdpo.sessionid = strtoul(sessid, NULL, 0);
         if (errno != 0) {
-            logger(LOG_INFO, "OpenLI: invalid session ID in SIP packet %s",
+            logger(LOG_DEBUG, "OpenLI: invalid session ID in SIP packet %s",
                     sessid);
             sessid = NULL;
             sdpo.sessionid = 0;
@@ -895,7 +895,7 @@ static int update_sip_state(collector_sync_voip_t *sync,
         errno = 0;
         sdpo.version = strtoul(sessversion, NULL, 0);
         if (errno != 0) {
-            logger(LOG_INFO, "OpenLI: invalid version in SIP packet %s",
+            logger(LOG_DEBUG, "OpenLI: invalid version in SIP packet %s",
                     sessid);
             sessversion = NULL;
             sdpo.version = 0;
@@ -920,20 +920,20 @@ static int update_sip_state(collector_sync_voip_t *sync,
     if (sip_is_invite(sync->sipparser)) {
         if ((ret = process_sip_invite(sync, callid, &sdpo, irimsg)) < 0) {
             iserr = 1;
-            logger(LOG_INFO, "OpenLI: error while processing SIP invite");
+            logger(LOG_DEBUG, "OpenLI: error while processing SIP invite");
             goto sipgiveup;
         }
     } else if (sip_is_register(sync->sipparser)) {
         if ((ret = process_sip_register(sync, callid, irimsg)) < 0) {
             iserr = 1;
-            logger(LOG_INFO, "OpenLI: error while processing SIP register");
+            logger(LOG_DEBUG, "OpenLI: error while processing SIP register");
             goto sipgiveup;
         }
     } else if (lookup_sip_callid(sync, callid) != 0) {
         /* SIP packet matches a "known" call of interest */
         if ((ret = process_sip_other(sync, callid, &sdpo, irimsg)) < 0) {
             iserr = 1;
-            logger(LOG_INFO, "OpenLI: error while processing non-invite SIP");
+            logger(LOG_DEBUG, "OpenLI: error while processing non-invite SIP");
             goto sipgiveup;
         }
     }
