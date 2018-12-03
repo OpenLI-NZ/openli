@@ -1,3 +1,4 @@
 usr/bin/openlimediator
 etc/openli/mediator*
 usr/share/openli/rsyslog/10-openli-mediator.conf etc/rsyslog.d
+usr/share/doc/openli/MediatorDoc.md

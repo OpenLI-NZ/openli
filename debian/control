@@ -10,7 +10,7 @@ Homepage: https://openli.nz
 Package: openli-provisioner
 Section: net
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}, lsb-base
 Description: Central provisioning daemon for an OpenLI system
  OpenLI is a software suite that allows network operators to conduct
  lawful interception of Internet traffic that is compliant with the
@@ -26,7 +26,7 @@ Package: openli-mediator
 Section: net
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, libwandder1-dev,
- libjudy-dev
+ libjudy-dev, lsb-base
 Recommends: strongswan
 Description: Mediation daemon for an OpenLI system
  OpenLI is a software suite that allows network operators to conduct
@@ -43,7 +43,7 @@ Package: openli-collector
 Section: net
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, libwandder1-dev,
- libjudy-dev, libgoogle-perftools-dev, libosip2-dev
+ libjudy-dev, libgoogle-perftools-dev, libosip2-dev, lsb-base
 Description: Collector daemon for an OpenLI system
  OpenLI is a software suite that allows network operators to conduct
  lawful interception of Internet traffic that is compliant with the
