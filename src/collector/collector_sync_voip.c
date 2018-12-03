@@ -1438,7 +1438,7 @@ static void examine_sip_update(collector_sync_voip_t *sync,
         }
 
         if (ret < 0) {
-            logger(LOG_INFO,
+            logger(LOG_DEBUG,
                     "OpenLI: sync thread parsed an invalid SIP packet?");
             if (sync->sipdebugfile && pktref) {
                 if (!sync->sipdebugout) {
@@ -1455,7 +1455,7 @@ static void examine_sip_update(collector_sync_voip_t *sync,
                 &(baseirimsg.data.ipmmiri.contentlen));
 
         if (ret > 0 && update_sip_state(sync, pktref, &baseirimsg) < 0) {
-            logger(LOG_INFO,
+            logger(LOG_DEBUG,
                     "OpenLI: error while updating SIP state in collector.");
             if (sync->sipdebugfile && pktref) {
                 if (!sync->sipdebugupdate) {
