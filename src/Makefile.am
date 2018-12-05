@@ -8,8 +8,8 @@ openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
 		netcomms.h netcomms.c coreserver.h coreserver.c \
                 collector/jenkinshash.c
 
+openliprovisioner_LDFLAGS = -lpthread @PROVISIONER_LIBS@
 openliprovisioner_LDADD = @ADD_LIBS@
-openliprovisioner_LDFLAGS=-lpthread
 openliprovisioner_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/
 endif
 
@@ -42,7 +42,7 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 $(PLUGIN_SRCS)
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 
-openlicollector_LDFLAGS=-lpthread -lpatricia
+openlicollector_LDFLAGS=-lpthread -lpatricia @COLLECTOR_LIBS@
 openlicollector_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/ -I$(builddir)
 
 endif
@@ -58,7 +58,7 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
                 collector/jenkinshash.c \
                 coreserver.c coreserver.h
 openlimediator_LDADD = @ADD_LIBS@
-openlimediator_LDFLAGS=-lpthread
+openlimediator_LDFLAGS=-lpthread @MEDIATOR_LIBS@
 openlimediator_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/
 endif
 
