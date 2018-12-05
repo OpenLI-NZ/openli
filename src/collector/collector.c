@@ -674,7 +674,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
      */
 
     if (todaemon) {
-        daemonise(progname, NULL);
+        open_daemonlog(progname);
     }
 
     if (trace_is_err(inp->trace)) {

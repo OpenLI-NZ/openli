@@ -71,6 +71,18 @@ static int create_pidfile(char *fname) {
 
 }
 
+void open_daemonlog(char *name) {
+
+#if HAVE_SYSLOG_H
+    name = strrchr(name,'/') ? strrchr(name,'/') + 1 : name;
+    openlog(name, LOG_PID, LOG_DAEMON);
+    setlogmask(LOG_UPTO(LOG_INFO));
+#else
+    (void)(name);
+#endif
+}
+
+
 void daemonise(char *name, char *pidfile) {
 
     int rv;
@@ -108,12 +120,7 @@ void daemonise(char *name, char *pidfile) {
     rv = dup(rv);
     assert(rv == 2);
 
-#if HAVE_SYSLOG_H
-    name = strrchr(name,'/') ? strrchr(name,'/') + 1 : name;
-    openlog(name, LOG_PID, LOG_DAEMON);
-    setlogmask(LOG_UPTO(LOG_INFO));
-#endif
-
+    open_daemonlog(name);
     if (pidfile) {
         if (create_pidfile(pidfile) < 0) {
             exit(0);
