@@ -567,6 +567,10 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
         return 0;
     }
 
+    logger(LOG_INFO,
+            "OpenLI: intercepting static IP range %s for LIID %s, AuthCC %s",
+            ipr->rangestr, ipint->common.liid, ipint->common.authcc);
+
     HASH_ADD_KEYPTR(hh, ipint->statics, ipr->rangestr,
             strlen(ipr->rangestr), ipr);
 
@@ -991,10 +995,10 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
                 sendq, tmp) {
             push_single_alushimid(sendq->q, cept, 0);
         }
-    } else {
+    } else if (cept->username != NULL) {
         logger(LOG_INFO,
-                "OpenLI: received IP intercept from provisioner (LIID %s, authCC %s)",
-                cept->common.liid, cept->common.authcc);
+                "OpenLI: received IP intercept for target %s from provisioner (LIID %s, authCC %s)",
+                cept->username, cept->common.liid, cept->common.authcc);
     }
 
     if (sync->pubsockcount <= 1) {

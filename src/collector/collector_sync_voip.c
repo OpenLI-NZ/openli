@@ -1267,9 +1267,6 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
 
     vint = (voipintercept_t *)malloc(sizeof(voipintercept_t));
     memcpy(vint, &toadd, sizeof(voipintercept_t));
-    logger(LOG_INFO,
-            "OpenLI: received VOIP intercept %s from provisioner.",
-            vint->common.liid);
     vint->common.seqtrackerid = hash_liid(vint->common.liid) %
             sync->pubsockcount;
 
