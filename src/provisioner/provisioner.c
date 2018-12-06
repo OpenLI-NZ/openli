@@ -2024,7 +2024,7 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
         HASH_FIND(hh_liid, newstate->voipintercepts, voipint->common.liid,
                 voipint->common.liid_len, newequiv);
 
-        if (newstate->ignorertpcomfort) {
+        if (newequiv && newstate->ignorertpcomfort) {
             newequiv->options |= (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
         }
 
