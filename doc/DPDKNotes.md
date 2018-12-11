@@ -27,6 +27,7 @@ Step 2: Install the Linux headers package for your system, if the headers
         are not already present.
 
   For 64 bit Debian / Ubuntu, this is done via:
+
      > sudo apt-get install linux-headers-amd64
 
 
