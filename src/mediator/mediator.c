@@ -596,6 +596,10 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
         }
         if (ms->parent->aliverespev) {
             ms->karesptimer_fd = ms->parent->aliverespev->fd;
+        } else {
+            /* No response expected, so we can safely start allowing
+             * connection logging for this handover again */
+            ms->parent->disconnect_msg = 0;
         }
 
     }
@@ -686,6 +690,12 @@ static int connect_handover(mediator_state_t *state, handover_t *ho) {
     }
     if (ho->aliveev) {
         agstate->katimer_fd = ho->aliveev->fd;
+    } else {
+        /* No keepalives, so we will have to assume that a successful
+         * connection is enough for us to decide that we can start
+         * logging connection-related messages again...
+         */
+        ho->disconnect_msg = 0;
     }
     return 1;
 }
