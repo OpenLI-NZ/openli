@@ -155,8 +155,6 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
         goto failconnect;
     }
 
-    logger(LOG_DEBUG, "OpenLI: connected to %s:%s successfully.",
-            ipstr, portstr);
     goto endconnect;
 
 failconnect:
