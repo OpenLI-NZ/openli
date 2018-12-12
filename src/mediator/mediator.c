@@ -1389,10 +1389,6 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
         return 0;
     }
 
-    if (get_buffered_amount(&(mas->buf)) == 0) {
-        return 0;
-    }
-
     if (transmit_buffered_records(&(mas->buf), mev->fd, 65535) == -1) {
         return -1;
     }
