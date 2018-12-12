@@ -507,10 +507,12 @@ static int send_to_provisioner(collector_sync_t *sync) {
 
     int ret;
     struct epoll_event ev;
+    openli_proto_msgtype_t err;
 
-    ret = transmit_net_buffer(sync->outgoing);
+    ret = transmit_net_buffer(sync->outgoing, &err);
     if (ret == -1) {
         /* Something went wrong */
+        nb_log_transmit_error(err);
         logger(LOG_INFO,
                 "OpenLI: error sending message from collector to provisioner.");
         return -1;

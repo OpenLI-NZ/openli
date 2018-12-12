@@ -54,9 +54,15 @@ enum {
     MED_EPOLL_CEASE_LIID_TIMER,
 };
 
+typedef struct disabled_collector {
+    char *ipaddr;
+    UT_hash_handle hh;
+} disabled_collector_t;
+
 typedef struct med_coll_state {
+    char *ipaddr;
     net_buffer_t *incoming;
-    int disabled;
+    int disabled_log;
 } med_coll_state_t;
 
 typedef struct handover {
@@ -94,6 +100,7 @@ typedef struct mediator_provisioner {
     int sentinfo;
     net_buffer_t *outgoing;
     net_buffer_t *incoming;
+    uint8_t disable_log;
 } mediator_prov_t;
 
 enum {
@@ -143,6 +150,7 @@ typedef struct med_state {
     pthread_t connectthread;
     libtrace_message_queue_t pcapqueue;
     wandder_etsispec_t *etsidecoder;
+    disabled_collector_t *disabledcols;
 
 } mediator_state_t;
 

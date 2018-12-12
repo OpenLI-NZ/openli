@@ -35,9 +35,11 @@
 #include "logger.h"
 #include "byteswap.h"
 
+#define DEBUG_DUMP 0
 
 static inline void dump_buffer_contents(uint8_t *buf, uint16_t len) {
 
+#if DEBUG_DUMP
     uint16_t i = 0;
 
     for (i = 0; i < len; i++) {
@@ -46,7 +48,9 @@ static inline void dump_buffer_contents(uint8_t *buf, uint16_t len) {
             printf("\n");
         }
     }
-
+#else
+    (void)len;
+#endif
 
 }
 
@@ -92,7 +96,6 @@ static inline int extend_net_buffer(net_buffer_t *nb, int musthave) {
     tmp = (char *)realloc(nb->buf, nb->alloced + NETBUF_ALLOC_SIZE);
     if (tmp == NULL) {
         /* OOM */
-        logger(LOG_INFO, "OpenLI: unable to allocate larger net buffer.");
         return -1;
     }
 
@@ -919,18 +922,16 @@ int push_nomore_intercepts(net_buffer_t *nb) {
             sizeof(ii_header_t));
 }
 
-int transmit_net_buffer(net_buffer_t *nb) {
+int transmit_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t *err) {
     int ret;
 
     if (nb == NULL) {
-        logger(LOG_INFO,
-                "OpenLI: attempted to transmit using a NULL buffer.");
+        *err = OPENLI_PROTO_NULL_BUFFER;
         return -1;
     }
 
     if (nb->buftype != NETBUF_SEND) {
-        logger(LOG_INFO,
-                "OpenLI: attempted to transmit using a receive buffer.");
+        *err = OPENLI_PROTO_WRONG_BUFFER_TYPE;
         return -1;
     }
 
@@ -946,9 +947,7 @@ int transmit_net_buffer(net_buffer_t *nb) {
             /* Socket not available right now... */
             return 1;
         }
-        logger(LOG_INFO,
-                "OpenLI: error while sending net buffer contents: %s.",
-                strerror(errno));
+        *err = OPENLI_PROTO_SEND_ERROR;
         return -1;
     }
 
@@ -988,10 +987,8 @@ static openli_proto_msgtype_t parse_received_message(net_buffer_t *nb,
     hdr = (ii_header_t *)(nb->actptr);
 
     if (ntohl(hdr->magic) != OPENLI_PROTO_MAGIC) {
-        logger(LOG_INFO, "OpenLI: bogus message received via net buffer.");
         dump_buffer_contents(nb->actptr, 64);
-        assert(0);
-        return OPENLI_PROTO_DISCONNECT;
+        return OPENLI_PROTO_INVALID_MESSAGE;
     }
 
     if (NETBUF_CONTENT_SIZE(nb) < sizeof(ii_header_t) + ntohs(hdr->bodylen)) {
@@ -1497,15 +1494,11 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
     int ret;
 
     if (nb == NULL) {
-        logger(LOG_INFO,
-                "OpenLI: attempted to receive using a NULL buffer.");
-        return OPENLI_PROTO_DISCONNECT;
+        return OPENLI_PROTO_NULL_BUFFER;
     }
 
     if (nb->buftype != NETBUF_RECV) {
-        logger(LOG_INFO,
-                "OpenLI: attempted to receive using a transmit buffer.");
-        return OPENLI_PROTO_DISCONNECT;
+        return OPENLI_PROTO_WRONG_BUFFER_TYPE;
     }
 
     rettype = parse_received_message(nb, msgbody, msglen, intid);
@@ -1516,7 +1509,7 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
     /* Not enough data in the buffer for a complete message, read some more. */
     if (NETBUF_SPACE_REM(nb) < NETBUF_ALLOC_SIZE) {
         if (extend_net_buffer(nb, NETBUF_ALLOC_SIZE) == -1) {
-            return OPENLI_PROTO_DISCONNECT;
+            return OPENLI_PROTO_BUFFER_TOO_FULL;
         }
     }
 
@@ -1527,12 +1520,9 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
         }
         if (ret == 0) {
             /* Other end disconnected */
-            return OPENLI_PROTO_DISCONNECT;
+            return OPENLI_PROTO_PEER_DISCONNECTED;
         }
-        logger(LOG_INFO,
-                "OpenLI: error while receiving data into net buffer: %s,",
-                strerror(errno));
-        return OPENLI_PROTO_DISCONNECT;
+        return OPENLI_PROTO_RECV_ERROR;
     }
 
     nb->appendptr += ret;
@@ -1541,4 +1531,66 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
     return rettype;
 }
 
+void nb_log_transmit_error(openli_proto_msgtype_t err) {
+    switch(err) {
+        case OPENLI_PROTO_NULL_BUFFER:
+            logger(LOG_INFO,
+                    "OpenLI: attempted to transmit using a NULL buffer.");
+            break;
+        case OPENLI_PROTO_WRONG_BUFFER_TYPE:
+            logger(LOG_INFO,
+                    "OpenLI: attempted to transmit using a receive buffer.");
+            break;
+        case OPENLI_PROTO_SEND_ERROR:
+            logger(LOG_INFO,
+                    "OpenLI: error while transmitting data from net buffer: %s",
+                    strerror(errno));
+            break;
+        case OPENLI_PROTO_PEER_DISCONNECTED:
+            logger(LOG_INFO,
+                    "OpenLI: remote peer disconnected while sending protocol message.");
+            break;
+        default:
+            logger(LOG_DEBUG,
+                    "OpenLI: unrecognised transmit net buffer error %d.", err);
+            break;
+    }
+
+}
+
+void nb_log_receive_error(openli_proto_msgtype_t err) {
+
+    switch(err) {
+        case OPENLI_PROTO_NULL_BUFFER:
+            logger(LOG_INFO,
+                    "OpenLI: attempted to receive using a NULL buffer.");
+            break;
+        case OPENLI_PROTO_WRONG_BUFFER_TYPE:
+            logger(LOG_INFO,
+                    "OpenLI: attempted to receive using a transmit buffer.");
+            break;
+        case OPENLI_PROTO_RECV_ERROR:
+            logger(LOG_INFO,
+                    "OpenLI: error while receiving data into net buffer: %s",
+                    strerror(errno));
+            break;
+        case OPENLI_PROTO_BUFFER_TOO_FULL:
+            logger(LOG_INFO,
+                    "OpenLI: unable to allocate larger net buffer.");
+            break;
+        case OPENLI_PROTO_PEER_DISCONNECTED:
+            logger(LOG_INFO,
+                    "OpenLI: remote peer disconnected while receiving protocol message.");
+            break;
+        case OPENLI_PROTO_INVALID_MESSAGE:
+            logger(LOG_INFO,
+                    "OpenLI: received invalid protocol message.");
+            break;
+        default:
+            logger(LOG_DEBUG,
+                    "OpenLI: unrecognised receive net buffer error %d.", err);
+            break;
+    }
+
+}
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

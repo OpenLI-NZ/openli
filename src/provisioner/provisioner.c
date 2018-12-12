@@ -844,9 +844,11 @@ static int transmit_socket(provision_state_t *state, prov_epoll_ev_t *pev) {
     int ret;
     struct epoll_event ev;
     prov_sock_state_t *cs = (prov_sock_state_t *)(pev->state);
+    openli_proto_msgtype_t err;
 
-    ret = transmit_net_buffer(cs->outgoing);
+    ret = transmit_net_buffer(cs->outgoing, &err);
     if (ret == -1) {
+        nb_log_transmit_error(err);
         logger(LOG_INFO,
                 "OpenLI: error sending message from provisioner to %s.",
                 get_event_description(pev));
