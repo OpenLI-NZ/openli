@@ -66,13 +66,13 @@ typedef struct handover {
     med_epoll_ev_t *outev;
     med_epoll_ev_t *aliveev;
     med_epoll_ev_t *aliverespev;
+    uint8_t disconnect_msg;
 } handover_t;
 
 typedef struct med_agency_state {
     export_buffer_t buf;
     libtrace_scb_t *incoming;
     int outenabled;
-    int failmsg;
     int main_fd;
     int katimer_fd;
     int karesptimer_fd;
