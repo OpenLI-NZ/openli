@@ -596,10 +596,6 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
         }
         if (ms->parent->aliverespev) {
             ms->karesptimer_fd = ms->parent->aliverespev->fd;
-        } else {
-            /* No response expected, so we can safely start allowing
-             * connection logging for this handover again */
-            ms->parent->disconnect_msg = 0;
         }
 
     }
@@ -690,12 +686,6 @@ static int connect_handover(mediator_state_t *state, handover_t *ho) {
     }
     if (ho->aliveev) {
         agstate->katimer_fd = ho->aliveev->fd;
-    } else {
-        /* No keepalives, so we will have to assume that a successful
-         * connection is enough for us to decide that we can start
-         * logging connection-related messages again...
-         */
-        ho->disconnect_msg = 0;
     }
     return 1;
 }
@@ -1335,6 +1325,12 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
             /* Sent the whole thing successfully */
             wandder_release_encoded_result(NULL, mas->pending_ka);
             mas->pending_ka = NULL;
+            if (ho->aliverespev == NULL) {
+                /* Not expecting a response, so we have to assume that
+                 * the connection is good again as soon as we successfully
+                 * send a KA */
+                ho->disconnect_msg = 0;
+            }
         } else {
             /* Partial send -- try the rest next time */
             memmove(mas->pending_ka->encoded, mas->pending_ka->encoded + ret,
@@ -1344,6 +1340,9 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
         return 0;
     }
 
+    if (get_buffered_amount(&(mas->buf)) == 0) {
+        return 0;
+    }
 
     if (transmit_buffered_records(&(mas->buf), mev->fd, 65535) == -1) {
         return -1;
@@ -1375,6 +1374,13 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
                 ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
         }
         return -1;
+    }
+
+    if (ho->aliveev == NULL) {
+        /* Keep alives are disabled, so we are going to use a successful
+         * transmit as an indicator that the connection is stable again
+         * and we can stop suppressing logs */
+        ho->disconnect_msg = 0;
     }
 
     return 0;
@@ -1648,7 +1654,7 @@ static int receive_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
             return 0;
         }
         if (mas->parent->disconnect_msg == 0) {
-            logger(LOG_INFO, "OpenLI mediator: error receiving data from LEA on handover %s:%s HI%d: %s\n",
+            logger(LOG_INFO, "OpenLI mediator: error receiving data from LEA on handover %s:%s HI%d: %s",
                     mas->parent->ipstr, mas->parent->portstr,
                     mas->parent->handover_type, strerror(errno));
         }
@@ -1658,7 +1664,7 @@ static int receive_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
     if (ret == 0) {
         if (mas->parent->disconnect_msg == 0) {
             logger(LOG_INFO,
-                    "OpenLI mediator: disconnect on LEA handover %s:%s HI%d\n",
+                    "OpenLI mediator: disconnect on LEA handover %s:%s HI%d",
                     mas->parent->ipstr, mas->parent->portstr,
                     mas->parent->handover_type);
         }
@@ -1705,6 +1711,9 @@ static int receive_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
             libtrace_scb_advance_read(mas->incoming, reclen);
             mas->karesptimer_fd = -1;
 
+            /* Successful KA response is a good indicator that the
+             * connection is stable.
+             */
             mas->parent->disconnect_msg = 0;
         } else {
             if (mas->parent->disconnect_msg == 0) {
