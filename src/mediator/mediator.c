@@ -587,7 +587,7 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
     */
         if (start_keepalive_timer(state, ms->parent->aliverespev,
                 ms->kawait) == -1) {
-            if (ms->parent->disconnect_msg) {
+            if (ms->parent->disconnect_msg == 0) {
                 logger(LOG_INFO,
                     "OpenLI: unable to start keepalive response timer: %s",
                     strerror(errno));
@@ -602,7 +602,7 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     halt_mediator_timer(state, mev);
     if (start_keepalive_timer(state, mev, ms->kafreq) == -1) {
-        if (ms->parent->disconnect_msg) {
+        if (ms->parent->disconnect_msg == 0) {
             logger(LOG_INFO,
                 "OpenLI: unable to reset keepalive timer for  %s:%s HI%d :s",
                 ms->parent->ipstr, ms->parent->portstr,
@@ -1345,7 +1345,7 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
         ev.events = EPOLLIN | EPOLLRDHUP;
 
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, mev->fd, &ev) == -1) {
-            if (ho->disconnect_msg) {
+            if (ho->disconnect_msg == 0) {
                 logger(LOG_INFO,
                     "OpenLI: error while trying to disable xmit for handover %s:%s HI%d -- %s",
                     ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
@@ -1677,7 +1677,7 @@ static int receive_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
             recvseq = wandder_etsili_get_sequence_number(mas->decoder);
 
             if (recvseq != mas->lastkaseq) {
-                if (mas->parent->disconnect_msg) {
+                if (mas->parent->disconnect_msg == 0) {
                     logger(LOG_INFO, "OpenLI mediator -- unexpected KA response from handover %s:%s HI%d",
                         mas->parent->ipstr, mas->parent->portstr,
                         mas->parent->handover_type);
