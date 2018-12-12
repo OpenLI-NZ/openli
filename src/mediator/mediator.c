@@ -1374,11 +1374,14 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
             /* Sent the whole thing successfully */
             wandder_release_encoded_result(NULL, mas->pending_ka);
             mas->pending_ka = NULL;
-            if (ho->aliverespev == NULL) {
+            if (ho->aliverespev == NULL && ho->disconnect_msg == 1) {
                 /* Not expecting a response, so we have to assume that
                  * the connection is good again as soon as we successfully
                  * send a KA */
                 ho->disconnect_msg = 0;
+                logger(LOG_INFO,
+                    "OpenLI: reconnected to handover %s:%s HI%d successfully.",
+                    ho->ipstr, ho->portstr, ho->handover_type);
             }
         } else {
             /* Partial send -- try the rest next time */
@@ -1389,8 +1392,12 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
         return 0;
     }
 
-    if (transmit_buffered_records(&(mas->buf), mev->fd, 65535) == -1) {
+    if ((ret = transmit_buffered_records(&(mas->buf), mev->fd, 65535)) == -1) {
         return -1;
+    }
+
+    if (ret == 0) {
+        return 0;
     }
 
     if (get_buffered_amount(&(mas->buf)) == 0) {
@@ -1421,10 +1428,14 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
         return -1;
     }
 
-    if (ho->aliveev == NULL) {
+    if (ho->aliveev == NULL && ho->disconnect_msg == 1) {
         /* Keep alives are disabled, so we are going to use a successful
          * transmit as an indicator that the connection is stable again
          * and we can stop suppressing logs */
+        logger(LOG_INFO,
+                "OpenLI: reconnected to handover %s:%s HI%d successfully.",
+                ho->ipstr, ho->portstr, ho->handover_type);
+
         ho->disconnect_msg = 0;
     }
 
@@ -1778,6 +1789,12 @@ static int receive_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
             /* Successful KA response is a good indicator that the
              * connection is stable.
              */
+            if (mas->parent->disconnect_msg == 1) {
+                logger(LOG_INFO,
+                        "OpenLI: reconnected to handover %s:%s HI%d successfully.",
+                        mas->parent->ipstr, mas->parent->portstr,
+                        mas->parent->handover_type);
+            }
             mas->parent->disconnect_msg = 0;
         } else {
             if (mas->parent->disconnect_msg == 0) {
