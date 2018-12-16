@@ -62,6 +62,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->coreservers = NULL;
     sync->instruct_fd = -1;
     sync->instruct_fail = 0;
+    sync->instruct_log = 1;
     sync->ii_ev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
 
     sync->outgoing = NULL;
@@ -234,7 +235,7 @@ static int forward_provmsg_to_voipsync(collector_sync_t *sync,
     topush.msglen = msglen;
 
     libtrace_message_queue_put(sync->intersyncq, &topush);
-    return 0;
+    return 1;
 
 }
 
@@ -401,8 +402,6 @@ static inline void push_static_iprange_to_collectors(
     staticipsession_t *staticsess = NULL;
 
     if (ipr->liid == NULL || ipr->rangestr == NULL) {
-        logger(LOG_INFO,
-                "OpenLI: attempted to send invalid static IP range to collectors");
         return;
     }
 
@@ -424,8 +423,6 @@ static inline void push_static_iprange_remove_to_collectors(
     staticipsession_t *staticsess = NULL;
 
     if (ipr->liid == NULL || ipr->rangestr == NULL) {
-        logger(LOG_INFO,
-                "OpenLI: attempted to send invalid static IP range to collectors");
         return;
     }
 
@@ -512,9 +509,11 @@ static int send_to_provisioner(collector_sync_t *sync) {
     ret = transmit_net_buffer(sync->outgoing, &err);
     if (ret == -1) {
         /* Something went wrong */
-        nb_log_transmit_error(err);
-        logger(LOG_INFO,
-                "OpenLI: error sending message from collector to provisioner.");
+        if (sync->instruct_log) {
+            nb_log_transmit_error(err);
+            logger(LOG_INFO,
+                    "OpenLI: error sending message from collector to provisioner.");
+        }
         return -1;
     }
 
@@ -525,9 +524,11 @@ static int send_to_provisioner(collector_sync_t *sync) {
 
         if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_MOD,
                     sync->instruct_fd, &ev) == -1) {
-            logger(LOG_INFO,
+            if (sync->instruct_log) {
+                logger(LOG_INFO,
                     "OpenLI: error disabling EPOLLOUT on provisioner fd: %s.",
                     strerror(errno));
+            }
             return -1;
         }
     }
@@ -545,17 +546,21 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
     ipr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
 
     if (decode_staticip_announcement(intmsg, msglen, ipr) == -1) {
-        logger(LOG_INFO,
-                "OpenLI: received invalid static IP range from provisioner.");
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid static IP range from provisioner.");
+        }
         free(ipr);
         return -1;
     }
 
     HASH_FIND(hh_liid, sync->ipintercepts, ipr->liid, strlen(ipr->liid), ipint);
     if (!ipint) {
-        logger(LOG_INFO,
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
                 "OpenLI: received static IP range for LIID %s, but this LIID is unknown?",
                 ipr->liid);
+        }
         free(ipr);
         return -1;
     }
@@ -566,7 +571,7 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
         free(ipr->liid);
         free(ipr->rangestr);
         free(ipr);
-        return 0;
+        return 1;
     }
 
     logger(LOG_INFO,
@@ -596,9 +601,11 @@ static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
 
     HASH_FIND(hh_liid, sync->ipintercepts, ipr->liid, strlen(ipr->liid), ipint);
     if (!ipint) {
-        logger(LOG_INFO,
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
                 "OpenLI: received static IP range to remove for LIID %s, but this LIID is unknown?",
                 ipr->liid);
+        }
         free(ipr);
         return -1;
     }
@@ -618,7 +625,7 @@ static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
         free(found);
     }
 
-    return 0;
+    return 1;
 }
 
 static inline void push_session_halt_to_threads(void *sendqs,
@@ -731,7 +738,9 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
     openli_export_recv_t *expmsg;
 
     if (decode_mediator_announcement(provmsg, msglen, &med) == -1) {
-        logger(LOG_INFO, "OpenLI: received invalid mediator announcement from provisioner.");
+        if (sync->instruct_log) {
+            logger(LOG_INFO, "OpenLI: received invalid mediator announcement from provisioner.");
+        }
         return -1;
     }
 
@@ -745,7 +754,7 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
 
         publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
     }
-    return 0;
+    return 1;
 }
 
 static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
@@ -756,7 +765,9 @@ static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
     openli_export_recv_t *expmsg;
 
     if (decode_mediator_withdraw(provmsg, msglen, &med) == -1) {
-        logger(LOG_INFO, "OpenLI: received invalid mediator withdrawal from provisioner.");
+        if (sync->instruct_log) {
+            logger(LOG_INFO, "OpenLI: received invalid mediator withdrawal from provisioner.");
+        }
         return -1;
     }
 
@@ -773,7 +784,7 @@ static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
 
     free(med.ipstr);
     free(med.portstr);
-    return 0;
+    return 1;
 }
 
 
@@ -784,7 +795,9 @@ static int forward_new_coreserver(collector_sync_t *sync, uint8_t *provmsg,
     cs = (coreserver_t *)calloc(1, sizeof(coreserver_t));
 
     if (decode_coreserver_announcement(provmsg, msglen, cs) == -1) {
-        logger(LOG_INFO, "OpenLI: received invalid core server announcement from provisioner.");
+        if (sync->instruct_log) {
+            logger(LOG_INFO, "OpenLI: received invalid core server announcement from provisioner.");
+        }
         free_single_coreserver(cs);
         return -1;
     }
@@ -804,7 +817,7 @@ static int forward_new_coreserver(collector_sync_t *sync, uint8_t *provmsg,
                 "OpenLI: collector has added %s to its %s core server list.",
                 cs->serverkey, coreserver_type_to_string(cs->servertype));
     }
-    return 0;
+    return 1;
 }
 
 static int forward_remove_coreserver(collector_sync_t *sync, uint8_t *provmsg,
@@ -814,7 +827,9 @@ static int forward_remove_coreserver(collector_sync_t *sync, uint8_t *provmsg,
 
     cs = (coreserver_t *)calloc(1, sizeof(coreserver_t));
     if (decode_coreserver_withdraw(provmsg, msglen, cs) == -1) {
-        logger(LOG_INFO, "OpenLI: received invalid core server withdrawal from provisioner.");
+        if (sync->instruct_log) {
+            logger(LOG_INFO, "OpenLI: received invalid core server withdrawal from provisioner.");
+        }
         free_single_coreserver(cs);
         return -1;
     }
@@ -822,8 +837,10 @@ static int forward_remove_coreserver(collector_sync_t *sync, uint8_t *provmsg,
     HASH_FIND(hh, sync->coreservers, cs->serverkey, strlen(cs->serverkey),
             found);
     if (!found) {
-        logger(LOG_INFO, "OpenLI sync: asked to remove %s server %s, but we don't have any record of it?",
-                coreserver_type_to_string(cs->servertype), cs->serverkey);
+        if (sync->instruct_log) {
+            logger(LOG_INFO, "OpenLI sync: asked to remove %s server %s, but we don't have any record of it?",
+                    coreserver_type_to_string(cs->servertype), cs->serverkey);
+        }
     } else {
         push_coreserver_msg(sync, cs, OPENLI_PUSH_REMOVE_CORESERVER);
         logger(LOG_INFO,
@@ -833,7 +850,7 @@ static int forward_remove_coreserver(collector_sync_t *sync, uint8_t *provmsg,
         free_single_coreserver(found);
     }
     free_single_coreserver(cs);
-    return 0;
+    return 1;
 }
 
 static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
@@ -862,8 +879,10 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     openli_export_recv_t *expmsg;
 
     if (decode_ipintercept_halt(intmsg, msglen, &torem) == -1) {
-        logger(LOG_INFO,
-                "OpenLI: received invalid IP intercept withdrawal from provisioner.");
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid IP intercept withdrawal from provisioner.");
+        }
         return -1;
     }
 
@@ -881,7 +900,7 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], expmsg);
     free_single_ipintercept(ipint);
 
-    return 0;
+    return 1;
 }
 
 static inline void drop_all_mediators(collector_sync_t *sync) {
@@ -909,8 +928,10 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     cept = (ipintercept_t *)malloc(sizeof(ipintercept_t));
     if (decode_ipintercept_start(intmsg, msglen, cept) == -1) {
-        logger(LOG_INFO,
-                "OpenLI: received invalid IP intercept from provisioner.");
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid IP intercept from provisioner.");
+        }
         free(cept);
         return -1;
     }
@@ -961,7 +982,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         x->awaitingconfirm = 0;
         free(cept);
         /* our collector threads should already know about this intercept */
-        return 0;
+        return 1;
     }
 
     if (cept->username) {
@@ -1021,7 +1042,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     publish_openli_msg(sync->zmq_pubsocks[cept->common.seqtrackerid], expmsg);
 
-    return 0;
+    return 1;
 
 }
 
@@ -1036,6 +1057,14 @@ static int recv_from_provisioner(collector_sync_t *sync) {
 
     do {
         msgtype = receive_net_buffer(sync->incoming, &provmsg, &msglen, &intid);
+        if (msgtype < 0) {
+            if (sync->instruct_log) {
+                nb_log_receive_error(msgtype);
+                logger(LOG_INFO, "OpenLI collector: error receiving message from provisioner.");
+            }
+            return -1;
+        }
+
         switch(msgtype) {
             case OPENLI_PROTO_DISCONNECT:
                 return -1;
@@ -1043,6 +1072,7 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 break;
             case OPENLI_PROTO_DISCONNECT_MEDIATORS:
                 drop_all_mediators(sync);
+                ret = 1;
                 break;
             case OPENLI_PROTO_ANNOUNCE_MEDIATOR:
                 ret = new_mediator(sync, provmsg, msglen);
@@ -1072,8 +1102,10 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 ipr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
 
                 if (decode_staticip_removal(provmsg, msglen, ipr) == -1) {
-                    logger(LOG_INFO,
+                    if (sync->instruct_log) {
+                        logger(LOG_INFO,
                             "OpenLI: received invalid static IP range from provisioner for removal.");
+                    }
                     free(ipr);
                     return -1;
                 }
@@ -1116,11 +1148,22 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 break;
             case OPENLI_PROTO_NOMORE_INTERCEPTS:
                 disable_unconfirmed_intercepts(sync);
-                forward_provmsg_to_voipsync(sync, provmsg, msglen, msgtype);
+                ret = forward_provmsg_to_voipsync(sync, provmsg, msglen,
+                        msgtype);
                 break;
+            default:
+                if (sync->instruct_log) {
+                    logger(LOG_INFO, "Received unexpected message of type %d from provisioner.", msgtype);
+                    return -1;
+                }
         }
 
     } while (msgtype != OPENLI_PROTO_NO_MESSAGE);
+
+    if (ret == 1 && sync->instruct_log == 0) {
+        logger(LOG_INFO, "Successfully connected to a legit OpenLI provisioner");
+        sync->instruct_log = 1;
+    }
 
     return 1;
 }
@@ -1213,15 +1256,22 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
     sync->outgoing = NULL;
     sync->incoming = NULL;
 
+
     if (sync->instruct_fd != -1) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO, "disconnecting from provisioner fd %d", sync->instruct_fd);
+        }
         if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_DEL,
                 sync->instruct_fd, &ev) == -1) {
-            logger(LOG_INFO,
+            if (sync->instruct_log) {
+                logger(LOG_INFO,
                     "OpenLI: error de-registering provisioner fd: %s.",
                     strerror(errno));
+            }
         }
         close(sync->instruct_fd);
         sync->instruct_fd = -1;
+        sync->instruct_log = 0;
     }
 
     /* Leave all intercepts running, but require them to be confirmed
@@ -1553,7 +1603,9 @@ int sync_thread_main(collector_sync_t *sync) {
 
 
             if (syncev->fd == sync->instruct_fd) {
-                logger(LOG_INFO, "OpenLI: collector lost connection to central provisioner");
+                if (sync->instruct_log) {
+                    logger(LOG_INFO, "OpenLI: collector lost connection to central provisioner");
+                }
                 sync_disconnect_provisioner(sync);
                 return 0;
 
@@ -1614,6 +1666,10 @@ int sync_thread_main(collector_sync_t *sync) {
             int ret;
             if ((ret = update_user_sessions(sync, recvd.data.pkt,
                         ACCESS_RADIUS)) < 0) {
+
+                /* If a user has screwed up their RADIUS config and we
+                 * see non-RADIUS packets here, we probably want to limit the
+                 * number of times we complain about this... FIXME */
                 logger(LOG_INFO,
                         "OpenLI: sync thread received an invalid RADIUS packet");
             }

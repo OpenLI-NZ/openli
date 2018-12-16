@@ -57,6 +57,7 @@ typedef struct colsync_data {
 
     int instruct_fd;
     uint8_t instruct_fail;
+    uint8_t instruct_log;
     sync_epoll_t *ii_ev;
 
     net_buffer_t *outgoing;

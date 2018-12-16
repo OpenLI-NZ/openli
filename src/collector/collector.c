@@ -1085,6 +1085,7 @@ static int reload_collector_config(collector_global_t *glob,
         logger(LOG_INFO,
                 "OpenLI collector: disconnecting from provisioner due to config change.");
         sync_disconnect_provisioner(sync);
+        sync->instruct_log = 1;
         free(glob->sharedinfo.provisionerip);
         free(glob->sharedinfo.provisionerport);
         glob->sharedinfo.provisionerip = strdup(newstate->sharedinfo.provisionerip);
