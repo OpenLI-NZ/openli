@@ -57,6 +57,7 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
         newdest->failmsg = 0;
         newdest->awaitingconfirm = 0;
         newdest->halted = 0;
+        newdest->logallowed = 1;
         newdest->mediatorid = msg->data.med.mediatorid;
         newdest->ipstr = msg->data.med.ipstr;
         newdest->portstr = msg->data.med.portstr;
@@ -76,6 +77,7 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
             found->portstr = msg->data.med.portstr;
             found->fd = -1;
             found->failmsg = 0;
+            found->logallowed = 1;
         } else {
             if (strcmp(found->ipstr, msg->data.med.ipstr) != 0 ||
                     strcmp(found->portstr, msg->data.med.portstr) != 0) {
@@ -87,6 +89,7 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
                 free(found->portstr);
                 found->ipstr = msg->data.med.ipstr;
                 found->portstr = msg->data.med.portstr;
+                found->logallowed = 1;
 
                 if (found->fd != -1) {
                     close(found->fd);
@@ -125,6 +128,12 @@ static inline void disconnect_mediator(forwarding_thread_data_t *fwd,
     close(med->fd);
     med->fd = -1;
 
+    if (med->logallowed) {
+        logger(LOG_INFO, "OpenLI: disconnecting mediator %s:%s",
+                med->ipstr, med->portstr);
+    }
+
+    med->logallowed = 0;
     if (med->pollindex >= 0) {
         fwd->topoll[med->pollindex].fd = 0;
         fwd->topoll[med->pollindex].events = 0;
@@ -265,7 +274,7 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
             logger(LOG_INFO,
                     "OpenLI: unable to create new intercept record reorderer due to lack of memory"
                     );
-            return 1;
+            exit(-2);
         }
 
         reord = (int_reorderer_t *)calloc(1, sizeof(int_reorderer_t));
@@ -344,13 +353,14 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
             logger(LOG_INFO,
                     "OpenLI: unable to allocate memory for unknown mediator %u",
                     res->destid);
-            return -1;
+            exit(-2);
         }
 
         med = (export_dest_t *)calloc(1, sizeof(export_dest_t));
         med->failmsg = 0;
         med->pollindex = -1;
         med->fd = -1;
+        med->logallowed = 1;
         med->ipstr = NULL;
         med->portstr = NULL;
         med->awaitingconfirm = 0;
@@ -457,7 +467,7 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
             logger(LOG_INFO, "memory issue while connecting to export target");
             close(dest->fd);
             dest->fd = -1;
-            return;
+            exit(-2);
         }
 
         *jval2 = (Word_t)dest;
@@ -642,10 +652,16 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
 
         if (transmit_buffered_records(&(dest->buffer), dest->fd,
                 BUF_BATCH_SIZE) < 0) {
-            logger(LOG_INFO,
-                    "OpenLI: error transmitting records to mediator %s:%s, dropping",
-                    dest->ipstr, dest->portstr);
+            if (dest->logallowed) {
+                logger(LOG_INFO,
+                    "OpenLI: error transmitting records to mediator %s:%s: %s",
+                    dest->ipstr, dest->portstr, strerror(errno));
+            }
             disconnect_mediator(fwd, dest);
+        } else if (dest->logallowed == 0) {
+            logger(LOG_INFO,
+                    "OpenLI: successfully started transmitting records to mediator %s:%s", dest->ipstr, dest->portstr);
+            dest->logallowed = 1;
         }
         fwd->forcesend[i] = 0;
 
