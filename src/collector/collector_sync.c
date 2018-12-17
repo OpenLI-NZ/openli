@@ -287,6 +287,7 @@ void sync_thread_publish_reload(collector_sync_t *sync) {
 
         publish_openli_msg(sync->zmq_pubsocks[i], expmsg);
     }
+    forward_provmsg_to_voipsync(sync, NULL, 0, OPENLI_PROTO_CONFIG_RELOADED);
 }
 
 static int create_ipiri_from_iprange(collector_sync_t *sync,
@@ -1164,6 +1165,9 @@ static int recv_from_provisioner(collector_sync_t *sync) {
         logger(LOG_INFO, "Successfully connected to a legit OpenLI provisioner");
         sync->instruct_log = 1;
     }
+    if (ret == 1) {
+        sync->instruct_fail = 0;
+    }
 
     return 1;
 }
@@ -1178,6 +1182,7 @@ int sync_connect_provisioner(collector_sync_t *sync) {
             sync->info->provisionerport, sync->instruct_fail, 0);
 
     if (sockfd == -1) {
+        sync->instruct_log = 0;
         return -1;
     }
 
@@ -1186,7 +1191,6 @@ int sync_connect_provisioner(collector_sync_t *sync) {
         return 0;
     }
 
-    sync->instruct_fail = 0;
     sync->instruct_fd = sockfd;
 
     assert(sync->outgoing == NULL && sync->incoming == NULL);
@@ -1259,7 +1263,7 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
 
     if (sync->instruct_fd != -1) {
         if (sync->instruct_log) {
-            logger(LOG_INFO, "disconnecting from provisioner fd %d", sync->instruct_fd);
+            logger(LOG_INFO, "OpenLI: collector is disconnecting from provisioner fd %d", sync->instruct_fd);
         }
         if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_DEL,
                 sync->instruct_fd, &ev) == -1) {
@@ -1421,7 +1425,6 @@ static int newly_active_session(collector_sync_t *sync,
         if (mapret < 0) {
             logger(LOG_INFO,
                 "OpenLI: error while updating IP->session map in sync thread.");
-            printf("%s\n", iuser->userid);
             return -1;
         }
     }

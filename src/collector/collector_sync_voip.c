@@ -59,6 +59,8 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
     sync->glob = &(glob->syncvoip);
     sync->info = &(glob->sharedinfo);
 
+    sync->log_bad_instruct = 1;
+    sync->log_bad_sip = 1;
     sync->pubsockcount = glob->seqtracker_threads;
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
 
@@ -171,8 +173,10 @@ static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
     copy = deep_copy_rtpstream(orig);
     if (!copy) {
         logger(LOG_INFO,
-                "OpenLI: unable to copy RTP stream in sync thread.");
-        return;
+                "OpenLI: unable to copy RTP stream in sync thread due to lack of memory.");
+        logger(LOG_INFO,
+                "OpenLI: forcing provisioner to halt.");
+        exit(-2);
     }
 
     memset(&msg, 0, sizeof(openli_pushed_t));
@@ -182,8 +186,8 @@ static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
     libtrace_message_queue_put(q, (void *)(&msg));
 }
 
-static void push_halt_active_voipstreams(libtrace_message_queue_t *q,
-        voipintercept_t *vint, int epollfd) {
+static void push_halt_active_voipstreams(collector_sync_voip_t *sync,
+        libtrace_message_queue_t *q, voipintercept_t *vint, int epollfd) {
 
     rtpstreaminf_t *cin = NULL;
     char *streamdup;
@@ -211,8 +215,10 @@ static void push_halt_active_voipstreams(libtrace_message_queue_t *q,
             struct epoll_event ev;
             sync_epoll_t *timerev = (sync_epoll_t *)(cin->timeout_ev);
             if (epoll_ctl(epollfd, EPOLL_CTL_DEL, timerev->fd, &ev) == -1) {
-                logger(LOG_INFO, "OpenLI: unable to remove RTP stream timeout event for %s from epoll: %s",
-                        cin->streamkey, strerror(errno));
+                if (sync->log_bad_instruct) {
+                    logger(LOG_INFO, "OpenLI: unable to remove RTP stream timeout event for %s from epoll: %s",
+                            cin->streamkey, strerror(errno));
+                }
             }
             close(timerev->fd);
             free(timerev);
@@ -228,13 +234,13 @@ static void push_voipintercept_halt_to_threads(collector_sync_voip_t *sync,
     sync_sendq_t *sendq, *tmp;
 
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
-        push_halt_active_voipstreams(sendq->q, vint,
+        push_halt_active_voipstreams(sync, sendq->q, vint,
                 sync->glob->epoll_fd);
     }
 }
 
-static void push_all_active_voipstreams(libtrace_message_queue_t *q,
-        voipintercept_t *vint) {
+static void push_all_active_voipstreams(collector_sync_voip_t *sync,
+        libtrace_message_queue_t *q, voipintercept_t *vint) {
 
     rtpstreaminf_t *cin = NULL;
 
@@ -265,8 +271,10 @@ static int update_rtp_stream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp,
     port = strtoul(portstr, NULL, 0);
 
     if (errno != 0 || port > 65535) {
-        logger(LOG_INFO, "OpenLI: invalid RTP port number: %s", portstr);
-        return -1;
+        if (sync->log_bad_sip) {
+            logger(LOG_INFO, "OpenLI: invalid RTP port number: %s", portstr);
+            return -1;
+        }
     }
 
     convert_ipstr_to_sockaddr(ipstr, &(saddr), &(family));
@@ -332,7 +340,9 @@ static inline voipcinmap_t *update_cin_callid_map(voipcinmap_t **cinmap,
     if (!newcinmap) {
         logger(LOG_INFO,
                 "OpenLI: out of memory in collector_sync thread.");
-        return NULL;
+        logger(LOG_INFO,
+                "OpenLI: forcing provisioner to halt.");
+        exit(-2);
     }
     newcinmap->callid = strdup(callid);
     newcinmap->shared = vshared;
@@ -354,7 +364,9 @@ static inline voipsdpmap_t *update_cin_sdp_map(voipintercept_t *vint,
     if (!newsdpmap) {
         logger(LOG_INFO,
                 "OpenLI: out of memory in collector_sync thread.");
-        return NULL;
+        logger(LOG_INFO,
+                "OpenLI: forcing provisioner to halt.");
+        exit(-2);
     }
     newsdpmap->sdpkey.sessionid = sdpo->sessionid;
     newsdpmap->sdpkey.version = sdpo->version;
@@ -384,7 +396,9 @@ static int create_new_voipcin(rtpstreaminf_t **activecins, uint32_t cin_id,
     if (!newcin) {
         logger(LOG_INFO,
                 "OpenLI: out of memory while creating new RTP stream");
-        return -1;
+        logger(LOG_INFO,
+                "OpenLI: forcing provisioner to halt.");
+        exit(-2);
     }
     HASH_ADD_KEYPTR(hh, *activecins, newcin->streamkey,
             strlen(newcin->streamkey), newcin);
@@ -465,6 +479,10 @@ static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
         return NULL;
     }
 
+    logger(LOG_INFO,
+            "Creating new VOIP session for LIID %s (callID=%s)",
+            vint->common.liid, callid);
+
     vshared = (voipintshared_t *)malloc(sizeof(voipintshared_t));
     vshared->cin = cin_id;
     vshared->refs = 0;
@@ -501,13 +519,14 @@ static inline int check_sip_auth_fields(collector_sync_voip_t *sync,
     do {
         if (isproxy) {
             ret = get_sip_proxy_auth_identity(sync->sipparser, i, &authcount,
-                    &authid);
+                    &authid, sync->log_bad_sip);
         } else {
             ret = get_sip_auth_identity(sync->sipparser, i, &authcount,
-                    &authid);
+                    &authid, sync->log_bad_sip);
         }
 
         if (ret == -1) {
+            sync->log_bad_sip = 0;
             break;
         }
         if (ret > 0) {
@@ -537,9 +556,11 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
         if (ipstr && portstr) {
             if (update_rtp_stream(sync, thisrtp, vint, ipstr,
                         portstr, 1) == -1) {
-                logger(LOG_INFO,
-                        "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
-                        vint->common.liid, ipstr, portstr);
+                if (sync->log_bad_sip) {
+                    logger(LOG_INFO,
+                            "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
+                            vint->common.liid, ipstr, portstr);
+                }
                 free(cseqstr);
                 return -1;
             }
@@ -567,9 +588,11 @@ static int process_sip_200ok(collector_sync_voip_t *sync, rtpstreaminf_t *thisrt
         if (ipstr && portstr) {
             if (update_rtp_stream(sync, thisrtp, vint, ipstr,
                         portstr, 1) == -1) {
-                logger(LOG_INFO,
-                        "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
-                        vint->common.liid, ipstr, portstr);
+                if (sync->log_bad_sip) {
+                    logger(LOG_INFO,
+                            "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
+                            vint->common.liid, ipstr, portstr);
+                }
                 free(cseqstr);
                 return -1;
             }
@@ -641,6 +664,7 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
     rtpstreaminf_t *thisrtp;
     etsili_iri_type_t iritype = ETSILI_IRI_REPORT;
     int exportcount = 0;
+    int badsip = 0;
 
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
         int queueused;
@@ -664,15 +688,19 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
         snprintf(rtpkey, 256, "%s-%u", vint->common.liid, vshared->cin);
         HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
         if (thisrtp == NULL) {
-            logger(LOG_INFO,
-                    "OpenLI: unable to find %u in the active call list for %s",
-                    vshared->cin, vint->common.liid);
+            if (sync->log_bad_sip) {
+                logger(LOG_INFO,
+                        "OpenLI: unable to find %u in the active call list for %s",
+                        vshared->cin, vint->common.liid);
+            }
+            badsip = 1;
             continue;
         }
 
         /* Check for a new RTP stream announcement in a 200 OK */
         if (sip_is_200ok(sync->sipparser)) {
             if (process_sip_200ok(sync, thisrtp, vint, &iritype) < 0) {
+                badsip = 1;
                 continue;
             }
         }
@@ -680,6 +708,7 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
         /* Check for 183 Session Progress, as this can contain RTP info */
         if (sip_is_183sessprog(sync->sipparser)) {
             if (process_sip_183sessprog(sync, thisrtp, vint, &iritype) < 0) {
+                badsip = 1;
                 continue;
             }
         }
@@ -701,6 +730,9 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
         create_sip_ipiri(sync, vint, irimsg, iritype, vshared->cin);
         exportcount += 1;
     }
+    if (badsip) {
+        return -1;
+    }
     return exportcount;
 
 }
@@ -714,8 +746,10 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
     int exportcount = 0;
 
     if (get_sip_to_uri_identity(sync->sipparser, &touriid) < 0) {
-        logger(LOG_INFO,
-                "OpenLI: unable to derive SIP identity from To: URI");
+        if (sync->log_bad_sip) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to derive SIP identity from To: URI");
+        }
         return -1;
     }
 
@@ -758,10 +792,13 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     char *ipstr, *portstr, *cseqstr;
     int exportcount = 0;
     etsili_iri_type_t iritype = ETSILI_IRI_REPORT;
+    int badsip = 0;
 
     if (get_sip_to_uri_identity(sync->sipparser, &touriid) < 0) {
-        logger(LOG_INFO,
-                "OpenLI: unable to derive SIP identity from To: URI");
+        if (sync->log_bad_sip) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to derive SIP identity from To: URI");
+        }
         return -1;
     }
 
@@ -773,27 +810,30 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         HASH_FIND(hh_callid, vint->cin_callid_map, callid, strlen(callid),
                 findcin);
 
-        HASH_FIND(hh_sdp, vint->cin_sdp_map, sdpo, sizeof(sdpo),
+        HASH_FIND(hh_sdp, vint->cin_sdp_map, sdpo, sizeof(sip_sdp_identifier_t),
                 findsdp);
 
         if (findcin) {
             if (findsdp) {
-                assert(findsdp->shared->cin == findcin->shared->cin); // XXX
-            } else if (update_cin_sdp_map(vint, sdpo, findcin->shared) == NULL)
-            {
-                // XXX ERROR
-
+                if (findsdp->shared->cin != findcin->shared->cin) {
+                    if (sync->log_bad_sip) {
+                        logger(LOG_INFO,
+                                "OpenLI: mismatched CINs for call %s and SDP identifier %u:%u:%s:%s",
+                                sdpo->sessionid, sdpo->version, sdpo->username,
+                                sdpo->address);
+                    }
+                    return -1;
+                }
             }
 
+            update_cin_sdp_map(vint, sdpo, findcin->shared);
             vshared = findcin->shared;
             iritype = ETSILI_IRI_CONTINUE;
 
         } else if (findsdp) {
             /* New call ID but already seen this session */
-            if (update_cin_callid_map(&(vint->cin_callid_map), callid,
-                        findsdp->shared) == NULL) {
-                // XXX ERROR
-            }
+            update_cin_callid_map(&(vint->cin_callid_map), callid,
+                        findsdp->shared);
             vshared = findsdp->shared;
             iritype = ETSILI_IRI_CONTINUE;
 
@@ -827,9 +867,12 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         snprintf(rtpkey, 256, "%s-%u", vint->common.liid, vshared->cin);
         HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
         if (thisrtp == NULL) {
-            logger(LOG_INFO,
+            if (sync->log_bad_sip) {
+                logger(LOG_INFO,
                     "OpenLI: unable to find %u in the active call list for %s",
                     vshared->cin, vint->common.liid);
+            }
+            badsip = 1;
             continue;
         }
 
@@ -839,9 +882,12 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         if (ipstr && portstr) {
             if (update_rtp_stream(sync, thisrtp, vint, ipstr, portstr,
                         0) == -1) {
-                logger(LOG_INFO,
+                if (sync->log_bad_sip) {
+                    logger(LOG_INFO,
                         "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
                         vint->common.liid, ipstr, portstr);
+                }
+                badsip = 1;
                 continue;
             }
         }
@@ -852,6 +898,10 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         thisrtp->invitecseq = get_sip_cseq(sync->sipparser);
         create_sip_ipiri(sync, vint, irimsg, iritype, vshared->cin);
         exportcount += 1;
+    }
+
+    if (badsip) {
+        return -1;
     }
     return exportcount;
 
@@ -873,7 +923,9 @@ static int update_sip_state(collector_sync_voip_t *sync,
     sessuser = get_sip_session_username(sync->sipparser);
 
     if (callid == NULL) {
-        logger(LOG_DEBUG, "OpenLI: SIP packet has no Call ID?");
+        if (sync->log_bad_sip) {
+            logger(LOG_INFO, "OpenLI: SIP packet has no Call ID?");
+        }
         iserr = 1;
         goto sipgiveup;
     }
@@ -882,8 +934,10 @@ static int update_sip_state(collector_sync_voip_t *sync,
         errno = 0;
         sdpo.sessionid = strtoul(sessid, NULL, 0);
         if (errno != 0) {
-            logger(LOG_DEBUG, "OpenLI: invalid session ID in SIP packet %s",
-                    sessid);
+            if (sync->log_bad_sip) {
+                logger(LOG_INFO, "OpenLI: invalid session ID in SIP packet %s",
+                        sessid);
+            }
             sessid = NULL;
             sdpo.sessionid = 0;
         }
@@ -895,8 +949,10 @@ static int update_sip_state(collector_sync_voip_t *sync,
         errno = 0;
         sdpo.version = strtoul(sessversion, NULL, 0);
         if (errno != 0) {
-            logger(LOG_DEBUG, "OpenLI: invalid version in SIP packet %s",
-                    sessid);
+            if (sync->log_bad_sip) {
+                logger(LOG_INFO, "OpenLI: invalid version in SIP packet %s",
+                        sessid);
+            }
             sessversion = NULL;
             sdpo.version = 0;
         }
@@ -920,20 +976,26 @@ static int update_sip_state(collector_sync_voip_t *sync,
     if (sip_is_invite(sync->sipparser)) {
         if ((ret = process_sip_invite(sync, callid, &sdpo, irimsg)) < 0) {
             iserr = 1;
-            logger(LOG_DEBUG, "OpenLI: error while processing SIP invite");
+            if (sync->log_bad_sip) {
+                logger(LOG_INFO, "OpenLI: error while processing SIP invite");
+            }
             goto sipgiveup;
         }
     } else if (sip_is_register(sync->sipparser)) {
         if ((ret = process_sip_register(sync, callid, irimsg)) < 0) {
             iserr = 1;
-            logger(LOG_DEBUG, "OpenLI: error while processing SIP register");
+            if (sync->log_bad_sip) {
+                logger(LOG_INFO, "OpenLI: error while processing SIP register");
+            }
             goto sipgiveup;
         }
     } else if (lookup_sip_callid(sync, callid) != 0) {
         /* SIP packet matches a "known" call of interest */
         if ((ret = process_sip_other(sync, callid, &sdpo, irimsg)) < 0) {
             iserr = 1;
-            logger(LOG_DEBUG, "OpenLI: error while processing non-invite SIP");
+            if (sync->log_bad_sip) {
+                logger(LOG_INFO, "OpenLI: error while processing non-invite SIP");
+            }
             goto sipgiveup;
         }
     }
@@ -959,21 +1021,27 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     openli_export_recv_t *expmsg;
 
     if (decode_voipintercept_modify(intmsg, msglen, &tomod) == -1) {
-        logger(LOG_INFO,
+        if (sync->log_bad_instruct) {
+            logger(LOG_INFO,
                 "OpenLI: received invalid VOIP intercept modification from provisioner.");
+        }
         return -1;
     }
 
     HASH_FIND(hh_liid, sync->voipintercepts, tomod.common.liid,
             tomod.common.liid_len, vint);
     if (!vint) {
-        logger(LOG_INFO,
+        if (sync->log_bad_instruct) {
+            logger(LOG_INFO,
                 "OpenLI: received modification for VOIP intercept %s but it is not present in the sync intercept list?",
                 tomod.common.liid);
+        }
         return 0;
     }
 
-    logger(LOG_INFO, "OpenLI: sync thread modifying options for VOIP intercept %s",
+    sync->log_bad_instruct = 1;
+    logger(LOG_INFO,
+            "OpenLI: sync thread modifying options for VOIP intercept %s",
             tomod.common.liid);
 
     vint->options = tomod.options;
@@ -995,20 +1063,25 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     openli_export_recv_t *expmsg;
 
     if (decode_voipintercept_halt(intmsg, msglen, &torem) == -1) {
-        logger(LOG_INFO,
+        if (sync->log_bad_instruct) {
+            logger(LOG_INFO,
                 "OpenLI: received invalid VOIP intercept withdrawal from provisioner.");
+        }
         return -1;
     }
 
     HASH_FIND(hh_liid, sync->voipintercepts, torem.common.liid,
             torem.common.liid_len, vint);
     if (!vint) {
-        logger(LOG_INFO,
+        if (sync->log_bad_instruct) {
+            logger(LOG_INFO,
                 "OpenLI: received withdrawal for VOIP intercept %s but it is not present in the sync intercept list?",
                 torem.common.liid);
+        }
         return 0;
     }
 
+    sync->log_bad_instruct = 1;
     logger(LOG_INFO, "OpenLI: sync thread withdrawing VOIP intercept %s",
             torem.common.liid);
 
@@ -1196,20 +1269,25 @@ static int new_voip_sip_target(collector_sync_voip_t *sync, uint8_t *intmsg,
 
     if (decode_sip_target_announcement(intmsg, msglen, &sipid, liidspace,
             1024) < 0) {
-        logger(LOG_INFO,
-                "OpenLI: received invalid SIP target from provisioner.");
+        if (sync->log_bad_instruct) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid SIP target from provisioner.");
+        }
         return -1;
     }
 
     HASH_FIND(hh_liid, sync->voipintercepts, liidspace, strlen(liidspace),
             vint);
     if (!vint) {
-        logger(LOG_INFO,
-                "OpenLI: received SIP target for unknown VOIP LIID %s.",
-                liidspace);
+        if (sync->log_bad_instruct) {
+            logger(LOG_INFO,
+                    "OpenLI: received SIP target for unknown VOIP LIID %s.",
+                    liidspace);
+        }
         return -1;
     }
 
+    sync->log_bad_instruct = 1;
     add_new_sip_target_to_list(vint, &sipid);
     return 0;
 }
@@ -1224,20 +1302,25 @@ static int withdraw_voip_sip_target(collector_sync_voip_t *sync,
 
     if (decode_sip_target_announcement(intmsg, msglen, &sipid, liidspace,
             1024) < 0) {
-        logger(LOG_INFO,
+        if (sync->log_bad_instruct) {
+            logger(LOG_INFO,
                 "OpenLI: received invalid SIP target withdrawal from provisioner.");
+        }
         return -1;
     }
 
     HASH_FIND(hh_liid, sync->voipintercepts, liidspace, strlen(liidspace),
             vint);
     if (!vint) {
-        logger(LOG_INFO,
+        if (sync->log_bad_instruct) {
+            logger(LOG_INFO,
                 "OpenLI: received SIP target withdrawal for unknown VOIP LIID %s.",
                 liidspace);
+        }
         return -1;
     }
 
+    sync->log_bad_instruct = 1;
     disable_sip_target(vint, &sipid);
 }
 
@@ -1250,9 +1333,15 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     openli_export_recv_t *expmsg;
 
     if (decode_voipintercept_start(intmsg, msglen, &toadd) == -1) {
-        logger(LOG_INFO,
+        if (sync->log_bad_instruct) {
+            logger(LOG_INFO,
                 "OpenLI: received invalid VOIP intercept from provisioner.");
+        }
         return -1;
+    }
+
+    if (sync->log_bad_instruct == 0) {
+        sync->log_bad_instruct = 1;
     }
 
     HASH_FIND(hh_liid, sync->voipintercepts, toadd.common.liid,
@@ -1283,7 +1372,7 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     pthread_mutex_lock(&(sync->glob->mutex));
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
         /* Forward all active CINs to our collector threads */
-        push_all_active_voipstreams(sendq->q, vint);
+        push_all_active_voipstreams(sync, sendq->q, vint);
 
     }
     pthread_mutex_unlock(&(sync->glob->mutex));
@@ -1386,11 +1475,17 @@ static void examine_sip_update(collector_sync_voip_t *sync,
     libtrace_packet_t *pktref;
     openli_export_recv_t baseirimsg;
 
-    ret = add_sip_packet_to_parser(&(sync->sipparser), recvdpkt);
+    ret = add_sip_packet_to_parser(&(sync->sipparser), recvdpkt,
+            sync->log_bad_sip);
 
     if (ret == SIP_ACTION_ERROR) {
-        logger(LOG_INFO,
-                "OpenLI: sync thread received an invalid SIP packet?");
+        if (sync->log_bad_sip) {
+            logger(LOG_INFO,
+                    "OpenLI: sync thread received an invalid SIP packet?");
+            logger(LOG_INFO,
+                    "OpenLI: will not log any further invalid SIP instances.");
+            sync->log_bad_sip = 0;
+        }
         if (sync->sipdebugfile) {
             if (!sync->sipdebugout) {
                 sync->sipdebugout = open_debug_output(sync->sipdebugfile,
@@ -1421,8 +1516,13 @@ static void examine_sip_update(collector_sync_voip_t *sync,
     if (extract_ip_addresses(recvdpkt, baseirimsg.data.ipmmiri.ipsrc,
             baseirimsg.data.ipmmiri.ipdest,
             &(baseirimsg.data.ipmmiri.ipfamily)) != 0) {
-        logger(LOG_INFO,
+        if (sync->log_bad_sip) {
+            logger(LOG_INFO,
                 "OpenLI: error while extracting IP addresses from SIP packet");
+            logger(LOG_INFO,
+                    "OpenLI: will not log any further invalid SIP instances.");
+            sync->log_bad_sip = 0;
+        }
         ret = SIP_ACTION_IGNORE;
     }
 
@@ -1435,8 +1535,13 @@ static void examine_sip_update(collector_sync_voip_t *sync,
         }
 
         if (ret < 0) {
-            logger(LOG_DEBUG,
-                    "OpenLI: sync thread parsed an invalid SIP packet?");
+            if (sync->log_bad_sip) {
+                logger(LOG_INFO,
+                        "OpenLI: sync thread parsed an invalid SIP packet?");
+                logger(LOG_INFO,
+                        "OpenLI: will not log any further invalid SIP instances.");
+                sync->log_bad_sip = 0;
+            }
             if (sync->sipdebugfile && pktref) {
                 if (!sync->sipdebugout) {
                     sync->sipdebugout = open_debug_output(
@@ -1452,8 +1557,13 @@ static void examine_sip_update(collector_sync_voip_t *sync,
                 &(baseirimsg.data.ipmmiri.contentlen));
 
         if (ret > 0 && update_sip_state(sync, pktref, &baseirimsg) < 0) {
-            logger(LOG_DEBUG,
-                    "OpenLI: error while updating SIP state in collector.");
+            if (sync->log_bad_sip) {
+                logger(LOG_INFO,
+                        "OpenLI: error while updating SIP state in collector.");
+                logger(LOG_INFO,
+                        "OpenLI: will not log any further invalid SIP instances.");
+                sync->log_bad_sip = 0;
+            }
             if (sync->sipdebugfile && pktref) {
                 if (!sync->sipdebugupdate) {
                     sync->sipdebugupdate = open_debug_output(
@@ -1491,7 +1601,7 @@ static inline void process_colthread_message(collector_sync_voip_t *sync,
     if (recvd.type == OPENLI_UPDATE_HELLO) {
         voipintercept_t *v;
         for (v = sync->voipintercepts; v != NULL; v = v->hh_liid.next) {
-            push_all_active_voipstreams(recvd.data.replyq, v);
+            push_all_active_voipstreams(sync, recvd.data.replyq, v);
         }
     }
 
@@ -1564,29 +1674,34 @@ static inline int process_intersync_msg(collector_sync_voip_t *sync,
         case OPENLI_PROTO_START_VOIPINTERCEPT:
             if (new_voipintercept(sync, syncmsg.msgbody, syncmsg.msglen) < 0) {
                 /* error, do something XXX */
+                sync->log_bad_instruct = 0;
             }
             break;
         case OPENLI_PROTO_HALT_VOIPINTERCEPT:
             if (halt_voipintercept(sync, syncmsg.msgbody, syncmsg.msglen) < 0) {
                 /* error, do something XXX */
+                sync->log_bad_instruct = 0;
             }
             break;
         case OPENLI_PROTO_MODIFY_VOIPINTERCEPT:
             if (modify_voipintercept(sync, syncmsg.msgbody, syncmsg.msglen)
                     < 0) {
                 /* error, do something XXX */
+                sync->log_bad_instruct = 0;
             }
             break;
         case OPENLI_PROTO_ANNOUNCE_SIP_TARGET:
             if (new_voip_sip_target(sync, syncmsg.msgbody,
                     syncmsg.msglen) < 0) {
                 /* error, do something XXX */
+                sync->log_bad_instruct = 0;
             }
             break;
         case OPENLI_PROTO_WITHDRAW_SIP_TARGET:
             if (withdraw_voip_sip_target(sync, syncmsg.msgbody,
                     syncmsg.msglen) < 0) {
                 /* error, do something XXX */
+                sync->log_bad_instruct = 0;
             }
             break;
         case OPENLI_PROTO_NOMORE_INTERCEPTS:
@@ -1594,6 +1709,9 @@ static inline int process_intersync_msg(collector_sync_voip_t *sync,
             break;
         case OPENLI_PROTO_DISCONNECT:
             touch_all_voipintercepts(sync->voipintercepts);
+            break;
+        case OPENLI_PROTO_CONFIG_RELOADED:
+            sync->log_bad_sip = 1;
             break;
     }
 

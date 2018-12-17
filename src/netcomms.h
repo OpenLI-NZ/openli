@@ -96,6 +96,7 @@ typedef enum {
     OPENLI_PROTO_ADD_STATICIPS,
     OPENLI_PROTO_REMOVE_STATICIPS,
     OPENLI_PROTO_MODIFY_VOIPINTERCEPT,
+    OPENLI_PROTO_CONFIG_RELOADED,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
