@@ -349,6 +349,7 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
 
         med = (export_dest_t *)calloc(1, sizeof(export_dest_t));
         med->failmsg = 0;
+        med->pollindex = -1;
         med->fd = -1;
         med->ipstr = NULL;
         med->portstr = NULL;
@@ -569,6 +570,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         if (x < 0) {
             return 0;
         }
+        fwd->topoll[0].revents = 0;
     }
 
     if (fwd->topoll[2].revents & ZMQ_POLLIN) {
@@ -593,6 +595,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         if (x < 0) {
             return 0;
         }
+        fwd->topoll[1].revents = 0;
     }
 
     if (fwd->awaitingconfirm) {
@@ -612,6 +615,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         if (!(fwd->topoll[i].revents & ZMQ_POLLOUT)) {
             continue;
         }
+        fwd->topoll[i].revents = 0;
 
         if (fwd->topoll[i].events == 0) {
             continue;
