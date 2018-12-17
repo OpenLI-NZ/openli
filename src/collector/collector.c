@@ -1207,6 +1207,9 @@ static void *start_ip_sync_thread(void *params) {
         if (ret == -1) {
             break;
         }
+        if (ret == 0) {
+            usleep(200000);
+        }
     }
 
     /* Collector is halting, stop all processing threads */
