@@ -159,6 +159,7 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate->details.liid_len = strlen(cept->liid);
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
+
     } else {
 
         /* New LIID, create fresh intercept state */
@@ -232,12 +233,12 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
     HASH_FIND(hh, seqdata->intercepts, msg->liid, strlen(msg->liid), intstate);
 
     if (!intstate) {
-        logger(LOG_INFO, "Tracker thread was told to end intercept LIID %s, but it is not a valid ID?",
+        logger(LOG_INFO, "OpenLI collector: tracker thread was told to end intercept LIID %s, but it is not a valid ID?",
                 msg->liid);
         return -1;
     }
 
-    logger(LOG_INFO, "tracker thread %d removed intercept %s",
+    logger(LOG_INFO, "OpenLI collector: tracker thread %d removed intercept %s",
             seqdata->trackerid, msg->liid);
     HASH_DELETE(hh, seqdata->intercepts, intstate);
 	if (msg->liid) {
@@ -312,6 +313,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         cinseq->iri_seqno ++;
 	}
 
+
     if (zmq_send(seqdata->zmq_pushjobsock, (char *)&job,
             sizeof(openli_encoding_job_t), 0) < 0) {
         logger(LOG_INFO,
@@ -374,9 +376,6 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
                     sincepurge ++;
 					break;
 
-                default:
-                    printf("got unexpected job: %u\n", job->type);
-                    assert(0);
             }
         }
 
