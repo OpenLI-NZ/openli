@@ -480,7 +480,7 @@ static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
     }
 
     logger(LOG_INFO,
-            "Creating new VOIP session for LIID %s (callID=%s)",
+            "OpenLI: creating new VOIP session for LIID %s (callID=%s)",
             vint->common.liid, callid);
 
     vshared = (voipintshared_t *)malloc(sizeof(voipintshared_t));
@@ -1073,11 +1073,6 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     HASH_FIND(hh_liid, sync->voipintercepts, torem.common.liid,
             torem.common.liid_len, vint);
     if (!vint) {
-        if (sync->log_bad_instruct) {
-            logger(LOG_INFO,
-                "OpenLI: received withdrawal for VOIP intercept %s but it is not present in the sync intercept list?",
-                torem.common.liid);
-        }
         return 0;
     }
 
@@ -1375,7 +1370,10 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         push_all_active_voipstreams(sync, sendq->q, vint);
 
     }
+
     pthread_mutex_unlock(&(sync->glob->mutex));
+    logger(LOG_INFO,
+            "OpenLI: adding new VOIP intercept %s", vint->common.liid);
     return 0;
 }
 
