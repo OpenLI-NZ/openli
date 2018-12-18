@@ -612,12 +612,26 @@ static int push_all_sip_targets(net_buffer_t *nb, libtrace_list_t *targets,
 }
 
 static int push_all_voipintercepts(provision_state_t *state,
-        voipintercept_t *voipintercepts, net_buffer_t *nb) {
+        voipintercept_t *voipintercepts, net_buffer_t *nb,
+        prov_agency_t *agencies) {
 
     voipintercept_t *v;
+    prov_agency_t *lea;
+    int skip = 0;
 
     for (v = voipintercepts; v != NULL; v = v->hh_liid.next) {
         if (v->active == 0) {
+            continue;
+        }
+        skip = 0;
+        if (strcmp(v->common.targetagency, "pcapdisk") != 0) {
+            HASH_FIND_STR(agencies, v->common.targetagency, lea);
+            if (lea == NULL) {
+                skip = 1;
+            }
+        }
+
+        if (skip) {
             continue;
         }
 
@@ -643,11 +657,25 @@ static int push_all_voipintercepts(provision_state_t *state,
 }
 
 static int push_all_ipintercepts(ipintercept_t *ipintercepts,
-        net_buffer_t *nb) {
+        net_buffer_t *nb, prov_agency_t *agencies) {
 
     ipintercept_t *cept;
+    prov_agency_t *lea;
+    int skip = 0;
 
     for (cept = ipintercepts; cept != NULL; cept = cept->hh_liid.next) {
+        skip = 0;
+        if (strcmp(cept->common.targetagency, "pcapdisk") != 0) {
+            HASH_FIND_STR(agencies, cept->common.targetagency, lea);
+            if (lea == NULL) {
+                skip = 1;
+            }
+        }
+
+        if (skip) {
+            continue;
+        }
+
         if (push_ipintercept_onto_net_buffer(nb, cept) < 0) {
             logger(LOG_INFO,
                     "OpenLI provisioner: error pushing IP intercept %s onto buffer for writing to collector.",
@@ -698,14 +726,16 @@ static int respond_collector_auth(provision_state_t *state,
         return -1;
     }
 
-    if (push_all_ipintercepts(state->ipintercepts, outgoing) == -1) {
+    if (push_all_ipintercepts(state->ipintercepts, outgoing,
+                state->leas) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue IP intercepts to be sent to new collector on fd %d",
                 pev->fd);
         return -1;
     }
 
-    if (push_all_voipintercepts(state, state->voipintercepts, outgoing) == -1) {
+    if (push_all_voipintercepts(state, state->voipintercepts, outgoing,
+            state->leas) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue VOIP IP intercepts to be sent to new collector on fd %d",
                 pev->fd);
@@ -2229,7 +2259,21 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
 
     HASH_ITER(hh_liid, newstate->voipintercepts, voipint, tmp) {
         liid_hash_t *h = NULL;
+        int skip = 0;
+        prov_agency_t *lea = NULL;
+
         if (!voipint->awaitingconfirm) {
+            continue;
+        }
+
+        if (strcmp(voipint->common.targetagency, "pcapdisk") != 0) {
+            HASH_FIND_STR(newstate->leas, voipint->common.targetagency, lea);
+            if (lea == NULL) {
+                skip = 1;
+            }
+        }
+
+        if (skip) {
             continue;
         }
 
@@ -2430,7 +2474,21 @@ static inline int reload_ipintercepts(provision_state_t *currstate,
 
     HASH_ITER(hh_liid, newstate->ipintercepts, ipint, tmp) {
         liid_hash_t *h = NULL;
+        int skip = 0;
+        prov_agency_t *lea = NULL;
+
         if (!ipint->awaitingconfirm) {
+            continue;
+        }
+
+        if (strcmp(ipint->common.targetagency, "pcapdisk") != 0) {
+            HASH_FIND_STR(newstate->leas, ipint->common.targetagency, lea);
+            if (lea == NULL) {
+                skip = 1;
+            }
+        }
+
+        if (skip) {
             continue;
         }
 
