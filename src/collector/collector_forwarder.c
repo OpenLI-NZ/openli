@@ -40,6 +40,25 @@
 #define BUF_BATCH_SIZE (100 * 1024 * 1024)
 #define MIN_SEND_AMOUNT (1 * 1024 * 1024)
 
+static inline void free_encoded_result(openli_encoded_result_t *res) {
+    if (res->liid) {
+        free(res->liid);
+    }
+
+    if (res->cinstr) {
+        free(res->cinstr);
+    }
+
+    if (res->msgbody) {
+        free(res->msgbody->encoded);
+        free(res->msgbody);
+    }
+
+    if (res->origreq) {
+        free_published_message(res->origreq);
+    }
+}
+
 static int add_new_destination(forwarding_thread_data_t *fwd,
         openli_export_recv_t *msg) {
 
@@ -179,6 +198,37 @@ static void remove_all_destinations(forwarding_thread_data_t *fwd) {
     }
 }
 
+static void remove_reorderers(forwarding_thread_data_t *fwd, char *liid,
+        Pvoid_t *reorderer_array) {
+
+    PWord_t jval;
+    uint8_t index[256];
+    int_reorderer_t *reord;
+    stored_result_t *stored, *tmp;
+    int err;
+
+    index[0] = '\0';
+    JSLF(jval, *reorderer_array, index);
+    while (jval != NULL) {
+        reord = (int_reorderer_t *)(*jval);
+
+        if (liid == NULL || strcmp(reord->liid, liid) != 0) {
+            JSLN(jval, *reorderer_array, index);
+            continue;
+        }
+        JSLD(err, *reorderer_array, index);
+        HASH_ITER(hh, reord->pending, stored, tmp) {
+            HASH_DELETE(hh, reord->pending, stored);
+            free_encoded_result(&(stored->res));
+            free(stored);
+        }
+        free(reord->liid);
+        free(reord->key);
+        free(reord);
+        JSLN(jval, *reorderer_array, index);
+    }
+}
+
 static void flag_all_destinations(forwarding_thread_data_t *fwd) {
     export_dest_t *med;
     PWord_t *jval;
@@ -203,7 +253,10 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         return 0;
     }
 
-    if (msg->type == OPENLI_EXPORT_MEDIATOR) {
+    if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
+        remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_cc));
+        remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_iri));
+    } else if (msg->type == OPENLI_EXPORT_MEDIATOR) {
         return add_new_destination(fwd, msg);
     } else if (msg->type == OPENLI_EXPORT_DROP_SINGLE_MEDIATOR) {
         PWord_t jval;
@@ -226,25 +279,6 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
     }
 
     return 1;
-}
-
-static inline void free_encoded_result(openli_encoded_result_t *res) {
-    if (res->liid) {
-        free(res->liid);
-    }
-
-    if (res->cinstr) {
-        free(res->cinstr);
-    }
-
-    if (res->msgbody) {
-        free(res->msgbody->encoded);
-        free(res->msgbody);
-    }
-
-    if (res->origreq) {
-        free_published_message(res->origreq);
-    }
 }
 
 static inline int enqueue_result(forwarding_thread_data_t *fwd,

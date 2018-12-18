@@ -904,6 +904,20 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     return 1;
 }
 
+static inline openli_export_recv_t *create_intercept_details_msg(
+        intercept_common_t *common) {
+
+    openli_export_recv_t *expmsg;
+    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    expmsg->type = OPENLI_EXPORT_INTERCEPT_DETAILS;
+    expmsg->data.cept.liid = strdup(common->liid);
+    expmsg->data.cept.authcc = strdup(common->authcc);
+    expmsg->data.cept.delivcc = strdup(common->delivcc);
+    expmsg->data.cept.seqtrackerid = common->seqtrackerid;
+
+    return expmsg;
+}
+
 static inline void drop_all_mediators(collector_sync_t *sync) {
     openli_export_recv_t *expmsg;
     int i;
@@ -1034,17 +1048,48 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
             cept->common.liid_len, cept);
 
-    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
-    expmsg->type = OPENLI_EXPORT_INTERCEPT_DETAILS;
-    expmsg->data.cept.liid = strdup(cept->common.liid);
-    expmsg->data.cept.authcc = strdup(cept->common.authcc);
-    expmsg->data.cept.delivcc = strdup(cept->common.delivcc);
-    expmsg->data.cept.seqtrackerid = cept->common.seqtrackerid;
-
+    expmsg = create_intercept_details_msg(&(cept->common));
     publish_openli_msg(sync->zmq_pubsocks[cept->common.seqtrackerid], expmsg);
+
+    for (i = 0; i < sync->forwardcount; i++) {
+        expmsg = create_intercept_details_msg(&(cept->common));
+        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+    }
 
     return 1;
 
+}
+
+static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
+        uint16_t msglen) {
+
+    voipintercept_t vint;
+    openli_export_recv_t *expmsg;
+    int i;
+
+    /* Most of the new VOIP intercept stuff is handled by the VOIP sync
+     * thread, but we also need to let the forwarder threads know that
+     * a new intercept is starting and only the IP sync thread has
+     * sockets for sending messages to the forwarders.
+     *
+     * Technically, this is only to handle an edge case that should
+     * never happen (i.e. an intercept ID being re-used after it had
+     * previously been used and withdrawn) but we should try to do the
+     * right thing if it ever happens (most likely to be when users
+     * are testing deployments, of course).
+     */
+
+    if (decode_voipintercept_start(intmsg, msglen, &vint) == -1) {
+        /* Don't bother logging, the VOIP sync thread should handle that */
+        return -1;
+    }
+
+    for (i = 0; i < sync->forwardcount; i++) {
+        expmsg = create_intercept_details_msg(&(vint.common));
+        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+    }
+
+    return 1;
 }
 
 static int recv_from_provisioner(collector_sync_t *sync) {
@@ -1137,6 +1182,17 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 }
                 break;
             case OPENLI_PROTO_START_VOIPINTERCEPT:
+                ret = new_voipintercept(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                ret = forward_provmsg_to_voipsync(sync, provmsg, msglen,
+                        msgtype);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+
             case OPENLI_PROTO_HALT_VOIPINTERCEPT:
             case OPENLI_PROTO_MODIFY_VOIPINTERCEPT:
             case OPENLI_PROTO_ANNOUNCE_SIP_TARGET:
