@@ -383,6 +383,8 @@ static void destroy_med_state(mediator_state_t *state) {
     }
     JSLFA(bytes, state->liid_array);
 
+    JSLFA(bytes, state->missing_liids);
+
     if (state->etsidecoder) {
         wandder_free_etsili_decoder(state->etsidecoder);
     }
@@ -461,6 +463,8 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->connectthread = -1;
 
     state->liid_array = NULL;
+    state->missing_liids = NULL;
+
     //state->liids = NULL;
     libtrace_message_queue_init(&(state->pcapqueue),
             sizeof(mediator_pcap_msg_t));
@@ -1303,10 +1307,20 @@ static liid_map_t *match_etsi_to_agency(mediator_state_t *state,
 
     JSLG(jval, state->liid_array, liidstr);
     if (jval == NULL) {
-        logger(LOG_INFO, "OpenLI: mediator was unable to find LIID %s in its set of mappings.", liidstr);
 
-        /* TODO what do we do in this case -- buffer it somewhere in case
-         * a mapping turns up later? drop it? */
+        JSLG(jval, state->missing_liids, liidstr);
+        if (jval == NULL) {
+            logger(LOG_INFO, "OpenLI: mediator was unable to find LIID %s in its set of mappings.", liidstr);
+
+            JSLI(jval, state->missing_liids, liidstr);
+            if (jval == NULL) {
+                logger(LOG_INFO, "OpenLI mediator: OOM when allocating memory for missing LIID.");
+                exit(-2);
+            }
+
+            *jval = 1;
+        }
+
         return NULL;
     }
     return (liid_map_t *)(*jval);
@@ -1466,11 +1480,6 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
 
     JSLG(jval, state->liid_array, liid);
     if (jval == NULL) {
-
-//    HASH_FIND_STR(state->liids, liid, m);
-//    if (m == NULL) {
-        logger(LOG_INFO, "OpenLI mediator: asked to cease mediation for LIID %s, but we have no record of this LIID?",
-                liid);
         free(liid);
         return 0;
     }
@@ -1528,6 +1537,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     mediator_agency_t *agency;
     liid_map_t *m;
     PWord_t jval;
+    int err;
 
     agencyid = NULL;
     liid = NULL;
@@ -1590,6 +1600,14 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
             return -1;
         }
         *jval = (Word_t)m;
+
+        /* If this was previously a "unknown" LIID, we can now remove
+         * it from our missing LIID list -- if it gets withdrawn later,
+         * we will then alert again about it being missing. */ 
+        JSLG(jval, state->missing_liids, liid);
+        if (jval != NULL) {
+            JSLD(err, state->missing_liids, liid);
+        }
     }
     m->liid = liid;
     m->agency = agency;
@@ -1862,7 +1880,7 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                 thisint = match_etsi_to_agency(state, msgbody, msglen,
                         &liidlen);
                 if (thisint == NULL) {
-                    return -1;
+                    break;
                 }
                 if (cs->disabled_log == 1) {
                     reenable_collector_logging(state, cs);
@@ -1886,7 +1904,7 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                 thisint = match_etsi_to_agency(state, msgbody, msglen,
                         &liidlen);
                 if (thisint == NULL) {
-                    return -1;
+                    break;
                 }
                 if (cs->disabled_log == 1) {
                     reenable_collector_logging(state, cs);

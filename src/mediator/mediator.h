@@ -143,6 +143,7 @@ typedef struct med_state {
     mediator_prov_t provisioner;
 
     Pvoid_t liid_array;
+    Pvoid_t missing_liids;
 //    liid_map_t *liids;
 
     uint32_t pcaprotatefreq;
