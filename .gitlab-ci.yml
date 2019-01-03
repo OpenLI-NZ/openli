@@ -37,6 +37,7 @@ build-debian-buster:
     - ./gitlab-build.sh
     - mkdir -p built-packages/debian_buster/
     - mv ../*.deb built-packages/debian_buster/
+  allow_failure: true
   artifacts:
     paths:
       - built-packages/*
@@ -51,6 +52,7 @@ build-debian-sid:
     - ./gitlab-build.sh
     - mkdir -p built-packages/debian_sid/
     - mv ../*.deb built-packages/debian_sid/
+  allow_failure: true
   artifacts:
     paths:
       - built-packages/*
