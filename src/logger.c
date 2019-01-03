@@ -7,6 +7,7 @@
 #include <string.h>
 #include <assert.h>
 #include <sys/stat.h>
+#include <errno.h>
 
 #if HAVE_SYSLOG_H
 #include <sys/syslog.h>
@@ -16,10 +17,75 @@
 
 int daemonised = 0;
 
-void daemonise(char *name) {
+void remove_pidfile(char *fname) {
+    if (unlink(fname) < 0) {
+        logger(LOG_INFO, "Error removing pidfile '%s': %s", fname,
+                strerror(errno));
+    }
+}
+
+static int create_pidfile(char *fname) {
+
+    int fd;
+    char buf[128];
+
+    if ((fd = open(fname, O_RDWR | O_CREAT | O_CLOEXEC,
+            S_IRUSR | S_IWUSR)) < 0) {
+        logger(LOG_INFO, "Error opening pidfile '%s': %s",
+                fname, strerror(errno));
+        return -1;
+    }
+
+    if (lockf(fd, F_TLOCK, 0) < 0) {
+        if (errno == EACCES || errno == EAGAIN) {
+            logger(LOG_DEBUG, "pidfile '%s' is locked, unable to start",
+                    fname);
+        } else {
+            logger(LOG_INFO, "Error while locking pidfile '%s': %s",
+                    fname, strerror(errno));
+        }
+        close(fd);
+        return -1;
+    }
+
+    if (ftruncate(fd, 0) < 0) {
+        logger(LOG_INFO, "Error while truncating pidfile '%s': %s",
+                fname, strerror(errno));
+        close(fd);
+        return -1;
+    }
+
+    memset(buf, 0, sizeof(buf));
+    snprintf(buf, sizeof(buf) - 1, "%d\n", getpid());
+    buf[sizeof(buf) - 1] = '\0';
+
+    if (write(fd, buf, strlen(buf)) < 0) {
+        logger(LOG_INFO, "Error while writing to pidfile '%s': %s",
+                fname, strerror(errno));
+        close(fd);
+        return -1;
+    }
+
+    close(fd);
+    return 0;
+
+}
+
+void open_daemonlog(char *name) {
+
+#if HAVE_SYSLOG_H
+    name = strrchr(name,'/') ? strrchr(name,'/') + 1 : name;
+    openlog(name, LOG_PID, LOG_DAEMON);
+    setlogmask(LOG_UPTO(LOG_INFO));
+#else
+    (void)(name);
+#endif
+}
+
+
+void daemonise(char *name, char *pidfile) {
 
     int rv;
-#if 0
     switch (fork()) {
         case 0:
             break;
@@ -53,16 +119,15 @@ void daemonise(char *name) {
     assert(rv == 1);
     rv = dup(rv);
     assert(rv == 2);
-#endif
 
-#if HAVE_SYSLOG_H
+    open_daemonlog(name);
+    if (pidfile) {
+        if (create_pidfile(pidfile) < 0) {
+            exit(0);
+        }
+    }
+
     daemonised = 1;
-    name = strrchr(name,'/') ? strrchr(name,'/') + 1 : name;
-
-    openlog(name, LOG_PID, LOG_DAEMON);
-    setlogmask(LOG_UPTO(LOG_INFO));
-#endif
-
 }
 
 void logger(int priority, const char *fmt, ...) {

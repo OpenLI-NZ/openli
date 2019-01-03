@@ -48,6 +48,7 @@ typedef struct export_dest {
     char *ipstr;
     char *portstr;
     export_buffer_t buffer;
+    uint8_t logallowed;
 
     UT_hash_handle hh_fd;
     UT_hash_handle hh_medid;

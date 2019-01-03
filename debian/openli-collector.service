@@ -1,0 +1,16 @@
+[Unit]
+Description=OpenLI collector daemon
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/etc/init.d/openli-collector start
+ExecStop=/etc/init.d/openli-collector stop
+ExecReload=/etc/init.d/openli-collector reload
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=yes
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

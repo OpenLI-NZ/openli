@@ -1,0 +1,16 @@
+[Unit]
+Description=OpenLI provisioner daemon
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/etc/init.d/openli-provisioner start
+ExecStop=/etc/init.d/openli-provisioner stop
+ExecReload=/etc/init.d/openli-provisioner reload
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=yes
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

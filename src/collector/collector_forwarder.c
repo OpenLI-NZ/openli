@@ -40,6 +40,25 @@
 #define BUF_BATCH_SIZE (100 * 1024 * 1024)
 #define MIN_SEND_AMOUNT (1 * 1024 * 1024)
 
+static inline void free_encoded_result(openli_encoded_result_t *res) {
+    if (res->liid) {
+        free(res->liid);
+    }
+
+    if (res->cinstr) {
+        free(res->cinstr);
+    }
+
+    if (res->msgbody) {
+        free(res->msgbody->encoded);
+        free(res->msgbody);
+    }
+
+    if (res->origreq) {
+        free_published_message(res->origreq);
+    }
+}
+
 static int add_new_destination(forwarding_thread_data_t *fwd,
         openli_export_recv_t *msg) {
 
@@ -57,6 +76,7 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
         newdest->failmsg = 0;
         newdest->awaitingconfirm = 0;
         newdest->halted = 0;
+        newdest->logallowed = 1;
         newdest->mediatorid = msg->data.med.mediatorid;
         newdest->ipstr = msg->data.med.ipstr;
         newdest->portstr = msg->data.med.portstr;
@@ -76,6 +96,7 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
             found->portstr = msg->data.med.portstr;
             found->fd = -1;
             found->failmsg = 0;
+            found->logallowed = 1;
         } else {
             if (strcmp(found->ipstr, msg->data.med.ipstr) != 0 ||
                     strcmp(found->portstr, msg->data.med.portstr) != 0) {
@@ -87,6 +108,7 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
                 free(found->portstr);
                 found->ipstr = msg->data.med.ipstr;
                 found->portstr = msg->data.med.portstr;
+                found->logallowed = 1;
 
                 if (found->fd != -1) {
                     close(found->fd);
@@ -125,6 +147,12 @@ static inline void disconnect_mediator(forwarding_thread_data_t *fwd,
     close(med->fd);
     med->fd = -1;
 
+    if (med->logallowed) {
+        logger(LOG_INFO, "OpenLI: disconnecting mediator %s:%s",
+                med->ipstr, med->portstr);
+    }
+
+    med->logallowed = 0;
     if (med->pollindex >= 0) {
         fwd->topoll[med->pollindex].fd = 0;
         fwd->topoll[med->pollindex].events = 0;
@@ -170,6 +198,37 @@ static void remove_all_destinations(forwarding_thread_data_t *fwd) {
     }
 }
 
+static void remove_reorderers(forwarding_thread_data_t *fwd, char *liid,
+        Pvoid_t *reorderer_array) {
+
+    PWord_t jval;
+    uint8_t index[256];
+    int_reorderer_t *reord;
+    stored_result_t *stored, *tmp;
+    int err;
+
+    index[0] = '\0';
+    JSLF(jval, *reorderer_array, index);
+    while (jval != NULL) {
+        reord = (int_reorderer_t *)(*jval);
+
+        if (liid == NULL || strcmp(reord->liid, liid) != 0) {
+            JSLN(jval, *reorderer_array, index);
+            continue;
+        }
+        JSLD(err, *reorderer_array, index);
+        HASH_ITER(hh, reord->pending, stored, tmp) {
+            HASH_DELETE(hh, reord->pending, stored);
+            free_encoded_result(&(stored->res));
+            free(stored);
+        }
+        free(reord->liid);
+        free(reord->key);
+        free(reord);
+        JSLN(jval, *reorderer_array, index);
+    }
+}
+
 static void flag_all_destinations(forwarding_thread_data_t *fwd) {
     export_dest_t *med;
     PWord_t *jval;
@@ -194,7 +253,10 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         return 0;
     }
 
-    if (msg->type == OPENLI_EXPORT_MEDIATOR) {
+    if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
+        remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_cc));
+        remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_iri));
+    } else if (msg->type == OPENLI_EXPORT_MEDIATOR) {
         return add_new_destination(fwd, msg);
     } else if (msg->type == OPENLI_EXPORT_DROP_SINGLE_MEDIATOR) {
         PWord_t jval;
@@ -217,25 +279,6 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
     }
 
     return 1;
-}
-
-static inline void free_encoded_result(openli_encoded_result_t *res) {
-    if (res->liid) {
-        free(res->liid);
-    }
-
-    if (res->cinstr) {
-        free(res->cinstr);
-    }
-
-    if (res->msgbody) {
-        free(res->msgbody->encoded);
-        free(res->msgbody);
-    }
-
-    if (res->origreq) {
-        free_published_message(res->origreq);
-    }
 }
 
 static inline int enqueue_result(forwarding_thread_data_t *fwd,
@@ -265,7 +308,7 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
             logger(LOG_INFO,
                     "OpenLI: unable to create new intercept record reorderer due to lack of memory"
                     );
-            return 1;
+            exit(-2);
         }
 
         reord = (int_reorderer_t *)calloc(1, sizeof(int_reorderer_t));
@@ -344,12 +387,14 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
             logger(LOG_INFO,
                     "OpenLI: unable to allocate memory for unknown mediator %u",
                     res->destid);
-            return -1;
+            exit(-2);
         }
 
         med = (export_dest_t *)calloc(1, sizeof(export_dest_t));
         med->failmsg = 0;
+        med->pollindex = -1;
         med->fd = -1;
+        med->logallowed = 1;
         med->ipstr = NULL;
         med->portstr = NULL;
         med->awaitingconfirm = 0;
@@ -456,7 +501,7 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
             logger(LOG_INFO, "memory issue while connecting to export target");
             close(dest->fd);
             dest->fd = -1;
-            return;
+            exit(-2);
         }
 
         *jval2 = (Word_t)dest;
@@ -569,6 +614,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         if (x < 0) {
             return 0;
         }
+        fwd->topoll[0].revents = 0;
     }
 
     if (fwd->topoll[2].revents & ZMQ_POLLIN) {
@@ -593,6 +639,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         if (x < 0) {
             return 0;
         }
+        fwd->topoll[1].revents = 0;
     }
 
     if (fwd->awaitingconfirm) {
@@ -612,6 +659,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         if (!(fwd->topoll[i].revents & ZMQ_POLLOUT)) {
             continue;
         }
+        fwd->topoll[i].revents = 0;
 
         if (fwd->topoll[i].events == 0) {
             continue;
@@ -638,10 +686,16 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
 
         if (transmit_buffered_records(&(dest->buffer), dest->fd,
                 BUF_BATCH_SIZE) < 0) {
-            logger(LOG_INFO,
-                    "OpenLI: error transmitting records to mediator %s:%s, dropping",
-                    dest->ipstr, dest->portstr);
+            if (dest->logallowed) {
+                logger(LOG_INFO,
+                    "OpenLI: error transmitting records to mediator %s:%s: %s",
+                    dest->ipstr, dest->portstr, strerror(errno));
+            }
             disconnect_mediator(fwd, dest);
+        } else if (dest->logallowed == 0) {
+            logger(LOG_INFO,
+                    "OpenLI: successfully started transmitting records to mediator %s:%s", dest->ipstr, dest->portstr);
+            dest->logallowed = 1;
         }
         fwd->forcesend[i] = 0;
 

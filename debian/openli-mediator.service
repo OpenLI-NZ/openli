@@ -1,0 +1,16 @@
+[Unit]
+Description=OpenLI mediator daemon
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/etc/init.d/openli-mediator start
+ExecStop=/etc/init.d/openli-mediator stop
+ExecReload=/etc/init.d/openli-mediator reload
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=yes
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

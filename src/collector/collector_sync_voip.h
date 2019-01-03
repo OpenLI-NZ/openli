@@ -55,6 +55,9 @@ typedef struct collector_sync_voip_data {
     libtrace_out_t *sipdebugout;
     libtrace_out_t *sipdebugupdate;
 
+    uint8_t log_bad_instruct;
+    uint8_t log_bad_sip;
+
 } collector_sync_voip_t;
 
 collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob);

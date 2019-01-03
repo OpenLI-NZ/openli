@@ -286,7 +286,7 @@ static int _add_sip_fragment(openli_sip_parser_t *p,
 }
 
 int add_sip_packet_to_parser(openli_sip_parser_t **parser,
-        libtrace_packet_t *packet) {
+        libtrace_packet_t *packet, uint8_t logallowed) {
 
     void *transport;
     char *completefrag = NULL;
@@ -338,14 +338,18 @@ int add_sip_packet_to_parser(openli_sip_parser_t **parser,
 
         ipstream = get_ipfrag_reassemble_stream(p->ipreass, packet);
         if (ipstream == NULL) {
-            logger(LOG_INFO, "OpenLI: unable to find IP stream for received SIP packet.");
+            if (logallowed) {
+                logger(LOG_INFO, "OpenLI: unable to find IP stream for received SIP packet.");
+            }
             return SIP_ACTION_ERROR;
         }
 
         ret = update_ipfrag_reassemble_stream(ipstream, packet, fragoff,
                 moreflag);
         if (ret < 0) {
-            logger(LOG_INFO, "OpenLI: unable to update IP stream for received SIP packet.");
+            if (logallowed) {
+                logger(LOG_INFO, "OpenLI: unable to update IP stream for received SIP packet.");
+            }
             return SIP_ACTION_ERROR;
         }
         if (ret == 0) {
@@ -569,7 +573,8 @@ static inline void strip_quotes(openli_sip_identity_t *sipid) {
 }
 
 int get_sip_auth_identity(openli_sip_parser_t *parser, int index,
-        int *authcount, openli_sip_identity_t *sipid) {
+        int *authcount, openli_sip_identity_t *sipid,
+        uint8_t logallowed) {
 
     osip_authorization_t *auth;
 
@@ -580,15 +585,19 @@ int get_sip_auth_identity(openli_sip_parser_t *parser, int index,
     }
 
     if (index >= *authcount) {
-        logger(LOG_INFO,
+        if (logallowed) {
+            logger(LOG_INFO,
                 "OpenLI: Error, requested auth username %d but packet only has %d auth headers.",
                 index, *authcount);
+        }
         return -1;
     }
 
     if (osip_message_get_authorization(parser->osip, index, &auth) != 0) {
-        logger(LOG_INFO,
+        if (logallowed) {
+            logger(LOG_INFO,
                 "OpenLI: Error while extracting auth header from SIP packet.");
+        }
         return -1;
     }
 
@@ -604,7 +613,8 @@ int get_sip_auth_identity(openli_sip_parser_t *parser, int index,
 }
 
 int get_sip_proxy_auth_identity(openli_sip_parser_t *parser, int index,
-        int *authcount, openli_sip_identity_t *sipid) {
+        int *authcount, openli_sip_identity_t *sipid,
+        uint8_t logallowed) {
 
     osip_proxy_authorization_t *auth;
 
@@ -615,15 +625,19 @@ int get_sip_proxy_auth_identity(openli_sip_parser_t *parser, int index,
     }
 
     if (index >= *authcount) {
-        logger(LOG_INFO,
+        if (logallowed) {
+            logger(LOG_INFO,
                 "OpenLI: Error, requested proxy auth username %d but packet only has %d auth headers.",
                 index, *authcount);
+        }
         return -1;
     }
 
     if (osip_message_get_proxy_authorization(parser->osip, index, &auth) != 0) {
-        logger(LOG_INFO,
+        if (logallowed) {
+            logger(LOG_INFO,
                 "OpenLI: Error while extracting proxy auth header from SIP packet.");
+        }
         return -1;
     }
 

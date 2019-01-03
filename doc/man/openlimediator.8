@@ -1,0 +1,52 @@
+.TH OPENLI-MEDIATOR 8 "2018-12-03" "openli-mediator" "OpenLI"
+
+.SH NAME
+openli-mediator \- mediator daemon for OpenLI
+
+.SH SYNOPSIS
+\fBopenlimediator\fR \fB-c\fR \fIconfigfile\fR [\fB-hd\fR] [\fB-p \fIpidfile\fR]
+
+.SH DESCRIPTION
+\fBopenli-mediator\fR is the mediator component of the \fBOpenLI\fR
+lawful interception system. The mediator receives intercepted packets
+encoded in the ETSI LI format from the OpenLI mediators and sends them
+on to the appropriate Law Enforcement Agencies (LEAs).
+
+.SH OPTIONS
+.TP
+\fB-h, --help\fR
+Show summary of supported command-line options
+
+.TP
+\fB-c, --config \fIconfigfile\fR
+Specifies the location of the file containing the configuration to
+use when running this openli-mediator instance. See MediatorDoc.md
+(most likely installed in /usr/share/doc/openli) for details on the
+configuration file format.
+
+.TP
+\fB-d, --daemonise\fR
+Run the openli-mediator as a detached daemon.
+
+.TP
+\fB-p, --pidfile \fIpidfile\fR
+Create a pidfile for the mediator process at \fIpidfile\fR.
+
+
+.SH FILES
+.TP
+.I /etc/openli/mediator-example.yaml
+Example OpenLI mediator configuration file
+
+
+.SH SECURITY
+\fbopenli-mediator\fR should be able to run unprivileged with no problems.
+It is highly recommended that any connections between your OpenLI mediator
+and the LEAs are over an encrypted tunnel or private layer 2 circuit.
+
+.SH AUTHOR
+OpenLI was originally written by Shane Alcock <shane.alcock@waikato.ac.nz>
+while working for the University of Waikato WAND Network Research Group.
+
+.PP
+This manual page was written by Shane Alcock <shane.alcock@waikato.ac.nz>

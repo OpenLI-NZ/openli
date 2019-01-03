@@ -1,0 +1,28 @@
+#!/bin/sh
+# postinst script for amplet2
+#
+# see: dh_installdeb(1)
+
+set -e
+
+case "$1" in
+    configure)
+        if [ -x "`which invoke-rc.d 2>/dev/null`" ]; then
+            invoke-rc.d rsyslog restart || exit $?
+        else
+            /etc/init.d/rsyslog restart || exit $?
+        fi
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

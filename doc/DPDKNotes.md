@@ -27,27 +27,28 @@ Step 2: Install the Linux headers package for your system, if the headers
         are not already present.
 
   For 64 bit Debian / Ubuntu, this is done via:
-   > sudo apt-get install linux-headers-amd64
+
+     > sudo apt-get install linux-headers-amd64
 
 
 Step 3: Clone the current DPDK code base.
 
-   > git clone https://git.dpdk.org/dpdk-stable/
-   > cd dpdk-stable
+     > git clone https://git.dpdk.org/dpdk-stable/
+     > cd dpdk-stable
 
 
 Step 4: Build the DPDK code to create a single shared library. This library
         will be installed into /usr/local/lib/.
 
-   > sudo make install T=x86_64-native-linuxapp-gcc CONFIG_RTE_BUILD_SHARED_LIB=y EXTRA_CFLAGS="-fPIC" --destdir=/usr/local/
+     > sudo make install T=x86_64-native-linuxapp-gcc CONFIG_RTE_BUILD_SHARED_LIB=y EXTRA_CFLAGS="-fPIC" --destdir=/usr/local/
 
   Note: this build may take a while...
 
 
 Step 5: Set the RTE_SDK and RTE_TARGET environment variables.
 
-   > export RTE_SDK=`pwd`
-   > export RTE_TARGET=x86_64-native-linuxapp-gcc
+     > export RTE_SDK=`pwd`
+     > export RTE_TARGET=x86_64-native-linuxapp-gcc
 
   Note: these environment variables must be set whenever you want to interact
         with DPDK, so you may want to consider adding them to your .profile.
@@ -57,7 +58,7 @@ Step 5: Set the RTE_SDK and RTE_TARGET environment variables.
 
 Step 6: Enable huge pages memory on your host using the DPDK setup script.
 
-   > sudo ./usertools/dpdk-setup.sh
+     > sudo ./usertools/dpdk-setup.sh
 
    Choose the "Setup hugepage mappings for NUMA systems" option.
 
@@ -66,24 +67,24 @@ Step 6: Enable huge pages memory on your host using the DPDK setup script.
 
 Step 7: Clone the current libtrace code base.
 
-   > cd ../
-   > git clone https://github.com/LibtraceTeam/libtrace.git
-   > cd libtrace
+     > cd ../
+     > git clone https://github.com/LibtraceTeam/libtrace.git
+     > cd libtrace
 
 
 Step 8: Configure libtrace to be built with DPDK support.
 
-   > ./bootstrap.sh
-   > ./configure --with-dpdk=yes LDFLAGS=-L/usr/local/lib CPPFLAGS=-I/usr/local/include
+     > ./bootstrap.sh
+     > ./configure --with-dpdk=yes LDFLAGS=-L/usr/local/lib CPPFLAGS=-I/usr/local/include
 
   The final output from the configure script should include the line:
 
-   "configure: Compiled with DPDK live capture support: Yes"
+     configure: Compiled with DPDK live capture support: Yes
 
 Step 9: Build and install your DPDK-enabled libtrace
 
-   > make
-   > sudo make install
+     > make
+     > sudo make install
 
 
 Step 10: If the DPDK interface is currently up and/or configured with an IP
@@ -91,25 +92,25 @@ Step 10: If the DPDK interface is currently up and/or configured with an IP
 
   For this example, my interface name is 'dos1'.
 
-   > sudo ip link set dos1 down
+     > sudo ip link set dos1 down
 
 
 Step 11: Load the uio module.
 
-   > sudo modprobe uio
+     > sudo modprobe uio
 
 
 Step 12: Use the dpdk-setup.sh script to load the igb_uio module.
 
-   > cd ../dpdk-stable
-   > sudo ./usertools/dpdk-setup.sh
+     > cd ../dpdk-stable
+     > sudo ./usertools/dpdk-setup.sh
 
    Choose "Insert IGB UIO module"
 
 
 Step 13: Use the dpdk-setup.sh script to bind your DPDK interface to IGB UIO.
 
-   > sudo ./usertools/dpdk-setup.sh  (if not still running from step 12)
+     > sudo ./usertools/dpdk-setup.sh  (if not still running from step 12)
 
    Choose "Bind Ethernet/Crypto device to IGB UIO module"
 
@@ -139,7 +140,7 @@ Step 14: Test that libtrace can see packets on the DPDK interface.
   Then use the tracepktdump tool included with libtrace to print the first
   5 captured packets to standard output:
 
-    > sudo /usr/local/bin/tracepktdump -c 5 dpdk:0000:42:00.1
+     > sudo /usr/local/bin/tracepktdump -c 5 dpdk:0000:42:00.1
 
   Don't forget to use your PCI address in place of 0000:42:00.1!
 

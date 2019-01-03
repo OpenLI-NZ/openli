@@ -42,6 +42,7 @@ void init_export_buffer(export_buffer_t *buf) {
     buf->alloced = 0;
     buf->partialfront = 0;
     buf->deadfront = 0;
+    buf->nextwarn = BUFFER_WARNING_THRESH;
 }
 
 void release_export_buffer(export_buffer_t *buf) {
@@ -79,10 +80,11 @@ static inline uint64_t extend_buffer(export_buffer_t *buf) {
     buf->buftail = space + bufused;
     buf->alloced = buf->alloced + BUFFER_ALLOC_SIZE;
 
-    if (buf->alloced - BUFFER_ALLOC_SIZE < BUFFER_WARNING_THRESH &&
-            buf->alloced >= BUFFER_WARNING_THRESH) {
+    if (buf->alloced - BUFFER_ALLOC_SIZE < buf->nextwarn &&
+            buf->alloced >= buf->nextwarn) {
         /* TODO add email alerts */
-        logger(LOG_INFO, "OpenLI: buffer space for missing mediator has exceeded warning threshold.");
+        logger(LOG_INFO, "OpenLI: buffer space for missing mediator has exceeded warning threshold %lu.", buf->nextwarn);
+        buf->nextwarn += BUFFER_WARNING_THRESH;
     }
 
     return buf->alloced - bufused;
@@ -176,9 +178,6 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         ret = send(fd, bhead + offset, (int)sent, MSG_DONTWAIT);
         if (ret < 0) {
             if (errno != EAGAIN) {
-                logger(LOG_INFO,
-                        "OpenLI: Error exporting to target from buffer: %s.",
-                        strerror(errno));
                 return -1;
             }
             return 0;

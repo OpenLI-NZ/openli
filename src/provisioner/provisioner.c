@@ -88,11 +88,19 @@ static inline int enable_epoll_write(provision_state_t *state,
     return 0;
 }
 
-static void create_socket_state(prov_epoll_ev_t *pev, int authtimerfd) {
+static void create_socket_state(prov_epoll_ev_t *pev, int authtimerfd,
+        char *ipaddrstr, int isbad) {
 
     prov_sock_state_t *cs = (prov_sock_state_t *)malloc(
             sizeof(prov_sock_state_t));
 
+    if (isbad) {
+        cs->log_allowed = 0;
+    } else {
+        cs->log_allowed = 1;
+    }
+
+    cs->ipaddr = strdup(ipaddrstr);
     cs->incoming = create_net_buffer(NETBUF_RECV, pev->fd);
     cs->outgoing = create_net_buffer(NETBUF_SEND, pev->fd);
     cs->trusted = 0;
@@ -111,6 +119,11 @@ static void free_socket_state(prov_epoll_ev_t *pev) {
     if (cs) {
         destroy_net_buffer(cs->incoming);
         destroy_net_buffer(cs->outgoing);
+        if (cs->ipaddr) {
+            free(cs->ipaddr);
+            cs->ipaddr = NULL;
+        }
+
         free(cs);
     }
 
@@ -206,9 +219,6 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->voipintercepts = NULL;
     state->ipintercepts = NULL;
 
-    state->dropped_collectors = 0;
-    state->dropped_mediators = 0;
-
     state->liid_map = NULL;
     state->leas = NULL;
 
@@ -225,6 +235,9 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->mediateaddr = NULL;
     state->pushport = NULL;
     state->pushaddr = NULL;
+
+    state->badmediators = NULL;
+    state->badcollectors = NULL;
 
     state->ignorertpcomfort = 0;
 
@@ -341,26 +354,32 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
              */
             if (push_mediator_withdraw_onto_net_buffer(cs->outgoing,
                     prevmed) < 0) {
-                logger(LOG_INFO,
+                if (cs->log_allowed) {
+                    logger(LOG_INFO,
                         "OpenLI provisioner: error pushing mediator withdrawal %s:%s onto buffer for writing to collector.",
                         prevmed->ipstr, prevmed->portstr);
+                }
                 ret = -1;
                 break;
             }
         }
 
         if (push_mediator_onto_net_buffer(cs->outgoing, provmed->details) < 0) {
-            logger(LOG_INFO,
+            if (cs->log_allowed) {
+                logger(LOG_INFO,
                     "OpenLI provisioner: error pushing mediator %s:%s onto buffer for writing to collector.",
                     provmed->details->ipstr, provmed->details->portstr);
+            }
             ret = -1;
             break;
         }
 
         if (enable_epoll_write(state, col->commev) == -1) {
-            logger(LOG_INFO,
+            if (cs->log_allowed) {
+                logger(LOG_INFO,
                     "OpenLI provisioner: cannot enable epoll write event to transmit mediator update to collector: %s.",
                     strerror(errno));
+            }
             ret = -1;
             break;
         }
@@ -402,9 +421,11 @@ static void halt_auth_timer(provision_state_t *state, prov_sock_state_t *cs) {
 
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, cs->authfd, &ev) < 0) {
-        logger(LOG_INFO,
-                "OpenLI: unable to remove collector fd from epoll: %s.",
-                strerror(errno));
+        if (cs->log_allowed) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to remove collector fd from epoll: %s.",
+                    strerror(errno));
+        }
     }
 
     close(cs->authfd);
@@ -436,6 +457,7 @@ static void clear_prov_state(provision_state_t *state) {
     liid_hash_t *h, *tmp;
     prov_agency_t *h2, *tmp2;
     liagency_t *lea;
+    prov_disabled_client_t *dis, *dtmp;
 
     HASH_ITER(hh, state->liid_map, h, tmp) {
         HASH_DEL(state->liid_map, h);
@@ -462,6 +484,22 @@ static void clear_prov_state(provision_state_t *state) {
         }
         free(lea);
         free(h2);
+    }
+
+    HASH_ITER(hh, state->badmediators, dis, dtmp) {
+        HASH_DELETE(hh, state->badmediators, dis);
+        if (dis->ipaddr) {
+            free(dis->ipaddr);
+        }
+        free(dis);
+    }
+
+    HASH_ITER(hh, state->badcollectors, dis, dtmp) {
+        HASH_DELETE(hh, state->badcollectors, dis);
+        if (dis->ipaddr) {
+            free(dis->ipaddr);
+        }
+        free(dis);
     }
 
     free_all_ipintercepts(&(state->ipintercepts));
@@ -574,12 +612,26 @@ static int push_all_sip_targets(net_buffer_t *nb, libtrace_list_t *targets,
 }
 
 static int push_all_voipintercepts(provision_state_t *state,
-        voipintercept_t *voipintercepts, net_buffer_t *nb) {
+        voipintercept_t *voipintercepts, net_buffer_t *nb,
+        prov_agency_t *agencies) {
 
     voipintercept_t *v;
+    prov_agency_t *lea;
+    int skip = 0;
 
     for (v = voipintercepts; v != NULL; v = v->hh_liid.next) {
         if (v->active == 0) {
+            continue;
+        }
+        skip = 0;
+        if (strcmp(v->common.targetagency, "pcapdisk") != 0) {
+            HASH_FIND_STR(agencies, v->common.targetagency, lea);
+            if (lea == NULL) {
+                skip = 1;
+            }
+        }
+
+        if (skip) {
             continue;
         }
 
@@ -605,11 +657,25 @@ static int push_all_voipintercepts(provision_state_t *state,
 }
 
 static int push_all_ipintercepts(ipintercept_t *ipintercepts,
-        net_buffer_t *nb) {
+        net_buffer_t *nb, prov_agency_t *agencies) {
 
     ipintercept_t *cept;
+    prov_agency_t *lea;
+    int skip = 0;
 
     for (cept = ipintercepts; cept != NULL; cept = cept->hh_liid.next) {
+        skip = 0;
+        if (strcmp(cept->common.targetagency, "pcapdisk") != 0) {
+            HASH_FIND_STR(agencies, cept->common.targetagency, lea);
+            if (lea == NULL) {
+                skip = 1;
+            }
+        }
+
+        if (skip) {
+            continue;
+        }
+
         if (push_ipintercept_onto_net_buffer(nb, cept) < 0) {
             logger(LOG_INFO,
                     "OpenLI provisioner: error pushing IP intercept %s onto buffer for writing to collector.",
@@ -636,6 +702,9 @@ static int respond_collector_auth(provision_state_t *state,
         return 0;
     }
 
+    /* No need to wrap our log messages with checks for log_allowed, as
+     * we should have just set log_allowed to 1 before calling this function
+     */
     if (push_all_mediators(state->mediators, outgoing) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue mediators to be sent to new collector on fd %d",
@@ -657,14 +726,16 @@ static int respond_collector_auth(provision_state_t *state,
         return -1;
     }
 
-    if (push_all_ipintercepts(state->ipintercepts, outgoing) == -1) {
+    if (push_all_ipintercepts(state->ipintercepts, outgoing,
+                state->leas) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue IP intercepts to be sent to new collector on fd %d",
                 pev->fd);
         return -1;
     }
 
-    if (push_all_voipintercepts(state, state->voipintercepts, outgoing) == -1) {
+    if (push_all_voipintercepts(state, state->voipintercepts, outgoing,
+            state->leas) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue VOIP IP intercepts to be sent to new collector on fd %d",
                 pev->fd);
@@ -697,6 +768,9 @@ static int respond_mediator_auth(provision_state_t *state,
 
     /* Mediator just authed successfully, so we can safely send it details
      * on any LEAs that we know about */
+    /* No need to wrap our log messages with checks for log_allowed, as
+     * we should have just set log_allowed to 1 before calling this function
+     */
     HASH_ITER(hh, state->leas, ag, tmp) {
         if (push_lea_onto_net_buffer(outgoing, ag->ag) == -1) {
             logger(LOG_INFO,
@@ -742,39 +816,54 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
     do {
         msgtype = receive_net_buffer(cs->incoming, &msgbody, &msglen,
                 &internalid);
+        if (msgtype < 0) {
+            if (cs->log_allowed) {
+                nb_log_receive_error(msgtype);
+                logger(LOG_INFO,
+                        "OpenLI provisioner: error receiving message from collector.");
+            }
+            return -1;
+        }
+
         switch(msgtype) {
             case OPENLI_PROTO_DISCONNECT:
-                logger(LOG_INFO,
-                        "OpenLI: error receiving message from collector.");
                 return -1;
             case OPENLI_PROTO_NO_MESSAGE:
                 break;
             case OPENLI_PROTO_COLLECTOR_AUTH:
                 if (internalid != OPENLI_COLLECTOR_MAGIC) {
-                    logger(LOG_INFO,
-                            "OpenLI: invalid auth code from collector.");
+                    if (cs->log_allowed) {
+                        logger(LOG_INFO,
+                                "OpenLI: invalid auth code from collector.");
+                    }
                     return -1;
                 }
                 if (cs->trusted == 1) {
-                    logger(LOG_INFO,
-                            "OpenLI: warning -- double auth from collector.");
-                    assert(0);
-                    break;
+                    if (cs->log_allowed) {
+                        logger(LOG_INFO,
+                                "OpenLI: warning -- double auth from collector.");
+                    }
+                    return -1;
                 }
                 cs->trusted = 1;
                 justauthed = 1;
                 break;
             default:
-                logger(LOG_INFO,
-                        "OpenLI: unexpected message type %d received from collector.",
-                        msgtype);
+                if (cs->log_allowed) {
+                    logger(LOG_INFO,
+                            "OpenLI: unexpected message type %d received from collector.",
+                            msgtype);
+                }
                 return -1;
         }
     } while (msgtype != OPENLI_PROTO_NO_MESSAGE);
 
     if (justauthed) {
-        logger(LOG_DEBUG, "OpenLI: collector on fd %d auth success.",
-                pev->fd);
+        if (cs->log_allowed == 0) {
+            cs->log_allowed = 1;
+        }
+        logger(LOG_DEBUG, "OpenLI: collector %s on fd %d auth success.",
+                cs->ipaddr, pev->fd);
         halt_auth_timer(state, cs);
         return respond_collector_auth(state, pev, cs->outgoing);
    }
@@ -793,45 +882,67 @@ static int receive_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
     do {
         msgtype = receive_net_buffer(cs->incoming, &msgbody, &msglen,
                 &internalid);
+        if (msgtype < 0) {
+            if (cs->log_allowed) {
+                nb_log_receive_error(msgtype);
+                logger(LOG_INFO, "OpenLI provisioner: error receiving message from mediator.");
+            }
+            return -1;
+        }
+
         switch(msgtype) {
             case OPENLI_PROTO_DISCONNECT:
-                logger(LOG_INFO,
-                        "OpenLI: error receiving message from mediator.");
                 return -1;
             case OPENLI_PROTO_NO_MESSAGE:
                 break;
             case OPENLI_PROTO_MEDIATOR_AUTH:
                 if (internalid != OPENLI_MEDIATOR_MAGIC) {
-                    logger(LOG_INFO,
-                            "OpenLI: invalid auth code from mediator.");
+                    if (cs->log_allowed) {
+                        logger(LOG_INFO,
+                                "OpenLI: invalid auth code from mediator.");
+                    }
                     return -1;
                 }
                 if (cs->trusted == 1) {
-                    logger(LOG_INFO,
-                            "OpenLI: warning -- double auth from mediator.");
-                    assert(0);
-                    break;
+                    if (cs->log_allowed) {
+                        logger(LOG_INFO,
+                                "OpenLI: warning -- double auth from mediator.");
+                    }
+                    return -1;
                 }
                 cs->trusted = 1;
                 justauthed = 1;
                 break;
             case OPENLI_PROTO_ANNOUNCE_MEDIATOR:
+                if (cs->trusted == 0) {
+                    if (cs->log_allowed) {
+                        logger(LOG_INFO,
+                                "Received mediator announcement from unauthed mediator.");
+                    }
+                    return -1;
+                }
+
                 if (update_mediator_details(state, msgbody, msglen,
                             pev->fd) == -1) {
                     return -1;
                 }
                 break;
             default:
-                logger(LOG_INFO,
-                        "OpenLI: unexpected message type %d received from mediator.",
-                        msgtype);
+                if (cs->log_allowed) {
+                    logger(LOG_INFO,
+                            "OpenLI: unexpected message type %d received from mediator.",
+                            msgtype);
+                }
                 return -1;
         }
     } while (msgtype != OPENLI_PROTO_NO_MESSAGE);
 
     if (justauthed) {
-        logger(LOG_INFO, "OpenLI: mediator on fd %d auth success.",
-                pev->fd);
+        if (cs->log_allowed == 0) {
+            cs->log_allowed = 1;
+        }
+        logger(LOG_INFO, "OpenLI: mediator %s on fd %d auth success.",
+                cs->ipaddr, pev->fd);
         halt_auth_timer(state, cs);
         return respond_mediator_auth(state, pev, cs->outgoing);
     }
@@ -844,12 +955,16 @@ static int transmit_socket(provision_state_t *state, prov_epoll_ev_t *pev) {
     int ret;
     struct epoll_event ev;
     prov_sock_state_t *cs = (prov_sock_state_t *)(pev->state);
+    openli_proto_msgtype_t err;
 
-    ret = transmit_net_buffer(cs->outgoing);
+    ret = transmit_net_buffer(cs->outgoing, &err);
     if (ret == -1) {
-        logger(LOG_INFO,
-                "OpenLI: error sending message from provisioner to %s.",
-                get_event_description(pev));
+        if (cs->log_allowed) {
+            nb_log_transmit_error(err);
+            logger(LOG_INFO,
+                    "OpenLI: error sending message from provisioner to %s.",
+                    get_event_description(pev));
+        }
         return -1;
     }
 
@@ -859,9 +974,11 @@ static int transmit_socket(provision_state_t *state, prov_epoll_ev_t *pev) {
         ev.events = EPOLLIN | EPOLLRDHUP;
 
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, pev->fd, &ev) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI: error disabling EPOLLOUT for %s fd %d: %s.",
-                    get_event_description(pev), pev->fd, strerror(errno));
+            if (cs->log_allowed) {
+                logger(LOG_INFO,
+                        "OpenLI: error disabling EPOLLOUT for %s fd %d: %s.",
+                        get_event_description(pev), pev->fd, strerror(errno));
+            }
             return -1;
         }
     }
@@ -881,9 +998,11 @@ static inline int drop_generic_socket(provision_state_t *state,
     }
 
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, cs->mainfd, &ev) < 0) {
-        logger(LOG_INFO,
-                "OpenLI: unable to remove collector fd from epoll: %s.",
-                strerror(errno));
+        if (cs->log_allowed) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to remove collector fd from epoll: %s.",
+                    strerror(errno));
+        }
     }
 
     close(cs->mainfd);
@@ -895,8 +1014,10 @@ static inline int drop_generic_socket(provision_state_t *state,
 }
 
 static void drop_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
+    prov_disabled_client_t *dis;
+    prov_sock_state_t *cs = (prov_sock_state_t *)(pev->state);
 
-    state->dropped_collectors += (drop_generic_socket(state, pev));
+    drop_generic_socket(state, pev);
 
     /* If we have a decent number of dropped collectors, re-create our
      * collector list to remove all of the useless items.
@@ -904,17 +1025,41 @@ static void drop_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
      * TODO
      */
 
+    HASH_FIND(hh, state->badcollectors, cs->ipaddr, strlen(cs->ipaddr), dis);
+    if (dis == NULL) {
+        dis = (prov_disabled_client_t *)calloc(1,
+                sizeof(prov_disabled_client_t));
+        dis->ipaddr = cs->ipaddr;
+        cs->ipaddr = NULL;
+
+        HASH_ADD_KEYPTR(hh, state->badcollectors, dis->ipaddr,
+                strlen(dis->ipaddr), dis);
+    }
+
 }
 
 static void drop_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
+    prov_disabled_client_t *dis;
+    prov_sock_state_t *cs = (prov_sock_state_t *)(pev->state);
 
-    state->dropped_mediators += (drop_generic_socket(state, pev));
+    drop_generic_socket(state, pev);
 
     /* If we have a decent number of dropped mediators, re-create our
      * mediator list to remove all of the useless items.
      *
      * TODO
      */
+
+    HASH_FIND(hh, state->badmediators, cs->ipaddr, strlen(cs->ipaddr), dis);
+    if (dis == NULL) {
+        dis = (prov_disabled_client_t *)calloc(1,
+                sizeof(prov_disabled_client_t));
+        dis->ipaddr = cs->ipaddr;
+        cs->ipaddr = NULL;
+
+        HASH_ADD_KEYPTR(hh, state->badmediators, dis->ipaddr,
+                strlen(dis->ipaddr), dis);
+    }
 
 }
 
@@ -927,6 +1072,7 @@ static int accept_collector(provision_state_t *state) {
     prov_collector_t col;
     libtrace_list_node_t *n;
     struct epoll_event ev;
+    prov_disabled_client_t *bad;
 
     /* TODO check for EPOLLHUP or EPOLLERR */
 
@@ -938,9 +1084,6 @@ static int accept_collector(provision_state_t *state) {
             0, 0, NI_NUMERICHOST) != 0) {
         logger(LOG_INFO, "OpenLI: getnameinfo error in provisioner: %s.",
                 strerror(errno));
-    } else {
-        logger(LOG_INFO, "OpenLI: provisioner accepted connection from collector %s on fd %d.",
-                strbuf, newfd);
     }
 
     if (newfd >= 0) {
@@ -954,9 +1097,20 @@ static int accept_collector(provision_state_t *state) {
         col.authev->fdtype = PROV_EPOLL_FD_TIMER;
         col.authev->fd = epoll_add_timer(state->epoll_fd, 5, col.authev);
         /* Create outgoing and incoming buffer state */
-        create_socket_state(col.commev, col.authev->fd);
-        col.authev->state = col.commev->state;
+        HASH_FIND(hh, state->badcollectors, strbuf, strlen(strbuf), bad);
+        if (!bad) {
+            logger(LOG_INFO,
+                    "OpenLI: provisioner accepted connection from collector %s on fd %d.",
+                    strbuf, newfd);
+        }
 
+        if (bad == NULL) {
+            create_socket_state(col.commev, col.authev->fd, strbuf, 0);
+        } else {
+            create_socket_state(col.commev, col.authev->fd, strbuf, 1);
+        }
+
+        col.authev->state = col.commev->state;
 
         /* Add fd to epoll */
         ev.data.ptr = (void *)col.commev;
@@ -965,9 +1119,11 @@ static int accept_collector(provision_state_t *state) {
 
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, col.commev->fd,
                     &ev) < 0) {
-            logger(LOG_INFO,
-                    "OpenLI: unable to add collector fd to epoll: %s.",
-                    strerror(errno));
+            if (bad == NULL) {
+                logger(LOG_INFO,
+                        "OpenLI: unable to add collector fd to epoll: %s.",
+                        strerror(errno));
+            }
             close(newfd);
             return -1;
         }
@@ -987,6 +1143,7 @@ static int accept_mediator(provision_state_t *state) {
     prov_mediator_t med;
     libtrace_list_node_t *n;
     struct epoll_event ev;
+    prov_disabled_client_t *bad;
 
     /* TODO check for EPOLLHUP or EPOLLERR */
 
@@ -996,12 +1153,9 @@ static int accept_mediator(provision_state_t *state) {
     newfd = accept(state->mediatorfd->fd, (struct sockaddr *)&saddr, &socklen);
 
     if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, sizeof(strbuf),
-            0, 0, NI_NUMERICHOST) != 0) {
+                0, 0, NI_NUMERICHOST) != 0) {
         logger(LOG_INFO, "OpenLI: getnameinfo error in provisioner: %s.",
                 strerror(errno));
-    } else {
-        logger(LOG_INFO, "OpenLI: provisioner accepted connection from mediator %s on %d.",
-                strbuf, newfd);
     }
 
     if (newfd >= 0) {
@@ -1018,17 +1172,32 @@ static int accept_mediator(provision_state_t *state) {
         med.authev->fdtype = PROV_EPOLL_FD_TIMER;
         med.authev->fd = epoll_add_timer(state->epoll_fd, 5, med.authev);
         /* Create outgoing and incoming buffer state */
-        create_socket_state(med.commev, med.authev->fd);
+
+        HASH_FIND(hh, state->badmediators, strbuf, strlen(strbuf), bad);
+        if (!bad) {
+            logger(LOG_INFO,
+                    "OpenLI: provisioner accepted connection from mediator %s on fd %d.",
+                    strbuf, newfd);
+        }
+
+        if (bad == NULL) {
+            create_socket_state(med.commev, med.authev->fd, strbuf, 0);
+        } else {
+            create_socket_state(med.commev, med.authev->fd, strbuf, 1);
+        }
         med.authev->state = med.commev->state;
+
 
         /* Add fd to epoll */
         ev.data.ptr = (void *)med.commev;
         ev.events = EPOLLIN | EPOLLRDHUP; /* recv only until we trust the mediator */
 
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, med.fd, &ev) < 0) {
-            logger(LOG_INFO,
-                    "OpenLI: unable to add mediator fd to epoll: %s.",
-                    strerror(errno));
+            if (bad == NULL) {
+                logger(LOG_INFO,
+                        "OpenLI: unable to add mediator fd to epoll: %s.",
+                        strerror(errno));
+            }
             close(newfd);
             return -1;
         }
@@ -1180,14 +1349,18 @@ static void expire_unauthed(provision_state_t *state, prov_epoll_ev_t *pev) {
     prov_sock_state_t *cs = (prov_sock_state_t *)(pev->state);
 
     if (cs->clientrole == PROV_EPOLL_COLLECTOR) {
-        logger(LOG_INFO,
-                "OpenLI Provisioner: dropping unauthed collector.");
+        if (cs->log_allowed) {
+            logger(LOG_INFO,
+                    "OpenLI Provisioner: dropping unauthed collector.");
+        }
         drop_collector(state, pev);
     }
 
     if (cs->clientrole == PROV_EPOLL_MEDIATOR) {
-        logger(LOG_INFO,
-                "OpenLI Provisioner: dropping unauthed mediator.");
+        if (cs->log_allowed) {
+            logger(LOG_INFO,
+                    "OpenLI Provisioner: dropping unauthed mediator.");
+        }
         drop_mediator(state, pev);
     }
 
@@ -1197,6 +1370,7 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
 
     int ret = 0;
     prov_epoll_ev_t *pev = (prov_epoll_ev_t *)(ev->data.ptr);
+    prov_sock_state_t *cs = (prov_sock_state_t *)(pev->state);
 
     switch(pev->fdtype) {
         case PROV_EPOLL_COLL_CONN:
@@ -1231,9 +1405,11 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
             }
 
             if (ret == -1) {
-                logger(LOG_DEBUG,
+                if (cs->log_allowed) {
+                    logger(LOG_DEBUG,
                         "OpenLI Provisioner: disconnecting collector on fd %d.",
                         pev->fd);
+                }
                 drop_collector(state, pev);
             }
             break;
@@ -1241,8 +1417,10 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
             if (ev->events & EPOLLIN) {
                 expire_unauthed(state, pev);
             } else {
-                logger(LOG_INFO,
+                if (cs->log_allowed) {
+                    logger(LOG_INFO,
                         "OpenLI Provisioner: collector auth timer has failed.");
+                }
                 return -1;
             }
             break;
@@ -1258,9 +1436,11 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
                 ret = -1;
             }
             if (ret == -1) {
-                logger(LOG_DEBUG,
+                if (cs->log_allowed) {
+                    logger(LOG_DEBUG,
                         "OpenLI Provisioner: disconnecting mediator on fd %d.",
                         pev->fd);
+                }
                 drop_mediator(state, pev);
             }
             break;
@@ -1359,7 +1539,6 @@ static inline int reload_mediator_socket_config(provision_state_t *currstate,
         free(currstate->mediateport);
         currstate->mediateaddr = strdup(newstate->mediateaddr);
         currstate->mediateport = strdup(newstate->mediateport);
-        currstate->dropped_mediators = 0;
 
         logger(LOG_INFO,
                 "OpenLI provisioner: mediation socket configuration has changed.");
@@ -1401,7 +1580,6 @@ static inline int reload_collector_socket_config(provision_state_t *currstate,
         free(currstate->listenport);
         currstate->listenaddr = strdup(newstate->listenaddr);
         currstate->listenport = strdup(newstate->listenport);
-        currstate->dropped_collectors = 0;
 
         if (start_main_listener(currstate) == -1) {
             logger(LOG_INFO,
@@ -1517,11 +1695,7 @@ static inline int reload_leas(provision_state_t *currstate,
 
         HASH_ITER(hh, newstate->leas, lea, tmp) {
             if (lea->announcereq) {
-                if (announce_lea_to_mediators(currstate, lea) == -1) {
-                    logger(LOG_INFO,
-                            "OpenLI provisioner: unable to announce new LEA to existing mediators.");
-                    return -1;
-                }
+                announce_lea_to_mediators(currstate, lea);
             }
         }
     }
@@ -1563,9 +1737,11 @@ static void add_new_staticip_range(provision_state_t *state,
         }
 
         if (enable_epoll_write(state, col->commev) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
-                    sock->mainfd, strerror(errno));
+            if (sock->log_allowed) {
+                logger(LOG_INFO,
+                        "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
+                        sock->mainfd, strerror(errno));
+            }
             drop_collector(state, col->commev);
         }
 
@@ -1629,9 +1805,11 @@ static int halt_existing_intercept(provision_state_t *state,
         }
 
         if (enable_epoll_write(state, col->commev) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
-                    sock->mainfd, strerror(errno));
+            if (sock->log_allowed) {
+                logger(LOG_INFO,
+                        "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
+                        sock->mainfd, strerror(errno));
+            }
             drop_collector(state, col->commev);
         }
 
@@ -1665,9 +1843,11 @@ static int modify_existing_intercept_options(provision_state_t *state,
         }
 
         if (enable_epoll_write(state, col->commev) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
-                    sock->mainfd, strerror(errno));
+            if (sock->log_allowed) {
+                logger(LOG_INFO,
+                        "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
+                        sock->mainfd, strerror(errno));
+            }
             drop_collector(state, col->commev);
         }
 
@@ -1698,17 +1878,21 @@ static int disconnect_mediators_from_collectors(provision_state_t *state) {
         }
 
         if (push_disconnect_mediators_onto_net_buffer(sock->outgoing) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: unable to send 'disconnect mediators' to collector %d.",
-                    sock->mainfd);
+            if (sock->log_allowed) {
+                logger(LOG_INFO,
+                        "OpenLI provisioner: unable to send 'disconnect mediators' to collector %d.",
+                        sock->mainfd);
+            }
             drop_collector(state, col->commev);
             continue;
         }
 
         if (enable_epoll_write(state, col->commev) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
-                    sock->mainfd, strerror(errno));
+            if (sock->log_allowed) {
+                logger(LOG_INFO,
+                        "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
+                        sock->mainfd, strerror(errno));
+            }
             drop_collector(state, col->commev);
         }
 
@@ -1747,17 +1931,21 @@ static int remove_liid_mapping(provision_state_t *state,
 
         if (push_cease_mediation_onto_net_buffer(sock->outgoing,
                     liid, liid_len) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: unable to halt mediation of intercept %s on mediator %d.",
-                    liid, sock->mainfd);
+            if (sock->log_allowed) {
+                logger(LOG_INFO,
+                        "OpenLI provisioner: unable to halt mediation of intercept %s on mediator %d.",
+                        liid, sock->mainfd);
+            }
             drop_mediator(state, med->commev);
             continue;
         }
 
         if (enable_epoll_write(state, med->commev) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: unable to enable epoll write event for mediator on fd %d: %s",
-                    sock->mainfd, strerror(errno));
+            if (sock->log_allowed) {
+                logger(LOG_INFO,
+                        "OpenLI provisioner: unable to enable epoll write event for mediator on fd %d: %s",
+                        sock->mainfd, strerror(errno));
+            }
             drop_mediator(state, med->commev);
         }
     }
@@ -2024,7 +2212,7 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
         HASH_FIND(hh_liid, newstate->voipintercepts, voipint->common.liid,
                 voipint->common.liid_len, newequiv);
 
-        if (newstate->ignorertpcomfort) {
+        if (newequiv && newstate->ignorertpcomfort) {
             newequiv->options |= (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
         }
 
@@ -2071,7 +2259,21 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
 
     HASH_ITER(hh_liid, newstate->voipintercepts, voipint, tmp) {
         liid_hash_t *h = NULL;
+        int skip = 0;
+        prov_agency_t *lea = NULL;
+
         if (!voipint->awaitingconfirm) {
+            continue;
+        }
+
+        if (strcmp(voipint->common.targetagency, "pcapdisk") != 0) {
+            HASH_FIND_STR(newstate->leas, voipint->common.targetagency, lea);
+            if (lea == NULL) {
+                skip = 1;
+            }
+        }
+
+        if (skip) {
             continue;
         }
 
@@ -2272,7 +2474,21 @@ static inline int reload_ipintercepts(provision_state_t *currstate,
 
     HASH_ITER(hh_liid, newstate->ipintercepts, ipint, tmp) {
         liid_hash_t *h = NULL;
+        int skip = 0;
+        prov_agency_t *lea = NULL;
+
         if (!ipint->awaitingconfirm) {
+            continue;
+        }
+
+        if (strcmp(ipint->common.targetagency, "pcapdisk") != 0) {
+            HASH_FIND_STR(newstate->leas, ipint->common.targetagency, lea);
+            if (lea == NULL) {
+                skip = 1;
+            }
+        }
+
+        if (skip) {
             continue;
         }
 
@@ -2447,6 +2663,7 @@ int main(int argc, char *argv[]) {
     char *configfile = NULL;
     sigset_t sigblock;
     int daemonmode = 0;
+    char *pidfile = NULL;
 
     provision_state_t provstate;
 
@@ -2456,10 +2673,11 @@ int main(int argc, char *argv[]) {
             { "help", 0, 0, 'h' },
             { "config", 1, 0, 'c'},
             { "daemonise", 0, 0, 'd'},
+            { "pidfile", 1, 0, 'p'},
             { NULL, 0, 0, 0},
         };
 
-        int c = getopt_long(argc, argv, "c:dh", long_options, &optind);
+        int c = getopt_long(argc, argv, "c:p:dh", long_options, &optind);
         if (c == -1) {
             break;
         }
@@ -2474,6 +2692,9 @@ int main(int argc, char *argv[]) {
             case 'h':
                 usage(argv[0]);
                 return 1;
+            case 'p':
+                pidfile = optarg;
+                break;
             default:
                 logger(LOG_INFO, "OpenLI: unsupported option: %c",
                         c);
@@ -2490,7 +2711,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (daemonmode) {
-        daemonise(argv[0]);
+        daemonise(argv[0], pidfile);
     }
 
     sigemptyset(&sigblock);
@@ -2523,6 +2744,10 @@ int main(int argc, char *argv[]) {
     run(&provstate);
 
     clear_prov_state(&provstate);
+
+    if (daemonmode && pidfile) {
+        remove_pidfile(pidfile);
+    }
     logger(LOG_INFO, "OpenLI: Provisioner has exited.");
 }
 

@@ -674,7 +674,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
      */
 
     if (todaemon) {
-        daemonise(progname);
+        open_daemonlog(progname);
     }
 
     if (trace_is_err(inp->trace)) {
@@ -1085,6 +1085,7 @@ static int reload_collector_config(collector_global_t *glob,
         logger(LOG_INFO,
                 "OpenLI collector: disconnecting from provisioner due to config change.");
         sync_disconnect_provisioner(sync);
+        sync->instruct_log = 1;
         free(glob->sharedinfo.provisionerip);
         free(glob->sharedinfo.provisionerport);
         glob->sharedinfo.provisionerip = strdup(newstate->sharedinfo.provisionerip);
@@ -1206,6 +1207,9 @@ static void *start_ip_sync_thread(void *params) {
         if (ret == -1) {
             break;
         }
+        if (ret == 0) {
+            usleep(200000);
+        }
     }
 
     /* Collector is halting, stop all processing threads */
@@ -1236,6 +1240,7 @@ int main(int argc, char *argv[]) {
 	struct sigaction sigact;
     sigset_t sig_before, sig_block_all;
     char *configfile = NULL;
+    char *pidfile = NULL;
     collector_global_t *glob = NULL;
     int i, ret, todaemon;
     colinput_t *inp, *tmp;
@@ -1247,10 +1252,11 @@ int main(int argc, char *argv[]) {
             { "help", 0, 0, 'h' },
             { "config", 1, 0, 'c'},
             { "daemonise", 0, 0, 'd'},
+            { "pidfile", 1, 0, 'p'},
             { NULL, 0, 0, 0 }
         };
 
-        int c = getopt_long(argc, argv, "c:dh", long_options,
+        int c = getopt_long(argc, argv, "c:dp:h", long_options,
                 &optind);
         if (c == -1) {
             break;
@@ -1266,6 +1272,9 @@ int main(int argc, char *argv[]) {
             case 'h':
                 usage(argv[0]);
                 return 1;
+            case 'p':
+                pidfile = optarg;
+                break;
             default:
                 logger(LOG_INFO, "OpenLI: unsupported option: %c", c);
                 usage(argv[0]);
@@ -1281,7 +1290,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (todaemon) {
-        daemonise(argv[0]);
+        daemonise(argv[0], pidfile);
     }
 
     /* Initialise osipparser2 */
@@ -1469,6 +1478,10 @@ int main(int argc, char *argv[]) {
     /* Tidy up, exit */
     clear_global_config(glob);
     destroy_collector_state(glob);
+
+    if (todaemon && pidfile) {
+        remove_pidfile(pidfile);
+    }
 
     return 0;
 }

@@ -87,7 +87,7 @@ typedef struct openli_sip_parser {
 } openli_sip_parser_t;
 
 int add_sip_packet_to_parser(openli_sip_parser_t **parser,
-        libtrace_packet_t *packet);
+        libtrace_packet_t *packet, uint8_t logallowed);
 int parse_next_sip_message(openli_sip_parser_t *parser,
         libtrace_packet_t *packet);
 void release_sip_parser(openli_sip_parser_t *parser);
@@ -101,9 +101,11 @@ char *get_sip_to_uri_realm(openli_sip_parser_t *parser);
 int get_sip_to_uri_identity(openli_sip_parser_t *parser,
         openli_sip_identity_t *sipid);
 int get_sip_auth_identity(openli_sip_parser_t *parser, int index,
-        int *authcount, openli_sip_identity_t *sipid);
+        int *authcount, openli_sip_identity_t *sipid,
+        uint8_t logallowed);
 int get_sip_proxy_auth_identity(openli_sip_parser_t *parser, int index,
-        int *authcount, openli_sip_identity_t *sipid);
+        int *authcount, openli_sip_identity_t *sipid,
+        uint8_t logallowed);
 char *get_sip_cseq(openli_sip_parser_t *parser);
 char *get_sip_callid(openli_sip_parser_t *parser);
 char *get_sip_session_id(openli_sip_parser_t *parser);

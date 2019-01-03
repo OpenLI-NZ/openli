@@ -1,0 +1,172 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          openlicollector
+# Required-Start:    $remote_fs $network $local_fs $named $syslog
+# Required-Stop:     $remote_fs $network $local_fs $named $syslog
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: OpenLI collector daemon
+# Description:       OpenLI collector daemon
+### END INIT INFO
+
+# Author: Shane Alcock <shane.alcock@waikato.ac.nz>
+
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+DESC="OpenLI collector"
+PKG_NAME=openli-collector
+DAEMON_NAME=openlicollector
+DAEMON=/usr/bin/$DAEMON_NAME
+PIDDIR=/var/run/openli
+CONFDIR=/etc/openli
+SCRIPTNAME=/etc/init.d/$PKG_NAME
+
+if [ ! -x $DAEMON ]; then
+        echo "Cannot find $DAEMON, aborting"
+        exit 5
+fi
+
+if [ -r /etc/default/$PKG_NAME ]; then
+        . /etc/default/$PKG_NAME
+fi
+
+. /lib/lsb/init-functions
+
+do_local_config()
+{
+    if [ ! -d $PIDDIR ]; then
+	mkdir -p $PIDDIR
+    fi
+}
+
+# Wait for a pidfile to be created and contain the correct pid
+do_wait()
+{
+    attempt=0
+    while [ $attempt -lt 50 ]; do
+	attempt=$((attempt+1))
+	if [ -f $1 ]; then
+            # file exists, check if the contents are a valid pid
+	    ps -p `cat $1` > /dev/null
+	    if [ $? -eq 0 ]; then
+		return 0
+	    fi
+	fi
+        sleep 0.1
+    done
+    # give up after too many failed attempts
+    return 2
+}
+
+do_start()
+{
+    CONFFILE=${CONFDIR}/collector-config.yaml
+    PIDFILE=${PIDDIR}/${DAEMON_NAME}.pid
+
+    if [ ! -f $CONFFILE ]; then
+        echo "$DAEMON_NAME configuration file ($CONFFILE) does not exist!"
+        echo "Cannot start $DAEMON_NAME"
+        return 1
+    fi
+
+    do_local_config
+    log_daemon_msg "Starting ${DESC}" "$CONFFILE"
+
+    start-stop-daemon --start --quiet --exec $DAEMON \
+	--pidfile $PIDFILE -- -p $PIDFILE -d -c $CONFFILE
+
+    if [ $? -eq 0 ]; then
+        do_wait $PIDFILE
+    fi
+
+    case "$?" in
+     	0|1) log_end_msg 0
+             return 0
+		;;
+    	2|3) log_end_msg 1
+             return 1
+		;;
+    esac
+
+    return 1
+}
+
+do_stop()
+{
+    PIDFILE=${PIDDIR}/${DAEMON_NAME}.pid
+    if [ ! -f $PIDFILE ]; then
+        return 0
+    fi
+
+    PID=`cat $PIDFILE`
+    log_daemon_msg "Stopping ${DESC}"
+    start-stop-daemon --stop --quiet --retry=TERM/30/KILL/5 \
+         --exec $DAEMON --pidfile $PIDFILE
+
+    if [ -n "$PID" ]; then
+      	/usr/bin/pgrep -s $PID > /dev/null
+        if [ $? -eq 0 ]; then
+	   /bin/kill -s TERM -- -$PID
+        fi
+
+        # make sure they are stopped, otherwise send a SIGKILL
+        /usr/bin/pgrep -s $PID > /dev/null
+        if [ $? -eq 0 ]; then
+	    sleep 3
+	    /bin/kill -s KILL -- -$PID 2> /dev/null
+        fi
+    fi
+
+    if `/usr/bin/pgrep -s $PID > /dev/null`; then
+        log_end_msg 1
+    	return 1
+    else
+        log_end_msg 0
+	return 0
+    fi
+
+}
+
+do_status()
+{
+    PIDFILE=${PIDDIR}/${DAEMON_NAME}.pid
+    status_of_proc -p $PIDFILE "$DAEMON"
+    if [ $? -gt 0 ]; then
+       	return 1
+    fi
+    return 0
+}
+
+do_reload()
+{
+    PIDFILE=${PIDDIR}/${DAEMON_NAME}.pid
+    log_daemon_msg "Reloading ${DESC}"
+    start-stop-daemon --stop --signal 1 --quiet --pidfile $PIDFILE \
+        	--exec $DAEMON
+    log_end_msg 0
+    return 0
+}
+
+case "$1" in
+  start)
+	do_start
+        ;;
+  stop)
+	do_stop
+        ;;
+  reload|force-reload)
+	do_reload
+  	;;
+  restart)
+	do_stop
+	do_start
+        ;;
+  status)
+	do_status && exit 0 || exit $?
+	;;
+  *)
+        echo "Usage: $SCRIPTNAME {start|stop|restart|reload}" >&2
+        exit 3
+        ;;
+esac
+
+

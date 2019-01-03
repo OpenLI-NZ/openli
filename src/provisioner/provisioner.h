@@ -70,6 +70,11 @@ typedef struct prov_agency {
     UT_hash_handle hh;
 } prov_agency_t;
 
+typedef struct disabled_client {
+    char *ipaddr;
+    UT_hash_handle hh;
+} prov_disabled_client_t;
+
 typedef struct prov_state {
 
     char *conffile;
@@ -86,6 +91,9 @@ typedef struct prov_state {
     coreserver_t *radiusservers;
     coreserver_t *sipservers;
 
+    prov_disabled_client_t *badmediators;
+    prov_disabled_client_t *badcollectors;
+
     voipintercept_t *voipintercepts;
     ipintercept_t *ipintercepts;
 
@@ -94,9 +102,6 @@ typedef struct prov_state {
     prov_epoll_ev_t *mediatorfd;
     prov_epoll_ev_t *timerfd;
     prov_epoll_ev_t *signalfd;
-
-    uint16_t dropped_collectors;
-    uint16_t dropped_mediators;
 
     prov_agency_t *leas;
     liid_hash_t *liid_map;
@@ -112,6 +117,8 @@ typedef struct prov_state {
 } provision_state_t;
 
 typedef struct prov_sock_state {
+    char *ipaddr;
+    uint8_t log_allowed;
     net_buffer_t *incoming;
     net_buffer_t *outgoing;
     uint8_t trusted;

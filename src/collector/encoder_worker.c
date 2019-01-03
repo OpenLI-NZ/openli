@@ -166,8 +166,6 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
         zmq_close(enc->zmq_recvjobs[i]);
     }
 
-    printf("encoder worker %d drained %u messages\n", enc->workerid, drained);
-
     if (enc->zmq_control) {
         zmq_close(enc->zmq_control);
     }

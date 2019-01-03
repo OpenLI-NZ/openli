@@ -1,0 +1,61 @@
+Source: openli
+Section: net
+Priority: optional
+Maintainer: Shane Alcock <shane.alcock@waikato.ac.nz>
+Build-Depends: debhelper (>= 9), dh-autoreconf, dh-systemd (>=1.5),
+ libtrace4-dev, libyaml-dev, uthash-dev
+Standards-Version: 4.1.3
+Homepage: https://openli.nz
+
+Package: openli-provisioner
+Section: net
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, lsb-base
+Description: Central provisioning daemon for an OpenLI system
+ OpenLI is a software suite that allows network operators to conduct
+ lawful interception of Internet traffic that is compliant with the
+ ETSI Lawful Intercept standards.
+ This package contains the provisioner component of the OpenLI
+ lawful intercept software. The provisioner acts as a centralised
+ controller for the deployed OpenLI collectors and mediators.
+ Intercepts are configured on the provisioner, which then pushes
+ the necessary intercept instructions to any registered collectors
+ and mediators.
+
+Package: openli-mediator
+Section: net
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libwandder1-dev,
+ libjudy-dev, lsb-base, libzmq3-dev
+Recommends: strongswan
+Description: Mediation daemon for an OpenLI system
+ OpenLI is a software suite that allows network operators to conduct
+ lawful interception of Internet traffic that is compliant with the
+ ETSI Lawful Intercept standards.
+ This package contains the mediator component of the OpenLI
+ lawful intercept software. The mediator collates intercepted
+ (and encoded) packets from the collectors and routes the packets
+ to the appropriate law enforcement agency (LEA). The mediator will
+ maintain active TCP sessions to all known LEAs for both handover
+ interface 2 and 3, using keep-alives as per the ETSI standard.
+
+Package: openli-collector
+Section: net
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libwandder1-dev,
+ libjudy-dev, libgoogle-perftools-dev, libosip2-dev, lsb-base,
+ libzmq3-dev
+Description: Collector daemon for an OpenLI system
+ OpenLI is a software suite that allows network operators to conduct
+ lawful interception of Internet traffic that is compliant with the
+ ETSI Lawful Intercept standards.
+ This package contains the collector component of the OpenLI lawful
+ intercept software. The collector captures packets on one or more
+ specified network interfaces, identifies traffic that should be
+ intercepted (based on instructions from an OpenLI provisioner),
+ encodes the intercepted traffic using the format described in the
+ ETSI specifications, and forwards the encoded traffic to the
+ appropriate mediator for export to the law enforcement agency that
+ requested the intercept.
+
+

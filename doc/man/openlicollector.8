@@ -1,0 +1,53 @@
+.TH OPENLI-COLLECTOR 8 "2018-12-03" "openli-collector" "OpenLI"
+
+.SH NAME
+openli-collector \- collector daemon for OpenLI
+
+.SH SYNOPSIS
+\fBopenlicollector\fR \fB-c\fR \fIconfigfile\fR [\fB-hd\fR] [\fB-p \fIpidfile\fR]
+
+.SH DESCRIPTION
+\fBopenli-collector\fR is the collector component of the \fBOpenLI\fR
+lawful interception system. More specifically, the collector is used to
+capture packets on one or more interceptable interfaces, determine which
+packets should be intercepted, encode those packets using the ETSI LI
+format and forward the encoded packets onto an OpenLI mediator.
+
+.SH OPTIONS
+.TP
+\fB-h, --help\fR
+Show summary of supported command-line options
+
+.TP
+\fB-c, --config \fIconfigfile\fR
+Specifies the location of the file containing the configuration to
+use when running this openli-collector instance. See CollectorDoc.md
+(most likely installed in /usr/share/doc/openli) for details on the
+configuration file format.
+
+.TP
+\fB-d, --daemonise\fR
+Run the openli-collector as a detached daemon.
+
+.TP
+\fB-p, --pidfile \fIpidfile\fR
+Create a pidfile for the collector process at \fIpidfile\fR.
+
+
+.SH FILES
+.TP
+.I /etc/openli/collector-example.yaml
+Example OpenLI collector configuration file
+
+
+.SH SECURITY
+Although \fBopenli-collector\fR can run unpriviliged, most intercept
+scenarios will require root privileges to perform raw packet capture on
+a network interface.
+
+.SH AUTHOR
+OpenLI was originally written by Shane Alcock <shane.alcock@waikato.ac.nz>
+while working for the University of Waikato WAND Network Research Group.
+
+.PP
+This manual page was written by Shane Alcock <shane.alcock@waikato.ac.nz>

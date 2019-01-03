@@ -53,6 +53,8 @@ typedef struct export_buffer {
 
     uint32_t deadfront;
     uint32_t partialfront;
+
+    uint64_t nextwarn;
 } export_buffer_t;
 
 
