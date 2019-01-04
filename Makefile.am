@@ -1,5 +1,5 @@
 SUBDIRS=extlib src
-EXTRA_DIST=doc
+EXTRA_DIST=doc README.md
 
 AUTOMAKE_OPTIONS=foreign
 
