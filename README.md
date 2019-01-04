@@ -86,9 +86,9 @@ To build OpenLI from source, just follow the series of steps given below.
     To disable the building of any of the three core OpenLI components, you
     can add any of the following to your './configure' command.
 
-      --disable-provisioner
-      --disable-mediator
-      --disable-collector
+        --disable-provisioner
+        --disable-mediator
+        --disable-collector
 
 
 3. Run `make`.
