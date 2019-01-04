@@ -1,10 +1,10 @@
 OpenLI -- open source ETSI-compliant Lawful Intercept software
 
-Version: pre-release
+Version: 1.0.0
 
 ---------------------------------------------------------------------------
 
-Copyright (c) 2018 The University of Waikato, Hamilton, New Zealand.
+Copyright (c) 2018, 2019 The University of Waikato, Hamilton, New Zealand.
 All rights reserved.
 
 This code has been developed by the University of Waikato WAND research group.
@@ -26,20 +26,22 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 ---------------------------------------------------------------------------
 
 ## IMPORTANT
-This software is currently in a pre-release state and should not be relied
-upon to satisfy your lawful intercept requirements. We still have more testing
-and refinement to complete before a formal release will occur, but we have
-made the code available now to allow people to experiment with OpenLI
-and figure out how to integrate it properly into their production network
-once the software is complete.
+This software is provided AS-IS and offers no guarantee that it will
+able to completely satisfy your lawful intercept obligations. This version
+of the software is an initial release and we anticipate that there will
+still be many bugs and incompatibilities that we have not yet encountered
+in our testing so far. If you do encounter issues with the OpenLI software,
+please report them to us via our Github page
+(https://github.com/wanduow/openli) so that we can continue to improve the
+quality of OpenLI for all of our users.
 
 ## Dependencies
 
-* [libtrace 4.0.4 or later](http://research.wand.net.nz/software/libtrace.php)
+* [libtrace 4.0.5 or later](http://research.wand.net.nz/software/libtrace.php)
   (packages for Debian / Ubuntu are available
   [from WAND](http://packages.wand.net.nz) as well).
 
-* [libwandder 1.0.1 or later](https://github.com/wanduow/libwandder/)
+* [libwandder 1.1.0 or later](https://github.com/wanduow/libwandder/)
   (packages for Debian / Ubuntu are available
   [from WAND](http://packages.wand.net.nz) as well).
 
@@ -63,7 +65,7 @@ once the software is complete.
 
 ## Building OpenLI
 
-To build OpenLI, just follow the series of steps given below.
+To build OpenLI from source, just follow the series of steps given below.
 
 1. Run the `./bootstrap.sh` script at the top level of the source tree (only
    required if you have cloned the OpenLI git repo).
