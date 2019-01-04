@@ -20,4 +20,4 @@ override_dh_installinit:
 	dh_installinit --no-start
 
 override_dh_builddeb:
-	dh_builddeb -- --no-uniform-compression
+	dh_builddeb -- -Zgzip
