@@ -2,40 +2,14 @@
 
 set -x -e -o pipefail
 
-VERSION=${CI_COMMIT_REF_NAME}
-PKGVERSION=1
-ARCH=amd64
+apt-get update && apt-get install -y curl
 
-APIKEY=${BINTRAY_API_KEY}
-
-apt-get update
-apt-get install -y curl
-
-UBUNTU_DISTS=("xenial" "artful" "bionic")
-DEBIAN_DISTS=("stretch" "jessie" "sid" "buster")
-PACKAGE_LIST=("openli-collector" "openli-provisioner" "openli-mediator")
-
-for i in "${UBUNTU_DISTS[@]}"
-do
-        for comp in "${PACKAGE_LIST[@]}"; do
-                echo ubuntu_$i/${comp}
-
-                if [ ! -f built-packages/ubuntu_$i/${comp}_${VERSION}-${PKGVERSION}_${ARCH}.deb ]; then
-                        continue
-                fi
-
-                curl -T built-packages/ubuntu_$i/${comp}_${VERSION}-${PKGVERSION}_${ARCH}.deb -u${BINTRAY_USERNAME}:$APIKEY "https://api.bintray.com/content/wand/OpenLI/$comp/$VERSION/pool/$i/main/${comp}_${VERSION}-${PKGVERSION}_${ARCH}.deb;deb_distribution=$i;deb_component=main;deb_architecture=$ARCH"
-        done
-done
-
-for i in "${DEBIAN_DISTS[@]}"
-do
-        for comp in "${PACKAGE_LIST[@]}"; do
-                echo debian_$i/${comp}
-                if [ ! -f built-packages/debian_$i/${comp}_${VERSION}-${PKGVERSION}_${ARCH}.deb ]; then
-                        continue
-                fi
-
-                curl -T built-packages/debian_$i/${comp}_${VERSION}-${PKGVERSION}_${ARCH}.deb -u${BINTRAY_USERNAME}:$APIKEY "https://api.bintray.com/content/wand/OpenLI/$comp/$VERSION/pool/$i/main/${comp}_${VERSION}-${PKGVERSION}_${ARCH}.deb;deb_distribution=$i;deb_component=main;deb_architecture=$ARCH"
-        done
+for path in `find built-packages/amd64/ -maxdepth 1 -type d`; do
+    IFS=_ read linux_dist linux_version <<< $(basename "${path}")
+    for deb in `find "${path}" -maxdepth 1 -type f`; do
+        pkg_filename=$(basename "${deb}")
+        IFS=_ read pkg_name pkg_version pkg_arch <<< $(basename -s ".deb" "${pkg_filename}")
+        curl -T "${deb}" -u${BINTRAY_USERNAME}:${BINTRAY_API_KEY} \
+            "https://api.bintray.com/content/wand/OpenLI/${pkg_name}/${pkg_version}/pool/${linux_version}/main/${pkg_filename};deb_distribution=${linux_version};deb_component=main;deb_architecture=${pkg_arch}"
+    done
 done
