@@ -9,9 +9,14 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y equivs devscripts dpkg-dev quilt curl apt-transport-https \
     apt-utils ssl-cert ca-certificates gnupg lsb-release debhelper git
+apt-get upgrade -y
 
-echo "deb https://packages.wand.net.nz $(lsb_release -sc) main" | tee /etc/apt/sources.list.d/wand.list
-curl https://packages.wand.net.nz/keyring.gpg -o /etc/apt/trusted.gpg.d/wand.gpg
+echo "deb https://dl.bintray.com/wand/general $(lsb_release -sc) main" | \
+    tee -a /etc/apt/sources.list.d/wand.list
+echo "deb https://dl.bintray.com/wand/libtrace $(lsb_release -sc) main" | \
+    tee -a /etc/apt/sources.list.d/wand.list
+curl "https://bintray.com/user/downloadSubjectPublicKey?username=wand" \
+    -o /etc/apt/trusted.gpg.d/wand.gpg
 
 apt-get update
 apt-get upgrade -y
