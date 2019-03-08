@@ -29,7 +29,7 @@ for path in `find built-packages/ -maxdepth 1 -type d`; do
         pkg_filename=$(basename "${deb}")
         IFS=_ read pkg_name pkg_version pkg_arch <<< $(basename -s ".deb" "${pkg_filename}")
         jfrog bt package-create --licenses ${BINTRAY_LICENSE} --vcs-url ${CI_PROJECT_URL} ${BINTRAY_REPO}/${pkg_name} || true
-        jfrog bt upload --publish --deb ${linux_version}/main/${pkg_arch} ${deb} ${BINTRAY_REPO}/${pkg_name}/${pkg_version} pool/${linux_version}/main/${pkg_name}/
+        jfrog bt upload --deb ${linux_version}/main/${pkg_arch} ${deb} ${BINTRAY_REPO}/${pkg_name}/${pkg_version} pool/${linux_version}/main/${pkg_name}/
     done
 done
 
