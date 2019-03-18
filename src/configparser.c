@@ -535,6 +535,7 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         newcept->common.authcc = NULL;
         newcept->common.delivcc = NULL;
         newcept->active_cins = NULL;
+        newcept->active_registrations = NULL;
         newcept->cin_callid_map = NULL;
         newcept->cin_sdp_map = NULL;
         newcept->targets = libtrace_list_init(sizeof(openli_sip_identity_t *));
