@@ -105,16 +105,13 @@ alushimhdr_t *get_alushim_header(libtrace_packet_t *packet, uint32_t *rem) {
 }
 
 static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
-        aluintercept_t *alu, uint8_t dir, collector_identity_t *info) {
+        aluintercept_t *alu, uint8_t dir, collector_identity_t *info,
+        void *l3, uint32_t rem) {
 
     openli_export_recv_t *msg;
     int queueused;
-    void *l3;
-    uint32_t rem;
-    uint16_t ethertype;
 
     msg = calloc(1, sizeof(openli_export_recv_t));
-    l3 = trace_get_layer3(packet, &ethertype, &rem);
 
     msg->type = OPENLI_EXPORT_IPCC;
     msg->ts = trace_get_timeval(packet);
@@ -162,6 +159,11 @@ int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
                 HASH_DELETE(hh, alusources, cs);
                 continue;
             }
+            if (cs->info->ai_family == AF_INET) {
+                cs->portswapped = ntohs(CS_TO_V4(cs)->sin_port);
+            } else if (cs->info->ai_family == AF_INET6) {
+                cs->portswapped = ntohs(CS_TO_V6(cs)->sin6_port);
+            }
         }
 
         if (cs->info->ai_family == AF_INET) {
@@ -169,12 +171,14 @@ int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
             sa = (struct sockaddr_in *)(&(pinfo->destip));
             if (CORESERVER_MATCH_V4(cs, sa, pinfo->destport)) {
                 alumatched = 1;
+                break;
             }
         } else if (cs->info->ai_family == AF_INET6) {
             struct sockaddr_in6 *sa6;
             sa6 = (struct sockaddr_in6 *)(&(pinfo->destip));
             if (CORESERVER_MATCH_V6(cs, sa6, pinfo->destport)) {
                 alumatched = 1;
+                break;
             }
         }
     }
@@ -244,7 +248,8 @@ int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
     alu->cin = ntohl(aluhdr->sessionid);
 
     /* Create an appropriate IPCC and export it */
-    push_alu_ipcc_job(loc, packet, alu, alushim_get_direction(aluhdr), info);
+    push_alu_ipcc_job(loc, packet, alu, alushim_get_direction(aluhdr), info,
+            l3, rem);
 
     return 1;
 }
