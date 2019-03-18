@@ -197,9 +197,6 @@ int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
     /* See if the intercept ID is in our set of intercepts */
     HASH_FIND(hh, aluints, &shimintid, sizeof(shimintid), alu);
     if (alu == NULL) {
-        logger(LOG_INFO,
-                "Warning: received packet from ALU mirror %s:%s with intercept ID %u, but that ID does not match an OpenLI intercept...",
-                cs->ipstr, cs->portstr, shimintid);
         return 0;
     }
 
