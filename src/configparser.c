@@ -42,6 +42,13 @@
 
 uint64_t nextid = 0;
 
+#define SET_CONFIG_STRING_OPTION(optname, yamlval) \
+    if (optname) { \
+        free(optname); \
+    } \
+    optname = strdup((char *)yamlval->data.scalar.value);
+
+
 static int check_onoff(char *value) {
 
     if (strcasecmp(value, "yes") == 0) {
@@ -167,9 +174,8 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "uri") == 0 &&
-                    inp->uri == NULL) {
-                inp->uri = strdup((char *)value->data.scalar.value);
+                    strcmp((char *)key->data.scalar.value, "uri") == 0) {
+                SET_CONFIG_STRING_OPTION(inp->uri, value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -225,17 +231,15 @@ static void parse_sip_targets(libtrace_list_t *targets, yaml_document_t *doc,
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "username") == 0 &&
-                    newtgt->username == NULL) {
-                newtgt->username = strdup((char *)value->data.scalar.value);
+                    strcmp((char *)key->data.scalar.value, "username") == 0) {
+                SET_CONFIG_STRING_OPTION(newtgt->username, value);
                 newtgt->username_len = strlen(newtgt->username);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "realm") == 0 &&
-                    newtgt->realm == NULL) {
-                newtgt->realm = strdup((char *)value->data.scalar.value);
+                    strcmp((char *)key->data.scalar.value, "realm") == 0) {
+                SET_CONFIG_STRING_OPTION(newtgt->realm, value);
                 newtgt->realm_len = strlen(newtgt->realm);
             }
         }
@@ -284,16 +288,14 @@ static int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "ip") == 0 &&
-                    cs->ipstr == NULL) {
-                cs->ipstr = strdup((char *)value->data.scalar.value);
+                    strcmp((char *)key->data.scalar.value, "ip") == 0) {
+                SET_CONFIG_STRING_OPTION(cs->ipstr, value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "port") == 0 &&
-                    cs->portstr == NULL) {
-                cs->portstr = strdup((char *)value->data.scalar.value);
+                    strcmp((char *)key->data.scalar.value, "port") == 0) {
+                SET_CONFIG_STRING_OPTION(cs->portstr, value);
             }
         }
 
@@ -436,37 +438,36 @@ static int parse_agency_list(provision_state_t *state, yaml_document_t *doc,
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value,
-                            "hi2address") == 0 && newag->hi2_ipstr == NULL) {
-                newag->hi2_ipstr = strdup((char *)value->data.scalar.value);
+                            "hi2address") == 0) {
+                SET_CONFIG_STRING_OPTION(newag->hi2_ipstr, value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value,
-                            "hi2port") == 0 && newag->hi2_portstr == NULL) {
-                newag->hi2_portstr = strdup((char *)value->data.scalar.value);
+                            "hi2port") == 0) {
+                SET_CONFIG_STRING_OPTION(newag->hi2_portstr, value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value,
-                            "hi3address") == 0 && newag->hi3_ipstr == NULL) {
-                newag->hi3_ipstr = strdup((char *)value->data.scalar.value);
+                            "hi3address") == 0) {
+                SET_CONFIG_STRING_OPTION(newag->hi3_ipstr, value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value,
-                            "hi3port") == 0 && newag->hi3_portstr == NULL) {
-                newag->hi3_portstr = strdup((char *)value->data.scalar.value);
+                            "hi3port") == 0) {
+                SET_CONFIG_STRING_OPTION(newag->hi3_portstr, value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value,
-                            "agencyid") == 0 && newag->agencyid == NULL) {
-                newag->agencyid = strdup((char *)value->data.scalar.value);
-
+                            "agencyid") == 0) {
+                SET_CONFIG_STRING_OPTION(newag->agencyid, value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -556,25 +557,22 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "liid") == 0 &&
-                    newcept->common.liid == NULL) {
-                newcept->common.liid = strdup((char *)value->data.scalar.value);
+                    strcmp((char *)key->data.scalar.value, "liid") == 0) {
+                SET_CONFIG_STRING_OPTION(newcept->common.liid, value);
                 newcept->common.liid_len = strlen(newcept->common.liid);
             }
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value,
-                        "authcountrycode") == 0 &&
-                    newcept->common.authcc == NULL) {
-                newcept->common.authcc = strdup((char *)value->data.scalar.value);
+                        "authcountrycode") == 0) {
+                SET_CONFIG_STRING_OPTION(newcept->common.authcc, value);
                 newcept->common.authcc_len = strlen(newcept->common.authcc);
             }
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value,
-                        "deliverycountrycode") == 0 &&
-                    newcept->common.delivcc == NULL) {
-                newcept->common.delivcc = strdup((char *)value->data.scalar.value);
+                        "deliverycountrycode") == 0) {
+                SET_CONFIG_STRING_OPTION(newcept->common.delivcc, value);
                 newcept->common.delivcc_len = strlen(newcept->common.delivcc);
             }
 
@@ -597,9 +595,8 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
             }
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "agencyid") == 0
-                    && newcept->common.targetagency == NULL) {
-                newcept->common.targetagency = strdup((char *)value->data.scalar.value);
+                    strcmp((char *)key->data.scalar.value, "agencyid") == 0) {
+                SET_CONFIG_STRING_OPTION(newcept->common.targetagency, value);
             }
 
         }
@@ -661,18 +658,16 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "liid") == 0 &&
-                    newcept->common.liid == NULL) {
-                newcept->common.liid = strdup((char *)value->data.scalar.value);
+                    strcmp((char *)key->data.scalar.value, "liid") == 0) {
+                SET_CONFIG_STRING_OPTION(newcept->common.liid, value);
                 newcept->common.liid_len = strlen(newcept->common.liid);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value,
-                            "authcountrycode") == 0 &&
-                    newcept->common.authcc == NULL) {
-                newcept->common.authcc = strdup((char *)value->data.scalar.value);
+                            "authcountrycode") == 0) {
+                SET_CONFIG_STRING_OPTION(newcept->common.authcc, value);
                 newcept->common.authcc_len = strlen(newcept->common.authcc);
             }
 
@@ -686,17 +681,15 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value,
-                            "deliverycountrycode") == 0 &&
-                    newcept->common.delivcc == NULL) {
-                newcept->common.delivcc = strdup((char *)value->data.scalar.value);
+                            "deliverycountrycode") == 0) {
+                SET_CONFIG_STRING_OPTION(newcept->common.delivcc, value);
                 newcept->common.delivcc_len = strlen(newcept->common.delivcc);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "user") == 0 &&
-                    newcept->username == NULL) {
-                newcept->username = strdup((char *)value->data.scalar.value);
+                    strcmp((char *)key->data.scalar.value, "user") == 0) {
+                SET_CONFIG_STRING_OPTION(newcept->username, value);
                 newcept->username_len = strlen(newcept->username);
             }
 
@@ -730,9 +723,8 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
             }
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "agencyid") == 0
-                    && newcept->common.targetagency == NULL) {
-                newcept->common.targetagency = strdup((char *)value->data.scalar.value);
+                    strcmp((char *)key->data.scalar.value, "agencyid") == 0) {
+                SET_CONFIG_STRING_OPTION(newcept->common.targetagency, value);
             }
 
         }
@@ -829,7 +821,7 @@ static int global_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "operatorid") == 0) {
-        glob->sharedinfo.operatorid = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(glob->sharedinfo.operatorid, value);
         glob->sharedinfo.operatorid_len = strlen(glob->sharedinfo.operatorid);
 
         /* Limited to 16 chars */
@@ -843,7 +835,7 @@ static int global_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "networkelementid")
             == 0) {
-        glob->sharedinfo.networkelemid = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(glob->sharedinfo.networkelemid, value);
         glob->sharedinfo.networkelemid_len = strlen(glob->sharedinfo.networkelemid);
 
         /* Limited to 16 chars */
@@ -857,7 +849,7 @@ static int global_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "interceptpointid")
             == 0) {
-        glob->sharedinfo.intpointid = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(glob->sharedinfo.intpointid, value);
         glob->sharedinfo.intpointid_len = strlen(glob->sharedinfo.intpointid);
 
         /* Limited to 8 chars */
@@ -870,19 +862,19 @@ static int global_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "provisionerport") == 0) {
-        glob->sharedinfo.provisionerport = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(glob->sharedinfo.provisionerport, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "provisioneraddr") == 0) {
-        glob->sharedinfo.provisionerip = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(glob->sharedinfo.provisionerip, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "sipdebugfile") == 0) {
-        glob->sipdebugfile = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(glob->sipdebugfile, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -930,6 +922,7 @@ static int global_parser(void *arg, yaml_document_t *doc,
     return 0;
 }
 
+
 static int mediator_parser(void *arg, yaml_document_t *doc,
         yaml_node_t *key, yaml_node_t *value) {
 
@@ -938,37 +931,37 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "listenport") == 0) {
-        state->listenport = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(state->listenport, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "listenaddr") == 0) {
-        state->listenaddr = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(state->listenaddr, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "provisionerport") == 0) {
-        state->provport = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(state->provport, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "provisioneraddr") == 0) {
-        state->provaddr = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(state->provaddr, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "pcapdirectory") == 0) {
-        state->pcapdirectory = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(state->pcapdirectory, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "operatorid") == 0) {
-        state->operatorid = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(state->operatorid, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -1056,37 +1049,37 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "clientport") == 0) {
-        state->listenport = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(state->listenport, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "clientaddr") == 0) {
-        state->listenaddr = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(state->listenaddr, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "updateport") == 0) {
-        state->pushport = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(state->pushport, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "updateaddr") == 0) {
-        state->pushaddr = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(state->pushaddr, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "mediationport") == 0) {
-        state->mediateport = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(state->mediateport, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "mediationaddr") == 0) {
-        state->mediateaddr = strdup((char *) value->data.scalar.value);
+        SET_CONFIG_STRING_OPTION(state->mediateaddr, value);
     }
     return 0;
 }
