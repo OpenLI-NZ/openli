@@ -386,6 +386,8 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
 
     }
     if (prevmed) {
+        free(prevmed->ipstr);
+        free(prevmed->portstr);
         free(prevmed);
     }
     return ret;
@@ -405,6 +407,9 @@ static void free_all_mediators(libtrace_list_t *m) {
             close(med->commev->fd);
         }
         free(med->commev);
+        if (med->authev->fd != -1) {
+            close(med->authev->fd);
+        }
         free(med->authev);
         n = n->next;
     }
@@ -446,6 +451,10 @@ static void stop_all_collectors(libtrace_list_t *c) {
             close(col->commev->fd);
         }
         free(col->commev);
+        if (col->authev->fd != -1) {
+            close(col->authev->fd);
+        }
+        free(col->authev);
         n = n->next;
     }
 
