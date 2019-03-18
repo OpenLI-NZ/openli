@@ -1296,6 +1296,12 @@ static int start_mediator_listener(provision_state_t *state) {
 
     state->mediatorfd = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
+    if (state->mediateaddr == NULL) {
+        state->mediateaddr = strdup("0.0.0.0");
+        logger(LOG_INFO, "OpenLI provisioner: warning, no mediator listen address configured, listening on ALL addresses.");
+        logger(LOG_INFO, "OpenLI provisioner: set 'mediationaddr' config option to resolve this.");
+    }
+
     sockfd  = create_listener(state->mediateaddr, state->mediateport,
             "incoming mediator");
     if (sockfd == -1) {
