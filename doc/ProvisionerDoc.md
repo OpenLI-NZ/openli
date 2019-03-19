@@ -147,11 +147,8 @@ to the OpenLI mediator.
 
 To configure OpenLI to recognise these mirrored packets as part of an
 intercept, you'll need to do two things. First, you'll need to add the
-'alumirrors' option to your provisioner config. 'alumirrors' should contain a
-sequence of entries, each containing two parameters:
-* ip -- the IP address of the sink
-* port -- the port that the sink is listening on for ALU intercept records
-
+'alumirrors' option to your collector config. More information on this
+option is present in CollectorDoc.md.
 Second, configure an IP intercept within the provisioner config as described
 below, but make sure you include the 'alushimid' parameter and that the
 value of that parameter matches the ID that was assigned to the intercept

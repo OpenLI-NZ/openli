@@ -85,6 +85,21 @@ main limiting factor for performance is actually packet rate rather than
 raw throughput, i.e. intercepting 500,000 64 byte packets per second is a
 much higher workload than intercepting 100,000 1500 byte packets.
 
+### ALU Mirror Configuration
+If you are using OpenLI to translate the intercept records produced by
+Alcatel-Lucent devices into ETSI-compliant output, any collectors that
+are expected to receive mirrored copies of the ALU intercept records need
+to be able to identify which packets are encapsulated records to be
+translated.
+
+This is done by configuring the collector with a sequence of known sinks for
+the ALU intercept traffic under the 'alumirrors' top-level configuration
+option. Each sequence entry is defined using two parameters:
+* ip -- the IP address of the sink
+* port -- the port that the sink is listening on for ALU intercept records
+
+Note that in this context, the sink refers to the destination IP address
+and port of the mirrored ALU traffic.
 
 ### Configuration Syntax
 All config options aside from the input configuration are standard YAML
@@ -110,6 +125,12 @@ and must contain the following two key-value elements:
 * uri              -- [a libtrace URI](https://github.com/LibtraceTeam/libtrace/wiki/Supported-Trace-Formats)
                       describing which interface to intercept packets on.
 * threads          -- the number of processing threads to use with this input.
+
+As described above, ALU mirrors are defined as a YAML sequence with a key
+of `alumirrors:`. Each sequence item must contain the following two
+key-value elements:
+* ip -- the IP address of the sink
+* port -- the port that the sink is listening on for ALU intercept records
 
 Be aware that increasing the number of threads used for sequence number
 tracking, encoding or forwarding can actually decrease OpenLI's performance,

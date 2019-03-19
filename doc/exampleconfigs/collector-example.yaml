@@ -28,6 +28,16 @@ encoderthreads: 2
 # mediators. You probably don't need to change this.
 forwardingthreads: 1
 
+# List of ALU LI mirrors that we are acting as a translation module for.
+# NOTE: This should be the IP and port of the *recipient* of the ALU
+#       intercept mirror, not the host that is doing the mirroring.
+# NOTE: ALU LI translation is a special case that won't apply to most users,
+#       but the configuration is included here for completeness
+alumirrors:
+ - ip: 10.100.0.233
+   port: 8500
+
+
 # List of interfaces to capture packets on
 inputs:
  - uri: eth1            # capture on interface eth1
