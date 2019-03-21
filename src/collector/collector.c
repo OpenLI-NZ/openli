@@ -176,8 +176,8 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
 
         snprintf(pubsockname, 128, "inproc://openlipub-%d", i);
         loc->zmq_pubsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
-        zmq_connect(loc->zmq_pubsocks[i], pubsockname);
         zmq_setsockopt(loc->zmq_pubsocks[i], ZMQ_SNDHWM, &zero, sizeof(zero));
+        zmq_connect(loc->zmq_pubsocks[i], pubsockname);
     }
 
     loc->fragreass = create_new_ipfrag_reassembler();
