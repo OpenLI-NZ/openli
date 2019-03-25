@@ -977,27 +977,33 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
                 logger(LOG_INFO,
                         "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
                         x->common.liid, x->username, cept->username);
-                free(cept);
-                return -1;
+                remove_ip_intercept(sync, x);
+                free_single_ipintercept(x);
+                x = NULL;
             }
-        } else if (cept->alushimid != x->alushimid) {
+        }
+
+        if (cept->alushimid != x->alushimid) {
             logger(LOG_INFO,
                     "OpenLI: duplicate IP ID %s seen, but ALU intercept IDs are different (was %u, now %u).",
                     x->common.liid, x->alushimid, cept->alushimid);
-            free(cept);
-            return -1;
+            remove_ip_intercept(sync, x);
+            free_single_ipintercept(x);
+            x = NULL;
         }
 
-        if (cept->accesstype != x->accesstype) {
-            logger(LOG_INFO,
+        if (x != NULL) {
+            if (cept->accesstype != x->accesstype) {
+                logger(LOG_INFO,
                     "OpenLI: duplicate IP ID %s seen, but access type has changed to %s.", x->common.liid, accesstype_to_string(cept->accesstype));
             /* Only affects IRIs so don't need to modify collector threads */
-            x->accesstype = cept->accesstype;
+                x->accesstype = cept->accesstype;
+            }
+            x->awaitingconfirm = 0;
+            free(cept);
+            /* our collector threads should already know about this intercept */
+            return 1;
         }
-        x->awaitingconfirm = 0;
-        free(cept);
-        /* our collector threads should already know about this intercept */
-        return 1;
     }
 
     if (cept->username) {

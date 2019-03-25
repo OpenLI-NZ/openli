@@ -114,12 +114,12 @@ to or from your SIP and RADIUS servers.
 
 SIP servers are defined using the sipservers option. Each SIP server that
 you have in your network should be included as a list item within the
-sipservers option. Failure to configure SIP servers will prevent OpenLI from
+'sipservers' option. Failure to configure SIP servers will prevent OpenLI from
 performing any VOIP intercepts. A SIP server is configured using two parameters:
 * ip -- the IP address of the SIP server
 * port -- the port that the SIP server is listening on.
 
-RADIUS servers are defined using the radiusservers option. The configuration
+RADIUS servers are defined using the 'radiusservers' option. The configuration
 works much the same as for SIP, except that most RADIUS deployments will need
 TWO server entries: one for the auth service and one for the accounting service,
 as these are usually listening on different ports. A RADIUS server entry is
@@ -127,6 +127,32 @@ configured using two parameters:
 * ip -- the IP address of the RADIUS server
 * port -- the port that the RADIUS server is communicating on.
 
+
+### ALU Lawful Intercept translation
+Some Alcatel-Lucent devices have a built-in LI system which is not
+ETSI-compliant. However, OpenLI is capable of taking a feed of the LI
+output produced by these devices and converting them into records that follow
+the ETSI standards. The first step is to configure your ALU device to
+perform the desired intercept, taking note of the ALU shim ID that is
+assigned to that intercept. You'll also need to take note of the IP address
+and port to which the device is sending its intercepted traffic (we'll
+refer to this as the intercept sink).
+
+At this point, your ALU box should be ready to perform an intercept and
+forward it to the "sink". Now, you will need to mirror the ALU-intercept
+records that will be sent to the sink to an interface that an OpenLI collector
+will be configured to capture packets from. The collector will translate this
+duplicate stream of records into ETSI-compliant records and forward them
+to the OpenLI mediator.
+
+To configure OpenLI to recognise these mirrored packets as part of an
+intercept, you'll need to do two things. First, you'll need to add the
+'alumirrors' option to your collector config. More information on this
+option is present in CollectorDoc.md.
+Second, configure an IP intercept within the provisioner config as described
+below, but make sure you include the 'alushimid' parameter and that the
+value of that parameter matches the ID that was assigned to the intercept
+on the ALU device.
 
 
 ### Pcap Output Mode

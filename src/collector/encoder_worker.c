@@ -48,11 +48,6 @@ static int init_worker(openli_encoder_t *enc) {
     for (i = 0; i < enc->seqtrackers; i++) {
         enc->zmq_recvjobs[i] = zmq_socket(enc->zmq_ctxt, ZMQ_PULL);
         snprintf(sockname, 128, "inproc://openliseqpush-%d", i);
-        if (zmq_connect(enc->zmq_recvjobs[i], sockname) != 0) {
-            logger(LOG_INFO, "OpenLI: error connecting to zmq pull socket");
-            return -1;
-        }
-
         if (zmq_setsockopt(enc->zmq_recvjobs[i], ZMQ_LINGER, &zero,
                 sizeof(zero)) != 0) {
             logger(LOG_INFO, "OpenLI: error configuring connection to zmq pull socket");
@@ -64,20 +59,17 @@ static int init_worker(openli_encoder_t *enc) {
             logger(LOG_INFO, "OpenLI: error configuring connection to zmq pull socket");
             return -1;
         }
+        if (zmq_connect(enc->zmq_recvjobs[i], sockname) != 0) {
+            logger(LOG_INFO, "OpenLI: error connecting to zmq pull socket");
+            return -1;
+        }
+
     }
 
     enc->zmq_pushresults = calloc(enc->forwarders, sizeof(void *));
     for (i = 0; i < enc->forwarders; i++) {
         snprintf(sockname, 128, "inproc://openlirespush-%d", i);
         enc->zmq_pushresults[i] = zmq_socket(enc->zmq_ctxt, ZMQ_PUSH);
-        if (zmq_connect(enc->zmq_pushresults[i], sockname) != 0) {
-            logger(LOG_INFO,
-                    "OpenLI: error connecting to exporter result socket%s: %s",
-                    sockname, strerror(errno));
-            zmq_close(enc->zmq_pushresults[i]);
-            enc->zmq_pushresults[i] = NULL;
-            continue;
-        }
         if (zmq_setsockopt(enc->zmq_pushresults[i], ZMQ_LINGER, &zero,
                 sizeof(zero)) != 0) {
             logger(LOG_INFO,
@@ -91,6 +83,14 @@ static int init_worker(openli_encoder_t *enc) {
                 sizeof(hwm)) != 0) {
             logger(LOG_INFO,
                     "OpenLI: error configuring connection to exporter push socket %s: %s",
+                    sockname, strerror(errno));
+            zmq_close(enc->zmq_pushresults[i]);
+            enc->zmq_pushresults[i] = NULL;
+            continue;
+        }
+        if (zmq_connect(enc->zmq_pushresults[i], sockname) != 0) {
+            logger(LOG_INFO,
+                    "OpenLI: error connecting to exporter result socket%s: %s",
                     sockname, strerror(errno));
             zmq_close(enc->zmq_pushresults[i]);
             enc->zmq_pushresults[i] = NULL;

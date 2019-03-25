@@ -2,7 +2,7 @@
 
 set -e -o pipefail
 
-BINTRAY_REPO="wand/openli"
+BINTRAY_REPO="wand/OpenLI"
 BINTRAY_LICENSE="GPL-3.0"
 
 apt-get update && apt-get install -y curl

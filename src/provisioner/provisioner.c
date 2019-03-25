@@ -386,6 +386,8 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
 
     }
     if (prevmed) {
+        free(prevmed->ipstr);
+        free(prevmed->portstr);
         free(prevmed);
     }
     return ret;
@@ -405,6 +407,9 @@ static void free_all_mediators(libtrace_list_t *m) {
             close(med->commev->fd);
         }
         free(med->commev);
+        if (med->authev->fd != -1) {
+            close(med->authev->fd);
+        }
         free(med->authev);
         n = n->next;
     }
@@ -446,6 +451,10 @@ static void stop_all_collectors(libtrace_list_t *c) {
             close(col->commev->fd);
         }
         free(col->commev);
+        if (col->authev->fd != -1) {
+            close(col->authev->fd);
+        }
+        free(col->authev);
         n = n->next;
     }
 
@@ -1286,6 +1295,12 @@ static int start_mediator_listener(provision_state_t *state) {
     int sockfd;
 
     state->mediatorfd = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
+
+    if (state->mediateaddr == NULL) {
+        state->mediateaddr = strdup("0.0.0.0");
+        logger(LOG_INFO, "OpenLI provisioner: warning, no mediator listen address configured, listening on ALL addresses.");
+        logger(LOG_INFO, "OpenLI provisioner: set 'mediationaddr' config option to resolve this.");
+    }
 
     sockfd  = create_listener(state->mediateaddr, state->mediateport,
             "incoming mediator");

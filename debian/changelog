@@ -1,4 +1,19 @@
-openli (1.0.0-1) UNRELEASED; urgency=low
+openli (1.0.1-1) unstable; urgency=medium
+
+  * Fix broken ALU shim parsing code.
+  * Fix endless collector disconnects if ALU shim or username changes
+    for an intercept without a corresponding LIID change.
+  * Fix various minor memory leaks that become problematic if a component
+    misbehaves.
+  * Fix "null" mediation address bug on the provisioner.
+  * Fix zeromq deadlock in collector.
+  * RADIUS packets are now no longer considered candidates for an IP CC,
+    improving performance under high RADIUS load.
+  * Improve documentation of ALU translation support.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Mon, 25 Mar 2019 15:34:49 +1300
+
+openli (1.0.0-1) unstable; urgency=low
 
   * Initial release.
 
