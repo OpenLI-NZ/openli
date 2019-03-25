@@ -588,6 +588,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                     loc->radiusservers)) {
             send_packet_to_sync(pkt, &(loc->tosyncq_ip), OPENLI_UPDATE_RADIUS);
             synced = 1;
+            goto processdone;
         }
 
         /* Is this a SIP packet? -- if yes, create a state update */
