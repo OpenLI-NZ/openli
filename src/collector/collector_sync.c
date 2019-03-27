@@ -1450,11 +1450,11 @@ static int add_ip_to_session_mapping(collector_sync_t *sync,
 }
 
 static inline internet_user_t *lookup_userid(collector_sync_t *sync,
-        char *userid) {
+        char *userid, int useridlen) {
 
     internet_user_t *iuser;
 
-    HASH_FIND(hh, sync->allusers, userid, strlen(userid), iuser);
+    HASH_FIND(hh, sync->allusers, userid, useridlen, iuser);
     if (iuser == NULL) {
         iuser = (internet_user_t *)malloc(sizeof(internet_user_t));
 
@@ -1466,7 +1466,7 @@ static inline internet_user_t *lookup_userid(collector_sync_t *sync,
         iuser->sessions = NULL;
 
         HASH_ADD_KEYPTR(hh, sync->allusers, iuser->userid,
-                strlen(iuser->userid), iuser);
+                useridlen, iuser);
     }
     return iuser;
 }
@@ -1550,7 +1550,7 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     ipintercept_t *ipint, *tmp;
     int expcount = 0;
     void *parseddata = NULL;
-    int i, ret;
+    int i, ret, useridlen = 0;
 
     if (accesstype == ACCESS_RADIUS) {
         p = sync->radiusplugin;
@@ -1568,13 +1568,13 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         return -1;
     }
 
-    userid = p->get_userid(p, parseddata);
+    userid = p->get_userid(p, parseddata, &useridlen);
     if (userid == NULL) {
         /* Probably an orphaned response packet */
         goto endupdate;
     }
 
-    iuser = lookup_userid(sync, userid);
+    iuser = lookup_userid(sync, userid, useridlen);
     if (!iuser) {
         p->destroy_parsed_data(p, parseddata);
         return -1;
@@ -1739,7 +1739,8 @@ int sync_thread_main(collector_sync_t *sync) {
                         "OpenLI: sync thread received an invalid RADIUS packet");
             }
 
-            trace_decrement_packet_refcount(recvd.data.pkt);
+            trace_free_packet(recvd.data.pkt->trace, recvd.data.pkt);
+            //trace_decrement_packet_refcount(recvd.data.pkt);
         }
 
     }
