@@ -48,6 +48,7 @@ typedef struct colsync_data {
     int forwardcount;
     void **zmq_pubsocks;
     void **zmq_fwdctrlsocks;
+    void *zmq_colsock;
 
     internet_user_t *allusers;
     ipintercept_t *ipintercepts;
@@ -58,7 +59,7 @@ typedef struct colsync_data {
     int instruct_fd;
     uint8_t instruct_fail;
     uint8_t instruct_log;
-    sync_epoll_t *ii_ev;
+    short instruct_events;
 
     net_buffer_t *outgoing;
     net_buffer_t *incoming;

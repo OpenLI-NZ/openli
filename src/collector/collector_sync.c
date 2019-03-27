@@ -63,7 +63,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->instruct_fd = -1;
     sync->instruct_fail = 0;
     sync->instruct_log = 1;
-    sync->ii_ev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
+    sync->instruct_events = ZMQ_POLLIN | ZMQ_POLLOUT;
 
     sync->outgoing = NULL;
     sync->incoming = NULL;
@@ -78,6 +78,14 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
     sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
+
+    sync->zmq_colsock = zmq_socket(glob->zmq_ctxt, ZMQ_PULL);
+    if (zmq_bind(sync->zmq_colsock, "inproc://openli-ipsync") != 0) {
+        logger(LOG_INFO, "OpenLI: colsync thread unable to bind to zmq socket for collector updates: %s",
+                strerror(errno));
+        zmq_close(sync->zmq_colsock);
+        sync->zmq_colsock = NULL;
+    }
 
     for (i = 0; i < sync->forwardcount; i++) {
         sync->zmq_fwdctrlsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
@@ -139,10 +147,6 @@ void clean_sync_data(collector_sync_t *sync) {
         destroy_net_buffer(sync->incoming);
     }
 
-    if (sync->ii_ev) {
-        free(sync->ii_ev);
-    }
-
     if (sync->radiusplugin) {
         destroy_access_plugin(sync->radiusplugin);
     }
@@ -152,12 +156,17 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->userintercepts = NULL;
     sync->outgoing = NULL;
     sync->incoming = NULL;
-    sync->ii_ev = NULL;
     sync->radiusplugin = NULL;
     sync->activeips = NULL;
 
     while (haltattempts < 10) {
         haltfails = 0;
+
+        if (sync->zmq_colsock) {
+            zmq_setsockopt(sync->zmq_colsock, ZMQ_LINGER, &zero, sizeof(zero));
+            zmq_close(sync->zmq_colsock);
+            sync->zmq_colsock = NULL;
+        }
 
         for (i = 0; i < sync->pubsockcount; i++) {
             if (sync->zmq_pubsocks[i] == NULL) {
@@ -504,7 +513,6 @@ static void push_all_coreservers(coreserver_t *servers,
 static int send_to_provisioner(collector_sync_t *sync) {
 
     int ret;
-    struct epoll_event ev;
     openli_proto_msgtype_t err;
 
     ret = transmit_net_buffer(sync->outgoing, &err);
@@ -520,18 +528,7 @@ static int send_to_provisioner(collector_sync_t *sync) {
 
     if (ret == 0) {
         /* Everything has been sent successfully, no more to send right now. */
-        ev.data.ptr = sync->ii_ev;
-        ev.events = EPOLLIN | EPOLLRDHUP;
-
-        if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_MOD,
-                    sync->instruct_fd, &ev) == -1) {
-            if (sync->instruct_log) {
-                logger(LOG_INFO,
-                    "OpenLI: error disabling EPOLLOUT on provisioner fd: %s.",
-                    strerror(errno));
-            }
-            return -1;
-        }
+        sync->instruct_events = ZMQ_POLLIN;
     }
 
     return 1;
@@ -1099,7 +1096,6 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
 }
 
 static int recv_from_provisioner(collector_sync_t *sync) {
-    struct epoll_event ev;
     int ret = 0;
     uint8_t *provmsg;
     uint16_t msglen = 0;
@@ -1236,9 +1232,7 @@ static int recv_from_provisioner(collector_sync_t *sync) {
 
 int sync_connect_provisioner(collector_sync_t *sync) {
 
-    struct epoll_event ev;
     int sockfd;
-
 
     sockfd = connect_socket(sync->info->provisionerip,
             sync->info->provisionerport, sync->instruct_fail, 0);
@@ -1266,24 +1260,8 @@ int sync_connect_provisioner(collector_sync_t *sync) {
         logger(LOG_INFO,"OpenLI: collector is unable to queue auth message.");
         return -1;
     }
-
-    /* Add instruct_fd to epoll for both reading and writing */
-    sync->ii_ev->fdtype = SYNC_EVENT_PROVISIONER;
-    sync->ii_ev->fd = sync->instruct_fd;
-    sync->ii_ev->ptr = NULL;
-
-    ev.data.ptr = (void *)(sync->ii_ev);
-    ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
-
-    if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
-        /* TODO Do something? */
-        logger(LOG_INFO, "OpenLI: failed to register provisioner fd: %s",
-                strerror(errno));
-        return -1;
-    }
-
+    sync->instruct_events = ZMQ_POLLIN | ZMQ_POLLOUT;
     return 1;
-
 }
 
 static inline void touch_all_coreservers(coreserver_t *servers) {
@@ -1312,7 +1290,6 @@ static inline void touch_all_intercepts(ipintercept_t *intlist) {
 
 void sync_disconnect_provisioner(collector_sync_t *sync) {
 
-    struct epoll_event ev;
     openli_export_recv_t *expmsg;
     int i;
 
@@ -1326,14 +1303,6 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
     if (sync->instruct_fd != -1) {
         if (sync->instruct_log) {
             logger(LOG_INFO, "OpenLI: collector is disconnecting from provisioner fd %d", sync->instruct_fd);
-        }
-        if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_DEL,
-                sync->instruct_fd, &ev) == -1) {
-            if (sync->instruct_log) {
-                logger(LOG_INFO,
-                    "OpenLI: error de-registering provisioner fd: %s.",
-                    strerror(errno));
-            }
         }
         close(sync->instruct_fd);
         sync->instruct_fd = -1;
@@ -1642,110 +1611,77 @@ endupdate:
 }
 
 int sync_thread_main(collector_sync_t *sync) {
-
-    int i, nfds;
-    struct epoll_event evs[64];
+    zmq_pollitem_t items[2];
     openli_state_update_t recvd;
-    libtrace_message_queue_t *srcq = NULL;
-    sync_epoll_t *syncev;
+    int rc;
 
-    nfds = epoll_wait(sync->glob->epoll_fd, evs, 64, 50);
+    items[0].socket = sync->zmq_colsock;
+    items[0].events = ZMQ_POLLIN;
 
-    if (nfds <= 0) {
-        return nfds;
+    items[1].socket = NULL;
+    items[1].fd = sync->instruct_fd;
+    items[1].events = sync->instruct_events;
+
+    if (zmq_poll(items, 2, 50) < 0) {
+        return -1;
     }
 
-    for (i = 0; i < nfds; i++) {
-        syncev = (sync_epoll_t *)(evs[i].data.ptr);
-
-	    /* Check for incoming messages from processing threads and II fd */
-        if ((evs[i].events & EPOLLERR) || (evs[i].events & EPOLLHUP) ||
-                (evs[i].events & EPOLLRDHUP)) {
-            /* Some error detection / handling? */
-
-            /* Don't close any fds on error -- they should get closed when
-             * their parent structures are tidied up */
-
-
-            if (syncev->fd == sync->instruct_fd) {
-                if (sync->instruct_log) {
-                    logger(LOG_INFO, "OpenLI: collector lost connection to central provisioner");
-                }
-                sync_disconnect_provisioner(sync);
-                return 0;
-
-            } else {
-                logger(LOG_INFO, "OpenLI: processor->sync message queue pipe has broken down.");
-                epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_DEL,
-                        syncev->fd, NULL);
-            }
-
-            continue;
+    if (items[1].revents & ZMQ_POLLOUT) {
+        if (send_to_provisioner(sync) <= 0) {
+            sync_disconnect_provisioner(sync);
+            return 0;
         }
-
-        if (syncev->fd == sync->instruct_fd) {
-            /* Provisioner fd */
-            if (evs[i].events & EPOLLOUT) {
-                if (send_to_provisioner(sync) <= 0) {
-                    sync_disconnect_provisioner(sync);
-                    return 0;
-                }
-            } else {
-                if (recv_from_provisioner(sync) <= 0) {
-                    sync_disconnect_provisioner(sync);
-                    return 0;
-                }
-            }
-            continue;
-        }
-
-        /* Must be from a processing thread queue, figure out which one */
-        if (libtrace_message_queue_count(
-                (libtrace_message_queue_t *)(syncev->ptr)) <= 0) {
-
-            /* Processing thread queue was empty but we thought we had a
-             * message available? I think this is just a consequence of
-             * libtrace MQ's "fast" path that tries to avoid locking for
-             * simple operations. */
-            continue;
-        }
-
-        libtrace_message_queue_get((libtrace_message_queue_t *)(syncev->ptr),
-                (void *)(&recvd));
-
-        /* If a hello from a thread, push all active intercepts back */
-        if (recvd.type == OPENLI_UPDATE_HELLO) {
-            push_all_active_intercepts(sync, sync->allusers, sync->ipintercepts,
-                    recvd.data.replyq);
-            push_all_coreservers(sync->coreservers, recvd.data.replyq);
-        }
-
-
-        /* If an update from a thread, update appropriate internal state */
-
-        /* If this resolves an unknown mapping or changes an existing one,
-         * push II update messages to processing threads */
-
-        /* If this relates to an active intercept, create IRI and export */
-        if (recvd.type == OPENLI_UPDATE_RADIUS) {
-            int ret;
-            if ((ret = update_user_sessions(sync, recvd.data.pkt,
-                        ACCESS_RADIUS)) < 0) {
-
-                /* If a user has screwed up their RADIUS config and we
-                 * see non-RADIUS packets here, we probably want to limit the
-                 * number of times we complain about this... FIXME */
-                logger(LOG_INFO,
-                        "OpenLI: sync thread received an invalid RADIUS packet");
-            }
-
-            trace_free_packet(recvd.data.pkt->trace, recvd.data.pkt);
-            //trace_decrement_packet_refcount(recvd.data.pkt);
-        }
-
     }
 
-    return nfds;
+    if (items[1].revents & ZMQ_POLLIN) {
+        if (recv_from_provisioner(sync) <= 0) {
+            sync_disconnect_provisioner(sync);
+            return 0;
+        }
+    }
+
+    if (items[0].revents & ZMQ_POLLIN) {
+        do {
+            rc = zmq_recv(sync->zmq_colsock, &recvd, sizeof(recvd),
+                    ZMQ_DONTWAIT);
+            if (rc < 0) {
+                if (errno == EAGAIN) {
+                    return 0;
+                }
+                logger(LOG_INFO, "openli-collector: IP sync thread had an error receiving message from collector threads: %s", strerror(errno));
+                return -1;
+            }
+
+            /* If a hello from a thread, push all active intercepts back */
+            if (recvd.type == OPENLI_UPDATE_HELLO) {
+                push_all_active_intercepts(sync, sync->allusers,
+                        sync->ipintercepts, recvd.data.replyq);
+                push_all_coreservers(sync->coreservers, recvd.data.replyq);
+            }
+
+
+            /* If an update from a thread, update appropriate internal state */
+
+            /* If this resolves an unknown mapping or changes an existing one,
+             * push II update messages to processing threads */
+
+            /* If this relates to an active intercept, create IRI and export */
+            if (recvd.type == OPENLI_UPDATE_RADIUS) {
+                int ret;
+                if ((ret = update_user_sessions(sync, recvd.data.pkt,
+                            ACCESS_RADIUS)) < 0) {
+                    /* If a user has screwed up their RADIUS config and we
+                     * see non-RADIUS packets here, we probably want to limit the
+                     * number of times we complain about this... FIXME */
+                    logger(LOG_INFO,
+                            "OpenLI: sync thread received an invalid RADIUS packet");
+                }
+                trace_destroy_packet(recvd.data.pkt);
+            }
+        } while (rc > 0);
+    }
+
+    return 0;
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
