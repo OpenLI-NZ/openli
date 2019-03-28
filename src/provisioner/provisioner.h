@@ -91,6 +91,7 @@ typedef struct prov_mediator {
     prov_epoll_ev_t *commev;
     prov_epoll_ev_t *authev;
 
+    UT_hash_handle hh;
 } prov_mediator_t;
 
 typedef struct prov_state {
@@ -104,7 +105,7 @@ typedef struct prov_state {
     char *pushport;
 
     int epoll_fd;
-    libtrace_list_t *mediators;
+    prov_mediator_t *mediators;
     prov_collector_t *collectors;
     coreserver_t *radiusservers;
     coreserver_t *sipservers;
