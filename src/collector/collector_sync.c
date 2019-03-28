@@ -345,6 +345,9 @@ static int create_ipiri_from_iprange(collector_sync_t *sync,
         sin6->sin6_scope_id = 0;
     }
 
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipiri_created ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
     publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], irimsg);
     free(prefix);
     return 0;
@@ -397,6 +400,9 @@ static int create_ipiri_from_session(collector_sync_t *sync,
                     sizeof(struct sockaddr_storage));
         }
 
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->ipiri_created ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
         publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], irimsg);
         iter ++;
     } while (ret > 0);
@@ -445,8 +451,9 @@ static inline void push_static_iprange_remove_to_collectors(
 
 }
 
-static inline void push_single_ipintercept(libtrace_message_queue_t *q,
-        ipintercept_t *ipint, access_session_t *session) {
+static inline void push_single_ipintercept(collector_sync_t *sync,
+        libtrace_message_queue_t *q, ipintercept_t *ipint,
+        access_session_t *session) {
 
     ipsession_t *ipsess;
     openli_pushed_t msg;
@@ -576,6 +583,14 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
             "OpenLI: intercepting static IP range %s for LIID %s, AuthCC %s",
             ipr->rangestr, ipint->common.liid, ipint->common.authcc);
 
+    /* XXX assumes each range corresponds to a unique session, not
+     * necessarily true but probably doesn't matter too much as this is just
+     * some informational stat tracking */
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipsessions_added_diff ++;
+    sync->glob->stats->ipsessions_added_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
+
     HASH_ADD_KEYPTR(hh, ipint->statics, ipr->rangestr,
             strlen(ipr->rangestr), ipr);
 
@@ -617,6 +632,13 @@ static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
             push_static_iprange_remove_to_collectors(sendq->q, ipint, ipr);
         }
 
+        /* XXX assumes each range corresponds to a unique session, not
+         * necessarily true but probably doesn't matter too much as this is just
+         * some informational stat tracking */
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->ipsessions_ended_diff ++;
+        sync->glob->stats->ipsessions_ended_total ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
         HASH_DELETE(hh, ipint->statics, found);
         free(found->liid);
         free(found->rangestr);
@@ -895,6 +917,18 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     expmsg->data.cept.delivcc = strdup(ipint->common.delivcc);
     expmsg->data.cept.seqtrackerid = ipint->common.seqtrackerid;
 
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipintercepts_ended_diff ++;
+    sync->glob->stats->ipintercepts_ended_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
+
+    if (ipint->alushimid != OPENLI_ALUSHIM_NONE) {
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->ipsessions_ended_diff ++;
+        sync->glob->stats->ipsessions_ended_total ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
+    }
+
     publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], expmsg);
     free_single_ipintercept(ipint);
 
@@ -1011,7 +1045,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             HASH_ITER(hh, user->sessions, sess, tmp2) {
                 HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                         sendq, tmp) {
-                    push_single_ipintercept(sendq->q, cept, sess);
+                    push_single_ipintercept(sync, sendq->q, cept, sess);
                 }
             }
         }
@@ -1036,6 +1070,10 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
                 sendq, tmp) {
             push_single_alushimid(sendq->q, cept, 0);
         }
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->ipsessions_added_diff ++;
+        sync->glob->stats->ipsessions_added_total ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
     } else if (cept->username != NULL) {
         logger(LOG_INFO,
                 "OpenLI: received IP intercept for target %s from provisioner (LIID %s, authCC %s)",
@@ -1050,6 +1088,11 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
             cept->common.liid_len, cept);
+
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipintercepts_added_diff ++;
+    sync->glob->stats->ipintercepts_added_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
 
     expmsg = create_intercept_details_msg(&(cept->common));
     publish_openli_msg(sync->zmq_pubsocks[cept->common.seqtrackerid], expmsg);
@@ -1345,7 +1388,7 @@ static void push_all_active_intercepts(collector_sync_t *sync,
             HASH_FIND(hh, allusers, orig->username, orig->username_len, user);
             if (user) {
                 HASH_ITER(hh, user->sessions, sess, tmp2) {
-                    push_single_ipintercept(q, orig, sess);
+                    push_single_ipintercept(sync, q, orig, sess);
                 }
             }
         }
@@ -1498,9 +1541,13 @@ static int newly_active_session(collector_sync_t *sync,
     HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
         HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                 sendq, tmpq) {
-            push_single_ipintercept(sendq->q, ipint, sess);
+            push_single_ipintercept(sync, sendq->q, ipint, sess);
         }
     }
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipsessions_added_diff ++;
+    sync->glob->stats->ipsessions_added_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
     return expcount;
 
 
@@ -1534,6 +1581,9 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
 
     if (parseddata == NULL) {
         logger(LOG_INFO, "OpenLI: unable to parse %s packet", p->name);
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->bad_ip_session_packets ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
         return -1;
     }
 
@@ -1577,6 +1627,10 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
                     push_session_halt_to_threads(sync->glob->collector_queues,
                             sess, ipint);
                 }
+                pthread_mutex_lock(sync->glob->stats_mutex);
+                sync->glob->stats->ipsessions_ended_diff ++;
+                sync->glob->stats->ipsessions_ended_total ++;
+                pthread_mutex_unlock(sync->glob->stats_mutex);
             }
 
             if (remove_ip_to_session_mapping(sync, sess) < 0) {

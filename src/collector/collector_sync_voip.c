@@ -172,8 +172,8 @@ void clean_sync_voip_data(collector_sync_voip_t *sync) {
 
 }
 
-static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
-        rtpstreaminf_t *orig) {
+static inline void push_single_voipstreamintercept(collector_sync_voip_t *sync,
+        libtrace_message_queue_t *q, rtpstreaminf_t *orig) {
 
     rtpstreaminf_t *copy;
     openli_pushed_t msg;
@@ -190,6 +190,11 @@ static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
     memset(&msg, 0, sizeof(openli_pushed_t));
     msg.type = OPENLI_PUSH_IPMMINTERCEPT;
     msg.data.ipmmint = copy;
+
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->voipsessions_added_diff ++;
+    sync->glob->stats->voipsessions_added_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
 
     libtrace_message_queue_put(q, (void *)(&msg));
 }
@@ -213,6 +218,11 @@ static void push_halt_active_voipstreams(collector_sync_voip_t *sync,
         memset(&msg, 0, sizeof(openli_pushed_t));
         msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
         msg.data.rtpstreamkey = streamdup;
+
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->voipsessions_ended_diff ++;
+        sync->glob->stats->voipsessions_ended_total ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
 
         libtrace_message_queue_put(q, (void *)(&msg));
 
@@ -260,7 +270,7 @@ static void push_all_active_voipstreams(collector_sync_voip_t *sync,
             continue;
         }
 
-        push_single_voipstreamintercept(q, cin);
+        push_single_voipstreamintercept(sync, q, cin);
     }
 
 }
@@ -318,7 +328,7 @@ static int update_rtp_stream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp,
      * processing threads. */
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
         if (rtp->active == 0) {
-            push_single_voipstreamintercept(sendq->q, rtp);
+            push_single_voipstreamintercept(sync, sendq->q, rtp);
         }
     }
     rtp->active = 1;
@@ -658,6 +668,9 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
     memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,
             copy->data.ipmmiri.contentlen);
 
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipmmiri_created;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
     publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], copy);
 }
 
@@ -1023,6 +1036,9 @@ static int update_sip_state(collector_sync_voip_t *sync,
 sipgiveup:
 
     if (iserr) {
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->bad_sip_packets ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
         return -1;
     }
     return 1;
@@ -1105,6 +1121,10 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     expmsg->data.cept.authcc = strdup(vint->common.authcc);
     expmsg->data.cept.delivcc = strdup(vint->common.delivcc);
 
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->voipintercepts_ended_diff ++;
+    sync->glob->stats->voipintercepts_ended_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
     publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], expmsg);
 
     HASH_DELETE(hh_liid, sync->voipintercepts, vint);
@@ -1381,6 +1401,12 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     expmsg->data.cept.liid = strdup(vint->common.liid);
     expmsg->data.cept.authcc = strdup(vint->common.authcc);
     expmsg->data.cept.delivcc = strdup(vint->common.delivcc);
+
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->voipintercepts_added_diff ++;
+    sync->glob->stats->voipintercepts_added_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
+
     publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], expmsg);
 
     pthread_mutex_lock(&(sync->glob->mutex));
@@ -1559,6 +1585,10 @@ static void examine_sip_update(collector_sync_voip_t *sync,
                         "OpenLI: will not log any further invalid SIP instances.");
                 sync->log_bad_sip = 0;
             }
+            pthread_mutex_lock(sync->glob->stats_mutex);
+            sync->glob->stats->bad_sip_packets ++;
+            pthread_mutex_unlock(sync->glob->stats_mutex);
+
             if (sync->sipdebugfile && pktref) {
                 if (!sync->sipdebugout) {
                     sync->sipdebugout = open_debug_output(
