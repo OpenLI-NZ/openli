@@ -600,6 +600,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         }
         pinfo.family = AF_INET;
     } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
+        struct sockaddr_in6 *in6;
         libtrace_ip6_t *ip6header = (libtrace_ip6_t *)l3;
         uint8_t *postip6 = (uint8_t *)(trace_get_payload_from_ip6(ip6header,
                 &proto, &rem));
@@ -608,6 +609,11 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         pinfo.destport = ntohs(*((uint16_t *)(postip6 + 2)));
         proto = ip6header->nxt;
         pinfo.family = AF_INET6;
+
+        in6 = (struct sockaddr_in6 *)(&(pinfo.srcip));
+        in6->sin6_addr = ip6header->ip_src;
+        in6 = (struct sockaddr_in6 *)(&(pinfo.destip));
+        in6->sin6_addr = ip6header->ip_dst;
     } else {
         pinfo.srcport = 0;
         pinfo.destport = 0;
