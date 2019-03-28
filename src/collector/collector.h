@@ -251,6 +251,11 @@ typedef struct collector_global {
 
     pthread_t seqproxy_tid;
 
+    uint32_t stat_frequency;
+    uint64_t ticks_since_last_stat;
+    collector_stats_t stats;
+    pthread_mutex_t stats_mutex;
+
 } collector_global_t;
 
 typedef struct packetinfo {

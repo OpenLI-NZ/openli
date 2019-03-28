@@ -919,6 +919,13 @@ static int global_parser(void *arg, yaml_document_t *doc,
         }
     }
 
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "logstatfrequency") == 0) {
+        glob->stat_frequency = strtoul((char *) value->data.scalar.value,
+                NULL, 10);
+    }
+
     return 0;
 }
 
