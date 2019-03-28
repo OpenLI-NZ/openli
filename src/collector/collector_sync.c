@@ -583,6 +583,14 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
             "OpenLI: intercepting static IP range %s for LIID %s, AuthCC %s",
             ipr->rangestr, ipint->common.liid, ipint->common.authcc);
 
+    /* XXX assumes each range corresponds to a unique session, not
+     * necessarily true but probably doesn't matter too much as this is just
+     * some informational stat tracking */
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipsessions_added_diff ++;
+    sync->glob->stats->ipsessions_added_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
+
     HASH_ADD_KEYPTR(hh, ipint->statics, ipr->rangestr,
             strlen(ipr->rangestr), ipr);
 
@@ -624,6 +632,13 @@ static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
             push_static_iprange_remove_to_collectors(sendq->q, ipint, ipr);
         }
 
+        /* XXX assumes each range corresponds to a unique session, not
+         * necessarily true but probably doesn't matter too much as this is just
+         * some informational stat tracking */
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->ipsessions_ended_diff ++;
+        sync->glob->stats->ipsessions_ended_total ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
         HASH_DELETE(hh, ipint->statics, found);
         free(found->liid);
         free(found->rangestr);
@@ -906,6 +921,13 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     sync->glob->stats->ipintercepts_ended_diff ++;
     sync->glob->stats->ipintercepts_ended_total ++;
     pthread_mutex_unlock(sync->glob->stats_mutex);
+
+    if (ipint->alushimid != OPENLI_ALUSHIM_NONE) {
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->ipsessions_ended_diff ++;
+        sync->glob->stats->ipsessions_ended_total ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
+    }
 
     publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], expmsg);
     free_single_ipintercept(ipint);

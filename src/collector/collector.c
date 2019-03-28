@@ -223,6 +223,7 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
             loc->dropped = stats->dropped;
         }
 
+        pthread_rwlock_rdlock(&(glob->config_mutex));
         if (glob->stat_frequency > 0) {
             glob->ticks_since_last_stat ++;
 
@@ -234,6 +235,7 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
                 glob->ticks_since_last_stat = 0;
             }
         }
+        pthread_rwlock_unlock(&(glob->config_mutex));
         loc->accepted = stats->accepted;
         free(stats);
     }
@@ -1251,6 +1253,7 @@ static int reload_collector_config(collector_global_t *glob,
 
     pthread_rwlock_wrlock(&(glob->config_mutex));
 
+    glob->stat_frequency = newstate->stat_frequency;
     reload_inputs(glob, newstate);
 
     /* Just update these, regardless of whether they've changed. It's more
