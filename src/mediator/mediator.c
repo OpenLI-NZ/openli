@@ -172,6 +172,13 @@ static int halt_mediator_timer(mediator_state_t *state,
     return 0;
 }
 
+static inline void setup_provisioner_reconnect_timer(mediator_state_t *state) {
+
+    state->provisioner.tryconnect = 0;
+    start_keepalive_timer(state, state->provreconnect, 1);
+
+}
+
 static void free_provisioner(int epollfd, mediator_prov_t *prov) {
     struct epoll_event ev;
 
@@ -410,6 +417,14 @@ static void destroy_med_state(mediator_state_t *state) {
         close(state->listenerev->fd);
         free(state->listenerev);
     }
+
+    if (state->provreconnect) {
+        if (state->provreconnect->fd != -1) {
+            close(state->provreconnect->fd);
+        }
+        free(state->provreconnect);
+    }
+
 	if (state->timerev) {
 		if (state->timerev->fd != -1) {
 			close(state->timerev->fd);
@@ -450,11 +465,13 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->disabledcols = NULL;
     state->listenerev = NULL;
     state->timerev = NULL;
+    state->provreconnect = NULL;
     state->pcaptimerev = NULL;
     state->provisioner.provev = NULL;
     state->provisioner.incoming = NULL;
     state->provisioner.outgoing = NULL;
     state->provisioner.disable_log = 0;
+    state->provisioner.tryconnect = 1;
     state->collectors = NULL;
     state->agencies = NULL;
     state->epoll_fd = -1;
@@ -508,6 +525,10 @@ static void prepare_mediator_state(mediator_state_t *state) {
     state->signalev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
     state->signalev->fdtype = MED_EPOLL_SIGNAL;
     state->signalev->fd = signalfd(-1, &sigmask, 0);
+
+    state->provreconnect = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+    state->provreconnect->fdtype = MED_EPOLL_PROVRECONNECT;
+    state->provreconnect->fd = -1;
 
     return;
 }
@@ -1967,6 +1988,12 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             assert(ev->events == EPOLLIN);
             ret = trigger_ka_failure(state, mev);
             break;
+        case MED_EPOLL_PROVRECONNECT:
+            assert(ev->events == EPOLLIN);
+            halt_mediator_timer(state, mev);
+            state->provisioner.tryconnect = 1;
+            break;
+
         case MED_EPOLL_LEA:
             if (ev->events & EPOLLRDHUP) {
                 ret = -1;
@@ -2007,6 +2034,7 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
                             "OpenLI mediator: disconnecting from provisioner.");
                 }
                 free_provisioner(state->epoll_fd, &(state->provisioner));
+                setup_provisioner_reconnect_timer(state);
                 state->provisioner.disable_log = 1;
             }
             break;
@@ -2339,7 +2367,8 @@ static void run(mediator_state_t *state) {
         }
 
 	    /* Attempt to connect to the provisioner */
-        if (state->provisioner.provev == NULL) {
+        if (state->provisioner.provev == NULL &&
+                state->provisioner.tryconnect) {
             int s = connect_socket(state->provaddr, state->provport, provfail,
                     0);
             if (s == -1) {
@@ -2362,6 +2391,7 @@ static void run(mediator_state_t *state) {
                 state->provisioner.provev->fd = -1;
                 state->provisioner.outgoing = NULL;
                 state->provisioner.incoming = NULL;
+                setup_provisioner_reconnect_timer(state);
                 break;
             }
         }

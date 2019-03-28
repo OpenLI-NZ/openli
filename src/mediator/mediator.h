@@ -52,6 +52,7 @@ enum {
     MED_EPOLL_SIGCHECK_TIMER,
     MED_EPOLL_PCAP_TIMER,
     MED_EPOLL_CEASE_LIID_TIMER,
+    MED_EPOLL_PROVRECONNECT,
 };
 
 typedef struct disabled_collector {
@@ -101,6 +102,7 @@ typedef struct mediator_provisioner {
     net_buffer_t *outgoing;
     net_buffer_t *incoming;
     uint8_t disable_log;
+    uint8_t tryconnect;
 } mediator_prov_t;
 
 enum {
@@ -139,6 +141,7 @@ typedef struct med_state {
     med_epoll_ev_t *signalev;
     med_epoll_ev_t *timerev;
     med_epoll_ev_t *pcaptimerev;
+    med_epoll_ev_t *provreconnect;
 
     mediator_prov_t provisioner;
 
