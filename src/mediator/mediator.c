@@ -42,6 +42,7 @@
 #include <libwandder_etsili.h>
 #include <Judy.h>
 
+#include "config.h"
 #include "configparser.h"
 #include "logger.h"
 #include "util.h"
@@ -575,6 +576,7 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
     wandder_encoded_result_t *kamsg;
     wandder_etsipshdr_data_t hdrdata;
     char elemstring[16];
+    char liidstring[24];
 
     if (ms->pending_ka == NULL && ms->main_fd != -1) {
         /* Only create a new KA message if we have sent the last one we
@@ -586,7 +588,9 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
             reset_wandder_encoder(ms->encoder);
         }
 
-        hdrdata.liid = "openlikeepalive";
+        /* from config.h */
+        snprintf(liidstring, 24, "%s-%s", PACKAGE_NAME, PACKAGE_VERSION);
+        hdrdata.liid = liidstring;
         hdrdata.liid_len = strlen(hdrdata.liid);
 
         hdrdata.authcc = "NA";
