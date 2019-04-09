@@ -72,6 +72,15 @@ connect to the provisioner, it will not receive any intercept instructions
 and will therefore sit idle. If the connection to the provisioner goes down
 for some reason, the collector will periodically attempt to reconnect to it.
 
+### Statistics Logging
+This option can be used to configure the collector to log regular statistic
+updates, which you can then inspect to gauge whether the collector is
+functioning as expected (i.e., is it receiving packets on the capture
+interface?). By default, the logging is disabled as it can be somewhat
+verbose. The value you set for this option will determine the number of
+minutes between statistic dumps from the collector -- setting this to zero
+will disable the statistic logging altogether.
+
 ### Inputs
 The inputs option is used to describe which interfaces should be used to
 intercept traffic. Each interface should be expressed using either its
@@ -118,6 +127,9 @@ The basic option keys are:
                        records (defaults to 2).
 * forwardingthreads -- set the number of threads to use for forwarding
                        encoded ETSI records to the mediators (defaults to 1).
+* logstatfrequency  -- set the frequency (in minutes) that the collector
+                       should dump detailed statistics about the collection
+                       process to the logger. Defaults to 0 (no stat logging).
 
 Inputs are specified as a YAML sequence with a key of `inputs:`. Each
 sequence item represents a single traffic source to intercept traffic from

@@ -28,6 +28,10 @@ encoderthreads: 2
 # mediators. You probably don't need to change this.
 forwardingthreads: 1
 
+# Number of minutes between each dump of performance statistics to the
+# logger. Set to zero to disable this extra logging altogether.
+logstatfrequency: 5
+
 # List of ALU LI mirrors that we are acting as a translation module for.
 # NOTE: This should be the IP and port of the *recipient* of the ALU
 #       intercept mirror, not the host that is doing the mirroring.
