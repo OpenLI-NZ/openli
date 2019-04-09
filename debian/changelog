@@ -1,3 +1,17 @@
+openli (1.0.2-1) unstable; urgency=medium
+
+  * Greatly improved RADIUS processing performance.
+  * Fix bug where IPv6 packets were not being intercepted properly.
+  * Add ability to configure the collector to periodically log
+    statistics about its internal operations.
+  * Keep alive messages now include the OpenLI version string inside
+    the LIID, so LEAs can now recognise which version of OpenLI is
+    being used.
+  * Better memory management of clients connected to the provisioner.
+  * Rate limit connection attempts by the mediator to the provisioner.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Tue, 09 Apr 2019 16:41:49 +1200
+
 openli (1.0.1-1) unstable; urgency=medium
 
   * Fix broken ALU shim parsing code.
