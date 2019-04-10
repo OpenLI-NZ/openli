@@ -75,6 +75,25 @@ typedef struct disabled_client {
     UT_hash_handle hh;
 } prov_disabled_client_t;
 
+/* Describes a collector that is being served by the provisioner */
+typedef struct prov_collector {
+
+    prov_epoll_ev_t *commev;
+    prov_epoll_ev_t *authev;
+
+    UT_hash_handle hh;
+} prov_collector_t;
+
+typedef struct prov_mediator {
+
+    int fd;     /* the socket for communication with the mediator */
+    openli_mediator_t *details;
+    prov_epoll_ev_t *commev;
+    prov_epoll_ev_t *authev;
+
+    UT_hash_handle hh;
+} prov_mediator_t;
+
 typedef struct prov_state {
 
     char *conffile;
@@ -86,8 +105,8 @@ typedef struct prov_state {
     char *pushport;
 
     int epoll_fd;
-    libtrace_list_t *mediators;
-    libtrace_list_t *collectors;
+    prov_mediator_t *mediators;
+    prov_collector_t *collectors;
     coreserver_t *radiusservers;
     coreserver_t *sipservers;
 
@@ -128,23 +147,6 @@ typedef struct prov_sock_state {
     int clientrole;
 
 } prov_sock_state_t;
-
-/* Describes a collector that is being served by the provisioner */
-typedef struct prov_collector {
-
-    prov_epoll_ev_t *commev;
-    prov_epoll_ev_t *authev;
-
-} prov_collector_t;
-
-typedef struct prov_mediator {
-
-    int fd;     /* the socket for communication with the mediator */
-    openli_mediator_t *details;
-    prov_epoll_ev_t *commev;
-    prov_epoll_ev_t *authev;
-
-} prov_mediator_t;
 
 #endif
 

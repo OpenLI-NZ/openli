@@ -120,6 +120,82 @@ static void dump_rtp_intercept(rtpstreaminf_t *rtp) {
     printf("------\n");
 }
 
+static void reset_collector_stats(collector_global_t *glob) {
+
+    glob->stats.packets_dropped = 0;
+    glob->stats.packets_accepted = 0;
+    glob->stats.packets_intercepted = 0;
+    glob->stats.packets_sync_ip = 0;
+    glob->stats.packets_sync_voip = 0;
+    glob->stats.ipcc_created = 0;
+    glob->stats.ipiri_created = 0;
+    glob->stats.ipmmcc_created = 0;
+    glob->stats.ipmmiri_created = 0;
+    glob->stats.bad_sip_packets = 0;
+    glob->stats.bad_ip_session_packets = 0;
+
+    glob->stats.ipintercepts_added_diff = 0;
+    glob->stats.voipintercepts_added_diff = 0;
+    glob->stats.ipintercepts_ended_diff = 0;
+    glob->stats.voipintercepts_ended_diff = 0;
+    glob->stats.ipsessions_added_diff = 0;
+    glob->stats.voipsessions_added_diff = 0;
+    glob->stats.ipsessions_ended_diff = 0;
+    glob->stats.voipsessions_ended_diff = 0;
+}
+
+static void log_collector_stats(collector_global_t *glob) {
+    if (glob->stat_frequency > 1) {
+        logger(LOG_INFO,
+                "OpenLI: Collector statistics for the last %u minutes:",
+                glob->stat_frequency);
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: Collector statistics for the last minute:");
+    }
+    logger(LOG_INFO, "OpenLI: Packets... captured: %lu    dropped: %lu   intercepted: %lu",
+            glob->stats.packets_accepted, glob->stats.packets_dropped,
+            glob->stats.packets_intercepted);
+    logger(LOG_INFO, "OpenLI: Packets sent to IP sync: %lu,  sent to VOIP sync: %lu",
+            glob->stats.packets_sync_ip, glob->stats.packets_sync_voip);
+    logger(LOG_INFO, "OpenLI: Bad SIP packets: %lu   Bad RADIUS packets: %lu",
+            glob->stats.bad_sip_packets, glob->stats.bad_ip_session_packets);
+    logger(LOG_INFO, "OpenLI: Records created... IPCCs: %lu  IPIRIs: %lu",
+            glob->stats.ipcc_created, glob->stats.ipiri_created);
+    logger(LOG_INFO, "OpenLI: Records created... IPMMCCs: %lu  IPMMIRIs: %lu",
+            glob->stats.ipmmcc_created, glob->stats.ipmmiri_created);
+
+    logger(LOG_INFO, "OpenLI: IP intercepts added: %lu  (all-time: %lu)",
+            glob->stats.ipintercepts_added_diff,
+            glob->stats.ipintercepts_added_total);
+    logger(LOG_INFO, "OpenLI: IP intercepts ended: %lu  (all-time: %lu)",
+            glob->stats.ipintercepts_ended_diff,
+            glob->stats.ipintercepts_ended_total);
+
+    logger(LOG_INFO, "OpenLI: VOIP intercepts added: %lu  (all-time: %lu)",
+            glob->stats.voipintercepts_added_diff,
+            glob->stats.voipintercepts_added_total);
+    logger(LOG_INFO, "OpenLI: VOIP intercepts ended: %lu  (all-time: %lu)",
+            glob->stats.voipintercepts_ended_diff,
+            glob->stats.voipintercepts_ended_total);
+
+    logger(LOG_INFO, "OpenLI: IP sessions added: %lu  (all-time: %lu)",
+            glob->stats.ipsessions_added_diff,
+            glob->stats.ipsessions_added_total);
+    logger(LOG_INFO, "OpenLI: IP sessions ended: %lu  (all-time: %lu)",
+            glob->stats.ipsessions_ended_diff,
+            glob->stats.ipsessions_ended_total);
+
+    logger(LOG_INFO, "OpenLI: VOIP sessions added: %lu  (all-time: %lu)",
+            glob->stats.voipsessions_added_diff,
+            glob->stats.voipsessions_added_total);
+    logger(LOG_INFO, "OpenLI: VOIP sessions ended: %lu  (all-time: %lu)",
+            glob->stats.voipsessions_ended_diff,
+            glob->stats.voipsessions_ended_total);
+
+    logger(LOG_INFO, "OpenLI: === statistics complete ===");
+}
+
 static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
         void *global, void *local, uint64_t tick) {
 
@@ -127,31 +203,50 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
     colthread_local_t *loc = (colthread_local_t *)local;
     libtrace_stat_t *stats;
 
-    stats = trace_create_statistics();
-    trace_get_statistics(trace, stats);
 
-    if (stats->dropped > loc->dropped && trace_get_perpkt_thread_id(t) == 0) {
-        logger(LOG_INFO,
-                "%lu dropped %lu packets in last second (accepted %lu)",
-                (tick >> 32),
-                stats->dropped - loc->dropped,
-                stats->accepted - loc->accepted);
-        loc->dropped = stats->dropped;
+    if (trace_get_perpkt_thread_id(t) == 0) {
+
+        stats = trace_create_statistics();
+        trace_get_statistics(trace, stats);
+
+        pthread_mutex_lock(&(glob->stats_mutex));
+        glob->stats.packets_dropped += (stats->dropped - loc->dropped);
+        glob->stats.packets_accepted += (stats->accepted - loc->accepted);
+        pthread_mutex_unlock(&(glob->stats_mutex));
+
+        if (stats->dropped > loc->dropped) {
+            logger(LOG_INFO,
+                    "%lu dropped %lu packets in last second (accepted %lu)",
+                    (tick >> 32),
+                    stats->dropped - loc->dropped,
+                    stats->accepted - loc->accepted);
+            loc->dropped = stats->dropped;
+        }
+
+        pthread_rwlock_rdlock(&(glob->config_mutex));
+        if (glob->stat_frequency > 0) {
+            glob->ticks_since_last_stat ++;
+
+            if (glob->ticks_since_last_stat >= glob->stat_frequency * 60) {
+                pthread_mutex_lock(&(glob->stats_mutex));
+                log_collector_stats(glob);
+                reset_collector_stats(glob);
+                pthread_mutex_unlock(&(glob->stats_mutex));
+                glob->ticks_since_last_stat = 0;
+            }
+        }
+        pthread_rwlock_unlock(&(glob->config_mutex));
+        loc->accepted = stats->accepted;
+        free(stats);
     }
-    loc->accepted = stats->accepted;
-    free(stats);
 }
 
 static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
         int threadid) {
 
     int zero = 0, i;
-    libtrace_message_queue_init(&(loc->tosyncq_ip),
-            sizeof(openli_state_update_t));
     libtrace_message_queue_init(&(loc->fromsyncq_ip),
             sizeof(openli_pushed_t));
-    libtrace_message_queue_init(&(loc->tosyncq_voip),
-            sizeof(openli_state_update_t));
     libtrace_message_queue_init(&(loc->fromsyncq_voip),
             sizeof(openli_pushed_t));
 
@@ -165,6 +260,8 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
     loc->staticv4ranges = New_Patricia(32);
     loc->staticv6ranges = New_Patricia(128);
     loc->staticcache = NULL;
+    loc->tosyncq_ip = NULL;
+    loc->tosyncq_voip = NULL;
 
     loc->accepted = 0;
     loc->dropped = 0;
@@ -176,11 +273,19 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
 
         snprintf(pubsockname, 128, "inproc://openlipub-%d", i);
         loc->zmq_pubsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
-        zmq_connect(loc->zmq_pubsocks[i], pubsockname);
         zmq_setsockopt(loc->zmq_pubsocks[i], ZMQ_SNDHWM, &zero, sizeof(zero));
+        zmq_connect(loc->zmq_pubsocks[i], pubsockname);
     }
 
     loc->fragreass = create_new_ipfrag_reassembler();
+
+    loc->tosyncq_ip = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+    zmq_setsockopt(loc->tosyncq_ip, ZMQ_SNDHWM, &zero, sizeof(zero));
+    zmq_connect(loc->tosyncq_ip, "inproc://openli-ipsync");
+
+    loc->tosyncq_voip = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+    zmq_setsockopt(loc->tosyncq_voip, ZMQ_SNDHWM, &zero, sizeof(zero));
+    zmq_connect(loc->tosyncq_voip, "inproc://openli-voipsync");
 
 }
 
@@ -195,9 +300,9 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     glob->nextloc ++;
     pthread_rwlock_unlock(&(glob->config_mutex));
 
-    register_sync_queues(&(glob->syncip), &(loc->tosyncq_ip),
+    register_sync_queues(&(glob->syncip), loc->tosyncq_ip,
 			&(loc->fromsyncq_ip), t);
-    register_sync_queues(&(glob->syncvoip), &(loc->tosyncq_voip),
+    register_sync_queues(&(glob->syncvoip), loc->tosyncq_voip,
 			&(loc->fromsyncq_voip), t);
 
     return loc;
@@ -246,15 +351,18 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
      * and any other malloced memory in the messages.
      */
 
-    libtrace_message_queue_destroy(&(loc->tosyncq_ip));
     libtrace_message_queue_destroy(&(loc->fromsyncq_ip));
-    libtrace_message_queue_destroy(&(loc->tosyncq_voip));
     libtrace_message_queue_destroy(&(loc->fromsyncq_voip));
 
     for (i = 0; i < glob->seqtracker_threads; i++) {
         zmq_setsockopt(loc->zmq_pubsocks[i], ZMQ_LINGER, &zero, sizeof(zero));
         zmq_close(loc->zmq_pubsocks[i]);
     }
+
+    zmq_setsockopt(loc->tosyncq_ip, ZMQ_LINGER, &zero, sizeof(zero));
+    zmq_close(loc->tosyncq_ip);
+    zmq_setsockopt(loc->tosyncq_voip, ZMQ_LINGER, &zero, sizeof(zero));
+    zmq_close(loc->tosyncq_voip);
 
     free(loc->zmq_pubsocks);
 
@@ -285,15 +393,50 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 }
 
 static inline void send_packet_to_sync(libtrace_packet_t *pkt,
-        libtrace_message_queue_t *q, uint8_t updatetype) {
+        void *q, uint8_t updatetype) {
     openli_state_update_t syncup;
+    libtrace_packet_t *copy;
+    int caplen = trace_get_capture_length(pkt);
+    int framelen = trace_get_framing_length(pkt);
+
+    if (caplen == -1 || framelen == -1) {
+        logger(LOG_INFO, "OpenLI: unable to copy packet for sync thread (caplen=%d, framelen=%d)", caplen, framelen);
+        exit(1);
+    }
+
+    /* We do this ourselves instead of calling trace_copy_packet() because
+     * we don't want to be allocating 64K per copied packet -- we could be
+     * doing this a lot and don't want to be wasteful */
+    copy = (libtrace_packet_t *)calloc((size_t)1, sizeof(libtrace_packet_t));
+    if (!copy) {
+        logger(LOG_INFO, "OpenLI: out of memory while copying packet for sync thread");
+        exit(1);
+    }
+
+    copy->trace = pkt->trace;
+    copy->buf_control = TRACE_CTRL_PACKET;
+    copy->buffer = malloc(framelen + caplen);
+    copy->type = pkt->type;
+    copy->header = copy->buffer;
+    copy->payload = ((char *)copy->buffer) + framelen;
+    copy->order = pkt->order;
+    copy->hash = pkt->hash;
+    copy->error = pkt->error;
+    copy->which_trace_start = pkt->which_trace_start;
+    copy->cached.capture_length = caplen;
+    copy->cached.framing_length = framelen;
+    copy->cached.wire_length = -1;
+    copy->cached.payload_length = -1;
+    /* everything else in cache should be 0 or NULL due to our earlier
+     * calloc() */
+    memcpy(copy->header, pkt->header, framelen);
+    memcpy(copy->payload, pkt->payload, caplen);
 
     syncup.type = updatetype;
-    syncup.data.pkt = pkt;
+    syncup.data.pkt = copy;
 
     //trace_increment_packet_refcount(pkt);
-    libtrace_message_queue_put(q, (void *)(&syncup));
-
+    zmq_send(q, (void *)(&syncup), sizeof(syncup), 0);
 }
 
 static inline uint8_t check_for_invalid_sip(libtrace_packet_t *pkt,
@@ -474,7 +617,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     uint32_t rem, iprem;
     uint8_t proto;
     int forwarded = 0, i, ret;
-    int synced = 0;
+    int ipsynced = 0, voipsynced = 0;
     uint16_t fragoff = 0;
 
     openli_pushed_t syncpush;
@@ -556,6 +699,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         }
         pinfo.family = AF_INET;
     } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
+        struct sockaddr_in6 *in6;
         libtrace_ip6_t *ip6header = (libtrace_ip6_t *)l3;
         uint8_t *postip6 = (uint8_t *)(trace_get_payload_from_ip6(ip6header,
                 &proto, &rem));
@@ -564,6 +708,11 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         pinfo.destport = ntohs(*((uint16_t *)(postip6 + 2)));
         proto = ip6header->nxt;
         pinfo.family = AF_INET6;
+
+        in6 = (struct sockaddr_in6 *)(&(pinfo.srcip));
+        in6->sin6_addr = ip6header->ip_src;
+        in6 = (struct sockaddr_in6 *)(&(pinfo.destip));
+        in6->sin6_addr = ip6header->ip_dst;
     } else {
         pinfo.srcport = 0;
         pinfo.destport = 0;
@@ -580,69 +729,100 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         if (glob->alumirrors && check_alu_intercept(&(glob->sharedinfo), loc,
                 pkt, &pinfo, glob->alumirrors, loc->activealuintercepts)) {
             forwarded = 1;
+            pthread_mutex_lock(&(glob->stats_mutex));
+            glob->stats.ipcc_created += 1;
+            pthread_mutex_unlock(&(glob->stats_mutex));
             goto processdone;
         }
 
         /* Is this a RADIUS packet? -- if yes, create a state update */
         if (loc->radiusservers && is_core_server_packet(pkt, &pinfo,
                     loc->radiusservers)) {
-            send_packet_to_sync(pkt, &(loc->tosyncq_ip), OPENLI_UPDATE_RADIUS);
-            synced = 1;
+            send_packet_to_sync(pkt, loc->tosyncq_ip, OPENLI_UPDATE_RADIUS);
+            ipsynced = 1;
+            goto processdone;
         }
 
         /* Is this a SIP packet? -- if yes, create a state update */
         if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
                     loc->sipservers)) {
             if (!check_for_invalid_sip(pkt, fragoff)) {
-                send_packet_to_sync(pkt, &(loc->tosyncq_voip),
+                send_packet_to_sync(pkt, loc->tosyncq_voip,
                         OPENLI_UPDATE_SIP);
-                synced = 1;
+                voipsynced = 1;
             }
         }
     } else if (proto == TRACE_IPPROTO_TCP) {
         /* Is this a SIP packet? -- if yes, create a state update */
         if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
                     loc->sipservers)) {
-            send_packet_to_sync(pkt, &(loc->tosyncq_voip), OPENLI_UPDATE_SIP);
-            synced = 1;
+            send_packet_to_sync(pkt, loc->tosyncq_voip, OPENLI_UPDATE_SIP);
+            voipsynced = 1;
         }
     }
 
 
     if (ethertype == TRACE_ETHERTYPE_IP) {
         /* Is this an IP packet? -- if yes, possible IP CC */
-        if (ipv4_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, iprem,
-                    loc)) {
+        if ((ret = ipv4_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, iprem,
+                    loc))) {
             forwarded = 1;
+            pthread_mutex_lock(&(glob->stats_mutex));
+            glob->stats.ipcc_created += ret;
+            pthread_mutex_unlock(&(glob->stats_mutex));
         }
 
         /* Is this an RTP packet? -- if yes, possible IPMM CC */
         if (proto == TRACE_IPPROTO_UDP) {
-            if (ip4mm_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, iprem,
-                        loc)) {
+            if ((ret = ip4mm_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3,
+                        iprem, loc))) {
                 forwarded = 1;
+                pthread_mutex_lock(&(glob->stats_mutex));
+                glob->stats.ipmmcc_created += ret;
+                pthread_mutex_unlock(&(glob->stats_mutex));
             }
         }
 
     } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
         /* Is this an IP packet? -- if yes, possible IP CC */
-        if (ipv6_comm_contents(pkt, &pinfo, (libtrace_ip6_t *)l3, iprem,
-                    loc)) {
+        if ((ret = ipv6_comm_contents(pkt, &pinfo, (libtrace_ip6_t *)l3, iprem,
+                    loc))) {
             forwarded = 1;
+            pthread_mutex_lock(&(glob->stats_mutex));
+            glob->stats.ipcc_created += ret;
+            pthread_mutex_unlock(&(glob->stats_mutex));
         }
 
         if (proto == TRACE_IPPROTO_UDP) {
-            if (ip6mm_comm_contents(pkt, &pinfo, (libtrace_ip6_t *)l3, iprem,
-                        loc)) {
+            if ((ret = ip6mm_comm_contents(pkt, &pinfo, (libtrace_ip6_t *)l3,
+                        iprem, loc))) {
                 forwarded = 1;
+                pthread_mutex_lock(&(glob->stats_mutex));
+                glob->stats.ipmmcc_created += ret;
+                pthread_mutex_unlock(&(glob->stats_mutex));
             }
         }
     }
 
 processdone:
-    if (synced) {
-        return NULL;
+    if (ipsynced) {
+        pthread_mutex_lock(&(glob->stats_mutex));
+        glob->stats.packets_sync_ip ++;
+        pthread_mutex_unlock(&(glob->stats_mutex));
     }
+
+    if (voipsynced) {
+        pthread_mutex_lock(&(glob->stats_mutex));
+        glob->stats.packets_sync_voip ++;
+        pthread_mutex_unlock(&(glob->stats_mutex));
+    }
+
+    if (forwarded) {
+        pthread_mutex_lock(&(glob->stats_mutex));
+        glob->stats.packets_intercepted ++;
+        pthread_mutex_unlock(&(glob->stats_mutex));
+    }
+
     return pkt;
 }
 
@@ -754,7 +934,8 @@ static void clear_input(colinput_t *input) {
     }
 }
 
-static inline void init_sync_thread_data(sync_thread_global_t *sup) {
+static inline void init_sync_thread_data(collector_global_t *glob,
+        sync_thread_global_t *sup) {
 
     sup->threadid = 0;
     pthread_mutex_init(&(sup->mutex), NULL);
@@ -762,6 +943,8 @@ static inline void init_sync_thread_data(sync_thread_global_t *sup) {
     sup->epollevs = NULL;
     sup->epoll_fd = epoll_create1(0);
 
+    sup->stats_mutex = &(glob->stats_mutex);
+    sup->stats = &(glob->stats);
 }
 
 static inline void free_sync_thread_data(sync_thread_global_t *sup) {
@@ -869,10 +1052,11 @@ static void clear_global_config(collector_global_t *glob) {
         free(glob->sharedinfo.provisionerport);
     }
 
+    pthread_mutex_destroy(&(glob->stats_mutex));
     pthread_rwlock_destroy(&glob->config_mutex);
 }
 
-static inline void push_hello_message(libtrace_message_queue_t *atob,
+static inline void push_hello_message(void *atob,
         libtrace_message_queue_t *btoa) {
 
     openli_state_update_t hello;
@@ -881,11 +1065,11 @@ static inline void push_hello_message(libtrace_message_queue_t *atob,
     hello.type = OPENLI_UPDATE_HELLO;
     hello.data.replyq = btoa;
 
-    libtrace_message_queue_put(atob, (void *)(&hello));
+    zmq_send(atob, (void *)&hello, sizeof(hello), 0);
 }
 
 int register_sync_queues(sync_thread_global_t *glob,
-        libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq,
+        void *recvq, libtrace_message_queue_t *sendq,
         libtrace_thread_t *parent) {
 
     struct epoll_event ev;
@@ -897,32 +1081,11 @@ int register_sync_queues(sync_thread_global_t *glob,
     syncq->q = sendq;
     syncq->parent = parent;
 
-    syncev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
-    syncev->fdtype = SYNC_EVENT_PROC_QUEUE;
-    syncev->fd = libtrace_message_queue_get_fd(recvq);
-    syncev->ptr = recvq;
-    syncev->parent = parent;
-
-    ev.data.ptr = (void *)syncev;
-    ev.events = EPOLLIN;
-
     pthread_mutex_lock(&(glob->mutex));
-    if (epoll_ctl(glob->epoll_fd, EPOLL_CTL_ADD, syncev->fd,
-                &ev) == -1) {
-        /* TODO Do something? */
-        logger(LOG_INFO, "OpenLI: failed to register processor->sync queue: %s",
-                strerror(errno));
-        pthread_mutex_unlock(&(glob->mutex));
-        return -1;
-    }
 
     sendq_hash = (sync_sendq_t *)(glob->collector_queues);
     HASH_ADD_PTR(sendq_hash, parent, syncq);
     glob->collector_queues = (void *)sendq_hash;
-
-    syncev_hash = (sync_epoll_t *)(glob->epollevs);
-    HASH_ADD_PTR(syncev_hash, parent, syncev);
-    glob->epollevs = (void *)syncev_hash;
 
     pthread_mutex_unlock(&(glob->mutex));
 
@@ -948,18 +1111,6 @@ void deregister_sync_queues(sync_thread_global_t *glob,
         glob->collector_queues = (void *)sendq_hash;
     }
 
-    syncev_hash = (sync_epoll_t *)(glob->epollevs);
-    HASH_FIND_PTR(syncev_hash, &t, syncev);
-    if (syncev) {
-        if (glob->epoll_fd != -1 && epoll_ctl(glob->epoll_fd,
-                    EPOLL_CTL_DEL, syncev->fd, &ev) == -1) {
-            logger(LOG_INFO, "OpenLI: failed to de-register processor->sync queue %d: %s", syncev->fd, strerror(errno));
-        }
-        HASH_DELETE(hh, syncev_hash, syncev);
-        free(syncev);
-        glob->epollevs = (void *)syncev_hash;
-    }
-
     pthread_mutex_unlock(&(glob->mutex));
 }
 
@@ -971,8 +1122,8 @@ static int prepare_collector_glob(collector_global_t *glob) {
 
     glob->expired_inputs = libtrace_list_init(sizeof(colinput_t *));
 
-    init_sync_thread_data(&(glob->syncip));
-    init_sync_thread_data(&(glob->syncvoip));
+    init_sync_thread_data(glob, &(glob->syncip));
+    init_sync_thread_data(glob, &(glob->syncvoip));
 
     glob->collocals = (colthread_local_t *)calloc(glob->total_col_threads,
             sizeof(colthread_local_t));
@@ -1028,6 +1179,11 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->sipdebugfile = NULL;
     glob->nextloc = 0;
     glob->syncgenericfreelist = NULL;
+
+    memset(&(glob->stats), 0, sizeof(glob->stats));
+    glob->stat_frequency = 0;
+    glob->ticks_since_last_stat = 0;
+    pthread_mutex_init(&(glob->stats_mutex), NULL);
 
     libtrace_message_queue_init(&glob->intersyncq,
             sizeof(openli_intersync_msg_t));
@@ -1097,6 +1253,7 @@ static int reload_collector_config(collector_global_t *glob,
 
     pthread_rwlock_wrlock(&(glob->config_mutex));
 
+    glob->stat_frequency = newstate->stat_frequency;
     reload_inputs(glob, newstate);
 
     /* Just update these, regardless of whether they've changed. It's more
@@ -1178,6 +1335,9 @@ static void *start_ip_sync_thread(void *params) {
      * from a config file. Eventually this should be replaced with
      * instructions that are received via a network interface.
      */
+    if (sync->zmq_colsock == NULL) {
+        goto haltsyncthread;
+    }
 
     while (collector_halt == 0) {
         if (reload_config) {
@@ -1212,6 +1372,7 @@ static void *start_ip_sync_thread(void *params) {
         }
     }
 
+haltsyncthread:
     /* Collector is halting, stop all processing threads */
     halt_processing_threads(glob);
     clean_sync_data(sync);

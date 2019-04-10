@@ -890,6 +890,7 @@ static int handle_published_message(collector_export_t *exp) {
     zmq_msg_init(&incoming);
     x = zmq_msg_recv(&incoming, exp->zmq_subsock, ZMQ_DONTWAIT);
     if (x < 0) {
+        zmq_msg_close(&incoming);
         if (errno == EAGAIN) {
             return 0;
         }

@@ -63,7 +63,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->instruct_fd = -1;
     sync->instruct_fail = 0;
     sync->instruct_log = 1;
-    sync->ii_ev = (sync_epoll_t *)malloc(sizeof(sync_epoll_t));
+    sync->instruct_events = ZMQ_POLLIN | ZMQ_POLLOUT;
 
     sync->outgoing = NULL;
     sync->incoming = NULL;
@@ -78,6 +78,14 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
     sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
+
+    sync->zmq_colsock = zmq_socket(glob->zmq_ctxt, ZMQ_PULL);
+    if (zmq_bind(sync->zmq_colsock, "inproc://openli-ipsync") != 0) {
+        logger(LOG_INFO, "OpenLI: colsync thread unable to bind to zmq socket for collector updates: %s",
+                strerror(errno));
+        zmq_close(sync->zmq_colsock);
+        sync->zmq_colsock = NULL;
+    }
 
     for (i = 0; i < sync->forwardcount; i++) {
         sync->zmq_fwdctrlsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
@@ -139,10 +147,6 @@ void clean_sync_data(collector_sync_t *sync) {
         destroy_net_buffer(sync->incoming);
     }
 
-    if (sync->ii_ev) {
-        free(sync->ii_ev);
-    }
-
     if (sync->radiusplugin) {
         destroy_access_plugin(sync->radiusplugin);
     }
@@ -152,12 +156,17 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->userintercepts = NULL;
     sync->outgoing = NULL;
     sync->incoming = NULL;
-    sync->ii_ev = NULL;
     sync->radiusplugin = NULL;
     sync->activeips = NULL;
 
     while (haltattempts < 10) {
         haltfails = 0;
+
+        if (sync->zmq_colsock) {
+            zmq_setsockopt(sync->zmq_colsock, ZMQ_LINGER, &zero, sizeof(zero));
+            zmq_close(sync->zmq_colsock);
+            sync->zmq_colsock = NULL;
+        }
 
         for (i = 0; i < sync->pubsockcount; i++) {
             if (sync->zmq_pubsocks[i] == NULL) {
@@ -336,6 +345,9 @@ static int create_ipiri_from_iprange(collector_sync_t *sync,
         sin6->sin6_scope_id = 0;
     }
 
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipiri_created ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
     publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], irimsg);
     free(prefix);
     return 0;
@@ -388,6 +400,9 @@ static int create_ipiri_from_session(collector_sync_t *sync,
                     sizeof(struct sockaddr_storage));
         }
 
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->ipiri_created ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
         publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], irimsg);
         iter ++;
     } while (ret > 0);
@@ -436,8 +451,9 @@ static inline void push_static_iprange_remove_to_collectors(
 
 }
 
-static inline void push_single_ipintercept(libtrace_message_queue_t *q,
-        ipintercept_t *ipint, access_session_t *session) {
+static inline void push_single_ipintercept(collector_sync_t *sync,
+        libtrace_message_queue_t *q, ipintercept_t *ipint,
+        access_session_t *session) {
 
     ipsession_t *ipsess;
     openli_pushed_t msg;
@@ -504,7 +520,6 @@ static void push_all_coreservers(coreserver_t *servers,
 static int send_to_provisioner(collector_sync_t *sync) {
 
     int ret;
-    struct epoll_event ev;
     openli_proto_msgtype_t err;
 
     ret = transmit_net_buffer(sync->outgoing, &err);
@@ -520,18 +535,7 @@ static int send_to_provisioner(collector_sync_t *sync) {
 
     if (ret == 0) {
         /* Everything has been sent successfully, no more to send right now. */
-        ev.data.ptr = sync->ii_ev;
-        ev.events = EPOLLIN | EPOLLRDHUP;
-
-        if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_MOD,
-                    sync->instruct_fd, &ev) == -1) {
-            if (sync->instruct_log) {
-                logger(LOG_INFO,
-                    "OpenLI: error disabling EPOLLOUT on provisioner fd: %s.",
-                    strerror(errno));
-            }
-            return -1;
-        }
+        sync->instruct_events = ZMQ_POLLIN;
     }
 
     return 1;
@@ -579,6 +583,14 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
             "OpenLI: intercepting static IP range %s for LIID %s, AuthCC %s",
             ipr->rangestr, ipint->common.liid, ipint->common.authcc);
 
+    /* XXX assumes each range corresponds to a unique session, not
+     * necessarily true but probably doesn't matter too much as this is just
+     * some informational stat tracking */
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipsessions_added_diff ++;
+    sync->glob->stats->ipsessions_added_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
+
     HASH_ADD_KEYPTR(hh, ipint->statics, ipr->rangestr,
             strlen(ipr->rangestr), ipr);
 
@@ -620,6 +632,13 @@ static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
             push_static_iprange_remove_to_collectors(sendq->q, ipint, ipr);
         }
 
+        /* XXX assumes each range corresponds to a unique session, not
+         * necessarily true but probably doesn't matter too much as this is just
+         * some informational stat tracking */
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->ipsessions_ended_diff ++;
+        sync->glob->stats->ipsessions_ended_total ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
         HASH_DELETE(hh, ipint->statics, found);
         free(found->liid);
         free(found->rangestr);
@@ -898,6 +917,18 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     expmsg->data.cept.delivcc = strdup(ipint->common.delivcc);
     expmsg->data.cept.seqtrackerid = ipint->common.seqtrackerid;
 
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipintercepts_ended_diff ++;
+    sync->glob->stats->ipintercepts_ended_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
+
+    if (ipint->alushimid != OPENLI_ALUSHIM_NONE) {
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->ipsessions_ended_diff ++;
+        sync->glob->stats->ipsessions_ended_total ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
+    }
+
     publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], expmsg);
     free_single_ipintercept(ipint);
 
@@ -977,27 +1008,33 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
                 logger(LOG_INFO,
                         "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
                         x->common.liid, x->username, cept->username);
-                free(cept);
-                return -1;
+                remove_ip_intercept(sync, x);
+                free_single_ipintercept(x);
+                x = NULL;
             }
-        } else if (cept->alushimid != x->alushimid) {
+        }
+
+        if (cept->alushimid != x->alushimid) {
             logger(LOG_INFO,
                     "OpenLI: duplicate IP ID %s seen, but ALU intercept IDs are different (was %u, now %u).",
                     x->common.liid, x->alushimid, cept->alushimid);
-            free(cept);
-            return -1;
+            remove_ip_intercept(sync, x);
+            free_single_ipintercept(x);
+            x = NULL;
         }
 
-        if (cept->accesstype != x->accesstype) {
-            logger(LOG_INFO,
+        if (x != NULL) {
+            if (cept->accesstype != x->accesstype) {
+                logger(LOG_INFO,
                     "OpenLI: duplicate IP ID %s seen, but access type has changed to %s.", x->common.liid, accesstype_to_string(cept->accesstype));
             /* Only affects IRIs so don't need to modify collector threads */
-            x->accesstype = cept->accesstype;
+                x->accesstype = cept->accesstype;
+            }
+            x->awaitingconfirm = 0;
+            free(cept);
+            /* our collector threads should already know about this intercept */
+            return 1;
         }
-        x->awaitingconfirm = 0;
-        free(cept);
-        /* our collector threads should already know about this intercept */
-        return 1;
     }
 
     if (cept->username) {
@@ -1008,7 +1045,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             HASH_ITER(hh, user->sessions, sess, tmp2) {
                 HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                         sendq, tmp) {
-                    push_single_ipintercept(sendq->q, cept, sess);
+                    push_single_ipintercept(sync, sendq->q, cept, sess);
                 }
             }
         }
@@ -1033,6 +1070,10 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
                 sendq, tmp) {
             push_single_alushimid(sendq->q, cept, 0);
         }
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->ipsessions_added_diff ++;
+        sync->glob->stats->ipsessions_added_total ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
     } else if (cept->username != NULL) {
         logger(LOG_INFO,
                 "OpenLI: received IP intercept for target %s from provisioner (LIID %s, authCC %s)",
@@ -1047,6 +1088,11 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
             cept->common.liid_len, cept);
+
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipintercepts_added_diff ++;
+    sync->glob->stats->ipintercepts_added_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
 
     expmsg = create_intercept_details_msg(&(cept->common));
     publish_openli_msg(sync->zmq_pubsocks[cept->common.seqtrackerid], expmsg);
@@ -1093,7 +1139,6 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
 }
 
 static int recv_from_provisioner(collector_sync_t *sync) {
-    struct epoll_event ev;
     int ret = 0;
     uint8_t *provmsg;
     uint16_t msglen = 0;
@@ -1230,9 +1275,7 @@ static int recv_from_provisioner(collector_sync_t *sync) {
 
 int sync_connect_provisioner(collector_sync_t *sync) {
 
-    struct epoll_event ev;
     int sockfd;
-
 
     sockfd = connect_socket(sync->info->provisionerip,
             sync->info->provisionerport, sync->instruct_fail, 0);
@@ -1260,24 +1303,8 @@ int sync_connect_provisioner(collector_sync_t *sync) {
         logger(LOG_INFO,"OpenLI: collector is unable to queue auth message.");
         return -1;
     }
-
-    /* Add instruct_fd to epoll for both reading and writing */
-    sync->ii_ev->fdtype = SYNC_EVENT_PROVISIONER;
-    sync->ii_ev->fd = sync->instruct_fd;
-    sync->ii_ev->ptr = NULL;
-
-    ev.data.ptr = (void *)(sync->ii_ev);
-    ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
-
-    if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
-        /* TODO Do something? */
-        logger(LOG_INFO, "OpenLI: failed to register provisioner fd: %s",
-                strerror(errno));
-        return -1;
-    }
-
+    sync->instruct_events = ZMQ_POLLIN | ZMQ_POLLOUT;
     return 1;
-
 }
 
 static inline void touch_all_coreservers(coreserver_t *servers) {
@@ -1306,7 +1333,6 @@ static inline void touch_all_intercepts(ipintercept_t *intlist) {
 
 void sync_disconnect_provisioner(collector_sync_t *sync) {
 
-    struct epoll_event ev;
     openli_export_recv_t *expmsg;
     int i;
 
@@ -1320,14 +1346,6 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
     if (sync->instruct_fd != -1) {
         if (sync->instruct_log) {
             logger(LOG_INFO, "OpenLI: collector is disconnecting from provisioner fd %d", sync->instruct_fd);
-        }
-        if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_DEL,
-                sync->instruct_fd, &ev) == -1) {
-            if (sync->instruct_log) {
-                logger(LOG_INFO,
-                    "OpenLI: error de-registering provisioner fd: %s.",
-                    strerror(errno));
-            }
         }
         close(sync->instruct_fd);
         sync->instruct_fd = -1;
@@ -1370,7 +1388,7 @@ static void push_all_active_intercepts(collector_sync_t *sync,
             HASH_FIND(hh, allusers, orig->username, orig->username_len, user);
             if (user) {
                 HASH_ITER(hh, user->sessions, sess, tmp2) {
-                    push_single_ipintercept(q, orig, sess);
+                    push_single_ipintercept(sync, q, orig, sess);
                 }
             }
         }
@@ -1444,11 +1462,11 @@ static int add_ip_to_session_mapping(collector_sync_t *sync,
 }
 
 static inline internet_user_t *lookup_userid(collector_sync_t *sync,
-        char *userid) {
+        char *userid, int useridlen) {
 
     internet_user_t *iuser;
 
-    HASH_FIND(hh, sync->allusers, userid, strlen(userid), iuser);
+    HASH_FIND(hh, sync->allusers, userid, useridlen, iuser);
     if (iuser == NULL) {
         iuser = (internet_user_t *)malloc(sizeof(internet_user_t));
 
@@ -1460,7 +1478,7 @@ static inline internet_user_t *lookup_userid(collector_sync_t *sync,
         iuser->sessions = NULL;
 
         HASH_ADD_KEYPTR(hh, sync->allusers, iuser->userid,
-                strlen(iuser->userid), iuser);
+                useridlen, iuser);
     }
     return iuser;
 }
@@ -1523,9 +1541,13 @@ static int newly_active_session(collector_sync_t *sync,
     HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
         HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                 sendq, tmpq) {
-            push_single_ipintercept(sendq->q, ipint, sess);
+            push_single_ipintercept(sync, sendq->q, ipint, sess);
         }
     }
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipsessions_added_diff ++;
+    sync->glob->stats->ipsessions_added_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
     return expcount;
 
 
@@ -1544,7 +1566,7 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     ipintercept_t *ipint, *tmp;
     int expcount = 0;
     void *parseddata = NULL;
-    int i, ret;
+    int i, ret, useridlen = 0;
 
     if (accesstype == ACCESS_RADIUS) {
         p = sync->radiusplugin;
@@ -1559,16 +1581,19 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
 
     if (parseddata == NULL) {
         logger(LOG_INFO, "OpenLI: unable to parse %s packet", p->name);
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->bad_ip_session_packets ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
         return -1;
     }
 
-    userid = p->get_userid(p, parseddata);
+    userid = p->get_userid(p, parseddata, &useridlen);
     if (userid == NULL) {
         /* Probably an orphaned response packet */
         goto endupdate;
     }
 
-    iuser = lookup_userid(sync, userid);
+    iuser = lookup_userid(sync, userid, useridlen);
     if (!iuser) {
         p->destroy_parsed_data(p, parseddata);
         return -1;
@@ -1602,6 +1627,10 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
                     push_session_halt_to_threads(sync->glob->collector_queues,
                             sess, ipint);
                 }
+                pthread_mutex_lock(sync->glob->stats_mutex);
+                sync->glob->stats->ipsessions_ended_diff ++;
+                sync->glob->stats->ipsessions_ended_total ++;
+                pthread_mutex_unlock(sync->glob->stats_mutex);
             }
 
             if (remove_ip_to_session_mapping(sync, sess) < 0) {
@@ -1636,109 +1665,77 @@ endupdate:
 }
 
 int sync_thread_main(collector_sync_t *sync) {
-
-    int i, nfds;
-    struct epoll_event evs[64];
+    zmq_pollitem_t items[2];
     openli_state_update_t recvd;
-    libtrace_message_queue_t *srcq = NULL;
-    sync_epoll_t *syncev;
+    int rc;
 
-    nfds = epoll_wait(sync->glob->epoll_fd, evs, 64, 50);
+    items[0].socket = sync->zmq_colsock;
+    items[0].events = ZMQ_POLLIN;
 
-    if (nfds <= 0) {
-        return nfds;
+    items[1].socket = NULL;
+    items[1].fd = sync->instruct_fd;
+    items[1].events = sync->instruct_events;
+
+    if (zmq_poll(items, 2, 50) < 0) {
+        return -1;
     }
 
-    for (i = 0; i < nfds; i++) {
-        syncev = (sync_epoll_t *)(evs[i].data.ptr);
-
-	    /* Check for incoming messages from processing threads and II fd */
-        if ((evs[i].events & EPOLLERR) || (evs[i].events & EPOLLHUP) ||
-                (evs[i].events & EPOLLRDHUP)) {
-            /* Some error detection / handling? */
-
-            /* Don't close any fds on error -- they should get closed when
-             * their parent structures are tidied up */
-
-
-            if (syncev->fd == sync->instruct_fd) {
-                if (sync->instruct_log) {
-                    logger(LOG_INFO, "OpenLI: collector lost connection to central provisioner");
-                }
-                sync_disconnect_provisioner(sync);
-                return 0;
-
-            } else {
-                logger(LOG_INFO, "OpenLI: processor->sync message queue pipe has broken down.");
-                epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_DEL,
-                        syncev->fd, NULL);
-            }
-
-            continue;
+    if (items[1].revents & ZMQ_POLLOUT) {
+        if (send_to_provisioner(sync) <= 0) {
+            sync_disconnect_provisioner(sync);
+            return 0;
         }
-
-        if (syncev->fd == sync->instruct_fd) {
-            /* Provisioner fd */
-            if (evs[i].events & EPOLLOUT) {
-                if (send_to_provisioner(sync) <= 0) {
-                    sync_disconnect_provisioner(sync);
-                    return 0;
-                }
-            } else {
-                if (recv_from_provisioner(sync) <= 0) {
-                    sync_disconnect_provisioner(sync);
-                    return 0;
-                }
-            }
-            continue;
-        }
-
-        /* Must be from a processing thread queue, figure out which one */
-        if (libtrace_message_queue_count(
-                (libtrace_message_queue_t *)(syncev->ptr)) <= 0) {
-
-            /* Processing thread queue was empty but we thought we had a
-             * message available? I think this is just a consequence of
-             * libtrace MQ's "fast" path that tries to avoid locking for
-             * simple operations. */
-            continue;
-        }
-
-        libtrace_message_queue_get((libtrace_message_queue_t *)(syncev->ptr),
-                (void *)(&recvd));
-
-        /* If a hello from a thread, push all active intercepts back */
-        if (recvd.type == OPENLI_UPDATE_HELLO) {
-            push_all_active_intercepts(sync, sync->allusers, sync->ipintercepts,
-                    recvd.data.replyq);
-            push_all_coreservers(sync->coreservers, recvd.data.replyq);
-        }
-
-
-        /* If an update from a thread, update appropriate internal state */
-
-        /* If this resolves an unknown mapping or changes an existing one,
-         * push II update messages to processing threads */
-
-        /* If this relates to an active intercept, create IRI and export */
-        if (recvd.type == OPENLI_UPDATE_RADIUS) {
-            int ret;
-            if ((ret = update_user_sessions(sync, recvd.data.pkt,
-                        ACCESS_RADIUS)) < 0) {
-
-                /* If a user has screwed up their RADIUS config and we
-                 * see non-RADIUS packets here, we probably want to limit the
-                 * number of times we complain about this... FIXME */
-                logger(LOG_INFO,
-                        "OpenLI: sync thread received an invalid RADIUS packet");
-            }
-
-            trace_decrement_packet_refcount(recvd.data.pkt);
-        }
-
     }
 
-    return nfds;
+    if (items[1].revents & ZMQ_POLLIN) {
+        if (recv_from_provisioner(sync) <= 0) {
+            sync_disconnect_provisioner(sync);
+            return 0;
+        }
+    }
+
+    if (items[0].revents & ZMQ_POLLIN) {
+        do {
+            rc = zmq_recv(sync->zmq_colsock, &recvd, sizeof(recvd),
+                    ZMQ_DONTWAIT);
+            if (rc < 0) {
+                if (errno == EAGAIN) {
+                    return 0;
+                }
+                logger(LOG_INFO, "openli-collector: IP sync thread had an error receiving message from collector threads: %s", strerror(errno));
+                return -1;
+            }
+
+            /* If a hello from a thread, push all active intercepts back */
+            if (recvd.type == OPENLI_UPDATE_HELLO) {
+                push_all_active_intercepts(sync, sync->allusers,
+                        sync->ipintercepts, recvd.data.replyq);
+                push_all_coreservers(sync->coreservers, recvd.data.replyq);
+            }
+
+
+            /* If an update from a thread, update appropriate internal state */
+
+            /* If this resolves an unknown mapping or changes an existing one,
+             * push II update messages to processing threads */
+
+            /* If this relates to an active intercept, create IRI and export */
+            if (recvd.type == OPENLI_UPDATE_RADIUS) {
+                int ret;
+                if ((ret = update_user_sessions(sync, recvd.data.pkt,
+                            ACCESS_RADIUS)) < 0) {
+                    /* If a user has screwed up their RADIUS config and we
+                     * see non-RADIUS packets here, we probably want to limit the
+                     * number of times we complain about this... FIXME */
+                    logger(LOG_INFO,
+                            "OpenLI: sync thread received an invalid RADIUS packet");
+                }
+                trace_destroy_packet(recvd.data.pkt);
+            }
+        } while (rc > 0);
+    }
+
+    return 0;
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -25,21 +25,23 @@
  */
 
 #include <assert.h>
-#include <uthash.h>
 #include <libtrace_parallel.h>
 #include <pthread.h>
+#include <Judy.h>
+#include <uthash.h>
 
 #include "ipiri.h"
 #include "logger.h"
 #include "internetaccess.h"
 #include "util.h"
 
-#define ORPHAN_EXPIRY 1.0
+#define ORPHAN_EXPIRY (1.0)
 
 #define DERIVE_REQUEST_ID(rad, reqtype) \
     ((((uint32_t)rad->msgident) << 16) + (((uint32_t)rad->sourceport)) + \
     (((uint32_t)reqtype) << 24))
 
+#define PREALLOC_ATTRS (50000)
 #define STANDARD_ATTR_ALLOC (64)
 
 #define TIMESTAMP_TO_TV(tv, floatts) \
@@ -81,13 +83,12 @@ enum {
 typedef struct radius_user {
 
     char *userid;
+    int userid_len;
     char *nasidentifier;
+    int nasid_len;
     session_state_t current;
     struct sockaddr *framedip4;
     struct sockaddr *framedip6;
-
-    UT_hash_handle hh_username;
-
 } radius_user_t;
 
 typedef struct radius_v6_prefix_attr {
@@ -117,7 +118,6 @@ struct radius_saved_request {
     radius_user_t *targetuser;
     radius_saved_req_t *next;
     UT_hash_handle hh;
-
 };
 
 
@@ -133,19 +133,17 @@ struct radius_orphaned_resp {
 
 typedef struct radius_nas_t {
     uint8_t *nasip;
-    radius_user_t *users;
-    radius_saved_req_t *requests;
+    Pvoid_t user_map;
+    radius_saved_req_t *request_map;
 
     radius_orphaned_resp_t *orphans;
     radius_orphaned_resp_t *orphans_tail;
 
-    UT_hash_handle hh;
 } radius_nas_t;
 
 typedef struct radius_server {
     uint8_t *servip;
-    radius_nas_t *naslist;
-    UT_hash_handle hh;
+    Pvoid_t nas_map;
 } radius_server_t;
 
 typedef struct radius_parsed {
@@ -180,12 +178,12 @@ typedef struct radius_parsed {
 } radius_parsed_t;
 
 typedef struct radius_global {
+    uint8_t interesting_attributes[256];
     radius_attribute_t *freeattrs;
     radius_saved_req_t *freeaccreqs;
     radius_parsed_t *parsedpkt;
 
-    pthread_mutex_t mutex;
-    radius_server_t *servers;
+    Pvoid_t server_map;
 } radius_global_t;
 
 typedef struct radius_header {
@@ -224,21 +222,11 @@ static inline void reset_parsed_packet(radius_parsed_t *parsed) {
 
 }
 
-static void radius_init_plugin_data(access_plugin_t *p) {
-    radius_global_t *glob;
+static inline char *fast_strdup(char *orig, int origlen) {
+    char *dup = malloc(origlen + 1);
 
-    glob = (radius_global_t *)(malloc(sizeof(radius_global_t)));
-    glob->freeattrs = NULL;
-    glob->freeaccreqs = NULL;
-    glob->servers = NULL;
-
-    pthread_mutex_init(&(glob->mutex), NULL);
-
-    glob->parsedpkt = (radius_parsed_t *)malloc(sizeof(radius_parsed_t));
-    reset_parsed_packet(glob->parsedpkt);
-
-    p->plugindata = (void *)(glob);
-    return;
+    memcpy(dup, orig, origlen + 1);
+    return dup;
 }
 
 static inline int interesting_attribute(uint8_t attrnum) {
@@ -265,39 +253,16 @@ static inline int interesting_attribute(uint8_t attrnum) {
 
 }
 
-static inline void free_attribute_list(radius_attribute_t *attrlist) {
-    radius_attribute_t *at, *tmp;
-
-    at = attrlist;
-    while (at) {
-        tmp = at;
-        at = at->next;
-        if (tmp->att_val) {
-            free(tmp->att_val);
-        }
-        free(tmp);
-    }
-}
-
 static inline radius_attribute_t *create_new_attribute(radius_global_t *glob,
-        uint8_t type, uint8_t len, uint8_t *valptr) {
+        uint8_t type, uint8_t len, uint8_t *valptr, uint8_t forcealloc) {
 
     radius_attribute_t *attr;
-    int gotlock = 0;
-    
-    if (pthread_mutex_trylock(&(glob->mutex)) == 0) {
-        gotlock = 1;
-    }
 
-    if (gotlock && glob->freeattrs) {
+    if (glob->freeattrs && !forcealloc) {
         attr = glob->freeattrs;
         glob->freeattrs = attr->next;
     } else {
         attr = (radius_attribute_t *)calloc(1, sizeof(radius_attribute_t));
-    }
-
-    if (gotlock) {
-        pthread_mutex_unlock(&(glob->mutex));
     }
 
     attr->next = NULL;
@@ -314,18 +279,143 @@ static inline radius_attribute_t *create_new_attribute(radius_global_t *glob,
         attr->att_val = realloc(attr->att_val, attr->att_len);
     }
 
-    memcpy(attr->att_val, valptr, attr->att_len);
+    if (valptr) {
+        memcpy(attr->att_val, valptr, attr->att_len);
+    }
     return attr;
+}
+
+static void radius_init_plugin_data(access_plugin_t *p) {
+    radius_global_t *glob;
+    int i;
+
+    glob = (radius_global_t *)(malloc(sizeof(radius_global_t)));
+    glob->freeattrs = NULL;
+    glob->freeaccreqs = NULL;
+    glob->server_map = (Pvoid_t)NULL;
+
+    memset(glob->interesting_attributes, 0,
+            sizeof(glob->interesting_attributes));
+
+    for (i = 0; i < 256; i++) {
+        if (interesting_attribute((uint8_t)i)) {
+            glob->interesting_attributes[i] = 1;
+        }
+    }
+
+    glob->parsedpkt = (radius_parsed_t *)malloc(sizeof(radius_parsed_t));
+    reset_parsed_packet(glob->parsedpkt);
+
+    for (i = 0; i < PREALLOC_ATTRS; i++) {
+        radius_attribute_t *at;
+
+        at = create_new_attribute(glob, RADIUS_ATTR_NASPORT,
+                STANDARD_ATTR_ALLOC, NULL, 1);
+        at->next = glob->freeattrs;
+        glob->freeattrs = at;
+    }
+
+    p->plugindata = (void *)(glob);
+    return;
+}
+
+static inline void free_attribute_list(radius_attribute_t *attrlist) {
+    radius_attribute_t *at, *tmp;
+
+    at = attrlist;
+    while (at) {
+        tmp = at;
+        at = at->next;
+        if (tmp->att_val) {
+            free(tmp->att_val);
+        }
+        free(tmp);
+    }
+}
+
+static void destroy_radius_nas(radius_nas_t *nas) {
+    radius_orphaned_resp_t *orph, *tmporph;
+    radius_saved_req_t *req, *tmpreq;
+    radius_user_t *user;
+    PWord_t pval;
+    char index[128];
+    Word_t res;
+
+    index[0] = '\0';
+    JSLF(pval, nas->user_map, index);
+    while (pval) {
+        user = (radius_user_t *)(*pval);
+        if (user->userid) {
+            free(user->userid);
+        }
+        if (user->nasidentifier) {
+            free(user->nasidentifier);
+        }
+        if (user->framedip4) {
+            free(user->framedip4);
+        }
+        if (user->framedip6) {
+            free(user->framedip6);
+        }
+        free(user);
+
+        JSLN(pval, nas->user_map, index);
+    }
+    JSLFA(res, nas->user_map);
+
+    HASH_ITER(hh, nas->request_map, req, tmpreq) {
+        HASH_DELETE(hh, nas->request_map, req);
+        free_attribute_list(req->attrs);
+        free(req);
+
+    }
+
+    orph = nas->orphans;
+    while (orph) {
+        tmporph = orph;
+        orph = orph->next;
+        free_attribute_list(tmporph->savedattrs);
+        free(tmporph);
+    }
+
+    if (nas->nasip) {
+        free(nas->nasip);
+    }
+    free(nas);
+}
+
+static void destroy_radius_server(radius_server_t *srv) {
+
+    radius_nas_t *nas;
+    PWord_t pval;
+    Word_t res;
+    char index[128];
+
+    index[0] = '\0';
+    JSLF(pval, srv->nas_map, index);
+    while (pval) {
+        nas = (radius_nas_t *)(*pval);
+        destroy_radius_nas(nas);
+
+        JSLN(pval, srv->nas_map, index);
+    }
+
+    JSLFA(res, srv->nas_map);
+    if (srv->servip) {
+        free(srv->servip);
+    }
+    free(srv);
 }
 
 static void radius_destroy_plugin_data(access_plugin_t *p) {
 
     radius_global_t *glob;
-    radius_server_t *srv, *tmpsrv;
-    radius_nas_t *nas, *tmpnas;
-    radius_user_t *user, *tmpuser;
+    radius_server_t *srv;
+    radius_nas_t *nas;
     radius_saved_req_t *req, *tmpreq;
-    radius_orphaned_resp_t *orph, *tmporph;
+    PWord_t pval;
+    char index[128];
+    Word_t res;
 
     glob = (radius_global_t *)(p->plugindata);
     if (!glob) {
@@ -341,58 +431,20 @@ static void radius_destroy_plugin_data(access_plugin_t *p) {
         free(tmpreq);
     }
 
-    HASH_ITER(hh, glob->servers, srv, tmpsrv) {
-        HASH_ITER(hh, srv->naslist, nas, tmpnas) {
-            HASH_ITER(hh_username, nas->users, user, tmpuser) {
-                HASH_DELETE(hh_username, nas->users, user);
-                if (user->userid) {
-                    free(user->userid);
-                }
-                if (user->nasidentifier) {
-                    free(user->nasidentifier);
-                }
-                if (user->framedip4) {
-                    free(user->framedip4);
-                }
-                if (user->framedip6) {
-                    free(user->framedip6);
-                }
-                free(user);
-            }
-
-            HASH_ITER(hh, nas->requests, req, tmpreq) {
-                HASH_DELETE(hh, nas->requests, req);
-                free_attribute_list(req->attrs);
-                free(req);
-            }
-
-            orph = nas->orphans;
-            while (orph) {
-                tmporph = orph;
-                orph = orph->next;
-                free_attribute_list(tmporph->savedattrs);
-                free(tmporph);
-            }
-
-            HASH_DELETE(hh, srv->naslist, nas);
-            if (nas->nasip) {
-                free(nas->nasip);
-            }
-            free(nas);
-        }
-        HASH_DELETE(hh, glob->servers, srv);
-        if (srv->servip) {
-            free(srv->servip);
-        }
-        free(srv);
+    index[0] = '\0';
+    JSLF(pval, glob->server_map, index);
+    while (pval) {
+        srv = (radius_server_t *)(*pval);
+        destroy_radius_server(srv);
+        JSLN(pval, glob->server_map, index);
     }
+    JSLFA(res, glob->server_map);
 
     if (glob->parsedpkt) {
         free_attribute_list(glob->parsedpkt->attrs);
         free(glob->parsedpkt);
     }
 
-    pthread_mutex_destroy(&(glob->mutex));
     free(glob);
     return;
 }
@@ -409,16 +461,12 @@ static inline void release_attribute(radius_attribute_t **freelist,
     }
 }
 
-static inline void release_attribute_list(pthread_mutex_t *mutex,
+static inline void release_attribute_list(
         radius_attribute_t **freelist, radius_attribute_t *attrlist) {
 
     radius_attribute_t *at, *tmp;
 
     at = attrlist;
-
-    if (pthread_mutex_trylock(mutex) != 0) {
-        free_attribute_list(attrlist);
-    }
 
     while (at != NULL) {
         tmp = at;
@@ -426,7 +474,6 @@ static inline void release_attribute_list(pthread_mutex_t *mutex,
         release_attribute(freelist, tmp);
     }
 
-    pthread_mutex_unlock(mutex);
 }
 
 static inline void release_saved_request(radius_saved_req_t **freelist,
@@ -455,8 +502,7 @@ static void radius_destroy_parsed_data(access_plugin_t *p, void *parsed) {
     if (rparsed->msgtype == RADIUS_CODE_ACCESS_REQUEST ||
                     rparsed->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
         if (rparsed->savedresp) {
-            release_attribute_list(&(glob->mutex),
-                    &(glob->freeattrs), rparsed->attrs);
+            release_attribute_list(&(glob->freeattrs), rparsed->attrs);
         }
     }
     else if (rparsed->msgtype == RADIUS_CODE_ACCESS_ACCEPT ||
@@ -464,25 +510,22 @@ static void radius_destroy_parsed_data(access_plugin_t *p, void *parsed) {
             rparsed->msgtype == RADIUS_CODE_ACCESS_CHALLENGE ||
             rparsed->msgtype == RADIUS_CODE_ACCOUNT_RESPONSE) {
         if (rparsed->savedreq) {
-            release_attribute_list(&(glob->mutex),
-                    &(glob->freeattrs), rparsed->attrs);
+            release_attribute_list(&(glob->freeattrs), rparsed->attrs);
         }
     }
     else {
-        release_attribute_list(&(glob->mutex),
-                &(glob->freeattrs), rparsed->attrs);
+        release_attribute_list(&(glob->freeattrs), rparsed->attrs);
     }
 
 
     if (rparsed->savedreq) {
-        release_attribute_list(&(glob->mutex),
-                &(glob->freeattrs), rparsed->savedreq->attrs);
+        release_attribute_list(&(glob->freeattrs), rparsed->savedreq->attrs);
         release_saved_request(&(glob->freeaccreqs), rparsed->savedreq);
         rparsed->savedreq = NULL;
     }
 
     if (rparsed->savedresp) {
-        release_attribute_list(&(glob->mutex), &(glob->freeattrs),
+        release_attribute_list(&(glob->freeattrs),
                 rparsed->savedresp->savedattrs);
         free(rparsed->savedresp);
     }
@@ -554,10 +597,12 @@ static void create_orphan(radius_global_t *glob, radius_orphaned_resp_t **head,
     }
 }
 
-static inline void *find_radius_start(libtrace_packet_t *pkt, uint32_t *rem) {
+static inline void *find_radius_start(libtrace_packet_t *pkt, uint32_t *rem,
+        uint16_t *sourceport, uint16_t *destport) {
 
     void *transport, *radstart;
     uint8_t proto;
+    libtrace_udp_t *udp;
 
     transport = trace_get_transport(pkt, &proto, rem);
     if (!transport || rem == 0) {
@@ -568,60 +613,80 @@ static inline void *find_radius_start(libtrace_packet_t *pkt, uint32_t *rem) {
         return NULL;
     }
 
-    radstart = trace_get_payload_from_udp((libtrace_udp_t *)transport, rem);
+    udp = (libtrace_udp_t *)transport;
+    *sourceport = ntohs(udp->source);
+    *destport = ntohs(udp->dest);
+
+    radstart = trace_get_payload_from_udp(udp, rem);
     return radstart;
 }
 
 static inline int grab_nas_details_from_packet(radius_parsed_t *parsed,
-        libtrace_packet_t *pkt, uint8_t code) {
+        libtrace_packet_t *pkt, uint8_t code, uint16_t sourceport,
+        uint16_t destport) {
 
-    struct sockaddr_storage ipaddr_nas;
-    struct sockaddr_storage ipaddr_rad;
+    struct sockaddr_storage *ipaddr_src;
+    struct sockaddr_storage *ipaddr_dst;
+    void *l3;
+    uint16_t ethertype;
+    uint32_t remaining;
 
-    memset(&ipaddr_nas, 0, sizeof(struct sockaddr_storage));
-    memset(&ipaddr_rad, 0, sizeof(struct sockaddr_storage));
+    /* We must have a complete IP header to get here */
+    l3 = trace_get_layer3(pkt, &ethertype, &remaining);
+    if (l3 == NULL || remaining < sizeof(libtrace_ip_t)) {
+        return -1;
+    }
 
     switch(code) {
         case RADIUS_CODE_ACCESS_REQUEST:
         case RADIUS_CODE_ACCOUNT_REQUEST:
-            if (trace_get_source_address(pkt,
-                    (struct sockaddr *)&ipaddr_nas) == NULL) {
-                logger(LOG_INFO,
-                        "Unable to get NAS address from RADIUS packet");
-                return -1;
-            }
-            if (trace_get_destination_address(pkt,
-                    (struct sockaddr *)&ipaddr_rad) == NULL) {
-                logger(LOG_INFO,
-                        "Unable to get server address from RADIUS packet");
-                return -1;
-            }
-            parsed->sourceport = trace_get_source_port(pkt);
+            ipaddr_src = &(parsed->nasip);
+            ipaddr_dst = &(parsed->radiusip);
+            parsed->sourceport = sourceport;
             break;
         case RADIUS_CODE_ACCESS_ACCEPT:
         case RADIUS_CODE_ACCESS_REJECT:
         case RADIUS_CODE_ACCOUNT_RESPONSE:
         case RADIUS_CODE_ACCESS_CHALLENGE:
-            if (trace_get_destination_address(pkt,
-                    (struct sockaddr *)&ipaddr_nas) == NULL) {
-                logger(LOG_INFO,
-                        "Unable to get NAS address from RADIUS packet");
-                return -1;
-            }
-            if (trace_get_source_address(pkt,
-                    (struct sockaddr *)&ipaddr_rad) == NULL) {
-                logger(LOG_INFO,
-                        "Unable to get server address from RADIUS packet");
-                return -1;
-            }
-            parsed->sourceport = trace_get_destination_port(pkt);
+            ipaddr_dst = &(parsed->nasip);
+            ipaddr_src = &(parsed->radiusip);
+            parsed->sourceport = destport;
             break;
         default:
             return -1;
     }
 
-    memcpy(&(parsed->nasip), &ipaddr_nas, sizeof(struct sockaddr_storage));
-    memcpy(&(parsed->radiusip), &ipaddr_rad, sizeof(struct sockaddr_storage));
+    if (ethertype == TRACE_ETHERTYPE_IP) {
+        struct sockaddr_in *src4, *dst4;
+        libtrace_ip_t *ip = (libtrace_ip_t *)l3;
+
+        src4 = (struct sockaddr_in *)ipaddr_src;
+        dst4 = (struct sockaddr_in *)ipaddr_dst;
+
+        src4->sin_family = AF_INET;
+        dst4->sin_family = AF_INET;
+        src4->sin_port = 0;
+        dst4->sin_port = 0;
+        src4->sin_addr = ip->ip_src;
+        dst4->sin_addr = ip->ip_dst;
+    } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
+        struct sockaddr_in6 *src6, *dst6;
+        libtrace_ip6_t *ip6 = (libtrace_ip6_t *)l3;
+
+        src6 = (struct sockaddr_in6 *)ipaddr_src;
+        dst6 = (struct sockaddr_in6 *)ipaddr_dst;
+
+        src6->sin6_family = AF_INET6;
+        dst6->sin6_family = AF_INET6;
+        src6->sin6_port = 0;
+        dst6->sin6_port = 0;
+        src6->sin6_addr = ip6->ip_src;
+        dst6->sin6_addr = ip6->ip_dst;
+    } else {
+        return -1;
+    }
+
+
     return 0;
 }
 
@@ -632,6 +697,10 @@ static inline void update_known_servers(radius_global_t *glob,
     radius_nas_t *nas;
     uint8_t *sockkey;
     int socklen;
+    char hashkey[20];
+    PWord_t pval;
+
+    memset(hashkey, 0, sizeof(hashkey));
 
     sockkey = sockaddr_to_key((struct sockaddr *)&(parsed->radiusip),
             &socklen);
@@ -639,15 +708,18 @@ static inline void update_known_servers(radius_global_t *glob,
     if (sockkey == NULL) {
         return;
     }
-    HASH_FIND(hh, glob->servers, sockkey, socklen, srv);
+    memcpy(hashkey, sockkey, socklen);
+    JSLG(pval, glob->server_map, hashkey);
 
-    if (!srv) {
+    if (pval == NULL) {
         srv = (radius_server_t *)malloc(sizeof(radius_server_t));
-        srv->naslist = NULL;
+        srv->nas_map = (Pvoid_t)NULL;
         srv->servip = (uint8_t *)malloc(socklen);
         memcpy(srv->servip, sockkey, socklen);
-
-        HASH_ADD_KEYPTR(hh, glob->servers, srv->servip, socklen, srv);
+        JSLI(pval, glob->server_map, hashkey);
+        *pval = (Word_t)srv;
+    } else {
+        srv = (radius_server_t *)(*pval);
     }
 
 
@@ -657,17 +729,22 @@ static inline void update_known_servers(radius_global_t *glob,
     if (sockkey == NULL) {
         return;
     }
-    HASH_FIND(hh, srv->naslist, sockkey, socklen, nas);
-    if (!nas) {
+    memcpy(hashkey, sockkey, socklen);
+    JSLG(pval, srv->nas_map, hashkey);
+
+    if (pval == NULL) {
         nas = (radius_nas_t *)malloc(sizeof(radius_nas_t));
-        nas->users = NULL;
-        nas->requests = NULL;
+        nas->user_map = (Pvoid_t)NULL;
+        nas->request_map = NULL;
         nas->orphans = NULL;
         nas->orphans_tail = NULL;
         nas->nasip = (uint8_t *)malloc(socklen);
         memcpy(nas->nasip, sockkey, socklen);
 
-        HASH_ADD_KEYPTR(hh, srv->naslist, nas->nasip, socklen, nas);
+        JSLI(pval, srv->nas_map, hashkey);
+        *pval = (Word_t)nas;
+    } else {
+        nas = (radius_nas_t *)(*pval);
     }
 
     parsed->matchednas = nas;
@@ -683,6 +760,8 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
     uint16_t len;
     radius_parsed_t *parsed;
     radius_global_t *glob;
+    uint16_t sourceport = 0;
+    uint16_t destport = 0;
 
     glob = (radius_global_t *)(p->plugindata);
 
@@ -691,7 +770,7 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
         radius_destroy_parsed_data(p, (void *)parsed);
     }
 
-    radstart = (uint8_t *)find_radius_start(pkt, &rem);
+    radstart = (uint8_t *)find_radius_start(pkt, &rem, &sourceport, &destport);
     if (radstart == NULL) {
         return NULL;
     }
@@ -719,7 +798,8 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
     parsed->origpkt = pkt;
     parsed->tvsec = trace_get_seconds(pkt);
 
-    if (grab_nas_details_from_packet(parsed, pkt, hdr->code) < 0) {
+    if (grab_nas_details_from_packet(parsed, pkt, hdr->code, sourceport,
+            destport) < 0) {
         return NULL;
     }
 
@@ -740,8 +820,8 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
             break;
         }
 
-        if (interesting_attribute(att_type)) {
-            newattr = create_new_attribute(glob, att_type, att_len, ptr);
+        if (glob->interesting_attributes[att_type]) {
+            newattr = create_new_attribute(glob, att_type, att_len, ptr, 0);
             newattr->next = parsed->attrs;
             parsed->attrs = newattr;
 
@@ -760,8 +840,10 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
 static inline void process_username_attribute(radius_parsed_t *raddata) {
 
     char userkey[256];
+    int keylen;
     radius_user_t *user;
     radius_attribute_t *userattr;
+    PWord_t pval;
 
     if (raddata->msgtype != RADIUS_CODE_ACCESS_REQUEST &&
             raddata->msgtype != RADIUS_CODE_ACCOUNT_REQUEST) {
@@ -783,32 +865,35 @@ static inline void process_username_attribute(radius_parsed_t *raddata) {
     if (userattr->att_len < 256) {
         memcpy(userkey, userattr->att_val, userattr->att_len);
         userkey[userattr->att_len] = '\0';
+        keylen = userattr->att_len;
     } else {
         memcpy(userkey, userattr->att_val, 255);
         userkey[255] = '\0';
+        keylen = 255;
         logger(LOG_INFO,
                 "OpenLI RADIUS: User-Name is too long, truncated to %s",
                 userkey);
     }
 
-    HASH_FIND(hh_username, raddata->matchednas->users, userkey,
-            strlen(userkey), user);
+    JSLG(pval, raddata->matchednas->user_map, userkey);
 
-    if (user) {
-        raddata->matcheduser = user;
+    if (pval) {
+        raddata->matcheduser = (radius_user_t *)(*pval);
         return;
     }
 
     user = (radius_user_t *)malloc(sizeof(radius_user_t));
 
-    user->userid = strdup(userkey);
+    user->userid = fast_strdup(userkey, keylen);
+    user->userid_len = keylen;
     user->nasidentifier = NULL;
+    user->nasid_len = 0;
     user->current = SESSION_STATE_NEW;
     user->framedip4 = NULL;
     user->framedip6 = NULL;
 
-    HASH_ADD_KEYPTR(hh_username, raddata->matchednas->users, user->userid,
-            strlen(user->userid), user);
+    JSLI(pval, raddata->matchednas->user_map, user->userid);
+    *pval = (Word_t)user;
     raddata->matcheduser = user;
 }
 
@@ -863,6 +948,7 @@ static uint32_t assign_cin(radius_parsed_t *raddata) {
 
 static inline void process_nasid_attribute(radius_parsed_t *raddata) {
     char nasid[1024];
+    int keylen = 0;
     uint8_t attrnum = RADIUS_ATTR_NASIDENTIFIER;
 
     radius_attribute_t *nasattr;
@@ -886,9 +972,11 @@ static inline void process_nasid_attribute(radius_parsed_t *raddata) {
     if (nasattr->att_len < 256) {
         memcpy(nasid, nasattr->att_val, nasattr->att_len);
         nasid[nasattr->att_len] = '\0';
+        keylen = nasattr->att_len;
     } else {
         memcpy(nasid, nasattr->att_val, 255);
         nasid[255] = '\0';
+        keylen = 255;
         logger(LOG_INFO,
                 "OpenLI RADIUS: NAS-Identifier is too long, truncated to %s",
                 nasid);
@@ -909,7 +997,8 @@ static inline void process_nasid_attribute(radius_parsed_t *raddata) {
         }
     }
 
-    raddata->matcheduser->nasidentifier = strdup(nasid);
+    raddata->matcheduser->nasidentifier = fast_strdup(nasid, keylen);
+    raddata->matcheduser->nasid_len = keylen;
 }
 
 static inline void process_nasport_attribute(radius_parsed_t *raddata) {
@@ -1022,8 +1111,9 @@ static inline void find_matching_request(radius_global_t *glob,
 
         radius_saved_req_t *req = NULL;
 
-        HASH_FIND(hh, raddata->matchednas->requests, &reqid, sizeof(reqid),
-                req);
+        HASH_FIND(hh, raddata->matchednas->request_map, &reqid,
+                sizeof(reqid), req);
+
         if (req == NULL) {
             create_orphan(glob, &(raddata->matchednas->orphans),
                     &(raddata->matchednas->orphans_tail), raddata->origpkt,
@@ -1036,12 +1126,14 @@ static inline void find_matching_request(radius_global_t *glob,
         raddata->matcheduser = req->targetuser;
         raddata->savedreq = req;
         raddata->accttype = raddata->savedreq->statustype;
-        HASH_DELETE(hh, raddata->matchednas->requests, req);
+
+        HASH_DELETE(hh, raddata->matchednas->request_map, req);
     }
 
 }
 
-static char *radius_get_userid(access_plugin_t *p, void *parsed) {
+static char *radius_get_userid(access_plugin_t *p, void *parsed,
+        int *useridlen) {
 
     radius_parsed_t *raddata;
     radius_global_t *glob;
@@ -1050,7 +1142,9 @@ static char *radius_get_userid(access_plugin_t *p, void *parsed) {
     glob = (radius_global_t *)(p->plugindata);
     raddata = (radius_parsed_t *)parsed;
 
+    *useridlen = 0;
     if (raddata->matcheduser) {
+        *useridlen = raddata->matcheduser->userid_len;
         return raddata->matcheduser->userid;
     }
 
@@ -1075,6 +1169,7 @@ static char *radius_get_userid(access_plugin_t *p, void *parsed) {
      */
     find_matching_request(glob, raddata);
     if (raddata->matcheduser) {
+        *useridlen = raddata->matcheduser->userid_len;
         return raddata->matcheduser->userid;
     }
     return NULL;
@@ -1243,9 +1338,7 @@ static inline int64_t translate_term_cause(uint32_t *tcause) {
     return IPIRI_END_REASON_UNDEFINED;
 }
 
-static inline char *quickcat(char *ptr, int *rem, char *toadd) {
-
-    int towrite = strlen(toadd);
+static inline char *quickcat(char *ptr, int *rem, char *toadd, int towrite) {
 
     if (*rem <= 1) {
         return ptr;
@@ -1371,9 +1464,11 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     }
 
     ptr = sessionid;
-    ptr = quickcat(ptr, &rem, raddata->matcheduser->userid);
-    ptr = quickcat(ptr, &rem, "-");
-    ptr = quickcat(ptr, &rem, raddata->matcheduser->nasidentifier);
+    ptr = quickcat(ptr, &rem, raddata->matcheduser->userid,
+            raddata->matcheduser->userid_len);
+    ptr = quickcat(ptr, &rem, "-", 1);
+    ptr = quickcat(ptr, &rem, raddata->matcheduser->nasidentifier,
+            raddata->matcheduser->nasid_len);
 
 
     thissess = *sesslist;
@@ -1388,7 +1483,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         thissess = (access_session_t *)malloc(sizeof(access_session_t));
 
         thissess->plugin = p;
-        thissess->sessionid = strdup(sessionid);
+        thissess->sessionid = fast_strdup(sessionid, 1024 - rem);
         thissess->statedata = NULL;
         thissess->idlength = strlen(sessionid);
         thissess->cin = assign_cin(raddata);
@@ -1438,20 +1533,19 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
             req->attrs = NULL;
 
             if (!raddata->savedresp) {
-                HASH_FIND(hh, raddata->matchednas->requests, &(req->reqid),
+                HASH_FIND(hh, raddata->matchednas->request_map, &(req->reqid),
                         sizeof(req->reqid), check);
                 if (check) {
                     /* The old one is probably an unanswered request, replace
                      * it with this one instead. */
-                    HASH_DELETE(hh, raddata->matchednas->requests, check);
-                    release_attribute_list(&(glob->mutex), &(glob->freeattrs),
-                            check->attrs);
+                    release_attribute_list(&(glob->freeattrs), check->attrs);
                     release_saved_request(&(glob->freeaccreqs), check);
+                    HASH_DELETE(hh, raddata->matchednas->request_map, check);
                 }
 
                 req->attrs = raddata->attrs;
 
-                HASH_ADD_KEYPTR(hh, raddata->matchednas->requests,
+                HASH_ADD_KEYPTR(hh, raddata->matchednas->request_map,
                         &(req->reqid), sizeof(req->reqid), req);
             }
         }

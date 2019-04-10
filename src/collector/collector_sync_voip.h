@@ -42,12 +42,15 @@ typedef struct collector_sync_voip_data {
 
     int pubsockcount;
     void **zmq_pubsocks;
+    void *zmq_colsock;
 
     voipintercept_t *voipintercepts;
     voipcinmap_t *knowncallids;
 
     libtrace_message_queue_t *intersyncq;
-    sync_epoll_t intersync_ev;
+    int intersync_fd;
+
+    sync_epoll_t *timeouts;
 
     openli_sip_parser_t *sipparser;
 
@@ -57,6 +60,10 @@ typedef struct collector_sync_voip_data {
 
     uint8_t log_bad_instruct;
     uint8_t log_bad_sip;
+
+    zmq_pollitem_t *topoll;
+    struct rtpstreaminf **expiring_streams;
+    int topoll_size;
 
 } collector_sync_voip_t;
 

@@ -33,6 +33,7 @@
 #include <netdb.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <sys/timerfd.h>
 
 #include "etsili_core.h"
 #include "collector.h"
@@ -64,6 +65,15 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
     sync->pubsockcount = glob->seqtracker_threads;
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
 
+    sync->topoll = calloc(128, sizeof(zmq_pollitem_t));
+    sync->topoll_size = 128;
+    sync->expiring_streams = calloc(128, sizeof(struct rtpstreaminf *));
+
+    sync->timeouts = NULL;
+
+    sync->intersyncq = &(glob->intersyncq);
+    sync->intersync_fd = libtrace_message_queue_get_fd(sync->intersyncq);
+
     for (i = 0; i < sync->pubsockcount; i++) {
         sync->zmq_pubsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
         snprintf(sockname, 128, "inproc://openlipub-%d", i);
@@ -78,26 +88,14 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
         /* Do we need to set a HWM? */
     }
 
-    sync->intersyncq = &(glob->intersyncq);
-    sync->intersync_ev.fdtype = SYNC_EVENT_INTERSYNC;
-    sync->intersync_ev.fd = libtrace_message_queue_get_fd(sync->intersyncq);
-    sync->intersync_ev.ptr = sync->intersyncq;
-    sync->intersync_ev.parent = NULL;
-
-    ev.data.ptr = (void *)(&sync->intersync_ev);
-    ev.events = EPOLLIN;
-
-    pthread_mutex_lock(&(sync->glob->mutex));
-    if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_ADD, sync->intersync_ev.fd,
-            &ev) == -1) {
-        logger(LOG_INFO, "OpenLI: failed to register epoll event for receiving on intersync queue: %s",
+    sync->zmq_colsock = zmq_socket(glob->zmq_ctxt, ZMQ_PULL);
+    if (zmq_bind(sync->zmq_colsock, "inproc://openli-voipsync") != 0) {
+        logger(LOG_INFO, "OpenLI: colsync VOIP thread unable to bind to zmq socket for collector updates: %s",
                 strerror(errno));
-        pthread_mutex_unlock(&(sync->glob->mutex));
-        free(sync);
-        return NULL;
+        zmq_close(sync->zmq_colsock);
+        sync->zmq_colsock = NULL;
     }
 
-    pthread_mutex_unlock(&(sync->glob->mutex));
 
     sync->voipintercepts = NULL;
     sync->knowncallids = NULL;
@@ -117,6 +115,7 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
 void clean_sync_voip_data(collector_sync_voip_t *sync) {
     struct epoll_event ev;
     int zero = 0, i;
+    sync_epoll_t *syncev, *tmp;
 
     free_voip_cinmap(sync->knowncallids);
     if (sync->voipintercepts) {
@@ -126,17 +125,21 @@ void clean_sync_voip_data(collector_sync_voip_t *sync) {
         release_sip_parser(sync->sipparser);
     }
 
+    if (sync->topoll) {
+        free(sync->topoll);
+    }
+
+    if (sync->expiring_streams) {
+        free(sync->expiring_streams);
+    }
+
+    HASH_ITER(hh, sync->timeouts, syncev, tmp) {
+        HASH_DELETE(hh, sync->timeouts, syncev);
+    }
+
     sync->voipintercepts = NULL;
     sync->knowncallids = NULL;
     sync->sipparser = NULL;
-
-    pthread_mutex_lock(&(sync->glob->mutex));
-    if (sync->glob->epoll_fd != -1 && epoll_ctl(sync->glob->epoll_fd,
-                EPOLL_CTL_DEL, sync->intersync_ev.fd, &ev) == -1) {
-        logger(LOG_INFO, "OpenLI: failed to de-register epoll event for receiving on intersync queue: %s",
-                strerror(errno));
-    }
-    pthread_mutex_unlock(&(sync->glob->mutex));
 
     if (sync->sipdebugupdate) {
         trace_destroy_output(sync->sipdebugupdate);
@@ -159,13 +162,18 @@ void clean_sync_voip_data(collector_sync_voip_t *sync) {
         zmq_close(sync->zmq_pubsocks[i]);
     }
 
+    if (sync->zmq_colsock) {
+        zmq_setsockopt(sync->zmq_colsock, ZMQ_LINGER, &zero, sizeof(zero));
+        zmq_close(sync->zmq_colsock);
+    }
+
     free(sync->zmq_pubsocks);
 
 
 }
 
-static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
-        rtpstreaminf_t *orig) {
+static inline void push_single_voipstreamintercept(collector_sync_voip_t *sync,
+        libtrace_message_queue_t *q, rtpstreaminf_t *orig) {
 
     rtpstreaminf_t *copy;
     openli_pushed_t msg;
@@ -182,6 +190,11 @@ static inline void push_single_voipstreamintercept(libtrace_message_queue_t *q,
     memset(&msg, 0, sizeof(openli_pushed_t));
     msg.type = OPENLI_PUSH_IPMMINTERCEPT;
     msg.data.ipmmint = copy;
+
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->voipsessions_added_diff ++;
+    sync->glob->stats->voipsessions_added_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
 
     libtrace_message_queue_put(q, (void *)(&msg));
 }
@@ -206,24 +219,28 @@ static void push_halt_active_voipstreams(collector_sync_voip_t *sync,
         msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
         msg.data.rtpstreamkey = streamdup;
 
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->voipsessions_ended_diff ++;
+        sync->glob->stats->voipsessions_ended_total ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
+
         libtrace_message_queue_put(q, (void *)(&msg));
 
         /* If we were already about to time this intercept out, make sure
          * we kill the timer.
          */
         if (cin->timeout_ev) {
-            struct epoll_event ev;
             sync_epoll_t *timerev = (sync_epoll_t *)(cin->timeout_ev);
-            if (epoll_ctl(epollfd, EPOLL_CTL_DEL, timerev->fd, &ev) == -1) {
-                if (sync->log_bad_instruct) {
-                    logger(LOG_INFO, "OpenLI: unable to remove RTP stream timeout event for %s from epoll: %s",
-                            cin->streamkey, strerror(errno));
-                }
+            sync_epoll_t *syncev;
+
+            HASH_FIND(hh, sync->timeouts, &(timerev->fd), sizeof(int), syncev);
+            if (syncev) {
+                HASH_DELETE(hh, sync->timeouts, syncev);
             }
+
             close(timerev->fd);
             free(timerev);
             cin->timeout_ev = NULL;
-
         }
     }
 }
@@ -253,7 +270,7 @@ static void push_all_active_voipstreams(collector_sync_voip_t *sync,
             continue;
         }
 
-        push_single_voipstreamintercept(q, cin);
+        push_single_voipstreamintercept(sync, q, cin);
     }
 
 }
@@ -311,7 +328,7 @@ static int update_rtp_stream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp,
      * processing threads. */
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
         if (rtp->active == 0) {
-            push_single_voipstreamintercept(sendq->q, rtp);
+            push_single_voipstreamintercept(sync, sendq->q, rtp);
         }
     }
     rtp->active = 1;
@@ -603,13 +620,23 @@ static int process_sip_200ok(collector_sync_voip_t *sync, rtpstreaminf_t *thisrt
                 cseqstr) == 0 && thisrtp->byematched == 0) {
         sync_epoll_t *timeout = (sync_epoll_t *)calloc(1,
                 sizeof(sync_epoll_t));
+        struct itimerspec its;
+
+        its.it_value.tv_sec = 30;
+        its.it_value.tv_nsec = 0;
+        its.it_interval.tv_sec = 0;
+        its.it_interval.tv_nsec = 0;
 
         /* Call for this session should be over */
         thisrtp->timeout_ev = (void *)timeout;
         timeout->fdtype = SYNC_EVENT_SIP_TIMEOUT;
-        timeout->fd = epoll_add_timer(sync->glob->epoll_fd,
-                30, timeout);
+        timeout->fd = timerfd_create(CLOCK_MONOTONIC, 0);
+        timerfd_settime(timeout->fd, 0, &its, NULL);
+
         timeout->ptr = thisrtp;
+        HASH_ADD_KEYPTR(hh, sync->timeouts, &(timeout->fd), sizeof(int),
+                timeout);
+
 
         thisrtp->byematched = 1;
         *iritype = ETSILI_IRI_END;
@@ -641,6 +668,9 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
     memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,
             copy->data.ipmmiri.contentlen);
 
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipmmiri_created;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
     publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], copy);
 }
 
@@ -1006,6 +1036,9 @@ static int update_sip_state(collector_sync_voip_t *sync,
 sipgiveup:
 
     if (iserr) {
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->bad_sip_packets ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
         return -1;
     }
     return 1;
@@ -1088,6 +1121,10 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     expmsg->data.cept.authcc = strdup(vint->common.authcc);
     expmsg->data.cept.delivcc = strdup(vint->common.delivcc);
 
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->voipintercepts_ended_diff ++;
+    sync->glob->stats->voipintercepts_ended_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
     publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], expmsg);
 
     HASH_DELETE(hh_liid, sync->voipintercepts, vint);
@@ -1102,14 +1139,16 @@ static int halt_single_rtpstream(collector_sync_voip_t *sync, rtpstreaminf_t *rt
     voipcinmap_t *cin_callid, *tmp;
     voipsdpmap_t *cin_sdp, *tmp2;
     sync_sendq_t *sendq, *tmp3;
+    sync_epoll_t *syncev;
 
     if (rtp->timeout_ev) {
         sync_epoll_t *timerev = (sync_epoll_t *)(rtp->timeout_ev);
-        if (epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_DEL, timerev->fd,
-                &ev) == -1) {
-            logger(LOG_INFO, "OpenLI: unable to remove RTP stream timeout event for %s from epoll: %s",
-                    rtp->streamkey, strerror(errno));
+
+        HASH_FIND(hh, sync->timeouts, &(timerev->fd), sizeof(int), syncev);
+        if (syncev) {
+            HASH_DELETE(hh, sync->timeouts, syncev);
         }
+
         close(timerev->fd);
         free(timerev);
         rtp->timeout_ev = NULL;
@@ -1362,6 +1401,12 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     expmsg->data.cept.liid = strdup(vint->common.liid);
     expmsg->data.cept.authcc = strdup(vint->common.authcc);
     expmsg->data.cept.delivcc = strdup(vint->common.delivcc);
+
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->voipintercepts_added_diff ++;
+    sync->glob->stats->voipintercepts_added_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
+
     publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], expmsg);
 
     pthread_mutex_lock(&(sync->glob->mutex));
@@ -1540,6 +1585,10 @@ static void examine_sip_update(collector_sync_voip_t *sync,
                         "OpenLI: will not log any further invalid SIP instances.");
                 sync->log_bad_sip = 0;
             }
+            pthread_mutex_lock(sync->glob->stats_mutex);
+            sync->glob->stats->bad_sip_packets ++;
+            pthread_mutex_unlock(sync->glob->stats_mutex);
+
             if (sync->sipdebugfile && pktref) {
                 if (!sync->sipdebugout) {
                     sync->sipdebugout = open_debug_output(
@@ -1577,44 +1626,44 @@ static void examine_sip_update(collector_sync_voip_t *sync,
 
 }
 
-static inline void process_colthread_message(collector_sync_voip_t *sync,
-        sync_epoll_t *syncev) {
+static inline int process_colthread_message(collector_sync_voip_t *sync) {
 
     openli_state_update_t recvd;
+    int rc;
 
-    if (libtrace_message_queue_count(
-                (libtrace_message_queue_t *)(syncev->ptr)) <= 0) {
-        /* Processing thread queue was empty but we thought we had a
-         * message available? I think this is just a consequence of
-         * libtrace MQ's "fast" path that tries to avoid locking for
-         * simple operations. */
+    do {
+        rc = zmq_recv(sync->zmq_colsock, &recvd, sizeof(recvd), ZMQ_DONTWAIT);
 
-        return;
-    }
-
-    libtrace_message_queue_get((libtrace_message_queue_t *)(syncev->ptr),
-            (void *)(&recvd));
-
-    /* If a hello from a thread, push all active VOIP intercepts back */
-    if (recvd.type == OPENLI_UPDATE_HELLO) {
-        voipintercept_t *v;
-        for (v = sync->voipintercepts; v != NULL; v = v->hh_liid.next) {
-            push_all_active_voipstreams(sync, recvd.data.replyq, v);
+        if (rc < 0) {
+            if (errno == EAGAIN) {
+                return 0;
+            }
+            logger(LOG_INFO, "openli-collector: VOIP sync thread had an error receiving message from collector threads: %s", strerror(errno));
+            return -1;
         }
-    }
 
-    /* If an update from a thread, update appropriate internal state */
+        /* If a hello from a thread, push all active VOIP intercepts back */
+        if (recvd.type == OPENLI_UPDATE_HELLO) {
+            voipintercept_t *v;
+            for (v = sync->voipintercepts; v != NULL; v = v->hh_liid.next) {
+                push_all_active_voipstreams(sync, recvd.data.replyq, v);
+            }
+        }
 
-    /* If this resolves an unknown mapping or changes an existing one,
-     * push II update messages to processing threads */
+        /* If an update from a thread, update appropriate internal state */
 
-    /* If this relates to an active intercept, create IRI and export */
+        /* If this resolves an unknown mapping or changes an existing one,
+         * push II update messages to processing threads */
 
-    if (recvd.type == OPENLI_UPDATE_SIP) {
-        examine_sip_update(sync, recvd.data.pkt);
-        trace_decrement_packet_refcount(recvd.data.pkt);
-    }
+        /* If this relates to an active intercept, create IRI and export */
 
+        if (recvd.type == OPENLI_UPDATE_SIP) {
+            examine_sip_update(sync, recvd.data.pkt);
+            trace_destroy_packet(recvd.data.pkt);
+        }
+    } while (rc > 0);
+
+    return 0;
 }
 
 static void disable_unconfirmed_voip_intercepts(collector_sync_voip_t *sync) {
@@ -1660,13 +1709,11 @@ static void disable_unconfirmed_voip_intercepts(collector_sync_voip_t *sync) {
 
 }
 
-static inline int process_intersync_msg(collector_sync_voip_t *sync,
-        sync_epoll_t *syncev) {
+static inline int process_intersync_msg(collector_sync_voip_t *sync) {
 
     openli_intersync_msg_t syncmsg;
 
-    libtrace_message_queue_get((libtrace_message_queue_t *)(syncev->ptr),
-            (void *)(&syncmsg));
+    libtrace_message_queue_get(sync->intersyncq, (void *)(&syncmsg));
 
     switch(syncmsg.msgtype) {
         case OPENLI_PROTO_START_VOIPINTERCEPT:
@@ -1722,62 +1769,59 @@ static inline int process_intersync_msg(collector_sync_voip_t *sync,
 
 int sync_voip_thread_main(collector_sync_voip_t *sync) {
 
-    int i, nfds;
-    struct epoll_event evs[64];
-    sync_epoll_t *syncev;
+    int i, rc;
+    sync_epoll_t *syncev, *tmp;
+    int topoll_size = 2 + HASH_CNT(hh, sync->timeouts);
 
-    nfds = epoll_wait(sync->glob->epoll_fd, evs, 64, 50);
+    if (sync->topoll_size < topoll_size) {
+        free(sync->topoll);
+        free(sync->expiring_streams);
 
-    if (nfds <= 0) {
-        return nfds;
+        sync->topoll = calloc(topoll_size, sizeof(zmq_pollitem_t));
+        sync->expiring_streams = calloc(topoll_size,
+                sizeof(struct rtpstreaminf *));
+        sync->topoll_size = topoll_size;
     }
 
-    for (i = 0; i < nfds; i++) {
-        syncev = (sync_epoll_t *)(evs[i].data.ptr);
+    sync->topoll[0].socket = sync->zmq_colsock;
+    sync->topoll[0].events = ZMQ_POLLIN;
 
-        /* Check for incoming messages from processing threads and II fd */
-        if ((evs[i].events & EPOLLERR) || (evs[i].events & EPOLLHUP) ||
-                (evs[i].events & EPOLLRDHUP)) {
+    sync->topoll[1].socket = NULL;
+    sync->topoll[1].fd = sync->intersync_fd;
+    sync->topoll[1].events = ZMQ_POLLIN;
 
-            if (syncev->fd == sync->intersync_ev.fd) {
-                logger(LOG_INFO, "OpenLI: intersync message queue has failed");
-                return -1;
-            }
-
-            logger(LOG_INFO, "OpenLI: processor->sync message queue pipe has broken down.");
-            epoll_ctl(sync->glob->epoll_fd, EPOLL_CTL_DEL,
-                    syncev->fd, NULL);
-            continue;
-        }
-
-        if (syncev->fdtype == SYNC_EVENT_SIP_TIMEOUT) {
-            struct rtpstreaminf *thisrtp;
-            thisrtp = (struct rtpstreaminf *)(syncev->ptr);
-            halt_single_rtpstream(sync, thisrtp);
-            continue;
-        }
-
-        if (libtrace_message_queue_count(
-                    (libtrace_message_queue_t *)(syncev->ptr)) <= 0) {
-
-            /* Processing thread queue was empty but we thought we had a
-             * message available? I think this is just a consequence of
-             * libtrace MQ's "fast" path that tries to avoid locking for
-             * simple operations. */
-            continue;
-        }
-
-        if (syncev->fdtype == SYNC_EVENT_INTERSYNC) {
-            /* Received a provisioner II via the IP sync thread */
-            process_intersync_msg(sync, syncev);
-            continue;
-        }
-
-        /* If we get here, we must be dealing with a processing thread */
-        process_colthread_message(sync, syncev);
-
+    i = 2;
+    HASH_ITER(hh, sync->timeouts, syncev, tmp) {
+        sync->topoll[i].socket = NULL;
+        sync->topoll[i].fd = syncev->fd;
+        sync->topoll[i].events = ZMQ_POLLIN;
+        sync->expiring_streams[i] = (struct rtpstreaminf *)(syncev->ptr);
+        i++;
     }
-    return nfds;
+
+    rc = zmq_poll(sync->topoll, topoll_size, 50);
+
+    if (rc < 0) {
+        return rc;
+    }
+
+    for (i = 2; i < topoll_size; i++) {
+        if (sync->topoll[i].revents & ZMQ_POLLIN) {
+            halt_single_rtpstream(sync, sync->expiring_streams[i]);
+        }
+    }
+
+    if (sync->topoll[1].revents & ZMQ_POLLIN) {
+        process_intersync_msg(sync);
+    }
+
+    if (sync->topoll[0].revents & ZMQ_POLLIN) {
+        if (process_colthread_message(sync) < 0) {
+            return -1;
+        }
+    }
+
+    return 1;
 }
 
 

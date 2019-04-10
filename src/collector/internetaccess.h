@@ -115,7 +115,7 @@ struct access_plugin {
     void (*destroy_parsed_data)(access_plugin_t *p, void *parseddata);
     void (*uncouple_parsed_data)(access_plugin_t *p);
 
-    char *(*get_userid)(access_plugin_t *p, void *parseddata);
+    char *(*get_userid)(access_plugin_t *p, void *parseddata, int *idlen);
 
     access_session_t *(*update_session_state)(access_plugin_t *p,
             void *parseddata, access_session_t **sesslist,

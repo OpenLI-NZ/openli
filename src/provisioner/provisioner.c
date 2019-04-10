@@ -212,8 +212,8 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->conffile = configfile;
 
     state->epoll_fd = epoll_create1(0);
-    state->mediators = libtrace_list_init(sizeof(prov_mediator_t));
-    state->collectors = libtrace_list_init(sizeof(prov_collector_t));
+    state->mediators = NULL;
+    state->collectors = NULL;
     state->radiusservers = NULL;
     state->sipservers = NULL;
     state->voipintercepts = NULL;
@@ -292,9 +292,9 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
 
     openli_mediator_t *med = (openli_mediator_t *)malloc(
             sizeof(openli_mediator_t));
-    libtrace_list_node_t *n;
-    prov_mediator_t *provmed = NULL;
     openli_mediator_t *prevmed = NULL;
+    prov_collector_t *col, *coltmp;
+    prov_mediator_t *provmed;
     int updatereq = 0;
     int ret = 0;
 
@@ -306,40 +306,24 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
     }
 
     /* Find the corresponding mediator in our mediator list */
-    n = state->mediators->head;
+    HASH_FIND(hh, state->mediators, &(medfd), sizeof(medfd), provmed);
 
-    while (n) {
-        provmed = (prov_mediator_t *)(n->data);
-        n = n->next;
-
-        if (provmed->fd != medfd) {
-            continue;
-        }
-
-        if (provmed->details == NULL) {
-            provmed->details = med;
-            updatereq = 1;
-            break;
-        }
-
-        prevmed = provmed->details;
-        provmed->details = med;
-        updatereq = 1;
-        break;
-    }
-
-    if (!updatereq) {
+    if (!provmed) {
         return 0;
     }
 
-    /* All collectors must now know about this mediator */
-    n = state->collectors->head;
+    if (provmed->details == NULL) {
+        provmed->details = med;
+    } else {
+        prevmed = provmed->details;
+        provmed->details = med;
+    }
 
-    while (n) {
-        prov_collector_t *col = (prov_collector_t *)(n->data);
+    /* All collectors must now know about this mediator */
+    HASH_ITER(hh, state->collectors, col, coltmp) {
+
         prov_sock_state_t *cs = (prov_sock_state_t *)(col->commev->state);
 
-        n = n->next;
         if (col->commev->fd == -1) {
             continue;
         }
@@ -386,30 +370,31 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
 
     }
     if (prevmed) {
+        free(prevmed->ipstr);
+        free(prevmed->portstr);
         free(prevmed);
     }
     return ret;
 }
 
-static void free_all_mediators(libtrace_list_t *m) {
+static void free_all_mediators(prov_mediator_t **mediators) {
 
-    libtrace_list_node_t *n;
-    prov_mediator_t *med;
+    prov_mediator_t *med, *medtmp;
 
-    n = m->head;
-    while (n) {
-        med = (prov_mediator_t *)(n->data);
+    HASH_ITER(hh, *mediators, med, medtmp) {
+        HASH_DELETE(hh, *mediators, med);
         free_socket_state(med->commev);
         free_openli_mediator(med->details);
         if (med->commev->fd != -1) {
             close(med->commev->fd);
         }
         free(med->commev);
+        if (med->authev->fd != -1) {
+            close(med->authev->fd);
+        }
         free(med->authev);
-        n = n->next;
+        free(med);
     }
-
-    libtrace_list_deinit(m);
 }
 
 static void halt_auth_timer(provision_state_t *state, prov_sock_state_t *cs) {
@@ -432,24 +417,24 @@ static void halt_auth_timer(provision_state_t *state, prov_sock_state_t *cs) {
     cs->authfd = -1;
 }
 
-static void stop_all_collectors(libtrace_list_t *c) {
+static void stop_all_collectors(prov_collector_t **collectors) {
 
     /* TODO send disconnect messages to all collectors? */
-    libtrace_list_node_t *n;
-    prov_collector_t *col;
+    prov_collector_t *col, *coltmp;
 
-    n = c->head;
-    while (n) {
-        col = (prov_collector_t *)n->data;
+    HASH_ITER(hh, *collectors, col, coltmp) {
+        HASH_DELETE(hh, *collectors, col);
         free_socket_state(col->commev);
         if (col->commev->fd != -1) {
             close(col->commev->fd);
         }
         free(col->commev);
-        n = n->next;
+        if (col->authev->fd != -1) {
+            close(col->authev->fd);
+        }
+        free(col->authev);
+        free(col);
     }
-
-    libtrace_list_deinit(c);
 }
 
 static void clear_prov_state(provision_state_t *state) {
@@ -504,8 +489,8 @@ static void clear_prov_state(provision_state_t *state) {
 
     free_all_ipintercepts(&(state->ipintercepts));
     free_all_voipintercepts(&(state->voipintercepts));
-    stop_all_collectors(state->collectors);
-    free_all_mediators(state->mediators);
+    stop_all_collectors(&(state->collectors));
+    free_all_mediators(&(state->mediators));
     free_coreserver_list(state->radiusservers);
     free_coreserver_list(state->sipservers);
 
@@ -570,15 +555,11 @@ static int push_coreservers(coreserver_t *servers, uint8_t cstype,
     return 0;
 }
 
-static int push_all_mediators(libtrace_list_t *mediators, net_buffer_t *nb) {
+static int push_all_mediators(prov_mediator_t *mediators, net_buffer_t *nb) {
 
-    libtrace_list_node_t *n;
-    prov_mediator_t *pmed;
+    prov_mediator_t *pmed, *medtmp;
 
-    n = mediators->head;
-    while (n) {
-        pmed = (prov_mediator_t *)(n->data);
-        n = n->next;
+    HASH_ITER(hh, mediators, pmed, medtmp) {
         if (pmed->details == NULL) {
             continue;
         }
@@ -694,7 +675,7 @@ static int respond_collector_auth(provision_state_t *state,
      * of known mediators and active intercepts to it.
      */
 
-    if (libtrace_list_get_size(state->mediators) +
+    if (HASH_CNT(hh, state->mediators) +
             HASH_CNT(hh, state->radiusservers) +
             HASH_CNT(hh, state->sipservers) +
             HASH_CNT(hh_liid, state->ipintercepts) +
@@ -1069,7 +1050,7 @@ static int accept_collector(provision_state_t *state) {
     struct sockaddr_storage saddr;
     socklen_t socklen = sizeof(saddr);
     char strbuf[INET6_ADDRSTRLEN];
-    prov_collector_t col;
+    prov_collector_t *col;
     libtrace_list_node_t *n;
     struct epoll_event ev;
     prov_disabled_client_t *bad;
@@ -1078,6 +1059,8 @@ static int accept_collector(provision_state_t *state) {
 
     /* Accept, then add to list of collectors. Push all active intercepts
      * out to the collector. */
+    col = calloc(1, sizeof(prov_collector_t));
+
     newfd = accept(state->clientfd->fd, (struct sockaddr *)&saddr, &socklen);
 
     if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, sizeof(strbuf),
@@ -1087,15 +1070,15 @@ static int accept_collector(provision_state_t *state) {
     }
 
     if (newfd >= 0) {
-        col.commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
-        col.authev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
+        col->commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
+        col->authev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
-        col.commev->fdtype = PROV_EPOLL_COLLECTOR;
-        col.commev->fd = newfd;
-        col.commev->state = NULL;
+        col->commev->fdtype = PROV_EPOLL_COLLECTOR;
+        col->commev->fd = newfd;
+        col->commev->state = NULL;
 
-        col.authev->fdtype = PROV_EPOLL_FD_TIMER;
-        col.authev->fd = epoll_add_timer(state->epoll_fd, 5, col.authev);
+        col->authev->fdtype = PROV_EPOLL_FD_TIMER;
+        col->authev->fd = epoll_add_timer(state->epoll_fd, 5, col->authev);
         /* Create outgoing and incoming buffer state */
         HASH_FIND(hh, state->badcollectors, strbuf, strlen(strbuf), bad);
         if (!bad) {
@@ -1105,19 +1088,19 @@ static int accept_collector(provision_state_t *state) {
         }
 
         if (bad == NULL) {
-            create_socket_state(col.commev, col.authev->fd, strbuf, 0);
+            create_socket_state(col->commev, col->authev->fd, strbuf, 0);
         } else {
-            create_socket_state(col.commev, col.authev->fd, strbuf, 1);
+            create_socket_state(col->commev, col->authev->fd, strbuf, 1);
         }
 
-        col.authev->state = col.commev->state;
+        col->authev->state = col->commev->state;
 
         /* Add fd to epoll */
-        ev.data.ptr = (void *)col.commev;
+        ev.data.ptr = (void *)col->commev;
         ev.events = EPOLLIN | EPOLLRDHUP;
         /* recv only until we trust the collector */
 
-        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, col.commev->fd,
+        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, col->commev->fd,
                     &ev) < 0) {
             if (bad == NULL) {
                 logger(LOG_INFO,
@@ -1128,7 +1111,8 @@ static int accept_collector(provision_state_t *state) {
             return -1;
         }
 
-        libtrace_list_push_back(state->collectors, &col);
+        HASH_ADD_KEYPTR(hh, state->collectors, col->commev,
+                sizeof(prov_epoll_ev_t), col);
     }
 
     return newfd;
@@ -1140,7 +1124,7 @@ static int accept_mediator(provision_state_t *state) {
     struct sockaddr_storage saddr;
     socklen_t socklen = sizeof(saddr);
     char strbuf[INET6_ADDRSTRLEN];
-    prov_mediator_t med;
+    prov_mediator_t *med;
     libtrace_list_node_t *n;
     struct epoll_event ev;
     prov_disabled_client_t *bad;
@@ -1159,18 +1143,19 @@ static int accept_mediator(provision_state_t *state) {
     }
 
     if (newfd >= 0) {
-        med.fd = newfd;
-        med.details = NULL;     /* will receive this from mediator soon */
-        med.commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
+        med = calloc(1, sizeof(prov_mediator_t));
+        med->fd = newfd;
+        med->details = NULL;     /* will receive this from mediator soon */
+        med->commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
-        med.commev->fdtype = PROV_EPOLL_MEDIATOR;
-        med.commev->fd = newfd;
-        med.commev->state = NULL;
+        med->commev->fdtype = PROV_EPOLL_MEDIATOR;
+        med->commev->fd = newfd;
+        med->commev->state = NULL;
 
-        med.authev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
+        med->authev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
-        med.authev->fdtype = PROV_EPOLL_FD_TIMER;
-        med.authev->fd = epoll_add_timer(state->epoll_fd, 5, med.authev);
+        med->authev->fdtype = PROV_EPOLL_FD_TIMER;
+        med->authev->fd = epoll_add_timer(state->epoll_fd, 5, med->authev);
         /* Create outgoing and incoming buffer state */
 
         HASH_FIND(hh, state->badmediators, strbuf, strlen(strbuf), bad);
@@ -1181,18 +1166,18 @@ static int accept_mediator(provision_state_t *state) {
         }
 
         if (bad == NULL) {
-            create_socket_state(med.commev, med.authev->fd, strbuf, 0);
+            create_socket_state(med->commev, med->authev->fd, strbuf, 0);
         } else {
-            create_socket_state(med.commev, med.authev->fd, strbuf, 1);
+            create_socket_state(med->commev, med->authev->fd, strbuf, 1);
         }
-        med.authev->state = med.commev->state;
+        med->authev->state = med->commev->state;
 
 
         /* Add fd to epoll */
-        ev.data.ptr = (void *)med.commev;
+        ev.data.ptr = (void *)med->commev;
         ev.events = EPOLLIN | EPOLLRDHUP; /* recv only until we trust the mediator */
 
-        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, med.fd, &ev) < 0) {
+        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, med->fd, &ev) < 0) {
             if (bad == NULL) {
                 logger(LOG_INFO,
                         "OpenLI: unable to add mediator fd to epoll: %s.",
@@ -1201,7 +1186,8 @@ static int accept_mediator(provision_state_t *state) {
             close(newfd);
             return -1;
         }
-        libtrace_list_push_back(state->mediators, &med);
+        HASH_ADD_KEYPTR(hh, state->mediators, &(med->fd), sizeof(med->fd),
+                med);
     }
 
     return newfd;
@@ -1286,6 +1272,12 @@ static int start_mediator_listener(provision_state_t *state) {
     int sockfd;
 
     state->mediatorfd = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
+
+    if (state->mediateaddr == NULL) {
+        state->mediateaddr = strdup("0.0.0.0");
+        logger(LOG_INFO, "OpenLI provisioner: warning, no mediator listen address configured, listening on ALL addresses.");
+        logger(LOG_INFO, "OpenLI provisioner: set 'mediationaddr' config option to resolve this.");
+    }
 
     sockfd  = create_listener(state->mediateaddr, state->mediateport,
             "incoming mediator");
@@ -1522,8 +1514,7 @@ static inline int reload_mediator_socket_config(provision_state_t *currstate,
     if (strcmp(newstate->mediateaddr, currstate->mediateaddr) != 0 ||
             strcmp(newstate->mediateport, currstate->mediateport) != 0) {
 
-        free_all_mediators(currstate->mediators);
-        currstate->mediators = libtrace_list_init(sizeof(prov_mediator_t));
+        free_all_mediators(&(currstate->mediators));
 
         if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
                 currstate->mediatorfd->fd, &ev) == -1) {
@@ -1563,8 +1554,7 @@ static inline int reload_collector_socket_config(provision_state_t *currstate,
 
         logger(LOG_INFO,
                 "OpenLI provisioner: collector listening socket configuration has changed.");
-        stop_all_collectors(currstate->collectors);
-        currstate->collectors = libtrace_list_init(sizeof(prov_collector_t));
+        stop_all_collectors(&(currstate->collectors));
 
         if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
                 currstate->clientfd->fd, &ev) == -1) {
@@ -1594,15 +1584,10 @@ static inline int reload_collector_socket_config(provision_state_t *currstate,
 static int announce_lea_to_mediators(provision_state_t *state,
         prov_agency_t *lea) {
 
-    libtrace_list_node_t *n;
-    prov_mediator_t *med;
+    prov_mediator_t *med, *medtmp;
     prov_sock_state_t *sock;
 
-    n = state->mediators->head;
-    while (n) {
-        med = (prov_mediator_t *)(n->data);
-        n = n->next;
-
+    HASH_ITER(hh, state->mediators, med, medtmp) {
         sock = (prov_sock_state_t *)(med->commev->state);
         if (!sock->trusted || sock->halted) {
             continue;
@@ -1613,6 +1598,7 @@ static int announce_lea_to_mediators(provision_state_t *state,
                     "OpenLI provisioner: unable to send LEA %s to mediator %d.",
                     lea->ag->agencyid, med->fd);
             drop_mediator(state, med->commev);
+            HASH_DELETE(hh, state->mediators, med);
             continue;
         }
 
@@ -1621,6 +1607,7 @@ static int announce_lea_to_mediators(provision_state_t *state,
                     "OpenLI: unable to enable epoll write event for mediator on fd %d: %s",
                     med->fd, strerror(errno));
             drop_mediator(state, med->commev);
+            HASH_DELETE(hh, state->mediators, med);
         }
 
     }
@@ -1631,15 +1618,10 @@ static int announce_lea_to_mediators(provision_state_t *state,
 static int withdraw_agency_from_mediators(provision_state_t *state,
         prov_agency_t *lea) {
 
-    libtrace_list_node_t *n;
-    prov_mediator_t *med;
+    prov_mediator_t *med, *medtmp;
     prov_sock_state_t *sock;
 
-    n = state->mediators->head;
-    while (n) {
-        med = (prov_mediator_t *)(n->data);
-        n = n->next;
-
+    HASH_ITER(hh, state->mediators, med, medtmp) {
         sock = (prov_sock_state_t *)(med->commev->state);
         if (!sock->trusted || sock->halted) {
             continue;
@@ -1651,6 +1633,7 @@ static int withdraw_agency_from_mediators(provision_state_t *state,
                     "OpenLI provisioner: unable to send withdrawal of LEA %s to mediator %d.",
                     lea->ag->agencyid, med->fd);
             drop_mediator(state, med->commev);
+            HASH_DELETE(hh, state->mediators, med);
             continue;
         }
 
@@ -1659,6 +1642,7 @@ static int withdraw_agency_from_mediators(provision_state_t *state,
                     "OpenLI: unable to enable epoll write event for mediator on fd %d: %s",
                     med->fd, strerror(errno));
             drop_mediator(state, med->commev);
+            HASH_DELETE(hh, state->mediators, med);
         }
 
     }
@@ -1716,15 +1700,10 @@ static inline int reload_leas(provision_state_t *currstate,
 static void add_new_staticip_range(provision_state_t *state,
         ipintercept_t *ipint, static_ipranges_t *ipr) {
 
-    libtrace_list_node_t *n;
-    prov_collector_t *col;
+    prov_collector_t *col, *coltmp;
     prov_sock_state_t *sock;
 
-    n = state->collectors->head;
-    while (n) {
-        col = (prov_collector_t *)(n->data);
-        n = n->next;
-
+    HASH_ITER(hh, state->collectors, col, coltmp) {
         sock = (prov_sock_state_t *)(col->commev->state);
         if (!sock->trusted || sock->halted) {
             continue;
@@ -1733,6 +1712,7 @@ static void add_new_staticip_range(provision_state_t *state,
         if (push_static_ipranges_onto_net_buffer(sock->outgoing,
                 ipint, ipr) < 0) {
             drop_collector(state, col->commev);
+            HASH_DELETE(hh, state->collectors, col);
             continue;
         }
 
@@ -1743,23 +1723,18 @@ static void add_new_staticip_range(provision_state_t *state,
                         sock->mainfd, strerror(errno));
             }
             drop_collector(state, col->commev);
+            HASH_DELETE(hh, state->collectors, col);
         }
-
     }
 }
 
 static void remove_existing_staticip_range(provision_state_t *state,
         ipintercept_t *ipint, static_ipranges_t *ipr) {
 
-    libtrace_list_node_t *n;
-    prov_collector_t *col;
+    prov_collector_t *col, *coltmp;
     prov_sock_state_t *sock;
 
-    n = state->collectors->head;
-    while (n) {
-        col = (prov_collector_t *)(n->data);
-        n = n->next;
-
+    HASH_ITER(hh, state->collectors, col, coltmp) {
         sock = (prov_sock_state_t *)(col->commev->state);
         if (!sock->trusted || sock->halted) {
             continue;
@@ -1768,6 +1743,7 @@ static void remove_existing_staticip_range(provision_state_t *state,
         if (push_static_ipranges_removal_onto_net_buffer(sock->outgoing,
                 ipint, ipr) < 0) {
             drop_collector(state, col->commev);
+            HASH_DELETE(hh, state->collectors, col);
             continue;
         }
 
@@ -1776,23 +1752,18 @@ static void remove_existing_staticip_range(provision_state_t *state,
                     "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
                     sock->mainfd, strerror(errno));
             drop_collector(state, col->commev);
+            HASH_DELETE(hh, state->collectors, col);
         }
-
     }
 }
 
 static int halt_existing_intercept(provision_state_t *state,
         void *cept, openli_proto_msgtype_t wdtype) {
 
-    libtrace_list_node_t *n;
-    prov_collector_t *col;
+    prov_collector_t *col, *coltmp;
     prov_sock_state_t *sock;
 
-    n = state->collectors->head;
-    while (n) {
-        col = (prov_collector_t *)(n->data);
-        n = n->next;
-
+    HASH_ITER(hh, state->collectors, col, coltmp) {
         sock = (prov_sock_state_t *)(col->commev->state);
         if (!sock->trusted || sock->halted) {
             continue;
@@ -1801,6 +1772,7 @@ static int halt_existing_intercept(provision_state_t *state,
         if (push_intercept_withdrawal_onto_net_buffer(sock->outgoing,
                 cept, wdtype) == -1) {
             drop_collector(state, col->commev);
+            HASH_DELETE(hh, state->collectors, col);
             continue;
         }
 
@@ -1811,6 +1783,7 @@ static int halt_existing_intercept(provision_state_t *state,
                         sock->mainfd, strerror(errno));
             }
             drop_collector(state, col->commev);
+            HASH_DELETE(hh, state->collectors, col);
         }
 
     }
@@ -1822,15 +1795,10 @@ static int halt_existing_intercept(provision_state_t *state,
 static int modify_existing_intercept_options(provision_state_t *state,
         void *cept, openli_proto_msgtype_t modtype) {
 
-    libtrace_list_node_t *n;
-    prov_collector_t *col;
+    prov_collector_t *col, *coltmp;
     prov_sock_state_t *sock;
 
-    n = state->collectors->head;
-    while (n) {
-        col = (prov_collector_t *)(n->data);
-        n = n->next;
-
+    HASH_ITER(hh, state->collectors, col, coltmp) {
         sock = (prov_sock_state_t *)(col->commev->state);
         if (!sock->trusted || sock->halted) {
             continue;
@@ -1839,6 +1807,7 @@ static int modify_existing_intercept_options(provision_state_t *state,
         if (push_intercept_modify_onto_net_buffer(sock->outgoing,
                 cept, modtype) == -1) {
             drop_collector(state, col->commev);
+            HASH_DELETE(hh, state->collectors, col);
             continue;
         }
 
@@ -1849,6 +1818,7 @@ static int modify_existing_intercept_options(provision_state_t *state,
                         sock->mainfd, strerror(errno));
             }
             drop_collector(state, col->commev);
+            HASH_DELETE(hh, state->collectors, col);
         }
 
     }
@@ -1863,15 +1833,10 @@ static int modify_existing_intercept_options(provision_state_t *state,
 
 static int disconnect_mediators_from_collectors(provision_state_t *state) {
 
-    libtrace_list_node_t *n;
-    prov_collector_t *col;
+    prov_collector_t *col, *coltmp;
     prov_sock_state_t *sock;
 
-    n = state->collectors->head;
-    while (n) {
-        col = (prov_collector_t *)(n->data);
-        n = n->next;
-
+    HASH_ITER(hh, state->collectors, col, coltmp) {
         sock = (prov_sock_state_t *)(col->commev->state);
         if (!sock->trusted || sock->halted) {
             continue;
@@ -1884,6 +1849,7 @@ static int disconnect_mediators_from_collectors(provision_state_t *state) {
                         sock->mainfd);
             }
             drop_collector(state, col->commev);
+            HASH_DELETE(hh, state->collectors, col);
             continue;
         }
 
@@ -1894,6 +1860,7 @@ static int disconnect_mediators_from_collectors(provision_state_t *state) {
                         sock->mainfd, strerror(errno));
             }
             drop_collector(state, col->commev);
+            HASH_DELETE(hh, state->collectors, col);
         }
 
     }
@@ -1906,8 +1873,7 @@ static int disconnect_mediators_from_collectors(provision_state_t *state) {
 static int remove_liid_mapping(provision_state_t *state,
         char *liid, int liid_len, int droppedmeds) {
 
-    libtrace_list_node_t *n;
-    prov_mediator_t *med;
+    prov_mediator_t *med, *medtmp;
     prov_sock_state_t *sock;
 
     /* Don't need to find and remove the mapping from our LIID map, as
@@ -1920,10 +1886,7 @@ static int remove_liid_mapping(provision_state_t *state,
     /* Still got mediators connected, so tell them about the now disabled
      * LIID.
      */
-    n = state->mediators->head;
-    while (n) {
-        med = (prov_mediator_t *)(n->data);
-        n = n->next;
+    HASH_ITER(hh, state->mediators, med, medtmp) {
         sock = (prov_sock_state_t *)(med->commev->state);
         if (!sock->trusted || sock->halted) {
             continue;
@@ -1937,6 +1900,7 @@ static int remove_liid_mapping(provision_state_t *state,
                         liid, sock->mainfd);
             }
             drop_mediator(state, med->commev);
+            HASH_DELETE(hh, state->mediators, med);
             continue;
         }
 
@@ -1947,6 +1911,7 @@ static int remove_liid_mapping(provision_state_t *state,
                         sock->mainfd, strerror(errno));
             }
             drop_mediator(state, med->commev);
+            HASH_DELETE(hh, state->mediators, med);
         }
     }
 
@@ -1956,19 +1921,14 @@ static int remove_liid_mapping(provision_state_t *state,
 static int announce_liidmapping_to_mediators(provision_state_t *state,
         liid_hash_t *liidmap) {
 
-    libtrace_list_node_t *n;
-    prov_mediator_t *med;
+    prov_mediator_t *med, *medtmp;
     prov_sock_state_t *sock;
 
     if (liidmap == NULL) {
         return 0;
     }
 
-    n = state->mediators->head;
-    while (n) {
-        med = (prov_mediator_t *)(n->data);
-        n = n->next;
-
+    HASH_ITER(hh, state->mediators, med, medtmp) {
         sock = (prov_sock_state_t *)(med->commev->state);
         if (!sock->trusted || sock->halted) {
             continue;
@@ -1980,6 +1940,7 @@ static int announce_liidmapping_to_mediators(provision_state_t *state,
                     "OpenLI provisioner: unable to send mapping for LIID %s to mediator %d.",
                     liidmap->liid, med->fd);
             drop_mediator(state, med->commev);
+            HASH_DELETE(hh, state->mediators, med);
             continue;
         }
 
@@ -1988,6 +1949,7 @@ static int announce_liidmapping_to_mediators(provision_state_t *state,
                     "OpenLI: unable to enable epoll write event for mediator on fd %d: %s",
                     med->fd, strerror(errno));
             drop_mediator(state, med->commev);
+            HASH_DELETE(hh, state->mediators, med);
         }
 
     }
@@ -1997,15 +1959,10 @@ static int announce_liidmapping_to_mediators(provision_state_t *state,
 
 static int announce_coreserver_change(provision_state_t *state,
         coreserver_t *cs, uint8_t isnew) {
-    libtrace_list_node_t *n;
-    prov_collector_t *col;
+    prov_collector_t *col, *coltmp;
     prov_sock_state_t *sock;
 
-    n = state->collectors->head;
-    while (n) {
-        col = (prov_collector_t *)(n->data);
-        n = n->next;
-
+    HASH_ITER(hh, state->collectors, col, coltmp) {
         sock = (prov_sock_state_t *)(col->commev->state);
         if (!sock->trusted || sock->halted) {
             continue;
@@ -2019,6 +1976,7 @@ static int announce_coreserver_change(provision_state_t *state,
                         coreserver_type_to_string(cs->servertype),
                         sock->mainfd);
                 drop_collector(state, col->commev);
+                HASH_DELETE(hh, state->collectors, col);
                 continue;
             }
         } else {
@@ -2029,6 +1987,7 @@ static int announce_coreserver_change(provision_state_t *state,
                         coreserver_type_to_string(cs->servertype),
                         sock->mainfd);
                 drop_collector(state, col->commev);
+                HASH_DELETE(hh, state->collectors, col);
                 continue;
             }
         }
@@ -2038,6 +1997,7 @@ static int announce_coreserver_change(provision_state_t *state,
                     "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
                     sock->mainfd, strerror(errno));
             drop_collector(state, col->commev);
+            HASH_DELETE(hh, state->collectors, col);
         }
     }
     return 0;
@@ -2046,15 +2006,10 @@ static int announce_coreserver_change(provision_state_t *state,
 static int announce_sip_target_change(provision_state_t *state,
         openli_sip_identity_t *sipid, voipintercept_t *vint, uint8_t isnew) {
 
-    libtrace_list_node_t *n;
-    prov_collector_t *col;
+    prov_collector_t *col, *coltmp;
     prov_sock_state_t *sock;
 
-    n = state->collectors->head;
-    while (n) {
-        col = (prov_collector_t *)(n->data);
-        n = n->next;
-
+    HASH_ITER(hh, state->collectors, col, coltmp) {
         sock = (prov_sock_state_t *)(col->commev->state);
         if (!sock->trusted || sock->halted) {
             continue;
@@ -2067,6 +2022,7 @@ static int announce_sip_target_change(provision_state_t *state,
                         "OpenLI: Unable to push SIP target to collector on fd %d",
                         sock->mainfd);
                 drop_collector(state, col->commev);
+                HASH_DELETE(hh, state->collectors, col);
                 continue;
             }
         } else {
@@ -2076,6 +2032,7 @@ static int announce_sip_target_change(provision_state_t *state,
                         "OpenLI: Unable to push removal of SIP target to collector on fd %d",
                         sock->mainfd);
                 drop_collector(state, col->commev);
+                HASH_DELETE(hh, state->collectors, col);
                 continue;
             }
         }
@@ -2085,6 +2042,7 @@ static int announce_sip_target_change(provision_state_t *state,
                     "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
                     sock->mainfd, strerror(errno));
             drop_collector(state, col->commev);
+            HASH_DELETE(hh, state->collectors, col);
         }
     }
     return 0;
@@ -2093,15 +2051,10 @@ static int announce_sip_target_change(provision_state_t *state,
 static int announce_single_intercept(provision_state_t *state,
         void *cept, int (*sendfunc)(net_buffer_t *, void *)) {
 
-    libtrace_list_node_t *n;
-    prov_collector_t *col;
+    prov_collector_t *col, *coltmp;
     prov_sock_state_t *sock;
 
-    n = state->collectors->head;
-    while (n) {
-        col = (prov_collector_t *)(n->data);
-        n = n->next;
-
+    HASH_ITER(hh, state->collectors, col, coltmp) {
         sock = (prov_sock_state_t *)(col->commev->state);
         if (!sock->trusted || sock->halted) {
             continue;
@@ -2109,6 +2062,7 @@ static int announce_single_intercept(provision_state_t *state,
 
         if (sendfunc(sock->outgoing, cept) == -1) {
             drop_collector(state, col->commev);
+            HASH_DELETE(hh, state->collectors, col);
             continue;
         }
 
@@ -2117,6 +2071,7 @@ static int announce_single_intercept(provision_state_t *state,
                     "OpenLI: unable to enable epoll write event for collector on fd %d: %s",
                     sock->mainfd, strerror(errno));
             drop_collector(state, col->commev);
+            HASH_DELETE(hh, state->collectors, col);
         }
 
     }

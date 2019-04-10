@@ -72,6 +72,15 @@ connect to the provisioner, it will not receive any intercept instructions
 and will therefore sit idle. If the connection to the provisioner goes down
 for some reason, the collector will periodically attempt to reconnect to it.
 
+### Statistics Logging
+This option can be used to configure the collector to log regular statistic
+updates, which you can then inspect to gauge whether the collector is
+functioning as expected (i.e., is it receiving packets on the capture
+interface?). By default, the logging is disabled as it can be somewhat
+verbose. The value you set for this option will determine the number of
+minutes between statistic dumps from the collector -- setting this to zero
+will disable the statistic logging altogether.
+
 ### Inputs
 The inputs option is used to describe which interfaces should be used to
 intercept traffic. Each interface should be expressed using either its
@@ -85,6 +94,21 @@ main limiting factor for performance is actually packet rate rather than
 raw throughput, i.e. intercepting 500,000 64 byte packets per second is a
 much higher workload than intercepting 100,000 1500 byte packets.
 
+### ALU Mirror Configuration
+If you are using OpenLI to translate the intercept records produced by
+Alcatel-Lucent devices into ETSI-compliant output, any collectors that
+are expected to receive mirrored copies of the ALU intercept records need
+to be able to identify which packets are encapsulated records to be
+translated.
+
+This is done by configuring the collector with a sequence of known sinks for
+the ALU intercept traffic under the 'alumirrors' top-level configuration
+option. Each sequence entry is defined using two parameters:
+* ip -- the IP address of the sink
+* port -- the port that the sink is listening on for ALU intercept records
+
+Note that in this context, the sink refers to the destination IP address
+and port of the mirrored ALU traffic.
 
 ### Configuration Syntax
 All config options aside from the input configuration are standard YAML
@@ -103,6 +127,9 @@ The basic option keys are:
                        records (defaults to 2).
 * forwardingthreads -- set the number of threads to use for forwarding
                        encoded ETSI records to the mediators (defaults to 1).
+* logstatfrequency  -- set the frequency (in minutes) that the collector
+                       should dump detailed statistics about the collection
+                       process to the logger. Defaults to 0 (no stat logging).
 
 Inputs are specified as a YAML sequence with a key of `inputs:`. Each
 sequence item represents a single traffic source to intercept traffic from
@@ -110,6 +137,12 @@ and must contain the following two key-value elements:
 * uri              -- [a libtrace URI](https://github.com/LibtraceTeam/libtrace/wiki/Supported-Trace-Formats)
                       describing which interface to intercept packets on.
 * threads          -- the number of processing threads to use with this input.
+
+As described above, ALU mirrors are defined as a YAML sequence with a key
+of `alumirrors:`. Each sequence item must contain the following two
+key-value elements:
+* ip -- the IP address of the sink
+* port -- the port that the sink is listening on for ALU intercept records
 
 Be aware that increasing the number of threads used for sequence number
 tracking, encoding or forwarding can actually decrease OpenLI's performance,

@@ -166,13 +166,13 @@ typedef struct staticip_cacheentry {
 typedef struct colthread_local {
 
     /* Message queue for pushing updates to sync IP thread */
-    libtrace_message_queue_t tosyncq_ip;
+    void *tosyncq_ip;
 
     /* Message queue for receiving IP intercept instructions from sync thread */
     libtrace_message_queue_t fromsyncq_ip;
 
     /* Message queue for pushing updates to sync VOIP thread */
-    libtrace_message_queue_t tosyncq_voip;
+    void *tosyncq_voip;
 
     /* Message queue for receiving VOIP intercept instructions from sync
        thread */
@@ -251,6 +251,11 @@ typedef struct collector_global {
 
     pthread_t seqproxy_tid;
 
+    uint32_t stat_frequency;
+    uint64_t ticks_since_last_stat;
+    collector_stats_t stats;
+    pthread_mutex_t stats_mutex;
+
 } collector_global_t;
 
 typedef struct packetinfo {
@@ -262,7 +267,7 @@ typedef struct packetinfo {
 } packet_info_t;
 
 int register_sync_queues(sync_thread_global_t *glob,
-        libtrace_message_queue_t *recvq, libtrace_message_queue_t *sendq,
+        void *recvq, libtrace_message_queue_t *sendq,
         libtrace_thread_t *parent);
 void deregister_sync_queues(sync_thread_global_t *glob,
         libtrace_thread_t *t);
