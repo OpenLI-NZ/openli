@@ -25,9 +25,10 @@ AC_ARG_ENABLE([provisioner], AS_HELP_STRING([--disable-provisioner],
 AC_ARG_ENABLE([collector], AS_HELP_STRING([--disable-collector],
         [Disable building the OpenLI collector]))
 
-PROVISIONER_LIBS=
-COLLECTOR_LIBS=
-MEDIATOR_LIBS=
+PROVISIONER_LIBS="-lssl -lcrypto"
+COLLECTOR_LIBS="-lssl -lcrypto"
+MEDIATOR_LIBS="-lssl -lcrypto"
+#this is not the proper way but it works for now //TODO
 
 AC_CHECK_LIB([trace], [trace_increment_packet_refcount],,libtrace_found=0)
 AC_CHECK_LIB([yaml], [yaml_document_get_node],,libyaml_found=0)

@@ -1,12 +1,16 @@
 # Example configuration file for an OpenLI provisioner
 
 # Listen for incoming collectors on 10.0.0.1:9001
-clientaddr: 10.0.0.1
+clientaddr: 127.0.0.1
 clientport: 9001
 
 # Listen for incoming mediators on 10.0.0.1:12001
-mediationaddr: 10.0.0.1
-mediationport: 12001
+mediationaddr: 127.0.0.1
+mediationport: 55555
+
+tlscert: server-crt.pem
+tlskey: server-key.pem
+tlsca: ca-crt.pem
 
 # List of SIP servers on our network (for managing VOIP intercepts)
 sipservers:

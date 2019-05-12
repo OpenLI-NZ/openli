@@ -54,7 +54,7 @@ static inline void dump_buffer_contents(uint8_t *buf, uint16_t len) {
 
 }
 
-net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd) {
+net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl) {
 
     net_buffer_t *nb = (net_buffer_t *)malloc(sizeof(net_buffer_t));
     nb->buf = (char *)malloc(NETBUF_ALLOC_SIZE);
@@ -63,6 +63,7 @@ net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd) {
     nb->alloced = NETBUF_ALLOC_SIZE;
     nb->fd = fd;
     nb->buftype = buftype;
+    nb->ssl = ssl;
     return nb;
 }
 
@@ -72,6 +73,125 @@ void destroy_net_buffer(net_buffer_t *nb) {
     }
     free(nb->buf);
     free(nb);
+}
+
+inline int fd_set_nonblock(int fd){
+    int flags = fcntl(fd, F_GETFL, 0);
+    flags |= O_NONBLOCK;
+    return fcntl(fd, F_SETFL, flags);
+}
+
+inline int fd_set_block(int fd){
+    int flags = fcntl(fd, F_GETFL, 0);
+    flags &= ~O_NONBLOCK;
+    return fcntl(fd, F_SETFL, flags);
+}
+
+enum sslstatus
+{
+	SSLSTATUS_OK,
+	SSLSTATUS_WANT_IO,
+	SSLSTATUS_FAIL
+};
+
+inline enum sslstatus get_sslstatus(SSL *ssl, int n)
+{
+	switch (SSL_get_error(ssl, n))
+	{
+	case SSL_ERROR_NONE:
+		return SSLSTATUS_OK;
+	case SSL_ERROR_WANT_WRITE:
+	case SSL_ERROR_WANT_READ:
+		return SSLSTATUS_WANT_IO;
+	case SSL_ERROR_ZERO_RETURN:
+	case SSL_ERROR_SYSCALL:
+	default:
+		return SSLSTATUS_FAIL;
+	}
+}
+
+void dump_cert_info(SSL *ssl) {
+    
+    printf("Ssl connection version: %s\n", SSL_get_version(ssl));
+
+
+    /* The cipher negotiated and being used */
+    printf("Using cipher %s", SSL_get_cipher(ssl));
+
+    /* Get client's certificate (note: beware of dynamic allocation) - opt */
+    X509 *client_cert = SSL_get_peer_certificate(ssl);
+    if (client_cert != NULL) {
+
+        printf("\nConnection certificate:\n");
+
+        char *str = X509_NAME_oneline(X509_get_subject_name(client_cert), 0, 0);
+        if(str == NULL) {
+            printf("warn X509 subject name is null");
+        }
+        printf("\t Subject: %s\n", str);
+        OPENSSL_free(str);
+
+        str = X509_NAME_oneline(X509_get_issuer_name(client_cert), 0, 0);
+        if(str == NULL) {
+            printf("warn X509 issuer name is null");
+        }
+        printf("\t Issuer: %s\n", str);
+        OPENSSL_free(str);
+
+        /* Deallocate certificate, free memory */
+        X509_free(client_cert);
+    } else {
+        printf("Connection does not have certificate.\n");
+    }
+}
+
+SSL_CTX * ssl_init(const char *cacertfile, const char *certfile, const char *keyfile) {
+    SSL_CTX *ctx = malloc(sizeof(SSL_CTX));
+
+    /* SSL library initialisation */
+    SSL_library_init();
+    OpenSSL_add_all_algorithms();
+    SSL_load_error_strings();
+    ERR_load_BIO_strings();
+    ERR_load_crypto_strings();
+
+    
+    /* create the SSL server context */
+    ctx = SSL_CTX_new(TLSv1_2_method());
+
+    SSL_CTX_load_verify_locations(ctx, cacertfile, "./");
+
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+
+
+    if (!ctx){ //check not NULL
+        logger(LOG_INFO, "OpenLI: SSL_CTX_new failed");
+        return NULL;
+    }
+    if(certfile != NULL && keyfile != NULL){
+        if (SSL_CTX_use_certificate_file(ctx, certfile, SSL_FILETYPE_PEM) != 1){
+            logger(LOG_INFO, "OpenLI: SSL_CTX_use_certificate_file failed");
+            return NULL;
+        }
+
+        if (SSL_CTX_use_PrivateKey_file(ctx, keyfile, SSL_FILETYPE_PEM) != 1){
+            logger(LOG_INFO, "OpenLI: SSL_CTX_use_PrivateKey_file failed");
+            return NULL;
+        }
+
+        /* Make sure the key and certificate file match. */
+        if (SSL_CTX_check_private_key(ctx) != 1){
+            logger(LOG_INFO, "OpenLI: SSL_CTX_check_private_key failed");
+            return NULL;
+            
+        }
+        else{
+            logger(LOG_INFO, "OpenLI: Certificate and private key loaded and verified");
+        }
+    }
+    /* Enforce use of TLSv1_2 */
+    SSL_CTX_set_options(ctx, SSL_OP_ALL | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+    return ctx;
 }
 
 static inline int extend_net_buffer(net_buffer_t *nb, int musthave) {
@@ -940,7 +1060,17 @@ int transmit_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t *err) {
     }
 
     //dump_buffer_contents(nb->actptr, NETBUF_CONTENT_SIZE(nb));
-    ret = send(nb->fd, nb->actptr, NETBUF_CONTENT_SIZE(nb), MSG_DONTWAIT);
+   
+    //printf("waiting for write.... %ld:bytes\n",NETBUF_CONTENT_SIZE(nb));
+    if (nb->ssl != NULL){
+        fd_set_nonblock(nb->fd);
+        ret = SSL_write(nb->ssl, nb->actptr, NETBUF_CONTENT_SIZE(nb));
+        fd_set_block(nb->fd);
+    }
+    else {
+        ret = send(nb->fd, nb->actptr, NETBUF_CONTENT_SIZE(nb), MSG_DONTWAIT);
+    }
+    //printf("write finshed\n");
 
     if (ret == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -1513,7 +1643,17 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
         }
     }
 
-    ret = recv(nb->fd, nb->appendptr, NETBUF_SPACE_REM(nb), MSG_DONTWAIT);
+    //printf("waiting for read....\n");
+    if (nb->ssl != NULL){
+        fd_set_nonblock(nb->fd);
+        ret = SSL_read(nb->ssl, nb->appendptr, NETBUF_SPACE_REM(nb));
+        fd_set_block(nb->fd);
+    }
+    else {
+        ret = recv(nb->fd, nb->appendptr, NETBUF_SPACE_REM(nb), MSG_DONTWAIT);
+    }
+    //printf("read finshed %d:bytes\n", ret);
+    
     if (ret <= 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             return OPENLI_PROTO_NO_MESSAGE;

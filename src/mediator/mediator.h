@@ -103,6 +103,7 @@ typedef struct mediator_provisioner {
     net_buffer_t *incoming;
     uint8_t disable_log;
     uint8_t tryconnect;
+    SSL *ssl;
 } mediator_prov_t;
 
 enum {
@@ -127,6 +128,9 @@ typedef struct med_state {
     char *operatorid;
     char *listenaddr;
     char *listenport;
+    char *keyfile;
+    char *certfile;
+    char *cacertfile;
 
     char *provaddr;
     char *provport;
@@ -155,6 +159,7 @@ typedef struct med_state {
     libtrace_message_queue_t pcapqueue;
     wandder_etsispec_t *etsidecoder;
     disabled_collector_t *disabledcols;
+    SSL_CTX *ctx;
 
 } mediator_state_t;
 

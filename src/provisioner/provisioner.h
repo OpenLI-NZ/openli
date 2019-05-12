@@ -31,6 +31,10 @@
 #include <uthash.h>
 #include "netcomms.h"
 
+#include <openssl/err.h>
+#include <openssl/pem.h>
+#include <openssl/ssl.h>
+
 typedef struct prov_epoll_ev {
     int fdtype;
     int fd;
@@ -80,6 +84,7 @@ typedef struct prov_collector {
 
     prov_epoll_ev_t *commev;
     prov_epoll_ev_t *authev;
+    SSL *ssl;
 
     UT_hash_handle hh;
 } prov_collector_t;
@@ -90,6 +95,7 @@ typedef struct prov_mediator {
     openli_mediator_t *details;
     prov_epoll_ev_t *commev;
     prov_epoll_ev_t *authev;
+    SSL *ssl;
 
     UT_hash_handle hh;
 } prov_mediator_t;
@@ -103,6 +109,9 @@ typedef struct prov_state {
     char *mediateport;
     char *pushaddr;
     char *pushport;
+    char *certfile;
+    char *keyfile;
+    char *cacertfile;
 
     int epoll_fd;
     prov_mediator_t *mediators;
@@ -126,6 +135,7 @@ typedef struct prov_state {
     liid_hash_t *liid_map;
 
     int ignorertpcomfort;
+    SSL_CTX *ctx;
     /*
     int activeupdatefd;
     int updatetimerfd;
@@ -145,7 +155,7 @@ typedef struct prov_sock_state {
     int mainfd;
     int authfd;
     int clientrole;
-
+    SSL *ssl;
 } prov_sock_state_t;
 
 #endif

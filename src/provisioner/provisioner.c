@@ -89,7 +89,7 @@ static inline int enable_epoll_write(provision_state_t *state,
 }
 
 static void create_socket_state(prov_epoll_ev_t *pev, int authtimerfd,
-        char *ipaddrstr, int isbad) {
+        char *ipaddrstr, int isbad, SSL *ssl) {
 
     prov_sock_state_t *cs = (prov_sock_state_t *)malloc(
             sizeof(prov_sock_state_t));
@@ -100,9 +100,10 @@ static void create_socket_state(prov_epoll_ev_t *pev, int authtimerfd,
         cs->log_allowed = 1;
     }
 
+    cs->ssl = ssl;
     cs->ipaddr = strdup(ipaddrstr);
-    cs->incoming = create_net_buffer(NETBUF_RECV, pev->fd);
-    cs->outgoing = create_net_buffer(NETBUF_SEND, pev->fd);
+    cs->incoming = create_net_buffer(NETBUF_RECV, pev->fd, cs->ssl);
+    cs->outgoing = create_net_buffer(NETBUF_SEND, pev->fd, cs->ssl);
     cs->trusted = 0;
     cs->halted = 0;
     cs->authfd = authtimerfd;
@@ -236,6 +237,10 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->pushport = NULL;
     state->pushaddr = NULL;
 
+    state->certfile = NULL;
+    state->keyfile = NULL;
+    state->cacertfile = NULL;
+
     state->badmediators = NULL;
     state->badcollectors = NULL;
 
@@ -270,6 +275,21 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->updatefd = NULL;
     state->mediatorfd = NULL;
     state->timerfd = NULL;
+
+    if (state->certfile && state->keyfile && state->cacertfile){
+        state->ctx = ssl_init(state->cacertfile, state->certfile, state->keyfile);
+        if(state->ctx == NULL){
+            logger(LOG_INFO, "OpenLI: Error, could not init ssl ctx Using %s, %s and %s.",
+                state->certfile, state->keyfile, state->cacertfile);
+            return -1;
+        }
+        logger(LOG_INFO, "OpenLI: OpenSSL CTX initlized, TLS encryption enabled.");
+        logger(LOG_INFO, "OpenLI: Using %s, %s and %s.", state->certfile, state->keyfile, state->cacertfile);
+    }
+    else {
+        state->ctx = NULL;
+        logger(LOG_INFO, "OpenLI: Not using OpenSSL TLS connection.");
+    }
 
     /* Use an fd to catch signals during our main epoll loop, so that we
      * can provide our own signal handling without causing epoll_wait to
@@ -1088,9 +1108,9 @@ static int accept_collector(provision_state_t *state) {
         }
 
         if (bad == NULL) {
-            create_socket_state(col->commev, col->authev->fd, strbuf, 0);
+            create_socket_state(col->commev, col->authev->fd, strbuf, 0, col->ssl);
         } else {
-            create_socket_state(col->commev, col->authev->fd, strbuf, 1);
+            create_socket_state(col->commev, col->authev->fd, strbuf, 1, col->ssl);
         }
 
         col->authev->state = col->commev->state;
@@ -1145,6 +1165,28 @@ static int accept_mediator(provision_state_t *state) {
     if (newfd >= 0) {
         med = calloc(1, sizeof(prov_mediator_t));
         med->fd = newfd;
+
+        if (state->ctx != NULL){ //only use TLS if ctx is set
+            med->ssl = SSL_new(state->ctx);
+            SSL_set_fd(med->ssl, newfd);
+            SSL_set_accept_state(med->ssl);
+            int errr = SSL_accept(med->ssl);
+            if ((errr) <= 0 ){
+                errr = SSL_get_error(med->ssl, errr);
+                logger(LOG_INFO, "OpenLI: TLS handshake failed %d", errr);
+                close(newfd);
+                ERR_print_errors_fp (stderr);
+                logger(LOG_INFO, "OpenLI: These are the openssl errors", errr);
+                free(med->ssl);
+                free(med);
+                return -1;
+            }            
+            logger(LOG_INFO, "OpenLI: TLS handshake accepted.");
+            dump_cert_info(med->ssl);
+        } else {
+            med->ssl = NULL;
+        }
+
         med->details = NULL;     /* will receive this from mediator soon */
         med->commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
@@ -1166,9 +1208,9 @@ static int accept_mediator(provision_state_t *state) {
         }
 
         if (bad == NULL) {
-            create_socket_state(med->commev, med->authev->fd, strbuf, 0);
+            create_socket_state(med->commev, med->authev->fd, strbuf, 0, med->ssl);
         } else {
-            create_socket_state(med->commev, med->authev->fd, strbuf, 1);
+            create_socket_state(med->commev, med->authev->fd, strbuf, 1, med->ssl);
         }
         med->authev->state = med->commev->state;
 
@@ -2611,7 +2653,7 @@ static void run(provision_state_t *state) {
 
 static void usage(char *prog) {
     fprintf(stderr, "Usage: %s [ -d ] -c configfile\n", prog);
-    fprintf(stderr, "\nSet the -d flag to run this program as a daemon.");
+    fprintf(stderr, "\nSet the -d flag to run this program as a daemon.\n");
 }
 
 int main(int argc, char *argv[]) {

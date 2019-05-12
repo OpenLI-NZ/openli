@@ -1294,8 +1294,8 @@ int sync_connect_provisioner(collector_sync_t *sync) {
 
     assert(sync->outgoing == NULL && sync->incoming == NULL);
 
-    sync->outgoing = create_net_buffer(NETBUF_SEND, sync->instruct_fd);
-    sync->incoming = create_net_buffer(NETBUF_RECV, sync->instruct_fd);
+    sync->outgoing = create_net_buffer(NETBUF_SEND, sync->instruct_fd, NULL); //TODO
+    sync->incoming = create_net_buffer(NETBUF_RECV, sync->instruct_fd, NULL); //TODO
 
     /* Put our auth message onto the outgoing buffer */
     if (push_auth_onto_net_buffer(sync->outgoing, OPENLI_PROTO_COLLECTOR_AUTH)

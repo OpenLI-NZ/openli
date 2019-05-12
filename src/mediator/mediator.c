@@ -456,6 +456,11 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->mediatorname = mediatorname;
     state->listenaddr = NULL;
     state->listenport = NULL;
+
+    state->certfile = NULL;
+    state->keyfile = NULL;
+    state->cacertfile = NULL;
+
     state->operatorid = NULL;
     state->provaddr = NULL;
     state->provport = NULL;
@@ -489,6 +494,20 @@ static int init_med_state(mediator_state_t *state, char *configfile,
 
     if (parse_mediator_config(configfile, state) == -1) {
         return -1;
+    }
+
+    if (state->certfile && state->keyfile && state->cacertfile){
+        state->ctx = ssl_init(state->cacertfile, state->certfile, state->keyfile);
+        if(state->ctx == NULL){
+            logger(LOG_INFO, "OpenLI: Error, could not init ssl ctx.");
+            return -1;
+        }
+        logger(LOG_INFO, "OpenLI: OpenSSL CTX initlized, TLS encryption enabled.");
+        logger(LOG_INFO, "OpenLI: Using %s, %s and %s.", state->certfile, state->keyfile, state->cacertfile);
+    }
+    else {
+        state->ctx = NULL;
+        logger(LOG_INFO, "OpenLI: Not using OpenSSL TLS connection.");
     }
 
     if (state->mediatorid == 0) {
@@ -884,7 +903,7 @@ static int accept_collector(mediator_state_t *state) {
         col.colev->fdtype = MED_EPOLL_COLLECTOR;
         col.colev->fd = newfd;
         col.colev->state = mstate;
-        mstate->incoming = create_net_buffer(NETBUF_RECV, newfd);
+        mstate->incoming = create_net_buffer(NETBUF_RECV, newfd, NULL); //TODO
         mstate->ipaddr = strdup(strbuf);
 
         HASH_FIND(hh, state->disabledcols, mstate->ipaddr,
@@ -2123,7 +2142,7 @@ static int send_mediator_listen_details(mediator_state_t *state,
     return 0;
 }
 
-static int init_provisioner_connection(mediator_state_t *state, int sock) {
+static int init_provisioner_connection(mediator_state_t *state, int sock, SSL_CTX *ctx) {
 
     struct epoll_event ev;
     mediator_prov_t *prov = (mediator_prov_t *)&(state->provisioner);
@@ -2132,14 +2151,38 @@ static int init_provisioner_connection(mediator_state_t *state, int sock) {
         return 0;
     }
 
+    if (ctx != NULL){
+        prov->ssl = SSL_new(ctx);
+        SSL_set_fd(prov->ssl, sock);
+
+        SSL_set_connect_state(prov->ssl);
+
+        int errr = SSL_do_handshake(prov->ssl);
+
+        if ((errr) <= 0 ){
+            errr = SSL_get_error(prov->ssl, errr);
+            logger(LOG_INFO, "OpenLI: ssl_accept died %d", errr);
+            ERR_print_errors_fp (stderr);
+            logger(LOG_INFO, "OpenLI: These are the openssl errors", errr);
+            return 0;
+        }
+
+        logger(LOG_INFO, "OpenLI: handshake accepted.");
+        dump_cert_info(prov->ssl);
+    }
+    else {
+        prov->ssl = NULL;
+    }
+
+
     prov->provev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
     prov->provev->fd = sock;
     prov->provev->fdtype = MED_EPOLL_PROVISIONER;
     prov->provev->state = NULL;
 
     prov->sentinfo = 0;
-    prov->outgoing = create_net_buffer(NETBUF_SEND, sock);
-    prov->incoming = create_net_buffer(NETBUF_RECV, sock);
+    prov->outgoing = create_net_buffer(NETBUF_SEND, sock, prov->ssl);
+    prov->incoming = create_net_buffer(NETBUF_RECV, sock, prov->ssl);
 
     ev.data.ptr = prov->provev;
     ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
@@ -2388,7 +2431,7 @@ static void run(mediator_state_t *state) {
                         state->provaddr, state->provport);
             }
 
-            if (init_provisioner_connection(state, s) == -1) {
+            if (init_provisioner_connection(state, s, state->ctx) == -1) {
                 destroy_net_buffer(state->provisioner.outgoing);
                 destroy_net_buffer(state->provisioner.incoming);
                 close(s);

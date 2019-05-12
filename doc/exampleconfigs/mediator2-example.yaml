@@ -4,19 +4,19 @@
 operatorid: WAND
 
 # Set a unique ID for this mediator (between 1 and 1,000,000)
-mediatorid: 6000
+mediatorid: 6001
 
 # Connect to a provisioner that is listening on 10.0.0.1:12001
 provisioneraddr: 127.0.0.1
 provisionerport: 55555
 
-tlscert: clientB-crt.pem
-tlskey: clientB-key.pem
+tlscert: medcert.pem
+tlskey: medkey.pem
 tlsca: ca-crt.pem
 
 # Listen for collectors on 10.200.5.100:8888
 listenaddr: 127.0.0.1
-listenport: 8888
+listenport: 8891
 
 # Write any pcap trace files out to this directory. Only applies to
 # intercepts that are configured to use the pcap output mode.
