@@ -404,5 +404,23 @@ uint32_t hash_liid(char *liid) {
     return hashlittle(liid, strlen(liid), 1572869);
 }
 
+void *get_udp_payload(libtrace_packet_t *packet, uint32_t *rem) {
+
+    uint8_t proto;
+    void *transport, *udppayload;
+
+    transport = trace_get_transport(packet, &proto, rem);
+    if (rem == 0 || transport == NULL) {
+        return NULL;
+    }
+    if (proto != TRACE_IPPROTO_UDP) {
+        return NULL;
+    }
+
+    udppayload = trace_get_payload_from_udp((libtrace_udp_t *)transport,
+            rem);
+	return udppayload;
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 

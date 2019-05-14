@@ -197,11 +197,31 @@ static int remove_ipv6_intercept(colthread_local_t *loc, ipsession_t *torem) {
     return 1;
 }
 
+void handle_push_jmirror_intercept(libtrace_thread_t *t, colthread_local_t *loc,
+        jmirror_intercept_t *jm) {
+    HASH_ADD_KEYPTR(hh, loc->activejmirrorintercepts,
+            &(jm->jmirror_interceptid), sizeof(jm->jmirror_interceptid), jm);
+}
 
 void handle_push_aluintercept(libtrace_thread_t *t, colthread_local_t *loc,
         aluintercept_t *alu) {
     HASH_ADD_KEYPTR(hh, loc->activealuintercepts, &(alu->aluinterceptid),
             sizeof(alu->aluinterceptid), alu);
+}
+
+void handle_halt_jmirror_intercept(libtrace_thread_t *t,
+        colthread_local_t *loc, jmirror_intercept_t *jm) {
+    jmirror_intercept_t *found;
+
+    HASH_FIND(hh, loc->activejmirrorintercepts, &(jm->jmirror_interceptid),
+            sizeof(jm->jmirror_interceptid), found);
+
+    if (found == NULL) {
+        logger(LOG_INFO, "OpenLI: collector thread was unable to remove JMirror intercept %u, as it was not present in its intercept set.",
+                jm->jmirror_interceptid);
+    } else {
+        HASH_DELETE(hh, loc->activejmirrorintercepts, found);
+    }
 }
 
 void handle_halt_aluintercept(libtrace_thread_t *t, colthread_local_t *loc,

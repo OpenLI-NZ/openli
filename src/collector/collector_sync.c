@@ -484,6 +484,31 @@ static inline void push_single_ipintercept(collector_sync_t *sync,
     libtrace_message_queue_put(q, (void *)(&msg));
 }
 
+static inline void push_single_jmirrorid(libtrace_message_queue_t *q,
+        ipintercept_t *ipint) {
+
+    jmirror_intercept_t *jm;
+    openli_pushed_t msg;
+
+    if (ipint->jmirrorid == OPENLI_JMIRROR_NONE) {
+        return;
+    }
+
+    jm = create_jmirror_intercept(ipint);
+    if (!jm) {
+        logger(LOG_INFO,
+                "OpenLI: ran out of memory while creating JMirror intercept message.");
+        return;
+    }
+
+    jm->cin = 0;
+    memset(&msg, 0, sizeof(openli_pushed_t));
+    msg.type = OPENLI_PUSH_JMIRROR_INTERCEPT;
+    msg.data.jmirror = jm;
+
+    libtrace_message_queue_put(q, (void *)(&msg));
+}
+
 static inline void push_single_alushimid(libtrace_message_queue_t *q,
         ipintercept_t *ipint, uint32_t sesscin) {
 
@@ -928,7 +953,8 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     sync->glob->stats->ipintercepts_ended_total ++;
     pthread_mutex_unlock(sync->glob->stats_mutex);
 
-    if (ipint->alushimid != OPENLI_ALUSHIM_NONE) {
+    if (ipint->alushimid != OPENLI_ALUSHIM_NONE || ipint->jmirrorid !=
+            OPENLI_JMIRROR_NONE) {
         pthread_mutex_lock(sync->glob->stats_mutex);
         sync->glob->stats->ipsessions_ended_diff ++;
         sync->glob->stats->ipsessions_ended_total ++;
@@ -1029,6 +1055,15 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             x = NULL;
         }
 
+        if (cept->jmirrorid != x->jmirrorid) {
+            logger(LOG_INFO,
+                    "OpenLI: duplicate IP ID %s seen, but JMirror intercept IDs are different (was %u, now %u).",
+                    x->common.liid, x->jmirrorid, cept->jmirrorid);
+            remove_ip_intercept(sync, x);
+            free_single_ipintercept(x);
+            x = NULL;
+        }
+
         if (x != NULL) {
             if (cept->accesstype != x->accesstype) {
                 logger(LOG_INFO,
@@ -1080,6 +1115,26 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         sync->glob->stats->ipsessions_added_diff ++;
         sync->glob->stats->ipsessions_added_total ++;
         pthread_mutex_unlock(sync->glob->stats_mutex);
+    } else if (cept->jmirrorid != OPENLI_JMIRROR_NONE) {
+        logger(LOG_INFO,
+                "OpenLI: received IP intercept from provisioner for JMirror intercept ID %u (LIID %s, authCC %s)",
+                cept->jmirrorid, cept->common.liid, cept->common.authcc);
+
+        /* Don't need to wait for a session to start an JMirror intercept.
+         * The CIN is contained within the packet and only valid
+         * interceptable packets should have the intercept ID we're
+         * looking for.
+         *
+         */
+        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
+                sendq, tmp) {
+            push_single_jmirrorid(sendq->q, cept);
+        }
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->ipsessions_added_diff ++;
+        sync->glob->stats->ipsessions_added_total ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
+
     } else if (cept->username != NULL) {
         logger(LOG_INFO,
                 "OpenLI: received IP intercept for target %s from provisioner (LIID %s, authCC %s)",
@@ -1427,6 +1482,8 @@ static void push_all_active_intercepts(collector_sync_t *sync,
         }
         if (orig->alushimid != OPENLI_ALUSHIM_NONE) {
             push_single_alushimid(q, orig, 0);
+        } else if (orig->jmirrorid != OPENLI_JMIRROR_NONE) {
+            push_single_jmirrorid(q, orig);
         }
         HASH_ITER(hh, orig->statics, ipr, tmpr) {
             push_static_iprange_to_collectors(q, orig, ipr);

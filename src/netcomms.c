@@ -807,6 +807,12 @@ int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
          sizeof(ipint->alushimid) + sizeof(ipint->common.destid) + \
          sizeof(ipint->accesstype) + (7 * 4))
 
+#define JMIRROR_IPINTERCEPT_BODY_LEN(ipint) \
+        (ipint->common.liid_len + ipint->common.authcc_len + \
+         ipint->common.delivcc_len + ipint->username_len + \
+         sizeof(ipint->jmirrorid) + sizeof(ipint->common.destid) + \
+         sizeof(ipint->accesstype) + (7 * 4))
+
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
     /* Pre-compute our body length so we can write it in the header */
@@ -818,6 +824,8 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
     if (ipint->alushimid != OPENLI_ALUSHIM_NONE) {
         totallen = ALUSHIM_IPINTERCEPT_BODY_LEN(ipint);
+    } else if (ipint->jmirrorid != OPENLI_JMIRROR_NONE) {
+        totallen = JMIRROR_IPINTERCEPT_BODY_LEN(ipint);
     } else {
         totallen = IPINTERCEPT_BODY_LEN(ipint);
     }
@@ -868,6 +876,12 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
         if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_ALUSHIMID,
                 (uint8_t *)(&ipint->alushimid),
                 sizeof(ipint->alushimid))) == -1) {
+            goto pushipintfail;
+        }
+    } else if (ipint->jmirrorid != OPENLI_JMIRROR_NONE) {
+        if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_JMIRRORID,
+                (uint8_t *)(&ipint->jmirrorid),
+                sizeof(ipint->jmirrorid))) == -1) {
             goto pushipintfail;
         }
     }
@@ -1235,6 +1249,7 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->common.targetagency = NULL;
     ipint->awaitingconfirm = 0;
     ipint->alushimid = OPENLI_ALUSHIM_NONE;
+    ipint->jmirrorid = OPENLI_JMIRROR_NONE;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
     ipint->statics = NULL;
 
@@ -1256,6 +1271,8 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
             ipint->common.destid = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_ALUSHIMID) {
             ipint->alushimid = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_JMIRRORID) {
+            ipint->jmirrorid = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_ACCESSTYPE) {
             ipint->accesstype = *((internet_access_method_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_LIID) {

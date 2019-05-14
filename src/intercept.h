@@ -34,6 +34,7 @@
 #include <uthash.h>
 
 #define OPENLI_ALUSHIM_NONE (0xffffffff)
+#define OPENLI_JMIRROR_NONE (0xffffffff)
 
 typedef enum {
     INTERNET_ACCESS_TYPE_UNDEFINED = 0,
@@ -82,6 +83,9 @@ typedef struct ipintercept {
 
     /* Special case for converting ALU intercepts into ETSI ones */
     uint32_t alushimid;
+
+    /* Special case for converting JMirror traffic into ETSI LI */
+    uint32_t jmirrorid;
 
     static_ipranges_t *statics;
 
@@ -140,6 +144,7 @@ typedef struct voipsdpmap {
 typedef struct rtpstreaminf rtpstreaminf_t;
 typedef struct ipsession ipsession_t;
 typedef struct aluintercept aluintercept_t;
+typedef struct jmirror_intercept jmirror_intercept_t;
 typedef struct staticipsession staticipsession_t;
 typedef struct sipregister sipregister_t;
 
@@ -212,10 +217,18 @@ struct ipsession {
 };
 
 struct aluintercept {
-    uint32_t cin;       // how do we set this properly?
+    uint32_t cin;
     uint32_t aluinterceptid;
     uint32_t nextseqno;
 
+    intercept_common_t common;
+    UT_hash_handle hh;
+};
+
+struct jmirror_intercept {
+    uint32_t cin;
+    uint32_t jmirror_interceptid;
+    uint32_t nextseqno;
     intercept_common_t common;
     UT_hash_handle hh;
 };
@@ -235,6 +248,7 @@ void free_all_voipintercepts(voipintercept_t **vintercepts);
 void free_all_rtpstreams(rtpstreaminf_t **streams);
 void free_all_ipsessions(ipsession_t **sessions);
 void free_all_aluintercepts(aluintercept_t **aluintercepts);
+void free_all_jmirror_intercepts(jmirror_intercept_t **jmirror_intercepts);
 void free_all_staticipsessions(staticipsession_t **statintercepts);
 
 void free_voip_cinmap(voipcinmap_t *cins);
@@ -244,6 +258,7 @@ void free_single_voipintercept(voipintercept_t *v);
 void free_single_ipsession(ipsession_t *sess);
 void free_single_rtpstream(rtpstreaminf_t *rtp);
 void free_single_aluintercept(aluintercept_t *alu);
+void free_single_jmirror_intercept(jmirror_intercept_t *jmirror);
 void free_single_staticipsession(staticipsession_t *statint);
 
 sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
@@ -256,6 +271,7 @@ ipsession_t *create_ipsession(ipintercept_t *ipint, uint32_t cin,
         int ipfamily, struct sockaddr *assignedip);
 
 aluintercept_t *create_aluintercept(ipintercept_t *ipint);
+jmirror_intercept_t *create_jmirror_intercept(ipintercept_t *ipint);
 
 staticipsession_t *create_staticipsession(ipintercept_t *ipint, char *rangestr,
         uint32_t cin);

@@ -59,6 +59,8 @@ enum {
     OPENLI_PUSH_HALT_ALUINTERCEPT = 10,
     OPENLI_PUSH_IPRANGE = 11,
     OPENLI_PUSH_REMOVE_IPRANGE = 12,
+    OPENLI_PUSH_JMIRROR_INTERCEPT = 13,
+    OPENLI_PUSH_HALT_JMIRROR_INTERCEPT = 14,
 };
 
 enum {
@@ -91,6 +93,7 @@ typedef struct openli_ii_msg {
         ipsession_t *ipsess;
         rtpstreaminf_t *ipmmint;
         aluintercept_t *aluint;
+        jmirror_intercept_t *jmirror;
         char *rtpstreamkey;
         coreserver_t *coreserver;
         staticipsession_t *iprange;
@@ -189,6 +192,7 @@ typedef struct colthread_local {
 
     rtpstreaminf_t *activertpintercepts;
     aluintercept_t *activealuintercepts;
+    jmirror_intercept_t *activejmirrorintercepts;
 
     staticipsession_t *activestaticintercepts;
 
@@ -250,6 +254,7 @@ typedef struct collector_global {
     libtrace_list_t *expired_inputs;
 
     coreserver_t *alumirrors;
+    coreserver_t *jmirrors;
 
     char *sipdebugfile;
 
@@ -267,14 +272,6 @@ typedef struct collector_global {
     SSL_CTX *ctx;
 
 } collector_global_t;
-
-typedef struct packetinfo {
-    int family;
-    struct sockaddr_storage srcip;
-    struct sockaddr_storage destip;
-    uint16_t srcport;
-    uint16_t destport;
-} packet_info_t;
 
 int register_sync_queues(sync_thread_global_t *glob,
         void *recvq, libtrace_message_queue_t *sendq,

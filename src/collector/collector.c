@@ -50,6 +50,7 @@
 #include "ipmmcc.h"
 #include "sipparsing.h"
 #include "alushim_parser.h"
+#include "jmirror_parser.h"
 #include "util.h"
 
 volatile int collector_halt = 0;
@@ -254,6 +255,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
     loc->activeipv6intercepts = NULL;
     loc->activertpintercepts = NULL;
     loc->activealuintercepts = NULL;
+    loc->activejmirrorintercepts = NULL;
     loc->activestaticintercepts = NULL;
     loc->radiusservers = NULL;
     loc->sipservers = NULL;
@@ -381,6 +383,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     free_all_staticipsessions(&(loc->activestaticintercepts));
     free_all_rtpstreams(&(loc->activertpintercepts));
     free_all_aluintercepts(&(loc->activealuintercepts));
+    free_all_jmirror_intercepts(&(loc->activejmirrorintercepts));
     free_coreserver_list(loc->radiusservers);
     free_coreserver_list(loc->sipservers);
 
@@ -537,6 +540,14 @@ static void process_incoming_messages(libtrace_thread_t *t,
 
     if (syncpush->type == OPENLI_PUSH_HALT_ALUINTERCEPT) {
         handle_halt_aluintercept(t, loc, syncpush->data.aluint);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_JMIRROR_INTERCEPT) {
+        handle_push_jmirror_intercept(t, loc, syncpush->data.jmirror);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_HALT_JMIRROR_INTERCEPT) {
+        handle_halt_jmirror_intercept(t, loc, syncpush->data.jmirror);
     }
 
     if (syncpush->type == OPENLI_PUSH_IPRANGE) {
@@ -728,6 +739,16 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
          * for conversion to an ETSI record */
         if (glob->alumirrors && check_alu_intercept(&(glob->sharedinfo), loc,
                 pkt, &pinfo, glob->alumirrors, loc->activealuintercepts)) {
+            forwarded = 1;
+            pthread_mutex_lock(&(glob->stats_mutex));
+            glob->stats.ipcc_created += 1;
+            pthread_mutex_unlock(&(glob->stats_mutex));
+            goto processdone;
+        }
+
+        if (glob->jmirrors && check_jmirror_intercept(&(glob->sharedinfo), loc,
+                pkt, &pinfo, glob->jmirrors, loc->activejmirrorintercepts)) {
+
             forwarded = 1;
             pthread_mutex_lock(&(glob->stats_mutex));
             glob->stats.ipcc_created += 1;
@@ -978,6 +999,7 @@ static void destroy_collector_state(collector_global_t *glob) {
     }
 
     free_coreserver_list(glob->alumirrors);
+    free_coreserver_list(glob->jmirrors);
 	free_sync_thread_data(&(glob->syncip));
 	free_sync_thread_data(&(glob->syncvoip));
 
@@ -1179,6 +1201,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->sharedinfo.provisionerip = NULL;
     glob->sharedinfo.provisionerport = NULL;
     glob->alumirrors = NULL;
+    glob->jmirrors = NULL;
     glob->sipdebugfile = NULL;
     glob->nextloc = 0;
     glob->syncgenericfreelist = NULL;
