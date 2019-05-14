@@ -46,6 +46,17 @@ logstatfrequency: 5
 #   port: 8500
 
 
+# List of Juniper mirrors that we are acting as a mediator for.
+# NOTE: This should be the IP and port of the *recipient* of the mirrored
+#       traffic, not the host that is doing the mirroring.
+# NOTE: JMirror translation is a special case that only applies to Juniper
+#       networks, but the configuration is included here for completeness
+jmirrors:
+ - ip: 192.168.200.77
+   port: 30030
+
+
+
 # List of interfaces to capture packets on
 inputs:
  - uri: lo            # capture on interface eth1
