@@ -394,6 +394,36 @@ void free_all_aluintercepts(aluintercept_t **aluints) {
     }
 }
 
+jmirror_intercept_t *create_jmirror_intercept(ipintercept_t *ipint) {
+    jmirror_intercept_t *jm;
+
+    jm = (jmirror_intercept_t *)malloc(sizeof(jmirror_intercept_t));
+    if (jm == NULL) {
+        return NULL;
+    }
+
+    jm->nextseqno = 0;
+    jm->cin = 0;
+    jm->jmirror_interceptid = ipint->jmirrorid;
+    copy_intercept_common(&(ipint->common), &(jm->common));
+
+    return jm;
+}
+
+void free_single_jmirror_intercept(jmirror_intercept_t *jm) {
+    free_intercept_common(&(jm->common));
+    free(jm);
+}
+
+void free_all_jmirror_intercepts(jmirror_intercept_t **jmints) {
+    jmirror_intercept_t *jm, *tmp;
+    HASH_ITER(hh, *jmints, jm, tmp) {
+        HASH_DELETE(hh, *jmints, jm);
+        free_single_jmirror_intercept(jm);
+    }
+}
+
+
 staticipsession_t *create_staticipsession(ipintercept_t *ipint, char *rangestr,
         uint32_t cin) {
 

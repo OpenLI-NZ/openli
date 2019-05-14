@@ -44,6 +44,15 @@ enum {
     OPENLI_CORE_SERVER_ALUMIRROR,
 };
 
+typedef struct packetinfo {
+    int family;
+    struct sockaddr_storage srcip;
+    struct sockaddr_storage destip;
+    uint16_t srcport;
+    uint16_t destport;
+} packet_info_t;
+
+
 typedef struct coreserver {
     char *serverkey;
     uint8_t servertype;
@@ -61,6 +70,9 @@ char *construct_coreserver_key(coreserver_t *cs);
 void free_coreserver_list(coreserver_t *servlist);
 const char *coreserver_type_to_string(uint8_t cstype);
 coreserver_t *deep_copy_coreserver(coreserver_t *cs);
+
+coreserver_t *match_packet_to_coreserver(coreserver_t *serverlist,
+        packet_info_t *pinfo);
 
 #define CS_TO_V4(cs) ((struct sockaddr_in *)(cs->info->ai_addr))
 #define CS_TO_V6(cs) ((struct sockaddr_in6 *)(cs->info->ai_addr))

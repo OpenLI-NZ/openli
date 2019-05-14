@@ -23,32 +23,19 @@
  *
  *
  */
+#ifndef OPENLI_JMIRROR_PARSER_H_
+#define OPENLI_JMIRROR_PARSER_H_
 
-#ifndef OPENLI_UTIL_H_
-#define OPENLI_UTIL_H_
-
-#include <math.h>
-#include <sys/epoll.h>
 #include <libtrace.h>
+#include "collector.h"
+#include "coreserver.h"
+#include "intercept.h"
 
-int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
-        uint8_t setkeepalive);
-int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr);
-int create_listener(char *addr, char *port, char *name);
-char *sockaddr_to_string(struct sockaddr *sa, char *str, int len);
-uint8_t *sockaddr_to_key(struct sockaddr *sa, int *socklen);
-void convert_ipstr_to_sockaddr(char *knownip, struct sockaddr_storage **saddr,
-        int *family);
-int sockaddr_match(int family, struct sockaddr *a, struct sockaddr *b);
-int extract_ip_addresses(libtrace_packet_t *pkt, uint8_t *srcip,
-        uint8_t *destip, int *ipfamily);
-struct addrinfo *populate_addrinfo(char *ipstr, char *portstr,
-        int socktype);
-void *get_udp_payload(libtrace_packet_t *packet, uint32_t *rem);
-
-uint32_t hash_liid(char *liid);
-uint32_t hashlittle( const void *key, size_t length, uint32_t initval);
+int check_jmirror_intercept(collector_identity_t *info, colthread_local_t *loc,
+        libtrace_packet_t *packet, packet_info_t *pinfo,
+        coreserver_t *alusources, jmirror_intercept_t *jmirrors);
 
 #endif
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 
