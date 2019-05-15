@@ -154,7 +154,7 @@ intercept, you'll need to do two things. First, you'll need to add the
 'alumirrors' option to your collector config. More information on this
 option is present in CollectorDoc.md.
 Second, configure an IP intercept within the provisioner config as described
-below, but make sure you include the 'alushimid' parameter and that the
+below, but make sure you include the 'vendmirrorid' parameter and that the
 value of that parameter matches the ID that was assigned to the intercept
 on the ALU device.
 
@@ -176,7 +176,7 @@ intercept, you'll need to do two things. First, you'll need to add the
 knows which packets contain mirrored traffic that should be decapsulated. More
 information on this option is given in CollectorDoc.md.
 Second, you must configure an IP intercept within the provisioner config as
-described below, but make sure to include the 'jmirrorid' parameter and that
+described below, but make sure to include the 'vendmirrorid' parameter and that
 the value of that parameter matches the Intercept ID that is going to be
 assigned to the mirrored traffic when you trigger the mirror on your Juniper
 device.
@@ -244,10 +244,12 @@ An IP intercept must contain the following key-value elements:
 * authcountrycode       -- the authorisation country code
 * deliverycountrycode   -- the delivery country code
 * user                  -- the AAA username for the target
-* alushimid             -- the intercept ID from the ALU intercept packets
-                           (only for re-encoding ALU intercepts as ETSI)
-* jmirrorid             -- the intercept ID from the Juniper mirrored packets
-                           (only for re-encoding JMirror intercepts as ETSI)
+* vendmirrorid          -- if using a vendor mirroring platform to stream
+                           packets to the collector, this is the intercept ID
+                           that you have assigned to the packets on the
+                           mirroring platform for the target user.
+                           (only for re-encoding ALU or JMirror intercepts as
+                           ETSI)
 * staticips             -- a list of IP ranges that are known to have been
                            assigned to the target.
 * mediator              -- the ID of the mediator which will forward the
