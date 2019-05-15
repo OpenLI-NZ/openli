@@ -23,17 +23,17 @@
  *
  *
  */
-#ifndef OPENLI_ALUSHIM_PARSER_H_
-#define OPENLI_ALUSHIM_PARSER_H_
+#ifndef OPENLI_JMIRROR_PARSER_H_
+#define OPENLI_JMIRROR_PARSER_H_
 
 #include <libtrace.h>
 #include "collector.h"
 #include "coreserver.h"
 #include "intercept.h"
 
-int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
+int check_jmirror_intercept(collector_identity_t *info, colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
-        coreserver_t *alusources, vendmirror_intercept_t *aluints);
+        coreserver_t *alusources, vendmirror_intercept_t *jmirrors);
 
 #endif
 
