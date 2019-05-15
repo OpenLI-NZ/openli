@@ -45,7 +45,7 @@ static inline uint32_t jmirror_get_interceptid(jmirrorhdr_t *header) {
 }
 
 static void push_jmirror_ipcc_job(colthread_local_t *loc,
-        libtrace_packet_t *packet, jmirror_intercept_t *cept,
+        libtrace_packet_t *packet, vendmirror_intercept_t *cept,
         collector_identity_t *info, void *l3, uint32_t rem) {
 
     openli_export_recv_t *msg;
@@ -69,12 +69,12 @@ static void push_jmirror_ipcc_job(colthread_local_t *loc,
 
 int check_jmirror_intercept(collector_identity_t *info, colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
-        coreserver_t *jmirror_sources, jmirror_intercept_t *jmirror_ints) {
+        coreserver_t *jmirror_sources, vendmirror_intercept_t *jmirror_ints) {
 
     coreserver_t *cs;
     jmirrorhdr_t *header = NULL;
     uint32_t rem = 0, cept_id;
-    jmirror_intercept_t *cept;
+    vendmirror_intercept_t *cept;
     char *l3;
 
     if ((cs = match_packet_to_coreserver(jmirror_sources, pinfo)) == NULL) {

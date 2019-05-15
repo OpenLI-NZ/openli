@@ -51,12 +51,10 @@ enum {
     OPENLI_PUSH_HALT_IPMMINTERCEPT = 4,
     OPENLI_PUSH_CORESERVER = 7,
     OPENLI_PUSH_REMOVE_CORESERVER = 8,
-    OPENLI_PUSH_ALUINTERCEPT = 9,
-    OPENLI_PUSH_HALT_ALUINTERCEPT = 10,
+    OPENLI_PUSH_VENDMIRROR_INTERCEPT = 9,
+    OPENLI_PUSH_HALT_VENDMIRROR_INTERCEPT = 10,
     OPENLI_PUSH_IPRANGE = 11,
     OPENLI_PUSH_REMOVE_IPRANGE = 12,
-    OPENLI_PUSH_JMIRROR_INTERCEPT = 13,
-    OPENLI_PUSH_HALT_JMIRROR_INTERCEPT = 14,
 };
 
 enum {
@@ -88,8 +86,7 @@ typedef struct openli_ii_msg {
     union {
         ipsession_t *ipsess;
         rtpstreaminf_t *ipmmint;
-        aluintercept_t *aluint;
-        jmirror_intercept_t *jmirror;
+        vendmirror_intercept_t *mirror;
         char *rtpstreamkey;
         coreserver_t *coreserver;
         staticipsession_t *iprange;
@@ -187,8 +184,7 @@ typedef struct colthread_local {
     ipv4_target_t *activeipv4intercepts;
 
     rtpstreaminf_t *activertpintercepts;
-    aluintercept_t *activealuintercepts;
-    jmirror_intercept_t *activejmirrorintercepts;
+    vendmirror_intercept_t *activemirrorintercepts;
 
     staticipsession_t *activestaticintercepts;
 
