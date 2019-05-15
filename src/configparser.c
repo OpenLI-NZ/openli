@@ -644,8 +644,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->username_len = 0;
         newcept->common.authcc_len = 0;
         newcept->common.delivcc_len = 0;
-        newcept->alushimid = OPENLI_ALUSHIM_NONE;
-        newcept->jmirrorid = OPENLI_JMIRROR_NONE;
+        newcept->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
         newcept->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED; 
         newcept->statics = NULL;
 
@@ -697,17 +696,19 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value, "alushimid") == 0) {
-                newcept->alushimid = strtoul((char *)value->data.scalar.value,
-                        NULL, 0);
+                newcept->vendmirrorid = strtoul(
+                        (char *)value->data.scalar.value, NULL, 0);
+                newcept->vendmirrorid &= 0x3fffffff;
             }
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "jmirrorid") == 0) {
-                newcept->jmirrorid = strtoul((char *)value->data.scalar.value,
+                    strcmp((char *)key->data.scalar.value,
+                    "vendmirrorid") == 0) {
+                newcept->vendmirrorid = strtoul(
+                        (char *)value->data.scalar.value,
                         NULL, 0);
-                /* Must be 30 bits only */
-                newcept->jmirrorid = (newcept->jmirrorid & 0x3fffffff);
+                newcept->vendmirrorid &= 0x3fffffff;
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -742,8 +743,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
                 newcept->common.delivcc != NULL &&
                 (newcept->username != NULL ||
-                 newcept->alushimid != OPENLI_ALUSHIM_NONE ||
-                 newcept->jmirrorid != OPENLI_JMIRROR_NONE || 
+                 newcept->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE ||
                  newcept->statics != NULL) &&
                 newcept->common.destid > 0 &&
                 newcept->common.targetagency != NULL) {

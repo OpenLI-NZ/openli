@@ -84,7 +84,7 @@ static inline int alushim_get_direction(alushimhdr_t *aluhdr) {
 }
 
 static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
-        aluintercept_t *alu, uint8_t dir, collector_identity_t *info,
+        vendmirror_intercept_t *alu, uint8_t dir, collector_identity_t *info,
         void *l3, uint32_t rem) {
 
     openli_export_recv_t *msg;
@@ -109,10 +109,10 @@ static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
 
 int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
-        coreserver_t *alusources, aluintercept_t *aluints) {
+        coreserver_t *alusources, vendmirror_intercept_t *aluints) {
 
     coreserver_t *cs;
-    aluintercept_t *alu;
+    vendmirror_intercept_t *alu;
     uint16_t ethertype;
     alushimhdr_t *aluhdr = NULL;
     uint32_t rem = 0, shimintid;
