@@ -84,7 +84,7 @@ ipintercepts:
  - liid: NAPP9321HN             # LIID, should be provided by requesting agency
    authcountrycode: NZ          # Authorisation country code
    deliverycountrycode: NZ      # Delivery country code
-   alushimid: 522781            # Intercept-ID number used by the ALU
+   vendmirrorid: 522781         # Intercept-ID number used by the ALU
                                 # intercept.
    mediator: 6001               # ID of the mediator to send intercept via
    agencyid: "Spooks"           # ID of agency to send intercept to
@@ -99,7 +99,7 @@ ipintercepts:
  - liid: GTNF4221AU             # LIID, should be provided by requesting agency
    authcountrycode: NZ          # Authorisation country code
    deliverycountrycode: NZ      # Delivery country code
-   jmirrorid: 0x12121212        # Intercept ID number used by the Juniper
+   vendmirrorid: 0x12121212     # Intercept ID number used by the Juniper
                                 # mirroring.
    mediator: 6001               # ID of the mediator to send intercept via
    agencyid: "Police"           # ID of agency to send intercept to
