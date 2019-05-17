@@ -86,6 +86,20 @@ build-amd64-ubuntu-disco:
   only:
     - tags
 
+build-amd64-ubuntu-disco:
+  stage: build
+  image: ubuntu:disco
+  script:
+    - ./gitlab-build.sh
+    - mkdir -p built-packages/disco/
+    - mv ../*.deb built-packages/disco/
+  artifacts:
+    paths:
+      - built-packages/*
+    expire_in: 1 day
+  only:
+    - tags
+
 upload-packages:
   stage: upload
   image: ubuntu:bionic
