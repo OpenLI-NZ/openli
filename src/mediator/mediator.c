@@ -183,6 +183,12 @@ static inline void setup_provisioner_reconnect_timer(mediator_state_t *state) {
 static void free_provisioner(int epollfd, mediator_prov_t *prov) {
     struct epoll_event ev;
 
+    if (prov->ssl){
+        SSL_set_shutdown(prov->ssl, SSL_SENT_SHUTDOWN);
+        SSL_shutdown(prov->ssl);
+        SSL_free(prov->ssl);
+    }
+
     if (prov->provev) {
         if (prov->provev->fd != -1) {
             if (epoll_ctl(epollfd, EPOLL_CTL_DEL, prov->provev->fd,
@@ -897,13 +903,34 @@ static int accept_collector(mediator_state_t *state) {
     }
 
     if (newfd >= 0) {
+
+       if (state->ctx != NULL){ //only use TLS if ctx is set
+            col.ssl = SSL_new(state->ctx);
+            SSL_set_fd(col.ssl, newfd);
+            SSL_set_accept_state(col.ssl);
+            int errr = SSL_accept(col.ssl);
+            if ((errr) <= 0 ){
+                errr = SSL_get_error(col.ssl, errr);
+                logger(LOG_INFO, "OpenLI: TLS handshake failed %d", errr);
+                close(newfd);
+                ERR_print_errors_fp (stderr);
+                logger(LOG_INFO, "OpenLI: These are the openssl errors for accepcting collector(med)", errr);
+                free(col.ssl);//TODO was this causseing the SSL_free errors later on?
+                return -1;
+            }            
+            logger(LOG_INFO, "OpenLI: TLS Collector handshake accepted.");
+            dump_cert_info(col.ssl);
+        } else {
+            col.ssl = NULL;
+        }
+
         mstate = (med_coll_state_t *)malloc(sizeof(med_coll_state_t));
         col.colev = (med_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
         col.colev->fdtype = MED_EPOLL_COLLECTOR;
         col.colev->fd = newfd;
         col.colev->state = mstate;
-        mstate->incoming = create_net_buffer(NETBUF_RECV, newfd, NULL); //TODO
+        mstate->incoming = create_net_buffer(NETBUF_RECV, newfd, col.ssl); //TODO
         mstate->ipaddr = strdup(strbuf);
 
         HASH_FIND(hh, state->disabledcols, mstate->ipaddr,
@@ -991,7 +1018,7 @@ static handover_t *create_new_handover(char *ipstr, char *portstr,
     }
 
 
-    init_export_buffer(&(agstate->buf));
+    init_export_buffer(&(agstate->buf)); //Handover doesnt use SSL
     agstate->main_fd = -1;
     agstate->outenabled = 0;
     agstate->katimer_fd = -1;
@@ -1450,7 +1477,7 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
         return 0;
     }
 
-    if ((ret = transmit_buffered_records(&(mas->buf), mev->fd, 65535)) == -1) {
+    if ((ret = transmit_buffered_records(&(mas->buf), mev->fd, 65535, NULL)) == -1) {
         return -1;
     }
 
@@ -2163,7 +2190,10 @@ static int init_provisioner_connection(mediator_state_t *state, int sock, SSL_CT
             errr = SSL_get_error(prov->ssl, errr);
             logger(LOG_INFO, "OpenLI: ssl_accept died %d", errr);
             ERR_print_errors_fp (stderr);
-            logger(LOG_INFO, "OpenLI: These are the openssl errors", errr);
+            logger(LOG_INFO, "OpenLI: These are the openssl errors for init prov(med)", errr);
+
+            //TODO free ssl here?
+
             return 0;
         }
 

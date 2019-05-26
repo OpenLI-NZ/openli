@@ -1180,6 +1180,10 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->nextloc = 0;
     glob->syncgenericfreelist = NULL;
 
+    glob->certfile = NULL;
+    glob->keyfile = NULL;
+    glob->cacertfile = NULL;
+
     memset(&(glob->stats), 0, sizeof(glob->stats));
     glob->stat_frequency = 0;
     glob->ticks_since_last_stat = 0;
@@ -1193,6 +1197,21 @@ static collector_global_t *parse_global_config(char *configfile) {
     if (parse_collector_config(configfile, glob) == -1) {
         clear_global_config(glob);
         return NULL;
+    }
+
+    if (glob->certfile && glob->keyfile && glob->cacertfile){
+        glob->ctx = ssl_init(glob->cacertfile, glob->certfile, glob->keyfile);
+        if(glob->ctx == NULL){
+            logger(LOG_INFO, "OpenLI: Error, could not init ssl ctx Using %s, %s and %s.",
+                glob->certfile, glob->keyfile, glob->cacertfile);
+            return -1;
+        }
+        logger(LOG_INFO, "OpenLI: OpenSSL CTX initlized, TLS encryption enabled.");
+        logger(LOG_INFO, "OpenLI: Using %s, %s and %s.", glob->certfile, glob->keyfile, glob->cacertfile);
+    }
+    else {
+        glob->ctx = NULL;
+        logger(LOG_INFO, "OpenLI: Not using OpenSSL TLS connection.");
     }
 
     if (glob->sharedinfo.provisionerport == NULL) {
@@ -1226,7 +1245,6 @@ static int reload_collector_config(collector_global_t *glob,
         collector_sync_t *sync) {
 
     collector_global_t *newstate;
-
     newstate = parse_global_config(glob->configfile);
     if (newstate == NULL) {
         logger(LOG_INFO,
@@ -1348,7 +1366,7 @@ static void *start_ip_sync_thread(void *params) {
             reload_config = 0;
         }
         if (sync->instruct_fd == -1) {
-            ret = sync_connect_provisioner(sync);
+            ret = sync_connect_provisioner(sync, glob->ctx);
             if (ret < 0) {
                 /* Fatal error */
                 logger(LOG_INFO,
@@ -1500,6 +1518,7 @@ int main(int argc, char *argv[]) {
         glob->forwarders[i].colthreads = glob->total_col_threads;
         glob->forwarders[i].zmq_ctrlsock = NULL;
         glob->forwarders[i].zmq_pullressock = NULL;
+        glob->forwarders[i].ctx = glob->ctx;
 
         pthread_create(&(glob->forwarders[i].threadid), NULL,
                 start_forwarding_thread, (void *)&(glob->forwarders[i]));

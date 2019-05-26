@@ -436,7 +436,7 @@ static void purge_unconfirmed_mediators(forwarding_thread_data_t *fwd) {
 
 }
 
-static int connect_single_target(export_dest_t *dest) {
+static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx) {
 
     int sockfd;
 
@@ -456,6 +456,32 @@ static int connect_single_target(export_dest_t *dest) {
     if (sockfd == 0) {
         dest->failmsg = 1;
         return -1;
+    }
+
+    if (ctx != NULL){
+        dest->ssl = SSL_new(ctx);
+        SSL_set_fd(dest->ssl, sockfd);
+
+        SSL_set_connect_state(dest->ssl);
+
+        int errr = SSL_do_handshake(dest->ssl);
+
+        if ((errr) <= 0 ){
+            errr = SSL_get_error(dest->ssl, errr);
+            logger(LOG_INFO, "OpenLI: ssl_accept died %d", errr);
+            ERR_print_errors_fp (stderr);
+            logger(LOG_INFO, "OpenLI: These are the openssl errors for init col(med)", errr);
+
+            //TODO free ssl here?
+
+            return 0;
+        }
+
+        logger(LOG_INFO, "OpenLI: handshake accepted.");
+        dump_cert_info(dest->ssl);
+    }
+    else {
+        dest->ssl = NULL;
     }
 
     dest->failmsg = 0;
@@ -491,7 +517,7 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
             continue;
         }
 
-        dest->fd = connect_single_target(dest);
+        dest->fd = connect_single_target(dest, fwd->ctx);
         if (dest->fd == -1) {
             continue;
         }
@@ -685,7 +711,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         }
 
         if (transmit_buffered_records(&(dest->buffer), dest->fd,
-                BUF_BATCH_SIZE) < 0) {
+                BUF_BATCH_SIZE, dest->ssl) < 0) {
             if (dest->logallowed) {
                 logger(LOG_INFO,
                     "OpenLI: error transmitting records to mediator %s:%s: %s",

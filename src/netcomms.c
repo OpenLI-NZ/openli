@@ -146,7 +146,7 @@ void dump_cert_info(SSL *ssl) {
 }
 
 SSL_CTX * ssl_init(const char *cacertfile, const char *certfile, const char *keyfile) {
-    SSL_CTX *ctx = malloc(sizeof(SSL_CTX));
+    SSL_CTX *ctx;// = malloc(sizeof(SSL_CTX)); //is this not needed?
 
     /* SSL library initialisation */
     SSL_library_init();

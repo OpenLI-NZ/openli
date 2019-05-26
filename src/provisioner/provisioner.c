@@ -1090,6 +1090,28 @@ static int accept_collector(provision_state_t *state) {
     }
 
     if (newfd >= 0) {
+
+        if (state->ctx != NULL){ //only use TLS if ctx is set
+            col->ssl = SSL_new(state->ctx);
+            SSL_set_fd(col->ssl, newfd);
+            SSL_set_accept_state(col->ssl);
+            int errr = SSL_accept(col->ssl);
+            if ((errr) <= 0 ){
+                errr = SSL_get_error(col->ssl, errr);
+                logger(LOG_INFO, "OpenLI: TLS handshake failed %d", errr);
+                close(newfd);
+                ERR_print_errors_fp (stderr);
+                logger(LOG_INFO, "OpenLI: These are the openssl errors for accepcting collector(prov)", errr);
+                free(col->ssl);
+                free(col);
+                return -1;
+            }            
+            logger(LOG_INFO, "OpenLI: TLS handshake accepted.");
+            dump_cert_info(col->ssl);
+        } else {
+            col->ssl = NULL;
+        }
+
         col->commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
         col->authev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
@@ -1176,7 +1198,7 @@ static int accept_mediator(provision_state_t *state) {
                 logger(LOG_INFO, "OpenLI: TLS handshake failed %d", errr);
                 close(newfd);
                 ERR_print_errors_fp (stderr);
-                logger(LOG_INFO, "OpenLI: These are the openssl errors", errr);
+                logger(LOG_INFO, "OpenLI: These are the openssl errors for accepting mediator(prov)", errr);
                 free(med->ssl);
                 free(med);
                 return -1;

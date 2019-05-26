@@ -66,7 +66,7 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
 uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
         uint8_t *pdustart, uint32_t pdulen, uint32_t beensent);
 int transmit_buffered_records(export_buffer_t *buf, int fd,
-        uint64_t bytelimit);
+        uint64_t bytelimit, SSL *ssl);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

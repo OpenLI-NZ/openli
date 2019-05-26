@@ -4,6 +4,10 @@
 provisioneraddr: 127.0.0.1
 provisionerport: 9001
 
+tlscert: clientA-crt.pem
+tlskey: clientA-key.pem
+tlsca: ca-crt.pem
+
 # Unique ID string for my network (16 chars max)
 operatorid: WAND
 

@@ -94,6 +94,7 @@ typedef struct med_agency_state {
 
 typedef struct mediator_collector {
     med_epoll_ev_t *colev;
+    SSL *ssl;
 } mediator_collector_t;
 
 typedef struct mediator_provisioner {

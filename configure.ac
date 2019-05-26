@@ -80,6 +80,10 @@ if test "$libtrace_found" = 0; then
         AC_MSG_ERROR(Required library libtrace 4.0.4 not found; use LDFLAGS to specify library location)
 fi
 
+if test "$libssl_found" = 0; then
+        AC_MSG_ERROR(Required library libssl TODO not found; use LDFLAGS to specify library location)
+fi
+
 if test "$libyaml_found" = 0; then
         AC_MSG_ERROR(Required library libyaml not found; use LDFLAGS to specify library location)
 fi
