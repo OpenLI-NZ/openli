@@ -1,7 +1,7 @@
 # Example configuration file for an OpenLI collector
 
 # Connect to a provisioner that is listening on 10.0.0.1:9001
-provisioneraddr: 127.0.0.1
+provisioneraddr: 10.0.0.1
 provisionerport: 9001
 
 tlscert: clientA-crt.pem
