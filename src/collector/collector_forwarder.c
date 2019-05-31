@@ -180,6 +180,10 @@ static void remove_destination(forwarding_thread_data_t *fwd,
         free(med->portstr);
     }
 
+    if (med->ssl){
+        SSL_free(med->ssl);
+    }
+
     free(med);
 }
 
@@ -459,26 +463,11 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx) {
     }
 
     if (ctx != NULL){
-        dest->ssl = SSL_new(ctx);
-        SSL_set_fd(dest->ssl, sockfd);
-
-        SSL_set_connect_state(dest->ssl);
-
-        int errr = SSL_do_handshake(dest->ssl);
-
-        if ((errr) <= 0 ){
-            errr = SSL_get_error(dest->ssl, errr);
-            logger(LOG_INFO, "OpenLI: ssl_accept died %d", errr);
-            ERR_print_errors_fp (stderr);
-            logger(LOG_INFO, "OpenLI: These are the openssl errors for init col(med)", errr);
-
-            //TODO free ssl here?
-
-            return 0;
+        dest->ssl = initiate_handshake(ctx, sockfd);
+        if (dest->ssl == NULL){
+            close(sockfd);
+            return 0; //handshake was rejected
         }
-
-        logger(LOG_INFO, "OpenLI: handshake accepted.");
-        dump_cert_info(dest->ssl);
     }
     else {
         dest->ssl = NULL;

@@ -944,7 +944,6 @@ static int global_parser(void *arg, yaml_document_t *doc,
         SET_CONFIG_STRING_OPTION(glob->cacertfile, value);
     }
 
-
     return 0;
 }
 

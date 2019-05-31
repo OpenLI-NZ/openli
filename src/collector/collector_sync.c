@@ -153,6 +153,10 @@ void clean_sync_data(collector_sync_t *sync) {
         destroy_access_plugin(sync->radiusplugin);
     }
 
+    if(sync->ssl){
+        SSL_free(sync->ssl);
+    }
+
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
     sync->userintercepts = NULL;
@@ -1293,25 +1297,10 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
     }
 
     if (ctx != NULL){
-
-        logger(LOG_INFO, "STARTING HANDSHAKE");
-        sync->ssl = SSL_new(ctx);
-        SSL_set_fd(sync->ssl, sockfd);
-
-        SSL_set_connect_state(sync->ssl);
-
-        int errr = SSL_do_handshake(sync->ssl);
-
-        if ((errr) <= 0 ){
-            errr = SSL_get_error(sync->ssl, errr);
-            logger(LOG_INFO, "OpenLI: ssl_accept died %d", errr);
-            ERR_print_errors_fp (stderr);
-            logger(LOG_INFO, "OpenLI: These are the openssl errors", errr);
-            return 0;
+        sync->ssl = initiate_handshake(ctx, sockfd);
+        if (sync->ssl == NULL){
+            return 0; //handshake was rejected
         }
-
-        logger(LOG_INFO, "OpenLI: handshake accepted.");
-        dump_cert_info(sync->ssl);
     }
     else {
         sync->ssl = NULL;

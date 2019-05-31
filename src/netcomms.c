@@ -87,111 +87,134 @@ inline int fd_set_block(int fd){
     return fcntl(fd, F_SETFL, flags);
 }
 
-enum sslstatus
-{
-	SSLSTATUS_OK,
-	SSLSTATUS_WANT_IO,
-	SSLSTATUS_FAIL
-};
-
-inline enum sslstatus get_sslstatus(SSL *ssl, int n)
-{
-	switch (SSL_get_error(ssl, n))
-	{
-	case SSL_ERROR_NONE:
-		return SSLSTATUS_OK;
-	case SSL_ERROR_WANT_WRITE:
-	case SSL_ERROR_WANT_READ:
-		return SSLSTATUS_WANT_IO;
-	case SSL_ERROR_ZERO_RETURN:
-	case SSL_ERROR_SYSCALL:
-	default:
-		return SSLSTATUS_FAIL;
-	}
-}
-
 void dump_cert_info(SSL *ssl) {
     
-    printf("Ssl connection version: %s\n", SSL_get_version(ssl));
+    logger(LOG_INFO,
+        "SSL connection version: %s", 
+        SSL_get_version(ssl)); //should ALWAYS be TLSv1_2
 
+    logger(LOG_INFO,
+        "Using cipher %s", 
+        SSL_get_cipher(ssl)); //should ALWAYS be AES256-GCM-SHA384
 
-    /* The cipher negotiated and being used */
-    printf("Using cipher %s", SSL_get_cipher(ssl));
-
-    /* Get client's certificate (note: beware of dynamic allocation) - opt */
     X509 *client_cert = SSL_get_peer_certificate(ssl);
     if (client_cert != NULL) {
 
-        printf("\nConnection certificate:\n");
-
         char *str = X509_NAME_oneline(X509_get_subject_name(client_cert), 0, 0);
-        if(str == NULL) {
-            printf("warn X509 subject name is null");
-        }
-        printf("\t Subject: %s\n", str);
+        logger(LOG_INFO,"Connection certificate: Subject: %s", str);
         OPENSSL_free(str);
 
         str = X509_NAME_oneline(X509_get_issuer_name(client_cert), 0, 0);
-        if(str == NULL) {
-            printf("warn X509 issuer name is null");
-        }
-        printf("\t Issuer: %s\n", str);
+        logger(LOG_INFO,"Connection certificate: Issuer: %s\n", str);
         OPENSSL_free(str);
 
-        /* Deallocate certificate, free memory */
         X509_free(client_cert);
-    } else {
-        printf("Connection does not have certificate.\n");
     }
 }
 
+//takes in 3 filenames for the CA, own cert and private key
+//if all 3 files names are null, returns null as successfully doing nothing
+//returns -1 if an error happened
+//otherwise returns a new SSL_CTX with the provided certificates using TLSv1_2
+//and enforces identity checking at handshake
 SSL_CTX * ssl_init(const char *cacertfile, const char *certfile, const char *keyfile) {
-    SSL_CTX *ctx;// = malloc(sizeof(SSL_CTX)); //is this not needed?
 
     /* SSL library initialisation */
     SSL_library_init();
     OpenSSL_add_all_algorithms();
     SSL_load_error_strings();
-    ERR_load_BIO_strings();
     ERR_load_crypto_strings();
-
     
-    /* create the SSL server context */
-    ctx = SSL_CTX_new(TLSv1_2_method());
-
-    SSL_CTX_load_verify_locations(ctx, cacertfile, "./");
-
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
-
+    /* create the SSL context */
+    SSL_CTX *ctx = SSL_CTX_new(TLSv1_2_method());
 
     if (!ctx){ //check not NULL
-        logger(LOG_INFO, "OpenLI: SSL_CTX_new failed");
+        logger(LOG_INFO, "OpenLI: SSL_CTX creation failed");
         return NULL;
     }
-    if(certfile != NULL && keyfile != NULL){
-        if (SSL_CTX_use_certificate_file(ctx, certfile, SSL_FILETYPE_PEM) != 1){
-            logger(LOG_INFO, "OpenLI: SSL_CTX_use_certificate_file failed");
-            return NULL;
-        }
 
-        if (SSL_CTX_use_PrivateKey_file(ctx, keyfile, SSL_FILETYPE_PEM) != 1){
-            logger(LOG_INFO, "OpenLI: SSL_CTX_use_PrivateKey_file failed");
-            return NULL;
-        }
-
-        /* Make sure the key and certificate file match. */
-        if (SSL_CTX_check_private_key(ctx) != 1){
-            logger(LOG_INFO, "OpenLI: SSL_CTX_check_private_key failed");
-            return NULL;
-            
-        }
-        else{
-            logger(LOG_INFO, "OpenLI: Certificate and private key loaded and verified");
-        }
-    }
     /* Enforce use of TLSv1_2 */
     SSL_CTX_set_options(ctx, SSL_OP_ALL | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+
+    if (SSL_CTX_load_verify_locations(ctx, cacertfile, "./") != 1){ //TODO this might want to be changed
+        logger(LOG_INFO, "OpenLI: SSL CA cert loading {%s} failed", cacertfile);
+        SSL_CTX_free(ctx);
+        return NULL;
+    }
+
+    //enforce cheking of client/server 
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+
+    if (SSL_CTX_use_certificate_file(ctx, certfile, SSL_FILETYPE_PEM) != 1){
+        logger(LOG_INFO, "OpenLI: SSL cert loading {%s} failed", certfile);
+        SSL_CTX_free(ctx);
+        return NULL;
+    }
+
+    if (SSL_CTX_use_PrivateKey_file(ctx, keyfile, SSL_FILETYPE_PEM) != 1){
+        logger(LOG_INFO, "OpenLI: SSL Key loading {%s} failed", keyfile);
+        SSL_CTX_free(ctx);
+        return NULL;
+    }
+
+    /* Make sure the key and certificate file match. */
+    if (SSL_CTX_check_private_key(ctx) != 1){
+        logger(LOG_INFO, "OpenLI: SSL CTX private key failed, %s and %s do not match", keyfile, certfile);
+        SSL_CTX_free(ctx);
+        return NULL;
+    }
+
+    logger(LOG_INFO, "OpenLI: Certificate and private key loaded and verified");
+    logger(LOG_INFO, "OpenLI: OpenSSL CTX initlized, TLS encryption enabled.");
+    logger(LOG_INFO, "OpenLI: Using %s, %s and %s.", certfile, keyfile, cacertfile);
+
     return ctx;
+}
+
+int logErr(const char *str, size_t len, void *u){
+    logger(LOG_INFO, str);
+}
+
+//connects to the SSL server on fd using the CTX
+//returns an SSL connection bound to the fd
+//or NULL on faliure
+SSL* initiate_handshake(SSL_CTX *ctx, int fd){
+    SSL *ssl = SSL_new(ctx);
+    SSL_set_fd(ssl, fd);
+    SSL_set_connect_state(ssl); //set client mode
+    int errr = SSL_do_handshake(ssl);
+    if ((errr) <= 0 ){
+        errr = SSL_get_error(ssl, errr);
+        logger(LOG_INFO, "OpenLI: TLS accept failed %d", errr);
+        ERR_print_errors_cb(&logErr, NULL);
+        SSL_free(ssl);
+        return NULL;
+    }
+    logger(LOG_INFO, "OpenLI: handshake initiated and accepted.");
+    dump_cert_info(ssl);
+
+    return ssl;
+}
+
+//connects to the SSL server on fd using the CTX
+//returns an SSL connection bound to the fd
+//or NULL on faliure
+SSL* accept_handshake(SSL_CTX *ctx, int fd){
+    SSL *ssl = SSL_new(ctx);
+    SSL_set_fd(ssl, fd);
+    SSL_set_accept_state(ssl); //set server mode
+    int errr = SSL_do_handshake(ssl);
+    if ((errr) <= 0 ){
+        errr = SSL_get_error(ssl, errr);
+        logger(LOG_INFO, "OpenLI: TLS handshake failed %d", errr);
+        ERR_print_errors_cb(&logErr, NULL);
+        SSL_free(ssl);
+        return NULL;
+    }            
+    logger(LOG_INFO, "OpenLI: TLS handshake accepted.");
+    dump_cert_info(ssl);
+
+    return ssl;
 }
 
 static inline int extend_net_buffer(net_buffer_t *nb, int musthave) {
@@ -1060,17 +1083,15 @@ int transmit_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t *err) {
     }
 
     //dump_buffer_contents(nb->actptr, NETBUF_CONTENT_SIZE(nb));
-   
-    //printf("waiting for write.... %ld:bytes\n",NETBUF_CONTENT_SIZE(nb));
+
     if (nb->ssl != NULL){
-        fd_set_nonblock(nb->fd);
+        fd_set_nonblock(nb->fd); //SSL_write cant be told to be non blocking, fd must change
         ret = SSL_write(nb->ssl, nb->actptr, NETBUF_CONTENT_SIZE(nb));
-        fd_set_block(nb->fd);
+        fd_set_block(nb->fd); //TODO maybe check to make sure it was blocking to begin with? 
     }
     else {
         ret = send(nb->fd, nb->actptr, NETBUF_CONTENT_SIZE(nb), MSG_DONTWAIT);
     }
-    //printf("write finshed\n");
 
     if (ret == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -1643,16 +1664,14 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
         }
     }
 
-    //printf("waiting for read....\n");
     if (nb->ssl != NULL){
-        fd_set_nonblock(nb->fd);
+        fd_set_nonblock(nb->fd); //SSL_read cant be told to be non blocking, fd must change
         ret = SSL_read(nb->ssl, nb->appendptr, NETBUF_SPACE_REM(nb));
-        fd_set_block(nb->fd);
+        fd_set_block(nb->fd); //TODO maybe check to make sure it was blocking to begin with?
     }
     else {
         ret = recv(nb->fd, nb->appendptr, NETBUF_SPACE_REM(nb), MSG_DONTWAIT);
     }
-    //printf("read finshed %d:bytes\n", ret);
     
     if (ret <= 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {

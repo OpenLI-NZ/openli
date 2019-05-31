@@ -184,8 +184,6 @@ static void free_provisioner(int epollfd, mediator_prov_t *prov) {
     struct epoll_event ev;
 
     if (prov->ssl){
-        SSL_set_shutdown(prov->ssl, SSL_SENT_SHUTDOWN);
-        SSL_shutdown(prov->ssl);
         SSL_free(prov->ssl);
     }
 
@@ -324,6 +322,9 @@ static void drop_all_collectors(mediator_state_t *state, libtrace_list_t *c) {
         drop_collector(state, col->colev, 0);
         free(col->colev->state);
         free(col->colev);
+        if (col->ssl){
+            SSL_free(col->ssl);
+        }
         n = n->next;
     }
 
@@ -364,6 +365,9 @@ static void clear_med_config(mediator_state_t *state) {
     }
     if (state->operatorid) {
         free(state->operatorid);
+    }
+    if(state->ctx){
+        SSL_CTX_free(state->ctx);
     }
     pthread_mutex_destroy(&(state->agency_mutex));
 }
@@ -504,16 +508,15 @@ static int init_med_state(mediator_state_t *state, char *configfile,
 
     if (state->certfile && state->keyfile && state->cacertfile){
         state->ctx = ssl_init(state->cacertfile, state->certfile, state->keyfile);
-        if(state->ctx == NULL){
-            logger(LOG_INFO, "OpenLI: Error, could not init ssl ctx.");
+    } else {
+        if (state->certfile || state->keyfile || state->cacertfile){
+            logger(LOG_INFO, "OpenLI: SSL error, missing keyfile or certfile names.");
             return -1;
         }
-        logger(LOG_INFO, "OpenLI: OpenSSL CTX initlized, TLS encryption enabled.");
-        logger(LOG_INFO, "OpenLI: Using %s, %s and %s.", state->certfile, state->keyfile, state->cacertfile);
-    }
-    else {
-        state->ctx = NULL;
-        logger(LOG_INFO, "OpenLI: Not using OpenSSL TLS connection.");
+        else{
+            logger(LOG_INFO, "OpenLI: Not using OpenSSL TLS connection.");
+            state->ctx = NULL;
+        }
     }
 
     if (state->mediatorid == 0) {
@@ -905,21 +908,11 @@ static int accept_collector(mediator_state_t *state) {
     if (newfd >= 0) {
 
        if (state->ctx != NULL){ //only use TLS if ctx is set
-            col.ssl = SSL_new(state->ctx);
-            SSL_set_fd(col.ssl, newfd);
-            SSL_set_accept_state(col.ssl);
-            int errr = SSL_accept(col.ssl);
-            if ((errr) <= 0 ){
-                errr = SSL_get_error(col.ssl, errr);
-                logger(LOG_INFO, "OpenLI: TLS handshake failed %d", errr);
+            col.ssl = accept_handshake(state->ctx, newfd);
+            if (col.ssl == NULL){ //handshake was rejected
                 close(newfd);
-                ERR_print_errors_fp (stderr);
-                logger(LOG_INFO, "OpenLI: These are the openssl errors for accepcting collector(med)", errr);
-                free(col.ssl);//TODO was this causseing the SSL_free errors later on?
                 return -1;
-            }            
-            logger(LOG_INFO, "OpenLI: TLS Collector handshake accepted.");
-            dump_cert_info(col.ssl);
+            }
         } else {
             col.ssl = NULL;
         }
@@ -930,7 +923,7 @@ static int accept_collector(mediator_state_t *state) {
         col.colev->fdtype = MED_EPOLL_COLLECTOR;
         col.colev->fd = newfd;
         col.colev->state = mstate;
-        mstate->incoming = create_net_buffer(NETBUF_RECV, newfd, col.ssl); //TODO
+        mstate->incoming = create_net_buffer(NETBUF_RECV, newfd, col.ssl);
         mstate->ipaddr = strdup(strbuf);
 
         HASH_FIND(hh, state->disabledcols, mstate->ipaddr,
@@ -1018,7 +1011,7 @@ static handover_t *create_new_handover(char *ipstr, char *portstr,
     }
 
 
-    init_export_buffer(&(agstate->buf)); //Handover doesnt use SSL
+    init_export_buffer(&(agstate->buf));
     agstate->main_fd = -1;
     agstate->outenabled = 0;
     agstate->katimer_fd = -1;
@@ -1477,7 +1470,7 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
         return 0;
     }
 
-    if ((ret = transmit_buffered_records(&(mas->buf), mev->fd, 65535, NULL)) == -1) {
+    if ((ret = transmit_buffered_records(&(mas->buf), mev->fd, 65535, NULL)) == -1) { //handover doesnt use TLS, so NULL
         return -1;
     }
 
@@ -2179,26 +2172,10 @@ static int init_provisioner_connection(mediator_state_t *state, int sock, SSL_CT
     }
 
     if (ctx != NULL){
-        prov->ssl = SSL_new(ctx);
-        SSL_set_fd(prov->ssl, sock);
-
-        SSL_set_connect_state(prov->ssl);
-
-        int errr = SSL_do_handshake(prov->ssl);
-
-        if ((errr) <= 0 ){
-            errr = SSL_get_error(prov->ssl, errr);
-            logger(LOG_INFO, "OpenLI: ssl_accept died %d", errr);
-            ERR_print_errors_fp (stderr);
-            logger(LOG_INFO, "OpenLI: These are the openssl errors for init prov(med)", errr);
-
-            //TODO free ssl here?
-
-            return 0;
+        prov->ssl = initiate_handshake(ctx, sock);
+        if (prov->ssl == NULL){
+            return 0; //handshake was rejected
         }
-
-        logger(LOG_INFO, "OpenLI: handshake accepted.");
-        dump_cert_info(prov->ssl);
     }
     else {
         prov->ssl = NULL;

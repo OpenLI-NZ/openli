@@ -174,25 +174,22 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
 
     sent = (buf->buftail - (bhead + offset));
 
-    if (sent != 0) {
-        
+    if (sent != 0) {        
 
         if (ssl != NULL){
-            fd_set_nonblock(fd);
+            fd_set_nonblock(fd); //SSL_read cant be told to be non blocking, fd must change
             ret = SSL_write(ssl, bhead + offset, (int)sent);
-            fd_set_block(fd);
+            fd_set_block(fd); //TODO maybe check to make sure it was blocking to begin with?
 
             if ((ret) <= 0 ){
                 int errr = SSL_get_error(ssl, ret);
-                logger(LOG_INFO, "OpenLI: ssl_accept error in export_buffer %d", errr);
-                ERR_print_errors_fp (stderr);
-                logger(LOG_INFO, "OpenLI: These are the openssl errors");
+                logger(LOG_INFO, "OpenLI: ssl_write error in export_buffer %d", errr);
+                ERR_print_errors_fp (stderr); //TODO make a log errors? (instead of using ERR_print_errors_fp)
             }
         }
         else {
            ret = send(fd, bhead + offset, (int)sent, MSG_DONTWAIT);
         }
-
 
         if (ret < 0) {
             if (errno != EAGAIN) {

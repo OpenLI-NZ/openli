@@ -1020,6 +1020,9 @@ static void destroy_collector_state(collector_global_t *glob) {
     if (glob->collocals) {
         free(glob->collocals);
     }
+    if(glob->ctx){
+        SSL_CTX_free(glob->ctx);
+    }
     free(glob);
 }
 
@@ -1201,17 +1204,16 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     if (glob->certfile && glob->keyfile && glob->cacertfile){
         glob->ctx = ssl_init(glob->cacertfile, glob->certfile, glob->keyfile);
-        if(glob->ctx == NULL){
-            logger(LOG_INFO, "OpenLI: Error, could not init ssl ctx Using %s, %s and %s.",
-                glob->certfile, glob->keyfile, glob->cacertfile);
-            return -1;
+    } else {
+        if (glob->certfile || glob->keyfile || glob->cacertfile){
+            logger(LOG_INFO, "OpenLI: SSL error, missing keyfile or certfile names.");
+            clear_global_config(glob);
+            return NULL;
         }
-        logger(LOG_INFO, "OpenLI: OpenSSL CTX initlized, TLS encryption enabled.");
-        logger(LOG_INFO, "OpenLI: Using %s, %s and %s.", glob->certfile, glob->keyfile, glob->cacertfile);
-    }
-    else {
-        glob->ctx = NULL;
-        logger(LOG_INFO, "OpenLI: Not using OpenSSL TLS connection.");
+        else{
+            logger(LOG_INFO, "OpenLI: Not using OpenSSL TLS connection.");
+            glob->ctx = NULL;
+        }
     }
 
     if (glob->sharedinfo.provisionerport == NULL) {

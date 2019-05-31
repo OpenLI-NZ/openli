@@ -30,7 +30,7 @@
 #include "config.h"
 #include <inttypes.h>
 #include <openssl/ssl.h>
- #include <openssl/err.h>
+#include <openssl/err.h>
 #include <fcntl.h>
 
 #define NETBUF_ALLOC_SIZE (10 * 1024 * 1024)
@@ -143,7 +143,9 @@ typedef enum {
 
 void dump_cert_info(SSL *ssl);
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl);
-SSL_CTX * ssl_init(const char *cacertfile, const char *certfile, const char *keyfile);
+SSL_CTX *ssl_init(const char *cacertfile, const char *certfile, const char *keyfile);
+SSL* initiate_handshake(SSL_CTX *ctx, int fd);
+SSL* accept_handshake(SSL_CTX *ctx, int fd);
 int fd_set_nonblock(int fd);
 int fd_set_block(int fd);
 void destroy_net_buffer(net_buffer_t *nb);

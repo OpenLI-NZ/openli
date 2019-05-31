@@ -156,6 +156,7 @@ typedef struct prov_sock_state {
     int authfd;
     int clientrole;
     SSL *ssl;
+    
 } prov_sock_state_t;
 
 #endif

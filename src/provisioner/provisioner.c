@@ -278,17 +278,15 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
 
     if (state->certfile && state->keyfile && state->cacertfile){
         state->ctx = ssl_init(state->cacertfile, state->certfile, state->keyfile);
-        if(state->ctx == NULL){
-            logger(LOG_INFO, "OpenLI: Error, could not init ssl ctx Using %s, %s and %s.",
-                state->certfile, state->keyfile, state->cacertfile);
+    } else {
+        if (state->certfile || state->keyfile || state->cacertfile){
+            logger(LOG_INFO, "OpenLI: SSL error, missing keyfile or certfile names.");
             return -1;
         }
-        logger(LOG_INFO, "OpenLI: OpenSSL CTX initlized, TLS encryption enabled.");
-        logger(LOG_INFO, "OpenLI: Using %s, %s and %s.", state->certfile, state->keyfile, state->cacertfile);
-    }
-    else {
-        state->ctx = NULL;
-        logger(LOG_INFO, "OpenLI: Not using OpenSSL TLS connection.");
+        else{
+            logger(LOG_INFO, "OpenLI: Not using OpenSSL TLS connection.");
+            state->ctx = NULL;
+        }
     }
 
     /* Use an fd to catch signals during our main epoll loop, so that we
@@ -413,6 +411,9 @@ static void free_all_mediators(prov_mediator_t **mediators) {
             close(med->authev->fd);
         }
         free(med->authev);
+        if(med->ssl){
+            SSL_free(med->ssl);
+        }
         free(med);
     }
 }
@@ -451,6 +452,9 @@ static void stop_all_collectors(prov_collector_t **collectors) {
         free(col->commev);
         if (col->authev->fd != -1) {
             close(col->authev->fd);
+        }
+        if (col->ssl){
+            SSL_free(col->ssl);
         }
         free(col->authev);
         free(col);
@@ -556,6 +560,9 @@ static void clear_prov_state(provision_state_t *state) {
     }
     if (state->mediateport) {
         free(state->mediateport);
+    }
+    if(state->ctx){
+        SSL_CTX_free(state->ctx);
     }
 
 }
@@ -1092,22 +1099,12 @@ static int accept_collector(provision_state_t *state) {
     if (newfd >= 0) {
 
         if (state->ctx != NULL){ //only use TLS if ctx is set
-            col->ssl = SSL_new(state->ctx);
-            SSL_set_fd(col->ssl, newfd);
-            SSL_set_accept_state(col->ssl);
-            int errr = SSL_accept(col->ssl);
-            if ((errr) <= 0 ){
-                errr = SSL_get_error(col->ssl, errr);
-                logger(LOG_INFO, "OpenLI: TLS handshake failed %d", errr);
+            col->ssl = accept_handshake(state->ctx, newfd);
+            if (col->ssl == NULL){ //handshake was rejected 
                 close(newfd);
-                ERR_print_errors_fp (stderr);
-                logger(LOG_INFO, "OpenLI: These are the openssl errors for accepcting collector(prov)", errr);
-                free(col->ssl);
                 free(col);
                 return -1;
-            }            
-            logger(LOG_INFO, "OpenLI: TLS handshake accepted.");
-            dump_cert_info(col->ssl);
+            }
         } else {
             col->ssl = NULL;
         }
@@ -1185,30 +1182,22 @@ static int accept_mediator(provision_state_t *state) {
     }
 
     if (newfd >= 0) {
+
         med = calloc(1, sizeof(prov_mediator_t));
-        med->fd = newfd;
 
         if (state->ctx != NULL){ //only use TLS if ctx is set
-            med->ssl = SSL_new(state->ctx);
-            SSL_set_fd(med->ssl, newfd);
-            SSL_set_accept_state(med->ssl);
-            int errr = SSL_accept(med->ssl);
-            if ((errr) <= 0 ){
-                errr = SSL_get_error(med->ssl, errr);
-                logger(LOG_INFO, "OpenLI: TLS handshake failed %d", errr);
+            med->ssl = accept_handshake(state->ctx, newfd);
+            if (med->ssl == NULL){ //handshake was rejected 
                 close(newfd);
-                ERR_print_errors_fp (stderr);
-                logger(LOG_INFO, "OpenLI: These are the openssl errors for accepting mediator(prov)", errr);
-                free(med->ssl);
                 free(med);
                 return -1;
-            }            
-            logger(LOG_INFO, "OpenLI: TLS handshake accepted.");
-            dump_cert_info(med->ssl);
+            }
         } else {
             med->ssl = NULL;
         }
 
+        
+        med->fd = newfd;
         med->details = NULL;     /* will receive this from mediator soon */
         med->commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
