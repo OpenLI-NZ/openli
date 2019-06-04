@@ -5,7 +5,7 @@
 
 
 override_dh_auto_configure:
-	dh_auto_configure -- --sysconfdir=/etc/openli
+	dh_auto_configure -- --sysconfdir=/etc/
 
 override_dh_install:
 	dh_install --sourcedir=debian/openli
