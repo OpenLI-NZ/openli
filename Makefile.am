@@ -1,5 +1,8 @@
+DISTCHECK_CONFIGURE_FLAGS = \
+        --with-systemdsystemunitdir=$$dc_install_base/$(systemdsystemunitdir)
+
 SUBDIRS=extlib src
-EXTRA_DIST=doc README.md
+EXTRA_DIST=doc README.md systemd/*.service
 
 AUTOMAKE_OPTIONS=foreign
 
@@ -15,3 +18,19 @@ dist_doc_DATA=doc/CollectorDoc.md doc/MediatorDoc.md doc/ProvisionerDoc.md
 
 mandir=$(pkgdatadir)/doc/man
 
+if HAVE_SYSTEMD
+systemdsystemunit_DATA =
+
+if BUILD_COLLECTOR
+systemdsystemunit_DATA += systemd/openli-collector.service
+endif
+
+if BUILD_PROVISIONER
+systemdsystemunit_DATA += systemd/openli-provisioner.service
+endif
+
+if BUILD_MEDIATOR
+systemdsystemunit_DATA += systemd/openli-mediator.service
+endif
+
+endif

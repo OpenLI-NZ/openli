@@ -25,6 +25,13 @@ AC_ARG_ENABLE([provisioner], AS_HELP_STRING([--disable-provisioner],
 AC_ARG_ENABLE([collector], AS_HELP_STRING([--disable-collector],
         [Disable building the OpenLI collector]))
 
+PKG_PROG_PKG_CONFIG
+AC_ARG_WITH([systemdsystemunitdir],
+        AS_HELP_STRING([--with-systemdsystemunitdir=DIR], [Directory for systemd service files]),
+                [], [with_systemdsystemunitdir=$($PKG_CONFIG --variable=systemdsystemunitdir systemd)])
+AC_SUBST([systemdsystemunitdir], [$with_systemdsystemunitdir])
+AM_CONDITIONAL(HAVE_SYSTEMD, [test -n "$with_systemdsystemunitdir"])
+
 PROVISIONER_LIBS=
 COLLECTOR_LIBS=
 MEDIATOR_LIBS=
