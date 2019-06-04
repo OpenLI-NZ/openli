@@ -1,4 +1,4 @@
 usr/bin/openliprovisioner
 etc/openli/provisioner*
-usr/share/openli/rsyslog/10-openli-provisioner.conf etc/rsyslog.d
+etc/rsyslog.d/10-openli-provisioner.conf
 usr/share/doc/openli/ProvisionerDoc.md
