@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenLI collector daemon
+Documentation=http://github.com/wanduow/openli/wiki
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/openlicollector -c /etc/openli/collector-config.yaml
+ExecReload=/bin/kill -s HUP $MAINPID
+ExecStop=/bin/kill -s TERM $MAINPID
+Restart=on-abnormal
+
+[Install]
+WantedBy=multi-user.target
