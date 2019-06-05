@@ -43,6 +43,7 @@ yum install -y wget make gcc
 
 if [ "$1" = "centos7" ]; then
         yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm || true
+        yum install -y http://repo.okay.com.mx/centos/7/x86_64/release/okay-release-1-1.noarch.rpm || true
 fi
 
 if [ "$1" = "centos6" ]; then
