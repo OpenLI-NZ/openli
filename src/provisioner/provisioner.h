@@ -31,6 +31,8 @@
 #include <uthash.h>
 #include "netcomms.h"
 
+#define DEFAULT_INTERCEPT_CONFIG_FILE "/var/lib/openli/intercepts.conf"
+
 typedef struct prov_epoll_ev {
     int fdtype;
     int fd;
@@ -94,6 +96,16 @@ typedef struct prov_mediator {
     UT_hash_handle hh;
 } prov_mediator_t;
 
+typedef struct prov_intercept_conf {
+    coreserver_t *radiusservers;
+    coreserver_t *sipservers;
+    voipintercept_t *voipintercepts;
+    ipintercept_t *ipintercepts;
+    prov_agency_t *leas;
+    liid_hash_t *liid_map;
+} prov_intercept_conf_t;
+
+
 typedef struct prov_state {
 
     char *conffile;
@@ -103,27 +115,20 @@ typedef struct prov_state {
     char *mediateport;
     char *pushaddr;
     char *pushport;
+    char *interceptconffile;
 
     int epoll_fd;
     prov_mediator_t *mediators;
     prov_collector_t *collectors;
-    coreserver_t *radiusservers;
-    coreserver_t *sipservers;
 
     prov_disabled_client_t *badmediators;
     prov_disabled_client_t *badcollectors;
-
-    voipintercept_t *voipintercepts;
-    ipintercept_t *ipintercepts;
 
     prov_epoll_ev_t *clientfd;
     prov_epoll_ev_t *updatefd;
     prov_epoll_ev_t *mediatorfd;
     prov_epoll_ev_t *timerfd;
     prov_epoll_ev_t *signalfd;
-
-    prov_agency_t *leas;
-    liid_hash_t *liid_map;
 
     int ignorertpcomfort;
     /*
@@ -132,6 +137,7 @@ typedef struct prov_state {
 
     provision_update_t upstate;
     */
+    prov_intercept_conf_t interceptconf;
 
 } provision_state_t;
 

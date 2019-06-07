@@ -409,7 +409,7 @@ static int add_intercept_static_ips(static_ipranges_t **statics,
     return 0;
 }
 
-static int parse_agency_list(provision_state_t *state, yaml_document_t *doc,
+static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         yaml_node_t *inputs) {
 
     yaml_node_item_t *item;
@@ -1017,10 +1017,10 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
 
 }
 
-static int provisioning_parser(void *arg, yaml_document_t *doc,
+static int intercept_parser(void *arg, yaml_document_t *doc,
         yaml_node_t *key, yaml_node_t *value) {
 
-    provision_state_t *state = (provision_state_t *)arg;
+    prov_intercept_conf_t *state = (prov_intercept_conf_t *)arg;
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SEQUENCE_NODE &&
@@ -1064,6 +1064,14 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
             return -1;
         }
     }
+    return 0;
+}
+
+static int provisioning_parser(void *arg, yaml_document_t *doc,
+        yaml_node_t *key, yaml_node_t *value) {
+
+    provision_state_t *state = (provision_state_t *)arg;
+
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
@@ -1108,7 +1116,17 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
             strcmp((char *)key->data.scalar.value, "mediationaddr") == 0) {
         SET_CONFIG_STRING_OPTION(state->mediateaddr, value);
     }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "intercept-config-file") == 0) {
+        SET_CONFIG_STRING_OPTION(state->interceptconffile, value);
+    }
     return 0;
+}
+
+int parse_intercept_config(char *configfile, prov_intercept_conf_t *conf) {
+    return yaml_parser(configfile, conf, intercept_parser);
 }
 
 int parse_collector_config(char *configfile, collector_global_t *glob) {

@@ -140,7 +140,7 @@ static int liid_hash_sort(liid_hash_t *a, liid_hash_t *b) {
     return strcmp(a->liid, b->liid);
 }
 
-static inline liid_hash_t *add_liid_mapping(provision_state_t *state,
+static inline liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
         char *liid, char *agency) {
 
     liid_hash_t *h;
@@ -150,7 +150,7 @@ static inline liid_hash_t *add_liid_mapping(provision_state_t *state,
 
     /* pcapdisk is a special agency that is not user-defined */
     if (strcmp(agency, "pcapdisk") != 0) {
-        HASH_FIND_STR(state->leas, agency, lea);
+        HASH_FIND_STR(conf->leas, agency, lea);
         if (!lea) {
             logger(LOG_INFO,
                     "OpenLI: intercept %s is destined for an unknown agency: %s -- skipping.",
@@ -162,11 +162,11 @@ static inline liid_hash_t *add_liid_mapping(provision_state_t *state,
 
     h->agency = agency;
     h->liid = liid;
-    HASH_ADD_KEYPTR(hh, state->liid_map, h->liid, strlen(h->liid), h);
+    HASH_ADD_KEYPTR(hh, conf->liid_map, h->liid, strlen(h->liid), h);
     return h;
 }
 
-static int map_intercepts_to_leas(provision_state_t *state) {
+static int map_intercepts_to_leas(prov_intercept_conf_t *conf) {
 
     int failed = 0;
     ipintercept_t *ipint, *iptmp;
@@ -174,18 +174,18 @@ static int map_intercepts_to_leas(provision_state_t *state) {
     prov_agency_t *lea;
 
     /* Do IP Intercepts */
-    HASH_ITER(hh_liid, state->ipintercepts, ipint, iptmp) {
-        add_liid_mapping(state, ipint->common.liid, ipint->common.targetagency);
+    HASH_ITER(hh_liid, conf->ipintercepts, ipint, iptmp) {
+        add_liid_mapping(conf, ipint->common.liid, ipint->common.targetagency);
     }
 
     /* Now do the VOIP intercepts */
-    for (vint = state->voipintercepts; vint != NULL; vint = vint->hh_liid.next)
+    for (vint = conf->voipintercepts; vint != NULL; vint = vint->hh_liid.next)
     {
-        add_liid_mapping(state, vint->common.liid, vint->common.targetagency);
+        add_liid_mapping(conf, vint->common.liid, vint->common.targetagency);
     }
 
     /* Sort the final mapping nicely */
-    HASH_SORT(state->liid_map, liid_hash_sort);
+    HASH_SORT(conf->liid_map, liid_hash_sort);
 
     return failed;
 
@@ -214,13 +214,13 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->epoll_fd = epoll_create1(0);
     state->mediators = NULL;
     state->collectors = NULL;
-    state->radiusservers = NULL;
-    state->sipservers = NULL;
-    state->voipintercepts = NULL;
-    state->ipintercepts = NULL;
 
-    state->liid_map = NULL;
-    state->leas = NULL;
+    state->interceptconf.radiusservers = NULL;
+    state->interceptconf.sipservers = NULL;
+    state->interceptconf.voipintercepts = NULL;
+    state->interceptconf.ipintercepts = NULL;
+    state->interceptconf.liid_map = NULL;
+    state->interceptconf.leas = NULL;
 
     /* Three listening sockets
      *
@@ -243,16 +243,6 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
 
     if (parse_provisioning_config(configfile, state) == -1) {
         logger(LOG_INFO, "OpenLI provisioner: error while parsing provisioner config in %s", configfile);
-        return -1;
-    }
-
-    /*
-     * XXX could also sanity check intercept->mediator mappings too...
-     */
-    if ((ret = map_intercepts_to_leas(state)) != 0) {
-        logger(LOG_INFO,
-                "OpenLI: failed to map %d intercepts to agencies. Exiting.",
-                ret);
         return -1;
     }
 
@@ -437,20 +427,19 @@ static void stop_all_collectors(prov_collector_t **collectors) {
     }
 }
 
-static void clear_prov_state(provision_state_t *state) {
+static void clear_intercept_state(prov_intercept_conf_t *conf) {
 
     liid_hash_t *h, *tmp;
     prov_agency_t *h2, *tmp2;
     liagency_t *lea;
-    prov_disabled_client_t *dis, *dtmp;
 
-    HASH_ITER(hh, state->liid_map, h, tmp) {
-        HASH_DEL(state->liid_map, h);
+    HASH_ITER(hh, conf->liid_map, h, tmp) {
+        HASH_DEL(conf->liid_map, h);
         free(h);
     }
 
-    HASH_ITER(hh, state->leas, h2, tmp2) {
-        HASH_DEL(state->leas, h2);
+    HASH_ITER(hh, conf->leas, h2, tmp2) {
+        HASH_DEL(conf->leas, h2);
         lea = h2->ag;
         if (lea->hi2_ipstr) {
             free(lea->hi2_ipstr);
@@ -471,6 +460,16 @@ static void clear_prov_state(provision_state_t *state) {
         free(h2);
     }
 
+    free_all_ipintercepts(&(conf->ipintercepts));
+    free_all_voipintercepts(&(conf->voipintercepts));
+    free_coreserver_list(conf->radiusservers);
+    free_coreserver_list(conf->sipservers);
+}
+
+static void clear_prov_state(provision_state_t *state) {
+
+    prov_disabled_client_t *dis, *dtmp;
+
     HASH_ITER(hh, state->badmediators, dis, dtmp) {
         HASH_DELETE(hh, state->badmediators, dis);
         if (dis->ipaddr) {
@@ -487,12 +486,10 @@ static void clear_prov_state(provision_state_t *state) {
         free(dis);
     }
 
-    free_all_ipintercepts(&(state->ipintercepts));
-    free_all_voipintercepts(&(state->voipintercepts));
+    clear_intercept_state(&(state->interceptconf));
+
     stop_all_collectors(&(state->collectors));
     free_all_mediators(&(state->mediators));
-    free_coreserver_list(state->radiusservers);
-    free_coreserver_list(state->sipservers);
 
     close(state->epoll_fd);
 
@@ -536,6 +533,9 @@ static void clear_prov_state(provision_state_t *state) {
     }
     if (state->mediateport) {
         free(state->mediateport);
+    }
+    if (state->interceptconffile) {
+        free(state->interceptconffile);
     }
 
 }
@@ -676,10 +676,10 @@ static int respond_collector_auth(provision_state_t *state,
      */
 
     if (HASH_CNT(hh, state->mediators) +
-            HASH_CNT(hh, state->radiusservers) +
-            HASH_CNT(hh, state->sipservers) +
-            HASH_CNT(hh_liid, state->ipintercepts) +
-            HASH_CNT(hh_liid, state->voipintercepts) == 0) {
+            HASH_CNT(hh, state->interceptconf.radiusservers) +
+            HASH_CNT(hh, state->interceptconf.sipservers) +
+            HASH_CNT(hh_liid, state->interceptconf.ipintercepts) +
+            HASH_CNT(hh_liid, state->interceptconf.voipintercepts) == 0) {
         return 0;
     }
 
@@ -693,30 +693,31 @@ static int respond_collector_auth(provision_state_t *state,
         return -1;
     }
 
-    if (push_coreservers(state->radiusservers, OPENLI_CORE_SERVER_RADIUS,
-            outgoing) == -1) {
+    if (push_coreservers(state->interceptconf.radiusservers,
+            OPENLI_CORE_SERVER_RADIUS, outgoing) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue RADIUS server details to be sent to new collector on fd %d", pev->fd);
         return -1;
     }
 
-    if (push_coreservers(state->sipservers, OPENLI_CORE_SERVER_SIP,
-            outgoing) == -1) {
+    if (push_coreservers(state->interceptconf.sipservers,
+            OPENLI_CORE_SERVER_SIP, outgoing) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue RADIUS server details to be sent to new collector on fd %d", pev->fd);
         return -1;
     }
 
-    if (push_all_ipintercepts(state->ipintercepts, outgoing,
-                state->leas) == -1) {
+    if (push_all_ipintercepts(state->interceptconf.ipintercepts, outgoing,
+                state->interceptconf.leas) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue IP intercepts to be sent to new collector on fd %d",
                 pev->fd);
         return -1;
     }
 
-    if (push_all_voipintercepts(state, state->voipintercepts, outgoing,
-            state->leas) == -1) {
+    if (push_all_voipintercepts(state,
+            state->interceptconf.voipintercepts, outgoing,
+            state->interceptconf.leas) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue VOIP IP intercepts to be sent to new collector on fd %d",
                 pev->fd);
@@ -752,7 +753,7 @@ static int respond_mediator_auth(provision_state_t *state,
     /* No need to wrap our log messages with checks for log_allowed, as
      * we should have just set log_allowed to 1 before calling this function
      */
-    HASH_ITER(hh, state->leas, ag, tmp) {
+    HASH_ITER(hh, state->interceptconf.leas, ag, tmp) {
         if (push_lea_onto_net_buffer(outgoing, ag->ag) == -1) {
             logger(LOG_INFO,
                     "OpenLI: error while buffering LEA details to send from provisioner to mediator.");
@@ -760,7 +761,7 @@ static int respond_mediator_auth(provision_state_t *state,
         }
     }
 
-    h = state->liid_map;
+    h = state->interceptconf.liid_map;
     while (h != NULL) {
         if (push_liid_mapping_onto_net_buffer(outgoing, h->agency, h->liid)
                 == -1) {
@@ -1651,6 +1652,7 @@ static int withdraw_agency_from_mediators(provision_state_t *state,
 
 }
 
+#if 0
 static inline int reload_leas(provision_state_t *currstate,
         provision_state_t *newstate, int medchange) {
 
@@ -1696,6 +1698,7 @@ static inline int reload_leas(provision_state_t *currstate,
     currstate->liid_map = newmap;
     return 0;
 }
+#endif
 
 static void add_new_staticip_range(provision_state_t *state,
         ipintercept_t *ipint, static_ipranges_t *ipr) {
@@ -2154,6 +2157,7 @@ static inline int compare_sip_targets(provision_state_t *currstate,
     return 0;
 }
 
+#if 0
 static inline int reload_voipintercepts(provision_state_t *currstate,
         provision_state_t *newstate, int droppedcols, int droppedmeds) {
 
@@ -2268,6 +2272,7 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
     currstate->voipintercepts = newints;
     return 0;
 }
+#endif
 
 static inline void reload_coreservers(provision_state_t *state,
         coreserver_t *currserv, coreserver_t *newserv, int droppedcols) {
@@ -2297,6 +2302,7 @@ static inline void reload_coreservers(provision_state_t *state,
     }
 }
 
+#if 0
 static inline int reload_radiusservers(provision_state_t *currstate,
         provision_state_t *newstate, int droppedcols) {
 
@@ -2324,6 +2330,7 @@ static inline int reload_sipservers(provision_state_t *currstate,
     currstate->sipservers = newsip;
     return 0;
 }
+#endif
 
 /* define here rather than as a macro, since IP intercepts are now
  * a bit more complicated (i.e. some structure fields are optional).
@@ -2360,6 +2367,7 @@ static inline int ip_intercept_equal(ipintercept_t *a, ipintercept_t *b) {
     return 1;
 }
 
+#if 0
 static inline int reload_staticips(provision_state_t *currstate,
         ipintercept_t *ipint, ipintercept_t *newequiv) {
 
@@ -2473,6 +2481,8 @@ static inline int reload_ipintercepts(provision_state_t *currstate,
     return 0;
 }
 
+#endif
+
 static int reload_provisioner_config(provision_state_t *currstate) {
 
     provision_state_t newstate;
@@ -2511,6 +2521,13 @@ static int reload_provisioner_config(provision_state_t *currstate) {
 
     }
 
+    /* TODO
+     * If the intercept config file has changed, we'll still need to
+     * reload the entire intercept config and push any changes to any
+     * mediators or collectors that are still connected.
+     */
+
+#if 0
     if (reload_leas(currstate, &newstate, mediatorchanged) == -1) {
         return -1;
     }
@@ -2532,6 +2549,7 @@ static int reload_provisioner_config(provision_state_t *currstate) {
     if (reload_sipservers(currstate, &newstate, clientchanged) == -1) {
         return -1;
     }
+#endif
 
     clear_prov_state(&newstate);
 
@@ -2619,6 +2637,7 @@ int main(int argc, char *argv[]) {
     sigset_t sigblock;
     int daemonmode = 0;
     char *pidfile = NULL;
+    int ret;
 
     provision_state_t provstate;
 
@@ -2679,6 +2698,25 @@ int main(int argc, char *argv[]) {
     if (init_prov_state(&provstate, configfile) == -1) {
         logger(LOG_INFO, "OpenLI: Error initialising provisioner.");
         return 1;
+    }
+
+    if (provstate.interceptconffile == NULL) {
+        provstate.interceptconffile = strdup(DEFAULT_INTERCEPT_CONFIG_FILE);
+    }
+    if (parse_intercept_config(provstate.interceptconffile,
+            &(provstate.interceptconf)) < 0) {
+        logger(LOG_INFO, "OpenLI provisioner: error while parsing intercept config file '%s'", provstate.interceptconffile);
+        return -1;
+    }
+
+    /*
+     * XXX could also sanity check intercept->mediator mappings too...
+     */
+    if ((ret = map_intercepts_to_leas(&(provstate.interceptconf))) != 0) {
+        logger(LOG_INFO,
+                "OpenLI: failed to map %d intercepts to agencies. Exiting.",
+                ret);
+        return -1;
     }
 
     if (start_main_listener(&provstate) == -1) {
