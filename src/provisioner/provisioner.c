@@ -70,6 +70,24 @@ static inline char *get_event_description(prov_epoll_ev_t *pev) {
     return "unknown";
 }
 
+static inline void start_mhd_daemon(provision_state_t *state) {
+
+    assert(state->updatesockfd >= 0);
+
+    state->updatedaemon = MHD_start_daemon(MHD_USE_SELECT_INTERNALLY,
+            0,
+            NULL,
+            NULL,
+            &handle_update_request,      // TODO
+            state,
+            MHD_OPTION_LISTEN_SOCKET,
+            state->updatesockfd,
+            MHD_OPTION_NOTIFY_COMPLETED,
+            &complete_update_request,    // TODO
+            state,
+            MHD_OPTION_END);
+}
+
 static inline int enable_epoll_write(provision_state_t *state,
         prov_epoll_ev_t *pev) {
     struct epoll_event ev;
@@ -210,6 +228,9 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     int ret = 0;
 
     state->conffile = configfile;
+    state->interceptconffile = NULL;
+    state->updatedaemon = NULL;
+    state->updatesockfd = -1;
 
     state->epoll_fd = epoll_create1(0);
     state->mediators = NULL;
@@ -257,7 +278,6 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     }
 
     state->clientfd = NULL;
-    state->updatefd = NULL;
     state->mediatorfd = NULL;
     state->timerfd = NULL;
 
@@ -496,10 +516,6 @@ static void clear_prov_state(provision_state_t *state) {
     if (state->clientfd) {
         close(state->clientfd->fd);
         free(state->clientfd);
-    }
-    if (state->updatefd) {
-        close(state->updatefd->fd);
-        free(state->updatefd);
     }
     if (state->mediatorfd) {
         close(state->mediatorfd->fd);
@@ -1231,43 +1247,6 @@ static int start_main_listener(provision_state_t *state) {
     return sockfd;
 }
 
-static int start_push_listener(provision_state_t *state) {
-    struct epoll_event ev;
-    int sockfd;
-
-    if (state->pushaddr == NULL) {
-        return -1;
-    }
-
-    state->updatefd = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
-
-    sockfd  = create_listener(state->pushaddr, state->pushport, "II push");
-    if (sockfd == -1) {
-        return -1;
-    }
-
-    logger(LOG_INFO,
-            "OpenLI provisioner: listening for updates on %s:%s",
-            state->pushaddr, state->pushport);
-
-    state->updatefd->fd = sockfd;
-    state->updatefd->fdtype = PROV_EPOLL_UPDATE_CONN;
-    state->updatefd->state = NULL;
-
-    ev.data.ptr = state->updatefd;
-    ev.events = EPOLLIN;
-
-    if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
-        logger(LOG_INFO,
-                "OpenLI: Failed to register push listening socket: %s.",
-                strerror(errno));
-        close(sockfd);
-        return -1;
-    }
-
-    return sockfd;
-}
-
 static int start_mediator_listener(provision_state_t *state) {
     struct epoll_event ev;
     int sockfd;
@@ -1459,20 +1438,12 @@ static inline int reload_push_socket_config(provision_state_t *currstate,
 
     /* TODO this will trigger on a whitespace change */
     if (currstate->pushaddr) {
-
         if (strcmp(newstate->pushaddr, currstate->pushaddr) != 0 ||
                 strcmp(newstate->pushport, currstate->pushport) != 0) {
 
-            if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
-                    currstate->updatefd->fd, &ev) == -1) {
-                logger(LOG_INFO,
-                        "OpenLI provisioner: Failed to remove update fd from epoll: %s.",
-                        strerror(errno));
-                return -1;
-            }
+            MHD_stop_daemon(currstate->updatedaemon);
+            currstate->updatedaemon = NULL;
 
-            close(currstate->updatefd->fd);
-            free(currstate->updatefd);
             free(currstate->pushaddr);
             free(currstate->pushport);
 
@@ -1484,9 +1455,7 @@ static inline int reload_push_socket_config(provision_state_t *currstate,
             currstate->pushport = strdup(newstate->pushport);
             changed = 1;
         }
-    }
-
-    else if (newstate->pushaddr) {
+    } else if (newstate->pushaddr) {
         currstate->pushaddr = strdup(newstate->pushaddr);
         currstate->pushport = strdup(newstate->pushport);
         changed = 1;
@@ -1495,7 +1464,14 @@ static inline int reload_push_socket_config(provision_state_t *currstate,
     if (changed) {
         logger(LOG_INFO,
                 "OpenLI provisioner: update socket configuration has changed.");
-        if (currstate->pushaddr && start_push_listener(currstate) == -1) {
+        currstate->updatesockfd = create_listener(currstate->pushaddr,
+                currstate->pushport, "update socket");
+
+        if (currstate->updatesockfd != -1) {
+            start_mhd_daemon(currstate);
+        }
+
+        if (currstate->updatesockfd == -1 || currstate->updatedaemon == NULL) {
             logger(LOG_INFO,
                     "OpenLI provisioner: Warning, update socket did not restart. Will not be able to receive live updates.");
             return -1;
@@ -2625,6 +2601,10 @@ static void run(provision_state_t *state) {
         state->timerfd->fd = -1;
     }
 
+    if (state->updatedaemon) {
+        MHD_stop_daemon(state->updatedaemon);
+    }
+
 }
 
 static void usage(char *prog) {
@@ -2724,14 +2704,19 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-/*
-    if (start_push_listener(&provstate) == -1) {
-        logger(LOG_INFO, "OpenLI: Warning, push socket did not start. New intercepts cannot be received.");
-    }
-*/
-
     if (start_mediator_listener(&provstate) == -1) {
         logger(LOG_INFO, "OpenLI: Warning, mediation socket did not start. Will not be able to control mediators.");
+    }
+
+    provstate.updatesockfd = create_listener(provstate.pushaddr,
+            provstate.pushport, "update socket");
+    if (provstate.updatesockfd == -1) {
+        logger(LOG_INFO, "OpenLI: warning, update microhttpd server did not start. Will not be able to receive live updates via REST API.");
+    } else {
+        start_mhd_daemon(&provstate);
+        if (provstate.updatedaemon == NULL) {
+            logger(LOG_INFO, "OpenLI: warning, update microhttpd server did not start. Will not be able to receive live updates via REST API.");
+        }
     }
 
     run(&provstate);

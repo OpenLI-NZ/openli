@@ -29,6 +29,7 @@
 
 #include <libtrace/linked_list.h>
 #include <uthash.h>
+#include <microhttpd.h>
 #include "netcomms.h"
 
 #define DEFAULT_INTERCEPT_CONFIG_FILE "/var/lib/openli/intercepts.conf"
@@ -131,13 +132,10 @@ typedef struct prov_state {
     prov_epoll_ev_t *signalfd;
 
     int ignorertpcomfort;
-    /*
-    int activeupdatefd;
-    int updatetimerfd;
 
-    provision_update_t upstate;
-    */
     prov_intercept_conf_t interceptconf;
+    struct MHD_Daemon *updatedaemon;
+    MHD_socket updatesockfd;
 
 } provision_state_t;
 
@@ -153,6 +151,14 @@ typedef struct prov_sock_state {
     int clientrole;
 
 } prov_sock_state_t;
+
+int handle_update_request(void *cls, struct MHD_Connection *conn,
+        const char *url, const char *method, const char *version,
+        const char *upload_data, size_t *upload_data_size,
+        void **con_cls);
+
+void complete_update_request(void *cls, struct MHD_Connection *conn,
+        void **con_cls, enum MHD_RequestTerminationCode toe);
 
 #endif
 
