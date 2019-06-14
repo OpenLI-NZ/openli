@@ -175,48 +175,6 @@ int logErr(const char *str, size_t len, void *u){
     logger(LOG_INFO, str);
 }
 
-//connects to the SSL server on fd using the CTX
-//returns an SSL connection bound to the fd
-//or NULL on faliure
-SSL* initiate_handshake(SSL_CTX *ctx, int fd){
-    SSL *ssl = SSL_new(ctx);
-    SSL_set_fd(ssl, fd);
-    SSL_set_connect_state(ssl); //set client mode
-    int errr = SSL_do_handshake(ssl);
-    if ((errr) <= 0 ){
-        errr = SSL_get_error(ssl, errr);
-        logger(LOG_INFO, "OpenLI: TLS accept failed %d", errr);
-        ERR_print_errors_cb(&logErr, NULL);
-        SSL_free(ssl);
-        return NULL;
-    }
-    logger(LOG_INFO, "OpenLI: handshake initiated and accepted.");
-    dump_cert_info(ssl);
-
-    return ssl;
-}
-
-//connects to the SSL server on fd using the CTX
-//returns an SSL connection bound to the fd
-//or NULL on faliure
-SSL* accept_handshake(SSL_CTX *ctx, int fd){
-    SSL *ssl = SSL_new(ctx);
-    SSL_set_fd(ssl, fd);
-    SSL_set_accept_state(ssl); //set server mode
-    int errr = SSL_do_handshake(ssl);
-    if ((errr) <= 0 ){
-        errr = SSL_get_error(ssl, errr);
-        logger(LOG_INFO, "OpenLI: TLS handshake failed %d", errr);
-        ERR_print_errors_cb(&logErr, NULL);
-        SSL_free(ssl);
-        return NULL;
-    }            
-    logger(LOG_INFO, "OpenLI: TLS handshake accepted.");
-    dump_cert_info(ssl);
-
-    return ssl;
-}
-
 static inline int extend_net_buffer(net_buffer_t *nb, int musthave) {
 
     int bufused = nb->alloced - NETBUF_SPACE_REM(nb);
@@ -1085,9 +1043,7 @@ int transmit_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t *err) {
     //dump_buffer_contents(nb->actptr, NETBUF_CONTENT_SIZE(nb));
 
     if (nb->ssl != NULL){
-        fd_set_nonblock(nb->fd); //SSL_write cant be told to be non blocking, fd must change
         ret = SSL_write(nb->ssl, nb->actptr, NETBUF_CONTENT_SIZE(nb));
-        fd_set_block(nb->fd); //TODO maybe check to make sure it was blocking to begin with? 
     }
     else {
         ret = send(nb->fd, nb->actptr, NETBUF_CONTENT_SIZE(nb), MSG_DONTWAIT);
@@ -1665,9 +1621,7 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
     }
 
     if (nb->ssl != NULL){
-        fd_set_nonblock(nb->fd); //SSL_read cant be told to be non blocking, fd must change
         ret = SSL_read(nb->ssl, nb->appendptr, NETBUF_SPACE_REM(nb));
-        fd_set_block(nb->fd); //TODO maybe check to make sure it was blocking to begin with?
     }
     else {
         ret = recv(nb->fd, nb->appendptr, NETBUF_SPACE_REM(nb), MSG_DONTWAIT);

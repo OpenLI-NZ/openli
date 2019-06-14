@@ -51,6 +51,7 @@ typedef struct export_dest {
     uint8_t logallowed;
 
     SSL *ssl;
+    int waitingforhandshake;
 
     UT_hash_handle hh_fd;
     UT_hash_handle hh_medid;

@@ -53,6 +53,7 @@ enum {
     MED_EPOLL_PCAP_TIMER,
     MED_EPOLL_CEASE_LIID_TIMER,
     MED_EPOLL_PROVRECONNECT,
+    MED_EPOLL_COLLECTOR_HANDSHAKE,
 };
 
 typedef struct disabled_collector {
@@ -64,6 +65,7 @@ typedef struct med_coll_state {
     char *ipaddr;
     net_buffer_t *incoming;
     int disabled_log;
+    SSL *ssl;
 } med_coll_state_t;
 
 typedef struct handover {

@@ -1297,10 +1297,27 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
     }
 
     if (ctx != NULL){
-        sync->ssl = initiate_handshake(ctx, sockfd);
-        if (sync->ssl == NULL){
-            return 0; //handshake was rejected
+        
+        fd_set_block(sockfd); 
+        //collector cannt do anything untill it has instructions from provisioner so blocking is fine
+
+        sync->ssl = SSL_new(ctx);
+        SSL_set_fd(sync->ssl, sockfd);
+        SSL_set_connect_state(sync->ssl); //set client mode
+        int errr = SSL_do_handshake(sync->ssl);
+
+        fd_set_nonblock(sockfd);
+        
+        if ((errr) <= 0 ){
+            errr = SSL_get_error(sync->ssl, errr);
+            logger(LOG_INFO, "OpenLI: TLS handshake failed %d", errr);
+            ERR_print_errors_fp(stderr);
+            SSL_free(sync->ssl);
+            return -1; //if handshake fails, its unrecoverable, retrying wont help
         }
+
+        logger(LOG_INFO, "OpenLI: Handshake finished");
+        dump_cert_info(sync->ssl);
     }
     else {
         sync->ssl = NULL;

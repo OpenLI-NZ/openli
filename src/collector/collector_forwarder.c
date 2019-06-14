@@ -157,6 +157,10 @@ static inline void disconnect_mediator(forwarding_thread_data_t *fwd,
         fwd->topoll[med->pollindex].fd = 0;
         fwd->topoll[med->pollindex].events = 0;
     }
+    if (med->ssl){
+        SSL_free(med->ssl);
+        med->ssl;
+    }
 
 }
 
@@ -180,9 +184,6 @@ static void remove_destination(forwarding_thread_data_t *fwd,
         free(med->portstr);
     }
 
-    if (med->ssl){
-        SSL_free(med->ssl);
-    }
 
     free(med);
 }
@@ -450,6 +451,7 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx) {
     }
 
     sockfd = connect_socket(dest->ipstr, dest->portstr, dest->failmsg, 0);
+    fd_set_nonblock(sockfd);
 
     if (sockfd == -1) {
         /* TODO should probably bail completely on this dest if this
@@ -463,11 +465,24 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx) {
     }
 
     if (ctx != NULL){
-        dest->ssl = initiate_handshake(ctx, sockfd);
-        if (dest->ssl == NULL){
-            close(sockfd);
-            return 0; //handshake was rejected
+        
+        int errr;
+        dest->ssl = SSL_new(ctx);
+        SSL_set_fd(dest->ssl, sockfd);
+        
+        errr = SSL_connect(dest->ssl);
+         
+        if(errr <= 0){
+            errr = SSL_get_error(dest->ssl, errr);
+            if (errr != SSL_ERROR_WANT_WRITE && errr != SSL_ERROR_WANT_READ){ //handshake failed badly
+                close(sockfd);
+                SSL_free(dest->ssl);
+                dest->ssl = NULL;
+                logger(LOG_INFO, "OpenLI: Handshake failed");
+                return -1;
+            }
         }
+        logger(LOG_INFO, "OpenLI: Handshake started");        
     }
     else {
         dest->ssl = NULL;
@@ -536,6 +551,8 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
         } else {
             ind = dest->pollindex;
         }
+
+        dest->waitingforhandshake = (dest->ssl != NULL); //needs to await for handshake if SSL is enabled 
 
         fwd->forcesend[ind] = 0;
         fwd->topoll[ind].socket = NULL;
@@ -688,6 +705,36 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         }
 
         dest = (export_dest_t *)(*jval);
+
+        if (dest->waitingforhandshake){
+
+            int ret = SSL_connect(dest->ssl); //either keep running handshake or fail when error 
+
+            if (ret <= 0){
+                ret = SSL_get_error(dest->ssl, ret);
+                if(ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE){
+                    //keep trying
+                    //logger(LOG_INFO, "OpenLI: Handshake continue");
+                }
+                else {
+                    //fail out
+                    //if (dest->logallowed) {
+                        logger(LOG_INFO,
+                            "OpenLI: error in continuing handshake with mediator: %s:%s",
+                            dest->ipstr, dest->portstr);
+                    //}
+                    dest->waitingforhandshake = 0;
+                    disconnect_mediator(fwd, dest);
+                    return -1;
+                }
+            }
+            else {
+                logger(LOG_INFO, "OpenLI: Handshake accepted");
+                dump_cert_info(dest->ssl);
+                dest->waitingforhandshake = 0;
+            }
+            continue;
+        }
 
         if ((availsend = get_buffered_amount(&(dest->buffer))) == 0) {
             /* Nothing available to send */

@@ -898,6 +898,7 @@ static int accept_collector(mediator_state_t *state) {
     /* Accept, then add to list of collectors. Push all active intercepts
      * out to the collector. */
     newfd = accept(state->listenerev->fd, (struct sockaddr *)&saddr, &socklen);
+    fd_set_nonblock(newfd);
 
     if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, sizeof(strbuf),
                 0, 0, NI_NUMERICHOST) != 0) {
@@ -907,22 +908,49 @@ static int accept_collector(mediator_state_t *state) {
 
     if (newfd >= 0) {
 
+        mstate = (med_coll_state_t *)malloc(sizeof(med_coll_state_t));
+        col.colev = (med_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
+
        if (state->ctx != NULL){ //only use TLS if ctx is set
-            col.ssl = accept_handshake(state->ctx, newfd);
-            if (col.ssl == NULL){ //handshake was rejected
-                close(newfd);
-                return -1;
+            col.ssl = SSL_new(state->ctx);
+            SSL_set_fd(col.ssl, newfd);
+
+            int errr = SSL_accept(col.ssl);
+            if (errr <= 0){
+                errr = SSL_get_error(col.ssl, errr);
+
+                if (errr != SSL_ERROR_WANT_WRITE &&
+                    errr != SSL_ERROR_WANT_READ && 
+                    errr != SSL_ERROR_WANT_ACCEPT &&
+                    errr != SSL_ERROR_WANT_CONNECT){ //handshake failed badly
+                    ERR_print_errors_fp(stderr);
+                    close(newfd);
+                    SSL_free(col.ssl);
+                    free(mstate);
+                    free(col.colev);
+                    //free(col); col is on the stack here? it is heap mem in provisioner
+                    logger(LOG_INFO, "OpenLI: Handshake failed %d", errr);
+                    return -1;
+                }
+                logger(LOG_INFO, "OpenLI: Handshake started");
+                col.colev->fdtype = MED_EPOLL_COLLECTOR_HANDSHAKE;
+            }
+            else {
+                logger(LOG_INFO, "OpenLI: Handshake accepted");
+                dump_cert_info(col.ssl);
+
+                //handshake has finished
+                col.colev->fdtype = MED_EPOLL_COLLECTOR;
+
             }
         } else {
             col.ssl = NULL;
         }
 
-        mstate = (med_coll_state_t *)malloc(sizeof(med_coll_state_t));
-        col.colev = (med_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
-
-        col.colev->fdtype = MED_EPOLL_COLLECTOR;
+        
         col.colev->fd = newfd;
         col.colev->state = mstate;
+        mstate->ssl = col.ssl;
         mstate->incoming = create_net_buffer(NETBUF_RECV, newfd, col.ssl);
         mstate->ipaddr = strdup(strbuf);
 
@@ -1996,6 +2024,31 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
     return 0;
 }
 
+static int continue_handshake(mediator_state_t *state, med_epoll_ev_t *mev) {
+    med_coll_state_t *cs = (med_coll_state_t *)(mev->state);
+
+    int ret = SSL_accept(cs->ssl); //either keep running handshake or return when error 
+
+    if (ret <= 0){
+        ret = SSL_get_error(cs->ssl, ret);
+        if(ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE){
+            //keep trying
+            //SSL_writelogger(LOG_INFO, "OpenLI: Handshake continue");
+            return 0;
+        }
+        else {
+            //fail out
+            logger(LOG_INFO, "OpenLI: Handshake failed");
+            return -1;
+        }
+    }
+    logger(LOG_INFO, "OpenLI: Handshake accepted");
+    dump_cert_info(cs->ssl);
+
+    //handshake has finished
+    mev->fdtype = MED_EPOLL_COLLECTOR;
+}
+
 static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 
 	med_epoll_ev_t *mev = (med_epoll_ev_t *)(ev->data.ptr);
@@ -2079,6 +2132,14 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
                 free_provisioner(state->epoll_fd, &(state->provisioner));
                 setup_provisioner_reconnect_timer(state);
                 state->provisioner.disable_log = 1;
+            }
+            break;
+        case MED_EPOLL_COLLECTOR_HANDSHAKE:{
+                //continue handshake process
+                ret = continue_handshake(state, mev);
+                if (ret == -1) {
+                    drop_collector(state, mev, 1);
+                }
             }
             break;
         case MED_EPOLL_COLLECTOR:
@@ -2171,21 +2232,41 @@ static int init_provisioner_connection(mediator_state_t *state, int sock, SSL_CT
         return 0;
     }
 
+    prov->provev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+    prov->provev->fd = sock;
+    prov->provev->fdtype = MED_EPOLL_PROVISIONER;
+    prov->provev->state = NULL;
+
     if (ctx != NULL){
-        prov->ssl = initiate_handshake(ctx, sock);
-        if (prov->ssl == NULL){
-            return 0; //handshake was rejected
+
+        fd_set_block(sock); 
+        //mediator cannt do anything untill it has instructions fom provisioner so blocking is fine
+
+        int errr;
+        prov->ssl = SSL_new(ctx);
+        SSL_set_fd(prov->ssl, sock);
+        
+        errr = SSL_connect(prov->ssl);
+        fd_set_nonblock(sock); 
+        if(errr <= 0){
+            errr = SSL_get_error(prov->ssl, errr);
+            if (errr != SSL_ERROR_WANT_WRITE && errr != SSL_ERROR_WANT_READ){ //handshake failed badly
+                //close(sock);
+                SSL_free(prov->ssl);
+                free(prov->provev);
+                prov->ssl = NULL;
+                logger(LOG_INFO, "OpenLI: Handshake failed");
+                return -1;
+            }
         }
+        logger(LOG_INFO, "OpenLI: Handshake started");
+        dump_cert_info(prov->ssl);
     }
     else {
         prov->ssl = NULL;
     }
 
 
-    prov->provev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
-    prov->provev->fd = sock;
-    prov->provev->fdtype = MED_EPOLL_PROVISIONER;
-    prov->provev->state = NULL;
 
     prov->sentinfo = 0;
     prov->outgoing = create_net_buffer(NETBUF_SEND, sock, prov->ssl);
