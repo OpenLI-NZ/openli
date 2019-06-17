@@ -17,3 +17,7 @@ ltmain.sh
 missing
 stamp-h1
 m4/*.m4
+#added for dev
+.vscode/*
+*.dirstamp
+dockertests/*

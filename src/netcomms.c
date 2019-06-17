@@ -54,7 +54,7 @@ static inline void dump_buffer_contents(uint8_t *buf, uint16_t len) {
 
 }
 
-net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd) {
+net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl) {
 
     net_buffer_t *nb = (net_buffer_t *)malloc(sizeof(net_buffer_t));
     nb->buf = (char *)malloc(NETBUF_ALLOC_SIZE);
@@ -63,6 +63,7 @@ net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd) {
     nb->alloced = NETBUF_ALLOC_SIZE;
     nb->fd = fd;
     nb->buftype = buftype;
+    nb->ssl = ssl;
     return nb;
 }
 
@@ -72,6 +73,106 @@ void destroy_net_buffer(net_buffer_t *nb) {
     }
     free(nb->buf);
     free(nb);
+}
+
+inline int fd_set_nonblock(int fd){
+    int flags = fcntl(fd, F_GETFL, 0);
+    flags |= O_NONBLOCK;
+    return fcntl(fd, F_SETFL, flags);
+}
+
+inline int fd_set_block(int fd){
+    int flags = fcntl(fd, F_GETFL, 0);
+    flags &= ~O_NONBLOCK;
+    return fcntl(fd, F_SETFL, flags);
+}
+
+void dump_cert_info(SSL *ssl) {
+    
+    logger(LOG_INFO,
+        "SSL connection version: %s", 
+        SSL_get_version(ssl)); //should ALWAYS be TLSv1_2
+
+    logger(LOG_INFO,
+        "Using cipher %s", 
+        SSL_get_cipher(ssl)); //should ALWAYS be AES256-GCM-SHA384
+
+    X509 *client_cert = SSL_get_peer_certificate(ssl);
+    if (client_cert != NULL) {
+
+        char *str = X509_NAME_oneline(X509_get_subject_name(client_cert), 0, 0);
+        logger(LOG_INFO,"Connection certificate: Subject: %s", str);
+        OPENSSL_free(str);
+
+        str = X509_NAME_oneline(X509_get_issuer_name(client_cert), 0, 0);
+        logger(LOG_INFO,"Connection certificate: Issuer: %s\n", str);
+        OPENSSL_free(str);
+
+        X509_free(client_cert);
+    }
+}
+
+//takes in 3 filenames for the CA, own cert and private key
+//if all 3 files names are null, returns null as successfully doing nothing
+//returns -1 if an error happened
+//otherwise returns a new SSL_CTX with the provided certificates using TLSv1_2
+//and enforces identity checking at handshake
+SSL_CTX * ssl_init(const char *cacertfile, const char *certfile, const char *keyfile) {
+
+    /* SSL library initialisation */
+    SSL_library_init();
+    OpenSSL_add_all_algorithms();
+    SSL_load_error_strings();
+    ERR_load_crypto_strings();
+    
+    /* create the SSL context */
+    SSL_CTX *ctx = SSL_CTX_new(TLSv1_2_method());
+
+    if (!ctx){ //check not NULL
+        logger(LOG_INFO, "OpenLI: SSL_CTX creation failed");
+        return NULL;
+    }
+
+    /* Enforce use of TLSv1_2 */
+    SSL_CTX_set_options(ctx, SSL_OP_ALL | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+
+    if (SSL_CTX_load_verify_locations(ctx, cacertfile, "./") != 1){ //TODO this might want to be changed
+        logger(LOG_INFO, "OpenLI: SSL CA cert loading {%s} failed", cacertfile);
+        SSL_CTX_free(ctx);
+        return NULL;
+    }
+
+    //enforce cheking of client/server 
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+
+    if (SSL_CTX_use_certificate_file(ctx, certfile, SSL_FILETYPE_PEM) != 1){
+        logger(LOG_INFO, "OpenLI: SSL cert loading {%s} failed", certfile);
+        SSL_CTX_free(ctx);
+        return NULL;
+    }
+
+    if (SSL_CTX_use_PrivateKey_file(ctx, keyfile, SSL_FILETYPE_PEM) != 1){
+        logger(LOG_INFO, "OpenLI: SSL Key loading {%s} failed", keyfile);
+        SSL_CTX_free(ctx);
+        return NULL;
+    }
+
+    /* Make sure the key and certificate file match. */
+    if (SSL_CTX_check_private_key(ctx) != 1){
+        logger(LOG_INFO, "OpenLI: SSL CTX private key failed, %s and %s do not match", keyfile, certfile);
+        SSL_CTX_free(ctx);
+        return NULL;
+    }
+
+    logger(LOG_INFO, "OpenLI: Certificate and private key loaded and verified");
+    logger(LOG_INFO, "OpenLI: OpenSSL CTX initlized, TLS encryption enabled.");
+    logger(LOG_INFO, "OpenLI: Using %s, %s and %s.", certfile, keyfile, cacertfile);
+
+    return ctx;
+}
+
+int logErr(const char *str, size_t len, void *u){
+    logger(LOG_INFO, str);
 }
 
 static inline int extend_net_buffer(net_buffer_t *nb, int musthave) {
@@ -940,7 +1041,13 @@ int transmit_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t *err) {
     }
 
     //dump_buffer_contents(nb->actptr, NETBUF_CONTENT_SIZE(nb));
-    ret = send(nb->fd, nb->actptr, NETBUF_CONTENT_SIZE(nb), MSG_DONTWAIT);
+
+    if (nb->ssl != NULL){
+        ret = SSL_write(nb->ssl, nb->actptr, NETBUF_CONTENT_SIZE(nb));
+    }
+    else {
+        ret = send(nb->fd, nb->actptr, NETBUF_CONTENT_SIZE(nb), MSG_DONTWAIT);
+    }
 
     if (ret == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -1513,7 +1620,13 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
         }
     }
 
-    ret = recv(nb->fd, nb->appendptr, NETBUF_SPACE_REM(nb), MSG_DONTWAIT);
+    if (nb->ssl != NULL){
+        ret = SSL_read(nb->ssl, nb->appendptr, NETBUF_SPACE_REM(nb));
+    }
+    else {
+        ret = recv(nb->fd, nb->appendptr, NETBUF_SPACE_REM(nb), MSG_DONTWAIT);
+    }
+    
     if (ret <= 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             return OPENLI_PROTO_NO_MESSAGE;

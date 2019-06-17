@@ -89,7 +89,7 @@ static inline int enable_epoll_write(provision_state_t *state,
 }
 
 static void create_socket_state(prov_epoll_ev_t *pev, int authtimerfd,
-        char *ipaddrstr, int isbad) {
+        char *ipaddrstr, int isbad, SSL *ssl) {
 
     prov_sock_state_t *cs = (prov_sock_state_t *)malloc(
             sizeof(prov_sock_state_t));
@@ -100,9 +100,10 @@ static void create_socket_state(prov_epoll_ev_t *pev, int authtimerfd,
         cs->log_allowed = 1;
     }
 
+    cs->ssl = ssl;
     cs->ipaddr = strdup(ipaddrstr);
-    cs->incoming = create_net_buffer(NETBUF_RECV, pev->fd);
-    cs->outgoing = create_net_buffer(NETBUF_SEND, pev->fd);
+    cs->incoming = create_net_buffer(NETBUF_RECV, pev->fd, cs->ssl);
+    cs->outgoing = create_net_buffer(NETBUF_SEND, pev->fd, cs->ssl);
     cs->trusted = 0;
     cs->halted = 0;
     cs->authfd = authtimerfd;
@@ -236,6 +237,10 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->pushport = NULL;
     state->pushaddr = NULL;
 
+    state->certfile = NULL;
+    state->keyfile = NULL;
+    state->cacertfile = NULL;
+
     state->badmediators = NULL;
     state->badcollectors = NULL;
 
@@ -270,6 +275,19 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->updatefd = NULL;
     state->mediatorfd = NULL;
     state->timerfd = NULL;
+
+    if (state->certfile && state->keyfile && state->cacertfile){
+        state->ctx = ssl_init(state->cacertfile, state->certfile, state->keyfile);
+    } else {
+        if (state->certfile || state->keyfile || state->cacertfile){
+            logger(LOG_INFO, "OpenLI: SSL error, missing keyfile or certfile names.");
+            return -1;
+        }
+        else{
+            logger(LOG_INFO, "OpenLI: Not using OpenSSL TLS connection.");
+            state->ctx = NULL;
+        }
+    }
 
     /* Use an fd to catch signals during our main epoll loop, so that we
      * can provide our own signal handling without causing epoll_wait to
@@ -393,6 +411,9 @@ static void free_all_mediators(prov_mediator_t **mediators) {
             close(med->authev->fd);
         }
         free(med->authev);
+        if(med->ssl){
+            SSL_free(med->ssl);
+        }
         free(med);
     }
 }
@@ -431,6 +452,9 @@ static void stop_all_collectors(prov_collector_t **collectors) {
         free(col->commev);
         if (col->authev->fd != -1) {
             close(col->authev->fd);
+        }
+        if (col->ssl){
+            SSL_free(col->ssl);
         }
         free(col->authev);
         free(col);
@@ -536,6 +560,9 @@ static void clear_prov_state(provision_state_t *state) {
     }
     if (state->mediateport) {
         free(state->mediateport);
+    }
+    if(state->ctx){
+        SSL_CTX_free(state->ctx);
     }
 
 }
@@ -931,6 +958,37 @@ static int receive_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
     return 0;
 }
 
+static int continue_handshake(provision_state_t *state, prov_epoll_ev_t *pev) {
+    prov_sock_state_t *cs = (prov_sock_state_t *)(pev->state);
+
+    int ret = SSL_accept(cs->ssl); //either keep running handshake or return when error 
+
+
+    if (ret <= 0){
+        ret = SSL_get_error(cs->ssl, ret);
+        if(ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE){
+            //keep trying
+            //logger(LOG_INFO, "OpenLI: Handshake continue");
+            return 0;
+        }
+        else {
+            //fail out
+            logger(LOG_INFO, "OpenLI: Handshake failed");
+            return -1;
+        }
+    }
+    logger(LOG_INFO, "OpenLI: Handshake accepted");
+    dump_cert_info(cs->ssl);
+
+    //handshake has finished
+    if(pev->fdtype == PROV_EPOLL_MEDIATOR_HANDSHAKE ){
+        pev->fdtype = PROV_EPOLL_MEDIATOR;
+    }
+    else if(pev->fdtype == PROV_EPOLL_COLLECTOR_HANDSHAKE ){
+        pev->fdtype = PROV_EPOLL_COLLECTOR;
+    }
+}
+
 static int transmit_socket(provision_state_t *state, prov_epoll_ev_t *pev) {
 
     int ret;
@@ -1062,6 +1120,7 @@ static int accept_collector(provision_state_t *state) {
     col = calloc(1, sizeof(prov_collector_t));
 
     newfd = accept(state->clientfd->fd, (struct sockaddr *)&saddr, &socklen);
+    fd_set_nonblock(newfd);
 
     if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, sizeof(strbuf),
             0, 0, NI_NUMERICHOST) != 0) {
@@ -1070,10 +1129,46 @@ static int accept_collector(provision_state_t *state) {
     }
 
     if (newfd >= 0) {
+
         col->commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
         col->authev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
-        col->commev->fdtype = PROV_EPOLL_COLLECTOR;
+        if (state->ctx != NULL){ //only use TLS if ctx is set
+
+            col->ssl = SSL_new(state->ctx);
+            SSL_set_fd(col->ssl, newfd);
+
+            int errr = SSL_accept(col->ssl);
+
+            if(errr <= 0){
+                errr = SSL_get_error(col->ssl, errr);
+
+                if (errr != SSL_ERROR_WANT_WRITE &&
+                    errr != SSL_ERROR_WANT_READ && 
+                    errr != SSL_ERROR_WANT_ACCEPT &&
+                    errr != SSL_ERROR_WANT_CONNECT){ //handshake failed badly
+                    ERR_print_errors_fp(stderr);
+                    close(newfd);
+                    SSL_free(col->ssl);
+                    free(col->commev);
+                    free(col->authev);
+                    free(col);
+                    logger(LOG_INFO, "OpenLI: Handshake failed %d", errr);
+                    return -1;
+                }
+                logger(LOG_INFO, "OpenLI: Handshake started");
+                col->commev->fdtype = PROV_EPOLL_COLLECTOR_HANDSHAKE;
+            }
+            else {
+                logger(LOG_INFO, "OpenLI: Handshake finished");
+                col->commev->fdtype = PROV_EPOLL_COLLECTOR;
+            }
+        } else {
+            col->ssl = NULL;
+            col->commev->fdtype = PROV_EPOLL_COLLECTOR;
+        }
+
+
         col->commev->fd = newfd;
         col->commev->state = NULL;
 
@@ -1088,9 +1183,9 @@ static int accept_collector(provision_state_t *state) {
         }
 
         if (bad == NULL) {
-            create_socket_state(col->commev, col->authev->fd, strbuf, 0);
+            create_socket_state(col->commev, col->authev->fd, strbuf, 0, col->ssl);
         } else {
-            create_socket_state(col->commev, col->authev->fd, strbuf, 1);
+            create_socket_state(col->commev, col->authev->fd, strbuf, 1, col->ssl);
         }
 
         col->authev->state = col->commev->state;
@@ -1135,6 +1230,7 @@ static int accept_mediator(provision_state_t *state) {
      * mediator, as well as any intercept->LEA mappings that we have.
      */
     newfd = accept(state->mediatorfd->fd, (struct sockaddr *)&saddr, &socklen);
+    fd_set_nonblock(newfd);
 
     if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, sizeof(strbuf),
                 0, 0, NI_NUMERICHOST) != 0) {
@@ -1143,12 +1239,52 @@ static int accept_mediator(provision_state_t *state) {
     }
 
     if (newfd >= 0) {
+
         med = calloc(1, sizeof(prov_mediator_t));
-        med->fd = newfd;
-        med->details = NULL;     /* will receive this from mediator soon */
         med->commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
-        med->commev->fdtype = PROV_EPOLL_MEDIATOR;
+        if (state->ctx != NULL){ //only use TLS if ctx is set
+
+            med->ssl = SSL_new(state->ctx);
+            SSL_set_fd(med->ssl, newfd);
+
+            int errr = SSL_accept(med->ssl);
+            
+
+            if(errr <= 0){
+                errr = SSL_get_error(med->ssl, errr);
+
+                if (errr != SSL_ERROR_WANT_WRITE &&
+                    errr != SSL_ERROR_WANT_READ && 
+                    errr != SSL_ERROR_WANT_ACCEPT &&
+                    errr != SSL_ERROR_WANT_CONNECT){ //handshake failed badly
+                    ERR_print_errors_fp(stderr);
+                    close(newfd);
+                    SSL_free(med->ssl);
+                    free(med->commev);
+                    free(med);
+                    logger(LOG_INFO, "OpenLI: Handshake failed %d", errr);
+                    return -1;
+                }
+                else{
+                    logger(LOG_INFO, "OpenLI: Handshake started");
+                    med->commev->fdtype = PROV_EPOLL_MEDIATOR_HANDSHAKE;
+                }
+            }
+            else{
+                logger(LOG_INFO, "OpenLI: Handshake finished");
+                med->commev->fdtype = PROV_EPOLL_MEDIATOR;
+            }
+            
+        } else {
+            med->ssl = NULL;
+            med->commev->fdtype = PROV_EPOLL_MEDIATOR;
+        }
+
+        
+        med->fd = newfd;
+        med->details = NULL;     /* will receive this from mediator soon */
+
         med->commev->fd = newfd;
         med->commev->state = NULL;
 
@@ -1166,9 +1302,9 @@ static int accept_mediator(provision_state_t *state) {
         }
 
         if (bad == NULL) {
-            create_socket_state(med->commev, med->authev->fd, strbuf, 0);
+            create_socket_state(med->commev, med->authev->fd, strbuf, 0, med->ssl);
         } else {
-            create_socket_state(med->commev, med->authev->fd, strbuf, 1);
+            create_socket_state(med->commev, med->authev->fd, strbuf, 1, med->ssl);
         }
         med->authev->state = med->commev->state;
 
@@ -1416,6 +1552,23 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
                 return -1;
             }
             break;
+
+        case PROV_EPOLL_MEDIATOR_HANDSHAKE: {
+                //continue handshake process
+                ret = continue_handshake(state, pev);
+                if (ret == -1) {
+                    drop_mediator(state, pev);
+                }
+            }
+            break;
+        case PROV_EPOLL_COLLECTOR_HANDSHAKE: {
+                //continue handshake process
+                ret = continue_handshake(state, pev);
+                if (ret == -1) {
+                    drop_collector(state, pev);
+                }
+            }
+            break; 
 
         case PROV_EPOLL_MEDIATOR:
             if (ev->events & EPOLLRDHUP) {
@@ -2611,7 +2764,7 @@ static void run(provision_state_t *state) {
 
 static void usage(char *prog) {
     fprintf(stderr, "Usage: %s [ -d ] -c configfile\n", prog);
-    fprintf(stderr, "\nSet the -d flag to run this program as a daemon.");
+    fprintf(stderr, "\nSet the -d flag to run this program as a daemon.\n");
 }
 
 int main(int argc, char *argv[]) {

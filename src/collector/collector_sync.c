@@ -79,6 +79,8 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
     sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
 
+    sync->ctx = glob->ctx;
+
     sync->zmq_colsock = zmq_socket(glob->zmq_ctxt, ZMQ_PULL);
     if (zmq_bind(sync->zmq_colsock, "inproc://openli-ipsync") != 0) {
         logger(LOG_INFO, "OpenLI: colsync thread unable to bind to zmq socket for collector updates: %s",
@@ -149,6 +151,10 @@ void clean_sync_data(collector_sync_t *sync) {
 
     if (sync->radiusplugin) {
         destroy_access_plugin(sync->radiusplugin);
+    }
+
+    if(sync->ssl){
+        SSL_free(sync->ssl);
     }
 
     sync->allusers = NULL;
@@ -1273,7 +1279,7 @@ static int recv_from_provisioner(collector_sync_t *sync) {
     return 1;
 }
 
-int sync_connect_provisioner(collector_sync_t *sync) {
+int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
 
     int sockfd;
 
@@ -1290,12 +1296,39 @@ int sync_connect_provisioner(collector_sync_t *sync) {
         return 0;
     }
 
+    if (ctx != NULL){
+        
+        fd_set_block(sockfd); 
+        //collector cannt do anything untill it has instructions from provisioner so blocking is fine
+
+        sync->ssl = SSL_new(ctx);
+        SSL_set_fd(sync->ssl, sockfd);
+        SSL_set_connect_state(sync->ssl); //set client mode
+        int errr = SSL_do_handshake(sync->ssl);
+
+        fd_set_nonblock(sockfd);
+        
+        if ((errr) <= 0 ){
+            errr = SSL_get_error(sync->ssl, errr);
+            logger(LOG_INFO, "OpenLI: TLS handshake failed %d", errr);
+            ERR_print_errors_fp(stderr);
+            SSL_free(sync->ssl);
+            return -1; //if handshake fails, its unrecoverable, retrying wont help
+        }
+
+        logger(LOG_INFO, "OpenLI: Handshake finished");
+        dump_cert_info(sync->ssl);
+    }
+    else {
+        sync->ssl = NULL;
+    }
+
     sync->instruct_fd = sockfd;
 
     assert(sync->outgoing == NULL && sync->incoming == NULL);
 
-    sync->outgoing = create_net_buffer(NETBUF_SEND, sync->instruct_fd);
-    sync->incoming = create_net_buffer(NETBUF_RECV, sync->instruct_fd);
+    sync->outgoing = create_net_buffer(NETBUF_SEND, sync->instruct_fd, sync->ssl);
+    sync->incoming = create_net_buffer(NETBUF_RECV, sync->instruct_fd, sync->ssl);
 
     /* Put our auth message onto the outgoing buffer */
     if (push_auth_onto_net_buffer(sync->outgoing, OPENLI_PROTO_COLLECTOR_AUTH)

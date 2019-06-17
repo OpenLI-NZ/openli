@@ -163,7 +163,7 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
 }
 
 int transmit_buffered_records(export_buffer_t *buf, int fd,
-        uint64_t bytelimit) {
+        uint64_t bytelimit, SSL *ssl) {
 
     uint64_t sent = 0;
     uint64_t rem = 0;
@@ -174,8 +174,21 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
 
     sent = (buf->buftail - (bhead + offset));
 
-    if (sent != 0) {
-        ret = send(fd, bhead + offset, (int)sent, MSG_DONTWAIT);
+    if (sent != 0) {        
+
+        if (ssl != NULL){
+            ret = SSL_write(ssl, bhead + offset, (int)sent);
+            
+            if ((ret) <= 0 ){
+                int errr = SSL_get_error(ssl, ret);
+                logger(LOG_INFO, "OpenLI: ssl_write error in export_buffer %d", errr);
+                ERR_print_errors_fp (stderr); //TODO make a log errors? (instead of using ERR_print_errors_fp)
+            }
+        }
+        else {
+           ret = send(fd, bhead + offset, (int)sent, MSG_DONTWAIT);
+        }
+
         if (ret < 0) {
             if (errno != EAGAIN) {
                 return -1;

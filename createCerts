@@ -1,0 +1,12 @@
+#!/bin/bash
+
+openssl req -newkey rsa:4096 -nodes -sha512 -x509 -days 3650 -nodes -out ca-crt.pem -keyout ca-key.pem
+openssl genrsa -out server-key.pem 4096
+openssl req -new -sha256 -key server-key.pem -out server-csr.pem 
+openssl x509 -req -days 365 -in server-csr.pem -CA ca-crt.pem  -CAkey ca-key.pem -CAcreateserial -out server-crt.pem
+openssl genrsa -out clientA-key.pem 4096
+openssl req -new -sha256 -key clientA-key.pem -out clientA-csr.pem
+openssl x509 -req -days 365 -in clientA-csr.pem -CA ca-crt.pem -CAkey ca-key.pem -CAcreateserial -out clientA-crt.pem
+
+
+#creates clientA-crt.pem  clientA-csr.pem  clientA-key.pem  server-crt.pem  server-csr.pem  server-key.pem  ca-crt.pem  ca-key.pem
