@@ -126,7 +126,12 @@ SSL_CTX * ssl_init(const char *cacertfile, const char *certfile, const char *key
     ERR_load_crypto_strings();
     
     /* create the SSL context */
+
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
     SSL_CTX *ctx = SSL_CTX_new(TLSv1_2_method());
+#else
+    SSL_CTX *ctx = SSL_CTX_new(TLS_method());
+#endif
 
     if (!ctx){ //check not NULL
         logger(LOG_INFO, "OpenLI: SSL_CTX creation failed");
