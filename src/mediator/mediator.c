@@ -944,6 +944,7 @@ static int accept_collector(mediator_state_t *state) {
 
             }
         } else {
+            col.colev->fdtype = MED_EPOLL_COLLECTOR;
             col.ssl = NULL;
         }
 
