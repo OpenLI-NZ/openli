@@ -185,6 +185,7 @@ static void free_provisioner(int epollfd, mediator_prov_t *prov) {
 
     if (prov->ssl){
         SSL_free(prov->ssl);
+        prov->ssl = NULL;
     }
 
     if (prov->provev) {
