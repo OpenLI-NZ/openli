@@ -488,6 +488,7 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->provisioner.outgoing = NULL;
     state->provisioner.disable_log = 0;
     state->provisioner.tryconnect = 1;
+    state->provisioner.ssl = NULL;
     state->collectors = NULL;
     state->agencies = NULL;
     state->epoll_fd = -1;
@@ -2552,7 +2553,8 @@ static void run(mediator_state_t *state) {
                 logger(LOG_INFO,
 						"OpenLI: error while waiting for epoll events in mediator: %s.",
                         strerror(errno));
-                return;
+                mediator_halt = true;
+                continue;
             }
 
             for (i = 0; i < nfds; i++) {
@@ -2568,12 +2570,13 @@ static void run(mediator_state_t *state) {
             logger(LOG_INFO,
                 "OpenLI: unable to remove mediator timer from epoll set: %s",
                 strerror(errno));
-            return;
+            break;
         }
 
         close(timerfd);
 		state->timerev->fd = -1;
     }
+    mediator_halt = true;
 
 }
 
