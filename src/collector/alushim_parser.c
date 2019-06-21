@@ -164,8 +164,14 @@ int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
             case TRACE_ETHERTYPE_PPP_SES:
                 l3 = trace_get_payload_from_pppoe(l3, &ethertype, &rem);
                 continue;
-            default:
+            case TRACE_ETHERTYPE_ARP:
+                /* Probably shouldn't be intercepting ARP */
+                return 0;
+            case TRACE_ETHERTYPE_IP:
+            case TRACE_ETHERTYPE_IPV6:
                 break;
+            default:
+                return 0;
         }
         break;
     }
