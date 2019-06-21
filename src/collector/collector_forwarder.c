@@ -160,7 +160,7 @@ static inline void disconnect_mediator(forwarding_thread_data_t *fwd,
     }
     if (med->ssl){
         SSL_free(med->ssl);
-        med->ssl;
+        med->ssl = NULL;
     }
 
 }
