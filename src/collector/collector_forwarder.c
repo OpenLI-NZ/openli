@@ -80,6 +80,7 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
         newdest->mediatorid = msg->data.med.mediatorid;
         newdest->ipstr = msg->data.med.ipstr;
         newdest->portstr = msg->data.med.portstr;
+        newdest->ssl = NULL;
         init_export_buffer(&(newdest->buffer));
 
         JLI(jval, fwd->destinations_by_id, newdest->mediatorid);

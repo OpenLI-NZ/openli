@@ -126,7 +126,12 @@ SSL_CTX * ssl_init(const char *cacertfile, const char *certfile, const char *key
     ERR_load_crypto_strings();
     
     /* create the SSL context */
+
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
     SSL_CTX *ctx = SSL_CTX_new(TLSv1_2_method());
+#else
+    SSL_CTX *ctx = SSL_CTX_new(TLS_method());
+#endif
 
     if (!ctx){ //check not NULL
         logger(LOG_INFO, "OpenLI: SSL_CTX creation failed");
@@ -801,10 +806,10 @@ int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
          ipint->username_len + sizeof(ipint->common.destid) + \
          sizeof(ipint->accesstype) + (6 * 4))
 
-#define ALUSHIM_IPINTERCEPT_BODY_LEN(ipint) \
+#define VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
          ipint->common.delivcc_len + ipint->username_len + \
-         sizeof(ipint->alushimid) + sizeof(ipint->common.destid) + \
+         sizeof(ipint->vendmirrorid) + sizeof(ipint->common.destid) + \
          sizeof(ipint->accesstype) + (7 * 4))
 
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
@@ -816,8 +821,8 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     ipintercept_t *ipint = (ipintercept_t *)data;
     static_ipranges_t *ipr, *tmpr;
 
-    if (ipint->alushimid != OPENLI_ALUSHIM_NONE) {
-        totallen = ALUSHIM_IPINTERCEPT_BODY_LEN(ipint);
+    if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
+        totallen = VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint);
     } else {
         totallen = IPINTERCEPT_BODY_LEN(ipint);
     }
@@ -864,10 +869,10 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
         goto pushipintfail;
     }
 
-    if (ipint->alushimid != OPENLI_ALUSHIM_NONE) {
-        if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_ALUSHIMID,
-                (uint8_t *)(&ipint->alushimid),
-                sizeof(ipint->alushimid))) == -1) {
+    if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
+        if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_VENDMIRRORID,
+                (uint8_t *)(&ipint->vendmirrorid),
+                sizeof(ipint->vendmirrorid))) == -1) {
             goto pushipintfail;
         }
     }
@@ -1234,7 +1239,7 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->common.destid = 0;
     ipint->common.targetagency = NULL;
     ipint->awaitingconfirm = 0;
-    ipint->alushimid = OPENLI_ALUSHIM_NONE;
+    ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
     ipint->statics = NULL;
 
@@ -1254,8 +1259,8 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
 
         if (f == OPENLI_PROTO_FIELD_MEDIATORID) {
             ipint->common.destid = *((uint32_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_ALUSHIMID) {
-            ipint->alushimid = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_VENDMIRRORID) {
+            ipint->vendmirrorid = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_ACCESSTYPE) {
             ipint->accesstype = *((internet_access_method_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_LIID) {

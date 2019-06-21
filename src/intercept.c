@@ -365,34 +365,35 @@ void free_all_rtpstreams(rtpstreaminf_t **streams) {
     }
 }
 
-aluintercept_t *create_aluintercept(ipintercept_t *ipint) {
-    aluintercept_t *alu;
+vendmirror_intercept_t *create_vendmirror_intercept(ipintercept_t *ipint) {
+    vendmirror_intercept_t *jm;
 
-    alu = (aluintercept_t *)malloc(sizeof(aluintercept_t));
-    if (alu == NULL) {
+    jm = (vendmirror_intercept_t *)malloc(sizeof(vendmirror_intercept_t));
+    if (jm == NULL) {
         return NULL;
     }
 
-    alu->nextseqno = 0;
-    alu->cin = 0;
-    alu->aluinterceptid = ipint->alushimid;
-    copy_intercept_common(&(ipint->common), &(alu->common));
+    jm->nextseqno = 0;
+    jm->cin = 0;
+    jm->interceptid = ipint->vendmirrorid;
+    copy_intercept_common(&(ipint->common), &(jm->common));
 
-    return alu;
+    return jm;
 }
 
-void free_single_aluintercept(aluintercept_t *alu) {
-    free_intercept_common(&(alu->common));
-    free(alu);
+void free_single_vendmirror_intercept(vendmirror_intercept_t *jm) {
+    free_intercept_common(&(jm->common));
+    free(jm);
 }
 
-void free_all_aluintercepts(aluintercept_t **aluints) {
-    aluintercept_t *alu, *tmp;
-    HASH_ITER(hh, *aluints, alu, tmp) {
-        HASH_DELETE(hh, *aluints, alu);
-        free_single_aluintercept(alu);
+void free_all_vendmirror_intercepts(vendmirror_intercept_t **jmints) {
+    vendmirror_intercept_t *jm, *tmp;
+    HASH_ITER(hh, *jmints, jm, tmp) {
+        HASH_DELETE(hh, *jmints, jm);
+        free_single_vendmirror_intercept(jm);
     }
 }
+
 
 staticipsession_t *create_staticipsession(ipintercept_t *ipint, char *rangestr,
         uint32_t cin) {

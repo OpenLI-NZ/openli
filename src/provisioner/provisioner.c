@@ -2498,7 +2498,7 @@ static inline int ip_intercept_equal(ipintercept_t *a, ipintercept_t *b) {
         return 0;
     }
 
-    if (a->alushimid != b->alushimid) {
+    if (a->vendmirrorid != b->vendmirrorid) {
         return 0;
     }
 

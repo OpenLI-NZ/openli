@@ -110,6 +110,22 @@ option. Each sequence entry is defined using two parameters:
 Note that in this context, the sink refers to the destination IP address
 and port of the mirrored ALU traffic.
 
+### Juniper Mirror Configuration
+If you are using Juniper Packet Mirroring (a.k.a. JMirror) to mirror intercepted
+traffic into an OpenLI collector, you will need to configure OpenLI with the
+IP address and port that the mirrored traffic is being sent to so that the
+collector can identify which packets are encapsulated records which need to
+be stripped and encoded as ETSI-compliant records.
+
+This is done by configuring the collector with a sequence of known sinks for
+the mirrored traffic under the 'jmirrors' top-level configuration option.
+Each sequence entry is defined using two parameters:
+* ip -- the IP address of the sink
+* port -- the port that the sink is listening on for ALU intercept records
+
+Note that in this context, the sink refers to the destination IP address
+and port of the mirrored traffic.
+
 ### Configuration Syntax
 All config options aside from the input configuration are standard YAML
 key-value pairs, where the key is the option name and the value is your chosen
@@ -143,6 +159,13 @@ of `alumirrors:`. Each sequence item must contain the following two
 key-value elements:
 * ip -- the IP address of the sink
 * port -- the port that the sink is listening on for ALU intercept records
+
+Juniper Packet Mirrors (JMirror) are defined in the same way as ALU mirrors,
+except using the key 'jmirrors:'. Each sequence item must contain the following
+two key-value elements:
+* ip -- the IP address of the JMirror sink
+* port -- the port that the sink is listening on for mirrored traffic
+
 
 Be aware that increasing the number of threads used for sequence number
 tracking, encoding or forwarding can actually decrease OpenLI's performance,

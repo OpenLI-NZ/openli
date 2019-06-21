@@ -25,6 +25,13 @@ AC_ARG_ENABLE([provisioner], AS_HELP_STRING([--disable-provisioner],
 AC_ARG_ENABLE([collector], AS_HELP_STRING([--disable-collector],
         [Disable building the OpenLI collector]))
 
+PKG_PROG_PKG_CONFIG
+AC_ARG_WITH([systemdsystemunitdir],
+        AS_HELP_STRING([--with-systemdsystemunitdir=DIR], [Directory for systemd service files]),
+                [], [with_systemdsystemunitdir=$($PKG_CONFIG --variable=systemdsystemunitdir systemd)])
+AC_SUBST([systemdsystemunitdir], [$with_systemdsystemunitdir])
+AM_CONDITIONAL(HAVE_SYSTEMD, [test -n "$with_systemdsystemunitdir"])
+
 PROVISIONER_LIBS=
 COLLECTOR_LIBS=
 MEDIATOR_LIBS=
@@ -33,8 +40,10 @@ AC_CHECK_LIB([trace], [trace_increment_packet_refcount],,libtrace_found=0)
 AC_CHECK_LIB([yaml], [yaml_document_get_node],,libyaml_found=0)
 AC_CHECK_LIB([zmq], [zmq_poll],libzmq_found=1,libzmq_found=0)
 AC_CHECK_LIB([m], [pow],,libm_found=0)
-AC_CHECK_LIB([ssl], [SSL_library_init],, libssl_found=0)
-AC_CHECK_LIB([crypto], [ERR_load_crypto_strings],, libcrypto_found=0)
+AC_CHECK_LIB([ssl], [SSL_library_init],libssl_found=1,)
+AC_CHECK_LIB([ssl], [OPENSSL_init_ssl],libssl_found=1,)
+AC_CHECK_LIB([crypto], [ERR_load_crypto_strings],libcrypto_found=1,)
+AC_CHECK_LIB([crypto], [EVP_CIPHER_CTX_new],libcrypto_found=1,)
 
 if test "x$libzmq_found" = "x1"; then
         COLLECTOR_LIBS="$COLLECTOR_LIBS -lzmq"
@@ -81,12 +90,20 @@ if test "$libtrace_found" = 0; then
         AC_MSG_ERROR(Required library libtrace 4.0.4 not found; use LDFLAGS to specify library location)
 fi
 
-if test "$libssl_found" = 0; then
+if test "$libssl_found" != 1; then
         AC_MSG_ERROR(Required library libssl not found; use LDFLAGS to specify library location)
+else
+        COLLECTOR_LIBS="$COLLECTOR_LIBS -lssl"
+        MEDIATOR_LIBS="$MEDIATOR_LIBS -lssl"
+        PROVISIONER_LIBS="$PROVISIONER_LIBS -lssl"
 fi
 
-if test "$libcrypto_found" = 0; then
+if test "$libcrypto_found" != 1; then
         AC_MSG_ERROR(Required library libcrypto not found; use LDFLAGS to specify library location)
+else
+        COLLECTOR_LIBS="$COLLECTOR_LIBS -lcrypto"
+        MEDIATOR_LIBS="$MEDIATOR_LIBS -lcrypto"
+        PROVISIONER_LIBS="$PROVISIONER_LIBS -lcrypto"
 fi
 
 if test "$libyaml_found" = 0; then

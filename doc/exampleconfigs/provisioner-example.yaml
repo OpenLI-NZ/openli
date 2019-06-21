@@ -84,11 +84,26 @@ ipintercepts:
  - liid: NAPP9321HN             # LIID, should be provided by requesting agency
    authcountrycode: NZ          # Authorisation country code
    deliverycountrycode: NZ      # Delivery country code
-   alushimid: 522781            # Intercept-ID number used by the ALU
+   vendmirrorid: 522781         # Intercept-ID number used by the ALU
                                 # intercept.
    mediator: 6001               # ID of the mediator to send intercept via
    agencyid: "Spooks"           # ID of agency to send intercept to
    accesstype: "ADSL"           # Access tech used by the target to access IP
+
+
+# This intercept is translating a Juniper Mirrored packet stream into an
+# ETSI-compliant intercept. All JMirrored packets with an Intercept ID of
+# 0x12121212 will be decapsulated and re-encoded to have the ETSI LIID of
+# GTNF4221AU and the resulting records will be passed on to mediator 6001
+# for forwarding to the "Police" agency.
+ - liid: GTNF4221AU             # LIID, should be provided by requesting agency
+   authcountrycode: NZ          # Authorisation country code
+   deliverycountrycode: NZ      # Delivery country code
+   vendmirrorid: 0x12121212     # Intercept ID number used by the Juniper
+                                # mirroring.
+   mediator: 6001               # ID of the mediator to send intercept via
+   agencyid: "Police"           # ID of agency to send intercept to
+   accesstype: "LAN"            # Access tech used by the target to access IP
 
 
 # This intercept demonstrates how to configure an intercept for a target that

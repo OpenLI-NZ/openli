@@ -644,7 +644,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->username_len = 0;
         newcept->common.authcc_len = 0;
         newcept->common.delivcc_len = 0;
-        newcept->alushimid = OPENLI_ALUSHIM_NONE;
+        newcept->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
         newcept->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED; 
         newcept->statics = NULL;
 
@@ -696,8 +696,19 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value, "alushimid") == 0) {
-                newcept->alushimid = strtoul((char *)value->data.scalar.value,
-                        NULL, 10);
+                newcept->vendmirrorid = strtoul(
+                        (char *)value->data.scalar.value, NULL, 0);
+                newcept->vendmirrorid &= 0x3fffffff;
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                    "vendmirrorid") == 0) {
+                newcept->vendmirrorid = strtoul(
+                        (char *)value->data.scalar.value,
+                        NULL, 0);
+                newcept->vendmirrorid &= 0x3fffffff;
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -732,7 +743,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
                 newcept->common.delivcc != NULL &&
                 (newcept->username != NULL ||
-                 newcept->alushimid != OPENLI_ALUSHIM_NONE ||
+                 newcept->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE ||
                  newcept->statics != NULL) &&
                 newcept->common.destid > 0 &&
                 newcept->common.targetagency != NULL) {
@@ -881,6 +892,15 @@ static int global_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SEQUENCE_NODE &&
             strcmp((char *)key->data.scalar.value, "alumirrors") == 0) {
         if (parse_core_server_list(&glob->alumirrors,
+                OPENLI_CORE_SERVER_ALUMIRROR, doc, value) == -1) {
+            return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value, "jmirrors") == 0) {
+        if (parse_core_server_list(&glob->jmirrors,
                 OPENLI_CORE_SERVER_ALUMIRROR, doc, value) == -1) {
             return -1;
         }

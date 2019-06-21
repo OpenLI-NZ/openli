@@ -197,26 +197,24 @@ static int remove_ipv6_intercept(colthread_local_t *loc, ipsession_t *torem) {
     return 1;
 }
 
-
-void handle_push_aluintercept(libtrace_thread_t *t, colthread_local_t *loc,
-        aluintercept_t *alu) {
-    HASH_ADD_KEYPTR(hh, loc->activealuintercepts, &(alu->aluinterceptid),
-            sizeof(alu->aluinterceptid), alu);
+void handle_push_mirror_intercept(libtrace_thread_t *t, colthread_local_t *loc,
+        vendmirror_intercept_t *vmi) {
+    HASH_ADD_KEYPTR(hh, loc->activemirrorintercepts,
+            &(vmi->interceptid), sizeof(vmi->interceptid), vmi);
 }
 
-void handle_halt_aluintercept(libtrace_thread_t *t, colthread_local_t *loc,
-        aluintercept_t *alu) {
+void handle_halt_mirror_intercept(libtrace_thread_t *t,
+        colthread_local_t *loc, vendmirror_intercept_t *vmi) {
+    vendmirror_intercept_t *found;
 
-    aluintercept_t *found;
-
-    HASH_FIND(hh, loc->activealuintercepts, &(alu->aluinterceptid),
-            sizeof(alu->aluinterceptid), found);
+    HASH_FIND(hh, loc->activemirrorintercepts, &(vmi->interceptid),
+            sizeof(vmi->interceptid), found);
 
     if (found == NULL) {
-        logger(LOG_INFO, "OpenLI: collector thread was unable to remove ALU intercept %u, as it was not present in its intercept set.",
-                alu->aluinterceptid);
+        logger(LOG_INFO, "OpenLI: collector thread was unable to remove JMirror intercept %u, as it was not present in its intercept set.",
+                vmi->interceptid);
     } else {
-        HASH_DELETE(hh, loc->activealuintercepts, found);
+        HASH_DELETE(hh, loc->activemirrorintercepts, found);
     }
 }
 

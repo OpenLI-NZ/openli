@@ -58,6 +58,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->intersyncq = &(glob->intersyncq);
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
+    sync->knownvoips = NULL;
     sync->userintercepts = NULL;
     sync->coreservers = NULL;
     sync->instruct_fd = -1;
@@ -140,6 +141,7 @@ void clean_sync_data(collector_sync_t *sync) {
     clear_user_intercept_list(sync->userintercepts);
     free_all_ipintercepts(&(sync->ipintercepts));
     free_coreserver_list(sync->coreservers);
+    free_all_voipintercepts(&(sync->knownvoips));
 
     if (sync->outgoing) {
         destroy_net_buffer(sync->outgoing);
@@ -159,6 +161,7 @@ void clean_sync_data(collector_sync_t *sync) {
 
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
+    sync->knownvoips = NULL;
     sync->userintercepts = NULL;
     sync->outgoing = NULL;
     sync->incoming = NULL;
@@ -484,27 +487,27 @@ static inline void push_single_ipintercept(collector_sync_t *sync,
     libtrace_message_queue_put(q, (void *)(&msg));
 }
 
-static inline void push_single_alushimid(libtrace_message_queue_t *q,
-        ipintercept_t *ipint, uint32_t sesscin) {
+static inline void push_single_vendmirrorid(libtrace_message_queue_t *q,
+        ipintercept_t *ipint) {
 
-    aluintercept_t *alu;
+    vendmirror_intercept_t *jm;
     openli_pushed_t msg;
 
-    if (ipint->alushimid == OPENLI_ALUSHIM_NONE) {
+    if (ipint->vendmirrorid == OPENLI_VENDOR_MIRROR_NONE) {
         return;
     }
 
-    alu = create_aluintercept(ipint);
-    if (!alu) {
+    jm = create_vendmirror_intercept(ipint);
+    if (!jm) {
         logger(LOG_INFO,
-                "OpenLI: ran out of memory while creating ALU intercept message.");
+                "OpenLI: ran out of memory while creating JMirror intercept message.");
         return;
     }
-    alu->cin = sesscin;
 
+    jm->cin = 0;
     memset(&msg, 0, sizeof(openli_pushed_t));
-    msg.type = OPENLI_PUSH_ALUINTERCEPT;
-    msg.data.aluint = alu;
+    msg.type = OPENLI_PUSH_VENDMIRROR_INTERCEPT;
+    msg.data.mirror = jm;
 
     libtrace_message_queue_put(q, (void *)(&msg));
 }
@@ -928,7 +931,7 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     sync->glob->stats->ipintercepts_ended_total ++;
     pthread_mutex_unlock(sync->glob->stats_mutex);
 
-    if (ipint->alushimid != OPENLI_ALUSHIM_NONE) {
+    if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
         pthread_mutex_lock(sync->glob->stats_mutex);
         sync->glob->stats->ipsessions_ended_diff ++;
         sync->glob->stats->ipsessions_ended_total ++;
@@ -1020,10 +1023,10 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             }
         }
 
-        if (cept->alushimid != x->alushimid) {
+        if (cept->vendmirrorid != x->vendmirrorid) {
             logger(LOG_INFO,
-                    "OpenLI: duplicate IP ID %s seen, but ALU intercept IDs are different (was %u, now %u).",
-                    x->common.liid, x->alushimid, cept->alushimid);
+                    "OpenLI: duplicate IP ID %s seen, but Vendor Mirroring intercept IDs are different (was %u, now %u).",
+                    x->common.liid, x->vendmirrorid, cept->vendmirrorid);
             remove_ip_intercept(sync, x);
             free_single_ipintercept(x);
             x = NULL;
@@ -1058,10 +1061,10 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         add_intercept_to_user_intercept_list(&sync->userintercepts, cept);
     }
 
-    if (cept->alushimid != OPENLI_ALUSHIM_NONE) {
+    if (cept->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
         logger(LOG_INFO,
-                "OpenLI: received IP intercept from provisioner for ALU shim ID %u (LIID %s, authCC %s)",
-                cept->alushimid, cept->common.liid, cept->common.authcc);
+                "OpenLI: received IP intercept from provisioner for Vendor Mirrored ID %u (LIID %s, authCC %s)",
+                cept->vendmirrorid, cept->common.liid, cept->common.authcc);
 
         /* Don't need to wait for a session to start an ALU intercept.
          * The CIN is contained within the packet and only valid
@@ -1069,12 +1072,12 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
          * looking for.
          *
          * TODO allow config that will force us to wait for a session
-         * instead, i.e. if the ALU is configured to NOT set the session
+         * instead, i.e. if the vendor is configured to NOT set the session
          * ID in the shim.
          */
         HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                 sendq, tmp) {
-            push_single_alushimid(sendq->q, cept, 0);
+            push_single_vendmirrorid(sendq->q, cept);
         }
         pthread_mutex_lock(sync->glob->stats_mutex);
         sync->glob->stats->ipsessions_added_diff ++;
@@ -1115,7 +1118,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
-    voipintercept_t vint;
+    voipintercept_t *vint, *found;
     openli_export_recv_t *expmsg;
     int i;
 
@@ -1131,14 +1134,26 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
      * are testing deployments, of course).
      */
 
-    if (decode_voipintercept_start(intmsg, msglen, &vint) == -1) {
+    vint = (voipintercept_t *)calloc(1, sizeof(voipintercept_t));
+
+    if (decode_voipintercept_start(intmsg, msglen, vint) == -1) {
         /* Don't bother logging, the VOIP sync thread should handle that */
         return -1;
     }
 
-    for (i = 0; i < sync->forwardcount; i++) {
-        expmsg = create_intercept_details_msg(&(vint.common));
-        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+    HASH_FIND(hh_liid, sync->knownvoips, vint->common.liid,
+            vint->common.liid_len, found);
+
+    if (found == NULL) {
+        HASH_ADD_KEYPTR(hh_liid, sync->knownvoips, vint->common.liid,
+                vint->common.liid_len, vint);
+
+        for (i = 0; i < sync->forwardcount; i++) {
+            expmsg = create_intercept_details_msg(&(vint->common));
+            publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+        }
+    } else {
+        free_single_voipintercept(vint);
     }
 
     return 1;
@@ -1425,8 +1440,8 @@ static void push_all_active_intercepts(collector_sync_t *sync,
                 }
             }
         }
-        if (orig->alushimid != OPENLI_ALUSHIM_NONE) {
-            push_single_alushimid(q, orig, 0);
+        if (orig->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
+            push_single_vendmirrorid(q, orig);
         }
         HASH_ITER(hh, orig->statics, ipr, tmpr) {
             push_static_iprange_to_collectors(q, orig, ipr);
