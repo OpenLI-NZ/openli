@@ -58,6 +58,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->intersyncq = &(glob->intersyncq);
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
+    sync->knownvoips = NULL;
     sync->userintercepts = NULL;
     sync->coreservers = NULL;
     sync->instruct_fd = -1;
@@ -140,6 +141,7 @@ void clean_sync_data(collector_sync_t *sync) {
     clear_user_intercept_list(sync->userintercepts);
     free_all_ipintercepts(&(sync->ipintercepts));
     free_coreserver_list(sync->coreservers);
+    free_all_voipintercepts(&(sync->knownvoips));
 
     if (sync->outgoing) {
         destroy_net_buffer(sync->outgoing);
@@ -159,6 +161,7 @@ void clean_sync_data(collector_sync_t *sync) {
 
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
+    sync->knownvoips = NULL;
     sync->userintercepts = NULL;
     sync->outgoing = NULL;
     sync->incoming = NULL;
@@ -1115,7 +1118,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
-    voipintercept_t vint;
+    voipintercept_t *vint, *found;
     openli_export_recv_t *expmsg;
     int i;
 
@@ -1131,14 +1134,26 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
      * are testing deployments, of course).
      */
 
-    if (decode_voipintercept_start(intmsg, msglen, &vint) == -1) {
+    vint = (voipintercept_t *)calloc(1, sizeof(voipintercept_t));
+
+    if (decode_voipintercept_start(intmsg, msglen, vint) == -1) {
         /* Don't bother logging, the VOIP sync thread should handle that */
         return -1;
     }
 
-    for (i = 0; i < sync->forwardcount; i++) {
-        expmsg = create_intercept_details_msg(&(vint.common));
-        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+    HASH_FIND(hh_liid, sync->knownvoips, vint->common.liid,
+            vint->common.liid_len, found);
+
+    if (found == NULL) {
+        HASH_ADD_KEYPTR(hh_liid, sync->knownvoips, vint->common.liid,
+                vint->common.liid_len, vint);
+
+        for (i = 0; i < sync->forwardcount; i++) {
+            expmsg = create_intercept_details_msg(&(vint->common));
+            publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+        }
+    } else {
+        free_single_voipintercept(vint);
     }
 
     return 1;

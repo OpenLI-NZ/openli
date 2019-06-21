@@ -53,6 +53,7 @@ typedef struct colsync_data {
     internet_user_t *allusers;
     ipintercept_t *ipintercepts;
     user_intercept_list_t *userintercepts;
+    voipintercept_t *knownvoips;
 
     coreserver_t *coreservers;
 
