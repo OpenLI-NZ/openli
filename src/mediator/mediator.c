@@ -509,7 +509,7 @@ static int init_med_state(mediator_state_t *state, char *configfile,
         return -1;
     }
 
-    logger(LOG_INFO, "OpenLI: ESTI TLS encryption %s",
+    logger(LOG_DEBUG, "OpenLI: ETSI TLS encryption %s",
         state->etsitls ? "enabled" : "disabled");
 
     if (state->certfile && state->keyfile && state->cacertfile){
@@ -520,7 +520,7 @@ static int init_med_state(mediator_state_t *state, char *configfile,
             return -1;
         }
         else{
-            logger(LOG_INFO, "OpenLI: Not using OpenSSL TLS connection.");
+            logger(LOG_DEBUG, "OpenLI: Not using OpenSSL TLS connection.");
             state->ctx = NULL;
         }
     }
@@ -935,15 +935,14 @@ static int accept_collector(mediator_state_t *state) {
                     SSL_free(col.ssl);
                     free(mstate);
                     free(col.colev);
-                    //free(col); col is on the stack here? it is heap mem in provisioner
-                    logger(LOG_INFO, "OpenLI: Handshake failed %d", errr);
+                    logger(LOG_INFO, "OpenLI: Handshake failed");
                     return -1;
                 }
-                logger(LOG_INFO, "OpenLI: Handshake started");
+                logger(LOG_DEBUG, "OpenLI: Handshake started");
                 col.colev->fdtype = MED_EPOLL_COLLECTOR_HANDSHAKE;
             }
             else {
-                logger(LOG_INFO, "OpenLI: Handshake accepted");
+                logger(LOG_DEBUG, "OpenLI: Handshake accepted");
                 dump_cert_info(col.ssl);
 
                 //handshake has finished
@@ -2050,7 +2049,7 @@ static int continue_handshake(mediator_state_t *state, med_epoll_ev_t *mev) {
             return -1;
         }
     }
-    logger(LOG_INFO, "OpenLI: Handshake accepted");
+    logger(LOG_DEBUG, "OpenLI: Handshake accepted");
     dump_cert_info(cs->ssl);
 
     //handshake has finished
@@ -2267,7 +2266,7 @@ static int init_provisioner_connection(mediator_state_t *state, int sock, SSL_CT
                 return -1;
             }
         }
-        logger(LOG_INFO, "OpenLI: Handshake started");
+        logger(LOG_DEBUG, "OpenLI: Handshake started");
         dump_cert_info(prov->ssl);
     }
     else {

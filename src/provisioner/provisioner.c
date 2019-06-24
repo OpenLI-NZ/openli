@@ -284,7 +284,7 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
             return -1;
         }
         else{
-            logger(LOG_INFO, "OpenLI: Not using OpenSSL TLS connection.");
+            logger(LOG_DEBUG, "OpenLI: Not using OpenSSL TLS connection.");
             state->ctx = NULL;
         }
     }
@@ -977,7 +977,7 @@ static int continue_handshake(provision_state_t *state, prov_epoll_ev_t *pev) {
             return -1;
         }
     }
-    logger(LOG_INFO, "OpenLI: Handshake accepted");
+    logger(LOG_DEBUG, "OpenLI: Handshake accepted");
     dump_cert_info(cs->ssl);
 
     //handshake has finished
@@ -1156,11 +1156,11 @@ static int accept_collector(provision_state_t *state) {
                     logger(LOG_INFO, "OpenLI: Handshake failed %d", errr);
                     return -1;
                 }
-                logger(LOG_INFO, "OpenLI: Handshake started");
+                logger(LOG_DEBUG, "OpenLI: Handshake started");
                 col->commev->fdtype = PROV_EPOLL_COLLECTOR_HANDSHAKE;
             }
             else {
-                logger(LOG_INFO, "OpenLI: Handshake finished");
+                logger(LOG_DEBUG, "OpenLI: Handshake finished");
                 col->commev->fdtype = PROV_EPOLL_COLLECTOR;
             }
         } else {
@@ -1267,12 +1267,12 @@ static int accept_mediator(provision_state_t *state) {
                     return -1;
                 }
                 else{
-                    logger(LOG_INFO, "OpenLI: Handshake started");
+                    logger(LOG_DEBUG, "OpenLI: Handshake started");
                     med->commev->fdtype = PROV_EPOLL_MEDIATOR_HANDSHAKE;
                 }
             }
             else{
-                logger(LOG_INFO, "OpenLI: Handshake finished");
+                logger(LOG_DEBUG, "OpenLI: Handshake finished");
                 med->commev->fdtype = PROV_EPOLL_MEDIATOR;
             }
             

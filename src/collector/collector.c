@@ -1216,7 +1216,7 @@ static collector_global_t *parse_global_config(char *configfile) {
         return NULL;
     }
 
-    logger(LOG_INFO, "OpenLI: ETSI TLS encryption %s",
+    logger(LOG_DEBUG, "OpenLI: ETSI TLS encryption %s",
         glob->etsitls ? "enabled" : "disabled");
 
     if (glob->certfile && glob->keyfile && glob->cacertfile){
@@ -1228,7 +1228,7 @@ static collector_global_t *parse_global_config(char *configfile) {
             return NULL;
         }
         else{
-            logger(LOG_INFO, "OpenLI: Not using OpenSSL TLS connection.");
+            logger(LOG_DEBUG, "OpenLI: Not using OpenSSL TLS connection.");
             glob->ctx = NULL;
         }
     }
