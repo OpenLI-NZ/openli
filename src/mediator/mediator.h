@@ -134,6 +134,7 @@ typedef struct med_state {
     char *keyfile;
     char *certfile;
     char *cacertfile;
+    uint8_t etsitls;
 
     char *provaddr;
     char *provport;

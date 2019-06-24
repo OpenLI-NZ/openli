@@ -467,6 +467,7 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->mediatorname = mediatorname;
     state->listenaddr = NULL;
     state->listenport = NULL;
+    state->etsitls = 1;
 
     state->certfile = NULL;
     state->keyfile = NULL;
@@ -507,6 +508,9 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     if (parse_mediator_config(configfile, state) == -1) {
         return -1;
     }
+
+    logger(LOG_INFO, "OpenLI: ESTI TLS encryption %s",
+        state->etsitls ? "enabled" : "disabled");
 
     if (state->certfile && state->keyfile && state->cacertfile){
         state->ctx = ssl_init(state->cacertfile, state->certfile, state->keyfile);
@@ -913,7 +917,8 @@ static int accept_collector(mediator_state_t *state) {
         mstate = (med_coll_state_t *)malloc(sizeof(med_coll_state_t));
         col.colev = (med_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
-       if (state->ctx != NULL){ //only use TLS if ctx is set
+        //only use TLS if ctx is set AND tls is not disabled for mediator/collector
+        if (state->ctx != NULL && state->etsitls == 1){
             col.ssl = SSL_new(state->ctx);
             SSL_set_fd(col.ssl, newfd);
 
