@@ -946,6 +946,30 @@ static int global_parser(void *arg, yaml_document_t *doc,
                 NULL, 10);
     }
 
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "tlscert") == 0) {
+        SET_CONFIG_STRING_OPTION(glob->certfile, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "tlskey") == 0) {
+        SET_CONFIG_STRING_OPTION(glob->keyfile, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "tlsca") == 0) {
+        SET_CONFIG_STRING_OPTION(glob->cacertfile, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "etsitls") == 0) {
+            glob->etsitls = check_onoff(value->data.scalar.value);
+    }
+    
     return 0;
 }
 
@@ -1011,6 +1035,30 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
             logger(LOG_INFO, "OpenLI: 0 is not a valid value for the 'pcaprotatefreq' config option.");
             return -1;
         }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "tlscert") == 0) {
+        SET_CONFIG_STRING_OPTION(state->certfile, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "tlskey") == 0) {
+        SET_CONFIG_STRING_OPTION(state->keyfile, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "tlsca") == 0) {
+        SET_CONFIG_STRING_OPTION(state->cacertfile, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "etsitls") == 0) {
+            state->etsitls = check_onoff(value->data.scalar.value);
     }
 
     return 0;
@@ -1108,6 +1156,25 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
             strcmp((char *)key->data.scalar.value, "mediationaddr") == 0) {
         SET_CONFIG_STRING_OPTION(state->mediateaddr, value);
     }
+
+   if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "tlscert") == 0) {
+        SET_CONFIG_STRING_OPTION(state->certfile, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "tlskey") == 0) {
+        SET_CONFIG_STRING_OPTION(state->keyfile, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "tlsca") == 0) {
+        SET_CONFIG_STRING_OPTION(state->cacertfile, value);
+    }
+
     return 0;
 }
 

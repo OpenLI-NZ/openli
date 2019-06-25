@@ -1,6 +1,6 @@
 Name:           openli
 Version:        1.0.2
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
 License:        GPLv3
@@ -21,6 +21,7 @@ BuildRequires: libwandder1-devel
 BuildRequires: zeromq-devel
 BuildRequires: gperftools-devel
 BuildRequires: libosip2-devel
+BuildRequires: openssl-devel
 BuildRequires: systemd
 
 %description
@@ -168,5 +169,8 @@ fi
 
 
 %changelog
+* Tue Jun 18 2019 Shane Alcock <salcock@waikato.ac.nz> - 1.0.2-2
+- Add openssl-devel dependency for encrypted communications
+
 * Tue Jun 4 2019 Shane Alcock <salcock@waikato.ac.nz> - 1.0.2-1
 - First OpenLI RPM package

@@ -1,0 +1,18 @@
+#!/bin/bash
+
+openssl req -newkey rsa:4096 -nodes -sha512 -config sslgen.conf -x509 -days 3650 -nodes --subj /CN=OpenLItestCA -out ca-crt.pem -keyout ca-key.pem
+
+openssl genrsa -out provisioner-key.pem 4096
+openssl req -new -sha256 -config sslgen.conf -key provisioner-key.pem -out provisioner-csr.pem 
+openssl x509 -req -days 365 -in provisioner-csr.pem -CA ca-crt.pem  -CAkey ca-key.pem -CAcreateserial -out provisioner-crt.pem
+
+openssl genrsa -out mediator-key.pem 4096
+openssl req -new -sha256 -config sslgen.conf -key mediator-key.pem -out mediator-csr.pem
+openssl x509 -req -days 365 -in mediator-csr.pem -CA ca-crt.pem -CAkey ca-key.pem -CAcreateserial -out mediator-crt.pem
+
+openssl genrsa -out collector-key.pem 4096
+openssl req -new -sha256 -config sslgen.conf -key collector-key.pem -out collector-csr.pem
+openssl x509 -req -days 365 -in collector-csr.pem -CA ca-crt.pem -CAkey ca-key.pem -CAcreateserial -out collector-crt.pem
+
+
+#creates mediator-crt.pem  mediator-csr.pem  mediator-key.pem  provisioner-crt.pem  provisioner-csr.pem  provisioner-key.pem  ca-crt.pem  ca-key.pem

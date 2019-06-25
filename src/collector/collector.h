@@ -36,6 +36,10 @@
 #include <libwandder.h>
 #include <zmq.h>
 
+#include <openssl/err.h>
+#include <openssl/pem.h>
+#include <openssl/ssl.h>
+
 #include "patricia.h"
 #include "coreserver.h"
 #include "intercept.h"
@@ -256,6 +260,13 @@ typedef struct collector_global {
     uint64_t ticks_since_last_stat;
     collector_stats_t stats;
     pthread_mutex_t stats_mutex;
+
+    char *keyfile;
+    char *certfile;
+    char *cacertfile;
+    uint8_t etsitls;
+
+    SSL_CTX *ctx;
 
 } collector_global_t;
 
