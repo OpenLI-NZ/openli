@@ -467,6 +467,7 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->mediatorname = mediatorname;
     state->listenaddr = NULL;
     state->listenport = NULL;
+    state->etsitls = 1;
 
     state->certfile = NULL;
     state->keyfile = NULL;
@@ -508,6 +509,9 @@ static int init_med_state(mediator_state_t *state, char *configfile,
         return -1;
     }
 
+    logger(LOG_DEBUG, "OpenLI: ETSI TLS encryption %s",
+        state->etsitls ? "enabled" : "disabled");
+
     if (state->certfile && state->keyfile && state->cacertfile){
         state->ctx = ssl_init(state->cacertfile, state->certfile, state->keyfile);
     } else {
@@ -516,7 +520,7 @@ static int init_med_state(mediator_state_t *state, char *configfile,
             return -1;
         }
         else{
-            logger(LOG_INFO, "OpenLI: Not using OpenSSL TLS connection.");
+            logger(LOG_DEBUG, "OpenLI: Not using OpenSSL TLS connection.");
             state->ctx = NULL;
         }
     }
@@ -913,7 +917,8 @@ static int accept_collector(mediator_state_t *state) {
         mstate = (med_coll_state_t *)malloc(sizeof(med_coll_state_t));
         col.colev = (med_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
 
-       if (state->ctx != NULL){ //only use TLS if ctx is set
+        //only use TLS if ctx is set AND tls is not disabled for mediator/collector
+        if (state->ctx != NULL && state->etsitls == 1){
             col.ssl = SSL_new(state->ctx);
             SSL_set_fd(col.ssl, newfd);
 
@@ -930,15 +935,14 @@ static int accept_collector(mediator_state_t *state) {
                     SSL_free(col.ssl);
                     free(mstate);
                     free(col.colev);
-                    //free(col); col is on the stack here? it is heap mem in provisioner
-                    logger(LOG_INFO, "OpenLI: Handshake failed %d", errr);
+                    logger(LOG_INFO, "OpenLI: Handshake failed");
                     return -1;
                 }
-                logger(LOG_INFO, "OpenLI: Handshake started");
+                logger(LOG_DEBUG, "OpenLI: Handshake started");
                 col.colev->fdtype = MED_EPOLL_COLLECTOR_HANDSHAKE;
             }
             else {
-                logger(LOG_INFO, "OpenLI: Handshake accepted");
+                logger(LOG_DEBUG, "OpenLI: Handshake accepted");
                 dump_cert_info(col.ssl);
 
                 //handshake has finished
@@ -2045,7 +2049,7 @@ static int continue_handshake(mediator_state_t *state, med_epoll_ev_t *mev) {
             return -1;
         }
     }
-    logger(LOG_INFO, "OpenLI: Handshake accepted");
+    logger(LOG_DEBUG, "OpenLI: Handshake accepted");
     dump_cert_info(cs->ssl);
 
     //handshake has finished
@@ -2262,7 +2266,7 @@ static int init_provisioner_connection(mediator_state_t *state, int sock, SSL_CT
                 return -1;
             }
         }
-        logger(LOG_INFO, "OpenLI: Handshake started");
+        logger(LOG_DEBUG, "OpenLI: Handshake started");
         dump_cert_info(prov->ssl);
     }
     else {

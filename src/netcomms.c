@@ -89,11 +89,11 @@ inline int fd_set_block(int fd){
 
 void dump_cert_info(SSL *ssl) {
     
-    logger(LOG_INFO,
+    logger(LOG_DEBUG,
         "SSL connection version: %s", 
         SSL_get_version(ssl)); //should ALWAYS be TLSv1_2
 
-    logger(LOG_INFO,
+    logger(LOG_DEBUG,
         "Using cipher %s", 
         SSL_get_cipher(ssl)); //should ALWAYS be AES256-GCM-SHA384
 
@@ -101,11 +101,11 @@ void dump_cert_info(SSL *ssl) {
     if (client_cert != NULL) {
 
         char *str = X509_NAME_oneline(X509_get_subject_name(client_cert), 0, 0);
-        logger(LOG_INFO,"Connection certificate: Subject: %s", str);
+        logger(LOG_DEBUG,"Connection certificate: Subject: %s", str);
         OPENSSL_free(str);
 
         str = X509_NAME_oneline(X509_get_issuer_name(client_cert), 0, 0);
-        logger(LOG_INFO,"Connection certificate: Issuer: %s\n", str);
+        logger(LOG_DEBUG,"Connection certificate: Issuer: %s\n", str);
         OPENSSL_free(str);
 
         X509_free(client_cert);
@@ -169,15 +169,10 @@ SSL_CTX * ssl_init(const char *cacertfile, const char *certfile, const char *key
         return NULL;
     }
 
-    logger(LOG_INFO, "OpenLI: Certificate and private key loaded and verified");
-    logger(LOG_INFO, "OpenLI: OpenSSL CTX initlized, TLS encryption enabled.");
-    logger(LOG_INFO, "OpenLI: Using %s, %s and %s.", certfile, keyfile, cacertfile);
+    logger(LOG_DEBUG, "OpenLI: OpenSSL CTX initlized, TLS encryption enabled.");
+    logger(LOG_DEBUG, "OpenLI: Using %s, %s and %s.", certfile, keyfile, cacertfile);
 
     return ctx;
-}
-
-int logErr(const char *str, size_t len, void *u){
-    logger(LOG_INFO, str);
 }
 
 static inline int extend_net_buffer(net_buffer_t *nb, int musthave) {

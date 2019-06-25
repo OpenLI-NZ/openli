@@ -1325,13 +1325,12 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
         
         if ((errr) <= 0 ){
             errr = SSL_get_error(sync->ssl, errr);
-            logger(LOG_INFO, "OpenLI: TLS handshake failed %d", errr);
-            ERR_print_errors_fp(stderr);
+            logger(LOG_INFO, "OpenLI: TLS handshake failed");
             SSL_free(sync->ssl);
             return -1; //if handshake fails, its unrecoverable, retrying wont help
         }
 
-        logger(LOG_INFO, "OpenLI: Handshake finished");
+        logger(LOG_DEBUG, "OpenLI: Handshake finished");
         dump_cert_info(sync->ssl);
     }
     else {

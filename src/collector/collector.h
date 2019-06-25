@@ -264,6 +264,7 @@ typedef struct collector_global {
     char *keyfile;
     char *certfile;
     char *cacertfile;
+    uint8_t etsitls;
 
     SSL_CTX *ctx;
 

@@ -479,11 +479,11 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx) {
                 close(sockfd);
                 SSL_free(dest->ssl);
                 dest->ssl = NULL;
-                logger(LOG_INFO, "OpenLI: Handshake failed");
+                logger(LOG_INFO, "OpenLI: Handshake with mediator failed");
                 return -1;
             }
         }
-        logger(LOG_INFO, "OpenLI: Handshake started");        
+        logger(LOG_DEBUG, "OpenLI: Handshake started");        
     }
     else {
         dest->ssl = NULL;
@@ -730,7 +730,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
                 }
             }
             else {
-                logger(LOG_INFO, "OpenLI: Handshake accepted");
+                logger(LOG_DEBUG, "OpenLI: Handshake accepted");
                 dump_cert_info(dest->ssl);
                 dest->waitingforhandshake = 0;
             }

@@ -1199,6 +1199,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->certfile = NULL;
     glob->keyfile = NULL;
     glob->cacertfile = NULL;
+    glob->etsitls = 1;
 
     memset(&(glob->stats), 0, sizeof(glob->stats));
     glob->stat_frequency = 0;
@@ -1215,6 +1216,9 @@ static collector_global_t *parse_global_config(char *configfile) {
         return NULL;
     }
 
+    logger(LOG_DEBUG, "OpenLI: ETSI TLS encryption %s",
+        glob->etsitls ? "enabled" : "disabled");
+
     if (glob->certfile && glob->keyfile && glob->cacertfile){
         glob->ctx = ssl_init(glob->cacertfile, glob->certfile, glob->keyfile);
     } else {
@@ -1224,7 +1228,7 @@ static collector_global_t *parse_global_config(char *configfile) {
             return NULL;
         }
         else{
-            logger(LOG_INFO, "OpenLI: Not using OpenSSL TLS connection.");
+            logger(LOG_DEBUG, "OpenLI: Not using OpenSSL TLS connection.");
             glob->ctx = NULL;
         }
     }
@@ -1533,7 +1537,8 @@ int main(int argc, char *argv[]) {
         glob->forwarders[i].colthreads = glob->total_col_threads;
         glob->forwarders[i].zmq_ctrlsock = NULL;
         glob->forwarders[i].zmq_pullressock = NULL;
-        glob->forwarders[i].ctx = glob->ctx;
+        glob->forwarders[i].ctx = (glob->ctx && glob->etsitls) ? glob->ctx : NULL;
+        //forwarder only needs CTX if ctx exists and is enabled 
 
         pthread_create(&(glob->forwarders[i].threadid), NULL,
                 start_forwarding_thread, (void *)&(glob->forwarders[i]));
