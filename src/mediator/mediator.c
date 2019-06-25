@@ -935,14 +935,14 @@ static int accept_collector(mediator_state_t *state) {
                     SSL_free(col.ssl);
                     free(mstate);
                     free(col.colev);
-                    logger(LOG_INFO, "OpenLI: Handshake failed");
+                    logger(LOG_INFO, "OpenLI: SSL Handshake failed");
                     return -1;
                 }
-                logger(LOG_DEBUG, "OpenLI: Handshake started");
+                logger(LOG_DEBUG, "OpenLI: SSL Handshake started");
                 col.colev->fdtype = MED_EPOLL_COLLECTOR_HANDSHAKE;
             }
             else {
-                logger(LOG_DEBUG, "OpenLI: Handshake accepted");
+                logger(LOG_DEBUG, "OpenLI: SSL Handshake accepted");
                 dump_cert_info(col.ssl);
 
                 //handshake has finished
@@ -2040,16 +2040,15 @@ static int continue_handshake(mediator_state_t *state, med_epoll_ev_t *mev) {
         ret = SSL_get_error(cs->ssl, ret);
         if(ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE){
             //keep trying
-            //SSL_writelogger(LOG_INFO, "OpenLI: Handshake continue");
             return 0;
         }
         else {
             //fail out
-            logger(LOG_INFO, "OpenLI: Handshake failed");
+            logger(LOG_INFO, "OpenLI: SSL Handshake failed");
             return -1;
         }
     }
-    logger(LOG_DEBUG, "OpenLI: Handshake accepted");
+    logger(LOG_DEBUG, "OpenLI: SSL Handshake accepted");
     dump_cert_info(cs->ssl);
 
     //handshake has finished
@@ -2262,11 +2261,11 @@ static int init_provisioner_connection(mediator_state_t *state, int sock, SSL_CT
                 SSL_free(prov->ssl);
                 free(prov->provev);
                 prov->ssl = NULL;
-                logger(LOG_INFO, "OpenLI: Handshake failed");
+                logger(LOG_INFO, "OpenLI: SSL Handshake failed");
                 return -1;
             }
         }
-        logger(LOG_DEBUG, "OpenLI: Handshake started");
+        logger(LOG_DEBUG, "OpenLI: SSL Handshake started");
         dump_cert_info(prov->ssl);
     }
     else {

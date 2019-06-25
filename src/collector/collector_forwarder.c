@@ -479,11 +479,11 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx) {
                 close(sockfd);
                 SSL_free(dest->ssl);
                 dest->ssl = NULL;
-                logger(LOG_INFO, "OpenLI: Handshake with mediator failed");
+                logger(LOG_INFO, "OpenLI: SSL Handshake with mediator failed");
                 return -1;
             }
         }
-        logger(LOG_DEBUG, "OpenLI: Handshake started");        
+        logger(LOG_DEBUG, "OpenLI: SSL Handshake started");
     }
     else {
         dest->ssl = NULL;
@@ -715,22 +715,19 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
                 ret = SSL_get_error(dest->ssl, ret);
                 if(ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE){
                     //keep trying
-                    //logger(LOG_INFO, "OpenLI: Handshake continue");
                 }
                 else {
                     //fail out
-                    //if (dest->logallowed) {
-                        logger(LOG_INFO,
-                            "OpenLI: error in continuing handshake with mediator: %s:%s",
+                    logger(LOG_INFO,
+                            "OpenLI: error in continuing SSL handshake with mediator: %s:%s",
                             dest->ipstr, dest->portstr);
-                    //}
                     dest->waitingforhandshake = 0;
                     disconnect_mediator(fwd, dest);
                     return -1;
                 }
             }
             else {
-                logger(LOG_DEBUG, "OpenLI: Handshake accepted");
+                logger(LOG_DEBUG, "OpenLI: SSL Handshake accepted");
                 dump_cert_info(dest->ssl);
                 dest->waitingforhandshake = 0;
             }

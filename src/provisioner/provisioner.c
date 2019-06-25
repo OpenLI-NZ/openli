@@ -968,16 +968,15 @@ static int continue_handshake(provision_state_t *state, prov_epoll_ev_t *pev) {
         ret = SSL_get_error(cs->ssl, ret);
         if(ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE){
             //keep trying
-            //logger(LOG_INFO, "OpenLI: Handshake continue");
             return 0;
         }
         else {
             //fail out
-            logger(LOG_INFO, "OpenLI: Handshake failed");
+            logger(LOG_INFO, "OpenLI: SSL Handshake failed");
             return -1;
         }
     }
-    logger(LOG_DEBUG, "OpenLI: Handshake accepted");
+    logger(LOG_DEBUG, "OpenLI: SSL Handshake accepted");
     dump_cert_info(cs->ssl);
 
     //handshake has finished
@@ -1153,14 +1152,14 @@ static int accept_collector(provision_state_t *state) {
                     free(col->commev);
                     free(col->authev);
                     free(col);
-                    logger(LOG_INFO, "OpenLI: Handshake failed %d", errr);
+                    logger(LOG_INFO, "OpenLI: SSL Handshake failed %d", errr);
                     return -1;
                 }
-                logger(LOG_DEBUG, "OpenLI: Handshake started");
+                logger(LOG_DEBUG, "OpenLI: SSL Handshake started");
                 col->commev->fdtype = PROV_EPOLL_COLLECTOR_HANDSHAKE;
             }
             else {
-                logger(LOG_DEBUG, "OpenLI: Handshake finished");
+                logger(LOG_DEBUG, "OpenLI: SSL Handshake finished");
                 col->commev->fdtype = PROV_EPOLL_COLLECTOR;
             }
         } else {
@@ -1263,16 +1262,16 @@ static int accept_mediator(provision_state_t *state) {
                     SSL_free(med->ssl);
                     free(med->commev);
                     free(med);
-                    logger(LOG_INFO, "OpenLI: Handshake failed %d", errr);
+                    logger(LOG_INFO, "OpenLI: SSL Handshake failed %d", errr);
                     return -1;
                 }
                 else{
-                    logger(LOG_DEBUG, "OpenLI: Handshake started");
+                    logger(LOG_DEBUG, "OpenLI: SSL Handshake started");
                     med->commev->fdtype = PROV_EPOLL_MEDIATOR_HANDSHAKE;
                 }
             }
             else{
-                logger(LOG_DEBUG, "OpenLI: Handshake finished");
+                logger(LOG_DEBUG, "OpenLI: SSL Handshake finished");
                 med->commev->fdtype = PROV_EPOLL_MEDIATOR;
             }
             
