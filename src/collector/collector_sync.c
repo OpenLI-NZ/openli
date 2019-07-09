@@ -58,6 +58,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->intersyncq = &(glob->intersyncq);
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
+    sync->knownvoips = NULL;
     sync->userintercepts = NULL;
     sync->coreservers = NULL;
     sync->instruct_fd = -1;
@@ -78,6 +79,8 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
     sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
+
+    sync->ctx = glob->ctx;
 
     sync->zmq_colsock = zmq_socket(glob->zmq_ctxt, ZMQ_PULL);
     if (zmq_bind(sync->zmq_colsock, "inproc://openli-ipsync") != 0) {
@@ -138,6 +141,7 @@ void clean_sync_data(collector_sync_t *sync) {
     clear_user_intercept_list(sync->userintercepts);
     free_all_ipintercepts(&(sync->ipintercepts));
     free_coreserver_list(sync->coreservers);
+    free_all_voipintercepts(&(sync->knownvoips));
 
     if (sync->outgoing) {
         destroy_net_buffer(sync->outgoing);
@@ -151,8 +155,13 @@ void clean_sync_data(collector_sync_t *sync) {
         destroy_access_plugin(sync->radiusplugin);
     }
 
+    if(sync->ssl){
+        SSL_free(sync->ssl);
+    }
+
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
+    sync->knownvoips = NULL;
     sync->userintercepts = NULL;
     sync->outgoing = NULL;
     sync->incoming = NULL;
@@ -1109,7 +1118,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
-    voipintercept_t vint;
+    voipintercept_t *vint, *found;
     openli_export_recv_t *expmsg;
     int i;
 
@@ -1125,14 +1134,26 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
      * are testing deployments, of course).
      */
 
-    if (decode_voipintercept_start(intmsg, msglen, &vint) == -1) {
+    vint = (voipintercept_t *)calloc(1, sizeof(voipintercept_t));
+
+    if (decode_voipintercept_start(intmsg, msglen, vint) == -1) {
         /* Don't bother logging, the VOIP sync thread should handle that */
         return -1;
     }
 
-    for (i = 0; i < sync->forwardcount; i++) {
-        expmsg = create_intercept_details_msg(&(vint.common));
-        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+    HASH_FIND(hh_liid, sync->knownvoips, vint->common.liid,
+            vint->common.liid_len, found);
+
+    if (found == NULL) {
+        HASH_ADD_KEYPTR(hh_liid, sync->knownvoips, vint->common.liid,
+                vint->common.liid_len, vint);
+
+        for (i = 0; i < sync->forwardcount; i++) {
+            expmsg = create_intercept_details_msg(&(vint->common));
+            publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+        }
+    } else {
+        free_single_voipintercept(vint);
     }
 
     return 1;
@@ -1273,7 +1294,7 @@ static int recv_from_provisioner(collector_sync_t *sync) {
     return 1;
 }
 
-int sync_connect_provisioner(collector_sync_t *sync) {
+int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
 
     int sockfd;
 
@@ -1290,12 +1311,38 @@ int sync_connect_provisioner(collector_sync_t *sync) {
         return 0;
     }
 
+    if (ctx != NULL){
+        
+        fd_set_block(sockfd); 
+        //collector cannt do anything untill it has instructions from provisioner so blocking is fine
+
+        sync->ssl = SSL_new(ctx);
+        SSL_set_fd(sync->ssl, sockfd);
+        SSL_set_connect_state(sync->ssl); //set client mode
+        int errr = SSL_do_handshake(sync->ssl);
+
+        fd_set_nonblock(sockfd);
+        
+        if ((errr) <= 0 ){
+            errr = SSL_get_error(sync->ssl, errr);
+            logger(LOG_INFO, "OpenLI: SSL handshake failed");
+            SSL_free(sync->ssl);
+            return -1; //if handshake fails, its unrecoverable, retrying wont help
+        }
+
+        logger(LOG_DEBUG, "OpenLI: SSL Handshake finished");
+        dump_cert_info(sync->ssl);
+    }
+    else {
+        sync->ssl = NULL;
+    }
+
     sync->instruct_fd = sockfd;
 
     assert(sync->outgoing == NULL && sync->incoming == NULL);
 
-    sync->outgoing = create_net_buffer(NETBUF_SEND, sync->instruct_fd);
-    sync->incoming = create_net_buffer(NETBUF_RECV, sync->instruct_fd);
+    sync->outgoing = create_net_buffer(NETBUF_SEND, sync->instruct_fd, sync->ssl);
+    sync->incoming = create_net_buffer(NETBUF_RECV, sync->instruct_fd, sync->ssl);
 
     /* Put our auth message onto the outgoing buffer */
     if (push_auth_onto_net_buffer(sync->outgoing, OPENLI_PROTO_COLLECTOR_AUTH)

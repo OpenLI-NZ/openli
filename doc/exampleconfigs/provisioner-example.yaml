@@ -8,6 +8,10 @@ clientport: 9001
 mediationaddr: 10.0.0.1
 mediationport: 12001
 
+tlscert: server-crt.pem
+tlskey: server-key.pem
+tlsca: ca-crt.pem
+
 # List of SIP servers on our network (for managing VOIP intercepts)
 sipservers:
   - ip: 192.168.110.100

@@ -1,3 +1,11 @@
+openli (1.0.3-1) UNRELEASED; urgency=medium
+
+  * Add ability to encrypt inter-component communications using TLS
+  * Add support for decapsulating JMirror captures
+  * Fix bug where ALU intercepts would erroneously intercept ARP packets
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Tue, 25 Jun 2019 14:34:26 +1200
+
 openli (1.0.2-1) unstable; urgency=medium
 
   * Greatly improved RADIUS processing performance.
