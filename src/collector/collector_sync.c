@@ -995,17 +995,6 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     HASH_FIND(hh_liid, sync->ipintercepts, cept->common.liid,
             cept->common.liid_len, x);
 
-    /* TODO change alushimid and username to not be mutually exclusive.
-     * Ideally, username would be mandatory even for ALU intercepts as we
-     * still will need to produce IRIs for those targets from AAA traffic.
-     * We can also use the AAA stream to assign CINs for the CCs created from
-     * the ALU intercepted packets, so really this still needs a lot of proper
-     * sync work.
-     *
-     * Therefore, we'll want to only announce ALU Shim IDs once we have a
-     * valid session for the user and withdraw them once the session is over.
-     */
-
     if (x) {
         /* Duplicate LIID */
 
@@ -1063,8 +1052,9 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     if (cept->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
         logger(LOG_INFO,
-                "OpenLI: received IP intercept from provisioner for Vendor Mirrored ID %u (LIID %s, authCC %s)",
-                cept->vendmirrorid, cept->common.liid, cept->common.authcc);
+                "OpenLI: received IP intercept from provisioner for Vendor Mirrored ID %u (LIID %s, authCC %s), target is %s",
+                cept->vendmirrorid, cept->common.liid, cept->common.authcc,
+                cept->username ? cept->username : "unknown");
 
         /* Don't need to wait for a session to start an ALU intercept.
          * The CIN is contained within the packet and only valid
