@@ -751,7 +751,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                     newcept->common.liid_len, newcept);
 
             if (newcept->username && newcept->statics) {
-                logger(LOG_INFO, "OpenLI: IP intercept %s specifies both a username and a set of static IPs -- is this intentional?");
+                logger(LOG_INFO, "OpenLI: IP intercept %s specifies both a username and a set of static IPs -- is this intentional?", newcept->common.liid);
             }
         } else {
             logger(LOG_INFO, "OpenLI: IP Intercept configuration was incomplete -- skipping.");
