@@ -82,11 +82,12 @@ intercept must be configured with the following parameters:
   of the agencies specified elsewhere in this configuration file).
 * Access type -- the technology used to provide the target with Internet
   access (e.g. DSL, Fiber, Wireless, etc).
+* User -- the username assigned to that user within your AAA system. This is
+  required, even if the target is only using static IP addresses.
 
-An IP intercept must also include ONE of the following parameters, which is
+An IP intercept may also include ONE of the following parameters, which is
 used to identify the intercept target.
 
-* User -- the username assigned to that user within your AAA system.
 * ALU Shim ID -- if you are using OpenLI to convert Alcatel-Lucent intercepts
   to ETSI-compliant records, this is the value that will be in the intercept-id
   fields of the packets emitted by the mirror.
@@ -97,11 +98,11 @@ used to identify the intercept target.
 * Static IPs -- if the target has a static IP (range), you can use this
   parameter to tell OpenLI which IPs belong to the target.
 
-If you are using User as the target identification method, you will need to
-ensure that the OpenLI collectors receive a copy of all RADIUS traffic
-relating to the subscribers whose traffic will be passing that collector.
-This includes both Authentication AND Accounting messages, as well both the
-Requests and Responses for both message types.
+If you are relying solely on the User as the target identification method, you
+will need to ensure that the OpenLI collectors receive a copy of all RADIUS
+traffic relating to the subscribers whose IP traffic will be passing that
+collector. This includes both Authentication AND Accounting messages, as well
+both the Requests and Responses for both message types.
 
 If you are using the ALU Shim or JMirror methods, you will still need to provide
 a RADIUS feed to an OpenLI collector to generate the IRI records but the
@@ -244,14 +245,6 @@ An IP intercept must contain the following key-value elements:
 * authcountrycode       -- the authorisation country code
 * deliverycountrycode   -- the delivery country code
 * user                  -- the AAA username for the target
-* vendmirrorid          -- if using a vendor mirroring platform to stream
-                           packets to the collector, this is the intercept ID
-                           that you have assigned to the packets on the
-                           mirroring platform for the target user.
-                           (only for re-encoding ALU or JMirror intercepts as
-                           ETSI)
-* staticips             -- a list of IP ranges that are known to have been
-                           assigned to the target.
 * mediator              -- the ID of the mediator which will forward the
                            intercept
 * agencyid              -- the internal identifier of the agency that requested
@@ -263,6 +256,16 @@ Valid access types are:
   'dialup', 'adsl', 'vdsl', 'fiber', 'wireless', 'lan', 'satellite', 'wimax',
   'cable' and 'wireless-other'.
 
+Optional key-value elements for an IP intercept are:
+
+* vendmirrorid          -- if using a vendor mirroring platform to stream
+                           packets to the collector, this is the intercept ID
+                           that you have assigned to the packets on the
+                           mirroring platform for the target user.
+                           (only for re-encoding ALU or JMirror intercepts as
+                           ETSI)
+* staticips             -- a list of IP ranges that are known to have been
+                           assigned to the target.
 
 `staticips:` are expressed as a YAML list: one list item per IP range that
 is associated with the target. Each list item is a YAML map containing the

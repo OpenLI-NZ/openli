@@ -80,10 +80,14 @@ ipintercepts:
 # an ETSI-compliant one. All ALU intercept packets with an
 # Intercept ID of 522781 will be converted to have the ETSI LIID of NAPP9321HN
 # and the resulting records will be forwarded to the "Spooks" agency.
+# Note that we still require a 'user' parameter to be set -- this is to
+# ensure that any relevant AAA traffic for that user which is seen by the
+# collector is properly intercepted and exported via HI2.
 
  - liid: NAPP9321HN             # LIID, should be provided by requesting agency
    authcountrycode: NZ          # Authorisation country code
    deliverycountrycode: NZ      # Delivery country code
+   user: "lexluthor"            # Username identifying the target in your AAA
    vendmirrorid: 522781         # Intercept-ID number used by the ALU
                                 # intercept.
    mediator: 6001               # ID of the mediator to send intercept via
@@ -99,6 +103,7 @@ ipintercepts:
  - liid: GTNF4221AU             # LIID, should be provided by requesting agency
    authcountrycode: NZ          # Authorisation country code
    deliverycountrycode: NZ      # Delivery country code
+   user: "skeletor"             # Username identifying the target in your AAA
    vendmirrorid: 0x12121212     # Intercept ID number used by the Juniper
                                 # mirroring.
    mediator: 6001               # ID of the mediator to send intercept via
@@ -116,6 +121,10 @@ ipintercepts:
 # they are part of the same communication session; this is probably what you
 # want in most circumstances.
 #
+# Once again, a user name is required when specifying the intercept
+# even though this target will probably not appear in any AAA traffic seen
+# by the collector.
+#
 # If, during the course of an intercept, the IP ranges assigned to the
 # target are modified somehow, you should change the session ID and tell
 # the provisioner to reload its configuration (even for IP ranges that remain
@@ -130,6 +139,7 @@ ipintercepts:
    authcountrycode: NZ          # Authorisation country code
    deliverycountrycode: NZ      # Delivery country code
    mediator: 6001               # ID of the mediator to send intercept via
+   user: "edwardnigma"          # Username for the target
    agencyid: "Police"           # ID of agency to send intercept to
    accesstype: "LAN"            # Access tech used by the target to access IP
    staticips:
