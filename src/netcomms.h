@@ -100,6 +100,7 @@ typedef enum {
     OPENLI_PROTO_REMOVE_STATICIPS,
     OPENLI_PROTO_MODIFY_VOIPINTERCEPT,
     OPENLI_PROTO_CONFIG_RELOADED,
+    OPENLI_PROTO_MODIFY_IPINTERCEPT,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -196,6 +197,8 @@ int decode_mediator_withdraw(uint8_t *msgbody, uint16_t len,
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
         ipintercept_t *ipint);
 int decode_ipintercept_halt(uint8_t *msgbody, uint16_t len,
+        ipintercept_t *ipint);
+int decode_ipintercept_modify(uint8_t *msgbody, uint16_t len,
         ipintercept_t *ipint);
 int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
         voipintercept_t *vint);

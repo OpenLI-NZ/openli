@@ -441,6 +441,83 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
     return (int)totallen;
 }
 
+#define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
+        (ipint->common.liid_len + ipint->common.authcc_len + \
+         ipint->username_len + sizeof(ipint->accesstype) + \
+         sizeof(ipint->vendmirrorid) + (5 * 4))
+
+#define IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
+        (ipint->common.liid_len + ipint->common.authcc_len + \
+         ipint->username_len + sizeof(ipint->accesstype) + \
+         (4 * 4))
+
+static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+    int ret;
+
+    /* Pre-compute our body length so we can write it in the header */
+    if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
+        totallen = VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint);
+    } else {
+        totallen = IPINTERCEPT_MODIFY_BODY_LEN(ipint);
+    }
+    if (totallen > 65535) {
+        logger(LOG_INFO,
+                "OpenLI: IP intercept modifcation is too long to fit in a single message (%d).",
+                totallen);
+        return -1;
+    }
+
+    /* Push on header */
+    populate_header(&hdr, OPENLI_PROTO_MODIFY_IPINTERCEPT, totallen, 0);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t))) == -1) {
+        goto pushmodfail;
+    }
+
+    /* Push on each intercept field */
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID, ipint->common.liid,
+                strlen(ipint->common.liid)) == -1) {
+        goto pushmodfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, ipint->common.authcc,
+            strlen(ipint->common.authcc)) == -1) {
+        goto pushmodfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_USERNAME, ipint->username,
+            ipint->username_len) == -1) {
+        goto pushmodfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_ACCESSTYPE,
+            (uint8_t *)(&(ipint->accesstype)),
+            sizeof(ipint->accesstype)) == -1) {
+        goto pushmodfail;
+    }
+
+    if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
+        if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_VENDMIRRORID,
+                (uint8_t *)(&ipint->vendmirrorid),
+                sizeof(ipint->vendmirrorid))) == -1) {
+            goto pushmodfail;
+        }
+    }
+
+    return (int)totallen;
+
+pushmodfail:
+    logger(LOG_INFO,
+            "OpenLI: unable to push IP intercept modify for %s to collector fd %d",
+            ipint->common.liid, nb->fd);
+    return -1;
+
+}
+
 #define VOIPINTERCEPT_MODIFY_BODY_LEN(vint) \
         (vint->common.liid_len + vint->common.authcc_len + \
          sizeof(vint->options) + (3 * 4))
@@ -455,7 +532,7 @@ static int _push_voipintercept_modify(net_buffer_t *nb, voipintercept_t *vint)
     totallen = VOIPINTERCEPT_MODIFY_BODY_LEN(vint);
     if (totallen > 65535) {
         logger(LOG_INFO,
-                "OpenLI: intercept modifcation is too long to fit in a single message (%d).",
+                "OpenLI: VOIP intercept modifcation is too long to fit in a single message (%d).",
                 totallen);
         return -1;
     }
@@ -500,6 +577,8 @@ int push_intercept_modify_onto_net_buffer(net_buffer_t *nb, void *data,
 
     if (modtype == OPENLI_PROTO_MODIFY_VOIPINTERCEPT) {
         return _push_voipintercept_modify(nb, (voipintercept_t *)data);
+    } else if (modtype == OPENLI_PROTO_MODIFY_IPINTERCEPT) {
+        return _push_ipintercept_modify(nb, (ipintercept_t *)data);
     }
 
     logger(LOG_INFO, "OpenLI: bad modtype in push_intercept_modify_onto_net_buffer: %d\n", modtype);
@@ -1218,6 +1297,11 @@ int decode_voipintercept_modify(uint8_t *msgbody, uint16_t len,
 }
 
 int decode_ipintercept_halt(uint8_t *msgbody, uint16_t len,
+        ipintercept_t *ipint) {
+    return decode_ipintercept_start(msgbody, len, ipint);
+}
+
+int decode_ipintercept_modify(uint8_t *msgbody, uint16_t len,
         ipintercept_t *ipint) {
     return decode_ipintercept_start(msgbody, len, ipint);
 }

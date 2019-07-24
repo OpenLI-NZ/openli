@@ -144,10 +144,8 @@ static int liid_hash_sort(liid_hash_t *a, liid_hash_t *b) {
 static inline liid_hash_t *add_liid_mapping(provision_state_t *state,
         char *liid, char *agency) {
 
-    liid_hash_t *h;
+    liid_hash_t *h, *found;
     prov_agency_t *lea;
-
-    h = (liid_hash_t *)malloc(sizeof(liid_hash_t));
 
     /* pcapdisk is a special agency that is not user-defined */
     if (strcmp(agency, "pcapdisk") != 0) {
@@ -156,14 +154,21 @@ static inline liid_hash_t *add_liid_mapping(provision_state_t *state,
             logger(LOG_INFO,
                     "OpenLI: intercept %s is destined for an unknown agency: %s -- skipping.",
                     liid, agency);
-            free(h);
             return NULL;
         }
     }
 
-    h->agency = agency;
-    h->liid = liid;
-    HASH_ADD_KEYPTR(hh, state->liid_map, h->liid, strlen(h->liid), h);
+    HASH_FIND(hh, state->liid_map, liid, strlen(liid), found);
+    if (found) {
+        found->agency = agency;
+        h = found;
+    } else {
+        h = (liid_hash_t *)malloc(sizeof(liid_hash_t));
+        h->agency = agency;
+        h->liid = liid;
+        HASH_ADD_KEYPTR(hh, state->liid_map, h->liid, strlen(h->liid), h);
+    }
+
     return h;
 }
 
@@ -2337,7 +2342,7 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
              * shouldn't happen but deal with it anyway
              */
             logger(LOG_INFO,
-                    "OpenLI provisioner: Details for VOIP intercept %s have changed?",
+                    "OpenLI provisioner: Details for VOIP intercept %s have changed -- updating collectors",
                     voipint->common.liid);
 
             if (!droppedcols) {
@@ -2352,8 +2357,8 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
                     "OpenLI provisioner: Options for VOIP intercept %s have changed",
                     voipint->common.liid);
             if (!droppedcols) {
-                modify_existing_intercept_options(currstate, (void *)voipint,
-                        OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
+                modify_existing_intercept_options(currstate, (void *)newequiv,
+                        OPENLI_PROTO_MODIFY_IPINTERCEPT);
             }
 
         } else {
@@ -2564,15 +2569,20 @@ static inline int reload_ipintercepts(provision_state_t *currstate,
             /* IP intercept has changed somehow -- this probably
              * shouldn't happen but deal with it anyway
              */
-            logger(LOG_INFO, "OpenLI provisioner: Details for IP intercept %s have changed?",
+            logger(LOG_INFO, "OpenLI provisioner: Details for IP intercept %s have changed -- updating collectors",
                     ipint->common.liid);
 
             if (!droppedcols) {
-                halt_existing_intercept(currstate, (void *)ipint,
-                        OPENLI_PROTO_HALT_IPINTERCEPT);
+                modify_existing_intercept_options(currstate, (void *)newequiv,
+                        OPENLI_PROTO_MODIFY_IPINTERCEPT);
+                newequiv->awaitingconfirm = 0;
             }
-            remove_liid_mapping(currstate, ipint->common.liid,
-                    ipint->common.liid_len, droppedmeds);
+
+            if (strcmp(ipint->common.targetagency,
+                    newequiv->common.targetagency) != 0) {
+                remove_liid_mapping(currstate, ipint->common.liid,
+                        ipint->common.liid_len, droppedmeds);
+            }
         } else {
             reload_staticips(currstate, ipint, newequiv);
             newequiv->awaitingconfirm = 0;

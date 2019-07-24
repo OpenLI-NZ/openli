@@ -742,18 +742,15 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
 
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
                 newcept->common.delivcc != NULL &&
-                (newcept->username != NULL ||
-                 newcept->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE ||
-                 newcept->statics != NULL) &&
+                newcept->username != NULL &&
                 newcept->common.destid > 0 &&
                 newcept->common.targetagency != NULL) {
             HASH_ADD_KEYPTR(hh_liid, *ipints, newcept->common.liid,
                     newcept->common.liid_len, newcept);
-
-            if (newcept->username && newcept->statics) {
-                logger(LOG_INFO, "OpenLI: IP intercept %s specifies both a username and a set of static IPs -- is this intentional?");
-            }
         } else {
+            if (newcept->username == NULL) {
+                logger(LOG_INFO, "OpenLI: provisioner configuration error: 'user' must be specified for an IP intercept");
+            }
             logger(LOG_INFO, "OpenLI: IP Intercept configuration was incomplete -- skipping.");
         }
     }
