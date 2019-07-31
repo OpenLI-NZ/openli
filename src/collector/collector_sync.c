@@ -58,6 +58,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->intersyncq = &(glob->intersyncq);
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
+    sync->knownvoips = NULL;
     sync->userintercepts = NULL;
     sync->coreservers = NULL;
     sync->instruct_fd = -1;
@@ -78,6 +79,8 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
     sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
+
+    sync->ctx = glob->ctx;
 
     sync->zmq_colsock = zmq_socket(glob->zmq_ctxt, ZMQ_PULL);
     if (zmq_bind(sync->zmq_colsock, "inproc://openli-ipsync") != 0) {
@@ -138,6 +141,7 @@ void clean_sync_data(collector_sync_t *sync) {
     clear_user_intercept_list(sync->userintercepts);
     free_all_ipintercepts(&(sync->ipintercepts));
     free_coreserver_list(sync->coreservers);
+    free_all_voipintercepts(&(sync->knownvoips));
 
     if (sync->outgoing) {
         destroy_net_buffer(sync->outgoing);
@@ -151,8 +155,13 @@ void clean_sync_data(collector_sync_t *sync) {
         destroy_access_plugin(sync->radiusplugin);
     }
 
+    if(sync->ssl){
+        SSL_free(sync->ssl);
+    }
+
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
+    sync->knownvoips = NULL;
     sync->userintercepts = NULL;
     sync->outgoing = NULL;
     sync->incoming = NULL;
@@ -478,27 +487,27 @@ static inline void push_single_ipintercept(collector_sync_t *sync,
     libtrace_message_queue_put(q, (void *)(&msg));
 }
 
-static inline void push_single_alushimid(libtrace_message_queue_t *q,
-        ipintercept_t *ipint, uint32_t sesscin) {
+static inline void push_single_vendmirrorid(libtrace_message_queue_t *q,
+        ipintercept_t *ipint, uint8_t msgtype) {
 
-    aluintercept_t *alu;
+    vendmirror_intercept_t *jm;
     openli_pushed_t msg;
 
-    if (ipint->alushimid == OPENLI_ALUSHIM_NONE) {
+    if (ipint->vendmirrorid == OPENLI_VENDOR_MIRROR_NONE) {
         return;
     }
 
-    alu = create_aluintercept(ipint);
-    if (!alu) {
+    jm = create_vendmirror_intercept(ipint);
+    if (!jm) {
         logger(LOG_INFO,
-                "OpenLI: ran out of memory while creating ALU intercept message.");
+                "OpenLI: ran out of memory while creating JMirror intercept message.");
         return;
     }
-    alu->cin = sesscin;
 
+    jm->cin = 0;
     memset(&msg, 0, sizeof(openli_pushed_t));
-    msg.type = OPENLI_PUSH_ALUINTERCEPT;
-    msg.data.aluint = alu;
+    msg.type = msgtype;
+    msg.data.mirror = jm;
 
     libtrace_message_queue_put(q, (void *)(&msg));
 }
@@ -681,7 +690,7 @@ static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
     access_session_t *sess, *tmp2;
     static_ipranges_t *ipr, *tmpr;
 
-    logger(LOG_INFO, "OpenLI: collector will stop intercepting traffic for LIID %s", ipint->common.liid);
+    logger(LOG_INFO, "OpenLI: collector will stop intercepting traffic for target %s (LIID = %s)", ipint->username, ipint->common.liid);
 
     /* Remove all static IP ranges for this intercept -- its over */
     HASH_ITER(hh, ipint->statics, ipr, tmpr) {
@@ -705,49 +714,6 @@ static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
                 ipint);
     }
 
-}
-
-static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
-    voipintercept_t *v, *tmp2;
-    coreserver_t *cs, *tmp3;
-    ipintercept_t *ipint, *tmp;
-    internet_user_t *user;
-    static_ipranges_t *ipr, *tmpr;
-
-    HASH_ITER(hh_liid, sync->ipintercepts, ipint, tmp) {
-
-        if (ipint->awaitingconfirm) {
-
-            /* Tell every collector thread to stop intercepting traffic for
-             * the IPs associated with this target. */
-            push_ipintercept_halt_to_threads(sync, ipint);
-            HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
-            if (ipint->username) {
-                remove_intercept_from_user_intercept_list(&sync->userintercepts,
-                        ipint);
-            }
-            free_single_ipintercept(ipint);
-        } else {
-            /* Deal with any unconfirmed static IP ranges */
-            HASH_ITER(hh, ipint->statics, ipr, tmpr) {
-                if (ipr->awaitingconfirm) {
-                    remove_staticiprange(sync, ipr);
-                }
-            }
-        }
-    }
-
-    /* Also remove any unconfirmed core servers */
-    HASH_ITER(hh, sync->coreservers, cs, tmp3) {
-        if (cs->awaitingconfirm) {
-            push_coreserver_msg(sync, cs, OPENLI_PUSH_REMOVE_CORESERVER);
-            logger(LOG_INFO,
-                    "OpenLI: collector has removed %s from its %s core server list.",
-                    cs->serverkey, coreserver_type_to_string(cs->servertype));
-            HASH_DELETE(hh, sync->coreservers, cs);
-            free_single_coreserver(cs);
-        }
-    }
 }
 
 static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
@@ -873,68 +839,6 @@ static int forward_remove_coreserver(collector_sync_t *sync, uint8_t *provmsg,
     return 1;
 }
 
-static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
-
-    if (!ipint) {
-        logger(LOG_INFO,
-                "OpenLI: received withdrawal for IP intercept %s but it is not present in the sync intercept list?",
-                ipint->common.liid);
-        return;
-    }
-
-    push_ipintercept_halt_to_threads(sync, ipint);
-    HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
-    if (ipint->username) {
-        remove_intercept_from_user_intercept_list(&sync->userintercepts, ipint);
-    }
-
-}
-
-static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
-        uint16_t msglen) {
-
-    ipintercept_t *ipint, torem;
-    sync_sendq_t *sendq, *tmp;
-    int i;
-    openli_export_recv_t *expmsg;
-
-    if (decode_ipintercept_halt(intmsg, msglen, &torem) == -1) {
-        if (sync->instruct_log) {
-            logger(LOG_INFO,
-                    "OpenLI: received invalid IP intercept withdrawal from provisioner.");
-        }
-        return -1;
-    }
-
-    HASH_FIND(hh_liid, sync->ipintercepts, torem.common.liid,
-            torem.common.liid_len, ipint);
-
-    remove_ip_intercept(sync, ipint);
-    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
-    expmsg->type = OPENLI_EXPORT_INTERCEPT_OVER;
-    expmsg->data.cept.liid = strdup(ipint->common.liid);
-    expmsg->data.cept.authcc = strdup(ipint->common.authcc);
-    expmsg->data.cept.delivcc = strdup(ipint->common.delivcc);
-    expmsg->data.cept.seqtrackerid = ipint->common.seqtrackerid;
-
-    pthread_mutex_lock(sync->glob->stats_mutex);
-    sync->glob->stats->ipintercepts_ended_diff ++;
-    sync->glob->stats->ipintercepts_ended_total ++;
-    pthread_mutex_unlock(sync->glob->stats_mutex);
-
-    if (ipint->alushimid != OPENLI_ALUSHIM_NONE) {
-        pthread_mutex_lock(sync->glob->stats_mutex);
-        sync->glob->stats->ipsessions_ended_diff ++;
-        sync->glob->stats->ipsessions_ended_total ++;
-        pthread_mutex_unlock(sync->glob->stats_mutex);
-    }
-
-    publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], expmsg);
-    free_single_ipintercept(ipint);
-
-    return 1;
-}
-
 static inline openli_export_recv_t *create_intercept_details_msg(
         intercept_common_t *common) {
 
@@ -949,113 +853,56 @@ static inline openli_export_recv_t *create_intercept_details_msg(
     return expmsg;
 }
 
-static inline void drop_all_mediators(collector_sync_t *sync) {
-    openli_export_recv_t *expmsg;
-    int i;
+static inline void announce_vendormirror_id(collector_sync_t *sync,
+        ipintercept_t *ipint) {
 
-    for (i = 0; i < sync->forwardcount; i++) {
-        expmsg = (openli_export_recv_t *)calloc(1,
-                sizeof(openli_export_recv_t));
-
-        expmsg->type = OPENLI_EXPORT_DROP_ALL_MEDIATORS;
-        expmsg->data.packet = NULL;
-        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+    sync_sendq_t *sendq, *tmp;
+    logger(LOG_INFO,
+            "OpenLI: received IP intercept from provisioner for Vendor Mirrored ID %u (LIID %s, authCC %s), target is %s",
+            ipint->vendmirrorid, ipint->common.liid, ipint->common.authcc,
+            ipint->username ? ipint->username : "unknown");
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
+            sendq, tmp) {
+        push_single_vendmirrorid(sendq->q, ipint,
+                OPENLI_PUSH_VENDMIRROR_INTERCEPT);
     }
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipsessions_added_diff ++;
+    sync->glob->stats->ipsessions_added_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
 }
 
-static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
-        uint16_t msglen) {
+static void push_existing_user_sessions(collector_sync_t *sync,
+        ipintercept_t *cept) {
 
-    ipintercept_t *cept, *x;
     sync_sendq_t *tmp, *sendq;
     internet_user_t *user;
+
+    HASH_FIND(hh, sync->allusers, cept->username, cept->username_len, user);
+
+    if (user) {
+        access_session_t *sess, *tmp2;
+        HASH_ITER(hh, user->sessions, sess, tmp2) {
+            HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
+                    sendq, tmp) {
+                push_single_ipintercept(sync, sendq->q, cept, sess);
+            }
+        }
+    }
+
+}
+
+static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
+
     openli_export_recv_t *expmsg;
     int i;
 
-    cept = (ipintercept_t *)malloc(sizeof(ipintercept_t));
-    if (decode_ipintercept_start(intmsg, msglen, cept) == -1) {
-        if (sync->instruct_log) {
-            logger(LOG_INFO,
-                    "OpenLI: received invalid IP intercept from provisioner.");
-        }
-        free(cept);
-        return -1;
-    }
-
-    /* Check if we already have this intercept */
-    HASH_FIND(hh_liid, sync->ipintercepts, cept->common.liid,
-            cept->common.liid_len, x);
-
-    /* TODO change alushimid and username to not be mutually exclusive.
-     * Ideally, username would be mandatory even for ALU intercepts as we
-     * still will need to produce IRIs for those targets from AAA traffic.
-     * We can also use the AAA stream to assign CINs for the CCs created from
-     * the ALU intercepted packets, so really this still needs a lot of proper
-     * sync work.
-     *
-     * Therefore, we'll want to only announce ALU Shim IDs once we have a
-     * valid session for the user and withdraw them once the session is over.
-     */
-
-    if (x) {
-        /* Duplicate LIID */
-
-        /* OpenLI-internal fields that could change value
-         * if the provisioner was restarted.
-         */
-        if (x->username && cept->username) {
-            if (strcmp(x->username, cept->username) != 0) {
-                logger(LOG_INFO,
-                        "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
-                        x->common.liid, x->username, cept->username);
-                remove_ip_intercept(sync, x);
-                free_single_ipintercept(x);
-                x = NULL;
-            }
-        }
-
-        if (cept->alushimid != x->alushimid) {
-            logger(LOG_INFO,
-                    "OpenLI: duplicate IP ID %s seen, but ALU intercept IDs are different (was %u, now %u).",
-                    x->common.liid, x->alushimid, cept->alushimid);
-            remove_ip_intercept(sync, x);
-            free_single_ipintercept(x);
-            x = NULL;
-        }
-
-        if (x != NULL) {
-            if (cept->accesstype != x->accesstype) {
-                logger(LOG_INFO,
-                    "OpenLI: duplicate IP ID %s seen, but access type has changed to %s.", x->common.liid, accesstype_to_string(cept->accesstype));
-            /* Only affects IRIs so don't need to modify collector threads */
-                x->accesstype = cept->accesstype;
-            }
-            x->awaitingconfirm = 0;
-            free(cept);
-            /* our collector threads should already know about this intercept */
-            return 1;
-        }
-    }
-
     if (cept->username) {
-        HASH_FIND(hh, sync->allusers, cept->username, cept->username_len, user);
-
-        if (user) {
-            access_session_t *sess, *tmp2;
-            HASH_ITER(hh, user->sessions, sess, tmp2) {
-                HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
-                        sendq, tmp) {
-                    push_single_ipintercept(sync, sendq->q, cept, sess);
-                }
-            }
-        }
+        push_existing_user_sessions(sync, cept);
         add_intercept_to_user_intercept_list(&sync->userintercepts, cept);
     }
 
-    if (cept->alushimid != OPENLI_ALUSHIM_NONE) {
-        logger(LOG_INFO,
-                "OpenLI: received IP intercept from provisioner for ALU shim ID %u (LIID %s, authCC %s)",
-                cept->alushimid, cept->common.liid, cept->common.authcc);
+    if (cept->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
 
         /* Don't need to wait for a session to start an ALU intercept.
          * The CIN is contained within the packet and only valid
@@ -1063,17 +910,10 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
          * looking for.
          *
          * TODO allow config that will force us to wait for a session
-         * instead, i.e. if the ALU is configured to NOT set the session
+         * instead, i.e. if the vendor is configured to NOT set the session
          * ID in the shim.
          */
-        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
-                sendq, tmp) {
-            push_single_alushimid(sendq->q, cept, 0);
-        }
-        pthread_mutex_lock(sync->glob->stats_mutex);
-        sync->glob->stats->ipsessions_added_diff ++;
-        sync->glob->stats->ipsessions_added_total ++;
-        pthread_mutex_unlock(sync->glob->stats_mutex);
+        announce_vendormirror_id(sync, cept);
     } else if (cept->username != NULL) {
         logger(LOG_INFO,
                 "OpenLI: received IP intercept for target %s from provisioner (LIID %s, authCC %s)",
@@ -1103,13 +943,217 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     }
 
     return 1;
+}
+
+static inline void remove_vendormirror_id(collector_sync_t *sync,
+        ipintercept_t *ipint) {
+
+    sync_sendq_t *sendq, *tmp;
+    logger(LOG_INFO,
+            "OpenLI: removing IP intercept for Vendor Mirrored ID %u (LIID %s, authCC %s), target was %s",
+            ipint->vendmirrorid, ipint->common.liid, ipint->common.authcc,
+            ipint->username ? ipint->username : "unknown");
+
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
+            sendq, tmp) {
+        push_single_vendmirrorid(sendq->q, ipint,
+                OPENLI_PUSH_HALT_VENDMIRROR_INTERCEPT);
+    }
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipsessions_ended_diff ++;
+    sync->glob->stats->ipsessions_ended_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
+}
+
+static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
+
+    openli_export_recv_t *expmsg;
+
+    if (!ipint) {
+        logger(LOG_INFO,
+                "OpenLI: received withdrawal for IP intercept %s but it is not present in the sync intercept list?",
+                ipint->common.liid);
+        return;
+    }
+
+    push_ipintercept_halt_to_threads(sync, ipint);
+    HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
+    if (ipint->username) {
+        remove_intercept_from_user_intercept_list(&sync->userintercepts, ipint);
+    }
+
+    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    expmsg->type = OPENLI_EXPORT_INTERCEPT_OVER;
+    expmsg->data.cept.liid = strdup(ipint->common.liid);
+    expmsg->data.cept.authcc = strdup(ipint->common.authcc);
+    expmsg->data.cept.delivcc = strdup(ipint->common.delivcc);
+    expmsg->data.cept.seqtrackerid = ipint->common.seqtrackerid;
+
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipintercepts_ended_diff ++;
+    sync->glob->stats->ipintercepts_ended_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
+
+    if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
+        remove_vendormirror_id(sync, ipint);
+    }
+    publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], expmsg);
+    free_single_ipintercept(ipint);
+}
+
+static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
+        uint16_t msglen) {
+
+    ipintercept_t *ipint, modified;
+
+    if (decode_ipintercept_modify(intmsg, msglen, &modified) == -1) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid IP intercept modification from provisioner.");
+        }
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, sync->ipintercepts, modified.common.liid,
+            modified.common.liid_len, ipint);
+
+    if (!ipint) {
+        return insert_new_ipintercept(sync, &modified);
+    }
+
+    if (strcmp(ipint->username, modified.username) != 0) {
+        push_ipintercept_halt_to_threads(sync, ipint);
+        remove_intercept_from_user_intercept_list(&sync->userintercepts, ipint);
+
+        free(ipint->username);
+        ipint->username = modified.username;
+        add_intercept_to_user_intercept_list(&sync->userintercepts, ipint);
+
+        push_existing_user_sessions(sync, ipint);
+        logger(LOG_INFO, "OpenLI: IP intercept %s is now using '%s' as the designated target", ipint->common.liid, ipint->username);
+    }
+
+    if (ipint->vendmirrorid != modified.vendmirrorid) {
+        if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
+            remove_vendormirror_id(sync, ipint);
+        }
+
+        ipint->vendmirrorid = modified.vendmirrorid;
+        if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
+            announce_vendormirror_id(sync, ipint);
+        }
+    }
 
 }
+
+static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
+        uint16_t msglen) {
+
+    ipintercept_t *ipint, torem;
+    int i;
+
+    if (decode_ipintercept_halt(intmsg, msglen, &torem) == -1) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid IP intercept withdrawal from provisioner.");
+        }
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, sync->ipintercepts, torem.common.liid,
+            torem.common.liid_len, ipint);
+
+    if (!ipint) {
+        logger(LOG_INFO,
+                "OpenLI: tried to halt IP intercept %s but this was not present in the intercept map?", torem.common.liid);
+        return -1;
+    }
+
+    remove_ip_intercept(sync, ipint);
+
+    return 1;
+}
+
+static inline void drop_all_mediators(collector_sync_t *sync) {
+    openli_export_recv_t *expmsg;
+    int i;
+
+    for (i = 0; i < sync->forwardcount; i++) {
+        expmsg = (openli_export_recv_t *)calloc(1,
+                sizeof(openli_export_recv_t));
+
+        expmsg->type = OPENLI_EXPORT_DROP_ALL_MEDIATORS;
+        expmsg->data.packet = NULL;
+        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+    }
+}
+
+static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
+        uint16_t msglen) {
+
+    ipintercept_t *cept, *x;
+    int i;
+
+    cept = (ipintercept_t *)malloc(sizeof(ipintercept_t));
+    if (decode_ipintercept_start(intmsg, msglen, cept) == -1) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid IP intercept from provisioner.");
+        }
+        free(cept);
+        return -1;
+    }
+
+    /* Check if we already have this intercept */
+    HASH_FIND(hh_liid, sync->ipintercepts, cept->common.liid,
+            cept->common.liid_len, x);
+
+    if (x) {
+        /* Duplicate LIID */
+
+        /* OpenLI-internal fields that could change value
+         * if the provisioner was restarted.
+         */
+        if (x->username && cept->username) {
+            if (strcmp(x->username, cept->username) != 0) {
+                logger(LOG_INFO,
+                        "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
+                        x->common.liid, x->username, cept->username);
+                remove_ip_intercept(sync, x);
+                x = NULL;
+            }
+        }
+
+        if (x != NULL && cept->vendmirrorid != x->vendmirrorid) {
+            logger(LOG_INFO,
+                    "OpenLI: duplicate IP ID %s seen, but Vendor Mirroring intercept IDs are different (was %u, now %u).",
+                    x->common.liid, x->vendmirrorid, cept->vendmirrorid);
+            remove_ip_intercept(sync, x);
+            x = NULL;
+        }
+
+        if (x != NULL) {
+            if (cept->accesstype != x->accesstype) {
+                logger(LOG_INFO,
+                    "OpenLI: duplicate IP ID %s seen, but access type has changed to %s.", x->common.liid, accesstype_to_string(cept->accesstype));
+            /* Only affects IRIs so don't need to modify collector threads */
+                x->accesstype = cept->accesstype;
+            }
+            x->awaitingconfirm = 0;
+            free(cept);
+            /* our collector threads should already know about this intercept */
+            return 1;
+        }
+    }
+
+    return insert_new_ipintercept(sync, cept);
+}
+
 
 static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
-    voipintercept_t vint;
+    voipintercept_t *vint, *found;
     openli_export_recv_t *expmsg;
     int i;
 
@@ -1125,17 +1169,66 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
      * are testing deployments, of course).
      */
 
-    if (decode_voipintercept_start(intmsg, msglen, &vint) == -1) {
+    vint = (voipintercept_t *)calloc(1, sizeof(voipintercept_t));
+
+    if (decode_voipintercept_start(intmsg, msglen, vint) == -1) {
         /* Don't bother logging, the VOIP sync thread should handle that */
         return -1;
     }
 
-    for (i = 0; i < sync->forwardcount; i++) {
-        expmsg = create_intercept_details_msg(&(vint.common));
-        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+    HASH_FIND(hh_liid, sync->knownvoips, vint->common.liid,
+            vint->common.liid_len, found);
+
+    if (found == NULL) {
+        HASH_ADD_KEYPTR(hh_liid, sync->knownvoips, vint->common.liid,
+                vint->common.liid_len, vint);
+
+        for (i = 0; i < sync->forwardcount; i++) {
+            expmsg = create_intercept_details_msg(&(vint->common));
+            publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+        }
+    } else {
+        free_single_voipintercept(vint);
     }
 
     return 1;
+}
+
+static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
+    voipintercept_t *v, *tmp2;
+    coreserver_t *cs, *tmp3;
+    ipintercept_t *ipint, *tmp;
+    internet_user_t *user;
+    static_ipranges_t *ipr, *tmpr;
+
+    HASH_ITER(hh_liid, sync->ipintercepts, ipint, tmp) {
+
+        if (ipint->awaitingconfirm) {
+
+            /* Tell every collector thread to stop intercepting traffic for
+             * the IPs associated with this target. */
+            remove_ip_intercept(sync, ipint);
+        } else {
+            /* Deal with any unconfirmed static IP ranges */
+            HASH_ITER(hh, ipint->statics, ipr, tmpr) {
+                if (ipr->awaitingconfirm) {
+                    remove_staticiprange(sync, ipr);
+                }
+            }
+        }
+    }
+
+    /* Also remove any unconfirmed core servers */
+    HASH_ITER(hh, sync->coreservers, cs, tmp3) {
+        if (cs->awaitingconfirm) {
+            push_coreserver_msg(sync, cs, OPENLI_PUSH_REMOVE_CORESERVER);
+            logger(LOG_INFO,
+                    "OpenLI: collector has removed %s from its %s core server list.",
+                    cs->serverkey, coreserver_type_to_string(cs->servertype));
+            HASH_DELETE(hh, sync->coreservers, cs);
+            free_single_coreserver(cs);
+        }
+    }
 }
 
 static int recv_from_provisioner(collector_sync_t *sync) {
@@ -1238,6 +1331,13 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 }
                 break;
 
+            case OPENLI_PROTO_MODIFY_IPINTERCEPT:
+                ret = modify_ipintercept(sync, provmsg, msglen);
+                if (ret < 0) {
+                    return -1;
+                }
+                break;
+
             case OPENLI_PROTO_HALT_VOIPINTERCEPT:
             case OPENLI_PROTO_MODIFY_VOIPINTERCEPT:
             case OPENLI_PROTO_ANNOUNCE_SIP_TARGET:
@@ -1273,7 +1373,7 @@ static int recv_from_provisioner(collector_sync_t *sync) {
     return 1;
 }
 
-int sync_connect_provisioner(collector_sync_t *sync) {
+int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
 
     int sockfd;
 
@@ -1290,12 +1390,38 @@ int sync_connect_provisioner(collector_sync_t *sync) {
         return 0;
     }
 
+    if (ctx != NULL){
+        
+        fd_set_block(sockfd); 
+        //collector cannt do anything untill it has instructions from provisioner so blocking is fine
+
+        sync->ssl = SSL_new(ctx);
+        SSL_set_fd(sync->ssl, sockfd);
+        SSL_set_connect_state(sync->ssl); //set client mode
+        int errr = SSL_do_handshake(sync->ssl);
+
+        fd_set_nonblock(sockfd);
+        
+        if ((errr) <= 0 ){
+            errr = SSL_get_error(sync->ssl, errr);
+            logger(LOG_INFO, "OpenLI: SSL handshake failed");
+            SSL_free(sync->ssl);
+            return -1; //if handshake fails, its unrecoverable, retrying wont help
+        }
+
+        logger(LOG_DEBUG, "OpenLI: SSL Handshake finished");
+        dump_cert_info(sync->ssl);
+    }
+    else {
+        sync->ssl = NULL;
+    }
+
     sync->instruct_fd = sockfd;
 
     assert(sync->outgoing == NULL && sync->incoming == NULL);
 
-    sync->outgoing = create_net_buffer(NETBUF_SEND, sync->instruct_fd);
-    sync->incoming = create_net_buffer(NETBUF_RECV, sync->instruct_fd);
+    sync->outgoing = create_net_buffer(NETBUF_SEND, sync->instruct_fd, sync->ssl);
+    sync->incoming = create_net_buffer(NETBUF_RECV, sync->instruct_fd, sync->ssl);
 
     /* Put our auth message onto the outgoing buffer */
     if (push_auth_onto_net_buffer(sync->outgoing, OPENLI_PROTO_COLLECTOR_AUTH)
@@ -1392,8 +1518,8 @@ static void push_all_active_intercepts(collector_sync_t *sync,
                 }
             }
         }
-        if (orig->alushimid != OPENLI_ALUSHIM_NONE) {
-            push_single_alushimid(q, orig, 0);
+        if (orig->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
+            push_single_vendmirrorid(q, orig, OPENLI_PUSH_VENDMIRROR_INTERCEPT);
         }
         HASH_ITER(hh, orig->statics, ipr, tmpr) {
             push_static_iprange_to_collectors(q, orig, ipr);

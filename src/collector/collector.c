@@ -50,6 +50,7 @@
 #include "ipmmcc.h"
 #include "sipparsing.h"
 #include "alushim_parser.h"
+#include "jmirror_parser.h"
 #include "util.h"
 
 volatile int collector_halt = 0;
@@ -253,7 +254,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
     loc->activeipv4intercepts = NULL;
     loc->activeipv6intercepts = NULL;
     loc->activertpintercepts = NULL;
-    loc->activealuintercepts = NULL;
+    loc->activemirrorintercepts = NULL;
     loc->activestaticintercepts = NULL;
     loc->radiusservers = NULL;
     loc->sipservers = NULL;
@@ -380,7 +381,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     free_all_staticipsessions(&(loc->activestaticintercepts));
     free_all_rtpstreams(&(loc->activertpintercepts));
-    free_all_aluintercepts(&(loc->activealuintercepts));
+    free_all_vendmirror_intercepts(&(loc->activemirrorintercepts));
     free_coreserver_list(loc->radiusservers);
     free_coreserver_list(loc->sipservers);
 
@@ -531,12 +532,12 @@ static void process_incoming_messages(libtrace_thread_t *t,
         handle_remove_coreserver(t, loc, syncpush->data.coreserver);
     }
 
-    if (syncpush->type == OPENLI_PUSH_ALUINTERCEPT) {
-        handle_push_aluintercept(t, loc, syncpush->data.aluint);
+    if (syncpush->type == OPENLI_PUSH_VENDMIRROR_INTERCEPT) {
+        handle_push_mirror_intercept(t, loc, syncpush->data.mirror);
     }
 
-    if (syncpush->type == OPENLI_PUSH_HALT_ALUINTERCEPT) {
-        handle_halt_aluintercept(t, loc, syncpush->data.aluint);
+    if (syncpush->type == OPENLI_PUSH_HALT_VENDMIRROR_INTERCEPT) {
+        handle_halt_mirror_intercept(t, loc, syncpush->data.mirror);
     }
 
     if (syncpush->type == OPENLI_PUSH_IPRANGE) {
@@ -727,7 +728,17 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         /* Is this from one of our ALU mirrors -- if yes, parse + strip it
          * for conversion to an ETSI record */
         if (glob->alumirrors && check_alu_intercept(&(glob->sharedinfo), loc,
-                pkt, &pinfo, glob->alumirrors, loc->activealuintercepts)) {
+                pkt, &pinfo, glob->alumirrors, loc->activemirrorintercepts)) {
+            forwarded = 1;
+            pthread_mutex_lock(&(glob->stats_mutex));
+            glob->stats.ipcc_created += 1;
+            pthread_mutex_unlock(&(glob->stats_mutex));
+            goto processdone;
+        }
+
+        if (glob->jmirrors && check_jmirror_intercept(&(glob->sharedinfo), loc,
+                pkt, &pinfo, glob->jmirrors, loc->activemirrorintercepts)) {
+
             forwarded = 1;
             pthread_mutex_lock(&(glob->stats_mutex));
             glob->stats.ipcc_created += 1;
@@ -978,6 +989,7 @@ static void destroy_collector_state(collector_global_t *glob) {
     }
 
     free_coreserver_list(glob->alumirrors);
+    free_coreserver_list(glob->jmirrors);
 	free_sync_thread_data(&(glob->syncip));
 	free_sync_thread_data(&(glob->syncvoip));
 
@@ -1019,6 +1031,9 @@ static void destroy_collector_state(collector_global_t *glob) {
 
     if (glob->collocals) {
         free(glob->collocals);
+    }
+    if(glob->ctx){
+        SSL_CTX_free(glob->ctx);
     }
     free(glob);
 }
@@ -1176,9 +1191,15 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->sharedinfo.provisionerip = NULL;
     glob->sharedinfo.provisionerport = NULL;
     glob->alumirrors = NULL;
+    glob->jmirrors = NULL;
     glob->sipdebugfile = NULL;
     glob->nextloc = 0;
     glob->syncgenericfreelist = NULL;
+
+    glob->certfile = NULL;
+    glob->keyfile = NULL;
+    glob->cacertfile = NULL;
+    glob->etsitls = 1;
 
     memset(&(glob->stats), 0, sizeof(glob->stats));
     glob->stat_frequency = 0;
@@ -1193,6 +1214,23 @@ static collector_global_t *parse_global_config(char *configfile) {
     if (parse_collector_config(configfile, glob) == -1) {
         clear_global_config(glob);
         return NULL;
+    }
+
+    logger(LOG_DEBUG, "OpenLI: ETSI TLS encryption %s",
+        glob->etsitls ? "enabled" : "disabled");
+
+    if (glob->certfile && glob->keyfile && glob->cacertfile){
+        glob->ctx = ssl_init(glob->cacertfile, glob->certfile, glob->keyfile);
+    } else {
+        if (glob->certfile || glob->keyfile || glob->cacertfile){
+            logger(LOG_INFO, "OpenLI: SSL error, missing keyfile or certfile names.");
+            clear_global_config(glob);
+            return NULL;
+        }
+        else{
+            logger(LOG_DEBUG, "OpenLI: Not using OpenSSL TLS connection.");
+            glob->ctx = NULL;
+        }
     }
 
     if (glob->sharedinfo.provisionerport == NULL) {
@@ -1226,7 +1264,6 @@ static int reload_collector_config(collector_global_t *glob,
         collector_sync_t *sync) {
 
     collector_global_t *newstate;
-
     newstate = parse_global_config(glob->configfile);
     if (newstate == NULL) {
         logger(LOG_INFO,
@@ -1348,7 +1385,7 @@ static void *start_ip_sync_thread(void *params) {
             reload_config = 0;
         }
         if (sync->instruct_fd == -1) {
-            ret = sync_connect_provisioner(sync);
+            ret = sync_connect_provisioner(sync, glob->ctx);
             if (ret < 0) {
                 /* Fatal error */
                 logger(LOG_INFO,
@@ -1500,6 +1537,8 @@ int main(int argc, char *argv[]) {
         glob->forwarders[i].colthreads = glob->total_col_threads;
         glob->forwarders[i].zmq_ctrlsock = NULL;
         glob->forwarders[i].zmq_pullressock = NULL;
+        glob->forwarders[i].ctx = (glob->ctx && glob->etsitls) ? glob->ctx : NULL;
+        //forwarder only needs CTX if ctx exists and is enabled 
 
         pthread_create(&(glob->forwarders[i].threadid), NULL,
                 start_forwarding_thread, (void *)&(glob->forwarders[i]));

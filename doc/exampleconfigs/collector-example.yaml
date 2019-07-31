@@ -4,6 +4,10 @@
 provisioneraddr: 10.0.0.1
 provisionerport: 9001
 
+tlscert: clientA-crt.pem
+tlskey: clientA-key.pem
+tlsca: ca-crt.pem
+
 # Unique ID string for my network (16 chars max)
 operatorid: WAND
 
@@ -37,15 +41,26 @@ logstatfrequency: 5
 #       intercept mirror, not the host that is doing the mirroring.
 # NOTE: ALU LI translation is a special case that won't apply to most users,
 #       but the configuration is included here for completeness
-alumirrors:
- - ip: 10.100.0.233
-   port: 8500
+#alumirrors:
+# - ip: 10.100.0.233
+#   port: 8500
+
+
+# List of Juniper mirrors that we are acting as a mediator for.
+# NOTE: This should be the IP and port of the *recipient* of the mirrored
+#       traffic, not the host that is doing the mirroring.
+# NOTE: JMirror translation is a special case that only applies to Juniper
+#       networks, but the configuration is included here for completeness
+jmirrors:
+ - ip: 192.168.200.77
+   port: 30030
+
 
 
 # List of interfaces to capture packets on
 inputs:
- - uri: eth1            # capture on interface eth1
+ - uri: lo            # capture on interface eth1
    threads: 2           # use 2 processing threads for this input
 
- - uri: dpdk:0000:42:00.0     # capture on DPDK interface with this PCI address
-   threads: 4                 # use 4 processing threads for this input
+# - uri: dpdk:0000:42:00.0     # capture on DPDK interface with this PCI address
+#   threads: 4                 # use 4 processing threads for this input

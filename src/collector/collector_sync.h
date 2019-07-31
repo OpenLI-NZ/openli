@@ -53,6 +53,7 @@ typedef struct colsync_data {
     internet_user_t *allusers;
     ipintercept_t *ipintercepts;
     user_intercept_list_t *userintercepts;
+    voipintercept_t *knownvoips;
 
     coreserver_t *coreservers;
 
@@ -72,12 +73,15 @@ typedef struct colsync_data {
 
     ip_to_session_t *activeips;
 
+    SSL *ssl;
+    SSL_CTX *ctx;
+
 } collector_sync_t;
 
 collector_sync_t *init_sync_data(collector_global_t *glob);
 void clean_sync_data(collector_sync_t *sync);
 void sync_disconnect_provisioner(collector_sync_t *sync);
-int sync_connect_provisioner(collector_sync_t *sync);
+int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx);
 void sync_thread_publish_reload(collector_sync_t *sync);
 int sync_thread_main(collector_sync_t *sync);
 

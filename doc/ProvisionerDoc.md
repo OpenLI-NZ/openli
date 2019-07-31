@@ -82,27 +82,32 @@ intercept must be configured with the following parameters:
   of the agencies specified elsewhere in this configuration file).
 * Access type -- the technology used to provide the target with Internet
   access (e.g. DSL, Fiber, Wireless, etc).
+* User -- the username assigned to that user within your AAA system. This is
+  required, even if the target is only using static IP addresses.
 
-An IP intercept must also include ONE of the following parameters, which is
+An IP intercept may also include ONE of the following parameters, which is
 used to identify the intercept target.
 
-* User -- the username assigned to that user within your AAA system.
 * ALU Shim ID -- if you are using OpenLI to convert Alcatel-Lucent intercepts
   to ETSI-compliant records, this is the value that will be in the intercept-id
   fields of the packets emitted by the mirror.
+* JMirror ID -- if you are using Juniper Packet Mirroring to feed intercepted
+  traffic into the OpenLI collector(s), any mirrored traffic with an intercept
+  ID that matches this value will be treated as belonging to this OpenLI IP
+  intercept.
 * Static IPs -- if the target has a static IP (range), you can use this
   parameter to tell OpenLI which IPs belong to the target.
 
-If you have using User as the target identification method, you will need to
-ensure that the OpenLI collectors receive a copy of all RADIUS traffic
-relating to the subscribers whose traffic will be passing that collector.
-This includes both Authentication AND Accounting messages, as well both the
-Requests and Responses for both message types.
+If you are relying solely on the User as the target identification method, you
+will need to ensure that the OpenLI collectors receive a copy of all RADIUS
+traffic relating to the subscribers whose IP traffic will be passing that
+collector. This includes both Authentication AND Accounting messages, as well
+both the Requests and Responses for both message types.
 
-If you are using the ALU Shim method, you will still need to provide a
-RADIUS feed to an OpenLI collector to generate the IRI records but it
-doesn't necessarily need to be the same collector instance as the one that
-is receiving the ALU intercept packets.
+If you are using the ALU Shim or JMirror methods, you will still need to provide
+a RADIUS feed to an OpenLI collector to generate the IRI records but the
+recipient collector doesn't necessarily need to be the same collector instance
+as the one that is receiving the mirrored packets.
 
 
 ### SIP Servers and RADIUS Servers
@@ -150,9 +155,33 @@ intercept, you'll need to do two things. First, you'll need to add the
 'alumirrors' option to your collector config. More information on this
 option is present in CollectorDoc.md.
 Second, configure an IP intercept within the provisioner config as described
-below, but make sure you include the 'alushimid' parameter and that the
+below, but make sure you include the 'vendmirrorid' parameter and that the
 value of that parameter matches the ID that was assigned to the intercept
 on the ALU device.
+
+### Juniper Packet Mirroring and OpenLI
+Many Juniper devices can be configured to mirror traffic for a particular
+subscriber to a mediation device. This can be triggered using either the
+DTCP protocol or a RADIUS COA. The mirrored traffic is wrapped in a custom
+header (containing an intercept ID and session ID) and is sent to the
+mediation device as a UDP packet.
+
+OpenLI collectors are able to fill the role of mediation device for a
+Juniper Packet Mirror, decapsulate the UDP and custom mirror headers and
+re-encode the mirrored traffic as an ETSI-compliant record before forwarding
+it on to the OpenLI mediator.
+
+To configure OpenLI to recognise these mirrored packets as belonging to an
+intercept, you'll need to do two things. First, you'll need to add the
+'jmirrors' option to your collector config so that the receiving collector
+knows which packets contain mirrored traffic that should be decapsulated. More
+information on this option is given in CollectorDoc.md.
+Second, you must configure an IP intercept within the provisioner config as
+described below, but make sure to include the 'vendmirrorid' parameter and that
+the value of that parameter matches the Intercept ID that is going to be
+assigned to the mirrored traffic when you trigger the mirror on your Juniper
+device.
+
 
 
 ### Pcap Output Mode
@@ -216,10 +245,6 @@ An IP intercept must contain the following key-value elements:
 * authcountrycode       -- the authorisation country code
 * deliverycountrycode   -- the delivery country code
 * user                  -- the AAA username for the target
-* alushimid             -- the intercept ID from the ALU intercept packets
-                           (only for re-encoding ALU intercepts as ETSI)
-* staticips             -- a list of IP ranges that are known to have been
-                           assigned to the target.
 * mediator              -- the ID of the mediator which will forward the
                            intercept
 * agencyid              -- the internal identifier of the agency that requested
@@ -231,6 +256,16 @@ Valid access types are:
   'dialup', 'adsl', 'vdsl', 'fiber', 'wireless', 'lan', 'satellite', 'wimax',
   'cable' and 'wireless-other'.
 
+Optional key-value elements for an IP intercept are:
+
+* vendmirrorid          -- if using a vendor mirroring platform to stream
+                           packets to the collector, this is the intercept ID
+                           that you have assigned to the packets on the
+                           mirroring platform for the target user.
+                           (only for re-encoding ALU or JMirror intercepts as
+                           ETSI)
+* staticips             -- a list of IP ranges that are known to have been
+                           assigned to the target.
 
 `staticips:` are expressed as a YAML list: one list item per IP range that
 is associated with the target. Each list item is a YAML map containing the

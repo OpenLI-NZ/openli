@@ -83,29 +83,8 @@ static inline int alushim_get_direction(alushimhdr_t *aluhdr) {
     return 2;
 }
 
-alushimhdr_t *get_alushim_header(libtrace_packet_t *packet, uint32_t *rem) {
-
-    uint8_t proto;
-    void *transport, *udppayload;
-
-    transport = trace_get_transport(packet, &proto, rem);
-    if (rem == 0 || transport == NULL) {
-        return NULL;
-    }
-    if (proto != TRACE_IPPROTO_UDP) {
-        return NULL;
-    }
-
-    udppayload = trace_get_payload_from_udp((libtrace_udp_t *)transport,
-            rem);
-    if (*rem < sizeof(alushimhdr_t)) {
-        return NULL;
-    }
-    return (alushimhdr_t *)(udppayload);
-}
-
 static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
-        aluintercept_t *alu, uint8_t dir, collector_identity_t *info,
+        vendmirror_intercept_t *alu, uint8_t dir, collector_identity_t *info,
         void *l3, uint32_t rem) {
 
     openli_export_recv_t *msg;
@@ -130,11 +109,10 @@ static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
 
 int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
-        coreserver_t *alusources, aluintercept_t *aluints) {
+        coreserver_t *alusources, vendmirror_intercept_t *aluints) {
 
-    coreserver_t *cs, *tmp;
-    aluintercept_t *alu;
-    int alumatched = 0;
+    coreserver_t *cs;
+    vendmirror_intercept_t *alu;
     uint16_t ethertype;
     alushimhdr_t *aluhdr = NULL;
     uint32_t rem = 0, shimintid;
@@ -143,55 +121,16 @@ int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
     struct timeval tv;
     int aludir;
 
-    if (pinfo->destport == 0) {
-        return 0;
-    }
-
-    /* Is this packet from any of our known ALU mirrors? */
-    HASH_ITER(hh, alusources, cs, tmp) {
-       	if (cs->info == NULL) {
-            cs->info = populate_addrinfo(cs->ipstr, cs->portstr, SOCK_DGRAM);
-            if (!cs->info) {
-                logger(LOG_INFO,
-                        "Removing %s:%s from %s ALU source list due to getaddrinfo error",
-                        cs->ipstr, cs->portstr,
-                        coreserver_type_to_string(cs->servertype));
-                HASH_DELETE(hh, alusources, cs);
-                continue;
-            }
-            if (cs->info->ai_family == AF_INET) {
-                cs->portswapped = ntohs(CS_TO_V4(cs)->sin_port);
-            } else if (cs->info->ai_family == AF_INET6) {
-                cs->portswapped = ntohs(CS_TO_V6(cs)->sin6_port);
-            }
-        }
-
-        if (cs->info->ai_family == AF_INET) {
-            struct sockaddr_in *sa;
-            sa = (struct sockaddr_in *)(&(pinfo->destip));
-            if (CORESERVER_MATCH_V4(cs, sa, pinfo->destport)) {
-                alumatched = 1;
-                break;
-            }
-        } else if (cs->info->ai_family == AF_INET6) {
-            struct sockaddr_in6 *sa6;
-            sa6 = (struct sockaddr_in6 *)(&(pinfo->destip));
-            if (CORESERVER_MATCH_V6(cs, sa6, pinfo->destport)) {
-                alumatched = 1;
-                break;
-            }
-        }
-    }
-
-    if (!alumatched) {
+    if ((cs = match_packet_to_coreserver(alusources, pinfo)) == NULL) {
         return 0;
     }
 
     /* Extract the intercept ID, direction and session ID */
-    aluhdr = get_alushim_header(packet, &rem);
-    if (!aluhdr) {
+    aluhdr = (alushimhdr_t *)get_udp_payload(packet, &rem);
+    if (!aluhdr || rem < sizeof(alushimhdr_t)) {
         return 0;
     }
+
     shimintid = alushim_get_interceptid(aluhdr);
 
     /* See if the intercept ID is in our set of intercepts */
@@ -225,8 +164,14 @@ int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
             case TRACE_ETHERTYPE_PPP_SES:
                 l3 = trace_get_payload_from_pppoe(l3, &ethertype, &rem);
                 continue;
-            default:
+            case TRACE_ETHERTYPE_ARP:
+                /* Probably shouldn't be intercepting ARP */
+                return 0;
+            case TRACE_ETHERTYPE_IP:
+            case TRACE_ETHERTYPE_IPV6:
                 break;
+            default:
+                return 0;
         }
         break;
     }

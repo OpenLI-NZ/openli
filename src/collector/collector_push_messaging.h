@@ -31,10 +31,10 @@
 #include "intercept.h"
 
 
-void handle_push_aluintercept(libtrace_thread_t *t, colthread_local_t *loc,
-        aluintercept_t *alu);
-void handle_halt_aluintercept(libtrace_thread_t *t, colthread_local_t *loc,
-        aluintercept_t *alu);
+void handle_push_mirror_intercept(libtrace_thread_t *t, colthread_local_t *loc,
+        vendmirror_intercept_t *vmi);
+void handle_halt_mirror_intercept(libtrace_thread_t *t, colthread_local_t *loc,
+        vendmirror_intercept_t *vmi);
 void handle_push_ipintercept(libtrace_thread_t *t, colthread_local_t *loc,
         ipsession_t *sess);
 void handle_push_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,

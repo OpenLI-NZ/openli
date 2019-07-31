@@ -80,6 +80,7 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
         newdest->mediatorid = msg->data.med.mediatorid;
         newdest->ipstr = msg->data.med.ipstr;
         newdest->portstr = msg->data.med.portstr;
+        newdest->ssl = NULL;
         init_export_buffer(&(newdest->buffer));
 
         JLI(jval, fwd->destinations_by_id, newdest->mediatorid);
@@ -157,6 +158,10 @@ static inline void disconnect_mediator(forwarding_thread_data_t *fwd,
         fwd->topoll[med->pollindex].fd = 0;
         fwd->topoll[med->pollindex].events = 0;
     }
+    if (med->ssl){
+        SSL_free(med->ssl);
+        med->ssl = NULL;
+    }
 
 }
 
@@ -179,6 +184,7 @@ static void remove_destination(forwarding_thread_data_t *fwd,
     if (med->portstr) {
         free(med->portstr);
     }
+
 
     free(med);
 }
@@ -436,7 +442,7 @@ static void purge_unconfirmed_mediators(forwarding_thread_data_t *fwd) {
 
 }
 
-static int connect_single_target(export_dest_t *dest) {
+static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx) {
 
     int sockfd;
 
@@ -446,6 +452,7 @@ static int connect_single_target(export_dest_t *dest) {
     }
 
     sockfd = connect_socket(dest->ipstr, dest->portstr, dest->failmsg, 0);
+    fd_set_nonblock(sockfd);
 
     if (sockfd == -1) {
         /* TODO should probably bail completely on this dest if this
@@ -456,6 +463,30 @@ static int connect_single_target(export_dest_t *dest) {
     if (sockfd == 0) {
         dest->failmsg = 1;
         return -1;
+    }
+
+    if (ctx != NULL){
+        
+        int errr;
+        dest->ssl = SSL_new(ctx);
+        SSL_set_fd(dest->ssl, sockfd);
+        
+        errr = SSL_connect(dest->ssl);
+         
+        if(errr <= 0){
+            errr = SSL_get_error(dest->ssl, errr);
+            if (errr != SSL_ERROR_WANT_WRITE && errr != SSL_ERROR_WANT_READ){ //handshake failed badly
+                close(sockfd);
+                SSL_free(dest->ssl);
+                dest->ssl = NULL;
+                logger(LOG_INFO, "OpenLI: SSL Handshake with mediator failed");
+                return -1;
+            }
+        }
+        logger(LOG_DEBUG, "OpenLI: SSL Handshake started");
+    }
+    else {
+        dest->ssl = NULL;
     }
 
     dest->failmsg = 0;
@@ -491,7 +522,7 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
             continue;
         }
 
-        dest->fd = connect_single_target(dest);
+        dest->fd = connect_single_target(dest, fwd->ctx);
         if (dest->fd == -1) {
             continue;
         }
@@ -521,6 +552,8 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
         } else {
             ind = dest->pollindex;
         }
+
+        dest->waitingforhandshake = (dest->ssl != NULL); //needs to await for handshake if SSL is enabled 
 
         fwd->forcesend[ind] = 0;
         fwd->topoll[ind].socket = NULL;
@@ -674,6 +707,33 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
 
         dest = (export_dest_t *)(*jval);
 
+        if (dest->waitingforhandshake){
+
+            int ret = SSL_connect(dest->ssl); //either keep running handshake or fail when error 
+
+            if (ret <= 0){
+                ret = SSL_get_error(dest->ssl, ret);
+                if(ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE){
+                    //keep trying
+                }
+                else {
+                    //fail out
+                    logger(LOG_INFO,
+                            "OpenLI: error in continuing SSL handshake with mediator: %s:%s",
+                            dest->ipstr, dest->portstr);
+                    dest->waitingforhandshake = 0;
+                    disconnect_mediator(fwd, dest);
+                    return -1;
+                }
+            }
+            else {
+                logger(LOG_DEBUG, "OpenLI: SSL Handshake accepted");
+                dump_cert_info(dest->ssl);
+                dest->waitingforhandshake = 0;
+            }
+            continue;
+        }
+
         if ((availsend = get_buffered_amount(&(dest->buffer))) == 0) {
             /* Nothing available to send */
             continue;
@@ -685,7 +745,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         }
 
         if (transmit_buffered_records(&(dest->buffer), dest->fd,
-                BUF_BATCH_SIZE) < 0) {
+                BUF_BATCH_SIZE, dest->ssl) < 0) {
             if (dest->logallowed) {
                 logger(LOG_INFO,
                     "OpenLI: error transmitting records to mediator %s:%s: %s",

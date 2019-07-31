@@ -50,6 +50,9 @@ typedef struct export_dest {
     export_buffer_t buffer;
     uint8_t logallowed;
 
+    SSL *ssl;
+    int waitingforhandshake;
+
     UT_hash_handle hh_fd;
     UT_hash_handle hh_medid;
 } export_dest_t;
@@ -173,6 +176,8 @@ typedef struct forwarding_thread_data {
 
     Pvoid_t intreorderer_cc;
     Pvoid_t intreorderer_iri;
+
+    SSL_CTX *ctx;
 
 } forwarding_thread_data_t;
 

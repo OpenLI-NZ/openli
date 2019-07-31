@@ -8,6 +8,10 @@ clientport: 9001
 mediationaddr: 10.0.0.1
 mediationport: 12001
 
+tlscert: server-crt.pem
+tlskey: server-key.pem
+tlsca: ca-crt.pem
+
 # List of SIP servers on our network (for managing VOIP intercepts)
 sipservers:
   - ip: 192.168.110.100
@@ -76,15 +80,35 @@ ipintercepts:
 # an ETSI-compliant one. All ALU intercept packets with an
 # Intercept ID of 522781 will be converted to have the ETSI LIID of NAPP9321HN
 # and the resulting records will be forwarded to the "Spooks" agency.
+# Note that we still require a 'user' parameter to be set -- this is to
+# ensure that any relevant AAA traffic for that user which is seen by the
+# collector is properly intercepted and exported via HI2.
 
  - liid: NAPP9321HN             # LIID, should be provided by requesting agency
    authcountrycode: NZ          # Authorisation country code
    deliverycountrycode: NZ      # Delivery country code
-   alushimid: 522781            # Intercept-ID number used by the ALU
+   user: "lexluthor"            # Username identifying the target in your AAA
+   vendmirrorid: 522781         # Intercept-ID number used by the ALU
                                 # intercept.
    mediator: 6001               # ID of the mediator to send intercept via
    agencyid: "Spooks"           # ID of agency to send intercept to
    accesstype: "ADSL"           # Access tech used by the target to access IP
+
+
+# This intercept is translating a Juniper Mirrored packet stream into an
+# ETSI-compliant intercept. All JMirrored packets with an Intercept ID of
+# 0x12121212 will be decapsulated and re-encoded to have the ETSI LIID of
+# GTNF4221AU and the resulting records will be passed on to mediator 6001
+# for forwarding to the "Police" agency.
+ - liid: GTNF4221AU             # LIID, should be provided by requesting agency
+   authcountrycode: NZ          # Authorisation country code
+   deliverycountrycode: NZ      # Delivery country code
+   user: "skeletor"             # Username identifying the target in your AAA
+   vendmirrorid: 0x12121212     # Intercept ID number used by the Juniper
+                                # mirroring.
+   mediator: 6001               # ID of the mediator to send intercept via
+   agencyid: "Police"           # ID of agency to send intercept to
+   accesstype: "LAN"            # Access tech used by the target to access IP
 
 
 # This intercept demonstrates how to configure an intercept for a target that
@@ -96,6 +120,10 @@ ipintercepts:
 # that any traffic intercepted from either range will be encoded as though
 # they are part of the same communication session; this is probably what you
 # want in most circumstances.
+#
+# Once again, a user name is required when specifying the intercept
+# even though this target will probably not appear in any AAA traffic seen
+# by the collector.
 #
 # If, during the course of an intercept, the IP ranges assigned to the
 # target are modified somehow, you should change the session ID and tell
@@ -111,6 +139,7 @@ ipintercepts:
    authcountrycode: NZ          # Authorisation country code
    deliverycountrycode: NZ      # Delivery country code
    mediator: 6001               # ID of the mediator to send intercept via
+   user: "edwardnigma"          # Username for the target
    agencyid: "Police"           # ID of agency to send intercept to
    accesstype: "LAN"            # Access tech used by the target to access IP
    staticips:

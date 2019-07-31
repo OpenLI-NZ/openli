@@ -36,6 +36,10 @@
 #include <libwandder.h>
 #include <zmq.h>
 
+#include <openssl/err.h>
+#include <openssl/pem.h>
+#include <openssl/ssl.h>
+
 #include "patricia.h"
 #include "coreserver.h"
 #include "intercept.h"
@@ -51,8 +55,8 @@ enum {
     OPENLI_PUSH_HALT_IPMMINTERCEPT = 4,
     OPENLI_PUSH_CORESERVER = 7,
     OPENLI_PUSH_REMOVE_CORESERVER = 8,
-    OPENLI_PUSH_ALUINTERCEPT = 9,
-    OPENLI_PUSH_HALT_ALUINTERCEPT = 10,
+    OPENLI_PUSH_VENDMIRROR_INTERCEPT = 9,
+    OPENLI_PUSH_HALT_VENDMIRROR_INTERCEPT = 10,
     OPENLI_PUSH_IPRANGE = 11,
     OPENLI_PUSH_REMOVE_IPRANGE = 12,
 };
@@ -86,7 +90,7 @@ typedef struct openli_ii_msg {
     union {
         ipsession_t *ipsess;
         rtpstreaminf_t *ipmmint;
-        aluintercept_t *aluint;
+        vendmirror_intercept_t *mirror;
         char *rtpstreamkey;
         coreserver_t *coreserver;
         staticipsession_t *iprange;
@@ -184,7 +188,7 @@ typedef struct colthread_local {
     ipv4_target_t *activeipv4intercepts;
 
     rtpstreaminf_t *activertpintercepts;
-    aluintercept_t *activealuintercepts;
+    vendmirror_intercept_t *activemirrorintercepts;
 
     staticipsession_t *activestaticintercepts;
 
@@ -246,6 +250,7 @@ typedef struct collector_global {
     libtrace_list_t *expired_inputs;
 
     coreserver_t *alumirrors;
+    coreserver_t *jmirrors;
 
     char *sipdebugfile;
 
@@ -256,15 +261,14 @@ typedef struct collector_global {
     collector_stats_t stats;
     pthread_mutex_t stats_mutex;
 
-} collector_global_t;
+    char *keyfile;
+    char *certfile;
+    char *cacertfile;
+    uint8_t etsitls;
 
-typedef struct packetinfo {
-    int family;
-    struct sockaddr_storage srcip;
-    struct sockaddr_storage destip;
-    uint16_t srcport;
-    uint16_t destport;
-} packet_info_t;
+    SSL_CTX *ctx;
+
+} collector_global_t;
 
 int register_sync_queues(sync_thread_global_t *glob,
         void *recvq, libtrace_message_queue_t *sendq,
