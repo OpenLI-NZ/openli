@@ -90,9 +90,9 @@ have created an `openli` user to run the provisioner component:
 You can enable internal TLS encryption by adding the following three options
 to your configuration file for each component:
 
- * tlscert: the location of the component's certificate file
- * tlskey:  the location of the component's key file
- * tlsca: the location of the certificate file for the CA that signed the
+ * `tlscert`: the location of the component's certificate file
+ * `tlskey`:  the location of the component's key file
+ * `tlsca`: the location of the certificate file for the CA that signed the
           certificates (i.e. openli-ca-crt.pem).
 
 If these config options are present and the certificates are successfully
