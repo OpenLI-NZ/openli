@@ -8,9 +8,15 @@ clientport: 9001
 mediationaddr: 10.0.0.1
 mediationport: 12001
 
-tlscert: server-crt.pem
-tlskey: server-key.pem
-tlsca: ca-crt.pem
+# If you wish to encrypt your internal OpenLI communications between
+# components, these three options must be point to valid certificates / keys
+# to be used for TLS encryption. Make sure that if you enable TLS on
+# one OpenLI component, that you also do so on all of the others.
+#
+# Leave these commented out for unencrypted inter-component communications.
+#tlscert: /etc/openli/openli-provisioner-crt.pem
+#tlskey: /etc/openli/openli-provisioner-key.pem
+#tlsca: /etc/openli/openli-ca-crt.pem
 
 # List of SIP servers on our network (for managing VOIP intercepts)
 sipservers:
