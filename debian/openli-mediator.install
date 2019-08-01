@@ -2,3 +2,4 @@ usr/bin/openlimediator
 etc/openli/mediator*
 etc/rsyslog.d/10-openli-mediator.conf
 usr/share/doc/openli/MediatorDoc.md
+usr/share/doc/openli/TLSDoc.md
