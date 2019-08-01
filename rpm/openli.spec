@@ -160,7 +160,6 @@ fi
 %config %{_sysconfdir}/rsyslog.d/10-openli-mediator.conf
 %config %{_sysconfdir}/openli/mediator-example.yaml
 %doc %{_docdir}/openli/MediatorDoc.md
-%doc %{_docdir}/openli/TLSDoc.md
 
 %files collector
 %{_bindir}/openlicollector
@@ -168,7 +167,6 @@ fi
 %config %{_sysconfdir}/rsyslog.d/10-openli-collector.conf
 %config %{_sysconfdir}/openli/collector-example.yaml
 %doc %{_docdir}/openli/CollectorDoc.md
-%doc %{_docdir}/openli/TLSDoc.md
 
 
 %changelog
