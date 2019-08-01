@@ -2,4 +2,3 @@ usr/bin/openlicollector
 etc/openli/collector*
 etc/rsyslog.d/10-openli-collector.conf
 usr/share/doc/openli/CollectorDoc.md
-usr/share/doc/openli/TLSDoc.md
