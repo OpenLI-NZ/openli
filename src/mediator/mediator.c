@@ -927,7 +927,7 @@ static int accept_collector(mediator_state_t *state) {
                 errr = SSL_get_error(col.ssl, errr);
 
                 if (errr != SSL_ERROR_WANT_WRITE &&
-                    errr != SSL_ERROR_WANT_READ && 
+                    errr != SSL_ERROR_WANT_READ &&
                     errr != SSL_ERROR_WANT_ACCEPT &&
                     errr != SSL_ERROR_WANT_CONNECT){ //handshake failed badly
                     ERR_print_errors_fp(stderr);
@@ -954,7 +954,7 @@ static int accept_collector(mediator_state_t *state) {
             col.ssl = NULL;
         }
 
-        
+
         col.colev->fd = newfd;
         col.colev->state = mstate;
         mstate->ssl = col.ssl;
@@ -1702,7 +1702,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
 
         /* If this was previously a "unknown" LIID, we can now remove
          * it from our missing LIID list -- if it gets withdrawn later,
-         * we will then alert again about it being missing. */ 
+         * we will then alert again about it being missing. */
         JSLG(jval, state->missing_liids, liid);
         if (jval != NULL) {
             JSLD(err, state->missing_liids, liid);
@@ -2034,7 +2034,7 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
 static int continue_handshake(mediator_state_t *state, med_epoll_ev_t *mev) {
     med_coll_state_t *cs = (med_coll_state_t *)(mev->state);
 
-    int ret = SSL_accept(cs->ssl); //either keep running handshake or return when error 
+    int ret = SSL_accept(cs->ssl); //either keep running handshake or return when error
 
     if (ret <= 0){
         ret = SSL_get_error(cs->ssl, ret);
@@ -2245,15 +2245,15 @@ static int init_provisioner_connection(mediator_state_t *state, int sock, SSL_CT
 
     if (ctx != NULL){
 
-        fd_set_block(sock); 
+        fd_set_block(sock);
         //mediator cannt do anything untill it has instructions fom provisioner so blocking is fine
 
         int errr;
         prov->ssl = SSL_new(ctx);
         SSL_set_fd(prov->ssl, sock);
-        
+
         errr = SSL_connect(prov->ssl);
-        fd_set_nonblock(sock); 
+        fd_set_nonblock(sock);
         if(errr <= 0){
             errr = SSL_get_error(prov->ssl, errr);
             if (errr != SSL_ERROR_WANT_WRITE && errr != SSL_ERROR_WANT_READ){ //handshake failed badly
