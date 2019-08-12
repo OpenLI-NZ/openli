@@ -138,12 +138,7 @@ typedef struct prov_state {
 
     int ignorertpcomfort;
     SSL_CTX *ctx;
-    /*
-    int activeupdatefd;
-    int updatetimerfd;
-
-    provision_update_t upstate;
-    */
+    int lastsslerror;
 
 } provision_state_t;
 
