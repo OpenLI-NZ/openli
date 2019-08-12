@@ -250,6 +250,7 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->badcollectors = NULL;
 
     state->ignorertpcomfort = 0;
+    state->lastsslerror = 0;
 
     if (parse_provisioning_config(configfile, state) == -1) {
         logger(LOG_INFO, "OpenLI provisioner: error while parsing provisioner config in %s", configfile);
@@ -283,13 +284,14 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
 
     if (state->certfile && state->keyfile && state->cacertfile){
         state->ctx = ssl_init(state->cacertfile, state->certfile, state->keyfile);
+        logger(LOG_INFO, "OpenLI: Using OpenSSL TLS connection.");
     } else {
         if (state->certfile || state->keyfile || state->cacertfile){
             logger(LOG_INFO, "OpenLI: SSL error, missing keyfile or certfile names.");
             return -1;
         }
         else{
-            logger(LOG_DEBUG, "OpenLI: Not using OpenSSL TLS connection.");
+            logger(LOG_INFO, "OpenLI: Not using OpenSSL TLS connection.");
             state->ctx = NULL;
         }
     }
@@ -565,6 +567,15 @@ static void clear_prov_state(provision_state_t *state) {
     }
     if (state->mediateport) {
         free(state->mediateport);
+    }
+    if (state->certfile) {
+        free(state->certfile);
+    }
+    if (state->keyfile) {
+        free(state->keyfile);
+    }
+    if (state->cacertfile) {
+        free(state->cacertfile);
     }
     if(state->ctx){
         SSL_CTX_free(state->ctx);
@@ -965,9 +976,16 @@ static int receive_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
 
 static int continue_handshake(provision_state_t *state, prov_epoll_ev_t *pev) {
     prov_sock_state_t *cs = (prov_sock_state_t *)(pev->state);
+    const char *label;
 
-    int ret = SSL_accept(cs->ssl); //either keep running handshake or return when error 
+    //either keep running handshake or return when error 
+    int ret = SSL_accept(cs->ssl);
 
+    if (pev->fdtype == PROV_EPOLL_MEDIATOR_HANDSHAKE) {
+        label = "mediator";
+    } else if (pev->fdtype == PROV_EPOLL_COLLECTOR_HANDSHAKE) {
+        label = "collector";
+    }
 
     if (ret <= 0){
         ret = SSL_get_error(cs->ssl, ret);
@@ -977,11 +995,16 @@ static int continue_handshake(provision_state_t *state, prov_epoll_ev_t *pev) {
         }
         else {
             //fail out
-            logger(LOG_INFO, "OpenLI: SSL Handshake failed");
+            if (ret != state->lastsslerror) {
+                logger(LOG_INFO, "OpenLI: Pending SSL Handshake for %s failed",
+                        label);
+            }
+            state->lastsslerror = ret;
             return -1;
         }
     }
-    logger(LOG_DEBUG, "OpenLI: SSL Handshake accepted");
+    logger(LOG_DEBUG, "OpenLI: Pending SSL Handshake for %s accepted", label);
+    state->lastsslerror = 0;
     dump_cert_info(cs->ssl);
 
     //handshake has finished
@@ -1151,21 +1174,27 @@ static int accept_collector(provision_state_t *state) {
                     errr != SSL_ERROR_WANT_READ && 
                     errr != SSL_ERROR_WANT_ACCEPT &&
                     errr != SSL_ERROR_WANT_CONNECT){ //handshake failed badly
-                    ERR_print_errors_fp(stderr);
                     close(newfd);
                     SSL_free(col->ssl);
                     free(col->commev);
                     free(col->authev);
                     free(col);
-                    logger(LOG_INFO, "OpenLI: SSL Handshake failed %d", errr);
+                    if (errr != state->lastsslerror) {
+                        logger(LOG_INFO, "OpenLI: SSL Handshake failed for collector %s", strbuf);
+                    }
+                    state->lastsslerror = errr;
                     return -1;
                 }
-                logger(LOG_DEBUG, "OpenLI: SSL Handshake started");
+
+                if (state->lastsslerror == 0) {
+                    logger(LOG_DEBUG, "OpenLI: SSL Handshake for collector %s started", strbuf);
+                }
                 col->commev->fdtype = PROV_EPOLL_COLLECTOR_HANDSHAKE;
             }
             else {
-                logger(LOG_DEBUG, "OpenLI: SSL Handshake finished");
+                logger(LOG_DEBUG, "OpenLI: SSL Handshake for collector %s completed successfully", strbuf);
                 col->commev->fdtype = PROV_EPOLL_COLLECTOR;
+                state->lastsslerror = 0;
             }
         } else {
             col->ssl = NULL;
@@ -1253,7 +1282,6 @@ static int accept_mediator(provision_state_t *state) {
             SSL_set_fd(med->ssl, newfd);
 
             int errr = SSL_accept(med->ssl);
-            
 
             if(errr <= 0){
                 errr = SSL_get_error(med->ssl, errr);
@@ -1262,30 +1290,33 @@ static int accept_mediator(provision_state_t *state) {
                     errr != SSL_ERROR_WANT_READ && 
                     errr != SSL_ERROR_WANT_ACCEPT &&
                     errr != SSL_ERROR_WANT_CONNECT){ //handshake failed badly
-                    ERR_print_errors_fp(stderr);
                     close(newfd);
                     SSL_free(med->ssl);
                     free(med->commev);
                     free(med);
-                    logger(LOG_INFO, "OpenLI: SSL Handshake failed %d", errr);
+                    if (errr != state->lastsslerror) {
+                        logger(LOG_INFO, "OpenLI: SSL Handshake for mediator %s failed", strbuf);
+                    }
+                    state->lastsslerror = errr;
                     return -1;
                 }
-                else{
-                    logger(LOG_DEBUG, "OpenLI: SSL Handshake started");
+                else {
+                    if (state->lastsslerror == 0) {
+                        logger(LOG_DEBUG, "OpenLI: SSL Handshake for mediator %s started", strbuf);
+                    }
                     med->commev->fdtype = PROV_EPOLL_MEDIATOR_HANDSHAKE;
                 }
             }
             else{
-                logger(LOG_DEBUG, "OpenLI: SSL Handshake finished");
+                logger(LOG_DEBUG, "OpenLI: SSL Handshake for mediator %s completed successfully", strbuf);
                 med->commev->fdtype = PROV_EPOLL_MEDIATOR;
+                state->lastsslerror = 0;
             }
-            
         } else {
             med->ssl = NULL;
             med->commev->fdtype = PROV_EPOLL_MEDIATOR;
         }
 
-        
         med->fd = newfd;
         med->details = NULL;     /* will receive this from mediator soon */
 
@@ -1299,7 +1330,7 @@ static int accept_mediator(provision_state_t *state) {
         /* Create outgoing and incoming buffer state */
 
         HASH_FIND(hh, state->badmediators, strbuf, strlen(strbuf), bad);
-        if (!bad) {
+        if (!bad && med->commev->fdtype == PROV_EPOLL_MEDIATOR) {
             logger(LOG_INFO,
                     "OpenLI: provisioner accepted connection from mediator %s on fd %d.",
                     strbuf, newfd);
@@ -1660,6 +1691,77 @@ static inline int reload_push_socket_config(provision_state_t *currstate,
     }
     return 0;
 
+}
+
+static inline int reload_tls_config(provision_state_t *currstate,
+        provision_state_t *newstate) {
+
+    int changestate = 0;
+
+    if (currstate->certfile == NULL && newstate->certfile != NULL) {
+        currstate->certfile = newstate->certfile;
+        newstate->certfile = NULL;
+        changestate = 1;
+    } else if (currstate->certfile != NULL && newstate->certfile == NULL) {
+        free(currstate->certfile);
+        currstate->certfile = NULL;
+        changestate = 1;
+    } else if (currstate->certfile && newstate->certfile) {
+        if (strcmp(currstate->certfile, newstate->certfile) != 0) {
+            free(currstate->certfile);
+            currstate->certfile = newstate->certfile;
+            newstate->certfile = NULL;
+            changestate = 1;
+        }
+    }
+
+    if (currstate->cacertfile == NULL && newstate->cacertfile != NULL) {
+        currstate->cacertfile = newstate->cacertfile;
+        newstate->cacertfile = NULL;
+        changestate = 1;
+    } else if (currstate->cacertfile != NULL && newstate->cacertfile == NULL) {
+        free(currstate->cacertfile);
+        currstate->cacertfile = NULL;
+        changestate = 1;
+    } else if (currstate->cacertfile && newstate->cacertfile) {
+        if (strcmp(currstate->cacertfile, newstate->cacertfile) != 0) {
+            free(currstate->cacertfile);
+            currstate->cacertfile = newstate->cacertfile;
+            newstate->cacertfile = NULL;
+            changestate = 1;
+        }
+    }
+
+    if (currstate->keyfile == NULL && newstate->keyfile != NULL) {
+        currstate->keyfile = newstate->keyfile;
+        newstate->keyfile = NULL;
+        changestate = 1;
+    } else if (currstate->keyfile != NULL && newstate->keyfile == NULL) {
+        free(currstate->keyfile);
+        currstate->keyfile = NULL;
+        changestate = 1;
+    } else if (currstate->keyfile && newstate->keyfile) {
+        if (strcmp(currstate->keyfile, newstate->keyfile) != 0) {
+            free(currstate->keyfile);
+            currstate->keyfile = newstate->keyfile;
+            newstate->keyfile = NULL;
+            changestate = 1;
+        }
+    }
+
+    if (!changestate) {
+        logger(LOG_INFO, "OpenLI: TLS configuration is unchanged.");
+        return 0;
+    }
+
+    logger(LOG_INFO, "OpenLI: TLS configuration has changed.");
+
+    if (currstate->ctx) {
+        SSL_CTX_free(currstate->ctx);
+    }
+    currstate->ctx = newstate->ctx;
+    newstate->ctx = NULL;
+    return 1;
 }
 
 static inline int reload_mediator_socket_config(provision_state_t *currstate,
@@ -2352,7 +2454,8 @@ static inline int reload_voipintercepts(provision_state_t *currstate,
             remove_liid_mapping(currstate, voipint->common.liid,
                     voipint->common.liid_len, droppedmeds);
 
-        } else if (voipint->options != newequiv->options) {
+        } else if (voipint->options != newequiv->options &&
+                HASH_CNT(hh, currstate->collectors) > 0) {
             logger(LOG_INFO,
                     "OpenLI provisioner: Options for VOIP intercept %s have changed",
                     voipint->common.liid);
@@ -2642,6 +2745,7 @@ static int reload_provisioner_config(provision_state_t *currstate) {
     int clientchanged = 0;
     int pushchanged = 0;
     int leachanged = 0;
+    int tlschanged = 0;
 
     if (init_prov_state(&newstate, currstate->conffile) == -1) {
         logger(LOG_INFO,
@@ -2665,6 +2769,22 @@ static int reload_provisioner_config(provision_state_t *currstate) {
     clientchanged = reload_collector_socket_config(currstate, &newstate);
     if (clientchanged == -1) {
         return -1;
+    }
+
+    tlschanged = reload_tls_config(currstate, &newstate);
+    if (tlschanged == -1) {
+        return -1;
+    }
+
+    if (tlschanged != 0) {
+        if (!mediatorchanged) {
+            free_all_mediators(&(currstate->mediators));
+            mediatorchanged = 1;
+        }
+        if (!clientchanged) {
+            stop_all_collectors(&(currstate->collectors));
+            clientchanged = 1;
+        }
     }
 
     if (mediatorchanged && !clientchanged) {
