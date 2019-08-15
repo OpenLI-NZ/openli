@@ -30,15 +30,15 @@
 #include <libtrace/linked_list.h>
 #include <uthash.h>
 #include "netcomms.h"
+#include "util.h"
+#include "openli_tls.h"
 
-#include <openssl/err.h>
-#include <openssl/pem.h>
-#include <openssl/ssl.h>
+typedef struct prov_client prov_client_t;
 
 typedef struct prov_epoll_ev {
     int fdtype;
     int fd;
-    void *state;
+    prov_client_t *client;
 } prov_epoll_ev_t;
 
 enum {
@@ -53,6 +53,7 @@ enum {
     PROV_EPOLL_SIGNAL,
     PROV_EPOLL_MEDIATOR_HANDSHAKE,
     PROV_EPOLL_COLLECTOR_HANDSHAKE,
+    PROV_EPOLL_FD_IDLETIMER,
 };
 
 typedef struct update_state {
@@ -81,23 +82,32 @@ typedef struct disabled_client {
     UT_hash_handle hh;
 } prov_disabled_client_t;
 
-/* Describes a collector that is being served by the provisioner */
-typedef struct prov_collector {
+typedef struct prov_sock_state prov_sock_state_t;
 
+struct prov_client {
     prov_epoll_ev_t *commev;
     prov_epoll_ev_t *authev;
+    prov_epoll_ev_t *idletimer;
+    prov_sock_state_t *state;
     SSL *ssl;
+    uint8_t lastsslerror;
+    uint8_t lastothererror;
+};
+
+/* Describes a collector that is being served by the provisioner */
+typedef struct prov_collector {
+    char *identifier;
+    prov_client_t client;
 
     UT_hash_handle hh;
 } prov_collector_t;
 
 typedef struct prov_mediator {
 
+    char *identifier;
+    prov_client_t client;
     int fd;     /* the socket for communication with the mediator */
     openli_mediator_t *details;
-    prov_epoll_ev_t *commev;
-    prov_epoll_ev_t *authev;
-    SSL *ssl;
 
     UT_hash_handle hh;
 } prov_mediator_t;
@@ -111,9 +121,6 @@ typedef struct prov_state {
     char *mediateport;
     char *pushaddr;
     char *pushport;
-    char *certfile;
-    char *keyfile;
-    char *cacertfile;
 
     int epoll_fd;
     prov_mediator_t *mediators;
@@ -137,24 +144,21 @@ typedef struct prov_state {
     liid_hash_t *liid_map;
 
     int ignorertpcomfort;
-    SSL_CTX *ctx;
+    openli_ssl_config_t sslconf;
     int lastsslerror;
 
 } provision_state_t;
 
-typedef struct prov_sock_state {
+struct prov_sock_state {
     char *ipaddr;
     uint8_t log_allowed;
     net_buffer_t *incoming;
     net_buffer_t *outgoing;
     uint8_t trusted;
     uint8_t halted;
-    int mainfd;
-    int authfd;
     int clientrole;
-    SSL *ssl;
-    
-} prov_sock_state_t;
+    prov_client_t *client; 
+};
 
 #endif
 

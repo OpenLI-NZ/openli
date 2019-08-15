@@ -946,19 +946,19 @@ static int global_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "tlscert") == 0) {
-        SET_CONFIG_STRING_OPTION(glob->certfile, value);
+        SET_CONFIG_STRING_OPTION(glob->sslconf.certfile, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "tlskey") == 0) {
-        SET_CONFIG_STRING_OPTION(glob->keyfile, value);
+        SET_CONFIG_STRING_OPTION(glob->sslconf.keyfile, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "tlsca") == 0) {
-        SET_CONFIG_STRING_OPTION(glob->cacertfile, value);
+        SET_CONFIG_STRING_OPTION(glob->sslconf.cacertfile, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -1037,19 +1037,19 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "tlscert") == 0) {
-        SET_CONFIG_STRING_OPTION(state->certfile, value);
+        SET_CONFIG_STRING_OPTION(state->sslconf.certfile, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "tlskey") == 0) {
-        SET_CONFIG_STRING_OPTION(state->keyfile, value);
+        SET_CONFIG_STRING_OPTION(state->sslconf.keyfile, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "tlsca") == 0) {
-        SET_CONFIG_STRING_OPTION(state->cacertfile, value);
+        SET_CONFIG_STRING_OPTION(state->sslconf.cacertfile, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -1157,19 +1157,19 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
    if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "tlscert") == 0) {
-        SET_CONFIG_STRING_OPTION(state->certfile, value);
+        SET_CONFIG_STRING_OPTION(state->sslconf.certfile, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "tlskey") == 0) {
-        SET_CONFIG_STRING_OPTION(state->keyfile, value);
+        SET_CONFIG_STRING_OPTION(state->sslconf.keyfile, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "tlsca") == 0) {
-        SET_CONFIG_STRING_OPTION(state->cacertfile, value);
+        SET_CONFIG_STRING_OPTION(state->sslconf.cacertfile, value);
     }
 
     return 0;
