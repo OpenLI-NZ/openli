@@ -39,11 +39,21 @@ repo_gpgcheck=1
 enabled=1
 EOF
 
+cat << EOF > /etc/yum.repos.d/bintray-wand-openli-rpm.repo
+#bintray-wand-openli-rpm - packages by wand from Bintray
+[bintray-wand-openli-rpm]
+name=bintray-wand-openli-rpm
+baseurl=https://dl.bintray.com/wand/OpenLI-rpm/${DISTRO}/\$releasever/\$basearch/
+gpgkey=https://bintray.com/user/downloadSubjectPublicKey?username=wand
+gpgcheck=0
+repo_gpgcheck=1
+enabled=1
+EOF
+
 yum install -y wget make gcc
 
 if [ "$1" = "centos7" ]; then
         yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm || true
-        yum install -y http://repo.okay.com.mx/centos/7/x86_64/release/okay-release-1-1.noarch.rpm || true
 fi
 
 if [ "$1" = "centos6" ]; then

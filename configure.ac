@@ -1,6 +1,6 @@
 # Super primitive configure script
 
-AC_INIT(openli, 1.0.2, salcock@waikato.ac.nz)
+AC_INIT(openli, 1.0.3, salcock@waikato.ac.nz)
 
 AM_INIT_AUTOMAKE([subdir-objects])
 AC_CONFIG_SRCDIR(src/collector/collector.c)
@@ -40,6 +40,10 @@ AC_CHECK_LIB([trace], [trace_increment_packet_refcount],,libtrace_found=0)
 AC_CHECK_LIB([yaml], [yaml_document_get_node],,libyaml_found=0)
 AC_CHECK_LIB([zmq], [zmq_poll],libzmq_found=1,libzmq_found=0)
 AC_CHECK_LIB([m], [pow],,libm_found=0)
+AC_CHECK_LIB([ssl], [SSL_library_init],libssl_found=1,)
+AC_CHECK_LIB([ssl], [OPENSSL_init_ssl],libssl_found=1,)
+AC_CHECK_LIB([crypto], [ERR_load_crypto_strings],libcrypto_found=1,)
+AC_CHECK_LIB([crypto], [EVP_CIPHER_CTX_new],libcrypto_found=1,)
 
 if test "x$libzmq_found" = "x1"; then
         COLLECTOR_LIBS="$COLLECTOR_LIBS -lzmq"
@@ -84,6 +88,22 @@ fi
 
 if test "$libtrace_found" = 0; then
         AC_MSG_ERROR(Required library libtrace 4.0.4 not found; use LDFLAGS to specify library location)
+fi
+
+if test "$libssl_found" != 1; then
+        AC_MSG_ERROR(Required library libssl not found; use LDFLAGS to specify library location)
+else
+        COLLECTOR_LIBS="$COLLECTOR_LIBS -lssl"
+        MEDIATOR_LIBS="$MEDIATOR_LIBS -lssl"
+        PROVISIONER_LIBS="$PROVISIONER_LIBS -lssl"
+fi
+
+if test "$libcrypto_found" != 1; then
+        AC_MSG_ERROR(Required library libcrypto not found; use LDFLAGS to specify library location)
+else
+        COLLECTOR_LIBS="$COLLECTOR_LIBS -lcrypto"
+        MEDIATOR_LIBS="$MEDIATOR_LIBS -lcrypto"
+        PROVISIONER_LIBS="$PROVISIONER_LIBS -lcrypto"
 fi
 
 if test "$libyaml_found" = 0; then

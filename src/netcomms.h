@@ -29,6 +29,9 @@
 
 #include "config.h"
 #include <inttypes.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <fcntl.h>
 
 #define NETBUF_ALLOC_SIZE (10 * 1024 * 1024)
 
@@ -97,6 +100,7 @@ typedef enum {
     OPENLI_PROTO_REMOVE_STATICIPS,
     OPENLI_PROTO_MODIFY_VOIPINTERCEPT,
     OPENLI_PROTO_CONFIG_RELOADED,
+    OPENLI_PROTO_MODIFY_IPINTERCEPT,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -106,6 +110,7 @@ typedef struct net_buffer {
     char *actptr;
     int alloced;
     net_buffer_type_t buftype;
+    SSL *ssl;
 } net_buffer_t;
 
 typedef enum {
@@ -126,7 +131,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_CORESERVER_TYPE,
     OPENLI_PROTO_FIELD_CORESERVER_IP,
     OPENLI_PROTO_FIELD_CORESERVER_PORT,
-    OPENLI_PROTO_FIELD_ALUSHIMID,
+    OPENLI_PROTO_FIELD_VENDMIRRORID,
     OPENLI_PROTO_FIELD_KAFREQ,
     OPENLI_PROTO_FIELD_KAWAIT,
     OPENLI_PROTO_FIELD_ACCESSTYPE,
@@ -137,8 +142,9 @@ typedef enum {
     OPENLI_PROTO_FIELD_INTOPTIONS,
 } openli_proto_fieldtype_t;
 
-
-net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd);
+net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl);
+int fd_set_nonblock(int fd);
+int fd_set_block(int fd);
 void destroy_net_buffer(net_buffer_t *nb);
 
 int construct_netcomm_protocol_header(ii_header_t *hdr, uint32_t contentlen,
@@ -189,6 +195,8 @@ int decode_mediator_withdraw(uint8_t *msgbody, uint16_t len,
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
         ipintercept_t *ipint);
 int decode_ipintercept_halt(uint8_t *msgbody, uint16_t len,
+        ipintercept_t *ipint);
+int decode_ipintercept_modify(uint8_t *msgbody, uint16_t len,
         ipintercept_t *ipint);
 int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
         voipintercept_t *vint);

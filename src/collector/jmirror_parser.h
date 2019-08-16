@@ -23,18 +23,19 @@
  *
  *
  */
+#ifndef OPENLI_JMIRROR_PARSER_H_
+#define OPENLI_JMIRROR_PARSER_H_
 
-#ifndef OPENLI_CONFIGPARSER_H_
-#define OPENLI_CONFIGPARSER_H_
+#include <libtrace.h>
+#include "collector.h"
+#include "coreserver.h"
+#include "intercept.h"
 
-#include "collector/collector.h"
-#include "provisioner/provisioner.h"
-#include "mediator/mediator.h"
-#include <yaml.h>
+int check_jmirror_intercept(collector_identity_t *info, colthread_local_t *loc,
+        libtrace_packet_t *packet, packet_info_t *pinfo,
+        coreserver_t *alusources, vendmirror_intercept_t *jmirrors);
 
-int parse_collector_config(char *configfile, collector_global_t *glob);
-int parse_provisioning_config(char *configfile, provision_state_t *state);
-int parse_mediator_config(char *configfile, mediator_state_t *state);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
+

@@ -54,7 +54,7 @@ static inline void dump_buffer_contents(uint8_t *buf, uint16_t len) {
 
 }
 
-net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd) {
+net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl) {
 
     net_buffer_t *nb = (net_buffer_t *)malloc(sizeof(net_buffer_t));
     nb->buf = (char *)malloc(NETBUF_ALLOC_SIZE);
@@ -63,6 +63,7 @@ net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd) {
     nb->alloced = NETBUF_ALLOC_SIZE;
     nb->fd = fd;
     nb->buftype = buftype;
+    nb->ssl = ssl;
     return nb;
 }
 
@@ -72,6 +73,18 @@ void destroy_net_buffer(net_buffer_t *nb) {
     }
     free(nb->buf);
     free(nb);
+}
+
+inline int fd_set_nonblock(int fd){
+    int flags = fcntl(fd, F_GETFL, 0);
+    flags |= O_NONBLOCK;
+    return fcntl(fd, F_SETFL, flags);
+}
+
+inline int fd_set_block(int fd){
+    int flags = fcntl(fd, F_GETFL, 0);
+    flags &= ~O_NONBLOCK;
+    return fcntl(fd, F_SETFL, flags);
 }
 
 static inline int extend_net_buffer(net_buffer_t *nb, int musthave) {
@@ -340,6 +353,83 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
     return (int)totallen;
 }
 
+#define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
+        (ipint->common.liid_len + ipint->common.authcc_len + \
+         ipint->username_len + sizeof(ipint->accesstype) + \
+         sizeof(ipint->vendmirrorid) + (5 * 4))
+
+#define IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
+        (ipint->common.liid_len + ipint->common.authcc_len + \
+         ipint->username_len + sizeof(ipint->accesstype) + \
+         (4 * 4))
+
+static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+    int ret;
+
+    /* Pre-compute our body length so we can write it in the header */
+    if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
+        totallen = VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint);
+    } else {
+        totallen = IPINTERCEPT_MODIFY_BODY_LEN(ipint);
+    }
+    if (totallen > 65535) {
+        logger(LOG_INFO,
+                "OpenLI: IP intercept modifcation is too long to fit in a single message (%d).",
+                totallen);
+        return -1;
+    }
+
+    /* Push on header */
+    populate_header(&hdr, OPENLI_PROTO_MODIFY_IPINTERCEPT, totallen, 0);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t))) == -1) {
+        goto pushmodfail;
+    }
+
+    /* Push on each intercept field */
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID, ipint->common.liid,
+                strlen(ipint->common.liid)) == -1) {
+        goto pushmodfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, ipint->common.authcc,
+            strlen(ipint->common.authcc)) == -1) {
+        goto pushmodfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_USERNAME, ipint->username,
+            ipint->username_len) == -1) {
+        goto pushmodfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_ACCESSTYPE,
+            (uint8_t *)(&(ipint->accesstype)),
+            sizeof(ipint->accesstype)) == -1) {
+        goto pushmodfail;
+    }
+
+    if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
+        if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_VENDMIRRORID,
+                (uint8_t *)(&ipint->vendmirrorid),
+                sizeof(ipint->vendmirrorid))) == -1) {
+            goto pushmodfail;
+        }
+    }
+
+    return (int)totallen;
+
+pushmodfail:
+    logger(LOG_INFO,
+            "OpenLI: unable to push IP intercept modify for %s to collector fd %d",
+            ipint->common.liid, nb->fd);
+    return -1;
+
+}
+
 #define VOIPINTERCEPT_MODIFY_BODY_LEN(vint) \
         (vint->common.liid_len + vint->common.authcc_len + \
          sizeof(vint->options) + (3 * 4))
@@ -354,7 +444,7 @@ static int _push_voipintercept_modify(net_buffer_t *nb, voipintercept_t *vint)
     totallen = VOIPINTERCEPT_MODIFY_BODY_LEN(vint);
     if (totallen > 65535) {
         logger(LOG_INFO,
-                "OpenLI: intercept modifcation is too long to fit in a single message (%d).",
+                "OpenLI: VOIP intercept modifcation is too long to fit in a single message (%d).",
                 totallen);
         return -1;
     }
@@ -399,6 +489,8 @@ int push_intercept_modify_onto_net_buffer(net_buffer_t *nb, void *data,
 
     if (modtype == OPENLI_PROTO_MODIFY_VOIPINTERCEPT) {
         return _push_voipintercept_modify(nb, (voipintercept_t *)data);
+    } else if (modtype == OPENLI_PROTO_MODIFY_IPINTERCEPT) {
+        return _push_ipintercept_modify(nb, (ipintercept_t *)data);
     }
 
     logger(LOG_INFO, "OpenLI: bad modtype in push_intercept_modify_onto_net_buffer: %d\n", modtype);
@@ -700,10 +792,10 @@ int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
          ipint->username_len + sizeof(ipint->common.destid) + \
          sizeof(ipint->accesstype) + (6 * 4))
 
-#define ALUSHIM_IPINTERCEPT_BODY_LEN(ipint) \
+#define VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
          ipint->common.delivcc_len + ipint->username_len + \
-         sizeof(ipint->alushimid) + sizeof(ipint->common.destid) + \
+         sizeof(ipint->vendmirrorid) + sizeof(ipint->common.destid) + \
          sizeof(ipint->accesstype) + (7 * 4))
 
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
@@ -715,8 +807,8 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     ipintercept_t *ipint = (ipintercept_t *)data;
     static_ipranges_t *ipr, *tmpr;
 
-    if (ipint->alushimid != OPENLI_ALUSHIM_NONE) {
-        totallen = ALUSHIM_IPINTERCEPT_BODY_LEN(ipint);
+    if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
+        totallen = VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint);
     } else {
         totallen = IPINTERCEPT_BODY_LEN(ipint);
     }
@@ -763,10 +855,10 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
         goto pushipintfail;
     }
 
-    if (ipint->alushimid != OPENLI_ALUSHIM_NONE) {
-        if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_ALUSHIMID,
-                (uint8_t *)(&ipint->alushimid),
-                sizeof(ipint->alushimid))) == -1) {
+    if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
+        if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_VENDMIRRORID,
+                (uint8_t *)(&ipint->vendmirrorid),
+                sizeof(ipint->vendmirrorid))) == -1) {
             goto pushipintfail;
         }
     }
@@ -940,7 +1032,13 @@ int transmit_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t *err) {
     }
 
     //dump_buffer_contents(nb->actptr, NETBUF_CONTENT_SIZE(nb));
-    ret = send(nb->fd, nb->actptr, NETBUF_CONTENT_SIZE(nb), MSG_DONTWAIT);
+
+    if (nb->ssl != NULL){
+        ret = SSL_write(nb->ssl, nb->actptr, NETBUF_CONTENT_SIZE(nb));
+    }
+    else {
+        ret = send(nb->fd, nb->actptr, NETBUF_CONTENT_SIZE(nb), MSG_DONTWAIT);
+    }
 
     if (ret == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -1115,6 +1213,11 @@ int decode_ipintercept_halt(uint8_t *msgbody, uint16_t len,
     return decode_ipintercept_start(msgbody, len, ipint);
 }
 
+int decode_ipintercept_modify(uint8_t *msgbody, uint16_t len,
+        ipintercept_t *ipint) {
+    return decode_ipintercept_start(msgbody, len, ipint);
+}
+
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
         ipintercept_t *ipint) {
 
@@ -1127,7 +1230,7 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->common.destid = 0;
     ipint->common.targetagency = NULL;
     ipint->awaitingconfirm = 0;
-    ipint->alushimid = OPENLI_ALUSHIM_NONE;
+    ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
     ipint->statics = NULL;
 
@@ -1147,8 +1250,8 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
 
         if (f == OPENLI_PROTO_FIELD_MEDIATORID) {
             ipint->common.destid = *((uint32_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_ALUSHIMID) {
-            ipint->alushimid = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_VENDMIRRORID) {
+            ipint->vendmirrorid = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_ACCESSTYPE) {
             ipint->accesstype = *((internet_access_method_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_LIID) {
@@ -1513,9 +1616,15 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
         }
     }
 
-    ret = recv(nb->fd, nb->appendptr, NETBUF_SPACE_REM(nb), MSG_DONTWAIT);
+    if (nb->ssl != NULL){
+        ret = SSL_read(nb->ssl, nb->appendptr, NETBUF_SPACE_REM(nb));
+    }
+    else {
+        ret = recv(nb->fd, nb->appendptr, NETBUF_SPACE_REM(nb), MSG_DONTWAIT);
+    }
+    
     if (ret <= 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             return OPENLI_PROTO_NO_MESSAGE;
         }
         if (ret == 0) {

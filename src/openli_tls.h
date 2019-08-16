@@ -24,17 +24,34 @@
  *
  */
 
-#ifndef OPENLI_CONFIGPARSER_H_
-#define OPENLI_CONFIGPARSER_H_
+#ifndef OPENLI_TLS_H_
+#define OPENLI_TLS_H_
 
-#include "collector/collector.h"
-#include "provisioner/provisioner.h"
-#include "mediator/mediator.h"
-#include <yaml.h>
+#include <openssl/err.h>
+#include <openssl/pem.h>
+#include <openssl/ssl.h>
 
-int parse_collector_config(char *configfile, collector_global_t *glob);
-int parse_provisioning_config(char *configfile, provision_state_t *state);
-int parse_mediator_config(char *configfile, mediator_state_t *state);
+typedef struct openli_ssl_config {
+    char *keyfile;
+    char *cacertfile;
+    char *certfile;
+    SSL_CTX *ctx;
+} openli_ssl_config_t;
+
+enum {
+    OPENLI_SSL_CONNECT_FAILED,
+    OPENLI_SSL_CONNECT_SUCCESS,
+    OPENLI_SSL_CONNECT_WAITING,
+    OPENLI_SSL_CONNECT_NOSSL
+};
+
+int create_ssl_context(openli_ssl_config_t *sslconf);
+void free_ssl_config(openli_ssl_config_t *sslconf);
+int reload_ssl_config(openli_ssl_config_t *current,
+        openli_ssl_config_t *newconf);
+int listen_ssl_socket(openli_ssl_config_t *sslconf, SSL **ssl, int newfd);
+
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
+

@@ -14,7 +14,8 @@ dist_openliconf_DATA=doc/exampleconfigs/collector-example.yaml \
 syslogdir=$(sysconfdir)/rsyslog.d/
 dist_syslog_DATA=rsyslog/*
 
-dist_doc_DATA=doc/CollectorDoc.md doc/MediatorDoc.md doc/ProvisionerDoc.md
+dist_doc_DATA=doc/CollectorDoc.md doc/MediatorDoc.md doc/ProvisionerDoc.md \
+        doc/TLSDoc.md
 
 mandir=$(pkgdatadir)/doc/man
 
