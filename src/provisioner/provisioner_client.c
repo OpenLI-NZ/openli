@@ -186,7 +186,6 @@ static void create_prov_socket_state(prov_client_t *client, int authtimerfd,
     cs->outgoing = create_net_buffer(NETBUF_SEND, fd, client->ssl);
     cs->trusted = 0;
     cs->halted = 0;
-	cs->client = client;
     cs->clientrole = fdtype;
 
     client->state = cs;
