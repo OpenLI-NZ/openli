@@ -208,8 +208,6 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->sslconf.cacertfile = NULL;
     state->sslconf.ctx = NULL;
 
-    state->badmediators = NULL;
-    state->badcollectors = NULL;
     state->ignorertpcomfort = 0;
 
     if (parse_provisioning_config(configfile, state) == -1) {
@@ -394,7 +392,6 @@ static void clear_prov_state(provision_state_t *state) {
     liid_hash_t *h, *tmp;
     prov_agency_t *h2, *tmp2;
     liagency_t *lea;
-    prov_disabled_client_t *dis, *dtmp;
 
     HASH_ITER(hh, state->liid_map, h, tmp) {
         HASH_DEL(state->liid_map, h);
@@ -421,22 +418,6 @@ static void clear_prov_state(provision_state_t *state) {
         }
         free(lea);
         free(h2);
-    }
-
-    HASH_ITER(hh, state->badmediators, dis, dtmp) {
-        HASH_DELETE(hh, state->badmediators, dis);
-        if (dis->ipaddr) {
-            free(dis->ipaddr);
-        }
-        free(dis);
-    }
-
-    HASH_ITER(hh, state->badcollectors, dis, dtmp) {
-        HASH_DELETE(hh, state->badcollectors, dis);
-        if (dis->ipaddr) {
-            free(dis->ipaddr);
-        }
-        free(dis);
     }
 
     free_all_ipintercepts(&(state->ipintercepts));
@@ -799,7 +780,7 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
         }
         logger(LOG_DEBUG, "OpenLI: collector %s on fd %d auth success.",
                 cs->ipaddr, pev->fd);
-        halt_provisioner_client_authtimer(state->epoll_fd, cs->client,
+        halt_provisioner_client_authtimer(state->epoll_fd, pev->client,
                 cs->ipaddr);
         return respond_collector_auth(state, pev, cs->outgoing);
    }
@@ -879,7 +860,7 @@ static int receive_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
         }
         logger(LOG_INFO, "OpenLI: mediator %s on fd %d auth success.",
                 cs->ipaddr, pev->fd);
-        halt_provisioner_client_authtimer(state->epoll_fd, cs->client,
+        halt_provisioner_client_authtimer(state->epoll_fd, pev->client,
                 cs->ipaddr);
         return respond_mediator_auth(state, pev, cs->outgoing);
     }
@@ -1198,7 +1179,7 @@ static void remove_idle_client(provision_state_t *state, prov_epoll_ev_t *pev) {
         prov_collector_t *col;
 
         HASH_FIND(hh, state->collectors, cs->ipaddr, strlen(cs->ipaddr), col);
-        destroy_provisioner_client(state->epoll_fd, cs->client, cs->ipaddr);
+        destroy_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);
         if (col) {
             logger(LOG_DEBUG, "OpenLI: removed collector %s from internal list",
                     col->identifier);
@@ -1210,7 +1191,7 @@ static void remove_idle_client(provision_state_t *state, prov_epoll_ev_t *pev) {
         prov_mediator_t *med;
 
         HASH_FIND(hh, state->mediators, cs->ipaddr, strlen(cs->ipaddr), med);
-        destroy_provisioner_client(state->epoll_fd, cs->client, cs->ipaddr);
+        destroy_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);
         if (med) {
             logger(LOG_DEBUG, "OpenLI: removed mediator %s from internal list",
                     med->identifier);
@@ -1240,7 +1221,7 @@ static void expire_unauthed(provision_state_t *state, prov_epoll_ev_t *pev) {
                     "OpenLI Provisioner: dropping unauthed mediator.");
         }
     }
-    disconnect_provisioner_client(state->epoll_fd, cs->client, cs->ipaddr);
+    disconnect_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);
 
 }
 
@@ -1293,7 +1274,7 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
                         cs->ipaddr);
                 }
                 cs->log_allowed = 0;
-                disconnect_provisioner_client(state->epoll_fd, cs->client,
+                disconnect_provisioner_client(state->epoll_fd, pev->client,
                         cs->ipaddr);
             }
             break;
@@ -1325,9 +1306,9 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
         case PROV_EPOLL_MEDIATOR_HANDSHAKE:
             //continue handshake process
             ret = continue_provisioner_client_handshake(state->epoll_fd,
-                    cs->client, cs);
+                    pev->client, cs);
             if (ret == -1) {
-                disconnect_provisioner_client(state->epoll_fd, cs->client,
+                disconnect_provisioner_client(state->epoll_fd, pev->client,
                         cs->ipaddr);
             }
             break;
@@ -1349,7 +1330,7 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
                         cs->ipaddr);
                 }
                 cs->log_allowed = 0;
-                disconnect_provisioner_client(state->epoll_fd, cs->client,
+                disconnect_provisioner_client(state->epoll_fd, pev->client,
                         cs->ipaddr);
             }
             break;
