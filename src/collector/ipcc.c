@@ -62,6 +62,43 @@ int encode_ipcc(wandder_encoder_t *encoder, wandder_encode_job_t *precomputed,
 
 }
 
+int encode_ipcc_ber(wandder_buf_t **preencoded_ber,
+        openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
+        openli_encoded_result_t *msg, wandder_etsili_top_t *top, wandder_encoder_t *encoder, wandder_encode_job_t *precomputed) {
+
+    uint32_t liidlen = precomputed[OPENLI_PREENCODE_LIID].vallen;
+    reset_wandder_encoder(encoder);
+
+    memset(msg, 0, sizeof(openli_encoded_result_t));
+
+    wandder_encode_etsi_ipcc_ber(   //new way
+        preencoded_ber,
+        (int64_t)job->cin,
+        (int64_t)seqno,
+        tv, 
+        job->ipcontent,
+        job->ipclen, 
+        job->dir, 
+        top);
+
+    msg->msgbody = malloc(sizeof(wandder_encoded_result_t));
+
+    msg->msgbody->encoder = NULL;
+    msg->msgbody->encoded = top->buf;
+    msg->msgbody->len = top->len;
+    msg->msgbody->alloced = top->len;
+    msg->msgbody->next = NULL;
+
+    msg->ipcontents = (uint8_t *)job->ipcontent;
+    msg->ipclen = job->ipclen;
+
+    msg->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    msg->header.bodylen = htons(msg->msgbody->len + liidlen + sizeof(uint16_t));
+    msg->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
+    msg->header.internalid = 0;
+
+    return 0;
+}
 /*
 static void dump_ptree(patricia_node_t *ptree) {
     char foo[128];

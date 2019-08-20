@@ -54,6 +54,8 @@ typedef struct intercept_state {
     cin_seqno_t *cinsequencing;
     UT_hash_handle hh;
     wandder_encode_job_t *preencoded;
+    wandder_buf_t **preencoded_ber;
+    wandder_etsili_top_t *top;
 } exporter_intercept_state_t;
 #endif
 

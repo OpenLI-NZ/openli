@@ -201,6 +201,8 @@ typedef struct encoder_state {
 
 typedef struct encoder_job {
     wandder_encode_job_t *preencoded;
+    wandder_buf_t **preencoded_ber;
+    wandder_etsili_top_t *top;
     uint32_t seqno;
     char *cinstr;
     openli_export_recv_t *origreq;

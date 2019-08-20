@@ -151,13 +151,18 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
         buf->buftail += (liidlen + 2);
     }
 
-    memcpy(buf->buftail, res->msgbody->encoded, enclen);
+    
 
-    buf->buftail += enclen;
-    if (res->ipclen > 0) {
-        memcpy(buf->buftail, res->ipcontents, res->ipclen);
-        buf->buftail += res->ipclen;
-    }
+    memcpy(buf->buftail, res->msgbody->encoded, res->msgbody->len);
+    buf->buftail += res->msgbody->len; //TODO, is this ok for BER !AND! DER?
+
+    // memcpy(buf->buftail, res->msgbody->encoded, enclen);
+
+    // buf->buftail += enclen;
+    // if (res->ipclen > 0) {
+    //     memcpy(buf->buftail, res->ipcontents, res->ipclen);
+    //     buf->buftail += res->ipclen;
+    // }
 
     return (buf->buftail - buf->bufhead);
 }
@@ -185,7 +190,7 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
             }
         }
         else {
-           ret = send(fd, bhead + offset, (int)sent, MSG_DONTWAIT);
+            ret = send(fd, bhead + offset, (int)sent, MSG_DONTWAIT);
         }
 
         if (ret < 0) {
