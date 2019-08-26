@@ -152,6 +152,7 @@ fi
 %config %{_sysconfdir}/rsyslog.d/10-openli-provisioner.conf
 %config %{_sysconfdir}/openli/provisioner-example.yaml
 %doc %{_docdir}/openli/ProvisionerDoc.md
+%doc %{_docdir}/openli/TLSDoc.md
 
 %files mediator
 %{_bindir}/openlimediator

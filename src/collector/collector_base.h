@@ -52,6 +52,7 @@ typedef struct export_dest {
 
     SSL *ssl;
     int waitingforhandshake;
+    int ssllasterror;
 
     UT_hash_handle hh_fd;
     UT_hash_handle hh_medid;
@@ -185,6 +186,7 @@ typedef struct forwarding_thread_data {
     Pvoid_t intreorderer_iri;
 
     SSL_CTX *ctx;
+    pthread_mutex_t sslmutex;
 
 } forwarding_thread_data_t;
 

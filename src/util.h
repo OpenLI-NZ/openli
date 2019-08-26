@@ -48,7 +48,6 @@ void *get_udp_payload(libtrace_packet_t *packet, uint32_t *rem);
 
 uint32_t hash_liid(char *liid);
 uint32_t hashlittle( const void *key, size_t length, uint32_t initval);
-
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 

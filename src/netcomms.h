@@ -142,9 +142,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_INTOPTIONS,
 } openli_proto_fieldtype_t;
 
-void dump_cert_info(SSL *ssl);
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl);
-SSL_CTX *ssl_init(const char *cacertfile, const char *certfile, const char *keyfile);
 int fd_set_nonblock(int fd);
 int fd_set_block(int fd);
 void destroy_net_buffer(net_buffer_t *nb);
