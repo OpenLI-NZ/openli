@@ -65,15 +65,13 @@ int encode_ipmmcc(wandder_encoder_t *encoder,
 int encode_ipmmcc_ber(wandder_buf_t **preencoded_ber,
         openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
         openli_encoded_result_t *msg, wandder_etsili_top_t *top,
-        wandder_encoder_t *encoder, wandder_encode_job_t *precomputed) {
+        wandder_encoder_t *encoder) {
 
-    uint32_t liidlen = precomputed[OPENLI_PREENCODE_LIID].vallen;
-    reset_wandder_encoder(encoder);
+    uint32_t liidlen = preencoded_ber[OPENLI_PREENCODE_LIID]->len -2;
+    //TODO this should not be hardcoded
+    //will break on strings longer than 128 chars
 
     memset(msg, 0, sizeof(openli_encoded_result_t));
-    // msg->msgbody = encode_etsi_ipmmcc(encoder, precomputed,
-    //         (int64_t)job->cin, (int64_t)seqno, tv, job->ipcontent,
-    //         job->ipclen, job->dir);
 
     wandder_encode_etsi_ipmmcc_ber(   //new way
         preencoded_ber,
@@ -105,6 +103,7 @@ int encode_ipmmcc_ber(wandder_buf_t **preencoded_ber,
     msg->header.bodylen = htons(msg->msgbody->len + liidlen + sizeof(uint16_t));
     msg->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
     msg->header.internalid = 0;
+
     return 0;
 }
 

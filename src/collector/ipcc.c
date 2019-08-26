@@ -64,10 +64,11 @@ int encode_ipcc(wandder_encoder_t *encoder, wandder_encode_job_t *precomputed,
 
 int encode_ipcc_ber(wandder_buf_t **preencoded_ber,
         openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
-        openli_encoded_result_t *msg, wandder_etsili_top_t *top, wandder_encoder_t *encoder, wandder_encode_job_t *precomputed) {
+        openli_encoded_result_t *msg, wandder_etsili_top_t *top, wandder_encoder_t *encoder) {
 
-    uint32_t liidlen = precomputed[OPENLI_PREENCODE_LIID].vallen;
-    reset_wandder_encoder(encoder);
+    uint32_t liidlen = preencoded_ber[OPENLI_PREENCODE_LIID]->len - 2;
+    //TODO this should not be hardcoded
+    //will break on strings longer than 128 chars
 
     memset(msg, 0, sizeof(openli_encoded_result_t));
 
@@ -86,11 +87,11 @@ int encode_ipcc_ber(wandder_buf_t **preencoded_ber,
     msg->msgbody->encoder = NULL;
     msg->msgbody->encoded = top->buf;
     msg->msgbody->len = top->len;
-    msg->msgbody->alloced = top->len;
+    msg->msgbody->alloced = top->alloc_len;
     msg->msgbody->next = NULL;
 
-    msg->ipcontents = (uint8_t *)job->ipcontent;
-    msg->ipclen = job->ipclen;
+    msg->ipcontents = NULL;
+    msg->ipclen = 0;
 
     msg->header.magic = htonl(OPENLI_PROTO_MAGIC);
     msg->header.bodylen = htons(msg->msgbody->len + liidlen + sizeof(uint16_t));

@@ -151,18 +151,21 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
         buf->buftail += (liidlen + 2);
     }
 
-    
+    if (res->isDer){
+        memcpy(buf->buftail, res->msgbody->encoded, enclen);
 
-    memcpy(buf->buftail, res->msgbody->encoded, res->msgbody->len);
-    buf->buftail += res->msgbody->len; //TODO, is this ok for BER !AND! DER?
-
-    // memcpy(buf->buftail, res->msgbody->encoded, enclen);
-
-    // buf->buftail += enclen;
-    // if (res->ipclen > 0) {
-    //     memcpy(buf->buftail, res->ipcontents, res->ipclen);
-    //     buf->buftail += res->ipclen;
-    // }
+        buf->buftail += enclen;
+        if (res->ipclen > 0) {
+            memcpy(buf->buftail, res->ipcontents, res->ipclen);
+            buf->buftail += res->ipclen;
+        }
+    }
+    else {
+        memcpy(buf->buftail, res->msgbody->encoded, res->msgbody->len);
+        buf->buftail += res->msgbody->len;
+        //BER has the payload already encoded into the result, DER leaves the payload out untill now
+        //BER has a set of ending octets (number varies by msg type)
+    }
 
     return (buf->buftail - buf->bufhead);
 }

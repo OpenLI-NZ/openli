@@ -42,6 +42,7 @@ typedef struct encoder_result {
     char *liid;
     char *cinstr;
     uint8_t encodedby;
+    uint8_t isDer;
     openli_export_recv_t *origreq;
     wandder_etsili_top_t *top;
 } PACKED openli_encoded_result_t;

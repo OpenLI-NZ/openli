@@ -1200,6 +1200,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->keyfile = NULL;
     glob->cacertfile = NULL;
     glob->etsitls = 1;
+    glob->encoding_method = 0;
 
     memset(&(glob->stats), 0, sizeof(glob->stats));
     glob->stat_frequency = 0;
@@ -1215,6 +1216,9 @@ static collector_global_t *parse_global_config(char *configfile) {
         clear_global_config(glob);
         return NULL;
     }
+
+    logger(LOG_DEBUG, "OpenLI: Encoding Method: %s",
+        glob->encoding_method ? "BER" : "DER");
 
     logger(LOG_DEBUG, "OpenLI: ETSI TLS encryption %s",
         glob->etsitls ? "enabled" : "disabled");
@@ -1554,6 +1558,7 @@ int main(int argc, char *argv[]) {
         glob->seqtrackers[i].zmq_recvpublished = NULL;
         glob->seqtrackers[i].intercepts = NULL;
         glob->seqtrackers[i].colident = &(glob->sharedinfo);
+        glob->seqtrackers[i].encoding_method = glob->encoding_method;
 
         pthread_create(&(glob->seqtrackers[i].threadid), NULL,
                 start_seqtracker_thread, (void *)&(glob->seqtrackers[i]));

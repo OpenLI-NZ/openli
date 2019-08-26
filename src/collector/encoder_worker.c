@@ -185,7 +185,7 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
         openli_encoded_result_t *res) {
 
     int ret = -1;
-    uint8_t isDer = 0;
+    uint8_t isDer = (job->preencoded_ber == NULL); //if BER encoding is not defined then use DER encoding
 
     switch(job->origreq->type) {
         case OPENLI_EXPORT_IPCC:
@@ -196,11 +196,11 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             }else {                
                 ret = encode_ipcc_ber(job->preencoded_ber,
                         &(job->origreq->data.ipcc), job->seqno,
-                        &(job->origreq->ts), res, job->top, enc->encoder, job->preencoded);
+                        &(job->origreq->ts), res, job->top, enc->encoder);
             }
             break;
         case OPENLI_EXPORT_IPIRI:
-            if(isDer){//TODO
+            if(isDer){
                 ret = encode_ipiri(enc->encoder, enc->freegenerics,
                         job->preencoded,
                         &(job->origreq->data.ipiri), job->seqno, res);
@@ -209,7 +209,7 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
                 //TODO
             }
             break;
-        case OPENLI_EXPORT_IPMMIRI:            
+        case OPENLI_EXPORT_IPMMIRI:
             if (isDer){
                 ret = encode_ipmmiri(enc->encoder, job->preencoded,
                     &(job->origreq->data.ipmmiri), job->seqno, res,
@@ -217,7 +217,7 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             }else {                
                 ret = encode_ipmmiri_ber(job->preencoded_ber,
                         &(job->origreq->data.ipmmiri), job->seqno,
-                        &(job->origreq->ts), res, job->top, enc->encoder, job->preencoded);
+                        &(job->origreq->ts), res, job->top, enc->encoder);
             }
             break;
         case OPENLI_EXPORT_IPMMCC:
@@ -228,11 +228,12 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             } else {
                 ret = encode_ipmmcc_ber(job->preencoded_ber,
                         &(job->origreq->data.ipcc), job->seqno,
-                        &(job->origreq->ts), res, job->top, enc->encoder, job->preencoded);
+                        &(job->origreq->ts), res, job->top, enc->encoder);
             }
             break;
     }
 
+    res->isDer = isDer;
 
     return ret;
 }

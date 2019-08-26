@@ -120,8 +120,14 @@ typedef struct old_intercept removed_intercept_t;
 
 struct old_intercept {
     void *preencoded;
+    void *ber_top;
     uint32_t haltedat;
     removed_intercept_t *next;
+};
+
+enum {
+    OPENLI_ENCODING_DER,
+    OPENLI_ENCODING_BER
 };
 
 typedef struct seqtracker_thread_data {
@@ -135,6 +141,7 @@ typedef struct seqtracker_thread_data {
 
     exporter_intercept_state_t *intercepts;
     removed_intercept_t *removedints;
+    uint8_t encoding_method;
 
 } seqtracker_thread_data_t;
 

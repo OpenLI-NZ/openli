@@ -35,7 +35,7 @@ int encode_ipcc(wandder_encoder_t *encoder, wandder_encode_job_t *precomputed,
 int encode_ipcc_ber(wandder_buf_t **preencoded_ber,
         openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
         openli_encoded_result_t *msg, wandder_etsili_top_t *top, 
-        wandder_encoder_t *encoder, wandder_encode_job_t *precomputed);
+        wandder_encoder_t *encoder);
 int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip_t *ip, uint32_t rem, colthread_local_t *loc);
 int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,

@@ -267,6 +267,7 @@ typedef struct collector_global {
     uint8_t etsitls;
 
     SSL_CTX *ctx;
+    uint8_t encoding_method;
 
 } collector_global_t;
 
