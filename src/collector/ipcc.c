@@ -66,9 +66,7 @@ int encode_ipcc_ber(wandder_buf_t **preencoded_ber,
         openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
         openli_encoded_result_t *msg, wandder_etsili_top_t *top, wandder_encoder_t *encoder) {
 
-    uint32_t liidlen = preencoded_ber[OPENLI_PREENCODE_LIID]->len - 2;
-    //TODO this should not be hardcoded
-    //will break on strings longer than 128 chars
+    uint32_t liidlen = (uint32_t)((size_t)preencoded_ber[WANDDER_PREENCODE_LIID_LEN]);
 
     memset(msg, 0, sizeof(openli_encoded_result_t));
 

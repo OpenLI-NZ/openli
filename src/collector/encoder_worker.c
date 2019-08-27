@@ -207,6 +207,8 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             }
             else{
                 //TODO
+                logger(LOG_INFO, "Openli: BER encoding for IPIRI is not yet implimented.");
+                //complain loudly that this dont work yet
             }
             break;
         case OPENLI_EXPORT_IPMMIRI:
@@ -233,7 +235,7 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             break;
     }
 
-    res->isDer = isDer;
+    res->isDer = isDer; //encodeing typeto be stored in result
 
     return ret;
 }

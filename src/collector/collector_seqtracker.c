@@ -327,7 +327,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 	job.preencoded = intstate->preencoded;
     job.preencoded_ber = intstate->preencoded_ber;
 
-    //create new copy of top so differnt encoding processes dont share 
+    //create new copy of top so differnt encoding jobs dont share 
     //workspaces, (encoding is filling in the missing parts of top)
     if(intstate->top){
         wandder_etsili_top_t* top = malloc(sizeof *top);
@@ -523,7 +523,7 @@ void clean_seqtracker(seqtracker_thread_data_t *seqdata) {
 	while (seqdata->removedints) {
 		rem = seqdata->removedints;
 		
-        if(rem->ber_top){
+        if(rem->ber_top){ //if top exists its the BER encoding that needs to be free'd
             wandder_etsili_clear_preencoded_fields_ber((wandder_buf_t**) rem->preencoded);
             wandder_free_top(rem->ber_top);
         }
