@@ -666,7 +666,7 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
 
     copy->data.ipmmiri.content = malloc(copy->data.ipmmiri.contentlen);
     memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,
-            copy->data.ipmmiri.contentlen);
+            irimsg->data.ipmmiri.contentlen);
 
     pthread_mutex_lock(sync->glob->stats_mutex);
     sync->glob->stats->ipmmiri_created;
@@ -959,6 +959,9 @@ static int update_sip_state(collector_sync_voip_t *sync,
         iserr = 1;
         goto sipgiveup;
     }
+
+    memset(sdpo.address, 0, sizeof(sdpo.address));
+    memset(sdpo.username, 0, sizeof(sdpo.username));
 
     if (sessid != NULL) {
         errno = 0;
