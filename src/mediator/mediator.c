@@ -1076,7 +1076,7 @@ static void *start_connect_thread(void *params) {
 
     mediator_state_t *state = (mediator_state_t *)params;
 
-    while (1) {
+    while (mediator_halt == 0) {
         pthread_mutex_lock(&(state->agency_mutex));
 
         if (libtrace_list_get_size(state->agencies) == 0) {
@@ -2040,6 +2040,7 @@ static int continue_handshake(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     //handshake has finished
     mev->fdtype = MED_EPOLL_COLLECTOR;
+    return 1;
 }
 
 static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
@@ -2127,12 +2128,11 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
                 state->provisioner.disable_log = 1;
             }
             break;
-        case MED_EPOLL_COLLECTOR_HANDSHAKE:{
-                //continue handshake process
-                ret = continue_handshake(state, mev);
-                if (ret == -1) {
-                    drop_collector(state, mev, 1);
-                }
+        case MED_EPOLL_COLLECTOR_HANDSHAKE:
+            //continue handshake process
+            ret = continue_handshake(state, mev);
+            if (ret == -1) {
+                drop_collector(state, mev, 1);
             }
             break;
         case MED_EPOLL_COLLECTOR:
