@@ -236,7 +236,7 @@ static void remove_reorderers(forwarding_thread_data_t *fwd, char *liid,
     while (jval != NULL) {
         reord = (int_reorderer_t *)(*jval);
 
-        if (liid == NULL || strcmp(reord->liid, liid) != 0) {
+        if (liid != NULL && strcmp(reord->liid, liid) != 0) {
             JSLN(jval, *reorderer_array, index);
             continue;
         }
@@ -280,6 +280,11 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
     if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
         remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_cc));
         remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_iri));
+
+        free(msg->data.cept.liid);
+        free(msg->data.cept.authcc);
+        free(msg->data.cept.delivcc);
+        free(msg);
     } else if (msg->type == OPENLI_EXPORT_MEDIATOR) {
         return add_new_destination(fwd, msg);
     } else if (msg->type == OPENLI_EXPORT_DROP_SINGLE_MEDIATOR) {
@@ -359,6 +364,7 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
         return 0;
     }
+
 
     if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
         logger(LOG_INFO,
@@ -838,6 +844,8 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
         x = forwarder_main_loop(fwd);
     } while (x == 1);
 
+    remove_reorderers(fwd, NULL, &(fwd->intreorderer_cc));
+    remove_reorderers(fwd, NULL, &(fwd->intreorderer_iri));
     free(fwd->topoll);
     free(fwd->forcesend);
     close(fwd->conntimerfd);
