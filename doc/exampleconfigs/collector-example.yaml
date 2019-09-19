@@ -4,10 +4,6 @@
 provisioneraddr: 10.0.0.1
 provisionerport: 9001
 
-tlscert: clientA-crt.pem
-tlskey: clientA-key.pem
-tlsca: ca-crt.pem
-
 # Unique ID string for my network (16 chars max)
 operatorid: WAND
 
@@ -45,6 +41,22 @@ logstatfrequency: 5
 # - ip: 10.100.0.233
 #   port: 8500
 
+
+# If you wish to encrypt your internal OpenLI communications between
+# components, these three options must be point to valid certificates / keys
+# to be used for TLS encryption. Make sure that if you enable TLS on
+# one OpenLI component, that you also do so on all of the others.
+#
+# Leave these commented out for unencrypted inter-component communications.
+#tlscert: /etc/openli/openli-collector-crt.pem
+#tlskey: /etc/openli/openli-collector-key.pem
+#tlsca: /etc/openli/openli-ca-crt.pem
+
+# If set to 'no', intercepted packets streamed by this collector to the
+# mediator will not be encrypted -- this may be desirable for performance
+# reasons. Make sure you set the corresponding option on the mediator as
+# well.
+#etsitls: yes
 
 # List of Juniper mirrors that we are acting as a mediator for.
 # NOTE: This should be the IP and port of the *recipient* of the mirrored

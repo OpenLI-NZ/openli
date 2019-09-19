@@ -10,10 +10,6 @@ mediatorid: 6001
 provisioneraddr: 10.0.0.1
 provisionerport: 12001
 
-tlscert: clientB-crt.pem
-tlskey: clientB-key.pem
-tlsca: ca-crt.pem
-
 # Listen for collectors on 10.200.5.100:8888
 listenaddr: 10.200.5.100
 listenport: 8888
@@ -29,3 +25,20 @@ pcapdirectory: /traces/openlipcaps/
 # OpenLI at 10:58am, the first rotation will occur at 11:00am, followed by
 # one at 11:30am etc.
 pcaprotatefreq: 30
+
+# If you wish to encrypt your internal OpenLI communications between
+# components, these three options must be point to valid certificates / keys
+# to be used for TLS encryption. Make sure that if you enable TLS on
+# one OpenLI component, that you also do so on all of the others.
+#
+# Leave these commented out for unencrypted inter-component communications.
+#tlscert: /etc/openli/openli-mediator-crt.pem
+#tlskey: /etc/openli/openli-mediator-key.pem
+#tlsca: /etc/openli/openli-ca-crt.pem
+
+# If set to 'no', intercepted packets streamed to this mediator by the
+# collectors will be treated as unencrypted -- this may be desirable for
+# performance reasons. Make sure you set the corresponding option on the
+# collectors as well.
+#etsitls: yes
+

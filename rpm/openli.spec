@@ -152,6 +152,7 @@ fi
 %config %{_sysconfdir}/rsyslog.d/10-openli-provisioner.conf
 %config %{_sysconfdir}/openli/provisioner-example.yaml
 %doc %{_docdir}/openli/ProvisionerDoc.md
+%doc %{_docdir}/openli/TLSDoc.md
 
 %files mediator
 %{_bindir}/openlimediator
@@ -169,7 +170,7 @@ fi
 
 
 %changelog
-* Tue Jun 25 2019 Shane Alcock <salcock@waikato.ac.nz> - 1.0.3-1
+* Fri Aug 16 2019 Shane Alcock <salcock@waikato.ac.nz> - 1.0.3-1
 - Updated for 1.0.3 release
 
 * Tue Jun 18 2019 Shane Alcock <salcock@waikato.ac.nz> - 1.0.2-2

@@ -40,6 +40,7 @@
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
 
+#include "util.h"
 #include "patricia.h"
 #include "coreserver.h"
 #include "intercept.h"
@@ -47,6 +48,7 @@
 #include "reassembler.h"
 #include "collector_publish.h"
 #include "collector_base.h"
+#include "openli_tls.h"
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
@@ -261,12 +263,8 @@ typedef struct collector_global {
     collector_stats_t stats;
     pthread_mutex_t stats_mutex;
 
-    char *keyfile;
-    char *certfile;
-    char *cacertfile;
     uint8_t etsitls;
-
-    SSL_CTX *ctx;
+    openli_ssl_config_t sslconf;
 
 } collector_global_t;
 
