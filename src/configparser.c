@@ -966,6 +966,12 @@ static int global_parser(void *arg, yaml_document_t *doc,
             strcmp((char *)key->data.scalar.value, "etsitls") == 0) {
             glob->etsitls = check_onoff(value->data.scalar.value);
     }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "encoding") == 0) {
+            glob->encoding_method = strcmp(value->data.scalar.value, "BER") == 0;
+    }
     
     return 0;
 }
