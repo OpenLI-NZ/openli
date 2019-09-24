@@ -69,7 +69,55 @@ int encode_ipmmiri(wandder_encoder_t *encoder,
     return 0;
 }
 
+int encode_ipmmiri_ber(wandder_buf_t **preencoded_ber,
+        openli_ipmmiri_job_t *job, uint32_t seqno, struct timeval *tv,
+        openli_encoded_result_t *res, wandder_etsili_top_t *top, 
+        wandder_encoder_t *encoder) {
 
+    uint32_t liidlen = (uint32_t)((size_t)preencoded_ber[WANDDER_PREENCODE_LIID_LEN]);
+
+    memset(res, 0, sizeof(openli_encoded_result_t));
+
+    if (job->ipmmiri_style == OPENLI_IPMMIRI_SIP) {
+        if (job->content == NULL) {
+            logger(LOG_INFO, "OpenLI: trying to create SIP IRI but packet has no SIP payload?");
+            return -1;
+        }
+
+        wandder_encode_etsi_ipmmiri_ber(
+            preencoded_ber,     //preencode
+            (int64_t)job->cin,  //cin
+            (int64_t)seqno,     //seqno
+            tv,                 //tv
+            job->content,       //content
+            job->contentlen,    //contentlen
+            job->iritype,       //iritype
+            job->ipsrc,
+            job->ipdest,
+            job->ipfamily,
+            top);               //top
+
+        res->msgbody = malloc(sizeof(wandder_encoded_result_t));
+
+        res->msgbody->encoder = NULL;
+        res->msgbody->encoded = top->buf;
+        res->msgbody->len = top->len;
+        res->msgbody->alloced = top->alloc_len;
+        res->msgbody->next = NULL;
+
+        res->ipcontents = NULL;
+        res->ipclen = 0;
+
+    }
+    /* TODO style == H323 */
+
+    res->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    res->header.bodylen = htons(res->msgbody->len + liidlen + sizeof(uint16_t));
+    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
+    res->header.internalid = 0;
+
+    return 0;
+}
 
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

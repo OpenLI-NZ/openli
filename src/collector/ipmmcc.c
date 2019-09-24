@@ -62,6 +62,49 @@ int encode_ipmmcc(wandder_encoder_t *encoder,
     return 0;
 }
 
+int encode_ipmmcc_ber(wandder_buf_t **preencoded_ber,
+        openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
+        openli_encoded_result_t *msg, wandder_etsili_top_t *top,
+        wandder_encoder_t *encoder) {
+
+    uint32_t liidlen = (uint32_t)((size_t)preencoded_ber[WANDDER_PREENCODE_LIID_LEN]);
+
+    memset(msg, 0, sizeof(openli_encoded_result_t));
+
+    wandder_encode_etsi_ipmmcc_ber(   //new way
+        preencoded_ber,
+        (int64_t)job->cin,
+        (int64_t)seqno,
+        tv, 
+        job->ipcontent,
+        job->ipclen, 
+        job->dir, 
+        top);
+
+    msg->msgbody = malloc(sizeof(wandder_encoded_result_t));
+
+    msg->msgbody->encoder = NULL;
+    msg->msgbody->encoded = top->buf;
+    msg->msgbody->len = top->len;
+    msg->msgbody->alloced = top->len;
+    msg->msgbody->next = NULL;
+
+    msg->ipcontents = NULL;
+    msg->ipclen = 0;
+
+    /* Unfortunately, the packet body is not the last item in our message so
+     * we can't easily use our zero-copy shortcut :( */
+    // msg->ipcontents = NULL;
+    // msg->ipclen = 0;
+
+    msg->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    msg->header.bodylen = htons(msg->msgbody->len + liidlen + sizeof(uint16_t));
+    msg->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
+    msg->header.internalid = 0;
+
+    return 0;
+}
+
 static inline uint8_t is_rtp_comfort_noise(libtrace_packet_t *packet) {
 
     void *transport, *payload;

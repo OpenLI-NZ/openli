@@ -44,5 +44,10 @@ int encode_ipmmiri(wandder_encoder_t *encoder,
         uint32_t seqno,
         openli_encoded_result_t *res, struct timeval *ts);
 
+int encode_ipmmiri_ber(wandder_buf_t **preencoded_ber,
+        openli_ipmmiri_job_t *job, uint32_t seqno, struct timeval *tv,
+        openli_encoded_result_t *res, wandder_etsili_top_t *top, 
+        wandder_encoder_t *encoder);
+
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
