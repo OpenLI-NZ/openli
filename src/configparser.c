@@ -970,7 +970,12 @@ static int global_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "encoding") == 0) {
-            glob->encoding_method = strcmp(value->data.scalar.value, "BER") == 0;
+
+        if (strcasecmp(value->data.scalar.value, "BER") == 0) {
+            glob->encoding_method = OPENLI_ENCODING_BER;
+        } else {
+            glob->encoding_method = OPENLI_ENCODING_DER;
+        }
     }
     
     return 0;
