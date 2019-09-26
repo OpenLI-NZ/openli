@@ -72,9 +72,15 @@ fi
 
 
 if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then
-        AC_CHECK_LIB([wandder], [init_wandder_encoder],libwandder_found=1,libwandder_found=0)
-        if test "$libwandder_found" = 0; then
-                AC_MSG_ERROR(Required library libwandder not found; use LDFLAGS to specify library location)
+        AC_CHECK_LIB([wandder], [wandder_init_encoder_ber],libwandder_ber_found=1,libwandder__ber_found=0)
+
+        if test "$libwandder_ber_found" = 1; then
+                AC_DEFINE(HAVE_BER_ENCODING, 1, [defined to 1 if libwandder supports BER encoding])
+        else
+                AC_CHECK_LIB([wandder], [init_wandder_encoder],libwandder_found=1,libwandder_found=0)
+                if test "$libwandder_found" = 0; then
+                        AC_MSG_ERROR(Required library libwandder not found; use LDFLAGS to specify library location)
+                fi
         fi
 
         AC_CHECK_LIB([Judy], [JudySLGet],libjudy_found=1,libjudy_found=0)

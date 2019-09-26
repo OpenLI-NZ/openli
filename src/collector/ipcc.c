@@ -24,6 +24,8 @@
  *
  */
 
+#include "config.h"
+
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
@@ -62,6 +64,8 @@ int encode_ipcc(wandder_encoder_t *encoder, wandder_encode_job_t *precomputed,
 
 }
 
+#ifdef HAVE_BER_ENCODING
+
 int encode_ipcc_ber(wandder_buf_t **preencoded_ber,
         openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
         openli_encoded_result_t *msg, wandder_etsili_top_t *top, wandder_encoder_t *encoder) {
@@ -98,23 +102,8 @@ int encode_ipcc_ber(wandder_buf_t **preencoded_ber,
 
     return 0;
 }
-/*
-static void dump_ptree(patricia_node_t *ptree) {
-    char foo[128];
-    if (ptree->l) {
-        dump_ptree(ptree->l);
-    }
+#endif
 
-    if (ptree->prefix) {
-        inet_ntop(AF_INET6, &(ptree->prefix->add.sin6), foo, 128);
-        printf("%s/%u\n", foo, ptree->prefix->bitlen);
-    }
-
-    if (ptree->r) {
-        dump_ptree(ptree->r);
-    }
-}
-*/
 
 static inline static_ipcache_t *find_static_cached(prefix_t *prefix,
         colthread_local_t *loc) {

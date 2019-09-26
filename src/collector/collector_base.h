@@ -27,6 +27,7 @@
 #ifndef OPENLI_COLLECTOR_BASE_H_
 #define OPENLI_COLLECTOR_BASE_H_
 
+#include "config.h"
 #include <pthread.h>
 #include <libwandder_etsili.h>
 #include <libwandder.h>
@@ -210,8 +211,10 @@ typedef struct encoder_state {
 
 typedef struct encoder_job {
     wandder_encode_job_t *preencoded;
+#ifdef HAVE_BER_ENCODING
     wandder_buf_t **preencoded_ber;
     wandder_etsili_top_t *top;
+#endif
     uint32_t seqno;
     char *cinstr;
     openli_export_recv_t *origreq;

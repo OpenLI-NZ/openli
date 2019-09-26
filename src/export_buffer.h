@@ -27,6 +27,7 @@
 #ifndef OPENLI_COLLECTOR_BUFFER_H_
 #define OPENLI_COLLECTOR_BUFFER_H_
 
+#include "config.h"
 #include <libwandder.h>
 #include <libwandder_etsili.h>
 #include "netcomms.h"
@@ -44,7 +45,9 @@ typedef struct encoder_result {
     uint8_t encodedby;
     uint8_t isDer;
     openli_export_recv_t *origreq;
+#ifdef HAVE_BER_ENCODING
     wandder_etsili_top_t *top;
+#endif
 } PACKED openli_encoded_result_t;
 
 

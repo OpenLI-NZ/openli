@@ -24,6 +24,8 @@
  *
  */
 
+#include "config.h"
+
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
@@ -61,6 +63,8 @@ int encode_ipmmcc(wandder_encoder_t *encoder,
     msg->header.internalid = 0;
     return 0;
 }
+
+#ifdef HAVE_BER_ENCODING
 
 int encode_ipmmcc_ber(wandder_buf_t **preencoded_ber,
         openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
@@ -104,6 +108,8 @@ int encode_ipmmcc_ber(wandder_buf_t **preencoded_ber,
 
     return 0;
 }
+
+#endif
 
 static inline uint8_t is_rtp_comfort_noise(libtrace_packet_t *packet) {
 

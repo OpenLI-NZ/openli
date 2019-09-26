@@ -972,7 +972,12 @@ static int global_parser(void *arg, yaml_document_t *doc,
             strcmp((char *)key->data.scalar.value, "encoding") == 0) {
 
         if (strcasecmp(value->data.scalar.value, "BER") == 0) {
+#ifdef HAVE_BER_ENCODING
             glob->encoding_method = OPENLI_ENCODING_BER;
+#else
+            logger(LOG_INFO, "BER encoding not supported by your version of libwandder, falling back to DER");
+            glob->encoding_method = OPENLI_ENCODING_DER;
+#endif
         } else {
             glob->encoding_method = OPENLI_ENCODING_DER;
         }

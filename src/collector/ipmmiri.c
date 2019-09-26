@@ -24,6 +24,8 @@
  *
  */
 
+#include "config.h"
+
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
@@ -68,6 +70,8 @@ int encode_ipmmiri(wandder_encoder_t *encoder,
 
     return 0;
 }
+
+#ifdef HAVE_BER_ENCODING
 
 int encode_ipmmiri_ber(wandder_buf_t **preencoded_ber,
         openli_ipmmiri_job_t *job, uint32_t seqno, struct timeval *tv,
@@ -119,5 +123,6 @@ int encode_ipmmiri_ber(wandder_buf_t **preencoded_ber,
     return 0;
 }
 
+#endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
