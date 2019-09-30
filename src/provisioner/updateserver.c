@@ -90,11 +90,21 @@ static int update_configuration(con_info_t *cinfo, provision_state_t *state) {
         return -1;
     }
 
-    if (cinfo->jsonbuffer) {
-        fprintf(stderr, "%s\n", cinfo->jsonbuffer);
-        free(cinfo->jsonbuffer);
+    if (!cinfo->jsonbuffer) {
+        return -1;
     }
 
+    switch(cinfo->target) {
+        case TARGET_AGENCY:
+        case TARGET_CORESERVER:
+        case TARGET_IPINTERCEPT:
+        case TARGET_VOIPINTERCEPT:
+            break;
+    }
+
+
+    free(cinfo->jsonbuffer);
+    emit_intercept_config(state->interceptconffile, &(state->interceptconf));
     return 0;
 }
 

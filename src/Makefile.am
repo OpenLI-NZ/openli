@@ -9,7 +9,8 @@ openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
                 collector/jenkinshash.c provisioner/updateserver.c \
                 openli_tls.c openli_tls.h \
                 provisioner/provisioner_client.c \
-                provisioner/provisioner_client.h
+                provisioner/provisioner_client.h \
+                provisioner/configwriter.c
 
 openliprovisioner_LDFLAGS = -lpthread @PROVISIONER_LIBS@
 openliprovisioner_LDADD = @ADD_LIBS@

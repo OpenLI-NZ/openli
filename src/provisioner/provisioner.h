@@ -290,6 +290,8 @@ int handle_update_request(void *cls, struct MHD_Connection *conn,
 void complete_update_request(void *cls, struct MHD_Connection *conn,
         void **con_cls, enum MHD_RequestTerminationCode toe);
 
+int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf);
+
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
