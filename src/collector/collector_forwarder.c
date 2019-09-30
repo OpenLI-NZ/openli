@@ -80,6 +80,10 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
         newdest->mediatorid = msg->data.med.mediatorid;
         newdest->ipstr = msg->data.med.ipstr;
         newdest->portstr = msg->data.med.portstr;
+        newdest->ssl = NULL;
+        newdest->ssllasterror = 0;
+        newdest->waitingforhandshake = 0;
+
         init_export_buffer(&(newdest->buffer));
 
         JLI(jval, fwd->destinations_by_id, newdest->mediatorid);
@@ -157,7 +161,10 @@ static inline void disconnect_mediator(forwarding_thread_data_t *fwd,
         fwd->topoll[med->pollindex].fd = 0;
         fwd->topoll[med->pollindex].events = 0;
     }
-
+    if (med->ssl){
+        SSL_free(med->ssl);
+        med->ssl = NULL;
+    }
 }
 
 static void remove_destination(forwarding_thread_data_t *fwd,
@@ -180,6 +187,7 @@ static void remove_destination(forwarding_thread_data_t *fwd,
         free(med->portstr);
     }
 
+
     free(med);
 }
 
@@ -198,6 +206,22 @@ static void remove_all_destinations(forwarding_thread_data_t *fwd) {
     }
 }
 
+static void disconnect_all_destinations(forwarding_thread_data_t *fwd) {
+
+    export_dest_t *med;
+    PWord_t *jval;
+    Word_t index;
+
+    index = 0;
+    JLF(jval, fwd->destinations_by_id, index);
+    while (jval != NULL) {
+        med = (export_dest_t *)(*jval);
+        JLN(jval, fwd->destinations_by_id, index);
+        disconnect_mediator(fwd, med);
+        med->ssllasterror = 0;
+    }
+}
+
 static void remove_reorderers(forwarding_thread_data_t *fwd, char *liid,
         Pvoid_t *reorderer_array) {
 
@@ -212,7 +236,7 @@ static void remove_reorderers(forwarding_thread_data_t *fwd, char *liid,
     while (jval != NULL) {
         reord = (int_reorderer_t *)(*jval);
 
-        if (liid == NULL || strcmp(reord->liid, liid) != 0) {
+        if (liid != NULL && strcmp(reord->liid, liid) != 0) {
             JSLN(jval, *reorderer_array, index);
             continue;
         }
@@ -256,6 +280,11 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
     if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
         remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_cc));
         remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_iri));
+
+        free(msg->data.cept.liid);
+        free(msg->data.cept.authcc);
+        free(msg->data.cept.delivcc);
+        free(msg);
     } else if (msg->type == OPENLI_EXPORT_MEDIATOR) {
         return add_new_destination(fwd, msg);
     } else if (msg->type == OPENLI_EXPORT_DROP_SINGLE_MEDIATOR) {
@@ -276,6 +305,9 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         remove_all_destinations(fwd);
     } else if (msg->type == OPENLI_EXPORT_FLAG_MEDIATORS) {
         flag_all_destinations(fwd);
+    } else if (msg->type == OPENLI_EXPORT_RECONNECT_ALL_MEDIATORS) {
+        logger(LOG_DEBUG, "causing all mediators to reconnect");
+        disconnect_all_destinations(fwd);
     }
 
     return 1;
@@ -332,6 +364,7 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
         return 0;
     }
+
 
     if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
         logger(LOG_INFO,
@@ -436,7 +469,7 @@ static void purge_unconfirmed_mediators(forwarding_thread_data_t *fwd) {
 
 }
 
-static int connect_single_target(export_dest_t *dest) {
+static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx) {
 
     int sockfd;
 
@@ -446,6 +479,7 @@ static int connect_single_target(export_dest_t *dest) {
     }
 
     sockfd = connect_socket(dest->ipstr, dest->portstr, dest->failmsg, 0);
+    fd_set_nonblock(sockfd);
 
     if (sockfd == -1) {
         /* TODO should probably bail completely on this dest if this
@@ -456,6 +490,31 @@ static int connect_single_target(export_dest_t *dest) {
     if (sockfd == 0) {
         dest->failmsg = 1;
         return -1;
+    }
+
+    if (ctx != NULL){
+        int errr;
+        dest->ssl = SSL_new(ctx);
+        SSL_set_fd(dest->ssl, sockfd);
+        errr = SSL_connect(dest->ssl);
+
+        if(errr <= 0){
+            errr = SSL_get_error(dest->ssl, errr);
+            if (errr != SSL_ERROR_WANT_WRITE && errr != SSL_ERROR_WANT_READ){ //handshake failed badly
+                close(sockfd);
+                SSL_free(dest->ssl);
+                dest->ssl = NULL;
+                logger(LOG_INFO, "OpenLI: SSL Handshake with mediator failed");
+                return -1;
+            }
+        }
+        if (dest->ssllasterror == 0) {
+            logger(LOG_DEBUG, "OpenLI: SSL Handshake with mediator started");
+        }
+    }
+    else {
+        logger(LOG_INFO, "OpenLI: collector has connected to mediator %s:%s using a non-TLS connection", dest->ipstr, dest->portstr);
+        dest->ssl = NULL;
     }
 
     dest->failmsg = 0;
@@ -491,7 +550,9 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
             continue;
         }
 
-        dest->fd = connect_single_target(dest);
+        pthread_mutex_lock(&(fwd->sslmutex));
+        dest->fd = connect_single_target(dest, fwd->ctx);
+        pthread_mutex_unlock(&(fwd->sslmutex));
         if (dest->fd == -1) {
             continue;
         }
@@ -521,6 +582,8 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
         } else {
             ind = dest->pollindex;
         }
+
+        dest->waitingforhandshake = (dest->ssl != NULL); //needs to await for handshake if SSL is enabled 
 
         fwd->forcesend[ind] = 0;
         fwd->topoll[ind].socket = NULL;
@@ -669,10 +732,41 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         if (jval == NULL) {
             logger(LOG_INFO, "OpenLI: no matching destination for fd %d?",
                     fwd->topoll[i].fd);
-            return -1;
+            fwd->topoll[i].events = 0;
+            continue;
         }
 
         dest = (export_dest_t *)(*jval);
+
+        if (dest->waitingforhandshake){
+
+            int ret = SSL_connect(dest->ssl); //either keep running handshake or fail when error 
+
+            if (ret <= 0){
+                ret = SSL_get_error(dest->ssl, ret);
+                if(ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE){
+                    //keep trying
+                }
+                else {
+                    //fail out
+                    if (dest->ssllasterror == 0) {
+                        logger(LOG_INFO,
+                                "OpenLI: error in continuing SSL handshake with mediator: %s:%s",
+                                dest->ipstr, dest->portstr);
+                    }
+                    dest->waitingforhandshake = 0;
+                    dest->ssllasterror = 1;
+                    disconnect_mediator(fwd, dest);
+                    continue;
+                }
+            }
+            else {
+                logger(LOG_DEBUG, "OpenLI: SSL Handshake from mediator accepted");
+                dest->waitingforhandshake = 0;
+                dest->ssllasterror = 0;
+            }
+            continue;
+        }
 
         if ((availsend = get_buffered_amount(&(dest->buffer))) == 0) {
             /* Nothing available to send */
@@ -685,7 +779,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         }
 
         if (transmit_buffered_records(&(dest->buffer), dest->fd,
-                BUF_BATCH_SIZE) < 0) {
+                BUF_BATCH_SIZE, dest->ssl) < 0) {
             if (dest->logallowed) {
                 logger(LOG_INFO,
                     "OpenLI: error transmitting records to mediator %s:%s: %s",
@@ -750,6 +844,8 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
         x = forwarder_main_loop(fwd);
     } while (x == 1);
 
+    remove_reorderers(fwd, NULL, &(fwd->intreorderer_cc));
+    remove_reorderers(fwd, NULL, &(fwd->intreorderer_iri));
     free(fwd->topoll);
     free(fwd->forcesend);
     close(fwd->conntimerfd);

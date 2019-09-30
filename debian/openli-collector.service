@@ -8,7 +8,7 @@ ExecStart=/etc/init.d/openli-collector start
 ExecStop=/etc/init.d/openli-collector stop
 ExecReload=/etc/init.d/openli-collector reload
 PrivateTmp=yes
-PrivateDevices=yes
+PrivateDevices=no
 ProtectSystem=yes
 ProtectHome=yes
 

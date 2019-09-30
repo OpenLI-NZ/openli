@@ -1008,6 +1008,7 @@ static void destroy_collector_state(collector_global_t *glob) {
     if (glob->forwarders) {
         for (i = 0; i < glob->forwarding_threads; i++) {
             zmq_close(glob->forwarders[i].zmq_pullressock);
+            pthread_mutex_destroy(&(glob->forwarders[i].sslmutex));
         }
         free(glob->forwarders);
     }
@@ -1032,6 +1033,8 @@ static void destroy_collector_state(collector_global_t *glob) {
     if (glob->collocals) {
         free(glob->collocals);
     }
+
+    free_ssl_config(&(glob->sslconf));
     free(glob);
 }
 
@@ -1193,6 +1196,14 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->nextloc = 0;
     glob->syncgenericfreelist = NULL;
 
+    glob->sslconf.certfile = NULL;
+    glob->sslconf.keyfile = NULL;
+    glob->sslconf.cacertfile = NULL;
+    glob->sslconf.ctx = NULL;
+
+    glob->etsitls = 1;
+    glob->encoding_method = OPENLI_ENCODING_DER;
+
     memset(&(glob->stats), 0, sizeof(glob->stats));
     glob->stat_frequency = 0;
     glob->ticks_since_last_stat = 0;
@@ -1205,6 +1216,16 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     if (parse_collector_config(configfile, glob) == -1) {
         clear_global_config(glob);
+        return NULL;
+    }
+
+    logger(LOG_DEBUG, "OpenLI: Encoding Method: %s",
+        glob->encoding_method == OPENLI_ENCODING_BER ? "BER" : "DER");
+
+    logger(LOG_DEBUG, "OpenLI: ETSI TLS encryption %s",
+        glob->etsitls ? "enabled" : "disabled");
+
+    if (create_ssl_context(&(glob->sslconf)) < 0) {
         return NULL;
     }
 
@@ -1239,11 +1260,18 @@ static int reload_collector_config(collector_global_t *glob,
         collector_sync_t *sync) {
 
     collector_global_t *newstate;
+    int i, tlschanged;
 
     newstate = parse_global_config(glob->configfile);
     if (newstate == NULL) {
         logger(LOG_INFO,
                 "OpenLI: error reloading config file for collector.");
+        return -1;
+    }
+
+    tlschanged = reload_ssl_config(&(glob->sslconf), &(newstate->sslconf));
+
+    if (tlschanged == -1) {
         return -1;
     }
 
@@ -1253,7 +1281,7 @@ static int reload_collector_config(collector_global_t *glob,
                     glob->sharedinfo.provisionerport) != 0) {
         logger(LOG_INFO,
                 "OpenLI collector: disconnecting from provisioner due to config change.");
-        sync_disconnect_provisioner(sync);
+        sync_disconnect_provisioner(sync, tlschanged);
         sync->instruct_log = 1;
         free(glob->sharedinfo.provisionerip);
         free(glob->sharedinfo.provisionerport);
@@ -1262,6 +1290,26 @@ static int reload_collector_config(collector_global_t *glob,
     } else {
         logger(LOG_INFO,
                 "OpenLI collector: provisioner socket configuration is unchanged.");
+    }
+
+    if (tlschanged) {
+        if (sync->instruct_fd != -1) {
+            sync_disconnect_provisioner(sync, 1);
+            sync->instruct_log = 1;
+        }
+    } else if (glob->etsitls != newstate->etsitls) {
+        sync_reconnect_all_mediators(sync);
+    }
+
+    if (tlschanged || (glob->etsitls != newstate->etsitls)) {
+        glob->etsitls = newstate->etsitls;
+
+        for (i = 0; i < glob->forwarding_threads; i++) {
+            pthread_mutex_lock(&(glob->forwarders[i].sslmutex));
+            glob->forwarders[i].ctx = (glob->sslconf.ctx && glob->etsitls)
+                    ? glob->sslconf.ctx : NULL;
+            pthread_mutex_unlock(&(glob->forwarders[i].sslmutex));
+        }
     }
 
     pthread_rwlock_wrlock(&(glob->config_mutex));
@@ -1361,7 +1409,7 @@ static void *start_ip_sync_thread(void *params) {
             reload_config = 0;
         }
         if (sync->instruct_fd == -1) {
-            ret = sync_connect_provisioner(sync);
+            ret = sync_connect_provisioner(sync, glob->sslconf.ctx);
             if (ret < 0) {
                 /* Fatal error */
                 logger(LOG_INFO,
@@ -1513,6 +1561,10 @@ int main(int argc, char *argv[]) {
         glob->forwarders[i].colthreads = glob->total_col_threads;
         glob->forwarders[i].zmq_ctrlsock = NULL;
         glob->forwarders[i].zmq_pullressock = NULL;
+        pthread_mutex_init(&(glob->forwarders[i].sslmutex), NULL);
+        glob->forwarders[i].ctx =
+                (glob->sslconf.ctx && glob->etsitls) ? glob->sslconf.ctx : NULL;
+        //forwarder only needs CTX if ctx exists and is enabled 
 
         pthread_create(&(glob->forwarders[i].threadid), NULL,
                 start_forwarding_thread, (void *)&(glob->forwarders[i]));
@@ -1528,6 +1580,7 @@ int main(int argc, char *argv[]) {
         glob->seqtrackers[i].zmq_recvpublished = NULL;
         glob->seqtrackers[i].intercepts = NULL;
         glob->seqtrackers[i].colident = &(glob->sharedinfo);
+        glob->seqtrackers[i].encoding_method = glob->encoding_method;
 
         pthread_create(&(glob->seqtrackers[i].threadid), NULL,
                 start_seqtracker_thread, (void *)&(glob->seqtrackers[i]));

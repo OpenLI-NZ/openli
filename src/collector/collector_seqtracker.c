@@ -107,7 +107,18 @@ static void purge_removedints(seqtracker_thread_data_t *seqdata) {
             prev->next = rem->next;
         }
 
-        etsili_clear_preencoded_fields(rem->preencoded);
+#ifdef HAVE_BER_ENCODING
+        if(rem->ber_top){
+            wandder_etsili_clear_preencoded_fields_ber((wandder_buf_t**) rem->preencoded);
+            wandder_free_top(rem->ber_top);
+        }
+        else {
+            etsili_clear_preencoded_fields((wandder_encode_job_t *)rem->preencoded);
+        }
+#else
+        etsili_clear_preencoded_fields((wandder_encode_job_t *)rem->preencoded);
+#endif
+
         tmp = rem;
         rem = rem->next;
         free(tmp->preencoded);
@@ -126,7 +137,20 @@ static inline void remove_preencoded(seqtracker_thread_data_t *seqdata,
 
 	gettimeofday(&tv, NULL);
 	rem->haltedat = tv.tv_sec;
-	rem->preencoded = intstate->preencoded;
+	
+    //if top is not NULL that means BER is in use so its the two BER fields that need to be free'd
+#ifdef HAVE_BER_ENCODING
+    rem->ber_top = intstate->top;
+    if (rem->ber_top){
+        rem->preencoded = intstate->preencoded_ber;
+    }
+    else {
+        rem->preencoded = intstate->preencoded;
+    }
+#else
+    rem->preencoded = intstate->preencoded;
+#endif
+
 
 	if (seqdata->removedints == NULL) {
 		seqdata->removedints = rem;
@@ -185,10 +209,22 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
     intdetails.networkelemid = seqdata->colident->networkelemid;
     intdetails.intpointid = seqdata->colident->intpointid;
 
-    intstate->preencoded = calloc(OPENLI_PREENCODE_LAST,
-            sizeof(wandder_encode_job_t));
-    etsili_preencode_static_fields(intstate->preencoded, &intdetails);
+    //decide to do BER or DER here
+    if(seqdata->encoding_method == OPENLI_ENCODING_DER){
+        intstate->preencoded = calloc(OPENLI_PREENCODE_LAST,
+                sizeof(wandder_encode_job_t));
+        etsili_preencode_static_fields(intstate->preencoded, &intdetails);
+    }
+    else {
 
+#ifdef HAVE_BER_ENCODING
+        intstate->preencoded_ber = calloc(WANDDER_PREENCODE_LAST, sizeof intstate->preencoded_ber);
+        wandder_etsili_preencode_static_fields_ber(intstate->preencoded_ber, (wandder_etsili_intercept_details_t*)&intdetails);
+        
+        intstate->top = calloc(sizeof *intstate->top,1);
+        wandder_init_pshdr_ber(intstate->preencoded_ber, intstate->top);
+#endif
+    }
 }
 
 static void reconfigure_intercepts(seqtracker_thread_data_t *seqdata) {
@@ -300,6 +336,29 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 
 
 	job.preencoded = intstate->preencoded;
+
+#ifdef HAVE_BER_ENCODING
+    job.preencoded_ber = intstate->preencoded_ber;
+    //create new copy of top so differnt encoding jobs dont share 
+    //workspaces, (encoding is filling in the missing parts of top)
+    if(intstate->top){
+        wandder_etsili_top_t* top = malloc(sizeof *top);
+        memcpy(top, intstate->top, sizeof *top);
+        top->len = intstate->top->len;
+        top->alloc_len = intstate->top->len;
+        top->buf = malloc(intstate->top->len);
+        memcpy(top->buf, intstate->top->buf, intstate->top->len);
+        ptrdiff_t offset = (top->buf - intstate->top->buf);
+        top->header.cin    += offset;
+        top->header.seqno  += offset;
+        top->header.sec    += offset;
+        top->header.usec   += offset;
+        top->header.end    += offset;
+        top->body.ipcc.dir    += offset;
+        top->body.ipcc.ipcontent   += offset;
+        job.top = top;
+    }
+#endif
 	job.origreq = recvd;
 	job.liid = strdup(liid);
     job.cinstr = strdup(cinseq->cin_string);
@@ -476,7 +535,19 @@ void clean_seqtracker(seqtracker_thread_data_t *seqdata) {
 
 	while (seqdata->removedints) {
 		rem = seqdata->removedints;
-		etsili_clear_preencoded_fields((wandder_encode_job_t *)rem->preencoded);
+
+#ifdef HAVE_BER_ENCODING
+        if(rem->ber_top){ //if top exists its the BER encoding that needs to be free'd
+            wandder_etsili_clear_preencoded_fields_ber((wandder_buf_t**) rem->preencoded);
+            wandder_free_top(rem->ber_top);
+        }
+        else {
+            etsili_clear_preencoded_fields((wandder_encode_job_t *)rem->preencoded);
+        }
+#else
+        etsili_clear_preencoded_fields((wandder_encode_job_t *)rem->preencoded);
+#endif
+
 		seqdata->removedints = seqdata->removedints->next;
         free(rem->preencoded);
 		free(rem);

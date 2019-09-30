@@ -34,6 +34,7 @@
 #include <uthash.h>
 #include "netcomms.h"
 #include "export_buffer.h"
+#include "util.h"
 
 typedef struct med_epoll_ev {
     int fdtype;
@@ -53,6 +54,7 @@ enum {
     MED_EPOLL_PCAP_TIMER,
     MED_EPOLL_CEASE_LIID_TIMER,
     MED_EPOLL_PROVRECONNECT,
+    MED_EPOLL_COLLECTOR_HANDSHAKE,
 };
 
 typedef struct disabled_collector {
@@ -64,6 +66,7 @@ typedef struct med_coll_state {
     char *ipaddr;
     net_buffer_t *incoming;
     int disabled_log;
+    SSL *ssl;
 } med_coll_state_t;
 
 typedef struct handover {
@@ -94,6 +97,7 @@ typedef struct med_agency_state {
 
 typedef struct mediator_collector {
     med_epoll_ev_t *colev;
+    SSL *ssl;
 } mediator_collector_t;
 
 typedef struct mediator_provisioner {
@@ -103,6 +107,7 @@ typedef struct mediator_provisioner {
     net_buffer_t *incoming;
     uint8_t disable_log;
     uint8_t tryconnect;
+    SSL *ssl;
 } mediator_prov_t;
 
 enum {
@@ -127,6 +132,7 @@ typedef struct med_state {
     char *operatorid;
     char *listenaddr;
     char *listenport;
+    uint8_t etsitls;
 
     char *provaddr;
     char *provport;
@@ -155,6 +161,9 @@ typedef struct med_state {
     libtrace_message_queue_t pcapqueue;
     wandder_etsispec_t *etsidecoder;
     disabled_collector_t *disabledcols;
+    openli_ssl_config_t sslconf;
+    int lastsslerror_accept;
+    int lastsslerror_connect;
 
 } mediator_state_t;
 

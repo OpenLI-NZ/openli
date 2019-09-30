@@ -6,7 +6,10 @@ openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
 		byteswap.c byteswap.h intercept.h intercept.c configparser.c \
                 configparser.h util.c util.h agency.h logger.c logger.h \
 		netcomms.h netcomms.c coreserver.h coreserver.c \
-                collector/jenkinshash.c provisioner/updateserver.c
+                collector/jenkinshash.c provisioner/updateserver.c \
+                openli_tls.c openli_tls.h \
+                provisioner/provisioner_client.c \
+                provisioner/provisioner_client.h
 
 openliprovisioner_LDFLAGS = -lpthread @PROVISIONER_LIBS@
 openliprovisioner_LDADD = @ADD_LIBS@
@@ -39,7 +42,7 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/encoder_worker.c collector/encoder_worker.h \
                 collector/collector_seqtracker.c \
                 collector/collector_forwarder.c collector/jmirror_parser.c \
-                collector/jmirror_parser.h \
+                collector/jmirror_parser.h openli_tls.c openli_tls.h \
                 $(PLUGIN_SRCS)
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 
@@ -56,7 +59,7 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
                 agency.h logger.c logger.h netcomms.c \
                 netcomms.h export_buffer.c \
                 export_buffer.h etsili_core.h etsili_core.c \
-                collector/jenkinshash.c \
+                collector/jenkinshash.c openli_tls.c openli_tls.h \
                 coreserver.c coreserver.h
 openlimediator_LDADD = @ADD_LIBS@
 openlimediator_LDFLAGS=-lpthread @MEDIATOR_LIBS@

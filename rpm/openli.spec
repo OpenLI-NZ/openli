@@ -1,5 +1,5 @@
 Name:           openli
-Version:        1.0.2
+Version:        1.0.3
 Release:        1%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
@@ -21,6 +21,7 @@ BuildRequires: libwandder1-devel
 BuildRequires: zeromq-devel
 BuildRequires: gperftools-devel
 BuildRequires: libosip2-devel
+BuildRequires: openssl-devel
 BuildRequires: systemd
 
 %description
@@ -151,6 +152,7 @@ fi
 %config %{_sysconfdir}/rsyslog.d/10-openli-provisioner.conf
 %config %{_sysconfdir}/openli/provisioner-example.yaml
 %doc %{_docdir}/openli/ProvisionerDoc.md
+%doc %{_docdir}/openli/TLSDoc.md
 
 %files mediator
 %{_bindir}/openlimediator
@@ -168,5 +170,11 @@ fi
 
 
 %changelog
+* Fri Aug 16 2019 Shane Alcock <salcock@waikato.ac.nz> - 1.0.3-1
+- Updated for 1.0.3 release
+
+* Tue Jun 18 2019 Shane Alcock <salcock@waikato.ac.nz> - 1.0.2-2
+- Add openssl-devel dependency for encrypted communications
+
 * Tue Jun 4 2019 Shane Alcock <salcock@waikato.ac.nz> - 1.0.2-1
 - First OpenLI RPM package

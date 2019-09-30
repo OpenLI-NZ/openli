@@ -24,30 +24,34 @@
  *
  */
 
-#ifndef OPENLI_UTIL_H_
-#define OPENLI_UTIL_H_
+#ifndef OPENLI_TLS_H_
+#define OPENLI_TLS_H_
 
-#include <math.h>
-#include <sys/epoll.h>
-#include <libtrace.h>
+#include <openssl/err.h>
+#include <openssl/pem.h>
+#include <openssl/ssl.h>
 
-int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
-        uint8_t setkeepalive);
-int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr);
-int create_listener(char *addr, char *port, char *name);
-char *sockaddr_to_string(struct sockaddr *sa, char *str, int len);
-uint8_t *sockaddr_to_key(struct sockaddr *sa, int *socklen);
-void convert_ipstr_to_sockaddr(char *knownip, struct sockaddr_storage **saddr,
-        int *family);
-int sockaddr_match(int family, struct sockaddr *a, struct sockaddr *b);
-int extract_ip_addresses(libtrace_packet_t *pkt, uint8_t *srcip,
-        uint8_t *destip, int *ipfamily);
-struct addrinfo *populate_addrinfo(char *ipstr, char *portstr,
-        int socktype);
-void *get_udp_payload(libtrace_packet_t *packet, uint32_t *rem);
+typedef struct openli_ssl_config {
+    char *keyfile;
+    char *cacertfile;
+    char *certfile;
+    SSL_CTX *ctx;
+} openli_ssl_config_t;
 
-uint32_t hash_liid(char *liid);
-uint32_t hashlittle( const void *key, size_t length, uint32_t initval);
+enum {
+    OPENLI_SSL_CONNECT_FAILED,
+    OPENLI_SSL_CONNECT_SUCCESS,
+    OPENLI_SSL_CONNECT_WAITING,
+    OPENLI_SSL_CONNECT_NOSSL
+};
+
+int create_ssl_context(openli_ssl_config_t *sslconf);
+void free_ssl_config(openli_ssl_config_t *sslconf);
+int reload_ssl_config(openli_ssl_config_t *current,
+        openli_ssl_config_t *newconf);
+int listen_ssl_socket(openli_ssl_config_t *sslconf, SSL **ssl, int newfd);
+
 #endif
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 
