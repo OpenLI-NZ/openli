@@ -292,6 +292,29 @@ void complete_update_request(void *cls, struct MHD_Connection *conn,
 
 int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf);
 
+int announce_lea_to_mediators(provision_state_t *state,
+        prov_agency_t *lea);
+int withdraw_agency_from_mediators(provision_state_t *state,
+        prov_agency_t *lea);
+void add_new_staticip_range(provision_state_t *state,
+        ipintercept_t *ipint, static_ipranges_t *ipr);
+void remove_existing_staticip_range(provision_state_t *state,
+        ipintercept_t *ipint, static_ipranges_t *ipr);
+int halt_existing_intercept(provision_state_t *state,
+        void *cept, openli_proto_msgtype_t wdtype);
+int modify_existing_intercept_options(provision_state_t *state,
+        void *cept, openli_proto_msgtype_t modtype);
+int disconnect_mediators_from_collectors(provision_state_t *state);
+int remove_liid_mapping(provision_state_t *state,
+        char *liid, int liid_len, int droppedmeds);
+int announce_liidmapping_to_mediators(provision_state_t *state,
+        liid_hash_t *liidmap);
+int announce_coreserver_change(provision_state_t *state,
+        coreserver_t *cs, uint8_t isnew);
+int announce_sip_target_change(provision_state_t *state,
+        openli_sip_identity_t *sipid, voipintercept_t *vint, uint8_t isnew);
+int announce_single_intercept(provision_state_t *state,
+        void *cept, int (*sendfunc)(net_buffer_t *, void *));
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

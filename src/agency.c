@@ -23,35 +23,27 @@
  *
  *
  */
+#include <stdlib.h>
 
-#ifndef OPENLI_AGENCY_H_
-#define OPENLI_AGENCY_H_
+#include "agency.h"
 
-#include <libtrace/linked_list.h>
-
-#define DEFAULT_AGENCY_KEEPALIVE_WAIT (30)
-#define DEFAULT_AGENCY_KEEPALIVE_FREQ (300)
-
-typedef struct liagency {
-
-    char *hi2_ipstr;
-    char *hi2_portstr;
-    char *hi3_ipstr;
-    char *hi3_portstr;
-    char *agencyid;
-    uint32_t keepalivefreq;
-    uint32_t keepalivewait;
-} liagency_t;
-
-#define agency_equal(a, b) \
-    ((strcmp(a->hi2_ipstr, b->hi2_ipstr) == 0) && \
-     (strcmp(a->hi2_portstr, b->hi2_portstr) == 0) && \
-     (strcmp(a->hi3_ipstr, b->hi3_ipstr) == 0) && \
-     (strcmp(a->hi3_portstr, b->hi3_portstr) == 0) && \
-     (strcmp(a->agencyid, b->agencyid) == 0))
-
-#endif
-
-void free_liagency(liagency_t *ag);
+void free_liagency(liagency_t *lea) {
+	if (lea->hi2_ipstr) {
+		free(lea->hi2_ipstr);
+	}
+	if (lea->hi2_portstr) {
+		free(lea->hi2_portstr);
+	}
+	if (lea->hi3_ipstr) {
+		free(lea->hi3_ipstr);
+	}
+	if (lea->hi3_portstr) {
+		free(lea->hi3_portstr);
+	}
+	if (lea->agencyid) {
+		free(lea->agencyid);
+	}
+	free(lea);
+}
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

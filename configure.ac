@@ -75,8 +75,12 @@ if test "x$enable_provisioner" != "xno"; then
         if test "$libmicrohttpd_found" = 0; then
                 AC_MSG_ERROR(Required library libmicrohttpd not found; use LDFLAGS to specify library location)
         fi
+        AC_CHECK_LIB([json-c], [json_tokener_new],,libjsonc_found=0)
 
-        PROVISIONER_LIBS="$PROVISIONER_LIBS -lmicrohttpd"
+        if test "$libjsonc_found" = 0; then
+                AC_MSG_ERROR(Required library libjson-c not found; use LDFLAGS to specify library location)
+        fi
+        PROVISIONER_LIBS="$PROVISIONER_LIBS -lmicrohttpd -ljson-c"
 fi
 
 if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then

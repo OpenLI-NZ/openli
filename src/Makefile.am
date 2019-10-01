@@ -7,10 +7,10 @@ openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
                 configparser.h util.c util.h agency.h logger.c logger.h \
 		netcomms.h netcomms.c coreserver.h coreserver.c \
                 collector/jenkinshash.c provisioner/updateserver.c \
-                openli_tls.c openli_tls.h \
+                openli_tls.c openli_tls.h agency.c agency.h \
                 provisioner/provisioner_client.c \
                 provisioner/provisioner_client.h \
-                provisioner/configwriter.c
+                provisioner/configwriter.c provisioner/clientupdates.c
 
 openliprovisioner_LDFLAGS = -lpthread @PROVISIONER_LIBS@
 openliprovisioner_LDADD = @ADD_LIBS@

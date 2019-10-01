@@ -425,8 +425,8 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         newag->hi3_ipstr = NULL;
         newag->hi3_portstr = NULL;
         newag->agencyid = NULL;
-        newag->keepalivefreq = 300;
-        newag->keepalivewait = 30;
+        newag->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
+        newag->keepalivewait = DEFAULT_AGENCY_KEEPALIVE_WAIT;
 
         for (pair = node->data.mapping.pairs.start;
                 pair < node->data.mapping.pairs.top; pair ++) {
