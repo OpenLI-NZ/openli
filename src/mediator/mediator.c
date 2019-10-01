@@ -1596,7 +1596,7 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     return 0;
 }
 
-static inline int remove_liid_mapping(mediator_state_t *state,
+static inline int remove_mediator_liid_mapping(mediator_state_t *state,
         med_epoll_ev_t *mev) {
 
     struct epoll_event ev;
@@ -2068,7 +2068,7 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             break;
         case MED_EPOLL_CEASE_LIID_TIMER:
             assert(ev->events == EPOLLIN);
-            ret = remove_liid_mapping(state, mev);
+            ret = remove_mediator_liid_mapping(state, mev);
             break;
         case MED_EPOLL_KA_TIMER:
             assert(ev->events == EPOLLIN);
