@@ -134,6 +134,48 @@ static int send_http_page(struct MHD_Connection *connection, const char *page,
         } \
     }
 
+#define MODIFY_STRING_MEMBER(newmem, oldmem, changeflag) \
+    if (newmem != NULL && strcmp(newmem, oldmem) != 0) { \
+        free(oldmem); oldmem = newmem; *changeflag = 1; \
+    } else if (newmem) { \
+        free(newmem); \
+    }
+
+#define INIT_JSON_AGENCY_PARSING \
+    memset(&agjson, 0, sizeof(struct json_agency)); \
+    tknr = json_tokener_new(); \
+    \
+    parsed = json_tokener_parse_ex(tknr, cinfo->jsonbuffer, cinfo->jsonlen); \
+    if (parsed == NULL) { \
+        logger(LOG_INFO, \
+                "unable to parse JSON received over update socket: %s", \
+                json_tokener_error_desc(json_tokener_get_error(tknr))); \
+        snprintf(cinfo->answerstring, 4096, \
+                "%s <p>OpenLI provisioner was unable to parse JSON received over update socket: %s. %s", \
+                update_failure_page_start, \
+                json_tokener_error_desc(json_tokener_get_error(tknr)), \
+                update_failure_page_end); \
+        goto agencyerr; \
+    } \
+    \
+    if (!(json_object_object_get_ex(parsed, "agencyid", &agencyid))) { \
+        logger(LOG_INFO, "error, agency update socket messages must include an 'agencyid'!"); \
+        snprintf(cinfo->answerstring, 4096, \
+                "%s <p>Agency update socket messages must include an 'agencyid'! %s", \
+                update_failure_page_start, update_failure_page_end); \
+        goto agencyerr; \
+    } \
+    \
+    idstr = json_object_get_string(agencyid); \
+    if (idstr == NULL) { \
+        logger(LOG_INFO, "error, could not parse 'agencyid' in agency update socket message"); \
+        snprintf(cinfo->answerstring, 4096, \
+                "%s <p>'agencyid' field in agency update was unparseable. %s", \
+                update_failure_page_start, update_failure_page_end); \
+        goto agencyerr; \
+    }
+
+
 static inline void extract_agency_json_objects(struct json_agency *agjson,
         struct json_object *parsed) {
 
@@ -178,38 +220,7 @@ static int add_new_agency(con_info_t *cinfo, provision_state_t *state) {
     prov_agency_t *lea, *found;
     int parseerr = 0;
 
-    memset(&agjson, 0, sizeof(struct json_agency));
-    tknr = json_tokener_new();
-
-    parsed = json_tokener_parse_ex(tknr, cinfo->jsonbuffer, cinfo->jsonlen);
-    if (parsed == NULL) {
-        logger(LOG_INFO, "unable to parse JSON received over update socket: %s",
-                json_tokener_error_desc(json_tokener_get_error(tknr)));
-        snprintf(cinfo->answerstring, 4096,
-                "%s <p>OpenLI provisioner was unable to parse JSON received over update socket: %s. %s",
-                update_failure_page_start,
-                json_tokener_error_desc(json_tokener_get_error(tknr)),
-                update_failure_page_end);
-        goto agencyerr;
-    }
-
-    if (!(json_object_object_get_ex(parsed, "agencyid", &agencyid))) {
-        logger(LOG_INFO, "error, agency update socket messages must include an 'agencyid'!");
-        snprintf(cinfo->answerstring, 4096,
-                "%s <p>Agency update socket messages must include an 'agencyid'! %s",
-                update_failure_page_start, update_failure_page_end);
-        goto agencyerr;
-    }
-
-    idstr = json_object_get_string(agencyid);
-    if (idstr == NULL) {
-        logger(LOG_INFO, "error, could not parse 'agencyid' in agency update socket message");
-        snprintf(cinfo->answerstring, 4096,
-                "%s <p>'agencyid' field in agency update was unparseable. %s",
-                update_failure_page_start, update_failure_page_end);
-        goto agencyerr;
-    }
-
+    INIT_JSON_AGENCY_PARSING
     extract_agency_json_objects(&agjson, parsed);
 
     nag = calloc(1, sizeof(liagency_t));
@@ -281,6 +292,106 @@ agencyerr:
     return -1;
 }
 
+static int modify_agency(con_info_t *cinfo, provision_state_t *state) {
+
+    struct json_object *agencyid;
+    struct json_agency agjson;
+
+    const char *idstr;
+    struct json_object *parsed;
+    struct json_tokener *tknr;
+    prov_agency_t *found;
+    int parseerr = 0;
+    liagency_t modified;
+    int changed = 0;
+
+    INIT_JSON_AGENCY_PARSING
+
+    HASH_FIND(hh, state->interceptconf.leas, idstr, strlen(idstr), found);
+
+    if (!found) {
+        /* Our "modify" is actually an addition? */
+        json_tokener_free(tknr);
+        return add_new_agency(cinfo, state);
+    }
+
+    memset(&modified, 0, sizeof(modified));
+    modified.keepalivefreq = 0xffffffff;
+    modified.keepalivewait = 0xffffffff;
+
+    extract_agency_json_objects(&agjson, parsed);
+    EXTRACT_JSON_STRING_PARAM("hi3address", "agency", agjson.hi3addr,
+            modified.hi3_ipstr, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("hi2address", "agency", agjson.hi2addr,
+            modified.hi2_ipstr, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("hi3port", "agency", agjson.hi3port,
+            modified.hi3_portstr, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("hi2port", "agency", agjson.hi2port,
+            modified.hi2_portstr, &parseerr, false);
+
+    EXTRACT_JSON_INT_PARAM("keepalivefreq", "agency", agjson.ka_freq,
+            modified.keepalivefreq, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("keepalivewait", "agency", agjson.ka_wait,
+            modified.keepalivewait, &parseerr, false);
+
+    if (parseerr) {
+        goto agencyerr;
+    }
+
+    printf("%s %s\n", modified.hi3_portstr, modified.hi2_portstr);
+
+    MODIFY_STRING_MEMBER(modified.hi3_ipstr, found->ag->hi3_ipstr, &changed);
+    MODIFY_STRING_MEMBER(modified.hi2_ipstr, found->ag->hi2_ipstr, &changed);
+    MODIFY_STRING_MEMBER(modified.hi3_portstr, found->ag->hi3_portstr,
+            &changed);
+    MODIFY_STRING_MEMBER(modified.hi2_portstr, found->ag->hi2_portstr,
+            &changed);
+
+    if (modified.keepalivefreq != 0xffffffff &&
+                modified.keepalivefreq != found->ag->keepalivefreq) {
+        changed = 1;
+        found->ag->keepalivefreq = modified.keepalivefreq;
+    }
+
+    if (modified.keepalivewait != 0xffffffff &&
+                modified.keepalivewait != found->ag->keepalivewait) {
+        changed = 1;
+        found->ag->keepalivewait = modified.keepalivewait;
+    }
+
+    if (changed) {
+        withdraw_agency_from_mediators(state, found);
+        announce_lea_to_mediators(state, found);
+        logger(LOG_INFO,
+                "OpenLI: modified existing agency '%s' via update socket.",
+                found->ag->agencyid);
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: did not modify existing agency '%s' via update socket, as no agency properties had changed.",
+                found->ag->agencyid);
+    }
+
+
+    json_tokener_free(tknr);
+    return 0;
+
+agencyerr:
+    if (modified.hi2_ipstr) {
+        free(modified.hi2_ipstr);
+    }
+    if (modified.hi3_ipstr) {
+        free(modified.hi3_ipstr);
+    }
+    if (modified.hi2_portstr) {
+        free(modified.hi2_portstr);
+    }
+    if (modified.hi3_portstr) {
+        free(modified.hi3_portstr);
+    }
+    json_tokener_free(tknr);
+    return -1;
+}
+
 static int update_configuration_delete(con_info_t *cinfo,
         provision_state_t *state, const char *url) {
 
@@ -328,7 +439,7 @@ static int update_configuration_delete(con_info_t *cinfo,
         return -1;
     }
 
-    memcpy(target, targetstart + 1, targetend - targetstart + 1);
+    memcpy(target, targetstart + 1, targetend - targetstart - 1);
     target[targetend - (targetstart + 1)] = '\0';
 
     switch(cinfo->target) {
@@ -365,6 +476,9 @@ static int update_configuration_post(con_info_t *cinfo,
         case TARGET_AGENCY:
             if (strcmp(method, "POST") == 0) {
                 ret = add_new_agency(cinfo, state);
+            }
+            else {
+                ret = modify_agency(cinfo, state);
             }
             break;
         case TARGET_CORESERVER:
