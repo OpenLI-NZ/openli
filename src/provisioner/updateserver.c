@@ -42,7 +42,8 @@
 
 enum {
     TARGET_AGENCY,
-    TARGET_CORESERVER,
+    TARGET_SIPSERVER,
+    TARGET_RADIUSSERVER,
     TARGET_IPINTERCEPT,
     TARGET_VOIPINTERCEPT,
 };
@@ -148,7 +149,7 @@ static int send_http_page(struct MHD_Connection *connection, const char *page,
     parsed = json_tokener_parse_ex(tknr, cinfo->jsonbuffer, cinfo->jsonlen); \
     if (parsed == NULL) { \
         logger(LOG_INFO, \
-                "unable to parse JSON received over update socket: %s", \
+                "OpenLI: unable to parse JSON received over update socket: %s", \
                 json_tokener_error_desc(json_tokener_get_error(tknr))); \
         snprintf(cinfo->answerstring, 4096, \
                 "%s <p>OpenLI provisioner was unable to parse JSON received over update socket: %s. %s", \
@@ -159,7 +160,7 @@ static int send_http_page(struct MHD_Connection *connection, const char *page,
     } \
     \
     if (!(json_object_object_get_ex(parsed, "agencyid", &agencyid))) { \
-        logger(LOG_INFO, "error, agency update socket messages must include an 'agencyid'!"); \
+        logger(LOG_INFO, "OpenLI: error, agency update socket messages must include an 'agencyid'!"); \
         snprintf(cinfo->answerstring, 4096, \
                 "%s <p>Agency update socket messages must include an 'agencyid'! %s", \
                 update_failure_page_start, update_failure_page_end); \
@@ -168,7 +169,7 @@ static int send_http_page(struct MHD_Connection *connection, const char *page,
     \
     idstr = json_object_get_string(agencyid); \
     if (idstr == NULL) { \
-        logger(LOG_INFO, "error, could not parse 'agencyid' in agency update socket message"); \
+        logger(LOG_INFO, "OpenLI: error, could not parse 'agencyid' in agency update socket message"); \
         snprintf(cinfo->answerstring, 4096, \
                 "%s <p>'agencyid' field in agency update was unparseable. %s", \
                 update_failure_page_start, update_failure_page_end); \
@@ -205,6 +206,97 @@ static int remove_agency(con_info_t *cinfo, provision_state_t *state,
         return 1;
     }
     return 0;
+
+}
+
+static int add_new_coreserver(con_info_t *cinfo, provision_state_t *state,
+        uint8_t srvtype) {
+
+    struct json_object *parsed;
+    struct json_tokener *tknr;
+    coreserver_t *found = NULL;
+    coreserver_t *new_cs = NULL;
+    struct json_object *ipaddr;
+    struct json_object *port;
+
+    char srvstring[1024];
+
+    int parseerr = 0;
+    tknr = json_tokener_new();
+
+    parsed = json_tokener_parse_ex(tknr, cinfo->jsonbuffer, cinfo->jsonlen);
+    if (parsed == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: unable to parse JSON received over update socket: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>OpenLI provisioner was unable to parse JSON received over update socket: %s. %s",
+                update_failure_page_start,
+                json_tokener_error_desc(json_tokener_get_error(tknr)),
+                update_failure_page_end);
+        goto siperr;
+    }
+
+    new_cs = (coreserver_t *)calloc(1, sizeof(coreserver_t));
+    new_cs->servertype = srvtype;
+    new_cs->awaitingconfirm = 1;
+
+    json_object_object_get_ex(parsed, "ipaddress", &(ipaddr));
+    json_object_object_get_ex(parsed, "port", &(port));
+
+    snprintf(srvstring, 1024, "%s server",
+            coreserver_type_to_string(srvtype));
+
+    EXTRACT_JSON_STRING_PARAM("ipaddress", srvstring, ipaddr,
+            new_cs->ipstr, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("port", srvstring, port,
+            new_cs->portstr, &parseerr, true);
+
+    if (construct_coreserver_key(new_cs) == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: unable to create %s from provided JSON record.", srvstring);
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Unable to create %s entity from JSON record provided over update socket. %s",
+                update_failure_page_start, srvstring, update_failure_page_end);
+        goto siperr;
+    }
+
+    if (srvtype == OPENLI_CORE_SERVER_SIP) {
+        HASH_FIND(hh, state->interceptconf.sipservers, new_cs->serverkey,
+                strlen(new_cs->serverkey), found);
+    } else if (srvtype == OPENLI_CORE_SERVER_RADIUS) {
+        HASH_FIND(hh, state->interceptconf.radiusservers, new_cs->serverkey,
+                strlen(new_cs->serverkey), found);
+    }
+
+    if (found) {
+        free_single_coreserver(new_cs);
+    } else {
+        if (srvtype == OPENLI_CORE_SERVER_SIP) {
+            HASH_ADD_KEYPTR(hh, state->interceptconf.sipservers,
+                    new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
+        } else if (srvtype == OPENLI_CORE_SERVER_RADIUS) {
+            HASH_ADD_KEYPTR(hh, state->interceptconf.radiusservers,
+                    new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
+        } else {
+            logger(LOG_INFO, "OpenLI: update socket received unexpected core server update (type = %u)", srvtype);
+            goto siperr;
+        }
+
+        announce_coreserver_change(state, new_cs, true);
+        logger(LOG_INFO, "OpenLI: added %s '%s:%s' via update socket.",
+                srvstring, new_cs->ipstr, new_cs->portstr);
+    }
+
+    json_tokener_free(tknr);
+    return 0;
+
+siperr:
+    if (new_cs) {
+        free_single_coreserver(new_cs);
+    }
+    json_tokener_free(tknr);
+    return -1;
 
 }
 
@@ -446,7 +538,8 @@ static int update_configuration_delete(con_info_t *cinfo,
         case TARGET_AGENCY:
             ret = remove_agency(cinfo, state, target);
             break;
-        case TARGET_CORESERVER:
+        case TARGET_SIPSERVER:
+        case TARGET_RADIUSSERVER:
         case TARGET_IPINTERCEPT:
         case TARGET_VOIPINTERCEPT:
             break;
@@ -481,7 +574,12 @@ static int update_configuration_post(con_info_t *cinfo,
                 ret = modify_agency(cinfo, state);
             }
             break;
-        case TARGET_CORESERVER:
+        case TARGET_SIPSERVER:
+            ret = add_new_coreserver(cinfo, state, OPENLI_CORE_SERVER_SIP);
+            break;
+        case TARGET_RADIUSSERVER:
+            ret = add_new_coreserver(cinfo, state, OPENLI_CORE_SERVER_RADIUS);
+            break;
         case TARGET_IPINTERCEPT:
         case TARGET_VOIPINTERCEPT:
             break;
@@ -544,11 +642,13 @@ int handle_update_request(void *cls, struct MHD_Connection *conn,
 
         if (strncmp(url, "/agency", 7) == 0) {
             cinfo->target = TARGET_AGENCY;
-        } else if (strncmp(url, "/coreserver", 11) == 0) {
-            cinfo->target = TARGET_CORESERVER;
-        } else if (strncmp(url, "/ipintercept", 11) == 0) {
+        } else if (strncmp(url, "/sipserver", 10) == 0) {
+            cinfo->target = TARGET_SIPSERVER;
+        } else if (strncmp(url, "/radiusserver", 13) == 0) {
+            cinfo->target = TARGET_RADIUSSERVER;
+        } else if (strncmp(url, "/ipintercept", 12) == 0) {
             cinfo->target = TARGET_IPINTERCEPT;
-        } else if (strncmp(url, "/voipintercept", 13) == 0) {
+        } else if (strncmp(url, "/voipintercept", 14) == 0) {
             cinfo->target = TARGET_VOIPINTERCEPT;
         } else {
             free(cinfo);
