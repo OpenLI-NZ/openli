@@ -209,6 +209,34 @@ static int remove_agency(con_info_t *cinfo, provision_state_t *state,
 
 }
 
+static int remove_coreserver(con_info_t *cinfo, provision_state_t *state,
+        const char *idstr, uint8_t srvtype) {
+
+    coreserver_t *found = NULL;
+    coreserver_t **src;
+
+    if (srvtype == OPENLI_CORE_SERVER_SIP) {
+        HASH_FIND(hh, state->interceptconf.sipservers, idstr, strlen(idstr),
+                found);
+        src = &(state->interceptconf.sipservers);
+    } else if (srvtype == OPENLI_CORE_SERVER_RADIUS) {
+        HASH_FIND(hh, state->interceptconf.radiusservers, idstr, strlen(idstr),
+                found);
+        src = &(state->interceptconf.radiusservers);
+    }
+
+    if (found) {
+        HASH_DEL(*src, found);
+        announce_coreserver_change(state, found, false);
+        free_single_coreserver(found);
+        logger(LOG_INFO, "OpenLI: removed %s server via update socket.",
+                coreserver_type_to_string(srvtype));
+        return 1;
+    }
+
+    return 0;
+}
+
 static int add_new_coreserver(con_info_t *cinfo, provision_state_t *state,
         uint8_t srvtype) {
 
@@ -539,8 +567,14 @@ static int update_configuration_delete(con_info_t *cinfo,
             ret = remove_agency(cinfo, state, target);
             break;
         case TARGET_SIPSERVER:
+            ret = remove_coreserver(cinfo, state, target,
+                    OPENLI_CORE_SERVER_SIP);
+            break;
         case TARGET_RADIUSSERVER:
         case TARGET_IPINTERCEPT:
+            ret = remove_coreserver(cinfo, state, target,
+                    OPENLI_CORE_SERVER_RADIUS);
+            break;
         case TARGET_VOIPINTERCEPT:
             break;
     }
