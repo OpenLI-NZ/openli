@@ -120,37 +120,6 @@ static int liid_hash_sort(liid_hash_t *a, liid_hash_t *b) {
     return strcmp(a->liid, b->liid);
 }
 
-static inline liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
-        char *liid, char *agency) {
-
-    liid_hash_t *h, *found;
-    prov_agency_t *lea;
-
-    /* pcapdisk is a special agency that is not user-defined */
-    if (strcmp(agency, "pcapdisk") != 0) {
-        HASH_FIND_STR(conf->leas, agency, lea);
-        if (!lea) {
-            logger(LOG_INFO,
-                    "OpenLI: intercept %s is destined for an unknown agency: %s -- skipping.",
-                    liid, agency);
-            return NULL;
-        }
-    }
-
-    HASH_FIND(hh, conf->liid_map, liid, strlen(liid), found);
-    if (found) {
-        found->agency = agency;
-        h = found;
-    } else {
-        h = (liid_hash_t *)malloc(sizeof(liid_hash_t));
-        h->agency = agency;
-        h->liid = liid;
-        HASH_ADD_KEYPTR(hh, conf->liid_map, h->liid, strlen(h->liid), h);
-    }
-
-    return h;
-}
-
 static int map_intercepts_to_leas(prov_intercept_conf_t *conf) {
 
     int failed = 0;

@@ -35,6 +35,7 @@
 
 #include "provisioner.h"
 #include "logger.h"
+#include "util.h"
 
 #define MICRO_POST 0
 #define MICRO_GET 1
@@ -68,6 +69,19 @@ struct json_agency {
     struct json_object *ka_freq;
     struct json_object *ka_wait;
 };
+
+struct json_ipintercept {
+    struct json_object *liid;
+    struct json_object *authcc;
+    struct json_object *delivcc;
+    struct json_object *agencyid;
+    struct json_object *mediator;
+    struct json_object *accesstype;
+    struct json_object *user;
+    struct json_object *vendmirrorid;
+    struct json_object *staticips;
+};
+
 
 const char *update_success_page =
         "<html><body>OpenLI provisioner configuration was successfully updated.</body></html>\n";
@@ -142,6 +156,22 @@ static int send_http_page(struct MHD_Connection *connection, const char *page,
         free(newmem); \
     }
 
+#define INIT_JSON_INTERCEPT_PARSING \
+    tknr = json_tokener_new(); \
+    \
+    parsed = json_tokener_parse_ex(tknr, cinfo->jsonbuffer, cinfo->jsonlen); \
+    if (parsed == NULL) { \
+        logger(LOG_INFO, \
+                "OpenLI: unable to parse JSON received over update socket: %s", \
+                json_tokener_error_desc(json_tokener_get_error(tknr))); \
+        snprintf(cinfo->answerstring, 4096, \
+                "%s <p>OpenLI provisioner was unable to parse JSON received over update socket: %s. %s", \
+                update_failure_page_start, \
+                json_tokener_error_desc(json_tokener_get_error(tknr)), \
+                update_failure_page_end); \
+        goto cepterr; \
+    } \
+
 #define INIT_JSON_AGENCY_PARSING \
     memset(&agjson, 0, sizeof(struct json_agency)); \
     tknr = json_tokener_new(); \
@@ -187,6 +217,68 @@ static inline void extract_agency_json_objects(struct json_agency *agjson,
     json_object_object_get_ex(parsed, "keepalivefreq", &(agjson->ka_freq));
     json_object_object_get_ex(parsed, "keepalivewait", &(agjson->ka_wait));
 
+}
+
+static inline void extract_ipintercept_json_objects(
+        struct json_ipintercept *ipjson, struct json_object *parsed) {
+
+    memset(ipjson, 0, sizeof(struct json_ipintercept));
+
+    json_object_object_get_ex(parsed, "liid", &(ipjson->liid));
+    json_object_object_get_ex(parsed, "authcc", &(ipjson->authcc));
+    json_object_object_get_ex(parsed, "delivcc", &(ipjson->delivcc));
+    json_object_object_get_ex(parsed, "agencyid", &(ipjson->agencyid));
+    json_object_object_get_ex(parsed, "mediator", &(ipjson->mediator));
+    json_object_object_get_ex(parsed, "user", &(ipjson->user));
+    json_object_object_get_ex(parsed, "accesstype", &(ipjson->accesstype));
+    json_object_object_get_ex(parsed, "vendmirrorid", &(ipjson->vendmirrorid));
+    json_object_object_get_ex(parsed, "staticips", &(ipjson->staticips));
+}
+
+static int remove_voip_intercept(con_info_t *cinfo, provision_state_t *state,
+        const char *idstr) {
+
+    voipintercept_t *found;
+
+    HASH_FIND(hh_liid, state->interceptconf.voipintercepts, idstr,
+            strlen(idstr), found);
+
+    if (found) {
+        HASH_DELETE(hh_liid, state->interceptconf.voipintercepts, found);
+        halt_existing_intercept(state, (void *)found,
+                OPENLI_PROTO_HALT_VOIPINTERCEPT);
+        remove_liid_mapping(state, found->common.liid, found->common.liid_len,
+                0);
+        free_single_voipintercept(found);
+        logger(LOG_INFO,
+                "OpenLI: removed VOIP intercept '%s' via update socket.",
+                idstr);
+        return 1;
+    }
+    return 0;
+}
+
+static int remove_ip_intercept(con_info_t *cinfo, provision_state_t *state,
+        const char *idstr) {
+
+    ipintercept_t *found;
+
+    HASH_FIND(hh_liid, state->interceptconf.ipintercepts, idstr,
+            strlen(idstr), found);
+
+    if (found) {
+        HASH_DELETE(hh_liid, state->interceptconf.ipintercepts, found);
+        halt_existing_intercept(state, (void *)found,
+                OPENLI_PROTO_HALT_IPINTERCEPT);
+        remove_liid_mapping(state, found->common.liid, found->common.liid_len,
+                0);
+        free_single_ipintercept(found);
+        logger(LOG_INFO,
+                "OpenLI: removed IP intercept '%s' via update socket.",
+                idstr);
+        return 1;
+    }
+    return 0;
 }
 
 static int remove_agency(con_info_t *cinfo, provision_state_t *state,
@@ -280,6 +372,10 @@ static int add_new_coreserver(con_info_t *cinfo, provision_state_t *state,
     EXTRACT_JSON_STRING_PARAM("port", srvstring, port,
             new_cs->portstr, &parseerr, true);
 
+    if (parseerr) {
+        goto siperr;
+    }
+
     if (construct_coreserver_key(new_cs) == NULL) {
         logger(LOG_INFO,
                 "OpenLI: unable to create %s from provided JSON record.", srvstring);
@@ -328,13 +424,225 @@ siperr:
 
 }
 
+static int parse_ipintercept_staticips(provision_state_t *state,
+        ipintercept_t *ipint, struct json_object *jsonips, con_info_t *cinfo) {
+
+    static_ipranges_t *newr = NULL;
+    static_ipranges_t *existing = NULL;
+    struct json_object *jobj;
+    struct json_object *iprange, *sessionid;
+    char *rangestr = NULL;
+    int parseerr = 0;
+
+    int i;
+
+    if (json_object_get_type(jsonips) != json_type_array) {
+        logger(LOG_INFO, "OpenLI update socket: 'staticips' for an IP intercept must be expressed as a JSON array");
+        snprintf(cinfo->answerstring, 4096, "%s <p>The 'staticips' members for an IP intercept must be expressed as a JSON array. %s",
+                update_failure_page_start, update_failure_page_end);
+        goto staticerr;
+    }
+
+    for (i = 0; i < json_object_array_length(jsonips); i++) {
+        jobj = json_object_array_get_idx(jsonips, i);
+
+        json_object_object_get_ex(jobj, "iprange", &(iprange));
+        json_object_object_get_ex(jobj, "sessionid", &(sessionid));
+
+        newr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
+        newr->rangestr = NULL;
+        newr->liid = NULL;
+        newr->awaitingconfirm = 0;
+        newr->cin = 1;
+
+        EXTRACT_JSON_STRING_PARAM("iprange", "IP intercept static IP", iprange,
+                rangestr, &parseerr, true);
+        EXTRACT_JSON_INT_PARAM("sessionid", "IP intercept static IP", sessionid,
+                newr->cin, &parseerr, false);
+
+        if (parseerr) {
+            if (rangestr) {
+                free(rangestr);
+            }
+            goto staticerr;
+        }
+
+        newr->rangestr = parse_iprange_string(rangestr);
+        if (!newr->rangestr) {
+            snprintf(cinfo->answerstring, 4096, "%s <p>'%s' is not a valid prefix or IP address... <%s>", update_failure_page_start, rangestr,
+                    update_failure_page_end);
+            if (rangestr) {
+                free(rangestr);
+            }
+            goto staticerr;
+        }
+
+        free(rangestr);
+        if (newr->cin >= (uint32_t)(pow(2,31))) {
+            logger(LOG_INFO,
+                    "OpenLI: CIN %u for static IP range %s is too large.",
+                    newr->cin, rangestr);
+            newr->cin = newr->cin % (uint32_t)(pow(2, 31));
+            logger(LOG_INFO, "OpenLI: replaced CIN with %u.",
+                    newr->cin);
+        }
+
+        HASH_FIND(hh, ipint->statics, newr->rangestr, strlen(newr->rangestr),
+                existing);
+        if (!existing) {
+            HASH_ADD_KEYPTR(hh, ipint->statics, newr->rangestr,
+                    strlen(newr->rangestr), newr);
+            if (!ipint->awaitingconfirm) {
+                add_new_staticip_range(state, ipint, newr);
+            }
+        } else {
+            free(newr->rangestr);
+            free(newr);
+        }
+    }
+
+    return 0;
+
+staticerr:
+    if (newr) {
+        if (newr->rangestr) {
+            free(newr->rangestr);
+        }
+        free(newr);
+    }
+    return -1;
+
+}
+
+static int add_new_ipintercept(con_info_t *cinfo, provision_state_t *state) {
+    struct json_ipintercept ipjson;
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL;
+    ipintercept_t *found = NULL;
+
+    const char *idstr;
+    char *accessstring = NULL;
+    ipintercept_t *ipint = NULL;
+    int parseerr = 0;
+    int skipannounce = 0;
+    prov_agency_t *lea = NULL;
+
+    INIT_JSON_INTERCEPT_PARSING
+    extract_ipintercept_json_objects(&ipjson, parsed);
+
+    ipint = calloc(1, sizeof(ipintercept_t));
+    ipint->awaitingconfirm = 1;
+    ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
+    ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
+
+    EXTRACT_JSON_STRING_PARAM("liid", "IP intercept", ipjson.liid,
+            ipint->common.liid, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("authcc", "IP intercept", ipjson.authcc,
+            ipint->common.authcc, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("delivcc", "IP intercept", ipjson.delivcc,
+            ipint->common.delivcc, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("agencyid", "IP intercept", ipjson.agencyid,
+            ipint->common.targetagency, &parseerr, true);
+    EXTRACT_JSON_INT_PARAM("mediator", "IP intercept", ipjson.mediator,
+            ipint->common.destid, &parseerr, true);
+    EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
+            ipint->vendmirrorid, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("user", "IP intercept", ipjson.user,
+            ipint->username, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("accesstype", "IP intercept", ipjson.accesstype,
+            accessstring, &parseerr, false);
+
+    if (parseerr) {
+        goto cepterr;
+    }
+
+    if (ipjson.staticips != NULL) {
+        if (parse_ipintercept_staticips(state, ipint, ipjson.staticips,
+                cinfo) < 0) {
+            goto cepterr;
+        }
+    }
+
+    ipint->common.liid_len = strlen(ipint->common.liid);
+    ipint->common.authcc_len = strlen(ipint->common.authcc);
+    ipint->common.delivcc_len = strlen(ipint->common.delivcc);
+    ipint->username_len = strlen(ipint->username);
+
+    if (accessstring) {
+        ipint->accesstype = map_access_type_string(accessstring);
+        free(accessstring);
+        accessstring = NULL;
+    }
+
+    HASH_FIND(hh_liid, state->interceptconf.ipintercepts,
+            ipint->common.liid, ipint->common.liid_len, found);
+
+    if (found) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>LIID %s already exists as an IP intercept, please use PUT method if you wish to modify it. %s",
+                update_failure_page_start,
+                ipint->common.liid,
+                update_failure_page_end);
+        goto cepterr;
+    }
+
+    HASH_ADD_KEYPTR(hh_liid, state->interceptconf.ipintercepts,
+            ipint->common.liid, ipint->common.liid_len, ipint);
+
+    if (strcmp(ipint->common.targetagency, "pcapdisk") != 0) {
+        HASH_FIND_STR(state->interceptconf.leas, ipint->common.targetagency,
+                lea);
+    }
+
+    if (lea != NULL) {
+        liid_hash_t *h = add_liid_mapping(&(state->interceptconf),
+                ipint->common.liid, ipint->common.targetagency);
+        if (announce_liidmapping_to_mediators(state, h) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to announce new IP intercept %s to mediators.",
+                    ipint->common.liid);
+        }
+    }
+
+    if (announce_single_intercept(state, (void *)ipint,
+            push_ipintercept_onto_net_buffer) < 0) {
+        logger(LOG_INFO,
+                "OpenLI provisioner: unable to announce new IP intercept %s to collectors.",
+                ipint->common.liid);
+    }
+
+    ipint->awaitingconfirm = 0;
+    logger(LOG_INFO,
+            "OpenLI provisioner: added new IP intercept %s via update socket.",
+            ipint->common.liid);
+
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return 0;
+
+cepterr:
+    if (ipint) {
+        free_single_ipintercept(ipint);
+    }
+    if (accessstring) {
+        free(accessstring);
+    }
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return -1;
+}
+
 static int add_new_agency(con_info_t *cinfo, provision_state_t *state) {
 
     struct json_object *agencyid;
     struct json_agency agjson;
 
     const char *idstr;
-    struct json_object *parsed;
+    struct json_object *parsed = NULL;
     struct json_tokener *tknr;
     liagency_t *nag = NULL;
     prov_agency_t *lea, *found;
@@ -386,6 +694,9 @@ static int add_new_agency(con_info_t *cinfo, provision_state_t *state) {
     logger(LOG_INFO, "OpenLI: added new agency '%s' via update socket.",
             nag->agencyid);
 
+    if (parsed) {
+        json_object_put(parsed);
+    }
     json_tokener_free(tknr);
     return 0;
 
@@ -408,6 +719,9 @@ agencyerr:
         }
         free(nag);
     }
+    if (parsed) {
+        json_object_put(parsed);
+    }
     json_tokener_free(tknr);
     return -1;
 }
@@ -418,7 +732,7 @@ static int modify_agency(con_info_t *cinfo, provision_state_t *state) {
     struct json_agency agjson;
 
     const char *idstr;
-    struct json_object *parsed;
+    struct json_object *parsed = NULL;
     struct json_tokener *tknr;
     prov_agency_t *found;
     int parseerr = 0;
@@ -492,6 +806,9 @@ static int modify_agency(con_info_t *cinfo, provision_state_t *state) {
     }
 
 
+    if (parsed) {
+        json_object_put(parsed);
+    }
     json_tokener_free(tknr);
     return 0;
 
@@ -507,6 +824,9 @@ agencyerr:
     }
     if (modified.hi3_portstr) {
         free(modified.hi3_portstr);
+    }
+    if (parsed) {
+        json_object_put(parsed);
     }
     json_tokener_free(tknr);
     return -1;
@@ -571,11 +891,14 @@ static int update_configuration_delete(con_info_t *cinfo,
                     OPENLI_CORE_SERVER_SIP);
             break;
         case TARGET_RADIUSSERVER:
-        case TARGET_IPINTERCEPT:
             ret = remove_coreserver(cinfo, state, target,
                     OPENLI_CORE_SERVER_RADIUS);
             break;
+        case TARGET_IPINTERCEPT:
+            ret = remove_ip_intercept(cinfo, state, target);
+            break;
         case TARGET_VOIPINTERCEPT:
+            ret = remove_voip_intercept(cinfo, state, target);
             break;
     }
 
@@ -615,6 +938,8 @@ static int update_configuration_post(con_info_t *cinfo,
             ret = add_new_coreserver(cinfo, state, OPENLI_CORE_SERVER_RADIUS);
             break;
         case TARGET_IPINTERCEPT:
+            ret = add_new_ipintercept(cinfo, state);
+            break;
         case TARGET_VOIPINTERCEPT:
             break;
     }

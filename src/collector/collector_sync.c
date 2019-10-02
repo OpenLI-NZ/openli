@@ -641,6 +641,9 @@ static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
             push_static_iprange_remove_to_collectors(sendq->q, ipint, ipr);
         }
 
+        logger(LOG_INFO, "OpenLI: removing capture of IP prefix %s for LIID %s",
+                ipr->rangestr, ipr->liid);
+
         /* XXX assumes each range corresponds to a unique session, not
          * necessarily true but probably doesn't matter too much as this is just
          * some informational stat tracking */

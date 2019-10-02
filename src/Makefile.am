@@ -58,7 +58,7 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
 		byteswap.c byteswap.h \
                 configparser.c configparser.h util.c util.h \
                 agency.h logger.c logger.h netcomms.c \
-                netcomms.h export_buffer.c \
+                netcomms.h export_buffer.c intercept.c \
                 export_buffer.h etsili_core.h etsili_core.c \
                 collector/jenkinshash.c openli_tls.c openli_tls.h \
                 coreserver.c coreserver.h

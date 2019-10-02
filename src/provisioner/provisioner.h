@@ -315,6 +315,8 @@ int announce_sip_target_change(provision_state_t *state,
         openli_sip_identity_t *sipid, voipintercept_t *vint, uint8_t isnew);
 int announce_single_intercept(provision_state_t *state,
         void *cept, int (*sendfunc)(net_buffer_t *, void *));
+liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
+        char *liid, char *agency);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

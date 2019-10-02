@@ -274,8 +274,10 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
         return -1;
     }
 
+/*
     logger(LOG_INFO, "OpenLI collector: tracker thread %d removed intercept %s",
             seqdata->trackerid, msg->liid);
+*/
     HASH_DELETE(hh, seqdata->intercepts, intstate);
 	if (msg->liid) {
 		free(msg->liid);

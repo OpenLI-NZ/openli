@@ -86,63 +86,6 @@ static int check_onoff(char *value) {
     return -1;
 }
 
-static internet_access_method_t map_access_type_string(char *confstr) {
-
-    if (strcasecmp(confstr, "dialup") == 0 ||
-            strcasecmp(confstr, "dial-up") == 0) {
-        return INTERNET_ACCESS_TYPE_DIALUP;
-    }
-
-    if (strcasecmp(confstr, "adsl") == 0 || strcasecmp(confstr, "vdsl") == 0 ||
-            strcasecmp(confstr, "dsl") == 0 ||
-            strcasecmp(confstr, "adsl2") == 0 ||
-            strcasecmp(confstr, "xdsl") == 0) {
-        return INTERNET_ACCESS_TYPE_XDSL;
-    }
-
-    if (strcasecmp(confstr, "cable") == 0 ||
-            strcasecmp(confstr, "cablemodem") == 0 ||
-            strcasecmp(confstr, "cable-modem") == 0) {
-        return INTERNET_ACCESS_TYPE_CABLEMODEM;
-    }
-
-    if (strcasecmp(confstr, "lan") == 0 ||
-            strcasecmp(confstr, "ethernet") == 0) {
-        return INTERNET_ACCESS_TYPE_LAN;
-    }
-
-    if (strcasecmp(confstr, "wirelesslan") == 0 ||
-            strcasecmp(confstr, "wireless-lan") == 0 ||
-            strcasecmp(confstr, "wireless") == 0 ||
-            strcasecmp(confstr, "wifi-lan") == 0 ||
-            strcasecmp(confstr, "wifi") == 0) {
-        return INTERNET_ACCESS_TYPE_WIRELESS_LAN;
-    }
-
-    if (strcasecmp(confstr, "fibre") == 0 || strcasecmp(confstr, "fiber") == 0
-            || strcasecmp(confstr, "ufb") == 0) {
-        return INTERNET_ACCESS_TYPE_FIBER;
-    }
-
-    if (strcasecmp(confstr, "wimax") == 0 ||
-            strcasecmp(confstr, "hiperman") == 0) {
-        return INTERNET_ACCESS_TYPE_WIMAX;
-    }
-
-    if (strcasecmp(confstr, "satellite") == 0) {
-        return INTERNET_ACCESS_TYPE_SATELLITE;
-    }
-
-    if (strcasecmp(confstr, "wireless-other") == 0 ||
-            strcasecmp(confstr, "wifi-other") == 0 ||
-            strcasecmp(confstr, "wifiother") == 0 ||
-            strcasecmp(confstr, "wirelessother") == 0) {
-        return INTERNET_ACCESS_TYPE_WIRELESS_OTHER;
-    }
-
-    return INTERNET_ACCESS_TYPE_UNDEFINED;
-}
-
 static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         yaml_node_t *inputs) {
 
@@ -312,35 +255,6 @@ static int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
     return 0;
 }
 
-static inline int parse_iprange_option(static_ipranges_t *newr,
-        yaml_node_t *value) {
-
-    char *confrange = (char *)value->data.scalar.value;
-    int family = 0;
-
-    if (strchr(confrange, ':') != NULL) {
-        family = AF_INET6;
-    } else if (strchr(confrange, '.') != NULL) {
-        family = AF_INET;
-    } else {
-        logger(LOG_INFO,
-                "OpenLI: '%s' is not a valid prefix or IP address, skipping.",
-                confrange);
-        return -1;
-    }
-    if (strchr(confrange, '/') == NULL) {
-        /* No slash, so assume /32 or /128 */
-        int rlen = strlen(confrange) + 5;   /* '/128' + nul */
-        newr->rangestr = (char *)calloc(1, rlen);
-        snprintf(newr->rangestr, rlen - 1, "%s/%u", confrange,
-                family == AF_INET ? 32 : 128);
-
-    } else {
-        newr->rangestr = strdup((char *)value->data.scalar.value);
-    }
-    return 0;
-}
-
 static int add_intercept_static_ips(static_ipranges_t **statics,
         yaml_document_t *doc, yaml_node_t *ipseq) {
 
@@ -369,9 +283,8 @@ static int add_intercept_static_ips(static_ipranges_t **statics,
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value, "iprange") == 0 &&
                     newr->rangestr == NULL) {
-                if (parse_iprange_option(newr, value) < 0) {
-                    continue;
-                }
+                newr->rangestr =
+                        parse_iprange_string((char *)value->data.scalar.value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -381,16 +294,16 @@ static int add_intercept_static_ips(static_ipranges_t **statics,
             }
         }
 
-        if (newr->cin >= (uint32_t)(pow(2, 31))) {
-            logger(LOG_INFO,
-                    "OpenLI: CIN %u for static IP range %s is too large.",
-                    newr->cin);
-            newr->cin = newr->cin % (uint32_t)(pow(2, 31));
-            logger(LOG_INFO, "OpenLI: replaced CIN with %u.",
-                    newr->cin);
-        }
 
         if (newr->rangestr) {
+            if (newr->cin >= (uint32_t)(pow(2, 31))) {
+                logger(LOG_INFO,
+                        "OpenLI: CIN %u for static IP range %s is too large.",
+                        newr->cin, newr->rangestr);
+                newr->cin = newr->cin % (uint32_t)(pow(2, 31));
+                logger(LOG_INFO, "OpenLI: replaced CIN with %u.",
+                        newr->cin);
+            }
             HASH_FIND(hh, *statics, newr->rangestr, strlen(newr->rangestr),
                     existing);
             if (!existing) {

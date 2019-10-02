@@ -592,4 +592,61 @@ void clear_user_intercept_list(user_intercept_list_t *ulist) {
     }
 }
 
+internet_access_method_t map_access_type_string(char *confstr) {
+
+    if (strcasecmp(confstr, "dialup") == 0 ||
+            strcasecmp(confstr, "dial-up") == 0) {
+        return INTERNET_ACCESS_TYPE_DIALUP;
+    }
+
+    if (strcasecmp(confstr, "adsl") == 0 || strcasecmp(confstr, "vdsl") == 0 ||
+            strcasecmp(confstr, "dsl") == 0 ||
+            strcasecmp(confstr, "adsl2") == 0 ||
+            strcasecmp(confstr, "xdsl") == 0) {
+        return INTERNET_ACCESS_TYPE_XDSL;
+    }
+
+    if (strcasecmp(confstr, "cable") == 0 ||
+            strcasecmp(confstr, "cablemodem") == 0 ||
+            strcasecmp(confstr, "cable-modem") == 0) {
+        return INTERNET_ACCESS_TYPE_CABLEMODEM;
+    }
+
+    if (strcasecmp(confstr, "lan") == 0 ||
+            strcasecmp(confstr, "ethernet") == 0) {
+        return INTERNET_ACCESS_TYPE_LAN;
+    }
+
+    if (strcasecmp(confstr, "wirelesslan") == 0 ||
+            strcasecmp(confstr, "wireless-lan") == 0 ||
+            strcasecmp(confstr, "wireless") == 0 ||
+            strcasecmp(confstr, "wifi-lan") == 0 ||
+            strcasecmp(confstr, "wifi") == 0) {
+        return INTERNET_ACCESS_TYPE_WIRELESS_LAN;
+    }
+
+    if (strcasecmp(confstr, "fibre") == 0 || strcasecmp(confstr, "fiber") == 0
+            || strcasecmp(confstr, "ufb") == 0) {
+        return INTERNET_ACCESS_TYPE_FIBER;
+    }
+
+    if (strcasecmp(confstr, "wimax") == 0 ||
+            strcasecmp(confstr, "hiperman") == 0) {
+        return INTERNET_ACCESS_TYPE_WIMAX;
+    }
+
+    if (strcasecmp(confstr, "satellite") == 0) {
+        return INTERNET_ACCESS_TYPE_SATELLITE;
+    }
+
+    if (strcasecmp(confstr, "wireless-other") == 0 ||
+            strcasecmp(confstr, "wifi-other") == 0 ||
+            strcasecmp(confstr, "wifiother") == 0 ||
+            strcasecmp(confstr, "wirelessother") == 0) {
+        return INTERNET_ACCESS_TYPE_WIRELESS_OTHER;
+    }
+
+    return INTERNET_ACCESS_TYPE_UNDEFINED;
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
