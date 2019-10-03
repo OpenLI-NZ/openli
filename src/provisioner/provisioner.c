@@ -50,6 +50,7 @@
 #include "coreserver.h"
 #include "openli_tls.h"
 #include "provisioner_client.h"
+#include "updateserver.h"
 
 volatile int provisioner_halt = 0;
 volatile int reload_config = 0;

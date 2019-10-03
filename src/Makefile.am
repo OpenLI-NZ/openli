@@ -10,7 +10,9 @@ openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
                 openli_tls.c openli_tls.h agency.c agency.h \
                 provisioner/provisioner_client.c \
                 provisioner/provisioner_client.h \
-                provisioner/configwriter.c provisioner/clientupdates.c
+                provisioner/configwriter.c provisioner/clientupdates.c \
+                provisioner/updateserver.h \
+                provisioner/updateserver_jsonparsing.c
 
 openliprovisioner_LDFLAGS = -lpthread @PROVISIONER_LIBS@
 openliprovisioner_LDADD = @ADD_LIBS@

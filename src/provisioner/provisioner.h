@@ -87,15 +87,6 @@ enum {
     PROV_EPOLL_FD_IDLETIMER,
 };
 
-typedef struct update_state {
-    char *recvbuf;
-    char *readptr;
-    char *writeptr;
-    uint32_t alloced;
-
-    int16_t tocome;
-} provision_update_t;
-
 /** A LIID->agency mapping, used to ensure mediators route the intercept
  *  traffic to the correct LEA.
  */
@@ -281,14 +272,6 @@ struct prov_sock_state {
     int clientrole;
 
 };
-
-int handle_update_request(void *cls, struct MHD_Connection *conn,
-        const char *url, const char *method, const char *version,
-        const char *upload_data, size_t *upload_data_size,
-        void **con_cls);
-
-void complete_update_request(void *cls, struct MHD_Connection *conn,
-        void **con_cls, enum MHD_RequestTerminationCode toe);
 
 int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf);
 
