@@ -70,7 +70,7 @@ struct json_agency {
     struct json_object *ka_wait;
 };
 
-struct json_ipintercept {
+struct json_intercept {
     struct json_object *liid;
     struct json_object *authcc;
     struct json_object *delivcc;
@@ -80,6 +80,7 @@ struct json_ipintercept {
     struct json_object *user;
     struct json_object *vendmirrorid;
     struct json_object *staticips;
+    struct json_object *siptargets;
 };
 
 
@@ -219,10 +220,10 @@ static inline void extract_agency_json_objects(struct json_agency *agjson,
 
 }
 
-static inline void extract_ipintercept_json_objects(
-        struct json_ipintercept *ipjson, struct json_object *parsed) {
+static inline void extract_intercept_json_objects(
+        struct json_intercept *ipjson, struct json_object *parsed) {
 
-    memset(ipjson, 0, sizeof(struct json_ipintercept));
+    memset(ipjson, 0, sizeof(struct json_intercept));
 
     json_object_object_get_ex(parsed, "liid", &(ipjson->liid));
     json_object_object_get_ex(parsed, "authcc", &(ipjson->authcc));
@@ -233,6 +234,7 @@ static inline void extract_ipintercept_json_objects(
     json_object_object_get_ex(parsed, "accesstype", &(ipjson->accesstype));
     json_object_object_get_ex(parsed, "vendmirrorid", &(ipjson->vendmirrorid));
     json_object_object_get_ex(parsed, "staticips", &(ipjson->staticips));
+    json_object_object_get_ex(parsed, "siptargets", &(ipjson->siptargets));
 }
 
 static int remove_voip_intercept(con_info_t *cinfo, provision_state_t *state,
@@ -424,6 +426,70 @@ siperr:
 
 }
 
+static int parse_voipintercept_siptargets(provision_state_t *state,
+        voipintercept_t *vint, struct json_object *jsontargets,
+        con_info_t *cinfo) {
+
+    openli_sip_identity_t *newtgt, *found;
+    struct json_object *jobj;
+    struct json_object *username, *realm;
+    int parseerr = 0, i, tgtcnt;
+
+    newtgt = NULL;
+    found = NULL;
+    tgtcnt = 0;
+
+    if (json_object_get_type(jsontargets) != json_type_array) {
+        logger(LOG_INFO, "OpenLI update socket: 'siptargets' for a VOIP intercept must be expressed as a JSON array");
+        snprintf(cinfo->answerstring, 4096, "%s <p>The 'siptargets' members for a VOIP intercept must be expressed as a JSON array. %s",
+                update_failure_page_start, update_failure_page_end);
+        goto siptargeterr;
+    }
+
+    for (i = 0; i < json_object_array_length(jsontargets); i++) {
+        jobj = json_object_array_get_idx(jsontargets, i);
+
+        json_object_object_get_ex(jobj, "username", &(username));
+        json_object_object_get_ex(jobj, "realm", &(realm));
+
+        newtgt = (openli_sip_identity_t *)calloc(1,
+                sizeof(openli_sip_identity_t));
+        newtgt->awaitingconfirm = 1;
+
+        EXTRACT_JSON_STRING_PARAM("username", "VOIP intercept SIP target",
+                username, newtgt->username, &parseerr, true);
+        EXTRACT_JSON_STRING_PARAM("realm", "VOIP intercept SIP target",
+                realm, newtgt->realm, &parseerr, false);
+
+        if (parseerr) {
+            goto siptargeterr;
+        }
+
+        newtgt->username_len = strlen(newtgt->username);
+        if (newtgt->realm) {
+            newtgt->realm_len = strlen(newtgt->realm);
+        }
+
+        tgtcnt ++;
+        libtrace_list_push_back(vint->targets, &newtgt);
+    }
+
+    return tgtcnt;
+
+siptargeterr:
+    if (newtgt) {
+        if (newtgt->username) {
+            free(newtgt->username);
+        }
+        if (newtgt->realm) {
+            free(newtgt->realm);
+        }
+        free(newtgt);
+    }
+    return -1;
+
+}
+
 static int parse_ipintercept_staticips(provision_state_t *state,
         ipintercept_t *ipint, struct json_object *jsonips, con_info_t *cinfo) {
 
@@ -514,21 +580,137 @@ staticerr:
 
 }
 
+static int add_new_voipintercept(con_info_t *cinfo, provision_state_t *state) {
+    struct json_intercept voipjson;
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL;
+    voipintercept_t *found = NULL;
+    voipintercept_t *vint = NULL;
+    int parseerr = 0, r;
+    prov_agency_t *lea = NULL;
+
+    INIT_JSON_INTERCEPT_PARSING
+    extract_intercept_json_objects(&voipjson, parsed);
+
+    vint = calloc(1, sizeof(voipintercept_t));
+    /* XXX does internalid still matter? if not, let's remove it */
+    vint->awaitingconfirm = 1;
+    vint->active = 1;
+    vint->targets = libtrace_list_init(sizeof(openli_sip_identity_t *));
+
+    EXTRACT_JSON_STRING_PARAM("liid", "VOIP intercept", voipjson.liid,
+            vint->common.liid, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("authcc", "VOIP intercept", voipjson.authcc,
+            vint->common.authcc, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("delivcc", "VOIP intercept", voipjson.delivcc,
+            vint->common.delivcc, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("agencyid", "VOIP intercept", voipjson.agencyid,
+            vint->common.targetagency, &parseerr, true);
+    EXTRACT_JSON_INT_PARAM("mediator", "VOIP intercept", voipjson.mediator,
+            vint->common.destid, &parseerr, true);
+
+    if (parseerr) {
+        goto cepterr;
+    }
+
+    r = 0;
+    if (voipjson.siptargets != NULL) {
+        if ((r = parse_voipintercept_siptargets(state, vint,
+                voipjson.siptargets, cinfo)) < 0) {
+            goto cepterr;
+        }
+    }
+
+    if (r == 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>VOIP intercept %s has been specified without valid SIP targets. %s",
+                update_failure_page_start, vint->common.liid,
+                update_failure_page_end);
+        goto cepterr;
+    }
+
+    vint->common.liid_len = strlen(vint->common.liid);
+    vint->common.authcc_len = strlen(vint->common.authcc);
+    vint->common.delivcc_len = strlen(vint->common.delivcc);
+
+    HASH_FIND(hh_liid, state->interceptconf.voipintercepts,
+            vint->common.liid, vint->common.liid_len, found);
+
+    if (found) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>LIID %s already exists as an VOIP intercept, please use PUT method if you wish to modify it. %s",
+                update_failure_page_start,
+                vint->common.liid,
+                update_failure_page_end);
+        goto cepterr;
+    }
+
+    HASH_ADD_KEYPTR(hh_liid, state->interceptconf.voipintercepts,
+            vint->common.liid, vint->common.liid_len, vint);
+
+    if (strcmp(vint->common.targetagency, "pcapdisk") != 0) {
+        HASH_FIND_STR(state->interceptconf.leas, vint->common.targetagency,
+                lea);
+    }
+
+    if (lea != NULL) {
+        liid_hash_t *h = add_liid_mapping(&(state->interceptconf),
+                vint->common.liid, vint->common.targetagency);
+        if (announce_liidmapping_to_mediators(state, h) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to announce new VOIP intercept %s to mediators.",
+                    vint->common.liid);
+        }
+    }
+
+    if (announce_single_intercept(state, (void *)vint,
+            push_voipintercept_onto_net_buffer) < 0) {
+        logger(LOG_INFO,
+                "OpenLI provisioner: unable to announce new VOIP intercept %s to collectors.",
+                vint->common.liid);
+    }
+
+    if (announce_all_sip_targets(state, vint) < 0) {
+        logger(LOG_INFO,
+                "OpenLI provisioner: unable to announce targets for new VOIP intercept %s to collectors.",
+                vint->common.liid);
+    }
+
+    vint->awaitingconfirm = 0;
+    logger(LOG_INFO,
+            "OpenLI provisioner: added new VOIP intercept %s via update socket.",
+            vint->common.liid);
+
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return 0;
+
+cepterr:
+    if (vint) {
+        free_single_voipintercept(vint);
+    }
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return -1;
+}
+
 static int add_new_ipintercept(con_info_t *cinfo, provision_state_t *state) {
-    struct json_ipintercept ipjson;
+    struct json_intercept ipjson;
     struct json_tokener *tknr;
     struct json_object *parsed = NULL;
     ipintercept_t *found = NULL;
 
-    const char *idstr;
     char *accessstring = NULL;
     ipintercept_t *ipint = NULL;
     int parseerr = 0;
-    int skipannounce = 0;
     prov_agency_t *lea = NULL;
 
     INIT_JSON_INTERCEPT_PARSING
-    extract_ipintercept_json_objects(&ipjson, parsed);
+    extract_intercept_json_objects(&ipjson, parsed);
 
     ipint = calloc(1, sizeof(ipintercept_t));
     ipint->awaitingconfirm = 1;
@@ -634,6 +816,12 @@ cepterr:
     }
     json_tokener_free(tknr);
     return -1;
+}
+
+static int modify_ipintercept(con_info_t *cinfo, provision_state_t *state) {
+
+    /* TODO */
+    return 0;
 }
 
 static int add_new_agency(con_info_t *cinfo, provision_state_t *state) {
@@ -938,9 +1126,18 @@ static int update_configuration_post(con_info_t *cinfo,
             ret = add_new_coreserver(cinfo, state, OPENLI_CORE_SERVER_RADIUS);
             break;
         case TARGET_IPINTERCEPT:
-            ret = add_new_ipintercept(cinfo, state);
+            if (strcmp(method, "POST") == 0) {
+                ret = add_new_ipintercept(cinfo, state);
+            } else {
+                ret = modify_ipintercept(cinfo, state);
+            }
             break;
         case TARGET_VOIPINTERCEPT:
+            if (strcmp(method, "POST") == 0) {
+                ret = add_new_voipintercept(cinfo, state);
+            } else {
+                //ret = modify_ipintercept(cinfo, state);
+            }
             break;
     }
 

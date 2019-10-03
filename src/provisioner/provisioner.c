@@ -1445,23 +1445,6 @@ static inline int reload_collector_socket_config(provision_state_t *currstate,
     return 0;
 }
 
-static int announce_all_sip_targets(provision_state_t *state,
-        libtrace_list_t *siptargets, voipintercept_t *vint) {
-
-    libtrace_list_node_t *n;
-    openli_sip_identity_t *sipid;
-
-    n = siptargets->head;
-    while (n) {
-        sipid = *((openli_sip_identity_t **)(n->data));
-        if (announce_sip_target_change(state, sipid, vint, 1) < 0) {
-            return -1;
-        }
-        n = n->next;
-    }
-    return 0;
-}
-
 static inline int compare_sip_targets(provision_state_t *currstate,
         voipintercept_t *existing, voipintercept_t *reload) {
 
@@ -2092,10 +2075,15 @@ int main(int argc, char *argv[]) {
     if (provstate.interceptconffile == NULL) {
         provstate.interceptconffile = strdup(DEFAULT_INTERCEPT_CONFIG_FILE);
     }
-    if (parse_intercept_config(provstate.interceptconffile,
-            &(provstate.interceptconf)) < 0) {
-        logger(LOG_INFO, "OpenLI provisioner: error while parsing intercept config file '%s'", provstate.interceptconffile);
-        return -1;
+    if ((ret = parse_intercept_config(provstate.interceptconffile,
+            &(provstate.interceptconf))) < 0) {
+        /* -2 means the config file was empty, but this is allowed for
+         * the intercept config.
+         */
+        if (ret == -1) {
+            logger(LOG_INFO, "OpenLI provisioner: error while parsing intercept config file '%s'", provstate.interceptconffile);
+            return -1;
+        }
     }
 
     /*

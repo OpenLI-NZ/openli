@@ -697,7 +697,8 @@ static int yaml_parser(char *configfile, void *arg,
 
     root = yaml_document_get_root_node(&document);
     if (!root) {
-        logger(LOG_INFO, "OpenLI: Config file is empty!");
+        logger(LOG_INFO, "OpenLI: Config file '%s' is empty!", configfile);
+        ret = -2;
         goto endconfig;
     }
 

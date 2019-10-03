@@ -347,6 +347,37 @@ int announce_sip_target_change(provision_state_t *state,
     return 0;
 }
 
+int announce_all_sip_targets(provision_state_t *state, voipintercept_t *vint) {
+    libtrace_list_node_t *n;
+    openli_sip_identity_t *sipid;
+
+    n = vint->targets->head;
+    while (n) {
+        sipid = *((openli_sip_identity_t **)(n->data));
+        if (sipid->awaitingconfirm && announce_sip_target_change(state,
+				sipid, vint, 1) < 0) {
+            return -1;
+        }
+		sipid->awaitingconfirm = 0;
+        n = n->next;
+    }
+}
+
+int remove_all_sip_targets(provision_state_t *state, voipintercept_t *vint) {
+    libtrace_list_node_t *n;
+    openli_sip_identity_t *sipid;
+
+    n = vint->targets->head;
+    while (n) {
+        sipid = *((openli_sip_identity_t **)(n->data));
+        if (sipid->awaitingconfirm == 0 && announce_sip_target_change(state,
+				sipid, vint, 1) < 0) {
+            return -1;
+        }
+        n = n->next;
+    }
+}
+
 int announce_single_intercept(provision_state_t *state,
         void *cept, int (*sendfunc)(net_buffer_t *, void *)) {
 

@@ -313,6 +313,8 @@ int announce_coreserver_change(provision_state_t *state,
         coreserver_t *cs, uint8_t isnew);
 int announce_sip_target_change(provision_state_t *state,
         openli_sip_identity_t *sipid, voipintercept_t *vint, uint8_t isnew);
+int announce_all_sip_targets(provision_state_t *state, voipintercept_t *vint);
+int remove_all_sip_targets(provision_state_t *state, voipintercept_t *vint);
 int announce_single_intercept(provision_state_t *state,
         void *cept, int (*sendfunc)(net_buffer_t *, void *));
 liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
