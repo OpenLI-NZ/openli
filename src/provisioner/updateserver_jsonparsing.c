@@ -95,6 +95,7 @@ struct json_intercept {
 #define MODIFY_STRING_MEMBER(newmem, oldmem, changeflag) \
     if (newmem != NULL && strcmp(newmem, oldmem) != 0) { \
         free(oldmem); oldmem = newmem; *changeflag = 1; \
+        newmem = NULL; \
     } else if (newmem) { \
         free(newmem); \
     }
@@ -460,7 +461,7 @@ int parse_ipintercept_staticips(provision_state_t *state,
         newr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
         newr->rangestr = NULL;
         newr->liid = NULL;
-        newr->awaitingconfirm = 0;
+        newr->awaitingconfirm = 1;
         newr->cin = 1;
 
         EXTRACT_JSON_STRING_PARAM("iprange", "IP intercept static IP", iprange,
@@ -762,8 +763,156 @@ cepterr:
 
 int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
-    /* TODO */
+    struct json_intercept ipjson;
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL;
+    ipintercept_t *found = NULL;
+    ipintercept_t *ipint = NULL;
+
+    char *liidstr = NULL;
+    char *accessstring = NULL;
+    int parseerr = 0, changed = 0;
+
+    INIT_JSON_INTERCEPT_PARSING
+    extract_intercept_json_objects(&ipjson, parsed);
+
+    EXTRACT_JSON_STRING_PARAM("liid", "IP intercept", ipjson.liid,
+            liidstr, &parseerr, true);
+
+    if (parseerr) {
+        goto cepterr;
+    }
+
+    HASH_FIND(hh_liid, state->interceptconf.ipintercepts, liidstr,
+            strlen(liidstr), found);
+
+    if (!found) {
+        json_object_put(parsed);
+        json_tokener_free(tknr);
+        return add_new_ipintercept(cinfo, state);
+    }
+
+    ipint = calloc(1, sizeof(ipintercept_t));
+    ipint->awaitingconfirm = 1;
+    ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
+    ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
+    ipint->common.liid = liidstr;
+
+    EXTRACT_JSON_STRING_PARAM("authcc", "IP intercept", ipjson.authcc,
+            ipint->common.authcc, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("delivcc", "IP intercept", ipjson.delivcc,
+            ipint->common.delivcc, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("agencyid", "IP intercept", ipjson.agencyid,
+            ipint->common.targetagency, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("mediator", "IP intercept", ipjson.mediator,
+            ipint->common.destid, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
+            ipint->vendmirrorid, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("user", "IP intercept", ipjson.user,
+            ipint->username, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("accesstype", "IP intercept", ipjson.accesstype,
+            accessstring, &parseerr, false);
+
+    if (parseerr) {
+        goto cepterr;
+    }
+
+    if (ipjson.staticips != NULL) {
+        static_ipranges_t *range, *tmp, *inmod;
+
+        if (parse_ipintercept_staticips(state, ipint, ipjson.staticips,
+                cinfo) < 0) {
+            goto cepterr;
+        }
+
+        HASH_ITER(hh, found->statics, range, tmp) {
+            HASH_FIND(hh, ipint->statics, range->rangestr,
+                    strlen(range->rangestr), inmod);
+
+            if (inmod) {
+                /* Unchanged */
+                inmod->awaitingconfirm = 0;
+            } else {
+                /* Withdrawn */
+                HASH_DEL(found->statics, range);
+                remove_existing_staticip_range(state, found, range);
+                if (range->rangestr) {
+                    free(range->rangestr);
+                }
+                free(range);
+            }
+        }
+
+        HASH_ITER(hh, ipint->statics, range, tmp) {
+            if (range->awaitingconfirm) {
+                /* New range */
+                HASH_DEL(ipint->statics, range);
+                HASH_ADD_KEYPTR(hh, found->statics, range->rangestr,
+                        strlen(range->rangestr), range);
+                add_new_staticip_range(state, found, range);
+                range->awaitingconfirm = 0;
+            }
+        }
+    }
+
+    if (accessstring) {
+        ipint->accesstype = map_access_type_string(accessstring);
+        free(accessstring);
+        accessstring = NULL;
+    }
+
+    /* TODO: warn if user tries to change fields that we don't support
+     * changing (e.g. mediator) ?
+     *
+     * TODO: allow target agency to be changed, we just need to remove and
+     * then announce the new LIID mapping...
+     */
+
+    MODIFY_STRING_MEMBER(ipint->common.authcc, found->common.authcc, &changed);
+    found->common.authcc_len  = strlen(found->common.authcc);
+    MODIFY_STRING_MEMBER(ipint->username, found->username, &changed);
+    found->username_len = strlen(found->username);
+
+    if (ipint->accesstype != found->accesstype) {
+        changed = 1;
+        found->accesstype = ipint->accesstype;
+    }
+
+    if (ipint->vendmirrorid != found->vendmirrorid) {
+        changed = 1;
+        found->vendmirrorid = ipint->vendmirrorid;
+    }
+
+    if (changed) {
+        modify_existing_intercept_options(state, (void *)found,
+                    OPENLI_PROTO_MODIFY_IPINTERCEPT);
+    }
+
+    logger(LOG_INFO,
+            "OpenLI provisioner: updated IP intercept %s via update socket.",
+            found->common.liid);
+
+    if (ipint) {
+        free_single_ipintercept(ipint);
+    }
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
     return 0;
+
+cepterr:
+    if (ipint) {
+        free_single_ipintercept(ipint);
+    }
+    if (accessstring) {
+        free(accessstring);
+    }
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return -1;
 }
 
 int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
@@ -881,6 +1030,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (!found) {
         /* Our "modify" is actually an addition? */
+        json_object_put(parsed);
         json_tokener_free(tknr);
         return add_new_agency(cinfo, state);
     }
@@ -907,8 +1057,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (parseerr) {
         goto agencyerr;
     }
-
-    printf("%s %s\n", modified.hi3_portstr, modified.hi2_portstr);
 
     MODIFY_STRING_MEMBER(modified.hi3_ipstr, found->ag->hi3_ipstr, &changed);
     MODIFY_STRING_MEMBER(modified.hi2_ipstr, found->ag->hi2_ipstr, &changed);
