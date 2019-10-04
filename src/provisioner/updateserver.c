@@ -175,7 +175,7 @@ static int update_configuration_post(update_con_info_t *cinfo,
             if (strcmp(method, "POST") == 0) {
                 ret = add_new_voipintercept(cinfo, state);
             } else {
-                //ret = modify_ipintercept(cinfo, state);
+                ret = modify_voipintercept(cinfo, state);
             }
             break;
     }

@@ -97,7 +97,7 @@ struct json_intercept {
         free(oldmem); oldmem = newmem; *changeflag = 1; \
         newmem = NULL; \
     } else if (newmem) { \
-        free(newmem); \
+        free(newmem); newmem = NULL; \
     }
 
 #define INIT_JSON_INTERCEPT_PARSING \
@@ -178,6 +178,63 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "vendmirrorid", &(ipjson->vendmirrorid));
     json_object_object_get_ex(parsed, "staticips", &(ipjson->staticips));
     json_object_object_get_ex(parsed, "siptargets", &(ipjson->siptargets));
+}
+
+static inline int compare_sip_targets(provision_state_t *currstate,
+        voipintercept_t *existing, voipintercept_t *reload) {
+
+    openli_sip_identity_t *oldtgt, *newtgt;
+    libtrace_list_node_t *n1, *n2;
+
+    /* Sluggish (n^2), but hopefully we don't have many IDs per intercept */
+
+    n1 = existing->targets->head;
+    while (n1) {
+        oldtgt = *((openli_sip_identity_t **)(n1->data));
+        n1 = n1->next;
+
+        oldtgt->awaitingconfirm = 1;
+        n2 = reload->targets->head;
+        while (n2) {
+            newtgt = *((openli_sip_identity_t **)(n2->data));
+            n2 = n2->next;
+            if (newtgt->awaitingconfirm == 0) {
+                continue;
+            }
+
+            if (are_sip_identities_same(newtgt, oldtgt)) {
+                oldtgt->awaitingconfirm = 0;
+                newtgt->awaitingconfirm = 0;
+                break;
+            }
+        }
+
+        if (oldtgt->awaitingconfirm) {
+            /* This target is no longer in the intercept config so
+             * withdraw it. */
+            if (announce_sip_target_change(currstate, oldtgt, existing, 0) < 0)
+            {
+                return -1;
+            }
+        }
+    }
+
+    n2 = reload->targets->head;
+    while (n2) {
+        newtgt = *((openli_sip_identity_t **)(n2->data));
+        n2 = n2->next;
+        if (newtgt->awaitingconfirm == 0) {
+            continue;
+        }
+
+        /* This target has been added since we last reloaded config so
+         * announce it. */
+        if (announce_sip_target_change(currstate, newtgt, existing, 1) < 0) {
+            return -1;
+        }
+    }
+
+    return 0;
 }
 
 int remove_voip_intercept(update_con_info_t *cinfo, provision_state_t *state,
@@ -761,6 +818,113 @@ cepterr:
     return -1;
 }
 
+int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
+
+    struct json_intercept voipjson;
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL;
+    voipintercept_t *found = NULL;
+    voipintercept_t *vint = NULL;
+
+    char *liidstr = NULL;
+    int parseerr = 0, changed = 0;
+
+    INIT_JSON_INTERCEPT_PARSING
+    extract_intercept_json_objects(&voipjson, parsed);
+
+    EXTRACT_JSON_STRING_PARAM("liid", "VOIP intercept", voipjson.liid,
+            liidstr, &parseerr, true);
+
+    if (parseerr) {
+        goto cepterr;
+    }
+
+    HASH_FIND(hh_liid, state->interceptconf.voipintercepts, liidstr,
+            strlen(liidstr), found);
+
+    if (!found) {
+        json_object_put(parsed);
+        json_tokener_free(tknr);
+		if (liidstr) {
+			free(liidstr);
+		}
+        return add_new_voipintercept(cinfo, state);
+    }
+
+    vint = calloc(1, sizeof(voipintercept_t));
+    vint->awaitingconfirm = 1;
+    vint->common.liid = liidstr;
+	vint->targets = libtrace_list_init(sizeof(openli_sip_identity_t *));
+
+    EXTRACT_JSON_STRING_PARAM("authcc", "VOIP intercept", voipjson.authcc,
+            vint->common.authcc, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("delivcc", "VOIP intercept", voipjson.delivcc,
+            vint->common.delivcc, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("agencyid", "VOIP intercept", voipjson.agencyid,
+            vint->common.targetagency, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("mediator", "VOIP intercept", voipjson.mediator,
+            vint->common.destid, &parseerr, false);
+
+    if (parseerr) {
+        goto cepterr;
+    }
+
+    if (voipjson.siptargets != NULL) {
+        libtrace_list_t *tmp;
+        libtrace_list_node_t *n, *n2;
+
+        if (parse_voipintercept_siptargets(state, vint, voipjson.siptargets,
+                cinfo) < 0) {
+            goto cepterr;
+        }
+
+        if (compare_sip_targets(state, found, vint) < 0) {
+            goto cepterr;
+        }
+		tmp = found->targets;
+		found->targets = vint->targets;
+		vint->targets = tmp;
+    }
+
+    /* TODO: warn if user tries to change fields that we don't support
+     * changing (e.g. mediator) ?
+     *
+     * TODO: allow target agency to be changed, we just need to remove and
+     * then announce the new LIID mapping...
+     */
+
+    MODIFY_STRING_MEMBER(vint->common.authcc, found->common.authcc, &changed);
+    found->common.authcc_len  = strlen(found->common.authcc);
+
+    if (changed) {
+        modify_existing_intercept_options(state, (void *)found,
+                    OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
+    }
+
+    logger(LOG_INFO,
+            "OpenLI provisioner: updated VOIP intercept %s via update socket.",
+            found->common.liid);
+
+    if (vint) {
+        free_single_voipintercept(vint);
+    }
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return 0;
+
+cepterr:
+    if (vint) {
+        free_single_voipintercept(vint);
+    }
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return -1;
+}
+
 int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     struct json_intercept ipjson;
@@ -789,6 +953,9 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     if (!found) {
         json_object_put(parsed);
         json_tokener_free(tknr);
+		if (liidstr) {
+			free(liidstr);
+		}
         return add_new_ipintercept(cinfo, state);
     }
 
@@ -853,12 +1020,14 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                 range->awaitingconfirm = 0;
             }
         }
+
+		tmp = found->statics;
+		found->statics = ipint->statics;
+		ipint->statics = tmp;
     }
 
     if (accessstring) {
         ipint->accesstype = map_access_type_string(accessstring);
-        free(accessstring);
-        accessstring = NULL;
     }
 
     /* TODO: warn if user tries to change fields that we don't support
@@ -873,10 +1042,13 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     MODIFY_STRING_MEMBER(ipint->username, found->username, &changed);
     found->username_len = strlen(found->username);
 
-    if (ipint->accesstype != found->accesstype) {
+    if (accessstring && ipint->accesstype != found->accesstype) {
         changed = 1;
         found->accesstype = ipint->accesstype;
     }
+
+	free(accessstring);
+	accessstring = NULL;
 
     if (ipint->vendmirrorid != found->vendmirrorid) {
         changed = 1;
@@ -913,12 +1085,6 @@ cepterr:
     }
     json_tokener_free(tknr);
     return -1;
-}
-
-int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
-
-    /* TODO */
-    return 0;
 }
 
 int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {

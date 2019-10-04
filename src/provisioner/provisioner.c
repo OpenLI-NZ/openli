@@ -1446,62 +1446,6 @@ static inline int reload_collector_socket_config(provision_state_t *currstate,
     return 0;
 }
 
-static inline int compare_sip_targets(provision_state_t *currstate,
-        voipintercept_t *existing, voipintercept_t *reload) {
-
-    openli_sip_identity_t *oldtgt, *newtgt;
-    libtrace_list_node_t *n1, *n2;
-
-    /* Sluggish (n^2), but hopefully we don't have many IDs per intercept */
-
-    n1 = existing->targets->head;
-    while (n1) {
-        oldtgt = *((openli_sip_identity_t **)(n1->data));
-        n1 = n1->next;
-
-        oldtgt->awaitingconfirm = 1;
-        n2 = reload->targets->head;
-        while (n2) {
-            newtgt = *((openli_sip_identity_t **)(n2->data));
-            n2 = n2->next;
-            if (newtgt->awaitingconfirm == 0) {
-                continue;
-            }
-
-            if (are_sip_identities_same(newtgt, oldtgt)) {
-                oldtgt->awaitingconfirm = 0;
-                newtgt->awaitingconfirm = 0;
-                break;
-            }
-        }
-
-        if (oldtgt->awaitingconfirm) {
-            /* This target is no longer in the intercept config so
-             * withdraw it. */
-            if (announce_sip_target_change(currstate, oldtgt, existing, 0) < 0)
-            {
-                return -1;
-            }
-        }
-    }
-
-    n2 = reload->targets->head;
-    while (n2) {
-        newtgt = *((openli_sip_identity_t **)(n2->data));
-        n2 = n2->next;
-        if (newtgt->awaitingconfirm == 0) {
-            continue;
-        }
-
-        /* This target has been added since we last reloaded config so
-         * announce it. */
-        if (announce_sip_target_change(currstate, newtgt, existing, 1) < 0) {
-            return -1;
-        }
-    }
-
-    return 0;
-}
 
 #if 0
 static inline int reload_voipintercepts(provision_state_t *currstate,
