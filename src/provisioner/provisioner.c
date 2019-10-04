@@ -665,6 +665,7 @@ static int respond_mediator_auth(provision_state_t *state,
         }
     }
 
+    /* We also need to send any LIID -> LEA mappings that we know about */
     h = state->interceptconf.liid_map;
     while (h != NULL) {
         if (push_liid_mapping_onto_net_buffer(outgoing, h->agency, h->liid)
@@ -675,9 +676,6 @@ static int respond_mediator_auth(provision_state_t *state,
         }
         h = h->hh.next;
     }
-
-    /* We also need to send any LIID -> LEA mappings that we know about */
-
 
     /* Update our epoll event for this mediator to allow transmit. */
     if (enable_epoll_write(state, pev) == -1) {
@@ -1002,12 +1000,6 @@ static int accept_mediator(provision_state_t *state) {
 
 }
 
-static int accept_update(provision_state_t *state) {
-
-    /* TODO write this! */
-    return -1;
-}
-
 static int start_main_listener(provision_state_t *state) {
 
     struct epoll_event ev;
@@ -1031,43 +1023,6 @@ static int start_main_listener(provision_state_t *state) {
     if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
         logger(LOG_INFO,
                 "OpenLI: Failed to register main listening socket: %s.",
-                strerror(errno));
-        close(sockfd);
-        return -1;
-    }
-
-    return sockfd;
-}
-
-static int start_push_listener(provision_state_t *state) {
-    struct epoll_event ev;
-    int sockfd;
-
-    if (state->pushaddr == NULL) {
-        return -1;
-    }
-
-    state->updatefd = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
-
-    sockfd  = create_listener(state->pushaddr, state->pushport, "II push");
-    if (sockfd == -1) {
-        return -1;
-    }
-
-    logger(LOG_INFO,
-            "OpenLI provisioner: listening for updates on %s:%s",
-            state->pushaddr, state->pushport);
-
-    state->updatefd->fd = sockfd;
-    state->updatefd->fdtype = PROV_EPOLL_UPDATE_CONN;
-    state->updatefd->client = NULL;
-
-    ev.data.ptr = state->updatefd;
-    ev.events = EPOLLIN;
-
-    if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
-        logger(LOG_INFO,
-                "OpenLI: Failed to register push listening socket: %s.",
                 strerror(errno));
         close(sockfd);
         return -1;
@@ -1211,9 +1166,6 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
             break;
         case PROV_EPOLL_MEDIATE_CONN:
             ret = accept_mediator(state);
-            break;
-        case PROV_EPOLL_UPDATE_CONN:
-            ret = accept_update(state);
             break;
         case PROV_EPOLL_MAIN_TIMER:
             if (ev->events & EPOLLIN) {
@@ -1446,339 +1398,6 @@ static inline int reload_collector_socket_config(provision_state_t *currstate,
     return 0;
 }
 
-
-#if 0
-static inline int reload_voipintercepts(provision_state_t *currstate,
-        provision_state_t *newstate, int droppedcols, int droppedmeds) {
-
-    voipintercept_t *newints, *voipint, *tmp, *newequiv;
-    char *str;
-
-    /* TODO error handling in the "inform other components about changes"
-     * functions?
-     */
-    HASH_ITER(hh_liid, currstate->voipintercepts, voipint, tmp) {
-        HASH_FIND(hh_liid, newstate->voipintercepts, voipint->common.liid,
-                voipint->common.liid_len, newequiv);
-
-        if (newequiv && newstate->ignorertpcomfort) {
-            newequiv->options |= (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
-        }
-
-        if (!newequiv) {
-            /* Intercept has been withdrawn entirely */
-            if (!droppedcols) {
-                halt_existing_intercept(currstate, (void *)voipint,
-                        OPENLI_PROTO_HALT_VOIPINTERCEPT);
-            }
-            remove_liid_mapping(currstate, voipint->common.liid,
-                    voipint->common.liid_len, droppedmeds);
-            continue;
-        } else if (!voip_intercept_equal(voipint, newequiv)) {
-            /* VOIP intercept has changed somehow -- this probably
-             * shouldn't happen but deal with it anyway
-             */
-            logger(LOG_INFO,
-                    "OpenLI provisioner: Details for VOIP intercept %s have changed -- updating collectors",
-                    voipint->common.liid);
-
-            if (!droppedcols) {
-                halt_existing_intercept(currstate, (void *)voipint,
-                        OPENLI_PROTO_HALT_VOIPINTERCEPT);
-            }
-            remove_liid_mapping(currstate, voipint->common.liid,
-                    voipint->common.liid_len, droppedmeds);
-
-        } else if (voipint->options != newequiv->options &&
-                HASH_CNT(hh, currstate->collectors) > 0) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: Options for VOIP intercept %s have changed",
-                    voipint->common.liid);
-            if (!droppedcols) {
-                modify_existing_intercept_options(currstate, (void *)newequiv,
-                        OPENLI_PROTO_MODIFY_IPINTERCEPT);
-            }
-
-        } else {
-            if (compare_sip_targets(currstate, voipint, newequiv) < 0) {
-                return -1;
-            }
-            newequiv->awaitingconfirm = 0;
-        }
-    }
-
-    HASH_ITER(hh_liid, newstate->voipintercepts, voipint, tmp) {
-        liid_hash_t *h = NULL;
-        int skip = 0;
-        prov_agency_t *lea = NULL;
-
-        if (!voipint->awaitingconfirm) {
-            continue;
-        }
-
-        if (strcmp(voipint->common.targetagency, "pcapdisk") != 0) {
-            HASH_FIND_STR(newstate->leas, voipint->common.targetagency, lea);
-            if (lea == NULL) {
-                skip = 1;
-            }
-        }
-
-        if (skip) {
-            continue;
-        }
-
-        if (newstate->ignorertpcomfort) {
-            newequiv->options |= (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
-        }
-
-        /* Add the LIID mapping */
-        h = add_liid_mapping(currstate, voipint->common.liid,
-                voipint->common.targetagency);
-
-        if (!droppedmeds && announce_liidmapping_to_mediators(currstate,
-                h) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: unable to announce new VOIP intercept to mediators.");
-            return -1;
-        }
-
-        if (!droppedcols && announce_single_intercept(currstate,
-                (void *)voipint, push_voipintercept_onto_net_buffer) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: unable to announce new VOIP intercept to collectors.");
-            return -1;
-        }
-
-        if (!droppedcols && announce_all_sip_targets(currstate,
-                    voipint->targets, voipint) < 0) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: error pushing SIP targets for VOIP intercept %s onto buffer.", voipint->common.liid);
-            return -1;
-        }
-    }
-
-    /* Swap the intercept lists */
-    newints = newstate->voipintercepts;
-    newstate->voipintercepts = currstate->voipintercepts;
-    currstate->voipintercepts = newints;
-    return 0;
-}
-#endif
-
-static inline void reload_coreservers(provision_state_t *state,
-        coreserver_t *currserv, coreserver_t *newserv, int droppedcols) {
-
-    coreserver_t *cs, *tmp, *newequiv;
-    HASH_ITER(hh, currserv, cs, tmp) {
-        HASH_FIND(hh, newserv, cs->serverkey, strlen(cs->serverkey), newequiv);
-        if (!newequiv) {
-            /* Core server has been withdrawn */
-            if (!droppedcols) {
-                announce_coreserver_change(state, cs, false);
-            }
-        } else {
-            newequiv->awaitingconfirm = 0;
-        }
-    }
-
-    HASH_ITER(hh, newserv, cs, tmp) {
-        if (!cs->awaitingconfirm) {
-            continue;
-        }
-
-        /* Announce this server as it has just been added */
-        if (!droppedcols) {
-            announce_coreserver_change(state, cs, true);
-        }
-    }
-}
-
-#if 0
-static inline int reload_radiusservers(provision_state_t *currstate,
-        provision_state_t *newstate, int droppedcols) {
-
-    coreserver_t *newrad;
-
-    reload_coreservers(currstate, currstate->radiusservers,
-            newstate->radiusservers, droppedcols);
-
-    newrad = newstate->radiusservers;
-    newstate->radiusservers = currstate->radiusservers;
-    currstate->radiusservers = newrad;
-    return 0;
-}
-
-static inline int reload_sipservers(provision_state_t *currstate,
-        provision_state_t *newstate, int droppedcols) {
-
-    coreserver_t *newsip;
-
-    reload_coreservers(currstate, currstate->sipservers,
-            newstate->sipservers, droppedcols);
-
-    newsip = newstate->sipservers;
-    newstate->sipservers = currstate->sipservers;
-    currstate->sipservers = newsip;
-    return 0;
-}
-#endif
-
-/* define here rather than as a macro, since IP intercepts are now
- * a bit more complicated (i.e. some structure fields are optional).
- */
-static inline int ip_intercept_equal(ipintercept_t *a, ipintercept_t *b) {
-    if (strcmp(a->common.liid, b->common.liid) != 0) {
-        return 0;
-    }
-
-    if (strcmp(a->common.authcc, b->common.authcc) != 0) {
-        return 0;
-    }
-
-    if (strcmp(a->common.delivcc, b->common.delivcc) != 0) {
-        return 0;
-    }
-
-    if (a->username && b->username && strcmp(a->username, b->username) != 0) {
-        return 0;
-    }
-
-    if (a->vendmirrorid != b->vendmirrorid) {
-        return 0;
-    }
-
-    if (strcmp(a->common.targetagency, b->common.targetagency) != 0) {
-        return 0;
-    }
-
-    if (a->accesstype != b->accesstype) {
-        return 0;
-    }
-
-    return 1;
-}
-
-#if 0
-static inline int reload_staticips(provision_state_t *currstate,
-        ipintercept_t *ipint, ipintercept_t *newequiv) {
-
-    static_ipranges_t *ipr, *tmp, *found;
-
-    HASH_ITER(hh, ipint->statics, ipr, tmp) {
-        HASH_FIND(hh, newequiv->statics, ipr->rangestr, strlen(ipr->rangestr),
-                found);
-        if (!found || found->cin != ipr->cin) {
-            remove_existing_staticip_range(currstate, ipint, ipr);
-        } else {
-            found->awaitingconfirm = 0;
-        }
-    }
-
-    HASH_ITER(hh, newequiv->statics, ipr, tmp) {
-        if (ipr->awaitingconfirm == 0) {
-            continue;
-        }
-        add_new_staticip_range(currstate, ipint, ipr);
-    }
-
-    return 0;
-}
-
-static inline int reload_ipintercepts(provision_state_t *currstate,
-        provision_state_t *newstate, int droppedcols, int droppedmeds) {
-
-    ipintercept_t *newints, *ipint, *tmp, *newequiv;
-    char *str;
-
-    /* TODO error handling in the "inform other components about changes"
-     * functions?
-     */
-    HASH_ITER(hh_liid, currstate->ipintercepts, ipint, tmp) {
-        HASH_FIND(hh_liid, newstate->ipintercepts, ipint->common.liid,
-                ipint->common.liid_len, newequiv);
-        if (!newequiv) {
-            /* Intercept has been withdrawn entirely */
-            if (!droppedcols) {
-                halt_existing_intercept(currstate, (void *)ipint,
-                        OPENLI_PROTO_HALT_IPINTERCEPT);
-            }
-            remove_liid_mapping(currstate, ipint->common.liid,
-                    ipint->common.liid_len, droppedmeds);
-            logger(LOG_INFO, "OpenLI provisioner: LIID %s has been withdrawn",
-                    ipint->common.liid);
-            continue;
-        } else if (!ip_intercept_equal(ipint, newequiv)) {
-            /* IP intercept has changed somehow -- this probably
-             * shouldn't happen but deal with it anyway
-             */
-            logger(LOG_INFO, "OpenLI provisioner: Details for IP intercept %s have changed -- updating collectors",
-                    ipint->common.liid);
-
-            if (!droppedcols) {
-                modify_existing_intercept_options(currstate, (void *)newequiv,
-                        OPENLI_PROTO_MODIFY_IPINTERCEPT);
-                newequiv->awaitingconfirm = 0;
-            }
-
-            if (strcmp(ipint->common.targetagency,
-                    newequiv->common.targetagency) != 0) {
-                remove_liid_mapping(currstate, ipint->common.liid,
-                        ipint->common.liid_len, droppedmeds);
-            }
-        } else {
-            reload_staticips(currstate, ipint, newequiv);
-            newequiv->awaitingconfirm = 0;
-        }
-    }
-
-    HASH_ITER(hh_liid, newstate->ipintercepts, ipint, tmp) {
-        liid_hash_t *h = NULL;
-        int skip = 0;
-        prov_agency_t *lea = NULL;
-
-        if (!ipint->awaitingconfirm) {
-            continue;
-        }
-
-        if (strcmp(ipint->common.targetagency, "pcapdisk") != 0) {
-            HASH_FIND_STR(newstate->leas, ipint->common.targetagency, lea);
-            if (lea == NULL) {
-                skip = 1;
-            }
-        }
-
-        if (skip) {
-            continue;
-        }
-
-        /* Add the LIID mapping */
-        h = add_liid_mapping(currstate, ipint->common.liid,
-                ipint->common.targetagency);
-
-        if (!droppedmeds && announce_liidmapping_to_mediators(currstate,
-                h) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: unable to announce new IP intercept to mediators.");
-            return -1;
-        }
-
-        if (!droppedcols && announce_single_intercept(currstate,
-                (void *)ipint, push_ipintercept_onto_net_buffer) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: unable to announce new IP intercept to collectors.");
-            return -1;
-        }
-    }
-
-    /* Swap the intercept lists */
-    newints = newstate->ipintercepts;
-    newstate->ipintercepts = currstate->ipintercepts;
-    currstate->ipintercepts = newints;
-    return 0;
-}
-
-#endif
-
 static int reload_provisioner_config(provision_state_t *currstate) {
 
     provision_state_t newstate;
@@ -1817,6 +1436,10 @@ static int reload_provisioner_config(provision_state_t *currstate) {
         return -1;
     }
 
+    /* TODO update voip-ignorecomfort settings if necessary
+     * -- includes calling modify_existing_intercept_options() on *all*
+     *    VOIP intercepts if this does change and clientchanged == 0 */
+
     if (tlschanged != 0) {
         if (!mediatorchanged) {
             free_all_mediators(currstate->epoll_fd, &(currstate->mediators));
@@ -1833,36 +1456,6 @@ static int reload_provisioner_config(provision_state_t *currstate) {
         disconnect_mediators_from_collectors(currstate);
 
     }
-
-    /* TODO
-     * If the intercept config file has changed, we'll still need to
-     * reload the entire intercept config and push any changes to any
-     * mediators or collectors that are still connected.
-     */
-
-#if 0
-    if (reload_leas(currstate, &newstate, mediatorchanged) == -1) {
-        return -1;
-    }
-
-    if (reload_voipintercepts(currstate, &newstate, clientchanged,
-            mediatorchanged) == -1) {
-        return -1;
-    }
-
-    if (reload_ipintercepts(currstate, &newstate, clientchanged,
-            mediatorchanged) == -1) {
-        return -1;
-    }
-
-    if (reload_radiusservers(currstate, &newstate, clientchanged) == -1) {
-        return -1;
-    }
-
-    if (reload_sipservers(currstate, &newstate, clientchanged) == -1) {
-        return -1;
-    }
-#endif
 
     clear_prov_state(&newstate);
 
