@@ -1277,27 +1277,29 @@ static inline int reload_push_socket_config(provision_state_t *currstate,
     int changed = 0;
 
     /* TODO this will trigger on a whitespace change */
-    if (currstate->pushaddr) {
-        if (strcmp(newstate->pushaddr, currstate->pushaddr) != 0 ||
-                strcmp(newstate->pushport, currstate->pushport) != 0) {
 
-            MHD_stop_daemon(currstate->updatedaemon);
-            currstate->updatedaemon = NULL;
+    if (strcmp(newstate->pushport, currstate->pushport) != 0 ||
+            (currstate->pushaddr == NULL && newstate->pushaddr != NULL) ||
+            (currstate->pushaddr != NULL && newstate->pushaddr == NULL) ||
+            (currstate->pushaddr && newstate->pushaddr &&
+             strcmp(newstate->pushaddr, currstate->pushaddr) != 0)) {
 
+        MHD_stop_daemon(currstate->updatedaemon);
+        currstate->updatedaemon = NULL;
+
+        if (currstate->pushaddr) {
             free(currstate->pushaddr);
-            free(currstate->pushport);
-
-            if (newstate->pushaddr) {
-                currstate->pushaddr = strdup(newstate->pushaddr);
-            } else {
-                currstate->pushaddr = NULL;
-            }
-            currstate->pushport = strdup(newstate->pushport);
-            changed = 1;
         }
-    } else if (newstate->pushaddr) {
-        currstate->pushaddr = strdup(newstate->pushaddr);
-        currstate->pushport = strdup(newstate->pushport);
+        free(currstate->pushport);
+
+        if (newstate->pushaddr) {
+            currstate->pushaddr = newstate->pushaddr;
+            newstate->pushaddr = NULL;
+        } else {
+            currstate->pushaddr = NULL;
+        }
+        currstate->pushport = newstate->pushport;
+        newstate->pushport = NULL;
         changed = 1;
     }
 
