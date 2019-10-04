@@ -598,6 +598,12 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     vint->active = 1;
     vint->targets = libtrace_list_init(sizeof(openli_sip_identity_t *));
 
+    /* XXX potential data race here if we're reloading core provisioner
+     * config at the same time, consider adding a mutex */
+    if (state->ignorertpcomfort == 1) {
+        vint->options |= (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
+    }
+
     EXTRACT_JSON_STRING_PARAM("liid", "VOIP intercept", voipjson.liid,
             vint->common.liid, &parseerr, true);
     EXTRACT_JSON_STRING_PARAM("authcc", "VOIP intercept", voipjson.authcc,
@@ -1182,7 +1188,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     struct json_object *agencyid;
     struct json_agency agjson;
 
-    const char *idstr;
+    const char *idstr = NULL;
     struct json_object *parsed = NULL;
     struct json_tokener *tknr;
     prov_agency_t *found;
