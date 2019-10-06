@@ -50,6 +50,7 @@
 #include "netcomms.h"
 #include "mediator.h"
 #include "etsili_core.h"
+#include "openli_tls.h"
 
 volatile int mediator_halt = 0;
 volatile int reload_config = 0;
@@ -367,9 +368,8 @@ static void clear_med_config(mediator_state_t *state) {
     if (state->operatorid) {
         free(state->operatorid);
     }
-    if(state->ctx){
-        SSL_CTX_free(state->ctx);
-    }
+
+    free_ssl_config(&(state->sslconf));
     pthread_mutex_destroy(&(state->agency_mutex));
 }
 
@@ -437,12 +437,12 @@ static void destroy_med_state(mediator_state_t *state) {
         free(state->provreconnect);
     }
 
-	if (state->timerev) {
-		if (state->timerev->fd != -1) {
-			close(state->timerev->fd);
-		}
-		free(state->timerev);
-	}
+  if (state->timerev) {
+    if (state->timerev->fd != -1) {
+      close(state->timerev->fd);
+    }
+    free(state->timerev);
+  }
 
     pthread_join(state->pcapthread, NULL);
     if (state->pcaptimerev) {
@@ -467,9 +467,12 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->listenport = NULL;
     state->etsitls = 1;
 
-    state->certfile = NULL;
-    state->keyfile = NULL;
-    state->cacertfile = NULL;
+    state->sslconf.certfile = NULL;
+    state->sslconf.keyfile = NULL;
+    state->sslconf.cacertfile = NULL;
+    state->sslconf.ctx = NULL;
+    state->lastsslerror_accept = 0;
+    state->lastsslerror_connect = 0;
 
     state->operatorid = NULL;
     state->provaddr = NULL;
@@ -510,17 +513,8 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     logger(LOG_DEBUG, "OpenLI Mediator: ETSI TLS encryption %s",
         state->etsitls ? "enabled" : "disabled");
 
-    if (state->certfile && state->keyfile && state->cacertfile){
-        state->ctx = ssl_init(state->cacertfile, state->certfile, state->keyfile);
-    } else {
-        if (state->certfile || state->keyfile || state->cacertfile){
-            logger(LOG_INFO, "OpenLI Mediator: SSL error, missing keyfile or certfile names.");
-            return -1;
-        }
-        else{
-            logger(LOG_DEBUG, "OpenLI Mediator: Not using OpenSSL TLS connection.");
-            state->ctx = NULL;
-        }
+    if (create_ssl_context(&(state->sslconf)) < 0) {
+        return -1;
     }
 
     if (state->mediatorid == 0 || state->mediatorid == NULL) {
@@ -924,47 +918,39 @@ static int accept_collector(mediator_state_t *state) {
     }
 
     if (newfd >= 0) {
+        int r = OPENLI_SSL_CONNECT_NOSSL;
 
         mstate = (med_coll_state_t *)malloc(sizeof(med_coll_state_t));
         col.colev = (med_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
+        col.ssl = NULL;
 
-        //only use TLS if ctx is set AND tls is not disabled for mediator/collector
-        if (state->ctx != NULL && state->etsitls == 1){
-            col.ssl = SSL_new(state->ctx);
-            SSL_set_fd(col.ssl, newfd);
+        if (state->etsitls) {
+            r = listen_ssl_socket(&(state->sslconf), &(col.ssl), newfd);
 
-            int errr = SSL_accept(col.ssl);
-            if (errr <= 0){
-                errr = SSL_get_error(col.ssl, errr);
+            if (r == OPENLI_SSL_CONNECT_FAILED) {
+                close(newfd);
+                SSL_free(col.ssl);
+                free(mstate);
+                free(col.colev);
 
-                if (errr != SSL_ERROR_WANT_WRITE &&
-                    errr != SSL_ERROR_WANT_READ &&
-                    errr != SSL_ERROR_WANT_ACCEPT &&
-                    errr != SSL_ERROR_WANT_CONNECT){ //handshake failed badly
-                    ERR_print_errors_fp(stderr);
-                    close(newfd);
-                    SSL_free(col.ssl);
-                    free(mstate);
-                    free(col.colev);
-                    logger(LOG_INFO, "OpenLI Mediator: SSL Handshake failed");
-                    return -1;
+                if (r != state->lastsslerror_accept) {
+                    logger(LOG_INFO,
+                            "OpenLI: SSL Handshake failed for collector %s",
+                            strbuf);
                 }
-                logger(LOG_DEBUG, "OpenLI Mediator: SSL Handshake started");
-                col.colev->fdtype = MED_EPOLL_COLLECTOR_HANDSHAKE;
+                state->lastsslerror_accept = r;
+                return -1;
             }
-            else {
-                logger(LOG_DEBUG, "OpenLI Mediator: SSL Handshake accepted");
-                dump_cert_info(col.ssl);
 
-                //handshake has finished
+            if (r == OPENLI_SSL_CONNECT_WAITING) {
+                col.colev->fdtype = MED_EPOLL_COLLECTOR_HANDSHAKE;
+            } else {
                 col.colev->fdtype = MED_EPOLL_COLLECTOR;
-
+                state->lastsslerror_accept = 0;
             }
         } else {
             col.colev->fdtype = MED_EPOLL_COLLECTOR;
-            col.ssl = NULL;
         }
-
 
         col.colev->fd = newfd;
         col.colev->state = mstate;
@@ -1099,7 +1085,7 @@ static void *start_connect_thread(void *params) {
 
     mediator_state_t *state = (mediator_state_t *)params;
 
-    while (1) {
+    while (mediator_halt == 0) {
         pthread_mutex_lock(&(state->agency_mutex));
 
         if (libtrace_list_get_size(state->agencies) == 0) {
@@ -2053,28 +2039,30 @@ static int continue_handshake(mediator_state_t *state, med_epoll_ev_t *mev) {
         }
         else {
             //fail out
-            logger(LOG_INFO, "OpenLI Mediator: SSL Handshake failed");
+            logger(LOG_INFO,
+                    "OpenLI: Pending SSL Handshake for collector failed");
             return -1;
         }
     }
-    logger(LOG_DEBUG, "OpenLI Mediator: SSL Handshake accepted");
-    dump_cert_info(cs->ssl);
+    logger(LOG_INFO, "OpenLI: Pending SSL Handshake for collector accepted");
+    state->lastsslerror_accept = 0;
 
     //handshake has finished
     mev->fdtype = MED_EPOLL_COLLECTOR;
+    return 1;
 }
 
 static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 
-	med_epoll_ev_t *mev = (med_epoll_ev_t *)(ev->data.ptr);
+  med_epoll_ev_t *mev = (med_epoll_ev_t *)(ev->data.ptr);
     int ret = 0;
 
-	switch(mev->fdtype) {
-		case MED_EPOLL_SIGCHECK_TIMER:
-			if (ev->events & EPOLLIN) {
-				return 1;
-			}
-			logger(LOG_INFO,
+  switch(mev->fdtype) {
+    case MED_EPOLL_SIGCHECK_TIMER:
+      if (ev->events & EPOLLIN) {
+        return 1;
+      }
+      logger(LOG_INFO,
                     "OpenLI Mediator: main epoll timer has failed.");
             return -1;
         case MED_EPOLL_PCAP_TIMER:
@@ -2129,7 +2117,7 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
                 ret = transmit_provisioner(state, mev);
             } else if (ev->events & EPOLLIN) {
                 ret = receive_provisioner(state, mev);
-                if (ret == 0 && state->provisioner.disable_log) {
+                if (ret == 0 && state->provisioner.disable_log == 0) {
                     logger(LOG_INFO,
                             "OpenLI Mediator: Connected to provisioner at %s:%s",
                             state->provaddr, state->provport);
@@ -2149,12 +2137,11 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
                 state->provisioner.disable_log = 1;
             }
             break;
-        case MED_EPOLL_COLLECTOR_HANDSHAKE:{
-                //continue handshake process
-                ret = continue_handshake(state, mev);
-                if (ret == -1) {
-                    drop_collector(state, mev, 1);
-                }
+        case MED_EPOLL_COLLECTOR_HANDSHAKE:
+            //continue handshake process
+            ret = continue_handshake(state, mev);
+            if (ret == -1) {
+                drop_collector(state, mev, 1);
             }
             break;
         case MED_EPOLL_COLLECTOR:
@@ -2247,7 +2234,10 @@ static int init_provisioner_connection(mediator_state_t *state, int sock, SSL_CT
         return 0;
     }
 
-    prov->provev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+    if (prov->provev == NULL) {
+        prov->provev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+    }
+
     prov->provev->fd = sock;
     prov->provev->fdtype = MED_EPOLL_PROVISIONER;
     prov->provev->state = NULL;
@@ -2266,22 +2256,23 @@ static int init_provisioner_connection(mediator_state_t *state, int sock, SSL_CT
         if(errr <= 0){
             errr = SSL_get_error(prov->ssl, errr);
             if (errr != SSL_ERROR_WANT_WRITE && errr != SSL_ERROR_WANT_READ){ //handshake failed badly
-                //close(sock);
                 SSL_free(prov->ssl);
                 free(prov->provev);
+                prov->provev = NULL;
                 prov->ssl = NULL;
-                logger(LOG_INFO, "OpenLI Mediator: SSL Handshake failed");
+                if (state->lastsslerror_connect == 0) {
+                    logger(LOG_INFO, "OpenLI: SSL Handshake failed when connecting to provisioner");
+                    state->lastsslerror_connect = 1;
+                }
                 return -1;
             }
         }
-        logger(LOG_DEBUG, "OpenLI Mediator: SSL Handshake started");
-        dump_cert_info(prov->ssl);
+        logger(LOG_DEBUG, "OpenLI: SSL Handshake started for connection to provisioner");
+        state->lastsslerror_connect = 0;
     }
     else {
         prov->ssl = NULL;
     }
-
-
 
     prov->sentinfo = 0;
     prov->outgoing = create_net_buffer(NETBUF_SEND, sock, prov->ssl);
@@ -2310,6 +2301,38 @@ static int init_provisioner_connection(mediator_state_t *state, int sock, SSL_CT
     return send_mediator_listen_details(state, 1);
 }
 
+static inline void drop_provisioner(mediator_state_t *currstate) {
+
+    liid_map_t *m, *tmp;
+    PWord_t pval;
+    char index[1024];
+    Word_t bytes;
+
+    /* Disconnect from provisioner and reset all state received
+     * from the old provisioner (just to be safe). */
+    index[0] = '\0';
+    JSLF(pval, currstate->liid_array, index);
+    while (pval != NULL) {
+        m = (liid_map_t *)(*pval);
+
+        if (m->ceasetimer) {
+            halt_mediator_timer(currstate, m->ceasetimer);
+            free(m->ceasetimer);
+        }
+        JSLN(pval, currstate->liid_array, index);
+        free(m->liid);
+        free(m);
+    }
+    JSLFA(bytes, currstate->liid_array);
+
+    free_provisioner(currstate->epoll_fd, &(currstate->provisioner));
+
+    pthread_mutex_lock(&(currstate->agency_mutex));
+    drop_all_agencies(currstate->agencies);
+    pthread_mutex_unlock(&(currstate->agency_mutex));
+
+}
+
 static int reload_provisioner_socket_config(mediator_state_t *currstate,
         mediator_state_t *newstate) {
 
@@ -2323,28 +2346,7 @@ static int reload_provisioner_socket_config(mediator_state_t *currstate,
     if (strcmp(newstate->provaddr, currstate->provaddr) != 0 ||
             strcmp(newstate->provport, currstate->provport) != 0) {
 
-        /* Disconnect from provisioner and reset all state received
-         * from the old provisioner (just to be safe). */
-        index[0] = '\0';
-        JSLF(pval, currstate->liid_array, index);
-        while (pval != NULL) {
-            m = (liid_map_t *)(*pval);
-
-            if (m->ceasetimer) {
-                halt_mediator_timer(currstate, m->ceasetimer);
-                free(m->ceasetimer);
-            }
-            JSLN(pval, currstate->liid_array, index);
-            free(m->liid);
-            free(m);
-        }
-        JSLFA(bytes, currstate->liid_array);
-
-        free_provisioner(currstate->epoll_fd, &(currstate->provisioner));
-
-        pthread_mutex_lock(&(currstate->agency_mutex));
-        drop_all_agencies(currstate->agencies);
-        pthread_mutex_unlock(&(currstate->agency_mutex));
+        drop_provisioner(currstate);
 
         /* Replace existing IP and port strings */
         free(currstate->provaddr);
@@ -2366,6 +2368,34 @@ static int reload_provisioner_socket_config(mediator_state_t *currstate,
     return changed;
 }
 
+static inline void halt_listening_socket(mediator_state_t *currstate) {
+    struct epoll_event ev;
+
+    /* Disconnect all collectors */
+    drop_all_collectors(currstate, currstate->collectors);
+    currstate->collectors = libtrace_list_init(
+            sizeof(mediator_collector_t));
+
+
+    /* Close listen socket */
+    if (currstate->listenerev) {
+        if (currstate->listenerev->fd != -1) {
+            logger(LOG_INFO, "OpenLI mediator: closing listening socket on %s:%s",
+                    currstate->listenaddr, currstate->listenport);
+            if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
+                        currstate->listenerev->fd, &ev) == -1) {
+                logger(LOG_INFO,
+                        "OpenLI mediator: failed to remove listener fd %d from epoll: %s",
+                        currstate->listenerev->fd, strerror(errno));
+            }
+            close(currstate->listenerev->fd);
+        }
+        free(currstate->listenerev);
+    }
+
+    currstate->listenerev = NULL;
+}
+
 static int reload_listener_socket_config(mediator_state_t *currstate,
         mediator_state_t *newstate) {
 
@@ -2375,29 +2405,7 @@ static int reload_listener_socket_config(mediator_state_t *currstate,
     if (strcmp(newstate->listenaddr, currstate->listenaddr) != 0 ||
             strcmp(newstate->listenport, currstate->listenport) != 0) {
 
-        /* Disconnect all collectors */
-        drop_all_collectors(currstate, currstate->collectors);
-        currstate->collectors = libtrace_list_init(
-                sizeof(mediator_collector_t));
-
-
-        /* Close listen socket */
-        if (currstate->listenerev) {
-            if (currstate->listenerev->fd != -1) {
-                logger(LOG_INFO, "OpenLI Mediator: closing listening socket on %s:%s",
-                        currstate->listenaddr, currstate->listenport);
-                if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
-                        currstate->listenerev->fd, &ev) == -1) {
-                    logger(LOG_INFO,
-                            "OpenLI Mediator: failed to remove listener fd %d from epoll: %s",
-                            currstate->listenerev->fd, strerror(errno));
-                }
-                close(currstate->listenerev->fd);
-            }
-            free(currstate->listenerev);
-        }
-
-        currstate->listenerev = NULL;
+        halt_listening_socket(currstate);
 
         /* Replace existing IP and port strings */
         free(currstate->listenaddr);
@@ -2434,6 +2442,7 @@ static int reload_mediator_config(mediator_state_t *currstate) {
     mediator_state_t newstate;
     int listenchanged = 0;
     int provchanged = 0;
+    int tlschanged = 0;
 
     if (init_med_state(&newstate, currstate->conffile,
             currstate->mediatorid) == -1) {
@@ -2452,6 +2461,28 @@ static int reload_mediator_config(mediator_state_t *currstate) {
         return -1;
     }
 
+    tlschanged = reload_ssl_config(&(currstate->sslconf), &(newstate.sslconf));
+    if (tlschanged == -1) {
+        return -1;
+    }
+
+    if (tlschanged != 0 || newstate.etsitls != currstate->etsitls) {
+        currstate->etsitls = newstate.etsitls;
+
+        if (!listenchanged) {
+            /* Disconnect all collectors */
+            drop_all_collectors(currstate, currstate->collectors);
+            currstate->collectors = libtrace_list_init(
+                    sizeof(mediator_collector_t));
+
+            listenchanged = 1;
+        }
+        if (!provchanged) {
+            drop_provisioner(currstate);
+            provchanged = 1;
+        }
+    }
+
     if (listenchanged && !provchanged) {
         /* Need to re-announce our details */
         if (send_mediator_listen_details(currstate, 0) < 0) {
@@ -2467,34 +2498,34 @@ static int reload_mediator_config(mediator_state_t *currstate) {
 
 static void run(mediator_state_t *state) {
 
-	int i, nfds;
-	int timerfd;
-	int timerexpired = 0;
-	struct itimerspec its;
-	struct epoll_event evs[64];
-	struct epoll_event ev;
+  int i, nfds;
+  int timerfd;
+  int timerexpired = 0;
+  struct itimerspec its;
+  struct epoll_event evs[64];
+  struct epoll_event ev;
     int provfail = 0;
     struct timeval tv;
     uint32_t firstflush;
 
-	ev.data.ptr = state->signalev;
-	ev.events = EPOLLIN;
+  ev.data.ptr = state->signalev;
+  ev.events = EPOLLIN;
 
-	if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, state->signalev->fd, &ev)
-			== -1) {
-		logger(LOG_INFO,
-				"OpenLI Mediator: Failed to register signal socket: %s.",
-				strerror(errno));
-		return;
-	}
+  if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, state->signalev->fd, &ev)
+      == -1) {
+    logger(LOG_INFO,
+        "OpenLI: Failed to register signal socket: %s.",
+        strerror(errno));
+    return;
+  }
 
     logger(LOG_INFO,
             "OpenLI Mediator: pcap output file rotation frequency is set to %d minutes.",
             state->pcaprotatefreq);
 
     gettimeofday(&tv, NULL);
-	state->timerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
-	state->pcaptimerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+  state->timerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+  state->pcaptimerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
 
     firstflush = (((tv.tv_sec / 60) * 60) + 60) - tv.tv_sec;
 
@@ -2508,7 +2539,7 @@ static void run(mediator_state_t *state) {
     state->pcaptimerev->fdtype = MED_EPOLL_PCAP_TIMER;
     state->pcaptimerev->state = NULL;
 
-	while (!mediator_halt) {
+  while (!mediator_halt) {
         if (reload_config) {
             if (reload_mediator_config(state) == -1) {
                 break;
@@ -2516,33 +2547,39 @@ static void run(mediator_state_t *state) {
             reload_config = 0;
         }
 
-	    /* Attempt to connect to the provisioner */
+      /* Attempt to connect to the provisioner */
         if (state->provisioner.provev == NULL &&
                 state->provisioner.tryconnect) {
             int s = connect_socket(state->provaddr, state->provport, provfail,
                     0);
+
+            provfail = 0;
             if (s == -1) {
                 if (state->provisioner.disable_log == 0) {
                     logger(LOG_INFO,
                             "OpenLI Mediator: Error - Unable to connect to provisioner.");
                 }
-                break;
+                provfail = 1;
             } else if (s == 0) {
                 provfail = 1;
-            } else if (state->provisioner.disable_log == 0) {
-                logger(LOG_INFO, "OpenLI Mediator: Connected to provisioner at %s:%s",
-                        state->provaddr, state->provport);
             }
 
-            if (init_provisioner_connection(state, s, state->ctx) == -1) {
-                destroy_net_buffer(state->provisioner.outgoing);
-                destroy_net_buffer(state->provisioner.incoming);
-                close(s);
-                state->provisioner.provev->fd = -1;
-                state->provisioner.outgoing = NULL;
-                state->provisioner.incoming = NULL;
-                setup_provisioner_reconnect_timer(state);
-                break;
+            if (!provfail) {
+                if (init_provisioner_connection(state, s, state->sslconf.ctx) == -1) {
+                    destroy_net_buffer(state->provisioner.outgoing);
+                    destroy_net_buffer(state->provisioner.incoming);
+                    close(s);
+                    if (state->provisioner.provev) {
+                        state->provisioner.provev->fd = -1;
+                    }
+                    state->provisioner.outgoing = NULL;
+                    state->provisioner.incoming = NULL;
+                    setup_provisioner_reconnect_timer(state);
+                } else if (state->provisioner.disable_log == 0) {
+                    logger(LOG_INFO,
+                            "OpenLI mediator has connected to provisioner at %s:%s",
+                            state->provaddr, state->provport);
+                }
             }
         }
 
@@ -2564,14 +2601,14 @@ static void run(mediator_state_t *state) {
                     continue;
                 }
                 logger(LOG_INFO,
-						"OpenLI Mediator: error while waiting for epoll events in mediator: %s.",
+            "OpenLI: error while waiting for epoll events in mediator: %s.",
                         strerror(errno));
                 mediator_halt = true;
                 continue;
             }
 
             for (i = 0; i < nfds; i++) {
-	            med_epoll_ev_t *mev = (med_epoll_ev_t *)(evs[i].data.ptr);
+              med_epoll_ev_t *mev = (med_epoll_ev_t *)(evs[i].data.ptr);
                 timerexpired = check_epoll_fd(state, &(evs[i]));
                 if (timerexpired == -1) {
                     break;
@@ -2587,7 +2624,7 @@ static void run(mediator_state_t *state) {
         }
 
         close(timerfd);
-		state->timerev->fd = -1;
+    state->timerev->fd = -1;
     }
     mediator_halt = true;
 

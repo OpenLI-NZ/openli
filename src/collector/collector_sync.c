@@ -80,7 +80,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
     sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
 
-    sync->ctx = glob->ctx;
+    sync->ctx = glob->sslconf.ctx;
 
     sync->zmq_colsock = zmq_socket(glob->zmq_ctxt, ZMQ_PULL);
     if (zmq_bind(sync->zmq_colsock, "inproc://openli-ipsync") != 0) {
@@ -740,6 +740,9 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
 
         publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
     }
+
+    logger(LOG_INFO, "OpenLI: new mediator announcement for %s:%s",
+            med.ipstr, med.portstr);
     return 1;
 }
 
@@ -1074,7 +1077,7 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     return 1;
 }
 
-static inline void drop_all_mediators(collector_sync_t *sync) {
+void sync_drop_all_mediators(collector_sync_t *sync) {
     openli_export_recv_t *expmsg;
     int i;
 
@@ -1083,6 +1086,20 @@ static inline void drop_all_mediators(collector_sync_t *sync) {
                 sizeof(openli_export_recv_t));
 
         expmsg->type = OPENLI_EXPORT_DROP_ALL_MEDIATORS;
+        expmsg->data.packet = NULL;
+        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+    }
+}
+
+void sync_reconnect_all_mediators(collector_sync_t *sync) {
+    openli_export_recv_t *expmsg;
+    int i;
+
+    for (i = 0; i < sync->forwardcount; i++) {
+        expmsg = (openli_export_recv_t *)calloc(1,
+                sizeof(openli_export_recv_t));
+
+        expmsg->type = OPENLI_EXPORT_RECONNECT_ALL_MEDIATORS;
         expmsg->data.packet = NULL;
         publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
     }
@@ -1255,7 +1272,7 @@ static int recv_from_provisioner(collector_sync_t *sync) {
             case OPENLI_PROTO_NO_MESSAGE:
                 break;
             case OPENLI_PROTO_DISCONNECT_MEDIATORS:
-                drop_all_mediators(sync);
+                sync_drop_all_mediators(sync);
                 ret = 1;
                 break;
             case OPENLI_PROTO_ANNOUNCE_MEDIATOR:
@@ -1382,7 +1399,7 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
 
     if (sockfd == -1) {
         sync->instruct_log = 0;
-        return -1;
+        return 0;
     }
 
     if (sockfd == 0) {
@@ -1391,8 +1408,7 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
     }
 
     if (ctx != NULL){
-        
-        fd_set_block(sockfd); 
+        fd_set_block(sockfd);
         //collector cannt do anything untill it has instructions from provisioner so blocking is fine
 
         sync->ssl = SSL_new(ctx);
@@ -1401,16 +1417,17 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
         int errr = SSL_do_handshake(sync->ssl);
 
         fd_set_nonblock(sockfd);
-        
         if ((errr) <= 0 ){
-            errr = SSL_get_error(sync->ssl, errr);
-            logger(LOG_INFO, "OpenLI: SSL handshake failed");
+            if (sync->instruct_fail == 0) {
+                logger(LOG_INFO, "OpenLI: SSL handshake to provisioner failed");
+            }
             SSL_free(sync->ssl);
-            return -1; //if handshake fails, its unrecoverable, retrying wont help
+            sync->ssl = NULL;
+            sync->instruct_fail = 1;
+            return 0;
         }
 
-        logger(LOG_DEBUG, "OpenLI: SSL Handshake finished");
-        dump_cert_info(sync->ssl);
+        logger(LOG_DEBUG, "OpenLI: SSL Handshake to provisioner finished");
     }
     else {
         sync->ssl = NULL;
@@ -1426,8 +1443,12 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
     /* Put our auth message onto the outgoing buffer */
     if (push_auth_onto_net_buffer(sync->outgoing, OPENLI_PROTO_COLLECTOR_AUTH)
             < 0) {
-        logger(LOG_INFO,"OpenLI: collector is unable to queue auth message.");
-        return -1;
+        if (sync->instruct_fail == 0) {
+            logger(LOG_INFO,"OpenLI: collector is unable to queue auth message.");
+        }
+        sync->instruct_fail = 1;
+        sync_disconnect_provisioner(sync, 0);
+        return 0;
     }
     sync->instruct_events = ZMQ_POLLIN | ZMQ_POLLOUT;
     return 1;
@@ -1457,7 +1478,7 @@ static inline void touch_all_intercepts(ipintercept_t *intlist) {
     }
 }
 
-void sync_disconnect_provisioner(collector_sync_t *sync) {
+void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
 
     openli_export_recv_t *expmsg;
     int i;
@@ -1467,7 +1488,6 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
 
     sync->outgoing = NULL;
     sync->incoming = NULL;
-
 
     if (sync->instruct_fd != -1) {
         if (sync->instruct_log) {
@@ -1489,14 +1509,19 @@ void sync_disconnect_provisioner(collector_sync_t *sync) {
 
     /* Same with mediators -- keep exporting to them, but flag them to be
      * disconnected if they are not announced after we reconnect. */
-    for ( i = 0; i < sync->forwardcount; i++) {
-        expmsg = (openli_export_recv_t *)calloc(1,
-                sizeof(openli_export_recv_t));
-        expmsg->type = OPENLI_EXPORT_FLAG_MEDIATORS;
-        expmsg->data.packet = NULL;
+    if (dropmeds) {
+        sync_reconnect_all_mediators(sync);
+    } else {
+        for ( i = 0; i < sync->forwardcount; i++) {
+            expmsg = (openli_export_recv_t *)calloc(1,
+                    sizeof(openli_export_recv_t));
+            expmsg->type = OPENLI_EXPORT_FLAG_MEDIATORS;
+            expmsg->data.packet = NULL;
 
-        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+            publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+        }
     }
+
 }
 
 static void push_all_active_intercepts(collector_sync_t *sync,
@@ -1808,14 +1833,14 @@ int sync_thread_main(collector_sync_t *sync) {
 
     if (items[1].revents & ZMQ_POLLOUT) {
         if (send_to_provisioner(sync) <= 0) {
-            sync_disconnect_provisioner(sync);
+            sync_disconnect_provisioner(sync, 0);
             return 0;
         }
     }
 
     if (items[1].revents & ZMQ_POLLIN) {
         if (recv_from_provisioner(sync) <= 0) {
-            sync_disconnect_provisioner(sync);
+            sync_disconnect_provisioner(sync, 0);
             return 0;
         }
     }
