@@ -34,6 +34,7 @@
 #include <uthash.h>
 #include "netcomms.h"
 #include "export_buffer.h"
+#include "util.h"
 
 typedef struct med_epoll_ev {
     int fdtype;
@@ -131,9 +132,6 @@ typedef struct med_state {
     char *operatorid;
     char *listenaddr;
     char *listenport;
-    char *keyfile;
-    char *certfile;
-    char *cacertfile;
     uint8_t etsitls;
 
     char *provaddr;
@@ -163,7 +161,9 @@ typedef struct med_state {
     libtrace_message_queue_t pcapqueue;
     wandder_etsispec_t *etsidecoder;
     disabled_collector_t *disabledcols;
-    SSL_CTX *ctx;
+    openli_ssl_config_t sslconf;
+    int lastsslerror_accept;
+    int lastsslerror_connect;
 
 } mediator_state_t;
 

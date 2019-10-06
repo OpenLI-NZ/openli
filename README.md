@@ -173,8 +173,8 @@ A. Unfortunately there are plenty of reasons why this might happen. Here are
 * Try installing the latest 'develop' branch of openli itself from
   https://github.com/wanduow/openli
 
-  If all else fails, send us an email at contact@wand.net.nz and someone
-  will try to help you.
+  If all else fails, send us an email at openli-support@waikato.ac.nz and
+  someone will try to help you.
 
 ---
 
