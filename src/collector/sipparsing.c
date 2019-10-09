@@ -131,13 +131,17 @@ int parse_next_sip_message(openli_sip_parser_t *p,
             p->sipmessage = NULL;
         }
 
-        ret = get_next_tcp_reassembled(p->thisstream, &(p->sipmessage),
-                &(p->siplen));
-        p->sipalloced = 1;
-        p->sipoffset = 0;
+        if (p->thisstream) {
+            ret = get_next_tcp_reassembled(p->thisstream, &(p->sipmessage),
+                    &(p->siplen));
+            if (p->sipmessage != NULL) {
+                p->sipalloced = 1;
+            }
 
-        if (ret <= 0) {
-            return ret;
+            if (ret <= 0) {
+                return ret;
+            }
+            p->sipoffset = 0;
         }
     }
 
