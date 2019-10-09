@@ -1284,7 +1284,9 @@ static inline int reload_push_socket_config(provision_state_t *currstate,
             (currstate->pushaddr && newstate->pushaddr &&
              strcmp(newstate->pushaddr, currstate->pushaddr) != 0)) {
 
-        MHD_stop_daemon(currstate->updatedaemon);
+        if (currstate->updatedaemon) {
+            MHD_stop_daemon(currstate->updatedaemon);
+        }
         currstate->updatedaemon = NULL;
 
         if (currstate->pushaddr) {
@@ -1306,17 +1308,25 @@ static inline int reload_push_socket_config(provision_state_t *currstate,
     if (changed) {
         logger(LOG_INFO,
                 "OpenLI provisioner: update socket configuration has changed.");
-        currstate->updatesockfd = create_listener(currstate->pushaddr,
-                currstate->pushport, "update socket");
-
-        if (currstate->updatesockfd != -1) {
-            start_mhd_daemon(currstate);
-        }
-
-        if (currstate->updatesockfd == -1 || currstate->updatedaemon == NULL) {
+        if (strcmp(currstate->pushport, "0") == 0) {
             logger(LOG_INFO,
-                    "OpenLI provisioner: Warning, update socket did not restart. Will not be able to receive live updates.");
-            return -1;
+                    "OpenLI provisioner: disabling update socket.");
+            logger(LOG_INFO,
+                    "OpenLI provisioner: warning -- intercept configuration can not be updated while the provisioner is running.");
+            currstate->updatesockfd = -1;
+        } else {
+            currstate->updatesockfd = create_listener(currstate->pushaddr,
+                    currstate->pushport, "update socket");
+
+            if (currstate->updatesockfd != -1) {
+                start_mhd_daemon(currstate);
+            }
+
+            if (currstate->updatesockfd == -1 || currstate->updatedaemon == NULL) {
+                logger(LOG_INFO,
+                        "OpenLI provisioner: Warning, update socket did not restart. Will not be able to receive live updates.");
+                return -1;
+            }
         }
         return 1;
     }
@@ -1645,15 +1655,21 @@ int main(int argc, char *argv[]) {
         logger(LOG_INFO, "OpenLI: Warning, mediation socket did not start. Will not be able to control mediators.");
     }
 
-    provstate.updatesockfd = create_listener(provstate.pushaddr,
-            provstate.pushport, "update socket");
-    if (provstate.updatesockfd == -1) {
-        logger(LOG_INFO, "OpenLI: warning, update microhttpd server did not start. Will not be able to receive live updates via REST API.");
-    } else {
-        start_mhd_daemon(&provstate);
-        if (provstate.updatedaemon == NULL) {
+    if (strcmp(provstate.pushport, "0") != 0) {
+        provstate.updatesockfd = create_listener(provstate.pushaddr,
+                provstate.pushport, "update socket");
+        if (provstate.updatesockfd == -1) {
             logger(LOG_INFO, "OpenLI: warning, update microhttpd server did not start. Will not be able to receive live updates via REST API.");
+        } else {
+            start_mhd_daemon(&provstate);
+            if (provstate.updatedaemon == NULL) {
+                logger(LOG_INFO, "OpenLI: warning, update microhttpd server did not start. Will not be able to receive live updates via REST API.");
+            }
         }
+    } else {
+        provstate.updatesockfd = -1;
+        provstate.updatedaemon = NULL;
+        logger(LOG_INFO, "OpenLI: warning, update microhttpd server is disabled. Will not be able to receive live updates via REST API.");
     }
 
     run(&provstate);
