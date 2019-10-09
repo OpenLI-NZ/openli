@@ -44,7 +44,13 @@ your changes may be overwritten without ever being applied.
 
 As this socket will allow people to start intercepts and specify where the
 intercepted traffic should be sent, be **very** careful about which hosts
-on your network can talk to this socket.
+on your network can communicate with this socket.
+
+The update socket can be disabled by configuring it to listen on port 0.
+This will remove any capacity for the running intercept config to updated
+without having to restart the provisioner, but users who are concerned
+about having an open socket that can start, stop or modify intercepts may
+find this to be a preferable option.
 
 ### Agencies
 In this context, an agency refers to an LEA (Law Enforcement Agency) that
@@ -234,7 +240,8 @@ The socket option keys are:
                              connections
 * `updateaddr`            -- the address that the update service should listen
                              on
-* `updateport`            -- the port that the update service should listen on
+* `updateport`            -- the port that the update service should listen on.
+                             Set to 0 to disable the update service.
 
 If you need to disable interception of RTP comfort noise packets (because
 they are considered invalid by the agency decoders), you can do so using
