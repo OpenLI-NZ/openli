@@ -435,6 +435,86 @@ void handle_iprange(libtrace_thread_t *t, colthread_local_t *loc,
     }
 }
 
+void handle_modify_iprange(libtrace_thread_t *t, colthread_local_t *loc,
+        staticipsession_t *ipr) {
+
+    liid_set_t *found = NULL, **all;
+    staticipsession_t *sessrec, *ipr_exist;
+    char key[128];
+    patricia_node_t *node = NULL;
+    prefix_t *prefix;
+
+    prefix = ascii2prefix(0, ipr->rangestr);
+    if (prefix == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: error converting %s into a valid IP prefix in thread %d",
+                ipr->rangestr, trace_get_perpkt_thread_id(t));
+        goto bailmodrange;
+    }
+
+    if (prefix->family == AF_INET) {
+        node = patricia_search_exact(loc->staticv4ranges, prefix);
+    } else if (prefix->family == AF_INET6) {
+        node = patricia_search_exact(loc->staticv6ranges, prefix);
+    }
+
+    if (!node) {
+        logger(LOG_INFO,
+                "OpenLI: thread %d was supposed to modify IP prefix %s for LIID %s but no such prefix exists in the tree.",
+                trace_get_perpkt_thread_id(t), ipr->rangestr, ipr->common.liid);
+        goto bailmodrange;
+    }
+
+    all = (liid_set_t **)&(node->data);
+    HASH_FIND(hh, *all, ipr->common.liid, ipr->common.liid_len, found);
+    if (!found) {
+        logger(LOG_INFO,
+                "OpenLI: thread %d was supposed to modify IP prefix %s for LIID %s but the LIID is not associated with that prefix.",
+                trace_get_perpkt_thread_id(t), ipr->rangestr, ipr->common.liid);
+        goto bailmodrange;
+    }
+
+    HASH_FIND(hh, loc->activestaticintercepts, found->key, strlen(found->key),
+            sessrec);
+
+    if (sessrec) {
+        sessrec->references --;
+        if (sessrec->references == 0) {
+            HASH_DELETE(hh, loc->activestaticintercepts, sessrec);
+            free_single_staticipsession(sessrec);
+        }
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: no static IP session exists for key %s, but we are supposed to be modifying the range for it.",
+                ipr->key);
+    }
+
+    found->cin = ipr->cin;
+    free(found->key);
+    snprintf(key, 127, "%s-%u", found->liid, found->cin);
+    found->key = strdup(key);
+    found->keylen = strlen(found->key);
+
+    HASH_FIND(hh, loc->activestaticintercepts, found->key,
+            strlen(found->key), ipr_exist);
+    if (!ipr_exist) {
+        ipr->references = 1;
+        HASH_ADD_KEYPTR(hh, loc->activestaticintercepts, found->key,
+                strlen(found->key), ipr);
+    } else {
+        ipr_exist->references ++;
+        free_single_staticipsession(ipr);
+    }
+
+
+bailmodrange:
+    if (prefix) {
+        free(prefix);
+    }
+    free_single_staticipsession(ipr);
+    return;
+}
+
 void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
         staticipsession_t *ipr) {
 

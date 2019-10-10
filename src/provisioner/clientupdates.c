@@ -153,6 +153,22 @@ void add_new_staticip_range(provision_state_t *state,
     SEND_ALL_COLLECTORS_END
 }
 
+void modify_existing_staticip_range(provision_state_t *state,
+        ipintercept_t *ipint, static_ipranges_t *ipr) {
+
+
+    SEND_ALL_COLLECTORS_BEGIN
+
+        if (push_static_ipranges_modify_onto_net_buffer(sock->outgoing,
+                ipint, ipr) < 0) {
+            disconnect_provisioner_client(state->epoll_fd,
+                    &(col->client), col->identifier);
+            continue;
+        }
+
+    SEND_ALL_COLLECTORS_END
+}
+
 void remove_existing_staticip_range(provision_state_t *state,
         ipintercept_t *ipint, static_ipranges_t *ipr) {
 

@@ -548,6 +548,10 @@ static void process_incoming_messages(libtrace_thread_t *t,
         handle_remove_iprange(t, loc, syncpush->data.iprange);
     }
 
+    if (syncpush->type == OPENLI_PUSH_MODIFY_IPRANGE) {
+        handle_modify_iprange(t, loc, syncpush->data.iprange);
+    }
+
 }
 
 static inline int is_core_server_packet(libtrace_packet_t *pkt,

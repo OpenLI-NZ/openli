@@ -283,6 +283,8 @@ int withdraw_agency_from_mediators(provision_state_t *state,
         prov_agency_t *lea);
 void add_new_staticip_range(provision_state_t *state,
         ipintercept_t *ipint, static_ipranges_t *ipr);
+void modify_existing_staticip_range(provision_state_t *state,
+        ipintercept_t *ipint, static_ipranges_t *ipr);
 void remove_existing_staticip_range(provision_state_t *state,
         ipintercept_t *ipint, static_ipranges_t *ipr);
 int halt_existing_intercept(provision_state_t *state,

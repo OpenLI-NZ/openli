@@ -1003,7 +1003,11 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                     strlen(range->rangestr), inmod);
 
             if (inmod) {
-                /* Unchanged */
+                /* Check if session ID has changed for some reason */
+                if (inmod->cin != range->cin) {
+                    range->cin = inmod->cin;
+                    modify_existing_staticip_range(state, found, range);
+                }
                 inmod->awaitingconfirm = 0;
             } else {
                 /* Withdrawn */
@@ -1019,9 +1023,6 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         HASH_ITER(hh, ipint->statics, range, tmp) {
             if (range->awaitingconfirm) {
                 /* New range */
-                HASH_DEL(ipint->statics, range);
-                HASH_ADD_KEYPTR(hh, found->statics, range->rangestr,
-                        strlen(range->rangestr), range);
                 add_new_staticip_range(state, found, range);
                 range->awaitingconfirm = 0;
             }

@@ -440,6 +440,25 @@ static inline void push_static_iprange_to_collectors(
 
 }
 
+static inline void push_static_iprange_modify_to_collectors(
+        libtrace_message_queue_t *q, ipintercept_t *ipint,
+        static_ipranges_t *ipr) {
+
+    openli_pushed_t msg;
+    staticipsession_t *staticsess = NULL;
+
+    if (ipr->liid == NULL || ipr->rangestr == NULL) {
+        return;
+    }
+
+    staticsess = create_staticipsession(ipint, ipr->rangestr, ipr->cin);
+    memset(&msg, 0, sizeof(openli_pushed_t));
+    msg.type = OPENLI_PUSH_MODIFY_IPRANGE;
+    msg.data.iprange = staticsess;
+
+    libtrace_message_queue_put(q, (void *)(&msg));
+}
+
 static inline void push_static_iprange_remove_to_collectors(
         libtrace_message_queue_t *q, ipintercept_t *ipint,
         static_ipranges_t *ipr) {
@@ -608,6 +627,39 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
             sendq, tmp) {
         push_static_iprange_to_collectors(sendq->q, ipint, ipr);
+    }
+
+    return 1;
+}
+
+static int modify_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
+{
+
+    static_ipranges_t *found;
+    ipintercept_t *ipint;
+    sync_sendq_t *tmp, *sendq;
+
+
+    HASH_FIND(hh_liid, sync->ipintercepts, ipr->liid, strlen(ipr->liid), ipint);
+    if (!ipint) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                "OpenLI: received static IP range to modify for LIID %s, but this LIID is unknown?",
+                ipr->liid);
+        }
+        free(ipr);
+        return -1;
+    }
+
+    HASH_FIND(hh, ipint->statics, ipr->rangestr, strlen(ipr->rangestr), found);
+    if (found) {
+        logger(LOG_INFO, "OpenLI: modifying capture of IP prefix %s for LIID %s -- CIN was %u, now %u",
+                ipr->rangestr, ipr->liid, found->cin, ipr->cin);
+        found->cin = ipr->cin;
+        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
+                sendq, tmp) {
+            push_static_iprange_modify_to_collectors(sendq->q, ipint, found);
+        }
     }
 
     return 1;
@@ -1301,6 +1353,25 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 if (ret == -1) {
                     return -1;
                 }
+                break;
+            case OPENLI_PROTO_MODIFY_STATICIPS:
+                ipr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
+
+                if (decode_staticip_modify(provmsg, msglen, ipr) == -1) {
+                    if (sync->instruct_log) {
+                        logger(LOG_INFO,
+                            "OpenLI: received invalid static IP range from provisioner for removal.");
+                    }
+                    free(ipr);
+                    return -1;
+                }
+                ret = modify_staticiprange(sync, ipr);
+                if (ret == -1) {
+                    return -1;
+                }
+                free(ipr->liid);
+                free(ipr->rangestr);
+                free(ipr);
                 break;
             case OPENLI_PROTO_REMOVE_STATICIPS:
                 ipr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
