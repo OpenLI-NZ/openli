@@ -110,7 +110,7 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
     newcin->timeout_ev = NULL;
     newcin->byematched = 0;
 
-    if (vint->options & (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
+    if (vint->options & (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
         newcin->skip_comfort = 1;
     } else {
         newcin->skip_comfort = 0;

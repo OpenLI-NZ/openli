@@ -601,7 +601,7 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     /* XXX potential data race here if we're reloading core provisioner
      * config at the same time, consider adding a mutex */
     if (state->ignorertpcomfort == 1) {
-        vint->options |= (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
+        vint->options |= (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
     }
 
     EXTRACT_JSON_STRING_PARAM("liid", "VOIP intercept", voipjson.liid,

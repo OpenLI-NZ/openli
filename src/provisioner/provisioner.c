@@ -522,7 +522,7 @@ static int push_all_voipintercepts(provision_state_t *state,
 
         v->options = 0;
         if (state->ignorertpcomfort == 1) {
-            v->options |= (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
+            v->options |= (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
         }
 
         if (push_voipintercept_onto_net_buffer(nb, v) < 0) {
@@ -1372,6 +1372,22 @@ static inline int reload_mediator_socket_config(provision_state_t *currstate,
     return 0;
 }
 
+static inline int reload_voipoptions_config(provision_state_t *currstate,
+        provision_state_t *newstate) {
+
+    if (currstate->ignorertpcomfort != newstate->ignorertpcomfort) {
+        currstate->ignorertpcomfort = newstate->ignorertpcomfort;
+        if (currstate->ignorertpcomfort) {
+            logger(LOG_INFO, "OpenLI: provisioner ignoring RTP comfort noise for all VOIP intercepts");
+        } else {
+            logger(LOG_INFO, "OpenLI: provisioner intercepting RTP comfort noise for all VOIP intercepts");
+        }
+        return 1;
+    }
+
+    return 0;
+}
+
 static inline int reload_collector_socket_config(provision_state_t *currstate,
         provision_state_t *newstate) {
 
@@ -1418,6 +1434,7 @@ static int reload_provisioner_config(provision_state_t *currstate) {
     int pushchanged = 0;
     int leachanged = 0;
     int tlschanged = 0;
+    int voipoptschanged = 0;
 
     if (init_prov_state(&newstate, currstate->conffile) == -1) {
         logger(LOG_INFO,
@@ -1446,6 +1463,22 @@ static int reload_provisioner_config(provision_state_t *currstate) {
     tlschanged = reload_ssl_config(&(currstate->sslconf), &(newstate.sslconf));
     if (tlschanged == -1) {
         return -1;
+    }
+
+    voipoptschanged = reload_voipoptions_config(currstate, &newstate);
+    if (voipoptschanged && !clientchanged) {
+        voipintercept_t *vint, *tmp;
+
+        HASH_ITER(hh_liid, currstate->interceptconf.voipintercepts, vint, tmp) {
+            if (currstate->ignorertpcomfort) {
+                vint->options |= (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
+            } else {
+                vint->options &= ~(1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
+            }
+
+            modify_existing_intercept_options(currstate, (void *)vint,
+                    OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
+        }
     }
 
     /* TODO update voip-ignorecomfort settings if necessary
@@ -1620,6 +1653,12 @@ int main(int argc, char *argv[]) {
     if (init_prov_state(&provstate, configfile) == -1) {
         logger(LOG_INFO, "OpenLI: Error initialising provisioner.");
         return 1;
+    }
+
+    if (provstate.ignorertpcomfort) {
+        logger(LOG_INFO, "OpenLI: provisioner ignoring RTP comfort noise for all VOIP intercepts");
+    } else {
+        logger(LOG_INFO, "OpenLI: provisioner intercepting RTP comfort noise for all VOIP intercepts");
     }
 
     if (provstate.interceptconffile == NULL) {
