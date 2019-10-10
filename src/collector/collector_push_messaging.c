@@ -486,7 +486,7 @@ void handle_modify_iprange(libtrace_thread_t *t, colthread_local_t *loc,
     } else {
         logger(LOG_INFO,
                 "OpenLI: no static IP session exists for key %s, but we are supposed to be modifying the range for it.",
-                ipr->key);
+                found->key);
     }
 
     found->cin = ipr->cin;
@@ -501,9 +501,9 @@ void handle_modify_iprange(libtrace_thread_t *t, colthread_local_t *loc,
         ipr->references = 1;
         HASH_ADD_KEYPTR(hh, loc->activestaticintercepts, found->key,
                 strlen(found->key), ipr);
+        ipr = NULL;
     } else {
         ipr_exist->references ++;
-        free_single_staticipsession(ipr);
     }
 
 
@@ -511,7 +511,9 @@ bailmodrange:
     if (prefix) {
         free(prefix);
     }
-    free_single_staticipsession(ipr);
+    if (ipr) {
+        free_single_staticipsession(ipr);
+    }
     return;
 }
 
@@ -554,6 +556,20 @@ void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
         goto bailremoverange;
     }
 
+    HASH_FIND(hh, loc->activestaticintercepts, ipr->key, strlen(ipr->key),
+            sessrec);
+    if (sessrec) {
+        sessrec->references --;
+        if (sessrec->references == 0) {
+            HASH_DELETE(hh, loc->activestaticintercepts, sessrec);
+            free_single_staticipsession(sessrec);
+        }
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: no static IP session exists for key %s, but we are supposed to be removing a range for it.",
+                ipr->key);
+    }
+
     HASH_DELETE(hh, *all, found);
     /*
     logger(LOG_INFO,
@@ -571,19 +587,6 @@ void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
     free(found->key);
     free(found);
 
-    HASH_FIND(hh, loc->activestaticintercepts, ipr->key, strlen(ipr->key),
-            sessrec);
-    if (sessrec) {
-        sessrec->references --;
-        if (sessrec->references == 0) {
-            HASH_DELETE(hh, loc->activestaticintercepts, sessrec);
-            free_single_staticipsession(sessrec);
-        }
-    } else {
-        logger(LOG_INFO,
-                "OpenLI: no static IP session exists for key %s, but we are supposed to be removing a range for it.",
-                ipr->key);
-    }
 
 
 bailremoverange:
