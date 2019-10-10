@@ -174,6 +174,8 @@ typedef struct prov_intercept_conf {
     ipintercept_t *ipintercepts;
     prov_agency_t *leas;
     liid_hash_t *liid_map;
+
+    pthread_mutex_t safelock;
 } prov_intercept_conf_t;
 
 

@@ -32,6 +32,7 @@
 #include <sys/socket.h>
 #include <microhttpd.h>
 #include <json-c/json.h>
+#include <pthread.h>
 
 #include "provisioner.h"
 #include "logger.h"
@@ -109,6 +110,7 @@ static int update_configuration_delete(update_con_info_t *cinfo,
     memcpy(target, targetstart + 1, targetend - targetstart - 1);
     target[targetend - (targetstart + 1)] = '\0';
 
+    pthread_mutex_lock(&(state->interceptconf.safelock));
     switch(cinfo->target) {
         case TARGET_AGENCY:
             ret = remove_agency(cinfo, state, target);
@@ -129,6 +131,9 @@ static int update_configuration_delete(update_con_info_t *cinfo,
             break;
     }
 
+    /* Safe to unlock before emitting, since all accesses should be reads
+     * anyway... */
+    pthread_mutex_unlock(&(state->interceptconf.safelock));
     emit_intercept_config(state->interceptconffile, &(state->interceptconf));
     free(urlcopy);
     return ret;
@@ -149,6 +154,7 @@ static int update_configuration_post(update_con_info_t *cinfo,
         return -1;
     }
 
+    pthread_mutex_lock(&(state->interceptconf.safelock));
     switch(cinfo->target) {
         case TARGET_AGENCY:
             if (strcmp(method, "POST") == 0) {
@@ -180,6 +186,10 @@ static int update_configuration_post(update_con_info_t *cinfo,
             break;
     }
 
+
+    /* Safe to unlock before emitting, since all accesses should be reads
+     * anyway... */
+    pthread_mutex_unlock(&(state->interceptconf.safelock));
 
     emit_intercept_config(state->interceptconffile, &(state->interceptconf));
     return ret;

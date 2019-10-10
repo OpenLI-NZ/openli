@@ -180,6 +180,8 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->interceptconf.liid_map = NULL;
     state->interceptconf.leas = NULL;
 
+    pthread_mutex_init(&(state->interceptconf.safelock), NULL);
+
     /* Three listening sockets
      *
      * listen:  collectors should connect to this socket to receive IIs
@@ -388,6 +390,8 @@ static void clear_intercept_state(prov_intercept_conf_t *conf) {
     free_all_voipintercepts(&(conf->voipintercepts));
     free_coreserver_list(conf->radiusservers);
     free_coreserver_list(conf->sipservers);
+
+    pthread_mutex_destroy(&(conf->safelock));
 }
 
 static void clear_prov_state(provision_state_t *state) {
@@ -579,11 +583,14 @@ static int respond_collector_auth(provision_state_t *state,
      * of known mediators and active intercepts to it.
      */
 
+    pthread_mutex_lock(&(state->interceptconf.safelock));
+
     if (HASH_CNT(hh, state->mediators) +
             HASH_CNT(hh, state->interceptconf.radiusservers) +
             HASH_CNT(hh, state->interceptconf.sipservers) +
             HASH_CNT(hh_liid, state->interceptconf.ipintercepts) +
             HASH_CNT(hh_liid, state->interceptconf.voipintercepts) == 0) {
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
         return 0;
     }
 
@@ -594,6 +601,7 @@ static int respond_collector_auth(provision_state_t *state,
         logger(LOG_INFO,
                 "OpenLI: unable to queue mediators to be sent to new collector on fd %d",
                 pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
     }
 
@@ -601,6 +609,7 @@ static int respond_collector_auth(provision_state_t *state,
             OPENLI_CORE_SERVER_RADIUS, outgoing) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue RADIUS server details to be sent to new collector on fd %d", pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
     }
 
@@ -608,6 +617,7 @@ static int respond_collector_auth(provision_state_t *state,
             OPENLI_CORE_SERVER_SIP, outgoing) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue RADIUS server details to be sent to new collector on fd %d", pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
     }
 
@@ -616,6 +626,7 @@ static int respond_collector_auth(provision_state_t *state,
         logger(LOG_INFO,
                 "OpenLI: unable to queue IP intercepts to be sent to new collector on fd %d",
                 pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
     }
 
@@ -625,12 +636,14 @@ static int respond_collector_auth(provision_state_t *state,
         logger(LOG_INFO,
                 "OpenLI: unable to queue VOIP IP intercepts to be sent to new collector on fd %d",
                 pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
     }
 
     if (push_nomore_intercepts(outgoing) < 0) {
         logger(LOG_INFO,
                 "OpenLI provisioner: error pushing end of intercepts onto buffer for writing to collector.");
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
     }
 
@@ -638,9 +651,11 @@ static int respond_collector_auth(provision_state_t *state,
         logger(LOG_INFO,
                 "OpenLI: unable to enable epoll write event for newly authed collector on fd %d: %s",
                 pev->fd, strerror(errno));
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
     }
 
+    pthread_mutex_unlock(&(state->interceptconf.safelock));
     return 0;
 
 }
@@ -652,6 +667,7 @@ static int respond_mediator_auth(provision_state_t *state,
     liid_hash_t *h;
     prov_agency_t *ag, *tmp;
 
+    pthread_mutex_lock(&(state->interceptconf.safelock));
     /* Mediator just authed successfully, so we can safely send it details
      * on any LEAs that we know about */
     /* No need to wrap our log messages with checks for log_allowed, as
@@ -661,6 +677,7 @@ static int respond_mediator_auth(provision_state_t *state,
         if (push_lea_onto_net_buffer(outgoing, ag->ag) == -1) {
             logger(LOG_INFO,
                     "OpenLI: error while buffering LEA details to send from provisioner to mediator.");
+            pthread_mutex_unlock(&(state->interceptconf.safelock));
             return -1;
         }
     }
@@ -672,10 +689,12 @@ static int respond_mediator_auth(provision_state_t *state,
                 == -1) {
             logger(LOG_INFO,
                     "OpenLI: error while buffering LIID mappings to send to mediator.");
+            pthread_mutex_unlock(&(state->interceptconf.safelock));
             return -1;
         }
         h = h->hh.next;
     }
+    pthread_mutex_unlock(&(state->interceptconf.safelock));
 
     /* Update our epoll event for this mediator to allow transmit. */
     if (enable_epoll_write(state, pev) == -1) {
@@ -1469,6 +1488,7 @@ static int reload_provisioner_config(provision_state_t *currstate) {
     if (voipoptschanged && !clientchanged) {
         voipintercept_t *vint, *tmp;
 
+        pthread_mutex_lock(&(currstate->interceptconf.safelock));
         HASH_ITER(hh_liid, currstate->interceptconf.voipintercepts, vint, tmp) {
             if (currstate->ignorertpcomfort) {
                 vint->options |= (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
@@ -1479,6 +1499,7 @@ static int reload_provisioner_config(provision_state_t *currstate) {
             modify_existing_intercept_options(currstate, (void *)vint,
                     OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
         }
+        pthread_mutex_unlock(&(currstate->interceptconf.safelock));
     }
 
     /* TODO update voip-ignorecomfort settings if necessary
