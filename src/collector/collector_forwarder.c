@@ -157,7 +157,7 @@ static inline void disconnect_mediator(forwarding_thread_data_t *fwd,
     }
 
     med->logallowed = 0;
-    if (med->pollindex >= 0) {
+    if (med->pollindex >= 0 && fwd->topoll) {
         fwd->topoll[med->pollindex].fd = 0;
         fwd->topoll[med->pollindex].events = 0;
     }
@@ -847,7 +847,9 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
     remove_reorderers(fwd, NULL, &(fwd->intreorderer_cc));
     remove_reorderers(fwd, NULL, &(fwd->intreorderer_iri));
     free(fwd->topoll);
+    fwd->topoll = NULL;
     free(fwd->forcesend);
+    fwd->forcesend = NULL;
     close(fwd->conntimerfd);
     if (fwd->flagtimerfd != -1) {
         close(fwd->flagtimerfd);
