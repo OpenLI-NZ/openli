@@ -29,6 +29,9 @@
 
 #include <libtrace/linked_list.h>
 
+#define DEFAULT_AGENCY_KEEPALIVE_WAIT (30)
+#define DEFAULT_AGENCY_KEEPALIVE_FREQ (300)
+
 typedef struct liagency {
 
     char *hi2_ipstr;
@@ -48,5 +51,7 @@ typedef struct liagency {
      (strcmp(a->agencyid, b->agencyid) == 0))
 
 #endif
+
+void free_liagency(liagency_t *ag);
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -6,9 +6,13 @@ openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
 		byteswap.c byteswap.h intercept.h intercept.c configparser.c \
                 configparser.h util.c util.h agency.h logger.c logger.h \
 		netcomms.h netcomms.c coreserver.h coreserver.c \
-                collector/jenkinshash.c openli_tls.c openli_tls.h \
+                collector/jenkinshash.c provisioner/updateserver.c \
+                openli_tls.c openli_tls.h agency.c agency.h \
                 provisioner/provisioner_client.c \
-                provisioner/provisioner_client.h 
+                provisioner/provisioner_client.h \
+                provisioner/configwriter.c provisioner/clientupdates.c \
+                provisioner/updateserver.h \
+                provisioner/updateserver_jsonparsing.c
 
 openliprovisioner_LDFLAGS = -lpthread @PROVISIONER_LIBS@
 openliprovisioner_LDADD = @ADD_LIBS@
@@ -56,7 +60,7 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
 		byteswap.c byteswap.h \
                 configparser.c configparser.h util.c util.h \
                 agency.h logger.c logger.h netcomms.c \
-                netcomms.h export_buffer.c \
+                netcomms.h export_buffer.c intercept.c \
                 export_buffer.h etsili_core.h etsili_core.c \
                 collector/jenkinshash.c openli_tls.c openli_tls.h \
                 coreserver.c coreserver.h

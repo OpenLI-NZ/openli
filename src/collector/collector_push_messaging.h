@@ -51,6 +51,8 @@ void handle_iprange(libtrace_thread_t *t, colthread_local_t *loc,
         staticipsession_t *ipr);
 void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
         staticipsession_t *ipr);
+void handle_modify_iprange(libtrace_thread_t *t, colthread_local_t *loc,
+        staticipsession_t *ipr);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

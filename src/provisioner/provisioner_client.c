@@ -311,6 +311,7 @@ int accept_provisioner_client(openli_ssl_config_t *sslconf, int epollfd,
 	 */
 	start_provisioner_client_authtimer(epollfd, client, identifier,
 			PROVISIONER_AUTH_TIMEOUT_SECS);
+    client->state->halted = 0;
 	return client->commev->fd;
 
 colconnfail:
@@ -356,6 +357,7 @@ int continue_provisioner_client_handshake(int epollfd, prov_client_t *client,
          * now a connected client.
 	     */
 		client->commev->fdtype = cs->clientrole;
+        client->state->halted = 0;
     } else {
         ret = SSL_get_error(client->ssl, ret);
         if(ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE){

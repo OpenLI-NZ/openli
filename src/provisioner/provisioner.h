@@ -29,9 +29,12 @@
 
 #include <libtrace/linked_list.h>
 #include <uthash.h>
+#include <microhttpd.h>
 #include "netcomms.h"
 #include "util.h"
 #include "openli_tls.h"
+
+#define DEFAULT_INTERCEPT_CONFIG_FILE "/var/lib/openli/intercepts.conf"
 
 typedef struct prov_client prov_client_t;
 
@@ -84,15 +87,6 @@ enum {
     /** Idle timeout for a client has expired */
     PROV_EPOLL_FD_IDLETIMER,
 };
-
-typedef struct update_state {
-    char *recvbuf;
-    char *readptr;
-    char *writeptr;
-    uint32_t alloced;
-
-    int16_t tocome;
-} provision_update_t;
 
 /** A LIID->agency mapping, used to ensure mediators route the intercept
  *  traffic to the correct LEA.
@@ -174,6 +168,17 @@ typedef struct prov_mediator {
     UT_hash_handle hh;
 } prov_mediator_t;
 
+typedef struct prov_intercept_conf {
+    coreserver_t *radiusservers;
+    coreserver_t *sipservers;
+    voipintercept_t *voipintercepts;
+    ipintercept_t *ipintercepts;
+    prov_agency_t *leas;
+    liid_hash_t *liid_map;
+
+    pthread_mutex_t safelock;
+} prov_intercept_conf_t;
+
 /** Global state for the provisioner instance */
 typedef struct prov_state {
 
@@ -192,6 +197,7 @@ typedef struct prov_state {
     char *pushaddr;
     /** The port to listen on for incoming updater connections */
     char *pushport;
+    char *interceptconffile;
 
     /** The file descriptor that is used for polling using epoll */
     int epoll_fd;
@@ -222,6 +228,10 @@ typedef struct prov_state {
     prov_epoll_ev_t *timerfd;
     /** Epoll event for the incoming signal socket */
     prov_epoll_ev_t *signalfd;
+
+    prov_intercept_conf_t interceptconf;
+    struct MHD_Daemon *updatedaemon;
+    MHD_socket updatesockfd;
 
     /** The set of LEAs that are potential intercept recipients */
     prov_agency_t *leas;
@@ -262,9 +272,39 @@ struct prov_sock_state {
 
     /** The type of client, e.g. either collector or mediator */
     int clientrole;
-
 };
 
+int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf);
+
+int announce_lea_to_mediators(provision_state_t *state,
+        prov_agency_t *lea);
+int withdraw_agency_from_mediators(provision_state_t *state,
+        prov_agency_t *lea);
+void add_new_staticip_range(provision_state_t *state,
+        ipintercept_t *ipint, static_ipranges_t *ipr);
+void modify_existing_staticip_range(provision_state_t *state,
+        ipintercept_t *ipint, static_ipranges_t *ipr);
+void remove_existing_staticip_range(provision_state_t *state,
+        ipintercept_t *ipint, static_ipranges_t *ipr);
+int halt_existing_intercept(provision_state_t *state,
+        void *cept, openli_proto_msgtype_t wdtype);
+int modify_existing_intercept_options(provision_state_t *state,
+        void *cept, openli_proto_msgtype_t modtype);
+int disconnect_mediators_from_collectors(provision_state_t *state);
+int remove_liid_mapping(provision_state_t *state,
+        char *liid, int liid_len, int droppedmeds);
+int announce_liidmapping_to_mediators(provision_state_t *state,
+        liid_hash_t *liidmap);
+int announce_coreserver_change(provision_state_t *state,
+        coreserver_t *cs, uint8_t isnew);
+int announce_sip_target_change(provision_state_t *state,
+        openli_sip_identity_t *sipid, voipintercept_t *vint, uint8_t isnew);
+int announce_all_sip_targets(provision_state_t *state, voipintercept_t *vint);
+int remove_all_sip_targets(provision_state_t *state, voipintercept_t *vint);
+int announce_single_intercept(provision_state_t *state,
+        void *cept, int (*sendfunc)(net_buffer_t *, void *));
+liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
+        char *liid, char *agency);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

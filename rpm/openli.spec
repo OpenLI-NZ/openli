@@ -151,6 +151,7 @@ fi
 %{_unitdir}/openli-provisioner.service
 %config %{_sysconfdir}/rsyslog.d/10-openli-provisioner.conf
 %config %{_sysconfdir}/openli/provisioner-example.yaml
+%config %{_sysconfdir}/openli/running-intercept-example.yaml
 %doc %{_docdir}/openli/ProvisionerDoc.md
 %doc %{_docdir}/openli/TLSDoc.md
 
