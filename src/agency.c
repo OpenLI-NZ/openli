@@ -23,28 +23,27 @@
  *
  *
  */
-#ifndef OPENLI_IPCC_H_
-#define OPENLI_IPCC_H_
+#include <stdlib.h>
 
-#include "config.h"
-#include <libtrace.h>
-#include "collector.h"
+#include "agency.h"
 
-int encode_ipcc(wandder_encoder_t *encoder, wandder_encode_job_t *precomputed,
-        openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
-        openli_encoded_result_t *msg);
-int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
-        libtrace_ip_t *ip, uint32_t rem, colthread_local_t *loc);
-int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
-        libtrace_ip6_t *ip, uint32_t rem, colthread_local_t *loc);
-
-#ifdef HAVE_BER_ENCODING
-int encode_ipcc_ber(wandder_buf_t **preencoded_ber,
-        openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
-        openli_encoded_result_t *msg, wandder_etsili_top_t *top, 
-        wandder_encoder_t *encoder);
-#endif
-#endif
+void free_liagency(liagency_t *lea) {
+	if (lea->hi2_ipstr) {
+		free(lea->hi2_ipstr);
+	}
+	if (lea->hi2_portstr) {
+		free(lea->hi2_portstr);
+	}
+	if (lea->hi3_ipstr) {
+		free(lea->hi3_ipstr);
+	}
+	if (lea->hi3_portstr) {
+		free(lea->hi3_portstr);
+	}
+	if (lea->agencyid) {
+		free(lea->agencyid);
+	}
+	free(lea);
+}
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
-

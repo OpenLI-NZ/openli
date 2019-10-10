@@ -422,5 +422,38 @@ void *get_udp_payload(libtrace_packet_t *packet, uint32_t *rem) {
 	return udppayload;
 }
 
+char *parse_iprange_string(char *ipr_str) {
+	    int family = 0;
+
+	char *parsed = NULL;
+
+    if (ipr_str == NULL) {
+        return NULL;
+    }
+
+    if (strchr(ipr_str, ':') != NULL) {
+        family = AF_INET6;
+    } else if (strchr(ipr_str, '.') != NULL) {
+        family = AF_INET;
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: '%s' is not a valid prefix or IP address",
+                ipr_str);
+        return NULL;
+    }
+    if (strchr(ipr_str, '/') == NULL) {
+        /* No slash, so assume /32 or /128 */
+        int rlen = strlen(ipr_str) + 5;   /* '/128' + nul */
+        parsed = (char *)calloc(1, rlen);
+        snprintf(parsed, rlen - 1, "%s/%u", ipr_str,
+                family == AF_INET ? 32 : 128);
+
+    } else {
+        parsed = strdup(ipr_str);
+    }
+    return parsed;
+
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 

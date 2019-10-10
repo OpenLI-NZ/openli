@@ -548,6 +548,10 @@ static void process_incoming_messages(libtrace_thread_t *t,
         handle_remove_iprange(t, loc, syncpush->data.iprange);
     }
 
+    if (syncpush->type == OPENLI_PUSH_MODIFY_IPRANGE) {
+        handle_modify_iprange(t, loc, syncpush->data.iprange);
+    }
+
 }
 
 static inline int is_core_server_packet(libtrace_packet_t *pkt,
@@ -1202,6 +1206,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->sslconf.ctx = NULL;
 
     glob->etsitls = 1;
+    glob->encoding_method = OPENLI_ENCODING_DER;
 
     memset(&(glob->stats), 0, sizeof(glob->stats));
     glob->stat_frequency = 0;
@@ -1217,6 +1222,9 @@ static collector_global_t *parse_global_config(char *configfile) {
         clear_global_config(glob);
         return NULL;
     }
+
+    logger(LOG_DEBUG, "OpenLI: Encoding Method: %s",
+        glob->encoding_method == OPENLI_ENCODING_BER ? "BER" : "DER");
 
     logger(LOG_DEBUG, "OpenLI: ETSI TLS encryption %s",
         glob->etsitls ? "enabled" : "disabled");
@@ -1576,6 +1584,7 @@ int main(int argc, char *argv[]) {
         glob->seqtrackers[i].zmq_recvpublished = NULL;
         glob->seqtrackers[i].intercepts = NULL;
         glob->seqtrackers[i].colident = &(glob->sharedinfo);
+        glob->seqtrackers[i].encoding_method = glob->encoding_method;
 
         pthread_create(&(glob->seqtrackers[i].threadid), NULL,
                 start_seqtracker_thread, (void *)&(glob->seqtrackers[i]));

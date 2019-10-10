@@ -61,6 +61,7 @@ enum {
     OPENLI_PUSH_HALT_VENDMIRROR_INTERCEPT = 10,
     OPENLI_PUSH_IPRANGE = 11,
     OPENLI_PUSH_REMOVE_IPRANGE = 12,
+    OPENLI_PUSH_MODIFY_IPRANGE = 13,
 };
 
 enum {
@@ -264,6 +265,8 @@ typedef struct collector_global {
     pthread_mutex_t stats_mutex;
 
     uint8_t etsitls;
+
+    uint8_t encoding_method;
     openli_ssl_config_t sslconf;
 
 } collector_global_t;

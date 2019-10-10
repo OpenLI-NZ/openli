@@ -1076,9 +1076,17 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     }
 
     sync->log_bad_instruct = 1;
-    logger(LOG_INFO,
-            "OpenLI: sync thread modifying options for VOIP intercept %s",
-            tomod.common.liid);
+
+    if (tomod.options & (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
+
+        logger(LOG_INFO,
+                "OpenLI: VOIP intercept %s is now ignoring RTP comfort noise",
+                tomod.common.liid);
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: VOIP intercept %s is now intercepting RTP comfort noise",
+                tomod.common.liid);
+    }
 
     vint->options = tomod.options;
 

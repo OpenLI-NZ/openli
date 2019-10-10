@@ -101,6 +101,7 @@ typedef enum {
     OPENLI_PROTO_MODIFY_VOIPINTERCEPT,
     OPENLI_PROTO_CONFIG_RELOADED,
     OPENLI_PROTO_MODIFY_IPINTERCEPT,
+    OPENLI_PROTO_MODIFY_STATICIPS,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -183,6 +184,8 @@ int push_nomore_intercepts(net_buffer_t *nb);
 int transmit_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t *err);
 int push_static_ipranges_removal_onto_net_buffer(net_buffer_t *nb,
         ipintercept_t *ipint, static_ipranges_t *ipr);
+int push_static_ipranges_modify_onto_net_buffer(net_buffer_t *nb,
+        ipintercept_t *ipint, static_ipranges_t *ipr);
 int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
         ipintercept_t *ipint, static_ipranges_t *ipr);
 
@@ -220,6 +223,8 @@ int decode_sip_target_withdraw(uint8_t *msgbody, uint16_t len,
 int decode_staticip_announcement(uint8_t *msgbody, uint16_t len,
         static_ipranges_t *ipr);
 int decode_staticip_removal(uint8_t *msgbody, uint16_t len,
+        static_ipranges_t *ipr);
+int decode_staticip_modify(uint8_t *msgbody, uint16_t len,
         static_ipranges_t *ipr);
 void nb_log_receive_error(openli_proto_msgtype_t err);
 void nb_log_transmit_error(openli_proto_msgtype_t err);
