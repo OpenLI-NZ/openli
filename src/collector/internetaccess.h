@@ -37,6 +37,7 @@
 
 enum {
     ACCESS_RADIUS,
+    ACCESS_GTP,
     ACCESS_DHCP
 };
 
@@ -149,6 +150,7 @@ void free_all_users(internet_user_t *users);
 int free_single_session(internet_user_t *user, access_session_t *sess);
 
 access_plugin_t *get_radius_access_plugin(void);
+access_plugin_t *get_gtp_access_plugin(void);
 
 const char *accesstype_to_string(internet_access_method_t am);
 

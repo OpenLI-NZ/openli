@@ -20,7 +20,9 @@ openliprovisioner_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/
 endif
 
 if BUILD_COLLECTOR
-PLUGIN_SRCS=collector/accessplugins/radius.c
+PLUGIN_SRCS=collector/accessplugins/radius.c \
+                collector/accessplugins/gtp.c
+
 bin_PROGRAMS +=openlicollector
 openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/collector.h logger.c logger.h \

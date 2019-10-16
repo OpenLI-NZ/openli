@@ -171,6 +171,8 @@ typedef struct prov_mediator {
 typedef struct prov_intercept_conf {
     /** The set of known RADIUS servers that will be provided to collectors */
     coreserver_t *radiusservers;
+    /** The set of known GTP servers that will be provided to collectors */
+    coreserver_t *gtpservers;
     /** The set of known SIP servers that will be provided to collectors */
     coreserver_t *sipservers;
     /** The set of VOIP intercepts that we are currently running */

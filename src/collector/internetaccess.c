@@ -35,6 +35,9 @@ access_plugin_t *init_access_plugin(uint8_t accessmethod) {
         case ACCESS_RADIUS:
             p = get_radius_access_plugin();
             break;
+        case ACCESS_GTP:
+            p = get_gtp_access_plugin();
+            break;
     }
 
     if (p == NULL) {

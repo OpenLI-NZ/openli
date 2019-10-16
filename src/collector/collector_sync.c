@@ -71,6 +71,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->info = &(glob->sharedinfo);
 
     sync->radiusplugin = init_access_plugin(ACCESS_RADIUS);
+    sync->gtpplugin = init_access_plugin(ACCESS_GTP);
     sync->freegenerics = glob->syncgenericfreelist;
     sync->activeips = NULL;
 
@@ -155,6 +156,10 @@ void clean_sync_data(collector_sync_t *sync) {
         destroy_access_plugin(sync->radiusplugin);
     }
 
+    if (sync->gtpplugin) {
+        destroy_access_plugin(sync->gtpplugin);
+    }
+
     if(sync->ssl){
         SSL_free(sync->ssl);
     }
@@ -166,6 +171,7 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->outgoing = NULL;
     sync->incoming = NULL;
     sync->radiusplugin = NULL;
+    sync->gtpplugin = NULL;
     sync->activeips = NULL;
 
     while (haltattempts < 10) {
@@ -1795,6 +1801,8 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
 
     if (accesstype == ACCESS_RADIUS) {
         p = sync->radiusplugin;
+    } else if (accesstype == ACCESS_GTP) {
+        p = sync->gtpplugin;
     }
 
     if (!p) {
@@ -1945,18 +1953,28 @@ int sync_thread_main(collector_sync_t *sync) {
              * push II update messages to processing threads */
 
             /* If this relates to an active intercept, create IRI and export */
-            if (recvd.type == OPENLI_UPDATE_RADIUS) {
+            if (recvd.type == OPENLI_UPDATE_RADIUS ||
+                    recvd.type == OPENLI_UPDATE_GTP) {
                 int ret;
+                int accesstype;
+
+                if (recvd.type == OPENLI_UPDATE_RADIUS) {
+                    accesstype = ACCESS_RADIUS;
+                } else if (recvd.type == OPENLI_UPDATE_GTP) {
+                    accesstype = ACCESS_GTP;
+                }
+
                 if ((ret = update_user_sessions(sync, recvd.data.pkt,
-                            ACCESS_RADIUS)) < 0) {
+                            accesstype)) < 0) {
                     /* If a user has screwed up their RADIUS config and we
                      * see non-RADIUS packets here, we probably want to limit the
                      * number of times we complain about this... FIXME */
                     logger(LOG_INFO,
-                            "OpenLI: sync thread received an invalid RADIUS packet");
+                            "OpenLI: sync thread received an invalid packet");
                 }
                 trace_destroy_packet(recvd.data.pkt);
             }
+
         } while (rc > 0);
     }
 

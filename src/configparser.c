@@ -1033,6 +1033,15 @@ static int intercept_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value, "gtpservers") == 0) {
+        if (parse_core_server_list(&state->gtpservers,
+                OPENLI_CORE_SERVER_GTP, doc, value) == -1) {
+            return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
             strcmp((char *)key->data.scalar.value, "sipservers") == 0) {
         if (parse_core_server_list(&state->sipservers,
                 OPENLI_CORE_SERVER_SIP, doc, value) == -1) {
