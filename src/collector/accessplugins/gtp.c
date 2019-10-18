@@ -156,6 +156,18 @@ static inline void destroy_gtp_session(gtp_session_t *sess) {
         return;
     }
 
+    if (sess->sessid) {
+        free(sess->sessid);
+    }
+
+    if (sess->userid.imsi) {
+        free(sess->userid.imsi);
+    }
+
+    if (sess->userid.msisdn) {
+        free(sess->userid.msisdn);
+    }
+
     free(sess);
 }
 
