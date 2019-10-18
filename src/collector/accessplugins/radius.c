@@ -597,30 +597,6 @@ static void create_orphan(radius_global_t *glob, radius_orphaned_resp_t **head,
     }
 }
 
-static inline void *find_radius_start(libtrace_packet_t *pkt, uint32_t *rem,
-        uint16_t *sourceport, uint16_t *destport) {
-
-    void *transport, *radstart;
-    uint8_t proto;
-    libtrace_udp_t *udp;
-
-    transport = trace_get_transport(pkt, &proto, rem);
-    if (!transport || rem == 0) {
-        return NULL;
-    }
-
-    if (proto != TRACE_IPPROTO_UDP) {
-        return NULL;
-    }
-
-    udp = (libtrace_udp_t *)transport;
-    *sourceport = ntohs(udp->source);
-    *destport = ntohs(udp->dest);
-
-    radstart = trace_get_payload_from_udp(udp, rem);
-    return radstart;
-}
-
 static inline int grab_nas_details_from_packet(radius_parsed_t *parsed,
         libtrace_packet_t *pkt, uint8_t code, uint16_t sourceport,
         uint16_t destport) {
@@ -770,7 +746,7 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
         radius_destroy_parsed_data(p, (void *)parsed);
     }
 
-    radstart = (uint8_t *)find_radius_start(pkt, &rem, &sourceport, &destport);
+    radstart = (uint8_t *)get_udp_payload(pkt, &rem, &sourceport, &destport);
     if (radstart == NULL) {
         return NULL;
     }
@@ -1137,7 +1113,6 @@ static char *radius_get_userid(access_plugin_t *p, void *parsed,
 
     radius_parsed_t *raddata;
     radius_global_t *glob;
-    char foo[128];
 
     glob = (radius_global_t *)(p->plugindata);
     raddata = (radius_parsed_t *)parsed;
