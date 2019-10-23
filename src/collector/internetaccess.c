@@ -94,6 +94,34 @@ void free_all_users(internet_user_t *users) {
     }
 }
 
+static inline char *fast_strdup(char *orig, int origlen) {
+    char *dup = malloc(origlen + 1);
+
+    memcpy(dup, orig, origlen + 1);
+    return dup;
+}
+
+access_session_t *create_access_session(access_plugin_t *p, char *sessid,
+        int sessid_len) {
+    access_session_t *newsess;
+
+    newsess = (access_session_t *)malloc(sizeof(access_session_t));
+
+    newsess->plugin = p;
+    newsess->sessionid = fast_strdup(sessid, sessid_len);
+	newsess->statedata = NULL;
+	newsess->idlength = sessid_len;
+	newsess->cin = 0;
+	memset(&(newsess->sessionip), 0, sizeof(newsess->sessionip));
+
+	newsess->iriseqno = 0;
+	newsess->started.tv_sec = 0;
+	newsess->started.tv_usec = 0;
+	newsess->activeipentry = NULL;
+
+	return newsess;
+}
+
 int free_single_session(internet_user_t *user, access_session_t *sess) {
 
     access_session_t *prev, *tmp;

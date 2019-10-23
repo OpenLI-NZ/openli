@@ -152,6 +152,9 @@ int free_single_session(internet_user_t *user, access_session_t *sess);
 access_plugin_t *get_radius_access_plugin(void);
 access_plugin_t *get_gtp_access_plugin(void);
 
+access_session_t *create_access_session(access_plugin_t *p,
+        char *idstr, int idstr_len);
+
 const char *accesstype_to_string(internet_access_method_t am);
 
 #endif

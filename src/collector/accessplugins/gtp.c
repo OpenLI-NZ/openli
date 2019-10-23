@@ -36,6 +36,7 @@
 
 enum {
     GTP_IE_IMSI = 1,
+    GTP_IE_CAUSE = 2,
     GTP_IE_MSISDN = 76,
     GTP_IE_PDN_ALLOC = 79,
     GTP_IE_FTEID = 87,
@@ -81,7 +82,7 @@ typedef struct gtp_session {
     char idstr[64];
     int idstr_len;
 
-    struct sockaddr_storage assignedip;
+    session_state_t current;
 } gtp_session_t;
 
 typedef struct gtp_parsed {
@@ -94,6 +95,7 @@ typedef struct gtp_parsed {
     double tvsec;
     uint32_t teid;
     uint32_t seqno;
+    uint8_t response_cause;
 
     uint8_t serveripfamily;
     uint8_t serverid[16];
@@ -103,6 +105,8 @@ typedef struct gtp_parsed {
 
     gtp_infoelem_t *ies;
     gtp_session_t *matched_session;
+
+    access_action_t action;
 
 } gtp_parsed_t;
 
@@ -130,6 +134,7 @@ static void reset_parsed_pkt(gtp_parsed_t *parsed) {
     parsed->tvsec = 0;
     parsed->teid = 0;
     parsed->seqno = 0;
+    parsed->response_cause = 0;
 
     parsed->serveripfamily = 0;
     memset(parsed->serverid, 0, 16);
@@ -138,6 +143,7 @@ static void reset_parsed_pkt(gtp_parsed_t *parsed) {
 
     parsed->ies = NULL;
     parsed->matched_session = NULL;
+    parsed->action = ACCESS_ACTION_NONE;
 }
 
 static void gtp_init_plugin_data(access_plugin_t *p) {
@@ -236,6 +242,7 @@ static inline bool interesting_info_element(uint8_t ietype) {
         case GTP_IE_FTEID:
         case GTP_IE_MSISDN:
         case GTP_IE_PDN_ALLOC:
+        case GTP_IE_CAUSE:
             return true;
     }
 
@@ -266,6 +273,11 @@ static inline uint32_t get_teid_from_fteid(gtp_infoelem_t *gtpel) {
 
     /* Bytes 2-5 contain the TEID/GRE key */
     return ntohl(*ptr);
+}
+
+static inline uint8_t get_cause_from_ie(gtp_infoelem_t *gtpel) {
+    
+    return *((uint8_t *)(gtpel->iecontent));
 }
 
 static inline void get_gtpnum_from_ie(gtp_infoelem_t *gtpel, char *field) {
@@ -324,7 +336,16 @@ static void walk_gtp_ies(gtp_parsed_t *parsedpkt, uint8_t *ptr, uint32_t rem,
             if (ietype == GTP_IE_MSISDN) {
                 get_gtpnum_from_ie(gtpel, parsedpkt->msisdn);
             }
+        } else if (parsedpkt->msgtype == GTPV2_DELETE_SESSION_REQUEST) {
+            if (ietype == GTP_IE_FTEID) {
+                parsedpkt->teid = get_teid_from_fteid(gtpel);
+            }
         }
+
+        if (ietype == GTP_IE_CAUSE) {
+            parsedpkt->response_cause = get_cause_from_ie(gtpel);
+        }
+
 
         ptr += (ielen + 4);
         used += (ielen + 4);
@@ -507,7 +528,7 @@ static char *gtp_get_userid(access_plugin_t *p, void *parsed,
 
     sess = calloc(1, sizeof(gtp_session_t));
     sess->sessid = strdup(sessid);
-    memset(&(sess->assignedip), 0, sizeof(struct sockaddr_storage));
+    sess->current = SESSION_STATE_NEW;
 
     if (gparsed->imsi[0] != '\0') {
         sess->userid.imsi = strdup(gparsed->imsi);
@@ -532,6 +553,118 @@ static char *gtp_get_userid(access_plugin_t *p, void *parsed,
     return sess->idstr;
 }
 
+static void extract_gtp_assigned_ip_address(gtp_parsed_t *gparsed,
+        access_session_t *sess) {
+
+    gtp_session_t *gsess = gparsed->matched_session;
+    gtp_infoelem_t *ie;
+
+    if (!gsess) {
+        return;
+    }
+
+    ie = gparsed->ies;
+    while (ie) {
+        if (ie->ietype == GTP_IE_PDN_ALLOC) {
+            if (*((uint8_t *)(ie->iecontent)) == 0x01) {
+                /* IPv4 */
+                struct sockaddr_in *in;
+
+                in = (struct sockaddr_in *)&(sess->sessionip.assignedip);
+                in->sin_family = AF_INET;
+                in->sin_port = 0;
+                in->sin_addr.s_addr = *((uint32_t *)(ie->iecontent + 1));
+
+                sess->sessionip.ipfamily = AF_INET;
+                sess->sessionip.prefixbits = 32;
+
+            } else if (*((uint8_t *)(ie->iecontent)) == 0x02) {
+                /* IPv6 */
+                struct sockaddr_in6 *in6;
+
+                in6 = (struct sockaddr_in6 *)&(sess->sessionip.assignedip);
+                in6->sin6_family = AF_INET6;
+                in6->sin6_port = 0;
+                memcpy(&(in6->sin6_addr.s6_addr), ie->iecontent + 1, 16);
+
+                sess->sessionip.ipfamily = AF_INET6;
+                sess->sessionip.prefixbits = 128;
+            } else if (*((uint8_t *)(ie->iecontent)) == 0x03) {
+                /* IPv4 AND IPv6 */
+
+                /* TODO support multiple sessionips per session */
+                struct sockaddr_in6 *in6;
+
+                in6 = (struct sockaddr_in6 *)&(sess->sessionip.assignedip);
+                in6->sin6_family = AF_INET6;
+                in6->sin6_port = 0;
+                memcpy(&(in6->sin6_addr.s6_addr), ie->iecontent + 1, 16);
+
+                sess->sessionip.ipfamily = AF_INET6;
+                sess->sessionip.prefixbits = 128;
+            }
+            break;
+        }
+
+        ie = ie->next;
+    }
+
+
+}
+
+static uint32_t assign_gtp_cin(gtp_parsed_t *gparsed) {
+
+    /* Hopefully this changes for different sessions for the same user */
+    /* XXX maybe we need to account for the GTP server IP as well? */
+    if (gparsed->teid != 0) {
+        return gparsed->teid % (uint32_t)(pow(2, 31));
+    } else {
+
+        /* If we don't have a useful TEID for some reason, fall back to
+         * using time of day */
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        return (tv.tv_sec % (uint32_t)(pow(2, 31)));
+    }
+
+    return 0;
+}
+
+static void apply_gtp_fsm_logic(gtp_parsed_t *gparsed, access_action_t *action,
+        access_session_t *sess) {
+
+    session_state_t current = gparsed->matched_session->current;
+
+    if (current == SESSION_STATE_NEW &&
+            gparsed->msgtype == GTPV2_CREATE_SESSION_REQUEST) {
+
+        current = SESSION_STATE_AUTHING;
+        *action = ACCESS_ACTION_ATTEMPT;
+
+    } else if (current == SESSION_STATE_AUTHING &&
+            gparsed->msgtype == GTPV2_CREATE_SESSION_RESPONSE) {
+
+        if (gparsed->response_cause == 0x10) {
+            current = SESSION_STATE_ACTIVE;
+            *action = ACCESS_ACTION_ACCEPT;
+
+            extract_gtp_assigned_ip_address(gparsed, sess);
+
+        } else if (gparsed->response_cause >= 64 &&
+                gparsed->response_cause <= 239) {
+            current = SESSION_STATE_OVER;
+            *action = ACCESS_ACTION_REJECT;
+        }
+    } else if (current == SESSION_STATE_ACTIVE &&
+            gparsed->msgtype == GTPV2_DELETE_SESSION_RESPONSE) {
+        current = SESSION_STATE_OVER;
+        *action = ACCESS_ACTION_END;
+    }
+
+    gparsed->matched_session->current = current;
+
+}
+
 static access_session_t *gtp_update_session_state(access_plugin_t *p,
         void *parsed, access_session_t **sesslist,
         session_state_t *oldstate, session_state_t *newstate,
@@ -539,21 +672,35 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
 
     gtp_global_t *glob = (gtp_global_t *)(p->plugindata);
     access_session_t *thissess;
+    gtp_parsed_t *gparsed = (gtp_parsed_t *)parsed;
 
-
-
-    switch(glob->parsedpkt->msgtype) {
-        case GTPV2_CREATE_SESSION_REQUEST:
-            break;
-        case GTPV2_CREATE_SESSION_RESPONSE:
-            break;
-        case GTPV2_DELETE_SESSION_REQUEST:
-            break;
-        case GTPV2_DELETE_SESSION_RESPONSE:
-            break;
+    if (gparsed->matched_session == NULL) {
+        return NULL;
     }
 
-    return NULL;
+    thissess = *sesslist;
+    while (thissess != NULL) {
+        if (strcmp(thissess->sessionid, gparsed->matched_session->idstr) == 0) {
+            break;
+        }
+        thissess = thissess->next;
+    }
+
+    if (!thissess) {
+        thissess = create_access_session(p, gparsed->matched_session->idstr,
+                gparsed->matched_session->idstr_len);
+        thissess->cin = assign_gtp_cin(gparsed);
+
+        thissess->next = *sesslist;
+        *sesslist = thissess;
+    }
+
+    *oldstate = gparsed->matched_session->current;
+    apply_gtp_fsm_logic(gparsed, &(gparsed->action), thissess);
+    *newstate = gparsed->matched_session->current;
+
+
+    return thissess;
 }
 
 static int gtp_generate_iri_data(access_plugin_t *p, void *parseddata,
