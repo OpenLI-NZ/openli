@@ -646,6 +646,14 @@ internet_access_method_t map_access_type_string(char *confstr) {
         return INTERNET_ACCESS_TYPE_WIRELESS_OTHER;
     }
 
+    if (strcasecmp(confstr, "mobile") == 0 ||
+            strcasecmp(confstr, "3g") == 0 ||
+            strcasecmp(confstr, "4g") == 0 ||
+            strcasecmp(confstr, "5g") == 0 ||
+            strcasecmp(confstr, "lte") == 0) {
+        return INTERNET_ACCESS_TYPE_MOBILE;
+    }
+
     return INTERNET_ACCESS_TYPE_UNDEFINED;
 }
 

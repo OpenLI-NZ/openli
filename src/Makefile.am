@@ -48,6 +48,7 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/collector_seqtracker.c \
                 collector/collector_forwarder.c collector/jmirror_parser.c \
                 collector/jmirror_parser.h openli_tls.c openli_tls.h \
+                collector/umtscc.h collector/umtscc.c \
                 $(PLUGIN_SRCS)
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 

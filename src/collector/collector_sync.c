@@ -369,6 +369,13 @@ static int create_ipiri_from_iprange(collector_sync_t *sync,
 
 }
 
+static int create_mobiri_from_session(collector_sync_t *sync,
+        access_session_t *sess, ipintercept_t *ipint, access_plugin_t *p,
+        void *parseddata) {
+
+    return 0;
+}
+
 static int create_ipiri_from_session(collector_sync_t *sync,
         access_session_t *sess, ipintercept_t *ipint, access_plugin_t *p,
         void *parseddata, uint8_t special) {
@@ -930,6 +937,8 @@ static inline void announce_vendormirror_id(collector_sync_t *sync,
         push_single_vendmirrorid(sendq->q, ipint,
                 OPENLI_PUSH_VENDMIRROR_INTERCEPT);
     }
+
+    /* TODO Do we need to create an IRI-Begin here too? Probably */
     pthread_mutex_lock(sync->glob->stats_mutex);
     sync->glob->stats->ipsessions_added_diff ++;
     sync->glob->stats->ipsessions_added_total ++;
@@ -951,6 +960,9 @@ static void push_existing_user_sessions(collector_sync_t *sync,
                     sendq, tmp) {
                 push_single_ipintercept(sync, sendq->q, cept, sess);
             }
+
+            /* TODO we'll also need to trigger an Intercept started while
+             * active BEGIN IRI */
         }
     }
 
@@ -1874,9 +1886,13 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
 
     if (userint && accessaction != ACCESS_ACTION_NONE) {
         HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
-            int queueused = 0;
-            queueused = create_ipiri_from_session(sync, sess, ipint, p,
-                    parseddata, OPENLI_IPIRI_STANDARD);
+            if (ipint->accesstype != INTERNET_ACCESS_TYPE_MOBILE) {
+                create_ipiri_from_session(sync, sess, ipint, p,
+                        parseddata, OPENLI_IPIRI_STANDARD);
+            } else {
+                create_mobiri_from_session(sync, sess, ipint, p,
+                        parseddata);
+            }
             expcount ++;
         }
     }

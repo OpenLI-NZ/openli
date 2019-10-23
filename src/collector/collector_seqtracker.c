@@ -60,6 +60,7 @@ static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
     switch(recvd->type) {
         case OPENLI_EXPORT_IPMMCC:
         case OPENLI_EXPORT_IPCC:
+        case OPENLI_EXPORT_UMTSCC:
             return recvd->data.ipcc.liid;
         case OPENLI_EXPORT_IPIRI:
             return recvd->data.ipiri.liid;
@@ -74,6 +75,7 @@ static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
     switch(recvd->type) {
         case OPENLI_EXPORT_IPMMCC:
         case OPENLI_EXPORT_IPCC:
+        case OPENLI_EXPORT_UMTSCC:
             return recvd->data.ipcc.cin;
         case OPENLI_EXPORT_IPIRI:
             return recvd->data.ipiri.cin;
@@ -366,7 +368,8 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     job.cinstr = strdup(cinseq->cin_string);
 
 	if (recvd->type == OPENLI_EXPORT_IPMMCC ||
-			recvd->type == OPENLI_EXPORT_IPCC) {
+			recvd->type == OPENLI_EXPORT_IPCC ||
+            recvd->type == OPENLI_EXPORT_UMTSCC) {
 	    job.seqno = cinseq->cc_seqno;
         cinseq->cc_seqno ++;
 	} else {
@@ -429,6 +432,7 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
                 case OPENLI_EXPORT_IPMMCC:
                 case OPENLI_EXPORT_IPMMIRI:
                 case OPENLI_EXPORT_IPIRI:
+                case OPENLI_EXPORT_UMTSCC:
 					run_encoding_job(seqdata, job);
                     sincepurge ++;
                     break;

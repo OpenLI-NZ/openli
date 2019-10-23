@@ -49,6 +49,44 @@ static inline void encode_tri_body(wandder_encoder_t *encoder) {
     wandder_encode_endseq(encoder);     // End Outermost Sequence
 }
 
+static inline void encode_umtscc_body(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, void *ipcontent, uint32_t iplen,
+        uint8_t dir) {
+
+    uint32_t dir32 = dir;
+
+    wandder_encode_job_t *jobarray[8];
+    int nextjob = 0;
+
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
+    jobarray[2] = &(precomputed[OPENLI_PREENCODE_USEQUENCE]);
+
+    if (dir == 0) {
+        jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRFROM]);
+        nextjob = 4;
+    } else if (dir == 1) {
+        jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRTO]);
+        nextjob = 4;
+    } else if (dir == 2) {
+        jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRUNKNOWN]);
+        nextjob = 4;
+    } else {
+        wandder_encode_next_preencoded(encoder, jobarray, 3);
+        nextjob = 0;
+        wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &dir32,
+                sizeof(uint32_t));
+    }
+
+    if (nextjob != 0) {
+        wandder_encode_next_preencoded(encoder, jobarray, nextjob);
+    }
+
+    wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, ipcontent, iplen);
+    END_ENCODED_SEQUENCE(encoder, 5);
+}
 
 static inline void encode_ipcc_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, void *ipcontent, uint32_t iplen,
@@ -72,7 +110,7 @@ static inline void encode_ipcc_body(wandder_encoder_t *encoder,
         jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRUNKNOWN]);
         nextjob = 4;
     } else {
-        wandder_encode_next_preencoded(encoder, jobarray, 4);
+        wandder_encode_next_preencoded(encoder, jobarray, 3);
         nextjob = 0;
         wandder_encode_next(encoder, WANDDER_TAG_ENUM,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &dir32,
@@ -387,7 +425,7 @@ static inline void encode_ipmmcc_body(wandder_encoder_t *encoder,
         nextjob = 4;
     } else {
         uint32_t dir32 = dir;
-        wandder_encode_next_preencoded(encoder, jobarray, 4);
+        wandder_encode_next_preencoded(encoder, jobarray, 3);
         nextjob = 0;
         wandder_encode_next(encoder, WANDDER_TAG_ENUM,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &dir32,
@@ -565,6 +603,15 @@ wandder_encoded_result_t *encode_etsi_ipcc(wandder_encoder_t *encoder,
     encode_ipcc_body(encoder, precomputed, ipcontents, iplen, dir);
     return wandder_encode_finish(encoder);
 
+}
+
+wandder_encoded_result_t *encode_etsi_umtscc(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
+        struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir) {
+
+    encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
+    encode_umtscc_body(encoder, precomputed, ipcontents, iplen, dir);
+    return wandder_encode_finish(encoder);
 }
 
 wandder_encoded_result_t *encode_etsi_ipmmcc(wandder_encoder_t *encoder,

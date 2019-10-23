@@ -31,6 +31,7 @@
 #include "ipmmcc.h"
 #include "ipcc.h"
 #include "ipmmiri.h"
+#include "umtscc.h"
 #include "collector_base.h"
 #include "logger.h"
 
@@ -247,6 +248,19 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
 #endif
             }
             break;
+        case OPENLI_EXPORT_UMTSCC:
+            if (isDer) {
+                ret = encode_umtscc(enc->encoder, job->preencoded,
+                        &(job->origreq->data.ipcc), job->seqno,
+                        &(job->origreq->ts), res);
+#ifdef HAVE_BER_ENCODING
+            }
+            else{
+                //TODO
+                logger(LOG_INFO, "OpenLI: BER encoding for UMTSCC is not yet implemented.");
+                //complain loudly that this dont work yet
+#endif
+            }
     }
 
     res->isDer = isDer; //encodeing typeto be stored in result

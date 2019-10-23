@@ -177,6 +177,8 @@ const char *accesstype_to_string(internet_access_method_t am) {
             return "satellite";
         case INTERNET_ACCESS_TYPE_WIRELESS_OTHER:
             return "wireless (Other)";
+        case INTERNET_ACCESS_TYPE_MOBILE:
+            return "mobile";
     }
     return "invalid";
 }
