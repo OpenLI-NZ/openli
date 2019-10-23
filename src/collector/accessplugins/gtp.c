@@ -530,19 +530,17 @@ static char *gtp_get_userid(access_plugin_t *p, void *parsed,
     sess->sessid = strdup(sessid);
     sess->current = SESSION_STATE_NEW;
 
-    if (gparsed->imsi[0] != '\0') {
-        sess->userid.imsi = strdup(gparsed->imsi);
-    } else {
-        sess->userid.imsi = strdup("imsiunknown");
-    }
-
+    /* For now, I'm going to just use the MSISDN as the user identity
+     * until I'm told otherwise.
+     */
     if (gparsed->msisdn[0] != '\0') {
         sess->userid.msisdn = strdup(gparsed->msisdn);
     } else {
-        sess->userid.msisdn = strdup("msisdnunknown");
+        destroy_gtp_session(sess);
+        return NULL;
     }
 
-    snprintf(sess->idstr, 64, "%s-%s", sess->userid.imsi, sess->userid.msisdn);
+    snprintf(sess->idstr, 64, "%s", sess->userid.msisdn);
     sess->idstr_len = strlen(sess->idstr);
 
     JSLI(pval, glob->session_map, sess->sessid);
