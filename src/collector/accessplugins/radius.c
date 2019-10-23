@@ -87,8 +87,6 @@ typedef struct radius_user {
     char *nasidentifier;
     int nasid_len;
     session_state_t current;
-    struct sockaddr *framedip4;
-    struct sockaddr *framedip6;
 } radius_user_t;
 
 typedef struct radius_v6_prefix_attr {
@@ -350,12 +348,6 @@ static void destroy_radius_nas(radius_nas_t *nas) {
         }
         if (user->nasidentifier) {
             free(user->nasidentifier);
-        }
-        if (user->framedip4) {
-            free(user->framedip4);
-        }
-        if (user->framedip6) {
-            free(user->framedip6);
         }
         free(user);
 
@@ -865,8 +857,6 @@ static inline void process_username_attribute(radius_parsed_t *raddata) {
     user->nasidentifier = NULL;
     user->nasid_len = 0;
     user->current = SESSION_STATE_NEW;
-    user->framedip4 = NULL;
-    user->framedip6 = NULL;
 
     JSLI(pval, raddata->matchednas->user_map, user->userid);
     *pval = (Word_t)user;
@@ -1455,19 +1445,8 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     }
 
     if (!thissess) {
-        thissess = (access_session_t *)malloc(sizeof(access_session_t));
-
-        thissess->plugin = p;
-        thissess->sessionid = fast_strdup(sessionid, 1024 - rem);
-        thissess->statedata = NULL;
-        thissess->idlength = strlen(sessionid);
+        thissess = create_access_session(p, sessionid, 1024 - rem);
         thissess->cin = assign_cin(raddata);
-        memset(&(thissess->sessionip), 0, sizeof(thissess->sessionip));
-
-        thissess->iriseqno = 0;
-        thissess->started.tv_sec = 0;
-        thissess->started.tv_usec = 0;
-        thissess->activeipentry = NULL;
 
         thissess->next = *sesslist;
         *sesslist = thissess;
