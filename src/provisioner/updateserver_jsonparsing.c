@@ -334,7 +334,7 @@ int remove_coreserver(update_con_info_t *cinfo, provision_state_t *state,
 int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
         uint8_t srvtype) {
 
-    struct json_object *parsed;
+    struct json_object *parsed = NULL;
     struct json_tokener *tknr;
     coreserver_t *found = NULL;
     coreserver_t *new_cs = NULL;
@@ -356,7 +356,7 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
                 update_failure_page_start,
                 json_tokener_error_desc(json_tokener_get_error(tknr)),
                 update_failure_page_end);
-        goto siperr;
+        goto cserr;
     }
 
     new_cs = (coreserver_t *)calloc(1, sizeof(coreserver_t));
@@ -375,7 +375,7 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
             new_cs->portstr, &parseerr, true);
 
     if (parseerr) {
-        goto siperr;
+        goto cserr;
     }
 
     if (construct_coreserver_key(new_cs) == NULL) {
@@ -384,7 +384,7 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
         snprintf(cinfo->answerstring, 4096,
                 "%s <p>Unable to create %s entity from JSON record provided over update socket. %s",
                 update_failure_page_start, srvstring, update_failure_page_end);
-        goto siperr;
+        goto cserr;
     }
 
     if (srvtype == OPENLI_CORE_SERVER_SIP) {
@@ -406,7 +406,7 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
                     new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
         } else {
             logger(LOG_INFO, "OpenLI: update socket received unexpected core server update (type = %u)", srvtype);
-            goto siperr;
+            goto cserr;
         }
 
         announce_coreserver_change(state, new_cs, true);
@@ -414,12 +414,18 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
                 srvstring, new_cs->ipstr, new_cs->portstr);
     }
 
+    if (parsed) {
+        json_object_put(parsed);
+    }
     json_tokener_free(tknr);
     return 0;
 
-siperr:
+cserr:
     if (new_cs) {
         free_single_coreserver(new_cs);
+    }
+    if (parsed) {
+        json_object_put(parsed);
     }
     json_tokener_free(tknr);
     return -1;

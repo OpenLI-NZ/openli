@@ -169,13 +169,20 @@ typedef struct prov_mediator {
 } prov_mediator_t;
 
 typedef struct prov_intercept_conf {
+    /** The set of known RADIUS servers that will be provided to collectors */
     coreserver_t *radiusservers;
+    /** The set of known SIP servers that will be provided to collectors */
     coreserver_t *sipservers;
+    /** The set of VOIP intercepts that we are currently running */
     voipintercept_t *voipintercepts;
+    /** The set of IP intercepts that we are currently running */
     ipintercept_t *ipintercepts;
+    /** The set of LEAs that are potential intercept recipients */
     prov_agency_t *leas;
+    /** A map of LIIDs to their destination LEAs */
     liid_hash_t *liid_map;
 
+    /** A mutex to protect the intercept config from race conditions */
     pthread_mutex_t safelock;
 } prov_intercept_conf_t;
 
@@ -208,16 +215,6 @@ typedef struct prov_state {
     /** The set of collectors that we are managing */
     prov_collector_t *collectors;
 
-    /** The set of known RADIUS servers that will be provided to collectors */
-    coreserver_t *radiusservers;
-    /** The set of known SIP servers that will be provided to collectors */
-    coreserver_t *sipservers;
-
-    /** The set of VOIP intercepts that we are currently running */
-    voipintercept_t *voipintercepts;
-    /** The set of IP intercepts that we are currently running */
-    ipintercept_t *ipintercepts;
-
     /** Epoll event for the collector connection socket */
     prov_epoll_ev_t *clientfd;
     /** Epoll event for the updater connection socket */
@@ -232,12 +229,6 @@ typedef struct prov_state {
     prov_intercept_conf_t interceptconf;
     struct MHD_Daemon *updatedaemon;
     MHD_socket updatesockfd;
-
-    /** The set of LEAs that are potential intercept recipients */
-    prov_agency_t *leas;
-
-    /** A map of LIIDs to their destination LEAs */
-    liid_hash_t *liid_map;
 
     /** A flag indicating whether collectors should ignore RTP comfort noise
      *  packets when intercepting voice traffic.

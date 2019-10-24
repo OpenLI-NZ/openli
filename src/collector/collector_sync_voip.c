@@ -281,7 +281,6 @@ static int update_rtp_stream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp,
     uint32_t port;
     struct sockaddr_storage *saddr;
     int family, i;
-    int updaterequired = 1;
     sync_sendq_t *sendq, *tmp;
 
     errno = 0;
@@ -321,9 +320,6 @@ static int update_rtp_stream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp,
         return 0;
     }
 
-    if (!updaterequired) {
-        return 0;
-    }
     /* If we get here, we need to push the RTP stream details to the
      * processing threads. */
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
