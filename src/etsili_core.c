@@ -79,10 +79,10 @@ static inline void encode_umtscc_body(wandder_encoder_t *encoder,
                 sizeof(uint32_t));
     }
 
-    if (nextjob != 0) {
-        wandder_encode_next_preencoded(encoder, jobarray, nextjob);
-    }
+    jobarray[nextjob] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
+    nextjob ++;
 
+    wandder_encode_next_preencoded(encoder, jobarray, nextjob);
     wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, ipcontent, iplen);
     END_ENCODED_SEQUENCE(encoder, 5);
