@@ -373,6 +373,37 @@ static int create_mobiri_from_session(collector_sync_t *sync,
         access_session_t *sess, ipintercept_t *ipint, access_plugin_t *p,
         void *parseddata) {
 
+    openli_export_recv_t *irimsg;
+    int ret;
+
+    irimsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    irimsg->type = OPENLI_EXPORT_UMTSIRI;
+    irimsg->destid = ipint->common.destid;
+    irimsg->data.mobiri.liid = strdup(ipint->common.liid);
+    irimsg->data.mobiri.cin = sess->cin;
+    irimsg->data.mobiri.iritype = ETSILI_IRI_REPORT;
+    irimsg->data.mobiri.customparams = NULL;
+
+    if (p) {
+        ret = p->generate_iri_data(p, parseddata,
+                &(irimsg->data.mobiri.customparams),
+                &(irimsg->data.mobiri.iritype),
+                sync->freegenerics, 0);
+        if (ret == -1) {
+            logger(LOG_INFO,
+                    "OpenLI: error whle creating UTMSIRI from session state change for %s.",
+                    irimsg->data.mobiri.liid);
+            free(irimsg->data.mobiri.liid);
+            free(irimsg);
+            return -1;
+        }
+    }
+
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->mobiri_created ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
+    publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], irimsg);
+
     return 0;
 }
 
@@ -398,7 +429,11 @@ static int create_ipiri_from_session(collector_sync_t *sync,
 
             if (ret == -1) {
                 logger(LOG_INFO,
-                        "OpenLI: error while creating IPIRI from session state change.");
+                        "OpenLI: error while creating IPIRI from session state change for %s.",
+                        irimsg->data.ipiri.liid);
+                free(irimsg->data.ipiri.username);
+                free(irimsg->data.ipiri.liid);
+                free(irimsg);
                 return -1;
             }
         }
@@ -1847,9 +1882,9 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     sess = p->update_session_state(p, parseddata, &(iuser->sessions), &oldstate,
             &newstate, &accessaction);
     if (!sess) {
-        logger(LOG_INFO, "OpenLI: error while assigning packet to a Internet access session");
+        /* Unable to assign packet to a session, just quietly ignore it */
         p->destroy_parsed_data(p, parseddata);
-        return -1;
+        return 0;
     }
 
     HASH_FIND(hh, sync->userintercepts, userid, strlen(userid), userint);

@@ -51,6 +51,7 @@ enum {
     OPENLI_EXPORT_HALT = 14,
     OPENLI_EXPORT_RECONFIGURE_INTERCEPTS = 15,
     OPENLI_EXPORT_UMTSCC = 16,
+    OPENLI_EXPORT_UMTSIRI = 17,
 
 };
 
@@ -78,6 +79,13 @@ typedef struct openli_ipmmiri_job {
     uint8_t ipdest[16];
     int ipfamily;
 } PACKED openli_ipmmiri_job_t;
+
+typedef struct openli_mobiri_job {
+    char *liid;
+    uint32_t cin;
+    etsili_iri_type_t iritype;
+    etsili_generic_t *customparams;
+} PACKED openli_mobiri_job_t;
 
 typedef struct openli_ipiri_job {
     char *liid;
@@ -128,6 +136,7 @@ struct openli_export_recv {
         openli_ipcc_job_t ipcc;
         openli_ipmmiri_job_t ipmmiri;
         openli_ipiri_job_t ipiri;
+        openli_mobiri_job_t mobiri;
     } data;
 } PACKED;
 

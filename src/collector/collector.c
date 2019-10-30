@@ -129,6 +129,7 @@ static void reset_collector_stats(collector_global_t *glob) {
     glob->stats.packets_sync_ip = 0;
     glob->stats.packets_sync_voip = 0;
     glob->stats.ipcc_created = 0;
+    glob->stats.mobiri_created = 0;
     glob->stats.ipiri_created = 0;
     glob->stats.ipmmcc_created = 0;
     glob->stats.ipmmiri_created = 0;
@@ -161,8 +162,9 @@ static void log_collector_stats(collector_global_t *glob) {
             glob->stats.packets_sync_ip, glob->stats.packets_sync_voip);
     logger(LOG_INFO, "OpenLI: Bad SIP packets: %lu   Bad RADIUS packets: %lu",
             glob->stats.bad_sip_packets, glob->stats.bad_ip_session_packets);
-    logger(LOG_INFO, "OpenLI: Records created... IPCCs: %lu  IPIRIs: %lu",
-            glob->stats.ipcc_created, glob->stats.ipiri_created);
+    logger(LOG_INFO, "OpenLI: Records created... IPCCs: %lu  IPIRIs: %lu  MobIRIs: %lu",
+            glob->stats.ipcc_created, glob->stats.ipiri_created,
+            glob->stats.mobiri_created);
     logger(LOG_INFO, "OpenLI: Records created... IPMMCCs: %lu  IPMMIRIs: %lu",
             glob->stats.ipmmcc_created, glob->stats.ipmmiri_created);
 
