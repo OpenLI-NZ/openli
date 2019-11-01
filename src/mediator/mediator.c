@@ -460,7 +460,7 @@ static void destroy_med_state(mediator_state_t *state) {
 }
 
 static int init_med_state(mediator_state_t *state, char *configfile,
-        int *mediatorid) {
+        int mediatorid) {
     state->mediatorid = mediatorid;
     state->conffile = configfile;
     state->listenaddr = NULL;
