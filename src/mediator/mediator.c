@@ -437,12 +437,12 @@ static void destroy_med_state(mediator_state_t *state) {
         free(state->provreconnect);
     }
 
-  if (state->timerev) {
-    if (state->timerev->fd != -1) {
-      close(state->timerev->fd);
-    }
-    free(state->timerev);
-  }
+	if (state->timerev) {
+		if (state->timerev->fd != -1) {
+			close(state->timerev->fd);
+		}
+		free(state->timerev);
+	}
 
     pthread_join(state->pcapthread, NULL);
     if (state->pcaptimerev) {
@@ -1688,7 +1688,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
 
         /* If this was previously a "unknown" LIID, we can now remove
          * it from our missing LIID list -- if it gets withdrawn later,
-         * we will then alert again about it being missing. */
+         * we will then alert again about it being missing. */ 
         JSLG(jval, state->missing_liids, liid);
         if (jval != NULL) {
             JSLD(err, state->missing_liids, liid);
@@ -2020,7 +2020,7 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
 static int continue_handshake(mediator_state_t *state, med_epoll_ev_t *mev) {
     med_coll_state_t *cs = (med_coll_state_t *)(mev->state);
 
-    int ret = SSL_accept(cs->ssl); //either keep running handshake or return when error
+    int ret = SSL_accept(cs->ssl); //either keep running handshake or return when error 
 
     if (ret <= 0){
         ret = SSL_get_error(cs->ssl, ret);
@@ -2045,15 +2045,15 @@ static int continue_handshake(mediator_state_t *state, med_epoll_ev_t *mev) {
 
 static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 
-  med_epoll_ev_t *mev = (med_epoll_ev_t *)(ev->data.ptr);
+	med_epoll_ev_t *mev = (med_epoll_ev_t *)(ev->data.ptr);
     int ret = 0;
 
-  switch(mev->fdtype) {
-    case MED_EPOLL_SIGCHECK_TIMER:
-      if (ev->events & EPOLLIN) {
-        return 1;
-      }
-      logger(LOG_INFO,
+	switch(mev->fdtype) {
+		case MED_EPOLL_SIGCHECK_TIMER:
+			if (ev->events & EPOLLIN) {
+				return 1;
+			}
+			logger(LOG_INFO,
                     "OpenLI Mediator: main epoll timer has failed.");
             return -1;
         case MED_EPOLL_PCAP_TIMER:
@@ -2235,15 +2235,15 @@ static int init_provisioner_connection(mediator_state_t *state, int sock, SSL_CT
 
     if (ctx != NULL){
 
-        fd_set_block(sock);
+        fd_set_block(sock); 
         //mediator cannt do anything untill it has instructions fom provisioner so blocking is fine
 
         int errr;
         prov->ssl = SSL_new(ctx);
         SSL_set_fd(prov->ssl, sock);
-
+        
         errr = SSL_connect(prov->ssl);
-        fd_set_nonblock(sock);
+        fd_set_nonblock(sock); 
         if(errr <= 0){
             errr = SSL_get_error(prov->ssl, errr);
             if (errr != SSL_ERROR_WANT_WRITE && errr != SSL_ERROR_WANT_READ){ //handshake failed badly
@@ -2489,34 +2489,34 @@ static int reload_mediator_config(mediator_state_t *currstate) {
 
 static void run(mediator_state_t *state) {
 
-  int i, nfds;
-  int timerfd;
-  int timerexpired = 0;
-  struct itimerspec its;
-  struct epoll_event evs[64];
-  struct epoll_event ev;
+	int i, nfds;
+	int timerfd;
+	int timerexpired = 0;
+	struct itimerspec its;
+	struct epoll_event evs[64];
+	struct epoll_event ev;
     int provfail = 0;
     struct timeval tv;
     uint32_t firstflush;
 
-  ev.data.ptr = state->signalev;
-  ev.events = EPOLLIN;
+	ev.data.ptr = state->signalev;
+	ev.events = EPOLLIN;
 
-  if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, state->signalev->fd, &ev)
-      == -1) {
-    logger(LOG_INFO,
-        "OpenLI: Failed to register signal socket: %s.",
-        strerror(errno));
-    return;
-  }
+	if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, state->signalev->fd, &ev)
+			== -1) {
+		logger(LOG_INFO,
+				"OpenLI: Failed to register signal socket: %s.",
+				strerror(errno));
+		return;
+	}
 
     logger(LOG_INFO,
             "OpenLI: pcap output file rotation frequency is set to %d minutes.",
             state->pcaprotatefreq);
 
     gettimeofday(&tv, NULL);
-  state->timerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
-  state->pcaptimerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+	state->timerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+	state->pcaptimerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
 
     firstflush = (((tv.tv_sec / 60) * 60) + 60) - tv.tv_sec;
 
@@ -2530,7 +2530,7 @@ static void run(mediator_state_t *state) {
     state->pcaptimerev->fdtype = MED_EPOLL_PCAP_TIMER;
     state->pcaptimerev->state = NULL;
 
-  while (!mediator_halt) {
+	while (!mediator_halt) {
         if (reload_config) {
             if (reload_mediator_config(state) == -1) {
                 break;
@@ -2538,7 +2538,7 @@ static void run(mediator_state_t *state) {
             reload_config = 0;
         }
 
-      /* Attempt to connect to the provisioner */
+	    /* Attempt to connect to the provisioner */
         if (state->provisioner.provev == NULL &&
                 state->provisioner.tryconnect) {
             int s = connect_socket(state->provaddr, state->provport, provfail,
@@ -2592,14 +2592,14 @@ static void run(mediator_state_t *state) {
                     continue;
                 }
                 logger(LOG_INFO,
-            "OpenLI: error while waiting for epoll events in mediator: %s.",
+						"OpenLI: error while waiting for epoll events in mediator: %s.",
                         strerror(errno));
                 mediator_halt = true;
                 continue;
             }
 
             for (i = 0; i < nfds; i++) {
-              med_epoll_ev_t *mev = (med_epoll_ev_t *)(evs[i].data.ptr);
+	            med_epoll_ev_t *mev = (med_epoll_ev_t *)(evs[i].data.ptr);
                 timerexpired = check_epoll_fd(state, &(evs[i]));
                 if (timerexpired == -1) {
                     break;
@@ -2615,7 +2615,7 @@ static void run(mediator_state_t *state) {
         }
 
         close(timerfd);
-    state->timerev->fd = -1;
+		state->timerev->fd = -1;
     }
     mediator_halt = true;
 
