@@ -779,6 +779,13 @@ int push_static_ipranges_removal_onto_net_buffer(net_buffer_t *nb,
             OPENLI_PROTO_REMOVE_STATICIPS);
 }
 
+int push_static_ipranges_modify_onto_net_buffer(net_buffer_t *nb,
+        ipintercept_t *ipint, static_ipranges_t *ipr) {
+
+    return push_static_ipranges_generic(nb, ipint, ipr,
+            OPENLI_PROTO_MODIFY_STATICIPS);
+}
+
 int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
         ipintercept_t *ipint, static_ipranges_t *ipr) {
 
@@ -1474,6 +1481,11 @@ int decode_staticip_announcement(uint8_t *msgbody, uint16_t len,
 }
 
 int decode_staticip_removal(uint8_t *msgbody, uint16_t len,
+        static_ipranges_t *ipr) {
+    return decode_staticip_announcement(msgbody, len, ipr);
+}
+
+int decode_staticip_modify(uint8_t *msgbody, uint16_t len,
         static_ipranges_t *ipr) {
     return decode_staticip_announcement(msgbody, len, ipr);
 }
