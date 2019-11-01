@@ -29,7 +29,7 @@
 #include <pthread.h>
 #include <Judy.h>
 
-#include "ipiri.h"
+#include "umtsiri.h"
 #include "logger.h"
 #include "internetaccess.h"
 #include "util.h"
@@ -39,8 +39,11 @@
 enum {
     GTP_IE_IMSI = 1,
     GTP_IE_CAUSE = 2,
+    GTP_IE_APNAME = 71,
+    GTP_IE_MEI = 75,
     GTP_IE_MSISDN = 76,
     GTP_IE_PDN_ALLOC = 79,
+    GTP_IE_ULI = 86,
     GTP_IE_FTEID = 87,
 };
 
@@ -83,6 +86,9 @@ typedef struct gtp_session {
 
     char idstr[64];
     int idstr_len;
+
+    internetaccess_ip_t pdpaddr;
+    int64_t cin;
 
     session_state_t current;
 } gtp_session_t;
@@ -282,6 +288,9 @@ static inline bool interesting_info_element(uint8_t ietype) {
         case GTP_IE_MSISDN:
         case GTP_IE_PDN_ALLOC:
         case GTP_IE_CAUSE:
+        case GTP_IE_MEI:
+        case GTP_IE_APNAME:
+        case GTP_IE_ULI:
             return true;
     }
 
@@ -533,15 +542,15 @@ static void *gtp_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
         //return NULL;
     }
 
-    glob->parsedpkt->tvsec = (uint32_t)trace_get_seconds(pkt);
+    glob->parsedpkt->tvsec = trace_get_seconds(pkt);
 
     if (glob->lastrefresh == 0) {
-        glob->lastrefresh = glob->parsedpkt->tvsec;
+        glob->lastrefresh = (uint32_t)glob->parsedpkt->tvsec;
     }
 
     if (glob->parsedpkt->tvsec - glob->lastrefresh > GTP_FLUSH_OLD_PKT_FREQ) {
         flush_old_gtp_packets(glob, glob->parsedpkt->tvsec);
-        glob->lastrefresh = glob->parsedpkt->tvsec;
+        glob->lastrefresh = (uint32_t)glob->parsedpkt->tvsec;
     }
 
     if (glob->parsedpkt->serveripfamily == 0) {
@@ -666,7 +675,11 @@ static void extract_gtp_assigned_ip_address(gtp_saved_pkt_t *gpkt,
 
                 sess->sessionip.ipfamily = AF_INET6;
                 sess->sessionip.prefixbits = 128;
+            } else {
+                break;
             }
+
+            memcpy(&(gsess->pdpaddr), sess, sizeof(internetaccess_ip_t));
             break;
         }
 
@@ -754,6 +767,7 @@ static inline access_session_t *find_matched_session(access_plugin_t *p,
     if (!thissess) {
         thissess = create_access_session(p, match->idstr, match->idstr_len);
         thissess->cin = assign_gtp_cin(teid);
+        match->cin = thissess->cin;
 
         thissess->next = *sesslist;
         *sesslist = thissess;
@@ -866,6 +880,119 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
     return thissess;
 }
 
+static void parse_uli(gtp_infoelem_t *el, etsili_generic_freelist_t *freelist,
+        etsili_generic_t **params) {
+
+    etsili_generic_t *np;
+    uint8_t uliflags;
+    uint8_t *ptr;
+
+    uliflags = *(uint8_t *)(el->iecontent);
+
+    /* TODO implement CGID, SAI, RAI */
+    ptr = ((uint8_t *)el->iecontent) + 1;
+
+    if (uliflags & 0x01) {
+        /* CGID */
+        ptr += 7;
+    }
+
+    if (uliflags & 0x02) {
+        /* SAI */
+        ptr += 7;
+    }
+
+    if (uliflags & 0x04) {
+        /* RAI */
+        ptr += 7;
+    }
+
+    if (uliflags & 0x08) {
+        /* TAI */
+        np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_TAI,
+                5, ptr);
+        HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+        ptr += 5;
+    }
+
+    if (uliflags & 0x10) {
+        /* ECGI */
+        np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_ECGI,
+                7, ptr);
+        HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+        ptr += 7;
+    }
+
+}
+
+static int gtp_create_context_activation_iri(gtp_parsed_t *gparsed,
+        etsili_generic_t **params, etsili_generic_freelist_t *freelist) {
+
+    etsili_generic_t *np;
+    gtp_infoelem_t *el;
+    uint8_t evtype = UMTSIRI_EVENT_TYPE_PDPCONTEXT_ACTIVATION;
+
+    np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_PDP_ADDRESS,
+            sizeof(internetaccess_ip_t), &(gparsed->matched_session->pdpaddr));
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+            np);
+
+    np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_EVENT_TYPE,
+            sizeof(uint8_t), &(evtype));
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+            np);
+
+    np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_EVENT_TIME,
+            sizeof(double), &(gparsed->response->tvsec));
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+            np);
+
+    np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_LOCATION_TIME,
+            sizeof(double), &(gparsed->request->tvsec));
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+            np);
+
+    np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_GPRS_CORRELATION,
+            sizeof(int64_t), &(gparsed->matched_session->cin));
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+            np);
+
+    el = gparsed->request->ies;
+    while (el) {
+        uint8_t ieattr = 0;
+        uint8_t *attrptr = (uint8_t *)el->iecontent;
+        uint16_t attrlen = el->ielength;
+
+        switch(el->ietype) {
+            case GTP_IE_IMSI:
+                ieattr = UMTSIRI_CONTENTS_IMSI;
+                break;
+            case GTP_IE_MSISDN:
+                ieattr = UMTSIRI_CONTENTS_MSISDN;
+                break;
+            case GTP_IE_MEI:
+                ieattr = UMTSIRI_CONTENTS_IMEI;
+                break;
+            case GTP_IE_APNAME:
+                ieattr = UMTSIRI_CONTENTS_APNAME;
+                break;
+            case GTP_IE_ULI:
+                parse_uli(el, freelist, params);
+                break;
+        }
+
+        if (ieattr != 0) {
+            np = create_etsili_generic(freelist, ieattr, attrlen, attrptr);
+            HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+                    np);
+        }
+
+        el = el->next;
+    }
+
+    return 0;
+}
+
 static int gtp_generate_iri_data(access_plugin_t *p, void *parseddata,
         etsili_generic_t **params, etsili_iri_type_t *iritype,
         etsili_generic_freelist_t *freelist, int iteration) {
@@ -874,7 +1001,11 @@ static int gtp_generate_iri_data(access_plugin_t *p, void *parseddata,
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parseddata;
 
     if (gparsed->action == ACCESS_ACTION_ACCEPT) {
-        printf("need to generate a PDP context activation IRI\n");
+        *iritype = ETSILI_IRI_BEGIN;
+        if (gtp_create_context_activation_iri(gparsed, params,
+                freelist) < 0) {
+            return -1;
+        }
     }
     else if (gparsed->action == ACCESS_ACTION_REJECT) {
         printf("need to generate a PDP context activation failed IRI\n");
