@@ -131,13 +131,17 @@ int parse_next_sip_message(openli_sip_parser_t *p,
             p->sipmessage = NULL;
         }
 
-        ret = get_next_tcp_reassembled(p->thisstream, &(p->sipmessage),
-                &(p->siplen));
-        p->sipalloced = 1;
-        p->sipoffset = 0;
+        if (p->thisstream) {
+            ret = get_next_tcp_reassembled(p->thisstream, &(p->sipmessage),
+                    &(p->siplen));
+            if (p->sipmessage != NULL) {
+                p->sipalloced = 1;
+            }
 
-        if (ret <= 0) {
-            return ret;
+            if (ret <= 0) {
+                return ret;
+            }
+            p->sipoffset = 0;
         }
     }
 
@@ -246,6 +250,7 @@ static int _add_sip_fragment(openli_sip_parser_t *p,
             free(p->sipmessage);
         }
         p->sipmessage = completefrag;
+        p->sipalloced = 1;
         p->siplen = fraglen - sizeof(libtrace_udp_t);
         p->sipoffset = sizeof(libtrace_udp_t);
         return SIP_ACTION_REASSEMBLE_IPFRAG;
@@ -276,6 +281,7 @@ static int _add_sip_fragment(openli_sip_parser_t *p,
             free(p->sipmessage);
         }
         p->sipmessage = (char *)tcp;
+        p->sipalloced = 1;
         p->siplen = fraglen - (tcp->doff * 4);
         p->sipoffset = (tcp->doff * 4);
         return SIP_ACTION_REASSEMBLE_IPFRAG;
@@ -288,7 +294,6 @@ static int _add_sip_fragment(openli_sip_parser_t *p,
 int add_sip_packet_to_parser(openli_sip_parser_t **parser,
         libtrace_packet_t *packet, uint8_t logallowed) {
 
-    void *transport;
     char *completefrag = NULL;
     uint8_t proto, moreflag, isfrag;
     uint32_t rem, plen;
@@ -366,7 +371,6 @@ int add_sip_packet_to_parser(openli_sip_parser_t **parser,
             }
             /* complete fragment in completefrag */
             isfrag = 1;
-            transport = completefrag;
         }
     }
 

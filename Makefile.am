@@ -9,6 +9,7 @@ AUTOMAKE_OPTIONS=foreign
 openliconfdir=$(sysconfdir)/openli
 dist_openliconf_DATA=doc/exampleconfigs/collector-example.yaml \
         doc/exampleconfigs/mediator-example.yaml \
+        doc/exampleconfigs/running-intercept-example.yaml \
         doc/exampleconfigs/provisioner-example.yaml
 
 syslogdir=$(sysconfdir)/rsyslog.d/
