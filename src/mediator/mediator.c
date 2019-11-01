@@ -2915,7 +2915,7 @@ static void *start_pcap_thread(void *params) {
 
 int main(int argc, char *argv[]) {
     char *configfile = NULL;
-    int *mediatorid = NULL;
+    uint32_t mediatorid = NULL;
     sigset_t sigblock;
     int todaemon = 0;
     char *pidfile = NULL;
@@ -2933,7 +2933,7 @@ int main(int argc, char *argv[]) {
             { NULL, 0, 0, 0},
         };
 
-        int c = getopt_long(argc, argv, "c:d:m:p:h", long_options, &optind);
+        int c = getopt_long(argc, argv, "c:dm:p:h", long_options, &optind);
         if (c == -1) {
             break;
         }
@@ -2943,7 +2943,7 @@ int main(int argc, char *argv[]) {
                 configfile = optarg;
                 break;
             case 'm':
-                mediatorid = optarg;
+                mediatorid = strtoul(optarg, NULL, 0);
                 break;
             case 'd':
                 todaemon = 1;
