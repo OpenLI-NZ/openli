@@ -517,7 +517,7 @@ static int init_med_state(mediator_state_t *state, char *configfile,
         return -1;
     }
 
-    if (state->mediatorid == 0 || state->mediatorid == NULL) {
+    if (state->mediatorid == 0) {
         logger(LOG_INFO, "OpenLI Mediator: ID is not present in the config file or is set to zero.");
         return -1;
     }
@@ -2915,7 +2915,7 @@ static void *start_pcap_thread(void *params) {
 
 int main(int argc, char *argv[]) {
     char *configfile = NULL;
-    uint32_t mediatorid = NULL;
+    uint32_t mediatorid = 0;
     sigset_t sigblock;
     int todaemon = 0;
     char *pidfile = NULL;
