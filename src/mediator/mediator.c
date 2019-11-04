@@ -460,7 +460,7 @@ static void destroy_med_state(mediator_state_t *state) {
 }
 
 static int init_med_state(mediator_state_t *state, char *configfile,
-        int mediatorid) {
+        uint32_t mediatorid) {
     state->mediatorid = mediatorid;
     state->conffile = configfile;
     state->listenaddr = NULL;
@@ -2987,7 +2987,7 @@ int main(int argc, char *argv[]) {
     prepare_mediator_state(&medstate);
 
     mediatorid = medstate.mediatorid;
-    logger(LOG_INFO, "OpenLI Mediator: '%d' has started.", mediatorid);
+    logger(LOG_INFO, "OpenLI Mediator: '%u' has started.", mediatorid);
 
     if (medstate.pcapdirectory != NULL) {
         memset(&pcapmsg, 0, sizeof(pcapmsg));
@@ -3016,7 +3016,7 @@ int main(int argc, char *argv[]) {
         remove_pidfile(pidfile);
     }
 
-    logger(LOG_INFO, "OpenLI Mediator: '%d' has exited.", mediatorid);
+    logger(LOG_INFO, "OpenLI Mediator: '%u' has exited.", mediatorid);
     return 0;
 }
 
