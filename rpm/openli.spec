@@ -22,6 +22,8 @@ BuildRequires: zeromq-devel
 BuildRequires: gperftools-devel
 BuildRequires: libosip2-devel
 BuildRequires: openssl-devel
+BuildRequires: json-c-devel
+BuildRequires: libmicrohttpd-devel
 BuildRequires: systemd
 
 %description
