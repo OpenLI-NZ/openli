@@ -44,10 +44,6 @@
 #define PREALLOC_ATTRS (50000)
 #define STANDARD_ATTR_ALLOC (64)
 
-#define TIMESTAMP_TO_TV(tv, floatts) \
-        tv->tv_sec = (uint32_t)(floatts); \
-        tv->tv_usec = (uint32_t)(((floatts - tv->tv_sec) * 1000000));
-
 enum {
     RADIUS_CODE_ACCESS_REQUEST = 1,
     RADIUS_CODE_ACCESS_ACCEPT = 2,

@@ -24,55 +24,49 @@
  *
  */
 
-#ifndef OPENLI_UMTSIRI_H_
-#define OPENLI_UMTSIRI_H_
-
 #include <libwandder.h>
 #include <libwandder_etsili.h>
-#include "collector.h"
-#include "intercept.h"
-#include "internetaccess.h"
+
+#include "logger.h"
+#include "umtsiri.h"
 #include "etsili_core.h"
 
-enum {
-        UMTSIRI_CONTENTS_IMSI,
-        UMTSIRI_CONTENTS_MSISDN,
-        UMTSIRI_CONTENTS_IMEI,
-        UMTSIRI_CONTENTS_APNAME,
-        UMTSIRI_CONTENTS_TAI,
-        UMTSIRI_CONTENTS_ECGI,
-        UMTSIRI_CONTENTS_PDP_ADDRESS,
-        UMTSIRI_CONTENTS_EVENT_TYPE,
-        UMTSIRI_CONTENTS_EVENT_TIME,
-        UMTSIRI_CONTENTS_LOCATION_TIME,
-        UMTSIRI_CONTENTS_GPRS_CORRELATION,
-        UMTSIRI_CONTENTS_IRI_TYPE,
-        UMTSIRI_CONTENTS_GPRS_ERROR_CODE,
-        UMTSIRI_CONTENTS_GGSN_IPADDRESS,
-        UMTSIRI_CONTENTS_INITIATOR,
-        UMTSIRI_CONTENTS_OPERATOR_IDENTIFIER,
-};
+static void free_umtsiri_parameters(etsili_generic_t *params) {
 
-enum {
-    UMTSIRI_EVENT_TYPE_PDPCONTEXT_ACTIVATION = 1,
-    UMTSIRI_EVENT_TYPE_START_WITH_PDPCONTEXT_ACTIVE = 2,
-    UMTSIRI_EVENT_TYPE_PDPCONTEXT_DEACTIVATION = 4,
-};
+    etsili_generic_t *oldp, *tmp;
 
-enum {
-    UMTSIRI_CONTENT_TYPE_BEGIN = 1,
-    UMTSIRI_CONTENT_TYPE_END = 2,
-    UMTSIRI_CONTENT_TYPE_CONTINUE = 3,
-    UMTSIRI_CONTENT_TYPE_REPORT = 4,
-};
+    HASH_ITER(hh, params, oldp, tmp) {
+        HASH_DELETE(hh, params, oldp);
+        release_etsili_generic(oldp);
+    }
+
+}
 
 int encode_umtsiri(wandder_encoder_t *encoder,
         etsili_generic_freelist_t *freegenerics,
         wandder_encode_job_t *precomputed,
         openli_mobiri_job_t *job, uint32_t seqno,
-        openli_encoded_result_t *res);
+        openli_encoded_result_t *res) {
 
+    struct timeval tv;
+    uint32_t liidlen = precomputed[OPENLI_PREENCODE_LIID].vallen;
 
-#endif
+    reset_wandder_encoder(encoder);
+    gettimeofday(&tv, NULL);
+
+    memset(res, 0, sizeof(openli_encoded_result_t));
+    res->msgbody = encode_etsi_umtsiri(encoder, precomputed, (int64_t)job->cin,
+            (int64_t)seqno, job->iritype, &tv, job->customparams);
+
+    res->ipcontents = NULL;
+    res->ipclen = 0;
+    res->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    res->header.bodylen = htons(res->msgbody->len + liidlen + sizeof(uint16_t));
+    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
+    res->header.internalid = 0;
+
+    free_umtsiri_parameters(job->customparams);
+    return 0;
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
-

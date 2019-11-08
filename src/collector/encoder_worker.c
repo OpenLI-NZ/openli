@@ -32,6 +32,7 @@
 #include "ipcc.h"
 #include "ipmmiri.h"
 #include "umtscc.h"
+#include "umtsiri.h"
 #include "collector_base.h"
 #include "logger.h"
 
@@ -187,6 +188,7 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
 
     int ret = -1;
     uint8_t isDer = 1;
+    etsili_generic_t *np;
 
 #ifdef HAVE_BER_ENCODING
      if (job->preencoded_ber != NULL) {
@@ -261,6 +263,37 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
                 //complain loudly that this dont work yet
 #endif
             }
+            break;
+        case OPENLI_EXPORT_UMTSIRI: {
+            char opid[6];
+            int opidlen = enc->shared->operatorid_len;
+
+            if (opidlen > 5) {
+                opidlen = 5;
+            }
+
+            memcpy(opid, enc->shared->operatorid, opidlen);
+            opid[opidlen] = '\0';
+
+            np = create_etsili_generic(enc->freegenerics,
+                    UMTSIRI_CONTENTS_OPERATOR_IDENTIFIER, opidlen, opid);
+            HASH_ADD_KEYPTR(hh, job->origreq->data.mobiri.customparams,
+                    &(np->itemnum), sizeof(np->itemnum), np);
+
+            if (isDer) {
+                ret = encode_umtsiri(enc->encoder, enc->freegenerics,
+                        job->preencoded, &(job->origreq->data.mobiri),
+                        job->seqno, res);
+#ifdef HAVE_BER_ENCODING
+            }
+            else{
+                //TODO
+                logger(LOG_INFO, "OpenLI: BER encoding for UMTSIRI is not yet implemented.");
+                //complain loudly that this dont work yet
+#endif
+            }
+            break;
+        }
     }
 
     res->isDer = isDer; //encodeing typeto be stored in result

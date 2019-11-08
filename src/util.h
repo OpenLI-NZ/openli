@@ -31,6 +31,11 @@
 #include <sys/epoll.h>
 #include <libtrace.h>
 
+#define TIMESTAMP_TO_TV(tv, floatts) \
+    tv->tv_sec = (uint32_t)(floatts); \
+    tv->tv_usec = (uint32_t)(((floatts - tv->tv_sec) * 1000000));
+
+
 int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
         uint8_t setkeepalive);
 int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr);

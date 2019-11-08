@@ -90,6 +90,9 @@ typedef struct gtp_session {
     internetaccess_ip_t pdpaddr;
     int64_t cin;
 
+    uint8_t serverid[16];
+    uint8_t serveripfamily;
+
     session_state_t current;
 } gtp_session_t;
 
@@ -606,6 +609,9 @@ static char *gtp_get_userid(access_plugin_t *p, void *parsed,
     sess->sessid = strdup(sessid);
     sess->current = SESSION_STATE_NEW;
 
+    memcpy(sess->serverid, gparsed->serverid, 16);
+    sess->serveripfamily = gparsed->serveripfamily;
+
     /* For now, I'm going to just use the MSISDN as the user identity
      * until I'm told otherwise.
      */
@@ -929,11 +935,30 @@ static int gtp_create_context_activation_iri(gtp_parsed_t *gparsed,
         etsili_generic_t **params, etsili_generic_freelist_t *freelist) {
 
     etsili_generic_t *np;
+    etsili_ipaddress_t ipaddr;
     gtp_infoelem_t *el;
     uint8_t evtype = UMTSIRI_EVENT_TYPE_PDPCONTEXT_ACTIVATION;
+    uint8_t initiator = 1;
+    struct timeval tv;
+    gtp_session_t *gsess = gparsed->matched_session;
+
+    if (gsess->serveripfamily == 4) {
+        etsili_create_ipaddress_v4((uint32_t *)(gsess->serverid),
+                ETSILI_IPV4_SUBNET_UNKNOWN, ETSILI_IPADDRESS_ASSIGNED_UNKNOWN,
+                &ipaddr);
+    } else {
+        etsili_create_ipaddress_v6((uint8_t *)(gsess->serverid),
+                ETSILI_IPV6_SUBNET_UNKNOWN, ETSILI_IPADDRESS_ASSIGNED_UNKNOWN,
+                &ipaddr);
+    }
+
+    np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_GGSN_IPADDRESS,
+        sizeof(etsili_ipaddress_t), (uint8_t *)&ipaddr);
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
 
     np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_PDP_ADDRESS,
-            sizeof(internetaccess_ip_t), &(gparsed->matched_session->pdpaddr));
+            sizeof(internetaccess_ip_t),
+            (uint8_t *)&(gparsed->matched_session->pdpaddr));
     HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
             np);
 
@@ -942,18 +967,25 @@ static int gtp_create_context_activation_iri(gtp_parsed_t *gparsed,
     HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
             np);
 
-    np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_EVENT_TIME,
-            sizeof(double), &(gparsed->response->tvsec));
+    np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_INITIATOR,
+            sizeof(uint8_t), &(initiator));
     HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
             np);
 
+    TIMESTAMP_TO_TV((&tv), gparsed->response->tvsec);
+    np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_EVENT_TIME,
+            sizeof(struct timeval), (uint8_t *)(&tv));
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+            np);
+
+    TIMESTAMP_TO_TV((&tv), gparsed->request->tvsec);
     np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_LOCATION_TIME,
-            sizeof(double), &(gparsed->request->tvsec));
+            sizeof(struct timeval), (uint8_t *)(&tv));
     HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
             np);
 
     np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_GPRS_CORRELATION,
-            sizeof(int64_t), &(gparsed->matched_session->cin));
+            sizeof(int64_t), (uint8_t *)(&(gparsed->matched_session->cin)));
     HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
             np);
 
