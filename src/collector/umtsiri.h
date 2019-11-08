@@ -59,13 +59,6 @@ enum {
     UMTSIRI_EVENT_TYPE_PDPCONTEXT_DEACTIVATION = 4,
 };
 
-enum {
-    UMTSIRI_CONTENT_TYPE_BEGIN = 1,
-    UMTSIRI_CONTENT_TYPE_END = 2,
-    UMTSIRI_CONTENT_TYPE_CONTINUE = 3,
-    UMTSIRI_CONTENT_TYPE_REPORT = 4,
-};
-
 int encode_umtsiri(wandder_encoder_t *encoder,
         etsili_generic_freelist_t *freegenerics,
         wandder_encode_job_t *precomputed,
