@@ -381,7 +381,7 @@ static int create_mobiri_from_session(collector_sync_t *sync,
     irimsg->destid = ipint->common.destid;
     irimsg->data.mobiri.liid = strdup(ipint->common.liid);
     irimsg->data.mobiri.cin = sess->cin;
-    irimsg->data.mobiri.iritype = ETSILI_IRI_REPORT;
+    irimsg->data.mobiri.iritype = ETSILI_IRI_NONE;
     irimsg->data.mobiri.customparams = NULL;
 
     if (p) {
@@ -391,7 +391,7 @@ static int create_mobiri_from_session(collector_sync_t *sync,
                 sync->freegenerics, 0);
         if (ret == -1) {
             logger(LOG_INFO,
-                    "OpenLI: error whle creating UTMSIRI from session state change for %s.",
+                    "OpenLI: error whle creating UMTSIRI from session state change for %s.",
                     irimsg->data.mobiri.liid);
             free(irimsg->data.mobiri.liid);
             free(irimsg);
@@ -399,12 +399,18 @@ static int create_mobiri_from_session(collector_sync_t *sync,
         }
     }
 
+    if (irimsg->data.mobiri.iritype == ETSILI_IRI_NONE) {
+            free(irimsg->data.mobiri.liid);
+            free(irimsg);
+            return 0;
+    }
+
     pthread_mutex_lock(sync->glob->stats_mutex);
     sync->glob->stats->mobiri_created ++;
     pthread_mutex_unlock(sync->glob->stats_mutex);
     publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], irimsg);
 
-    return 0;
+    return 1;
 }
 
 static int create_ipiri_from_session(collector_sync_t *sync,
