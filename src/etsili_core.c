@@ -304,9 +304,10 @@ static inline void encode_umtsiri_body(wandder_encoder_t *encoder,
         etsili_iri_type_t iritype, etsili_generic_t *params) {
 
     wandder_encode_job_t *jobarray[7];
-    etsili_generic_t *p;
+    etsili_generic_t *p, *savedtime;
     uint8_t lookup;
-    uint8_t iriversion = 8;
+    uint32_t iriversion = 8;
+    uint32_t gprstarget = 3;
 
     jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
     jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_0]);
@@ -318,6 +319,19 @@ static inline void encode_umtsiri_body(wandder_encoder_t *encoder,
             sizeof(iritype));
 
     /* timeStamp -- as generalized time */
+    lookup = UMTSIRI_CONTENTS_EVENT_TIME;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_GENERALTIME,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1,
+                p->itemptr, p->itemlen);
+        savedtime = p;
+    } else {
+        savedtime = NULL;
+        logger(LOG_INFO,
+                "OpenLI: warning, no timestamp available for constructing UMTS IRI");
+        logger(LOG_INFO, "OpenLI: UMTS IRI record may be invalid...");
+    }
 
     jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
     jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_4]);
@@ -327,7 +341,6 @@ static inline void encode_umtsiri_body(wandder_encoder_t *encoder,
 
     /* Object identifier (0) */
     jobarray[3] = &(precomputed[OPENLI_PREENCODE_UMTSIRIOID]);
-
 
     /* LIID (1) -- fortunately the identifier matches the one
      * used in the PSHeader, so we can use our preencoded
@@ -339,16 +352,10 @@ static inline void encode_umtsiri_body(wandder_encoder_t *encoder,
     jobarray[5] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_3]);
     wandder_encode_next_preencoded(encoder, jobarray, 6);
 
-    lookup = UMTSIRI_CONTENTS_EVENT_TIME;
-    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
-    if (!p) {
-        logger(LOG_INFO,
-                "OpenLI: warning, no timestamp available for constructing UMTS IRI");
-        logger(LOG_INFO, "OpenLI: UMTS IRI record may be invalid...");
-    } else {
+    if (savedtime) {
         wandder_encode_next(encoder, WANDDER_TAG_UTCTIME,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 1,
-                p->itemptr, p->itemlen);
+                savedtime->itemptr, savedtime->itemlen);
     }
     END_ENCODED_SEQUENCE(encoder, 1);
 
@@ -361,13 +368,113 @@ static inline void encode_umtsiri_body(wandder_encoder_t *encoder,
         logger(LOG_INFO, "OpenLI: UMTS IRI record may be invalid...");
     } else {
         wandder_encode_next(encoder, WANDDER_TAG_ENUM,
-                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 4,
                 p->itemptr, p->itemlen);
     }
 
     /* location, if available (8) -- nested */
 
+    ENC_CSEQUENCE(encoder, 8);
+    lookup = UMTSIRI_CONTENTS_TAI;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 9, p->itemptr, p->itemlen);
+    }
+
+    lookup = UMTSIRI_CONTENTS_ECGI;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 10, p->itemptr, p->itemlen);
+    }
+
+    ENC_CSEQUENCE(encoder, 13);
+    ENC_CSEQUENCE(encoder, 0);
+
+    lookup = UMTSIRI_CONTENTS_LOCATION_TIME;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_UTCTIME,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0,
+                p->itemptr, p->itemlen);
+    }
+    END_ENCODED_SEQUENCE(encoder, 3);
+
     /* party information (9) -- nested */
+    ENC_CSEQUENCE(encoder, 9);
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &gprstarget, sizeof(gprstarget));
+    ENC_CSEQUENCE(encoder, 1);
+
+    lookup = UMTSIRI_CONTENTS_IMEI;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, p->itemptr, p->itemlen);
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: warning, no IMEI available for constructing UMTS IRI");
+        logger(LOG_INFO, "OpenLI: UMTS IRI record may be invalid...");
+    }
+
+    lookup = UMTSIRI_CONTENTS_IMSI;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 3, p->itemptr, p->itemlen);
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: warning, no IMSI available for constructing UMTS IRI");
+        logger(LOG_INFO, "OpenLI: UMTS IRI record may be invalid...");
+    }
+
+    lookup = UMTSIRI_CONTENTS_MSISDN;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 6, p->itemptr, p->itemlen);
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: warning, no MSISDN available for constructing UMTS IRI");
+        logger(LOG_INFO, "OpenLI: UMTS IRI record may be invalid...");
+    }
+
+    END_ENCODED_SEQUENCE(encoder, 1);
+
+    /* servicesDataInformation (pdpAddress, APN etc) */
+    ENC_CSEQUENCE(encoder, 4);       // services-data-information
+    ENC_CSEQUENCE(encoder, 1);       // gprs-parameters
+
+    lookup = UMTSIRI_CONTENTS_PDP_ADDRESS;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        ENC_CSEQUENCE(encoder, 1);       // pdp-address
+        ENC_CSEQUENCE(encoder, 1);       // datanodeaddress
+        encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
+        END_ENCODED_SEQUENCE(encoder, 2);
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: warning, no PDP Address available for constructing UMTS IRI");
+        logger(LOG_INFO, "OpenLI: UMTS IRI record may be invalid...");
+    }
+
+    lookup = UMTSIRI_CONTENTS_APNAME;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, p->itemptr, p->itemlen);
+    }
+
+    lookup = UMTSIRI_CONTENTS_PDPTYPE;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 3, p->itemptr, p->itemlen);
+    }
+
+
+    END_ENCODED_SEQUENCE(encoder, 3);
 
     /* gprs correlation number (18) */
     lookup = UMTSIRI_CONTENTS_GPRS_CORRELATION;
@@ -378,7 +485,7 @@ static inline void encode_umtsiri_body(wandder_encoder_t *encoder,
         logger(LOG_INFO, "OpenLI: UMTS IRI record may be invalid...");
     } else {
         char space[24];
-        snprintf(space, 24, "%u", ((uint64_t *)(p->itemptr)));
+        snprintf(space, 24, "%lu", *((uint64_t *)(p->itemptr)));
 
         wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 18, space, strlen(space));
@@ -428,8 +535,9 @@ static inline void encode_umtsiri_body(wandder_encoder_t *encoder,
     HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
     if (p) {
         ENC_CSEQUENCE(encoder, 1);
+        ENC_CSEQUENCE(encoder, 5);
         encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
-        END_ENCODED_SEQUENCE(encoder, 1);
+        END_ENCODED_SEQUENCE(encoder, 2);
     } else {
         logger(LOG_INFO,
                 "OpenLI: warning, no network element identifier available for constructing UMTS IRI");

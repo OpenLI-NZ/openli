@@ -88,6 +88,7 @@ typedef struct gtp_session {
     int idstr_len;
 
     internetaccess_ip_t pdpaddr;
+    uint16_t pdptype;
     int64_t cin;
 
     uint8_t serverid[16];
@@ -622,6 +623,10 @@ static char *gtp_get_userid(access_plugin_t *p, void *parsed,
         return NULL;
     }
 
+    if (gparsed->imsi[0] != '\0') {
+        sess->userid.imsi = strdup(gparsed->imsi);
+    }
+
     snprintf(sess->idstr, 64, "%s", sess->userid.msisdn);
     sess->idstr_len = strlen(sess->idstr);
 
@@ -657,6 +662,17 @@ static void extract_gtp_assigned_ip_address(gtp_saved_pkt_t *gpkt,
                 sess->sessionip.ipfamily = AF_INET;
                 sess->sessionip.prefixbits = 32;
 
+                /* These weird numbers are derived from bytes 3 and 4 of
+                 * the Packet Data Protocol Address IE defined in
+                 * 3GPP TS 24.008
+                 *
+                 * 0x01 = IETF assigned address
+                 * 0x21 = IPv4 address
+                 * 0x57 = IPv6 address
+                 * 0x8d = IPv4v6 address
+                 */
+                gsess->pdptype = htons(0x0121);
+
             } else if (*((uint8_t *)(ie->iecontent)) == 0x02) {
                 /* IPv6 */
                 struct sockaddr_in6 *in6;
@@ -668,6 +684,7 @@ static void extract_gtp_assigned_ip_address(gtp_saved_pkt_t *gpkt,
 
                 sess->sessionip.ipfamily = AF_INET6;
                 sess->sessionip.prefixbits = 128;
+                gsess->pdptype = htons(0x0157);
             } else if (*((uint8_t *)(ie->iecontent)) == 0x03) {
                 /* IPv4 AND IPv6 */
 
@@ -681,6 +698,7 @@ static void extract_gtp_assigned_ip_address(gtp_saved_pkt_t *gpkt,
 
                 sess->sessionip.ipfamily = AF_INET6;
                 sess->sessionip.prefixbits = 128;
+                gsess->pdptype = htons(0x018d);
             } else {
                 break;
             }
@@ -915,16 +933,23 @@ static void parse_uli(gtp_infoelem_t *el, etsili_generic_freelist_t *freelist,
 
     if (uliflags & 0x08) {
         /* TAI */
+        uint8_t taispace[6];
+
+        taispace[0] = 5;
+        memcpy(taispace + 1, ptr, 5);
         np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_TAI,
-                5, ptr);
+                6, taispace);
         HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
         ptr += 5;
     }
 
     if (uliflags & 0x10) {
         /* ECGI */
+        uint8_t ecgispace[8];
+        ecgispace[0] = 7;
+        memcpy(ecgispace + 1, ptr, 7);
         np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_ECGI,
-                7, ptr);
+                8, ecgispace);
         HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
         ptr += 7;
     }
@@ -937,8 +962,8 @@ static int gtp_create_context_activation_iri(gtp_parsed_t *gparsed,
     etsili_generic_t *np;
     etsili_ipaddress_t ipaddr;
     gtp_infoelem_t *el;
-    uint8_t evtype = UMTSIRI_EVENT_TYPE_PDPCONTEXT_ACTIVATION;
-    uint8_t initiator = 1;
+    uint32_t evtype = UMTSIRI_EVENT_TYPE_PDPCONTEXT_ACTIVATION;
+    uint32_t initiator = 1;
     struct timeval tv;
     gtp_session_t *gsess = gparsed->matched_session;
 
@@ -956,19 +981,39 @@ static int gtp_create_context_activation_iri(gtp_parsed_t *gparsed,
         sizeof(etsili_ipaddress_t), (uint8_t *)&ipaddr);
     HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
 
+    if (gparsed->matched_session->pdpaddr.ipfamily == AF_INET) {
+        struct sockaddr_in *sin = (struct sockaddr_in *)
+                &(gparsed->matched_session->pdpaddr.assignedip);
+
+        etsili_create_ipaddress_v4((uint32_t *)&(sin->sin_addr.s_addr),
+                ETSILI_IPV4_SUBNET_UNKNOWN, ETSILI_IPADDRESS_ASSIGNED_DYNAMIC,
+                &ipaddr);
+    } else {
+        struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)
+                &(gparsed->matched_session->pdpaddr.assignedip);
+
+        etsili_create_ipaddress_v6((uint8_t *)(sin6->sin6_addr.s6_addr),
+                ETSILI_IPV6_SUBNET_UNKNOWN, ETSILI_IPADDRESS_ASSIGNED_DYNAMIC,
+                &ipaddr);
+    }
+
     np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_PDP_ADDRESS,
-            sizeof(internetaccess_ip_t),
-            (uint8_t *)&(gparsed->matched_session->pdpaddr));
+            sizeof(etsili_ipaddress_t), (uint8_t *)&ipaddr);
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+            np);
+
+    np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_PDPTYPE,
+            sizeof(uint16_t), (uint8_t *)&(gsess->pdptype));
     HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
             np);
 
     np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_EVENT_TYPE,
-            sizeof(uint8_t), &(evtype));
+            sizeof(uint32_t), (uint8_t *)&(evtype));
     HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
             np);
 
     np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_INITIATOR,
-            sizeof(uint8_t), &(initiator));
+            sizeof(uint32_t), (uint8_t *)&(initiator));
     HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
             np);
 
@@ -1038,6 +1083,7 @@ static int gtp_generate_iri_data(access_plugin_t *p, void *parseddata,
                 freelist) < 0) {
             return -1;
         }
+        return 0;
     }
     else if (gparsed->action == ACCESS_ACTION_REJECT) {
         printf("need to generate a PDP context activation failed IRI\n");
