@@ -323,7 +323,8 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
     stored_result_t *stored, *tmp;
 
     if (res->origreq->type == OPENLI_EXPORT_IPCC ||
-            res->origreq->type == OPENLI_EXPORT_IPMMCC) {
+            res->origreq->type == OPENLI_EXPORT_IPMMCC ||
+            res->origreq->type == OPENLI_EXPORT_UMTSCC) {
 
         reorderer = &(fwd->intreorderer_cc);
     } else {
