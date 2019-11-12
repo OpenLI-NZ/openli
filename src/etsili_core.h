@@ -81,6 +81,7 @@ typedef struct etsili_ipaddress {
 } etsili_ipaddress_t;
 
 typedef enum {
+    ETSILI_IRI_NONE = 0,
     ETSILI_IRI_BEGIN = 1,
     ETSILI_IRI_END = 2,
     ETSILI_IRI_CONTINUE = 3,
