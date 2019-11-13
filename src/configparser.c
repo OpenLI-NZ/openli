@@ -410,6 +410,12 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
             newag->agencyid = NULL;
         }
 
+        if (newag->keepalivewait > newag->keepalivefreq) {
+            logger(LOG_INFO, "keepalivewait must be less than or equal to keepalivefreq, setting keepalivewait to %u",
+                    newag->keepalivefreq);
+            newag->keepalivewait = newag->keepalivefreq;
+        }
+
         if (newag->hi2_ipstr != NULL && newag->hi2_portstr != NULL &&
                 newag->hi3_ipstr != NULL && newag->hi3_portstr != NULL &
                 newag->agencyid != NULL) {

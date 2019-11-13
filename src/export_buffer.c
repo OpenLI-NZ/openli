@@ -182,6 +182,10 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
 
     sent = (buf->buftail - (bhead + offset));
 
+    if (sent > bytelimit) {
+        sent = bytelimit;
+    }
+
     if (sent != 0) {        
 
         if (ssl != NULL){
