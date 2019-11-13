@@ -369,6 +369,32 @@ static int create_ipiri_from_iprange(collector_sync_t *sync,
 
 }
 
+static int export_raw_sync_packet_content(collector_sync_t *sync,
+        ipintercept_t *ipint, libtrace_packet_t *pkt) {
+
+    openli_export_recv_t *msg;
+    void *l3;
+    uint16_t ethertype;
+    uint32_t rem;
+
+    l3 = trace_get_layer3(pkt, &ethertype, &rem);
+
+    if (l3 == NULL || rem == 0) {
+        return 0;
+    }
+
+    msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    msg->type = OPENLI_EXPORT_RAW_SYNC;
+    msg->destid = ipint->common.destid;
+    msg->data.rawip.liid = strdup(ipint->common.liid);
+    msg->data.rawip.ipcontent = malloc(rem);
+
+    memcpy(msg->data.rawip.ipcontent, l3, rem);
+    msg->data.rawip.ipclen = rem;
+    publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], msg);
+    return 1;
+}
+
 static int create_mobiri_from_session(collector_sync_t *sync,
         access_session_t *sess, ipintercept_t *ipint, access_plugin_t *p,
         void *parseddata) {
@@ -1925,16 +1951,22 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         }
     }
 
-    if (userint && accessaction != ACCESS_ACTION_NONE) {
+    if (userint) {
         HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
-            if (ipint->accesstype != INTERNET_ACCESS_TYPE_MOBILE) {
-                create_ipiri_from_session(sync, sess, ipint, p,
-                        parseddata, OPENLI_IPIRI_STANDARD);
-            } else {
-                create_mobiri_from_session(sync, sess, ipint, p,
-                        parseddata);
+
+            if (strcmp(ipint->common.targetagency, "pcapdisk") == 0) {
+                export_raw_sync_packet_content(sync, ipint, pkt);
+                expcount ++;
+            } else if (accessaction != ACCESS_ACTION_NONE) {
+                if (ipint->accesstype != INTERNET_ACCESS_TYPE_MOBILE) {
+                    create_ipiri_from_session(sync, sess, ipint, p,
+                            parseddata, OPENLI_IPIRI_STANDARD);
+                } else {
+                    create_mobiri_from_session(sync, sess, ipint, p,
+                            parseddata);
+                }
+                expcount ++;
             }
-            expcount ++;
         }
     }
 

@@ -183,6 +183,32 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
 
 }
 
+static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
+        openli_encoded_result_t *res) {
+
+    uint32_t liidlen = strlen(job->liid);
+
+    memset(res, 0, sizeof(openli_encoded_result_t));
+
+    res->msgbody = calloc(1, sizeof(wandder_encoded_result_t));
+    res->msgbody->encoder = NULL;
+    res->msgbody->encoded = NULL;
+    res->msgbody->len = job->origreq->data.rawip.ipclen;
+    res->msgbody->alloced = 0;
+    res->msgbody->next = NULL;
+
+    res->ipcontents = job->origreq->data.rawip.ipcontent;
+    res->ipclen = job->origreq->data.rawip.ipclen;
+    res->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    res->header.bodylen = htons(res->msgbody->len + liidlen + sizeof(uint16_t));
+    res->header.intercepttype = htons(OPENLI_PROTO_RAWIP_SYNC);
+    res->header.internalid = 0;
+    res->isDer = 1;         /* Must be set as DER for the forwarder to handle
+                             * correctly */
+
+    return 0;
+}
+
 static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
         openli_encoded_result_t *res) {
 
@@ -320,13 +346,19 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         } else if (x == 0) {
             return 0;
         }
-        if (encode_etsi(enc, &job, &result) < 0) {
-            /* What do we do in the event of an error? */
-            logger(LOG_INFO,
-                    "OpenLI: encoder worker had an error when encoding %d record",
-                    job.origreq->type);
 
-            continue;
+        if (job.origreq->type == OPENLI_EXPORT_RAW_SYNC) {
+            encode_rawip(enc, &job, &result);
+        } else {
+
+            if (encode_etsi(enc, &job, &result) < 0) {
+                /* What do we do in the event of an error? */
+                logger(LOG_INFO,
+                        "OpenLI: encoder worker had an error when encoding %d record",
+                        job.origreq->type);
+
+                continue;
+            }
         }
 
         result.cinstr = job.cinstr;

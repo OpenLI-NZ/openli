@@ -68,6 +68,8 @@ static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
             return recvd->data.ipmmiri.liid;
         case OPENLI_EXPORT_UMTSIRI:
             return recvd->data.mobiri.liid;
+        case OPENLI_EXPORT_RAW_SYNC:
+            return recvd->data.rawip.liid;
     }
     return NULL;
 }
@@ -298,6 +300,28 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
     return 1;
 }
 
+static int forward_rawip_job(seqtracker_thread_data_t *seqdata,
+        openli_export_recv_t *recvd) {
+
+    openli_encoding_job_t job;
+
+    job.preencoded = NULL;
+    job.seqno = 0;
+    job.cinstr = NULL;
+    job.origreq = recvd;
+    job.liid = strdup(recvd->data.rawip.liid);
+
+    if (zmq_send(seqdata->zmq_pushjobsock, (char *)&job,
+            sizeof(openli_encoding_job_t), 0) < 0) {
+        logger(LOG_INFO,
+                "Error while forwarding raw IP job to worker threads: %s",
+                strerror(errno));
+        return -1;
+    }
+    return 1;
+}
+
+
 static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         openli_export_recv_t *recvd) {
 
@@ -432,6 +456,10 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
 					remove_tracked_intercept(seqdata, &(job->data.cept));
 					free(job);
 					break;
+
+                case OPENLI_EXPORT_RAW_SYNC:
+                    forward_rawip_job(seqdata, job);
+                    break;
 
                 case OPENLI_EXPORT_IPMMCC:
                 case OPENLI_EXPORT_IPMMIRI:

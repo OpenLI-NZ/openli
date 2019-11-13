@@ -174,6 +174,7 @@ enum {
     PCAP_MESSAGE_PACKET,
     PCAP_MESSAGE_FLUSH,
     PCAP_MESSAGE_ROTATE,
+    PCAP_MESSAGE_RAWIP,
 };
 
 typedef struct active_pcap_output {

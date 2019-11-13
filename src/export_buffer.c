@@ -152,9 +152,11 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     }
 
     if (res->isDer){
-        memcpy(buf->buftail, res->msgbody->encoded, enclen);
+        if (enclen > 0) {
+            memcpy(buf->buftail, res->msgbody->encoded, enclen);
+            buf->buftail += enclen;
+        }
 
-        buf->buftail += enclen;
         if (res->ipclen > 0) {
             memcpy(buf->buftail, res->ipcontents, res->ipclen);
             buf->buftail += res->ipclen;

@@ -1381,22 +1381,37 @@ static mediator_agency_t *lookup_agency(libtrace_list_t *alist, char *id) {
 
 }
 
+static inline char *extract_liid_from_exported_msg(uint8_t *etsimsg,
+        uint16_t msglen, char *space, int maxspace, uint16_t *liidlen) {
+
+    uint16_t l;
+
+    l = *(uint16_t *)(etsimsg);
+    *liidlen = ntohs(l);
+
+    if (*liidlen > msglen - 2) {
+        *liidlen = msglen - 2;
+    }
+
+    if (*liidlen > maxspace - 1) {
+        *liidlen = maxspace - 1;
+    }
+
+    memcpy(space, etsimsg + 2, *liidlen);
+    space[*liidlen] = '\0';
+
+    *liidlen += sizeof(l);
+    return space;
+}
+
 static liid_map_t *match_etsi_to_agency(mediator_state_t *state,
         uint8_t *etsimsg, uint16_t msglen, uint16_t *liidlen) {
 
     char liidstr[65536];
     liid_map_t *match = NULL;
-    uint16_t l;
     PWord_t jval;
 
-
-    l = *(uint16_t *)(etsimsg);
-    *liidlen = ntohs(l);
-
-    memcpy(liidstr, etsimsg + 2, *liidlen);
-    liidstr[*liidlen] = '\0';
-
-    *liidlen += sizeof(l);
+    extract_liid_from_exported_msg(etsimsg, msglen, liidstr, 65536, liidlen);
 
     JSLG(jval, state->liid_array, liidstr);
     if (jval == NULL) {
@@ -1991,6 +2006,27 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                         "OpenLI: error receiving message from collector.");
                 return -1;
             case OPENLI_PROTO_NO_MESSAGE:
+                break;
+            case OPENLI_PROTO_RAWIP_SYNC:
+                /* msgbody should be an LIID + an IP packet */
+                thisint = match_etsi_to_agency(state, msgbody, msglen,
+                        &liidlen);
+                if (thisint == NULL) {
+                    break;
+                }
+                if (cs->disabled_log == 1) {
+                    reenable_collector_logging(state, cs);
+                }
+
+                if (thisint->agency == NULL) {
+                    /* Write IP packet directly to pcap */
+                    pcapmsg.msgtype = PCAP_MESSAGE_RAWIP;
+                    pcapmsg.msgbody = (uint8_t *)malloc(msglen);
+                    memcpy(pcapmsg.msgbody, msgbody, msglen);
+                    pcapmsg.msglen = msglen;
+                    libtrace_message_queue_put(&(state->pcapqueue), &pcapmsg);
+                }
+
                 break;
             case OPENLI_PROTO_ETSI_CC:
                 /* msgbody should contain a full ETSI record */
@@ -2759,6 +2795,57 @@ static active_pcap_output_t *create_new_pcap_output(pcap_thread_state_t *pstate,
     return act;
 }
 
+static void write_rawpcap_packet(pcap_thread_state_t *pstate,
+        mediator_pcap_msg_t *pcapmsg) {
+
+    active_pcap_output_t *pcapout;
+    uint16_t liidlen;
+    char liidspace[2048];
+    uint8_t *rawip;
+
+    if (pcapmsg->msgbody == NULL) {
+        return;
+    }
+
+    extract_liid_from_exported_msg(pcapmsg->msgbody, pcapmsg->msglen,
+            liidspace, 2048, &liidlen);
+
+    if (liidlen == pcapmsg->msglen) {
+        return;
+    }
+
+    rawip = pcapmsg->msgbody + liidlen;
+
+    HASH_FIND(hh, pstate->active, liidspace, strlen(liidspace), pcapout);
+    if (!pcapout) {
+        pcapout = create_new_pcap_output(pstate, liidspace);
+    }
+
+    if (pcapout) {
+
+        if (!pstate->packet) {
+            pstate->packet = trace_create_packet();
+        }
+
+        trace_construct_packet(pstate->packet, TRACE_TYPE_NONE,
+                (const void *)rawip, (uint16_t)pcapmsg->msglen - liidlen);
+
+        /* write resulting packet to libtrace output */
+        if (trace_write_packet(pcapout->out, pstate->packet) < 0) {
+            libtrace_err_t err = trace_get_err_output(pcapout->out);
+            logger(LOG_INFO,
+                    "OpenLI mediator: error while writing packet to pcap trace file: %s",
+                    err.problem);
+            trace_destroy_output(pcapout->out);
+            HASH_DELETE(hh, pstate->active, pcapout);
+            free(pcapout->liid);
+            free(pcapout);
+        }
+    }
+
+    free(pcapmsg->msgbody);
+}
+
 static void write_pcap_packet(pcap_thread_state_t *pstate,
         mediator_pcap_msg_t *pcapmsg) {
 
@@ -2915,6 +3002,10 @@ static void *start_pcap_thread(void *params) {
                         "OpenLI mediator: pcap trace file directory has been set to NULL");
             }
             continue;
+        }
+
+        if (pcapmsg.msgtype == PCAP_MESSAGE_RAWIP) {
+            write_rawpcap_packet(&pstate, &pcapmsg);
         }
 
         write_pcap_packet(&pstate, &pcapmsg);
