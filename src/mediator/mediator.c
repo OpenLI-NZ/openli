@@ -2882,7 +2882,7 @@ static void write_pcap_packet(pcap_thread_state_t *pstate,
         pcapout = create_new_pcap_output(pstate, liidspace);
     }
 
-    if (pcapout) {
+    if (pcapout && pcapout->out) {
         uint8_t *rawip;
         uint32_t cclen;
 
@@ -2907,6 +2907,7 @@ static void write_pcap_packet(pcap_thread_state_t *pstate,
                         "OpenLI mediator: error while writing packet to pcap trace file: %s",
                         err.problem);
                 trace_destroy_output(pcapout->out);
+                pcapout->out = NULL;
                 HASH_DELETE(hh, pstate->active, pcapout);
                 free(pcapout->liid);
                 free(pcapout);
@@ -2921,12 +2922,13 @@ static void pcap_flush_traces(pcap_thread_state_t *pstate) {
     active_pcap_output_t *pcapout, *tmp;
 
     HASH_ITER(hh, pstate->active, pcapout, tmp) {
-        if (trace_flush_output(pcapout->out) < 0) {
+        if (pcapout->out && trace_flush_output(pcapout->out) < 0) {
             libtrace_err_t err = trace_get_err_output(pcapout->out);
             logger(LOG_INFO,
                     "OpenLI mediator: error while flushing pcap trace file: %s",
                     err.problem);
             trace_destroy_output(pcapout->out);
+            pcapout->out = NULL;
             HASH_DELETE(hh, pstate->active, pcapout);
             free(pcapout->liid);
             free(pcapout);
@@ -2938,13 +2940,16 @@ static void pcap_rotate_traces(pcap_thread_state_t *pstate) {
     active_pcap_output_t *pcapout, *tmp, *rotated;
 
     HASH_ITER(hh, pstate->active, pcapout, tmp) {
-        HASH_DELETE(hh, pstate->active, pcapout);
         trace_destroy_output(pcapout->out);
+        pcapout->out = NULL;
         if (open_pcap_output_file(pstate, pcapout) == -1) {
             logger(LOG_INFO,
                     "OpenLI mediator: error while rotating pcap trace file");
 
-            trace_destroy_output(pcapout->out);
+            if (pcapout->out) {
+                trace_destroy_output(pcapout->out);
+                pcapout->out = NULL;
+            }
             HASH_DELETE(hh, pstate->active, pcapout);
             free(pcapout->liid);
             free(pcapout);
@@ -3006,6 +3011,7 @@ static void *start_pcap_thread(void *params) {
 
         if (pcapmsg.msgtype == PCAP_MESSAGE_RAWIP) {
             write_rawpcap_packet(&pstate, &pcapmsg);
+            continue;
         }
 
         write_pcap_packet(&pstate, &pcapmsg);

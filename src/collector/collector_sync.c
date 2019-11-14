@@ -1954,7 +1954,7 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     if (userint) {
         HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
 
-            if (strcmp(ipint->common.targetagency, "pcapdisk") == 0) {
+            if (ipint->common.targetagency == NULL) {
                 export_raw_sync_packet_content(sync, ipint, pkt);
                 expcount ++;
             } else if (accessaction != ACCESS_ACTION_NONE) {
