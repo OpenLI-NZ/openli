@@ -1103,6 +1103,15 @@ static void gtp_destroy_session_data(access_plugin_t *p,
 
 }
 
+static uint32_t gtp_get_packet_sequence(access_plugin_t *p, void *parseddata) {
+
+    gtp_global_t *glob = (gtp_global_t *)(p->plugindata);
+    gtp_parsed_t *gparsed = (gtp_parsed_t *)parseddata;
+
+    /* bottom 8 bits of seqno are "spare" */
+    return (gparsed->seqno | gparsed->msgtype);
+}
+
 static access_plugin_t gtpplugin = {
 
     "GTP",
@@ -1117,7 +1126,8 @@ static access_plugin_t gtpplugin = {
     gtp_get_userid,
     gtp_update_session_state,
     gtp_generate_iri_data,
-    gtp_destroy_session_data
+    gtp_destroy_session_data,
+    gtp_get_packet_sequence,
 };
 
 access_plugin_t *get_gtp_access_plugin(void) {

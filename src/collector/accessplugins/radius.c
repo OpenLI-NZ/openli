@@ -1824,6 +1824,18 @@ static void radius_destroy_session_data(access_plugin_t *p,
     return;
 }
 
+static uint32_t radius_get_packet_sequence(access_plugin_t *p,
+        void *parseddata) {
+
+    radius_global_t *radglob;
+    radius_parsed_t *raddata;
+
+    radglob = (radius_global_t *)(p->plugindata);
+    raddata = (radius_parsed_t *)parseddata;
+
+    return DERIVE_REQUEST_ID(raddata, raddata->msgtype);
+}
+
 static access_plugin_t radiusplugin = {
 
     "RADIUS",
@@ -1839,7 +1851,8 @@ static access_plugin_t radiusplugin = {
     radius_update_session_state,
     radius_generate_iri_data,
     //radius_create_iri_from_packet,
-    radius_destroy_session_data
+    radius_destroy_session_data,
+    radius_get_packet_sequence,
 };
 
 access_plugin_t *get_radius_access_plugin(void) {

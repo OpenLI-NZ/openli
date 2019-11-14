@@ -139,6 +139,8 @@ struct access_plugin {
 
     void (*destroy_session_data)(access_plugin_t *p, access_session_t *sess);
 
+    uint32_t (*get_packet_sequence)(access_plugin_t *p, void *parseddata);
+
     /* APIs that are internally used but should be required by all plugins
      * so may as well enforce them as part of the plugin definition.
      */
