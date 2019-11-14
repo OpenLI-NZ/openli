@@ -370,7 +370,8 @@ static int create_ipiri_from_iprange(collector_sync_t *sync,
 }
 
 static int export_raw_sync_packet_content(collector_sync_t *sync,
-        ipintercept_t *ipint, libtrace_packet_t *pkt) {
+        ipintercept_t *ipint, libtrace_packet_t *pkt, uint32_t seqno,
+        uint32_t cin) {
 
     openli_export_recv_t *msg;
     void *l3;
@@ -388,6 +389,8 @@ static int export_raw_sync_packet_content(collector_sync_t *sync,
     msg->destid = ipint->common.destid;
     msg->data.rawip.liid = strdup(ipint->common.liid);
     msg->data.rawip.ipcontent = malloc(rem);
+    msg->data.rawip.seqno = seqno;
+    msg->data.rawip.cin = cin;
 
     memcpy(msg->data.rawip.ipcontent, l3, rem);
     msg->data.rawip.ipclen = rem;
@@ -1955,7 +1958,11 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
             if (ipint->common.targetagency == NULL ||
                     strcmp(ipint->common.targetagency,"pcapdisk") == 0) {
-                export_raw_sync_packet_content(sync, ipint, pkt);
+                uint32_t seqno;
+
+                seqno = p->get_packet_sequence(p, parseddata);
+                export_raw_sync_packet_content(sync, ipint, pkt, seqno,
+                        sess->cin);
                 expcount ++;
             } else if (accessaction != ACCESS_ACTION_NONE) {
                 if (ipint->accesstype != INTERNET_ACCESS_TYPE_MOBILE) {

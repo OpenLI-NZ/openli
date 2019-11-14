@@ -108,6 +108,8 @@ typedef struct openli_rawip_job {
     char *liid;
     uint8_t *ipcontent;
     uint32_t ipclen;
+    uint32_t seqno;
+    uint32_t cin;
 } PACKED openli_rawip_job_t;
 
 enum {

@@ -457,11 +457,7 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
         med = (export_dest_t *)(*jval);
     }
 
-    if (res->origreq->type == OPENLI_EXPORT_RAW_SYNC) {
-        ret = enqueue_raw(fwd, med, res);
-    } else {
-        ret = enqueue_result(fwd, med, res);
-    }
+    ret = enqueue_result(fwd, med, res);
 
     if (ret == 1) {
         free_encoded_result(res);
