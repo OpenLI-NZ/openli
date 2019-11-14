@@ -901,6 +901,7 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
         *newstate = gparsed->matched_session->current;
     }
 
+    *action = gparsed->action;
     return thissess;
 }
 
