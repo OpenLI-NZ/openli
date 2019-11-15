@@ -64,6 +64,9 @@ static inline void free_session(access_session_t *sess) {
     if (sess->plugin) {
         sess->plugin->destroy_session_data(sess->plugin, sess);
     }
+    if (sess->sessionid) {
+        free(sess->sessionid);
+    }
     free(sess);
 }
 

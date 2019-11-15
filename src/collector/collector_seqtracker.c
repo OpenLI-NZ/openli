@@ -51,6 +51,9 @@ static inline void free_cinsequencing(exporter_intercept_state_t *intstate) {
 
     HASH_ITER(hh, intstate->cinsequencing, c, tmp) {
         HASH_DELETE(hh, intstate->cinsequencing, c);
+        if (c->cin_string) {
+            free(c->cin_string);
+        }
         free(c);
     }
 }

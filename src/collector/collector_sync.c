@@ -873,8 +873,8 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
                 sizeof(openli_export_recv_t));
         expmsg->type = OPENLI_EXPORT_MEDIATOR;
         expmsg->data.med.mediatorid = med.mediatorid;
-        expmsg->data.med.ipstr = strdup(med.ipstr);
-        expmsg->data.med.portstr = strdup(med.portstr);
+        expmsg->data.med.ipstr = med.ipstr;
+        expmsg->data.med.portstr = med.portstr;
 
         publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
     }

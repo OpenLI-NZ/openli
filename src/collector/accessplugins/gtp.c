@@ -1273,6 +1273,10 @@ static int gtp_generate_iri_data(access_plugin_t *p, void *parseddata,
 static void gtp_destroy_session_data(access_plugin_t *p,
         access_session_t *sess) {
 
+    if (sess->sessionid) {
+        free(sess->sessionid);
+    }
+
 }
 
 static uint32_t gtp_get_packet_sequence(access_plugin_t *p, void *parseddata) {
