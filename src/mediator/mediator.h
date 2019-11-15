@@ -180,6 +180,7 @@ enum {
 typedef struct active_pcap_output {
     char *liid;
     libtrace_out_t *out;
+    int pktwritten;
 
     UT_hash_handle hh;
 } active_pcap_output_t;

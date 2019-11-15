@@ -2769,6 +2769,7 @@ static int open_pcap_output_file(pcap_thread_state_t *pstate,
 
     logger(LOG_INFO, "OpenLI mediator: opened new trace file %s for LIID %s",
             uri, act->liid);
+    act->pktwritten = 0;
 
     return 0;
 
@@ -2841,6 +2842,7 @@ static void write_rawpcap_packet(pcap_thread_state_t *pstate,
             free(pcapout->liid);
             free(pcapout);
         }
+        pcapout->pktwritten = 1;
     }
 
     free(pcapmsg->msgbody);
@@ -2912,6 +2914,7 @@ static void write_pcap_packet(pcap_thread_state_t *pstate,
                 free(pcapout->liid);
                 free(pcapout);
             }
+            pcapout->pktwritten = 1;
         }
     }
 
@@ -2922,7 +2925,8 @@ static void pcap_flush_traces(pcap_thread_state_t *pstate) {
     active_pcap_output_t *pcapout, *tmp;
 
     HASH_ITER(hh, pstate->active, pcapout, tmp) {
-        if (pcapout->out && trace_flush_output(pcapout->out) < 0) {
+        if (pcapout->out && pcapout->pktwritten &&
+                trace_flush_output(pcapout->out) < 0) {
             libtrace_err_t err = trace_get_err_output(pcapout->out);
             logger(LOG_INFO,
                     "OpenLI mediator: error while flushing pcap trace file: %s",
