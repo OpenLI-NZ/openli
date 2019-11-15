@@ -459,6 +459,9 @@ static inline void encode_umtsiri_body(wandder_encoder_t *encoder,
         logger(LOG_INFO, "OpenLI: UMTS IRI record may be invalid...");
     }
 
+    /* TODO figure out if we need to include the "length" field in our
+     * encoding.
+     */
     lookup = UMTSIRI_CONTENTS_APNAME;
     HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
     if (p) {
