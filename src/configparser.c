@@ -891,6 +891,12 @@ static int global_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "encoding") == 0) {
 
+/** Don't let users enable BER just yet, it's still incomplete.
+ *
+  * Still TODO:
+  *   BER encoding for IPIRIs, UMTSIRIs and UMTSCCs
+  */
+#if 0
         if (strcasecmp(value->data.scalar.value, "BER") == 0) {
 #ifdef HAVE_BER_ENCODING
             glob->encoding_method = OPENLI_ENCODING_BER;
@@ -901,6 +907,7 @@ static int global_parser(void *arg, yaml_document_t *doc,
         } else {
             glob->encoding_method = OPENLI_ENCODING_DER;
         }
+#endif
     }
     
     return 0;
