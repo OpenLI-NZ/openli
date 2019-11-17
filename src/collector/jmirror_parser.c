@@ -81,7 +81,7 @@ int check_jmirror_intercept(collector_identity_t *info, colthread_local_t *loc,
         return 0;
     }
 
-    header = (jmirrorhdr_t *)get_udp_payload(packet, &rem);
+    header = (jmirrorhdr_t *)get_udp_payload(packet, &rem, NULL, NULL);
     if (rem < sizeof(jmirrorhdr_t) || header == NULL) {
         return 0;
     }

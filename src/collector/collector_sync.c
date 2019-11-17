@@ -71,6 +71,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->info = &(glob->sharedinfo);
 
     sync->radiusplugin = init_access_plugin(ACCESS_RADIUS);
+    sync->gtpplugin = init_access_plugin(ACCESS_GTP);
     sync->freegenerics = glob->syncgenericfreelist;
     sync->activeips = NULL;
 
@@ -155,6 +156,10 @@ void clean_sync_data(collector_sync_t *sync) {
         destroy_access_plugin(sync->radiusplugin);
     }
 
+    if (sync->gtpplugin) {
+        destroy_access_plugin(sync->gtpplugin);
+    }
+
     if(sync->ssl){
         SSL_free(sync->ssl);
     }
@@ -166,6 +171,7 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->outgoing = NULL;
     sync->incoming = NULL;
     sync->radiusplugin = NULL;
+    sync->gtpplugin = NULL;
     sync->activeips = NULL;
 
     while (haltattempts < 10) {
@@ -363,6 +369,79 @@ static int create_ipiri_from_iprange(collector_sync_t *sync,
 
 }
 
+static int export_raw_sync_packet_content(collector_sync_t *sync,
+        ipintercept_t *ipint, libtrace_packet_t *pkt, uint32_t seqno,
+        uint32_t cin) {
+
+    openli_export_recv_t *msg;
+    void *l3;
+    uint16_t ethertype;
+    uint32_t rem;
+
+    l3 = trace_get_layer3(pkt, &ethertype, &rem);
+
+    if (l3 == NULL || rem == 0) {
+        return 0;
+    }
+
+    msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    msg->type = OPENLI_EXPORT_RAW_SYNC;
+    msg->destid = ipint->common.destid;
+    msg->data.rawip.liid = strdup(ipint->common.liid);
+    msg->data.rawip.ipcontent = malloc(rem);
+    msg->data.rawip.seqno = seqno;
+    msg->data.rawip.cin = cin;
+
+    memcpy(msg->data.rawip.ipcontent, l3, rem);
+    msg->data.rawip.ipclen = rem;
+    publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], msg);
+    return 1;
+}
+
+static int create_mobiri_from_session(collector_sync_t *sync,
+        access_session_t *sess, ipintercept_t *ipint, access_plugin_t *p,
+        void *parseddata) {
+
+    openli_export_recv_t *irimsg;
+    int ret;
+
+    irimsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    irimsg->type = OPENLI_EXPORT_UMTSIRI;
+    irimsg->destid = ipint->common.destid;
+    irimsg->data.mobiri.liid = strdup(ipint->common.liid);
+    irimsg->data.mobiri.cin = sess->cin;
+    irimsg->data.mobiri.iritype = ETSILI_IRI_NONE;
+    irimsg->data.mobiri.customparams = NULL;
+
+    if (p) {
+        ret = p->generate_iri_data(p, parseddata,
+                &(irimsg->data.mobiri.customparams),
+                &(irimsg->data.mobiri.iritype),
+                sync->freegenerics, 0);
+        if (ret == -1) {
+            logger(LOG_INFO,
+                    "OpenLI: error whle creating UMTSIRI from session state change for %s.",
+                    irimsg->data.mobiri.liid);
+            free(irimsg->data.mobiri.liid);
+            free(irimsg);
+            return -1;
+        }
+    }
+
+    if (irimsg->data.mobiri.iritype == ETSILI_IRI_NONE) {
+            free(irimsg->data.mobiri.liid);
+            free(irimsg);
+            return 0;
+    }
+
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->mobiri_created ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
+    publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], irimsg);
+
+    return 1;
+}
+
 static int create_ipiri_from_session(collector_sync_t *sync,
         access_session_t *sess, ipintercept_t *ipint, access_plugin_t *p,
         void *parseddata, uint8_t special) {
@@ -385,7 +464,11 @@ static int create_ipiri_from_session(collector_sync_t *sync,
 
             if (ret == -1) {
                 logger(LOG_INFO,
-                        "OpenLI: error while creating IPIRI from session state change.");
+                        "OpenLI: error while creating IPIRI from session state change for %s.",
+                        irimsg->data.ipiri.liid);
+                free(irimsg->data.ipiri.username);
+                free(irimsg->data.ipiri.liid);
+                free(irimsg);
                 return -1;
             }
         }
@@ -790,8 +873,8 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
                 sizeof(openli_export_recv_t));
         expmsg->type = OPENLI_EXPORT_MEDIATOR;
         expmsg->data.med.mediatorid = med.mediatorid;
-        expmsg->data.med.ipstr = strdup(med.ipstr);
-        expmsg->data.med.portstr = strdup(med.portstr);
+        expmsg->data.med.ipstr = med.ipstr;
+        expmsg->data.med.portstr = med.portstr;
 
         publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
     }
@@ -924,6 +1007,8 @@ static inline void announce_vendormirror_id(collector_sync_t *sync,
         push_single_vendmirrorid(sendq->q, ipint,
                 OPENLI_PUSH_VENDMIRROR_INTERCEPT);
     }
+
+    /* TODO Do we need to create an IRI-Begin here too? Probably */
     pthread_mutex_lock(sync->glob->stats_mutex);
     sync->glob->stats->ipsessions_added_diff ++;
     sync->glob->stats->ipsessions_added_total ++;
@@ -945,6 +1030,9 @@ static void push_existing_user_sessions(collector_sync_t *sync,
                     sendq, tmp) {
                 push_single_ipintercept(sync, sendq->q, cept, sess);
             }
+
+            /* TODO we'll also need to trigger an Intercept started while
+             * active BEGIN IRI */
         }
     }
 
@@ -1795,6 +1883,8 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
 
     if (accesstype == ACCESS_RADIUS) {
         p = sync->radiusplugin;
+    } else if (accesstype == ACCESS_GTP) {
+        p = sync->gtpplugin;
     }
 
     if (!p) {
@@ -1827,9 +1917,9 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     sess = p->update_session_state(p, parseddata, &(iuser->sessions), &oldstate,
             &newstate, &accessaction);
     if (!sess) {
-        logger(LOG_INFO, "OpenLI: error while assigning packet to a Internet access session");
+        /* Unable to assign packet to a session, just quietly ignore it */
         p->destroy_parsed_data(p, parseddata);
-        return -1;
+        return 0;
     }
 
     HASH_FIND(hh, sync->userintercepts, userid, strlen(userid), userint);
@@ -1864,12 +1954,26 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         }
     }
 
-    if (userint && accessaction != ACCESS_ACTION_NONE) {
+    if (userint) {
         HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
-            int queueused = 0;
-            queueused = create_ipiri_from_session(sync, sess, ipint, p,
-                    parseddata, OPENLI_IPIRI_STANDARD);
-            expcount ++;
+            if (ipint->common.targetagency == NULL ||
+                    strcmp(ipint->common.targetagency,"pcapdisk") == 0) {
+                uint32_t seqno;
+
+                seqno = p->get_packet_sequence(p, parseddata);
+                export_raw_sync_packet_content(sync, ipint, pkt, seqno,
+                        sess->cin);
+                expcount ++;
+            } else if (accessaction != ACCESS_ACTION_NONE) {
+                if (ipint->accesstype != INTERNET_ACCESS_TYPE_MOBILE) {
+                    create_ipiri_from_session(sync, sess, ipint, p,
+                            parseddata, OPENLI_IPIRI_STANDARD);
+                } else {
+                    create_mobiri_from_session(sync, sess, ipint, p,
+                            parseddata);
+                }
+                expcount ++;
+            }
         }
     }
 
@@ -1945,18 +2049,28 @@ int sync_thread_main(collector_sync_t *sync) {
              * push II update messages to processing threads */
 
             /* If this relates to an active intercept, create IRI and export */
-            if (recvd.type == OPENLI_UPDATE_RADIUS) {
+            if (recvd.type == OPENLI_UPDATE_RADIUS ||
+                    recvd.type == OPENLI_UPDATE_GTP) {
                 int ret;
+                int accesstype;
+
+                if (recvd.type == OPENLI_UPDATE_RADIUS) {
+                    accesstype = ACCESS_RADIUS;
+                } else if (recvd.type == OPENLI_UPDATE_GTP) {
+                    accesstype = ACCESS_GTP;
+                }
+
                 if ((ret = update_user_sessions(sync, recvd.data.pkt,
-                            ACCESS_RADIUS)) < 0) {
+                            accesstype)) < 0) {
                     /* If a user has screwed up their RADIUS config and we
                      * see non-RADIUS packets here, we probably want to limit the
                      * number of times we complain about this... FIXME */
                     logger(LOG_INFO,
-                            "OpenLI: sync thread received an invalid RADIUS packet");
+                            "OpenLI: sync thread received an invalid packet");
                 }
                 trace_destroy_packet(recvd.data.pkt);
             }
+
         } while (rc > 0);
     }
 

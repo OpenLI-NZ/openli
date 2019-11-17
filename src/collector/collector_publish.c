@@ -48,7 +48,8 @@ int publish_openli_msg(void *pubsock, openli_export_recv_t *msg) {
 
 void free_published_message(openli_export_recv_t *msg) {
 
-    if (msg->type == OPENLI_EXPORT_IPCC || msg->type == OPENLI_EXPORT_IPMMCC) {
+    if (msg->type == OPENLI_EXPORT_IPCC || msg->type == OPENLI_EXPORT_IPMMCC
+            || msg->type == OPENLI_EXPORT_UMTSCC) {
         if (msg->data.ipcc.liid) {
             free(msg->data.ipcc.liid);
         }
@@ -68,6 +69,17 @@ void free_published_message(openli_export_recv_t *msg) {
         }
         if (msg->data.ipiri.username) {
             free(msg->data.ipiri.username);
+        }
+    } else if (msg->type == OPENLI_EXPORT_UMTSIRI) {
+        if (msg->data.mobiri.liid) {
+            free(msg->data.mobiri.liid);
+        }
+    } else if (msg->type == OPENLI_EXPORT_RAW_SYNC) {
+        if (msg->data.rawip.liid) {
+            free(msg->data.rawip.liid);
+        }
+        if (msg->data.rawip.ipcontent) {
+            free(msg->data.rawip.ipcontent);
         }
     }
 

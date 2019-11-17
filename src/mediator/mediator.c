@@ -98,6 +98,7 @@ static void disconnect_handover(mediator_state_t *state, handover_t *ho) {
         }
         close(agstate->katimer_fd);
         agstate->katimer_fd = -1;
+        agstate->katimer_setsec = 0;
         if (ho->aliveev) {
             ho->aliveev->fd = -1;
         }
@@ -604,7 +605,11 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
     char elemstring[16];
     char liidstring[24];
 
-    if (ms->pending_ka == NULL && ms->main_fd != -1) {
+    if (ms->main_fd == -1) {
+        return 0;
+    }
+
+    if (ms->pending_ka == NULL) {
         /* Only create a new KA message if we have sent the last one we
          * had queued up.
          */
@@ -667,11 +672,11 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
             ms->outenabled = 1;
         }
 
-    /*
-        logger(LOG_INFO, "OpenLI Mediator: queued keep alive %ld for %s:%s HI%d",
+        /*
+        logger(LOG_INFO, "OpenLI Mediator: queued keep alive %ld for %s:%s HI%d, event fd=%d",
                 ms->lastkaseq, ms->parent->ipstr, ms->parent->portstr,
-                ms->parent->handover_type);
-    */
+                ms->parent->handover_type, mev->fd);
+        */
         if (start_keepalive_timer(state, ms->parent->aliverespev,
                 ms->kawait) == -1) {
             if (ms->parent->disconnect_msg == 0) {
@@ -724,33 +729,13 @@ static int connect_handover(mediator_state_t *state, handover_t *ho) {
         return 0;
     }
 
-    if (get_buffered_amount(&(agstate->buf)) > 0) {
-        ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
-        agstate->outenabled = 1;
-    } else {
-        ev.events = EPOLLIN | EPOLLRDHUP;
-        agstate->outenabled = 0;
-    }
-    ev.data.ptr = (void *)ho->outev;
-
-    if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, ho->outev->fd, &ev) == -1) {
-        if (ho->disconnect_msg ==0) {
-            logger(LOG_INFO,
-                    "OpenLI Mediator: unable to add agency handover fd %d to epoll.",
-                    ho->outev->fd);
-        }
-        ho->disconnect_msg = 1;
-        close(ho->outev->fd);
-        ho->outev->fd = -1;
-        return 0;
-    }
-
     agstate->incoming = (libtrace_scb_t *)malloc(sizeof(libtrace_scb_t));
     libtrace_scb_init(agstate->incoming, (64 * 1024 * 1024),
             (uint16_t)state->mediatorid);
 
     agstate->main_fd = ho->outev->fd;
     agstate->katimer_fd = -1;
+    agstate->katimer_setsec = 0;
     agstate->karesptimer_fd = -1;
     agstate->lastkaseq = 0;
     agstate->pending_ka = NULL;
@@ -774,6 +759,28 @@ static int connect_handover(mediator_state_t *state, handover_t *ho) {
     if (ho->aliveev) {
         agstate->katimer_fd = ho->aliveev->fd;
     }
+
+    if (get_buffered_amount(&(agstate->buf)) > 0) {
+        ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
+        agstate->outenabled = 1;
+    } else {
+        ev.events = EPOLLIN | EPOLLRDHUP;
+        agstate->outenabled = 0;
+    }
+    ev.data.ptr = (void *)ho->outev;
+
+    if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, ho->outev->fd, &ev) == -1) {
+        if (ho->disconnect_msg ==0) {
+            logger(LOG_INFO,
+                    "OpenLI Mediator: unable to add agency handover fd %d to epoll.",
+                    ho->outev->fd);
+        }
+        ho->disconnect_msg = 1;
+        close(ho->outev->fd);
+        ho->outev->fd = -1;
+        return 0;
+    }
+
     return 1;
 }
 
@@ -1045,6 +1052,7 @@ static handover_t *create_new_handover(char *ipstr, char *portstr,
     agstate->main_fd = -1;
     agstate->outenabled = 0;
     agstate->katimer_fd = -1;
+    agstate->katimer_setsec = 0;
     agstate->karesptimer_fd = -1;
     agstate->parent = ho;
     agstate->incoming = NULL;
@@ -1384,22 +1392,37 @@ static mediator_agency_t *lookup_agency(libtrace_list_t *alist, char *id) {
 
 }
 
+static inline char *extract_liid_from_exported_msg(uint8_t *etsimsg,
+        uint16_t msglen, char *space, int maxspace, uint16_t *liidlen) {
+
+    uint16_t l;
+
+    l = *(uint16_t *)(etsimsg);
+    *liidlen = ntohs(l);
+
+    if (*liidlen > msglen - 2) {
+        *liidlen = msglen - 2;
+    }
+
+    if (*liidlen > maxspace - 1) {
+        *liidlen = maxspace - 1;
+    }
+
+    memcpy(space, etsimsg + 2, *liidlen);
+    space[*liidlen] = '\0';
+
+    *liidlen += sizeof(l);
+    return space;
+}
+
 static liid_map_t *match_etsi_to_agency(mediator_state_t *state,
         uint8_t *etsimsg, uint16_t msglen, uint16_t *liidlen) {
 
     char liidstr[65536];
     liid_map_t *match = NULL;
-    uint16_t l;
     PWord_t jval;
 
-
-    l = *(uint16_t *)(etsimsg);
-    *liidlen = ntohs(l);
-
-    memcpy(liidstr, etsimsg + 2, *liidlen);
-    liidstr[*liidlen] = '\0';
-
-    *liidlen += sizeof(l);
+    extract_liid_from_exported_msg(etsimsg, msglen, liidstr, 65536, liidlen);
 
     JSLG(jval, state->liid_array, liidstr);
     if (jval == NULL) {
@@ -1459,11 +1482,32 @@ static int enqueue_etsi(mediator_state_t *state, handover_t *ho,
     return 0;
 }
 
+static inline int disable_epoll_write(mediator_state_t *state,
+        med_agency_state_t *mas, handover_t *ho, med_epoll_ev_t *mev) {
+
+    struct epoll_event ev;
+    ev.data.ptr = mev;
+    ev.events = EPOLLIN | EPOLLRDHUP;
+
+    if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, mev->fd, &ev) == -1) {
+        if (ho->disconnect_msg == 0) {
+            logger(LOG_INFO,
+                "OpenLI: error while trying to disable xmit for handover %s:%s HI%d -- %s",
+                ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
+        }
+        return -1;
+    }
+    mas->outenabled = 0;
+    return 0;
+}
+
+
 static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     med_agency_state_t *mas = (med_agency_state_t *)(mev->state);
     handover_t *ho = mas->parent;
     int ret = 0;
+    struct timeval tv;
 
     if (mas->pending_ka) {
         ret = send(mev->fd, mas->pending_ka->encoded, mas->pending_ka->len,
@@ -1493,6 +1537,13 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
                     "OpenLI Mediator: reconnected to handover %s:%s HI%d successfully.",
                     ho->ipstr, ho->portstr, ho->handover_type);
             }
+
+            if (get_buffered_amount(&(mas->buf)) == 0) {
+                if (disable_epoll_write(state, mas, ho, mev) < 0) {
+                    return -1;
+                }
+            }
+
         } else {
             /* Partial send -- try the rest next time */
             memmove(mas->pending_ka->encoded, mas->pending_ka->encoded + ret,
@@ -1502,7 +1553,7 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
         return 0;
     }
 
-    if ((ret = transmit_buffered_records(&(mas->buf), mev->fd, 65535, NULL)) == -1) { //handover doesnt use TLS, so NULL
+    if ((ret = transmit_buffered_records(&(mas->buf), mev->fd, 16000, NULL)) == -1) { //handover doesnt use TLS, so NULL
         return -1;
     }
 
@@ -1511,11 +1562,19 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
     }
 
     if (get_buffered_amount(&(mas->buf)) == 0) {
-        struct epoll_event ev;
-        ev.data.ptr = mev;
-        ev.events = EPOLLIN | EPOLLRDHUP;
+        if (disable_epoll_write(state, mas, ho, mev) < 0) {
+            return -1;
+        }
+    }
 
-        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, mev->fd, &ev) == -1) {
+    /* Reset the keep alive timer */
+    gettimeofday(&tv, NULL);
+    if (mas->katimer_setsec < tv.tv_sec) {
+        if (mas->parent->aliveev->fd != -1) {
+            halt_mediator_timer(state, mas->parent->aliveev);
+        }
+        if (start_keepalive_timer(state, mas->parent->aliveev,
+                    mas->kafreq) == -1) {
             if (ho->disconnect_msg == 0) {
                 logger(LOG_INFO,
                     "OpenLI Mediator: error while trying to disable xmit for handover %s:%s HI%d -- %s",
@@ -1523,19 +1582,7 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
             }
             return -1;
         }
-        mas->outenabled = 0;
-    }
-
-    /* Reset the keep alive timer */
-    halt_mediator_timer(state, mas->parent->aliveev);
-    if (start_keepalive_timer(state, mas->parent->aliveev,
-                mas->kafreq) == -1) {
-        if (ho->disconnect_msg == 0) {
-            logger(LOG_INFO,
-                "OpenLI Mediator: unable to reset keepalive timer for handover %s:%s HI%d.",
-                ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
-        }
-        return -1;
+        mas->katimer_setsec = tv.tv_sec;
     }
 
     if (ho->aliveev == NULL && ho->disconnect_msg == 1) {
@@ -1970,6 +2017,27 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                         "OpenLI Mediator: error receiving message from collector.");
                 return -1;
             case OPENLI_PROTO_NO_MESSAGE:
+                break;
+            case OPENLI_PROTO_RAWIP_SYNC:
+                /* msgbody should be an LIID + an IP packet */
+                thisint = match_etsi_to_agency(state, msgbody, msglen,
+                        &liidlen);
+                if (thisint == NULL) {
+                    break;
+                }
+                if (cs->disabled_log == 1) {
+                    reenable_collector_logging(state, cs);
+                }
+
+                if (thisint->agency == NULL) {
+                    /* Write IP packet directly to pcap */
+                    pcapmsg.msgtype = PCAP_MESSAGE_RAWIP;
+                    pcapmsg.msgbody = (uint8_t *)malloc(msglen);
+                    memcpy(pcapmsg.msgbody, msgbody, msglen);
+                    pcapmsg.msglen = msglen;
+                    libtrace_message_queue_put(&(state->pcapqueue), &pcapmsg);
+                }
+
                 break;
             case OPENLI_PROTO_ETSI_CC:
                 /* msgbody should contain a full ETSI record */
@@ -2712,6 +2780,7 @@ static int open_pcap_output_file(pcap_thread_state_t *pstate,
 
     logger(LOG_INFO, "OpenLI Mediator: opened new trace file %s for LIID %s",
             uri, act->liid);
+    act->pktwritten = 0;
 
     return 0;
 
@@ -2736,6 +2805,58 @@ static active_pcap_output_t *create_new_pcap_output(pcap_thread_state_t *pstate,
     }
     HASH_ADD_KEYPTR(hh, pstate->active, act->liid, strlen(act->liid), act);
     return act;
+}
+
+static void write_rawpcap_packet(pcap_thread_state_t *pstate,
+        mediator_pcap_msg_t *pcapmsg) {
+
+    active_pcap_output_t *pcapout;
+    uint16_t liidlen;
+    char liidspace[2048];
+    uint8_t *rawip;
+
+    if (pcapmsg->msgbody == NULL) {
+        return;
+    }
+
+    extract_liid_from_exported_msg(pcapmsg->msgbody, pcapmsg->msglen,
+            liidspace, 2048, &liidlen);
+
+    if (liidlen == pcapmsg->msglen) {
+        return;
+    }
+
+    rawip = pcapmsg->msgbody + liidlen;
+
+    HASH_FIND(hh, pstate->active, liidspace, strlen(liidspace), pcapout);
+    if (!pcapout) {
+        pcapout = create_new_pcap_output(pstate, liidspace);
+    }
+
+    if (pcapout) {
+
+        if (!pstate->packet) {
+            pstate->packet = trace_create_packet();
+        }
+
+        trace_construct_packet(pstate->packet, TRACE_TYPE_NONE,
+                (const void *)rawip, (uint16_t)pcapmsg->msglen - liidlen);
+
+        /* write resulting packet to libtrace output */
+        if (trace_write_packet(pcapout->out, pstate->packet) < 0) {
+            libtrace_err_t err = trace_get_err_output(pcapout->out);
+            logger(LOG_INFO,
+                    "OpenLI mediator: error while writing packet to pcap trace file: %s",
+                    err.problem);
+            trace_destroy_output(pcapout->out);
+            HASH_DELETE(hh, pstate->active, pcapout);
+            free(pcapout->liid);
+            free(pcapout);
+        }
+        pcapout->pktwritten = 1;
+    }
+
+    free(pcapmsg->msgbody);
 }
 
 static void write_pcap_packet(pcap_thread_state_t *pstate,
@@ -2774,7 +2895,7 @@ static void write_pcap_packet(pcap_thread_state_t *pstate,
         pcapout = create_new_pcap_output(pstate, liidspace);
     }
 
-    if (pcapout) {
+    if (pcapout && pcapout->out) {
         uint8_t *rawip;
         uint32_t cclen;
 
@@ -2799,10 +2920,12 @@ static void write_pcap_packet(pcap_thread_state_t *pstate,
                         "OpenLI Mediator: error while writing packet to pcap trace file: %s",
                         err.problem);
                 trace_destroy_output(pcapout->out);
+                pcapout->out = NULL;
                 HASH_DELETE(hh, pstate->active, pcapout);
                 free(pcapout->liid);
                 free(pcapout);
             }
+            pcapout->pktwritten = 1;
         }
     }
 
@@ -2813,12 +2936,14 @@ static void pcap_flush_traces(pcap_thread_state_t *pstate) {
     active_pcap_output_t *pcapout, *tmp;
 
     HASH_ITER(hh, pstate->active, pcapout, tmp) {
-        if (trace_flush_output(pcapout->out) < 0) {
+        if (pcapout->out && pcapout->pktwritten &&
+                trace_flush_output(pcapout->out) < 0) {
             libtrace_err_t err = trace_get_err_output(pcapout->out);
             logger(LOG_INFO,
                     "OpenLI Mediator: error while flushing pcap trace file: %s",
                     err.problem);
             trace_destroy_output(pcapout->out);
+            pcapout->out = NULL;
             HASH_DELETE(hh, pstate->active, pcapout);
             free(pcapout->liid);
             free(pcapout);
@@ -2830,13 +2955,16 @@ static void pcap_rotate_traces(pcap_thread_state_t *pstate) {
     active_pcap_output_t *pcapout, *tmp, *rotated;
 
     HASH_ITER(hh, pstate->active, pcapout, tmp) {
-        HASH_DELETE(hh, pstate->active, pcapout);
         trace_destroy_output(pcapout->out);
+        pcapout->out = NULL;
         if (open_pcap_output_file(pstate, pcapout) == -1) {
             logger(LOG_INFO,
                     "OpenLI Mediator: error while rotating pcap trace file");
 
-            trace_destroy_output(pcapout->out);
+            if (pcapout->out) {
+                trace_destroy_output(pcapout->out);
+                pcapout->out = NULL;
+            }
             HASH_DELETE(hh, pstate->active, pcapout);
             free(pcapout->liid);
             free(pcapout);
@@ -2893,6 +3021,11 @@ static void *start_pcap_thread(void *params) {
                 logger(LOG_INFO,
                         "OpenLI Mediator: pcap trace file directory has been set to NULL");
             }
+            continue;
+        }
+
+        if (pcapmsg.msgtype == PCAP_MESSAGE_RAWIP) {
+            write_rawpcap_packet(&pstate, &pcapmsg);
             continue;
         }
 

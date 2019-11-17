@@ -44,10 +44,6 @@
 #define PREALLOC_ATTRS (50000)
 #define STANDARD_ATTR_ALLOC (64)
 
-#define TIMESTAMP_TO_TV(tv, floatts) \
-        tv->tv_sec = (uint32_t)(floatts); \
-        tv->tv_usec = (uint32_t)(((floatts - tv->tv_sec) * 1000000));
-
 enum {
     RADIUS_CODE_ACCESS_REQUEST = 1,
     RADIUS_CODE_ACCESS_ACCEPT = 2,
@@ -87,8 +83,6 @@ typedef struct radius_user {
     char *nasidentifier;
     int nasid_len;
     session_state_t current;
-    struct sockaddr *framedip4;
-    struct sockaddr *framedip6;
 } radius_user_t;
 
 typedef struct radius_v6_prefix_attr {
@@ -351,12 +345,6 @@ static void destroy_radius_nas(radius_nas_t *nas) {
         if (user->nasidentifier) {
             free(user->nasidentifier);
         }
-        if (user->framedip4) {
-            free(user->framedip4);
-        }
-        if (user->framedip6) {
-            free(user->framedip6);
-        }
         free(user);
 
         JSLN(pval, nas->user_map, index);
@@ -597,30 +585,6 @@ static void create_orphan(radius_global_t *glob, radius_orphaned_resp_t **head,
     }
 }
 
-static inline void *find_radius_start(libtrace_packet_t *pkt, uint32_t *rem,
-        uint16_t *sourceport, uint16_t *destport) {
-
-    void *transport, *radstart;
-    uint8_t proto;
-    libtrace_udp_t *udp;
-
-    transport = trace_get_transport(pkt, &proto, rem);
-    if (!transport || rem == 0) {
-        return NULL;
-    }
-
-    if (proto != TRACE_IPPROTO_UDP) {
-        return NULL;
-    }
-
-    udp = (libtrace_udp_t *)transport;
-    *sourceport = ntohs(udp->source);
-    *destport = ntohs(udp->dest);
-
-    radstart = trace_get_payload_from_udp(udp, rem);
-    return radstart;
-}
-
 static inline int grab_nas_details_from_packet(radius_parsed_t *parsed,
         libtrace_packet_t *pkt, uint8_t code, uint16_t sourceport,
         uint16_t destport) {
@@ -770,7 +734,7 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
         radius_destroy_parsed_data(p, (void *)parsed);
     }
 
-    radstart = (uint8_t *)find_radius_start(pkt, &rem, &sourceport, &destport);
+    radstart = (uint8_t *)get_udp_payload(pkt, &rem, &sourceport, &destport);
     if (radstart == NULL) {
         return NULL;
     }
@@ -889,8 +853,6 @@ static inline void process_username_attribute(radius_parsed_t *raddata) {
     user->nasidentifier = NULL;
     user->nasid_len = 0;
     user->current = SESSION_STATE_NEW;
-    user->framedip4 = NULL;
-    user->framedip6 = NULL;
 
     JSLI(pval, raddata->matchednas->user_map, user->userid);
     *pval = (Word_t)user;
@@ -1137,7 +1099,6 @@ static char *radius_get_userid(access_plugin_t *p, void *parsed,
 
     radius_parsed_t *raddata;
     radius_global_t *glob;
-    char foo[128];
 
     glob = (radius_global_t *)(p->plugindata);
     raddata = (radius_parsed_t *)parsed;
@@ -1480,19 +1441,8 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     }
 
     if (!thissess) {
-        thissess = (access_session_t *)malloc(sizeof(access_session_t));
-
-        thissess->plugin = p;
-        thissess->sessionid = fast_strdup(sessionid, 1024 - rem);
-        thissess->statedata = NULL;
-        thissess->idlength = strlen(sessionid);
+        thissess = create_access_session(p, sessionid, 1024 - rem);
         thissess->cin = assign_cin(raddata);
-        memset(&(thissess->sessionip), 0, sizeof(thissess->sessionip));
-
-        thissess->iriseqno = 0;
-        thissess->started.tv_sec = 0;
-        thissess->started.tv_usec = 0;
-        thissess->activeipentry = NULL;
 
         thissess->next = *sesslist;
         *sesslist = thissess;
@@ -1874,6 +1824,18 @@ static void radius_destroy_session_data(access_plugin_t *p,
     return;
 }
 
+static uint32_t radius_get_packet_sequence(access_plugin_t *p,
+        void *parseddata) {
+
+    radius_global_t *radglob;
+    radius_parsed_t *raddata;
+
+    radglob = (radius_global_t *)(p->plugindata);
+    raddata = (radius_parsed_t *)parseddata;
+
+    return DERIVE_REQUEST_ID(raddata, raddata->msgtype);
+}
+
 static access_plugin_t radiusplugin = {
 
     "RADIUS",
@@ -1889,7 +1851,8 @@ static access_plugin_t radiusplugin = {
     radius_update_session_state,
     radius_generate_iri_data,
     //radius_create_iri_from_packet,
-    radius_destroy_session_data
+    radius_destroy_session_data,
+    radius_get_packet_sequence,
 };
 
 access_plugin_t *get_radius_access_plugin(void) {

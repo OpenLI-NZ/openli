@@ -174,6 +174,7 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->collectors = NULL;
 
     state->interceptconf.radiusservers = NULL;
+    state->interceptconf.gtpservers = NULL;
     state->interceptconf.sipservers = NULL;
     state->interceptconf.voipintercepts = NULL;
     state->interceptconf.ipintercepts = NULL;
@@ -389,6 +390,7 @@ static void clear_intercept_state(prov_intercept_conf_t *conf) {
     free_all_ipintercepts(&(conf->ipintercepts));
     free_all_voipintercepts(&(conf->voipintercepts));
     free_coreserver_list(conf->radiusservers);
+    free_coreserver_list(conf->gtpservers);
     free_coreserver_list(conf->sipservers);
 
     pthread_mutex_destroy(&(conf->safelock));
@@ -586,6 +588,7 @@ static int respond_collector_auth(provision_state_t *state,
 
     if (HASH_CNT(hh, state->mediators) +
             HASH_CNT(hh, state->interceptconf.radiusservers) +
+            HASH_CNT(hh, state->interceptconf.gtpservers) +
             HASH_CNT(hh, state->interceptconf.sipservers) +
             HASH_CNT(hh_liid, state->interceptconf.ipintercepts) +
             HASH_CNT(hh_liid, state->interceptconf.voipintercepts) == 0) {
@@ -608,6 +611,14 @@ static int respond_collector_auth(provision_state_t *state,
             OPENLI_CORE_SERVER_RADIUS, outgoing) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue RADIUS server details to be sent to new collector on fd %d", pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
+        return -1;
+    }
+
+    if (push_coreservers(state->interceptconf.gtpservers,
+            OPENLI_CORE_SERVER_GTP, outgoing) == -1) {
+        logger(LOG_INFO,
+                "OpenLI: unable to queue GTP server details to be sent to new collector on fd %d", pev->fd);
         pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
     }

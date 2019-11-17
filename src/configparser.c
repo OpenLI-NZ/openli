@@ -410,6 +410,12 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
             newag->agencyid = NULL;
         }
 
+        if (newag->keepalivewait > newag->keepalivefreq) {
+            logger(LOG_INFO, "keepalivewait must be less than or equal to keepalivefreq, setting keepalivewait to %u",
+                    newag->keepalivefreq);
+            newag->keepalivewait = newag->keepalivefreq;
+        }
+
         if (newag->hi2_ipstr != NULL && newag->hi2_portstr != NULL &&
                 newag->hi3_ipstr != NULL && newag->hi3_portstr != NULL &
                 newag->agencyid != NULL) {
@@ -885,6 +891,12 @@ static int global_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "encoding") == 0) {
 
+/** Don't let users enable BER just yet, it's still incomplete.
+ *
+  * Still TODO:
+  *   BER encoding for IPIRIs, UMTSIRIs and UMTSCCs
+  */
+#if 0
         if (strcasecmp(value->data.scalar.value, "BER") == 0) {
 #ifdef HAVE_BER_ENCODING
             glob->encoding_method = OPENLI_ENCODING_BER;
@@ -895,6 +907,7 @@ static int global_parser(void *arg, yaml_document_t *doc,
         } else {
             glob->encoding_method = OPENLI_ENCODING_DER;
         }
+#endif
     }
     
     return 0;
@@ -1027,6 +1040,15 @@ static int intercept_parser(void *arg, yaml_document_t *doc,
             strcmp((char *)key->data.scalar.value, "radiusservers") == 0) {
         if (parse_core_server_list(&state->radiusservers,
                 OPENLI_CORE_SERVER_RADIUS, doc, value) == -1) {
+            return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value, "gtpservers") == 0) {
+        if (parse_core_server_list(&state->gtpservers,
+                OPENLI_CORE_SERVER_GTP, doc, value) == -1) {
             return -1;
         }
     }
