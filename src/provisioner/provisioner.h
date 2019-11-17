@@ -36,6 +36,11 @@
 
 #define DEFAULT_INTERCEPT_CONFIG_FILE "/var/lib/openli/intercepts.conf"
 
+#ifndef MHD_SOCKET_DEFINED
+typedef int MHD_socket;
+#define MHD_SOCKET_DEFINED
+#endif
+
 typedef struct prov_client prov_client_t;
 
 /** Represents an event that has been added to the epoll event set */
