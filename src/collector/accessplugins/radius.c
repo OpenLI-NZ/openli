@@ -79,7 +79,11 @@ enum {
 typedef struct radius_user {
 
     char *userid;
-    int userid_len;
+
+    user_identity_t *identities;
+    int identcount;
+
+    //int userid_len;
     char *nasidentifier;
     int nasid_len;
     session_state_t current;
@@ -341,6 +345,15 @@ static void destroy_radius_nas(radius_nas_t *nas) {
         user = (radius_user_t *)(*pval);
         if (user->userid) {
             free(user->userid);
+        }
+        if (user->identities) {
+            int i;
+            for (i = 0; i < user->identcount; i++) {
+                if (user->identities[i].idstr) {
+                    free(user->identities[i].idstr);
+                }
+            }
+            free(user->identities);
         }
         if (user->nasidentifier) {
             free(user->nasidentifier);
@@ -801,13 +814,53 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
     return parsed;
 }
 
+#define ADD_IDENTITY(att_type, attrstr, idstrlen, save) \
+    if (nextchar != userkey) { \
+        *nextchar = '-'; \
+        nextchar ++; \
+        keyrem --; \
+    } \
+    \
+    if (keyrem < idstrlen) { \
+        tocopy = keyrem; \
+    } else { \
+        tocopy = idstrlen; \
+    } \
+    \
+    if (save) { \
+        if (att_type == RADIUS_ATTR_USERNAME) { \
+            savedids[savedidcount].method = USER_IDENT_RADIUS_USERNAME; \
+            got_username = 1; \
+        } else { \
+            savedids[savedidcount].method = USER_IDENT_RADIUS_CSID; \
+            got_csid = 1; \
+        } \
+        \
+        savedids[savedidcount].idstr = (char *)attrstr; \
+        savedids[savedidcount].idlength = idstrlen; \
+        savedidcount ++; \
+    } \
+    \
+    memcpy(nextchar, attrstr, tocopy); \
+    keyrem -= tocopy; \
+    nextchar += tocopy;
+
 static inline void process_username_attribute(radius_parsed_t *raddata) {
 
-    char userkey[256];
+    char userkey[2048];
     int keylen;
     radius_user_t *user;
     radius_attribute_t *userattr;
     PWord_t pval;
+    char *nextchar = userkey;
+    int keyrem = 2047;
+    user_identity_t savedids[USER_IDENT_MAX];
+    int savedidcount = 0;
+    int got_username = 0;
+    int got_csid = 0;
+    int tocopy, i;
+
+    memset(savedids, 0, sizeof(user_identity_t) * USER_IDENT_MAX);
 
     if (raddata->msgtype != RADIUS_CODE_ACCESS_REQUEST &&
             raddata->msgtype != RADIUS_CODE_ACCOUNT_REQUEST) {
@@ -816,28 +869,33 @@ static inline void process_username_attribute(radius_parsed_t *raddata) {
 
     userattr = raddata->attrs;
     while (userattr) {
-        if (userattr->att_type == RADIUS_ATTR_USERNAME) {
-            break;
+        switch(userattr->att_type) {
+            case RADIUS_ATTR_USERNAME:
+            case RADIUS_ATTR_CALLING_STATION_ID:
+                if (keyrem > 0) {
+                    ADD_IDENTITY(userattr->att_type,
+                            userattr->att_val, userattr->att_len, 1);
+                }
+                break;
         }
         userattr = userattr->next;
     }
 
-    if (!userattr) {
+    /* Every RADIUS request should have a username? */
+    if (!got_username) {
         return;
     }
 
-    if (userattr->att_len < 256) {
-        memcpy(userkey, userattr->att_val, userattr->att_len);
-        userkey[userattr->att_len] = '\0';
-        keylen = userattr->att_len;
-    } else {
-        memcpy(userkey, userattr->att_val, 255);
-        userkey[255] = '\0';
-        keylen = 255;
-        logger(LOG_INFO,
-                "OpenLI RADIUS: User-Name is too long, truncated to %s",
-                userkey);
+    if (!got_csid) {
+        if (keyrem > 0) {
+            ADD_IDENTITY(USER_IDENT_RADIUS_CSID, "csidunknown", 11, 0);
+        }
     }
+
+    if (nextchar == userkey) {
+        return;
+    }
+    *nextchar = '\0';
 
     JSLG(pval, raddata->matchednas->user_map, userkey);
 
@@ -849,7 +907,18 @@ static inline void process_username_attribute(radius_parsed_t *raddata) {
     user = (radius_user_t *)malloc(sizeof(radius_user_t));
 
     user->userid = fast_strdup(userkey, keylen);
-    user->userid_len = keylen;
+    user->identities = calloc(savedidcount, sizeof(user_identity_t));
+    user->identcount = savedidcount;
+
+    for (i = 0; i < savedidcount; i++) {
+        user->identities[i].idstr = calloc(1, savedids[i].idlength + 1);
+        memcpy(user->identities[i].idstr, savedids[i].idstr,
+                savedids[i].idlength);
+
+        user->identities[i].idlength = savedids[i].idlength;
+        user->identities[i].method = savedids[i].method;
+    }
+
     user->nasidentifier = NULL;
     user->nasid_len = 0;
     user->current = SESSION_STATE_NEW;
@@ -1094,8 +1163,8 @@ static inline void find_matching_request(radius_global_t *glob,
 
 }
 
-static char *radius_get_userid(access_plugin_t *p, void *parsed,
-        int *useridlen) {
+static user_identity_t *radius_get_userid(access_plugin_t *p, void *parsed,
+        int *numberids) {
 
     radius_parsed_t *raddata;
     radius_global_t *glob;
@@ -1103,10 +1172,10 @@ static char *radius_get_userid(access_plugin_t *p, void *parsed,
     glob = (radius_global_t *)(p->plugindata);
     raddata = (radius_parsed_t *)parsed;
 
-    *useridlen = 0;
+    *numberids = 0;
     if (raddata->matcheduser) {
-        *useridlen = raddata->matcheduser->userid_len;
-        return raddata->matcheduser->userid;
+        *numberids = raddata->matcheduser->identcount;
+        return raddata->matcheduser->identities;
     }
 
     if (!raddata->matchednas) {
@@ -1130,8 +1199,8 @@ static char *radius_get_userid(access_plugin_t *p, void *parsed,
      */
     find_matching_request(glob, raddata);
     if (raddata->matcheduser) {
-        *useridlen = raddata->matcheduser->userid_len;
-        return raddata->matcheduser->userid;
+        *numberids = raddata->matcheduser->identcount;
+        return raddata->matcheduser->identities;
     }
     return NULL;
 
@@ -1406,9 +1475,9 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     radius_global_t *glob;
     radius_parsed_t *raddata;
     access_session_t *thissess;
-    char sessionid[1024];
+    char sessionid[5000];
     char *ptr;
-    int rem = 1024;
+    int rem = 5000;
 
     glob = (radius_global_t *)(p->plugindata);
     raddata = (radius_parsed_t *)parsed;
@@ -1426,7 +1495,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
 
     ptr = sessionid;
     ptr = quickcat(ptr, &rem, raddata->matcheduser->userid,
-            raddata->matcheduser->userid_len);
+            strlen(raddata->matcheduser->userid));
     ptr = quickcat(ptr, &rem, "-", 1);
     ptr = quickcat(ptr, &rem, raddata->matcheduser->nasidentifier,
             raddata->matcheduser->nasid_len);
@@ -1441,7 +1510,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     }
 
     if (!thissess) {
-        thissess = create_access_session(p, sessionid, 1024 - rem);
+        thissess = create_access_session(p, sessionid, 5000 - rem);
         thissess->cin = assign_cin(raddata);
 
         thissess->next = *sesslist;

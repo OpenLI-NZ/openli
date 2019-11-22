@@ -64,9 +64,23 @@ typedef enum {
     ACCESS_ACTION_NONE
 } access_action_t;
 
+typedef enum {
+    USER_IDENT_RADIUS_USERNAME,
+    USER_IDENT_RADIUS_CSID,
+    USER_IDENT_GTP_MSISDN,
+    USER_IDENT_GTP_IMSI,
+    USER_IDENT_MAX
+} user_identity_method_t;
+
 typedef struct access_plugin access_plugin_t;
 typedef struct internet_user internet_user_t;
 typedef struct access_session access_session_t;
+
+typedef struct user_identity {
+    user_identity_method_t method;
+    char *idstr;
+    int idlength;
+} user_identity_t;
 
 typedef struct internetaccess_ip {
     int ipfamily;
@@ -118,7 +132,8 @@ struct access_plugin {
     void (*destroy_parsed_data)(access_plugin_t *p, void *parseddata);
     void (*uncouple_parsed_data)(access_plugin_t *p);
 
-    char *(*get_userid)(access_plugin_t *p, void *parseddata, int *idlen);
+    user_identity_t *(*get_userid)(access_plugin_t *p, void *parseddata,
+            int *numberids);
 
     access_session_t *(*update_session_state)(access_plugin_t *p,
             void *parseddata, access_session_t **sesslist,
