@@ -64,15 +64,14 @@ int sort_generics(etsili_generic_t *a, etsili_generic_t *b) {
 }
 
 static inline void encode_ipiri_shared(wandder_encoder_t *encoder,
+        etsili_generic_freelist_t *freegenerics,
         openli_ipiri_job_t *job,
         etsili_iri_type_t *iritype_p,
-        etsili_generic_freelist_t *freegenerics,
         etsili_generic_t **params_p) {
 
-    etsili_generic_t *np;
-    etsili_ipaddress_t targetip;
-    etsili_generic_t *params = NULL;
+    etsili_generic_t *np, *params = NULL;
     etsili_iri_type_t iritype;
+    etsili_ipaddress_t targetip;
     int64_t ipversion = 0;
     params = job->customparams;
 
@@ -110,6 +109,7 @@ static inline void encode_ipiri_shared(wandder_encoder_t *encoder,
     } else {
         iritype = job->iritype;
     }
+
 
     np = create_etsili_generic(freegenerics,
             IPIRI_CONTENTS_INTERNET_ACCESS_TYPE, sizeof(uint32_t),
@@ -200,9 +200,9 @@ int encode_ipiri(wandder_encoder_t *encoder,
     uint32_t liidlen = precomputed[OPENLI_PREENCODE_LIID].vallen;
 
     encode_ipiri_shared(encoder,
+        freegenerics,
         job,
         &iritype,
-        freegenerics,
         &params);
 
     gettimeofday(&tv, NULL);
@@ -278,9 +278,9 @@ int encode_ipiri_ber(wandder_buf_t **preencoded_ber,
     uint32_t liidlen = (uint32_t)((size_t)preencoded_ber[WANDDER_PREENCODE_LIID_LEN]);
 
     encode_ipiri_shared(encoder,
+        freegenerics,
         job,
         &iritype,
-        freegenerics,
         &params);
 
     gettimeofday(&current_tv, NULL);
