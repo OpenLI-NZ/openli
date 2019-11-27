@@ -63,21 +63,17 @@ int sort_generics(etsili_generic_t *a, etsili_generic_t *b) {
     return 0;
 }
 
-
-int encode_ipiri(wandder_encoder_t *encoder,
+static inline void encode_ipiri_shared(wandder_encoder_t *encoder,
+        openli_ipiri_job_t *job,
+        etsili_iri_type_t *iritype_p,
         etsili_generic_freelist_t *freegenerics,
-        wandder_encode_job_t *precomputed,
-        openli_ipiri_job_t *job, uint32_t seqno,
-        openli_encoded_result_t *res) {
+        etsili_generic_t **params_p) {
 
-    etsili_generic_t *np, *params = NULL;
-    etsili_iri_type_t iritype;
+    etsili_generic_t *np;
     etsili_ipaddress_t targetip;
+    etsili_generic_t *params = NULL;
+    etsili_iri_type_t iritype;
     int64_t ipversion = 0;
-    struct timeval tv;
-    int ret = 0;
-    uint32_t liidlen = precomputed[OPENLI_PREENCODE_LIID].vallen;
-
     params = job->customparams;
 
     if (job->special == OPENLI_IPIRI_ENDWHILEACTIVE) {
@@ -114,7 +110,6 @@ int encode_ipiri(wandder_encoder_t *encoder,
     } else {
         iritype = job->iritype;
     }
-
 
     np = create_etsili_generic(freegenerics,
             IPIRI_CONTENTS_INTERNET_ACCESS_TYPE, sizeof(uint32_t),
@@ -185,6 +180,30 @@ int encode_ipiri(wandder_encoder_t *encoder,
     }
 
     reset_wandder_encoder(encoder);
+
+    *iritype_p = iritype;
+    *params_p = params;
+
+}
+
+int encode_ipiri(wandder_encoder_t *encoder,
+        etsili_generic_freelist_t *freegenerics,
+        wandder_encode_job_t *precomputed,
+        openli_ipiri_job_t *job, uint32_t seqno,
+        openli_encoded_result_t *res) {
+
+    
+    etsili_generic_t *params = NULL;
+    etsili_iri_type_t iritype;
+    struct timeval tv;
+    int ret = 0;
+    uint32_t liidlen = precomputed[OPENLI_PREENCODE_LIID].vallen;
+
+    encode_ipiri_shared(encoder,
+        job,
+        &iritype,
+        freegenerics,
+        &params);
 
     gettimeofday(&tv, NULL);
 
@@ -241,6 +260,7 @@ void ipiri_free_id(ipiri_id_t *iriid) {
     }
 }
 
+#ifdef HAVE_BER_ENCODING
 int encode_ipiri_ber(wandder_buf_t **preencoded_ber,
         openli_ipiri_job_t *job,
         etsili_generic_freelist_t *freegenerics,
@@ -249,123 +269,19 @@ int encode_ipiri_ber(wandder_buf_t **preencoded_ber,
         wandder_etsili_top_t *top, 
         wandder_encoder_t *encoder) {
 
-    etsili_generic_t *np, *params = NULL;
+    memset(res, 0, sizeof(openli_encoded_result_t));
+
+    etsili_generic_t *params = NULL;
     etsili_iri_type_t iritype;
-    etsili_ipaddress_t targetip;
-    int64_t ipversion = 0;
     struct timeval current_tv;
     int ret = 0;
     uint32_t liidlen = (uint32_t)((size_t)preencoded_ber[WANDDER_PREENCODE_LIID_LEN]);
 
-    memset(res, 0, sizeof(openli_encoded_result_t));
-
-    params = job->customparams;
-
-    if (job->special == OPENLI_IPIRI_ENDWHILEACTIVE) {
-        uint32_t evtype = IPIRI_END_WHILE_ACTIVE;
-        iritype = ETSILI_IRI_REPORT;
-
-        np = create_etsili_generic(freegenerics,
-                IPIRI_CONTENTS_ACCESS_EVENT_TYPE, sizeof(uint32_t),
-                (uint8_t *)(&evtype));
-        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum),
-                np);
-    } else if (job->special == OPENLI_IPIRI_STARTWHILEACTIVE) {
-        uint32_t evtype = IPIRI_START_WHILE_ACTIVE;
-        iritype = ETSILI_IRI_BEGIN;
-
-        np = create_etsili_generic(freegenerics,
-                IPIRI_CONTENTS_ACCESS_EVENT_TYPE, sizeof(uint32_t),
-                (uint8_t *)(&evtype));
-        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum),
-                np);
-    } else if (job->special == OPENLI_IPIRI_SILENTLOGOFF) {
-        uint32_t evtype = IPIRI_ACCESS_END;     // unsure if correct?
-        iritype = ETSILI_IRI_END;
-
-        np = create_etsili_generic(freegenerics,
-                IPIRI_CONTENTS_ACCESS_EVENT_TYPE, sizeof(uint32_t),
-                (uint8_t *)(&evtype));
-        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum),
-                np);
-
-        /* TODO probably need to set an endReason in here, but not sure
-         * what is the right reason to use.
-         */
-    } else {
-        iritype = job->iritype;
-    }
-
-
-    np = create_etsili_generic(freegenerics,
-            IPIRI_CONTENTS_INTERNET_ACCESS_TYPE, sizeof(uint32_t),
-            (uint8_t *)&(job->access_tech));
-    HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
-
-    if (job->username) {
-        np = create_etsili_generic(freegenerics,
-                IPIRI_CONTENTS_TARGET_USERNAME, strlen(job->username),
-                job->username);
-        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum),
-                np);
-    }
-
-    if (job->ipfamily != 0) {
-        uint8_t etsiipmethod = ETSILI_IPADDRESS_ASSIGNED_UNKNOWN;
-
-        switch(job->ipassignmentmethod) {
-            case OPENLI_IPIRI_IPMETHOD_UNKNOWN:
-                etsiipmethod = ETSILI_IPADDRESS_ASSIGNED_UNKNOWN;
-                break;
-            case OPENLI_IPIRI_IPMETHOD_STATIC:
-                etsiipmethod = ETSILI_IPADDRESS_ASSIGNED_STATIC;
-                break;
-            case OPENLI_IPIRI_IPMETHOD_DYNAMIC:
-                etsiipmethod = ETSILI_IPADDRESS_ASSIGNED_DYNAMIC;
-                break;
-        }
-
-        if (job->ipfamily == AF_INET) {
-            struct sockaddr_in *in = (struct sockaddr_in *)&(job->assignedip);
-            etsili_create_ipaddress_v4(
-                    (uint32_t *)(&(in->sin_addr.s_addr)),
-                    job->assignedip_prefixbits,
-                    etsiipmethod, &targetip);
-            ipversion = IPIRI_IPVERSION_4;
-        } else if (job->ipfamily == AF_INET6) {
-            struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)
-                    &(job->assignedip);
-            etsili_create_ipaddress_v6(
-                    (uint8_t *)(&(in6->sin6_addr.s6_addr)),
-                    job->assignedip_prefixbits,
-                    etsiipmethod, &targetip);
-            ipversion = IPIRI_IPVERSION_6;
-        }
-
-        if (ipversion == IPIRI_IPVERSION_4 || ipversion == IPIRI_IPVERSION_6) {
-            np = create_etsili_generic(freegenerics,
-                    IPIRI_CONTENTS_IPVERSION, sizeof(int64_t),
-                    (uint8_t *)(&ipversion));
-            HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum),
-                    np);
-
-            np = create_etsili_generic(freegenerics,
-                    IPIRI_CONTENTS_TARGET_IPADDRESS,
-                    sizeof(etsili_ipaddress_t), (uint8_t *)(&targetip));
-            HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum),
-                    np);
-        }
-    }
-
-    if (job->sessionstartts.tv_sec > 0) {
-        np = create_etsili_generic(freegenerics,
-                IPIRI_CONTENTS_STARTTIME,
-                sizeof(struct timeval), (uint8_t *)&(job->sessionstartts));
-        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum),
-                np);
-    }
-
-    reset_wandder_encoder(encoder);
+    encode_ipiri_shared(encoder,
+        job,
+        &iritype,
+        freegenerics,
+        &params);
 
     gettimeofday(&current_tv, NULL);
 
@@ -398,5 +314,6 @@ int encode_ipiri_ber(wandder_buf_t **preencoded_ber,
     free_ipiri_parameters(params);
     return ret;
 }
+#endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

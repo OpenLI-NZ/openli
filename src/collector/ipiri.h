@@ -138,6 +138,8 @@ int encode_ipiri(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed,
         openli_ipiri_job_t *job, uint32_t seqno,
         openli_encoded_result_t *res);
+
+#ifdef HAVE_BER_ENCODING
 int encode_ipiri_ber(wandder_buf_t **preencoded_ber,
         openli_ipiri_job_t *job,
         etsili_generic_freelist_t *freegenerics,
@@ -145,6 +147,7 @@ int encode_ipiri_ber(wandder_buf_t **preencoded_ber,
         openli_encoded_result_t *res,
         wandder_etsili_top_t *top, 
         wandder_encoder_t *encoder);
+#endif
 
 /* TODO consider adding free lists to these APIs to avoid excess mallocs */
 int ipiri_create_id_printable(char *idstr, int length, ipiri_id_t *ipiriid);
