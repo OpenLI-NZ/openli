@@ -190,6 +190,9 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
 #ifdef HAVE_BER_ENCODING
      if (job->preencoded_ber != NULL) {
          isDer = 0;
+         if (job->top == NULL ){
+             job->top = calloc(sizeof(wandder_etsili_top_t), 1);
+         }
      }
 #endif
 
@@ -215,9 +218,10 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
 #ifdef HAVE_BER_ENCODING
             }
             else{
-                //TODO
-                logger(LOG_INFO, "OpenLI: BER encoding for IPIRI is not yet implemented.");
-                //complain loudly that this dont work yet
+                ret = encode_ipiri_ber(job->preencoded_ber,
+                        &(job->origreq->data.ipiri), enc->freegenerics,
+                        job->seqno, &(job->origreq->ts), res, job->top, 
+                        enc->encoder);
 #endif
             }
             break;
