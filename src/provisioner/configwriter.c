@@ -56,6 +56,8 @@ static const char *access_type_to_string(internet_access_method_t method) {
             return "satellite";
         case INTERNET_ACCESS_TYPE_WIRELESS_OTHER:
             return "wifi-other";
+        case INTERNET_ACCESS_TYPE_MOBILE:
+            return "mobile";
     }
     return "undefined";
 
