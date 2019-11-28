@@ -211,6 +211,7 @@ static inline void reset_parsed_packet(radius_parsed_t *parsed) {
     parsed->savedreq = NULL;
     parsed->savedresp = NULL;
     parsed->muser_count = 0;
+    parsed->acctsess = 0;
     memset(parsed->matchedusers, 0, sizeof(radius_user_t *) * USER_IDENT_MAX);
     memset(&(parsed->nasip), 0, sizeof(struct sockaddr_storage));
     memset(&(parsed->radiusip), 0, sizeof(struct sockaddr_storage));
