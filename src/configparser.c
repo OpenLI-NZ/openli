@@ -548,6 +548,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         yaml_node_t *node = yaml_document_get_node(doc, *item);
         ipintercept_t *newcept;
         yaml_node_pair_t *pair;
+        int radchosen = 0;
 
         /* Each sequence item is a new intercept */
         newcept = (ipintercept_t *)malloc(sizeof(ipintercept_t));
@@ -566,6 +567,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
         newcept->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED; 
         newcept->statics = NULL;
+        newcept->options = 0;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -657,6 +659,21 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                 SET_CONFIG_STRING_OPTION(newcept->common.targetagency, value);
             }
 
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "radiusident")
+                    == 0) {
+
+                if (strcasecmp((char *)value->data.scalar.value, "csid") == 0) {
+                    newcept->options |= (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID);
+                    radchosen = 1;
+                } else if (strncasecmp((char *)value->data.scalar.value,
+                        "user", 4) == 0) {
+                    newcept->options |= (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER);
+                    radchosen = 1;
+                }
+
+            }
         }
 
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
@@ -664,6 +681,13 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                 newcept->username != NULL &&
                 newcept->common.destid > 0 &&
                 newcept->common.targetagency != NULL) {
+
+            /* Default to matching against both RADIUS username and CSID */
+            if (!radchosen) {
+                newcept->options |= (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID);
+                newcept->options |= (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER);
+            }
+
             HASH_ADD_KEYPTR(hh_liid, *ipints, newcept->common.liid,
                     newcept->common.liid_len, newcept);
         } else {

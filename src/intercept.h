@@ -53,6 +53,11 @@ typedef enum {
     OPENLI_VOIPINT_OPTION_IGNORE_COMFORT = 0,
 } voipintercept_options_t;
 
+typedef enum {
+    OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID = 0,
+    OPENLI_IPINT_OPTION_RADIUS_IDENT_USER = 1,
+} ipintercept_options_t;
+
 typedef struct static_ipranges {
     char *rangestr;
     char *liid;
@@ -88,6 +93,7 @@ typedef struct ipintercept {
     static_ipranges_t *statics;
 
     uint8_t awaitingconfirm;
+    uint32_t options;
     UT_hash_handle hh_liid;
     UT_hash_handle hh_user;
 } ipintercept_t;

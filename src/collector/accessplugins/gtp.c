@@ -685,6 +685,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
     uids[0].method = USER_IDENT_GTP_MSISDN;
     uids[0].idstr = strdup(gparsed->matched_session->idstr);
     uids[0].idlength = gparsed->matched_session->idstr_len;
+    uids[0].plugindata = NULL;
     *numberids = 1;
     return uids;
 }
@@ -892,7 +893,7 @@ static inline access_session_t *find_matched_session(access_plugin_t *p,
 }
 
 static access_session_t *gtp_update_session_state(access_plugin_t *p,
-        void *parsed, access_session_t **sesslist,
+        void *parsed, void *plugindata, access_session_t **sesslist,
         session_state_t *oldstate, session_state_t *newstate,
         access_action_t *action) {
 

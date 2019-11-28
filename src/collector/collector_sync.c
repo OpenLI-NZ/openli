@@ -1775,11 +1775,11 @@ static int add_ip_to_session_mapping(collector_sync_t *sync,
 }
 
 static inline internet_user_t *lookup_userid(collector_sync_t *sync,
-        char *userid, int useridlen) {
+        user_identity_t *userid) {
 
     internet_user_t *iuser;
 
-    HASH_FIND(hh, sync->allusers, userid, useridlen, iuser);
+    HASH_FIND(hh, sync->allusers, userid->idstr, userid->idlength, iuser);
     if (iuser == NULL) {
         iuser = (internet_user_t *)malloc(sizeof(internet_user_t));
 
@@ -1787,11 +1787,12 @@ static inline internet_user_t *lookup_userid(collector_sync_t *sync,
             logger(LOG_INFO, "OpenLI: unable to allocate memory for new Internet user");
             return NULL;
         }
-        iuser->userid = strdup(userid);
+        iuser->userid = userid->idstr;
+        userid->idstr = NULL;
         iuser->sessions = NULL;
 
         HASH_ADD_KEYPTR(hh, sync->allusers, iuser->userid,
-                useridlen, iuser);
+                userid->idlength, iuser);
     }
     return iuser;
 }
@@ -1866,6 +1867,27 @@ static int newly_active_session(collector_sync_t *sync,
 
 }
 
+static inline int identity_match_intercept(ipintercept_t *ipint,
+        user_identity_t *uid) {
+
+    /* If the user has specifically said that the intercept target can
+     * not be identified using the username, then matching against the
+     * username is not allowed */
+
+    if (uid->method == USER_IDENT_RADIUS_USERNAME &&
+            ((ipint->options & (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER))\
+            == 0)) {
+        return 0;
+    }
+
+    if (uid->method == USER_IDENT_RADIUS_CSID &&
+            ((ipint->options & (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID)) == 0)) {
+        return 0;
+    }
+
+    return 1;
+}
+
 static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         uint8_t accesstype) {
 
@@ -1903,6 +1925,7 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         return -1;
     }
 
+    ret = 0;
     identities = p->get_userid(p, parseddata, &useridcnt);
     if (identities == NULL) {
         /* Probably an orphaned response packet */
@@ -1913,34 +1936,27 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         /* TODO, if id type is RADIUS username and idstr is in the list of
          * default usernames, then ignore it */
 
-        iuser = lookup_userid(sync, identities[i].idstr,
-                identities[i].idlength);
+        iuser = lookup_userid(sync, &identities[i]);
         if (!iuser) {
-            p->destroy_parsed_data(p, parseddata);
-            return -1;
+            ret = -1;
+            break;
         }
 
-        sess = p->update_session_state(p, parseddata, &(iuser->sessions),
-                &oldstate, &newstate, &accessaction);
+        sess = p->update_session_state(p, parseddata, identities[i].plugindata,
+                &(iuser->sessions), &oldstate, &newstate, &accessaction);
         if (!sess) {
             /* Unable to assign packet to a session, just quietly ignore it */
-            p->destroy_parsed_data(p, parseddata);
-            return 0;
+            continue;
         }
 
-        HASH_FIND(hh, sync->userintercepts, identities[i].idstr,
+        HASH_FIND(hh, sync->userintercepts, iuser->userid,
                 identities[i].idlength, userint);
-
-        /* TODO, if id type is not CSID, but the intercept says CSID-only then
-         * set userint to NULL.
-         */
 
         if (oldstate != newstate) {
             if (newstate == SESSION_STATE_ACTIVE) {
                 ret = newly_active_session(sync, userint, iuser, sess);
                 if (ret < 0) {
                     logger(LOG_INFO, "OpenLI: error while processing new active IP session in sync thread.");
-                    p->destroy_parsed_data(p, parseddata);
                     break;
                 }
 
@@ -1949,8 +1965,11 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
                  * stop intercepting traffic for this session */
                 if (userint) {
                     HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
-                        push_session_halt_to_threads(sync->glob->collector_queues,
-                                sess, ipint);
+                        if (identity_match_intercept(ipint, &(identities[i]))) {
+                            push_session_halt_to_threads(
+                                    sync->glob->collector_queues,
+                                    sess, ipint);
+                        }
                     }
                     pthread_mutex_lock(sync->glob->stats_mutex);
                     sync->glob->stats->ipsessions_ended_diff ++;
@@ -1966,6 +1985,10 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
 
         if (userint) {
             HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
+                if (!identity_match_intercept(ipint, &(identities[i]))) {
+                    continue;
+                }
+
                 if (ipint->common.targetagency == NULL ||
                         strcmp(ipint->common.targetagency,"pcapdisk") == 0) {
                     uint32_t seqno;
@@ -1995,6 +2018,19 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
 endupdate:
     if (parseddata) {
         p->destroy_parsed_data(p, parseddata);
+    }
+
+    if (identities) {
+        for (i = 0; i < useridcnt; i++) {
+            if (identities[i].idstr) {
+                free(identities[i].idstr);
+            }
+        }
+        free(identities);
+    }
+
+    if (ret < 0) {
+        return -1;
     }
 
     if (expcount == 0) {

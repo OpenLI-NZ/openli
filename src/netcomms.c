@@ -356,12 +356,13 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
 #define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
          ipint->username_len + sizeof(ipint->accesstype) + \
-         sizeof(ipint->vendmirrorid) + (5 * 4))
+         sizeof(ipint->options) + \
+         sizeof(ipint->vendmirrorid) + (6 * 4))
 
 #define IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
          ipint->username_len + sizeof(ipint->accesstype) + \
-         (4 * 4))
+         sizeof(ipint->options) + (5 * 4))
 
 static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
 
@@ -409,6 +410,12 @@ static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
     if (push_tlv(nb, OPENLI_PROTO_FIELD_ACCESSTYPE,
             (uint8_t *)(&(ipint->accesstype)),
             sizeof(ipint->accesstype)) == -1) {
+        goto pushmodfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTOPTIONS,
+            (uint8_t *)(&(ipint->options)),
+            sizeof(ipint->options)) == -1) {
         goto pushmodfail;
     }
 
@@ -803,14 +810,16 @@ int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
          ipint->common.delivcc_len + \
          ipint->username_len + sizeof(ipint->common.destid) + \
          strlen(ipint->common.targetagency) + \
-         sizeof(ipint->accesstype) + (7 * 4))
+         sizeof(ipint->options) + \
+         sizeof(ipint->accesstype) + (8 * 4))
 
 #define VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
          ipint->common.delivcc_len + ipint->username_len + \
          strlen(ipint->common.targetagency) + \
          sizeof(ipint->vendmirrorid) + sizeof(ipint->common.destid) + \
-         sizeof(ipint->accesstype) + (8 * 4))
+         sizeof(ipint->options) + \
+         sizeof(ipint->accesstype) + (9 * 4))
 
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
@@ -872,6 +881,12 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_ACCESSTYPE,
             (uint8_t *)(&ipint->accesstype),
             sizeof(ipint->accesstype))) == -1) {
+        goto pushipintfail;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_INTOPTIONS,
+            (uint8_t *)(&ipint->options),
+            sizeof(ipint->options))) == -1) {
         goto pushipintfail;
     }
 
@@ -1255,6 +1270,7 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
     ipint->statics = NULL;
+    ipint->options = 0;
 
     ipint->common.liid_len = 0;
     ipint->common.authcc_len = 0;
@@ -1288,6 +1304,8 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
             ipint->common.delivcc_len = vallen;
         } else if (f == OPENLI_PROTO_FIELD_LEAID) {
             DECODE_STRING_FIELD(ipint->common.targetagency, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_INTOPTIONS) {
+            ipint->options = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_USERNAME) {
             DECODE_STRING_FIELD(ipint->username, valptr, vallen);
             if (vallen == 0) {

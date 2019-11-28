@@ -80,6 +80,7 @@ typedef struct user_identity {
     user_identity_method_t method;
     char *idstr;
     int idlength;
+    void *plugindata;
 } user_identity_t;
 
 typedef struct internetaccess_ip {
@@ -136,7 +137,7 @@ struct access_plugin {
             int *numberids);
 
     access_session_t *(*update_session_state)(access_plugin_t *p,
-            void *parseddata, access_session_t **sesslist,
+            void *parseddata, void *pluginuserdata, access_session_t **sesslist,
             session_state_t *oldstate, session_state_t *newstate,
             access_action_t *action);
 
