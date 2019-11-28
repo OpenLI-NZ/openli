@@ -220,10 +220,6 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
 #ifdef HAVE_BER_ENCODING
         intstate->preencoded_ber = calloc(WANDDER_PREENCODE_LAST, sizeof intstate->preencoded_ber);
         wandder_etsili_preencode_static_fields_ber(intstate->preencoded_ber, (wandder_etsili_intercept_details_t*)&intdetails);
-        
-        //intstate->top = calloc(sizeof *intstate->top,1);
-        //wandder_init_pshdr_ber(intstate->preencoded_ber, intstate->top);
-        //this should be done inside calls to libwandder, not here
 #endif
     }
 }
