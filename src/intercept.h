@@ -277,6 +277,7 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
         ipintercept_t *ipint);
 
 internet_access_method_t map_access_type_string(char *confstr);
+uint32_t map_radius_ident_string(char *confstr);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -592,6 +592,17 @@ void clear_user_intercept_list(user_intercept_list_t *ulist) {
     }
 }
 
+uint32_t map_radius_ident_string(char *confstr) {
+    if (strcasecmp(confstr, "csid") == 0) {
+        return (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID);
+    }
+
+    if (strncasecmp(confstr, "user", 4) == 0) {
+        return (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER);
+    }
+    return 0;
+}
+
 internet_access_method_t map_access_type_string(char *confstr) {
 
     if (strcasecmp(confstr, "dialup") == 0 ||

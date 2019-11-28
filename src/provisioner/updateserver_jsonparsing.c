@@ -51,6 +51,7 @@ struct json_intercept {
     struct json_object *mediator;
     struct json_object *accesstype;
     struct json_object *user;
+    struct json_object *radiusident;
     struct json_object *vendmirrorid;
     struct json_object *staticips;
     struct json_object *siptargets;
@@ -175,6 +176,7 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "mediator", &(ipjson->mediator));
     json_object_object_get_ex(parsed, "user", &(ipjson->user));
     json_object_object_get_ex(parsed, "accesstype", &(ipjson->accesstype));
+    json_object_object_get_ex(parsed, "radiusident", &(ipjson->radiusident));
     json_object_object_get_ex(parsed, "vendmirrorid", &(ipjson->vendmirrorid));
     json_object_object_get_ex(parsed, "staticips", &(ipjson->staticips));
     json_object_object_get_ex(parsed, "siptargets", &(ipjson->siptargets));
@@ -727,6 +729,7 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipintercept_t *found = NULL;
 
     char *accessstring = NULL;
+    char *radiusidentstring = NULL;
     ipintercept_t *ipint = NULL;
     int parseerr = 0;
     prov_agency_t *lea = NULL;
@@ -738,6 +741,7 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipint->awaitingconfirm = 1;
     ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
+    ipint->options = 0;
 
     EXTRACT_JSON_STRING_PARAM("liid", "IP intercept", ipjson.liid,
             ipint->common.liid, &parseerr, true);
@@ -755,6 +759,8 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             ipint->username, &parseerr, true);
     EXTRACT_JSON_STRING_PARAM("accesstype", "IP intercept", ipjson.accesstype,
             accessstring, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("radiusident", "IP intercept", ipjson.radiusident,
+            radiusidentstring, &parseerr, false);
 
     if (parseerr) {
         goto cepterr;
@@ -776,6 +782,15 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         ipint->accesstype = map_access_type_string(accessstring);
         free(accessstring);
         accessstring = NULL;
+    }
+
+    if (radiusidentstring) {
+        ipint->options = map_radius_ident_string(radiusidentstring);
+        free(radiusidentstring);
+        radiusidentstring = NULL;
+    } else {
+        ipint->options = (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID) |
+                (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER);
     }
 
     HASH_FIND(hh_liid, state->interceptconf.ipintercepts,
@@ -832,6 +847,9 @@ cepterr:
     }
     if (accessstring) {
         free(accessstring);
+    }
+    if (radiusidentstring) {
+        free(radiusidentstring);
     }
     if (parsed) {
         json_object_put(parsed);
@@ -957,6 +975,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     char *liidstr = NULL;
     char *accessstring = NULL;
+    char *radiusidentstring = NULL;
     int parseerr = 0, changed = 0;
 
     INIT_JSON_INTERCEPT_PARSING
@@ -1001,6 +1020,8 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             ipint->username, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("accesstype", "IP intercept", ipjson.accesstype,
             accessstring, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("radiusident", "IP intercept", ipjson.radiusident,
+            radiusidentstring, &parseerr, false);
 
     if (parseerr) {
         goto cepterr;
@@ -1053,6 +1074,13 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         ipint->accesstype = map_access_type_string(accessstring);
     }
 
+    if (radiusidentstring) {
+        ipint->options = map_radius_ident_string(radiusidentstring);
+    } else {
+        ipint->options = (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER) |
+                (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID);
+    }
+
     /* TODO: warn if user tries to change fields that we don't support
      * changing (e.g. mediator) ?
      *
@@ -1070,7 +1098,18 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         found->accesstype = ipint->accesstype;
     }
 
-	free(accessstring);
+    if (ipint->options != found->options) {
+        changed = 1;
+        found->options = ipint->options;
+    }
+
+    if (accessstring) {
+    	free(accessstring);
+    }
+    if (radiusidentstring) {
+        free(radiusidentstring);
+    }
+    radiusidentstring = NULL;
 	accessstring = NULL;
 
     if (ipint->vendmirrorid != found->vendmirrorid) {
@@ -1102,6 +1141,9 @@ cepterr:
     }
     if (accessstring) {
         free(accessstring);
+    }
+    if (radiusidentstring) {
+        free(radiusidentstring);
     }
     if (parsed) {
         json_object_put(parsed);
