@@ -46,6 +46,7 @@ typedef enum {
     INTERNET_ACCESS_TYPE_WIMAX = 7,
     INTERNET_ACCESS_TYPE_SATELLITE= 8,
     INTERNET_ACCESS_TYPE_WIRELESS_OTHER = 9,
+    INTERNET_ACCESS_TYPE_MOBILE = 32,       /* Not a "real" value */
 } internet_access_method_t;
 
 typedef enum {

@@ -27,6 +27,11 @@ radiusservers:
   - ip: 10.199.0.253
     port: 1813
 
+# List of GTP servers on our network (for managing mobile IP intercepts)
+gtpservers:
+  - ip: 10.100.0.200
+    port: 2123
+
 # List the set of agencies that we can perform intercepts for
 agencies:
 
@@ -102,6 +107,17 @@ ipintercepts:
    agencyid: "Police"           # ID of agency to send intercept to
    accesstype: "LAN"            # Access tech used by the target to access IP
 
+# This intercept will attempt to intercept all IP traffic for a mobile
+# phone user, using GTPv2 packets to detect the start and end of the target's
+# sessions. Note that the accesstype must be set to "mobile". The user field
+# is set to the target's MSISDN (i.e. phone number).
+ - liid: TH473NNOQ              # LIID, should be provided by requesting agency
+   authcountrycode: NZ          # Authorisation country code
+   deliverycountrycode: NZ      # Delivery country code
+   user: 64211234567            # Phone number belonging to the target
+   mediator: 6001               # ID of the mediator to send intercept via
+   agencyid: "Police"           # ID of agency to send intercept to
+   accesstype: "mobile"         # Must be "mobile" for UMTS intercepts
 
 # This intercept demonstrates how to configure an intercept for a target that
 # has static IP allocations. The target has both an IPv4 and IPv6 allocation

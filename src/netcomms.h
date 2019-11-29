@@ -102,6 +102,7 @@ typedef enum {
     OPENLI_PROTO_CONFIG_RELOADED,
     OPENLI_PROTO_MODIFY_IPINTERCEPT,
     OPENLI_PROTO_MODIFY_STATICIPS,
+    OPENLI_PROTO_RAWIP_SYNC,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {

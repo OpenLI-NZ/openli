@@ -499,9 +499,9 @@ int push_intercept_modify_onto_net_buffer(net_buffer_t *nb, void *data,
 
 #define VOIPINTERCEPT_BODY_LEN(vint) \
         (vint->common.liid_len + vint->common.authcc_len + \
-         vint->common.delivcc_len + \
+         vint->common.delivcc_len + strlen(vint->common.targetagency) + \
          sizeof(vint->common.destid) + sizeof(vint->options) \
-         + (5 * 4))
+         + (6 * 4))
 
 #define INTERCEPT_WITHDRAW_BODY_LEN(liid, authcc) \
         (strlen(liid) + strlen(authcc) + (2 * 4))
@@ -603,6 +603,11 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC, vint->common.delivcc,
             vint->common.delivcc_len)) == -1) {
+        goto pushvoipintfail;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LEAID, vint->common.targetagency,
+            strlen(vint->common.targetagency))) == -1) {
         goto pushvoipintfail;
     }
 
@@ -797,13 +802,15 @@ int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
         (ipint->common.liid_len + ipint->common.authcc_len + \
          ipint->common.delivcc_len + \
          ipint->username_len + sizeof(ipint->common.destid) + \
-         sizeof(ipint->accesstype) + (6 * 4))
+         strlen(ipint->common.targetagency) + \
+         sizeof(ipint->accesstype) + (7 * 4))
 
 #define VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
          ipint->common.delivcc_len + ipint->username_len + \
+         strlen(ipint->common.targetagency) + \
          sizeof(ipint->vendmirrorid) + sizeof(ipint->common.destid) + \
-         sizeof(ipint->accesstype) + (7 * 4))
+         sizeof(ipint->accesstype) + (8 * 4))
 
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
@@ -853,6 +860,12 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_USERNAME, ipint->username,
             ipint->username_len)) == -1) {
+        goto pushipintfail;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LEAID,
+            ipint->common.targetagency,
+            strlen(ipint->common.targetagency))) == -1) {
         goto pushipintfail;
     }
 
@@ -1188,6 +1201,8 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
         } else if (f == OPENLI_PROTO_FIELD_AUTHCC) {
             DECODE_STRING_FIELD(vint->common.authcc, valptr, vallen);
             vint->common.authcc_len = vallen;
+        } else if (f == OPENLI_PROTO_FIELD_LEAID) {
+            DECODE_STRING_FIELD(vint->common.targetagency, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_DELIVCC) {
             DECODE_STRING_FIELD(vint->common.delivcc, valptr, vallen);
             vint->common.delivcc_len = vallen;
@@ -1271,6 +1286,8 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
         } else if (f == OPENLI_PROTO_FIELD_DELIVCC) {
             DECODE_STRING_FIELD(ipint->common.delivcc, valptr, vallen);
             ipint->common.delivcc_len = vallen;
+        } else if (f == OPENLI_PROTO_FIELD_LEAID) {
+            DECODE_STRING_FIELD(ipint->common.targetagency, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_USERNAME) {
             DECODE_STRING_FIELD(ipint->username, valptr, vallen);
             if (vallen == 0) {

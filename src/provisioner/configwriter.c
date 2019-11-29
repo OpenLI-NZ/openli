@@ -563,6 +563,11 @@ int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf) {
         goto error;
     }
 
+    if (emit_core_server_list(conf->gtpservers, "gtpservers",
+            &emitter) < 0) {
+        goto error;
+    }
+
     if (emit_agencies(conf->leas, &emitter) < 0) {
         goto error;
     }

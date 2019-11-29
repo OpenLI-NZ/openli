@@ -317,6 +317,10 @@ int remove_coreserver(update_con_info_t *cinfo, provision_state_t *state,
         HASH_FIND(hh, state->interceptconf.radiusservers, idstr, strlen(idstr),
                 found);
         src = &(state->interceptconf.radiusservers);
+    } else if (srvtype == OPENLI_CORE_SERVER_GTP) {
+        HASH_FIND(hh, state->interceptconf.gtpservers, idstr, strlen(idstr),
+                found);
+        src = &(state->interceptconf.gtpservers);
     }
 
     if (found) {
@@ -393,6 +397,9 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
     } else if (srvtype == OPENLI_CORE_SERVER_RADIUS) {
         HASH_FIND(hh, state->interceptconf.radiusservers, new_cs->serverkey,
                 strlen(new_cs->serverkey), found);
+    } else if (srvtype == OPENLI_CORE_SERVER_GTP) {
+        HASH_FIND(hh, state->interceptconf.gtpservers, new_cs->serverkey,
+                strlen(new_cs->serverkey), found);
     }
 
     if (found) {
@@ -403,6 +410,9 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
                     new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
         } else if (srvtype == OPENLI_CORE_SERVER_RADIUS) {
             HASH_ADD_KEYPTR(hh, state->interceptconf.radiusservers,
+                    new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
+        } else if (srvtype == OPENLI_CORE_SERVER_GTP) {
+            HASH_ADD_KEYPTR(hh, state->interceptconf.gtpservers,
                     new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
         } else {
             logger(LOG_INFO, "OpenLI: update socket received unexpected core server update (type = %u)", srvtype);

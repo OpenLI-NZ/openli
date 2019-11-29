@@ -129,6 +129,7 @@ static void reset_collector_stats(collector_global_t *glob) {
     glob->stats.packets_sync_ip = 0;
     glob->stats.packets_sync_voip = 0;
     glob->stats.ipcc_created = 0;
+    glob->stats.mobiri_created = 0;
     glob->stats.ipiri_created = 0;
     glob->stats.ipmmcc_created = 0;
     glob->stats.ipmmiri_created = 0;
@@ -161,8 +162,9 @@ static void log_collector_stats(collector_global_t *glob) {
             glob->stats.packets_sync_ip, glob->stats.packets_sync_voip);
     logger(LOG_INFO, "OpenLI: Bad SIP packets: %lu   Bad RADIUS packets: %lu",
             glob->stats.bad_sip_packets, glob->stats.bad_ip_session_packets);
-    logger(LOG_INFO, "OpenLI: Records created... IPCCs: %lu  IPIRIs: %lu",
-            glob->stats.ipcc_created, glob->stats.ipiri_created);
+    logger(LOG_INFO, "OpenLI: Records created... IPCCs: %lu  IPIRIs: %lu  MobIRIs: %lu",
+            glob->stats.ipcc_created, glob->stats.ipiri_created,
+            glob->stats.mobiri_created);
     logger(LOG_INFO, "OpenLI: Records created... IPMMCCs: %lu  IPMMIRIs: %lu",
             glob->stats.ipmmcc_created, glob->stats.ipmmiri_created);
 
@@ -257,6 +259,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
     loc->activemirrorintercepts = NULL;
     loc->activestaticintercepts = NULL;
     loc->radiusservers = NULL;
+    loc->gtpservers = NULL;
     loc->sipservers = NULL;
     loc->staticv4ranges = New_Patricia(32);
     loc->staticv6ranges = New_Patricia(128);
@@ -383,6 +386,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     free_all_rtpstreams(&(loc->activertpintercepts));
     free_all_vendmirror_intercepts(&(loc->activemirrorintercepts));
     free_coreserver_list(loc->radiusservers);
+    free_coreserver_list(loc->gtpservers);
     free_coreserver_list(loc->sipservers);
 
     destroy_ipfrag_reassembler(loc->fragreass);
@@ -754,6 +758,13 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         if (loc->radiusservers && is_core_server_packet(pkt, &pinfo,
                     loc->radiusservers)) {
             send_packet_to_sync(pkt, loc->tosyncq_ip, OPENLI_UPDATE_RADIUS);
+            ipsynced = 1;
+            goto processdone;
+        }
+
+        if (loc->gtpservers && is_core_server_packet(pkt, &pinfo,
+                    loc->gtpservers)) {
+            send_packet_to_sync(pkt, loc->tosyncq_ip, OPENLI_UPDATE_GTP);
             ipsynced = 1;
             goto processdone;
         }

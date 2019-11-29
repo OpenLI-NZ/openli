@@ -137,6 +137,11 @@ a RADIUS feed to an OpenLI collector to generate the IRI records but the
 recipient collector doesn't necessarily need to be the same collector instance
 as the one that is receiving the mirrored packets.
 
+For mobile IP intercepts, there are some slight differences. The Access type
+must be set to "mobile" to tell OpenLI to detect IP sessions using mobile
+session management protocols (such as GTP), instead of RADIUS. The User must
+also be set to the target's phone number (MSISDN). The ALU Shim and JMirror
+methods do not apply to mobile IP intercepts.
 
 ### SIP Servers and RADIUS Servers
 OpenLI uses SIP and RADIUS traffic to maintain internal state regarding which
@@ -160,6 +165,23 @@ configured using two parameters:
 * ip -- the IP address of the RADIUS server
 * port -- the port that the RADIUS server is communicating on.
 
+
+### GTP Servers
+For interception of mobile phone traffic, OpenLI uses GTPv2 traffic to track
+the state of mobile users' IP sessions. To be able to recognise the GTP traffic
+that should be used for this purpose, the OenLI collectors must be able to
+identify the traffic that is either going from or to your GTP servers.
+
+GTP servers are defined using the gtpservers option. Each GTP server that
+you have in your network should be included as a list item within the
+'gtpservers' option. Failure to configure GTP servers will prevent OpenLI from
+performing any IP intercepts for targets using a mobile phone. A GTP server is
+configured using two parameters:
+* ip -- the IP address of the SIP server
+* port -- the port that the SIP server is listening on.
+
+NOTE: remember that an IP intercept *must* be configured with an `accesstype`
+of "mobile" if you want OpenLI to identify the target's IP traffic using GTP.
 
 ### ALU Lawful Intercept translation
 Some Alcatel-Lucent devices have a built-in LI system which is not
@@ -219,8 +241,11 @@ instead write the captured CC records to a pcap trace file. To enable this
 for an intercept, set the agency ID in the intercept configuration to
 'pcapdisk'.
 
-NOTE: you will also need to set the 'pcapdirectory' option in the
-configuration file for your mediators.
+For mobile IP intercepts, the GTPv2 traffic for the target's session will
+also be included in the pcap trace file.
+
+NOTE: you will also need to set the 'pcapdirectory' and 'pcaprotatefreq'
+options in the configuration file for your mediators.
 
 WARNING: you should confirm with the requesting agency that a pcap file is
 an acceptable format for an intercept before using pcap output mode.
@@ -317,7 +342,11 @@ An IP intercept must contain the following key-value elements:
 
 Valid access types are:
   'dialup', 'adsl', 'vdsl', 'fiber', 'wireless', 'lan', 'satellite', 'wimax',
-  'cable' and 'wireless-other'.
+  'cable', 'mobile' and 'wireless-other'.
+
+Note that setting the access type to 'mobile' will cause OpenLI to use GTPv2
+traffic to identify the target's IP sessions, and the resulting ETSI records
+will conform to the UMTS format (as opposed to the standard IP format).
 
 Optional key-value elements for an IP intercept are:
 

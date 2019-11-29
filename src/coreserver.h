@@ -42,6 +42,7 @@ enum {
     OPENLI_CORE_SERVER_DHCP,
     OPENLI_CORE_SERVER_SIP,
     OPENLI_CORE_SERVER_ALUMIRROR,
+    OPENLI_CORE_SERVER_GTP,
 };
 
 typedef struct packetinfo {
