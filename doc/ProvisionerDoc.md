@@ -143,6 +143,33 @@ session management protocols (such as GTP), instead of RADIUS. The User must
 also be set to the target's phone number (MSISDN). The ALU Shim and JMirror
 methods do not apply to mobile IP intercepts.
 
+#### Using the RADIUS Calling Station ID to Identify IP Intercept Targets
+In a conventional RADIUS deployment, the identity of the subscriber can be
+found within the Username AVP field which is present in RADIUS request
+packets. In that case, the value of the RADIUS Username field is what you
+should use to configure an IP intercept where the subscriber is the target.
+
+However, some deployments use an alternative approach: the subscriber CPE
+is configured to send RADIUS requests with a default username and password
+(where all subscribers share the same 'credentials'). Instead, individual
+users are recognised using the contents of the Calling Station Id AVP,
+which is unique for each subscriber.
+
+To accommodate the latter style of deployment, IP intercepts in OpenLI can
+be configured to indicate that the identity provided in the "User" field is
+specifically either a RADIUS Username or a RADIUS Calling Station Id (CSID).
+If not explicitly configured, OpenLI will assume attempt to match the
+identity against both RADIUS AVPs.
+
+Additionally, you may configure the provisioner with a list of "default"
+usernames. Any RADIUS Username AVPs that contain a value from that list are
+automatically not considered as potential targets, which may improve
+collector performance in cases where there are many subscribers that are using
+default RADIUS credentials. RADIUS packets with a Username matching a
+configured "default" will still have their CSID AVP examined, if present,
+to see if it matches the User field for a running intercept.
+
+
 ### SIP Servers and RADIUS Servers
 OpenLI uses SIP and RADIUS traffic to maintain internal state regarding which
 VOIP calls and IP sessions should be intercepted, respectively. To be able
@@ -306,6 +333,13 @@ file is provided here. Please note that, due to limitations in the library
 that is used to emit the intercept config, the layout of the YAML in this
 file is minimalist and not pleasant to read.
 
+Default RADIUS usernames are expressed as a YAML sequence with a key of
+`defaultradiususers:`. Each sequence item is a RADIUS Username that you
+want OpenLI to ignore when tracking potentially interceptable sessions
+from captured RADIUS traffic (because the username is a default that has been
+pre-configured on CPEs, and therefore does not correspond to an individual
+user).
+
 Agencies are expressed as a YAML sequence with a key of `agencies:`. Each
 sequence item represents a single agency and must contain the following
 key-value elements:
@@ -350,6 +384,17 @@ will conform to the UMTS format (as opposed to the standard IP format).
 
 Optional key-value elements for an IP intercept are:
 
+* `radiusident`           -- if set to 'csid', RADIUS packets will only be
+                           recognised as belonging to the intercept target
+                           if the RADIUS Calling Station ID AVP matches the
+                           `user` field defined for this intercept. If set
+                           to 'user', RADIUS packets will only be recognised
+                           as belonging to the intercept target if the RADIUS
+                           Username AVP matches the `user` field defined for
+                           this intercept. If not set, then RADIUS packets
+                           will be recognised as belonging to the intercept
+                           target if the value of either one of those AVPs
+                           matches the `user` field.
 * `vendmirrorid`          -- if using a vendor mirroring platform to stream
                            packets to the collector, this is the intercept ID
                            that you have assigned to the packets on the
