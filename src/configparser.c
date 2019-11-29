@@ -201,6 +201,45 @@ static void parse_sip_targets(libtrace_list_t *targets, yaml_document_t *doc,
 
 }
 
+static int parse_defradusers_list(prov_intercept_conf_t *state,
+        yaml_document_t *doc, yaml_node_t *inputs) {
+
+    yaml_node_item_t *item;
+
+    for (item = inputs->data.sequence.items.start;
+            item != inputs->data.sequence.items.top; item ++) {
+
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+        default_radius_user_t *defuser, *found;
+
+        if (node->type != YAML_SCALAR_NODE) {
+            continue;
+        }
+        defuser = (default_radius_user_t *)calloc(1,
+                sizeof(default_radius_user_t));
+
+        defuser->name = strdup((char *)node->data.scalar.value);
+        defuser->namelen = strlen(defuser->name);
+        defuser->awaitingconfirm = 0;
+
+        HASH_FIND(hh, state->defradusers, defuser->name, defuser->namelen,
+                found);
+        if (found) {
+            logger(LOG_INFO,
+                    "OpenLI: warning -- '%s' should only appear once in the default RADIUS username config.",
+                    defuser->name);
+            free(defuser->name);
+            free(defuser);
+            continue;
+        }
+
+        HASH_ADD_KEYPTR(hh, state->defradusers, defuser->name,
+                defuser->namelen, defuser);
+    }
+
+    return 0;
+}
+
 static int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
         yaml_document_t *doc, yaml_node_t *inputs) {
 
@@ -1055,6 +1094,14 @@ static int intercept_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SEQUENCE_NODE &&
             strcmp((char *)key->data.scalar.value, "agencies") == 0) {
         if (parse_agency_list(state, doc, value) == -1) {
+            return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value, "defaultradiususers") == 0) {
+        if (parse_defradusers_list(state, doc, value) == -1) {
             return -1;
         }
     }

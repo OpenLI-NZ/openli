@@ -61,6 +61,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->knownvoips = NULL;
     sync->userintercepts = NULL;
     sync->coreservers = NULL;
+    sync->defaultradiususers = NULL;
     sync->instruct_fd = -1;
     sync->instruct_fail = 0;
     sync->instruct_log = 1;
@@ -126,6 +127,7 @@ void clean_sync_data(collector_sync_t *sync) {
     int haltattempts = 0, haltfails = 0;
     ip_to_session_t *iter, *tmp;
     openli_export_recv_t *haltmsg;
+    default_radius_user_t *raditer, *radtmp;
 
 	if (sync->instruct_fd != -1) {
 		close(sync->instruct_fd);
@@ -135,6 +137,14 @@ void clean_sync_data(collector_sync_t *sync) {
     HASH_ITER(hh, sync->activeips, iter, tmp) {
         HASH_DELETE(hh, sync->activeips, iter);
         free(iter);
+    }
+
+    HASH_ITER(hh, sync->defaultradiususers, raditer, radtmp) {
+        HASH_DELETE(hh, sync->defaultradiususers, raditer);
+        if (raditer->name) {
+            free(raditer->name);
+        }
+        free(raditer);
     }
 
 
@@ -167,6 +177,7 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
     sync->knownvoips = NULL;
+    sync->defaultradiususers = NULL;
     sync->userintercepts = NULL;
     sync->outgoing = NULL;
     sync->incoming = NULL;
@@ -1248,6 +1259,83 @@ void sync_reconnect_all_mediators(collector_sync_t *sync) {
     }
 }
 
+static int new_default_radius(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+
+    default_radius_user_t *defrad, *found;
+
+    defrad = (default_radius_user_t *)calloc(1, sizeof(default_radius_user_t));
+
+    if (decode_default_radius_announcement(provmsg, msglen, defrad) == -1) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid default RADIUS username from provisioner.");
+        }
+        free(defrad);
+        return -1;
+    }
+
+    HASH_FIND(hh, sync->defaultradiususers, defrad->name, defrad->namelen,
+            found);
+
+    if (found) {
+        found->awaitingconfirm = 0;
+        free(defrad->name);
+        free(defrad);
+        return 0;
+    }
+
+    HASH_ADD_KEYPTR(hh, sync->defaultradiususers, defrad->name, defrad->namelen,
+            defrad);
+    logger(LOG_INFO, "OpenLI: added %s to list of default RADIUS usernames.",
+            defrad->name);
+    return 1;
+}
+
+static inline int remove_default_radius(collector_sync_t *sync,
+        default_radius_user_t *defrad) {
+
+    if (!defrad) {
+        return 0;
+    }
+
+    HASH_DELETE(hh, sync->defaultradiususers, defrad);
+    logger(LOG_INFO,
+            "OpenLI: removed %s from list of default RADIUS usernames.",
+            defrad->name);
+    free(defrad->name);
+    free(defrad);
+
+    return 1;
+}
+
+static int withdraw_default_radius(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+
+    default_radius_user_t defrad, *found;
+
+    if (decode_default_radius_announcement(provmsg, msglen, &defrad) == -1) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid default RADIUS username from provisioner.");
+        }
+        return -1;
+    }
+
+    if (!defrad.name) {
+        return -1;
+    }
+
+    HASH_FIND(hh, sync->defaultradiususers, defrad.name, defrad.namelen,
+            found);
+    if (found) {
+        remove_default_radius(sync, found);
+    }
+    free(defrad.name);
+
+    return 1;
+}
+
 static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
@@ -1360,6 +1448,7 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
     ipintercept_t *ipint, *tmp;
     internet_user_t *user;
     static_ipranges_t *ipr, *tmpr;
+    default_radius_user_t *defrad, *tmprad;
 
     HASH_ITER(hh_liid, sync->ipintercepts, ipint, tmp) {
 
@@ -1387,6 +1476,12 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
                     cs->serverkey, coreserver_type_to_string(cs->servertype));
             HASH_DELETE(hh, sync->coreservers, cs);
             free_single_coreserver(cs);
+        }
+    }
+
+    HASH_ITER(hh, sync->defaultradiususers, defrad, tmprad) {
+        if (defrad->awaitingconfirm) {
+            remove_default_radius(sync, defrad);
         }
     }
 }
@@ -1482,6 +1577,18 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 break;
             case OPENLI_PROTO_HALT_IPINTERCEPT:
                 ret = halt_ipintercept(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_ANNOUNCE_DEFAULT_RADIUS:
+                ret = new_default_radius(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_WITHDRAW_DEFAULT_RADIUS:
+                ret = withdraw_default_radius(sync, provmsg, msglen);
                 if (ret == -1) {
                     return -1;
                 }
@@ -1624,6 +1731,14 @@ static inline void touch_all_coreservers(coreserver_t *servers) {
     }
 }
 
+static inline void touch_all_defaultradius(default_radius_user_t *radusers) {
+    default_radius_user_t *def, *tmp;
+
+    HASH_ITER(hh, radusers, def, tmp) {
+        def->awaitingconfirm = 1;
+    }
+}
+
 static inline void touch_all_intercepts(ipintercept_t *intlist) {
     ipintercept_t *ipint, *tmp;
     static_ipranges_t *ipr, *tmpr;
@@ -1665,6 +1780,7 @@ void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
      */
     touch_all_intercepts(sync->ipintercepts);
     touch_all_coreservers(sync->coreservers);
+    touch_all_defaultradius(sync->defaultradiususers);
 
     /* Tell other sync thread to flag its intercepts too */
     forward_provmsg_to_voipsync(sync, NULL, 0, OPENLI_PROTO_DISCONNECT);
@@ -1888,6 +2004,25 @@ static inline int identity_match_intercept(ipintercept_t *ipint,
     return 1;
 }
 
+static inline int is_default_radius_username(collector_sync_t *sync,
+        user_identity_t *uid) {
+
+    default_radius_user_t *found;
+
+    if (uid->method != USER_IDENT_RADIUS_USERNAME) {
+        return 0;
+    }
+
+    HASH_FIND(hh, sync->defaultradiususers, uid->idstr, uid->idlength,
+            found);
+
+    if (found) {
+        return 1;
+    }
+
+    return 0;
+}
+
 static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         uint8_t accesstype) {
 
@@ -1933,8 +2068,12 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     }
 
     for (i = 0; i < useridcnt; i++) {
-        /* TODO, if id type is RADIUS username and idstr is in the list of
+        /* If id type is RADIUS username and idstr is in the list of
          * default usernames, then ignore it */
+
+        if (is_default_radius_username(sync, &(identities[i]))) {
+            continue;
+        }
 
         iuser = lookup_userid(sync, &identities[i]);
         if (!iuser) {

@@ -49,6 +49,7 @@ enum {
     TARGET_IPINTERCEPT,
     TARGET_VOIPINTERCEPT,
     TARGET_GTPSERVER,
+    TARGET_DEFAULTRADIUS,
 };
 
 static const char *update_success_page =

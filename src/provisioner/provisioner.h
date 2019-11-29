@@ -188,6 +188,8 @@ typedef struct prov_intercept_conf {
     prov_agency_t *leas;
     /** A map of LIIDs to their destination LEAs */
     liid_hash_t *liid_map;
+    /** A set of default RADIUS user names */
+    default_radius_user_t *defradusers;
 
     /** A mutex to protect the intercept config from race conditions */
     pthread_mutex_t safelock;

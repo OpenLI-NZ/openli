@@ -63,6 +63,41 @@ static const char *access_type_to_string(internet_access_method_t method) {
 
 }
 
+static int emit_default_radius_usernames(default_radius_user_t *radusers,
+        yaml_emitter_t *emitter) {
+
+    yaml_event_t event;
+    default_radius_user_t *user, *tmp;
+
+    if (HASH_CNT(hh, radusers) == 0) {
+        return 0;
+    }
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)"defaultradiususers",
+            strlen("defaultradiususers"), 1, 0,
+            YAML_PLAIN_SCALAR_STYLE);
+
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    yaml_sequence_start_event_initialize(&event, NULL,
+            (yaml_char_t *)YAML_SEQ_TAG, 1, YAML_ANY_SEQUENCE_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    HASH_ITER(hh, radusers, user, tmp) {
+
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)user->name, user->namelen, 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    }
+    yaml_sequence_end_event_initialize(&event);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    return 0;
+}
+
 static int emit_core_server_list(coreserver_t *servers, const char *label,
         yaml_emitter_t *emitter) {
 
@@ -599,6 +634,10 @@ int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf) {
 
     if (emit_core_server_list(conf->gtpservers, "gtpservers",
             &emitter) < 0) {
+        goto error;
+    }
+
+    if (emit_default_radius_usernames(conf->defradusers, &emitter) < 0) {
         goto error;
     }
 

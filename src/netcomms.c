@@ -979,6 +979,59 @@ int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
             OPENLI_PROTO_WITHDRAW_MEDIATOR);
 }
 
+#define DEF_RADIUS_BODY_LEN(def) \
+    (def->namelen + (1 * 4))
+
+static inline int push_default_radius_msg_onto_net_buffer(net_buffer_t *nb,
+        default_radius_user_t *defrad, openli_proto_msgtype_t type) {
+
+
+    ii_header_t hdr;
+    uint16_t totallen;
+    int ret;
+
+    /* Pre-compute our body length so we can write it in the header */
+    if (DEF_RADIUS_BODY_LEN(defrad) > 65535) {
+        logger(LOG_INFO,
+                "OpenLI: default radius usename announcement is too long to fit in a single message (%d).",
+                DEF_RADIUS_BODY_LEN(defrad));
+        return -1;
+    }
+
+    totallen = DEF_RADIUS_BODY_LEN(defrad);
+
+    /* Push on header */
+    populate_header(&hdr, type, totallen, 0);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t))) == -1) {
+        return -1;
+    }
+
+    /* Push on the default username field */
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_USERNAME,
+            (uint8_t *)(defrad->name), defrad->namelen)) == -1) {
+        return -1;
+    }
+
+    return (int)totallen;
+}
+
+int push_default_radius_onto_net_buffer(net_buffer_t *nb,
+        default_radius_user_t *defrad) {
+
+    return push_default_radius_msg_onto_net_buffer(nb, defrad,
+            OPENLI_PROTO_ANNOUNCE_DEFAULT_RADIUS);
+
+}
+
+int push_default_radius_withdraw_onto_net_buffer(net_buffer_t *nb,
+        default_radius_user_t *defrad) {
+
+    return push_default_radius_msg_onto_net_buffer(nb, defrad,
+            OPENLI_PROTO_WITHDRAW_DEFAULT_RADIUS);
+
+}
+
 #define CORESERVER_BODY_LEN(cs) \
     (sizeof(uint8_t) + strlen(cs->ipstr) + \
     (cs->portstr ? (strlen(cs->portstr) + (3 * 4)) : (2 * 4)))
@@ -1476,6 +1529,49 @@ int decode_coreserver_announcement(uint8_t *msgbody, uint16_t len,
 int decode_coreserver_withdraw(uint8_t *msgbody, uint16_t len,
         coreserver_t *cs) {
     return decode_coreserver_announcement(msgbody, len, cs);
+}
+
+int decode_default_radius_announcement(uint8_t *msgbody, uint16_t len,
+        default_radius_user_t *defuser) {
+
+    uint8_t *msgend = msgbody + len;
+
+    defuser->name = NULL;
+    defuser->namelen = 0;
+    defuser->awaitingconfirm = 0;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_USERNAME) {
+            if (defuser->name) {
+                free(defuser->name);
+            }
+            defuser->name = DECODE_STRING_FIELD(defuser->name, valptr, vallen);
+            defuser->namelen = strlen(defuser->name);
+        }
+
+        msgbody += (vallen + 4);
+    }
+
+    if (defuser->name == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: received a default RADIUS user message with no username?");
+        return -1;
+    }
+    return 0;
+}
+
+int decode_default_radius_withdraw(uint8_t *msgbody, uint16_t len,
+        default_radius_user_t *defuser) {
+    
+    return decode_default_radius_announcement(msgbody, len, defuser);
 }
 
 int decode_staticip_announcement(uint8_t *msgbody, uint16_t len,

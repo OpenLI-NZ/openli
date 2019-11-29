@@ -237,6 +237,21 @@ struct staticipsession {
     UT_hash_handle hh;
 };
 
+/* A default username that may appear in RADIUS packets that should not
+ * be treated as an actual user. Some ISPs will use CSID as user identity
+ * instead and configure their CPEs to send a "default" username in RADIUS
+ * when joining the network -- if the ISP can provide the defaults, we
+ * can tell the collectors to not bother trying to track the sessions for
+ * those "users".
+ */
+typedef struct default_radius_user {
+    char *name;     /**< The default username */
+    int namelen;    /**< The length of the username, in bytes */
+
+    uint8_t awaitingconfirm;
+    UT_hash_handle hh;
+} default_radius_user_t;
+
 void free_all_ipintercepts(ipintercept_t **interceptlist);
 void free_all_voipintercepts(voipintercept_t **vintercepts);
 void free_all_rtpstreams(rtpstreaminf_t **streams);
