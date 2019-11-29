@@ -32,6 +32,12 @@ gtpservers:
   - ip: 10.100.0.200
     port: 2123
 
+# List of default RADIUS usernames that OpenLI should ignore when tracking
+# user sessions from RADIUS traffic
+defaultradiususers:
+  - default@mynetwork.com
+  - customercpe
+
 # List the set of agencies that we can perform intercepts for
 agencies:
 
@@ -155,6 +161,24 @@ ipintercepts:
        sessionid: 7
      - iprange: "2001:db8::/56"
        sessionid: 7
+
+# This intercept shows how to configure an intercept where the RADIUS Calling
+# Station ID is used to recognise the target's RADIUS session instead of the
+# traditional Username field.
+# Note that not setting 'radiusident' will simply mean that OpenLI will
+# consider *both* the Username and CSID AVP values when attempting a match
+# against the 'user' field given here.
+
+ - liid:  200091THY
+   authcountrycode: NZ          # Authorisation country code
+   deliverycountrycode: NZ      # Delivery country code
+   mediator: 6001               # ID of the mediator to send intercept via
+   user: "PHYUSR12110"          # CSID for the target
+   agencyid: "Police"           # ID of agency to send intercept to
+   accesstype: "Fibre"          # Access tech used by the target to access IP
+   radiusident: "csid"          # Only match RADIUS if CSID is "PHYUSR12110",
+                                # not the Username. Set to 'user' for the
+                                # reverse effect.
 
 
 # List of active VOIP intercepts.

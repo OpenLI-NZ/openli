@@ -53,6 +53,11 @@ typedef enum {
     OPENLI_VOIPINT_OPTION_IGNORE_COMFORT = 0,
 } voipintercept_options_t;
 
+typedef enum {
+    OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID = 0,
+    OPENLI_IPINT_OPTION_RADIUS_IDENT_USER = 1,
+} ipintercept_options_t;
+
 typedef struct static_ipranges {
     char *rangestr;
     char *liid;
@@ -88,6 +93,7 @@ typedef struct ipintercept {
     static_ipranges_t *statics;
 
     uint8_t awaitingconfirm;
+    uint32_t options;
     UT_hash_handle hh_liid;
     UT_hash_handle hh_user;
 } ipintercept_t;
@@ -231,6 +237,21 @@ struct staticipsession {
     UT_hash_handle hh;
 };
 
+/* A default username that may appear in RADIUS packets that should not
+ * be treated as an actual user. Some ISPs will use CSID as user identity
+ * instead and configure their CPEs to send a "default" username in RADIUS
+ * when joining the network -- if the ISP can provide the defaults, we
+ * can tell the collectors to not bother trying to track the sessions for
+ * those "users".
+ */
+typedef struct default_radius_user {
+    char *name;     /**< The default username */
+    int namelen;    /**< The length of the username, in bytes */
+
+    uint8_t awaitingconfirm;
+    UT_hash_handle hh;
+} default_radius_user_t;
+
 void free_all_ipintercepts(ipintercept_t **interceptlist);
 void free_all_voipintercepts(voipintercept_t **vintercepts);
 void free_all_rtpstreams(rtpstreaminf_t **streams);
@@ -271,6 +292,7 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
         ipintercept_t *ipint);
 
 internet_access_method_t map_access_type_string(char *confstr);
+uint32_t map_radius_ident_string(char *confstr);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

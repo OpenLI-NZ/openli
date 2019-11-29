@@ -103,6 +103,8 @@ typedef enum {
     OPENLI_PROTO_MODIFY_IPINTERCEPT,
     OPENLI_PROTO_MODIFY_STATICIPS,
     OPENLI_PROTO_RAWIP_SYNC,
+    OPENLI_PROTO_ANNOUNCE_DEFAULT_RADIUS,
+    OPENLI_PROTO_WITHDRAW_DEFAULT_RADIUS,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -152,6 +154,10 @@ void destroy_net_buffer(net_buffer_t *nb);
 int construct_netcomm_protocol_header(ii_header_t *hdr, uint32_t contentlen,
         uint16_t msgtype, uint64_t internalid, uint32_t *hdrlen);
 
+int push_default_radius_onto_net_buffer(net_buffer_t *nb,
+        default_radius_user_t *defuser);
+int push_default_radius_withdraw_onto_net_buffer(net_buffer_t *nb,
+        default_radius_user_t *defuser);
 int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med);
 int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
         openli_mediator_t *med);
@@ -192,6 +198,10 @@ int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
 
 openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
         uint16_t *msglen, uint64_t *intid);
+int decode_default_radius_announcement(uint8_t *msgbody, uint16_t len,
+        default_radius_user_t *defuser);
+int decode_default_radius_withdraw(uint8_t *msgbody, uint16_t len,
+        default_radius_user_t *defuser);
 int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
 int decode_mediator_withdraw(uint8_t *msgbody, uint16_t len,

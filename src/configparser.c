@@ -201,6 +201,45 @@ static void parse_sip_targets(libtrace_list_t *targets, yaml_document_t *doc,
 
 }
 
+static int parse_defradusers_list(prov_intercept_conf_t *state,
+        yaml_document_t *doc, yaml_node_t *inputs) {
+
+    yaml_node_item_t *item;
+
+    for (item = inputs->data.sequence.items.start;
+            item != inputs->data.sequence.items.top; item ++) {
+
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+        default_radius_user_t *defuser, *found;
+
+        if (node->type != YAML_SCALAR_NODE) {
+            continue;
+        }
+        defuser = (default_radius_user_t *)calloc(1,
+                sizeof(default_radius_user_t));
+
+        defuser->name = strdup((char *)node->data.scalar.value);
+        defuser->namelen = strlen(defuser->name);
+        defuser->awaitingconfirm = 0;
+
+        HASH_FIND(hh, state->defradusers, defuser->name, defuser->namelen,
+                found);
+        if (found) {
+            logger(LOG_INFO,
+                    "OpenLI: warning -- '%s' should only appear once in the default RADIUS username config.",
+                    defuser->name);
+            free(defuser->name);
+            free(defuser);
+            continue;
+        }
+
+        HASH_ADD_KEYPTR(hh, state->defradusers, defuser->name,
+                defuser->namelen, defuser);
+    }
+
+    return 0;
+}
+
 static int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
         yaml_document_t *doc, yaml_node_t *inputs) {
 
@@ -548,6 +587,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         yaml_node_t *node = yaml_document_get_node(doc, *item);
         ipintercept_t *newcept;
         yaml_node_pair_t *pair;
+        int radchosen = 0;
 
         /* Each sequence item is a new intercept */
         newcept = (ipintercept_t *)malloc(sizeof(ipintercept_t));
@@ -566,6 +606,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
         newcept->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED; 
         newcept->statics = NULL;
+        newcept->options = 0;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -657,6 +698,21 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                 SET_CONFIG_STRING_OPTION(newcept->common.targetagency, value);
             }
 
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "radiusident")
+                    == 0) {
+
+                if (strcasecmp((char *)value->data.scalar.value, "csid") == 0) {
+                    newcept->options |= (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID);
+                    radchosen = 1;
+                } else if (strncasecmp((char *)value->data.scalar.value,
+                        "user", 4) == 0) {
+                    newcept->options |= (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER);
+                    radchosen = 1;
+                }
+
+            }
         }
 
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
@@ -664,6 +720,13 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                 newcept->username != NULL &&
                 newcept->common.destid > 0 &&
                 newcept->common.targetagency != NULL) {
+
+            /* Default to matching against both RADIUS username and CSID */
+            if (!radchosen) {
+                newcept->options |= (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID);
+                newcept->options |= (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER);
+            }
+
             HASH_ADD_KEYPTR(hh_liid, *ipints, newcept->common.liid,
                     newcept->common.liid_len, newcept);
         } else {
@@ -1031,6 +1094,14 @@ static int intercept_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SEQUENCE_NODE &&
             strcmp((char *)key->data.scalar.value, "agencies") == 0) {
         if (parse_agency_list(state, doc, value) == -1) {
+            return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value, "defaultradiususers") == 0) {
+        if (parse_defradusers_list(state, doc, value) == -1) {
             return -1;
         }
     }
