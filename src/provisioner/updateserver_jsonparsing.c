@@ -305,6 +305,26 @@ int remove_agency(update_con_info_t *cinfo, provision_state_t *state,
 
 }
 
+int remove_defaultradius(update_con_info_t *cinfo, provision_state_t *state,
+        const char *idstr) {
+
+    default_radius_user_t *found;
+
+    HASH_FIND(hh, state->interceptconf.defradusers, idstr, strlen(idstr),
+            found);
+
+    if (found) {
+        HASH_DELETE(hh, state->interceptconf.defradusers, found);
+        withdraw_default_radius_username(state, found);
+        free(found->name);
+        free(found);
+        logger(LOG_INFO, "OpenLI: removed default RADIUS username '%s' via update socket.",
+                idstr);
+        return 1;
+    }
+    return 0;
+}
+
 int remove_coreserver(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr, uint8_t srvtype) {
 
@@ -335,6 +355,78 @@ int remove_coreserver(update_con_info_t *cinfo, provision_state_t *state,
     }
 
     return 0;
+}
+
+int add_new_defaultradius(update_con_info_t *cinfo, provision_state_t *state) {
+
+    struct json_object *parsed = NULL;
+    struct json_tokener *tknr;
+    struct json_object *username;
+    default_radius_user_t *raduser = NULL;
+    default_radius_user_t *found = NULL;
+
+    int parseerr = 0;
+    tknr = json_tokener_new();
+
+    parsed = json_tokener_parse_ex(tknr, cinfo->jsonbuffer, cinfo->jsonlen);
+
+    if (parsed == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: unable to parse JSON received over update socket: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>OpenLI provisioner was unable to parse JSON received over update socket: %s. %s",
+                update_failure_page_start,
+                json_tokener_error_desc(json_tokener_get_error(tknr)),
+                update_failure_page_end);
+        goto defraderr;
+    }
+
+    raduser = (default_radius_user_t *)calloc(1, sizeof(default_radius_user_t));
+    raduser->awaitingconfirm = 1;
+
+    json_object_object_get_ex(parsed, "username", &(username));
+
+    EXTRACT_JSON_STRING_PARAM("username", "default RADIUS username",
+            username, raduser->name, &parseerr, true);
+    if (parseerr || raduser->name == NULL) {
+        goto defraderr;
+    }
+
+    raduser->namelen = strlen(raduser->name);
+    HASH_FIND(hh, state->interceptconf.defradusers, raduser->name,
+            raduser->namelen, found);
+
+    if (found) {
+        free(raduser->name);
+        free(raduser);
+    } else {
+        HASH_ADD_KEYPTR(hh, state->interceptconf.defradusers, raduser->name,
+                raduser->namelen, raduser);
+        announce_default_radius_username(state, raduser);
+
+        logger(LOG_INFO, "OpenLI: added default RADIUS username '%s' via update socket.",
+                raduser->name);
+    }
+
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return 0;
+
+defraderr:
+    if (raduser) {
+        if (raduser->name) {
+            free(raduser->name);
+        }
+        free(raduser);
+    }
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return -1;
 }
 
 int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,

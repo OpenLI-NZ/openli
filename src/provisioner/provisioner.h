@@ -276,6 +276,10 @@ struct prov_sock_state {
 
 int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf);
 
+int announce_default_radius_username(provision_state_t *state,
+        default_radius_user_t *raduser);
+int withdraw_default_radius_username(provision_state_t *state,
+        default_radius_user_t *raduser);
 int announce_lea_to_mediators(provision_state_t *state,
         prov_agency_t *lea);
 int withdraw_agency_from_mediators(provision_state_t *state,
