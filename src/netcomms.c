@@ -356,12 +356,13 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
 #define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
          ipint->username_len + sizeof(ipint->accesstype) + \
-         sizeof(ipint->vendmirrorid) + (5 * 4))
+         sizeof(ipint->options) + \
+         sizeof(ipint->vendmirrorid) + (6 * 4))
 
 #define IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
          ipint->username_len + sizeof(ipint->accesstype) + \
-         (4 * 4))
+         sizeof(ipint->options) + (5 * 4))
 
 static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
 
@@ -409,6 +410,12 @@ static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
     if (push_tlv(nb, OPENLI_PROTO_FIELD_ACCESSTYPE,
             (uint8_t *)(&(ipint->accesstype)),
             sizeof(ipint->accesstype)) == -1) {
+        goto pushmodfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTOPTIONS,
+            (uint8_t *)(&(ipint->options)),
+            sizeof(ipint->options)) == -1) {
         goto pushmodfail;
     }
 
@@ -803,14 +810,16 @@ int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
          ipint->common.delivcc_len + \
          ipint->username_len + sizeof(ipint->common.destid) + \
          strlen(ipint->common.targetagency) + \
-         sizeof(ipint->accesstype) + (7 * 4))
+         sizeof(ipint->options) + \
+         sizeof(ipint->accesstype) + (8 * 4))
 
 #define VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
          ipint->common.delivcc_len + ipint->username_len + \
          strlen(ipint->common.targetagency) + \
          sizeof(ipint->vendmirrorid) + sizeof(ipint->common.destid) + \
-         sizeof(ipint->accesstype) + (8 * 4))
+         sizeof(ipint->options) + \
+         sizeof(ipint->accesstype) + (9 * 4))
 
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
@@ -872,6 +881,12 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_ACCESSTYPE,
             (uint8_t *)(&ipint->accesstype),
             sizeof(ipint->accesstype))) == -1) {
+        goto pushipintfail;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_INTOPTIONS,
+            (uint8_t *)(&ipint->options),
+            sizeof(ipint->options))) == -1) {
         goto pushipintfail;
     }
 
@@ -962,6 +977,59 @@ int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
 
     return push_mediator_msg_onto_net_buffer(nb, med,
             OPENLI_PROTO_WITHDRAW_MEDIATOR);
+}
+
+#define DEF_RADIUS_BODY_LEN(def) \
+    (def->namelen + (1 * 4))
+
+static inline int push_default_radius_msg_onto_net_buffer(net_buffer_t *nb,
+        default_radius_user_t *defrad, openli_proto_msgtype_t type) {
+
+
+    ii_header_t hdr;
+    uint16_t totallen;
+    int ret;
+
+    /* Pre-compute our body length so we can write it in the header */
+    if (DEF_RADIUS_BODY_LEN(defrad) > 65535) {
+        logger(LOG_INFO,
+                "OpenLI: default radius usename announcement is too long to fit in a single message (%d).",
+                DEF_RADIUS_BODY_LEN(defrad));
+        return -1;
+    }
+
+    totallen = DEF_RADIUS_BODY_LEN(defrad);
+
+    /* Push on header */
+    populate_header(&hdr, type, totallen, 0);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t))) == -1) {
+        return -1;
+    }
+
+    /* Push on the default username field */
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_USERNAME,
+            (uint8_t *)(defrad->name), defrad->namelen)) == -1) {
+        return -1;
+    }
+
+    return (int)totallen;
+}
+
+int push_default_radius_onto_net_buffer(net_buffer_t *nb,
+        default_radius_user_t *defrad) {
+
+    return push_default_radius_msg_onto_net_buffer(nb, defrad,
+            OPENLI_PROTO_ANNOUNCE_DEFAULT_RADIUS);
+
+}
+
+int push_default_radius_withdraw_onto_net_buffer(net_buffer_t *nb,
+        default_radius_user_t *defrad) {
+
+    return push_default_radius_msg_onto_net_buffer(nb, defrad,
+            OPENLI_PROTO_WITHDRAW_DEFAULT_RADIUS);
+
 }
 
 #define CORESERVER_BODY_LEN(cs) \
@@ -1255,6 +1323,7 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
     ipint->statics = NULL;
+    ipint->options = 0;
 
     ipint->common.liid_len = 0;
     ipint->common.authcc_len = 0;
@@ -1288,6 +1357,8 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
             ipint->common.delivcc_len = vallen;
         } else if (f == OPENLI_PROTO_FIELD_LEAID) {
             DECODE_STRING_FIELD(ipint->common.targetagency, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_INTOPTIONS) {
+            ipint->options = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_USERNAME) {
             DECODE_STRING_FIELD(ipint->username, valptr, vallen);
             if (vallen == 0) {
@@ -1458,6 +1529,49 @@ int decode_coreserver_announcement(uint8_t *msgbody, uint16_t len,
 int decode_coreserver_withdraw(uint8_t *msgbody, uint16_t len,
         coreserver_t *cs) {
     return decode_coreserver_announcement(msgbody, len, cs);
+}
+
+int decode_default_radius_announcement(uint8_t *msgbody, uint16_t len,
+        default_radius_user_t *defuser) {
+
+    uint8_t *msgend = msgbody + len;
+
+    defuser->name = NULL;
+    defuser->namelen = 0;
+    defuser->awaitingconfirm = 0;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_USERNAME) {
+            if (defuser->name) {
+                free(defuser->name);
+            }
+            defuser->name = DECODE_STRING_FIELD(defuser->name, valptr, vallen);
+            defuser->namelen = strlen(defuser->name);
+        }
+
+        msgbody += (vallen + 4);
+    }
+
+    if (defuser->name == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: received a default RADIUS user message with no username?");
+        return -1;
+    }
+    return 0;
+}
+
+int decode_default_radius_withdraw(uint8_t *msgbody, uint16_t len,
+        default_radius_user_t *defuser) {
+    
+    return decode_default_radius_announcement(msgbody, len, defuser);
 }
 
 int decode_staticip_announcement(uint8_t *msgbody, uint16_t len,

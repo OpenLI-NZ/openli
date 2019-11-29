@@ -133,6 +133,9 @@ static int update_configuration_delete(update_con_info_t *cinfo,
         case TARGET_VOIPINTERCEPT:
             ret = remove_voip_intercept(cinfo, state, target);
             break;
+        case TARGET_DEFAULTRADIUS:
+            ret = remove_defaultradius(cinfo, state, target);
+            break;
     }
 
     /* Safe to unlock before emitting, since all accesses should be reads
@@ -173,6 +176,9 @@ static int update_configuration_post(update_con_info_t *cinfo,
             break;
         case TARGET_RADIUSSERVER:
             ret = add_new_coreserver(cinfo, state, OPENLI_CORE_SERVER_RADIUS);
+            break;
+        case TARGET_DEFAULTRADIUS:
+            ret = add_new_defaultradius(cinfo, state);
             break;
         case TARGET_GTPSERVER:
             ret = add_new_coreserver(cinfo, state, OPENLI_CORE_SERVER_GTP);
@@ -264,6 +270,8 @@ int handle_update_request(void *cls, struct MHD_Connection *conn,
             cinfo->target = TARGET_IPINTERCEPT;
         } else if (strncmp(url, "/voipintercept", 14) == 0) {
             cinfo->target = TARGET_VOIPINTERCEPT;
+        } else if (strncmp(url, "/defaultradius", 14) == 0) {
+            cinfo->target = TARGET_DEFAULTRADIUS;
         } else {
             free(cinfo);
             return MHD_NO;

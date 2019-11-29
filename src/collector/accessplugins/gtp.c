@@ -601,22 +601,27 @@ static void *gtp_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
     return glob->parsedpkt;
 }
 
-static char *gtp_get_userid(access_plugin_t *p, void *parsed,
-        int *useridlen) {
+static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
+        int *numberids) {
 
     gtp_global_t *glob = (gtp_global_t *)(p->plugindata);
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parsed;
     char sessid[64];
     gtp_session_t *sess;
     PWord_t pval;
+    user_identity_t *uids;
 
     if (glob == NULL || gparsed == NULL) {
         return NULL;
     }
 
     if (gparsed->matched_session) {
-        *useridlen = gparsed->matched_session->idstr_len;
-        return gparsed->matched_session->idstr;
+        uids = calloc(1, sizeof(user_identity_t));
+        uids[0].method = USER_IDENT_GTP_MSISDN;
+        uids[0].idstr = strdup(gparsed->matched_session->idstr);
+        uids[0].idlength = gparsed->matched_session->idstr_len;
+        *numberids = 1;
+        return uids;
     }
 
     /* Need to look up the session */
@@ -635,8 +640,12 @@ static char *gtp_get_userid(access_plugin_t *p, void *parsed,
 
     if (pval) {
         gparsed->matched_session = (gtp_session_t *)(*pval);
-        *useridlen = gparsed->matched_session->idstr_len;
-        return gparsed->matched_session->idstr;
+        uids = calloc(1, sizeof(user_identity_t));
+        uids[0].method = USER_IDENT_GTP_MSISDN;
+        uids[0].idstr = strdup(gparsed->matched_session->idstr);
+        uids[0].idlength = gparsed->matched_session->idstr_len;
+        *numberids = 1;
+        return uids;
     }
 
     if (gparsed->msgtype != GTPV2_CREATE_SESSION_REQUEST) {
@@ -670,9 +679,15 @@ static char *gtp_get_userid(access_plugin_t *p, void *parsed,
     JSLI(pval, glob->session_map, sess->sessid);
     *pval = (Word_t)sess;
 
-    *useridlen = sess->idstr_len;
     gparsed->matched_session = sess;
-    return sess->idstr;
+
+    uids = calloc(1, sizeof(user_identity_t));
+    uids[0].method = USER_IDENT_GTP_MSISDN;
+    uids[0].idstr = strdup(gparsed->matched_session->idstr);
+    uids[0].idlength = gparsed->matched_session->idstr_len;
+    uids[0].plugindata = NULL;
+    *numberids = 1;
+    return uids;
 }
 
 static void extract_gtp_assigned_ip_address(gtp_saved_pkt_t *gpkt,
@@ -878,7 +893,7 @@ static inline access_session_t *find_matched_session(access_plugin_t *p,
 }
 
 static access_session_t *gtp_update_session_state(access_plugin_t *p,
-        void *parsed, access_session_t **sesslist,
+        void *parsed, void *plugindata, access_session_t **sesslist,
         session_state_t *oldstate, session_state_t *newstate,
         access_action_t *action) {
 

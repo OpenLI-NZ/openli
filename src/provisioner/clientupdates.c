@@ -138,6 +138,35 @@ int withdraw_agency_from_mediators(provision_state_t *state,
     return 0;
 }
 
+int announce_default_radius_username(provision_state_t *state,
+        default_radius_user_t *raduser) {
+
+    SEND_ALL_COLLECTORS_BEGIN
+
+        if (push_default_radius_onto_net_buffer(sock->outgoing, raduser) < 0) {
+            disconnect_provisioner_client(state->epoll_fd,
+                    &(col->client), col->identifier);
+            continue;
+        }
+
+    SEND_ALL_COLLECTORS_END
+}
+
+int withdraw_default_radius_username(provision_state_t *state,
+        default_radius_user_t *raduser) {
+
+    SEND_ALL_COLLECTORS_BEGIN
+
+        if (push_default_radius_withdraw_onto_net_buffer(sock->outgoing,
+                raduser) < 0) {
+            disconnect_provisioner_client(state->epoll_fd,
+                    &(col->client), col->identifier);
+            continue;
+        }
+
+    SEND_ALL_COLLECTORS_END
+}
+
 void add_new_staticip_range(provision_state_t *state,
         ipintercept_t *ipint, static_ipranges_t *ipr) {
 
