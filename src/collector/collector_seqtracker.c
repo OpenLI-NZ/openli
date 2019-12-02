@@ -234,8 +234,9 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate->preencoded_ber = calloc(WANDDER_PREENCODE_LAST, sizeof intstate->preencoded_ber);
         wandder_etsili_preencode_static_fields_ber(intstate->preencoded_ber, (wandder_etsili_intercept_details_t*)&intdetails);
         
-        intstate->top = calloc(sizeof *intstate->top,1);
-        wandder_init_pshdr_ber(intstate->preencoded_ber, intstate->top);
+        //intstate->top = calloc(sizeof *intstate->top,1);
+        //wandder_init_pshdr_ber(intstate->preencoded_ber, intstate->top);
+        //this should be done inside calls to libwandder, not here
 #endif
     }
 }
@@ -354,25 +355,6 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 
 #ifdef HAVE_BER_ENCODING
     job.preencoded_ber = intstate->preencoded_ber;
-    //create new copy of top so differnt encoding jobs dont share 
-    //workspaces, (encoding is filling in the missing parts of top)
-    if(intstate->top){
-        wandder_etsili_top_t* top = malloc(sizeof *top);
-        memcpy(top, intstate->top, sizeof *top);
-        top->len = intstate->top->len;
-        top->alloc_len = intstate->top->len;
-        top->buf = malloc(intstate->top->len);
-        memcpy(top->buf, intstate->top->buf, intstate->top->len);
-        ptrdiff_t offset = (top->buf - intstate->top->buf);
-        top->header.cin    += offset;
-        top->header.seqno  += offset;
-        top->header.sec    += offset;
-        top->header.usec   += offset;
-        top->header.end    += offset;
-        top->body.ipcc.dir    += offset;
-        top->body.ipcc.ipcontent   += offset;
-        job.top = top;
-    }
 #endif
 	job.origreq = recvd;
 	job.liid = strdup(liid);
