@@ -107,6 +107,8 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
     if (glob->sipdebugfile) {
         sync->sipdebugfile = glob->sipdebugfile;
         glob->sipdebugfile = NULL;
+    } else {
+        sync->sipdebugfile = NULL;
     }
 
     return sync;
