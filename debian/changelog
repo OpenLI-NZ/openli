@@ -1,3 +1,10 @@
+openli (1.0.4-1~gtptest01) UNRELEASED; urgency=medium
+
+  * Pre-release packaging of 1.0.4 for Datora to use for testing the
+    new GTP-based mobile interception capabilities.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Mon, 18 Nov 2019 11:11:20 +1300
+
 openli (1.0.3-1) unstable; urgency=medium
 
   * Add ability to encrypt inter-component communications using TLS

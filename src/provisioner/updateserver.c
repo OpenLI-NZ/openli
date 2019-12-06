@@ -123,11 +123,18 @@ static int update_configuration_delete(update_con_info_t *cinfo,
             ret = remove_coreserver(cinfo, state, target,
                     OPENLI_CORE_SERVER_RADIUS);
             break;
+        case TARGET_GTPSERVER:
+            ret = remove_coreserver(cinfo, state, target,
+                    OPENLI_CORE_SERVER_GTP);
+            break;
         case TARGET_IPINTERCEPT:
             ret = remove_ip_intercept(cinfo, state, target);
             break;
         case TARGET_VOIPINTERCEPT:
             ret = remove_voip_intercept(cinfo, state, target);
+            break;
+        case TARGET_DEFAULTRADIUS:
+            ret = remove_defaultradius(cinfo, state, target);
             break;
     }
 
@@ -169,6 +176,12 @@ static int update_configuration_post(update_con_info_t *cinfo,
             break;
         case TARGET_RADIUSSERVER:
             ret = add_new_coreserver(cinfo, state, OPENLI_CORE_SERVER_RADIUS);
+            break;
+        case TARGET_DEFAULTRADIUS:
+            ret = add_new_defaultradius(cinfo, state);
+            break;
+        case TARGET_GTPSERVER:
+            ret = add_new_coreserver(cinfo, state, OPENLI_CORE_SERVER_GTP);
             break;
         case TARGET_IPINTERCEPT:
             if (strcmp(method, "POST") == 0) {
@@ -251,10 +264,14 @@ int handle_update_request(void *cls, struct MHD_Connection *conn,
             cinfo->target = TARGET_SIPSERVER;
         } else if (strncmp(url, "/radiusserver", 13) == 0) {
             cinfo->target = TARGET_RADIUSSERVER;
+        } else if (strncmp(url, "/gtpserver", 10) == 0) {
+            cinfo->target = TARGET_GTPSERVER;
         } else if (strncmp(url, "/ipintercept", 12) == 0) {
             cinfo->target = TARGET_IPINTERCEPT;
         } else if (strncmp(url, "/voipintercept", 14) == 0) {
             cinfo->target = TARGET_VOIPINTERCEPT;
+        } else if (strncmp(url, "/defaultradius", 14) == 0) {
+            cinfo->target = TARGET_DEFAULTRADIUS;
         } else {
             free(cinfo);
             return MHD_NO;

@@ -54,6 +54,7 @@ typedef struct colsync_data {
     ipintercept_t *ipintercepts;
     user_intercept_list_t *userintercepts;
     voipintercept_t *knownvoips;
+    default_radius_user_t *defaultradiususers;
 
     coreserver_t *coreservers;
 
@@ -69,6 +70,7 @@ typedef struct colsync_data {
     wandder_encoder_t *encoder;
 
     access_plugin_t *radiusplugin;
+    access_plugin_t *gtpplugin;
     etsili_generic_freelist_t *freegenerics;
 
     ip_to_session_t *activeips;

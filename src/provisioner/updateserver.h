@@ -48,6 +48,8 @@ enum {
     TARGET_RADIUSSERVER,
     TARGET_IPINTERCEPT,
     TARGET_VOIPINTERCEPT,
+    TARGET_GTPSERVER,
+    TARGET_DEFAULTRADIUS,
 };
 
 static const char *update_success_page =
@@ -77,12 +79,15 @@ int remove_agency(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr);
 int remove_coreserver(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr, uint8_t srvtype);
+int remove_defaultradius(update_con_info_t *cinfo, provision_state_t *state,
+        const char *idstr);
 int remove_ip_intercept(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr);
 int remove_voip_intercept(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr);
 
 int add_new_agency(update_con_info_t *cinfo, provision_state_t *state);
+int add_new_defaultradius(update_con_info_t *cinfo, provision_state_t *state);
 int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state);
 int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state);
 int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,

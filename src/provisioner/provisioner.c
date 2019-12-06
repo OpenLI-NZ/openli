@@ -174,11 +174,13 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->collectors = NULL;
 
     state->interceptconf.radiusservers = NULL;
+    state->interceptconf.gtpservers = NULL;
     state->interceptconf.sipservers = NULL;
     state->interceptconf.voipintercepts = NULL;
     state->interceptconf.ipintercepts = NULL;
     state->interceptconf.liid_map = NULL;
     state->interceptconf.leas = NULL;
+    state->interceptconf.defradusers = NULL;
 
     pthread_mutex_init(&(state->interceptconf.safelock), NULL);
 
@@ -374,10 +376,19 @@ static void clear_intercept_state(prov_intercept_conf_t *conf) {
     liid_hash_t *h, *tmp;
     prov_agency_t *h2, *tmp2;
     liagency_t *lea;
+    default_radius_user_t *h3, *tmp3;
 
     HASH_ITER(hh, conf->liid_map, h, tmp) {
         HASH_DEL(conf->liid_map, h);
         free(h);
+    }
+
+    HASH_ITER(hh, conf->defradusers, h3, tmp3) {
+        HASH_DEL(conf->defradusers, h3);
+        if (h3->name) {
+            free(h3->name);
+        }
+        free(h3);
     }
 
     HASH_ITER(hh, conf->leas, h2, tmp2) {
@@ -389,6 +400,7 @@ static void clear_intercept_state(prov_intercept_conf_t *conf) {
     free_all_ipintercepts(&(conf->ipintercepts));
     free_all_voipintercepts(&(conf->voipintercepts));
     free_coreserver_list(conf->radiusservers);
+    free_coreserver_list(conf->gtpservers);
     free_coreserver_list(conf->sipservers);
 
     pthread_mutex_destroy(&(conf->safelock));
@@ -456,6 +468,24 @@ static int push_coreservers(coreserver_t *servers, uint8_t cstype,
             logger(LOG_INFO,
                     "OpenLI provisioner: error pushing %s server %s onto buffer for writing to collector.",
                     coreserver_type_to_string(cstype), cs->ipstr);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int push_all_default_radius(default_radius_user_t *users,
+        net_buffer_t *nb) {
+    default_radius_user_t *defuser, *tmp;
+
+    HASH_ITER(hh, users, defuser, tmp) {
+        if (defuser->name == NULL) {
+            continue;
+        }
+        if (push_default_radius_onto_net_buffer(nb, defuser) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: error pushing default RADIUS user %s onto buffer for writing to collector.",
+                    defuser->name);
             return -1;
         }
     }
@@ -586,6 +616,7 @@ static int respond_collector_auth(provision_state_t *state,
 
     if (HASH_CNT(hh, state->mediators) +
             HASH_CNT(hh, state->interceptconf.radiusservers) +
+            HASH_CNT(hh, state->interceptconf.gtpservers) +
             HASH_CNT(hh, state->interceptconf.sipservers) +
             HASH_CNT(hh_liid, state->interceptconf.ipintercepts) +
             HASH_CNT(hh_liid, state->interceptconf.voipintercepts) == 0) {
@@ -604,10 +635,28 @@ static int respond_collector_auth(provision_state_t *state,
         return -1;
     }
 
+    if (push_all_default_radius(state->interceptconf.defradusers,
+            outgoing) == -1) {
+        logger(LOG_INFO,
+                "OpenLI: unable to queue default RADIUS usernames to be sent to new collector on fd %d",
+                pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
+        return -1;
+    }
+
+
     if (push_coreservers(state->interceptconf.radiusservers,
             OPENLI_CORE_SERVER_RADIUS, outgoing) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue RADIUS server details to be sent to new collector on fd %d", pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
+        return -1;
+    }
+
+    if (push_coreservers(state->interceptconf.gtpservers,
+            OPENLI_CORE_SERVER_GTP, outgoing) == -1) {
+        logger(LOG_INFO,
+                "OpenLI: unable to queue GTP server details to be sent to new collector on fd %d", pev->fd);
         pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
     }

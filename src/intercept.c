@@ -592,6 +592,17 @@ void clear_user_intercept_list(user_intercept_list_t *ulist) {
     }
 }
 
+uint32_t map_radius_ident_string(char *confstr) {
+    if (strcasecmp(confstr, "csid") == 0) {
+        return (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID);
+    }
+
+    if (strncasecmp(confstr, "user", 4) == 0) {
+        return (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER);
+    }
+    return 0;
+}
+
 internet_access_method_t map_access_type_string(char *confstr) {
 
     if (strcasecmp(confstr, "dialup") == 0 ||
@@ -644,6 +655,14 @@ internet_access_method_t map_access_type_string(char *confstr) {
             strcasecmp(confstr, "wifiother") == 0 ||
             strcasecmp(confstr, "wirelessother") == 0) {
         return INTERNET_ACCESS_TYPE_WIRELESS_OTHER;
+    }
+
+    if (strcasecmp(confstr, "mobile") == 0 ||
+            strcasecmp(confstr, "3g") == 0 ||
+            strcasecmp(confstr, "4g") == 0 ||
+            strcasecmp(confstr, "5g") == 0 ||
+            strcasecmp(confstr, "lte") == 0) {
+        return INTERNET_ACCESS_TYPE_MOBILE;
     }
 
     return INTERNET_ACCESS_TYPE_UNDEFINED;

@@ -234,6 +234,9 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             msg = create_ipcc_job(sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 0);
+            if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg) {
+                msg->type = OPENLI_EXPORT_UMTSCC;
+            }
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
             }
@@ -249,6 +252,9 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             msg = create_ipcc_job(sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 1);
+            if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg) {
+                msg->type = OPENLI_EXPORT_UMTSCC;
+            }
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
             }
@@ -299,6 +305,9 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             msg = create_ipcc_job(sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 0);
+            if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg) {
+                msg->type = OPENLI_EXPORT_UMTSCC;
+            }
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
             }
@@ -314,6 +323,9 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             msg = create_ipcc_job(sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 1);
+            if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg) {
+                msg->type = OPENLI_EXPORT_UMTSCC;
+            }
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
             }

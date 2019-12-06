@@ -51,6 +51,9 @@ static inline void free_cinsequencing(exporter_intercept_state_t *intstate) {
 
     HASH_ITER(hh, intstate->cinsequencing, c, tmp) {
         HASH_DELETE(hh, intstate->cinsequencing, c);
+        if (c->cin_string) {
+            free(c->cin_string);
+        }
         free(c);
     }
 }
@@ -60,11 +63,16 @@ static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
     switch(recvd->type) {
         case OPENLI_EXPORT_IPMMCC:
         case OPENLI_EXPORT_IPCC:
+        case OPENLI_EXPORT_UMTSCC:
             return recvd->data.ipcc.liid;
         case OPENLI_EXPORT_IPIRI:
             return recvd->data.ipiri.liid;
         case OPENLI_EXPORT_IPMMIRI:
             return recvd->data.ipmmiri.liid;
+        case OPENLI_EXPORT_UMTSIRI:
+            return recvd->data.mobiri.liid;
+        case OPENLI_EXPORT_RAW_SYNC:
+            return recvd->data.rawip.liid;
     }
     return NULL;
 }
@@ -74,11 +82,16 @@ static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
     switch(recvd->type) {
         case OPENLI_EXPORT_IPMMCC:
         case OPENLI_EXPORT_IPCC:
+        case OPENLI_EXPORT_UMTSCC:
             return recvd->data.ipcc.cin;
         case OPENLI_EXPORT_IPIRI:
             return recvd->data.ipiri.cin;
         case OPENLI_EXPORT_IPMMIRI:
             return recvd->data.ipmmiri.cin;
+        case OPENLI_EXPORT_UMTSIRI:
+            return recvd->data.mobiri.cin;
+        case OPENLI_EXPORT_RAW_SYNC:
+            return recvd->data.rawip.cin;
     }
     logger(LOG_INFO,
             "OpenLI: invalid message type in extract_cin_from_job: %u",
@@ -344,7 +357,8 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     job.cinstr = strdup(cinseq->cin_string);
 
 	if (recvd->type == OPENLI_EXPORT_IPMMCC ||
-			recvd->type == OPENLI_EXPORT_IPCC) {
+			recvd->type == OPENLI_EXPORT_IPCC ||
+            recvd->type == OPENLI_EXPORT_UMTSCC) {
 	    job.seqno = cinseq->cc_seqno;
         cinseq->cc_seqno ++;
 	} else {
@@ -407,6 +421,9 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
                 case OPENLI_EXPORT_IPMMCC:
                 case OPENLI_EXPORT_IPMMIRI:
                 case OPENLI_EXPORT_IPIRI:
+                case OPENLI_EXPORT_UMTSCC:
+                case OPENLI_EXPORT_UMTSIRI:
+                case OPENLI_EXPORT_RAW_SYNC:
 					run_encoding_job(seqdata, job);
                     sincepurge ++;
                     break;

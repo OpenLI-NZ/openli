@@ -50,7 +50,9 @@ static inline void free_encoded_result(openli_encoded_result_t *res) {
     }
 
     if (res->msgbody) {
-        free(res->msgbody->encoded);
+        if (res->msgbody->encoded) {
+            free(res->msgbody->encoded);
+        }
         free(res->msgbody);
     }
 
@@ -313,6 +315,20 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
     return 1;
 }
 
+static inline int enqueue_raw(forwarding_thread_data_t *fwd,
+        export_dest_t *med, openli_encoded_result_t *res) {
+
+    if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
+        logger(LOG_INFO,
+                "OpenLI: forced to drop mediator %s:%s because we cannot buffer any more records for it -- please investigate asap!",
+                med->ipstr, med->portstr);
+        remove_destination(fwd, med);
+        return 1;
+    }
+
+    return 1;
+}
+
 static inline int enqueue_result(forwarding_thread_data_t *fwd,
         export_dest_t *med, openli_encoded_result_t *res) {
 
@@ -323,7 +339,8 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
     stored_result_t *stored, *tmp;
 
     if (res->origreq->type == OPENLI_EXPORT_IPCC ||
-            res->origreq->type == OPENLI_EXPORT_IPMMCC) {
+            res->origreq->type == OPENLI_EXPORT_IPMMCC ||
+            res->origreq->type == OPENLI_EXPORT_UMTSCC) {
 
         reorderer = &(fwd->intreorderer_cc);
     } else {
@@ -440,7 +457,6 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
         med = (export_dest_t *)(*jval);
     }
 
-    /* TODO enqueue this result to be forwarded */
     ret = enqueue_result(fwd, med, res);
 
     if (ret == 1) {

@@ -126,7 +126,7 @@ int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
     }
 
     /* Extract the intercept ID, direction and session ID */
-    aluhdr = (alushimhdr_t *)get_udp_payload(packet, &rem);
+    aluhdr = (alushimhdr_t *)get_udp_payload(packet, &rem, NULL, NULL);
     if (!aluhdr || rem < sizeof(alushimhdr_t)) {
         return 0;
     }

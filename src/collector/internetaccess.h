@@ -37,6 +37,7 @@
 
 enum {
     ACCESS_RADIUS,
+    ACCESS_GTP,
     ACCESS_DHCP
 };
 
@@ -45,6 +46,7 @@ typedef enum {
     SESSION_STATE_AUTHING,
     SESSION_STATE_ACTIVE,
     SESSION_STATE_RENEW,
+    SESSION_STATE_ENDING,
     SESSION_STATE_OVER,
 } session_state_t;
 
@@ -55,15 +57,31 @@ typedef enum {
     ACCESS_ACTION_REJECT,
     ACCESS_ACTION_ALREADY_ACTIVE,
     ACCESS_ACTION_INTERIM_UPDATE,
+    ACCESS_ACTION_MODIFIED,
     ACCESS_ACTION_END,
     ACCESS_ACTION_END_SUDDEN,
     ACCESS_ACTION_RETRY,
     ACCESS_ACTION_NONE
 } access_action_t;
 
+typedef enum {
+    USER_IDENT_RADIUS_USERNAME,
+    USER_IDENT_RADIUS_CSID,
+    USER_IDENT_GTP_MSISDN,
+    USER_IDENT_GTP_IMSI,
+    USER_IDENT_MAX
+} user_identity_method_t;
+
 typedef struct access_plugin access_plugin_t;
 typedef struct internet_user internet_user_t;
 typedef struct access_session access_session_t;
+
+typedef struct user_identity {
+    user_identity_method_t method;
+    char *idstr;
+    int idlength;
+    void *plugindata;
+} user_identity_t;
 
 typedef struct internetaccess_ip {
     int ipfamily;
@@ -115,10 +133,11 @@ struct access_plugin {
     void (*destroy_parsed_data)(access_plugin_t *p, void *parseddata);
     void (*uncouple_parsed_data)(access_plugin_t *p);
 
-    char *(*get_userid)(access_plugin_t *p, void *parseddata, int *idlen);
+    user_identity_t *(*get_userid)(access_plugin_t *p, void *parseddata,
+            int *numberids);
 
     access_session_t *(*update_session_state)(access_plugin_t *p,
-            void *parseddata, access_session_t **sesslist,
+            void *parseddata, void *pluginuserdata, access_session_t **sesslist,
             session_state_t *oldstate, session_state_t *newstate,
             access_action_t *action);
 
@@ -136,6 +155,8 @@ struct access_plugin {
 
     void (*destroy_session_data)(access_plugin_t *p, access_session_t *sess);
 
+    uint32_t (*get_packet_sequence)(access_plugin_t *p, void *parseddata);
+
     /* APIs that are internally used but should be required by all plugins
      * so may as well enforce them as part of the plugin definition.
      */
@@ -149,6 +170,10 @@ void free_all_users(internet_user_t *users);
 int free_single_session(internet_user_t *user, access_session_t *sess);
 
 access_plugin_t *get_radius_access_plugin(void);
+access_plugin_t *get_gtp_access_plugin(void);
+
+access_session_t *create_access_session(access_plugin_t *p,
+        char *idstr, int idstr_len);
 
 const char *accesstype_to_string(internet_access_method_t am);
 

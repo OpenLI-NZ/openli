@@ -404,19 +404,28 @@ uint32_t hash_liid(char *liid) {
     return hashlittle(liid, strlen(liid), 1572869);
 }
 
-void *get_udp_payload(libtrace_packet_t *packet, uint32_t *rem) {
+void *get_udp_payload(libtrace_packet_t *packet, uint32_t *rem,
+        uint16_t *sourceport, uint16_t *destport) {
 
     uint8_t proto;
     void *transport, *udppayload;
+    libtrace_udp_t *udp;
 
     transport = trace_get_transport(packet, &proto, rem);
-    if (rem == 0 || transport == NULL) {
+    if (*rem < sizeof(libtrace_udp_t) || transport == NULL) {
         return NULL;
     }
     if (proto != TRACE_IPPROTO_UDP) {
         return NULL;
     }
 
+    udp = (libtrace_udp_t *)transport;
+    if (sourceport) {
+        *sourceport = ntohs(udp->source);
+    }
+    if (destport) {
+        *destport = ntohs(udp->dest);
+    }
     udppayload = trace_get_payload_from_udp((libtrace_udp_t *)transport,
             rem);
 	return udppayload;

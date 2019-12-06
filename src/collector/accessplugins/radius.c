@@ -44,10 +44,6 @@
 #define PREALLOC_ATTRS (50000)
 #define STANDARD_ATTR_ALLOC (64)
 
-#define TIMESTAMP_TO_TV(tv, floatts) \
-        tv->tv_sec = (uint32_t)(floatts); \
-        tv->tv_usec = (uint32_t)(((floatts - tv->tv_sec) * 1000000));
-
 enum {
     RADIUS_CODE_ACCESS_REQUEST = 1,
     RADIUS_CODE_ACCESS_ACCEPT = 2,
@@ -82,13 +78,11 @@ enum {
 
 typedef struct radius_user {
 
+    user_identity_method_t idmethod;
     char *userid;
-    int userid_len;
     char *nasidentifier;
     int nasid_len;
     session_state_t current;
-    struct sockaddr *framedip4;
-    struct sockaddr *framedip6;
 } radius_user_t;
 
 typedef struct radius_v6_prefix_attr {
@@ -112,10 +106,13 @@ struct radius_saved_request {
 
     uint32_t reqid;
     uint32_t statustype;
+    uint32_t acctsess;
     double tvsec;
     radius_attribute_t *attrs;
 
-    radius_user_t *targetuser;
+    radius_user_t *targetusers[USER_IDENT_MAX];
+    int targetuser_count;
+
     radius_saved_req_t *next;
     UT_hash_handle hh;
 };
@@ -154,6 +151,7 @@ typedef struct radius_parsed {
     uint8_t msgident;
     uint8_t *authptr;
     uint32_t accttype;
+    uint32_t acctsess;
     uint32_t nasport;
     double tvsec;
     radius_attribute_t *attrs;
@@ -162,7 +160,8 @@ typedef struct radius_parsed {
     struct sockaddr_storage radiusip;
     uint16_t sourceport;
 
-    radius_user_t *matcheduser;
+    int muser_count;
+    radius_user_t *matchedusers[USER_IDENT_MAX];
     radius_nas_t *matchednas;
     radius_server_t *matchedserv;
 
@@ -207,11 +206,13 @@ static inline void reset_parsed_packet(radius_parsed_t *parsed) {
     parsed->sourceport = 0;
     parsed->tvsec = 0;
     parsed->nasport = 0;
-    parsed->matcheduser = NULL;
     parsed->matchednas = NULL;
     parsed->matchedserv = NULL;
     parsed->savedreq = NULL;
     parsed->savedresp = NULL;
+    parsed->muser_count = 0;
+    parsed->acctsess = 0;
+    memset(parsed->matchedusers, 0, sizeof(radius_user_t *) * USER_IDENT_MAX);
     memset(&(parsed->nasip), 0, sizeof(struct sockaddr_storage));
     memset(&(parsed->radiusip), 0, sizeof(struct sockaddr_storage));
 
@@ -350,12 +351,6 @@ static void destroy_radius_nas(radius_nas_t *nas) {
         }
         if (user->nasidentifier) {
             free(user->nasidentifier);
-        }
-        if (user->framedip4) {
-            free(user->framedip4);
-        }
-        if (user->framedip6) {
-            free(user->framedip6);
         }
         free(user);
 
@@ -597,30 +592,6 @@ static void create_orphan(radius_global_t *glob, radius_orphaned_resp_t **head,
     }
 }
 
-static inline void *find_radius_start(libtrace_packet_t *pkt, uint32_t *rem,
-        uint16_t *sourceport, uint16_t *destport) {
-
-    void *transport, *radstart;
-    uint8_t proto;
-    libtrace_udp_t *udp;
-
-    transport = trace_get_transport(pkt, &proto, rem);
-    if (!transport || rem == 0) {
-        return NULL;
-    }
-
-    if (proto != TRACE_IPPROTO_UDP) {
-        return NULL;
-    }
-
-    udp = (libtrace_udp_t *)transport;
-    *sourceport = ntohs(udp->source);
-    *destport = ntohs(udp->dest);
-
-    radstart = trace_get_payload_from_udp(udp, rem);
-    return radstart;
-}
-
 static inline int grab_nas_details_from_packet(radius_parsed_t *parsed,
         libtrace_packet_t *pkt, uint8_t code, uint16_t sourceport,
         uint16_t destport) {
@@ -770,7 +741,7 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
         radius_destroy_parsed_data(p, (void *)parsed);
     }
 
-    radstart = (uint8_t *)find_radius_start(pkt, &rem, &sourceport, &destport);
+    radstart = (uint8_t *)get_udp_payload(pkt, &rem, &sourceport, &destport);
     if (radstart == NULL) {
         return NULL;
     }
@@ -828,6 +799,9 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
             if (newattr->att_type == RADIUS_ATTR_ACCT_STATUS_TYPE) {
                 parsed->accttype = ntohl(*((uint32_t *)newattr->att_val));
             }
+            if (newattr->att_type == RADIUS_ATTR_ACCT_SESSION_ID) {
+                parsed->acctsess = ntohl(*((uint32_t *)newattr->att_val));
+            }
         }
 
         rem -= att_len;
@@ -837,13 +811,64 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
     return parsed;
 }
 
-static inline void process_username_attribute(radius_parsed_t *raddata) {
+static radius_user_t *add_user_identity(uint8_t att_type, uint8_t *att_val,
+        uint8_t att_len, radius_parsed_t *raddata) {
 
-    char userkey[256];
-    int keylen;
+    char userkey[2048];
+    char *nextchar;
+    int keyrem = 2047;
     radius_user_t *user;
-    radius_attribute_t *userattr;
+    user_identity_method_t method;
     PWord_t pval;
+
+    if (att_type == RADIUS_ATTR_USERNAME) {
+        memcpy(userkey, "raduser-", 8);
+        keyrem -= 8;
+        nextchar = userkey + 8;
+        method = USER_IDENT_RADIUS_USERNAME;
+    } else if (att_type == RADIUS_ATTR_CALLING_STATION_ID) {
+        memcpy(userkey, "radcsid-", 8);
+        keyrem -= 8;
+        nextchar = userkey + 8;
+        method = USER_IDENT_RADIUS_CSID;
+    }
+
+    assert(keyrem > att_len);
+    memcpy(nextchar, att_val, att_len);
+
+    nextchar += att_len;
+    keyrem -= att_len;
+
+    *nextchar = '\0';
+
+    JSLG(pval, raddata->matchednas->user_map, userkey);
+
+    if (pval) {
+        raddata->muser_count ++;
+        raddata->matchedusers[method] = (radius_user_t *)(*pval);
+        return raddata->matchedusers[method];
+    }
+
+    user = (radius_user_t *)calloc(1, sizeof(radius_user_t));
+
+    user->userid = strdup(userkey);
+    user->idmethod = method;
+    user->nasidentifier = NULL;
+    user->nasid_len = 0;
+    user->current = SESSION_STATE_NEW;
+
+    JSLI(pval, raddata->matchednas->user_map, user->userid);
+    *pval = (Word_t)user;
+    raddata->matchedusers[method] = user;
+    raddata->muser_count ++;
+    return raddata->matchedusers[method];
+
+}
+
+static void process_username_attribute(radius_parsed_t *raddata) {
+
+    radius_attribute_t *userattr;
+    radius_user_t *raduser;
 
     if (raddata->msgtype != RADIUS_CODE_ACCESS_REQUEST &&
             raddata->msgtype != RADIUS_CODE_ACCOUNT_REQUEST) {
@@ -852,49 +877,17 @@ static inline void process_username_attribute(radius_parsed_t *raddata) {
 
     userattr = raddata->attrs;
     while (userattr) {
-        if (userattr->att_type == RADIUS_ATTR_USERNAME) {
-            break;
+        switch(userattr->att_type) {
+            case RADIUS_ATTR_USERNAME:
+            case RADIUS_ATTR_CALLING_STATION_ID:
+                raduser = add_user_identity(userattr->att_type,
+                        userattr->att_val, userattr->att_len, raddata);
+                assert(raduser);
+                break;
         }
         userattr = userattr->next;
     }
 
-    if (!userattr) {
-        return;
-    }
-
-    if (userattr->att_len < 256) {
-        memcpy(userkey, userattr->att_val, userattr->att_len);
-        userkey[userattr->att_len] = '\0';
-        keylen = userattr->att_len;
-    } else {
-        memcpy(userkey, userattr->att_val, 255);
-        userkey[255] = '\0';
-        keylen = 255;
-        logger(LOG_INFO,
-                "OpenLI RADIUS: User-Name is too long, truncated to %s",
-                userkey);
-    }
-
-    JSLG(pval, raddata->matchednas->user_map, userkey);
-
-    if (pval) {
-        raddata->matcheduser = (radius_user_t *)(*pval);
-        return;
-    }
-
-    user = (radius_user_t *)malloc(sizeof(radius_user_t));
-
-    user->userid = fast_strdup(userkey, keylen);
-    user->userid_len = keylen;
-    user->nasidentifier = NULL;
-    user->nasid_len = 0;
-    user->current = SESSION_STATE_NEW;
-    user->framedip4 = NULL;
-    user->framedip6 = NULL;
-
-    JSLI(pval, raddata->matchednas->user_map, user->userid);
-    *pval = (Word_t)user;
-    raddata->matcheduser = user;
 }
 
 static uint32_t assign_cin(radius_parsed_t *raddata) {
@@ -948,12 +941,12 @@ static uint32_t assign_cin(radius_parsed_t *raddata) {
 
 static inline void process_nasid_attribute(radius_parsed_t *raddata) {
     char nasid[1024];
-    int keylen = 0;
+    int keylen = 0, i;
     uint8_t attrnum = RADIUS_ATTR_NASIDENTIFIER;
 
     radius_attribute_t *nasattr;
 
-    if (!raddata->matcheduser) {
+    if (raddata->muser_count == 0) {
         return;
     }
 
@@ -982,23 +975,26 @@ static inline void process_nasid_attribute(radius_parsed_t *raddata) {
                 nasid);
     }
 
-    if (raddata->matcheduser->nasidentifier) {
-        if (strcmp(nasid, raddata->matcheduser->nasidentifier) != 0) {
-            /*
-            logger(LOG_INFO,
-                    "OpenLI RADIUS: NAS-Identifier for user %s has changed from %s to %s",
-                    raddata->matcheduser->userid,
-                    raddata->matcheduser->nasidentifier,
-                    nasid);
-            */
-            free(raddata->matcheduser->nasidentifier);
-        } else {
-            return;
-        }
-    }
+    for (i = 0; i < raddata->muser_count; i++) {
 
-    raddata->matcheduser->nasidentifier = fast_strdup(nasid, keylen);
-    raddata->matcheduser->nasid_len = keylen;
+        if (raddata->matchedusers[i]->nasidentifier) {
+            if (strcmp(nasid, raddata->matchedusers[i]->nasidentifier) != 0) {
+            /*
+                logger(LOG_INFO,
+                        "OpenLI RADIUS: NAS-Identifier for user %s has changed from %s to %s",
+                        raddata->matchedusers[i]->userid,
+                        raddata->matchedusers[i]->nasidentifier,
+                        nasid);
+            */
+                free(raddata->matchedusers[i]->nasidentifier);
+            } else {
+                continue;
+            }
+        }
+
+        raddata->matchedusers[i]->nasidentifier = fast_strdup(nasid, keylen);
+        raddata->matchedusers[i]->nasid_len = keylen;
+    }
 }
 
 static inline void process_nasport_attribute(radius_parsed_t *raddata) {
@@ -1029,7 +1025,7 @@ static inline void extract_assigned_ip_address(radius_global_t *glob,
     radius_attribute_t *attr;
     struct sockaddr_storage *sa;
 
-    if (!raddata->matcheduser) {
+    if (!raddata->muser_count) {
         return;
     }
     if (!sess) {
@@ -1121,120 +1117,155 @@ static inline void find_matching_request(radius_global_t *glob,
             return;
         }
 
-        assert(raddata->matcheduser == NULL ||
-                req->targetuser == raddata->matcheduser);
-        raddata->matcheduser = req->targetuser;
         raddata->savedreq = req;
         raddata->accttype = raddata->savedreq->statustype;
+        raddata->acctsess = raddata->savedreq->acctsess;
+
+        memcpy(raddata->matchedusers, raddata->savedreq->targetusers,
+                sizeof(radius_user_t *) * USER_IDENT_MAX);
+        raddata->muser_count = raddata->savedreq->targetuser_count;
 
         HASH_DELETE(hh, raddata->matchednas->request_map, req);
     }
 
 }
 
-static char *radius_get_userid(access_plugin_t *p, void *parsed,
-        int *useridlen) {
+
+static user_identity_t *radius_get_userid(access_plugin_t *p, void *parsed,
+        int *numberids) {
 
     radius_parsed_t *raddata;
     radius_global_t *glob;
-    char foo[128];
+    int i, idx;
+    user_identity_t *idarray = NULL;
 
     glob = (radius_global_t *)(p->plugindata);
     raddata = (radius_parsed_t *)parsed;
 
-    *useridlen = 0;
-    if (raddata->matcheduser) {
-        *useridlen = raddata->matcheduser->userid_len;
-        return raddata->matcheduser->userid;
+    *numberids = 0;
+
+    if (raddata->muser_count == 0) {
+        if (!raddata->matchednas) {
+            logger(LOG_INFO, "OpenLI RADIUS: please parse the packet before attempting to get the user id.");
+            return NULL;
+        }
+
+        process_username_attribute(raddata);
     }
 
-    if (!raddata->matchednas) {
-        logger(LOG_INFO, "OpenLI RADIUS: please parse the packet before attempting to get the user id.");
-        return NULL;
-    }
-
-    process_username_attribute(raddata);
     //process_nasport_attribute(raddata);
 
-    if (!raddata->matcheduser && (
-            raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST ||
-            raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST)) {
-        logger(LOG_INFO,
-                "OpenLI RADIUS: got a request with no User-Name field?");
+    if (raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST ||
+            raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
+
+        if (raddata->muser_count == 0) {
+            logger(LOG_INFO,
+                    "OpenLI RADIUS: got a request with no user identity fields?");
+            return NULL;
+        }
+
+    } else {
+        /* This must be a response packet, try to match it to a previously
+         * seen request...
+         */
+        find_matching_request(glob, raddata);
+    }
+
+    if (raddata->muser_count == 0) {
         return NULL;
     }
 
-    /* This must be a response packet, try to match it to a previously
-     * seen request...
-     */
-    find_matching_request(glob, raddata);
-    if (raddata->matcheduser) {
-        *useridlen = raddata->matcheduser->userid_len;
-        return raddata->matcheduser->userid;
+    /* If there is a NAS Identifier, grab it and use it */
+    process_nasid_attribute(raddata);
+
+    idarray = calloc(raddata->muser_count, sizeof(user_identity_t));
+    idx = 0;
+
+    for (i = 0; i < USER_IDENT_MAX; i++) {
+        char *stripped;
+        if (raddata->matchedusers[i] == NULL) {
+            continue;
+        }
+
+        idarray[idx].method = raddata->matchedusers[i]->idmethod;
+
+        stripped = strchr(raddata->matchedusers[i]->userid, '-');
+        if (stripped == NULL) {
+            idarray[idx].idstr = strdup(raddata->matchedusers[i]->userid);
+        } else {
+            idarray[idx].idstr = strdup(stripped + 1);
+        }
+
+        idarray[idx].idlength = strlen(idarray[idx].idstr);
+        idarray[idx].plugindata = (void *)(raddata->matchedusers[i]);
+
+        idx ++;
     }
-    return NULL;
+
+    *numberids = idx;
+    return idarray;
 
 }
 
 static inline void apply_fsm_logic(radius_parsed_t *raddata,
-        uint8_t msgtype, uint32_t accttype, session_state_t *newstate,
-        access_action_t *action) {
+        radius_user_t *raduser, uint8_t msgtype, uint32_t accttype,
+        session_state_t *newstate, access_action_t *action) {
 
     *action = ACCESS_ACTION_NONE;
 
     /* RADIUS state machine logic goes here */
     /* TODO figure out what Access-Failed is, since it is in the ETSI spec */
-    if ((raddata->matcheduser->current == SESSION_STATE_NEW ||
-            raddata->matcheduser->current == SESSION_STATE_OVER) && (
+    if ((raduser->current == SESSION_STATE_NEW ||
+            raduser->current == SESSION_STATE_OVER) && (
             msgtype == RADIUS_CODE_ACCESS_REQUEST ||
             (msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
                 accttype == RADIUS_ACCT_START))) {
 
-        raddata->matcheduser->current = SESSION_STATE_AUTHING;
+        raduser->current = SESSION_STATE_AUTHING;
         *action = ACCESS_ACTION_ATTEMPT;
-    } else if (raddata->matcheduser->current == SESSION_STATE_AUTHING && (
+    } else if (raduser->current == SESSION_STATE_AUTHING && (
             msgtype == RADIUS_CODE_ACCESS_REJECT)) {
 
-        raddata->matcheduser->current = SESSION_STATE_OVER;
+        raduser->current = SESSION_STATE_OVER;
         *action = ACCESS_ACTION_REJECT;
 
-    } else if (raddata->matcheduser->current == SESSION_STATE_AUTHING && (
+    } else if (raduser->current == SESSION_STATE_AUTHING && (
             msgtype == RADIUS_CODE_ACCESS_CHALLENGE)) {
 
-        raddata->matcheduser->current = SESSION_STATE_AUTHING;
+        raduser->current = SESSION_STATE_AUTHING;
         *action = ACCESS_ACTION_RETRY;
 
-    } else if (raddata->matcheduser->current == SESSION_STATE_AUTHING && (
+    } else if (raduser->current == SESSION_STATE_AUTHING && (
             msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
             accttype == RADIUS_ACCT_STOP)) {
 
-        raddata->matcheduser->current = SESSION_STATE_OVER;
+        raduser->current = SESSION_STATE_OVER;
         *action = ACCESS_ACTION_FAILED;
 
-    } else if (raddata->matcheduser->current == SESSION_STATE_AUTHING && (
+    } else if (raduser->current == SESSION_STATE_AUTHING && (
             msgtype == RADIUS_CODE_ACCESS_ACCEPT ||
             (msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
                 accttype == RADIUS_ACCT_START))) {
 
-        raddata->matcheduser->current = SESSION_STATE_ACTIVE;
+        raduser->current = SESSION_STATE_ACTIVE;
         *action = ACCESS_ACTION_ACCEPT;
 
-    } else if (raddata->matcheduser->current == SESSION_STATE_ACTIVE && (
+    } else if (raduser->current == SESSION_STATE_ACTIVE && (
             msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
             (accttype == RADIUS_ACCT_START ||
                 accttype == RADIUS_ACCT_INTERIM_UPDATE))) {
 
         *action = ACCESS_ACTION_INTERIM_UPDATE;
 
-    } else if (raddata->matcheduser->current == SESSION_STATE_ACTIVE && (
+    } else if (raduser->current == SESSION_STATE_ACTIVE && (
             msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
             accttype == RADIUS_ACCT_STOP)) {
 
-        raddata->matcheduser->current = SESSION_STATE_OVER;
+        raduser->current = SESSION_STATE_OVER;
         *action = ACCESS_ACTION_END;
 
-    } else if ((raddata->matcheduser->current == SESSION_STATE_NEW ||
-            raddata->matcheduser->current == SESSION_STATE_OVER) && (
+    } else if ((raduser->current == SESSION_STATE_NEW ||
+            raduser->current == SESSION_STATE_OVER) && (
             msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
             accttype == RADIUS_ACCT_INTERIM_UPDATE)) {
 
@@ -1242,12 +1273,12 @@ static inline void apply_fsm_logic(radius_parsed_t *raddata,
          * jump straight to active and try to carry on from there.
          */
 
-        raddata->matcheduser->current = SESSION_STATE_ACTIVE;
+        raduser->current = SESSION_STATE_ACTIVE;
         *action = ACCESS_ACTION_ALREADY_ACTIVE;
     }
 
 
-    *newstate = raddata->matcheduser->current;
+    *newstate = raduser->current;
 }
 
 static radius_orphaned_resp_t *search_orphans(radius_orphaned_resp_t **head,
@@ -1438,37 +1469,33 @@ static inline void update_second_action(radius_global_t *glob,
     }
 }
 static access_session_t *radius_update_session_state(access_plugin_t *p,
-        void *parsed, access_session_t **sesslist,
+        void *parsed, void *plugindata, access_session_t **sesslist,
         session_state_t *oldstate, session_state_t *newstate,
         access_action_t *action) {
 
     radius_global_t *glob;
     radius_parsed_t *raddata;
+    radius_user_t *raduser = (radius_user_t *)plugindata;
     access_session_t *thissess;
-    char sessionid[1024];
+    char sessionid[5000];
     char *ptr;
-    int rem = 1024;
+    int rem = 5000;
 
     glob = (radius_global_t *)(p->plugindata);
     raddata = (radius_parsed_t *)parsed;
-    if (!raddata || raddata->matcheduser == NULL) {
+    if (!raddata || raddata->muser_count == 0 || raduser == NULL) {
         return NULL;
     }
 
-    /* If there is a NAS Identifier, grab it and use it */
-    process_nasid_attribute(raddata);
-
     /* TODO fall back to NAS-IP */
-    if (raddata->matcheduser->nasidentifier == NULL) {
+    if (raduser->nasidentifier == NULL) {
         assert(0);
     }
 
     ptr = sessionid;
-    ptr = quickcat(ptr, &rem, raddata->matcheduser->userid,
-            raddata->matcheduser->userid_len);
+    ptr = quickcat(ptr, &rem, raduser->userid, strlen(raduser->userid));
     ptr = quickcat(ptr, &rem, "-", 1);
-    ptr = quickcat(ptr, &rem, raddata->matcheduser->nasidentifier,
-            raddata->matcheduser->nasid_len);
+    ptr = quickcat(ptr, &rem, raduser->nasidentifier, raduser->nasid_len);
 
 
     thissess = *sesslist;
@@ -1480,19 +1507,8 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     }
 
     if (!thissess) {
-        thissess = (access_session_t *)malloc(sizeof(access_session_t));
-
-        thissess->plugin = p;
-        thissess->sessionid = fast_strdup(sessionid, 1024 - rem);
-        thissess->statedata = NULL;
-        thissess->idlength = strlen(sessionid);
+        thissess = create_access_session(p, sessionid, 5000 - rem);
         thissess->cin = assign_cin(raddata);
-        memset(&(thissess->sessionip), 0, sizeof(thissess->sessionip));
-
-        thissess->iriseqno = 0;
-        thissess->started.tv_sec = 0;
-        thissess->started.tv_usec = 0;
-        thissess->activeipentry = NULL;
 
         thissess->next = *sesslist;
         *sesslist = thissess;
@@ -1516,25 +1532,22 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
                 DERIVE_REQUEST_ID(raddata, raddata->msgtype), raddata->tvsec);
         if (orphan) {
             raddata->savedresp = orphan;
-        } else {
+        } else if (!raddata->savedresp) {
+            uint32_t reqid;
+            reqid = DERIVE_REQUEST_ID(raddata, raddata->msgtype);
 
-            if (glob->freeaccreqs == NULL) {
-                req = (radius_saved_req_t *)malloc(sizeof(radius_saved_req_t));
+            HASH_FIND(hh, raddata->matchednas->request_map, &(reqid),
+                    sizeof(reqid), check);
+            if (check && raddata->tvsec == check->tvsec &&
+                    raddata->acctsess == check->acctsess) {
+                /* This *is* the same request -- we've already inserted it,
+                 * probably due to having both CSID and username in the
+                 * AVP list.
+                 */
+
+                 // pass
+
             } else {
-                req = glob->freeaccreqs;
-                glob->freeaccreqs = req->next;
-            }
-
-            req->reqid = DERIVE_REQUEST_ID(raddata, raddata->msgtype);
-            req->targetuser = raddata->matcheduser;
-            req->statustype = raddata->accttype;
-            req->tvsec = raddata->tvsec;
-            req->next = NULL;
-            req->attrs = NULL;
-
-            if (!raddata->savedresp) {
-                HASH_FIND(hh, raddata->matchednas->request_map, &(req->reqid),
-                        sizeof(req->reqid), check);
                 if (check) {
                     /* The old one is probably an unanswered request, replace
                      * it with this one instead. */
@@ -1543,7 +1556,23 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
                     HASH_DELETE(hh, raddata->matchednas->request_map, check);
                 }
 
+                if (glob->freeaccreqs == NULL) {
+                    req = (radius_saved_req_t *)malloc(
+                            sizeof(radius_saved_req_t));
+                } else {
+                    req = glob->freeaccreqs;
+                    glob->freeaccreqs = req->next;
+                }
+
+                req->reqid = reqid;
+                req->statustype = raddata->accttype;
+                req->acctsess = raddata->acctsess;
+                req->tvsec = raddata->tvsec;
+                req->next = NULL;
                 req->attrs = raddata->attrs;
+                req->targetuser_count = raddata->muser_count;
+                memcpy(req->targetusers, raddata->matchedusers,
+                        sizeof(radius_user_t *) * USER_IDENT_MAX);
 
                 HASH_ADD_KEYPTR(hh, raddata->matchednas->request_map,
                         &(req->reqid), sizeof(req->reqid), req);
@@ -1551,12 +1580,11 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         }
     }
 
-
-    *oldstate = raddata->matcheduser->current;
-    apply_fsm_logic(raddata, raddata->msgtype, raddata->accttype, newstate,
-            &(raddata->firstaction));
+    *oldstate = raduser->current;
+    apply_fsm_logic(raddata, raduser, raddata->msgtype, raddata->accttype,
+            newstate, &(raddata->firstaction));
     if (raddata->savedresp) {
-        apply_fsm_logic(raddata, raddata->savedresp->resptype,
+        apply_fsm_logic(raddata, raduser, raddata->savedresp->resptype,
                 raddata->accttype, newstate, &(raddata->secondaction));
     }
 
@@ -1589,7 +1617,6 @@ static int generate_iri(etsili_generic_t **paramlist,
     ipiri_id_t nasid;
     int64_t inocts, outocts, endreason;
 
-
     /* XXX Static generics aren't going to work anymore -- we'll need to
      * copy them into memory that we control...
      */
@@ -1606,6 +1633,7 @@ static int generate_iri(etsili_generic_t **paramlist,
                 np);
 
     }
+
 
     while (attr) {
         uint8_t iriattr = 0xff;
@@ -1874,6 +1902,18 @@ static void radius_destroy_session_data(access_plugin_t *p,
     return;
 }
 
+static uint32_t radius_get_packet_sequence(access_plugin_t *p,
+        void *parseddata) {
+
+    radius_global_t *radglob;
+    radius_parsed_t *raddata;
+
+    radglob = (radius_global_t *)(p->plugindata);
+    raddata = (radius_parsed_t *)parseddata;
+
+    return DERIVE_REQUEST_ID(raddata, raddata->msgtype);
+}
+
 static access_plugin_t radiusplugin = {
 
     "RADIUS",
@@ -1889,7 +1929,8 @@ static access_plugin_t radiusplugin = {
     radius_update_session_state,
     radius_generate_iri_data,
     //radius_create_iri_from_packet,
-    radius_destroy_session_data
+    radius_destroy_session_data,
+    radius_get_packet_sequence,
 };
 
 access_plugin_t *get_radius_access_plugin(void) {

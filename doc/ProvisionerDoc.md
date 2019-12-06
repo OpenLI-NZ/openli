@@ -137,6 +137,38 @@ a RADIUS feed to an OpenLI collector to generate the IRI records but the
 recipient collector doesn't necessarily need to be the same collector instance
 as the one that is receiving the mirrored packets.
 
+For mobile IP intercepts, there are some slight differences. The Access type
+must be set to "mobile" to tell OpenLI to detect IP sessions using mobile
+session management protocols (such as GTP), instead of RADIUS. The User must
+also be set to the target's phone number (MSISDN). The ALU Shim and JMirror
+methods do not apply to mobile IP intercepts.
+
+#### Using the RADIUS Calling Station ID to Identify IP Intercept Targets
+In a conventional RADIUS deployment, the identity of the subscriber can be
+found within the Username AVP field which is present in RADIUS request
+packets. In that case, the value of the RADIUS Username field is what you
+should use to configure an IP intercept where the subscriber is the target.
+
+However, some deployments use an alternative approach: the subscriber CPE
+is configured to send RADIUS requests with a default username and password
+(where all subscribers share the same 'credentials'). Instead, individual
+users are recognised using the contents of the Calling Station Id AVP,
+which is unique for each subscriber.
+
+To accommodate the latter style of deployment, IP intercepts in OpenLI can
+be configured to indicate that the identity provided in the "User" field is
+specifically either a RADIUS Username or a RADIUS Calling Station Id (CSID).
+If not explicitly configured, OpenLI will assume attempt to match the
+identity against both RADIUS AVPs.
+
+Additionally, you may configure the provisioner with a list of "default"
+usernames. Any RADIUS Username AVPs that contain a value from that list are
+automatically not considered as potential targets, which may improve
+collector performance in cases where there are many subscribers that are using
+default RADIUS credentials. RADIUS packets with a Username matching a
+configured "default" will still have their CSID AVP examined, if present,
+to see if it matches the User field for a running intercept.
+
 
 ### SIP Servers and RADIUS Servers
 OpenLI uses SIP and RADIUS traffic to maintain internal state regarding which
@@ -160,6 +192,23 @@ configured using two parameters:
 * ip -- the IP address of the RADIUS server
 * port -- the port that the RADIUS server is communicating on.
 
+
+### GTP Servers
+For interception of mobile phone traffic, OpenLI uses GTPv2 traffic to track
+the state of mobile users' IP sessions. To be able to recognise the GTP traffic
+that should be used for this purpose, the OenLI collectors must be able to
+identify the traffic that is either going from or to your GTP servers.
+
+GTP servers are defined using the gtpservers option. Each GTP server that
+you have in your network should be included as a list item within the
+'gtpservers' option. Failure to configure GTP servers will prevent OpenLI from
+performing any IP intercepts for targets using a mobile phone. A GTP server is
+configured using two parameters:
+* ip -- the IP address of the SIP server
+* port -- the port that the SIP server is listening on.
+
+NOTE: remember that an IP intercept *must* be configured with an `accesstype`
+of "mobile" if you want OpenLI to identify the target's IP traffic using GTP.
 
 ### ALU Lawful Intercept translation
 Some Alcatel-Lucent devices have a built-in LI system which is not
@@ -219,8 +268,11 @@ instead write the captured CC records to a pcap trace file. To enable this
 for an intercept, set the agency ID in the intercept configuration to
 'pcapdisk'.
 
-NOTE: you will also need to set the 'pcapdirectory' option in the
-configuration file for your mediators.
+For mobile IP intercepts, the GTPv2 traffic for the target's session will
+also be included in the pcap trace file.
+
+NOTE: you will also need to set the 'pcapdirectory' and 'pcaprotatefreq'
+options in the configuration file for your mediators.
 
 WARNING: you should confirm with the requesting agency that a pcap file is
 an acceptable format for an intercept before using pcap output mode.
@@ -281,6 +333,13 @@ file is provided here. Please note that, due to limitations in the library
 that is used to emit the intercept config, the layout of the YAML in this
 file is minimalist and not pleasant to read.
 
+Default RADIUS usernames are expressed as a YAML sequence with a key of
+`defaultradiususers:`. Each sequence item is a RADIUS Username that you
+want OpenLI to ignore when tracking potentially interceptable sessions
+from captured RADIUS traffic (because the username is a default that has been
+pre-configured on CPEs, and therefore does not correspond to an individual
+user).
+
 Agencies are expressed as a YAML sequence with a key of `agencies:`. Each
 sequence item represents a single agency and must contain the following
 key-value elements:
@@ -317,10 +376,25 @@ An IP intercept must contain the following key-value elements:
 
 Valid access types are:
   'dialup', 'adsl', 'vdsl', 'fiber', 'wireless', 'lan', 'satellite', 'wimax',
-  'cable' and 'wireless-other'.
+  'cable', 'mobile' and 'wireless-other'.
+
+Note that setting the access type to 'mobile' will cause OpenLI to use GTPv2
+traffic to identify the target's IP sessions, and the resulting ETSI records
+will conform to the UMTS format (as opposed to the standard IP format).
 
 Optional key-value elements for an IP intercept are:
 
+* `radiusident`           -- if set to 'csid', RADIUS packets will only be
+                           recognised as belonging to the intercept target
+                           if the RADIUS Calling Station ID AVP matches the
+                           `user` field defined for this intercept. If set
+                           to 'user', RADIUS packets will only be recognised
+                           as belonging to the intercept target if the RADIUS
+                           Username AVP matches the `user` field defined for
+                           this intercept. If not set, then RADIUS packets
+                           will be recognised as belonging to the intercept
+                           target if the value of either one of those AVPs
+                           matches the `user` field.
 * `vendmirrorid`          -- if using a vendor mirroring platform to stream
                            packets to the collector, this is the intercept ID
                            that you have assigned to the packets on the

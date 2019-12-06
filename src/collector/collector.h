@@ -68,7 +68,8 @@ enum {
     OPENLI_UPDATE_HELLO = 0,
     OPENLI_UPDATE_RADIUS = 1,
     OPENLI_UPDATE_DHCP = 2,
-    OPENLI_UPDATE_SIP = 3
+    OPENLI_UPDATE_SIP = 3,
+    OPENLI_UPDATE_GTP = 4,
 };
 
 typedef struct openli_intersync_msg {
@@ -207,6 +208,11 @@ typedef struct colthread_local {
      * servers, we assume it is SIP.
      */
     coreserver_t *sipservers;
+
+    /* Known GTP servers, i.e. if we see traffic to or from these
+     * servers, we assume it is GTP.
+     */
+    coreserver_t *gtpservers;
 
     patricia_tree_t *staticv4ranges;
     patricia_tree_t *staticv6ranges;

@@ -176,6 +176,8 @@ typedef struct prov_mediator {
 typedef struct prov_intercept_conf {
     /** The set of known RADIUS servers that will be provided to collectors */
     coreserver_t *radiusservers;
+    /** The set of known GTP servers that will be provided to collectors */
+    coreserver_t *gtpservers;
     /** The set of known SIP servers that will be provided to collectors */
     coreserver_t *sipservers;
     /** The set of VOIP intercepts that we are currently running */
@@ -186,6 +188,8 @@ typedef struct prov_intercept_conf {
     prov_agency_t *leas;
     /** A map of LIIDs to their destination LEAs */
     liid_hash_t *liid_map;
+    /** A set of default RADIUS user names */
+    default_radius_user_t *defradusers;
 
     /** A mutex to protect the intercept config from race conditions */
     pthread_mutex_t safelock;
@@ -272,6 +276,10 @@ struct prov_sock_state {
 
 int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf);
 
+int announce_default_radius_username(provision_state_t *state,
+        default_radius_user_t *raduser);
+int withdraw_default_radius_username(provision_state_t *state,
+        default_radius_user_t *raduser);
 int announce_lea_to_mediators(provision_state_t *state,
         prov_agency_t *lea);
 int withdraw_agency_from_mediators(provision_state_t *state,
