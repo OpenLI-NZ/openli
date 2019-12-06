@@ -380,33 +380,38 @@ static int create_ipiri_from_iprange(collector_sync_t *sync,
 
 }
 
-static int export_raw_sync_packet_content(collector_sync_t *sync,
-        ipintercept_t *ipint, libtrace_packet_t *pkt, uint32_t seqno,
-        uint32_t cin) {
+static int export_raw_sync_packet_content(access_plugin_t *p,
+        collector_sync_t *sync, ipintercept_t *ipint, void *parseddata,
+        uint32_t seqno, uint32_t cin) {
 
     openli_export_recv_t *msg;
-    void *l3;
-    uint16_t ethertype;
-    uint32_t rem;
+    uint8_t *ipptr = NULL;
+    uint16_t iplen;
 
-    l3 = trace_get_layer3(pkt, &ethertype, &rem);
+    int iteration = 0;
 
-    if (l3 == NULL || rem == 0) {
-        return 0;
-    }
+    do {
+        ipptr = p->get_ip_contents(p, parseddata, &iplen, iteration);
 
-    msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
-    msg->type = OPENLI_EXPORT_RAW_SYNC;
-    msg->destid = ipint->common.destid;
-    msg->data.rawip.liid = strdup(ipint->common.liid);
-    msg->data.rawip.ipcontent = malloc(rem);
-    msg->data.rawip.seqno = seqno;
-    msg->data.rawip.cin = cin;
+        if (!ipptr) {
+            break;
+        }
 
-    memcpy(msg->data.rawip.ipcontent, l3, rem);
-    msg->data.rawip.ipclen = rem;
-    publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], msg);
-    return 1;
+        msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+        msg->type = OPENLI_EXPORT_RAW_SYNC;
+        msg->destid = ipint->common.destid;
+        msg->data.rawip.liid = strdup(ipint->common.liid);
+
+        msg->data.rawip.ipcontent = ipptr;
+        msg->data.rawip.ipclen = iplen;
+        msg->data.rawip.seqno = seqno;
+        msg->data.rawip.cin = cin;
+        iteration ++;
+
+        publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], msg);
+    } while (ipptr);
+
+    return iteration;
 }
 
 static int create_mobiri_from_session(collector_sync_t *sync,
@@ -2133,9 +2138,10 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
                     uint32_t seqno;
 
                     seqno = p->get_packet_sequence(p, parseddata);
-                    export_raw_sync_packet_content(sync, ipint, pkt, seqno,
-                            sess->cin);
-                    expcount ++;
+                    if (export_raw_sync_packet_content(p, sync, ipint,
+                            parseddata, seqno, sess->cin) > 0) {
+                        expcount ++;
+                    }
                 } else if (accessaction != ACCESS_ACTION_NONE) {
                     if (ipint->accesstype != INTERNET_ACCESS_TYPE_MOBILE) {
                         create_ipiri_from_session(sync, sess, ipint, p,

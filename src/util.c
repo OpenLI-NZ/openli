@@ -41,6 +41,27 @@
 #include "logger.h"
 #include "util.h"
 
+void openli_copy_ipcontent(libtrace_packet_t *pkt, uint8_t **ipc,
+        uint16_t *iplen) {
+
+    void *l3;
+    uint16_t ethertype;
+    uint32_t rem;
+
+    *ipc = NULL;
+    *iplen = 0;
+
+    l3 = trace_get_layer3(pkt, &ethertype, &rem);
+
+    if (l3 == NULL || rem == 0) {
+        return;
+    }
+
+	*ipc = malloc(rem);
+	memcpy(*ipc, l3, rem);
+	*iplen = rem;
+}
+
 int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
         uint8_t setkeepalive) {
 

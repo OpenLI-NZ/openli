@@ -125,7 +125,10 @@ struct gtp_saved_packet {
     uint8_t type;
     uint8_t applied;
     double tvsec;
+    uint8_t response_cause;
 
+    uint8_t *ipcontent;
+    uint16_t iplen;
     gtp_infoelem_t *ies;
     gtp_session_t *matched_session;
 };
@@ -278,6 +281,9 @@ static void gtp_destroy_plugin_data(access_plugin_t *p) {
     while (pval) {
         gtp_saved_pkt_t *pkt = (gtp_saved_pkt_t *)(*pval);
 
+        if (pkt->ipcontent) {
+            free(pkt->ipcontent);
+        }
         gtp_free_ie_list(pkt->ies);
         free(pkt);
         JLN(pval, glob->saved_packets, indexnum);
@@ -306,11 +312,17 @@ static void gtp_destroy_parsed_data(access_plugin_t *p, void *parsed) {
     gtp_free_ie_list(gparsed->ies);
 
     if (gparsed->request) {
+        if (gparsed->request->ipcontent) {
+            free(gparsed->request->ipcontent);
+        }
         gtp_free_ie_list(gparsed->request->ies);
         free(gparsed->request);
     }
 
     if (gparsed->response) {
+        if (gparsed->response->ipcontent) {
+            free(gparsed->response->ipcontent);
+        }
         gtp_free_ie_list(gparsed->response->ies);
         free(gparsed->response);
     }
@@ -456,6 +468,9 @@ static void flush_old_gtp_packets(gtp_global_t *glob, double ts) {
 
         if (ts > pkt->tvsec + GTP_FLUSH_OLD_PKT_FREQ) {
             gtp_free_ie_list(pkt->ies);
+            if (pkt->ipcontent) {
+                free(pkt->ipcontent);
+            }
             JLD(rc, glob->saved_packets, pkt->reqid);
             free(pkt);
             purged ++;
@@ -640,6 +655,21 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
 
     if (pval) {
         gparsed->matched_session = (gtp_session_t *)(*pval);
+
+        if (gparsed->matched_session->idstr_len == 0 &&
+                gparsed->msisdn[0] != '\0') {
+            gparsed->matched_session->userid.msisdn = strdup(gparsed->msisdn);
+            snprintf(gparsed->matched_session->idstr, 64, "%s",
+                    gparsed->msisdn);
+            gparsed->matched_session->idstr_len =
+                    strlen(gparsed->matched_session->idstr);
+        }
+
+        if (gparsed->matched_session->idstr_len == 0) {
+            *numberids = 0;
+            return NULL;
+        }
+
         uids = calloc(1, sizeof(user_identity_t));
         uids[0].method = USER_IDENT_GTP_MSISDN;
         uids[0].idstr = strdup(gparsed->matched_session->idstr);
@@ -649,6 +679,36 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
     }
 
     if (gparsed->msgtype != GTPV2_CREATE_SESSION_REQUEST) {
+        gtp_saved_pkt_t *saved;
+
+        saved = calloc(1, sizeof(gtp_saved_pkt_t));
+
+        saved->type = gparsed->msgtype;
+        saved->reqid = (((uint64_t)gparsed->teid) << 32) |
+            ((uint64_t)gparsed->seqno);
+        saved->ies = gparsed->ies;
+        saved->matched_session = NULL;
+        saved->applied = 0;
+        saved->tvsec = gparsed->tvsec;
+        saved->ipcontent = NULL;
+        saved->iplen = 0;
+        saved->response_cause = gparsed->response_cause;
+        gparsed->ies = NULL;
+
+        openli_copy_ipcontent(gparsed->origpkt, &(saved->ipcontent),
+                &(saved->iplen));
+
+        JLG(pval, glob->saved_packets, saved->reqid);
+        if (pval == NULL) {
+            JLI(pval, glob->saved_packets, saved->reqid);
+            *pval = (Word_t)saved;
+        } else {
+            gparsed->ies = saved->ies;
+            if (saved->ipcontent) {
+                free(saved->ipcontent);
+            }
+            free(saved);
+        }
         return NULL;
     }
 
@@ -664,22 +724,26 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
      */
     if (gparsed->msisdn[0] != '\0') {
         sess->userid.msisdn = strdup(gparsed->msisdn);
+        snprintf(sess->idstr, 64, "%s", sess->userid.msisdn);
+        sess->idstr_len = strlen(sess->idstr);
     } else {
-        destroy_gtp_session(sess);
-        return NULL;
+        sess->userid.msisdn = NULL;
+        sess->idstr_len = 0;
     }
 
     if (gparsed->imsi[0] != '\0') {
         sess->userid.imsi = strdup(gparsed->imsi);
     }
 
-    snprintf(sess->idstr, 64, "%s", sess->userid.msisdn);
-    sess->idstr_len = strlen(sess->idstr);
-
     JSLI(pval, glob->session_map, sess->sessid);
     *pval = (Word_t)sess;
 
     gparsed->matched_session = sess;
+
+    if (sess->idstr_len == 0) {
+        *numberids = 0;
+        return NULL;
+    }
 
     uids = calloc(1, sizeof(user_identity_t));
     uids[0].method = USER_IDENT_GTP_MSISDN;
@@ -838,15 +902,14 @@ static void apply_gtp_fsm_logic(gtp_parsed_t *gparsed, access_action_t *action,
     } else if (current == SESSION_STATE_AUTHING &&
             gpkt->type == GTPV2_CREATE_SESSION_RESPONSE) {
 
-        if (gparsed->response_cause == 0x10) {
+        if (gpkt->response_cause == 0x10) {
             current = SESSION_STATE_ACTIVE;
             *action = ACCESS_ACTION_ACCEPT;
 
             extract_gtp_assigned_ip_address(gpkt, sess,
                     gparsed->matched_session);
 
-        } else if (gparsed->response_cause >= 64 &&
-                gparsed->response_cause <= 239) {
+        } else if (gpkt->response_cause >= 64 && gpkt->response_cause <= 239) {
             current = SESSION_STATE_OVER;
             *action = ACCESS_ACTION_REJECT;
         }
@@ -914,7 +977,13 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
     saved->matched_session = gparsed->matched_session;
     saved->applied = 0;
     saved->tvsec = gparsed->tvsec;
+    saved->ipcontent = NULL;
+    saved->iplen = 0;
+    saved->response_cause = gparsed->response_cause;
     gparsed->ies = NULL;
+
+    openli_copy_ipcontent(gparsed->origpkt, &(saved->ipcontent),
+            &(saved->iplen));
 
     JLG(pval, glob->saved_packets, saved->reqid);
     if (pval == NULL) {
@@ -985,11 +1054,14 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
         }
 
         if (thissess) {
-            if (check->applied == 0) {
+            if (gparsed->request->applied == 0) {
                 apply_gtp_fsm_logic(gparsed, &(gparsed->action), thissess,
-                        check);
+                        gparsed->request);
             }
-            apply_gtp_fsm_logic(gparsed, &(gparsed->action), thissess, saved);
+            if (gparsed->response->applied == 0) {
+                apply_gtp_fsm_logic(gparsed, &(gparsed->action), thissess,
+                        gparsed->response);
+            }
         }
         *newstate = gparsed->matched_session->current;
     }
@@ -1285,6 +1357,38 @@ static int gtp_generate_iri_data(access_plugin_t *p, void *parseddata,
     return -1;
 }
 
+static uint8_t *gtp_get_ip_contents(access_plugin_t *p, void *parseddata,
+        uint16_t *iplen, int iteration) {
+
+    gtp_parsed_t *gparsed = (gtp_parsed_t *)parseddata;
+    uint8_t *ipc = NULL;
+
+    if (iteration == 0) {
+        if (gparsed->request && gparsed->request->ipcontent != NULL) {
+            *iplen = gparsed->request->iplen;
+            ipc = gparsed->request->ipcontent;
+            gparsed->request->ipcontent = NULL;
+            gparsed->request->iplen = 0;
+            return ipc;
+        }
+        iteration = 1;
+    }
+
+    if (iteration == 1) {
+        if (gparsed->response && gparsed->response->ipcontent != NULL) {
+            *iplen = gparsed->response->iplen;
+            ipc = gparsed->response->ipcontent;
+            gparsed->response->ipcontent = NULL;
+            gparsed->response->iplen = 0;
+            return ipc;
+        }
+    }
+
+    *iplen = 0;
+    return NULL;
+
+}
+
 static void gtp_destroy_session_data(access_plugin_t *p,
         access_session_t *sess) {
 
@@ -1319,6 +1423,7 @@ static access_plugin_t gtpplugin = {
     gtp_generate_iri_data,
     gtp_destroy_session_data,
     gtp_get_packet_sequence,
+    gtp_get_ip_contents,
 };
 
 access_plugin_t *get_gtp_access_plugin(void) {

@@ -52,6 +52,8 @@ struct addrinfo *populate_addrinfo(char *ipstr, char *portstr,
 void *get_udp_payload(libtrace_packet_t *packet, uint32_t *rem,
         uint16_t *sourceport, uint16_t *destport);
 char *parse_iprange_string(char *ipr_str);
+void openli_copy_ipcontent(libtrace_packet_t *pkt, uint8_t **ipc,
+        uint16_t *iplen);
 
 uint32_t hash_liid(char *liid);
 uint32_t hashlittle( const void *key, size_t length, uint32_t initval);
