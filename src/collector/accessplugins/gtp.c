@@ -1032,6 +1032,9 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
             JLI(pval, glob->saved_packets, saved->reqid);
             *pval = (Word_t)saved;
 
+            if (check->ipcontent) {
+                free(check->ipcontent);
+            }
             gtp_free_ie_list(check->ies);
             free(check);
             return NULL;
