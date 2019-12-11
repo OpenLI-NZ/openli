@@ -355,6 +355,7 @@ static int reload_ipintercepts(provision_state_t *currstate,
 
     ipintercept_t *ipint, *tmp, *newequiv;
     char *str;
+    liid_hash_t *h = NULL;
 
     /* TODO error handling in the "inform other components about changes"
      * functions?
@@ -390,6 +391,19 @@ static int reload_ipintercepts(provision_state_t *currstate,
                     newequiv->common.targetagency) != 0) {
                 remove_liid_mapping(currstate, ipint->common.liid,
                         ipint->common.liid_len, droppedmeds);
+
+                if (newequiv->awaitingconfirm == 0) {
+                    h = add_liid_mapping(intconf, newequiv->common.liid,
+                            newequiv->common.targetagency);
+
+                    if (!droppedmeds &&
+                            announce_liidmapping_to_mediators(currstate, h)
+                            == -1) {
+                        logger(LOG_INFO,
+                                "OpenLI provisioner: unable to announce new IP intercept to mediators.");
+                        return -1;
+                    }
+                }
             }
         } else {
             reload_staticips(currstate, ipint, newequiv);
@@ -398,7 +412,6 @@ static int reload_ipintercepts(provision_state_t *currstate,
     }
 
     HASH_ITER(hh_liid, newints, ipint, tmp) {
-        liid_hash_t *h = NULL;
         int skip = 0;
         prov_agency_t *lea = NULL;
 
