@@ -74,7 +74,7 @@ static inline char *get_event_description(prov_epoll_ev_t *pev) {
     return "unknown";
 }
 
-static inline void start_mhd_daemon(provision_state_t *state) {
+void start_mhd_daemon(provision_state_t *state) {
 
     assert(state->updatesockfd >= 0);
 
@@ -90,6 +90,21 @@ static inline void start_mhd_daemon(provision_state_t *state) {
             &complete_update_request,    // TODO
             state,
             MHD_OPTION_END);
+}
+
+void init_intercept_config(prov_intercept_conf_t *state) {
+
+    state->radiusservers = NULL;
+    state->gtpservers = NULL;
+    state->sipservers = NULL;
+    state->voipintercepts = NULL;
+    state->ipintercepts = NULL;
+    state->liid_map = NULL;
+    state->leas = NULL;
+    state->defradusers = NULL;
+    state->destroy_pending = 0;
+
+    pthread_mutex_init(&(state->safelock), NULL);
 }
 
 static inline int enable_epoll_write(provision_state_t *state,
@@ -159,7 +174,7 @@ void free_openli_mediator(openli_mediator_t *med) {
     free(med);
 }
 
-static int init_prov_state(provision_state_t *state, char *configfile) {
+int init_prov_state(provision_state_t *state, char *configfile) {
 
     sigset_t sigmask;
     int ret = 0;
@@ -172,17 +187,6 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->epoll_fd = epoll_create1(0);
     state->mediators = NULL;
     state->collectors = NULL;
-
-    state->interceptconf.radiusservers = NULL;
-    state->interceptconf.gtpservers = NULL;
-    state->interceptconf.sipservers = NULL;
-    state->interceptconf.voipintercepts = NULL;
-    state->interceptconf.ipintercepts = NULL;
-    state->interceptconf.liid_map = NULL;
-    state->interceptconf.leas = NULL;
-    state->interceptconf.defradusers = NULL;
-
-    pthread_mutex_init(&(state->interceptconf.safelock), NULL);
 
     /* Three listening sockets
      *
@@ -204,6 +208,8 @@ static int init_prov_state(provision_state_t *state, char *configfile) {
     state->sslconf.ctx = NULL;
 
     state->ignorertpcomfort = 0;
+
+    init_intercept_config(&(state->interceptconf));
 
     if (parse_provisioning_config(configfile, state) == -1) {
         logger(LOG_INFO, "OpenLI provisioner: error while parsing provisioner config in %s", configfile);
@@ -346,7 +352,7 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
     return ret;
 }
 
-static void free_all_mediators(int epollfd, prov_mediator_t **mediators) {
+void free_all_mediators(int epollfd, prov_mediator_t **mediators) {
 
     prov_mediator_t *med, *medtmp;
 
@@ -359,7 +365,7 @@ static void free_all_mediators(int epollfd, prov_mediator_t **mediators) {
     }
 }
 
-static void stop_all_collectors(int epollfd, prov_collector_t **collectors) {
+void stop_all_collectors(int epollfd, prov_collector_t **collectors) {
 
     prov_collector_t *col, *coltmp;
 
@@ -371,12 +377,16 @@ static void stop_all_collectors(int epollfd, prov_collector_t **collectors) {
     }
 }
 
-static void clear_intercept_state(prov_intercept_conf_t *conf) {
+void clear_intercept_state(prov_intercept_conf_t *conf) {
 
     liid_hash_t *h, *tmp;
     prov_agency_t *h2, *tmp2;
     liagency_t *lea;
     default_radius_user_t *h3, *tmp3;
+
+    pthread_mutex_lock(&(conf->safelock));
+    conf->destroy_pending = 1;
+    pthread_mutex_unlock(&(conf->safelock));
 
     HASH_ITER(hh, conf->liid_map, h, tmp) {
         HASH_DEL(conf->liid_map, h);
@@ -406,7 +416,7 @@ static void clear_intercept_state(prov_intercept_conf_t *conf) {
     pthread_mutex_destroy(&(conf->safelock));
 }
 
-static void clear_prov_state(provision_state_t *state) {
+void clear_prov_state(provision_state_t *state) {
 
     clear_intercept_state(&(state->interceptconf));
 
@@ -1067,7 +1077,7 @@ static int accept_mediator(provision_state_t *state) {
 
 }
 
-static int start_main_listener(provision_state_t *state) {
+int start_main_listener(provision_state_t *state) {
 
     struct epoll_event ev;
     int sockfd;
@@ -1098,7 +1108,7 @@ static int start_main_listener(provision_state_t *state) {
     return sockfd;
 }
 
-static int start_mediator_listener(provision_state_t *state) {
+int start_mediator_listener(provision_state_t *state) {
     struct epoll_event ev;
     int sockfd;
 
@@ -1337,242 +1347,6 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
 
 }
 
-static inline int reload_push_socket_config(provision_state_t *currstate,
-        provision_state_t *newstate) {
-
-    struct epoll_event ev;
-    int changed = 0;
-
-    /* TODO this will trigger on a whitespace change */
-
-    if (strcmp(newstate->pushport, currstate->pushport) != 0 ||
-            (currstate->pushaddr == NULL && newstate->pushaddr != NULL) ||
-            (currstate->pushaddr != NULL && newstate->pushaddr == NULL) ||
-            (currstate->pushaddr && newstate->pushaddr &&
-             strcmp(newstate->pushaddr, currstate->pushaddr) != 0)) {
-
-        if (currstate->updatedaemon) {
-            MHD_stop_daemon(currstate->updatedaemon);
-        }
-        currstate->updatedaemon = NULL;
-
-        if (currstate->pushaddr) {
-            free(currstate->pushaddr);
-        }
-        free(currstate->pushport);
-
-        if (newstate->pushaddr) {
-            currstate->pushaddr = newstate->pushaddr;
-            newstate->pushaddr = NULL;
-        } else {
-            currstate->pushaddr = NULL;
-        }
-        currstate->pushport = newstate->pushport;
-        newstate->pushport = NULL;
-        changed = 1;
-    }
-
-    if (changed) {
-        logger(LOG_INFO,
-                "OpenLI provisioner: update socket configuration has changed.");
-        if (strcmp(currstate->pushport, "0") == 0) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: disabling update socket.");
-            logger(LOG_INFO,
-                    "OpenLI provisioner: warning -- intercept configuration can not be updated while the provisioner is running.");
-            currstate->updatesockfd = -1;
-        } else {
-            currstate->updatesockfd = create_listener(currstate->pushaddr,
-                    currstate->pushport, "update socket");
-
-            if (currstate->updatesockfd != -1) {
-                start_mhd_daemon(currstate);
-            }
-
-            if (currstate->updatesockfd == -1 || currstate->updatedaemon == NULL) {
-                logger(LOG_INFO,
-                        "OpenLI provisioner: Warning, update socket did not restart. Will not be able to receive live updates.");
-                return -1;
-            }
-        }
-        return 1;
-    }
-    return 0;
-
-}
-
-static inline int reload_mediator_socket_config(provision_state_t *currstate,
-        provision_state_t *newstate) {
-
-    struct epoll_event ev;
-
-    /* TODO this will trigger on a whitespace change */
-    if (strcmp(newstate->mediateaddr, currstate->mediateaddr) != 0 ||
-            strcmp(newstate->mediateport, currstate->mediateport) != 0) {
-
-        free_all_mediators(currstate->epoll_fd, &(currstate->mediators));
-
-        if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
-                currstate->mediatorfd->fd, &ev) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: Failed to remove mediator fd from epoll: %s.",
-                    strerror(errno));
-            return -1;
-        }
-
-        close(currstate->mediatorfd->fd);
-        free(currstate->mediatorfd);
-        free(currstate->mediateaddr);
-        free(currstate->mediateport);
-        currstate->mediateaddr = strdup(newstate->mediateaddr);
-        currstate->mediateport = strdup(newstate->mediateport);
-
-        logger(LOG_INFO,
-                "OpenLI provisioner: mediation socket configuration has changed.");
-        if (start_mediator_listener(currstate) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: Warning, mediation socket did not restart. Will not be able to control mediators.");
-            return -1;
-        }
-        return 1;
-    }
-    return 0;
-}
-
-static inline int reload_voipoptions_config(provision_state_t *currstate,
-        provision_state_t *newstate) {
-
-    if (currstate->ignorertpcomfort != newstate->ignorertpcomfort) {
-        currstate->ignorertpcomfort = newstate->ignorertpcomfort;
-        if (currstate->ignorertpcomfort) {
-            logger(LOG_INFO, "OpenLI: provisioner ignoring RTP comfort noise for all VOIP intercepts");
-        } else {
-            logger(LOG_INFO, "OpenLI: provisioner intercepting RTP comfort noise for all VOIP intercepts");
-        }
-        return 1;
-    }
-
-    return 0;
-}
-
-static inline int reload_collector_socket_config(provision_state_t *currstate,
-        provision_state_t *newstate) {
-
-    struct epoll_event ev;
-
-    /* TODO this will trigger on a whitespace change */
-    if (strcmp(newstate->listenaddr, currstate->listenaddr) != 0 ||
-            strcmp(newstate->listenport, currstate->listenport) != 0) {
-
-        logger(LOG_INFO,
-                "OpenLI provisioner: collector listening socket configuration has changed.");
-        stop_all_collectors(currstate->epoll_fd, &(currstate->collectors));
-
-        if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
-                currstate->clientfd->fd, &ev) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: Failed to remove mediator fd from epoll: %s.",
-                    strerror(errno));
-            return -1;
-        }
-
-        close(currstate->clientfd->fd);
-        free(currstate->clientfd);
-        free(currstate->listenaddr);
-        free(currstate->listenport);
-        currstate->listenaddr = strdup(newstate->listenaddr);
-        currstate->listenport = strdup(newstate->listenport);
-
-        if (start_main_listener(currstate) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: Warning, listening socket did not restart. Will not be able to accept collector clients.");
-            return -1;
-        }
-        return 1;
-    }
-    return 0;
-}
-
-static int reload_provisioner_config(provision_state_t *currstate) {
-
-    provision_state_t newstate;
-    int mediatorchanged = 0;
-    int clientchanged = 0;
-    int pushchanged = 0;
-    int leachanged = 0;
-    int tlschanged = 0;
-    int voipoptschanged = 0;
-
-    if (init_prov_state(&newstate, currstate->conffile) == -1) {
-        logger(LOG_INFO,
-                "OpenLI: Error reloading config file for provisioner.");
-        return -1;
-    }
-
-    /* Only make changes if the relevant configuration has changed, so as
-     * to minimise interruptions.
-     */
-    mediatorchanged = reload_mediator_socket_config(currstate, &newstate);
-    if (mediatorchanged == -1) {
-        return -1;
-    }
-
-    pushchanged = reload_push_socket_config(currstate, &newstate);
-    if (pushchanged == -1) {
-        return -1;
-    }
-
-    clientchanged = reload_collector_socket_config(currstate, &newstate);
-    if (clientchanged == -1) {
-        return -1;
-    }
-
-    tlschanged = reload_ssl_config(&(currstate->sslconf), &(newstate.sslconf));
-    if (tlschanged == -1) {
-        return -1;
-    }
-
-    voipoptschanged = reload_voipoptions_config(currstate, &newstate);
-    if (voipoptschanged && !clientchanged) {
-        voipintercept_t *vint, *tmp;
-
-        pthread_mutex_lock(&(currstate->interceptconf.safelock));
-        HASH_ITER(hh_liid, currstate->interceptconf.voipintercepts, vint, tmp) {
-            if (currstate->ignorertpcomfort) {
-                vint->options |= (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
-            } else {
-                vint->options &= ~(1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
-            }
-
-            modify_existing_intercept_options(currstate, (void *)vint,
-                    OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
-        }
-        pthread_mutex_unlock(&(currstate->interceptconf.safelock));
-    }
-
-    if (tlschanged != 0) {
-        if (!mediatorchanged) {
-            free_all_mediators(currstate->epoll_fd, &(currstate->mediators));
-            mediatorchanged = 1;
-        }
-        if (!clientchanged) {
-            stop_all_collectors(currstate->epoll_fd, &(currstate->collectors));
-            clientchanged = 1;
-        }
-    }
-
-    if (mediatorchanged && !clientchanged) {
-        /* Tell all collectors to drop their mediators until further notice */
-        disconnect_mediators_from_collectors(currstate);
-
-    }
-
-    clear_prov_state(&newstate);
-
-    return 0;
-
-}
-
 static void run(provision_state_t *state) {
 
     int i, nfds;
@@ -1729,6 +1503,9 @@ int main(int argc, char *argv[]) {
     if (provstate.interceptconffile == NULL) {
         provstate.interceptconffile = strdup(DEFAULT_INTERCEPT_CONFIG_FILE);
     }
+
+    init_intercept_config(&(provstate.interceptconf));
+
     if ((ret = parse_intercept_config(provstate.interceptconffile,
             &(provstate.interceptconf))) < 0) {
         /* -2 means the config file was empty, but this is allowed for
