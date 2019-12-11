@@ -454,6 +454,10 @@ static int reload_intercept_config(provision_state_t *currstate,
     currstate->interceptconf.destroy_pending = 1;
     pthread_mutex_unlock(&(currstate->interceptconf.safelock));
 
+    if (map_intercepts_to_leas(&(newconf)) < 0) {
+        return -1;
+    }
+
     /* Check each section of the config for changes and update the
      * collectors and mediators accordingly.
      */
