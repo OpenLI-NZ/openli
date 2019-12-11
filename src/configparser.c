@@ -220,7 +220,7 @@ static int parse_defradusers_list(prov_intercept_conf_t *state,
 
         defuser->name = strdup((char *)node->data.scalar.value);
         defuser->namelen = strlen(defuser->name);
-        defuser->awaitingconfirm = 0;
+        defuser->awaitingconfirm = 1;
 
         HASH_FIND(hh, state->defradusers, defuser->name, defuser->namelen,
                 found);

@@ -119,7 +119,6 @@ struct internet_user {
     UT_hash_handle hh;
 };
 
-
 struct access_plugin {
     const char *name;
     uint8_t access_type;
@@ -156,6 +155,8 @@ struct access_plugin {
     void (*destroy_session_data)(access_plugin_t *p, access_session_t *sess);
 
     uint32_t (*get_packet_sequence)(access_plugin_t *p, void *parseddata);
+    uint8_t *(*get_ip_contents)(access_plugin_t *p, void *parseddata,
+            uint16_t *iplen, int iteration);
 
     /* APIs that are internally used but should be required by all plugins
      * so may as well enforce them as part of the plugin definition.

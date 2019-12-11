@@ -122,6 +122,7 @@ typedef struct mediator_agency {
     char *agencyid;
     int awaitingconfirm;
     int disabled;
+    int disabled_msg;
     handover_t *hi2;
     handover_t *hi3;
 } mediator_agency_t;

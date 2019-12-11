@@ -191,6 +191,7 @@ typedef struct prov_intercept_conf {
     /** A set of default RADIUS user names */
     default_radius_user_t *defradusers;
 
+    int destroy_pending;
     /** A mutex to protect the intercept config from race conditions */
     pthread_mutex_t safelock;
 } prov_intercept_conf_t;
@@ -274,8 +275,23 @@ struct prov_sock_state {
     int clientrole;
 };
 
+/* Implemented in provisioner.c, but included here to be available
+ * inside hup_reload.c
+ */
+int init_prov_state(provision_state_t *state, char *configfile);
+void clear_prov_state(provision_state_t *state);
+void free_all_mediators(int epollfd, prov_mediator_t **mediators);
+void stop_all_collectors(int epollfd, prov_collector_t **collectors);
+int start_main_listener(provision_state_t *state);
+int start_mediator_listener(provision_state_t *state);
+void start_mhd_daemon(provision_state_t *state);
+void clear_intercept_state(prov_intercept_conf_t *conf);
+void init_intercept_config(prov_intercept_conf_t *conf);
+
+/* Implemented in configwriter.c */
 int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf);
 
+/* Implemented in clientupdates.c */
 int announce_default_radius_username(provision_state_t *state,
         default_radius_user_t *raduser);
 int withdraw_default_radius_username(provision_state_t *state,
@@ -309,6 +325,11 @@ int announce_single_intercept(provision_state_t *state,
         void *cept, int (*sendfunc)(net_buffer_t *, void *));
 liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
         char *liid, char *agency);
+
+/* Implemented in hup_reload.c */
+int reload_provisioner_config(provision_state_t *state);
+
+
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -1914,6 +1914,15 @@ static uint32_t radius_get_packet_sequence(access_plugin_t *p,
     return DERIVE_REQUEST_ID(raddata, raddata->msgtype);
 }
 
+static uint8_t *radius_get_ip_contents(access_plugin_t *p, void *parseddata,
+        uint16_t *iplen, int iteration) {
+
+    /* TODO */
+
+    *iplen = 0;
+    return NULL;
+}
+
 static access_plugin_t radiusplugin = {
 
     "RADIUS",
@@ -1931,6 +1940,7 @@ static access_plugin_t radiusplugin = {
     //radius_create_iri_from_packet,
     radius_destroy_session_data,
     radius_get_packet_sequence,
+    radius_get_ip_contents,
 };
 
 access_plugin_t *get_radius_access_plugin(void) {
