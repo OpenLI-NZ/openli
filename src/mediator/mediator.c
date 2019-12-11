@@ -796,9 +796,12 @@ static void connect_agencies(mediator_state_t *state) {
         n = n->next;
 
         if (ag->disabled) {
-            logger(LOG_INFO,
+            if (!ag->disabled_msg) {
+                logger(LOG_INFO,
                     "OpenLI Mediator: cannot connect to agency %s because it is disabled",
                     ag->agencyid);
+                ag->disabled_msg = 1;
+            }
             continue;
         }
 
@@ -1118,6 +1121,7 @@ static void create_new_agency(mediator_state_t *state, liagency_t *lea) {
     newagency.agencyid = lea->agencyid;
     newagency.awaitingconfirm = 0;
     newagency.disabled = 0;
+    newagency.disabled_msg = 0;
     newagency.hi2 = create_new_handover(lea->hi2_ipstr, lea->hi2_portstr,
             HANDOVER_HI2, lea->keepalivefreq, lea->keepalivewait);
     newagency.hi3 = create_new_handover(lea->hi3_ipstr, lea->hi3_portstr,
@@ -1291,6 +1295,7 @@ static int receive_lea_withdrawal(mediator_state_t *state, uint8_t *msgbody,
 
         if (strcmp(x->agencyid, lea.agencyid) == 0) {
             x->disabled = 1;
+            x->disabled_msg = 0;
             disconnect_handover(state, x->hi2);
             disconnect_handover(state, x->hi3);
             break;
@@ -1336,6 +1341,7 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
             if ((ret = has_handover_changed(state, x->hi2, lea.hi2_ipstr,
                     lea.hi2_portstr, x, &lea, mas)) == -1) {
                 x->disabled = 1;
+                x->disabled_msg = 0;
                 goto freelea;
             } else if (ret == 1) {
                 lea.hi2_portstr = NULL;
@@ -1346,6 +1352,7 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
             if ((ret = has_handover_changed(state, x->hi3, lea.hi3_ipstr,
                     lea.hi3_portstr, x, &lea, mas)) == -1) {
                 x->disabled = 1;
+                x->disabled_msg = 0;
                 goto freelea;
             } else if (ret == 1) {
                 lea.hi3_portstr = NULL;
