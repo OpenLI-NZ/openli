@@ -136,7 +136,7 @@ static int liid_hash_sort(liid_hash_t *a, liid_hash_t *b) {
     return strcmp(a->liid, b->liid);
 }
 
-static int map_intercepts_to_leas(prov_intercept_conf_t *conf) {
+int map_intercepts_to_leas(prov_intercept_conf_t *conf) {
 
     int failed = 0;
     ipintercept_t *ipint, *iptmp;

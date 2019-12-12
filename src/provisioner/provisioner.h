@@ -287,6 +287,7 @@ int start_mediator_listener(provision_state_t *state);
 void start_mhd_daemon(provision_state_t *state);
 void clear_intercept_state(prov_intercept_conf_t *conf);
 void init_intercept_config(prov_intercept_conf_t *conf);
+int map_intercepts_to_leas(prov_intercept_conf_t *conf);
 
 /* Implemented in configwriter.c */
 int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf);

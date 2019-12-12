@@ -609,9 +609,11 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
         return 0;
     }
 
-    if (ms->pending_ka == NULL) {
+    if (ms->pending_ka == NULL && get_buffered_amount(&(ms->buf)) == 0) {
         /* Only create a new KA message if we have sent the last one we
          * had queued up.
+         * Also only create one if we don't already have data to send. We
+         * should only be sending keep alives if the socket is idle.
          */
         if (ms->encoder == NULL) {
             ms->encoder = init_wandder_encoder();
@@ -672,25 +674,15 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
             ms->outenabled = 1;
         }
 
-        /*
-        logger(LOG_INFO, "OpenLI Mediator: queued keep alive %ld for %s:%s HI%d, event fd=%d",
+/*
+        logger(LOG_INFO, "OpenLI Mediator: queued keep alive %ld for %s:%s HI%d, event fd=%d %u",
                 ms->lastkaseq, ms->parent->ipstr, ms->parent->portstr,
-                ms->parent->handover_type, mev->fd);
-        */
-        if (start_keepalive_timer(state, ms->parent->aliverespev,
-                ms->kawait) == -1) {
-            if (ms->parent->disconnect_msg == 0) {
-                logger(LOG_INFO,
-                    "OpenLI Mediator: unable to start keepalive response timer: %s",
-                    strerror(errno));
-            }
-            return -1;
-        }
-        if (ms->parent->aliverespev) {
-            ms->karesptimer_fd = ms->parent->aliverespev->fd;
-        }
+                ms->parent->handover_type, mev->fd,
+                get_buffered_amount(&(ms->buf)));
+
 
     }
+    */
 
     halt_mediator_timer(state, mev);
     if (start_keepalive_timer(state, mev, ms->kafreq) == -1) {
@@ -1535,7 +1527,23 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
             /* Sent the whole thing successfully */
             wandder_release_encoded_result(NULL, mas->pending_ka);
             mas->pending_ka = NULL;
-            if (ho->aliverespev == NULL && ho->disconnect_msg == 1) {
+
+/*
+            logger(LOG_INFO, "successfully sent keep alive to %s:%s HI%d",
+                    ho->ipstr, ho->portstr, ho->handover_type);
+*/
+            if (start_keepalive_timer(state, ho->aliverespev,
+                        mas->kawait) == -1) {
+                if (ho->disconnect_msg == 0) {
+                    logger(LOG_INFO,
+                            "OpenLI Mediator: unable to start keepalive response timer: %s",
+                            strerror(errno));
+                }
+                return -1;
+            }
+            if (ho->aliverespev) {
+                mas->karesptimer_fd = ho->aliverespev->fd;
+            } else if (ho->aliverespev == NULL && ho->disconnect_msg == 1) {
                 /* Not expecting a response, so we have to assume that
                  * the connection is good again as soon as we successfully
                  * send a KA */
@@ -1557,6 +1565,10 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
                     mas->pending_ka->len - ret);
             mas->pending_ka->len -= ret;
         }
+        return 0;
+    }
+
+    if (ho->aliverespev && mas->karesptimer_fd != -1) {
         return 0;
     }
 
@@ -1820,7 +1832,9 @@ static int trigger_ka_failure(mediator_state_t *state, med_epoll_ev_t *mev) {
     }
 
 
+    pthread_mutex_lock(&(state->agency_mutex));
     disconnect_handover(state, ms->parent);
+    pthread_mutex_unlock(&(state->agency_mutex));
     return 0;
 }
 
@@ -2183,7 +2197,9 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             }
             if (ret == -1) {
                 med_agency_state_t *mas = (med_agency_state_t *)(mev->state);
+                pthread_mutex_lock(&(state->agency_mutex));
                 disconnect_handover(state, mas->parent);
+                pthread_mutex_unlock(&(state->agency_mutex));
             }
             break;
 
