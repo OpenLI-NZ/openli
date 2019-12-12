@@ -681,8 +681,8 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
                 get_buffered_amount(&(ms->buf)));
 
 
-    }
     */
+    }
 
     halt_mediator_timer(state, mev);
     if (start_keepalive_timer(state, mev, ms->kafreq) == -1) {
