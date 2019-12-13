@@ -27,6 +27,7 @@
 #ifndef OPENLI_PROV_UPDATESERVER_H_
 #define OPENLI_PROV_UPDATESERVER_H_
 
+#include <json-c/json.h>
 #include <microhttpd.h>
 #include "provisioner.h"
 
@@ -65,6 +66,8 @@ static const char *get_not_implemented =
 static const char *unsupported_operation =
         "<html><body>OpenLI provisioner does not support that type of request.</body></html>\n";
 
+static const char *get404 =
+        "<html><body>OpenLI provisioner was unable to find the requested resource in its running intercept configuration.</body></html>\n";
 
 int handle_update_request(void *cls, struct MHD_Connection *conn,
         const char *url, const char *method, const char *version,
@@ -96,5 +99,16 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
 int modify_agency(update_con_info_t *cinfo, provision_state_t *state);
 int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state);
 int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state);
+
+struct json_object *get_agency(update_con_info_t *cinfo,
+        provision_state_t *state, char *target);
+struct json_object *get_coreservers(update_con_info_t *cinfo,
+        provision_state_t *state, uint8_t srvtype);
+struct json_object *get_default_radius(update_con_info_t *cinfo,
+        provision_state_t *state);
+struct json_object *get_voip_intercept(update_con_info_t *cinfo,
+        provision_state_t *state, char *target);
+struct json_object *get_ip_intercept(update_con_info_t *cinfo,
+        provision_state_t *state, char *target);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

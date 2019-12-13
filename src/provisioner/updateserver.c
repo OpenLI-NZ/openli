@@ -60,36 +60,66 @@ static int send_http_page(struct MHD_Connection *connection, const char *page,
     return ret;
 }
 
-static int update_configuration_delete(update_con_info_t *cinfo,
-        provision_state_t *state, const char *url) {
+static int send_json_object(struct MHD_Connection *connection,
+        json_object *jobj) {
 
-    int ret = 0;
-    char *urlcopy = strdup(url);
+    int ret;
+    struct MHD_Response *resp;
+    const char *jsonstr;
+
+    if (jobj) {
+        jsonstr = json_object_to_json_string(jobj);
+        if (!jsonstr) {
+            return MHD_NO;
+        }
+
+        resp = MHD_create_response_from_buffer(strlen(jsonstr), (void *)jsonstr,
+                MHD_RESPMEM_MUST_COPY);
+        if (!resp) {
+            return MHD_NO;
+        }
+
+        MHD_add_response_header(resp, MHD_HTTP_HEADER_CONTENT_TYPE,
+                "application/json");
+        ret = MHD_queue_response(connection, MHD_HTTP_OK, resp);
+    } else {
+
+        resp = MHD_create_response_from_buffer(strlen(get404), (void *)get404,
+                MHD_RESPMEM_MUST_COPY);
+        if (!resp) {
+            return MHD_NO;
+        }
+
+        MHD_add_response_header(resp, MHD_HTTP_HEADER_CONTENT_TYPE,
+                "text/html");
+        ret = MHD_queue_response(connection, MHD_HTTP_NOT_FOUND, resp);
+    }
+    MHD_destroy_response(resp);
+    return ret;
+}
+
+static inline int extract_target_from_url(update_con_info_t *cinfo,
+        char *url, char *targetspace, int spacelen, char *methodtype) {
+
     char *targetstart, *targetend, *urlstart;
-    char target[4096];
 
     if (*url != '/') {
-        free(urlcopy);
-        logger(LOG_INFO, "OpenLI: invalid DELETE url from update socket: %s", url);
+        logger(LOG_INFO, "OpenLI: invalid %s url from update socket: %s",
+                methodtype, url);
         snprintf(cinfo->answerstring, 4096,
-                "%s <p>OpenLI provisioner was unable to parse delete instruction from update socket. %s",
-                update_failure_page_start, update_failure_page_end);
+                "%s <p>OpenLI provisioner was unable to parse %s instruction from update socket. %s",
+                update_failure_page_start, methodtype, update_failure_page_end);
         return -1;
     }
 
-    urlstart = urlcopy;
+    urlstart = url;
     while (*urlstart == '/') {
         urlstart ++;
     }
 
     targetstart = strchr(urlstart, '/');
     if (targetstart == NULL) {
-        free(urlcopy);
-        logger(LOG_INFO, "OpenLI: invalid DELETE url from update socket: %s", url);
-        snprintf(cinfo->answerstring, 4096,
-                "%s <p>OpenLI provisioner was unable to parse delete instruction from update socket. %s",
-                update_failure_page_start, update_failure_page_end);
-        return -1;
+        return 0;
     }
 
     while (*(targetstart + 1) == '/') {
@@ -98,17 +128,39 @@ static int update_configuration_delete(update_con_info_t *cinfo,
 
     targetend = strchrnul(targetstart + 1, '/');
 
-    if (targetend - targetstart >= 4096) {
-        free(urlcopy);
-        logger(LOG_INFO, "OpenLI: invalid DELETE url from update socket: %s", url);
+    if (targetend - targetstart >= spacelen) {
+        logger(LOG_INFO, "OpenLI: invalid %s url from update socket: %s",
+                methodtype, url);
         snprintf(cinfo->answerstring, 4096,
-                "%s <p>OpenLI provisioner was unable to parse delete instruction from update socket. %s",
-                update_failure_page_start, update_failure_page_end);
+                "%s <p>OpenLI provisioner was unable to parse %s instruction from update socket. %s",
+                update_failure_page_start, methodtype, update_failure_page_end);
         return -1;
     }
 
-    memcpy(target, targetstart + 1, targetend - targetstart - 1);
-    target[targetend - (targetstart + 1)] = '\0';
+    memcpy(targetspace, targetstart + 1, targetend - targetstart - 1);
+    targetspace[targetend - (targetstart + 1)] = '\0';
+    return 1;
+}
+
+static int update_configuration_delete(update_con_info_t *cinfo,
+        provision_state_t *state, const char *url) {
+
+    int ret = 0;
+    char *urlcopy = strdup(url);
+    char target[4096];
+
+    if ((ret = extract_target_from_url(cinfo, urlcopy, target, 4096, "DELETE"))
+             < 0) {
+        free(urlcopy);
+        return -1;
+    }
+
+    if (ret == 0) {
+        /* no target specified, just return quietly? */
+        free(urlcopy);
+        return ret;
+    }
+    ret = 0;
 
     pthread_mutex_lock(&(state->interceptconf.safelock));
     switch(cinfo->target) {
@@ -144,6 +196,59 @@ static int update_configuration_delete(update_con_info_t *cinfo,
     emit_intercept_config(state->interceptconffile, &(state->interceptconf));
     free(urlcopy);
     return ret;
+}
+
+static json_object *create_get_response(update_con_info_t *cinfo,
+        provision_state_t *state, const char *url) {
+
+    json_object *jobj = NULL;
+    int ret = 0;
+    char *tgtptr = NULL;
+    char *urlcopy = strdup(url);
+    char target[4096];
+
+    if ((ret = extract_target_from_url(cinfo, urlcopy, target, 4096, "GET"))
+            < 0) {
+        free(urlcopy);
+        return NULL;
+    }
+
+    if (ret > 0) {
+        tgtptr = target;
+    }
+    ret = 0;
+
+    pthread_mutex_lock(&(state->interceptconf.safelock));
+    switch(cinfo->target) {
+        case TARGET_AGENCY:
+            jobj = get_agency(cinfo, state, tgtptr);
+            break;
+        case TARGET_SIPSERVER:
+            jobj = get_coreservers(cinfo, state, OPENLI_CORE_SERVER_SIP);
+            break;
+        case TARGET_RADIUSSERVER:
+            jobj = get_coreservers(cinfo, state, OPENLI_CORE_SERVER_RADIUS);
+            break;
+        case TARGET_DEFAULTRADIUS:
+            jobj = get_default_radius(cinfo, state);
+            break;
+        case TARGET_GTPSERVER:
+            jobj = get_coreservers(cinfo, state, OPENLI_CORE_SERVER_GTP);
+            break;
+        case TARGET_IPINTERCEPT:
+            jobj = get_ip_intercept(cinfo, state, tgtptr);
+            break;
+        case TARGET_VOIPINTERCEPT:
+            jobj = get_voip_intercept(cinfo, state, tgtptr);
+            break;
+    }
+
+
+    /* Safe to unlock before emitting, since all accesses should be reads
+     * anyway... */
+    pthread_mutex_unlock(&(state->interceptconf.safelock));
+    free(urlcopy);
+    return jobj;
 }
 
 
@@ -251,6 +356,7 @@ int handle_update_request(void *cls, struct MHD_Connection *conn,
 
     update_con_info_t *cinfo;
     provision_state_t *provstate = (provision_state_t *)cls;
+    int ret;
 
     if (*con_cls == NULL) {
         cinfo = calloc(1, sizeof(update_con_info_t));
@@ -290,6 +396,7 @@ int handle_update_request(void *cls, struct MHD_Connection *conn,
             snprintf(cinfo->answerstring, 4096, "%s", update_success_page);
         } else {
             cinfo->connectiontype = MICRO_GET;
+            cinfo->answercode = MHD_HTTP_OK;
         }
 
         *con_cls = (void *)cinfo;
@@ -298,7 +405,16 @@ int handle_update_request(void *cls, struct MHD_Connection *conn,
 
 
     if (strcmp(method, "GET") == 0) {
-        return send_http_page(conn, get_not_implemented, MHD_HTTP_OK);
+        json_object *respjson = NULL;
+        cinfo = (update_con_info_t *)(*con_cls);
+
+        respjson = create_get_response(cinfo, provstate, url);
+        ret = send_json_object(conn, respjson);
+
+        if (respjson) {
+            json_object_put(respjson);
+        }
+        return ret;
     } else if (strcmp(method, "POST") == 0 || strcmp(method, "PUT") == 0) {
         cinfo = (update_con_info_t *)(*con_cls);
 
