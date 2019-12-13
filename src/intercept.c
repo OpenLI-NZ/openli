@@ -603,6 +603,47 @@ uint32_t map_radius_ident_string(char *confstr) {
     return 0;
 }
 
+const char *get_radius_ident_string(uint32_t radoptions) {
+
+    if (radoptions == (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID)) {
+        return "csid";
+    }
+
+    if (radoptions == (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER)) {
+        return "user";
+    }
+
+    return "any";
+}
+
+const char *get_access_type_string(internet_access_method_t method) {
+
+    switch(method) {
+        case INTERNET_ACCESS_TYPE_DIALUP:
+            return "dialup";
+        case INTERNET_ACCESS_TYPE_XDSL:
+            return "xDSL";
+        case INTERNET_ACCESS_TYPE_CABLEMODEM:
+            return "cable";
+        case INTERNET_ACCESS_TYPE_LAN:
+            return "LAN";
+        case INTERNET_ACCESS_TYPE_WIRELESS_LAN:
+            return "wifi";
+        case INTERNET_ACCESS_TYPE_FIBER:
+            return "fiber";
+        case INTERNET_ACCESS_TYPE_WIMAX:
+            return "wimax";
+        case INTERNET_ACCESS_TYPE_SATELLITE:
+            return "satellite";
+        case INTERNET_ACCESS_TYPE_MOBILE:
+            return "mobile";
+        case INTERNET_ACCESS_TYPE_WIRELESS_OTHER:
+            return "wireless-other";
+    }
+
+    return "undefined";
+}
+
 internet_access_method_t map_access_type_string(char *confstr) {
 
     if (strcasecmp(confstr, "dialup") == 0 ||
