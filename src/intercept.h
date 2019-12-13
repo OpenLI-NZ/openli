@@ -291,6 +291,8 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
 int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
         ipintercept_t *ipint);
 
+const char *get_access_type_string(internet_access_method_t method);
+const char *get_radius_ident_string(uint32_t radoptions);
 internet_access_method_t map_access_type_string(char *confstr);
 uint32_t map_radius_ident_string(char *confstr);
 #endif
