@@ -37,19 +37,34 @@
 #define GTP_FLUSH_OLD_PKT_FREQ 180
 
 enum {
-    GTP_IE_IMSI = 1,
-    GTP_IE_CAUSE = 2,
-    GTP_IE_APNAME = 71,
-    GTP_IE_MEI = 75,
-    GTP_IE_MSISDN = 76,
-    GTP_IE_PDN_ALLOC = 79,
-    GTP_IE_ULI = 86,
-    GTP_IE_FTEID = 87,
+    GTPV1_IE_CAUSE = 1,
+    GTPV1_IE_IMSI = 2,
+    GTPV1_IE_TEID_CTRL = 17,
+    GTPV1_IE_END_USER_ADDRESS = 128,
+    GTPV1_IE_APNAME = 131,
+    GTPV1_IE_MSISDN = 134,
+    GTPV1_IE_ULI = 152,
+    GTPV1_IE_MEI = 154,
+};
+
+enum {
+    GTPV2_IE_IMSI = 1,
+    GTPV2_IE_CAUSE = 2,
+    GTPV2_IE_APNAME = 71,
+    GTPV2_IE_MEI = 75,
+    GTPV2_IE_MSISDN = 76,
+    GTPV2_IE_PDN_ALLOC = 79,
+    GTPV2_IE_ULI = 86,
+    GTPV2_IE_FTEID = 87,
 };
 
 /* TODO add more cause values here */
 enum {
-    GTP_CAUSE_REQUEST_ACCEPTED = 16,
+    GTPV2_CAUSE_REQUEST_ACCEPTED = 16,
+};
+
+enum {
+    GTPV1_CAUSE_REQUEST_ACCEPTED = 128,
 };
 
 enum {
@@ -58,11 +73,28 @@ enum {
 
 /* XXX do we need to support other message types here, e.g. for IRI-Report? */
 enum {
+    GTPV1_CREATE_PDP_CONTEXT_REQUEST = 16,
+    GTPV1_CREATE_PDP_CONTEXT_RESPONSE = 17,
+    GTPV1_UPDATE_PDP_CONTEXT_REQUEST = 18,
+    GTPV1_UPDATE_PDP_CONTEXT_RESPONSE = 19,
+    GTPV1_DELETE_PDP_CONTEXT_REQUEST = 20,
+    GTPV1_DELETE_PDP_CONTEXT_RESPONSE = 21,
+
     GTPV2_CREATE_SESSION_REQUEST = 32,
     GTPV2_CREATE_SESSION_RESPONSE = 33,
     GTPV2_DELETE_SESSION_REQUEST = 36,
     GTPV2_DELETE_SESSION_RESPONSE = 37,
 };
+
+typedef struct gtpv1_header {
+    uint8_t octet1;
+    uint8_t msgtype;
+    uint16_t msglen;
+    uint32_t teid;
+    uint16_t seqno;
+    uint8_t npdu;
+    uint8_t next_ext;
+} PACKED gtpv1_header_t;
 
 typedef struct gtpv2_header_teid {
     uint8_t octet1;
@@ -122,6 +154,7 @@ typedef struct gtp_saved_packet gtp_saved_pkt_t;
 
 struct gtp_saved_packet {
     uint64_t reqid;
+    uint8_t version;
     uint8_t type;
     uint8_t applied;
     double tvsec;
@@ -334,23 +367,38 @@ static void gtp_destroy_parsed_data(access_plugin_t *p, void *parsed) {
     }
 }
 
-static inline bool interesting_info_element(uint8_t ietype) {
-    switch(ietype) {
-        case GTP_IE_IMSI:
-        case GTP_IE_FTEID:
-        case GTP_IE_MSISDN:
-        case GTP_IE_PDN_ALLOC:
-        case GTP_IE_CAUSE:
-        case GTP_IE_MEI:
-        case GTP_IE_APNAME:
-        case GTP_IE_ULI:
-            return true;
+static inline bool interesting_info_element(uint8_t gtpv, uint8_t ietype) {
+
+    if (gtpv == 2) {
+        switch(ietype) {
+            case GTPV2_IE_IMSI:
+            case GTPV2_IE_FTEID:
+            case GTPV2_IE_MSISDN:
+            case GTPV2_IE_PDN_ALLOC:
+            case GTPV2_IE_CAUSE:
+            case GTPV2_IE_MEI:
+            case GTPV2_IE_APNAME:
+            case GTPV2_IE_ULI:
+                return true;
+        }
+    } else if (gtpv == 1) {
+        switch (ietype) {
+            case GTPV1_IE_CAUSE:
+            case GTPV1_IE_IMSI:
+            case GTPV1_IE_TEID_CTRL:
+            case GTPV1_IE_END_USER_ADDRESS:
+            case GTPV1_IE_APNAME:
+            case GTPV1_IE_MSISDN:
+            case GTPV1_IE_ULI:
+            case GTPV1_IE_MEI:
+                return true;
+        }
     }
 
     return false;
 }
 
-static inline gtp_infoelem_t *create_new_gtp_infoel(uint8_t ietype,
+static inline gtp_infoelem_t *create_new_gtpv2_infoel(uint8_t ietype,
         uint16_t ielen, uint8_t *ieptr) {
 
     gtp_infoelem_t *el;
@@ -367,6 +415,34 @@ static inline gtp_infoelem_t *create_new_gtp_infoel(uint8_t ietype,
     return el;
 }
 
+static inline gtp_infoelem_t *create_new_gtpv1_infoel(uint8_t ietype,
+        uint16_t ielen, uint8_t *ieptr) {
+
+    gtp_infoelem_t *el;
+
+    el = (gtp_infoelem_t *)calloc(1, sizeof(gtp_infoelem_t));
+
+    el->ietype = ietype;
+    el->ielength = ielen;
+    el->ieflags = 0;
+    el->iecontent = malloc(ielen);
+    el->next = NULL;
+
+    if (ietype & 0x80) {
+        memcpy(el->iecontent, ieptr + 3, ielen);
+    } else {
+        memcpy(el->iecontent, ieptr + 1, ielen);
+    }
+    return el;
+}
+
+static inline uint32_t get_teid_from_teidctl(gtp_infoelem_t *gtpel) {
+
+    /* No flags byte in GTPv1 TEID */
+    uint32_t *ptr = (uint32_t *)(gtpel->iecontent);
+    return ntohl(*ptr);
+}
+
 static inline uint32_t get_teid_from_fteid(gtp_infoelem_t *gtpel) {
 
     /* Skip over first byte, which contains flags */
@@ -377,14 +453,15 @@ static inline uint32_t get_teid_from_fteid(gtp_infoelem_t *gtpel) {
 }
 
 static inline uint8_t get_cause_from_ie(gtp_infoelem_t *gtpel) {
-    
+
     return *((uint8_t *)(gtpel->iecontent));
 }
 
-static inline void get_gtpnum_from_ie(gtp_infoelem_t *gtpel, char *field) {
+static inline void get_gtpnum_from_ie(gtp_infoelem_t *gtpel, char *field,
+        int skipfront) {
 
     /* IMSI is encoded in a weird way :( */
-    uint8_t *ptr = gtpel->iecontent;
+    uint8_t *ptr = (gtpel->iecontent + skipfront);
     int i, j;
 
     j = 0;
@@ -408,7 +485,119 @@ static inline void get_gtpnum_from_ie(gtp_infoelem_t *gtpel, char *field) {
     field[j] = '\0';
 }
 
-static void walk_gtp_ies(gtp_parsed_t *parsedpkt, uint8_t *ptr, uint32_t rem,
+static inline uint16_t gtpv1_lookup_ielen(uint8_t ietype) {
+
+    /* The fact that this function has to exist annoys me so much! */
+
+    /* Ref: 3GPP TS 29.060 -- Information Elements table */
+    switch (ietype) {
+        case 1: return 1;
+        case 2: return 8;
+        case 3: return 6;
+        case 4: return 4;
+        case 5: return 4;
+        case 8: return 1;
+        case 9: return 28;
+        case 11: return 1;
+        case 12: return 3;
+        case 13: return 1;
+        case 14: return 1;
+        case 15: return 1;
+        case 16: return 4;
+        case 17: return 4;
+        case 18: return 5;
+        case 19: return 1;
+        case 20: return 1;
+        case 21: return 1;
+        case 22: return 9;
+        case 23: return 1;
+        case 24: return 1;
+        case 25: return 2;
+        case 26: return 2;
+        case 27: return 2;
+        case 28: return 2;
+        case 29: return 1;
+        case 127: return 4;
+    }
+
+    return 0;
+}
+
+static int walk_gtpv1_ies(gtp_parsed_t *parsedpkt, uint8_t *ptr, uint32_t rem,
+        uint16_t gtplen) {
+
+    uint16_t used = 0;
+
+    while (rem > 2 && used < gtplen) {
+        uint8_t ietype;
+        uint16_t ielen;
+        gtp_infoelem_t *gtpel;
+
+        ietype = *ptr;
+
+        if (ietype & 0x80) {
+            /* IE is a TLV IE */
+            ielen = ntohs(*((uint16_t *)(ptr + 1)));
+        } else {
+            /* IE is a TV IE */
+            ielen = gtpv1_lookup_ielen(ietype);
+        }
+
+        if (ielen == 0) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to determine IE length for GTPv1 IE %u.",
+                    ietype);
+            logger(LOG_INFO,
+                    "OpenLI: aborting parsing of GTPv1 packet.",
+                    ietype);
+            return -1;
+        }
+
+        if (interesting_info_element(parsedpkt->version, ietype)) {
+            gtpel = create_new_gtpv1_infoel(ietype, ielen, ptr);
+            gtpel->next = parsedpkt->ies;
+            parsedpkt->ies = gtpel;
+        }
+
+        if (parsedpkt->msgtype == GTPV1_CREATE_PDP_CONTEXT_REQUEST) {
+            if (ietype == GTPV1_IE_TEID_CTRL) {
+                parsedpkt->teid = get_teid_from_teidctl(gtpel);
+            }
+            if (ietype == GTPV1_IE_IMSI) {
+                get_gtpnum_from_ie(gtpel, parsedpkt->imsi, 0);
+            }
+            if (ietype == GTPV1_IE_MSISDN) {
+                get_gtpnum_from_ie(gtpel, parsedpkt->msisdn, 1);
+            }
+        } else if (parsedpkt->msgtype == GTPV1_UPDATE_PDP_CONTEXT_REQUEST) {
+            if (ietype == GTPV1_IE_TEID_CTRL) {
+                parsedpkt->teid = get_teid_from_teidctl(gtpel);
+            }
+        } else if (parsedpkt->msgtype == GTPV1_DELETE_PDP_CONTEXT_REQUEST) {
+            if (ietype == GTPV1_IE_TEID_CTRL) {
+                parsedpkt->teid = get_teid_from_teidctl(gtpel);
+            }
+        }
+
+
+        if (ietype == GTPV1_IE_CAUSE) {
+            parsedpkt->response_cause = get_cause_from_ie(gtpel);
+        }
+
+        if (ietype & 0x80) {
+            ptr += (ielen + 3);
+            used += (ielen + 3);
+            rem -= (ielen + 3);
+        } else {
+            ptr += (ielen + 1);
+            used += (ielen + 1);
+            rem -= (ielen + 1);
+        }
+    }
+    return 0;
+}
+
+static void walk_gtpv2_ies(gtp_parsed_t *parsedpkt, uint8_t *ptr, uint32_t rem,
         uint16_t gtplen) {
 
     uint16_t used = 0;
@@ -421,29 +610,29 @@ static void walk_gtp_ies(gtp_parsed_t *parsedpkt, uint8_t *ptr, uint32_t rem,
         ietype = *ptr;
         ielen = ntohs(*((uint16_t *)(ptr + 1)));
 
-        if (interesting_info_element(ietype)) {
-            gtpel = create_new_gtp_infoel(ietype, ielen, ptr);
+        if (interesting_info_element(parsedpkt->version, ietype)) {
+            gtpel = create_new_gtpv2_infoel(ietype, ielen, ptr);
             gtpel->next = parsedpkt->ies;
             parsedpkt->ies = gtpel;
         }
 
         if (parsedpkt->msgtype == GTPV2_CREATE_SESSION_REQUEST) {
-            if (ietype == GTP_IE_FTEID) {
+            if (ietype == GTPV2_IE_FTEID) {
                 parsedpkt->teid = get_teid_from_fteid(gtpel);
             }
-            if (ietype == GTP_IE_IMSI) {
-                get_gtpnum_from_ie(gtpel, parsedpkt->imsi);
+            if (ietype == GTPV2_IE_IMSI) {
+                get_gtpnum_from_ie(gtpel, parsedpkt->imsi, 0);
             }
-            if (ietype == GTP_IE_MSISDN) {
-                get_gtpnum_from_ie(gtpel, parsedpkt->msisdn);
+            if (ietype == GTPV2_IE_MSISDN) {
+                get_gtpnum_from_ie(gtpel, parsedpkt->msisdn, 0);
             }
         } else if (parsedpkt->msgtype == GTPV2_DELETE_SESSION_REQUEST) {
-            if (ietype == GTP_IE_FTEID) {
+            if (ietype == GTPV2_IE_FTEID) {
                 parsedpkt->teid = get_teid_from_fteid(gtpel);
             }
         }
 
-        if (ietype == GTP_IE_CAUSE) {
+        if (ietype == GTPV2_IE_CAUSE) {
             parsedpkt->response_cause = get_cause_from_ie(gtpel);
         }
 
@@ -513,7 +702,48 @@ static int gtp_parse_v2_teid(gtp_global_t *glob, libtrace_packet_t *pkt,
     rem -= sizeof(gtpv2_header_teid_t);
     len -= (sizeof(gtpv2_header_teid_t) - 4);
 
-    walk_gtp_ies(glob->parsedpkt, ptr, rem, len);
+    walk_gtpv2_ies(glob->parsedpkt, ptr, rem, len);
+
+    return 0;
+}
+
+static int gtp_parse_v1_teid(gtp_global_t *glob, libtrace_packet_t *pkt,
+        uint8_t *gtpstart, uint32_t rem) {
+
+    uint8_t *ptr;
+    uint16_t len;
+
+    gtpv1_header_t *header = (gtpv1_header_t *)gtpstart;
+
+    if (rem < sizeof(gtpv1_header_t)) {
+        logger(LOG_INFO,
+                "OpenLI: GTPv1 packet did not have a complete header");
+        return -1;
+    }
+
+    len = ntohs(header->msglen);
+
+    if (len + 8 > rem) {
+        logger(LOG_INFO,
+                "OpenLI: GTPv1 packet was truncated, some IEs may be missed.");
+        logger(LOG_INFO,
+                "OpenLI: GTPv1 length was %u, but we only had %u bytes of payload.",
+                len, rem - 8);
+    }
+
+    glob->parsedpkt->origpkt = pkt;
+    glob->parsedpkt->version = 1;
+    glob->parsedpkt->msgtype = header->msgtype;
+    glob->parsedpkt->teid = ntohl(header->teid);
+    glob->parsedpkt->seqno = ntohs(header->seqno);
+
+    ptr = gtpstart + sizeof(gtpv1_header_t);
+    rem -= sizeof(gtpv1_header_t);
+    len -= (sizeof(gtpv1_header_t) - 8);
+
+    if (walk_gtpv1_ies(glob->parsedpkt, ptr, rem, len) < 0) {
+        return -1;
+    }
 
     return 0;
 }
@@ -552,50 +782,66 @@ static void *gtp_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
             return NULL;
         }
 
-        if (ethertype == TRACE_ETHERTYPE_IP) {
-            libtrace_ip_t *ip = (libtrace_ip_t *)l3;
-
-            glob->parsedpkt->serveripfamily = 4;
-
-            switch(glob->parsedpkt->msgtype) {
-                case GTPV2_CREATE_SESSION_REQUEST:
-                case GTPV2_DELETE_SESSION_REQUEST:
-                    memcpy(glob->parsedpkt->serverid, &(ip->ip_dst.s_addr), 4);
-                    break;
-                case GTPV2_CREATE_SESSION_RESPONSE:
-                case GTPV2_DELETE_SESSION_RESPONSE:
-                    memcpy(glob->parsedpkt->serverid, &(ip->ip_src.s_addr), 4);
-                    break;
-                default:
-                    glob->parsedpkt->serveripfamily = 0;
-                    break;
-            }
-        } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
-            libtrace_ip6_t *ip6 = (libtrace_ip6_t *)l3;
-
-            glob->parsedpkt->serveripfamily = 6;
-
-            switch(glob->parsedpkt->msgtype) {
-                case GTPV2_CREATE_SESSION_REQUEST:
-                case GTPV2_DELETE_SESSION_REQUEST:
-                    memcpy(glob->parsedpkt->serverid, &(ip6->ip_dst.s6_addr),
-                            16);
-                    break;
-                case GTPV2_CREATE_SESSION_RESPONSE:
-                case GTPV2_DELETE_SESSION_RESPONSE:
-                    memcpy(glob->parsedpkt->serverid, &(ip6->ip_src.s6_addr),
-                            16);
-                    break;
-                default:
-                    glob->parsedpkt->serveripfamily = 0;
-                    break;
-            }
+    } else if (((*gtpstart) & 0xe0) == 0x20) {
+        /* GTPv1 */
+        if (gtp_parse_v1_teid(glob, pkt, gtpstart, rem) < 0) {
+            return NULL;
         }
-
-
     } else {
-        /* TODO GTPv2 without TEID and GTPv1 if required */
+        /* TODO GTPv2 without TEID */
         //return NULL;
+    }
+
+    if (ethertype == TRACE_ETHERTYPE_IP) {
+        libtrace_ip_t *ip = (libtrace_ip_t *)l3;
+
+        glob->parsedpkt->serveripfamily = 4;
+
+        switch(glob->parsedpkt->msgtype) {
+            case GTPV2_CREATE_SESSION_REQUEST:
+            case GTPV2_DELETE_SESSION_REQUEST:
+            case GTPV1_CREATE_PDP_CONTEXT_REQUEST:
+            case GTPV1_UPDATE_PDP_CONTEXT_REQUEST:
+            case GTPV1_DELETE_PDP_CONTEXT_REQUEST:
+                memcpy(glob->parsedpkt->serverid, &(ip->ip_dst.s_addr), 4);
+                break;
+            case GTPV2_CREATE_SESSION_RESPONSE:
+            case GTPV2_DELETE_SESSION_RESPONSE:
+            case GTPV1_CREATE_PDP_CONTEXT_RESPONSE:
+            case GTPV1_UPDATE_PDP_CONTEXT_RESPONSE:
+            case GTPV1_DELETE_PDP_CONTEXT_RESPONSE:
+                memcpy(glob->parsedpkt->serverid, &(ip->ip_src.s_addr), 4);
+                break;
+            default:
+                glob->parsedpkt->serveripfamily = 0;
+                break;
+        }
+    } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
+        libtrace_ip6_t *ip6 = (libtrace_ip6_t *)l3;
+
+        glob->parsedpkt->serveripfamily = 6;
+
+        switch(glob->parsedpkt->msgtype) {
+            case GTPV2_CREATE_SESSION_REQUEST:
+            case GTPV2_DELETE_SESSION_REQUEST:
+            case GTPV1_CREATE_PDP_CONTEXT_REQUEST:
+            case GTPV1_UPDATE_PDP_CONTEXT_REQUEST:
+            case GTPV1_DELETE_PDP_CONTEXT_REQUEST:
+                memcpy(glob->parsedpkt->serverid, &(ip6->ip_dst.s6_addr),
+                        16);
+                break;
+            case GTPV2_CREATE_SESSION_RESPONSE:
+            case GTPV2_DELETE_SESSION_RESPONSE:
+            case GTPV1_CREATE_PDP_CONTEXT_RESPONSE:
+            case GTPV1_UPDATE_PDP_CONTEXT_RESPONSE:
+            case GTPV1_DELETE_PDP_CONTEXT_RESPONSE:
+                memcpy(glob->parsedpkt->serverid, &(ip6->ip_src.s6_addr),
+                        16);
+                break;
+            default:
+                glob->parsedpkt->serveripfamily = 0;
+                break;
+        }
     }
 
     glob->parsedpkt->tvsec = trace_get_seconds(pkt);
@@ -678,7 +924,8 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
         return uids;
     }
 
-    if (gparsed->msgtype != GTPV2_CREATE_SESSION_REQUEST) {
+    if (gparsed->msgtype != GTPV2_CREATE_SESSION_REQUEST &&
+            gparsed->msgtype != GTPV1_CREATE_PDP_CONTEXT_REQUEST) {
         gtp_saved_pkt_t *saved;
 
         saved = calloc(1, sizeof(gtp_saved_pkt_t));
@@ -687,6 +934,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
         saved->reqid = (((uint64_t)gparsed->teid) << 32) |
             ((uint64_t)gparsed->seqno);
         saved->ies = gparsed->ies;
+        saved->version = gparsed->version;
         saved->matched_session = NULL;
         saved->applied = 0;
         saved->tvsec = gparsed->tvsec;
@@ -765,7 +1013,7 @@ static void extract_gtp_assigned_ip_address(gtp_saved_pkt_t *gpkt,
 
     ie = gpkt->ies;
     while (ie) {
-        if (ie->ietype == GTP_IE_PDN_ALLOC) {
+        if (gpkt->version == 2 && ie->ietype == GTPV2_IE_PDN_ALLOC) {
             if (*((uint8_t *)(ie->iecontent)) == 0x01) {
                 /* IPv4 */
                 struct sockaddr_in *in;
@@ -823,6 +1071,39 @@ static void extract_gtp_assigned_ip_address(gtp_saved_pkt_t *gpkt,
             break;
         }
 
+        if (gpkt->version == 1 && ie->ietype == GTPV1_IE_END_USER_ADDRESS) {
+            uint16_t pdptype = ntohs(*((uint16_t *)(ie->iecontent)));
+
+            if ((pdptype & 0x0fff) == 0x0121) {
+                /* IPv4 */
+                struct sockaddr_in *in;
+
+                gsess->pdptype = htons(0x0121);
+
+                in = (struct sockaddr_in *)&(sess->sessionip.assignedip);
+                in->sin_family = AF_INET;
+                in->sin_port = 0;
+                in->sin_addr.s_addr = *((uint32_t *)(ie->iecontent + 2));
+
+                sess->sessionip.ipfamily = AF_INET;
+                sess->sessionip.prefixbits = 32;
+            } else if ((pdptype & 0x0fff) == 0x0157) {
+                /* IPv6 */
+                struct sockaddr_in6 *in6;
+
+                in6 = (struct sockaddr_in6 *)&(sess->sessionip.assignedip);
+                in6->sin6_family = AF_INET6;
+                in6->sin6_port = 0;
+                memcpy(&(in6->sin6_addr.s6_addr), ie->iecontent + 2, 16);
+
+                sess->sessionip.ipfamily = AF_INET6;
+                sess->sessionip.prefixbits = 128;
+                gsess->pdptype = htons(0x0157);
+            }
+            memcpy(&(gsess->pdpaddr), sess, sizeof(internetaccess_ip_t));
+            break;
+        }
+
         ie = ie->next;
     }
 
@@ -847,7 +1128,8 @@ static uint32_t assign_gtp_cin(uint32_t teid) {
     return 0;
 }
 
-static void copy_session_params(gtp_parsed_t *gparsed, gtp_saved_pkt_t *gpkt) {
+static void copy_session_params_v1(gtp_parsed_t *gparsed,
+        gtp_saved_pkt_t *gpkt) {
 
     gtp_session_t *gsess = gparsed->matched_session;
     gtp_infoelem_t *el;
@@ -857,24 +1139,62 @@ static void copy_session_params(gtp_parsed_t *gparsed, gtp_saved_pkt_t *gpkt) {
         uint8_t *attrptr = (uint8_t *)el->iecontent;
         uint16_t attrlen = el->ielength;
 
-
         switch(el->ietype) {
-            case GTP_IE_IMSI:
+            case GTPV1_IE_IMSI:
                 gsess->saved.imsi = calloc(1, attrlen + 1);
                 gsess->saved.imsi_len = attrlen;
                 memcpy(gsess->saved.imsi, attrptr, attrlen);
                 break;
-            case GTP_IE_MSISDN:
-                gsess->saved.msisdn = calloc(1, attrlen + 1);
-                gsess->saved.msisdn_len = attrlen;
-                memcpy(gsess->saved.msisdn, attrptr, attrlen);
+            case GTPV1_IE_MSISDN:
+                gsess->saved.msisdn = calloc(1, attrlen);
+                gsess->saved.msisdn_len = attrlen - 1;
+                memcpy(gsess->saved.msisdn, attrptr + 1, attrlen - 1);
                 break;
-            case GTP_IE_MEI:
+            case GTPV1_IE_MEI:
                 gsess->saved.imei = calloc(1, attrlen + 1);
                 gsess->saved.imei_len = attrlen;
                 memcpy(gsess->saved.imei, attrptr, attrlen);
                 break;
-            case GTP_IE_APNAME:
+            case GTPV1_IE_APNAME:
+                gsess->saved.apname = calloc(1, attrlen + 1);
+                gsess->saved.apname_len = attrlen;
+                memcpy(gsess->saved.apname, attrptr, attrlen);
+                break;
+
+        }
+
+        el = el->next;
+    }
+}
+
+static void copy_session_params_v2(gtp_parsed_t *gparsed,
+        gtp_saved_pkt_t *gpkt) {
+
+    gtp_session_t *gsess = gparsed->matched_session;
+    gtp_infoelem_t *el;
+
+    el = gpkt->ies;
+    while (el) {
+        uint8_t *attrptr = (uint8_t *)el->iecontent;
+        uint16_t attrlen = el->ielength;
+
+        switch(el->ietype) {
+            case GTPV2_IE_IMSI:
+                gsess->saved.imsi = calloc(1, attrlen + 1);
+                gsess->saved.imsi_len = attrlen;
+                memcpy(gsess->saved.imsi, attrptr, attrlen);
+                break;
+            case GTPV2_IE_MSISDN:
+                gsess->saved.msisdn = calloc(1, attrlen + 1);
+                gsess->saved.msisdn_len = attrlen;
+                memcpy(gsess->saved.msisdn, attrptr, attrlen);
+                break;
+            case GTPV2_IE_MEI:
+                gsess->saved.imei = calloc(1, attrlen + 1);
+                gsess->saved.imei_len = attrlen;
+                memcpy(gsess->saved.imei, attrptr, attrlen);
+                break;
+            case GTPV2_IE_APNAME:
                 gsess->saved.apname = calloc(1, attrlen + 1);
                 gsess->saved.apname_len = attrlen;
                 memcpy(gsess->saved.apname, attrptr, attrlen);
@@ -892,12 +1212,17 @@ static void apply_gtp_fsm_logic(gtp_parsed_t *gparsed, access_action_t *action,
     session_state_t current = gparsed->matched_session->current;
 
     if (current == SESSION_STATE_NEW &&
-            gpkt->type == GTPV2_CREATE_SESSION_REQUEST) {
+            (gpkt->type == GTPV2_CREATE_SESSION_REQUEST ||
+             gpkt->type == GTPV1_CREATE_PDP_CONTEXT_REQUEST)) {
 
         current = SESSION_STATE_AUTHING;
         *action = ACCESS_ACTION_NONE;
 
-        copy_session_params(gparsed, gpkt);
+        if (gpkt->version == 1) {
+            copy_session_params_v1(gparsed, gpkt);
+        } else {
+            copy_session_params_v2(gparsed, gpkt);
+        }
 
     } else if (current == SESSION_STATE_AUTHING &&
             gpkt->type == GTPV2_CREATE_SESSION_RESPONSE) {
@@ -913,14 +1238,33 @@ static void apply_gtp_fsm_logic(gtp_parsed_t *gparsed, access_action_t *action,
             current = SESSION_STATE_OVER;
             *action = ACCESS_ACTION_REJECT;
         }
+    } else if (current == SESSION_STATE_AUTHING &&
+            gpkt->type == GTPV1_CREATE_PDP_CONTEXT_RESPONSE) {
+
+        if (gpkt->response_cause == 128) {
+            current = SESSION_STATE_ACTIVE;
+            *action = ACCESS_ACTION_ACCEPT;
+
+            extract_gtp_assigned_ip_address(gpkt, sess,
+                    gparsed->matched_session);
+        } else if (gpkt->response_cause >= 192 && gpkt->response_cause <= 255) {
+            current = SESSION_STATE_OVER;
+            *action = ACCESS_ACTION_REJECT;
+        }
+
     } else if (current == SESSION_STATE_ACTIVE &&
-            gpkt->type == GTPV2_DELETE_SESSION_REQUEST) {
+            (gpkt->type == GTPV2_DELETE_SESSION_REQUEST ||
+             gpkt->type == GTPV1_DELETE_PDP_CONTEXT_REQUEST)) {
         current = SESSION_STATE_ENDING;
         *action = ACCESS_ACTION_NONE;
     } else if (current == SESSION_STATE_ENDING &&
-            gpkt->type == GTPV2_DELETE_SESSION_RESPONSE) {
+            (gpkt->type == GTPV2_DELETE_SESSION_RESPONSE ||
+             gpkt->type == GTPV1_DELETE_PDP_CONTEXT_RESPONSE)) {
         current = SESSION_STATE_OVER;
         *action = ACCESS_ACTION_END;
+    } else if (current == SESSION_STATE_ACTIVE &&
+            (gpkt->type == GTPV1_UPDATE_PDP_CONTEXT_RESPONSE)) {
+        *action = ACCESS_ACTION_INTERIM_UPDATE;
     }
 
     gparsed->matched_session->current = current;
@@ -938,14 +1282,15 @@ static inline access_session_t *find_matched_session(access_plugin_t *p,
 
     thissess = *sesslist;
     while (thissess != NULL) {
-        if (strcmp(thissess->sessionid, match->idstr) == 0) {
+        if (strcmp(thissess->sessionid, match->sessid) == 0) {
             break;
         }
         thissess = thissess->next;
     }
 
     if (!thissess) {
-        thissess = create_access_session(p, match->idstr, match->idstr_len);
+        thissess = create_access_session(p, match->sessid,
+                strlen(match->sessid));
         thissess->cin = assign_gtp_cin(teid);
         match->cin = thissess->cin;
 
@@ -974,6 +1319,7 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
     saved->reqid = (((uint64_t)gparsed->teid) << 32) |
             ((uint64_t)gparsed->seqno);
     saved->ies = gparsed->ies;
+    saved->version = gparsed->version;
     saved->matched_session = gparsed->matched_session;
     saved->applied = 0;
     saved->tvsec = gparsed->tvsec;
@@ -991,7 +1337,9 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
         *pval = (Word_t)saved;
 
         if (gparsed->msgtype == GTPV2_CREATE_SESSION_REQUEST ||
-                gparsed->msgtype == GTPV2_DELETE_SESSION_REQUEST) {
+                gparsed->msgtype == GTPV2_DELETE_SESSION_REQUEST ||
+                gparsed->msgtype == GTPV1_CREATE_PDP_CONTEXT_REQUEST ||
+                gparsed->msgtype == GTPV1_DELETE_PDP_CONTEXT_REQUEST) {
 
             thissess = find_matched_session(p, sesslist,
                     gparsed->matched_session, gparsed->teid);
@@ -1025,6 +1373,32 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
             gparsed->response = check;
         } else if (check->type == GTPV2_DELETE_SESSION_REQUEST &&
                 saved->type == GTPV2_DELETE_SESSION_RESPONSE) {
+            gparsed->request = check;
+            gparsed->response = saved;
+        } else if (saved->type == GTPV1_CREATE_PDP_CONTEXT_REQUEST &&
+                check->type == GTPV1_CREATE_PDP_CONTEXT_RESPONSE) {
+
+            gparsed->request = saved;
+            gparsed->response = check;
+
+        } else if (check->type == GTPV1_CREATE_PDP_CONTEXT_REQUEST &&
+                saved->type == GTPV1_CREATE_PDP_CONTEXT_RESPONSE) {
+            gparsed->request = check;
+            gparsed->response = saved;
+        } else if (saved->type == GTPV1_DELETE_PDP_CONTEXT_REQUEST &&
+                check->type == GTPV1_DELETE_PDP_CONTEXT_RESPONSE) {
+            gparsed->request = saved;
+            gparsed->response = check;
+        } else if (check->type == GTPV1_DELETE_PDP_CONTEXT_REQUEST &&
+                saved->type == GTPV1_DELETE_PDP_CONTEXT_RESPONSE) {
+            gparsed->request = check;
+            gparsed->response = saved;
+        } else if (saved->type == GTPV1_UPDATE_PDP_CONTEXT_REQUEST &&
+                check->type == GTPV1_UPDATE_PDP_CONTEXT_RESPONSE) {
+            gparsed->request = saved;
+            gparsed->response = check;
+        } else if (check->type == GTPV1_UPDATE_PDP_CONTEXT_REQUEST &&
+                saved->type == GTPV1_UPDATE_PDP_CONTEXT_RESPONSE) {
             gparsed->request = check;
             gparsed->response = saved;
         } else if (saved->type == check->type) {
@@ -1073,8 +1447,30 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
     return thissess;
 }
 
-static void parse_uli(gtp_infoelem_t *el, etsili_generic_freelist_t *freelist,
-        etsili_generic_t **params) {
+static void parse_uli_v1(gtp_infoelem_t *el,
+        etsili_generic_freelist_t *freelist, etsili_generic_t **params) {
+
+    etsili_generic_t *np;
+    uint8_t uliflags;
+    uint8_t *ptr;
+
+    uliflags = *(uint8_t *)(el->iecontent);
+    ptr = ((uint8_t *)el->iecontent) + 1;
+
+    if (uliflags == 0) {
+        np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_CGI, 7,
+                ptr);
+        HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+    } else if (uliflags == 1) {
+        np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_SAI, 7,
+                ptr);
+        HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+    }
+
+}
+
+static void parse_uli_v2(gtp_infoelem_t *el,
+        etsili_generic_freelist_t *freelist, etsili_generic_t **params) {
 
     etsili_generic_t *np;
     uint8_t uliflags;
@@ -1223,10 +1619,20 @@ static int gtp_create_pdp_generic_iri(gtp_parsed_t *gparsed,
 
 }
 
-static inline uint8_t gtp_cause_to_sm(uint8_t *gtpcause) {
+static inline uint8_t gtpv2_cause_to_sm(uint8_t *gtpcause) {
 
     switch(*gtpcause) {
-        case GTP_CAUSE_REQUEST_ACCEPTED:
+        case GTPV2_CAUSE_REQUEST_ACCEPTED:
+            return SM_CAUSE_REGULAR_DEACTIVATION;
+    }
+
+    return 0;
+}
+
+static inline uint8_t gtpv1_cause_to_sm(uint8_t *gtpcause) {
+
+    switch(*gtpcause) {
+        case GTPV1_CAUSE_REQUEST_ACCEPTED:
             return SM_CAUSE_REGULAR_DEACTIVATION;
     }
 
@@ -1249,8 +1655,11 @@ static int gtp_create_context_deactivation_iri(gtp_parsed_t *gparsed,
         uint16_t attrlen = el->ielength;
 
         switch(el->ietype) {
-            case GTP_IE_ULI:
-                parse_uli(el, freelist, params);
+            case GTPV2_IE_ULI:
+                parse_uli_v2(el, freelist, params);
+                break;
+            case GTPV1_IE_ULI:
+                parse_uli_v1(el, freelist, params);
                 break;
         }
 
@@ -1270,8 +1679,8 @@ static int gtp_create_context_deactivation_iri(gtp_parsed_t *gparsed,
         uint16_t attrlen = el->ielength;
 
         switch(el->ietype) {
-            case GTP_IE_CAUSE: {
-                uint8_t smcauseval = gtp_cause_to_sm(attrptr);
+            case GTPV2_IE_CAUSE: {
+                uint8_t smcauseval = gtpv2_cause_to_sm(attrptr);
                 if (smcauseval != 0) {
                     np = create_etsili_generic(freelist,
                             UMTSIRI_CONTENTS_GPRS_ERROR_CODE,
@@ -1281,6 +1690,18 @@ static int gtp_create_context_deactivation_iri(gtp_parsed_t *gparsed,
                 }
                 break;
             }
+            case GTPV1_IE_CAUSE: {
+                uint8_t smcauseval = gtpv1_cause_to_sm(attrptr);
+                if (smcauseval != 0) {
+                    np = create_etsili_generic(freelist,
+                            UMTSIRI_CONTENTS_GPRS_ERROR_CODE,
+                            sizeof(uint8_t), &(smcauseval));
+                    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum),
+                            sizeof(np->itemnum), np);
+                }
+                break;
+            }
+
         }
 
         if (ieattr != 0) {
@@ -1294,6 +1715,41 @@ static int gtp_create_context_deactivation_iri(gtp_parsed_t *gparsed,
 
     return 0;
 }
+
+static int gtp_create_context_modification_iri(gtp_parsed_t *gparsed,
+        etsili_generic_t **params, etsili_generic_freelist_t *freelist) {
+
+    uint32_t evtype = UMTSIRI_EVENT_TYPE_PDPCONTEXT_MODIFICATION;
+    gtp_infoelem_t *el;
+    etsili_generic_t *np;
+
+    gtp_create_pdp_generic_iri(gparsed, params, freelist, evtype);
+
+    el = gparsed->request->ies;
+    while (el) {
+        uint8_t ieattr = 0;
+        uint8_t *attrptr = (uint8_t *)el->iecontent;
+        uint16_t attrlen = el->ielength;
+
+        switch(el->ietype) {
+            case GTPV2_IE_ULI:
+                parse_uli_v2(el, freelist, params);
+                break;
+            case GTPV1_IE_ULI:
+                parse_uli_v1(el, freelist, params);
+                break;
+        }
+
+        if (ieattr != 0) {
+            np = create_etsili_generic(freelist, ieattr, attrlen, attrptr);
+            HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+                    np);
+        }
+
+        el = el->next;
+    }
+}
+
 
 static int gtp_create_context_activation_iri(gtp_parsed_t *gparsed,
         etsili_generic_t **params, etsili_generic_freelist_t *freelist) {
@@ -1311,8 +1767,11 @@ static int gtp_create_context_activation_iri(gtp_parsed_t *gparsed,
         uint16_t attrlen = el->ielength;
 
         switch(el->ietype) {
-            case GTP_IE_ULI:
-                parse_uli(el, freelist, params);
+            case GTPV2_IE_ULI:
+                parse_uli_v2(el, freelist, params);
+                break;
+            case GTPV1_IE_ULI:
+                parse_uli_v1(el, freelist, params);
                 break;
         }
 
@@ -1345,6 +1804,14 @@ static int gtp_generate_iri_data(access_plugin_t *p, void *parseddata,
     }
     else if (gparsed->action == ACCESS_ACTION_REJECT) {
         printf("need to generate a PDP context activation failed IRI\n");
+    }
+    else if (gparsed->action == ACCESS_ACTION_INTERIM_UPDATE) {
+        *iritype = ETSILI_IRI_CONTINUE;
+        if (gtp_create_context_modification_iri(gparsed, params, freelist) < 0)
+        {
+            return -1;
+        }
+        return 0;
     }
     else if (gparsed->action == ACCESS_ACTION_END) {
         *iritype = ETSILI_IRI_END;
