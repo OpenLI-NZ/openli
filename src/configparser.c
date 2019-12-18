@@ -742,7 +742,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
 
 static int yaml_parser(char *configfile, void *arg,
         int (*parse_mapping)(void *, yaml_document_t *, yaml_node_t *,
-                yaml_node_t *)) {
+                yaml_node_t *), int createifmissing) {
     FILE *in = NULL;
     yaml_parser_t parser;
     yaml_document_t document;
@@ -750,7 +750,13 @@ static int yaml_parser(char *configfile, void *arg,
     yaml_node_pair_t *pair;
     int ret = -1;
 
-    if ((in = fopen(configfile, "r")) == NULL) {
+    if (createifmissing) {
+        in = fopen(configfile, "w+");
+    } else {
+        in = fopen(configfile, "r");
+    }
+
+    if (in == NULL) {
         logger(LOG_INFO, "OpenLI: Failed to open config file: %s",
                 strerror(errno));
         return -1;
@@ -1213,19 +1219,19 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
 }
 
 int parse_intercept_config(char *configfile, prov_intercept_conf_t *conf) {
-    return yaml_parser(configfile, conf, intercept_parser);
+    return yaml_parser(configfile, conf, intercept_parser, 1);
 }
 
 int parse_collector_config(char *configfile, collector_global_t *glob) {
-    return yaml_parser(configfile, glob, global_parser);
+    return yaml_parser(configfile, glob, global_parser, 0);
 }
 
 int parse_provisioning_config(char *configfile, provision_state_t *state) {
 
-    return yaml_parser(configfile, state, provisioning_parser);
+    return yaml_parser(configfile, state, provisioning_parser, 0);
 }
 
 int parse_mediator_config(char *configfile, mediator_state_t *state) {
-    return yaml_parser(configfile, state, mediator_parser);
+    return yaml_parser(configfile, state, mediator_parser, 0);
 }
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
