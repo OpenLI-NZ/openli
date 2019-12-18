@@ -71,11 +71,11 @@ if test "x$enable_collector" != "xno"; then
 fi
 
 if test "x$enable_provisioner" != "xno"; then
-        AC_CHECK_LIB([microhttpd], [MHD_destroy_post_processor],,libmicrohttpd_found=0)
+        AC_CHECK_LIB([microhttpd], [MHD_destroy_post_processor],libmicrohttpd_found=1,libmicrohttpd_found=0)
         if test "$libmicrohttpd_found" = 0; then
                 AC_MSG_ERROR(Required library libmicrohttpd not found; use LDFLAGS to specify library location)
         fi
-        AC_CHECK_LIB([json-c], [json_tokener_new],,libjsonc_found=0)
+        AC_CHECK_LIB([json-c], [json_tokener_new],libjsonc_found=1,libjsonc_found=0)
 
         if test "$libjsonc_found" = 0; then
                 AC_MSG_ERROR(Required library libjson-c not found; use LDFLAGS to specify library location)

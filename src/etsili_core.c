@@ -375,6 +375,20 @@ static inline void encode_umtsiri_body(wandder_encoder_t *encoder,
     /* location, if available (8) -- nested */
 
     ENC_CSEQUENCE(encoder, 8);
+    lookup = UMTSIRI_CONTENTS_CGI;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, p->itemptr, p->itemlen);
+    }
+
+    lookup = UMTSIRI_CONTENTS_SAI;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 7, p->itemptr, p->itemlen);
+    }
+
     lookup = UMTSIRI_CONTENTS_TAI;
     HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
     if (p) {

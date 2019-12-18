@@ -28,8 +28,7 @@ Description: Central provisioning daemon for an OpenLI system
 Package: openli-mediator
 Section: net
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, libwandder1-dev,
- libjudy-dev, lsb-base, libzmq3-dev
+Depends: ${shlibs:Depends}, ${misc:Depends}, lsb-base
 Recommends: strongswan
 Description: Mediation daemon for an OpenLI system
  OpenLI is a software suite that allows network operators to conduct
@@ -45,9 +44,7 @@ Description: Mediation daemon for an OpenLI system
 Package: openli-collector
 Section: net
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, libwandder1-dev,
- libjudy-dev, libgoogle-perftools-dev, libosip2-dev, lsb-base,
- libzmq3-dev
+Depends: ${shlibs:Depends}, ${misc:Depends}, lsb-base
 Description: Collector daemon for an OpenLI system
  OpenLI is a software suite that allows network operators to conduct
  lawful interception of Internet traffic that is compliant with the
