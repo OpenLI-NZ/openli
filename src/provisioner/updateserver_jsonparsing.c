@@ -696,7 +696,7 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     struct json_object *parsed = NULL;
     voipintercept_t *found = NULL;
     voipintercept_t *vint = NULL;
-    int parseerr = 0, r;
+    int parseerr = 0, r, liidmapped = 0;
     prov_agency_t *lea = NULL;
 
     INIT_JSON_INTERCEPT_PARSING
@@ -767,9 +767,14 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     if (strcmp(vint->common.targetagency, "pcapdisk") != 0) {
         HASH_FIND_STR(state->interceptconf.leas, vint->common.targetagency,
                 lea);
+        if (lea) {
+            liidmapped = 1;
+        }
+    } else {
+        liidmapped = 1;
     }
 
-    if (lea != NULL) {
+    if (liidmapped) {
         liid_hash_t *h = add_liid_mapping(&(state->interceptconf),
                 vint->common.liid, vint->common.targetagency);
         if (announce_liidmapping_to_mediators(state, h) < 0) {
@@ -823,7 +828,7 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *accessstring = NULL;
     char *radiusidentstring = NULL;
     ipintercept_t *ipint = NULL;
-    int parseerr = 0;
+    int parseerr = 0, liidmapped = 0;
     prov_agency_t *lea = NULL;
 
     INIT_JSON_INTERCEPT_PARSING
@@ -903,9 +908,14 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     if (strcmp(ipint->common.targetagency, "pcapdisk") != 0) {
         HASH_FIND_STR(state->interceptconf.leas, ipint->common.targetagency,
                 lea);
+        if (lea) {
+            liidmapped = 1;
+        }
+    } else {
+        liidmapped = 1;
     }
 
-    if (lea != NULL) {
+    if (liidmapped) {
         liid_hash_t *h = add_liid_mapping(&(state->interceptconf),
                 ipint->common.liid, ipint->common.targetagency);
         if (announce_liidmapping_to_mediators(state, h) < 0) {
