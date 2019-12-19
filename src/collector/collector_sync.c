@@ -520,35 +520,32 @@ static int create_ipiri_from_session(collector_sync_t *sync,
             }
         }
 
-        if (ret != 0) {
+        irimsg->data.ipiri.ipassignmentmethod =
+            OPENLI_IPIRI_IPMETHOD_DYNAMIC;
+        irimsg->data.ipiri.assignedip_prefixbits =
+            sess->sessionip.prefixbits;
 
-            irimsg->data.ipiri.ipassignmentmethod =
-                    OPENLI_IPIRI_IPMETHOD_DYNAMIC;
-            irimsg->data.ipiri.assignedip_prefixbits =
-                    sess->sessionip.prefixbits;
-
-            if (sess->sessionip.ipfamily) {
-                irimsg->data.ipiri.sessionstartts = sess->started;
-                irimsg->data.ipiri.ipfamily = sess->sessionip.ipfamily;
-                memcpy(&(irimsg->data.ipiri.assignedip),
-                        &(sess->sessionip.assignedip),
-                        (sess->sessionip.ipfamily == AF_INET) ?
-                        sizeof(struct sockaddr_in) :
-                        sizeof(struct sockaddr_in6));
-            } else {
-                irimsg->data.ipiri.ipfamily = 0;
-                irimsg->data.ipiri.sessionstartts.tv_sec = 0;
-                irimsg->data.ipiri.sessionstartts.tv_usec = 0;
-                memset(&(irimsg->data.ipiri.assignedip), 0,
-                        sizeof(struct sockaddr_storage));
-            }
-
-            pthread_mutex_lock(sync->glob->stats_mutex);
-            sync->glob->stats->ipiri_created ++;
-            pthread_mutex_unlock(sync->glob->stats_mutex);
-            publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid],
-                    irimsg);
+        if (sess->sessionip.ipfamily) {
+            irimsg->data.ipiri.sessionstartts = sess->started;
+            irimsg->data.ipiri.ipfamily = sess->sessionip.ipfamily;
+            memcpy(&(irimsg->data.ipiri.assignedip),
+                    &(sess->sessionip.assignedip),
+                    (sess->sessionip.ipfamily == AF_INET) ?
+                    sizeof(struct sockaddr_in) :
+                    sizeof(struct sockaddr_in6));
+        } else {
+            irimsg->data.ipiri.ipfamily = 0;
+            irimsg->data.ipiri.sessionstartts.tv_sec = 0;
+            irimsg->data.ipiri.sessionstartts.tv_usec = 0;
+            memset(&(irimsg->data.ipiri.assignedip), 0,
+                    sizeof(struct sockaddr_storage));
         }
+
+        pthread_mutex_lock(sync->glob->stats_mutex);
+        sync->glob->stats->ipiri_created ++;
+        pthread_mutex_unlock(sync->glob->stats_mutex);
+        publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid],
+                irimsg);
         iter ++;
     } while (ret > 0);
 
