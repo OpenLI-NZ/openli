@@ -33,6 +33,7 @@
 #include "intercept.h"
 #include "internetaccess.h"
 #include "etsili_core.h"
+#include "collector_sync.h"
 
 enum {
         UMTSIRI_CONTENTS_IMSI = 1,
@@ -69,6 +70,12 @@ int encode_umtsiri(wandder_encoder_t *encoder,
         openli_mobiri_job_t *job, uint32_t seqno,
         openli_encoded_result_t *res);
 
+int create_mobiri_job_from_session(collector_sync_t *sync,
+        access_session_t *sess, ipintercept_t *ipint, uint8_t special);
+
+int create_mobiri_job_from_packet(collector_sync_t *sync,
+        access_session_t *sess, ipintercept_t *ipint, access_plugin_t *p,
+        void *parseddata);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

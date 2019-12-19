@@ -1892,6 +1892,24 @@ static int radius_generate_iri_data(access_plugin_t *p, void *parseddata,
     return -1;
 }
 
+static int radius_generate_iri_from_session(access_plugin_t *p,
+        access_session_t *session, etsili_generic_t **params,
+        etsili_iri_type_t *iritype, etsili_generic_freelist_t *freelist,
+        uint8_t trigger) {
+
+    if (trigger == OPENLI_IPIRI_STARTWHILEACTIVE) {
+        *iritype = ETSILI_IRI_BEGIN;
+    }
+    if (trigger == OPENLI_IPIRI_ENDWHILEACTIVE) {
+        *iritype = ETSILI_IRI_REPORT;
+    }
+    if (trigger == OPENLI_IPIRI_SILENTLOGOFF) {
+        *iritype = ETSILI_IRI_END;
+    }
+
+    return 1;
+}
+
 static void radius_destroy_session_data(access_plugin_t *p,
         access_session_t *sess) {
 
@@ -1937,6 +1955,7 @@ static access_plugin_t radiusplugin = {
     radius_get_userid,
     radius_update_session_state,
     radius_generate_iri_data,
+    radius_generate_iri_from_session,
     //radius_create_iri_from_packet,
     radius_destroy_session_data,
     radius_get_packet_sequence,
