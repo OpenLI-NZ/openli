@@ -485,7 +485,7 @@ static int create_ipiri_from_session(collector_sync_t *sync,
         irimsg->data.ipiri.special = special;
         irimsg->data.ipiri.customparams = NULL;
 
-        if (p) {
+        if (parseddata) {
             ret = p->generate_iri_data(p, parseddata,
                     &(irimsg->data.ipiri.customparams),
                     &(irimsg->data.ipiri.iritype),
@@ -518,6 +518,7 @@ static int create_ipiri_from_session(collector_sync_t *sync,
                 free(irimsg);
                 return ret;
             }
+            ret = 0;
         }
 
         irimsg->data.ipiri.ipassignmentmethod =

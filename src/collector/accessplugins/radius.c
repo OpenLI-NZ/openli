@@ -1897,6 +1897,16 @@ static int radius_generate_iri_from_session(access_plugin_t *p,
         etsili_iri_type_t *iritype, etsili_generic_freelist_t *freelist,
         uint8_t trigger) {
 
+    if (trigger == OPENLI_IPIRI_STARTWHILEACTIVE) {
+        *iritype = ETSILI_IRI_BEGIN;
+    }
+    if (trigger == OPENLI_IPIRI_ENDWHILEACTIVE) {
+        *iritype = ETSILI_IRI_REPORT;
+    }
+    if (trigger == OPENLI_IPIRI_SILENTLOGOFF) {
+        *iritype = ETSILI_IRI_END;
+    }
+
     return 1;
 }
 
