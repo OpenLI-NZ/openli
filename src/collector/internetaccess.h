@@ -144,6 +144,11 @@ struct access_plugin {
             etsili_generic_t **params, etsili_iri_type_t *iritype,
             etsili_generic_freelist_t *freegenerics, int iteration);
 
+    int (*generate_iri_from_session)(access_plugin_t *p,
+            access_session_t *session,
+            etsili_generic_t **params, etsili_iri_type_t *iritype,
+            etsili_generic_freelist_t *freegenerics, uint8_t trigger);
+
 /*
     int (*create_iri_from_packet)(access_plugin_t *p,
             shared_global_info_t *info, etsili_generic_t **freegenerics,

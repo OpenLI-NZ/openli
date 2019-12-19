@@ -416,7 +416,7 @@ static int export_raw_sync_packet_content(access_plugin_t *p,
 
 static int create_mobiri_from_session(collector_sync_t *sync,
         access_session_t *sess, ipintercept_t *ipint, access_plugin_t *p,
-        void *parseddata) {
+        void *parseddata, uint8_t special) {
 
     openli_export_recv_t *irimsg;
     int ret;
@@ -437,6 +437,19 @@ static int create_mobiri_from_session(collector_sync_t *sync,
         if (ret == -1) {
             logger(LOG_INFO,
                     "OpenLI: error whle creating UMTSIRI from session state change for %s.",
+                    irimsg->data.mobiri.liid);
+            free(irimsg->data.mobiri.liid);
+            free(irimsg);
+            return -1;
+        }
+    } else {
+        p = sess->plugin;
+        ret = p->generate_iri_from_session(p, sess,
+                &(irimsg->data.mobiri.customparams),
+                &(irimsg->data.mobiri.iritype), sync->freegenerics, special);
+        if (ret == -1) {
+            logger(LOG_INFO,
+                    "OpenLI: error whle creating UMTSIRI from existing session %s.",
                     irimsg->data.mobiri.liid);
             free(irimsg->data.mobiri.liid);
             free(irimsg);
@@ -487,34 +500,73 @@ static int create_ipiri_from_session(collector_sync_t *sync,
                 free(irimsg);
                 return -1;
             }
-        }
-
-        irimsg->data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_UNKNOWN;
-        irimsg->data.ipiri.assignedip_prefixbits = sess->sessionip.prefixbits;
-
-        if (sess->sessionip.ipfamily) {
-            irimsg->data.ipiri.sessionstartts = sess->started;
-            irimsg->data.ipiri.ipfamily = sess->sessionip.ipfamily;
-            memcpy(&(irimsg->data.ipiri.assignedip),
-                    &(sess->sessionip.assignedip),
-                    (sess->sessionip.ipfamily == AF_INET) ?
-                    sizeof(struct sockaddr_in) :
-                    sizeof(struct sockaddr_in6));
         } else {
-            irimsg->data.ipiri.ipfamily = 0;
-            irimsg->data.ipiri.sessionstartts.tv_sec = 0;
-            irimsg->data.ipiri.sessionstartts.tv_usec = 0;
-            memset(&(irimsg->data.ipiri.assignedip), 0,
-                    sizeof(struct sockaddr_storage));
+            p = sess->plugin;
+            ret = p->generate_iri_from_session(p, sess,
+                    &(irimsg->data.ipiri.customparams),
+                    &(irimsg->data.ipiri.iritype), sync->freegenerics, special);
+            if (ret <= 0) {
+
+                if (ret < 0) {
+                    logger(LOG_INFO,
+                            "OpenLI: error whle creating IPIRI from existing session %s.",
+                            irimsg->data.ipiri.liid);
+                }
+
+                free(irimsg->data.ipiri.username);
+                free(irimsg->data.ipiri.liid);
+                free(irimsg);
+                return ret;
+            }
         }
 
-        pthread_mutex_lock(sync->glob->stats_mutex);
-        sync->glob->stats->ipiri_created ++;
-        pthread_mutex_unlock(sync->glob->stats_mutex);
-        publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], irimsg);
+        if (ret != 0) {
+
+            irimsg->data.ipiri.ipassignmentmethod =
+                    OPENLI_IPIRI_IPMETHOD_DYNAMIC;
+            irimsg->data.ipiri.assignedip_prefixbits =
+                    sess->sessionip.prefixbits;
+
+            if (sess->sessionip.ipfamily) {
+                irimsg->data.ipiri.sessionstartts = sess->started;
+                irimsg->data.ipiri.ipfamily = sess->sessionip.ipfamily;
+                memcpy(&(irimsg->data.ipiri.assignedip),
+                        &(sess->sessionip.assignedip),
+                        (sess->sessionip.ipfamily == AF_INET) ?
+                        sizeof(struct sockaddr_in) :
+                        sizeof(struct sockaddr_in6));
+            } else {
+                irimsg->data.ipiri.ipfamily = 0;
+                irimsg->data.ipiri.sessionstartts.tv_sec = 0;
+                irimsg->data.ipiri.sessionstartts.tv_usec = 0;
+                memset(&(irimsg->data.ipiri.assignedip), 0,
+                        sizeof(struct sockaddr_storage));
+            }
+
+            pthread_mutex_lock(sync->glob->stats_mutex);
+            sync->glob->stats->ipiri_created ++;
+            pthread_mutex_unlock(sync->glob->stats_mutex);
+            publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid],
+                    irimsg);
+        }
         iter ++;
     } while (ret > 0);
+
     return 0;
+
+}
+
+static int create_iri_from_session(collector_sync_t *sync,
+        access_session_t *sess, ipintercept_t *ipint, access_plugin_t *p,
+        void *parseddata, uint8_t special) {
+
+    if (ipint->accesstype == INTERNET_ACCESS_TYPE_MOBILE) {
+        return create_mobiri_from_session(sync, sess, ipint, p, parseddata,
+                special);
+    }
+
+    return create_ipiri_from_session(sync, sess, ipint, p, parseddata,
+            special);
 
 }
 
@@ -862,7 +914,7 @@ static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
     HASH_ITER(hh, user->sessions, sess, tmp2) {
         /* TODO skip sessions that were never active */
 
-        create_ipiri_from_session(sync, sess, ipint, NULL, NULL,
+        create_iri_from_session(sync, sess, ipint, NULL, NULL,
                 OPENLI_IPIRI_ENDWHILEACTIVE);
         push_session_halt_to_threads(sync->glob->collector_queues, sess,
                 ipint);
@@ -1047,8 +1099,8 @@ static void push_existing_user_sessions(collector_sync_t *sync,
                 push_single_ipintercept(sync, sendq->q, cept, sess);
             }
 
-            /* TODO we'll also need to trigger an Intercept started while
-             * active BEGIN IRI */
+            create_iri_from_session(sync, sess, cept, NULL, NULL,
+                OPENLI_IPIRI_STARTWHILEACTIVE);
         }
     }
 
@@ -1058,11 +1110,6 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
 
     openli_export_recv_t *expmsg;
     int i;
-
-    if (cept->username) {
-        push_existing_user_sessions(sync, cept);
-        add_intercept_to_user_intercept_list(&sync->userintercepts, cept);
-    }
 
     if (cept->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
 
@@ -1102,6 +1149,11 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
     for (i = 0; i < sync->forwardcount; i++) {
         expmsg = create_intercept_details_msg(&(cept->common));
         publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+    }
+
+    if (cept->username) {
+        push_existing_user_sessions(sync, cept);
+        add_intercept_to_user_intercept_list(&sync->userintercepts, cept);
     }
 
     return 1;
@@ -1232,6 +1284,18 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     }
 
     remove_ip_intercept(sync, ipint);
+    if (torem.common.liid) {
+        free(torem.common.liid);
+    }
+
+    if (torem.common.authcc) {
+        free(torem.common.authcc);
+    }
+
+    if (torem.common.delivcc) {
+        free(torem.common.delivcc);
+    }
+
 
     return 1;
 }
@@ -1956,7 +2020,7 @@ static int newly_active_session(collector_sync_t *sync,
 
             HASH_ITER(hh_user, prevuser->intlist, ipint, tmp) {
                 int queueused = 0;
-                queueused = create_ipiri_from_session(sync,
+                queueused = create_iri_from_session(sync,
                         prevmapping->session,
                         ipint, NULL, NULL, OPENLI_IPIRI_SILENTLOGOFF);
                 expcount ++;
@@ -2143,13 +2207,8 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
                         expcount ++;
                     }
                 } else if (accessaction != ACCESS_ACTION_NONE) {
-                    if (ipint->accesstype != INTERNET_ACCESS_TYPE_MOBILE) {
-                        create_ipiri_from_session(sync, sess, ipint, p,
-                                parseddata, OPENLI_IPIRI_STANDARD);
-                    } else {
-                        create_mobiri_from_session(sync, sess, ipint, p,
-                                parseddata);
-                    }
+                    create_iri_from_session(sync, sess, ipint, p,
+                            parseddata, OPENLI_IPIRI_STANDARD);
                     expcount ++;
                 }
             }
