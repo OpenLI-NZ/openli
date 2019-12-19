@@ -750,10 +750,10 @@ static int yaml_parser(char *configfile, void *arg,
     yaml_node_pair_t *pair;
     int ret = -1;
 
-    if (createifmissing) {
+    in = fopen(configfile, "r");
+
+    if (in == NULL && errno == ENOENT && createifmissing) {
         in = fopen(configfile, "w+");
-    } else {
-        in = fopen(configfile, "r");
     }
 
     if (in == NULL) {
