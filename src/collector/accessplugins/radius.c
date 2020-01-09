@@ -76,13 +76,19 @@ enum {
     RADIUS_ACCT_INTERIM_UPDATE = 3,
 };
 
+typedef struct radius_session {
+    uint32_t session_id;
+    session_state_t current;
+} radius_user_session_t;
+
 typedef struct radius_user {
 
     user_identity_method_t idmethod;
     char *userid;
     char *nasidentifier;
     int nasid_len;
-    session_state_t current;
+
+    Pvoid_t sessions;
 } radius_user_t;
 
 typedef struct radius_v6_prefix_attr {
@@ -352,6 +358,8 @@ static void destroy_radius_nas(radius_nas_t *nas) {
         if (user->nasidentifier) {
             free(user->nasidentifier);
         }
+
+        JLFA(res, user->sessions);
         free(user);
 
         JSLN(pval, nas->user_map, index);
@@ -800,7 +808,16 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
                 parsed->accttype = ntohl(*((uint32_t *)newattr->att_val));
             }
             if (newattr->att_type == RADIUS_ATTR_ACCT_SESSION_ID) {
-                parsed->acctsess = ntohl(*((uint32_t *)newattr->att_val));
+                char sessstr[24];
+
+                memset(sessstr, 0, 24);
+                if (att_len - 2 > 23) {
+                    memcpy(sessstr, newattr->att_val, 23);
+                } else {
+                    memcpy(sessstr, newattr->att_val, att_len - 2);
+                }
+
+                parsed->acctsess = strtoul(sessstr, NULL, 10);
             }
         }
 
@@ -855,7 +872,8 @@ static radius_user_t *add_user_identity(uint8_t att_type, uint8_t *att_val,
     user->idmethod = method;
     user->nasidentifier = NULL;
     user->nasid_len = 0;
-    user->current = SESSION_STATE_NEW;
+    user->sessions = NULL;
+    //user->current = SESSION_STATE_NEW;
 
     JSLI(pval, raddata->matchednas->user_map, user->userid);
     *pval = (Word_t)user;
@@ -895,8 +913,7 @@ static uint32_t assign_cin(radius_parsed_t *raddata) {
     /* CIN assignment for RADIUS sessions:
      *
      * Use the Acct-Session-ID if available -- often present in
-     * Access-Requests but not guaranteed. It's a variable length
-     * UTF-8 string, so we need to hash it into a 32 bit space.
+     * Access-Requests but not guaranteed.
      *
      * Depending on your RADIUS setup, session ID may not be unique.
      * See https://freeradius.org/rfc/acct_session_id_uniqueness.html for
@@ -915,8 +932,10 @@ static uint32_t assign_cin(radius_parsed_t *raddata) {
     attr = raddata->attrs;
     while (attr) {
         if (attr->att_type == RADIUS_ATTR_ACCT_SESSION_ID) {
-            hashval = hashlittle(attr->att_val, attr->att_len, 0xfacebeef);
-            hashval = hashval % (uint32_t)(pow(2, 31));
+            /* Modulo 2^31 to avoid possible issues with the CIN
+             * being treated as a negative number by the recipient.
+             */
+            hashval = raddata->acctsess % (uint32_t)(pow(2, 31));
             return hashval;
         }
         attr = attr->next;
@@ -1208,64 +1227,64 @@ static user_identity_t *radius_get_userid(access_plugin_t *p, void *parsed,
 }
 
 static inline void apply_fsm_logic(radius_parsed_t *raddata,
-        radius_user_t *raduser, uint8_t msgtype, uint32_t accttype,
+        radius_user_session_t *radsess, uint8_t msgtype, uint32_t accttype,
         session_state_t *newstate, access_action_t *action) {
 
     *action = ACCESS_ACTION_NONE;
 
     /* RADIUS state machine logic goes here */
     /* TODO figure out what Access-Failed is, since it is in the ETSI spec */
-    if ((raduser->current == SESSION_STATE_NEW ||
-            raduser->current == SESSION_STATE_OVER) && (
+    if ((radsess->current == SESSION_STATE_NEW ||
+            radsess->current == SESSION_STATE_OVER) && (
             msgtype == RADIUS_CODE_ACCESS_REQUEST ||
             (msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
                 accttype == RADIUS_ACCT_START))) {
 
-        raduser->current = SESSION_STATE_AUTHING;
+        radsess->current = SESSION_STATE_AUTHING;
         *action = ACCESS_ACTION_ATTEMPT;
-    } else if (raduser->current == SESSION_STATE_AUTHING && (
+    } else if (radsess->current == SESSION_STATE_AUTHING && (
             msgtype == RADIUS_CODE_ACCESS_REJECT)) {
 
-        raduser->current = SESSION_STATE_OVER;
+        radsess->current = SESSION_STATE_OVER;
         *action = ACCESS_ACTION_REJECT;
 
-    } else if (raduser->current == SESSION_STATE_AUTHING && (
+    } else if (radsess->current == SESSION_STATE_AUTHING && (
             msgtype == RADIUS_CODE_ACCESS_CHALLENGE)) {
 
-        raduser->current = SESSION_STATE_AUTHING;
+        radsess->current = SESSION_STATE_AUTHING;
         *action = ACCESS_ACTION_RETRY;
 
-    } else if (raduser->current == SESSION_STATE_AUTHING && (
+    } else if (radsess->current == SESSION_STATE_AUTHING && (
             msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
             accttype == RADIUS_ACCT_STOP)) {
 
-        raduser->current = SESSION_STATE_OVER;
+        radsess->current = SESSION_STATE_OVER;
         *action = ACCESS_ACTION_FAILED;
 
-    } else if (raduser->current == SESSION_STATE_AUTHING && (
+    } else if (radsess->current == SESSION_STATE_AUTHING && (
             msgtype == RADIUS_CODE_ACCESS_ACCEPT ||
             (msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
                 accttype == RADIUS_ACCT_START))) {
 
-        raduser->current = SESSION_STATE_ACTIVE;
+        radsess->current = SESSION_STATE_ACTIVE;
         *action = ACCESS_ACTION_ACCEPT;
 
-    } else if (raduser->current == SESSION_STATE_ACTIVE && (
+    } else if (radsess->current == SESSION_STATE_ACTIVE && (
             msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
             (accttype == RADIUS_ACCT_START ||
                 accttype == RADIUS_ACCT_INTERIM_UPDATE))) {
 
         *action = ACCESS_ACTION_INTERIM_UPDATE;
 
-    } else if (raduser->current == SESSION_STATE_ACTIVE && (
+    } else if (radsess->current == SESSION_STATE_ACTIVE && (
             msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
             accttype == RADIUS_ACCT_STOP)) {
 
-        raduser->current = SESSION_STATE_OVER;
+        radsess->current = SESSION_STATE_OVER;
         *action = ACCESS_ACTION_END;
 
-    } else if ((raduser->current == SESSION_STATE_NEW ||
-            raduser->current == SESSION_STATE_OVER) && (
+    } else if ((radsess->current == SESSION_STATE_NEW ||
+            radsess->current == SESSION_STATE_OVER) && (
             msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
             accttype == RADIUS_ACCT_INTERIM_UPDATE)) {
 
@@ -1273,12 +1292,12 @@ static inline void apply_fsm_logic(radius_parsed_t *raddata,
          * jump straight to active and try to carry on from there.
          */
 
-        raduser->current = SESSION_STATE_ACTIVE;
+        radsess->current = SESSION_STATE_ACTIVE;
         *action = ACCESS_ACTION_ALREADY_ACTIVE;
     }
 
 
-    *newstate = raduser->current;
+    *newstate = radsess->current;
 }
 
 static radius_orphaned_resp_t *search_orphans(radius_orphaned_resp_t **head,
@@ -1386,7 +1405,7 @@ static inline char *quickcat(char *ptr, int *rem, char *toadd, int towrite) {
     }
 
     *ptr = '\0';
-    return (ptr + 1);
+    return (ptr);
 }
 
 /* Set firstattrs and secondattrs correctly for all possible
@@ -1425,6 +1444,11 @@ static inline void update_first_action(radius_global_t *glob,
             TIMESTAMP_TO_TV((&(sess->started)), raddata->savedreq->tvsec);
             break;
         case ACCESS_ACTION_ATTEMPT:
+            if (raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
+                extract_assigned_ip_address(glob, raddata, raddata->attrs,
+                        sess);
+                TIMESTAMP_TO_TV((&(sess->started)), raddata->tvsec);
+            }
             raddata->firstattrs = raddata->attrs;
             break;
         case ACCESS_ACTION_INTERIM_UPDATE:
@@ -1477,9 +1501,13 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     radius_parsed_t *raddata;
     radius_user_t *raduser = (radius_user_t *)plugindata;
     access_session_t *thissess;
+    radius_user_session_t *usess;
+
     char sessionid[5000];
+    char tempstr[24];
     char *ptr;
     int rem = 5000;
+    PWord_t pval;
 
     glob = (radius_global_t *)(p->plugindata);
     raddata = (radius_parsed_t *)parsed;
@@ -1496,7 +1524,10 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     ptr = quickcat(ptr, &rem, raduser->userid, strlen(raduser->userid));
     ptr = quickcat(ptr, &rem, "-", 1);
     ptr = quickcat(ptr, &rem, raduser->nasidentifier, raduser->nasid_len);
+    ptr = quickcat(ptr, &rem, "-", 1);
 
+    snprintf(tempstr, 24, "%lu", raddata->acctsess);
+    ptr = quickcat(ptr, &rem, tempstr, strlen(tempstr));
 
     thissess = *sesslist;
     while (thissess != NULL) {
@@ -1514,7 +1545,6 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         *sesslist = thissess;
 
     }
-
 
     if (raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST ||
             raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
@@ -1580,11 +1610,24 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         }
     }
 
-    *oldstate = raduser->current;
-    apply_fsm_logic(raddata, raduser, raddata->msgtype, raddata->accttype,
+    JLG(pval, raduser->sessions, raddata->acctsess);
+    if (pval == NULL) {
+        usess = calloc(1, sizeof(radius_user_session_t));
+
+        usess->current = SESSION_STATE_NEW;
+        usess->session_id = raddata->acctsess;
+
+        JLI(pval, raduser->sessions, usess->session_id);
+        *pval = (Word_t)usess;
+    } else {
+        usess = (radius_user_session_t *)(*pval);
+    }
+
+    *oldstate = usess->current;
+    apply_fsm_logic(raddata, usess, raddata->msgtype, raddata->accttype,
             newstate, &(raddata->firstaction));
     if (raddata->savedresp) {
-        apply_fsm_logic(raddata, raduser, raddata->savedresp->resptype,
+        apply_fsm_logic(raddata, usess, raddata->savedresp->resptype,
                 raddata->accttype, newstate, &(raddata->secondaction));
     }
 
