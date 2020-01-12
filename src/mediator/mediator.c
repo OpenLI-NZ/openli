@@ -1588,11 +1588,11 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     /* Reset the keep alive timer */
     gettimeofday(&tv, NULL);
-    if (mas->katimer_setsec < tv.tv_sec) {
-        if (mas->parent->aliveev->fd != -1) {
-            halt_mediator_timer(state, mas->parent->aliveev);
+    if (ho->aliveev && mas->katimer_setsec < tv.tv_sec) {
+        if (ho->aliveev->fd != -1) {
+            halt_mediator_timer(state, ho->aliveev);
         }
-        if (start_keepalive_timer(state, mas->parent->aliveev,
+        if (start_keepalive_timer(state, ho->aliveev,
                     mas->kafreq) == -1) {
             if (ho->disconnect_msg == 0) {
                 logger(LOG_INFO,
