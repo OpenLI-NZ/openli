@@ -34,7 +34,7 @@
 #include "util.h"
 #include "openli_tls.h"
 
-#define DEFAULT_INTERCEPT_CONFIG_FILE "/var/lib/openli/intercepts.conf"
+#define DEFAULT_INTERCEPT_CONFIG_FILE "/etc/openli/running-intercept-config.yaml"
 
 #ifndef MHD_SOCKET_DEFINED
 typedef int MHD_socket;
