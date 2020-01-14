@@ -192,7 +192,7 @@ typedef struct colthread_local {
     ipv4_target_t *activeipv4intercepts;
 
     rtpstreaminf_t *activertpintercepts;
-    vendmirror_intercept_t *activemirrorintercepts;
+    vendmirror_intercept_list_t *activemirrorintercepts;
 
     staticipsession_t *activestaticintercepts;
 

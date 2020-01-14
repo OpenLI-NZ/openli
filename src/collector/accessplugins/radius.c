@@ -1529,21 +1529,14 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     snprintf(tempstr, 24, "%lu", raddata->acctsess);
     ptr = quickcat(ptr, &rem, tempstr, strlen(tempstr));
 
-    thissess = *sesslist;
-    while (thissess != NULL) {
-        if (strcmp(thissess->sessionid, sessionid) == 0) {
-            break;
-        }
-        thissess = thissess->next;
-    }
+    HASH_FIND(hh, *sesslist, sessionid, strlen(sessionid), thissess);
 
     if (!thissess) {
         thissess = create_access_session(p, sessionid, 5000 - rem);
         thissess->cin = assign_cin(raddata);
 
-        thissess->next = *sesslist;
-        *sesslist = thissess;
-
+        HASH_ADD_KEYPTR(hh, *sesslist, thissess->sessionid,
+                strlen(thissess->sessionid), thissess);
     }
 
     if (raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST ||

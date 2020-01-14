@@ -468,7 +468,6 @@ static inline void push_single_vendmirrorid(libtrace_message_queue_t *q,
         return;
     }
 
-    jm->cin = 0;
     memset(&msg, 0, sizeof(openli_pushed_t));
     msg.type = msgtype;
     msg.data.mirror = jm;
@@ -886,6 +885,7 @@ static void push_existing_user_sessions(collector_sync_t *sync,
 
     if (user) {
         access_session_t *sess, *tmp2;
+
         HASH_ITER(hh, user->sessions, sess, tmp2) {
             HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                     sendq, tmp) {
