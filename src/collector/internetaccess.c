@@ -74,10 +74,8 @@ void free_single_user(internet_user_t *u) {
         free(u->userid);
     }
 
-    tmp = u->sessions;
-    while (tmp) {
-        sess = tmp;
-        tmp = tmp->next;
+    HASH_ITER(hh, u->sessions, sess, tmp) {
+        HASH_DELETE(hh, u->sessions, sess);
         free_session(sess);
     }
     free(u);
@@ -132,25 +130,7 @@ int free_single_session(internet_user_t *user, access_session_t *sess) {
         return -1;
     }
 
-    tmp = user->sessions;
-    prev = NULL;
-    while (tmp) {
-        if (sess == tmp) {
-            break;
-        }
-        prev = tmp;
-        tmp = tmp->next;
-    }
-
-    //HASH_DELETE(hh, user->sessions, sess);
-    if (tmp != NULL) {
-        if (prev) {
-            prev->next = tmp->next;
-        } else {
-            user->sessions = tmp->next;
-        }
-    }
-
+    HASH_DELETE(hh, user->sessions, sess);
     free_session(sess);
     return 0;
 }

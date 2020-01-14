@@ -1295,13 +1295,7 @@ static inline access_session_t *find_matched_session(access_plugin_t *p,
         return NULL;
     }
 
-    thissess = *sesslist;
-    while (thissess != NULL) {
-        if (strcmp(thissess->sessionid, match->sessid) == 0) {
-            break;
-        }
-        thissess = thissess->next;
-    }
+    HASH_FIND(hh, *sesslist, match->sessid, strlen(match->sessid), thissess);
 
     if (!thissess) {
         thissess = create_access_session(p, match->sessid,
@@ -1309,8 +1303,8 @@ static inline access_session_t *find_matched_session(access_plugin_t *p,
         thissess->cin = assign_gtp_cin(teid);
         match->cin = thissess->cin;
 
-        thissess->next = *sesslist;
-        *sesslist = thissess;
+        HASH_ADD_KEYPTR(hh, *sesslist, thissess->sessionid,
+                strlen(thissess->sessionid), thissess);
     }
     return thissess;
 }

@@ -84,8 +84,8 @@ static inline int alushim_get_direction(alushimhdr_t *aluhdr) {
 }
 
 static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
-        vendmirror_intercept_t *alu, uint8_t dir, collector_identity_t *info,
-        void *l3, uint32_t rem) {
+        vendmirror_intercept_t *alu, uint32_t cin, uint8_t dir,
+        collector_identity_t *info, void *l3, uint32_t rem) {
 
     openli_export_recv_t *msg;
     int queueused;
@@ -96,7 +96,7 @@ static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
     msg->ts = trace_get_timeval(packet);
     msg->destid = alu->common.destid;
     msg->data.ipcc.liid = strdup(alu->common.liid);
-    msg->data.ipcc.cin = alu->cin;
+    msg->data.ipcc.cin = cin;
     msg->data.ipcc.dir = dir;
     msg->data.ipcc.ipcontent = (uint8_t *)calloc(1, rem);
     msg->data.ipcc.ipclen = rem;
@@ -109,13 +109,14 @@ static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
 
 int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
-        coreserver_t *alusources, vendmirror_intercept_t *aluints) {
+        coreserver_t *alusources, vendmirror_intercept_list_t *aluints) {
 
     coreserver_t *cs;
-    vendmirror_intercept_t *alu;
+    vendmirror_intercept_t *alu, *tmp;
+    vendmirror_intercept_list_t *vmilist;
     uint16_t ethertype;
     alushimhdr_t *aluhdr = NULL;
-    uint32_t rem = 0, shimintid;
+    uint32_t rem = 0, shimintid, cin;
     void *l3, *l2;
     openli_export_recv_t msg;
     struct timeval tv;
@@ -134,8 +135,8 @@ int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
     shimintid = alushim_get_interceptid(aluhdr);
 
     /* See if the intercept ID is in our set of intercepts */
-    HASH_FIND(hh, aluints, &shimintid, sizeof(shimintid), alu);
-    if (alu == NULL) {
+    HASH_FIND(hh, aluints, &shimintid, sizeof(shimintid), vmilist);
+    if (vmilist == NULL) {
         return 0;
     }
 
@@ -187,11 +188,14 @@ int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
 
     /* Use the session ID from the shim as the CIN */
     /* TODO double check that this will be available in the RADIUS stream */
-    alu->cin = ntohl(aluhdr->sessionid);
+    cin = ntohl(aluhdr->sessionid);
 
-    /* Create an appropriate IPCC and export it */
-    push_alu_ipcc_job(loc, packet, alu, alushim_get_direction(aluhdr), info,
-            l3, rem);
+    HASH_ITER(hh, vmilist->intercepts, alu, tmp) {
+
+        /* Create an appropriate IPCC and export it */
+        push_alu_ipcc_job(loc, packet, alu, cin,
+                alushim_get_direction(aluhdr), info, l3, rem);
+    }
 
     return 1;
 }

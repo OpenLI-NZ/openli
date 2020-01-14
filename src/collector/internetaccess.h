@@ -109,7 +109,6 @@ struct access_session {
 
     struct timeval started;
 
-    access_session_t *next;
     UT_hash_handle hh;
 } ;
 

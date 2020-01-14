@@ -373,9 +373,7 @@ vendmirror_intercept_t *create_vendmirror_intercept(ipintercept_t *ipint) {
         return NULL;
     }
 
-    jm->nextseqno = 0;
-    jm->cin = 0;
-    jm->interceptid = ipint->vendmirrorid;
+    jm->sessionid = ipint->vendmirrorid;
     copy_intercept_common(&(ipint->common), &(jm->common));
 
     return jm;
@@ -386,11 +384,17 @@ void free_single_vendmirror_intercept(vendmirror_intercept_t *jm) {
     free(jm);
 }
 
-void free_all_vendmirror_intercepts(vendmirror_intercept_t **jmints) {
+void free_all_vendmirror_intercepts(vendmirror_intercept_list_t **jmints) {
+
+    vendmirror_intercept_list_t *parent, *ptmp;
     vendmirror_intercept_t *jm, *tmp;
-    HASH_ITER(hh, *jmints, jm, tmp) {
-        HASH_DELETE(hh, *jmints, jm);
-        free_single_vendmirror_intercept(jm);
+    HASH_ITER(hh, *jmints, parent, ptmp) {
+
+        HASH_ITER(hh, parent->intercepts, jm, tmp) {
+            HASH_DELETE(hh, parent->intercepts, jm);
+            free_single_vendmirror_intercept(jm);
+        }
+        HASH_DELETE(hh, *jmints, parent);
     }
 }
 
@@ -554,12 +558,14 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
     HASH_FIND(hh, *ulist, ipint->username, ipint->username_len, found);
 
     if (!found) {
+        printf("!found: %s\n", ipint->username);
         return 0;
     }
 
     HASH_FIND(hh_user, found->intlist, ipint->common.liid,
             ipint->common.liid_len, existing);
     if (!existing) {
+        printf("!existing: %s\n", ipint->common.liid);
         return 0;
     }
 
@@ -573,6 +579,7 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
         free(found->username);
         free(found);
     }
+    printf("removed %s:%s\n", ipint->username, ipint->common.liid);
     return 0;
 }
 
