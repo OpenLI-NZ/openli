@@ -835,7 +835,7 @@ static radius_user_t *add_user_identity(uint8_t att_type, uint8_t *att_val,
     char *nextchar;
     int keyrem = 2047;
     radius_user_t *user;
-    user_identity_method_t method;
+    user_identity_method_t method = USER_IDENT_MAX;
     PWord_t pval;
 
     if (att_type == RADIUS_ATTR_USERNAME) {
@@ -848,6 +848,8 @@ static radius_user_t *add_user_identity(uint8_t att_type, uint8_t *att_val,
         keyrem -= 8;
         nextchar = userkey + 8;
         method = USER_IDENT_RADIUS_CSID;
+    } else {
+        return NULL;
     }
 
     assert(keyrem > att_len);
@@ -858,7 +860,7 @@ static radius_user_t *add_user_identity(uint8_t att_type, uint8_t *att_val,
 
     *nextchar = '\0';
 
-    JSLG(pval, raddata->matchednas->user_map, userkey);
+    JSLG(pval, raddata->matchednas->user_map, (unsigned char *)userkey);
 
     if (pval) {
         raddata->muser_count ++;
@@ -875,7 +877,7 @@ static radius_user_t *add_user_identity(uint8_t att_type, uint8_t *att_val,
     user->sessions = NULL;
     //user->current = SESSION_STATE_NEW;
 
-    JSLI(pval, raddata->matchednas->user_map, user->userid);
+    JSLI(pval, raddata->matchednas->user_map, (unsigned char *)user->userid);
     *pval = (Word_t)user;
     raddata->matchedusers[method] = user;
     raddata->muser_count ++;
@@ -961,7 +963,6 @@ static uint32_t assign_cin(radius_parsed_t *raddata) {
 static inline void process_nasid_attribute(radius_parsed_t *raddata) {
     char nasid[1024];
     int keylen = 0, i;
-    uint8_t attrnum = RADIUS_ATTR_NASIDENTIFIER;
 
     radius_attribute_t *nasattr;
 
@@ -1017,7 +1018,6 @@ static inline void process_nasid_attribute(radius_parsed_t *raddata) {
 }
 
 static inline void process_nasport_attribute(radius_parsed_t *raddata) {
-    uint8_t attrnum = RADIUS_ATTR_NASPORT;
 
     radius_attribute_t *nasattr;
 
@@ -1526,7 +1526,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     ptr = quickcat(ptr, &rem, raduser->nasidentifier, raduser->nasid_len);
     ptr = quickcat(ptr, &rem, "-", 1);
 
-    snprintf(tempstr, 24, "%lu", raddata->acctsess);
+    snprintf(tempstr, 24, "%u", raddata->acctsess);
     ptr = quickcat(ptr, &rem, tempstr, strlen(tempstr));
 
     HASH_FIND(hh, *sesslist, sessionid, strlen(sessionid), thissess);

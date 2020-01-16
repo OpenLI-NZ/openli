@@ -621,28 +621,28 @@ static void walk_gtpv2_ies(gtp_parsed_t *parsedpkt, uint8_t *ptr, uint32_t rem,
             gtpel = create_new_gtpv2_infoel(ietype, ielen, ptr);
             gtpel->next = parsedpkt->ies;
             parsedpkt->ies = gtpel;
-        }
 
-        if (parsedpkt->msgtype == GTPV2_CREATE_SESSION_REQUEST) {
-            if (ietype == GTPV2_IE_FTEID) {
-                parsedpkt->teid = get_teid_from_fteid(gtpel);
+            if (parsedpkt->msgtype == GTPV2_CREATE_SESSION_REQUEST) {
+                if (ietype == GTPV2_IE_FTEID) {
+                    parsedpkt->teid = get_teid_from_fteid(gtpel);
+                }
+                if (ietype == GTPV2_IE_IMSI) {
+                    get_gtpnum_from_ie(gtpel, parsedpkt->imsi, 0);
+                }
+                if (ietype == GTPV2_IE_MSISDN) {
+                    get_gtpnum_from_ie(gtpel, parsedpkt->msisdn, 0);
+                }
+            } else if (parsedpkt->msgtype == GTPV2_DELETE_SESSION_REQUEST) {
+                if (ietype == GTPV2_IE_FTEID) {
+                    parsedpkt->teid = get_teid_from_fteid(gtpel);
+                }
             }
-            if (ietype == GTPV2_IE_IMSI) {
-                get_gtpnum_from_ie(gtpel, parsedpkt->imsi, 0);
-            }
-            if (ietype == GTPV2_IE_MSISDN) {
-                get_gtpnum_from_ie(gtpel, parsedpkt->msisdn, 0);
-            }
-        } else if (parsedpkt->msgtype == GTPV2_DELETE_SESSION_REQUEST) {
-            if (ietype == GTPV2_IE_FTEID) {
-                parsedpkt->teid = get_teid_from_fteid(gtpel);
-            }
-        }
 
-        if (ietype == GTPV2_IE_CAUSE) {
-            parsedpkt->response_cause = get_cause_from_ie(gtpel);
-        }
+            if (ietype == GTPV2_IE_CAUSE) {
+                parsedpkt->response_cause = get_cause_from_ie(gtpel);
+            }
 
+        }
 
         ptr += (ielen + 4);
         used += (ielen + 4);
