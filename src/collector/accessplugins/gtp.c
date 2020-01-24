@@ -1199,7 +1199,7 @@ static void copy_session_params_v2(gtp_parsed_t *gparsed,
                 break;
             case GTPV2_IE_MSISDN:
                 COPY_SESSION_PARAM(gsess->saved.msisdn, gsess->saved.msisdn_len,
-                        attrptr, attrlen - 1);
+                        attrptr, attrlen);
                 break;
             case GTPV2_IE_MEI:
                 COPY_SESSION_PARAM(gsess->saved.imei, gsess->saved.imei_len,
