@@ -63,21 +63,16 @@ int sort_generics(etsili_generic_t *a, etsili_generic_t *b) {
     return 0;
 }
 
-
-int encode_ipiri(wandder_encoder_t *encoder,
+static inline void encode_ipiri_shared(wandder_encoder_t *encoder,
         etsili_generic_freelist_t *freegenerics,
-        wandder_encode_job_t *precomputed,
-        openli_ipiri_job_t *job, uint32_t seqno,
-        openli_encoded_result_t *res) {
+        openli_ipiri_job_t *job,
+        etsili_iri_type_t *iritype_p,
+        etsili_generic_t **params_p) {
 
     etsili_generic_t *np, *params = NULL;
     etsili_iri_type_t iritype;
     etsili_ipaddress_t targetip;
     int64_t ipversion = 0;
-    struct timeval tv;
-    int ret = 0;
-    uint32_t liidlen = precomputed[OPENLI_PREENCODE_LIID].vallen;
-
     params = job->customparams;
 
     if (job->special == OPENLI_IPIRI_ENDWHILEACTIVE) {
@@ -186,6 +181,30 @@ int encode_ipiri(wandder_encoder_t *encoder,
 
     reset_wandder_encoder(encoder);
 
+    *iritype_p = iritype;
+    *params_p = params;
+
+}
+
+int encode_ipiri(wandder_encoder_t *encoder,
+        etsili_generic_freelist_t *freegenerics,
+        wandder_encode_job_t *precomputed,
+        openli_ipiri_job_t *job, uint32_t seqno,
+        openli_encoded_result_t *res) {
+
+    
+    etsili_generic_t *params = NULL;
+    etsili_iri_type_t iritype;
+    struct timeval tv;
+    int ret = 0;
+    uint32_t liidlen = precomputed[OPENLI_PREENCODE_LIID].vallen;
+
+    encode_ipiri_shared(encoder,
+        freegenerics,
+        job,
+        &iritype,
+        &params);
+
     gettimeofday(&tv, NULL);
 
     memset(res, 0, sizeof(openli_encoded_result_t));
@@ -240,5 +259,244 @@ void ipiri_free_id(ipiri_id_t *iriid) {
         free(iriid->content.printable);
     }
 }
+
+#ifdef HAVE_BER_ENCODING
+int encode_ipiri_ber(wandder_buf_t **preencoded_ber,
+        openli_ipiri_job_t *job,
+        etsili_generic_freelist_t *freegenerics,
+        uint32_t seqno, struct timeval *tv,
+        openli_encoded_result_t *res,
+        wandder_etsili_top_t *top, 
+        wandder_encoder_t *encoder) {
+
+    memset(res, 0, sizeof(openli_encoded_result_t));
+
+    etsili_generic_t *params = NULL;
+    etsili_iri_type_t iritype;
+    struct timeval current_tv;
+    int ret = 0;
+    uint32_t liidlen = (uint32_t)((size_t)preencoded_ber[WANDDER_PREENCODE_LIID_LEN]);
+
+    encode_ipiri_shared(encoder,
+        freegenerics,
+        job,
+        &iritype,
+        &params);
+
+    gettimeofday(&current_tv, NULL);
+
+    memset(res, 0, sizeof(openli_encoded_result_t));
+
+    wandder_encode_etsi_ipiri_ber (
+            preencoded_ber,
+            (int64_t)(job->cin),
+            (int64_t)seqno,
+            &current_tv,
+            params,
+            iritype,
+            top);
+
+    res->msgbody = malloc(sizeof(wandder_encoded_result_t));
+    res->msgbody->encoder = NULL;
+    res->msgbody->encoded = top->buf;
+    res->msgbody->len = top->len;
+    res->msgbody->alloced = top->alloc_len;
+    res->msgbody->next = NULL;
+
+    res->ipcontents = NULL;
+    res->ipclen = 0;
+    
+    res->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    res->header.bodylen = htons(res->msgbody->len + liidlen + sizeof(uint16_t));
+    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
+    res->header.internalid = 0;
+
+    free_ipiri_parameters(params);
+    return ret;
+}
+#endif
+
+static inline void finish_ipiri_job(collector_sync_t *sync,
+        access_session_t *sess, ipintercept_t *ipint,
+        openli_export_recv_t *irimsg) {
+
+    irimsg->data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_DYNAMIC;
+    irimsg->data.ipiri.assignedip_prefixbits = sess->sessionip.prefixbits;
+
+    if (sess->sessionip.ipfamily) {
+        irimsg->data.ipiri.sessionstartts = sess->started;
+        irimsg->data.ipiri.ipfamily = sess->sessionip.ipfamily;
+        memcpy(&(irimsg->data.ipiri.assignedip),
+                &(sess->sessionip.assignedip),
+                (sess->sessionip.ipfamily == AF_INET) ?
+                sizeof(struct sockaddr_in) :
+                sizeof(struct sockaddr_in6));
+    } else {
+        irimsg->data.ipiri.ipfamily = 0;
+        irimsg->data.ipiri.sessionstartts.tv_sec = 0;
+        irimsg->data.ipiri.sessionstartts.tv_usec = 0;
+        memset(&(irimsg->data.ipiri.assignedip), 0,
+                sizeof(struct sockaddr_storage));
+    }
+
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipiri_created ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
+    publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid],
+            irimsg);
+}
+
+static inline openli_export_recv_t *_create_ipiri_job_basic(
+		collector_sync_t *sync,
+        ipintercept_t *ipint, char *username, uint32_t cin) {
+
+    openli_export_recv_t *irimsg;
+
+    irimsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+
+    irimsg->type = OPENLI_EXPORT_IPIRI;
+    irimsg->destid = ipint->common.destid;
+    irimsg->data.ipiri.liid = strdup(ipint->common.liid);
+    irimsg->data.ipiri.access_tech = ipint->accesstype;
+    irimsg->data.ipiri.cin = cin;
+    irimsg->data.ipiri.username = strdup(username);
+    irimsg->data.ipiri.iritype = ETSILI_IRI_REPORT;
+    irimsg->data.ipiri.customparams = NULL;
+
+    return irimsg;
+}
+
+
+int create_ipiri_job_from_iprange(collector_sync_t *sync,
+        static_ipranges_t *staticsess, ipintercept_t *ipint, uint8_t special) {
+
+    int queueused = 0;
+    struct timeval tv;
+    prefix_t *prefix = NULL;
+    openli_export_recv_t *irimsg;
+
+    prefix = ascii2prefix(0, staticsess->rangestr);
+    if (prefix == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: error converting %s into a valid IP prefix in sync thread",
+                staticsess->rangestr);
+        return -1;
+    }
+
+    irimsg = _create_ipiri_job_basic(sync, ipint, "unknownuser",
+            staticsess->cin);
+
+    irimsg->data.ipiri.special = special;
+    irimsg->data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_STATIC;
+
+    /* We generally have no idea when a static session would have started. */
+    irimsg->data.ipiri.sessionstartts.tv_sec = 0;
+    irimsg->data.ipiri.sessionstartts.tv_usec = 0;
+
+    irimsg->data.ipiri.ipfamily = prefix->family;
+    irimsg->data.ipiri.assignedip_prefixbits = prefix->bitlen;
+    if (prefix->family == AF_INET) {
+        struct sockaddr_in *sin;
+
+        sin = (struct sockaddr_in *)&(irimsg->data.ipiri.assignedip);
+        memcpy(&(sin->sin_addr), &(prefix->add.sin), sizeof(struct in_addr));
+        sin->sin_family = AF_INET;
+        sin->sin_port = 0;
+    } else if (prefix->family == AF_INET6) {
+        struct sockaddr_in6 *sin6;
+
+        sin6 = (struct sockaddr_in6 *)&(irimsg->data.ipiri.assignedip);
+        memcpy(&(sin6->sin6_addr), &(prefix->add.sin6),
+                sizeof(struct in6_addr));
+        sin6->sin6_family = AF_INET6;
+        sin6->sin6_port = 0;
+        sin6->sin6_flowinfo = 0;
+        sin6->sin6_scope_id = 0;
+    }
+
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipiri_created ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
+    publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], irimsg);
+    free(prefix);
+    return 0;
+}
+
+int create_ipiri_job_from_packet(collector_sync_t *sync,
+        access_session_t *sess, ipintercept_t *ipint, access_plugin_t *p,
+        void *parseddata) {
+
+    openli_export_recv_t *irimsg;
+    int ret, iter = 0;
+
+    ret = 0;
+
+    if (p == NULL || parseddata == NULL) {
+        return -1;
+    }
+
+    do {
+        irimsg = _create_ipiri_job_basic(sync, ipint, ipint->username,
+				sess->cin);
+
+        irimsg->data.ipiri.special = OPENLI_IPIRI_STANDARD;
+        irimsg->data.ipiri.customparams = NULL;
+
+        if (parseddata) {
+            ret = p->generate_iri_data(p, parseddata,
+                    &(irimsg->data.ipiri.customparams),
+                    &(irimsg->data.ipiri.iritype),
+                    sync->freegenerics, iter);
+
+            if (ret == -1) {
+                logger(LOG_INFO,
+                        "OpenLI: error while creating IPIRI from session state change for %s.",
+                        irimsg->data.ipiri.liid);
+                free(irimsg->data.ipiri.username);
+                free(irimsg->data.ipiri.liid);
+                free(irimsg);
+                return -1;
+            }
+        }
+
+        finish_ipiri_job(sync, sess, ipint, irimsg);
+        iter ++;
+    } while (ret > 0);
+
+    return 0;
+}
+
+
+int create_ipiri_job_from_session(collector_sync_t *sync,
+        access_session_t *sess, ipintercept_t *ipint, uint8_t special) {
+
+    openli_export_recv_t *irimsg;
+    int ret = 0;
+
+    irimsg = _create_ipiri_job_basic(sync, ipint, ipint->username, sess->cin);
+
+    ret = sess->plugin->generate_iri_from_session(sess->plugin, sess,
+            &(irimsg->data.ipiri.customparams),
+            &(irimsg->data.ipiri.iritype), sync->freegenerics, special);
+
+    irimsg->data.ipiri.special = special;
+    if (ret <= 0) {
+        if (ret < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: error whle creating IPIRI from existing session %s.",
+                    irimsg->data.ipiri.liid);
+        }
+
+        free(irimsg->data.ipiri.username);
+        free(irimsg->data.ipiri.liid);
+        free(irimsg);
+        return ret;
+    }
+    finish_ipiri_job(sync, sess, ipint, irimsg);
+    return 0;
+
+}
+
+
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

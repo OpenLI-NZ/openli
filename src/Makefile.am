@@ -6,9 +6,15 @@ openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
 		byteswap.c byteswap.h intercept.h intercept.c configparser.c \
                 configparser.h util.c util.h agency.h logger.c logger.h \
 		netcomms.h netcomms.c coreserver.h coreserver.c \
-                collector/jenkinshash.c openli_tls.c openli_tls.h \
+                collector/jenkinshash.c provisioner/updateserver.c \
+                openli_tls.c openli_tls.h agency.c agency.h \
                 provisioner/provisioner_client.c \
-                provisioner/provisioner_client.h 
+                provisioner/provisioner_client.h \
+                provisioner/configwriter.c provisioner/clientupdates.c \
+                provisioner/updateserver.h \
+                provisioner/updateserver_jsonparsing.c \
+                provisioner/updateserver_jsoncreation.c \
+                provisioner/hup_reload.c
 
 openliprovisioner_LDFLAGS = -lpthread @PROVISIONER_LIBS@
 openliprovisioner_LDADD = @ADD_LIBS@
@@ -16,7 +22,9 @@ openliprovisioner_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/
 endif
 
 if BUILD_COLLECTOR
-PLUGIN_SRCS=collector/accessplugins/radius.c
+PLUGIN_SRCS=collector/accessplugins/radius.c \
+                collector/accessplugins/gtp.c
+
 bin_PROGRAMS +=openlicollector
 openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/collector.h logger.c logger.h \
@@ -42,6 +50,8 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/collector_seqtracker.c \
                 collector/collector_forwarder.c collector/jmirror_parser.c \
                 collector/jmirror_parser.h openli_tls.c openli_tls.h \
+                collector/umtscc.h collector/umtscc.c \
+                collector/umtsiri.h collector/umtsiri.c \
                 $(PLUGIN_SRCS)
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 
@@ -56,7 +66,7 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
 		byteswap.c byteswap.h \
                 configparser.c configparser.h util.c util.h \
                 agency.h logger.c logger.h netcomms.c \
-                netcomms.h export_buffer.c \
+                netcomms.h export_buffer.c intercept.c \
                 export_buffer.h etsili_core.h etsili_core.c \
                 collector/jenkinshash.c openli_tls.c openli_tls.h \
                 coreserver.c coreserver.h

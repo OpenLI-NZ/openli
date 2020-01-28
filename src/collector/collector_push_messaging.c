@@ -199,22 +199,60 @@ static int remove_ipv6_intercept(colthread_local_t *loc, ipsession_t *torem) {
 
 void handle_push_mirror_intercept(libtrace_thread_t *t, colthread_local_t *loc,
         vendmirror_intercept_t *vmi) {
-    HASH_ADD_KEYPTR(hh, loc->activemirrorintercepts,
-            &(vmi->interceptid), sizeof(vmi->interceptid), vmi);
+
+    vendmirror_intercept_list_t *vmilist = NULL;
+    vendmirror_intercept_t *found = NULL;
+
+    HASH_FIND(hh, loc->activemirrorintercepts, &(vmi->sessionid),
+            sizeof(vmi->sessionid), vmilist);
+
+    if (!vmilist) {
+        vmilist = calloc(1, sizeof(vendmirror_intercept_list_t));
+
+        vmilist->sessionid = vmi->sessionid;
+        vmilist->intercepts = NULL;
+        HASH_ADD_KEYPTR(hh, loc->activemirrorintercepts, &(vmi->sessionid),
+                sizeof(vmi->sessionid), vmilist);
+    }
+
+    HASH_FIND(hh, vmilist->intercepts, vmi->common.liid, (vmi->common.liid_len),
+            found);
+    if (!found) {
+        HASH_ADD_KEYPTR(hh, vmilist->intercepts, vmi->common.liid,
+                vmi->common.liid_len, vmi);
+    } else {
+        logger(LOG_INFO, "OpenLI: collector received duplicate vendmirror intercept %u:%s, ignoring. %d", vmi->sessionid, vmi->common.liid,
+                trace_get_perpkt_thread_id(t));
+        free_single_vendmirror_intercept(vmi);
+    }
+
 }
 
 void handle_halt_mirror_intercept(libtrace_thread_t *t,
         colthread_local_t *loc, vendmirror_intercept_t *vmi) {
     vendmirror_intercept_t *found;
+    vendmirror_intercept_list_t *parent;
 
-    HASH_FIND(hh, loc->activemirrorintercepts, &(vmi->interceptid),
-            sizeof(vmi->interceptid), found);
+    HASH_FIND(hh, loc->activemirrorintercepts, &(vmi->sessionid),
+            sizeof(vmi->sessionid), parent);
 
+    if (parent == NULL) {
+        logger(LOG_INFO, "OpenLI: collector thread was unable to remove JMirror intercept %u:%s, as the session ID was not present in its intercept set.",
+                vmi->sessionid, vmi->common.liid);
+        return;
+    }
+
+    HASH_FIND(hh, parent->intercepts, vmi->common.liid, vmi->common.liid_len,
+            found);
     if (found == NULL) {
-        logger(LOG_INFO, "OpenLI: collector thread was unable to remove JMirror intercept %u, as it was not present in its intercept set.",
-                vmi->interceptid);
-    } else {
-        HASH_DELETE(hh, loc->activemirrorintercepts, found);
+        logger(LOG_INFO, "OpenLI: collector thread was unable to remove JMirror intercept %u:%s, as the LIID was not present in its intercept list.",
+                vmi->sessionid, vmi->common.liid);
+        return;
+    }
+
+    HASH_DELETE(hh, parent->intercepts, found);
+    if (HASH_CNT(hh, parent->intercepts) == 0) {
+        HASH_DELETE(hh, loc->activemirrorintercepts, parent);
     }
 }
 
@@ -310,6 +348,9 @@ void handle_push_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
         case OPENLI_CORE_SERVER_SIP:
             servlist = &(loc->sipservers);
             break;
+        case OPENLI_CORE_SERVER_GTP:
+            servlist = &(loc->gtpservers);
+            break;
         default:
             logger(LOG_INFO,
                     "OpenLI: unexpected core server type received by collector thread %d: %d",
@@ -341,6 +382,9 @@ void handle_remove_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
             break;
         case OPENLI_CORE_SERVER_SIP:
             servlist = &(loc->sipservers);
+            break;
+        case OPENLI_CORE_SERVER_GTP:
+            servlist = &(loc->gtpservers);
             break;
         default:
             logger(LOG_INFO,
@@ -435,6 +479,88 @@ void handle_iprange(libtrace_thread_t *t, colthread_local_t *loc,
     }
 }
 
+void handle_modify_iprange(libtrace_thread_t *t, colthread_local_t *loc,
+        staticipsession_t *ipr) {
+
+    liid_set_t *found = NULL, **all;
+    staticipsession_t *sessrec, *ipr_exist;
+    char key[128];
+    patricia_node_t *node = NULL;
+    prefix_t *prefix;
+
+    prefix = ascii2prefix(0, ipr->rangestr);
+    if (prefix == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: error converting %s into a valid IP prefix in thread %d",
+                ipr->rangestr, trace_get_perpkt_thread_id(t));
+        goto bailmodrange;
+    }
+
+    if (prefix->family == AF_INET) {
+        node = patricia_search_exact(loc->staticv4ranges, prefix);
+    } else if (prefix->family == AF_INET6) {
+        node = patricia_search_exact(loc->staticv6ranges, prefix);
+    }
+
+    if (!node) {
+        logger(LOG_INFO,
+                "OpenLI: thread %d was supposed to modify IP prefix %s for LIID %s but no such prefix exists in the tree.",
+                trace_get_perpkt_thread_id(t), ipr->rangestr, ipr->common.liid);
+        goto bailmodrange;
+    }
+
+    all = (liid_set_t **)&(node->data);
+    HASH_FIND(hh, *all, ipr->common.liid, ipr->common.liid_len, found);
+    if (!found) {
+        logger(LOG_INFO,
+                "OpenLI: thread %d was supposed to modify IP prefix %s for LIID %s but the LIID is not associated with that prefix.",
+                trace_get_perpkt_thread_id(t), ipr->rangestr, ipr->common.liid);
+        goto bailmodrange;
+    }
+
+    HASH_FIND(hh, loc->activestaticintercepts, found->key, strlen(found->key),
+            sessrec);
+
+    if (sessrec) {
+        sessrec->references --;
+        if (sessrec->references == 0) {
+            HASH_DELETE(hh, loc->activestaticintercepts, sessrec);
+            free_single_staticipsession(sessrec);
+        }
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: no static IP session exists for key %s, but we are supposed to be modifying the range for it.",
+                found->key);
+    }
+
+    found->cin = ipr->cin;
+    free(found->key);
+    snprintf(key, 127, "%s-%u", found->liid, found->cin);
+    found->key = strdup(key);
+    found->keylen = strlen(found->key);
+
+    HASH_FIND(hh, loc->activestaticintercepts, found->key,
+            strlen(found->key), ipr_exist);
+    if (!ipr_exist) {
+        ipr->references = 1;
+        HASH_ADD_KEYPTR(hh, loc->activestaticintercepts, found->key,
+                strlen(found->key), ipr);
+        ipr = NULL;
+    } else {
+        ipr_exist->references ++;
+    }
+
+
+bailmodrange:
+    if (prefix) {
+        free(prefix);
+    }
+    if (ipr) {
+        free_single_staticipsession(ipr);
+    }
+    return;
+}
+
 void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
         staticipsession_t *ipr) {
 
@@ -474,6 +600,20 @@ void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
         goto bailremoverange;
     }
 
+    HASH_FIND(hh, loc->activestaticintercepts, ipr->key, strlen(ipr->key),
+            sessrec);
+    if (sessrec) {
+        sessrec->references --;
+        if (sessrec->references == 0) {
+            HASH_DELETE(hh, loc->activestaticintercepts, sessrec);
+            free_single_staticipsession(sessrec);
+        }
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: no static IP session exists for key %s, but we are supposed to be removing a range for it.",
+                ipr->key);
+    }
+
     HASH_DELETE(hh, *all, found);
     /*
     logger(LOG_INFO,
@@ -491,19 +631,6 @@ void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
     free(found->key);
     free(found);
 
-    HASH_FIND(hh, loc->activestaticintercepts, ipr->key, strlen(ipr->key),
-            sessrec);
-    if (sessrec) {
-        sessrec->references --;
-        if (sessrec->references == 0) {
-            HASH_DELETE(hh, loc->activestaticintercepts, sessrec);
-            free_single_staticipsession(sessrec);
-        }
-    } else {
-        logger(LOG_INFO,
-                "OpenLI: no static IP session exists for key %s, but we are supposed to be removing a range for it.",
-                ipr->key);
-    }
 
 
 bailremoverange:

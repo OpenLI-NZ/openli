@@ -1,3 +1,43 @@
+openli (1.0.4-1) UNRELEASED; urgency=medium
+
+  * Added REST API to provisioner to allow intercepts, agencies and
+    core servers to be manipulated by sending HTTP requests to a
+    listening socket.
+  * Intercept config has been separated from provisioner config.
+  * Added support for UMTS (mobile) intercepts using GTP.
+  * Allow RADIUS Calling-Station-ID to be used for determining user
+    identity.
+  * Allow multiple concurrent RADIUS sessions for a single user
+    (e.g. simultaneous IPv4 and IPv6 sessions).
+  * Many bug fixes (as documented in
+    https://github.com/wanduow/openli/wiki/ChangeLog).
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Wed, 18 Dec 2019 10:15:20 +1300
+
+openli (1.0.4-1~gtptest03) UNRELEASED; urgency=medium
+
+  * Pre-release packaging of 1.0.4 for Datora to use for testing the
+    new GTP-based mobile interception capabilities.
+  * Added support for GTPv1.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Wed, 18 Dec 2019 10:15:20 +1300
+
+openli (1.0.4-1~gtptest02) UNRELEASED; urgency=medium
+
+  * Pre-release packaging of 1.0.4 for Datora to use for testing the
+    new GTP-based mobile interception capabilities.
+  * Fixed issue where GTP sessions were not properly tracked if the request
+    and response were seen in the wrong order.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Mon, 9 Dec 2019 11:00:20 +1300
+
+openli (1.0.4-1~gtptest01) UNRELEASED; urgency=medium
+
+  * Pre-release packaging of 1.0.4 for Datora to use for testing the
+    new GTP-based mobile interception capabilities.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Mon, 18 Nov 2019 11:11:20 +1300
+
 openli (1.0.3-1) unstable; urgency=medium
 
   * Add ability to encrypt inter-component communications using TLS

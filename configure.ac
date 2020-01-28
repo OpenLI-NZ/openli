@@ -1,6 +1,6 @@
 # Super primitive configure script
 
-AC_INIT(openli, 1.0.3, salcock@waikato.ac.nz)
+AC_INIT(openli, 1.0.4, salcock@waikato.ac.nz)
 
 AM_INIT_AUTOMAKE([subdir-objects])
 AC_CONFIG_SRCDIR(src/collector/collector.c)
@@ -70,11 +70,29 @@ if test "x$enable_collector" != "xno"; then
         COLLECTOR_LIBS="$COLLECTOR_LIBS -losipparser2"
 fi
 
+if test "x$enable_provisioner" != "xno"; then
+        AC_CHECK_LIB([microhttpd], [MHD_destroy_post_processor],libmicrohttpd_found=1,libmicrohttpd_found=0)
+        if test "$libmicrohttpd_found" = 0; then
+                AC_MSG_ERROR(Required library libmicrohttpd not found; use LDFLAGS to specify library location)
+        fi
+        AC_CHECK_LIB([json-c], [json_tokener_new],libjsonc_found=1,libjsonc_found=0)
+
+        if test "$libjsonc_found" = 0; then
+                AC_MSG_ERROR(Required library libjson-c not found; use LDFLAGS to specify library location)
+        fi
+        PROVISIONER_LIBS="$PROVISIONER_LIBS -lmicrohttpd -ljson-c"
+fi
 
 if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then
-        AC_CHECK_LIB([wandder], [init_wandder_encoder],libwandder_found=1,libwandder_found=0)
-        if test "$libwandder_found" = 0; then
-                AC_MSG_ERROR(Required library libwandder not found; use LDFLAGS to specify library location)
+        AC_CHECK_LIB([wandder], [wandder_init_encoder_ber],libwandder_ber_found=1,libwandder__ber_found=0)
+
+        if test "$libwandder_ber_found" = 1; then
+                AC_DEFINE(HAVE_BER_ENCODING, 1, [defined to 1 if libwandder supports BER encoding])
+        else
+                AC_CHECK_LIB([wandder], [init_wandder_encoder],libwandder_found=1,libwandder_found=0)
+                if test "$libwandder_found" = 0; then
+                        AC_MSG_ERROR(Required library libwandder not found; use LDFLAGS to specify library location)
+                fi
         fi
 
         AC_CHECK_LIB([Judy], [JudySLGet],libjudy_found=1,libjudy_found=0)

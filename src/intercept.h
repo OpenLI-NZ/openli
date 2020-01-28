@@ -46,11 +46,17 @@ typedef enum {
     INTERNET_ACCESS_TYPE_WIMAX = 7,
     INTERNET_ACCESS_TYPE_SATELLITE= 8,
     INTERNET_ACCESS_TYPE_WIRELESS_OTHER = 9,
+    INTERNET_ACCESS_TYPE_MOBILE = 32,       /* Not a "real" value */
 } internet_access_method_t;
 
 typedef enum {
     OPENLI_VOIPINT_OPTION_IGNORE_COMFORT = 0,
 } voipintercept_options_t;
+
+typedef enum {
+    OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID = 0,
+    OPENLI_IPINT_OPTION_RADIUS_IDENT_USER = 1,
+} ipintercept_options_t;
 
 typedef struct static_ipranges {
     char *rangestr;
@@ -87,6 +93,7 @@ typedef struct ipintercept {
     static_ipranges_t *statics;
 
     uint8_t awaitingconfirm;
+    uint32_t options;
     UT_hash_handle hh_liid;
     UT_hash_handle hh_user;
 } ipintercept_t;
@@ -213,12 +220,16 @@ struct ipsession {
 };
 
 struct vendmirror_intercept {
-    uint32_t cin;
-    uint32_t interceptid;
-    uint32_t nextseqno;
+    uint32_t sessionid;
     intercept_common_t common;
     UT_hash_handle hh;
 };
+
+typedef struct vendmirror_intercept_list {
+    uint32_t sessionid;
+    vendmirror_intercept_t *intercepts;
+    UT_hash_handle hh;
+} vendmirror_intercept_list_t;
 
 struct staticipsession {
     char *key;
@@ -230,11 +241,26 @@ struct staticipsession {
     UT_hash_handle hh;
 };
 
+/* A default username that may appear in RADIUS packets that should not
+ * be treated as an actual user. Some ISPs will use CSID as user identity
+ * instead and configure their CPEs to send a "default" username in RADIUS
+ * when joining the network -- if the ISP can provide the defaults, we
+ * can tell the collectors to not bother trying to track the sessions for
+ * those "users".
+ */
+typedef struct default_radius_user {
+    char *name;     /**< The default username */
+    int namelen;    /**< The length of the username, in bytes */
+
+    uint8_t awaitingconfirm;
+    UT_hash_handle hh;
+} default_radius_user_t;
+
 void free_all_ipintercepts(ipintercept_t **interceptlist);
 void free_all_voipintercepts(voipintercept_t **vintercepts);
 void free_all_rtpstreams(rtpstreaminf_t **streams);
 void free_all_ipsessions(ipsession_t **sessions);
-void free_all_vendmirror_intercepts(vendmirror_intercept_t **mirror_intercepts);
+void free_all_vendmirror_intercepts(vendmirror_intercept_list_t **mirror_intercepts);
 void free_all_staticipsessions(staticipsession_t **statintercepts);
 
 void free_voip_cinmap(voipcinmap_t *cins);
@@ -268,6 +294,11 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
         ipintercept_t *ipint);
 int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
         ipintercept_t *ipint);
+
+const char *get_access_type_string(internet_access_method_t method);
+const char *get_radius_ident_string(uint32_t radoptions);
+internet_access_method_t map_access_type_string(char *confstr);
+uint32_t map_radius_ident_string(char *confstr);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

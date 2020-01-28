@@ -31,6 +31,8 @@
 #include "ipmmcc.h"
 #include "ipcc.h"
 #include "ipmmiri.h"
+#include "umtscc.h"
+#include "umtsiri.h"
 #include "collector_base.h"
 #include "logger.h"
 
@@ -181,35 +183,150 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
 
 }
 
+static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
+        openli_encoded_result_t *res) {
+
+    uint32_t liidlen = strlen(job->liid);
+
+    memset(res, 0, sizeof(openli_encoded_result_t));
+
+    res->msgbody = calloc(1, sizeof(wandder_encoded_result_t));
+    res->msgbody->encoder = NULL;
+    res->msgbody->encoded = NULL;
+    res->msgbody->len = job->origreq->data.rawip.ipclen;
+    res->msgbody->alloced = 0;
+    res->msgbody->next = NULL;
+
+    res->ipcontents = job->origreq->data.rawip.ipcontent;
+    res->ipclen = job->origreq->data.rawip.ipclen;
+    res->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    res->header.bodylen = htons(res->msgbody->len + liidlen + sizeof(uint16_t));
+    res->header.intercepttype = htons(OPENLI_PROTO_RAWIP_SYNC);
+    res->header.internalid = 0;
+    res->isDer = 1;         /* Must be set as DER for the forwarder to handle
+                             * correctly */
+
+    return 0;
+}
+
 static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
         openli_encoded_result_t *res) {
 
     int ret = -1;
+    uint8_t isDer = 1;
+    etsili_generic_t *np;
+
+#ifdef HAVE_BER_ENCODING
+     if (job->preencoded_ber != NULL) {
+         isDer = 0;
+         if (job->top == NULL ){
+             job->top = calloc(sizeof(wandder_etsili_top_t), 1);
+         }
+     }
+#endif
 
     switch(job->origreq->type) {
         case OPENLI_EXPORT_IPCC:
-            ret = encode_ipcc(enc->encoder, job->preencoded,
-                    &(job->origreq->data.ipcc), job->seqno,
-                    &(job->origreq->ts), res);
+            if (isDer){
+                ret = encode_ipcc(enc->encoder, job->preencoded,
+                        &(job->origreq->data.ipcc), job->seqno,
+                        &(job->origreq->ts), res);
+#ifdef HAVE_BER_ENCODING
+            }else {                
+                ret = encode_ipcc_ber(job->preencoded_ber,
+                        &(job->origreq->data.ipcc), job->seqno,
+                        &(job->origreq->ts), res, job->top, enc->encoder);
+#endif
+            }
             break;
         case OPENLI_EXPORT_IPIRI:
-            ret = encode_ipiri(enc->encoder, enc->freegenerics,
-                    job->preencoded,
-                    &(job->origreq->data.ipiri), job->seqno, res);
-
+            if(isDer){
+                ret = encode_ipiri(enc->encoder, enc->freegenerics,
+                        job->preencoded,
+                        &(job->origreq->data.ipiri), job->seqno, res);
+#ifdef HAVE_BER_ENCODING
+            }
+            else{
+                ret = encode_ipiri_ber(job->preencoded_ber,
+                        &(job->origreq->data.ipiri), enc->freegenerics,
+                        job->seqno, &(job->origreq->ts), res, job->top, 
+                        enc->encoder);
+#endif
+            }
             break;
         case OPENLI_EXPORT_IPMMIRI:
-            ret = encode_ipmmiri(enc->encoder, job->preencoded,
+            if (isDer){
+                ret = encode_ipmmiri(enc->encoder, job->preencoded,
                     &(job->origreq->data.ipmmiri), job->seqno, res,
                     &(job->origreq->ts));
+#ifdef HAVE_BER_ENCODING
+            }else {                
+                ret = encode_ipmmiri_ber(job->preencoded_ber,
+                        &(job->origreq->data.ipmmiri), job->seqno,
+                        &(job->origreq->ts), res, job->top, enc->encoder);
+#endif
+            }
             break;
         case OPENLI_EXPORT_IPMMCC:
-            ret = encode_ipmmcc(enc->encoder, job->preencoded,
-                    &(job->origreq->data.ipcc), job->seqno,
-                    &(job->origreq->ts), res);
+            if (isDer){
+                ret = encode_ipmmcc(enc->encoder, job->preencoded,
+                        &(job->origreq->data.ipcc), job->seqno,
+                        &(job->origreq->ts), res);
+#ifdef HAVE_BER_ENCODING
+            } else {
+                ret = encode_ipmmcc_ber(job->preencoded_ber,
+                        &(job->origreq->data.ipcc), job->seqno,
+                        &(job->origreq->ts), res, job->top, enc->encoder);
+#endif
+            }
             break;
+        case OPENLI_EXPORT_UMTSCC:
+            if (isDer) {
+                ret = encode_umtscc(enc->encoder, job->preencoded,
+                        &(job->origreq->data.ipcc), job->seqno,
+                        &(job->origreq->ts), res);
+#ifdef HAVE_BER_ENCODING
+            }
+            else{
+                //TODO
+                logger(LOG_INFO, "OpenLI: BER encoding for UMTSCC is not yet implemented.");
+                //complain loudly that this dont work yet
+#endif
+            }
+            break;
+        case OPENLI_EXPORT_UMTSIRI: {
+            char opid[6];
+            int opidlen = enc->shared->operatorid_len;
+
+            if (opidlen > 5) {
+                opidlen = 5;
+            }
+
+            memcpy(opid, enc->shared->operatorid, opidlen);
+            opid[opidlen] = '\0';
+
+            np = create_etsili_generic(enc->freegenerics,
+                    UMTSIRI_CONTENTS_OPERATOR_IDENTIFIER, opidlen, opid);
+            HASH_ADD_KEYPTR(hh, job->origreq->data.mobiri.customparams,
+                    &(np->itemnum), sizeof(np->itemnum), np);
+
+            if (isDer) {
+                ret = encode_umtsiri(enc->encoder, enc->freegenerics,
+                        job->preencoded, &(job->origreq->data.mobiri),
+                        job->seqno, res);
+#ifdef HAVE_BER_ENCODING
+            }
+            else{
+                //TODO
+                logger(LOG_INFO, "OpenLI: BER encoding for UMTSIRI is not yet implemented.");
+                //complain loudly that this dont work yet
+#endif
+            }
+            break;
+        }
     }
 
+    res->isDer = isDer; //encodeing typeto be stored in result
 
     return ret;
 }
@@ -222,6 +339,7 @@ static int process_job(openli_encoder_t *enc, void *socket) {
     openli_encoded_result_t result;
 
     while (batch < 50) {
+        memset(&job, 0, sizeof(openli_encoding_job_t));
         x = zmq_recv(socket, &job, sizeof(openli_encoding_job_t), 0);
         if (x < 0 && errno != EAGAIN) {
             logger(LOG_INFO,
@@ -233,13 +351,19 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         } else if (x == 0) {
             return 0;
         }
-        if (encode_etsi(enc, &job, &result) < 0) {
-            /* What do we do in the event of an error? */
-            logger(LOG_INFO,
-                    "OpenLI: encoder worker had an error when encoding %d record",
-                    job.origreq->type);
 
-            continue;
+        if (job.origreq->type == OPENLI_EXPORT_RAW_SYNC) {
+            encode_rawip(enc, &job, &result);
+        } else {
+
+            if (encode_etsi(enc, &job, &result) < 0) {
+                /* What do we do in the event of an error? */
+                logger(LOG_INFO,
+                        "OpenLI: encoder worker had an error when encoding %d record",
+                        job.origreq->type);
+
+                continue;
+            }
         }
 
         result.cinstr = job.cinstr;
@@ -248,6 +372,10 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         result.destid = job.origreq->destid;
         result.origreq = job.origreq;
         result.encodedby = enc->workerid;
+
+#ifdef HAVE_BER_ENCODING
+        result.top = job.top;
+#endif
 
         // FIXME -- hash result based on LIID (and CIN?)
         assert(enc->zmq_pushresults[0] != NULL);

@@ -23,34 +23,42 @@
  *
  *
  */
-
 #include "config.h"
 
-#include <libtrace/message_queue.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
 #include <libtrace.h>
+#include <libtrace_parallel.h>
 #include <libwandder.h>
 #include <libwandder_etsili.h>
 
+#include "logger.h"
 #include "collector.h"
-#include "intercept.h"
+#include "collector_publish.h"
 #include "etsili_core.h"
+#include "util.h"
+#include "umtscc.h"
 
-enum {
-    OPENLI_IPMMIRI_ORIGINAL,
-    OPENLI_IPMMIRI_SIP,
-    OPENLI_IPMMIRI_H323,
-};
 
-int encode_ipmmiri(wandder_encoder_t *encoder,
-        wandder_encode_job_t *preencoded, openli_ipmmiri_job_t *job,
-        uint32_t seqno,
-        openli_encoded_result_t *res, struct timeval *ts);
+int encode_umtscc(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, openli_ipcc_job_t *job,
+        uint32_t seqno, struct timeval *tv,  openli_encoded_result_t *msg) {
 
-#ifdef HAVE_BER_ENCODING
-int encode_ipmmiri_ber(wandder_buf_t **preencoded_ber,
-        openli_ipmmiri_job_t *job, uint32_t seqno, struct timeval *tv,
-        openli_encoded_result_t *res, wandder_etsili_top_t *top, 
-        wandder_encoder_t *encoder);
-#endif
+    uint32_t liidlen = precomputed[OPENLI_PREENCODE_LIID].vallen;
+    reset_wandder_encoder(encoder);
+
+    memset(msg, 0, sizeof(openli_encoded_result_t));
+    msg->msgbody = encode_etsi_umtscc(encoder, precomputed, (int64_t)job->cin,
+            (int64_t)seqno, tv, job->ipcontent, job->ipclen, job->dir);
+
+    msg->ipcontents = (uint8_t *)job->ipcontent;
+    msg->ipclen = job->ipclen;
+    msg->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    msg->header.bodylen = htons(msg->msgbody->len + liidlen + sizeof(uint16_t));
+    msg->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
+    msg->header.internalid = 0;
+    return 0;
+}
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

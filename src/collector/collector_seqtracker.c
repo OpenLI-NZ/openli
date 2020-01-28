@@ -51,6 +51,9 @@ static inline void free_cinsequencing(exporter_intercept_state_t *intstate) {
 
     HASH_ITER(hh, intstate->cinsequencing, c, tmp) {
         HASH_DELETE(hh, intstate->cinsequencing, c);
+        if (c->cin_string) {
+            free(c->cin_string);
+        }
         free(c);
     }
 }
@@ -60,11 +63,16 @@ static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
     switch(recvd->type) {
         case OPENLI_EXPORT_IPMMCC:
         case OPENLI_EXPORT_IPCC:
+        case OPENLI_EXPORT_UMTSCC:
             return recvd->data.ipcc.liid;
         case OPENLI_EXPORT_IPIRI:
             return recvd->data.ipiri.liid;
         case OPENLI_EXPORT_IPMMIRI:
             return recvd->data.ipmmiri.liid;
+        case OPENLI_EXPORT_UMTSIRI:
+            return recvd->data.mobiri.liid;
+        case OPENLI_EXPORT_RAW_SYNC:
+            return recvd->data.rawip.liid;
     }
     return NULL;
 }
@@ -74,11 +82,16 @@ static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
     switch(recvd->type) {
         case OPENLI_EXPORT_IPMMCC:
         case OPENLI_EXPORT_IPCC:
+        case OPENLI_EXPORT_UMTSCC:
             return recvd->data.ipcc.cin;
         case OPENLI_EXPORT_IPIRI:
             return recvd->data.ipiri.cin;
         case OPENLI_EXPORT_IPMMIRI:
             return recvd->data.ipmmiri.cin;
+        case OPENLI_EXPORT_UMTSIRI:
+            return recvd->data.mobiri.cin;
+        case OPENLI_EXPORT_RAW_SYNC:
+            return recvd->data.rawip.cin;
     }
     logger(LOG_INFO,
             "OpenLI: invalid message type in extract_cin_from_job: %u",
@@ -107,7 +120,18 @@ static void purge_removedints(seqtracker_thread_data_t *seqdata) {
             prev->next = rem->next;
         }
 
-        etsili_clear_preencoded_fields(rem->preencoded);
+#ifdef HAVE_BER_ENCODING
+        if(rem->ber_top){
+            wandder_etsili_clear_preencoded_fields_ber((wandder_buf_t**) rem->preencoded);
+            wandder_free_top(rem->ber_top);
+        }
+        else {
+            etsili_clear_preencoded_fields((wandder_encode_job_t *)rem->preencoded);
+        }
+#else
+        etsili_clear_preencoded_fields((wandder_encode_job_t *)rem->preencoded);
+#endif
+
         tmp = rem;
         rem = rem->next;
         free(tmp->preencoded);
@@ -126,7 +150,20 @@ static inline void remove_preencoded(seqtracker_thread_data_t *seqdata,
 
 	gettimeofday(&tv, NULL);
 	rem->haltedat = tv.tv_sec;
-	rem->preencoded = intstate->preencoded;
+	
+    //if top is not NULL that means BER is in use so its the two BER fields that need to be free'd
+#ifdef HAVE_BER_ENCODING
+    rem->ber_top = intstate->top;
+    if (rem->ber_top){
+        rem->preencoded = intstate->preencoded_ber;
+    }
+    else {
+        rem->preencoded = intstate->preencoded;
+    }
+#else
+    rem->preencoded = intstate->preencoded;
+#endif
+
 
 	if (seqdata->removedints == NULL) {
 		seqdata->removedints = rem;
@@ -185,10 +222,23 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
     intdetails.networkelemid = seqdata->colident->networkelemid;
     intdetails.intpointid = seqdata->colident->intpointid;
 
-    intstate->preencoded = calloc(OPENLI_PREENCODE_LAST,
-            sizeof(wandder_encode_job_t));
-    etsili_preencode_static_fields(intstate->preencoded, &intdetails);
+    //decide to do BER or DER here
+    if(seqdata->encoding_method == OPENLI_ENCODING_DER){
+        intstate->preencoded = calloc(OPENLI_PREENCODE_LAST,
+                sizeof(wandder_encode_job_t));
+        etsili_preencode_static_fields(intstate->preencoded, &intdetails);
+    }
+    else {
 
+#ifdef HAVE_BER_ENCODING
+        intstate->preencoded_ber = calloc(WANDDER_PREENCODE_LAST, sizeof intstate->preencoded_ber);
+        wandder_etsili_preencode_static_fields_ber(intstate->preencoded_ber, (wandder_etsili_intercept_details_t*)&intdetails);
+        
+        //intstate->top = calloc(sizeof *intstate->top,1);
+        //wandder_init_pshdr_ber(intstate->preencoded_ber, intstate->top);
+        //this should be done inside calls to libwandder, not here
+#endif
+    }
 }
 
 static void reconfigure_intercepts(seqtracker_thread_data_t *seqdata) {
@@ -238,8 +288,10 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
         return -1;
     }
 
+/*
     logger(LOG_INFO, "OpenLI collector: tracker thread %d removed intercept %s",
             seqdata->trackerid, msg->liid);
+*/
     HASH_DELETE(hh, seqdata->intercepts, intstate);
 	if (msg->liid) {
 		free(msg->liid);
@@ -272,6 +324,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     if (!intstate) {
         logger(LOG_INFO, "Received encoding job for an unknown LIID: %s??",
                 liid);
+        free_published_message(recvd);
         return 0;
     }
 
@@ -300,12 +353,17 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 
 
 	job.preencoded = intstate->preencoded;
+
+#ifdef HAVE_BER_ENCODING
+    job.preencoded_ber = intstate->preencoded_ber;
+#endif
 	job.origreq = recvd;
 	job.liid = strdup(liid);
     job.cinstr = strdup(cinseq->cin_string);
 
 	if (recvd->type == OPENLI_EXPORT_IPMMCC ||
-			recvd->type == OPENLI_EXPORT_IPCC) {
+			recvd->type == OPENLI_EXPORT_IPCC ||
+            recvd->type == OPENLI_EXPORT_UMTSCC) {
 	    job.seqno = cinseq->cc_seqno;
         cinseq->cc_seqno ++;
 	} else {
@@ -368,6 +426,9 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
                 case OPENLI_EXPORT_IPMMCC:
                 case OPENLI_EXPORT_IPMMIRI:
                 case OPENLI_EXPORT_IPIRI:
+                case OPENLI_EXPORT_UMTSCC:
+                case OPENLI_EXPORT_UMTSIRI:
+                case OPENLI_EXPORT_RAW_SYNC:
 					run_encoding_job(seqdata, job);
                     sincepurge ++;
                     break;
@@ -476,7 +537,19 @@ void clean_seqtracker(seqtracker_thread_data_t *seqdata) {
 
 	while (seqdata->removedints) {
 		rem = seqdata->removedints;
-		etsili_clear_preencoded_fields((wandder_encode_job_t *)rem->preencoded);
+
+#ifdef HAVE_BER_ENCODING
+        if(rem->ber_top){ //if top exists its the BER encoding that needs to be free'd
+            wandder_etsili_clear_preencoded_fields_ber((wandder_buf_t**) rem->preencoded);
+            wandder_free_top(rem->ber_top);
+        }
+        else {
+            etsili_clear_preencoded_fields((wandder_encode_job_t *)rem->preencoded);
+        }
+#else
+        etsili_clear_preencoded_fields((wandder_encode_job_t *)rem->preencoded);
+#endif
+
 		seqdata->removedints = seqdata->removedints->next;
         free(rem->preencoded);
 		free(rem);

@@ -281,7 +281,6 @@ static int update_rtp_stream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp,
     uint32_t port;
     struct sockaddr_storage *saddr;
     int family, i;
-    int updaterequired = 1;
     sync_sendq_t *sendq, *tmp;
 
     errno = 0;
@@ -321,9 +320,6 @@ static int update_rtp_stream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp,
         return 0;
     }
 
-    if (!updaterequired) {
-        return 0;
-    }
     /* If we get here, we need to push the RTP stream details to the
      * processing threads. */
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
@@ -666,7 +662,7 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
 
     copy->data.ipmmiri.content = malloc(copy->data.ipmmiri.contentlen);
     memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,
-            copy->data.ipmmiri.contentlen);
+            irimsg->data.ipmmiri.contentlen);
 
     pthread_mutex_lock(sync->glob->stats_mutex);
     sync->glob->stats->ipmmiri_created;
@@ -960,6 +956,9 @@ static int update_sip_state(collector_sync_voip_t *sync,
         goto sipgiveup;
     }
 
+    memset(sdpo.address, 0, sizeof(sdpo.address));
+    memset(sdpo.username, 0, sizeof(sdpo.username));
+
     if (sessid != NULL) {
         errno = 0;
         sdpo.sessionid = strtoul(sessid, NULL, 0);
@@ -1073,9 +1072,17 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     }
 
     sync->log_bad_instruct = 1;
-    logger(LOG_INFO,
-            "OpenLI: sync thread modifying options for VOIP intercept %s",
-            tomod.common.liid);
+
+    if (tomod.options & (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
+
+        logger(LOG_INFO,
+                "OpenLI: VOIP intercept %s is now ignoring RTP comfort noise",
+                tomod.common.liid);
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: VOIP intercept %s is now intercepting RTP comfort noise",
+                tomod.common.liid);
+    }
 
     vint->options = tomod.options;
 

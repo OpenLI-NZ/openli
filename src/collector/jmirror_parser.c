@@ -46,7 +46,7 @@ static inline uint32_t jmirror_get_interceptid(jmirrorhdr_t *header) {
 
 static void push_jmirror_ipcc_job(colthread_local_t *loc,
         libtrace_packet_t *packet, vendmirror_intercept_t *cept,
-        collector_identity_t *info, void *l3, uint32_t rem) {
+        uint32_t cin, collector_identity_t *info, void *l3, uint32_t rem) {
 
     openli_export_recv_t *msg;
 
@@ -56,7 +56,7 @@ static void push_jmirror_ipcc_job(colthread_local_t *loc,
     msg->ts = trace_get_timeval(packet);
     msg->destid = cept->common.destid;
     msg->data.ipcc.liid = strdup(cept->common.liid);
-    msg->data.ipcc.cin = cept->cin;
+    msg->data.ipcc.cin = cin;
     msg->data.ipcc.dir = ETSI_DIR_INDETERMINATE;
     msg->data.ipcc.ipcontent = (uint8_t *)calloc(1, rem);
     msg->data.ipcc.ipclen = rem;
@@ -69,27 +69,29 @@ static void push_jmirror_ipcc_job(colthread_local_t *loc,
 
 int check_jmirror_intercept(collector_identity_t *info, colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
-        coreserver_t *jmirror_sources, vendmirror_intercept_t *jmirror_ints) {
+        coreserver_t *jmirror_sources,
+        vendmirror_intercept_list_t *jmirror_ints) {
 
     coreserver_t *cs;
     jmirrorhdr_t *header = NULL;
-    uint32_t rem = 0, cept_id;
-    vendmirror_intercept_t *cept;
+    uint32_t rem = 0, cept_id, cin;
+    vendmirror_intercept_t *cept, *tmp;
+    vendmirror_intercept_list_t *vmilist;
     char *l3;
 
     if ((cs = match_packet_to_coreserver(jmirror_sources, pinfo)) == NULL) {
         return 0;
     }
 
-    header = (jmirrorhdr_t *)get_udp_payload(packet, &rem);
+    header = (jmirrorhdr_t *)get_udp_payload(packet, &rem, NULL, NULL);
     if (rem < sizeof(jmirrorhdr_t) || header == NULL) {
         return 0;
     }
 
     cept_id = jmirror_get_interceptid(header);
 
-    HASH_FIND(hh, jmirror_ints, &cept_id, sizeof(cept_id), cept);
-    if (cept == NULL) {
+    HASH_FIND(hh, jmirror_ints, &cept_id, sizeof(cept_id), vmilist);
+    if (vmilist == NULL) {
         return 0;
     }
 
@@ -99,9 +101,11 @@ int check_jmirror_intercept(collector_identity_t *info, colthread_local_t *loc,
     if (rem == 0) {
         return 0;
     }
+    cin = ntohl(header->sessionid);
 
-    cept->cin = ntohl(header->sessionid);
-    push_jmirror_ipcc_job(loc, packet, cept, info, l3, rem);
+    HASH_ITER(hh, vmilist->intercepts, cept, tmp) {
+        push_jmirror_ipcc_job(loc, packet, cept, cin, info, l3, rem);
+    }
     return 1;
 
 }

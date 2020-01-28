@@ -85,6 +85,7 @@ typedef struct med_agency_state {
     int outenabled;
     int main_fd;
     int katimer_fd;
+    uint32_t katimer_setsec;
     int karesptimer_fd;
     wandder_encoded_result_t *pending_ka;
     int64_t lastkaseq;
@@ -121,6 +122,7 @@ typedef struct mediator_agency {
     char *agencyid;
     int awaitingconfirm;
     int disabled;
+    int disabled_msg;
     handover_t *hi2;
     handover_t *hi3;
 } mediator_agency_t;
@@ -173,11 +175,13 @@ enum {
     PCAP_MESSAGE_PACKET,
     PCAP_MESSAGE_FLUSH,
     PCAP_MESSAGE_ROTATE,
+    PCAP_MESSAGE_RAWIP,
 };
 
 typedef struct active_pcap_output {
     char *liid;
     libtrace_out_t *out;
+    int pktwritten;
 
     UT_hash_handle hh;
 } active_pcap_output_t;

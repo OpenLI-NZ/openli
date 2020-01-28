@@ -1,5 +1,5 @@
 Name:           openli
-Version:        1.0.3
+Version:        1.0.4
 Release:        1%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
@@ -22,6 +22,8 @@ BuildRequires: zeromq-devel
 BuildRequires: gperftools-devel
 BuildRequires: libosip2-devel
 BuildRequires: openssl-devel
+BuildRequires: json-c-devel
+BuildRequires: libmicrohttpd-devel
 BuildRequires: systemd
 
 %description
@@ -151,6 +153,7 @@ fi
 %{_unitdir}/openli-provisioner.service
 %config %{_sysconfdir}/rsyslog.d/10-openli-provisioner.conf
 %config %{_sysconfdir}/openli/provisioner-example.yaml
+%config %{_sysconfdir}/openli/running-intercept-example.yaml
 %doc %{_docdir}/openli/ProvisionerDoc.md
 %doc %{_docdir}/openli/TLSDoc.md
 
@@ -170,6 +173,9 @@ fi
 
 
 %changelog
+* Mon Jan 13 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.4-1
+- Updated for 1.0.4 release
+
 * Fri Aug 16 2019 Shane Alcock <salcock@waikato.ac.nz> - 1.0.3-1
 - Updated for 1.0.3 release
 

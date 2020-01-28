@@ -41,6 +41,27 @@
 #include "logger.h"
 #include "util.h"
 
+void openli_copy_ipcontent(libtrace_packet_t *pkt, uint8_t **ipc,
+        uint16_t *iplen) {
+
+    void *l3;
+    uint16_t ethertype;
+    uint32_t rem;
+
+    *ipc = NULL;
+    *iplen = 0;
+
+    l3 = trace_get_layer3(pkt, &ethertype, &rem);
+
+    if (l3 == NULL || rem == 0) {
+        return;
+    }
+
+	*ipc = malloc(rem);
+	memcpy(*ipc, l3, rem);
+	*iplen = rem;
+}
+
 int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
         uint8_t setkeepalive) {
 
@@ -404,22 +425,64 @@ uint32_t hash_liid(char *liid) {
     return hashlittle(liid, strlen(liid), 1572869);
 }
 
-void *get_udp_payload(libtrace_packet_t *packet, uint32_t *rem) {
+void *get_udp_payload(libtrace_packet_t *packet, uint32_t *rem,
+        uint16_t *sourceport, uint16_t *destport) {
 
     uint8_t proto;
     void *transport, *udppayload;
+    libtrace_udp_t *udp;
 
     transport = trace_get_transport(packet, &proto, rem);
-    if (rem == 0 || transport == NULL) {
+    if (*rem < sizeof(libtrace_udp_t) || transport == NULL) {
         return NULL;
     }
     if (proto != TRACE_IPPROTO_UDP) {
         return NULL;
     }
 
+    udp = (libtrace_udp_t *)transport;
+    if (sourceport) {
+        *sourceport = ntohs(udp->source);
+    }
+    if (destport) {
+        *destport = ntohs(udp->dest);
+    }
     udppayload = trace_get_payload_from_udp((libtrace_udp_t *)transport,
             rem);
 	return udppayload;
+}
+
+char *parse_iprange_string(char *ipr_str) {
+	    int family = 0;
+
+	char *parsed = NULL;
+
+    if (ipr_str == NULL) {
+        return NULL;
+    }
+
+    if (strchr(ipr_str, ':') != NULL) {
+        family = AF_INET6;
+    } else if (strchr(ipr_str, '.') != NULL) {
+        family = AF_INET;
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: '%s' is not a valid prefix or IP address",
+                ipr_str);
+        return NULL;
+    }
+    if (strchr(ipr_str, '/') == NULL) {
+        /* No slash, so assume /32 or /128 */
+        int rlen = strlen(ipr_str) + 5;   /* '/128' + nul */
+        parsed = (char *)calloc(1, rlen);
+        snprintf(parsed, rlen - 1, "%s/%u", ipr_str,
+                family == AF_INET ? 32 : 128);
+
+    } else {
+        parsed = strdup(ipr_str);
+    }
+    return parsed;
+
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

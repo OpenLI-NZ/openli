@@ -110,7 +110,7 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
     newcin->timeout_ev = NULL;
     newcin->byematched = 0;
 
-    if (vint->options & (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
+    if (vint->options & (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
         newcin->skip_comfort = 1;
     } else {
         newcin->skip_comfort = 0;
@@ -373,9 +373,7 @@ vendmirror_intercept_t *create_vendmirror_intercept(ipintercept_t *ipint) {
         return NULL;
     }
 
-    jm->nextseqno = 0;
-    jm->cin = 0;
-    jm->interceptid = ipint->vendmirrorid;
+    jm->sessionid = ipint->vendmirrorid;
     copy_intercept_common(&(ipint->common), &(jm->common));
 
     return jm;
@@ -386,11 +384,17 @@ void free_single_vendmirror_intercept(vendmirror_intercept_t *jm) {
     free(jm);
 }
 
-void free_all_vendmirror_intercepts(vendmirror_intercept_t **jmints) {
+void free_all_vendmirror_intercepts(vendmirror_intercept_list_t **jmints) {
+
+    vendmirror_intercept_list_t *parent, *ptmp;
     vendmirror_intercept_t *jm, *tmp;
-    HASH_ITER(hh, *jmints, jm, tmp) {
-        HASH_DELETE(hh, *jmints, jm);
-        free_single_vendmirror_intercept(jm);
+    HASH_ITER(hh, *jmints, parent, ptmp) {
+
+        HASH_ITER(hh, parent->intercepts, jm, tmp) {
+            HASH_DELETE(hh, parent->intercepts, jm);
+            free_single_vendmirror_intercept(jm);
+        }
+        HASH_DELETE(hh, *jmints, parent);
     }
 }
 
@@ -554,12 +558,14 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
     HASH_FIND(hh, *ulist, ipint->username, ipint->username_len, found);
 
     if (!found) {
+        printf("!found: %s\n", ipint->username);
         return 0;
     }
 
     HASH_FIND(hh_user, found->intlist, ipint->common.liid,
             ipint->common.liid_len, existing);
     if (!existing) {
+        printf("!existing: %s\n", ipint->common.liid);
         return 0;
     }
 
@@ -573,6 +579,7 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
         free(found->username);
         free(found);
     }
+    printf("removed %s:%s\n", ipint->username, ipint->common.liid);
     return 0;
 }
 
@@ -590,6 +597,123 @@ void clear_user_intercept_list(user_intercept_list_t *ulist) {
         free(u->username);
         free(u);
     }
+}
+
+uint32_t map_radius_ident_string(char *confstr) {
+    if (strcasecmp(confstr, "csid") == 0) {
+        return (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID);
+    }
+
+    if (strncasecmp(confstr, "user", 4) == 0) {
+        return (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER);
+    }
+    return 0;
+}
+
+const char *get_radius_ident_string(uint32_t radoptions) {
+
+    if (radoptions == (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID)) {
+        return "csid";
+    }
+
+    if (radoptions == (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER)) {
+        return "user";
+    }
+
+    return "any";
+}
+
+const char *get_access_type_string(internet_access_method_t method) {
+
+    switch(method) {
+        case INTERNET_ACCESS_TYPE_DIALUP:
+            return "dialup";
+        case INTERNET_ACCESS_TYPE_XDSL:
+            return "xDSL";
+        case INTERNET_ACCESS_TYPE_CABLEMODEM:
+            return "cable";
+        case INTERNET_ACCESS_TYPE_LAN:
+            return "LAN";
+        case INTERNET_ACCESS_TYPE_WIRELESS_LAN:
+            return "wifi";
+        case INTERNET_ACCESS_TYPE_FIBER:
+            return "fiber";
+        case INTERNET_ACCESS_TYPE_WIMAX:
+            return "wimax";
+        case INTERNET_ACCESS_TYPE_SATELLITE:
+            return "satellite";
+        case INTERNET_ACCESS_TYPE_MOBILE:
+            return "mobile";
+        case INTERNET_ACCESS_TYPE_WIRELESS_OTHER:
+            return "wireless-other";
+    }
+
+    return "undefined";
+}
+
+internet_access_method_t map_access_type_string(char *confstr) {
+
+    if (strcasecmp(confstr, "dialup") == 0 ||
+            strcasecmp(confstr, "dial-up") == 0) {
+        return INTERNET_ACCESS_TYPE_DIALUP;
+    }
+
+    if (strcasecmp(confstr, "adsl") == 0 || strcasecmp(confstr, "vdsl") == 0 ||
+            strcasecmp(confstr, "dsl") == 0 ||
+            strcasecmp(confstr, "adsl2") == 0 ||
+            strcasecmp(confstr, "xdsl") == 0) {
+        return INTERNET_ACCESS_TYPE_XDSL;
+    }
+
+    if (strcasecmp(confstr, "cable") == 0 ||
+            strcasecmp(confstr, "cablemodem") == 0 ||
+            strcasecmp(confstr, "cable-modem") == 0) {
+        return INTERNET_ACCESS_TYPE_CABLEMODEM;
+    }
+
+    if (strcasecmp(confstr, "lan") == 0 ||
+            strcasecmp(confstr, "ethernet") == 0) {
+        return INTERNET_ACCESS_TYPE_LAN;
+    }
+
+    if (strcasecmp(confstr, "wirelesslan") == 0 ||
+            strcasecmp(confstr, "wireless-lan") == 0 ||
+            strcasecmp(confstr, "wireless") == 0 ||
+            strcasecmp(confstr, "wifi-lan") == 0 ||
+            strcasecmp(confstr, "wifi") == 0) {
+        return INTERNET_ACCESS_TYPE_WIRELESS_LAN;
+    }
+
+    if (strcasecmp(confstr, "fibre") == 0 || strcasecmp(confstr, "fiber") == 0
+            || strcasecmp(confstr, "ufb") == 0) {
+        return INTERNET_ACCESS_TYPE_FIBER;
+    }
+
+    if (strcasecmp(confstr, "wimax") == 0 ||
+            strcasecmp(confstr, "hiperman") == 0) {
+        return INTERNET_ACCESS_TYPE_WIMAX;
+    }
+
+    if (strcasecmp(confstr, "satellite") == 0) {
+        return INTERNET_ACCESS_TYPE_SATELLITE;
+    }
+
+    if (strcasecmp(confstr, "wireless-other") == 0 ||
+            strcasecmp(confstr, "wifi-other") == 0 ||
+            strcasecmp(confstr, "wifiother") == 0 ||
+            strcasecmp(confstr, "wirelessother") == 0) {
+        return INTERNET_ACCESS_TYPE_WIRELESS_OTHER;
+    }
+
+    if (strcasecmp(confstr, "mobile") == 0 ||
+            strcasecmp(confstr, "3g") == 0 ||
+            strcasecmp(confstr, "4g") == 0 ||
+            strcasecmp(confstr, "5g") == 0 ||
+            strcasecmp(confstr, "lte") == 0) {
+        return INTERNET_ACCESS_TYPE_MOBILE;
+    }
+
+    return INTERNET_ACCESS_TYPE_UNDEFINED;
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

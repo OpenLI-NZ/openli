@@ -129,6 +129,7 @@ static void reset_collector_stats(collector_global_t *glob) {
     glob->stats.packets_sync_ip = 0;
     glob->stats.packets_sync_voip = 0;
     glob->stats.ipcc_created = 0;
+    glob->stats.mobiri_created = 0;
     glob->stats.ipiri_created = 0;
     glob->stats.ipmmcc_created = 0;
     glob->stats.ipmmiri_created = 0;
@@ -161,8 +162,9 @@ static void log_collector_stats(collector_global_t *glob) {
             glob->stats.packets_sync_ip, glob->stats.packets_sync_voip);
     logger(LOG_INFO, "OpenLI: Bad SIP packets: %lu   Bad RADIUS packets: %lu",
             glob->stats.bad_sip_packets, glob->stats.bad_ip_session_packets);
-    logger(LOG_INFO, "OpenLI: Records created... IPCCs: %lu  IPIRIs: %lu",
-            glob->stats.ipcc_created, glob->stats.ipiri_created);
+    logger(LOG_INFO, "OpenLI: Records created... IPCCs: %lu  IPIRIs: %lu  MobIRIs: %lu",
+            glob->stats.ipcc_created, glob->stats.ipiri_created,
+            glob->stats.mobiri_created);
     logger(LOG_INFO, "OpenLI: Records created... IPMMCCs: %lu  IPMMIRIs: %lu",
             glob->stats.ipmmcc_created, glob->stats.ipmmiri_created);
 
@@ -257,6 +259,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
     loc->activemirrorintercepts = NULL;
     loc->activestaticintercepts = NULL;
     loc->radiusservers = NULL;
+    loc->gtpservers = NULL;
     loc->sipservers = NULL;
     loc->staticv4ranges = New_Patricia(32);
     loc->staticv6ranges = New_Patricia(128);
@@ -383,6 +386,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     free_all_rtpstreams(&(loc->activertpintercepts));
     free_all_vendmirror_intercepts(&(loc->activemirrorintercepts));
     free_coreserver_list(loc->radiusservers);
+    free_coreserver_list(loc->gtpservers);
     free_coreserver_list(loc->sipservers);
 
     destroy_ipfrag_reassembler(loc->fragreass);
@@ -546,6 +550,10 @@ static void process_incoming_messages(libtrace_thread_t *t,
 
     if (syncpush->type == OPENLI_PUSH_REMOVE_IPRANGE) {
         handle_remove_iprange(t, loc, syncpush->data.iprange);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_MODIFY_IPRANGE) {
+        handle_modify_iprange(t, loc, syncpush->data.iprange);
     }
 
 }
@@ -750,6 +758,13 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         if (loc->radiusservers && is_core_server_packet(pkt, &pinfo,
                     loc->radiusservers)) {
             send_packet_to_sync(pkt, loc->tosyncq_ip, OPENLI_UPDATE_RADIUS);
+            ipsynced = 1;
+            goto processdone;
+        }
+
+        if (loc->gtpservers && is_core_server_packet(pkt, &pinfo,
+                    loc->gtpservers)) {
+            send_packet_to_sync(pkt, loc->tosyncq_ip, OPENLI_UPDATE_GTP);
             ipsynced = 1;
             goto processdone;
         }
@@ -1202,6 +1217,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->sslconf.ctx = NULL;
 
     glob->etsitls = 1;
+    glob->encoding_method = OPENLI_ENCODING_DER;
 
     memset(&(glob->stats), 0, sizeof(glob->stats));
     glob->stat_frequency = 0;
@@ -1217,6 +1233,9 @@ static collector_global_t *parse_global_config(char *configfile) {
         clear_global_config(glob);
         return NULL;
     }
+
+    logger(LOG_DEBUG, "OpenLI: Encoding Method: %s",
+        glob->encoding_method == OPENLI_ENCODING_BER ? "BER" : "DER");
 
     logger(LOG_DEBUG, "OpenLI: ETSI TLS encryption %s",
         glob->etsitls ? "enabled" : "disabled");
@@ -1576,6 +1595,7 @@ int main(int argc, char *argv[]) {
         glob->seqtrackers[i].zmq_recvpublished = NULL;
         glob->seqtrackers[i].intercepts = NULL;
         glob->seqtrackers[i].colident = &(glob->sharedinfo);
+        glob->seqtrackers[i].encoding_method = glob->encoding_method;
 
         pthread_create(&(glob->seqtrackers[i].threadid), NULL,
                 start_seqtracker_thread, (void *)&(glob->seqtrackers[i]));

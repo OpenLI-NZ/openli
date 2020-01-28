@@ -61,13 +61,15 @@ enum {
     OPENLI_PUSH_HALT_VENDMIRROR_INTERCEPT = 10,
     OPENLI_PUSH_IPRANGE = 11,
     OPENLI_PUSH_REMOVE_IPRANGE = 12,
+    OPENLI_PUSH_MODIFY_IPRANGE = 13,
 };
 
 enum {
     OPENLI_UPDATE_HELLO = 0,
     OPENLI_UPDATE_RADIUS = 1,
     OPENLI_UPDATE_DHCP = 2,
-    OPENLI_UPDATE_SIP = 3
+    OPENLI_UPDATE_SIP = 3,
+    OPENLI_UPDATE_GTP = 4,
 };
 
 typedef struct openli_intersync_msg {
@@ -190,7 +192,7 @@ typedef struct colthread_local {
     ipv4_target_t *activeipv4intercepts;
 
     rtpstreaminf_t *activertpintercepts;
-    vendmirror_intercept_t *activemirrorintercepts;
+    vendmirror_intercept_list_t *activemirrorintercepts;
 
     staticipsession_t *activestaticintercepts;
 
@@ -206,6 +208,11 @@ typedef struct colthread_local {
      * servers, we assume it is SIP.
      */
     coreserver_t *sipservers;
+
+    /* Known GTP servers, i.e. if we see traffic to or from these
+     * servers, we assume it is GTP.
+     */
+    coreserver_t *gtpservers;
 
     patricia_tree_t *staticv4ranges;
     patricia_tree_t *staticv6ranges;
@@ -264,6 +271,8 @@ typedef struct collector_global {
     pthread_mutex_t stats_mutex;
 
     uint8_t etsitls;
+
+    uint8_t encoding_method;
     openli_ssl_config_t sslconf;
 
 } collector_global_t;

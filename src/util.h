@@ -31,6 +31,11 @@
 #include <sys/epoll.h>
 #include <libtrace.h>
 
+#define TIMESTAMP_TO_TV(tv, floatts) \
+    tv->tv_sec = (uint32_t)(floatts); \
+    tv->tv_usec = (uint32_t)(((floatts - tv->tv_sec) * 1000000));
+
+
 int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
         uint8_t setkeepalive);
 int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr);
@@ -44,7 +49,11 @@ int extract_ip_addresses(libtrace_packet_t *pkt, uint8_t *srcip,
         uint8_t *destip, int *ipfamily);
 struct addrinfo *populate_addrinfo(char *ipstr, char *portstr,
         int socktype);
-void *get_udp_payload(libtrace_packet_t *packet, uint32_t *rem);
+void *get_udp_payload(libtrace_packet_t *packet, uint32_t *rem,
+        uint16_t *sourceport, uint16_t *destport);
+char *parse_iprange_string(char *ipr_str);
+void openli_copy_ipcontent(libtrace_packet_t *pkt, uint8_t **ipc,
+        uint16_t *iplen);
 
 uint32_t hash_liid(char *liid);
 uint32_t hashlittle( const void *key, size_t length, uint32_t initval);

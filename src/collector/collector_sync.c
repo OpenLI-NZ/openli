@@ -46,6 +46,8 @@
 #include "netcomms.h"
 #include "util.h"
 #include "ipmmiri.h"
+#include "umtsiri.h"
+#include "ipiri.h"
 
 collector_sync_t *init_sync_data(collector_global_t *glob) {
 
@@ -61,6 +63,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->knownvoips = NULL;
     sync->userintercepts = NULL;
     sync->coreservers = NULL;
+    sync->defaultradiususers = NULL;
     sync->instruct_fd = -1;
     sync->instruct_fail = 0;
     sync->instruct_log = 1;
@@ -71,6 +74,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->info = &(glob->sharedinfo);
 
     sync->radiusplugin = init_access_plugin(ACCESS_RADIUS);
+    sync->gtpplugin = init_access_plugin(ACCESS_GTP);
     sync->freegenerics = glob->syncgenericfreelist;
     sync->activeips = NULL;
 
@@ -125,6 +129,7 @@ void clean_sync_data(collector_sync_t *sync) {
     int haltattempts = 0, haltfails = 0;
     ip_to_session_t *iter, *tmp;
     openli_export_recv_t *haltmsg;
+    default_radius_user_t *raditer, *radtmp;
 
 	if (sync->instruct_fd != -1) {
 		close(sync->instruct_fd);
@@ -134,6 +139,14 @@ void clean_sync_data(collector_sync_t *sync) {
     HASH_ITER(hh, sync->activeips, iter, tmp) {
         HASH_DELETE(hh, sync->activeips, iter);
         free(iter);
+    }
+
+    HASH_ITER(hh, sync->defaultradiususers, raditer, radtmp) {
+        HASH_DELETE(hh, sync->defaultradiususers, raditer);
+        if (raditer->name) {
+            free(raditer->name);
+        }
+        free(raditer);
     }
 
 
@@ -155,6 +168,10 @@ void clean_sync_data(collector_sync_t *sync) {
         destroy_access_plugin(sync->radiusplugin);
     }
 
+    if (sync->gtpplugin) {
+        destroy_access_plugin(sync->gtpplugin);
+    }
+
     if(sync->ssl){
         SSL_free(sync->ssl);
     }
@@ -162,10 +179,12 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
     sync->knownvoips = NULL;
+    sync->defaultradiususers = NULL;
     sync->userintercepts = NULL;
     sync->outgoing = NULL;
     sync->incoming = NULL;
     sync->radiusplugin = NULL;
+    sync->gtpplugin = NULL;
     sync->activeips = NULL;
 
     while (haltattempts < 10) {
@@ -273,25 +292,6 @@ static inline void push_coreserver_msg(collector_sync_t *sync,
     pthread_mutex_unlock(&(sync->glob->mutex));
 }
 
-static inline openli_export_recv_t *_create_ipiri_basic(collector_sync_t *sync,
-        ipintercept_t *ipint, char *username, uint32_t cin) {
-
-    openli_export_recv_t *irimsg;
-
-    irimsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
-
-    irimsg->type = OPENLI_EXPORT_IPIRI;
-    irimsg->destid = ipint->common.destid;
-    irimsg->data.ipiri.liid = strdup(ipint->common.liid);
-    irimsg->data.ipiri.access_tech = ipint->accesstype;
-    irimsg->data.ipiri.cin = cin;
-    irimsg->data.ipiri.username = strdup(username);
-    irimsg->data.ipiri.iritype = ETSILI_IRI_REPORT;
-    irimsg->data.ipiri.customparams = NULL;
-
-    return irimsg;
-}
-
 void sync_thread_publish_reload(collector_sync_t *sync) {
 
     int i;
@@ -308,114 +308,59 @@ void sync_thread_publish_reload(collector_sync_t *sync) {
     forward_provmsg_to_voipsync(sync, NULL, 0, OPENLI_PROTO_CONFIG_RELOADED);
 }
 
-static int create_ipiri_from_iprange(collector_sync_t *sync,
-        static_ipranges_t *staticsess, ipintercept_t *ipint, uint8_t special) {
+static int export_raw_sync_packet_content(access_plugin_t *p,
+        collector_sync_t *sync, ipintercept_t *ipint, void *parseddata,
+        uint32_t seqno, uint32_t cin) {
 
-    int queueused = 0;
-    struct timeval tv;
-    prefix_t *prefix = NULL;
-    openli_export_recv_t *irimsg;
+    openli_export_recv_t *msg;
+    uint8_t *ipptr = NULL;
+    uint16_t iplen;
 
-    prefix = ascii2prefix(0, staticsess->rangestr);
-    if (prefix == NULL) {
-        logger(LOG_INFO,
-                "OpenLI: error converting %s into a valid IP prefix in sync thread",
-                staticsess->rangestr);
-        return -1;
-    }
+    int iteration = 0;
 
-    irimsg = _create_ipiri_basic(sync, ipint, "unknownuser", staticsess->cin);
+    do {
+        ipptr = p->get_ip_contents(p, parseddata, &iplen, iteration);
 
-    irimsg->data.ipiri.special = special;
-    irimsg->data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_STATIC;
+        if (!ipptr) {
+            break;
+        }
 
-    /* We generally have no idea when a static session would have started. */
-    irimsg->data.ipiri.sessionstartts.tv_sec = 0;
-    irimsg->data.ipiri.sessionstartts.tv_usec = 0;
+        msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+        msg->type = OPENLI_EXPORT_RAW_SYNC;
+        msg->destid = ipint->common.destid;
+        msg->data.rawip.liid = strdup(ipint->common.liid);
 
-    irimsg->data.ipiri.ipfamily = prefix->family;
-    irimsg->data.ipiri.assignedip_prefixbits = prefix->bitlen;
-    if (prefix->family == AF_INET) {
-        struct sockaddr_in *sin;
+        msg->data.rawip.ipcontent = ipptr;
+        msg->data.rawip.ipclen = iplen;
+        msg->data.rawip.seqno = seqno;
+        msg->data.rawip.cin = cin;
+        iteration ++;
 
-        sin = (struct sockaddr_in *)&(irimsg->data.ipiri.assignedip);
-        memcpy(&(sin->sin_addr), &(prefix->add.sin), sizeof(struct in_addr));
-        sin->sin_family = AF_INET;
-        sin->sin_port = 0;
-    } else if (prefix->family == AF_INET6) {
-        struct sockaddr_in6 *sin6;
+        publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], msg);
+    } while (ipptr);
 
-        sin6 = (struct sockaddr_in6 *)&(irimsg->data.ipiri.assignedip);
-        memcpy(&(sin6->sin6_addr), &(prefix->add.sin6),
-                sizeof(struct in6_addr));
-        sin6->sin6_family = AF_INET6;
-        sin6->sin6_port = 0;
-        sin6->sin6_flowinfo = 0;
-        sin6->sin6_scope_id = 0;
-    }
-
-    pthread_mutex_lock(sync->glob->stats_mutex);
-    sync->glob->stats->ipiri_created ++;
-    pthread_mutex_unlock(sync->glob->stats_mutex);
-    publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], irimsg);
-    free(prefix);
-    return 0;
-
+    return iteration;
 }
 
-static int create_ipiri_from_session(collector_sync_t *sync,
+static int create_iri_from_packet_event(collector_sync_t *sync,
         access_session_t *sess, ipintercept_t *ipint, access_plugin_t *p,
-        void *parseddata, uint8_t special) {
+        void *parseddata) {
 
-    openli_export_recv_t *irimsg;
-    int ret, iter = 0;
+    if (ipint->accesstype == INTERNET_ACCESS_TYPE_MOBILE) {
+        return create_mobiri_job_from_packet(sync, sess, ipint, p, parseddata);
+    }
 
-    ret = 0;
-    do {
-        irimsg = _create_ipiri_basic(sync, ipint, ipint->username, sess->cin);
+    return create_ipiri_job_from_packet(sync, sess, ipint, p, parseddata);
+}
 
-        irimsg->data.ipiri.special = special;
-        irimsg->data.ipiri.customparams = NULL;
+static int create_iri_from_session(collector_sync_t *sync,
+        access_session_t *sess, ipintercept_t *ipint, uint8_t special) {
 
-        if (p) {
-            ret = p->generate_iri_data(p, parseddata,
-                    &(irimsg->data.ipiri.customparams),
-                    &(irimsg->data.ipiri.iritype),
-                    sync->freegenerics, iter);
+    if (ipint->accesstype == INTERNET_ACCESS_TYPE_MOBILE) {
+        return create_mobiri_job_from_session(sync, sess, ipint, special);
+    }
 
-            if (ret == -1) {
-                logger(LOG_INFO,
-                        "OpenLI: error while creating IPIRI from session state change.");
-                return -1;
-            }
-        }
-
-        irimsg->data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_UNKNOWN;
-        irimsg->data.ipiri.assignedip_prefixbits = sess->sessionip.prefixbits;
-
-        if (sess->sessionip.ipfamily) {
-            irimsg->data.ipiri.sessionstartts = sess->started;
-            irimsg->data.ipiri.ipfamily = sess->sessionip.ipfamily;
-            memcpy(&(irimsg->data.ipiri.assignedip),
-                    &(sess->sessionip.assignedip),
-                    (sess->sessionip.ipfamily == AF_INET) ?
-                    sizeof(struct sockaddr_in) :
-                    sizeof(struct sockaddr_in6));
-        } else {
-            irimsg->data.ipiri.ipfamily = 0;
-            irimsg->data.ipiri.sessionstartts.tv_sec = 0;
-            irimsg->data.ipiri.sessionstartts.tv_usec = 0;
-            memset(&(irimsg->data.ipiri.assignedip), 0,
-                    sizeof(struct sockaddr_storage));
-        }
-
-        pthread_mutex_lock(sync->glob->stats_mutex);
-        sync->glob->stats->ipiri_created ++;
-        pthread_mutex_unlock(sync->glob->stats_mutex);
-        publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], irimsg);
-        iter ++;
-    } while (ret > 0);
-    return 0;
+    return create_ipiri_job_from_session(sync, sess, ipint, special);
 
 }
 
@@ -438,6 +383,25 @@ static inline void push_static_iprange_to_collectors(
 
     libtrace_message_queue_put(q, (void *)(&msg));
 
+}
+
+static inline void push_static_iprange_modify_to_collectors(
+        libtrace_message_queue_t *q, ipintercept_t *ipint,
+        static_ipranges_t *ipr) {
+
+    openli_pushed_t msg;
+    staticipsession_t *staticsess = NULL;
+
+    if (ipr->liid == NULL || ipr->rangestr == NULL) {
+        return;
+    }
+
+    staticsess = create_staticipsession(ipint, ipr->rangestr, ipr->cin);
+    memset(&msg, 0, sizeof(openli_pushed_t));
+    msg.type = OPENLI_PUSH_MODIFY_IPRANGE;
+    msg.data.iprange = staticsess;
+
+    libtrace_message_queue_put(q, (void *)(&msg));
 }
 
 static inline void push_static_iprange_remove_to_collectors(
@@ -504,7 +468,6 @@ static inline void push_single_vendmirrorid(libtrace_message_queue_t *q,
         return;
     }
 
-    jm->cin = 0;
     memset(&msg, 0, sizeof(openli_pushed_t));
     msg.type = msgtype;
     msg.data.mirror = jm;
@@ -603,11 +566,44 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
     HASH_ADD_KEYPTR(hh, ipint->statics, ipr->rangestr,
             strlen(ipr->rangestr), ipr);
 
-    create_ipiri_from_iprange(sync, ipr, ipint, OPENLI_IPIRI_STARTWHILEACTIVE);
+    create_ipiri_job_from_iprange(sync, ipr, ipint, OPENLI_IPIRI_STARTWHILEACTIVE);
 
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
             sendq, tmp) {
         push_static_iprange_to_collectors(sendq->q, ipint, ipr);
+    }
+
+    return 1;
+}
+
+static int modify_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
+{
+
+    static_ipranges_t *found;
+    ipintercept_t *ipint;
+    sync_sendq_t *tmp, *sendq;
+
+
+    HASH_FIND(hh_liid, sync->ipintercepts, ipr->liid, strlen(ipr->liid), ipint);
+    if (!ipint) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                "OpenLI: received static IP range to modify for LIID %s, but this LIID is unknown?",
+                ipr->liid);
+        }
+        free(ipr);
+        return -1;
+    }
+
+    HASH_FIND(hh, ipint->statics, ipr->rangestr, strlen(ipr->rangestr), found);
+    if (found) {
+        logger(LOG_INFO, "OpenLI: modifying capture of IP prefix %s for LIID %s -- CIN was %u, now %u",
+                ipr->rangestr, ipr->liid, found->cin, ipr->cin);
+        found->cin = ipr->cin;
+        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
+                sendq, tmp) {
+            push_static_iprange_modify_to_collectors(sendq->q, ipint, found);
+        }
     }
 
     return 1;
@@ -634,12 +630,15 @@ static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
 
     HASH_FIND(hh, ipint->statics, ipr->rangestr, strlen(ipr->rangestr), found);
     if (found) {
-        create_ipiri_from_iprange(sync, found, ipint,
+        create_ipiri_job_from_iprange(sync, found, ipint,
                 OPENLI_IPIRI_ENDWHILEACTIVE);
         HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                 sendq, tmp) {
             push_static_iprange_remove_to_collectors(sendq->q, ipint, ipr);
         }
+
+        logger(LOG_INFO, "OpenLI: removing capture of IP prefix %s for LIID %s",
+                ipr->rangestr, ipr->liid);
 
         /* XXX assumes each range corresponds to a unique session, not
          * necessarily true but probably doesn't matter too much as this is just
@@ -708,8 +707,7 @@ static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
     HASH_ITER(hh, user->sessions, sess, tmp2) {
         /* TODO skip sessions that were never active */
 
-        create_ipiri_from_session(sync, sess, ipint, NULL, NULL,
-                OPENLI_IPIRI_ENDWHILEACTIVE);
+        create_iri_from_session(sync, sess, ipint, OPENLI_IPIRI_ENDWHILEACTIVE);
         push_session_halt_to_threads(sync->glob->collector_queues, sess,
                 ipint);
     }
@@ -735,8 +733,8 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
                 sizeof(openli_export_recv_t));
         expmsg->type = OPENLI_EXPORT_MEDIATOR;
         expmsg->data.med.mediatorid = med.mediatorid;
-        expmsg->data.med.ipstr = strdup(med.ipstr);
-        expmsg->data.med.portstr = strdup(med.portstr);
+        expmsg->data.med.ipstr = med.ipstr;
+        expmsg->data.med.portstr = med.portstr;
 
         publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
     }
@@ -869,6 +867,8 @@ static inline void announce_vendormirror_id(collector_sync_t *sync,
         push_single_vendmirrorid(sendq->q, ipint,
                 OPENLI_PUSH_VENDMIRROR_INTERCEPT);
     }
+
+    /* TODO Do we need to create an IRI-Begin here too? Probably */
     pthread_mutex_lock(sync->glob->stats_mutex);
     sync->glob->stats->ipsessions_added_diff ++;
     sync->glob->stats->ipsessions_added_total ++;
@@ -885,11 +885,15 @@ static void push_existing_user_sessions(collector_sync_t *sync,
 
     if (user) {
         access_session_t *sess, *tmp2;
+
         HASH_ITER(hh, user->sessions, sess, tmp2) {
             HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                     sendq, tmp) {
                 push_single_ipintercept(sync, sendq->q, cept, sess);
             }
+
+            create_iri_from_session(sync, sess, cept,
+                    OPENLI_IPIRI_STARTWHILEACTIVE);
         }
     }
 
@@ -899,11 +903,6 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
 
     openli_export_recv_t *expmsg;
     int i;
-
-    if (cept->username) {
-        push_existing_user_sessions(sync, cept);
-        add_intercept_to_user_intercept_list(&sync->userintercepts, cept);
-    }
 
     if (cept->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
 
@@ -943,6 +942,11 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
     for (i = 0; i < sync->forwardcount; i++) {
         expmsg = create_intercept_details_msg(&(cept->common));
         publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+    }
+
+    if (cept->username) {
+        push_existing_user_sessions(sync, cept);
+        add_intercept_to_user_intercept_list(&sync->userintercepts, cept);
     }
 
     return 1;
@@ -1073,6 +1077,18 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     }
 
     remove_ip_intercept(sync, ipint);
+    if (torem.common.liid) {
+        free(torem.common.liid);
+    }
+
+    if (torem.common.authcc) {
+        free(torem.common.authcc);
+    }
+
+    if (torem.common.delivcc) {
+        free(torem.common.delivcc);
+    }
+
 
     return 1;
 }
@@ -1103,6 +1119,83 @@ void sync_reconnect_all_mediators(collector_sync_t *sync) {
         expmsg->data.packet = NULL;
         publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
     }
+}
+
+static int new_default_radius(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+
+    default_radius_user_t *defrad, *found;
+
+    defrad = (default_radius_user_t *)calloc(1, sizeof(default_radius_user_t));
+
+    if (decode_default_radius_announcement(provmsg, msglen, defrad) == -1) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid default RADIUS username from provisioner.");
+        }
+        free(defrad);
+        return -1;
+    }
+
+    HASH_FIND(hh, sync->defaultradiususers, defrad->name, defrad->namelen,
+            found);
+
+    if (found) {
+        found->awaitingconfirm = 0;
+        free(defrad->name);
+        free(defrad);
+        return 0;
+    }
+
+    HASH_ADD_KEYPTR(hh, sync->defaultradiususers, defrad->name, defrad->namelen,
+            defrad);
+    logger(LOG_INFO, "OpenLI: added %s to list of default RADIUS usernames.",
+            defrad->name);
+    return 1;
+}
+
+static inline int remove_default_radius(collector_sync_t *sync,
+        default_radius_user_t *defrad) {
+
+    if (!defrad) {
+        return 0;
+    }
+
+    HASH_DELETE(hh, sync->defaultradiususers, defrad);
+    logger(LOG_INFO,
+            "OpenLI: removed %s from list of default RADIUS usernames.",
+            defrad->name);
+    free(defrad->name);
+    free(defrad);
+
+    return 1;
+}
+
+static int withdraw_default_radius(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+
+    default_radius_user_t defrad, *found;
+
+    if (decode_default_radius_announcement(provmsg, msglen, &defrad) == -1) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid default RADIUS username from provisioner.");
+        }
+        return -1;
+    }
+
+    if (!defrad.name) {
+        return -1;
+    }
+
+    HASH_FIND(hh, sync->defaultradiususers, defrad.name, defrad.namelen,
+            found);
+    if (found) {
+        remove_default_radius(sync, found);
+    }
+    free(defrad.name);
+
+    return 1;
 }
 
 static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
@@ -1217,6 +1310,7 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
     ipintercept_t *ipint, *tmp;
     internet_user_t *user;
     static_ipranges_t *ipr, *tmpr;
+    default_radius_user_t *defrad, *tmprad;
 
     HASH_ITER(hh_liid, sync->ipintercepts, ipint, tmp) {
 
@@ -1244,6 +1338,12 @@ static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
                     cs->serverkey, coreserver_type_to_string(cs->servertype));
             HASH_DELETE(hh, sync->coreservers, cs);
             free_single_coreserver(cs);
+        }
+    }
+
+    HASH_ITER(hh, sync->defaultradiususers, defrad, tmprad) {
+        if (defrad->awaitingconfirm) {
+            remove_default_radius(sync, defrad);
         }
     }
 }
@@ -1299,6 +1399,25 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                     return -1;
                 }
                 break;
+            case OPENLI_PROTO_MODIFY_STATICIPS:
+                ipr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
+
+                if (decode_staticip_modify(provmsg, msglen, ipr) == -1) {
+                    if (sync->instruct_log) {
+                        logger(LOG_INFO,
+                            "OpenLI: received invalid static IP range from provisioner for removal.");
+                    }
+                    free(ipr);
+                    return -1;
+                }
+                ret = modify_staticiprange(sync, ipr);
+                if (ret == -1) {
+                    return -1;
+                }
+                free(ipr->liid);
+                free(ipr->rangestr);
+                free(ipr);
+                break;
             case OPENLI_PROTO_REMOVE_STATICIPS:
                 ipr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
 
@@ -1320,6 +1439,18 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 break;
             case OPENLI_PROTO_HALT_IPINTERCEPT:
                 ret = halt_ipintercept(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_ANNOUNCE_DEFAULT_RADIUS:
+                ret = new_default_radius(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_WITHDRAW_DEFAULT_RADIUS:
+                ret = withdraw_default_radius(sync, provmsg, msglen);
                 if (ret == -1) {
                     return -1;
                 }
@@ -1462,6 +1593,14 @@ static inline void touch_all_coreservers(coreserver_t *servers) {
     }
 }
 
+static inline void touch_all_defaultradius(default_radius_user_t *radusers) {
+    default_radius_user_t *def, *tmp;
+
+    HASH_ITER(hh, radusers, def, tmp) {
+        def->awaitingconfirm = 1;
+    }
+}
+
 static inline void touch_all_intercepts(ipintercept_t *intlist) {
     ipintercept_t *ipint, *tmp;
     static_ipranges_t *ipr, *tmpr;
@@ -1503,6 +1642,7 @@ void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
      */
     touch_all_intercepts(sync->ipintercepts);
     touch_all_coreservers(sync->coreservers);
+    touch_all_defaultradius(sync->defaultradiususers);
 
     /* Tell other sync thread to flag its intercepts too */
     forward_provmsg_to_voipsync(sync, NULL, 0, OPENLI_PROTO_DISCONNECT);
@@ -1613,11 +1753,11 @@ static int add_ip_to_session_mapping(collector_sync_t *sync,
 }
 
 static inline internet_user_t *lookup_userid(collector_sync_t *sync,
-        char *userid, int useridlen) {
+        user_identity_t *userid) {
 
     internet_user_t *iuser;
 
-    HASH_FIND(hh, sync->allusers, userid, useridlen, iuser);
+    HASH_FIND(hh, sync->allusers, userid->idstr, userid->idlength, iuser);
     if (iuser == NULL) {
         iuser = (internet_user_t *)malloc(sizeof(internet_user_t));
 
@@ -1625,11 +1765,12 @@ static inline internet_user_t *lookup_userid(collector_sync_t *sync,
             logger(LOG_INFO, "OpenLI: unable to allocate memory for new Internet user");
             return NULL;
         }
-        iuser->userid = strdup(userid);
+        iuser->userid = userid->idstr;
+        userid->idstr = NULL;
         iuser->sessions = NULL;
 
         HASH_ADD_KEYPTR(hh, sync->allusers, iuser->userid,
-                useridlen, iuser);
+                userid->idlength, iuser);
     }
     return iuser;
 }
@@ -1672,9 +1813,9 @@ static int newly_active_session(collector_sync_t *sync,
 
             HASH_ITER(hh_user, prevuser->intlist, ipint, tmp) {
                 int queueused = 0;
-                queueused = create_ipiri_from_session(sync,
+                queueused = create_iri_from_session(sync,
                         prevmapping->session,
-                        ipint, NULL, NULL, OPENLI_IPIRI_SILENTLOGOFF);
+                        ipint, OPENLI_IPIRI_SILENTLOGOFF);
                 expcount ++;
             }
         }
@@ -1704,10 +1845,51 @@ static int newly_active_session(collector_sync_t *sync,
 
 }
 
+static inline int identity_match_intercept(ipintercept_t *ipint,
+        user_identity_t *uid) {
+
+    /* If the user has specifically said that the intercept target can
+     * not be identified using the username, then matching against the
+     * username is not allowed */
+
+    if (uid->method == USER_IDENT_RADIUS_USERNAME &&
+            ((ipint->options & (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER))\
+            == 0)) {
+        return 0;
+    }
+
+    if (uid->method == USER_IDENT_RADIUS_CSID &&
+            ((ipint->options & (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID)) == 0)) {
+        return 0;
+    }
+
+    return 1;
+}
+
+static inline int is_default_radius_username(collector_sync_t *sync,
+        user_identity_t *uid) {
+
+    default_radius_user_t *found;
+
+    if (uid->method != USER_IDENT_RADIUS_USERNAME) {
+        return 0;
+    }
+
+    HASH_FIND(hh, sync->defaultradiususers, uid->idstr, uid->idlength,
+            found);
+
+    if (found) {
+        return 1;
+    }
+
+    return 0;
+}
+
 static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         uint8_t accesstype) {
 
     access_plugin_t *p = NULL;
+    user_identity_t *identities = NULL;
     char *userid;
     internet_user_t *iuser;
     access_session_t *sess;
@@ -1717,10 +1899,12 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     ipintercept_t *ipint, *tmp;
     int expcount = 0;
     void *parseddata = NULL;
-    int i, ret, useridlen = 0;
+    int i, ret, useridcnt = 0;
 
     if (accesstype == ACCESS_RADIUS) {
         p = sync->radiusplugin;
+    } else if (accesstype == ACCESS_GTP) {
+        p = sync->gtpplugin;
     }
 
     if (!p) {
@@ -1738,74 +1922,112 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
         return -1;
     }
 
-    userid = p->get_userid(p, parseddata, &useridlen);
-    if (userid == NULL) {
+    ret = 0;
+    identities = p->get_userid(p, parseddata, &useridcnt);
+    if (identities == NULL) {
         /* Probably an orphaned response packet */
         goto endupdate;
     }
 
-    iuser = lookup_userid(sync, userid, useridlen);
-    if (!iuser) {
-        p->destroy_parsed_data(p, parseddata);
-        return -1;
-    }
+    for (i = 0; i < useridcnt; i++) {
+        /* If id type is RADIUS username and idstr is in the list of
+         * default usernames, then ignore it */
 
-    sess = p->update_session_state(p, parseddata, &(iuser->sessions), &oldstate,
-            &newstate, &accessaction);
-    if (!sess) {
-        logger(LOG_INFO, "OpenLI: error while assigning packet to a Internet access session");
-        p->destroy_parsed_data(p, parseddata);
-        return -1;
-    }
+        if (is_default_radius_username(sync, &(identities[i]))) {
+            continue;
+        }
 
-    HASH_FIND(hh, sync->userintercepts, userid, strlen(userid), userint);
+        iuser = lookup_userid(sync, &identities[i]);
+        if (!iuser) {
+            ret = -1;
+            break;
+        }
 
-    if (oldstate != newstate) {
-        if (newstate == SESSION_STATE_ACTIVE) {
-            ret = newly_active_session(sync, userint, iuser, sess);
-            if (ret < 0) {
-                logger(LOG_INFO, "OpenLI: error while processing new active IP session in sync thread.");
-                p->destroy_parsed_data(p, parseddata);
-                assert(0);
-                return -1;
-            }
+        sess = p->update_session_state(p, parseddata, identities[i].plugindata,
+                &(iuser->sessions), &oldstate, &newstate, &accessaction);
+        if (!sess) {
+            /* Unable to assign packet to a session, just quietly ignore it */
+            continue;
+        }
 
-        } else if (newstate == SESSION_STATE_OVER) {
-            /* If this was an active intercept, tell our threads to
-             * stop intercepting traffic for this session */
-            if (userint) {
-                HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
-                    push_session_halt_to_threads(sync->glob->collector_queues,
-                            sess, ipint);
+        HASH_FIND(hh, sync->userintercepts, iuser->userid,
+                identities[i].idlength, userint);
+
+        if (oldstate != newstate) {
+            if (newstate == SESSION_STATE_ACTIVE) {
+                ret = newly_active_session(sync, userint, iuser, sess);
+                if (ret < 0) {
+                    logger(LOG_INFO, "OpenLI: error while processing new active IP session in sync thread.");
+                    break;
                 }
-                pthread_mutex_lock(sync->glob->stats_mutex);
-                sync->glob->stats->ipsessions_ended_diff ++;
-                sync->glob->stats->ipsessions_ended_total ++;
-                pthread_mutex_unlock(sync->glob->stats_mutex);
-            }
 
-            if (remove_ip_to_session_mapping(sync, sess) < 0) {
-                logger(LOG_INFO, "OpenLI: error while removing IP->session mapping in sync thread.");
+            } else if (newstate == SESSION_STATE_OVER) {
+                /* If this was an active intercept, tell our threads to
+                 * stop intercepting traffic for this session */
+                if (userint) {
+                    HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
+                        if (identity_match_intercept(ipint, &(identities[i]))) {
+                            push_session_halt_to_threads(
+                                    sync->glob->collector_queues,
+                                    sess, ipint);
+                        }
+                    }
+                    pthread_mutex_lock(sync->glob->stats_mutex);
+                    sync->glob->stats->ipsessions_ended_diff ++;
+                    sync->glob->stats->ipsessions_ended_total ++;
+                    pthread_mutex_unlock(sync->glob->stats_mutex);
+                }
+
+                if (remove_ip_to_session_mapping(sync, sess) < 0) {
+                    logger(LOG_INFO, "OpenLI: error while removing IP->session mapping in sync thread.");
+                }
             }
         }
-    }
 
-    if (userint && accessaction != ACCESS_ACTION_NONE) {
-        HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
-            int queueused = 0;
-            queueused = create_ipiri_from_session(sync, sess, ipint, p,
-                    parseddata, OPENLI_IPIRI_STANDARD);
-            expcount ++;
+        if (userint) {
+            HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
+                if (!identity_match_intercept(ipint, &(identities[i]))) {
+                    continue;
+                }
+
+                if (ipint->common.targetagency == NULL ||
+                        strcmp(ipint->common.targetagency,"pcapdisk") == 0) {
+                    uint32_t seqno;
+
+                    seqno = p->get_packet_sequence(p, parseddata);
+                    if (export_raw_sync_packet_content(p, sync, ipint,
+                            parseddata, seqno, sess->cin) > 0) {
+                        expcount ++;
+                    }
+                } else if (accessaction != ACCESS_ACTION_NONE) {
+                    create_iri_from_packet_event(sync, sess, ipint, p,
+                            parseddata);
+                    expcount ++;
+                }
+            }
         }
-    }
 
-    if (oldstate != newstate && newstate == SESSION_STATE_OVER) {
-        free_single_session(iuser, sess);
+        if (oldstate != newstate && newstate == SESSION_STATE_OVER) {
+            free_single_session(iuser, sess);
+        }
     }
 
 endupdate:
     if (parseddata) {
         p->destroy_parsed_data(p, parseddata);
+    }
+
+    if (identities) {
+        for (i = 0; i < useridcnt; i++) {
+            if (identities[i].idstr) {
+                free(identities[i].idstr);
+            }
+        }
+        free(identities);
+    }
+
+    if (ret < 0) {
+        return -1;
     }
 
     if (expcount == 0) {
@@ -1871,18 +2093,28 @@ int sync_thread_main(collector_sync_t *sync) {
              * push II update messages to processing threads */
 
             /* If this relates to an active intercept, create IRI and export */
-            if (recvd.type == OPENLI_UPDATE_RADIUS) {
+            if (recvd.type == OPENLI_UPDATE_RADIUS ||
+                    recvd.type == OPENLI_UPDATE_GTP) {
                 int ret;
+                int accesstype;
+
+                if (recvd.type == OPENLI_UPDATE_RADIUS) {
+                    accesstype = ACCESS_RADIUS;
+                } else if (recvd.type == OPENLI_UPDATE_GTP) {
+                    accesstype = ACCESS_GTP;
+                }
+
                 if ((ret = update_user_sessions(sync, recvd.data.pkt,
-                            ACCESS_RADIUS)) < 0) {
+                            accesstype)) < 0) {
                     /* If a user has screwed up their RADIUS config and we
                      * see non-RADIUS packets here, we probably want to limit the
                      * number of times we complain about this... FIXME */
                     logger(LOG_INFO,
-                            "OpenLI: sync thread received an invalid RADIUS packet");
+                            "OpenLI: sync thread received an invalid packet");
                 }
                 trace_destroy_packet(recvd.data.pkt);
             }
+
         } while (rc > 0);
     }
 

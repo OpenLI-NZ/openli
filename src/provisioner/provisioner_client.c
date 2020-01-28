@@ -31,6 +31,14 @@
 #include "openli_tls.h"
 #include "logger.h"
 
+/* Generic functions for managing clients which connect to the OpenLI
+ * provisioner, either mediators or collectors.
+ */
+
+/** Initialise the client structure
+ *
+ *  @param client       The client to be initialised
+ */
 void init_provisioner_client(prov_client_t *client) {
     client->commev = NULL;
     client->authev = NULL;
@@ -40,6 +48,7 @@ void init_provisioner_client(prov_client_t *client) {
     client->ssl = NULL;
 }
 
+/** Destroys the state associated with a client socket */
 static void destroy_client_state(prov_sock_state_t *cs) {
 
 	if (cs == NULL) {
@@ -56,7 +65,10 @@ static void destroy_client_state(prov_sock_state_t *cs) {
 
 }
 
-void halt_provisioner_client_mainfd(int epollfd, prov_client_t *client,
+/** Closes the main communication channel for a client and frees the
+ *  state for that socket.
+ */
+static void halt_provisioner_client_mainfd(int epollfd, prov_client_t *client,
 		char *identifier) {
 
 	prov_sock_state_t *cs = client->state;
@@ -92,6 +104,7 @@ void halt_provisioner_client_mainfd(int epollfd, prov_client_t *client,
 		free(client->commev);
 	}
 
+	/* Destroy the buffers allocated for storing incoming and outgoing data */
 	if (cs->incoming) {
 		destroy_net_buffer(cs->incoming);
 		cs->incoming = NULL;
@@ -106,12 +119,25 @@ void halt_provisioner_client_mainfd(int epollfd, prov_client_t *client,
 	client->commev = NULL;
 }
 
+/** Closes the communication channel between the provisioner and a client.
+ *  Will also start the inactivity timer for the client and delete any
+ *  buffered data both for and from the client.
+ *
+ *  @param epollfd      The file descriptor used by the provisioner for
+ *                      polling.
+ *  @param client       The client to be disconnected.
+ *  @param identifier   The name of the client, used for logging.
+ */
 void disconnect_provisioner_client(int epollfd, prov_client_t *client,
 		char *identifier) {
 
+	/* If we were waiting on auth, make sure to remove the timer */
 	halt_provisioner_client_authtimer(epollfd, client, identifier);
 	halt_provisioner_client_mainfd(epollfd, client, identifier);
 
+	/* Start the idle timer, so we can remove this client if it is no
+     * longer being used.
+     */
 	start_provisioner_client_idletimer(epollfd, client, identifier,
 			PROVISIONER_IDLE_TIMEOUT_SECS);
 	if (client->ssl) {
@@ -120,21 +146,35 @@ void disconnect_provisioner_client(int epollfd, prov_client_t *client,
 	}
 }
 
+/** Terminates the communication channel and destroys all state associated
+ *  with a given client, immediately.
+ *
+ *  @param epollfd      The file descriptor used by the provisioner for
+ *                      polling.
+ *  @param client       The client to be destroyed.
+ *  @param identifier   The name of the client, used for logging.
+ */
 void destroy_provisioner_client(int epollfd, prov_client_t *client,
 		char *identifier) {
 
+	/* Make sure the client has disconnected cleanly */
 	disconnect_provisioner_client(epollfd, client, identifier);
 	halt_provisioner_client_idletimer(epollfd, client, identifier);
 
 	destroy_client_state(client->state);
 }
 
+/** Create fresh socket state for a newly connected client */
 static void create_prov_socket_state(prov_client_t *client, int authtimerfd,
         char *ipaddrstr, int isbad, int fd, int fdtype) {
 
     prov_sock_state_t *cs = (prov_sock_state_t *)malloc(
             sizeof(prov_sock_state_t));
 
+	/* If the client is known to have been troublesome in the past, i.e.
+     * failing to connect properly, don't print any error logs until it
+     * manages to connect successfully. This is just to reduce log spam.
+     */
     if (isbad) {
         cs->log_allowed = 0;
     } else {
@@ -146,12 +186,34 @@ static void create_prov_socket_state(prov_client_t *client, int authtimerfd,
     cs->outgoing = create_net_buffer(NETBUF_SEND, fd, client->ssl);
     cs->trusted = 0;
     cs->halted = 0;
-	cs->client = client;
     cs->clientrole = fdtype;
 
     client->state = cs;
 }
 
+/** Attempts to complete an incoming connection from a client. If the
+ *  provisioner is using SSL, an SSL handshake will be attempted.
+ *
+ *  @note an SSL handshake may not immediately succeed, in which case
+ *        the client is marked as pending and the handshake can be later
+ *        resolved by observed a 'waitfdtype' epoll event for the client
+ *        file descriptor.
+ *
+ *  @param sslconf      The SSL configuration used by the provisioner.
+ *  @param epollfd      The file descriptor used by the provisioner for
+ *                      polling.
+ *  @param identifier   The name of the client, used for logging.
+ *  @param client       The client that is attempting to connect.
+ *  @param newfd        The file descriptor which the client connection
+ *                      has been accepted on.
+ *  @param successfdtype    The epoll event type to associate with this
+ *                          client once it has successfully connected.
+ *  @param waitfdtype       The epoll event type to associate with this
+ *                          client if the connection is still pending.
+ *
+ *  @return -1 if an error occurs, 0 if the connection is pending, 1 if
+ *          the connection completes successfully.
+ */
 int accept_provisioner_client(openli_ssl_config_t *sslconf, int epollfd,
         char *identifier, prov_client_t *client, int newfd,
 		int successfdtype, int waitfdtype) {
@@ -166,11 +228,13 @@ int accept_provisioner_client(openli_ssl_config_t *sslconf, int epollfd,
 		label = "mediator";
 	}
 
+    /* Hopefully this never happens... */
 	if (client->commev) {
 		 logger(LOG_INFO, "OpenLI: received new connection from %s %s, but we already have an active connection from them?", label, identifier);
 		return 1;
 	}
 
+	/* If client->ssl is NULL, this will complete a non-TLS connection */
     r = listen_ssl_socket(sslconf, &(client->ssl), newfd);
 
 	if (!client->state) {
@@ -184,6 +248,7 @@ int accept_provisioner_client(openli_ssl_config_t *sslconf, int epollfd,
 	}
 
     if (r == OPENLI_SSL_CONNECT_FAILED) {
+		/* SSL handshake failed -- drop the client */
         close(newfd);
         SSL_free(client->ssl);
         client->ssl = NULL;
@@ -200,7 +265,6 @@ int accept_provisioner_client(openli_ssl_config_t *sslconf, int epollfd,
     client->commev = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
     client->commev->fd = newfd;
     client->commev->client = client;
-
 
     if (r == OPENLI_SSL_CONNECT_WAITING) {
         client->commev->fdtype = waitfdtype;
@@ -241,8 +305,13 @@ int accept_provisioner_client(openli_ssl_config_t *sslconf, int epollfd,
 		}
 	}
 
+	/* Now the client needs to authenticate with us before we can send it
+     * any intercept instructions. If it doesn't auth soon, we assume it is
+ 	 * not a valid OpenLI collector or mediator and want to drop it asap.
+	 */
 	start_provisioner_client_authtimer(epollfd, client, identifier,
 			PROVISIONER_AUTH_TIMEOUT_SECS);
+    client->state->halted = 0;
 	return client->commev->fd;
 
 colconnfail:
@@ -251,6 +320,17 @@ colconnfail:
 
 }
 
+/** Continues a pending SSL handshake for a client which is attempting to
+ *  connect to the provisioner.
+ *
+ *  @param epollfd      The file descriptor used by the provisioner for
+ *                      polling.
+ *  @param client       The client that is attempting to connect.
+ *  @param cs           The socket state associated with this client.
+ *
+ *  @return -1 if the handshake fails, 0 if it is still incomplete, 1 if
+ *          the handshake has now completed successfully.
+ */
 int continue_provisioner_client_handshake(int epollfd, prov_client_t *client,
 		prov_sock_state_t *cs) {
 
@@ -272,7 +352,12 @@ int continue_provisioner_client_handshake(int epollfd, prov_client_t *client,
         client->lastothererror = 0;
         start_provisioner_client_authtimer(epollfd, client, cs->ipaddr,
 			PROVISIONER_AUTH_TIMEOUT_SECS);
+
+		/* Change our epoll event type so the epoll loop knows that we are
+         * now a connected client.
+	     */
 		client->commev->fdtype = cs->clientrole;
+        client->state->halted = 0;
     } else {
         ret = SSL_get_error(client->ssl, ret);
         if(ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE){
@@ -294,6 +379,15 @@ int continue_provisioner_client_handshake(int epollfd, prov_client_t *client,
     return 1;
 }
 
+/** Stops the inactivity timer for a given client.
+ *
+ *  @param epollfd      The file descriptor used by the provisioner for
+ *                      polling.
+ *  @param client       The client that is no longer inactive.
+ *  @param identifier   The name of the client, used for logging.
+ *
+ *  @return -1 if the timer couldn't be stopped for some reason. 0 otherwise.
+ */
 int halt_provisioner_client_idletimer(int epollfd, prov_client_t *client,
         char *identifier) {
 
@@ -319,6 +413,15 @@ int halt_provisioner_client_idletimer(int epollfd, prov_client_t *client,
     return ret;
 }
 
+/** Stops the authentication timer for a given client.
+ *
+ *  @param epollfd      The file descriptor used by the provisioner for
+ *                      polling.
+ *  @param client       The client that no longer has auth pending.
+ *  @param identifier   The name of the client, used for logging.
+ *
+ *  @return -1 if the timer couldn't be stopped for some reason. 0 otherwise.
+ */
 int halt_provisioner_client_authtimer(int epollfd, prov_client_t *client,
         char *identifier) {
 
@@ -344,6 +447,12 @@ int halt_provisioner_client_authtimer(int epollfd, prov_client_t *client,
     return ret;
 }
 
+/** Starts the authentication timer for a given client.
+ *  @param epollfd      The file descriptor used by the provisioner for
+ *                      polling.
+ *  @param client       The client that needs to authenticate.
+ *  @param identifier   The name of the client, used for logging.
+ */
 void start_provisioner_client_authtimer(int epollfd, prov_client_t *client,
         char *identifier, int timeoutsecs) {
 
@@ -359,6 +468,12 @@ void start_provisioner_client_authtimer(int epollfd, prov_client_t *client,
     client->authev->client = client;
 }
 
+/** Starts the inactivity timer for a given client.
+ *  @param epollfd      The file descriptor used by the provisioner for
+ *                      polling.
+ *  @param client       The client that has become inactive.
+ *  @param identifier   The name of the client, used for logging.
+ */
 void start_provisioner_client_idletimer(int epollfd, prov_client_t *client,
         char *identifier, int timeoutsecs) {
 

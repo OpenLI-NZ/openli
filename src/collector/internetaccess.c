@@ -35,6 +35,9 @@ access_plugin_t *init_access_plugin(uint8_t accessmethod) {
         case ACCESS_RADIUS:
             p = get_radius_access_plugin();
             break;
+        case ACCESS_GTP:
+            p = get_gtp_access_plugin();
+            break;
     }
 
     if (p == NULL) {
@@ -71,10 +74,8 @@ void free_single_user(internet_user_t *u) {
         free(u->userid);
     }
 
-    tmp = u->sessions;
-    while (tmp) {
-        sess = tmp;
-        tmp = tmp->next;
+    HASH_ITER(hh, u->sessions, sess, tmp) {
+        HASH_DELETE(hh, u->sessions, sess);
         free_session(sess);
     }
     free(u);
@@ -91,6 +92,34 @@ void free_all_users(internet_user_t *users) {
     }
 }
 
+static inline char *fast_strdup(char *orig, int origlen) {
+    char *dup = malloc(origlen + 1);
+
+    memcpy(dup, orig, origlen + 1);
+    return dup;
+}
+
+access_session_t *create_access_session(access_plugin_t *p, char *sessid,
+        int sessid_len) {
+    access_session_t *newsess;
+
+    newsess = (access_session_t *)malloc(sizeof(access_session_t));
+
+    newsess->plugin = p;
+    newsess->sessionid = fast_strdup(sessid, sessid_len);
+	newsess->statedata = NULL;
+	newsess->idlength = sessid_len;
+	newsess->cin = 0;
+	memset(&(newsess->sessionip), 0, sizeof(newsess->sessionip));
+
+	newsess->iriseqno = 0;
+	newsess->started.tv_sec = 0;
+	newsess->started.tv_usec = 0;
+	newsess->activeipentry = NULL;
+
+	return newsess;
+}
+
 int free_single_session(internet_user_t *user, access_session_t *sess) {
 
     access_session_t *prev, *tmp;
@@ -101,25 +130,7 @@ int free_single_session(internet_user_t *user, access_session_t *sess) {
         return -1;
     }
 
-    tmp = user->sessions;
-    prev = NULL;
-    while (tmp) {
-        if (sess == tmp) {
-            break;
-        }
-        prev = tmp;
-        tmp = tmp->next;
-    }
-
-    //HASH_DELETE(hh, user->sessions, sess);
-    if (tmp != NULL) {
-        if (prev) {
-            prev->next = tmp->next;
-        } else {
-            user->sessions = tmp->next;
-        }
-    }
-
+    HASH_DELETE(hh, user->sessions, sess);
     free_session(sess);
     return 0;
 }
@@ -146,6 +157,8 @@ const char *accesstype_to_string(internet_access_method_t am) {
             return "satellite";
         case INTERNET_ACCESS_TYPE_WIRELESS_OTHER:
             return "wireless (Other)";
+        case INTERNET_ACCESS_TYPE_MOBILE:
+            return "mobile";
     }
     return "invalid";
 }

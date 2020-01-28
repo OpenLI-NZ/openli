@@ -24,6 +24,34 @@ connections.
 As with the client socket, your mediators will need to be configured to
 connect to the IP address and port that you have configured here.
 
+### Update Socket
+The update socket is used to receive instructions to either add, modify,
+delete or query intercepts within the OpenLI system. A simple HTTP server
+is run on the socket and there is a RESTful API that can be used to interact
+with the update socket. Full documentation of the REST API for intercept
+management is available at
+https://github.com/wanduow/openli/wiki/Intercept-Configuration-REST-API
+
+In addition to intercepts, the update socket can be used to manage the agencies
+that the OpenLI system will export intercepts to, as well as the set of
+known SIP and RADIUS servers on the network being monitored by OpenLI.
+
+The running intercept config is stored in a file on disk. You may edit this
+file directly, but be warned that any changes to the file will only be
+applied when the OpenLI provisioner is restarted. In addition, the file is
+overwritten whenever an instruction is received over the update socket, so
+your changes may be overwritten without ever being applied.
+
+As this socket will allow people to start intercepts and specify where the
+intercepted traffic should be sent, be **very** careful about which hosts
+on your network can communicate with this socket.
+
+The update socket can be disabled by configuring it to listen on port 0.
+This will remove any capacity for the running intercept config to updated
+without having to restart the provisioner, but users who are concerned
+about having an open socket that can start, stop or modify intercepts may
+find this to be a preferable option.
+
 ### Agencies
 In this context, an agency refers to an LEA (Law Enforcement Agency) that
 can issue warrants for intercepts. The configuration for an agency is used
@@ -109,6 +137,38 @@ a RADIUS feed to an OpenLI collector to generate the IRI records but the
 recipient collector doesn't necessarily need to be the same collector instance
 as the one that is receiving the mirrored packets.
 
+For mobile IP intercepts, there are some slight differences. The Access type
+must be set to "mobile" to tell OpenLI to detect IP sessions using mobile
+session management protocols (such as GTP), instead of RADIUS. The User must
+also be set to the target's phone number (MSISDN). The ALU Shim and JMirror
+methods do not apply to mobile IP intercepts.
+
+#### Using the RADIUS Calling Station ID to Identify IP Intercept Targets
+In a conventional RADIUS deployment, the identity of the subscriber can be
+found within the Username AVP field which is present in RADIUS request
+packets. In that case, the value of the RADIUS Username field is what you
+should use to configure an IP intercept where the subscriber is the target.
+
+However, some deployments use an alternative approach: the subscriber CPE
+is configured to send RADIUS requests with a default username and password
+(where all subscribers share the same 'credentials'). Instead, individual
+users are recognised using the contents of the Calling Station Id AVP,
+which is unique for each subscriber.
+
+To accommodate the latter style of deployment, IP intercepts in OpenLI can
+be configured to indicate that the identity provided in the "User" field is
+specifically either a RADIUS Username or a RADIUS Calling Station Id (CSID).
+If not explicitly configured, OpenLI will assume attempt to match the
+identity against both RADIUS AVPs.
+
+Additionally, you may configure the provisioner with a list of "default"
+usernames. Any RADIUS Username AVPs that contain a value from that list are
+automatically not considered as potential targets, which may improve
+collector performance in cases where there are many subscribers that are using
+default RADIUS credentials. RADIUS packets with a Username matching a
+configured "default" will still have their CSID AVP examined, if present,
+to see if it matches the User field for a running intercept.
+
 
 ### SIP Servers and RADIUS Servers
 OpenLI uses SIP and RADIUS traffic to maintain internal state regarding which
@@ -132,6 +192,23 @@ configured using two parameters:
 * ip -- the IP address of the RADIUS server
 * port -- the port that the RADIUS server is communicating on.
 
+
+### GTP Servers
+For interception of mobile phone traffic, OpenLI uses GTPv2 traffic to track
+the state of mobile users' IP sessions. To be able to recognise the GTP traffic
+that should be used for this purpose, the OenLI collectors must be able to
+identify the traffic that is either going from or to your GTP servers.
+
+GTP servers are defined using the gtpservers option. Each GTP server that
+you have in your network should be included as a list item within the
+'gtpservers' option. Failure to configure GTP servers will prevent OpenLI from
+performing any IP intercepts for targets using a mobile phone. A GTP server is
+configured using two parameters:
+* ip -- the IP address of the SIP server
+* port -- the port that the SIP server is listening on.
+
+NOTE: remember that an IP intercept *must* be configured with an `accesstype`
+of "mobile" if you want OpenLI to identify the target's IP traffic using GTP.
 
 ### ALU Lawful Intercept translation
 Some Alcatel-Lucent devices have a built-in LI system which is not
@@ -191,8 +268,11 @@ instead write the captured CC records to a pcap trace file. To enable this
 for an intercept, set the agency ID in the intercept configuration to
 'pcapdisk'.
 
-NOTE: you will also need to set the 'pcapdirectory' option in the
-configuration file for your mediators.
+For mobile IP intercepts, the GTPv2 traffic for the target's session will
+also be included in the pcap trace file.
+
+NOTE: you will also need to set the 'pcapdirectory' and 'pcaprotatefreq'
+options in the configuration file for your mediators.
 
 WARNING: you should confirm with the requesting agency that a pcap file is
 an acceptable format for an intercept before using pcap output mode.
@@ -202,34 +282,76 @@ The socket options are expressed used standard YAML key-value pairs, where the
 key is the option name and the value is your chosen value for that option.
 
 The socket option keys are:
-* clientaddr            -- the address to listen on for incoming collector
-                           connections
-* clientport            -- the port to listen on for incoming collector
-                           connections
-* mediationaddr         -- the address to listen on for incoming mediator
-                           connections
-* mediationport         -- the port to listen on for incoming mediator
-                           connections
+* `clientaddr`            -- the address to listen on for incoming collector
+                             connections
+* `clientport`            -- the port to listen on for incoming collector
+                             connections
+* `mediationaddr`         -- the address to listen on for incoming mediator
+                             connections
+* `mediationport`         -- the port to listen on for incoming mediator
+                             connections
+* `updateaddr`            -- the address that the update service should listen
+                             on
+* `updateport`            -- the port that the update service should listen on.
+                             Set to 0 to disable the update service.
 
 If you need to disable interception of RTP comfort noise packets (because
 they are considered invalid by the agency decoders), you can do so using
 the following option key:
 
-* voip-ignorecomfort    -- if set to 'yes', RTP comfort noise packets are
-                           ignored by OpenLI.
+* `voip-ignorecomfort`    -- if set to 'yes', RTP comfort noise packets are
+                             ignored by OpenLI.
+
+* `intercept-config-file` -- the location of the file which will be used to
+                             store the running intercept config. If this file
+                             is not empty, then the configuration in this file
+                             will be immediately pushed out to the collectors
+                             and mediators on start-up. Any changes to the
+                             intercept configuration via the update socket will
+                             be immediately written out to this file.
+
+If you wish to use TLS to encrypt the messages sent by the provisioner to
+the other OpenLI components, you will also need to provide the following
+options:
+
+* `tlscert`     --  the location of the component's certificate file
+* `tlskey`      --  the location of the component's key file
+* `tlsca`       --  the location of the certificate file for the CA that signed
+                    the certificates (i.e. openli-ca-crt.pem).
+
+
+### Intercept Configuration Syntax
+Intercept configuration, i.e. current intercepts, recipient agencies and
+special servers, is stored in a separate YAML file. Ideally, a user would
+not need to interact with this file at all -- changes would be made via
+the update socket and existing configuration can also be queries through
+the update socket.
+
+However, for the sake of completeness and to potentially help with
+troubleshooting, the format and structure of the intercept configuration
+file is provided here. Please note that, due to limitations in the library
+that is used to emit the intercept config, the layout of the YAML in this
+file is minimalist and not pleasant to read.
+
+Default RADIUS usernames are expressed as a YAML sequence with a key of
+`defaultradiususers:`. Each sequence item is a RADIUS Username that you
+want OpenLI to ignore when tracking potentially interceptable sessions
+from captured RADIUS traffic (because the username is a default that has been
+pre-configured on CPEs, and therefore does not correspond to an individual
+user).
 
 Agencies are expressed as a YAML sequence with a key of `agencies:`. Each
 sequence item represents a single agency and must contain the following
 key-value elements:
-* agencyid      -- the unique internal identifier for this agency
-* hi2address    -- the address of the HI2 handover on the agency side
-* hi2port       -- the port number for the HI2 handover on the agency side
-* hi3address    -- the address of the HI3 handover on the agency side
-* hi3port       -- the port number for the HI3 handover on the agency side
-* keepalivefreq -- the frequency at which keep alive messages should be sent
+* `agencyid`      -- the unique internal identifier for this agency
+* `hi2address`    -- the address of the HI2 handover on the agency side
+* `hi2port`       -- the port number for the HI2 handover on the agency side
+* `hi3address`    -- the address of the HI3 handover on the agency side
+* `hi3port`       -- the port number for the HI3 handover on the agency side
+* `keepalivefreq` -- the frequency at which keep alive messages should be sent
                    to this agency by the mediators (in seconds). Defaults to
                    300. If set to zero, no keep alives are sent.
-* keepalivewait -- the amount of time (in seconds) to wait for a keep alive
+* `keepalivewait` -- the amount of time (in seconds) to wait for a keep alive
                    response from the agency before terminating the handover
                    connection. Defaults to 30. If set to zero, the mediator
                    will not require a response to keep alives to maintain the
@@ -241,62 +363,77 @@ represents a single intercept.
 
 An IP intercept must contain the following key-value elements:
 
-* liid                  -- the LIID
-* authcountrycode       -- the authorisation country code
-* deliverycountrycode   -- the delivery country code
-* user                  -- the AAA username for the target
-* mediator              -- the ID of the mediator which will forward the
-                           intercept
-* agencyid              -- the internal identifier of the agency that requested
-                           the intercept
-* accesstype            -- the access type providied to the user, will
-                           default to 'undefined' if not set.
+* `liid`                  -- the LIID
+* `authcountrycode`       -- the authorisation country code
+* `deliverycountrycode`   -- the delivery country code
+* `user`                  -- the AAA username for the target
+* `mediator`              -- the ID of the mediator which will forward the
+                             intercept
+* `agencyid`              -- the internal identifier of the agency that
+                             requested the intercept
+* `accesstype`            -- the access type providied to the user, will
+                             default to 'undefined' if not set.
 
 Valid access types are:
   'dialup', 'adsl', 'vdsl', 'fiber', 'wireless', 'lan', 'satellite', 'wimax',
-  'cable' and 'wireless-other'.
+  'cable', 'mobile' and 'wireless-other'.
+
+Note that setting the access type to 'mobile' will cause OpenLI to use GTPv2
+traffic to identify the target's IP sessions, and the resulting ETSI records
+will conform to the UMTS format (as opposed to the standard IP format).
 
 Optional key-value elements for an IP intercept are:
 
-* vendmirrorid          -- if using a vendor mirroring platform to stream
+* `radiusident`           -- if set to 'csid', RADIUS packets will only be
+                           recognised as belonging to the intercept target
+                           if the RADIUS Calling Station ID AVP matches the
+                           `user` field defined for this intercept. If set
+                           to 'user', RADIUS packets will only be recognised
+                           as belonging to the intercept target if the RADIUS
+                           Username AVP matches the `user` field defined for
+                           this intercept. If not set, then RADIUS packets
+                           will be recognised as belonging to the intercept
+                           target if the value of either one of those AVPs
+                           matches the `user` field.
+* `vendmirrorid`          -- if using a vendor mirroring platform to stream
                            packets to the collector, this is the intercept ID
                            that you have assigned to the packets on the
                            mirroring platform for the target user.
                            (only for re-encoding ALU or JMirror intercepts as
                            ETSI)
-* staticips             -- a list of IP ranges that are known to have been
+* `staticips`             -- a list of IP ranges that are known to have been
                            assigned to the target.
 
 `staticips:` are expressed as a YAML list: one list item per IP range that
 is associated with the target. Each list item is a YAML map containing the
 following key-value elements:
 
-* iprange               -- the IP range, expressed in CIDR notation. If a
-                           single address (i.e. no subnet) is given, a /32
-                           or /128 mask will be added automatically.
-* sessionid             -- the session ID (also known as CIN) to associate with
-                           intercepts for this address range. See example
-                           config for more information about the meaning of
-                           this field.
+* `iprange`               -- the IP range, expressed in CIDR notation. If a
+                             single address (i.e. no subnet) is given, a /32
+                             or /128 mask will be added automatically.
+* `sessionid`             -- the session ID (also known as CIN) to associate
+                             with intercepts for this address range. See
+                             example config for more information about the
+                             meaning of this field.
 
 ---
 A VOIP intercept must contain the following key-value elements:
 
-* liid                  -- the LIID
-* authcountrycode       -- the authorisation country code
-* deliverycountrycode   -- the delivery country code
-* mediator              -- the ID of the mediator which will forward the
-                           intercept
-* agencyid              -- the internal identifier of the agency that requested
-                           the intercept
-* siptargets            -- a list of identities that can be used to recognise
-                           SIP activity related to the target
+* `liid`                  -- the LIID
+* `authcountrycode`       -- the authorisation country code
+* `deliverycountrycode`   -- the delivery country code
+* `mediator`              -- the ID of the mediator which will forward the
+                             intercept
+* `agencyid`              -- the internal identifier of the agency that
+                             requested the intercept
+* `siptargets`            -- a list of identities that can be used to recognise
+                             SIP activity related to the target
 
 
 A SIP target can be described using the following key-value elements:
 
-* username              -- the username that is associated with the target
-* realm                 -- the host or realm that the user belongs to in your
+* `username`              -- the username that is associated with the target
+* `realm`                 -- the host or realm that the user belongs to in your
                            SIP environment; if not present, any SIP where the
                            username appears in the 'To:' URI or an
                            Authorization header will be associated with the
@@ -316,15 +453,15 @@ typically takes the form "sip:roger@sip.example.net". If our goal is to
 intercept any incoming calls to that SIP address, we could add the following
 SIP target to our VOIP intercept config:
 
-voipintercepts:
-  - liid: RogerIntercept
-    authcountrycode: NZ
-    deliverycountrycode: NZ
-    mediatorid: 1001
-    agencyid: "ExampleLEA"
-    siptargets:
-      - username: roger
-        realm: sip.example.net
+    voipintercepts:
+      - liid: RogerIntercept
+        authcountrycode: NZ
+        deliverycountrycode: NZ
+        mediatorid: 1001
+        agencyid: "ExampleLEA"
+        siptargets:
+          - username: roger
+            realm: sip.example.net
 
 In situations where the hostname is dynamic, e.g. you use the user's dynamic
 IP address as your hostname, then excluding the "realm:" line will result in
@@ -346,17 +483,17 @@ user from earlier was to authorize using the username "6478384466" (i.e.
 their phone number) against the realm "sippysoft.com", we can update our
 config as follows:
 
-voipintercepts:
-  - liid: RogerIntercept
-    authcountrycode: NZ
-    deliverycountrycode: NZ
-    mediatorid: 1001
-    agencyid: "ExampleLEA"
-    siptargets:
-      - username: roger
-        realm: sip.example.net
-      - username: 6478384466
-        realm: sippysoft.com
+    voipintercepts:
+      - liid: RogerIntercept
+        authcountrycode: NZ
+        deliverycountrycode: NZ
+        mediatorid: 1001
+        agencyid: "ExampleLEA"
+        siptargets:
+          - username: roger
+            realm: sip.example.net
+          - username: 6478384466
+            realm: sippysoft.com
 
 Now OpenLI should be able to pick up both incoming and outgoing calls for
 this user, despite the discrepancies between outgoing Auth and the address

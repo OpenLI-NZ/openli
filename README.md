@@ -1,10 +1,10 @@
 OpenLI -- open source ETSI-compliant Lawful Intercept software
 
-Version: 1.0.3
+Version: 1.0.4
 
 ---------------------------------------------------------------------------
 
-Copyright (c) 2018, 2019 The University of Waikato, Hamilton, New Zealand.
+Copyright (c) 2018 - 2020 The University of Waikato, Hamilton, New Zealand.
 All rights reserved.
 
 This code has been developed by the University of Waikato WAND research group.
@@ -59,6 +59,12 @@ quality of OpenLI for all of our users.
 
 * libJudy -- Debian / Ubuntu users can install the libjudy-dev package.
   Required for the collector and the mediator.
+
+* libmicrohttpd -- Debian / Ubuntu users can install the libmicrohttpd-dev
+  package. Required for the provisioner.
+
+* libjson-c -- Debian/Ubuntu users can install the libjson-c-dev package.
+  Required for the provisioner.
 
 * libtcmalloc -- Debian / Ubuntu users can install the libgoogle-perftools-dev
   package. Optional, but highly recommended for performance reasons.
@@ -140,16 +146,15 @@ Example configuration for each component is also included in this directory.
 
 If you wish to make changes to the configuration of a running instance of
 OpenLI, sending a SIGHUP to any running OpenLI process will cause it to
-re-read its configuration file and apply any changes that have occurred. Any
+re-read its configuration files and apply any changes that have occurred. Any
 ongoing intercepts that have not been modified will continue uninterrupted.
+The OpenLI components will be notified of any intercepts that have been
+added, removed or modified and update their behaviour accordingly.
 
-In particular, this is the primary mechanism for adding and removing intercepts
-at the moment, e.g. to add an intercept, add it to the provisioner config
-file and send a SIGHUP to the OpenLI provisioner process. The provisioner
-will read the new intercept details from the config and push that out to all
-of the collectors and mediators that it is managing. Halting an intercept
-works much the same way, except you remove the intercept from the config file
-before sending SIGHUP to the provisioner.
+Starting from version 1.0.4, the provisioner will also listen on a socket
+for RESTful HTTP requests that either add or modify the running intercept
+configuration. The API for interacting with this update socket is documented
+at https://github.com/wanduow/openli/wiki/Intercept-Configuration-REST-API
 
 
 ## Common problems with OpenLI

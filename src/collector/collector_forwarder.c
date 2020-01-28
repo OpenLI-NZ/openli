@@ -50,7 +50,9 @@ static inline void free_encoded_result(openli_encoded_result_t *res) {
     }
 
     if (res->msgbody) {
-        free(res->msgbody->encoded);
+        if (res->msgbody->encoded) {
+            free(res->msgbody->encoded);
+        }
         free(res->msgbody);
     }
 
@@ -157,7 +159,7 @@ static inline void disconnect_mediator(forwarding_thread_data_t *fwd,
     }
 
     med->logallowed = 0;
-    if (med->pollindex >= 0) {
+    if (med->pollindex >= 0 && fwd->topoll) {
         fwd->topoll[med->pollindex].fd = 0;
         fwd->topoll[med->pollindex].events = 0;
     }
@@ -236,7 +238,7 @@ static void remove_reorderers(forwarding_thread_data_t *fwd, char *liid,
     while (jval != NULL) {
         reord = (int_reorderer_t *)(*jval);
 
-        if (liid == NULL || strcmp(reord->liid, liid) != 0) {
+        if (liid != NULL && strcmp(reord->liid, liid) != 0) {
             JSLN(jval, *reorderer_array, index);
             continue;
         }
@@ -280,6 +282,11 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
     if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
         remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_cc));
         remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_iri));
+
+        free(msg->data.cept.liid);
+        free(msg->data.cept.authcc);
+        free(msg->data.cept.delivcc);
+        free(msg);
     } else if (msg->type == OPENLI_EXPORT_MEDIATOR) {
         return add_new_destination(fwd, msg);
     } else if (msg->type == OPENLI_EXPORT_DROP_SINGLE_MEDIATOR) {
@@ -308,6 +315,20 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
     return 1;
 }
 
+static inline int enqueue_raw(forwarding_thread_data_t *fwd,
+        export_dest_t *med, openli_encoded_result_t *res) {
+
+    if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
+        logger(LOG_INFO,
+                "OpenLI: forced to drop mediator %s:%s because we cannot buffer any more records for it -- please investigate asap!",
+                med->ipstr, med->portstr);
+        remove_destination(fwd, med);
+        return 1;
+    }
+
+    return 1;
+}
+
 static inline int enqueue_result(forwarding_thread_data_t *fwd,
         export_dest_t *med, openli_encoded_result_t *res) {
 
@@ -318,7 +339,8 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
     stored_result_t *stored, *tmp;
 
     if (res->origreq->type == OPENLI_EXPORT_IPCC ||
-            res->origreq->type == OPENLI_EXPORT_IPMMCC) {
+            res->origreq->type == OPENLI_EXPORT_IPMMCC ||
+            res->origreq->type == OPENLI_EXPORT_UMTSCC) {
 
         reorderer = &(fwd->intreorderer_cc);
     } else {
@@ -359,6 +381,7 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
         return 0;
     }
+
 
     if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
         logger(LOG_INFO,
@@ -434,7 +457,6 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
         med = (export_dest_t *)(*jval);
     }
 
-    /* TODO enqueue this result to be forwarded */
     ret = enqueue_result(fwd, med, res);
 
     if (ret == 1) {
@@ -838,8 +860,12 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
         x = forwarder_main_loop(fwd);
     } while (x == 1);
 
+    remove_reorderers(fwd, NULL, &(fwd->intreorderer_cc));
+    remove_reorderers(fwd, NULL, &(fwd->intreorderer_iri));
     free(fwd->topoll);
+    fwd->topoll = NULL;
     free(fwd->forcesend);
+    fwd->forcesend = NULL;
     close(fwd->conntimerfd);
     if (fwd->flagtimerfd != -1) {
         close(fwd->flagtimerfd);

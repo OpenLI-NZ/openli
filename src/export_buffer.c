@@ -151,12 +151,22 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
         buf->buftail += (liidlen + 2);
     }
 
-    memcpy(buf->buftail, res->msgbody->encoded, enclen);
+    if (res->isDer){
+        if (enclen > 0) {
+            memcpy(buf->buftail, res->msgbody->encoded, enclen);
+            buf->buftail += enclen;
+        }
 
-    buf->buftail += enclen;
-    if (res->ipclen > 0) {
-        memcpy(buf->buftail, res->ipcontents, res->ipclen);
-        buf->buftail += res->ipclen;
+        if (res->ipclen > 0) {
+            memcpy(buf->buftail, res->ipcontents, res->ipclen);
+            buf->buftail += res->ipclen;
+        }
+    }
+    else {
+        memcpy(buf->buftail, res->msgbody->encoded, res->msgbody->len);
+        buf->buftail += res->msgbody->len;
+        //BER has the payload already encoded into the result, DER leaves the payload out untill now
+        //BER has a set of trailing ending octets (number varies by msg type)
     }
 
     return (buf->buftail - buf->bufhead);
@@ -174,6 +184,10 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
 
     sent = (buf->buftail - (bhead + offset));
 
+    if (sent > bytelimit) {
+        sent = bytelimit;
+    }
+
     if (sent != 0) {        
 
         if (ssl != NULL){
@@ -185,7 +199,7 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
             }
         }
         else {
-           ret = send(fd, bhead + offset, (int)sent, MSG_DONTWAIT);
+            ret = send(fd, bhead + offset, (int)sent, MSG_DONTWAIT);
         }
 
         if (ret < 0) {

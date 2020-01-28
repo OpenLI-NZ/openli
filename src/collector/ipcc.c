@@ -24,6 +24,8 @@
  *
  */
 
+#include "config.h"
+
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
@@ -62,23 +64,46 @@ int encode_ipcc(wandder_encoder_t *encoder, wandder_encode_job_t *precomputed,
 
 }
 
-/*
-static void dump_ptree(patricia_node_t *ptree) {
-    char foo[128];
-    if (ptree->l) {
-        dump_ptree(ptree->l);
-    }
+#ifdef HAVE_BER_ENCODING
 
-    if (ptree->prefix) {
-        inet_ntop(AF_INET6, &(ptree->prefix->add.sin6), foo, 128);
-        printf("%s/%u\n", foo, ptree->prefix->bitlen);
-    }
+int encode_ipcc_ber(wandder_buf_t **preencoded_ber,
+        openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
+        openli_encoded_result_t *msg, wandder_etsili_top_t *top, wandder_encoder_t *encoder) {
 
-    if (ptree->r) {
-        dump_ptree(ptree->r);
-    }
+    uint32_t liidlen = (uint32_t)((size_t)preencoded_ber[WANDDER_PREENCODE_LIID_LEN]);
+
+    memset(msg, 0, sizeof(openli_encoded_result_t));
+
+    wandder_encode_etsi_ipcc_ber(   //new way
+        preencoded_ber,
+        (int64_t)job->cin,
+        (int64_t)seqno,
+        tv, 
+        job->ipcontent,
+        job->ipclen, 
+        job->dir, 
+        top);
+
+    msg->msgbody = malloc(sizeof(wandder_encoded_result_t));
+
+    msg->msgbody->encoder = NULL;
+    msg->msgbody->encoded = top->buf;
+    msg->msgbody->len = top->len;
+    msg->msgbody->alloced = top->alloc_len;
+    msg->msgbody->next = NULL;
+
+    msg->ipcontents = NULL;
+    msg->ipclen = 0;
+
+    msg->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    msg->header.bodylen = htons(msg->msgbody->len + liidlen + sizeof(uint16_t));
+    msg->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
+    msg->header.internalid = 0;
+
+    return 0;
 }
-*/
+#endif
+
 
 static inline static_ipcache_t *find_static_cached(prefix_t *prefix,
         colthread_local_t *loc) {
@@ -209,6 +234,9 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             msg = create_ipcc_job(sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 0);
+            if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg) {
+                msg->type = OPENLI_EXPORT_UMTSCC;
+            }
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
             }
@@ -224,6 +252,9 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             msg = create_ipcc_job(sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 1);
+            if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg) {
+                msg->type = OPENLI_EXPORT_UMTSCC;
+            }
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
             }
@@ -274,6 +305,9 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             msg = create_ipcc_job(sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 0);
+            if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg) {
+                msg->type = OPENLI_EXPORT_UMTSCC;
+            }
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
             }
@@ -289,6 +323,9 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             msg = create_ipcc_job(sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 1);
+            if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg) {
+                msg->type = OPENLI_EXPORT_UMTSCC;
+            }
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
             }

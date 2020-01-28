@@ -86,63 +86,6 @@ static int check_onoff(char *value) {
     return -1;
 }
 
-static internet_access_method_t map_access_type_string(char *confstr) {
-
-    if (strcasecmp(confstr, "dialup") == 0 ||
-            strcasecmp(confstr, "dial-up") == 0) {
-        return INTERNET_ACCESS_TYPE_DIALUP;
-    }
-
-    if (strcasecmp(confstr, "adsl") == 0 || strcasecmp(confstr, "vdsl") == 0 ||
-            strcasecmp(confstr, "dsl") == 0 ||
-            strcasecmp(confstr, "adsl2") == 0 ||
-            strcasecmp(confstr, "xdsl") == 0) {
-        return INTERNET_ACCESS_TYPE_XDSL;
-    }
-
-    if (strcasecmp(confstr, "cable") == 0 ||
-            strcasecmp(confstr, "cablemodem") == 0 ||
-            strcasecmp(confstr, "cable-modem") == 0) {
-        return INTERNET_ACCESS_TYPE_CABLEMODEM;
-    }
-
-    if (strcasecmp(confstr, "lan") == 0 ||
-            strcasecmp(confstr, "ethernet") == 0) {
-        return INTERNET_ACCESS_TYPE_LAN;
-    }
-
-    if (strcasecmp(confstr, "wirelesslan") == 0 ||
-            strcasecmp(confstr, "wireless-lan") == 0 ||
-            strcasecmp(confstr, "wireless") == 0 ||
-            strcasecmp(confstr, "wifi-lan") == 0 ||
-            strcasecmp(confstr, "wifi") == 0) {
-        return INTERNET_ACCESS_TYPE_WIRELESS_LAN;
-    }
-
-    if (strcasecmp(confstr, "fibre") == 0 || strcasecmp(confstr, "fiber") == 0
-            || strcasecmp(confstr, "ufb") == 0) {
-        return INTERNET_ACCESS_TYPE_FIBER;
-    }
-
-    if (strcasecmp(confstr, "wimax") == 0 ||
-            strcasecmp(confstr, "hiperman") == 0) {
-        return INTERNET_ACCESS_TYPE_WIMAX;
-    }
-
-    if (strcasecmp(confstr, "satellite") == 0) {
-        return INTERNET_ACCESS_TYPE_SATELLITE;
-    }
-
-    if (strcasecmp(confstr, "wireless-other") == 0 ||
-            strcasecmp(confstr, "wifi-other") == 0 ||
-            strcasecmp(confstr, "wifiother") == 0 ||
-            strcasecmp(confstr, "wirelessother") == 0) {
-        return INTERNET_ACCESS_TYPE_WIRELESS_OTHER;
-    }
-
-    return INTERNET_ACCESS_TYPE_UNDEFINED;
-}
-
 static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         yaml_node_t *inputs) {
 
@@ -258,6 +201,45 @@ static void parse_sip_targets(libtrace_list_t *targets, yaml_document_t *doc,
 
 }
 
+static int parse_defradusers_list(prov_intercept_conf_t *state,
+        yaml_document_t *doc, yaml_node_t *inputs) {
+
+    yaml_node_item_t *item;
+
+    for (item = inputs->data.sequence.items.start;
+            item != inputs->data.sequence.items.top; item ++) {
+
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+        default_radius_user_t *defuser, *found;
+
+        if (node->type != YAML_SCALAR_NODE) {
+            continue;
+        }
+        defuser = (default_radius_user_t *)calloc(1,
+                sizeof(default_radius_user_t));
+
+        defuser->name = strdup((char *)node->data.scalar.value);
+        defuser->namelen = strlen(defuser->name);
+        defuser->awaitingconfirm = 1;
+
+        HASH_FIND(hh, state->defradusers, defuser->name, defuser->namelen,
+                found);
+        if (found) {
+            logger(LOG_INFO,
+                    "OpenLI: warning -- '%s' should only appear once in the default RADIUS username config.",
+                    defuser->name);
+            free(defuser->name);
+            free(defuser);
+            continue;
+        }
+
+        HASH_ADD_KEYPTR(hh, state->defradusers, defuser->name,
+                defuser->namelen, defuser);
+    }
+
+    return 0;
+}
+
 static int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
         yaml_document_t *doc, yaml_node_t *inputs) {
 
@@ -312,35 +294,6 @@ static int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
     return 0;
 }
 
-static inline int parse_iprange_option(static_ipranges_t *newr,
-        yaml_node_t *value) {
-
-    char *confrange = (char *)value->data.scalar.value;
-    int family = 0;
-
-    if (strchr(confrange, ':') != NULL) {
-        family = AF_INET6;
-    } else if (strchr(confrange, '.') != NULL) {
-        family = AF_INET;
-    } else {
-        logger(LOG_INFO,
-                "OpenLI: '%s' is not a valid prefix or IP address, skipping.",
-                confrange);
-        return -1;
-    }
-    if (strchr(confrange, '/') == NULL) {
-        /* No slash, so assume /32 or /128 */
-        int rlen = strlen(confrange) + 5;   /* '/128' + nul */
-        newr->rangestr = (char *)calloc(1, rlen);
-        snprintf(newr->rangestr, rlen - 1, "%s/%u", confrange,
-                family == AF_INET ? 32 : 128);
-
-    } else {
-        newr->rangestr = strdup((char *)value->data.scalar.value);
-    }
-    return 0;
-}
-
 static int add_intercept_static_ips(static_ipranges_t **statics,
         yaml_document_t *doc, yaml_node_t *ipseq) {
 
@@ -369,9 +322,8 @@ static int add_intercept_static_ips(static_ipranges_t **statics,
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value, "iprange") == 0 &&
                     newr->rangestr == NULL) {
-                if (parse_iprange_option(newr, value) < 0) {
-                    continue;
-                }
+                newr->rangestr =
+                        parse_iprange_string((char *)value->data.scalar.value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -381,16 +333,16 @@ static int add_intercept_static_ips(static_ipranges_t **statics,
             }
         }
 
-        if (newr->cin >= (uint32_t)(pow(2, 31))) {
-            logger(LOG_INFO,
-                    "OpenLI: CIN %u for static IP range %s is too large.",
-                    newr->cin);
-            newr->cin = newr->cin % (uint32_t)(pow(2, 31));
-            logger(LOG_INFO, "OpenLI: replaced CIN with %u.",
-                    newr->cin);
-        }
 
         if (newr->rangestr) {
+            if (newr->cin >= (uint32_t)(pow(2, 31))) {
+                logger(LOG_INFO,
+                        "OpenLI: CIN %u for static IP range %s is too large.",
+                        newr->cin, newr->rangestr);
+                newr->cin = newr->cin % (uint32_t)(pow(2, 31));
+                logger(LOG_INFO, "OpenLI: replaced CIN with %u.",
+                        newr->cin);
+            }
             HASH_FIND(hh, *statics, newr->rangestr, strlen(newr->rangestr),
                     existing);
             if (!existing) {
@@ -409,7 +361,7 @@ static int add_intercept_static_ips(static_ipranges_t **statics,
     return 0;
 }
 
-static int parse_agency_list(provision_state_t *state, yaml_document_t *doc,
+static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         yaml_node_t *inputs) {
 
     yaml_node_item_t *item;
@@ -425,8 +377,8 @@ static int parse_agency_list(provision_state_t *state, yaml_document_t *doc,
         newag->hi3_ipstr = NULL;
         newag->hi3_portstr = NULL;
         newag->agencyid = NULL;
-        newag->keepalivefreq = 300;
-        newag->keepalivewait = 30;
+        newag->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
+        newag->keepalivewait = DEFAULT_AGENCY_KEEPALIVE_WAIT;
 
         for (pair = node->data.mapping.pairs.start;
                 pair < node->data.mapping.pairs.top; pair ++) {
@@ -495,6 +447,12 @@ static int parse_agency_list(provision_state_t *state, yaml_document_t *doc,
                     "OpenLI: 'pcapdisk' is a reserved agencyid, please rename to something else.");
             free(newag->agencyid);
             newag->agencyid = NULL;
+        }
+
+        if (newag->keepalivewait > newag->keepalivefreq) {
+            logger(LOG_INFO, "keepalivewait must be less than or equal to keepalivefreq, setting keepalivewait to %u",
+                    newag->keepalivefreq);
+            newag->keepalivewait = newag->keepalivefreq;
         }
 
         if (newag->hi2_ipstr != NULL && newag->hi2_portstr != NULL &&
@@ -629,6 +587,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         yaml_node_t *node = yaml_document_get_node(doc, *item);
         ipintercept_t *newcept;
         yaml_node_pair_t *pair;
+        int radchosen = 0;
 
         /* Each sequence item is a new intercept */
         newcept = (ipintercept_t *)malloc(sizeof(ipintercept_t));
@@ -647,6 +606,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
         newcept->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED; 
         newcept->statics = NULL;
+        newcept->options = 0;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -738,6 +698,21 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                 SET_CONFIG_STRING_OPTION(newcept->common.targetagency, value);
             }
 
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "radiusident")
+                    == 0) {
+
+                if (strcasecmp((char *)value->data.scalar.value, "csid") == 0) {
+                    newcept->options |= (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID);
+                    radchosen = 1;
+                } else if (strncasecmp((char *)value->data.scalar.value,
+                        "user", 4) == 0) {
+                    newcept->options |= (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER);
+                    radchosen = 1;
+                }
+
+            }
         }
 
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
@@ -745,6 +720,13 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                 newcept->username != NULL &&
                 newcept->common.destid > 0 &&
                 newcept->common.targetagency != NULL) {
+
+            /* Default to matching against both RADIUS username and CSID */
+            if (!radchosen) {
+                newcept->options |= (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID);
+                newcept->options |= (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER);
+            }
+
             HASH_ADD_KEYPTR(hh_liid, *ipints, newcept->common.liid,
                     newcept->common.liid_len, newcept);
         } else {
@@ -760,7 +742,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
 
 static int yaml_parser(char *configfile, void *arg,
         int (*parse_mapping)(void *, yaml_document_t *, yaml_node_t *,
-                yaml_node_t *)) {
+                yaml_node_t *), int createifmissing) {
     FILE *in = NULL;
     yaml_parser_t parser;
     yaml_document_t document;
@@ -768,7 +750,13 @@ static int yaml_parser(char *configfile, void *arg,
     yaml_node_pair_t *pair;
     int ret = -1;
 
-    if ((in = fopen(configfile, "r")) == NULL) {
+    in = fopen(configfile, "r");
+
+    if (in == NULL && errno == ENOENT && createifmissing) {
+        in = fopen(configfile, "w+");
+    }
+
+    if (in == NULL) {
         logger(LOG_INFO, "OpenLI: Failed to open config file: %s",
                 strerror(errno));
         return -1;
@@ -784,7 +772,8 @@ static int yaml_parser(char *configfile, void *arg,
 
     root = yaml_document_get_root_node(&document);
     if (!root) {
-        logger(LOG_INFO, "OpenLI: Config file is empty!");
+        logger(LOG_INFO, "OpenLI: Config file '%s' is empty!", configfile);
+        ret = -2;
         goto endconfig;
     }
 
@@ -966,6 +955,29 @@ static int global_parser(void *arg, yaml_document_t *doc,
             strcmp((char *)key->data.scalar.value, "etsitls") == 0) {
             glob->etsitls = check_onoff(value->data.scalar.value);
     }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "encoding") == 0) {
+
+/** Don't let users enable BER just yet, it's still incomplete.
+ *
+  * Still TODO:
+  *   BER encoding for IPIRIs, UMTSIRIs and UMTSCCs
+  */
+#if 0
+        if (strcasecmp(value->data.scalar.value, "BER") == 0) {
+#ifdef HAVE_BER_ENCODING
+            glob->encoding_method = OPENLI_ENCODING_BER;
+#else
+            logger(LOG_INFO, "BER encoding not supported by your version of libwandder, falling back to DER");
+            glob->encoding_method = OPENLI_ENCODING_DER;
+#endif
+        } else {
+            glob->encoding_method = OPENLI_ENCODING_DER;
+        }
+#endif
+    }
     
     return 0;
 }
@@ -1062,10 +1074,10 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
 
 }
 
-static int provisioning_parser(void *arg, yaml_document_t *doc,
+static int intercept_parser(void *arg, yaml_document_t *doc,
         yaml_node_t *key, yaml_node_t *value) {
 
-    provision_state_t *state = (provision_state_t *)arg;
+    prov_intercept_conf_t *state = (prov_intercept_conf_t *)arg;
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SEQUENCE_NODE &&
@@ -1094,9 +1106,26 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value, "defaultradiususers") == 0) {
+        if (parse_defradusers_list(state, doc, value) == -1) {
+            return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
             strcmp((char *)key->data.scalar.value, "radiusservers") == 0) {
         if (parse_core_server_list(&state->radiusservers,
                 OPENLI_CORE_SERVER_RADIUS, doc, value) == -1) {
+            return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value, "gtpservers") == 0) {
+        if (parse_core_server_list(&state->gtpservers,
+                OPENLI_CORE_SERVER_GTP, doc, value) == -1) {
             return -1;
         }
     }
@@ -1109,6 +1138,14 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
             return -1;
         }
     }
+    return 0;
+}
+
+static int provisioning_parser(void *arg, yaml_document_t *doc,
+        yaml_node_t *key, yaml_node_t *value) {
+
+    provision_state_t *state = (provision_state_t *)arg;
+
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
@@ -1154,7 +1191,13 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
         SET_CONFIG_STRING_OPTION(state->mediateaddr, value);
     }
 
-   if (key->type == YAML_SCALAR_NODE &&
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "intercept-config-file") == 0) {
+        SET_CONFIG_STRING_OPTION(state->interceptconffile, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "tlscert") == 0) {
         SET_CONFIG_STRING_OPTION(state->sslconf.certfile, value);
@@ -1175,16 +1218,20 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
     return 0;
 }
 
+int parse_intercept_config(char *configfile, prov_intercept_conf_t *conf) {
+    return yaml_parser(configfile, conf, intercept_parser, 1);
+}
+
 int parse_collector_config(char *configfile, collector_global_t *glob) {
-    return yaml_parser(configfile, glob, global_parser);
+    return yaml_parser(configfile, glob, global_parser, 0);
 }
 
 int parse_provisioning_config(char *configfile, provision_state_t *state) {
 
-    return yaml_parser(configfile, state, provisioning_parser);
+    return yaml_parser(configfile, state, provisioning_parser, 0);
 }
 
 int parse_mediator_config(char *configfile, mediator_state_t *state) {
-    return yaml_parser(configfile, state, mediator_parser);
+    return yaml_parser(configfile, state, mediator_parser, 0);
 }
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -32,6 +32,7 @@
 #include <libwandder.h>
 #include <libwandder_etsili.h>
 #include "collector.h"
+#include "collector_sync.h"
 #include "intercept.h"
 #include "internetaccess.h"
 #include "etsili_core.h"
@@ -139,6 +140,16 @@ int encode_ipiri(wandder_encoder_t *encoder,
         openli_ipiri_job_t *job, uint32_t seqno,
         openli_encoded_result_t *res);
 
+#ifdef HAVE_BER_ENCODING
+int encode_ipiri_ber(wandder_buf_t **preencoded_ber,
+        openli_ipiri_job_t *job,
+        etsili_generic_freelist_t *freegenerics,
+        uint32_t seqno, struct timeval *tv,
+        openli_encoded_result_t *res,
+        wandder_etsili_top_t *top, 
+        wandder_encoder_t *encoder);
+#endif
+
 /* TODO consider adding free lists to these APIs to avoid excess mallocs */
 int ipiri_create_id_printable(char *idstr, int length, ipiri_id_t *ipiriid);
 int ipiri_create_id_mac(uint8_t *macaddr, ipiri_id_t *ipiriid);
@@ -146,6 +157,14 @@ int ipiri_create_id_ipv4(uint32_t addrnum, uint8_t slashbits,
         ipiri_id_t *ipiriid);
 
 void ipiri_free_id(ipiri_id_t *iriid);
+
+int create_ipiri_job_from_iprange(collector_sync_t *sync,
+        static_ipranges_t *staticsess, ipintercept_t *ipint, uint8_t special);
+int create_ipiri_job_from_packet(collector_sync_t *sync,
+        access_session_t *sess, ipintercept_t *ipint, access_plugin_t *p,
+        void *parseddata);
+int create_ipiri_job_from_session(collector_sync_t *sync,
+        access_session_t *sess, ipintercept_t *ipint, uint8_t special);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
