@@ -109,7 +109,6 @@ struct access_session {
 
     struct timeval started;
 
-    access_session_t *next;
     UT_hash_handle hh;
 } ;
 
@@ -118,7 +117,6 @@ struct internet_user {
     access_session_t *sessions;
     UT_hash_handle hh;
 };
-
 
 struct access_plugin {
     const char *name;
@@ -145,6 +143,11 @@ struct access_plugin {
             etsili_generic_t **params, etsili_iri_type_t *iritype,
             etsili_generic_freelist_t *freegenerics, int iteration);
 
+    int (*generate_iri_from_session)(access_plugin_t *p,
+            access_session_t *session,
+            etsili_generic_t **params, etsili_iri_type_t *iritype,
+            etsili_generic_freelist_t *freegenerics, uint8_t trigger);
+
 /*
     int (*create_iri_from_packet)(access_plugin_t *p,
             shared_global_info_t *info, etsili_generic_t **freegenerics,
@@ -156,6 +159,8 @@ struct access_plugin {
     void (*destroy_session_data)(access_plugin_t *p, access_session_t *sess);
 
     uint32_t (*get_packet_sequence)(access_plugin_t *p, void *parseddata);
+    uint8_t *(*get_ip_contents)(access_plugin_t *p, void *parseddata,
+            uint16_t *iplen, int iteration);
 
     /* APIs that are internally used but should be required by all plugins
      * so may as well enforce them as part of the plugin definition.

@@ -609,9 +609,11 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
         return 0;
     }
 
-    if (ms->pending_ka == NULL) {
+    if (ms->pending_ka == NULL && get_buffered_amount(&(ms->buf)) == 0) {
         /* Only create a new KA message if we have sent the last one we
          * had queued up.
+         * Also only create one if we don't already have data to send. We
+         * should only be sending keep alives if the socket is idle.
          */
         if (ms->encoder == NULL) {
             ms->encoder = init_wandder_encoder();
@@ -672,24 +674,14 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
             ms->outenabled = 1;
         }
 
-        /*
-        logger(LOG_INFO, "OpenLI Mediator: queued keep alive %ld for %s:%s HI%d, event fd=%d",
+/*
+        logger(LOG_INFO, "OpenLI Mediator: queued keep alive %ld for %s:%s HI%d, event fd=%d %u",
                 ms->lastkaseq, ms->parent->ipstr, ms->parent->portstr,
-                ms->parent->handover_type, mev->fd);
-        */
-        if (start_keepalive_timer(state, ms->parent->aliverespev,
-                ms->kawait) == -1) {
-            if (ms->parent->disconnect_msg == 0) {
-                logger(LOG_INFO,
-                    "OpenLI Mediator: unable to start keepalive response timer: %s",
-                    strerror(errno));
-            }
-            return -1;
-        }
-        if (ms->parent->aliverespev) {
-            ms->karesptimer_fd = ms->parent->aliverespev->fd;
-        }
+                ms->parent->handover_type, mev->fd,
+                get_buffered_amount(&(ms->buf)));
 
+
+    */
     }
 
     halt_mediator_timer(state, mev);
@@ -796,9 +788,12 @@ static void connect_agencies(mediator_state_t *state) {
         n = n->next;
 
         if (ag->disabled) {
-            logger(LOG_INFO,
+            if (!ag->disabled_msg) {
+                logger(LOG_INFO,
                     "OpenLI Mediator: cannot connect to agency %s because it is disabled",
                     ag->agencyid);
+                ag->disabled_msg = 1;
+            }
             continue;
         }
 
@@ -1118,6 +1113,7 @@ static void create_new_agency(mediator_state_t *state, liagency_t *lea) {
     newagency.agencyid = lea->agencyid;
     newagency.awaitingconfirm = 0;
     newagency.disabled = 0;
+    newagency.disabled_msg = 0;
     newagency.hi2 = create_new_handover(lea->hi2_ipstr, lea->hi2_portstr,
             HANDOVER_HI2, lea->keepalivefreq, lea->keepalivewait);
     newagency.hi3 = create_new_handover(lea->hi3_ipstr, lea->hi3_portstr,
@@ -1291,6 +1287,7 @@ static int receive_lea_withdrawal(mediator_state_t *state, uint8_t *msgbody,
 
         if (strcmp(x->agencyid, lea.agencyid) == 0) {
             x->disabled = 1;
+            x->disabled_msg = 0;
             disconnect_handover(state, x->hi2);
             disconnect_handover(state, x->hi3);
             break;
@@ -1336,6 +1333,7 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
             if ((ret = has_handover_changed(state, x->hi2, lea.hi2_ipstr,
                     lea.hi2_portstr, x, &lea, mas)) == -1) {
                 x->disabled = 1;
+                x->disabled_msg = 0;
                 goto freelea;
             } else if (ret == 1) {
                 lea.hi2_portstr = NULL;
@@ -1346,6 +1344,7 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
             if ((ret = has_handover_changed(state, x->hi3, lea.hi3_ipstr,
                     lea.hi3_portstr, x, &lea, mas)) == -1) {
                 x->disabled = 1;
+                x->disabled_msg = 0;
                 goto freelea;
             } else if (ret == 1) {
                 lea.hi3_portstr = NULL;
@@ -1528,7 +1527,23 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
             /* Sent the whole thing successfully */
             wandder_release_encoded_result(NULL, mas->pending_ka);
             mas->pending_ka = NULL;
-            if (ho->aliverespev == NULL && ho->disconnect_msg == 1) {
+
+/*
+            logger(LOG_INFO, "successfully sent keep alive to %s:%s HI%d",
+                    ho->ipstr, ho->portstr, ho->handover_type);
+*/
+            if (start_keepalive_timer(state, ho->aliverespev,
+                        mas->kawait) == -1) {
+                if (ho->disconnect_msg == 0) {
+                    logger(LOG_INFO,
+                            "OpenLI Mediator: unable to start keepalive response timer: %s",
+                            strerror(errno));
+                }
+                return -1;
+            }
+            if (ho->aliverespev) {
+                mas->karesptimer_fd = ho->aliverespev->fd;
+            } else if (ho->aliverespev == NULL && ho->disconnect_msg == 1) {
                 /* Not expecting a response, so we have to assume that
                  * the connection is good again as soon as we successfully
                  * send a KA */
@@ -1553,6 +1568,10 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
         return 0;
     }
 
+    if (ho->aliverespev && mas->karesptimer_fd != -1) {
+        return 0;
+    }
+
     if ((ret = transmit_buffered_records(&(mas->buf), mev->fd, 16000, NULL)) == -1) { //handover doesnt use TLS, so NULL
         return -1;
     }
@@ -1569,11 +1588,11 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     /* Reset the keep alive timer */
     gettimeofday(&tv, NULL);
-    if (mas->katimer_setsec < tv.tv_sec) {
-        if (mas->parent->aliveev->fd != -1) {
-            halt_mediator_timer(state, mas->parent->aliveev);
+    if (ho->aliveev && mas->katimer_setsec < tv.tv_sec) {
+        if (ho->aliveev->fd != -1) {
+            halt_mediator_timer(state, ho->aliveev);
         }
-        if (start_keepalive_timer(state, mas->parent->aliveev,
+        if (start_keepalive_timer(state, ho->aliveev,
                     mas->kafreq) == -1) {
             if (ho->disconnect_msg == 0) {
                 logger(LOG_INFO,
@@ -1813,7 +1832,9 @@ static int trigger_ka_failure(mediator_state_t *state, med_epoll_ev_t *mev) {
     }
 
 
+    pthread_mutex_lock(&(state->agency_mutex));
     disconnect_handover(state, ms->parent);
+    pthread_mutex_unlock(&(state->agency_mutex));
     return 0;
 }
 
@@ -2176,7 +2197,9 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             }
             if (ret == -1) {
                 med_agency_state_t *mas = (med_agency_state_t *)(mev->state);
+                pthread_mutex_lock(&(state->agency_mutex));
                 disconnect_handover(state, mas->parent);
+                pthread_mutex_unlock(&(state->agency_mutex));
             }
             break;
 

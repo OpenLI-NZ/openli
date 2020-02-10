@@ -199,22 +199,60 @@ static int remove_ipv6_intercept(colthread_local_t *loc, ipsession_t *torem) {
 
 void handle_push_mirror_intercept(libtrace_thread_t *t, colthread_local_t *loc,
         vendmirror_intercept_t *vmi) {
-    HASH_ADD_KEYPTR(hh, loc->activemirrorintercepts,
-            &(vmi->interceptid), sizeof(vmi->interceptid), vmi);
+
+    vendmirror_intercept_list_t *vmilist = NULL;
+    vendmirror_intercept_t *found = NULL;
+
+    HASH_FIND(hh, loc->activemirrorintercepts, &(vmi->sessionid),
+            sizeof(vmi->sessionid), vmilist);
+
+    if (!vmilist) {
+        vmilist = calloc(1, sizeof(vendmirror_intercept_list_t));
+
+        vmilist->sessionid = vmi->sessionid;
+        vmilist->intercepts = NULL;
+        HASH_ADD_KEYPTR(hh, loc->activemirrorintercepts, &(vmi->sessionid),
+                sizeof(vmi->sessionid), vmilist);
+    }
+
+    HASH_FIND(hh, vmilist->intercepts, vmi->common.liid, (vmi->common.liid_len),
+            found);
+    if (!found) {
+        HASH_ADD_KEYPTR(hh, vmilist->intercepts, vmi->common.liid,
+                vmi->common.liid_len, vmi);
+    } else {
+        logger(LOG_INFO, "OpenLI: collector received duplicate vendmirror intercept %u:%s, ignoring. %d", vmi->sessionid, vmi->common.liid,
+                trace_get_perpkt_thread_id(t));
+        free_single_vendmirror_intercept(vmi);
+    }
+
 }
 
 void handle_halt_mirror_intercept(libtrace_thread_t *t,
         colthread_local_t *loc, vendmirror_intercept_t *vmi) {
     vendmirror_intercept_t *found;
+    vendmirror_intercept_list_t *parent;
 
-    HASH_FIND(hh, loc->activemirrorintercepts, &(vmi->interceptid),
-            sizeof(vmi->interceptid), found);
+    HASH_FIND(hh, loc->activemirrorintercepts, &(vmi->sessionid),
+            sizeof(vmi->sessionid), parent);
 
+    if (parent == NULL) {
+        logger(LOG_INFO, "OpenLI: collector thread was unable to remove JMirror intercept %u:%s, as the session ID was not present in its intercept set.",
+                vmi->sessionid, vmi->common.liid);
+        return;
+    }
+
+    HASH_FIND(hh, parent->intercepts, vmi->common.liid, vmi->common.liid_len,
+            found);
     if (found == NULL) {
-        logger(LOG_INFO, "OpenLI: collector thread was unable to remove JMirror intercept %u, as it was not present in its intercept set.",
-                vmi->interceptid);
-    } else {
-        HASH_DELETE(hh, loc->activemirrorintercepts, found);
+        logger(LOG_INFO, "OpenLI: collector thread was unable to remove JMirror intercept %u:%s, as the LIID was not present in its intercept list.",
+                vmi->sessionid, vmi->common.liid);
+        return;
+    }
+
+    HASH_DELETE(hh, parent->intercepts, found);
+    if (HASH_CNT(hh, parent->intercepts) == 0) {
+        HASH_DELETE(hh, loc->activemirrorintercepts, parent);
     }
 }
 

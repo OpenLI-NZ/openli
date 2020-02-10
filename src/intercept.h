@@ -220,12 +220,16 @@ struct ipsession {
 };
 
 struct vendmirror_intercept {
-    uint32_t cin;
-    uint32_t interceptid;
-    uint32_t nextseqno;
+    uint32_t sessionid;
     intercept_common_t common;
     UT_hash_handle hh;
 };
+
+typedef struct vendmirror_intercept_list {
+    uint32_t sessionid;
+    vendmirror_intercept_t *intercepts;
+    UT_hash_handle hh;
+} vendmirror_intercept_list_t;
 
 struct staticipsession {
     char *key;
@@ -256,7 +260,7 @@ void free_all_ipintercepts(ipintercept_t **interceptlist);
 void free_all_voipintercepts(voipintercept_t **vintercepts);
 void free_all_rtpstreams(rtpstreaminf_t **streams);
 void free_all_ipsessions(ipsession_t **sessions);
-void free_all_vendmirror_intercepts(vendmirror_intercept_t **mirror_intercepts);
+void free_all_vendmirror_intercepts(vendmirror_intercept_list_t **mirror_intercepts);
 void free_all_staticipsessions(staticipsession_t **statintercepts);
 
 void free_voip_cinmap(voipcinmap_t *cins);
@@ -291,6 +295,8 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
 int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
         ipintercept_t *ipint);
 
+const char *get_access_type_string(internet_access_method_t method);
+const char *get_radius_ident_string(uint32_t radoptions);
 internet_access_method_t map_access_type_string(char *confstr);
 uint32_t map_radius_ident_string(char *confstr);
 #endif

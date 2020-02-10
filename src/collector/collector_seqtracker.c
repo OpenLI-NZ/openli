@@ -311,6 +311,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     if (!intstate) {
         logger(LOG_INFO, "Received encoding job for an unknown LIID: %s??",
                 liid);
+        free_published_message(recvd);
         return 0;
     }
 
