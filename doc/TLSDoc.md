@@ -22,18 +22,20 @@ you prefer):
     openssl req -newkey rsa:4096 -nodes -sha512 -x509 -days 3650 -nodes -subj /CN=myOpenLICA -out openli-ca-crt.pem -keyout openli-ca-key.pem
 
 
-Now, create and sign a certificate for each of the OpenLI components:
+Now, create and sign a certificate for each of the OpenLI components (you
+should replace the `/CN=` subj argument with the hostname of the device / VM /
+container that the component will be running on):
 
     openssl genrsa -out openli-provisioner-key.pem 4096
-    openssl req -new -sha256 -subj /CN=OpenLIprov -key openli-provisioner-key.pem -out openli-provisioner-csr.pem
+    openssl req -new -sha256 -subj /CN=provisioner-openli.mynetwork.net -key openli-provisioner-key.pem -out openli-provisioner-csr.pem
     openssl x509 -req -days 365 -in openli-provisioner-csr.pem -CA openli-ca-crt.pem  -CAkey openli-ca-key.pem -CAcreateserial -out openli-provisioner-crt.pem
 
     openssl genrsa -out openli-mediator-key.pem 4096
-    openssl req -new -sha256 -subj /CN=OpenLImed -key openli-mediator-key.pem -out openli-mediator-csr.pem
+    openssl req -new -sha256 -subj /CN=mediator-openli.mynetwork.net -key openli-mediator-key.pem -out openli-mediator-csr.pem
     openssl x509 -req -days 365 -in openli-mediator-csr.pem -CA openli-ca-crt.pem -CAkey openli-ca-key.pem -CAcreateserial -out openli-mediator-crt.pem
 
     openssl genrsa -out openli-collector-key.pem 4096
-    openssl req -new -sha256 -subj /CN=OpenLIcol -key openli-collector-key.pem -out openli-collector-csr.pem
+    openssl req -new -sha256 -subj /CN=collector01-openli.mynetwork.net -key openli-collector-key.pem -out openli-collector-csr.pem
     openssl x509 -req -days 365 -in openli-collector-csr.pem -CA openli-ca-crt.pem -CAkey openli-ca-key.pem -CAcreateserial -out openli-collector-crt.pem
 
 If you have planning on having multiple collectors, you may need to generate

@@ -34,7 +34,7 @@
 #include "util.h"
 #include "openli_tls.h"
 
-#define DEFAULT_INTERCEPT_CONFIG_FILE "/var/lib/openli/intercepts.conf"
+#define DEFAULT_INTERCEPT_CONFIG_FILE "/etc/openli/running-intercept-config.yaml"
 
 #ifndef MHD_SOCKET_DEFINED
 typedef int MHD_socket;
@@ -237,6 +237,9 @@ typedef struct prov_state {
     prov_epoll_ev_t *signalfd;
 
     prov_intercept_conf_t interceptconf;
+
+    char *key_pem;
+    char *cert_pem;
     struct MHD_Daemon *updatedaemon;
     MHD_socket updatesockfd;
 
