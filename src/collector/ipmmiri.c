@@ -73,12 +73,12 @@ int encode_ipmmiri(wandder_encoder_t *encoder,
 
 #ifdef HAVE_BER_ENCODING
 
-int encode_ipmmiri_ber(wandder_buf_t **preencoded_ber,
+int encode_ipmmiri_ber(
         openli_ipmmiri_job_t *job, uint32_t seqno, struct timeval *tv,
-        openli_encoded_result_t *res, wandder_etsili_top_t *top, 
+        openli_encoded_result_t *res, wandder_etsili_child_t *child, 
         wandder_encoder_t *encoder) {
 
-    uint32_t liidlen = (uint32_t)((size_t)preencoded_ber[WANDDER_PREENCODE_LIID_LEN]);
+    uint32_t liidlen = (uint32_t)((size_t)child->owner->preencoded[WANDDER_PREENCODE_LIID_LEN]);
 
     memset(res, 0, sizeof(openli_encoded_result_t));
 
@@ -89,7 +89,6 @@ int encode_ipmmiri_ber(wandder_buf_t **preencoded_ber,
         }
 
         wandder_encode_etsi_ipmmiri_ber(
-            preencoded_ber,     //preencode
             (int64_t)job->cin,  //cin
             (int64_t)seqno,     //seqno
             tv,                 //tv
@@ -99,14 +98,14 @@ int encode_ipmmiri_ber(wandder_buf_t **preencoded_ber,
             job->ipsrc,
             job->ipdest,
             job->ipfamily,
-            top);               //top
+            child);
 
         res->msgbody = malloc(sizeof(wandder_encoded_result_t));
 
         res->msgbody->encoder = NULL;
-        res->msgbody->encoded = top->buf;
-        res->msgbody->len = top->len;
-        res->msgbody->alloced = top->alloc_len;
+        res->msgbody->encoded = child->buf;
+        res->msgbody->len = child->len;
+        res->msgbody->alloced = child->alloc_len;
         res->msgbody->next = NULL;
 
         res->ipcontents = NULL;

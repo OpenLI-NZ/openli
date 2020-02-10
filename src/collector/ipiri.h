@@ -140,12 +140,12 @@ int encode_ipiri(wandder_encoder_t *encoder,
         openli_encoded_result_t *res);
 
 #ifdef HAVE_BER_ENCODING
-int encode_ipiri_ber(wandder_buf_t **preencoded_ber,
+int encode_ipiri_ber(
         openli_ipiri_job_t *job,
         etsili_generic_freelist_t *freegenerics,
         uint32_t seqno, struct timeval *tv,
         openli_encoded_result_t *res,
-        wandder_etsili_top_t *top, 
+        wandder_etsili_child_t *child, 
         wandder_encoder_t *encoder);
 #endif
 

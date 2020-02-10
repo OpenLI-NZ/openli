@@ -217,12 +217,9 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
     etsili_generic_t *np;
 
 #ifdef HAVE_BER_ENCODING
-     if (job->preencoded_ber != NULL) {
-         isDer = 0;
-         if (job->top == NULL ){
-             job->top = calloc(sizeof(wandder_etsili_top_t), 1);
-         }
-     }
+    if (job->top != NULL) {
+        isDer = 0;
+    }
 #endif
 
     switch(job->origreq->type) {
@@ -233,9 +230,10 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
                         &(job->origreq->ts), res);
 #ifdef HAVE_BER_ENCODING
             }else {                
-                ret = encode_ipcc_ber(job->preencoded_ber,
+                job->child = wandder_create_etsili_child(job->top, &(job->top->ipcc));
+                ret = encode_ipcc_ber(
                         &(job->origreq->data.ipcc), job->seqno,
-                        &(job->origreq->ts), res, job->top, enc->encoder);
+                        &(job->origreq->ts), res, job->child, enc->encoder);
 #endif
             }
             break;
@@ -247,9 +245,10 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
 #ifdef HAVE_BER_ENCODING
             }
             else{
-                ret = encode_ipiri_ber(job->preencoded_ber,
+                job->child = wandder_create_etsili_child(job->top, &(job->top->ipiri));
+                ret = encode_ipiri_ber(
                         &(job->origreq->data.ipiri), enc->freegenerics,
-                        job->seqno, &(job->origreq->ts), res, job->top, 
+                        job->seqno, &(job->origreq->ts), res, job->child, 
                         enc->encoder);
 #endif
             }
@@ -260,10 +259,11 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
                     &(job->origreq->data.ipmmiri), job->seqno, res,
                     &(job->origreq->ts));
 #ifdef HAVE_BER_ENCODING
-            }else {                
-                ret = encode_ipmmiri_ber(job->preencoded_ber,
+            }else {      
+                job->child = wandder_create_etsili_child(job->top, &(job->top->ipmmiri));          
+                ret = encode_ipmmiri_ber(
                         &(job->origreq->data.ipmmiri), job->seqno,
-                        &(job->origreq->ts), res, job->top, enc->encoder);
+                        &(job->origreq->ts), res, job->child, enc->encoder);
 #endif
             }
             break;
@@ -274,9 +274,10 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
                         &(job->origreq->ts), res);
 #ifdef HAVE_BER_ENCODING
             } else {
-                ret = encode_ipmmcc_ber(job->preencoded_ber,
+                job->child = wandder_create_etsili_child(job->top, &(job->top->ipmmcc));
+                ret = encode_ipmmcc_ber(
                         &(job->origreq->data.ipcc), job->seqno,
-                        &(job->origreq->ts), res, job->top, enc->encoder);
+                        &(job->origreq->ts), res, job->child, enc->encoder);
 #endif
             }
             break;
@@ -374,7 +375,7 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         result.encodedby = enc->workerid;
 
 #ifdef HAVE_BER_ENCODING
-        result.top = job.top;
+        result.child = job.child;
 #endif
 
         // FIXME -- hash result based on LIID (and CIN?)
