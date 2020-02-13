@@ -1,4 +1,14 @@
-openli (1.0.4-1) UNRELEASED; urgency=medium
+openli (1.0.5-1~sdpofix) UNRELEASED; urgency=medium
+
+  * Pre-release packaging of 1.0.5 to allow clients to beta-test
+    the SDP O patch.
+  * Add config option to disable joining VOIP calls with the same
+    SDP O identifier into the same CIN.
+  * Add HTTPS support to REST API.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Thu, 13 Feb 2020 13:58:21 +1300
+
+openli (1.0.4-1) unstable; urgency=medium
 
   * Added REST API to provisioner to allow intercepts, agencies and
     core servers to be manipulated by sending HTTP requests to a
