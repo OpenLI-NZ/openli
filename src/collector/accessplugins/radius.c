@@ -67,6 +67,7 @@ enum {
     RADIUS_ATTR_ACCT_SESSION_ID = 44,
     RADIUS_ATTR_ACCT_TERMINATE_CAUSE = 49,
     RADIUS_ATTR_FRAMED_IPV6_PREFIX = 97,
+    RADIUS_ATTR_DELEGATED_IPV6_PREFIX = 123,
     RADIUS_ATTR_FRAMED_IPV6_ADDRESS = 168,
 };
 
@@ -253,6 +254,7 @@ static inline int interesting_attribute(uint8_t attrnum) {
         case RADIUS_ATTR_CALLED_STATION_ID:
         case RADIUS_ATTR_CALLING_STATION_ID:
         case RADIUS_ATTR_ACCT_TERMINATE_CAUSE:
+        case RADIUS_ATTR_DELEGATED_IPV6_PREFIX:
             return 1;
     }
 
@@ -1085,7 +1087,8 @@ static inline void extract_assigned_ip_address(radius_global_t *glob,
             return;
         }
 
-        if (attr->att_type == RADIUS_ATTR_FRAMED_IPV6_PREFIX) {
+        if (attr->att_type == RADIUS_ATTR_FRAMED_IPV6_PREFIX ||
+                attr->att_type == RADIUS_ATTR_DELEGATED_IPV6_PREFIX) {
             struct sockaddr_in6 *in6;
             radius_v6_prefix_attr_t *prefattr;
 
