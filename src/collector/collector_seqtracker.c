@@ -371,6 +371,18 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
                     top->ipiri.flist = wandder_create_etsili_child_freelist();
                 }
                 break;
+            case OPENLI_EXPORT_UMTSCC:
+                if (!top->umtscc.buf) {
+                    wandder_init_etsili_umtscc(enc_ber, top);
+                    top->umtscc.flist = wandder_create_etsili_child_freelist();
+                }
+                break;
+            case OPENLI_EXPORT_UMTSIRI:
+                if (!top->umtsiri.buf) {
+                    wandder_init_etsili_umtsiri(enc_ber, top);
+                    top->umtsiri.flist = wandder_create_etsili_child_freelist();
+                }
+                break;
             default:
                 printf("UNKNOWN ENCODING TYPE\n");
         }

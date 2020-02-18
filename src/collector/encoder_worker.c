@@ -288,10 +288,12 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
                         &(job->origreq->ts), res);
 #ifdef HAVE_BER_ENCODING
             }
-            else{
-                //TODO
-                logger(LOG_INFO, "OpenLI: BER encoding for UMTSCC is not yet implemented.");
-                //complain loudly that this dont work yet
+            else {
+                job->child = wandder_create_etsili_child(job->top, &(job->top->umtscc));
+                ret = encode_umtscc_ber(
+                        &(job->origreq->data.ipcc), job->seqno,
+                        &(job->origreq->ts), res, job->child, enc->encoder);
+
 #endif
             }
             break;
@@ -318,9 +320,10 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
 #ifdef HAVE_BER_ENCODING
             }
             else{
-                //TODO
-                logger(LOG_INFO, "OpenLI: BER encoding for UMTSIRI is not yet implemented.");
-                //complain loudly that this dont work yet
+                job->child = wandder_create_etsili_child(job->top, &(job->top->umtsiri));
+                ret = encode_umtsiri_ber(
+                        &(job->origreq->data.mobiri), enc->freegenerics,
+                        job->seqno, res, job->child);
 #endif
             }
             break;
