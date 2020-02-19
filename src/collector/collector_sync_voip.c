@@ -103,6 +103,11 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
 
     sync->sipdebugupdate = NULL;
     sync->sipdebugout = NULL;
+    sync->ignore_sdpo_matches = glob->ignore_sdpo_matches;
+
+    if (glob->ignore_sdpo_matches) {
+        logger(LOG_INFO, "OpenLI: disabling tracking of multiple SIP legs using SDP O identifier");
+    }
 
     if (glob->sipdebugfile) {
         sync->sipdebugfile = glob->sipdebugfile;
@@ -858,7 +863,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
             vshared = findcin->shared;
             iritype = ETSILI_IRI_CONTINUE;
 
-        } else if (findsdp) {
+        } else if (findsdp && !sync->ignore_sdpo_matches) {
             /* New call ID but already seen this session */
             update_cin_callid_map(&(vint->cin_callid_map), callid,
                         findsdp->shared);

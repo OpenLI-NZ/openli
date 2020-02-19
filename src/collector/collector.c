@@ -1217,6 +1217,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->sslconf.ctx = NULL;
 
     glob->etsitls = 1;
+    glob->ignore_sdpo_matches = 0;
     glob->encoding_method = OPENLI_ENCODING_DER;
 
     memset(&(glob->stats), 0, sizeof(glob->stats));

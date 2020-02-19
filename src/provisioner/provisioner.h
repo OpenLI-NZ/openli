@@ -237,6 +237,9 @@ typedef struct prov_state {
     prov_epoll_ev_t *signalfd;
 
     prov_intercept_conf_t interceptconf;
+
+    char *key_pem;
+    char *cert_pem;
     struct MHD_Daemon *updatedaemon;
     MHD_socket updatesockfd;
 

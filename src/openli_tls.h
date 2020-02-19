@@ -51,6 +51,7 @@ int reload_ssl_config(openli_ssl_config_t *current,
         openli_ssl_config_t *newconf);
 int listen_ssl_socket(openli_ssl_config_t *sslconf, SSL **ssl, int newfd);
 
+int load_pem_into_memory(char *pemfile, char **memspace);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

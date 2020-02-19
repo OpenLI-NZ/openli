@@ -76,18 +76,50 @@ static inline char *get_event_description(prov_epoll_ev_t *pev) {
 
 void start_mhd_daemon(provision_state_t *state) {
 
+    int started = 0;
     assert(state->updatesockfd >= 0);
 
+    if (state->sslconf.certfile && state->sslconf.keyfile) {
+        if (load_pem_into_memory(state->sslconf.keyfile, &(state->key_pem)) < 0)
+        {
+            goto startnotls;
+        }
+        if (load_pem_into_memory(state->sslconf.certfile, &(state->cert_pem))
+                < 0) {
+            goto startnotls;
+        }
+
+        state->updatedaemon = MHD_start_daemon(
+                MHD_USE_SELECT_INTERNALLY | MHD_USE_SSL,
+                0,
+                NULL,
+                NULL,
+                &handle_update_request,
+                state,
+                MHD_OPTION_LISTEN_SOCKET,
+                state->updatesockfd,
+                MHD_OPTION_NOTIFY_COMPLETED,
+                &complete_update_request,
+                state,
+                MHD_OPTION_HTTPS_MEM_KEY,
+                state->key_pem,
+                MHD_OPTION_HTTPS_MEM_CERT,
+                state->cert_pem,
+                MHD_OPTION_END);
+        return;
+    }
+
+startnotls:
     state->updatedaemon = MHD_start_daemon(MHD_USE_SELECT_INTERNALLY,
             0,
             NULL,
             NULL,
-            &handle_update_request,      // TODO
+            &handle_update_request,
             state,
             MHD_OPTION_LISTEN_SOCKET,
             state->updatesockfd,
             MHD_OPTION_NOTIFY_COMPLETED,
-            &complete_update_request,    // TODO
+            &complete_update_request,
             state,
             MHD_OPTION_END);
 }
@@ -103,7 +135,6 @@ void init_intercept_config(prov_intercept_conf_t *state) {
     state->leas = NULL;
     state->defradusers = NULL;
     state->destroy_pending = 0;
-
     pthread_mutex_init(&(state->safelock), NULL);
 }
 
@@ -206,6 +237,9 @@ int init_prov_state(provision_state_t *state, char *configfile) {
     state->sslconf.keyfile = NULL;
     state->sslconf.cacertfile = NULL;
     state->sslconf.ctx = NULL;
+
+    state->key_pem = NULL;
+    state->cert_pem = NULL;
 
     state->ignorertpcomfort = 0;
 
@@ -464,6 +498,12 @@ void clear_prov_state(provision_state_t *state) {
     }
     if (state->interceptconffile) {
         free(state->interceptconffile);
+    }
+    if (state->key_pem) {
+        free(state->key_pem);
+    }
+    if (state->cert_pem) {
+        free(state->cert_pem);
     }
 
     free_ssl_config(&(state->sslconf));

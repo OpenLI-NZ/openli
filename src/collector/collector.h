@@ -262,6 +262,7 @@ typedef struct collector_global {
     coreserver_t *jmirrors;
 
     char *sipdebugfile;
+    uint8_t ignore_sdpo_matches;
 
     pthread_t seqproxy_tid;
 
