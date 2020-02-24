@@ -10,10 +10,14 @@ We have also assumed that you already have certain software installed
 on your system such as git and gcc. If a step fails because you are
 missing a tool or library, you will need to resolve that before continuing.
 
-NOTE: it may be possible to skip many of these steps by installing the
-dpdk-dev package (Debian / Ubuntu). This is not something I have been able
-to test properly yet, so have only included instructions that definitely
-have worked for me in our testing environment.
+IMPORTANT: These notes were written from the perspective of someone who is
+building DPDK from source -- this is not necessary in many cases now, as
+fairly decent packages for DPDK are now available for major Linux
+distributions and the libtrace packages automatically include DPDK as a
+dependency. If you want to make your life easier and just use the
+packaged version of DPDK, stop reading this file and try the wiki page at
+https://github.com/wanduow/openli/wiki/DPDK-and-OpenLI instead!
+
 
 ========================
 
@@ -33,14 +37,14 @@ Step 2: Install the Linux headers package for your system, if the headers
 
 Step 3: Clone the current DPDK code base.
 
-     > git clone https://git.dpdk.org/dpdk-stable/
+     > git clone git://dpdk.org/dpdk-stable/
      > cd dpdk-stable
 
 
 Step 4: Build the DPDK code to create a single shared library. This library
         will be installed into /usr/local/lib/.
 
-     > sudo make install T=x86_64-native-linuxapp-gcc CONFIG_RTE_BUILD_SHARED_LIB=y EXTRA_CFLAGS="-fPIC" --destdir=/usr/local/
+     > sudo make install T=x86_64-native-linuxapp-gcc CONFIG_RTE_BUILD_SHARED_LIB=y EXTRA_CFLAGS="-fPIC" DESTDIR="/usr/local/"
 
   Note: this build may take a while...
 

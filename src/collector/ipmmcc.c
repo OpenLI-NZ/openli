@@ -66,31 +66,30 @@ int encode_ipmmcc(wandder_encoder_t *encoder,
 
 #ifdef HAVE_BER_ENCODING
 
-int encode_ipmmcc_ber(wandder_buf_t **preencoded_ber,
+int encode_ipmmcc_ber(
         openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
-        openli_encoded_result_t *msg, wandder_etsili_top_t *top,
+        openli_encoded_result_t *msg, wandder_etsili_child_t *child,
         wandder_encoder_t *encoder) {
 
-    uint32_t liidlen = (uint32_t)((size_t)preencoded_ber[WANDDER_PREENCODE_LIID_LEN]);
+    uint32_t liidlen = (uint32_t)((size_t)child->owner->preencoded[WANDDER_PREENCODE_LIID_LEN]);
 
     memset(msg, 0, sizeof(openli_encoded_result_t));
 
     wandder_encode_etsi_ipmmcc_ber(   //new way
-        preencoded_ber,
         (int64_t)job->cin,
         (int64_t)seqno,
         tv, 
         job->ipcontent,
         job->ipclen, 
         job->dir, 
-        top);
+        child);
 
     msg->msgbody = malloc(sizeof(wandder_encoded_result_t));
 
     msg->msgbody->encoder = NULL;
-    msg->msgbody->encoded = top->buf;
-    msg->msgbody->len = top->len;
-    msg->msgbody->alloced = top->len;
+    msg->msgbody->encoded = child->buf;
+    msg->msgbody->len = child->len;
+    msg->msgbody->alloced = child->alloc_len;
     msg->msgbody->next = NULL;
 
     msg->ipcontents = NULL;

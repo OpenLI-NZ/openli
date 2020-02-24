@@ -70,6 +70,15 @@ int encode_umtsiri(wandder_encoder_t *encoder,
         openli_mobiri_job_t *job, uint32_t seqno,
         openli_encoded_result_t *res);
 
+#ifdef HAVE_BER_ENCODING
+int encode_umtsiri_ber(
+        openli_mobiri_job_t *job,
+        etsili_generic_freelist_t *freegenerics,
+        uint32_t seqno,
+        openli_encoded_result_t *res,
+        wandder_etsili_child_t *child);
+#endif
+
 int create_mobiri_job_from_session(collector_sync_t *sync,
         access_session_t *sess, ipintercept_t *ipint, uint8_t special);
 
