@@ -282,7 +282,7 @@ static inline radius_attribute_t *create_new_attribute(radius_global_t *glob,
         if (attr->att_len > STANDARD_ATTR_ALLOC) {
             attr->att_val = malloc(attr->att_len);
         } else {
-            attr->att_val = malloc(STANDARD_ATTR_ALLOC);
+            attr->att_val = calloc(1, STANDARD_ATTR_ALLOC);
         }
     } else if (attr->att_len > STANDARD_ATTR_ALLOC) {
         attr->att_val = realloc(attr->att_val, attr->att_len);
@@ -1087,8 +1087,7 @@ static inline void extract_assigned_ip_address(radius_global_t *glob,
             return;
         }
 
-        if (attr->att_type == RADIUS_ATTR_FRAMED_IPV6_PREFIX ||
-                attr->att_type == RADIUS_ATTR_DELEGATED_IPV6_PREFIX) {
+        if (attr->att_type == RADIUS_ATTR_DELEGATED_IPV6_PREFIX) {
             struct sockaddr_in6 *in6;
             radius_v6_prefix_attr_t *prefattr;
 
@@ -1099,10 +1098,11 @@ static inline void extract_assigned_ip_address(radius_global_t *glob,
             in6->sin6_flowinfo = 0;
 
             prefattr = (radius_v6_prefix_attr_t *)(attr->att_val);
-            memcpy(&(in6->sin6_addr.s6_addr), prefattr->address, 16);
+            memcpy((in6->sin6_addr.s6_addr), prefattr->address, 16);
 
             sess->sessionip.ipfamily = AF_INET6;
             sess->sessionip.prefixbits = prefattr->preflength;
+
             return;
         }
 
