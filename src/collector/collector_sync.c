@@ -68,6 +68,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->instruct_fail = 0;
     sync->instruct_log = 1;
     sync->instruct_events = ZMQ_POLLIN | ZMQ_POLLOUT;
+    sync->hellosreceived = 0;
 
     sync->outgoing = NULL;
     sync->incoming = NULL;
@@ -2060,7 +2061,20 @@ int sync_thread_main(collector_sync_t *sync) {
         }
     }
 
-    if (items[1].revents & ZMQ_POLLIN) {
+    /* Don't process any incoming messages from the provisioner until
+     * all of our processing threads have started up. This helps avoid
+     * concurrency issues where we end up doing duplicate announcements
+     * of "active" intercepts because we announce them both as soon as
+     * we get the message from the provisioner and then again when the
+     * HELLO message comes in from the processing threads.
+     *
+     * NOTE: we should consider just removing HELLO messages entirely,
+     * as they communicate no useful information and we should be able
+     * to push messages onto the queue for a processing thread, even if
+     * the thread itself is still in the process of starting up.
+     */
+    if ((items[1].revents & ZMQ_POLLIN) &&
+            sync->hellosreceived >= sync->glob->total_col_threads) {
         if (recv_from_provisioner(sync) <= 0) {
             sync_disconnect_provisioner(sync, 0);
             return 0;
@@ -2084,6 +2098,11 @@ int sync_thread_main(collector_sync_t *sync) {
                 push_all_active_intercepts(sync, sync->allusers,
                         sync->ipintercepts, recvd.data.replyq);
                 push_all_coreservers(sync->coreservers, recvd.data.replyq);
+                sync->hellosreceived ++;
+
+                if (sync->hellosreceived == sync->glob->total_col_threads) {
+                    logger(LOG_INFO, "openli-collector: all processing threads have reported for duty");
+                }
             }
 
 

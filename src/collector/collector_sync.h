@@ -78,6 +78,7 @@ typedef struct colsync_data {
     SSL *ssl;
     SSL_CTX *ctx;
     uint8_t provconnfailed;
+    uint8_t hellosreceived;
 
 } collector_sync_t;
 
