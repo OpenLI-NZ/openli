@@ -24,6 +24,7 @@
  *
  */
 
+#include <string.h>
 #include <openssl/ssl.h>
 #include "logger.h"
 #include "openli_tls.h"

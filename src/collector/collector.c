@@ -968,6 +968,7 @@ static inline void init_sync_thread_data(collector_global_t *glob,
     sup->collector_queues = NULL;
     sup->epollevs = NULL;
     sup->epoll_fd = epoll_create1(0);
+    sup->total_col_threads = glob->total_col_threads;
 
     sup->stats_mutex = &(glob->stats_mutex);
     sup->stats = &(glob->stats);
