@@ -33,6 +33,7 @@
 #include "netcomms.h"
 #include "etsili_core.h"
 #include "intercept.h"
+#include "internetaccess.h"
 
 enum {
     OPENLI_EXPORT_HALT_WORKER = 1,
@@ -92,13 +93,15 @@ typedef struct openli_ipiri_job {
     char *liid;
     uint32_t cin;
     char *username;
-    struct sockaddr_storage assignedip;
-    int ipfamily;
+
+    internetaccess_ip_t *assignedips;
+    uint8_t ipcount;
+    uint8_t ipversioning;
+
     struct timeval sessionstartts;
     internet_access_method_t access_tech;
     uint8_t special;
     uint8_t ipassignmentmethod;
-    uint8_t assignedip_prefixbits;
     etsili_iri_type_t iritype;
     etsili_generic_t *customparams;
 

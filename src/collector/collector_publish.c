@@ -70,6 +70,9 @@ void free_published_message(openli_export_recv_t *msg) {
         if (msg->data.ipiri.username) {
             free(msg->data.ipiri.username);
         }
+        if (msg->data.ipiri.assignedips) {
+            free(msg->data.ipiri.assignedips);
+        }
     } else if (msg->type == OPENLI_EXPORT_UMTSIRI) {
         if (msg->data.mobiri.liid) {
             free(msg->data.mobiri.liid);

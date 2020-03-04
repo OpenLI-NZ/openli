@@ -288,6 +288,19 @@ static inline void encode_ipiri_id(wandder_encoder_t *encoder,
     wandder_encode_endseq(encoder);
 }
 
+static inline void encode_other_targets(wandder_encoder_t *encoder,
+        etsili_other_targets_t *others) {
+
+    int i;
+
+    ENC_CSEQUENCE(encoder, 0);
+    for (i = 0; i < others->count; i++) {
+        encode_ipaddress(encoder, &(others->targets[i]));
+    }
+    END_ENCODED_SEQUENCE(encoder, 1);
+
+}
+
 static int sort_etsili_generic(etsili_generic_t *a, etsili_generic_t *b) {
 
     if (a->itemnum < b->itemnum) {
@@ -629,7 +642,10 @@ static inline void encode_ipiri_body(wandder_encoder_t *encoder,
                 break;
 
             case IPIRI_CONTENTS_OTHER_TARGET_IDENTIFIERS:
-                /* TODO */
+                ENC_CSEQUENCE(encoder, p->itemnum);
+                encode_other_targets(encoder,
+                        (etsili_other_targets_t *)(p->itemptr));
+                END_ENCODED_SEQUENCE(encoder, 1);
                 break;
 
             case IPIRI_CONTENTS_POP_PORTNUMBER:

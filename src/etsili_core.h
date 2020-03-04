@@ -80,6 +80,13 @@ typedef struct etsili_ipaddress {
     uint8_t *ipvalue;
 } etsili_ipaddress_t;
 
+typedef struct etsili_other_targets {
+
+    uint8_t count;
+    uint8_t alloced;
+    etsili_ipaddress_t *targets;
+} etsili_other_targets_t;
+
 typedef enum {
     ETSILI_IRI_NONE = 0,
     ETSILI_IRI_BEGIN = 1,
