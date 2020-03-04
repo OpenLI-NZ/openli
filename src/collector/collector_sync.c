@@ -431,25 +431,26 @@ static inline void push_single_ipintercept(collector_sync_t *sync,
 
     ipsession_t *ipsess;
     openli_pushed_t msg;
+    int i;
 
-    /* No assigned IP, session is not fully active yet. Don't push yet */
-    if (session->sessionip.ipfamily == 0) {
-        return;
+    for (i = 0; i < session->sessipcount; i++) {
+
+        ipsess = create_ipsession(ipint, session->cin,
+            session->sessionips[i].ipfamily,
+            (struct sockaddr *)&(session->sessionips[i].assignedip),
+            session->sessionips[i].prefixbits);
+
+        if (!ipsess) {
+            logger(LOG_INFO,
+                    "OpenLI: ran out of memory while creating IP session message.");
+            return;
+        }
+        memset(&msg, 0, sizeof(openli_pushed_t));
+        msg.type = OPENLI_PUSH_IPINTERCEPT;
+        msg.data.ipsess = ipsess;
+
+        libtrace_message_queue_put(q, (void *)(&msg));
     }
-
-    ipsess = create_ipsession(ipint, session->cin, session->sessionip.ipfamily,
-            (struct sockaddr *)&(session->sessionip.assignedip));
-
-    if (!ipsess) {
-        logger(LOG_INFO,
-                "OpenLI: ran out of memory while creating IP session message.");
-        return;
-    }
-    memset(&msg, 0, sizeof(openli_pushed_t));
-    msg.type = OPENLI_PUSH_IPINTERCEPT;
-    msg.data.ipsess = ipsess;
-
-    libtrace_message_queue_put(q, (void *)(&msg));
 }
 
 static inline void push_single_vendmirrorid(libtrace_message_queue_t *q,
@@ -661,23 +662,23 @@ static inline void push_session_halt_to_threads(void *sendqs,
         access_session_t *sess, ipintercept_t *ipint) {
 
     sync_sendq_t *sendq, *tmp;
+    int i;
 
-    if (sess->sessionip.ipfamily == 0) {
-        return;
-    }
-
-    HASH_ITER(hh, (sync_sendq_t *)sendqs, sendq, tmp) {
+    for (i = 0; i < sess->sessipcount; i++) {
         openli_pushed_t pmsg;
         ipsession_t *sessdup;
 
-        memset(&pmsg, 0, sizeof(openli_pushed_t));
-        pmsg.type = OPENLI_PUSH_HALT_IPINTERCEPT;
-        sessdup = create_ipsession(ipint, sess->cin, sess->sessionip.ipfamily,
-                (struct sockaddr *)&(sess->sessionip.assignedip));
+        HASH_ITER(hh, (sync_sendq_t *)sendqs, sendq, tmp) {
+            memset(&pmsg, 0, sizeof(openli_pushed_t));
+            pmsg.type = OPENLI_PUSH_HALT_IPINTERCEPT;
+            sessdup = create_ipsession(ipint, sess->cin,
+                    sess->sessionips[i].ipfamily,
+                    (struct sockaddr *)&(sess->sessionips[i].assignedip),
+                    sess->sessionips[i].prefixbits);
 
-        pmsg.data.ipsess = sessdup;
-
-        libtrace_message_queue_put(sendq->q, &pmsg);
+            pmsg.data.ipsess = sessdup;
+            libtrace_message_queue_put(sendq->q, &pmsg);
+        }
 
     }
 }
@@ -1698,59 +1699,92 @@ static int remove_ip_to_session_mapping(collector_sync_t *sync,
 
     ip_to_session_t *mapping;
     char ipstr[128];
+    int i, errs = 0;
 
-    if (sess->sessionip.ipfamily == 0) {
+
+    for (i = 0; i < sess->sessipcount; i++) {
+
+        HASH_FIND(hh, sync->activeips, &(sess->sessionips[i]),
+                sizeof(internetaccess_ip_t), mapping);
+
+        if (!mapping) {
+            logger(LOG_INFO,
+                "OpenLI: attempt to remove session mapping for IP %s, but the mapping doesn't exist?",
+                sockaddr_to_string(
+                    (struct sockaddr *)&(sess->sessionips[i].assignedip),
+                    ipstr, 128));
+            errs ++;
+            continue;
+        }
+
+        HASH_DELETE(hh, sync->activeips, mapping);
+        free(mapping);
+    }
+    if (errs == 0) {
         return 0;
     }
-
-    HASH_FIND(hh, sync->activeips, &(sess->sessionip),
-            sizeof(internetaccess_ip_t), mapping);
-
-    if (!mapping) {
-        logger(LOG_INFO,
-            "OpenLI: attempt to remove session mapping for IP %s, but the mapping doesn't exist?",
-            sockaddr_to_string((struct sockaddr *)&(sess->sessionip.assignedip),
-                ipstr, 128));
-        return -1;
-    }
-
-    HASH_DELETE(hh, sync->activeips, mapping);
-    free(mapping);
-    return 0;
+    return -1;
 }
 
 static int add_ip_to_session_mapping(collector_sync_t *sync,
-        access_session_t *sess, internet_user_t *iuser,
-        ip_to_session_t **prev) {
+        access_session_t *sess, internet_user_t *iuser) {
 
     char ipstr[128];
+    int i, replaced = 0;
+    ip_to_session_t *prev;
 
-    *prev = NULL;
+    prev = NULL;
     ip_to_session_t *newmap;
 
-    if (sess->sessionip.ipfamily == 0) {
+    if (sess->sessipcount == 0) {
         logger(LOG_INFO, "OpenLI: called add_ip_to_session_mapping() but no IP has been assigned for this session.");
         return -1;
     }
 
-    HASH_FIND(hh, sync->activeips, &(sess->sessionip),
-            sizeof(internetaccess_ip_t), *prev);
+    for (i = 0; i < sess->sessipcount; i++) {
+        HASH_FIND(hh, sync->activeips, &(sess->sessionips[i]),
+                sizeof(internetaccess_ip_t), prev);
 
-    newmap = (ip_to_session_t *)malloc(sizeof(ip_to_session_t));
-    newmap->ip = &(sess->sessionip);
-    newmap->session = sess;
-    newmap->owner = iuser;
+        newmap = (ip_to_session_t *)malloc(sizeof(ip_to_session_t));
+        newmap->ip = &(sess->sessionips[i]);
+        newmap->session = sess;
+        newmap->owner = iuser;
 
-    if (*prev) {
-        HASH_DELETE(hh, sync->activeips, *prev);
+        if (prev) {
+            user_intercept_list_t *prevuser;
+            ipintercept_t *ipint, *tmp;
+            int expcount = 0;
+
+            HASH_DELETE(hh, sync->activeips, prev);
+
+            /* Check for silent-logoff scenario */
+            HASH_FIND(hh, sync->userintercepts, prev->owner->userid,
+                strlen(prev->owner->userid), prevuser);
+            if (prevuser) {
+                char ipstr[128];
+                logger(LOG_INFO,
+                        "OpenLI: detected silent owner change for IP %s",
+                        sockaddr_to_string(
+                            (struct sockaddr *)&(prev->ip->assignedip),
+                            ipstr, 128));
+
+                HASH_ITER(hh_user, prevuser->intlist, ipint, tmp) {
+                    int queueused = 0;
+                    queueused = create_iri_from_session(sync,
+                            prev->session,
+                            ipint, OPENLI_IPIRI_SILENTLOGOFF);
+                    expcount ++;
+                }
+            }
+            free_single_session(prev->owner, prev->session);
+            replaced ++;
+        }
+
+        HASH_ADD_KEYPTR(hh, sync->activeips, newmap->ip,
+                sizeof(internetaccess_ip_t), newmap);
+
     }
-    HASH_ADD_KEYPTR(hh, sync->activeips, newmap->ip,
-            sizeof(internetaccess_ip_t), newmap);
-
-    if (*prev) {
-        return 1;
-    }
-    return 0;
+    return replaced;
 }
 
 static inline internet_user_t *lookup_userid(collector_sync_t *sync,
@@ -1781,14 +1815,11 @@ static int newly_active_session(collector_sync_t *sync,
         access_session_t *sess) {
 
     int mapret = 0;
-    ip_to_session_t *prevmapping = NULL;
-    user_intercept_list_t *prevuser;
-    ipintercept_t *ipint, *tmp;
-    int expcount = 0;
     sync_sendq_t *sendq, *tmpq;
+    ipintercept_t *ipint, *tmp;
 
-    if (sess->sessionip.ipfamily != 0) {
-        mapret = add_ip_to_session_mapping(sync, sess, iuser, &prevmapping);
+    if (sess->sessipcount > 0) {
+        mapret = add_ip_to_session_mapping(sync, sess, iuser);
         if (mapret < 0) {
             logger(LOG_INFO,
                 "OpenLI: error while updating IP->session map in sync thread.");
@@ -1796,36 +1827,8 @@ static int newly_active_session(collector_sync_t *sync,
         }
     }
 
-    if (mapret == 1) {
-        /* This new session has the same IP as an existing one, so
-         * the existing one must have silently logged off.
-         *
-         * TODO test this somehow?
-         */
-        HASH_FIND(hh, sync->userintercepts, prevmapping->owner->userid,
-                strlen(prevmapping->owner->userid), prevuser);
-        if (prevuser) {
-            char ipstr[128];
-            logger(LOG_INFO,
-                    "OpenLI: detected silent owner change for IP %s",
-                    sockaddr_to_string(
-                        (struct sockaddr *)&(prevmapping->ip->assignedip),
-                        ipstr, 128));
-
-            HASH_ITER(hh_user, prevuser->intlist, ipint, tmp) {
-                int queueused = 0;
-                queueused = create_iri_from_session(sync,
-                        prevmapping->session,
-                        ipint, OPENLI_IPIRI_SILENTLOGOFF);
-                expcount ++;
-            }
-        }
-        free_single_session(prevmapping->owner, prevmapping->session);
-    }
-
-
     if (!userint) {
-        return expcount;
+        return 0;
     }
 
     /* Session has been confirmed for a target; time to start intercepting
@@ -1841,7 +1844,7 @@ static int newly_active_session(collector_sync_t *sync,
     sync->glob->stats->ipsessions_added_diff ++;
     sync->glob->stats->ipsessions_added_total ++;
     pthread_mutex_unlock(sync->glob->stats_mutex);
-    return expcount;
+    return 0;
 
 
 }

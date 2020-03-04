@@ -46,7 +46,12 @@ static void free_ipiri_parameters(etsili_generic_t *params) {
         HASH_DELETE(hh, params, oldp);
         if (oldp->itemnum == IPIRI_CONTENTS_POP_IDENTIFIER) {
             ipiri_free_id((ipiri_id_t *)(oldp->itemptr));
+        } else if (oldp->itemnum == IPIRI_CONTENTS_OTHER_TARGET_IDENTIFIERS) {
+            etsili_other_targets_t *others =
+                    (etsili_other_targets_t *)oldp->itemptr;
+            free(others->targets);
         }
+
         release_etsili_generic(oldp);
     }
 
@@ -63,6 +68,21 @@ int sort_generics(etsili_generic_t *a, etsili_generic_t *b) {
     return 0;
 }
 
+static inline void add_another_target_identifier(internetaccess_ip_t *nextip,
+       etsili_other_targets_t *others,  etsili_ipaddress_t *ipaddr) {
+
+    if (others->alloced == others->count) {
+        others->targets = realloc(others->targets,
+                (others->alloced + 5) * sizeof(etsili_ipaddress_t));
+        others->alloced += 5;
+    }
+
+    memcpy(&(others->targets[others->count]), ipaddr,
+            sizeof(etsili_ipaddress_t));
+    others->count ++;
+
+}
+
 static inline void encode_ipiri_shared(wandder_encoder_t *encoder,
         etsili_generic_freelist_t *freegenerics,
         openli_ipiri_job_t *job,
@@ -72,8 +92,14 @@ static inline void encode_ipiri_shared(wandder_encoder_t *encoder,
     etsili_generic_t *np, *params = NULL;
     etsili_iri_type_t iritype;
     etsili_ipaddress_t targetip;
+    etsili_other_targets_t othertargets;
+
     int64_t ipversion = 0;
     params = job->customparams;
+
+    othertargets.count = 0;
+    othertargets.alloced = 0;
+    othertargets.targets = NULL;
 
     if (job->special == OPENLI_IPIRI_ENDWHILEACTIVE) {
         uint32_t evtype = IPIRI_END_WHILE_ACTIVE;
@@ -124,8 +150,11 @@ static inline void encode_ipiri_shared(wandder_encoder_t *encoder,
                 np);
     }
 
-    if (job->ipfamily != 0) {
+    if (job->ipcount > 0) {
         uint8_t etsiipmethod = ETSILI_IPADDRESS_ASSIGNED_UNKNOWN;
+        uint8_t donev4 = 0;
+        uint8_t donev6 = 0;
+        int i;
 
         switch(job->ipassignmentmethod) {
             case OPENLI_IPIRI_IPMETHOD_UNKNOWN:
@@ -139,35 +168,87 @@ static inline void encode_ipiri_shared(wandder_encoder_t *encoder,
                 break;
         }
 
-        if (job->ipfamily == AF_INET) {
-            struct sockaddr_in *in = (struct sockaddr_in *)&(job->assignedip);
-            etsili_create_ipaddress_v4(
-                    (uint32_t *)(&(in->sin_addr.s_addr)),
-                    job->assignedip_prefixbits,
-                    etsiipmethod, &targetip);
+        if (job->ipversioning == SESSION_IP_VERSION_V4) {
             ipversion = IPIRI_IPVERSION_4;
-        } else if (job->ipfamily == AF_INET6) {
-            struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)
-                    &(job->assignedip);
-            etsili_create_ipaddress_v6(
-                    (uint8_t *)(&(in6->sin6_addr.s6_addr)),
-                    job->assignedip_prefixbits,
-                    etsiipmethod, &targetip);
+        } else if (job->ipversioning == SESSION_IP_VERSION_V6) {
             ipversion = IPIRI_IPVERSION_6;
+        } else if (job->ipversioning == SESSION_IP_VERSION_DUAL) {
+            ipversion = IPIRI_IPVERSION_4AND6;
+        } else {
+            ipversion = 0;
         }
 
-        if (ipversion == IPIRI_IPVERSION_4 || ipversion == IPIRI_IPVERSION_6) {
+        if (ipversion != 0) {
             np = create_etsili_generic(freegenerics,
                     IPIRI_CONTENTS_IPVERSION, sizeof(int64_t),
                     (uint8_t *)(&ipversion));
             HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum),
                     np);
+        }
 
+        for (i = 0; i < job->ipcount; i++) {
+            internetaccess_ip_t *nextip = &(job->assignedips[i]);
+
+            if (nextip->ipfamily == AF_INET) {
+                struct sockaddr_in *in =
+                        (struct sockaddr_in *)&(nextip->assignedip);
+                etsili_create_ipaddress_v4(
+                        (uint32_t *)(&(in->sin_addr.s_addr)),
+                        nextip->prefixbits,
+                        etsiipmethod, &targetip);
+
+                if (!donev4) {
+                    np = create_etsili_generic(freegenerics,
+                            IPIRI_CONTENTS_TARGET_IPADDRESS,
+                            sizeof(etsili_ipaddress_t),
+                            (uint8_t *)(&targetip));
+                    HASH_ADD_KEYPTR(hh, params, &(np->itemnum),
+                            sizeof(np->itemnum), np);
+                    donev4 = 1;
+                } else {
+                    add_another_target_identifier(nextip, &othertargets,
+                            &targetip);
+                }
+
+            } else if (nextip->ipfamily == AF_INET6) {
+                struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)
+                        &(nextip->assignedip);
+                etsili_create_ipaddress_v6(
+                        (uint8_t *)(&(in6->sin6_addr.s6_addr)),
+                        nextip->prefixbits,
+                        etsiipmethod, &targetip);
+
+                if (ipversion == IPIRI_IPVERSION_6 && donev6 == 0) {
+                    np = create_etsili_generic(freegenerics,
+                            IPIRI_CONTENTS_TARGET_IPADDRESS,
+                            sizeof(etsili_ipaddress_t),
+                            (uint8_t *)(&targetip));
+                    HASH_ADD_KEYPTR(hh, params, &(np->itemnum),
+                            sizeof(np->itemnum), np);
+                    donev6 = 1;
+                } else if (ipversion == IPIRI_IPVERSION_4AND6 && donev6 == 0) {
+                    np = create_etsili_generic(freegenerics,
+                            IPIRI_CONTENTS_ADDITIONAL_IPADDRESS,
+                            sizeof(etsili_ipaddress_t),
+                            (uint8_t *)(&targetip));
+                    HASH_ADD_KEYPTR(hh, params, &(np->itemnum),
+                            sizeof(np->itemnum), np);
+                    donev6 = 1;
+                } else {
+                    add_another_target_identifier(nextip, &othertargets,
+                            &targetip);
+                }
+            }
+        }
+
+        if (othertargets.count > 0) {
             np = create_etsili_generic(freegenerics,
-                    IPIRI_CONTENTS_TARGET_IPADDRESS,
-                    sizeof(etsili_ipaddress_t), (uint8_t *)(&targetip));
-            HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum),
-                    np);
+                    IPIRI_CONTENTS_OTHER_TARGET_IDENTIFIERS,
+                    sizeof(etsili_other_targets_t),
+                    (uint8_t *)(&othertargets));
+            HASH_ADD_KEYPTR(hh, params, &(np->itemnum),
+                    sizeof(np->itemnum), np);
+
         }
     }
 
@@ -320,23 +401,24 @@ static inline void finish_ipiri_job(collector_sync_t *sync,
         access_session_t *sess, ipintercept_t *ipint,
         openli_export_recv_t *irimsg) {
 
-    irimsg->data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_DYNAMIC;
-    irimsg->data.ipiri.assignedip_prefixbits = sess->sessionip.prefixbits;
+    int i;
 
-    if (sess->sessionip.ipfamily) {
+    irimsg->data.ipiri.assignedips = calloc(sess->sessipcount,
+            sizeof(internetaccess_ip_t));
+    irimsg->data.ipiri.ipcount = sess->sessipcount;
+    irimsg->data.ipiri.ipversioning = sess->sessipversion;
+    irimsg->data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_DYNAMIC;
+
+    for (i = 0; i < sess->sessipcount; i++) {
+        memcpy(&(irimsg->data.ipiri.assignedips[i]), &(sess->sessionips[i]),
+                sizeof(internetaccess_ip_t));
+    }
+
+    if (sess->sessipcount > 0) {
         irimsg->data.ipiri.sessionstartts = sess->started;
-        irimsg->data.ipiri.ipfamily = sess->sessionip.ipfamily;
-        memcpy(&(irimsg->data.ipiri.assignedip),
-                &(sess->sessionip.assignedip),
-                (sess->sessionip.ipfamily == AF_INET) ?
-                sizeof(struct sockaddr_in) :
-                sizeof(struct sockaddr_in6));
     } else {
-        irimsg->data.ipiri.ipfamily = 0;
         irimsg->data.ipiri.sessionstartts.tv_sec = 0;
         irimsg->data.ipiri.sessionstartts.tv_usec = 0;
-        memset(&(irimsg->data.ipiri.assignedip), 0,
-                sizeof(struct sockaddr_storage));
     }
 
     pthread_mutex_lock(sync->glob->stats_mutex);
@@ -393,19 +475,21 @@ int create_ipiri_job_from_iprange(collector_sync_t *sync,
     irimsg->data.ipiri.sessionstartts.tv_sec = 0;
     irimsg->data.ipiri.sessionstartts.tv_usec = 0;
 
-    irimsg->data.ipiri.ipfamily = prefix->family;
-    irimsg->data.ipiri.assignedip_prefixbits = prefix->bitlen;
+    irimsg->data.ipiri.assignedips = calloc(1, sizeof(internetaccess_ip_t));
+
+    irimsg->data.ipiri.assignedips[0].ipfamily = prefix->family;
+    irimsg->data.ipiri.assignedips[0].prefixbits = prefix->bitlen;
     if (prefix->family == AF_INET) {
         struct sockaddr_in *sin;
 
-        sin = (struct sockaddr_in *)&(irimsg->data.ipiri.assignedip);
+        sin = (struct sockaddr_in *)&(irimsg->data.ipiri.assignedips[0].assignedip);
         memcpy(&(sin->sin_addr), &(prefix->add.sin), sizeof(struct in_addr));
         sin->sin_family = AF_INET;
         sin->sin_port = 0;
     } else if (prefix->family == AF_INET6) {
         struct sockaddr_in6 *sin6;
 
-        sin6 = (struct sockaddr_in6 *)&(irimsg->data.ipiri.assignedip);
+        sin6 = (struct sockaddr_in6 *)&(irimsg->data.ipiri.assignedips[0].assignedip);
         memcpy(&(sin6->sin6_addr), &(prefix->add.sin6),
                 sizeof(struct in6_addr));
         sin6->sin6_family = AF_INET6;

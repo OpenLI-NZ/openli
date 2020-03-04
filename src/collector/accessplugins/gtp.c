@@ -1054,15 +1054,7 @@ static void extract_gtp_assigned_ip_address(gtp_saved_pkt_t *gpkt,
         if (gpkt->version == 2 && ie->ietype == GTPV2_IE_PDN_ALLOC) {
             if (*((uint8_t *)(ie->iecontent)) == 0x01) {
                 /* IPv4 */
-                struct sockaddr_in *in;
-
-                in = (struct sockaddr_in *)&(sess->sessionip.assignedip);
-                in->sin_family = AF_INET;
-                in->sin_port = 0;
-                in->sin_addr.s_addr = *((uint32_t *)(ie->iecontent + 1));
-
-                sess->sessionip.ipfamily = AF_INET;
-                sess->sessionip.prefixbits = 32;
+                add_new_session_ip(sess, ie->iecontent + 1, AF_INET, 32);
 
                 /* These weird numbers are derived from bytes 3 and 4 of
                  * the Packet Data Protocol Address IE defined in
@@ -1077,29 +1069,14 @@ static void extract_gtp_assigned_ip_address(gtp_saved_pkt_t *gpkt,
 
             } else if (*((uint8_t *)(ie->iecontent)) == 0x02) {
                 /* IPv6 */
-                struct sockaddr_in6 *in6;
-
-                in6 = (struct sockaddr_in6 *)&(sess->sessionip.assignedip);
-                in6->sin6_family = AF_INET6;
-                in6->sin6_port = 0;
-                memcpy(&(in6->sin6_addr.s6_addr), ie->iecontent + 1, 16);
-
-                sess->sessionip.ipfamily = AF_INET6;
-                sess->sessionip.prefixbits = 128;
+                add_new_session_ip(sess, ie->iecontent + 1, AF_INET6, 128);
                 gsess->pdptype = htons(0x0157);
             } else if (*((uint8_t *)(ie->iecontent)) == 0x03) {
                 /* IPv4 AND IPv6 */
 
                 /* TODO support multiple sessionips per session */
-                struct sockaddr_in6 *in6;
+                add_new_session_ip(sess, ie->iecontent + 1, AF_INET6, 128);
 
-                in6 = (struct sockaddr_in6 *)&(sess->sessionip.assignedip);
-                in6->sin6_family = AF_INET6;
-                in6->sin6_port = 0;
-                memcpy(&(in6->sin6_addr.s6_addr), ie->iecontent + 1, 16);
-
-                sess->sessionip.ipfamily = AF_INET6;
-                sess->sessionip.prefixbits = 128;
                 gsess->pdptype = htons(0x018d);
             } else {
                 break;
@@ -1114,28 +1091,11 @@ static void extract_gtp_assigned_ip_address(gtp_saved_pkt_t *gpkt,
 
             if ((pdptype & 0x0fff) == 0x0121) {
                 /* IPv4 */
-                struct sockaddr_in *in;
-
+                add_new_session_ip(sess, ie->iecontent + 2, AF_INET, 32);
                 gsess->pdptype = htons(0x0121);
-
-                in = (struct sockaddr_in *)&(sess->sessionip.assignedip);
-                in->sin_family = AF_INET;
-                in->sin_port = 0;
-                in->sin_addr.s_addr = *((uint32_t *)(ie->iecontent + 2));
-
-                sess->sessionip.ipfamily = AF_INET;
-                sess->sessionip.prefixbits = 32;
             } else if ((pdptype & 0x0fff) == 0x0157) {
                 /* IPv6 */
-                struct sockaddr_in6 *in6;
-
-                in6 = (struct sockaddr_in6 *)&(sess->sessionip.assignedip);
-                in6->sin6_family = AF_INET6;
-                in6->sin6_port = 0;
-                memcpy(&(in6->sin6_addr.s6_addr), ie->iecontent + 2, 16);
-
-                sess->sessionip.ipfamily = AF_INET6;
-                sess->sessionip.prefixbits = 128;
+                add_new_session_ip(sess, ie->iecontent + 2, AF_INET6, 128);
                 gsess->pdptype = htons(0x0157);
             }
             memcpy(&(gsess->pdpaddr), sess, sizeof(internetaccess_ip_t));

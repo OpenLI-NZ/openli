@@ -64,6 +64,9 @@ static inline void free_session(access_session_t *sess) {
     if (sess->plugin) {
         sess->plugin->destroy_session_data(sess->plugin, sess);
     }
+    if (sess->sessionips) {
+        free(sess->sessionips);
+    }
     free(sess);
 }
 
@@ -110,7 +113,9 @@ access_session_t *create_access_session(access_plugin_t *p, char *sessid,
 	newsess->statedata = NULL;
 	newsess->idlength = sessid_len;
 	newsess->cin = 0;
-	memset(&(newsess->sessionip), 0, sizeof(newsess->sessionip));
+    newsess->sessionips = calloc(SESSION_IP_INCR, sizeof(internetaccess_ip_t));
+    newsess->sessipcount = 0;
+    newsess->sessipversion = SESSION_IP_VERSION_NONE;
 
 	newsess->iriseqno = 0;
 	newsess->started.tv_sec = 0;
@@ -118,6 +123,61 @@ access_session_t *create_access_session(access_plugin_t *p, char *sessid,
 	newsess->activeipentry = NULL;
 
 	return newsess;
+}
+
+void add_new_session_ip(access_session_t *sess, void *att_val,
+        int family, uint8_t pfxbits) {
+
+	    int ind = sess->sessipcount;
+
+    if (sess->sessipcount > 0 && (sess->sessipcount % SESSION_IP_INCR) == 0) {
+        sess->sessionips = realloc(sess->sessionips,
+                (sess->sessipcount + SESSION_IP_INCR) *
+                sizeof(internetaccess_ip_t));
+
+    }
+
+    if (family == AF_INET) {
+        struct sockaddr_in *in;
+
+        in = (struct sockaddr_in *)&(sess->sessionips[ind].assignedip);
+
+        in->sin_family = AF_INET;
+        in->sin_port = 0;
+        in->sin_addr.s_addr = *((uint32_t *)att_val);
+
+        if (sess->sessipversion == SESSION_IP_VERSION_NONE) {
+            sess->sessipversion = SESSION_IP_VERSION_V4;
+        } else if (sess->sessipversion == SESSION_IP_VERSION_V6) {
+            sess->sessipversion = SESSION_IP_VERSION_DUAL;
+        }
+
+
+    } else if (family == AF_INET6) {
+
+        struct sockaddr_in6 *in6;
+
+        in6 = (struct sockaddr_in6 *)&(sess->sessionips[ind].assignedip);
+
+        in6->sin6_family = AF_INET6;
+        in6->sin6_port = 0;
+        in6->sin6_flowinfo = 0;
+
+        memcpy(&(in6->sin6_addr.s6_addr), att_val, 16);
+
+        if (sess->sessipversion == SESSION_IP_VERSION_NONE) {
+            sess->sessipversion = SESSION_IP_VERSION_V6;
+        } else if (sess->sessipversion == SESSION_IP_VERSION_V4) {
+            sess->sessipversion = SESSION_IP_VERSION_DUAL;
+        }
+
+    } else {
+        return;
+    }
+
+    sess->sessionips[ind].ipfamily = family;
+    sess->sessionips[ind].prefixbits = pfxbits;
+    sess->sessipcount ++;
 }
 
 int free_single_session(internet_user_t *user, access_session_t *sess) {
