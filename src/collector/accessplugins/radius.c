@@ -282,7 +282,7 @@ static inline radius_attribute_t *create_new_attribute(radius_global_t *glob,
         if (attr->att_len > STANDARD_ATTR_ALLOC) {
             attr->att_val = malloc(attr->att_len);
         } else {
-            attr->att_val = malloc(STANDARD_ATTR_ALLOC);
+            attr->att_val = calloc(1, STANDARD_ATTR_ALLOC);
         }
     } else if (attr->att_len > STANDARD_ATTR_ALLOC) {
         attr->att_val = realloc(attr->att_val, attr->att_len);
@@ -346,9 +346,9 @@ static void destroy_radius_nas(radius_nas_t *nas) {
     radius_orphaned_resp_t *orph, *tmporph;
     radius_saved_req_t *req, *tmpreq;
     radius_user_t *user;
-    PWord_t pval;
+    PWord_t pval, pval2;
     char index[128];
-    Word_t res;
+    Word_t res, index2;
 
     index[0] = '\0';
     JSLF(pval, nas->user_map, index);
@@ -361,6 +361,13 @@ static void destroy_radius_nas(radius_nas_t *nas) {
             free(user->nasidentifier);
         }
 
+        index2 = 0;
+        JLF(pval2, user->sessions, index2);
+        while (pval2) {
+            radius_user_session_t *usess = (radius_user_session_t *)(*pval2);
+            free(usess);
+            JLN(pval2, user->sessions, index2);
+        }
         JLFA(res, user->sessions);
         free(user);
 
@@ -1053,56 +1060,25 @@ static inline void extract_assigned_ip_address(radius_global_t *glob,
         return;
     }
 
-    /* TODO is multiple address assignment a thing that happens in reality? */
     attr = attrlist;
     while (attr) {
         if (attr->att_type == RADIUS_ATTR_FRAMED_IP_ADDRESS) {
-            struct sockaddr_in *in;
-
-            in = (struct sockaddr_in *)&(sess->sessionip.assignedip);
-
-            in->sin_family = AF_INET;
-            in->sin_port = 0;
-            in->sin_addr.s_addr = *((uint32_t *)attr->att_val);
-
-            sess->sessionip.ipfamily = AF_INET;
-            sess->sessionip.prefixbits = 32;
-
-            return;
+            add_new_session_ip(sess, attr->att_val, AF_INET, 32);
         }
 
         if (attr->att_type == RADIUS_ATTR_FRAMED_IPV6_ADDRESS) {
-            struct sockaddr_in6 *in6;
-
-            in6 = (struct sockaddr_in6 *)&(sess->sessionip.assignedip);
-
-            in6->sin6_family = AF_INET6;
-            in6->sin6_port = 0;
-            in6->sin6_flowinfo = 0;
-
-            memcpy(&(in6->sin6_addr.s6_addr), attr->att_val, 16);
-
-            sess->sessionip.ipfamily = AF_INET6;
-            sess->sessionip.prefixbits = 128;
-            return;
+            add_new_session_ip(sess, attr->att_val, AF_INET6, 128);
         }
 
-        if (attr->att_type == RADIUS_ATTR_FRAMED_IPV6_PREFIX ||
-                attr->att_type == RADIUS_ATTR_DELEGATED_IPV6_PREFIX) {
-            struct sockaddr_in6 *in6;
+        if (attr->att_type == RADIUS_ATTR_DELEGATED_IPV6_PREFIX ||
+                attr->att_type == RADIUS_ATTR_FRAMED_IPV6_PREFIX) {
+
             radius_v6_prefix_attr_t *prefattr;
-
-            in6 = (struct sockaddr_in6 *)&(sess->sessionip.assignedip);
-
-            in6->sin6_family = AF_INET6;
-            in6->sin6_port = 0;
-            in6->sin6_flowinfo = 0;
-
             prefattr = (radius_v6_prefix_attr_t *)(attr->att_val);
-            memcpy(&(in6->sin6_addr.s6_addr), prefattr->address, 16);
 
-            sess->sessionip.ipfamily = AF_INET6;
-            sess->sessionip.prefixbits = prefattr->preflength;
+            add_new_session_ip(sess, prefattr->address, AF_INET6,
+                    prefattr->preflength);
+
             return;
         }
 
@@ -1181,8 +1157,6 @@ static user_identity_t *radius_get_userid(access_plugin_t *p, void *parsed,
             raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
 
         if (raddata->muser_count == 0) {
-            logger(LOG_INFO,
-                    "OpenLI RADIUS: got a request with no user identity fields?");
             return NULL;
         }
 

@@ -100,6 +100,7 @@ typedef struct sync_thread_global {
     void *collector_queues;
     void *epollevs;
     int epoll_fd;
+    int total_col_threads;
 
     pthread_mutex_t *stats_mutex;
     collector_stats_t *stats;

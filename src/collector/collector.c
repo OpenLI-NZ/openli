@@ -263,6 +263,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
     loc->sipservers = NULL;
     loc->staticv4ranges = New_Patricia(32);
     loc->staticv6ranges = New_Patricia(128);
+    loc->dynamicv6ranges = New_Patricia(128);
     loc->staticcache = NULL;
     loc->tosyncq_ip = NULL;
     loc->tosyncq_voip = NULL;
@@ -379,8 +380,10 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     HASH_ITER(hh, loc->activeipv6intercepts, v6, tmp2) {
         free_all_ipsessions(&(v6->intercepts));
         HASH_DELETE(hh, loc->activeipv6intercepts, v6);
+        free(v6->prefixstr);
         free(v6);
     }
+
 
     free_all_staticipsessions(&(loc->activestaticintercepts));
     free_all_rtpstreams(&(loc->activertpintercepts));
@@ -393,6 +396,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     Destroy_Patricia(loc->staticv4ranges, free_staticrange_data);
     Destroy_Patricia(loc->staticv6ranges, free_staticrange_data);
+    Destroy_Patricia(loc->dynamicv6ranges, free_staticrange_data);
 
     free_staticcache(loc->staticcache);
 }
@@ -968,6 +972,7 @@ static inline void init_sync_thread_data(collector_global_t *glob,
     sup->collector_queues = NULL;
     sup->epollevs = NULL;
     sup->epoll_fd = epoll_create1(0);
+    sup->total_col_threads = glob->total_col_threads;
 
     sup->stats_mutex = &(glob->stats_mutex);
     sup->stats = &(glob->stats);

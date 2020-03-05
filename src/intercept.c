@@ -24,6 +24,7 @@
  *
  */
 
+#include "util.h"
 #include "logger.h"
 #include "intercept.h"
 
@@ -395,6 +396,7 @@ void free_all_vendmirror_intercepts(vendmirror_intercept_list_t **jmints) {
             free_single_vendmirror_intercept(jm);
         }
         HASH_DELETE(hh, *jmints, parent);
+        free(parent);
     }
 }
 
@@ -444,7 +446,7 @@ void free_all_staticipsessions(staticipsession_t **statintercepts) {
 }
 
 ipsession_t *create_ipsession(ipintercept_t *ipint, uint32_t cin,
-        int ipfamily, struct sockaddr *assignedip) {
+        int ipfamily, struct sockaddr *assignedip, uint8_t prefixlen) {
 
     ipsession_t *ipsess;
 
@@ -456,6 +458,7 @@ ipsession_t *create_ipsession(ipintercept_t *ipint, uint32_t cin,
     ipsess->nextseqno = 0;
     ipsess->cin = cin;
     ipsess->ai_family = ipfamily;
+    ipsess->prefixlen = prefixlen;
     ipsess->targetip = (struct sockaddr_storage *)(malloc(
             sizeof(struct sockaddr_storage)));
     if (!ipsess->targetip) {
@@ -474,6 +477,7 @@ ipsession_t *create_ipsession(ipintercept_t *ipint, uint32_t cin,
         return NULL;
     }
     snprintf(ipsess->streamkey, 256, "%s-%u", ipint->common.liid, cin);
+
     return ipsess;
 }
 

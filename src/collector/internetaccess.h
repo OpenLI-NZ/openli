@@ -35,6 +35,8 @@
 #include "etsili_core.h"
 #include "intercept.h"
 
+#define SESSION_IP_INCR (5)
+
 enum {
     ACCESS_RADIUS,
     ACCESS_GTP,
@@ -72,6 +74,13 @@ typedef enum {
     USER_IDENT_MAX
 } user_identity_method_t;
 
+typedef enum {
+    SESSION_IP_VERSION_NONE,
+    SESSION_IP_VERSION_V4,
+    SESSION_IP_VERSION_V6,
+    SESSION_IP_VERSION_DUAL,
+} session_ipversion_t;
+
 typedef struct access_plugin access_plugin_t;
 typedef struct internet_user internet_user_t;
 typedef struct access_session access_session_t;
@@ -98,7 +107,10 @@ typedef struct ip_to_session {
 
 struct access_session {
 
-    internetaccess_ip_t sessionip;
+    internetaccess_ip_t *sessionips;
+    uint8_t sessipcount;
+    session_ipversion_t sessipversion;
+
     access_plugin_t *plugin;
     void *sessionid;
     void *statedata;
@@ -179,6 +191,8 @@ access_plugin_t *get_gtp_access_plugin(void);
 
 access_session_t *create_access_session(access_plugin_t *p,
         char *idstr, int idstr_len);
+void add_new_session_ip(access_session_t *sess, void *att_val,
+        int family, uint8_t pfxbits);
 
 const char *accesstype_to_string(internet_access_method_t am);
 
