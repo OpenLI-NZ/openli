@@ -384,7 +384,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
                 }
                 break;
             default:
-                printf("UNKNOWN ENCODING TYPE\n");
+                logger(LOG_INFO, "OpenLI: Error Unknown encoding type");
         }
         job.top = top;
 

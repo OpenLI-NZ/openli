@@ -1597,8 +1597,9 @@ int main(int argc, char *argv[]) {
         glob->seqtrackers[i].intercepts = NULL;
         glob->seqtrackers[i].colident = &(glob->sharedinfo);
         glob->seqtrackers[i].encoding_method = glob->encoding_method;
+#ifdef HAVE_BER_ENCODING
         glob->seqtrackers[i].enc_ber = wandder_init_encoder_ber(1000, 512);
-
+#endif
         pthread_create(&(glob->seqtrackers[i].threadid), NULL,
                 start_seqtracker_thread, (void *)&(glob->seqtrackers[i]));
     }
