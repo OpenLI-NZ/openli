@@ -479,6 +479,8 @@ int create_ipiri_job_from_iprange(collector_sync_t *sync,
 
     irimsg->data.ipiri.assignedips[0].ipfamily = prefix->family;
     irimsg->data.ipiri.assignedips[0].prefixbits = prefix->bitlen;
+    irimsg->data.ipiri.ipcount = 1;
+
     if (prefix->family == AF_INET) {
         struct sockaddr_in *sin;
 
@@ -486,6 +488,7 @@ int create_ipiri_job_from_iprange(collector_sync_t *sync,
         memcpy(&(sin->sin_addr), &(prefix->add.sin), sizeof(struct in_addr));
         sin->sin_family = AF_INET;
         sin->sin_port = 0;
+        irimsg->data.ipiri.ipversioning = IPIRI_IPVERSION_4;
     } else if (prefix->family == AF_INET6) {
         struct sockaddr_in6 *sin6;
 
@@ -496,6 +499,7 @@ int create_ipiri_job_from_iprange(collector_sync_t *sync,
         sin6->sin6_port = 0;
         sin6->sin6_flowinfo = 0;
         sin6->sin6_scope_id = 0;
+        irimsg->data.ipiri.ipversioning = IPIRI_IPVERSION_6;
     }
 
     pthread_mutex_lock(sync->glob->stats_mutex);
