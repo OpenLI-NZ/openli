@@ -108,7 +108,7 @@ int encode_umtsiri_ber(
     res->header.internalid = 0;
 
     free_umtsiri_parameters(job->customparams);
-
+    return 0;
 }
 #endif
 
