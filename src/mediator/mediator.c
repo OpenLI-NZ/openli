@@ -722,6 +722,8 @@ static int connect_handover(mediator_state_t *state, handover_t *ho) {
     }
 
     agstate->incoming = (libtrace_scb_t *)malloc(sizeof(libtrace_scb_t));
+    agstate->incoming->fd = -1;
+    agstate->incoming->address = NULL;
     libtrace_scb_init(agstate->incoming, (64 * 1024 * 1024),
             (uint16_t)state->mediatorid);
 
