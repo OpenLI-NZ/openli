@@ -39,9 +39,9 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip6_t *ip, uint32_t rem, colthread_local_t *loc);
 
 #ifdef HAVE_BER_ENCODING
-int encode_ipcc_ber(wandder_buf_t **preencoded_ber,
+int encode_ipcc_ber(
         openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
-        openli_encoded_result_t *msg, wandder_etsili_top_t *top, 
+        openli_encoded_result_t *msg, wandder_etsili_child_t *child, 
         wandder_encoder_t *encoder);
 #endif
 #endif

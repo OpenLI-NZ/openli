@@ -50,7 +50,10 @@ static inline void free_encoded_result(openli_encoded_result_t *res) {
     }
 
     if (res->msgbody) {
-        if (res->msgbody->encoded) {
+
+        if (res->msgbody->encoded && !res->child) { 
+            //if child exists, then msgbody->encoded is owned by child
+            //dont free so it can be reused
             free(res->msgbody->encoded);
         }
         free(res->msgbody);
@@ -58,6 +61,10 @@ static inline void free_encoded_result(openli_encoded_result_t *res) {
 
     if (res->origreq) {
         free_published_message(res->origreq);
+    }
+
+    if (res->child){
+        wandder_free_child(res->child);
     }
 }
 

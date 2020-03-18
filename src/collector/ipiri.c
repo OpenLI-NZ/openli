@@ -342,12 +342,12 @@ void ipiri_free_id(ipiri_id_t *iriid) {
 }
 
 #ifdef HAVE_BER_ENCODING
-int encode_ipiri_ber(wandder_buf_t **preencoded_ber,
+int encode_ipiri_ber(
         openli_ipiri_job_t *job,
         etsili_generic_freelist_t *freegenerics,
         uint32_t seqno, struct timeval *tv,
         openli_encoded_result_t *res,
-        wandder_etsili_top_t *top, 
+        wandder_etsili_child_t *child, 
         wandder_encoder_t *encoder) {
 
     memset(res, 0, sizeof(openli_encoded_result_t));
@@ -356,7 +356,7 @@ int encode_ipiri_ber(wandder_buf_t **preencoded_ber,
     etsili_iri_type_t iritype;
     struct timeval current_tv;
     int ret = 0;
-    uint32_t liidlen = (uint32_t)((size_t)preencoded_ber[WANDDER_PREENCODE_LIID_LEN]);
+    uint32_t liidlen = (uint32_t)((size_t)child->owner->preencoded[WANDDER_PREENCODE_LIID_LEN]);
 
     encode_ipiri_shared(encoder,
         freegenerics,
@@ -369,19 +369,18 @@ int encode_ipiri_ber(wandder_buf_t **preencoded_ber,
     memset(res, 0, sizeof(openli_encoded_result_t));
 
     wandder_encode_etsi_ipiri_ber (
-            preencoded_ber,
             (int64_t)(job->cin),
             (int64_t)seqno,
             &current_tv,
             params,
             iritype,
-            top);
+            child);
 
     res->msgbody = malloc(sizeof(wandder_encoded_result_t));
     res->msgbody->encoder = NULL;
-    res->msgbody->encoded = top->buf;
-    res->msgbody->len = top->len;
-    res->msgbody->alloced = top->alloc_len;
+    res->msgbody->encoded = child->buf;
+    res->msgbody->len = child->len;
+    res->msgbody->alloced = child->alloc_len;
     res->msgbody->next = NULL;
 
     res->ipcontents = NULL;
