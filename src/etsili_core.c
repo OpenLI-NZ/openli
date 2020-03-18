@@ -146,6 +146,10 @@ static inline void encode_ipaddress(wandder_encoder_t *encoder,
     uint32_t assign = addr->assignment;
     uint32_t prefbits = addr->v6prefixlen;
 
+    if (addr->ipvalue == NULL) {
+        return; // ???
+    }
+
     if (addr->iptype == ETSILI_IPADDRESS_VERSION_6) {
         addrlen = 16;
     }
@@ -183,6 +187,8 @@ static inline void encode_ipaddress(wandder_encoder_t *encoder,
             sizeof(addr->v4subnetmask));
     }
 
+    free(addr->ipvalue);
+    addr->ipvalue = NULL;
 }
 
 static inline void encode_ipmmiri_body_common(wandder_encoder_t *encoder,
@@ -1060,7 +1066,8 @@ void etsili_create_ipaddress_v6(uint8_t *addrnum,
     ip->v4subnetmask = 0;
 
     ip->valtype = ETSILI_IPADDRESS_REP_BINARY;
-    ip->ipvalue = addrnum;
+    ip->ipvalue = calloc(16, sizeof(uint8_t));
+    memcpy(ip->ipvalue, addrnum, 16);
 }
 
 void etsili_create_ipaddress_v4(uint32_t *addrnum,
@@ -1076,7 +1083,8 @@ void etsili_create_ipaddress_v4(uint32_t *addrnum,
     }
 
     ip->valtype = ETSILI_IPADDRESS_REP_BINARY;
-    ip->ipvalue = (uint8_t *)addrnum;
+    ip->ipvalue = calloc(4, sizeof(uint8_t));
+    memcpy(ip->ipvalue, addrnum, 4);
 }
 
 void etsili_preencode_static_fields(
