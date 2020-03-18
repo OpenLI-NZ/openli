@@ -209,6 +209,7 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
         intstate->cinsequencing = NULL;
+        intstate->top = NULL;
 
         HASH_ADD_KEYPTR(hh, seqdata->intercepts, intstate->details.liid,
                 intstate->details.liid_len, intstate);
