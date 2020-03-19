@@ -69,6 +69,49 @@ int encode_umtsiri(wandder_encoder_t *encoder,
     return 0;
 }
 
+#ifdef HAVE_BER_ENCODING
+int encode_umtsiri_ber(
+        openli_mobiri_job_t *job,
+        etsili_generic_freelist_t *freegenerics,
+        uint32_t seqno,
+        openli_encoded_result_t *res,
+        wandder_etsili_child_t *child) {
+
+    struct timeval current_tv;
+
+    uint32_t liidlen = (uint32_t)((size_t)child->owner->preencoded[WANDDER_PREENCODE_LIID_LEN]);
+
+    gettimeofday(&current_tv, NULL);
+    memset(res, 0, sizeof(openli_encoded_result_t));    
+
+    wandder_encode_etsi_umtsiri_ber(   //new way
+        (int64_t)job->cin,
+        (int64_t)seqno,
+        &current_tv, 
+        job->customparams, 
+        job->iritype, 
+        child);
+
+    res->msgbody = malloc(sizeof(wandder_encoded_result_t));
+    res->msgbody->encoder = NULL;
+    res->msgbody->encoded = child->buf;
+    res->msgbody->len = child->len;
+    res->msgbody->alloced = child->alloc_len;
+    res->msgbody->next = NULL;
+
+    res->ipcontents = NULL;
+    res->ipclen = 0;
+
+    res->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    res->header.bodylen = htons(res->msgbody->len + liidlen + sizeof(uint16_t));
+    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
+    res->header.internalid = 0;
+
+    free_umtsiri_parameters(job->customparams);
+    return 0;
+}
+#endif
+
 int create_mobiri_job_from_session(collector_sync_t *sync,
         access_session_t *sess, ipintercept_t *ipint, uint8_t special) {
 

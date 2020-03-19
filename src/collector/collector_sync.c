@@ -86,6 +86,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
 
     sync->ctx = glob->sslconf.ctx;
+    sync->ssl = NULL;
 
     sync->zmq_colsock = zmq_socket(glob->zmq_ctxt, ZMQ_PULL);
     if (zmq_bind(sync->zmq_colsock, "inproc://openli-ipsync") != 0) {
@@ -1777,6 +1778,7 @@ static int add_ip_to_session_mapping(collector_sync_t *sync,
                 }
             }
             free_single_session(prev->owner, prev->session);
+            free(prev);
             replaced ++;
         }
 

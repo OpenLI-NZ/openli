@@ -1157,8 +1157,6 @@ static user_identity_t *radius_get_userid(access_plugin_t *p, void *parsed,
             raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
 
         if (raddata->muser_count == 0) {
-            logger(LOG_INFO,
-                    "OpenLI RADIUS: got a request with no user identity fields?");
             return NULL;
         }
 

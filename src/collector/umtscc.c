@@ -61,4 +61,44 @@ int encode_umtscc(wandder_encoder_t *encoder,
     return 0;
 }
 
+
+#ifdef HAVE_BER_ENCODING
+
+int encode_umtscc_ber(
+        openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
+        openli_encoded_result_t *msg, wandder_etsili_child_t *child, wandder_encoder_t *encoder) {
+
+    uint32_t liidlen = (uint32_t)((size_t)child->owner->preencoded[WANDDER_PREENCODE_LIID_LEN]);
+
+    memset(msg, 0, sizeof(openli_encoded_result_t));
+
+    wandder_encode_etsi_umtscc_ber (
+            job->cin,
+            (int64_t)seqno,
+            tv,
+            job->ipcontent,
+            job->ipclen,
+            job->dir,
+            child);
+
+    msg->msgbody = malloc(sizeof(wandder_encoded_result_t));
+
+    msg->msgbody->encoder = NULL;
+    msg->msgbody->encoded = child->buf;
+    msg->msgbody->len = child->len;
+    msg->msgbody->alloced = child->alloc_len;
+    msg->msgbody->next = NULL;
+
+    msg->ipcontents = NULL;
+    msg->ipclen = 0;
+
+    msg->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    msg->header.bodylen = htons(msg->msgbody->len + liidlen + sizeof(uint16_t));
+    msg->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
+    msg->header.internalid = 0;
+
+    return 0;
+}
+#endif
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -146,6 +146,9 @@ typedef struct seqtracker_thread_data {
     exporter_intercept_state_t *intercepts;
     removed_intercept_t *removedints;
     uint8_t encoding_method;
+#if HAVE_BER_ENCODING
+    wandder_encoder_ber_t *enc_ber;
+#endif
 
 } seqtracker_thread_data_t;
 
@@ -214,8 +217,8 @@ typedef struct encoder_state {
 typedef struct encoder_job {
     wandder_encode_job_t *preencoded;
 #ifdef HAVE_BER_ENCODING
-    wandder_buf_t **preencoded_ber;
     wandder_etsili_top_t *top;
+    wandder_etsili_child_t *child;
 #endif
     uint32_t seqno;
     char *cinstr;

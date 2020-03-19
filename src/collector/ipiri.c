@@ -342,12 +342,12 @@ void ipiri_free_id(ipiri_id_t *iriid) {
 }
 
 #ifdef HAVE_BER_ENCODING
-int encode_ipiri_ber(wandder_buf_t **preencoded_ber,
+int encode_ipiri_ber(
         openli_ipiri_job_t *job,
         etsili_generic_freelist_t *freegenerics,
         uint32_t seqno, struct timeval *tv,
         openli_encoded_result_t *res,
-        wandder_etsili_top_t *top, 
+        wandder_etsili_child_t *child, 
         wandder_encoder_t *encoder) {
 
     memset(res, 0, sizeof(openli_encoded_result_t));
@@ -356,7 +356,7 @@ int encode_ipiri_ber(wandder_buf_t **preencoded_ber,
     etsili_iri_type_t iritype;
     struct timeval current_tv;
     int ret = 0;
-    uint32_t liidlen = (uint32_t)((size_t)preencoded_ber[WANDDER_PREENCODE_LIID_LEN]);
+    uint32_t liidlen = (uint32_t)((size_t)child->owner->preencoded[WANDDER_PREENCODE_LIID_LEN]);
 
     encode_ipiri_shared(encoder,
         freegenerics,
@@ -369,19 +369,18 @@ int encode_ipiri_ber(wandder_buf_t **preencoded_ber,
     memset(res, 0, sizeof(openli_encoded_result_t));
 
     wandder_encode_etsi_ipiri_ber (
-            preencoded_ber,
             (int64_t)(job->cin),
             (int64_t)seqno,
             &current_tv,
             params,
             iritype,
-            top);
+            child);
 
     res->msgbody = malloc(sizeof(wandder_encoded_result_t));
     res->msgbody->encoder = NULL;
-    res->msgbody->encoded = top->buf;
-    res->msgbody->len = top->len;
-    res->msgbody->alloced = top->alloc_len;
+    res->msgbody->encoded = child->buf;
+    res->msgbody->len = child->len;
+    res->msgbody->alloced = child->alloc_len;
     res->msgbody->next = NULL;
 
     res->ipcontents = NULL;
@@ -479,6 +478,8 @@ int create_ipiri_job_from_iprange(collector_sync_t *sync,
 
     irimsg->data.ipiri.assignedips[0].ipfamily = prefix->family;
     irimsg->data.ipiri.assignedips[0].prefixbits = prefix->bitlen;
+    irimsg->data.ipiri.ipcount = 1;
+
     if (prefix->family == AF_INET) {
         struct sockaddr_in *sin;
 
@@ -486,6 +487,7 @@ int create_ipiri_job_from_iprange(collector_sync_t *sync,
         memcpy(&(sin->sin_addr), &(prefix->add.sin), sizeof(struct in_addr));
         sin->sin_family = AF_INET;
         sin->sin_port = 0;
+        irimsg->data.ipiri.ipversioning = IPIRI_IPVERSION_4;
     } else if (prefix->family == AF_INET6) {
         struct sockaddr_in6 *sin6;
 
@@ -496,6 +498,7 @@ int create_ipiri_job_from_iprange(collector_sync_t *sync,
         sin6->sin6_port = 0;
         sin6->sin6_flowinfo = 0;
         sin6->sin6_scope_id = 0;
+        irimsg->data.ipiri.ipversioning = IPIRI_IPVERSION_6;
     }
 
     pthread_mutex_lock(sync->glob->stats_mutex);

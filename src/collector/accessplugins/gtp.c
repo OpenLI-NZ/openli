@@ -144,7 +144,8 @@ typedef struct gtp_session {
     int idstr_len;
     uint32_t teid;
 
-    internetaccess_ip_t pdpaddr;
+    internetaccess_ip_t *pdpaddrs;
+    uint8_t pdpaddrcount;
     uint16_t pdptype;
     int64_t cin;
 
@@ -477,7 +478,7 @@ static inline void get_gtpnum_from_ie(gtp_infoelem_t *gtpel, char *field,
     int i, j;
 
     j = 0;
-    for (i = 0; i < gtpel->ielength; i++) {
+    for (i = 0; i < gtpel->ielength - skipfront; i++) {
         uint8_t num = *(ptr + i);
         field[j] = (char)('0' + (num & 0x0f));
 
@@ -1001,6 +1002,8 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
     sess->sessid = strdup(sessid);
     sess->current = SESSION_STATE_NEW;
     sess->teid = gparsed->teid;
+    sess->pdpaddrs = NULL;
+    sess->pdpaddrcount = 0;
 
     memcpy(sess->serverid, gparsed->serverid, 16);
     sess->serveripfamily = gparsed->serveripfamily;
@@ -1082,23 +1085,25 @@ static void extract_gtp_assigned_ip_address(gtp_saved_pkt_t *gpkt,
                 break;
             }
 
-            memcpy(&(gsess->pdpaddr), sess, sizeof(internetaccess_ip_t));
+            gsess->pdpaddrs = sess->sessionips;
+            gsess->pdpaddrcount = sess->sessipcount;
             break;
         }
 
         if (gpkt->version == 1 && ie->ietype == GTPV1_IE_END_USER_ADDRESS) {
             uint16_t pdptype = ntohs(*((uint16_t *)(ie->iecontent)));
 
-            if ((pdptype & 0x0fff) == 0x0121) {
+            if ((pdptype & 0x0fff) == 0x0121 && ie->ielength >= 6) {
                 /* IPv4 */
                 add_new_session_ip(sess, ie->iecontent + 2, AF_INET, 32);
                 gsess->pdptype = htons(0x0121);
-            } else if ((pdptype & 0x0fff) == 0x0157) {
+            } else if ((pdptype & 0x0fff) == 0x0157 && ie->ielength >= 18) {
                 /* IPv6 */
                 add_new_session_ip(sess, ie->iecontent + 2, AF_INET6, 128);
                 gsess->pdptype = htons(0x0157);
             }
-            memcpy(&(gsess->pdpaddr), sess, sizeof(internetaccess_ip_t));
+            gsess->pdpaddrs = sess->sessionips;
+            gsess->pdpaddrcount = sess->sessipcount;
             break;
         }
 
@@ -1562,20 +1567,25 @@ static int gtp_create_pdp_generic_iri(gtp_parsed_t *gparsed,
         gsess->saved.apname_len, (uint8_t *)gsess->saved.apname);
     HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
 
-    if (gsess->pdpaddr.ipfamily == AF_INET) {
-        struct sockaddr_in *sin = (struct sockaddr_in *)
-                &(gsess->pdpaddr.assignedip);
+    /* TODO encode all PDP addresses according to the standards */
+    if (gsess->pdpaddrcount > 0) {
+        if (gsess->pdpaddrs[0].ipfamily == AF_INET) {
+            struct sockaddr_in *sin = (struct sockaddr_in *)
+                    &(gsess->pdpaddrs[0].assignedip);
 
-        etsili_create_ipaddress_v4((uint32_t *)&(sin->sin_addr.s_addr),
-                ETSILI_IPV4_SUBNET_UNKNOWN, ETSILI_IPADDRESS_ASSIGNED_DYNAMIC,
-                &ipaddr);
-    } else {
-        struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)
-                &(gsess->pdpaddr.assignedip);
+            etsili_create_ipaddress_v4((uint32_t *)&(sin->sin_addr.s_addr),
+                    ETSILI_IPV4_SUBNET_UNKNOWN,
+                    ETSILI_IPADDRESS_ASSIGNED_DYNAMIC,
+                    &ipaddr);
+        } else {
+            struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)
+                    &(gsess->pdpaddrs[0].assignedip);
 
-        etsili_create_ipaddress_v6((uint8_t *)(sin6->sin6_addr.s6_addr),
-                ETSILI_IPV6_SUBNET_UNKNOWN, ETSILI_IPADDRESS_ASSIGNED_DYNAMIC,
-                &ipaddr);
+            etsili_create_ipaddress_v6((uint8_t *)(sin6->sin6_addr.s6_addr),
+                    ETSILI_IPV6_SUBNET_UNKNOWN,
+                    ETSILI_IPADDRESS_ASSIGNED_DYNAMIC,
+                    &ipaddr);
+        }
     }
 
     np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_PDP_ADDRESS,
