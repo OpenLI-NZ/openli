@@ -1778,6 +1778,7 @@ static int add_ip_to_session_mapping(collector_sync_t *sync,
                 }
             }
             free_single_session(prev->owner, prev->session);
+            free(prev);
             replaced ++;
         }
 
