@@ -1086,14 +1086,18 @@ static void update_user_session_data(radius_parsed_t *raddata,
                 usess->nas_port = ntohl(*((uint32_t *)attr->att_val));
                 break;
             case RADIUS_ATTR_NASIDENTIFIER:
-                nasid_to_string(attr, strspace, 1024, &nasidlen);
-                usess->nasidentifier = strdup(strspace);
+                if (usess->nasidentifier == NULL) {
+                    nasid_to_string(attr, strspace, 1024, &nasidlen);
+                    usess->nasidentifier = strdup(strspace);
+                }
                 break;
             case RADIUS_ATTR_NASIP:
                 /* XXX v4 only? */
-                usess->nas_ip_family = AF_INET;
-                usess->nas_ip = calloc(1, sizeof(uint32_t));
-                memcpy(usess->nas_ip, attr->att_val, sizeof(uint32_t));
+                if (usess->nas_ip == NULL) {
+                    usess->nas_ip_family = AF_INET;
+                    usess->nas_ip = calloc(1, sizeof(uint32_t));
+                    memcpy(usess->nas_ip, attr->att_val, sizeof(uint32_t));
+                }
                 break;
             case RADIUS_ATTR_ACCT_INOCTETS:
                 usess->octets_received =
