@@ -24,6 +24,8 @@
  *
  */
 
+#include "config.h"
+
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -51,10 +53,16 @@ static inline void free_encoded_result(openli_encoded_result_t *res) {
 
     if (res->msgbody) {
 
-        if (res->msgbody->encoded && !res->child) { 
-            //if child exists, then msgbody->encoded is owned by child
-            //dont free so it can be reused
+        if (res->msgbody->encoded) {
+#ifdef HAVE_BER_ENCODING
+            if (!res->child) {
+                //if child exists, then msgbody->encoded is owned by child
+                //dont free so it can be reused
+                free(res->msgbody->encoded);
+            }
+#else
             free(res->msgbody->encoded);
+#endif
         }
         free(res->msgbody);
     }
@@ -63,9 +71,11 @@ static inline void free_encoded_result(openli_encoded_result_t *res) {
         free_published_message(res->origreq);
     }
 
+#ifdef HAVE_BER_ENCODING
     if (res->child){
         wandder_free_child(res->child);
     }
+#endif
 }
 
 static int add_new_destination(forwarding_thread_data_t *fwd,

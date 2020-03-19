@@ -84,7 +84,7 @@ if test "x$enable_provisioner" != "xno"; then
 fi
 
 if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then
-        AC_CHECK_LIB([wandder], [wandder_init_encoder_ber],libwandder_ber_found=1,libwandder__ber_found=0)
+        AC_CHECK_LIB([wandder], [wandder_encode_init_top_ber],libwandder_ber_found=1,libwandder__ber_found=0)
 
         if test "$libwandder_ber_found" = 1; then
                 AC_DEFINE(HAVE_BER_ENCODING, 1, [defined to 1 if libwandder supports BER encoding])
