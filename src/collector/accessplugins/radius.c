@@ -80,6 +80,14 @@ enum {
 typedef struct radius_session {
     uint32_t session_id;
     session_state_t current;
+
+    uint32_t nas_port;
+    int64_t octets_received;
+    int64_t octets_sent;
+    char *nasidentifier;
+    uint8_t *nas_ip;
+    int nas_ip_family;
+
 } radius_user_session_t;
 
 typedef struct radius_user {
@@ -365,6 +373,13 @@ static void destroy_radius_nas(radius_nas_t *nas) {
         JLF(pval2, user->sessions, index2);
         while (pval2) {
             radius_user_session_t *usess = (radius_user_session_t *)(*pval2);
+            if (usess->nasidentifier) {
+                free(usess->nasidentifier);
+            }
+            if (usess->nas_ip) {
+                free(usess->nas_ip);
+            }
+
             free(usess);
             JLN(pval2, user->sessions, index2);
         }
@@ -969,6 +984,26 @@ static uint32_t assign_cin(radius_parsed_t *raddata) {
 
 }
 
+static inline void nasid_to_string(radius_attribute_t *nasattr, char *strspace,
+        int spacelen, int *keylen) {
+
+    assert (spacelen >= 256);
+
+    if (nasattr->att_len < 256) {
+        memcpy(strspace, nasattr->att_val, nasattr->att_len);
+        strspace[nasattr->att_len] = '\0';
+        *keylen = nasattr->att_len;
+    } else {
+        memcpy(strspace, nasattr->att_val, 255);
+        strspace[255] = '\0';
+        *keylen = 255;
+        logger(LOG_INFO,
+                "OpenLI RADIUS: NAS-Identifier is too long, truncated to %s",
+                strspace);
+    }
+
+}
+
 static inline void process_nasid_attribute(radius_parsed_t *raddata) {
     char nasid[1024];
     int keylen = 0, i;
@@ -991,18 +1026,7 @@ static inline void process_nasid_attribute(radius_parsed_t *raddata) {
         return;
     }
 
-    if (nasattr->att_len < 256) {
-        memcpy(nasid, nasattr->att_val, nasattr->att_len);
-        nasid[nasattr->att_len] = '\0';
-        keylen = nasattr->att_len;
-    } else {
-        memcpy(nasid, nasattr->att_val, 255);
-        nasid[255] = '\0';
-        keylen = 255;
-        logger(LOG_INFO,
-                "OpenLI RADIUS: NAS-Identifier is too long, truncated to %s",
-                nasid);
-    }
+    nasid_to_string(nasattr, nasid, 1024, &keylen);
 
     for (i = 0; i < raddata->muser_count; i++) {
 
@@ -1043,6 +1067,49 @@ static inline void process_nasport_attribute(radius_parsed_t *raddata) {
     }
 
     raddata->nasport = *((uint32_t *)nasattr->att_val);
+}
+
+static void update_user_session_data(radius_parsed_t *raddata,
+        radius_user_session_t *usess) {
+
+    radius_attribute_t *attr = raddata->attrs;
+    char strspace[1024];
+    int nasidlen = 0;
+
+    if (usess == NULL) {
+        return;
+    }
+
+    while (attr) {
+        switch (attr->att_type) {
+            case RADIUS_ATTR_NASPORT:
+                usess->nas_port = ntohl(*((uint32_t *)attr->att_val));
+                break;
+            case RADIUS_ATTR_NASIDENTIFIER:
+                if (usess->nasidentifier == NULL) {
+                    nasid_to_string(attr, strspace, 1024, &nasidlen);
+                    usess->nasidentifier = strdup(strspace);
+                }
+                break;
+            case RADIUS_ATTR_NASIP:
+                /* XXX v4 only? */
+                if (usess->nas_ip == NULL) {
+                    usess->nas_ip_family = AF_INET;
+                    usess->nas_ip = calloc(1, sizeof(uint32_t));
+                    memcpy(usess->nas_ip, attr->att_val, sizeof(uint32_t));
+                }
+                break;
+            case RADIUS_ATTR_ACCT_INOCTETS:
+                usess->octets_received =
+                        (int64_t) ntohl(*((uint32_t *)(attr->att_val)));
+                break;
+            case RADIUS_ATTR_ACCT_OUTOCTETS:
+                usess->octets_sent =
+                        (int64_t) ntohl(*((uint32_t *)(attr->att_val)));
+                break;
+        }
+        attr = attr->next;
+    }
 }
 
 static inline void extract_assigned_ip_address(radius_global_t *glob,
@@ -1586,6 +1653,14 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
 
         usess->current = SESSION_STATE_NEW;
         usess->session_id = raddata->acctsess;
+        usess->nasidentifier = NULL;
+        usess->nas_port = 0;
+        usess->nas_ip = NULL;
+        usess->nas_ip_family = 0;
+        usess->octets_received = 0;
+        usess->octets_sent = 0;
+
+        thissess->statedata = usess;
 
         JLI(pval, raduser->sessions, usess->session_id);
         *pval = (Word_t)usess;
@@ -1600,6 +1675,8 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         apply_fsm_logic(raddata, usess, raddata->savedresp->resptype,
                 raddata->accttype, newstate, &(raddata->secondaction));
     }
+
+    update_user_session_data(raddata, usess);
 
     update_first_action(glob, raddata, thissess);
     update_second_action(glob, raddata, thissess);
@@ -1910,6 +1987,56 @@ static int radius_generate_iri_from_session(access_plugin_t *p,
         etsili_iri_type_t *iritype, etsili_generic_freelist_t *freelist,
         uint8_t trigger) {
 
+    radius_user_session_t *usess =
+            (radius_user_session_t *)(session->statedata);
+
+    etsili_generic_t *np;
+    int64_t nasport;
+    etsili_ipaddress_t nasip;
+    ipiri_id_t nasid;
+
+    /* XXX Static generics aren't going to work anymore -- we'll need to
+     * copy them into memory that we control...
+     */
+    if (usess->nas_port != 0) {
+        nasport = (int64_t)(usess->nas_port);
+        np = create_etsili_generic(freelist,
+                IPIRI_CONTENTS_POP_PORTNUMBER, sizeof(int64_t),
+                (uint8_t *)(&usess->nas_port));
+        HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+    }
+
+    if (usess->nasidentifier != NULL) {
+        if (ipiri_create_id_printable(usess->nasidentifier,
+                    strlen(usess->nasidentifier), &nasid) < 0) {
+            logger(LOG_INFO, "OpenLI: Unable to convert RADIUS NAS Identifier attribute into a printable POP Identifier");
+        }
+        np = create_etsili_generic(freelist,
+                IPIRI_CONTENTS_POP_IDENTIFIER, sizeof(ipiri_id_t),
+                (uint8_t *)(&nasid));
+        HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+    }
+
+    if (usess->nas_ip_family != 0) {
+        etsili_create_ipaddress_v4((uint32_t *)(usess->nas_ip),
+                ETSILI_IPV4_SUBNET_UNKNOWN,
+                ETSILI_IPADDRESS_ASSIGNED_UNKNOWN, &nasip);
+        np = create_etsili_generic(freelist,
+                IPIRI_CONTENTS_POP_IPADDRESS, sizeof(etsili_ipaddress_t),
+                (uint8_t *)(&nasip));
+        HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+    }
+
+    np = create_etsili_generic(freelist,
+            IPIRI_CONTENTS_OCTETS_RECEIVED, sizeof(int64_t),
+            (uint8_t *)(&usess->octets_received));
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+
+    np = create_etsili_generic(freelist,
+            IPIRI_CONTENTS_OCTETS_TRANSMITTED, sizeof(int64_t),
+            (uint8_t *)(&usess->octets_sent));
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+
     if (trigger == OPENLI_IPIRI_STARTWHILEACTIVE) {
         *iritype = ETSILI_IRI_BEGIN;
     }
@@ -1926,8 +2053,19 @@ static int radius_generate_iri_from_session(access_plugin_t *p,
 static void radius_destroy_session_data(access_plugin_t *p,
         access_session_t *sess) {
 
+    radius_user_session_t *usess = (radius_user_session_t *)sess->statedata;
+
     if (sess->sessionid) {
         free(sess->sessionid);
+    }
+
+    if (usess) {
+        if (usess->nasidentifier) {
+            free(usess->nasidentifier);
+        }
+        if (usess->nas_ip) {
+            free(usess->nas_ip);
+        }
     }
 
     return;

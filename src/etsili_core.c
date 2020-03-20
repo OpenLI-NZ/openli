@@ -586,7 +586,7 @@ static inline void encode_umtsiri_body(wandder_encoder_t *encoder,
 
 static inline void encode_ipiri_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed,
-        etsili_iri_type_t iritype, etsili_generic_t *params) {
+        etsili_iri_type_t iritype, etsili_generic_t **params) {
 
     etsili_generic_t *p, *tmp;
     wandder_encode_job_t *jobarray[4];
@@ -609,9 +609,9 @@ static inline void encode_ipiri_body(wandder_encoder_t *encoder,
     /* Sort the parameter list by item ID, since we have to provide the
      * IRI contents in order.
      */
-    HASH_SRT(hh, params, sort_etsili_generic);
+    HASH_SRT(hh, *params, sort_etsili_generic);
 
-    HASH_ITER(hh, params, p, tmp) {
+    HASH_ITER(hh, *params, p, tmp) {
         switch(p->itemnum) {
             case IPIRI_CONTENTS_ACCESS_EVENT_TYPE:
             case IPIRI_CONTENTS_INTERNET_ACCESS_TYPE:
@@ -927,7 +927,15 @@ wandder_encoded_result_t *encode_etsi_ipmmiri(wandder_encoder_t *encoder,
 wandder_encoded_result_t *encode_etsi_ipiri(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
         etsili_iri_type_t iritype, struct timeval *tv,
-        etsili_generic_t *params) {
+        etsili_generic_t **params) {
+
+    /* Note: params is a double pointer here because we are going to
+     * use HASH_SRT(), which may change which item should be the "start"
+     * of the hashed collection. If we want that change to persist back
+     * to our caller, e.g. to properly release all of the items in the
+     * collection, we need to pass in a reference to the collection
+     * to encode_ipiri_body().
+     */
 
     encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
     encode_ipiri_body(encoder, precomputed, iritype, params);
