@@ -290,7 +290,7 @@ int encode_ipiri(wandder_encoder_t *encoder,
 
     memset(res, 0, sizeof(openli_encoded_result_t));
     res->msgbody = encode_etsi_ipiri(encoder, precomputed,
-            (int64_t)(job->cin), (int64_t)seqno, iritype, &tv, params);
+            (int64_t)(job->cin), (int64_t)seqno, iritype, &tv, &params);
 
     res->ipcontents = NULL;
     res->ipclen = 0;
