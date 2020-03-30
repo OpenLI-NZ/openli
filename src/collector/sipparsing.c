@@ -742,7 +742,7 @@ char *get_sip_media_ipaddr(openli_sip_parser_t *parser) {
     return ipaddr;
 }
 
-char *get_sip_media_port(openli_sip_parser_t *parser) {
+char *get_sip_media_port(openli_sip_parser_t *parser, int index) {
     char *port;
 
     if (!parser->sdp) {
@@ -750,8 +750,20 @@ char *get_sip_media_port(openli_sip_parser_t *parser) {
             return NULL;
         }
     }
-    port = sdp_message_m_port_get(parser->sdp, 0);
+    port = sdp_message_m_port_get(parser->sdp, index);
     return port;
+}
+
+char *get_sip_media_type(openli_sip_parser_t *parser, int index) {
+    char *media;
+
+    if (!parser->sdp) {
+        if (parse_sdp_body(parser) == -1) {
+            return NULL;
+        }
+    }
+    media = sdp_message_m_media_get(parser->sdp, index);
+    return media;
 }
 
 int sip_is_invite(openli_sip_parser_t *parser) {

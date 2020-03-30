@@ -142,25 +142,32 @@ static inline int match_rtp_stream(rtpstreaminf_t *rtp, uint16_t porta,
         uint8_t *is_comfort, libtrace_packet_t *pkt) {
 
     struct sockaddr *tgt, *other;
+    int i;
+
     tgt = (struct sockaddr *)(rtp->targetaddr);
     other = (struct sockaddr *)(rtp->otheraddr);
 
-    if ((rtp->targetport == porta && rtp->otherport == portb) ||
-            (rtp->targetport + 1 == porta && rtp->otherport + 1 == portb)) {
+    for (i = 0; i < rtp->streamcount; i++) {
 
-        if (sockaddr_match(rtp->ai_family, ipa, tgt) &&
-                sockaddr_match(rtp->ai_family, ipb, other)) {
+        if ((rtp->mediastreams[i].targetport == porta &&
+                rtp->mediastreams[i].otherport == portb) ||
+                (rtp->mediastreams[i].targetport + 1 == porta &&
+                rtp->mediastreams[i].otherport + 1 == portb)) {
 
-            if (rtp->skip_comfort) {
-                if (*is_comfort == 255) {
-                    *is_comfort = is_rtp_comfort_noise(pkt);
+            if (sockaddr_match(rtp->ai_family, ipa, tgt) &&
+                    sockaddr_match(rtp->ai_family, ipb, other)) {
+
+                if (rtp->skip_comfort) {
+                    if (*is_comfort == 255) {
+                        *is_comfort = is_rtp_comfort_noise(pkt);
+                    }
+                    if (*is_comfort == 1) {
+                        return 0;
+                    }
                 }
-                if (*is_comfort == 1) {
-                    return 0;
-                }
+
+                return 1;
             }
-
-            return 1;
         }
     }
     return 0;
@@ -215,6 +222,7 @@ static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
             continue;
         }
     }
+
     return matched;
 }
 
