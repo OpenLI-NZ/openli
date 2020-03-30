@@ -184,6 +184,14 @@ struct sipregister {
     UT_hash_handle hh;
 };
 
+#define RTP_STREAM_ALLOC 8
+
+struct sipmediastream {
+    uint16_t targetport;
+    uint16_t otherport;
+    char *mediatype;
+};
+
 struct rtpstreaminf {
     char *streamkey;
     uint32_t cin;
@@ -191,8 +199,10 @@ struct rtpstreaminf {
     int ai_family;
     struct sockaddr_storage *targetaddr;
     struct sockaddr_storage *otheraddr;
-    uint16_t targetport;
-    uint16_t otherport;
+
+    int streamcount;
+    struct sipmediastream *mediastreams;
+
     uint32_t seqno;
     uint8_t active;
     uint8_t byematched;

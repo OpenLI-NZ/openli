@@ -100,6 +100,7 @@ static void dump_ip_intercept(ipintercept_t *ipint) {
 
 static void dump_rtp_intercept(rtpstreaminf_t *rtp) {
     char ipbuf[256];
+    int i;
 
     printf("LI ID: %s\n", rtp->common.liid);
     printf("Auth CC: %s     Delivery CC: %s\n", rtp->common.authcc,
@@ -108,13 +109,19 @@ static void dump_rtp_intercept(rtpstreaminf_t *rtp) {
     if (rtp->targetaddr && rtp->ai_family == AF_INET) {
         struct sockaddr_in *sin = (struct sockaddr_in *)rtp->targetaddr;
         inet_ntop(AF_INET, (void *)&(sin->sin_addr), ipbuf, 256);
-        printf("Target RTP endpoint: %s:%u\n", ipbuf, rtp->targetport);
+        for (i = 0; i < rtp->streamcount; i++) {
+            printf("Target RTP endpoint %d: %s:%u\n", i, ipbuf,
+                    rtp->mediastreams[i].targetport);
+        }
     }
 
     if (rtp->otheraddr && rtp->ai_family == AF_INET) {
         struct sockaddr_in *sin = (struct sockaddr_in *)rtp->otheraddr;
         inet_ntop(AF_INET, (void *)&(sin->sin_addr), ipbuf, 256);
-        printf("Remote RTP endpoint: %s:%u\n", ipbuf, rtp->otherport);
+        for (i = 0; i < rtp->streamcount; i++) {
+            printf("Remote RTP endpoint %d: %s:%u\n", i, ipbuf,
+                    rtp->mediastreams[i].otherport);
+        }
     }
 
     printf("Communication ID: %u\n", rtp->cin);
