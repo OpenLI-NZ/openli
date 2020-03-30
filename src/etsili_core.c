@@ -239,10 +239,12 @@ static inline void encode_sipiri_body(wandder_encoder_t *encoder,
         encipsrc.v6prefixlen = 0;
         encipsrc.v4subnetmask = 0xffffffff;
         encipsrc.valtype = ETSILI_IPADDRESS_REP_BINARY;
-        encipsrc.ipvalue = ipsrc;
+        encipsrc.ipvalue = calloc(1, sizeof(uint32_t));
+        memcpy(encipsrc.ipvalue, ipsrc, sizeof(uint32_t));
 
         encipdst = encipsrc;
-        encipdst.ipvalue = ipdest;
+        encipdst.ipvalue = calloc(1, sizeof(uint32_t));
+        memcpy(encipdst.ipvalue, ipdest, sizeof(uint32_t));
     } else if (ipfamily == AF_INET6) {
         encipsrc.iptype = ETSILI_IPADDRESS_VERSION_6;
         encipsrc.assignment = ETSILI_IPADDRESS_ASSIGNED_UNKNOWN;
@@ -250,10 +252,12 @@ static inline void encode_sipiri_body(wandder_encoder_t *encoder,
         encipsrc.v4subnetmask = 0;
         encipsrc.valtype = ETSILI_IPADDRESS_REP_BINARY;
 
-        encipsrc.ipvalue = ipsrc;
+        encipsrc.ipvalue = calloc(16, sizeof(uint8_t));
+        memcpy(encipsrc.ipvalue, ipsrc, 16);
 
         encipdst = encipsrc;
-        encipdst.ipvalue = ipdest;
+        encipdst.ipvalue = calloc(16, sizeof(uint8_t));
+        memcpy(encipdst.ipvalue, ipdest, 16);
     } else {
         END_ENCODED_SEQUENCE(encoder, 1);  // ends outermost sequence
         return;
