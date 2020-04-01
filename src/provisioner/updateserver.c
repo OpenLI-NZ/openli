@@ -430,9 +430,6 @@ int handle_update_request(void *cls, struct MHD_Connection *conn,
             }
             logger(LOG_INFO, "OpenLI: user '%s' successfully authenticated against provisioner update service", username);
 
-            /* XXX debug */
-            logger(LOG_INFO, "%02x %02x %02x", (uint8_t)digest[0],
-                    (uint8_t)digest[1], (uint8_t)digest[2]);
             ret = MHD_digest_auth_check_digest(conn, realm, username, digest,
                     300);
 #endif
