@@ -240,7 +240,7 @@ static void init_restauth_db(provision_state_t *state) {
     int rc;
 
     assert(state != NULL);
-    rc = sqlite3_open(state->restauthdbfile, &(state->authdb));
+    rc = sqlite3_open(state->restauthdbfile, (sqlite3 **)(&(state->authdb)));
     if (rc != SQLITE_OK) {
         logger(LOG_INFO, "Failed to open REST authentication database: %s: %s",
                 state->restauthdbfile, sqlite3_errmsg(state->authdb));
