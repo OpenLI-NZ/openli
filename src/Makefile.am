@@ -18,7 +18,7 @@ openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
 
 openliprovisioner_LDFLAGS = -lpthread @PROVISIONER_LIBS@
 openliprovisioner_LDADD = @ADD_LIBS@
-openliprovisioner_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/
+openliprovisioner_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ @PROVISIONER_CFLAGS@
 endif
 
 if BUILD_COLLECTOR

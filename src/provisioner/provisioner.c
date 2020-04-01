@@ -76,8 +76,30 @@ static inline char *get_event_description(prov_epoll_ev_t *pev) {
 
 void start_mhd_daemon(provision_state_t *state) {
 
-    int started = 0;
+    int started = 0, fd, off, len;
+    char rndseed[8];
+
     assert(state->updatesockfd >= 0);
+
+    fd = open("/dev/urandom", O_RDONLY);
+    if (fd == -1) {
+        if (state->restauthenabled == 1) {
+            logger(LOG_INFO, "Failed to generate random seed for REST authentication: %s", strerror(errno));
+            return;
+        }
+    }
+    off = 0;
+    while (off < 8) {
+        if ((len = read(fd, rndseed + off, 8 - off)) == -1) {
+            if (state->restauthenabled == 1) {
+                logger(LOG_INFO, "Failed to populate random seed for REST authentication: %s", strerror(errno));
+                close(fd);
+                return;
+            }
+        }
+        off += len;
+    }
+    close(fd);
 
     if (state->sslconf.certfile && state->sslconf.keyfile) {
         if (load_pem_into_memory(state->sslconf.keyfile, &(state->key_pem)) < 0)
@@ -105,6 +127,10 @@ void start_mhd_daemon(provision_state_t *state) {
                 state->key_pem,
                 MHD_OPTION_HTTPS_MEM_CERT,
                 state->cert_pem,
+                MHD_OPTION_NONCE_NC_SIZE,
+                300,
+                MHD_OPTION_DIGEST_AUTH_RANDOM,
+                sizeof(rndseed), rndseed,
                 MHD_OPTION_END);
         return;
     }
@@ -121,6 +147,10 @@ startnotls:
             MHD_OPTION_NOTIFY_COMPLETED,
             &complete_update_request,
             state,
+            MHD_OPTION_NONCE_NC_SIZE,
+            300,
+            MHD_OPTION_DIGEST_AUTH_RANDOM,
+            sizeof(rndseed), rndseed,
             MHD_OPTION_END);
 }
 
@@ -205,6 +235,35 @@ void free_openli_mediator(openli_mediator_t *med) {
     free(med);
 }
 
+#ifdef HAVE_SQLCIPHER
+static void init_restauth_db(provision_state_t *state) {
+
+    int rc;
+
+    assert(state != NULL);
+    rc = sqlite3_open(state->restauthdbfile, &(state->authdb));
+    if (rc != SQLITE_OK) {
+        logger(LOG_INFO, "Failed to open REST authentication database: %s: %s",
+                state->restauthdbfile, sqlite3_errmsg(state->authdb));
+        sqlite3_close(state->authdb);
+        state->authdb = NULL;
+        return;
+    }
+
+    sqlite3_key(state->authdb, state->restauthkey, strlen(state->restauthkey));
+
+    if (sqlite3_exec(state->authdb, "SELECT count(*) from sqlite_master;",
+            NULL, NULL, NULL) != SQLITE_OK) {
+        logger(LOG_INFO, "Failed to open REST authentication database due to incorrect key");
+        sqlite3_close(state->authdb);
+        state->authdb = NULL;
+        return;
+    }
+
+    state->restauthenabled = 1;
+}
+#endif
+
 int init_prov_state(provision_state_t *state, char *configfile) {
 
     sigset_t sigmask;
@@ -243,11 +302,25 @@ int init_prov_state(provision_state_t *state, char *configfile) {
 
     state->ignorertpcomfort = 0;
 
+    state->restauthenabled = 0;
+    state->restauthdbfile = NULL;
+    state->restauthkey = NULL;
+    state->authdb = NULL;
+
     init_intercept_config(&(state->interceptconf));
 
     if (parse_provisioning_config(configfile, state) == -1) {
         logger(LOG_INFO, "OpenLI provisioner: error while parsing provisioner config in %s", configfile);
         return -1;
+    }
+
+    if (state->restauthdbfile && state->restauthkey) {
+#ifdef HAVE_SQLCIPHER
+        init_restauth_db(state);
+#else
+        logger(LOG_INFO, "OpenLI provisioner: REST Auth DB options are set, but your system does not support using an Auth DB.");
+        logger(LOG_INFO, "OpenLI provisioner: Auth DB options ignored.");
+#endif
     }
 
     if (state->pushport == NULL) {

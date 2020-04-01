@@ -34,6 +34,10 @@
 #include <json-c/json.h>
 #include <pthread.h>
 
+#ifdef HAVE_SQLCIPHER
+#include <sqlcipher/sqlite3.h>
+#endif
+
 #include "provisioner.h"
 #include "logger.h"
 #include "util.h"
@@ -42,6 +46,24 @@
 #define MICRO_POST 0
 #define MICRO_GET 1
 #define MICRO_DELETE 2
+
+#define OPAQUE_TOKEN "a7844291bd990a17bfe389e1ccb0981ed6d187a"
+
+static int send_auth_failure(struct MHD_Connection *connection,
+        const char *realm, int cause) {
+    int ret;
+    struct MHD_Response *resp;
+
+    resp = MHD_create_response_from_buffer(strlen(auth_failed),
+            (void *)auth_failed, MHD_RESPMEM_MUST_COPY);
+    if (!resp) {
+        return MHD_NO;
+    }
+    ret = MHD_queue_auth_fail_response(connection, realm, OPAQUE_TOKEN, resp,
+            (cause == MHD_INVALID_NONCE) ? MHD_YES : MHD_NO);
+    MHD_destroy_response(resp);
+    return ret;
+}
 
 static int send_http_page(struct MHD_Connection *connection, const char *page,
         int status_code) {
@@ -349,6 +371,37 @@ void complete_update_request(void *cls, struct MHD_Connection *conn,
     *con_cls = NULL;
 }
 
+#ifdef HAVE_SQLCIPHER
+static unsigned char *lookup_user_digest(provision_state_t *provstate,
+        char *username, unsigned char *digestres) {
+
+    int rc, step;
+    sqlite3_stmt *res;
+    char *sql = "SELECT username, digesthash FROM authcreds where username = ?";
+    unsigned char *returning = NULL;
+
+    rc = sqlite3_prepare_v2(provstate->authdb, sql, -1, &res, 0);
+    if (rc != SQLITE_OK) {
+        logger(LOG_INFO, "OpenLI: Failed to prepare SQL SELECT to lookup user credentials for %s: %s",
+                username, sqlite3_errmsg(provstate->authdb));
+        return NULL;
+    }
+
+    sqlite3_bind_text(res, 1, username, -1, SQLITE_TRANSIENT);
+
+    memset(digestres, 0, 16);
+
+    step = sqlite3_step(res);
+    if (step == SQLITE_ROW) {
+        memcpy(digestres, sqlite3_column_blob(res, 1), 16);
+        returning = digestres;
+    }
+
+    sqlite3_finalize(res);
+    return returning;
+}
+#endif
+
 int handle_update_request(void *cls, struct MHD_Connection *conn,
         const char *url, const char *method, const char *version,
         const char *upload_data, size_t *upload_data_size,
@@ -357,8 +410,40 @@ int handle_update_request(void *cls, struct MHD_Connection *conn,
     update_con_info_t *cinfo;
     provision_state_t *provstate = (provision_state_t *)cls;
     int ret;
+    char *username;
+    const char *realm = "provisioner@openli.nz";
+    unsigned char digest[16];
 
     if (*con_cls == NULL) {
+        if (provstate->restauthenabled) {
+            username = MHD_digest_auth_get_username(conn);
+            if (username == NULL) {
+                return send_auth_failure(conn, realm, MHD_NO);
+            }
+
+            ret = MHD_NO;
+#ifdef HAVE_SQLCIPHER
+            if (lookup_user_digest(provstate, username, digest) == NULL) {
+                logger(LOG_INFO,
+                        "OpenLI: user '%s' attempted to authenticate against provisioner update service, but they don't exist in the database", username);
+                return send_auth_failure(conn, realm, MHD_NO);
+            }
+            logger(LOG_INFO, "OpenLI: user '%s' successfully authenticated against provisioner update service", username);
+
+            /* XXX debug */
+            logger(LOG_INFO, "%02x %02x %02x", (uint8_t)digest[0],
+                    (uint8_t)digest[1], (uint8_t)digest[2]);
+            ret = MHD_digest_auth_check_digest(conn, realm, username, digest,
+                    300);
+#endif
+            free(username);
+            if ( ret == MHD_INVALID_NONCE || ret == MHD_NO) {
+                return send_auth_failure(conn, realm, ret);
+            }
+        } else {
+            /* TODO log all "anonymous" accesses to this socket? */
+        }
+
         cinfo = calloc(1, sizeof(update_con_info_t));
         if (cinfo == NULL) {
             return MHD_NO;
