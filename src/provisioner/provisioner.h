@@ -27,9 +27,16 @@
 #ifndef OPENLI_PROVISIONER_H_
 #define OPENLI_PROVISIONER_H_
 
+#include "config.h"
+
 #include <libtrace/linked_list.h>
 #include <uthash.h>
 #include <microhttpd.h>
+
+#ifdef HAVE_SQLCIPHER
+#include <sqlcipher/sqlite3.h>
+#endif
+
 #include "netcomms.h"
 #include "util.h"
 #include "openli_tls.h"
@@ -259,6 +266,11 @@ typedef struct prov_state {
     char *cert_pem;
     struct MHD_Daemon *updatedaemon;
     MHD_socket updatesockfd;
+
+    uint8_t restauthenabled;
+    char *restauthdbfile;
+    char *restauthkey;
+    void *authdb;
 
     /** A flag indicating whether collectors should ignore RTP comfort noise
      *  packets when intercepting voice traffic.
