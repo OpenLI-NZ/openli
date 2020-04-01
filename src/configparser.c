@@ -967,7 +967,7 @@ static int global_parser(void *arg, yaml_document_t *doc,
   * Still TODO:
   *   BER encoding for IPIRIs, UMTSIRIs and UMTSCCs
   */
-#if 0
+#if 1
         if (strcasecmp(value->data.scalar.value, "BER") == 0) {
 #ifdef HAVE_BER_ENCODING
             glob->encoding_method = OPENLI_ENCODING_BER;
@@ -1215,6 +1215,18 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "tlsca") == 0) {
         SET_CONFIG_STRING_OPTION(state->sslconf.cacertfile, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "restauthdb") == 0) {
+        SET_CONFIG_STRING_OPTION(state->restauthdbfile, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "restauthkey") == 0) {
+        SET_CONFIG_STRING_OPTION(state->restauthkey, value);
     }
 
     return 0;
