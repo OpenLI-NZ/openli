@@ -100,8 +100,10 @@ typedef struct internetaccess_ip {
 
 typedef struct ip_to_session {
     internetaccess_ip_t *ip;
-    access_session_t *session;
-    internet_user_t *owner;
+    int sessioncount;
+    access_session_t **session;
+    internet_user_t **owner;
+    uint32_t cin;
     UT_hash_handle hh;
 } ip_to_session_t;
 
@@ -117,7 +119,6 @@ struct access_session {
     int idlength;
     uint32_t cin;
     uint32_t iriseqno;
-    ip_to_session_t *activeipentry;
 
     struct timeval started;
 
