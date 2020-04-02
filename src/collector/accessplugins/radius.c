@@ -77,6 +77,8 @@ enum {
     RADIUS_ACCT_INTERIM_UPDATE = 3,
 };
 
+typedef struct radius_user radius_user_t;
+
 typedef struct radius_session {
     uint32_t session_id;
     session_state_t current;
@@ -88,9 +90,13 @@ typedef struct radius_session {
     uint8_t *nas_ip;
     int nas_ip_family;
 
+    radius_user_t *parent;
+
 } radius_user_session_t;
 
-typedef struct radius_user {
+typedef struct radius_nas_t radius_nas_t;
+
+struct radius_user {
 
     user_identity_method_t idmethod;
     char *userid;
@@ -98,7 +104,8 @@ typedef struct radius_user {
     int nasid_len;
 
     Pvoid_t sessions;
-} radius_user_t;
+    radius_nas_t *parent_nas;
+};
 
 typedef struct radius_v6_prefix_attr {
     uint8_t reserved;
@@ -143,7 +150,7 @@ struct radius_orphaned_resp {
     radius_orphaned_resp_t *next;
 };
 
-typedef struct radius_nas_t {
+struct radius_nas_t {
     uint8_t *nasip;
     Pvoid_t user_map;
     radius_saved_req_t *request_map;
@@ -151,7 +158,7 @@ typedef struct radius_nas_t {
     radius_orphaned_resp_t *orphans;
     radius_orphaned_resp_t *orphans_tail;
 
-} radius_nas_t;
+};
 
 typedef struct radius_server {
     uint8_t *servip;
@@ -350,42 +357,51 @@ static inline void free_attribute_list(radius_attribute_t *attrlist) {
     }
 }
 
+static void destroy_radius_user(radius_user_t *user, char *userind) {
+
+    Word_t res, index2;
+    PWord_t pval;
+    int rcint;
+
+    JSLD(rcint, user->parent_nas->user_map, userind);
+    if (user->userid) {
+        free(user->userid);
+    }
+    if (user->nasidentifier) {
+        free(user->nasidentifier);
+    }
+
+    index2 = 0;
+    JLF(pval, user->sessions, index2);
+    while (pval) {
+        radius_user_session_t *usess = (radius_user_session_t *)(*pval);
+        if (usess->nasidentifier) {
+            free(usess->nasidentifier);
+        }
+        if (usess->nas_ip) {
+            free(usess->nas_ip);
+        }
+
+        free(usess);
+        JLN(pval, user->sessions, index2);
+    }
+    JLFA(res, user->sessions);
+    free(user);
+}
+
 static void destroy_radius_nas(radius_nas_t *nas) {
     radius_orphaned_resp_t *orph, *tmporph;
     radius_saved_req_t *req, *tmpreq;
     radius_user_t *user;
-    PWord_t pval, pval2;
+    PWord_t pval;
     char index[128];
-    Word_t res, index2;
+    Word_t res;
 
     index[0] = '\0';
     JSLF(pval, nas->user_map, index);
     while (pval) {
         user = (radius_user_t *)(*pval);
-        if (user->userid) {
-            free(user->userid);
-        }
-        if (user->nasidentifier) {
-            free(user->nasidentifier);
-        }
-
-        index2 = 0;
-        JLF(pval2, user->sessions, index2);
-        while (pval2) {
-            radius_user_session_t *usess = (radius_user_session_t *)(*pval2);
-            if (usess->nasidentifier) {
-                free(usess->nasidentifier);
-            }
-            if (usess->nas_ip) {
-                free(usess->nas_ip);
-            }
-
-            free(usess);
-            JLN(pval2, user->sessions, index2);
-        }
-        JLFA(res, user->sessions);
-        free(user);
-
+        destroy_radius_user(user, index);
         JSLN(pval, nas->user_map, index);
     }
     JSLFA(res, nas->user_map);
@@ -813,8 +829,7 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
 
     while (rem > 2) {
         uint8_t att_type, att_len;
-        radius_attribute_t *newattr;
-
+        radius_attribute_t *newattr; 
         att_type = *ptr;
         att_len = *(ptr+1);
         ptr += 2;
@@ -858,6 +873,7 @@ static radius_user_t *add_user_identity(uint8_t att_type, uint8_t *att_val,
     char userkey[2048];
     char *nextchar;
     int keyrem = 2047;
+    int index;
     radius_user_t *user;
     user_identity_method_t method = USER_IDENT_MAX;
     PWord_t pval;
@@ -887,9 +903,10 @@ static radius_user_t *add_user_identity(uint8_t att_type, uint8_t *att_val,
     JSLG(pval, raddata->matchednas->user_map, (unsigned char *)userkey);
 
     if (pval) {
+        index = raddata->muser_count;
         raddata->muser_count ++;
-        raddata->matchedusers[method] = (radius_user_t *)(*pval);
-        return raddata->matchedusers[method];
+        raddata->matchedusers[index] = (radius_user_t *)(*pval);
+        return raddata->matchedusers[index];
     }
 
     user = (radius_user_t *)calloc(1, sizeof(radius_user_t));
@@ -899,13 +916,15 @@ static radius_user_t *add_user_identity(uint8_t att_type, uint8_t *att_val,
     user->nasidentifier = NULL;
     user->nasid_len = 0;
     user->sessions = NULL;
+    user->parent_nas = raddata->matchednas;
     //user->current = SESSION_STATE_NEW;
 
     JSLI(pval, raddata->matchednas->user_map, (unsigned char *)user->userid);
     *pval = (Word_t)user;
-    raddata->matchedusers[method] = user;
+    index = raddata->muser_count;
+    raddata->matchedusers[index] = user;
     raddata->muser_count ++;
-    return raddata->matchedusers[method];
+    return raddata->matchedusers[index];
 
 }
 
@@ -1659,6 +1678,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         usess->nas_ip_family = 0;
         usess->octets_received = 0;
         usess->octets_sent = 0;
+        usess->parent = raduser;
 
         thissess->statedata = usess;
 
@@ -2053,22 +2073,36 @@ static int radius_generate_iri_from_session(access_plugin_t *p,
 static void radius_destroy_session_data(access_plugin_t *p,
         access_session_t *sess) {
 
+    int rcint;
+    Word_t rcw;
     radius_user_session_t *usess = (radius_user_session_t *)sess->statedata;
 
     if (sess->sessionid) {
         free(sess->sessionid);
     }
 
-    if (usess) {
-        if (usess->nasidentifier) {
-            free(usess->nasidentifier);
-        }
-        if (usess->nas_ip) {
-            free(usess->nas_ip);
+    if (usess == NULL) {
+        return;
+    }
+
+    if (usess->nasidentifier) {
+        free(usess->nasidentifier);
+        usess->nasidentifier = NULL;
+    }
+    if (usess->nas_ip) {
+        free(usess->nas_ip);
+        usess->nas_ip = NULL;
+    }
+
+    if (usess->parent) {
+        JLD(rcint, usess->parent->sessions, usess->session_id);
+        JLC(rcw, usess->parent->sessions, 0, -1);
+        if (rcw == 0) {
+            destroy_radius_user(usess->parent, usess->parent->userid);
         }
     }
 
-    return;
+    free(usess);
 }
 
 static uint32_t radius_get_packet_sequence(access_plugin_t *p,

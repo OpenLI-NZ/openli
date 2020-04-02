@@ -140,6 +140,8 @@ void clean_sync_data(collector_sync_t *sync) {
 
     HASH_ITER(hh, sync->activeips, iter, tmp) {
         HASH_DELETE(hh, sync->activeips, iter);
+        free(iter->session);
+        free(iter->owner);
         free(iter);
     }
 
@@ -1700,7 +1702,7 @@ static int remove_ip_to_session_mapping(collector_sync_t *sync,
 
     ip_to_session_t *mapping;
     char ipstr[128];
-    int i, errs = 0;
+    int i, j, errs = 0, nullsess = 0;
 
 
     for (i = 0; i < sess->sessipcount; i++) {
@@ -1718,13 +1720,72 @@ static int remove_ip_to_session_mapping(collector_sync_t *sync,
             continue;
         }
 
-        HASH_DELETE(hh, sync->activeips, mapping);
-        free(mapping);
+        for (j = 0; j < mapping->sessioncount; j++) {
+            if (mapping->session[j] == NULL) {
+                nullsess ++;
+                continue;
+            }
+
+            /* should be ok to compare pointers, right? */
+            if (mapping->session[j] == sess) {
+                mapping->session[j] = NULL;
+                mapping->owner[j] = NULL;
+                nullsess ++;
+            }
+        }
+
+        if (nullsess == mapping->sessioncount) {
+            /* all sessions relating to this IP have been removed, so we
+             * can free the mapping object */
+            HASH_DELETE(hh, sync->activeips, mapping);
+            free(mapping->session);
+            free(mapping->owner);
+            free(mapping);
+        }
     }
     if (errs == 0) {
         return 0;
     }
     return -1;
+}
+
+static inline int report_silent_logoffs(collector_sync_t *sync,
+        ip_to_session_t *prev) {
+
+    user_intercept_list_t *prevuser;
+    ipintercept_t *ipint, *tmp;
+    int i;
+    char ipstr[128];
+
+    for (i = 0; i < prev->sessioncount; i++) {
+
+        /* Check for silent-logoff scenario */
+        if (prev->owner[i] == NULL || prev->session[i] == NULL) {
+            continue;
+        }
+        HASH_FIND(hh, sync->userintercepts, prev->owner[i]->userid,
+                strlen(prev->owner[i]->userid), prevuser);
+        if (prevuser) {
+            int queueused = 0;
+
+            logger(LOG_INFO,
+                    "OpenLI: detected silent owner change for IP %s",
+                    sockaddr_to_string(
+                        (struct sockaddr *)&(prev->ip->assignedip),
+                        ipstr, 128));
+            HASH_ITER(hh_user, prevuser->intlist, ipint, tmp) {
+                queueused = create_iri_from_session(sync,
+                        prev->session[i],
+                        ipint, OPENLI_IPIRI_SILENTLOGOFF);
+            }
+        }
+        free_single_session(prev->owner[i], prev->session[i]);
+    }
+    free(prev->session);
+    free(prev->owner);
+    HASH_DELETE(hh, sync->activeips, prev);
+    free(prev);
+    return 1;
 }
 
 static int add_ip_to_session_mapping(collector_sync_t *sync,
@@ -1746,41 +1807,29 @@ static int add_ip_to_session_mapping(collector_sync_t *sync,
         HASH_FIND(hh, sync->activeips, &(sess->sessionips[i]),
                 sizeof(internetaccess_ip_t), prev);
 
+        if (prev && prev->cin == sess->cin) {
+            prev->session = realloc(prev->session,
+                    (prev->sessioncount + 1) * sizeof(access_session_t *));
+            prev->owner = realloc(prev->owner,
+                    (prev->sessioncount + 1) * sizeof(internet_user_t *));
+            prev->session[prev->sessioncount] = sess;
+            prev->owner[prev->sessioncount] = iuser;
+            prev->sessioncount ++;
+            continue;
+        } else if (prev) {
+            replaced += report_silent_logoffs(sync, prev);
+            /* fall through to replace prev with a new entry */
+        }
+
         newmap = (ip_to_session_t *)malloc(sizeof(ip_to_session_t));
         newmap->ip = &(sess->sessionips[i]);
-        newmap->session = sess;
-        newmap->owner = iuser;
+        newmap->sessioncount = 1;
+        newmap->session = calloc(1, sizeof(access_session_t *));
+        newmap->owner = calloc(1, sizeof(internet_user_t *));
+        newmap->cin = sess->cin;
 
-        if (prev) {
-            user_intercept_list_t *prevuser;
-            ipintercept_t *ipint, *tmp;
-            int expcount = 0;
-
-            HASH_DELETE(hh, sync->activeips, prev);
-
-            /* Check for silent-logoff scenario */
-            HASH_FIND(hh, sync->userintercepts, prev->owner->userid,
-                strlen(prev->owner->userid), prevuser);
-            if (prevuser) {
-                char ipstr[128];
-                logger(LOG_INFO,
-                        "OpenLI: detected silent owner change for IP %s",
-                        sockaddr_to_string(
-                            (struct sockaddr *)&(prev->ip->assignedip),
-                            ipstr, 128));
-
-                HASH_ITER(hh_user, prevuser->intlist, ipint, tmp) {
-                    int queueused = 0;
-                    queueused = create_iri_from_session(sync,
-                            prev->session,
-                            ipint, OPENLI_IPIRI_SILENTLOGOFF);
-                    expcount ++;
-                }
-            }
-            free_single_session(prev->owner, prev->session);
-            free(prev);
-            replaced ++;
-        }
+        newmap->session[0] = sess;
+        newmap->owner[0] = iuser;
 
         HASH_ADD_KEYPTR(hh, sync->activeips, newmap->ip,
                 sizeof(internetaccess_ip_t), newmap);
