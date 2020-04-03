@@ -1777,6 +1777,8 @@ static inline int report_silent_logoffs(collector_sync_t *sync,
                 queueused = create_iri_from_session(sync,
                         prev->session[i],
                         ipint, OPENLI_IPIRI_SILENTLOGOFF);
+                push_session_halt_to_threads(sync->glob->collector_queues,
+                        prev->session[i], ipint);
             }
         }
         free_single_session(prev->owner[i], prev->session[i]);
