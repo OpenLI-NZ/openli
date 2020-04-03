@@ -188,14 +188,18 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         sent = bytelimit;
     }
 
-    if (sent != 0) {        
+    if (sent != 0) {
 
         if (ssl != NULL){
             ret = SSL_write(ssl, bhead + offset, (int)sent);
-            
+
             if ((ret) <= 0 ){
                 int errr = SSL_get_error(ssl, ret);
-                logger(LOG_INFO, "OpenLI: ssl_write error in export_buffer");
+                if (errr == SSL_ERROR_WANT_WRITE) {
+                    return 0;
+                }
+                logger(LOG_INFO, "OpenLI: ssl_write error (%d) in export_buffer",
+                        errr);
             }
         }
         else {
