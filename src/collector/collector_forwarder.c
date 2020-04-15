@@ -332,20 +332,6 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
     return 1;
 }
 
-static inline int enqueue_raw(forwarding_thread_data_t *fwd,
-        export_dest_t *med, openli_encoded_result_t *res) {
-
-    if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
-        logger(LOG_INFO,
-                "OpenLI: forced to drop mediator %s:%s because we cannot buffer any more records for it -- please investigate asap!",
-                med->ipstr, med->portstr);
-        remove_destination(fwd, med);
-        return 1;
-    }
-
-    return 1;
-}
-
 static inline int enqueue_result(forwarding_thread_data_t *fwd,
         export_dest_t *med, openli_encoded_result_t *res) {
 
@@ -401,8 +387,8 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
     if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
         logger(LOG_INFO,
-                "OpenLI: forced to drop mediator %s:%s because we cannot buffer any more records for it -- please investigate asap!",
-                med->ipstr, med->portstr);
+                "OpenLI: forced to drop mediator %u because we cannot buffer any more records for it -- please investigate now!",
+                med->mediatorid);
         remove_destination(fwd, med);
         return 1;
     }
@@ -418,10 +404,10 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
         if (append_message_to_buffer(&(med->buffer), &(stored->res), 0) == 0) {
             logger(LOG_INFO,
-                    "OpenLI: forced to drop mediator %s:%s because we cannot buffer any more records for it -- please investigate asap!",
-                    med->ipstr, med->portstr);
+                    "OpenLI: forced to drop mediator %u because we cannot buffer any more records for it -- please investigate asap!",
+                    med->mediatorid);
             remove_destination(fwd, med);
-            break;
+            return -1;
         }
         reord->expectedseqno = stored->res.seqno + 1;
 
@@ -475,7 +461,7 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
 
     ret = enqueue_result(fwd, med, res);
 
-    if (ret == 1) {
+    if (ret != 0) {
         free_encoded_result(res);
     }
 

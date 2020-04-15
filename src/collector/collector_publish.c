@@ -119,6 +119,12 @@ openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,
         msg->data.ipcc.liid = realloc(msg->data.ipcc.liid, x);
         msg->data.ipcc.liidalloc = x;
     }
+    if (msg->data.ipcc.liid == NULL) {
+        msg->data.ipcc.liidalloc = 0;
+        free(msg);
+        return NULL;
+    }
+
     memcpy(msg->data.ipcc.liid, liid, liidlen);
     msg->data.ipcc.liid[liidlen] = '\0';
 
@@ -132,6 +138,11 @@ openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,
         msg->data.ipcc.ipcalloc = x;
     }
 
+    if (msg->data.ipcc.ipcontent == NULL) {
+        msg->data.ipcc.ipcalloc = 0;
+        free(msg);
+        return NULL;
+    }
     memcpy(msg->data.ipcc.ipcontent, l3, rem);
     msg->data.ipcc.ipclen = rem;
     msg->data.ipcc.cin = cin;
