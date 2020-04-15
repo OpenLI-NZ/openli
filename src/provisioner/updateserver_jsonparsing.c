@@ -57,6 +57,11 @@ struct json_intercept {
     struct json_object *siptargets;
 };
 
+static const char *update_failure_page_start =
+"<html><body><p>OpenLI provisioner configuration failed.";
+static const char *update_failure_page_end = "</body></html>\n";
+
+
 #define EXTRACT_JSON_INT_PARAM(name, uptype, jsonobj, dest, errflag, force) \
     if ((*errflag) == 0) { \
         int64_t ival; \

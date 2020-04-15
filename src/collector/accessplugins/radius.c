@@ -357,13 +357,13 @@ static inline void free_attribute_list(radius_attribute_t *attrlist) {
     }
 }
 
-static void destroy_radius_user(radius_user_t *user, char *userind) {
+static void destroy_radius_user(radius_user_t *user, unsigned char *userind) {
 
     Word_t res, index2;
     PWord_t pval;
     int rcint;
 
-    JSLD(rcint, user->parent_nas->user_map, (unsigned char *)userind);
+    JSLD(rcint, user->parent_nas->user_map, userind);
     if (user->userid) {
         free(user->userid);
     }
@@ -2089,7 +2089,8 @@ static void radius_destroy_session_data(access_plugin_t *p,
         JLD(rcint, usess->parent->sessions, usess->session_id);
         JLC(rcw, usess->parent->sessions, 0, -1);
         if (rcw == 0) {
-            destroy_radius_user(usess->parent, usess->parent->userid);
+            destroy_radius_user(usess->parent,
+                    (unsigned char *)usess->parent->userid);
         }
     }
 

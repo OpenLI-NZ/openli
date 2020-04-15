@@ -1640,7 +1640,7 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
         return -1;
     }
 
-    JSLG(jval, state->liid_array, liid);
+    JSLG(jval, state->liid_array, (unsigned char *)liid);
     if (jval == NULL) {
         free(liid);
         return 0;
