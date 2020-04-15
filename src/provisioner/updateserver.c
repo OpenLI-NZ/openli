@@ -50,9 +50,6 @@ static const char *update_failure_page_start =
 "<html><body><p>OpenLI provisioner configuration failed.";
 static const char *update_failure_page_end = "</body></html>\n";
 
-static const char *get_not_implemented =
-"<html><body>OpenLI provisioner does not support fetching intercept config (yet).</body></html>\n";
-
 static const char *unsupported_operation =
 "<html><body>OpenLI provisioner does not support that type of request.</body></html>\n";
 
