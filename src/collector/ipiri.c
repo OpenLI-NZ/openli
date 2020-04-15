@@ -145,7 +145,7 @@ static inline void encode_ipiri_shared(wandder_encoder_t *encoder,
     if (job->username) {
         np = create_etsili_generic(freegenerics,
                 IPIRI_CONTENTS_TARGET_USERNAME, strlen(job->username),
-                job->username);
+                (uint8_t *)job->username);
         HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum),
                 np);
     }
@@ -451,8 +451,6 @@ static inline openli_export_recv_t *_create_ipiri_job_basic(
 int create_ipiri_job_from_iprange(collector_sync_t *sync,
         static_ipranges_t *staticsess, ipintercept_t *ipint, uint8_t special) {
 
-    int queueused = 0;
-    struct timeval tv;
     prefix_t *prefix = NULL;
     openli_export_recv_t *irimsg;
 

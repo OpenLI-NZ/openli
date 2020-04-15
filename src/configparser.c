@@ -90,7 +90,6 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         yaml_node_t *inputs) {
 
     yaml_node_item_t *item;
-    int i;
 
     for (item = inputs->data.sequence.items.start;
             item != inputs->data.sequence.items.top; item ++) {
@@ -250,7 +249,6 @@ static int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
         yaml_node_t *node = yaml_document_get_node(doc, *item);
         yaml_node_pair_t *pair;
         coreserver_t *cs;
-        char keyspace[256];
 
         cs = (coreserver_t *)calloc(1, sizeof(coreserver_t));
 
@@ -456,7 +454,7 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         }
 
         if (newag->hi2_ipstr != NULL && newag->hi2_portstr != NULL &&
-                newag->hi3_ipstr != NULL && newag->hi3_portstr != NULL &
+                newag->hi3_ipstr != NULL && newag->hi3_portstr != NULL &&
                 newag->agencyid != NULL) {
             prov_agency_t *prov_ag;
             prov_ag = (prov_agency_t *)malloc(sizeof(prov_agency_t));
@@ -477,7 +475,6 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         yaml_document_t *doc, yaml_node_t *inputs) {
 
     yaml_node_item_t *item;
-    int i;
 
     for (item = inputs->data.sequence.items.start;
             item != inputs->data.sequence.items.top; item ++) {
@@ -580,7 +577,6 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         yaml_node_t *inputs) {
 
     yaml_node_item_t *item;
-    int i;
 
     for (item = inputs->data.sequence.items.start;
             item != inputs->data.sequence.items.top; item ++) {
@@ -953,13 +949,13 @@ static int global_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "etsitls") == 0) {
-        glob->etsitls = check_onoff(value->data.scalar.value);
+        glob->etsitls = check_onoff((char *)value->data.scalar.value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "sipignoresdpo") == 0) {
-        glob->ignore_sdpo_matches = check_onoff(value->data.scalar.value);
+        glob->ignore_sdpo_matches = check_onoff((char *)value->data.scalar.value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -1073,7 +1069,7 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "etsitls") == 0) {
-            state->etsitls = check_onoff(value->data.scalar.value);
+            state->etsitls = check_onoff((char *)value->data.scalar.value);
     }
 
     return 0;

@@ -454,10 +454,9 @@ static void radius_destroy_plugin_data(access_plugin_t *p) {
 
     radius_global_t *glob;
     radius_server_t *srv;
-    radius_nas_t *nas;
     radius_saved_req_t *req, *tmpreq;
     PWord_t pval;
-    char index[128];
+    unsigned char index[128];
     Word_t res;
 
     glob = (radius_global_t *)(p->plugindata);
@@ -716,7 +715,7 @@ static inline void update_known_servers(radius_global_t *glob,
     radius_nas_t *nas;
     uint8_t *sockkey;
     int socklen;
-    char hashkey[20];
+    unsigned char hashkey[20];
     PWord_t pval;
 
     memset(hashkey, 0, sizeof(hashkey));
@@ -1135,9 +1134,7 @@ static inline void extract_assigned_ip_address(radius_global_t *glob,
         radius_parsed_t *raddata, radius_attribute_t *attrlist,
         access_session_t *sess) {
 
-    uint8_t attrnum;
     radius_attribute_t *attr;
-    struct sockaddr_storage *sa;
 
     if (!raddata->muser_count) {
         return;
@@ -1966,10 +1963,8 @@ static int radius_generate_iri_data(access_plugin_t *p, void *parseddata,
         etsili_generic_t **params, etsili_iri_type_t *iritype,
         etsili_generic_freelist_t *freelist, int iteration) {
 
-    radius_global_t *radglob;
     radius_parsed_t *raddata;
 
-    radglob = (radius_global_t *)(p->plugindata);
     raddata = (radius_parsed_t *)parseddata;
 
     if (iteration == 0) {
@@ -2011,7 +2006,6 @@ static int radius_generate_iri_from_session(access_plugin_t *p,
             (radius_user_session_t *)(session->statedata);
 
     etsili_generic_t *np;
-    int64_t nasport;
     etsili_ipaddress_t nasip;
     ipiri_id_t nasid;
 
@@ -2019,7 +2013,6 @@ static int radius_generate_iri_from_session(access_plugin_t *p,
      * copy them into memory that we control...
      */
     if (usess->nas_port != 0) {
-        nasport = (int64_t)(usess->nas_port);
         np = create_etsili_generic(freelist,
                 IPIRI_CONTENTS_POP_PORTNUMBER, sizeof(int64_t),
                 (uint8_t *)(&usess->nas_port));
@@ -2108,10 +2101,7 @@ static void radius_destroy_session_data(access_plugin_t *p,
 static uint32_t radius_get_packet_sequence(access_plugin_t *p,
         void *parseddata) {
 
-    radius_global_t *radglob;
     radius_parsed_t *raddata;
-
-    radglob = (radius_global_t *)(p->plugindata);
     raddata = (radius_parsed_t *)parseddata;
 
     return DERIVE_REQUEST_ID(raddata, raddata->msgtype);

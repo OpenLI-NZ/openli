@@ -116,7 +116,6 @@ void remove_iprange_from_patricia(patricia_tree_t *ptree, char *iprangestr,
     patricia_node_t *node = NULL;
     prefix_t *prefix = NULL;
     liid_set_t **all, *found;
-    liid_set_t *a, *b;
 
     prefix = ascii2prefix(0, iprangestr);
     if (prefix == NULL) {
@@ -551,7 +550,7 @@ void handle_remove_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
 void handle_iprange(libtrace_thread_t *t, colthread_local_t *loc,
         staticipsession_t *ipr) {
 
-    staticipsession_t *newsess, *ipr_exist;
+    staticipsession_t *ipr_exist;
     patricia_tree_t *ptree = NULL;
 
     if (strchr(ipr->rangestr, ':')) {

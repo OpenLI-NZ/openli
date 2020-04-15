@@ -180,7 +180,6 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
     uint8_t *bhead = buf->bufhead + buf->deadfront;
     uint64_t offset = buf->partialfront;
     int ret;
-    ii_header_t *header = NULL;
 
     sent = (buf->buftail - (bhead + offset));
 

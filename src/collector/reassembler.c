@@ -203,8 +203,6 @@ tcp_reassemble_stream_t *get_tcp_reassemble_stream(tcp_reassembler_t *reass,
         tcp_streamid_t *id, libtrace_tcp_t *tcp, struct timeval *tv,
         uint32_t tcprem) {
 
-    uint32_t rem;
-    uint8_t proto;
     tcp_reassemble_stream_t *existing;
 
     HASH_FIND(hh, reass->knownstreams, &id, sizeof(id), existing);
@@ -351,7 +349,6 @@ static uint8_t *find_sip_message_end(uint8_t *content, uint16_t contlen) {
 
     uint8_t *crlf;
     uint8_t *clengthfield, *clengthend, *clengthstart;
-    uint8_t *endptr;
     char clenstr[12];
     unsigned long int clenval;
 
@@ -388,8 +385,7 @@ int update_ipfrag_reassemble_stream(ip_reassemble_stream_t *stream,
     libtrace_ip_t *ipheader;
     uint16_t ethertype, iprem;
     uint32_t rem;
-    void *ippayload, *transport;
-    uint8_t proto;
+    void *transport;
     ip_reass_fragment_t *newfrag;
 
     /* assumes we already know pkt is IPv4 */
@@ -452,15 +448,15 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
     HASH_FIND(hh, stream->segments, &seqno, sizeof(seqno), existing);
     if (existing) {
         /* retransmit? check for size difference... */
-        if (plen == seg->length) {
+        if (plen == existing->length) {
             return -1;
         }
 
         /* segment is longer? try to add the "extra" bit as a new segment */
-        if (plen > seg->length) {
-            plen -= seg->length;
-            seqno += seg->length;
-            content = content + seg->length;
+        if (plen > existing->length) {
+            plen -= existing->length;
+            seqno += existing->length;
+            content = content + existing->length;
             return update_tcp_reassemble_stream(stream, content, plen, seqno);
         }
 
@@ -657,7 +653,7 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
         memcpy((*content) + contused, iter->content + iter->offset,
                 iter->length);
 
-        endfound = find_sip_message_end((*content) + checked,
+        endfound = find_sip_message_end((uint8_t *)((*content) + checked),
                 (contused - checked) + iter->length);
 
         if (endfound) {
@@ -701,7 +697,7 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
      * went.
      */
     if (contused > 0 || expseqno > stream->expectedseqno) {
-        update_tcp_reassemble_stream(stream, *content, contused,
+        update_tcp_reassemble_stream(stream, (uint8_t *)(*content), contused,
                 stream->expectedseqno);
     }
     *len = 0;

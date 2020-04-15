@@ -181,8 +181,6 @@ void add_new_session_ip(access_session_t *sess, void *att_val,
 
 int free_single_session(internet_user_t *user, access_session_t *sess) {
 
-    access_session_t *prev, *tmp;
-
     if (user == NULL) {
         logger(LOG_INFO,
                 "OpenLI: called free_single_session() for a NULL user!");

@@ -1056,13 +1056,13 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         }
     }
 
+    return 0;
 }
 
 static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
     ipintercept_t *ipint, torem;
-    int i;
 
     if (decode_ipintercept_halt(intmsg, msglen, &torem) == -1) {
         if (sync->instruct_log) {
@@ -1207,7 +1207,6 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
     ipintercept_t *cept, *x;
-    int i;
 
     cept = (ipintercept_t *)malloc(sizeof(ipintercept_t));
     if (decode_ipintercept_start(intmsg, msglen, cept) == -1) {
@@ -1310,10 +1309,8 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
 }
 
 static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
-    voipintercept_t *v, *tmp2;
     coreserver_t *cs, *tmp3;
     ipintercept_t *ipint, *tmp;
-    internet_user_t *user;
     static_ipranges_t *ipr, *tmpr;
     default_radius_user_t *defrad, *tmprad;
 
@@ -1766,15 +1763,13 @@ static inline int report_silent_logoffs(collector_sync_t *sync,
         HASH_FIND(hh, sync->userintercepts, prev->owner[i]->userid,
                 strlen(prev->owner[i]->userid), prevuser);
         if (prevuser) {
-            int queueused = 0;
-
             logger(LOG_INFO,
                     "OpenLI: detected silent owner change for IP %s",
                     sockaddr_to_string(
                         (struct sockaddr *)&(prev->ip->assignedip),
                         ipstr, 128));
             HASH_ITER(hh_user, prevuser->intlist, ipint, tmp) {
-                queueused = create_iri_from_session(sync,
+                create_iri_from_session(sync,
                         prev->session[i],
                         ipint, OPENLI_IPIRI_SILENTLOGOFF);
                 push_session_halt_to_threads(sync->glob->collector_queues,
@@ -1793,7 +1788,6 @@ static inline int report_silent_logoffs(collector_sync_t *sync,
 static int add_ip_to_session_mapping(collector_sync_t *sync,
         access_session_t *sess, internet_user_t *iuser) {
 
-    char ipstr[128];
     int i, replaced = 0;
     ip_to_session_t *prev;
 
@@ -1947,7 +1941,6 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
 
     access_plugin_t *p = NULL;
     user_identity_t *identities = NULL;
-    char *userid;
     internet_user_t *iuser;
     access_session_t *sess;
     access_action_t accessaction;

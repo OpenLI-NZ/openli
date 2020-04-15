@@ -49,8 +49,7 @@
 
 collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
 
-    struct epoll_event ev;
-    int zero = 0, i;
+    int i;
     char sockname[128];
 
     collector_sync_voip_t *sync = (collector_sync_voip_t *)
@@ -120,7 +119,6 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
 }
 
 void clean_sync_voip_data(collector_sync_voip_t *sync) {
-    struct epoll_event ev;
     int zero = 0, i;
     sync_epoll_t *syncev, *tmp;
 
@@ -728,7 +726,7 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
             irimsg->data.ipmmiri.contentlen);
 
     pthread_mutex_lock(sync->glob->stats_mutex);
-    sync->glob->stats->ipmmiri_created;
+    sync->glob->stats->ipmmiri_created ++;
     pthread_mutex_unlock(sync->glob->stats_mutex);
     publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], copy);
 }
@@ -756,7 +754,6 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
     int badsip = 0;
 
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
-        int queueused;
 
         /* Is this call ID associated with this intercept? */
         HASH_FIND(hh_callid, vint->cin_callid_map, callid, strlen(callid),
@@ -829,7 +826,7 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
 static int process_sip_register(collector_sync_voip_t *sync, char *callid,
         openli_export_recv_t *irimsg) {
 
-    openli_sip_identity_t touriid, authid;
+    openli_sip_identity_t touriid;
     voipintercept_t *vint, *tmp;
     sipregister_t *sipreg;
     int exportcount = 0;
@@ -875,10 +872,10 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     voipcinmap_t *findcin;
     voipsdpmap_t *findsdp = NULL;
     voipintshared_t *vshared;
-    openli_sip_identity_t touriid, authid;
+    openli_sip_identity_t touriid;
     char rtpkey[256];
     rtpstreaminf_t *thisrtp;
-    char *ipstr, *portstr, *cseqstr, *mediatype;
+    char *ipstr, *portstr, *mediatype;
     int exportcount = 0;
     etsili_iri_type_t iritype = ETSILI_IRI_REPORT;
     int badsip = 0;
@@ -893,7 +890,6 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     }
 
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
-        int queueused;
         vshared = NULL;
 
         /* Is this a call ID we've seen already? */
@@ -1010,10 +1006,9 @@ static int update_sip_state(collector_sync_voip_t *sync,
         libtrace_packet_t *pkt, openli_export_recv_t *irimsg) {
 
     char *callid, *sessid, *sessversion, *sessaddr, *sessuser;
-    openli_sip_identity_t authid, touriid;
     sip_sdp_identifier_t sdpo;
     int iserr = 0;
-    int ret, authcount, i;
+    int ret;
 
     callid = get_sip_callid(sync->sipparser);
     sessid = get_sip_session_id(sync->sipparser);
@@ -1121,9 +1116,6 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
     voipintercept_t *vint, tomod;
-    sync_sendq_t *sendq, *tmp;
-    int i;
-    openli_export_recv_t *expmsg;
 
     if (decode_voipintercept_modify(intmsg, msglen, &tomod) == -1) {
         if (sync->log_bad_instruct) {
@@ -1171,8 +1163,6 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
     voipintercept_t *vint, torem;
-    sync_sendq_t *sendq, *tmp;
-    int i;
     openli_export_recv_t *expmsg;
 
     if (decode_voipintercept_halt(intmsg, msglen, &torem) == -1) {
@@ -1213,9 +1203,7 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
 }
 
 static int halt_single_rtpstream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp) {
-    int i;
 
-    struct epoll_event ev;
     voipcinmap_t *cin_callid, *tmp;
     voipsdpmap_t *cin_sdp, *tmp2;
     sync_sendq_t *sendq, *tmp3;
@@ -1288,7 +1276,7 @@ static int halt_single_rtpstream(collector_sync_voip_t *sync, rtpstreaminf_t *rt
 static inline void disable_sip_target(voipintercept_t *vint,
         openli_sip_identity_t *sipid) {
 
-    openli_sip_identity_t *newid, *iter;
+    openli_sip_identity_t *iter;
     libtrace_list_node_t *n;
 
     n = vint->targets->head;
@@ -1436,6 +1424,7 @@ static int withdraw_voip_sip_target(collector_sync_voip_t *sync,
 
     sync->log_bad_instruct = 1;
     disable_sip_target(vint, &sipid);
+    return 0;
 }
 
 static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
@@ -1443,7 +1432,6 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
 
     voipintercept_t *vint, toadd;
     sync_sendq_t *sendq, *tmp;
-    int i;
     openli_export_recv_t *expmsg;
 
     if (decode_voipintercept_start(intmsg, msglen, &toadd) == -1) {

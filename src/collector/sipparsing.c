@@ -80,7 +80,6 @@ static int parse_udp_sip_packet(openli_sip_parser_t *p, libtrace_udp_t *udp,
         uint32_t udprem) {
 
     void *payload = NULL;
-    int ret;
 
     payload = trace_get_payload_from_udp(udp, &udprem);
     if (payload == NULL || udprem == 0) {
@@ -296,8 +295,7 @@ int add_sip_packet_to_parser(openli_sip_parser_t **parser,
 
     char *completefrag = NULL;
     uint8_t proto, moreflag, isfrag;
-    uint32_t rem, plen;
-    int i, ret;
+    int ret;
     openli_sip_parser_t *p;
     uint16_t fragoff, fraglen;
     struct timeval tstamp;

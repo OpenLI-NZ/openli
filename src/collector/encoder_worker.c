@@ -309,7 +309,8 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             opid[opidlen] = '\0';
 
             np = create_etsili_generic(enc->freegenerics,
-                    UMTSIRI_CONTENTS_OPERATOR_IDENTIFIER, opidlen, opid);
+                    UMTSIRI_CONTENTS_OPERATOR_IDENTIFIER, opidlen,
+                    (uint8_t *)opid);
             HASH_ADD_KEYPTR(hh, job->origreq->data.mobiri.customparams,
                     &(np->itemnum), sizeof(np->itemnum), np);
 
