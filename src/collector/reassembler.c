@@ -616,7 +616,8 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
     uint16_t checked = 0;
     uint32_t used = 0;
     uint32_t expseqno;
-    char *endfound = NULL;
+    uint8_t *endfound = NULL;
+    uint8_t *contstart = NULL;
 
     if (stream == NULL) {
         return 0;
@@ -650,20 +651,22 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
             }
         }
 
-        memcpy((*content) + contused, iter->content + iter->offset,
+        contstart = (uint8_t *)((*content) + contused);
+
+        memcpy(contstart, iter->content + iter->offset,
                 iter->length);
 
         endfound = find_sip_message_end((uint8_t *)((*content) + checked),
                 (contused - checked) + iter->length);
 
         if (endfound) {
-            assert(endfound <= (*content) + contused + iter->length);
-            assert(endfound > ((*content) + contused));
+            assert(endfound <= contstart + iter->length);
+            assert(endfound > contstart);
 
-            used = endfound - ((*content) + contused);
+            used = endfound - (contstart);
 
             stream->expectedseqno += used;
-            if (((*content) + contused + iter->length)  == (endfound)) {
+            if (contstart + iter->length == endfound) {
                 /* We've used the entire segment */
                 *len = contused + iter->length;
                 HASH_DELETE(hh, stream->segments, iter);

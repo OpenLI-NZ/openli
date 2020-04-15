@@ -1056,7 +1056,6 @@ int register_sync_queues(sync_thread_global_t *glob,
         void *recvq, libtrace_message_queue_t *sendq,
         libtrace_thread_t *parent) {
 
-    struct epoll_event ev;
     sync_sendq_t *syncq, *sendq_hash;
 
     syncq = (sync_sendq_t *)malloc(sizeof(sync_sendq_t));

@@ -174,7 +174,7 @@ static inline int push_tlv(net_buffer_t *nb, openli_proto_fieldtype_t type,
         uint8_t *value, uint16_t vallen) {
 
     unsigned char tmp[4096];
-    char *ptr = tmp;
+    unsigned char *ptr = tmp;
     uint16_t shorttype, swaplen;
 
     if (vallen > 4096 - 4) {

@@ -335,7 +335,6 @@ static void drop_all_collectors(mediator_state_t *state, libtrace_list_t *c) {
 }
 
 static void drop_all_agencies(libtrace_list_t *a) {
-    libtrace_list_node_t *n;
     mediator_agency_t ag;
 
     while (libtrace_list_get_size(a) > 0) {
@@ -1413,7 +1412,7 @@ static inline char *extract_liid_from_exported_msg(uint8_t *etsimsg,
     space[*liidlen] = '\0';
 
     *liidlen += sizeof(l);
-    return space;
+    return (char *)space;
 }
 
 static liid_map_t *match_etsi_to_agency(mediator_state_t *state,
@@ -1695,7 +1694,7 @@ static inline int remove_mediator_liid_mapping(mediator_state_t *state,
 static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
 
-    unsigned char *agencyid, *liid;
+    char *agencyid, *liid;
     mediator_agency_t *agency;
     liid_map_t *m;
     PWord_t jval;
@@ -1704,8 +1703,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     agencyid = NULL;
     liid = NULL;
 
-    if (decode_liid_mapping(msgbody, msglen, (char **)&agencyid,
-            (char **)&liid) == -1) {
+    if (decode_liid_mapping(msgbody, msglen, &agencyid, &liid) == -1) {
         logger(LOG_INFO, "OpenLI Mediator: receive invalid LIID mapping from provisioner.");
         return -1;
     }
@@ -1717,7 +1715,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     /* "Special" agency ID for intercepts that need to be written to a
      * PCAP file instead of sent to an agency...
      */
-    if (strcmp(agencyid, "pcapdisk") == 0) {
+    if (strcmp((char *)agencyid, "pcapdisk") == 0) {
         agency = NULL;
     } else {
         /* Try to find the agency in our agency list */
@@ -1740,7 +1738,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         }
     }
 
-    JSLG(jval, state->liid_array, liid);
+    JSLG(jval, state->liid_array, (unsigned char *)liid);
     if (jval != NULL) {
         m = (liid_map_t *)(*jval);
 
@@ -1751,7 +1749,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         }
         free(m->liid);
     } else {
-        JSLI(jval, state->liid_array, liid);
+        JSLI(jval, state->liid_array, (unsigned char *)liid);
         if (jval == NULL) {
             logger(LOG_INFO, "OpenLI Mediator: OOM when allocating memory for new LIID.");
             return -1;
@@ -1767,17 +1765,15 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         /* If this was previously a "unknown" LIID, we can now remove
          * it from our missing LIID list -- if it gets withdrawn later,
          * we will then alert again about it being missing. */ 
-        JSLG(jval, state->missing_liids, liid);
+        JSLG(jval, state->missing_liids, (unsigned char *)liid);
         if (jval != NULL) {
-            JSLD(err, state->missing_liids, liid);
+            JSLD(err, state->missing_liids, (unsigned char *)liid);
         }
     }
     m->liid = liid;
     m->agency = agency;
     m->ceasetimer = NULL;
     free(agencyid);
-
-    //HASH_ADD_STR(state->liids, liid, m);
 
     if (agency) {
         logger(LOG_DEBUG, "OpenLI Mediator: added %s -> %s to LIID map",
@@ -2194,7 +2190,7 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             } else if (ev->events & EPOLLOUT) {
                 ret = xmit_handover(state, mev);
             } else {
-                ret == -1;
+                ret = -1;
             }
             if (ret == -1) {
                 med_agency_state_t *mas = (med_agency_state_t *)(mev->state);
@@ -2753,7 +2749,7 @@ static int open_pcap_output_file(pcap_thread_state_t *pstate,
 
     gettimeofday(&tv, NULL);
 
-    snprintf(uri, 4096, "pcapfile:%s/openli-%s-%u.pcap.gz", pstate->dir,
+    snprintf(uri, 4096, "pcapfile:%s/openli-%s-%lu.pcap.gz", pstate->dir,
             act->liid, tv.tv_sec);
     act->out = trace_create_output(uri);
     if (trace_is_err_output(act->out)) {
@@ -2844,9 +2840,10 @@ static void write_rawpcap_packet(pcap_thread_state_t *pstate,
 
     rawip = pcapmsg->msgbody + liidlen;
 
-    HASH_FIND(hh, pstate->active, liidspace, strlen(liidspace), pcapout);
+    HASH_FIND(hh, pstate->active, liidspace, strlen((char *)liidspace),
+            pcapout);
     if (!pcapout) {
-        pcapout = create_new_pcap_output(pstate, liidspace);
+        pcapout = create_new_pcap_output(pstate, (char *)liidspace);
     }
 
     if (pcapout) {
@@ -2968,7 +2965,7 @@ static void pcap_flush_traces(pcap_thread_state_t *pstate) {
 }
 
 static void pcap_rotate_traces(pcap_thread_state_t *pstate) {
-    active_pcap_output_t *pcapout, *tmp, *rotated;
+    active_pcap_output_t *pcapout, *tmp;
 
     HASH_ITER(hh, pstate->active, pcapout, tmp) {
         trace_destroy_output(pcapout->out);

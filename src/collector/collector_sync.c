@@ -689,7 +689,6 @@ static inline void push_session_halt_to_threads(void *sendqs,
 static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
         ipintercept_t *ipint) {
 
-    sync_sendq_t *sendq, *tmp;
     internet_user_t *user;
     access_session_t *sess, *tmp2;
     static_ipranges_t *ipr, *tmpr;

@@ -348,7 +348,6 @@ static void gtp_uncouple_parsed_data(access_plugin_t *p) {
 
 static void gtp_destroy_parsed_data(access_plugin_t *p, void *parsed) {
 
-    gtp_global_t *glob = (gtp_global_t *)(p->plugindata);
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parsed;
 
     if (!gparsed) {
@@ -910,7 +909,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
     }
 
     /* Need to look up the session */
-    GEN_SESSID(sessid, gparsed, gparsed->teid);
+    GEN_SESSID((char *)sessid, gparsed, gparsed->teid);
 
     if (gparsed->msgtype == GTPV1_DELETE_PDP_CONTEXT_REQUEST) {
         search = glob->alt_session_map;
@@ -941,7 +940,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
          * for that TEID as well. Otherwise we'll miss the delete requests.
          */
         if (gparsed->msgtype == GTPV1_CREATE_PDP_CONTEXT_RESPONSE) {
-            GEN_SESSID(alt_sessid, gparsed, gparsed->teid_ctl);
+            GEN_SESSID((char *)alt_sessid, gparsed, gparsed->teid_ctl);
             JSLG(pval, glob->alt_session_map, alt_sessid);
 
             if (!pval) {
@@ -1001,7 +1000,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
     }
 
     sess = calloc(1, sizeof(gtp_session_t));
-    sess->sessid = strdup(sessid);
+    sess->sessid = strdup((char *)sessid);
     sess->current = SESSION_STATE_NEW;
     sess->teid = gparsed->teid;
     sess->pdpaddrs = NULL;
@@ -1026,7 +1025,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
         sess->userid.imsi = strdup(gparsed->imsi);
     }
 
-    JSLI(pval, glob->session_map, sess->sessid);
+    JSLI(pval, glob->session_map, (unsigned char *)sess->sessid);
     *pval = (Word_t)sess;
 
     gparsed->matched_session = sess;

@@ -1352,7 +1352,6 @@ static void run(provision_state_t *state) {
     int i, nfds;
     int timerfd;
     int timerexpired = 0;
-    struct itimerspec its;
     struct epoll_event evs[64];
     struct epoll_event ev;
 

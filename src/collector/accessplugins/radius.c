@@ -363,7 +363,7 @@ static void destroy_radius_user(radius_user_t *user, char *userind) {
     PWord_t pval;
     int rcint;
 
-    JSLD(rcint, user->parent_nas->user_map, userind);
+    JSLD(rcint, user->parent_nas->user_map, (unsigned char *)userind);
     if (user->userid) {
         free(user->userid);
     }
@@ -394,7 +394,7 @@ static void destroy_radius_nas(radius_nas_t *nas) {
     radius_saved_req_t *req, *tmpreq;
     radius_user_t *user;
     PWord_t pval;
-    char index[128];
+    unsigned char index[128];
     Word_t res;
 
     index[0] = '\0';
@@ -432,7 +432,7 @@ static void destroy_radius_server(radius_server_t *srv) {
     radius_nas_t *nas;
     PWord_t pval;
     Word_t res;
-    char index[128];
+    unsigned char index[128];
 
     index[0] = '\0';
     JSLF(pval, srv->nas_map, index);
@@ -599,7 +599,6 @@ static void create_orphan(radius_global_t *glob, radius_orphaned_resp_t **head,
      * orphaned responses */
 
     radius_orphaned_resp_t *resp, *iter;
-    radius_attribute_t *attr, *attrcopy;
 
     resp = (radius_orphaned_resp_t *)malloc(sizeof(radius_orphaned_resp_t));
     resp->key = reqid;
@@ -1607,7 +1606,6 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         radius_saved_req_t *check = NULL;
 
         radius_orphaned_resp_t *orphan = NULL;
-        radius_attribute_t *attr, *attrcopy;
 
         orphan = search_orphans(
                 &(raddata->matchednas->orphans),

@@ -235,7 +235,7 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
                         sliid->key);
             } else {
                 HASH_ITER(hh, tgt->intercepts, sess, tmp) {
-                    *matched ++;
+                    *matched = ((*matched) + 1);
                     msg = create_ipcc_job(sess->cin, sess->common.liid,
                             sess->common.destid, pkt, 0);
                     if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg)
