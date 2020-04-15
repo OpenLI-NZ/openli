@@ -57,6 +57,11 @@ struct json_intercept {
     struct json_object *siptargets;
 };
 
+static const char *update_failure_page_start =
+"<html><body><p>OpenLI provisioner configuration failed.";
+static const char *update_failure_page_end = "</body></html>\n";
+
+
 #define EXTRACT_JSON_INT_PARAM(name, uptype, jsonobj, dest, errflag, force) \
     if ((*errflag) == 0) { \
         int64_t ival; \
@@ -78,7 +83,7 @@ struct json_intercept {
 
 #define EXTRACT_JSON_STRING_PARAM(name, uptype, jsonobj, dest, errflag, force) \
     if ((*errflag) == 0) { \
-        const char *objstr; \
+        const char *objstr = NULL; \
         if (jsonobj != NULL) { \
             objstr = json_object_get_string(jsonobj); \
         } \
@@ -540,13 +545,12 @@ int parse_voipintercept_siptargets(provision_state_t *state,
         voipintercept_t *vint, struct json_object *jsontargets,
         update_con_info_t *cinfo) {
 
-    openli_sip_identity_t *newtgt, *found;
+    openli_sip_identity_t *newtgt;
     struct json_object *jobj;
     struct json_object *username, *realm;
     int parseerr = 0, i, tgtcnt;
 
     newtgt = NULL;
-    found = NULL;
     tgtcnt = 0;
 
     if (json_object_get_type(jsontargets) != json_type_array) {
@@ -1013,7 +1017,6 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (voipjson.siptargets != NULL) {
         libtrace_list_t *tmp;
-        libtrace_list_node_t *n, *n2;
 
         if (parse_voipintercept_siptargets(state, vint, voipjson.siptargets,
                 cinfo) < 0) {
@@ -1357,6 +1360,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     liagency_t modified;
     int changed = 0;
 
+    memset(&modified, 0, sizeof(modified));
     INIT_JSON_AGENCY_PARSING
 
     HASH_FIND(hh, state->interceptconf.leas, idstr, strlen(idstr), found);
@@ -1368,7 +1372,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         return add_new_agency(cinfo, state);
     }
 
-    memset(&modified, 0, sizeof(modified));
     modified.keepalivefreq = 0xffffffff;
     modified.keepalivewait = 0xffffffff;
 

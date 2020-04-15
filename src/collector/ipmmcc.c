@@ -178,8 +178,7 @@ static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
 
     openli_export_recv_t *msg;
     rtpstreaminf_t *rtp, *tmp;
-    int matched = 0, queueused;
-    struct sockaddr *cmp, *tgt, *other;
+    int matched = 0;
     uint8_t is_comfort = 255;
 
     /* TODO change active RTP so we can look up by 5 tuple? */

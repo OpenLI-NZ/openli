@@ -303,7 +303,7 @@ static inline void gtp_free_ie_list(gtp_infoelem_t *ies) {
 
 static void gtp_destroy_plugin_data(access_plugin_t *p) {
     gtp_global_t *glob;
-    char index[64];
+    unsigned char index[64];
     PWord_t pval;
     Word_t res, indexnum;
 
@@ -348,7 +348,6 @@ static void gtp_uncouple_parsed_data(access_plugin_t *p) {
 
 static void gtp_destroy_parsed_data(access_plugin_t *p, void *parsed) {
 
-    gtp_global_t *glob = (gtp_global_t *)(p->plugindata);
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parsed;
 
     if (!gparsed) {
@@ -544,7 +543,7 @@ static int walk_gtpv1_ies(gtp_parsed_t *parsedpkt, uint8_t *ptr, uint32_t rem,
     while (rem > 2 && used < gtplen) {
         uint8_t ietype;
         uint16_t ielen;
-        gtp_infoelem_t *gtpel;
+        gtp_infoelem_t *gtpel = NULL;
 
         ietype = *ptr;
 
@@ -572,24 +571,26 @@ static int walk_gtpv1_ies(gtp_parsed_t *parsedpkt, uint8_t *ptr, uint32_t rem,
             parsedpkt->ies = gtpel;
         }
 
-        if (parsedpkt->msgtype == GTPV1_CREATE_PDP_CONTEXT_REQUEST) {
+        if (gtpel) {
+            if (parsedpkt->msgtype == GTPV1_CREATE_PDP_CONTEXT_REQUEST) {
+                if (ietype == GTPV1_IE_TEID_CTRL) {
+                    parsedpkt->teid = get_teid_from_teidctl(gtpel);
+                }
+                if (ietype == GTPV1_IE_IMSI) {
+                    get_gtpnum_from_ie(gtpel, parsedpkt->imsi, 0);
+                }
+                if (ietype == GTPV1_IE_MSISDN) {
+                    get_gtpnum_from_ie(gtpel, parsedpkt->msisdn, 1);
+                }
+            }
+
             if (ietype == GTPV1_IE_TEID_CTRL) {
-                parsedpkt->teid = get_teid_from_teidctl(gtpel);
+                parsedpkt->teid_ctl = get_teid_from_teidctl(gtpel);
             }
-            if (ietype == GTPV1_IE_IMSI) {
-                get_gtpnum_from_ie(gtpel, parsedpkt->imsi, 0);
-            }
-            if (ietype == GTPV1_IE_MSISDN) {
-                get_gtpnum_from_ie(gtpel, parsedpkt->msisdn, 1);
-            }
-        }
 
-        if (ietype == GTPV1_IE_TEID_CTRL) {
-            parsedpkt->teid_ctl = get_teid_from_teidctl(gtpel);
-        }
-
-        if (ietype == GTPV1_IE_CAUSE) {
-            parsedpkt->response_cause = get_cause_from_ie(gtpel);
+            if (ietype == GTPV1_IE_CAUSE) {
+                parsedpkt->response_cause = get_cause_from_ie(gtpel);
+            }
         }
 
         if (ietype & 0x80) {
@@ -883,8 +884,8 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
 
     gtp_global_t *glob = (gtp_global_t *)(p->plugindata);
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parsed;
-    char sessid[64];
-    char alt_sessid[64];
+    unsigned char sessid[64];
+    unsigned char alt_sessid[64];
     gtp_session_t *sess;
     PWord_t pval;
     user_identity_t *uids;
@@ -908,7 +909,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
     }
 
     /* Need to look up the session */
-    GEN_SESSID(sessid, gparsed, gparsed->teid);
+    GEN_SESSID((char *)sessid, gparsed, gparsed->teid);
 
     if (gparsed->msgtype == GTPV1_DELETE_PDP_CONTEXT_REQUEST) {
         search = glob->alt_session_map;
@@ -939,7 +940,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
          * for that TEID as well. Otherwise we'll miss the delete requests.
          */
         if (gparsed->msgtype == GTPV1_CREATE_PDP_CONTEXT_RESPONSE) {
-            GEN_SESSID(alt_sessid, gparsed, gparsed->teid_ctl);
+            GEN_SESSID((char *)alt_sessid, gparsed, gparsed->teid_ctl);
             JSLG(pval, glob->alt_session_map, alt_sessid);
 
             if (!pval) {
@@ -999,7 +1000,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
     }
 
     sess = calloc(1, sizeof(gtp_session_t));
-    sess->sessid = strdup(sessid);
+    sess->sessid = strdup((char *)sessid);
     sess->current = SESSION_STATE_NEW;
     sess->teid = gparsed->teid;
     sess->pdpaddrs = NULL;
@@ -1024,7 +1025,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
         sess->userid.imsi = strdup(gparsed->imsi);
     }
 
-    JSLI(pval, glob->session_map, sess->sessid);
+    JSLI(pval, glob->session_map, (unsigned char *)sess->sessid);
     *pval = (Word_t)sess;
 
     gparsed->matched_session = sess;
@@ -1314,7 +1315,6 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
     access_session_t *thissess = NULL;
     gtp_saved_pkt_t *saved, *check;
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parsed;
-    gtp_session_t *gsession = NULL;
     PWord_t pval;
     Word_t rcint;
 
@@ -1533,7 +1533,6 @@ static int gtp_create_pdp_generic_iri(gtp_parsed_t *gparsed,
 
     etsili_generic_t *np;
     etsili_ipaddress_t ipaddr;
-    gtp_infoelem_t *el;
     uint32_t initiator = 1;
     struct timeval tv;
 
@@ -1761,7 +1760,6 @@ static int gtp_generate_iri_data(access_plugin_t *p, void *parseddata,
         etsili_generic_t **params, etsili_iri_type_t *iritype,
         etsili_generic_freelist_t *freelist, int iteration) {
 
-    gtp_global_t *glob = (gtp_global_t *)(p->plugindata);
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parseddata;
 
     if (gparsed->action == ACCESS_ACTION_ACCEPT) {
@@ -1875,7 +1873,6 @@ static void gtp_destroy_session_data(access_plugin_t *p,
 
 static uint32_t gtp_get_packet_sequence(access_plugin_t *p, void *parseddata) {
 
-    gtp_global_t *glob = (gtp_global_t *)(p->plugindata);
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parseddata;
 
     /* bottom 8 bits of seqno are "spare" */

@@ -70,64 +70,6 @@ static void usage(char *prog) {
     fprintf(stderr, "Usage: %s -c configfile\n", prog);
 }
 
-#if 0
-static void dump_ip_intercept(ipintercept_t *ipint) {
-    char ipbuf[256];
-
-    printf("Intercept %u  %s\n", ipint->internalid,
-            ipint->active ? "ACTIVE": "INACTIVE");
-    printf("LI ID: %s\n", ipint->liid);
-    printf("Auth CC: %s     Delivery CC: %s\n", ipint->authcc,
-            ipint->delivcc);
-    if (ipint->username) {
-        printf("Username: %s\n", ipint->username);
-    } else {
-        printf("Username: Unknown\n");
-    }
-
-    if (ipint->ipaddr && ipint->ai_family == AF_INET) {
-        struct sockaddr_in *sin = (struct sockaddr_in *)ipint->ipaddr;
-        inet_ntop(AF_INET, (void *)&(sin->sin_addr), ipbuf, 256);
-        printf("User IPv4 address: %s\n", ipbuf);
-    } else {
-        printf("User IP address: Unknown\n");
-    }
-
-    printf("Communication ID: %u\n", ipint->cin);
-    printf("------\n");
-}
-#endif
-
-static void dump_rtp_intercept(rtpstreaminf_t *rtp) {
-    char ipbuf[256];
-    int i;
-
-    printf("LI ID: %s\n", rtp->common.liid);
-    printf("Auth CC: %s     Delivery CC: %s\n", rtp->common.authcc,
-            rtp->common.delivcc);
-
-    if (rtp->targetaddr && rtp->ai_family == AF_INET) {
-        struct sockaddr_in *sin = (struct sockaddr_in *)rtp->targetaddr;
-        inet_ntop(AF_INET, (void *)&(sin->sin_addr), ipbuf, 256);
-        for (i = 0; i < rtp->streamcount; i++) {
-            printf("Target RTP endpoint %d: %s:%u\n", i, ipbuf,
-                    rtp->mediastreams[i].targetport);
-        }
-    }
-
-    if (rtp->otheraddr && rtp->ai_family == AF_INET) {
-        struct sockaddr_in *sin = (struct sockaddr_in *)rtp->otheraddr;
-        inet_ntop(AF_INET, (void *)&(sin->sin_addr), ipbuf, 256);
-        for (i = 0; i < rtp->streamcount; i++) {
-            printf("Remote RTP endpoint %d: %s:%u\n", i, ipbuf,
-                    rtp->mediastreams[i].otherport);
-        }
-    }
-
-    printf("Communication ID: %u\n", rtp->cin);
-    printf("------\n");
-}
-
 static void reset_collector_stats(collector_global_t *glob) {
 
     glob->stats.packets_dropped = 0;
@@ -636,7 +578,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     uint16_t ethertype;
     uint32_t rem, iprem;
     uint8_t proto;
-    int forwarded = 0, i, ret;
+    int forwarded = 0, ret;
     int ipsynced = 0, voipsynced = 0;
     uint16_t fragoff = 0;
 
@@ -1000,7 +942,7 @@ static inline void free_sync_thread_data(sync_thread_global_t *sup) {
 
 static void destroy_collector_state(collector_global_t *glob) {
 
-    colinput_t *inp, *tmp;
+    colinput_t *inp;
     int i;
 
     if (glob->expired_inputs) {
@@ -1114,10 +1056,7 @@ int register_sync_queues(sync_thread_global_t *glob,
         void *recvq, libtrace_message_queue_t *sendq,
         libtrace_thread_t *parent) {
 
-    struct epoll_event ev;
-    sync_epoll_t *syncev, *syncev_hash;
-    sync_sendq_t *syncq, *sendq_hash, *a, *b;
-    int ind;
+    sync_sendq_t *syncq, *sendq_hash;
 
     syncq = (sync_sendq_t *)malloc(sizeof(sync_sendq_t));
     syncq->q = sendq;
@@ -1138,9 +1077,7 @@ int register_sync_queues(sync_thread_global_t *glob,
 void deregister_sync_queues(sync_thread_global_t *glob,
 		libtrace_thread_t *t) {
 
-    sync_epoll_t *syncev, *syncev_hash;
     sync_sendq_t *syncq, *sendq_hash;
-    struct epoll_event ev;
 
     pthread_mutex_lock(&(glob->mutex));
     sendq_hash = (sync_sendq_t *)(glob->collector_queues);
@@ -1378,7 +1315,7 @@ static int reload_collector_config(collector_global_t *glob,
 static void *start_voip_sync_thread(void *params) {
 
     collector_global_t *glob = (collector_global_t *)params;
-    int ret, i;
+    int ret;
     collector_sync_voip_t *sync = init_voip_sync_data(glob);
     sync_sendq_t *sq;
 
@@ -1416,7 +1353,7 @@ void halt_processing_threads(collector_global_t *glob) {
 static void *start_ip_sync_thread(void *params) {
 
     collector_global_t *glob = (collector_global_t *)params;
-    int ret, i;
+    int ret;
     collector_sync_t *sync = init_sync_data(glob);
     sync_sendq_t *sq;
 

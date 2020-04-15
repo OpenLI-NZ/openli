@@ -150,6 +150,7 @@ int announce_default_radius_username(provision_state_t *state,
         }
 
     SEND_ALL_COLLECTORS_END
+    return 0;
 }
 
 int withdraw_default_radius_username(provision_state_t *state,
@@ -165,6 +166,7 @@ int withdraw_default_radius_username(provision_state_t *state,
         }
 
     SEND_ALL_COLLECTORS_END
+    return 0;
 }
 
 void add_new_staticip_range(provision_state_t *state,
@@ -406,6 +408,7 @@ int announce_all_sip_targets(provision_state_t *state, voipintercept_t *vint) {
 		sipid->awaitingconfirm = 0;
         n = n->next;
     }
+    return 0;
 }
 
 int remove_all_sip_targets(provision_state_t *state, voipintercept_t *vint) {
@@ -421,6 +424,7 @@ int remove_all_sip_targets(provision_state_t *state, voipintercept_t *vint) {
         }
         n = n->next;
     }
+    return 0;
 }
 
 int announce_single_intercept(provision_state_t *state,

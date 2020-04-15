@@ -76,7 +76,6 @@ static inline char *get_event_description(prov_epoll_ev_t *pev) {
 
 void start_mhd_daemon(provision_state_t *state) {
 
-    int started = 0;
     assert(state->updatesockfd >= 0);
 
     if (state->sslconf.certfile && state->sslconf.keyfile) {
@@ -172,7 +171,6 @@ int map_intercepts_to_leas(prov_intercept_conf_t *conf) {
     int failed = 0;
     ipintercept_t *ipint, *iptmp;
     voipintercept_t *vint;
-    prov_agency_t *lea;
 
     /* Do IP Intercepts */
     HASH_ITER(hh_liid, conf->ipintercepts, ipint, iptmp) {
@@ -208,7 +206,6 @@ void free_openli_mediator(openli_mediator_t *med) {
 int init_prov_state(provision_state_t *state, char *configfile) {
 
     sigset_t sigmask;
-    int ret = 0;
 
     state->conffile = configfile;
     state->interceptconffile = NULL;
@@ -293,7 +290,6 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
     openli_mediator_t *prevmed = NULL;
     prov_collector_t *col, *coltmp;
     prov_mediator_t *provmed;
-    int updatereq = 0;
     int ret = 0;
 
     if (decode_mediator_announcement(medmsg, msglen, med) == -1) {
@@ -415,7 +411,6 @@ void clear_intercept_state(prov_intercept_conf_t *conf) {
 
     liid_hash_t *h, *tmp;
     prov_agency_t *h2, *tmp2;
-    liagency_t *lea;
     default_radius_user_t *h3, *tmp3;
 
     pthread_mutex_lock(&(conf->safelock));
@@ -761,7 +756,6 @@ static int respond_collector_auth(provision_state_t *state,
 static int respond_mediator_auth(provision_state_t *state,
         prov_epoll_ev_t *pev, net_buffer_t *outgoing) {
 
-    char *lastlea = NULL;
     liid_hash_t *h;
     prov_agency_t *ag, *tmp;
 
@@ -951,40 +945,6 @@ static int receive_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
     }
 
     return 0;
-}
-
-static int continue_collector_handshake(provision_state_t *state,
-        prov_epoll_ev_t *pev) {
-
-    prov_sock_state_t *cs = (prov_sock_state_t *)(pev->client->state);
-    prov_collector_t *col;
-    int ret;
-
-    HASH_FIND(hh, state->collectors, cs->ipaddr, strlen(cs->ipaddr), col);
-    if (col == NULL) {
-        logger(LOG_INFO, "OpenLI: unable to continue SSL handshake for collector %s as it is not in our collector list", cs->ipaddr);
-        return -1;
-    }
-
-    return continue_provisioner_client_handshake(state->epoll_fd,
-            &(col->client), cs);
-}
-
-static int continue_mediator_handshake(provision_state_t *state,
-        prov_epoll_ev_t *pev) {
-
-    prov_sock_state_t *cs = (prov_sock_state_t *)(pev->client->state);
-    prov_mediator_t *med;
-    int ret;
-
-    HASH_FIND(hh, state->mediators, cs->ipaddr, strlen(cs->ipaddr), med);
-    if (med == NULL) {
-        logger(LOG_INFO, "OpenLI: unable to continue SSL handshake for mediator %s as it is not in our collector list", cs->ipaddr);
-        return -1;
-    }
-
-    return continue_provisioner_client_handshake(state->epoll_fd,
-            &(med->client), cs);
 }
 
 static int transmit_socket(provision_state_t *state, prov_epoll_ev_t *pev) {
@@ -1392,7 +1352,6 @@ static void run(provision_state_t *state) {
     int i, nfds;
     int timerfd;
     int timerexpired = 0;
-    struct itimerspec its;
     struct epoll_event evs[64];
     struct epoll_event ev;
 

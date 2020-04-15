@@ -351,7 +351,6 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
     PWord_t jval;
     int_reorderer_t *reord;
-    openli_encoded_result_t *rescopy;
     Pvoid_t *reorderer;
     stored_result_t *stored, *tmp;
 
@@ -366,9 +365,9 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
 
     /* reordering of results if required for each LIID/CIN */
-    JSLG(jval, *reorderer, res->cinstr);
+    JSLG(jval, *reorderer, (unsigned char *)res->cinstr);
     if (jval == NULL) {
-        JSLI(jval, *reorderer, res->cinstr);
+        JSLI(jval, *reorderer, (unsigned char *)res->cinstr);
 
         if (jval == NULL) {
             logger(LOG_INFO,
@@ -562,7 +561,7 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx) {
 
 static void connect_export_targets(forwarding_thread_data_t *fwd) {
 
-    export_dest_t *dest, *tmp;
+    export_dest_t *dest;
     int ind;
     PWord_t jval, jval2;
     Word_t index;
@@ -832,7 +831,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
 
 static void forwarder_main(forwarding_thread_data_t *fwd) {
 
-    int halted = 0, x, i;
+    int x;
     struct itimerspec its;
 
     fwd->destinations_by_id = NULL;

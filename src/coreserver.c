@@ -113,7 +113,6 @@ coreserver_t *match_packet_to_coreserver(coreserver_t *serverlist,
         packet_info_t *pinfo) {
 
     coreserver_t *cs, *tmp;
-	int alumatched = 0;
 
 	if (pinfo->destport == 0) {
 		return NULL;
@@ -141,7 +140,6 @@ coreserver_t *match_packet_to_coreserver(coreserver_t *serverlist,
             struct sockaddr_in *sa;
             sa = (struct sockaddr_in *)(&(pinfo->destip));
             if (CORESERVER_MATCH_V4(cs, sa, pinfo->destport)) {
-                alumatched = 1;
                 return cs;
             }
         } else if (cs->info->ai_family == AF_INET6) {

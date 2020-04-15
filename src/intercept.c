@@ -671,6 +671,8 @@ const char *get_access_type_string(internet_access_method_t method) {
             return "mobile";
         case INTERNET_ACCESS_TYPE_WIRELESS_OTHER:
             return "wireless-other";
+        default:
+            break;
     }
 
     return "undefined";
