@@ -125,6 +125,7 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
                     strcmp(found->portstr, msg->data.med.portstr) != 0) {
                 /* Mediator has changed IP or port */
                 logger(LOG_INFO, "OpenLI: mediator %u has changed location from %s:%s to %s:%s",
+                        found->mediatorid,
                         found->ipstr, found->portstr, msg->data.med.ipstr,
                         msg->data.med.portstr);
                 free(found->ipstr);

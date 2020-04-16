@@ -584,7 +584,8 @@ static inline int reload_mediator_socket_config(provision_state_t *currstate,
     if (strcmp(newstate->mediateaddr, currstate->mediateaddr) != 0 ||
             strcmp(newstate->mediateport, currstate->mediateport) != 0) {
 
-        free_all_mediators(currstate->epoll_fd, &(currstate->mediators));
+        free_all_mediators(currstate->epoll_fd, &(currstate->mediators),
+                &(currstate->knownmeds));
 
         if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
                 currstate->mediatorfd->fd, &ev) == -1) {
@@ -743,7 +744,8 @@ int reload_provisioner_config(provision_state_t *currstate) {
 
     if (tlschanged != 0) {
         if (!mediatorchanged) {
-            free_all_mediators(currstate->epoll_fd, &(currstate->mediators));
+            free_all_mediators(currstate->epoll_fd, &(currstate->mediators),
+                    &(currstate->knownmeds));
             mediatorchanged = 1;
         }
         if (!clientchanged) {

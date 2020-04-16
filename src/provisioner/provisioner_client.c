@@ -161,7 +161,11 @@ void destroy_provisioner_client(int epollfd, prov_client_t *client,
 	disconnect_provisioner_client(epollfd, client, identifier);
 	halt_provisioner_client_idletimer(epollfd, client, identifier);
 
+    if (client->identifier) {
+        free(client->identifier);
+    }
 	destroy_client_state(client->state);
+    free(client);
 }
 
 /** Create fresh socket state for a newly connected client */
