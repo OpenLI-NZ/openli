@@ -450,10 +450,14 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
                 prevmed->details->portstr,
                 med->mediatorid, med->ipstr, med->portstr);
 
-        announce_mediator_withdraw(state, prevmed);
+        //announce_mediator_withdraw(state, prevmed);
         tmp = prevmed->details;
         prevmed->details = med;
         provmed = prevmed;
+
+        free(tmp->ipstr);
+        free(tmp->portstr);
+        free(tmp);
     } else {
         HASH_FIND(hh, state->pendingclients, clientname, strlen(clientname),
                 pending);
@@ -1401,7 +1405,7 @@ static void expire_unauthed(provision_state_t *state, prov_epoll_ev_t *pev) {
                     "OpenLI Provisioner: dropping unauthed mediator.");
         }
     }
-    disconnect_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);
+    destroy_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);
 
 }
 
