@@ -149,7 +149,7 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
     for (i = 0; i < enc->seqtrackers; i++) {
         do {
             x = zmq_recv(enc->zmq_recvjobs[i], &job,
-                    sizeof(openli_encoding_job_t), ZMQ_DONTWAIT);
+                    sizeof(openli_encoding_job_t), 0);
             if (x < 0) {
                 if (errno == EAGAIN) {
                     continue;
@@ -161,6 +161,12 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
                 free_published_message(job.origreq);
             } else {
                 free(job.origreq);
+            }
+            if (job.liid) {
+                free(job.liid);
+            }
+            if (job.cinstr) {
+                free(job.cinstr);
             }
             drained ++;
 
