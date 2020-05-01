@@ -378,7 +378,7 @@ static int announce_mediator_withdraw(provision_state_t *state,
 }
 
 static int add_collector_to_hashmap(provision_state_t *state,
-        prov_client_t *client) {
+        prov_client_t *client, prov_sock_state_t *cs) {
 
     prov_collector_t *col;
 
@@ -394,6 +394,7 @@ static int add_collector_to_hashmap(provision_state_t *state,
         logger(LOG_INFO,
                 "OpenLI provisioner: collector %s is now active",
                 client->identifier);
+        cs->parent = (void *)col;
     } else {
         /* Can probably get away with not caring if we see a duplicate? */
     }
@@ -1004,7 +1005,7 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 }
                 cs->trusted = 1;
                 justauthed = 1;
-                add_collector_to_hashmap(state, pev->client);
+                add_collector_to_hashmap(state, pev->client, cs);
                 break;
             default:
                 if (cs->log_allowed) {
