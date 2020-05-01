@@ -613,6 +613,27 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
 
 }
 
+static int drain_incoming_etsi(forwarding_thread_data_t *fwd) {
+
+    int x;
+    openli_encoded_result_t res;
+
+    do {
+        x = zmq_recv(fwd->zmq_pullressock, &res, sizeof(res),
+                ZMQ_DONTWAIT);
+        if (x < 0 && errno != EAGAIN) {
+            return -1;
+        }
+
+        if (x <= 0) {
+            break;
+        }
+        free_encoded_result(&res);
+    } while (x > 0);
+
+    return 1;
+}
+
 static int receive_incoming_etsi(forwarding_thread_data_t *fwd) {
     int x, processed;
     openli_encoded_result_t res;
@@ -865,6 +886,11 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
 
     remove_reorderers(fwd, NULL, &(fwd->intreorderer_cc));
     remove_reorderers(fwd, NULL, &(fwd->intreorderer_iri));
+
+    if (x == 0) {
+        drain_incoming_etsi(fwd);
+    }
+
     free(fwd->topoll);
     fwd->topoll = NULL;
     free(fwd->forcesend);
