@@ -189,16 +189,22 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
 
     if (sent != 0) {
 
-        if (ssl != NULL){
-            ret = SSL_write(ssl, bhead + offset, (int)sent);
+        if (ssl != NULL) {
+            while (1) {
+                ret = SSL_write(ssl, bhead + offset, (int)sent);
 
-            if ((ret) <= 0 ){
-                int errr = SSL_get_error(ssl, ret);
-                if (errr == SSL_ERROR_WANT_WRITE) {
-                    return 0;
+                if ((ret) <= 0 ) {
+                    char errstring[128];
+                    int errr = SSL_get_error(ssl, ret);
+                    if (errr == SSL_ERROR_WANT_WRITE) {
+                        continue;
+                    }
+                    logger(LOG_INFO,
+                            "OpenLI: ssl_write error (%d) in export_buffer: %s",
+                            errr, ERR_error_string(ERR_get_error(), errstring));
+                    return -1;
                 }
-                logger(LOG_INFO, "OpenLI: ssl_write error (%d) in export_buffer",
-                        errr);
+                break;
             }
         }
         else {

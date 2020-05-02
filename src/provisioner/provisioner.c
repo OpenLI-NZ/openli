@@ -215,6 +215,8 @@ int init_prov_state(provision_state_t *state, char *configfile) {
     state->epoll_fd = epoll_create1(0);
     state->mediators = NULL;
     state->collectors = NULL;
+    state->pendingclients = NULL;
+    state->knownmeds = NULL;
 
     /* Three listening sockets
      *
@@ -282,14 +284,137 @@ int init_prov_state(provision_state_t *state, char *configfile) {
     return 0;
 }
 
+static int announce_mediator(provision_state_t *state,
+        prov_mediator_t *med) {
+
+    prov_collector_t *col, *coltmp;
+
+    HASH_ITER(hh, state->collectors, col, coltmp) {
+        prov_sock_state_t *cs = (prov_sock_state_t *)(col->client->state);
+
+        if (cs == NULL) {
+            continue;
+        }
+
+        if (col->client->commev == NULL ||
+                col->client->commev->fdtype != PROV_EPOLL_COLLECTOR) {
+            continue;
+        }
+
+        if (col->client->commev->fd == -1) {
+            continue;
+        }
+
+        if (cs->trusted == 0) {
+            continue;
+        }
+
+        if (push_mediator_onto_net_buffer(cs->outgoing, med->details) < 0) {
+            if (cs->log_allowed) {
+                logger(LOG_INFO,
+                    "OpenLI provisioner: error pushing mediator %s:%s onto buffer for writing to collector %s.",
+                    med->details->ipstr, med->details->portstr,
+                    col->identifier);
+            }
+            return -1;
+        }
+        if (enable_epoll_write(state, col->client->commev) == -1) {
+            if (cs->log_allowed) {
+                logger(LOG_INFO,
+                    "OpenLI provisioner: cannot enable epoll write event to transmit mediator update to collector %s -- %s.",
+                    col->identifier, strerror(errno));
+            }
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int announce_mediator_withdraw(provision_state_t *state,
+        prov_mediator_t *med) {
+
+    prov_collector_t *col, *coltmp;
+
+    HASH_ITER(hh, state->collectors, col, coltmp) {
+        prov_sock_state_t *cs = (prov_sock_state_t *)(col->client->state);
+
+        if (cs == NULL) {
+            continue;
+        }
+
+        if (col->client->commev == NULL ||
+                col->client->commev->fdtype != PROV_EPOLL_COLLECTOR) {
+            continue;
+        }
+
+        if (col->client->commev->fd == -1) {
+            continue;
+        }
+
+        if (cs->trusted == 0) {
+            continue;
+        }
+
+        if (push_mediator_withdraw_onto_net_buffer(cs->outgoing,
+                med->details) < 0) {
+            if (cs->log_allowed) {
+                logger(LOG_INFO,
+                        "OpenLI provisioner: error pushing mediator withdrawal %s:%s onto buffer for writing to collector %s.",
+                        med->details->ipstr, med->details->portstr,
+                        col->identifier);
+            }
+            return -1;
+        }
+        if (enable_epoll_write(state, col->client->commev) == -1) {
+            if (cs->log_allowed) {
+                logger(LOG_INFO,
+                    "OpenLI provisioner: cannot enable epoll write event to transmit mediator update to collector %s -- %s.",
+                    col->identifier, strerror(errno));
+            }
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int add_collector_to_hashmap(provision_state_t *state,
+        prov_client_t *client, prov_sock_state_t *cs) {
+
+    prov_collector_t *col;
+
+    HASH_FIND(hh, state->collectors, client->identifier,
+            strlen(client->identifier), col);
+
+    if (!col) {
+        col = calloc(1, sizeof(prov_collector_t));
+        col->identifier = strdup(client->identifier);
+        col->client = client;
+        HASH_ADD_KEYPTR(hh, state->collectors, col->identifier,
+                strlen(col->identifier), col);
+        logger(LOG_INFO,
+                "OpenLI provisioner: collector %s is now active",
+                client->identifier);
+        cs->parent = (void *)col;
+    } else {
+        /* Can probably get away with not caring if we see a duplicate? */
+    }
+
+    HASH_DELETE(hh, state->pendingclients, client);
+
+
+    return 0;
+}
+
 static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
-        uint16_t msglen, char *identifier) {
+        uint16_t msglen, prov_sock_state_t *cs, char *clientname) {
 
     openli_mediator_t *med = (openli_mediator_t *)malloc(
             sizeof(openli_mediator_t));
-    openli_mediator_t *prevmed = NULL;
-    prov_collector_t *col, *coltmp;
-    prov_mediator_t *provmed;
+    openli_mediator_t *tmp = NULL;
+    prov_client_t *pending;
+    mediator_address_t *knownaddr;
+    prov_mediator_t *provmed = NULL, *prevmed = NULL;
+    char identifier[1024];
     int ret = 0;
 
     if (decode_mediator_announcement(medmsg, msglen, med) == -1) {
@@ -299,99 +424,135 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
         return -1;
     }
 
-    /* Find the corresponding mediator in our mediator list */
-    HASH_FIND(hh, state->mediators, identifier, strlen(identifier), provmed);
+    HASH_FIND(hh, state->mediators, &(med->mediatorid), sizeof(med->mediatorid),
+            prevmed);
 
-    if (!provmed) {
-        free_openli_mediator(med);
-        return 0;
-    }
+    if (prevmed) {
 
-    if (provmed->details == NULL) {
-        provmed->details = med;
+        if (prevmed->mediatorid == med->mediatorid &&
+                strcmp(prevmed->details->ipstr, med->ipstr) == 0 &&
+                strcmp(prevmed->details->portstr, med->portstr) == 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: mediator %u has reconnected (%s:%s)",
+                    med->mediatorid, med->ipstr, med->portstr);
+
+            /* Don't need to inform collectors, they should reconnect on
+             * their own once the mediator starts listening.
+             */
+            free(med->ipstr);
+            free(med->portstr);
+            free(med);
+            return 0;
+        }
+
+        logger(LOG_INFO,
+                "OpenLI provisioner: replacing mediator %u (%s:%s) with %u (%s:%s)",
+                prevmed->mediatorid, prevmed->details->ipstr,
+                prevmed->details->portstr,
+                med->mediatorid, med->ipstr, med->portstr);
+
+        //announce_mediator_withdraw(state, prevmed);
+        tmp = prevmed->details;
+        prevmed->details = med;
+        provmed = prevmed;
+
+        free(tmp->ipstr);
+        free(tmp->portstr);
+        free(tmp);
     } else {
-        prevmed = provmed->details;
+        HASH_FIND(hh, state->pendingclients, clientname, strlen(clientname),
+                pending);
+
+        if (!pending) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: received an announcement from mediator %u via %s, but this mediator is unknown to us?",
+                    med->mediatorid, clientname);
+            free(med->ipstr);
+            free(med->portstr);
+            free(med);
+            return -1;
+        }
+
+        provmed = calloc(1, sizeof(prov_mediator_t));
+        provmed->mediatorid = med->mediatorid;
         provmed->details = med;
+        provmed->client = pending;
+        HASH_DELETE(hh, state->pendingclients, pending);
+        HASH_ADD_KEYPTR(hh, state->mediators, &(provmed->mediatorid),
+                sizeof(provmed->mediatorid), provmed);
+        cs->parent = (void *)provmed;
     }
 
-    /* All collectors must now know about this mediator */
-    HASH_ITER(hh, state->collectors, col, coltmp) {
+    /* If another mediator is using the same IP + port as a previous one,
+     * we need to make sure collectors do not connect to that socket for
+     * the old mediator.
+     */
+    snprintf(identifier, 1024, "%s-%s", med->ipstr, med->portstr);
+    logger(LOG_INFO, "identifier is %s\n", identifier);
 
-        prov_sock_state_t *cs = (prov_sock_state_t *)(col->client.state);
+    HASH_FIND(hh, state->knownmeds, identifier, strlen(identifier), knownaddr);
+    if (!knownaddr) {
+        knownaddr = calloc(1, sizeof(mediator_address_t));
+        knownaddr->medid = provmed->mediatorid;
+        knownaddr->ipportstr = strdup(identifier);
 
-        if (cs == NULL) {
-            continue;
-        }
-
-        if (col->client.commev == NULL ||
-                col->client.commev->fdtype != PROV_EPOLL_COLLECTOR) {
-            continue;
-        }
-
-        if (col->client.commev->fd == -1) {
-            continue;
-        }
-
-        if (cs->trusted == 0) {
-            continue;
-        }
+        HASH_ADD_KEYPTR(hh, state->knownmeds, knownaddr->ipportstr,
+                strlen(knownaddr->ipportstr), knownaddr);
+    } else {
+        logger(LOG_INFO,
+                "OpenLI provisioner: duplicate use of %s by mediators %u and %u, removing %u",
+                identifier, knownaddr->medid, provmed->mediatorid,
+                knownaddr->medid);
+        HASH_FIND(hh, state->mediators, &(knownaddr->medid),
+                sizeof(knownaddr->medid), prevmed);
+        knownaddr->medid = provmed->mediatorid;
 
         if (prevmed) {
-            /* The mediator has changed its details somehow, withdraw any
-             * references to the old one.
-             */
-            if (push_mediator_withdraw_onto_net_buffer(cs->outgoing,
-                    prevmed) < 0) {
-                if (cs->log_allowed) {
-                    logger(LOG_INFO,
-                        "OpenLI provisioner: error pushing mediator withdrawal %s:%s onto buffer for writing to collectori %s.",
-                        prevmed->ipstr, prevmed->portstr, col->identifier);
-                }
-                ret = -1;
-                break;
-            }
+            announce_mediator_withdraw(state, prevmed);
+            HASH_DELETE(hh, state->mediators, prevmed);
+            free_openli_mediator(prevmed->details);
+            destroy_provisioner_client(state->epoll_fd, prevmed->client,
+                    identifier);
+            free(prevmed);
         }
-
-        if (push_mediator_onto_net_buffer(cs->outgoing, provmed->details) < 0) {
-            if (cs->log_allowed) {
-                logger(LOG_INFO,
-                    "OpenLI provisioner: error pushing mediator %s:%s onto buffer for writing to collector %s.",
-                    provmed->details->ipstr, provmed->details->portstr,
-                    col->identifier);
-            }
-            ret = -1;
-            break;
-        }
-
-        if (enable_epoll_write(state, col->client.commev) == -1) {
-            if (cs->log_allowed) {
-                logger(LOG_INFO,
-                    "OpenLI provisioner: cannot enable epoll write event to transmit mediator update to collector %s -- %s.",
-                    col->identifier, strerror(errno));
-            }
-            ret = -1;
-            break;
-        }
-
     }
-    if (prevmed) {
-        free(prevmed->ipstr);
-        free(prevmed->portstr);
-        free(prevmed);
+
+    if (provmed) {
+        announce_mediator(state, provmed);
     }
+
     return ret;
 }
 
-void free_all_mediators(int epollfd, prov_mediator_t **mediators) {
+static void free_all_pending(int epollfd, prov_client_t **pending) {
+
+    prov_client_t *client, *tmp;
+
+    HASH_ITER(hh, *pending, client, tmp) {
+        HASH_DELETE(hh, *pending, client);
+        destroy_provisioner_client(epollfd, client, client->identifier);
+    }
+}
+
+void free_all_mediators(int epollfd, prov_mediator_t **mediators,
+        mediator_address_t **knownmeds) {
 
     prov_mediator_t *med, *medtmp;
+    mediator_address_t *kaddr, *ktmp;
 
     HASH_ITER(hh, *mediators, med, medtmp) {
         HASH_DELETE(hh, *mediators, med);
+        destroy_provisioner_client(epollfd, med->client, med->details->ipstr);
         free_openli_mediator(med->details);
-        destroy_provisioner_client(epollfd, &(med->client), med->identifier);
-        free(med->identifier);
         free(med);
+    }
+
+    HASH_ITER(hh, *knownmeds, kaddr, ktmp) {
+        HASH_DELETE(hh, *knownmeds, kaddr);
+        if (kaddr->ipportstr) {
+            free(kaddr->ipportstr);
+        }
+        free(kaddr);
     }
 }
 
@@ -401,7 +562,7 @@ void stop_all_collectors(int epollfd, prov_collector_t **collectors) {
 
     HASH_ITER(hh, *collectors, col, coltmp) {
         HASH_DELETE(hh, *collectors, col);
-        destroy_provisioner_client(epollfd, &(col->client), col->identifier);
+        destroy_provisioner_client(epollfd, col->client, col->identifier);
         free(col->identifier);
         free(col);
     }
@@ -449,8 +610,10 @@ void clear_prov_state(provision_state_t *state) {
 
     clear_intercept_state(&(state->interceptconf));
 
+    free_all_pending(state->epoll_fd, &(state->pendingclients));
     stop_all_collectors(state->epoll_fd, &(state->collectors));
-    free_all_mediators(state->epoll_fd, &(state->mediators));
+    free_all_mediators(state->epoll_fd, &(state->mediators),
+            &(state->knownmeds));
 
     close(state->epoll_fd);
 
@@ -842,6 +1005,7 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 }
                 cs->trusted = 1;
                 justauthed = 1;
+                add_collector_to_hashmap(state, pev->client, cs);
                 break;
             default:
                 if (cs->log_allowed) {
@@ -919,7 +1083,7 @@ static int receive_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
                 }
 
                 if (update_mediator_details(state, msgbody, msglen,
-                            cs->ipaddr) == -1) {
+                        cs, cs->ipaddr) == -1) {
                     return -1;
                 }
                 break;
@@ -983,96 +1147,105 @@ static int transmit_socket(provision_state_t *state, prov_epoll_ev_t *pev) {
     return 1;
 }
 
-static int accept_collector(provision_state_t *state) {
+static inline int accept_client(int sock, char *identspace,
+        int spacelen) {
 
     int newfd;
     struct sockaddr_storage saddr;
     socklen_t socklen = sizeof(saddr);
     char strbuf[INET6_ADDRSTRLEN];
     char portbuf[10];
-    prov_collector_t *col;
 
-    /* TODO check for EPOLLHUP or EPOLLERR */
-
-    /* Accept, then add to list of collectors. Push all active intercepts
-     * out to the collector. */
-    newfd = accept(state->clientfd->fd, (struct sockaddr *)&saddr, &socklen);
+    newfd = accept(sock, (struct sockaddr *)&saddr, &socklen);
     if (newfd < 0) {
         return newfd;
     }
-
     fd_set_nonblock(newfd);
 
     if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, sizeof(strbuf),
             portbuf, sizeof(portbuf), NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
         logger(LOG_INFO, "OpenLI: getnameinfo error in provisioner: %s.",
                 strerror(errno));
+        close(newfd);
+        return -1;
+    }
+
+    snprintf(identspace, spacelen, "%s-%s", strbuf, portbuf);
+    return newfd;
+}
+
+
+static int accept_collector(provision_state_t *state) {
+
+    char identbuf[INET6_ADDRSTRLEN + 11];
+    prov_client_t *colclient;
+    int newfd = -1;
+
+    /* TODO check for EPOLLHUP or EPOLLERR */
+
+    /* Accept, then add to list of collectors. Push all active intercepts
+     * out to the collector. */
+
+    if ((newfd = accept_client(state->clientfd->fd, identbuf,
+            INET6_ADDRSTRLEN + 11)) < 0) {
+        return -1;
     }
 
     /* See if this collector already exists */
-    HASH_FIND(hh, state->collectors, strbuf, strlen(strbuf), col);
+    HASH_FIND(hh, state->pendingclients, identbuf, strlen(identbuf), colclient);
 
-    if (!col) {
-        col = calloc(1, sizeof(prov_collector_t));
-        col->identifier = strdup(strbuf);
-        init_provisioner_client(&(col->client));
+    if (!colclient) {
+        colclient = calloc(1, sizeof(prov_client_t));
+        colclient->identifier = strdup(identbuf);
+        colclient->clientrole = PROV_EPOLL_COLLECTOR;
+        init_provisioner_client(colclient);
 
-        HASH_ADD_KEYPTR(hh, state->collectors, col->identifier,
-                strlen(col->identifier), col);
+        HASH_ADD_KEYPTR(hh, state->pendingclients, colclient->identifier,
+                strlen(colclient->identifier), colclient);
     }
 
-    halt_provisioner_client_idletimer(state->epoll_fd, &(col->client),
-            col->identifier);
+    halt_provisioner_client_idletimer(state->epoll_fd, colclient,
+            colclient->identifier);
 
     return accept_provisioner_client(&(state->sslconf), state->epoll_fd,
-            col->identifier, &(col->client), newfd, PROV_EPOLL_COLLECTOR,
+            colclient->identifier, colclient, newfd, PROV_EPOLL_COLLECTOR,
             PROV_EPOLL_COLLECTOR_HANDSHAKE);
 
 }
 
 static int accept_mediator(provision_state_t *state) {
 
-    int newfd;
-    struct sockaddr_storage saddr;
-    socklen_t socklen = sizeof(saddr);
-    char strbuf[INET6_ADDRSTRLEN];
-    char portbuf[10];
-    prov_mediator_t *med;
+    char identbuf[10 + INET6_ADDRSTRLEN + 1];
+    prov_client_t *medclient;
+    int newfd = -1;
 
     /* TODO check for EPOLLHUP or EPOLLERR */
 
     /* Accept, then add to list of mediators. Push all known LEAs to the
      * mediator, as well as any intercept->LEA mappings that we have.
      */
-    newfd = accept(state->mediatorfd->fd, (struct sockaddr *)&saddr, &socklen);
-    if (newfd < 0) {
-        return newfd;
-    }
-    fd_set_nonblock(newfd);
-
-    if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, sizeof(strbuf),
-            portbuf, sizeof(portbuf), NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
-        logger(LOG_INFO, "OpenLI: getnameinfo error in provisioner: %s.",
-                strerror(errno));
-    }
-
     /* See if this mediator already exists */
-    HASH_FIND(hh, state->mediators, strbuf, strlen(strbuf), med);
-
-    if (!med) {
-        med = calloc(1, sizeof(prov_mediator_t));
-        med->identifier = strdup(strbuf);
-        init_provisioner_client(&(med->client));
-
-        HASH_ADD_KEYPTR(hh, state->mediators, med->identifier,
-                strlen(med->identifier), med);
+    if ((newfd = accept_client(state->mediatorfd->fd, identbuf,
+            INET6_ADDRSTRLEN + 11)) < 0) {
+        return -1;
     }
 
-    halt_provisioner_client_idletimer(state->epoll_fd, &(med->client),
-            med->identifier);
+    HASH_FIND(hh, state->pendingclients, identbuf, strlen(identbuf), medclient);
+
+    if (!medclient) {
+        medclient = calloc(1, sizeof(prov_client_t));
+        init_provisioner_client(medclient);
+        medclient->identifier = strdup(identbuf);
+        medclient->clientrole = PROV_EPOLL_MEDIATOR;
+        HASH_ADD_KEYPTR(hh, state->pendingclients, medclient->identifier,
+                strlen(medclient->identifier), medclient);
+    }
+
+    halt_provisioner_client_idletimer(state->epoll_fd, medclient,
+            medclient->identifier);
 
     return accept_provisioner_client(&(state->sslconf), state->epoll_fd,
-            med->identifier, &(med->client), newfd, PROV_EPOLL_MEDIATOR,
+            medclient->identifier, medclient, newfd, PROV_EPOLL_MEDIATOR,
             PROV_EPOLL_MEDIATOR_HANDSHAKE);
 
 }
@@ -1177,11 +1350,21 @@ static void remove_idle_client(provision_state_t *state, prov_epoll_ev_t *pev) {
 
     prov_sock_state_t *cs = (prov_sock_state_t *)(pev->client->state);
 
-    if (cs->clientrole == PROV_EPOLL_COLLECTOR) {
+    if (cs->parent == NULL) {
+        prov_client_t *client;
+
+        HASH_FIND(hh, state->pendingclients, cs->ipaddr, strlen(cs->ipaddr),
+                client);
+        if (client) {
+            logger(LOG_DEBUG, "OpenLI: removed pending client %s from internal list", cs->ipaddr);
+            HASH_DELETE(hh, state->pendingclients, client);
+        }
+        destroy_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);
+
+    } else if (cs->clientrole == PROV_EPOLL_COLLECTOR) {
         prov_collector_t *col;
 
-        HASH_FIND(hh, state->collectors, cs->ipaddr, strlen(cs->ipaddr), col);
-        destroy_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);
+        col = (prov_collector_t *)(cs->parent);
         if (col) {
             logger(LOG_DEBUG, "OpenLI: removed collector %s from internal list",
                     col->identifier);
@@ -1189,19 +1372,19 @@ static void remove_idle_client(provision_state_t *state, prov_epoll_ev_t *pev) {
             free(col->identifier);
             free(col);
         }
+        destroy_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);
     } else if (cs->clientrole == PROV_EPOLL_MEDIATOR) {
         prov_mediator_t *med;
 
-        HASH_FIND(hh, state->mediators, cs->ipaddr, strlen(cs->ipaddr), med);
-        destroy_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);
+        med = (prov_mediator_t *)(cs->parent);
         if (med) {
-            logger(LOG_DEBUG, "OpenLI: removed mediator %s from internal list",
-                    med->identifier);
+            logger(LOG_DEBUG, "OpenLI: removed mediator %u from internal list",
+                    med->mediatorid);
             HASH_DELETE(hh, state->mediators, med);
             free_openli_mediator(med->details);
-            free(med->identifier);
             free(med);
         }
+        destroy_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);
     }
 
 }
@@ -1223,7 +1406,7 @@ static void expire_unauthed(provision_state_t *state, prov_epoll_ev_t *pev) {
                     "OpenLI Provisioner: dropping unauthed mediator.");
         }
     }
-    disconnect_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);
+    destroy_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);
 
 }
 
