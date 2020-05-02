@@ -287,6 +287,11 @@ static void flag_all_destinations(forwarding_thread_data_t *fwd) {
         med->awaitingconfirm = 1;
     }
     fwd->awaitingconfirm = 1;
+
+    if (fwd->flagtimerfd != -1) {
+        close(fwd->flagtimerfd);
+        fwd->flagtimerfd = -1;
+    }
 }
 
 static int handle_ctrl_message(forwarding_thread_data_t *fwd,
@@ -701,7 +706,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
     /* Add the mediator confirmation timer to our poll item list, if
      * required.
      */
-    if (fwd->awaitingconfirm) {
+    if (fwd->awaitingconfirm && fwd->flagtimerfd != -1) {
         fwd->topoll[fwd->nextpoll].socket = NULL;
         fwd->topoll[fwd->nextpoll].fd = fwd->flagtimerfd;
         fwd->topoll[fwd->nextpoll].events = ZMQ_POLLIN;
@@ -751,7 +756,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         fwd->topoll[1].revents = 0;
     }
 
-    if (fwd->awaitingconfirm) {
+    if (fwd->awaitingconfirm && fwd->flagtimerfd != -1) {
         if (fwd->topoll[fwd->nextpoll].revents & ZMQ_POLLIN) {
             purge_unconfirmed_mediators(fwd);
             fwd->awaitingconfirm = 0;
