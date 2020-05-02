@@ -1253,7 +1253,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
                 x->accesstype = cept->accesstype;
             }
             x->awaitingconfirm = 0;
-            free(cept);
+            free_single_ipintercept(cept);
             /* our collector threads should already know about this intercept */
             return 1;
         }
@@ -1543,6 +1543,9 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
         fd_set_block(sockfd);
         //collector cannt do anything untill it has instructions from provisioner so blocking is fine
 
+        if (sync->ssl) {
+            SSL_free(sync->ssl);
+        }
         sync->ssl = SSL_new(ctx);
         SSL_set_fd(sync->ssl, sockfd);
         SSL_set_connect_state(sync->ssl); //set client mode

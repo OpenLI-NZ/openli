@@ -283,6 +283,56 @@ static void free_staticcache(static_ipcache_t *cache) {
     }
 }
 
+static void process_incoming_messages(libtrace_thread_t *t,
+        collector_global_t *glob, colthread_local_t *loc,
+        openli_pushed_t *syncpush) {
+
+    if (syncpush->type == OPENLI_PUSH_IPINTERCEPT) {
+        handle_push_ipintercept(t, loc, syncpush->data.ipsess);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_HALT_IPINTERCEPT) {
+        handle_halt_ipintercept(t, loc, syncpush->data.ipsess);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_IPMMINTERCEPT) {
+        handle_push_ipmmintercept(t, loc, syncpush->data.ipmmint);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_HALT_IPMMINTERCEPT) {
+        handle_halt_ipmmintercept(t, loc, syncpush->data.rtpstreamkey);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_CORESERVER) {
+        handle_push_coreserver(t, loc, syncpush->data.coreserver);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_REMOVE_CORESERVER) {
+        handle_remove_coreserver(t, loc, syncpush->data.coreserver);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_VENDMIRROR_INTERCEPT) {
+        handle_push_mirror_intercept(t, loc, syncpush->data.mirror);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_HALT_VENDMIRROR_INTERCEPT) {
+        handle_halt_mirror_intercept(t, loc, syncpush->data.mirror);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_IPRANGE) {
+        handle_iprange(t, loc, syncpush->data.iprange);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_REMOVE_IPRANGE) {
+        handle_remove_iprange(t, loc, syncpush->data.iprange);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_MODIFY_IPRANGE) {
+        handle_modify_iprange(t, loc, syncpush->data.iprange);
+    }
+
+}
+
 static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
         void *global, void *tls) {
 
@@ -290,6 +340,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     colthread_local_t *loc = (colthread_local_t *)tls;
     ipv4_target_t *v4, *tmp;
     ipv6_target_t *v6, *tmp2;
+    openli_pushed_t syncpush;
     int zero = 0, i;
 
     if (trace_is_err(trace)) {
@@ -298,12 +349,18 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
                 err.problem);
     }
 
+    while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
+            (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
+        process_incoming_messages(t, glob, loc, &syncpush);
+    }
+
+    while (libtrace_message_queue_try_get(&(loc->fromsyncq_voip),
+            (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
+        process_incoming_messages(t, glob, loc, &syncpush);
+    }
+
     deregister_sync_queues(&(glob->syncip), t);
     deregister_sync_queues(&(glob->syncvoip), t);
-
-    /* TODO drain fromsync message queue so we don't leak SIP URIs
-     * and any other malloced memory in the messages.
-     */
 
     libtrace_message_queue_destroy(&(loc->fromsyncq_ip));
     libtrace_message_queue_destroy(&(loc->fromsyncq_voip));
@@ -459,56 +516,6 @@ static inline uint8_t check_for_invalid_sip(libtrace_packet_t *pkt,
     }
 
     return 0;
-}
-
-static void process_incoming_messages(libtrace_thread_t *t,
-        collector_global_t *glob, colthread_local_t *loc,
-        openli_pushed_t *syncpush) {
-
-    if (syncpush->type == OPENLI_PUSH_IPINTERCEPT) {
-        handle_push_ipintercept(t, loc, syncpush->data.ipsess);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_HALT_IPINTERCEPT) {
-        handle_halt_ipintercept(t, loc, syncpush->data.ipsess);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_IPMMINTERCEPT) {
-        handle_push_ipmmintercept(t, loc, syncpush->data.ipmmint);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_HALT_IPMMINTERCEPT) {
-        handle_halt_ipmmintercept(t, loc, syncpush->data.rtpstreamkey);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_CORESERVER) {
-        handle_push_coreserver(t, loc, syncpush->data.coreserver);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_REMOVE_CORESERVER) {
-        handle_remove_coreserver(t, loc, syncpush->data.coreserver);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_VENDMIRROR_INTERCEPT) {
-        handle_push_mirror_intercept(t, loc, syncpush->data.mirror);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_HALT_VENDMIRROR_INTERCEPT) {
-        handle_halt_mirror_intercept(t, loc, syncpush->data.mirror);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_IPRANGE) {
-        handle_iprange(t, loc, syncpush->data.iprange);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_REMOVE_IPRANGE) {
-        handle_remove_iprange(t, loc, syncpush->data.iprange);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_MODIFY_IPRANGE) {
-        handle_modify_iprange(t, loc, syncpush->data.iprange);
-    }
-
 }
 
 static inline int is_core_server_packet(libtrace_packet_t *pkt,
@@ -1489,7 +1496,8 @@ int main(int argc, char *argv[]) {
 
     sigaction(SIGINT, &sigact, NULL);
     sigaction(SIGTERM, &sigact, NULL);
-	signal(SIGPIPE, SIG_IGN);
+    sigaction(SIGPIPE, &(struct sigaction){SIG_IGN}, NULL);
+	//signal(SIGPIPE, SIG_IGN);
 
     sigact.sa_handler = reload_signal;
     sigemptyset(&sigact.sa_mask);

@@ -138,6 +138,9 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
                     close(found->fd);
                     found->fd = -1;
                 }
+            } else {
+                free(msg->data.med.ipstr);
+                free(msg->data.med.portstr);
             }
             found->awaitingconfirm = 0;
             found->halted = 0;
@@ -168,7 +171,9 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
 static inline void disconnect_mediator(forwarding_thread_data_t *fwd,
         export_dest_t *med) {
 
-    close(med->fd);
+    if (med->fd != -1) {
+        close(med->fd);
+    }
     med->fd = -1;
 
     if (med->logallowed) {
@@ -309,7 +314,6 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         free(msg->data.cept.liid);
         free(msg->data.cept.authcc);
         free(msg->data.cept.delivcc);
-        free(msg);
     } else if (msg->type == OPENLI_EXPORT_MEDIATOR) {
         return add_new_destination(fwd, msg);
     } else if (msg->type == OPENLI_EXPORT_DROP_SINGLE_MEDIATOR) {
@@ -320,6 +324,7 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         if (jval == NULL) {
             logger(LOG_DEBUG, "asked to remove mediator %d but cannot find it?",
                     msg->data.med.mediatorid);
+            free(msg);
             return 1;
         }
         med = (export_dest_t *)(*jval);
@@ -334,7 +339,7 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         logger(LOG_DEBUG, "causing all mediators to reconnect");
         disconnect_all_destinations(fwd);
     }
-
+    free(msg);
     return 1;
 }
 

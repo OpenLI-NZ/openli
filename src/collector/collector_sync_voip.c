@@ -1332,6 +1332,12 @@ static inline void add_new_sip_target_to_list(voipintercept_t *vint,
                 iter->active = 1;
             }
             iter->awaitingconfirm = 0;
+            if (sipid->username) {
+                free(sipid->username);
+            }
+            if (sipid->realm) {
+                free(sipid->realm);
+            }
             return;
         }
         n = n->next;
@@ -1430,11 +1436,12 @@ static int withdraw_voip_sip_target(collector_sync_voip_t *sync,
 static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
-    voipintercept_t *vint, toadd;
+    voipintercept_t *vint, *toadd;
     sync_sendq_t *sendq, *tmp;
     openli_export_recv_t *expmsg;
 
-    if (decode_voipintercept_start(intmsg, msglen, &toadd) == -1) {
+    toadd = (voipintercept_t *)malloc(sizeof(voipintercept_t));
+    if (decode_voipintercept_start(intmsg, msglen, toadd) == -1) {
         if (sync->log_bad_instruct) {
             logger(LOG_INFO,
                 "OpenLI: received invalid VOIP intercept from provisioner.");
@@ -1446,18 +1453,19 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         sync->log_bad_instruct = 1;
     }
 
-    HASH_FIND(hh_liid, sync->voipintercepts, toadd.common.liid,
-            toadd.common.liid_len, vint);
+    HASH_FIND(hh_liid, sync->voipintercepts, toadd->common.liid,
+            toadd->common.liid_len, vint);
     if (vint) {
-        vint->internalid = toadd.internalid;
+        vint->internalid = toadd->internalid;
         vint->awaitingconfirm = 0;
         vint->active = 1;
-        vint->options = toadd.options;
+        vint->options = toadd->options;
+        free_single_voipintercept(toadd);
         return 0;
+    } else {
+        vint = toadd;
     }
 
-    vint = (voipintercept_t *)malloc(sizeof(voipintercept_t));
-    memcpy(vint, &toadd, sizeof(voipintercept_t));
     vint->common.seqtrackerid = hash_liid(vint->common.liid) %
             sync->pubsockcount;
 
