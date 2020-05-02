@@ -615,7 +615,7 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
 
 static int drain_incoming_etsi(forwarding_thread_data_t *fwd) {
 
-    int x;
+    int x, encoders_over = 0;
     openli_encoded_result_t res;
 
     do {
@@ -625,11 +625,17 @@ static int drain_incoming_etsi(forwarding_thread_data_t *fwd) {
             return -1;
         }
 
-        if (x <= 0) {
-            break;
+        if (x < 0) {
+            continue;
         }
+
+        if (res.liid == NULL && res.destid == 0) {
+            logger(LOG_INFO, "encoder %d has ceased encoding", encoders_over);
+            encoders_over ++;
+        }
+
         free_encoded_result(&res);
-    } while (x > 0);
+    } while (encoders_over < fwd->encoders);
 
     return 1;
 }

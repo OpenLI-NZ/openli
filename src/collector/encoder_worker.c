@@ -180,6 +180,10 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
 
     for (i = 0; i < enc->forwarders; i++) {
         if (enc->zmq_pushresults[i]) {
+            openli_encoded_result_t final;
+
+            memset(&final, 0, sizeof(final));
+            zmq_send(enc->zmq_pushresults[i], &final, sizeof(final), 0);
             zmq_close(enc->zmq_pushresults[i]);
         }
     }
