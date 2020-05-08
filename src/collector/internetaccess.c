@@ -25,6 +25,7 @@
  */
 
 #include "logger.h"
+#include "util.h"
 #include "internetaccess.h"
 
 access_plugin_t *init_access_plugin(uint8_t accessmethod) {
@@ -125,7 +126,7 @@ access_session_t *create_access_session(access_plugin_t *p, char *sessid,
 }
 
 void add_new_session_ip(access_session_t *sess, void *att_val,
-        int family, uint8_t pfxbits) {
+        int family, uint8_t pfxbits, int att_len) {
 
 	    int ind = sess->sessipcount;
 
@@ -141,6 +142,11 @@ void add_new_session_ip(access_session_t *sess, void *att_val,
 
         in = (struct sockaddr_in *)&(sess->sessionips[ind].assignedip);
 
+        if (att_len != 4) {
+            logger(LOG_INFO, "OpenLI: unexpected attribute length for an IPv4 address: %d\n", att_len);
+            return;
+        }
+
         in->sin_family = AF_INET;
         in->sin_port = 0;
         in->sin_addr.s_addr = *((uint32_t *)att_val);
@@ -155,6 +161,11 @@ void add_new_session_ip(access_session_t *sess, void *att_val,
     } else if (family == AF_INET6) {
 
         struct sockaddr_in6 *in6;
+        int tocopy = 16;
+
+        if (att_len < tocopy) {
+            tocopy = att_len;
+        }
 
         in6 = (struct sockaddr_in6 *)&(sess->sessionips[ind].assignedip);
 
@@ -162,14 +173,14 @@ void add_new_session_ip(access_session_t *sess, void *att_val,
         in6->sin6_port = 0;
         in6->sin6_flowinfo = 0;
 
-        memcpy(&(in6->sin6_addr.s6_addr), att_val, 16);
+        memset(in6->sin6_addr.s6_addr, 0, sizeof(in6->sin6_addr.s6_addr));
+        memcpy(in6->sin6_addr.s6_addr, att_val, tocopy);
 
         if (sess->sessipversion == SESSION_IP_VERSION_NONE) {
             sess->sessipversion = SESSION_IP_VERSION_V6;
         } else if (sess->sessipversion == SESSION_IP_VERSION_V4) {
             sess->sessipversion = SESSION_IP_VERSION_DUAL;
         }
-
     } else {
         return;
     }

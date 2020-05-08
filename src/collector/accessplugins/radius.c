@@ -1145,11 +1145,11 @@ static inline void extract_assigned_ip_address(radius_global_t *glob,
     attr = attrlist;
     while (attr) {
         if (attr->att_type == RADIUS_ATTR_FRAMED_IP_ADDRESS) {
-            add_new_session_ip(sess, attr->att_val, AF_INET, 32);
+            add_new_session_ip(sess, attr->att_val, AF_INET, 32, attr->att_len);
         }
 
         if (attr->att_type == RADIUS_ATTR_FRAMED_IPV6_ADDRESS) {
-            add_new_session_ip(sess, attr->att_val, AF_INET6, 128);
+            add_new_session_ip(sess, attr->att_val, AF_INET6, 128, attr->att_len);
         }
 
         if (attr->att_type == RADIUS_ATTR_DELEGATED_IPV6_PREFIX ||
@@ -1159,7 +1159,7 @@ static inline void extract_assigned_ip_address(radius_global_t *glob,
             prefattr = (radius_v6_prefix_attr_t *)(attr->att_val);
 
             add_new_session_ip(sess, prefattr->address, AF_INET6,
-                    prefattr->preflength);
+                    prefattr->preflength, attr->att_len - 2);
 
             return;
         }

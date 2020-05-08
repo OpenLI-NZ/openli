@@ -1058,7 +1058,8 @@ static void extract_gtp_assigned_ip_address(gtp_saved_pkt_t *gpkt,
         if (gpkt->version == 2 && ie->ietype == GTPV2_IE_PDN_ALLOC) {
             if (*((uint8_t *)(ie->iecontent)) == 0x01) {
                 /* IPv4 */
-                add_new_session_ip(sess, ie->iecontent + 1, AF_INET, 32);
+                add_new_session_ip(sess, ie->iecontent + 1, AF_INET, 32,
+                        ie->ielength - 1);
 
                 /* These weird numbers are derived from bytes 3 and 4 of
                  * the Packet Data Protocol Address IE defined in
@@ -1073,13 +1074,15 @@ static void extract_gtp_assigned_ip_address(gtp_saved_pkt_t *gpkt,
 
             } else if (*((uint8_t *)(ie->iecontent)) == 0x02) {
                 /* IPv6 */
-                add_new_session_ip(sess, ie->iecontent + 1, AF_INET6, 128);
+                add_new_session_ip(sess, ie->iecontent + 1, AF_INET6, 128,
+                        ie->ielength - 1);
                 gsess->pdptype = htons(0x0157);
             } else if (*((uint8_t *)(ie->iecontent)) == 0x03) {
                 /* IPv4 AND IPv6 */
 
                 /* TODO support multiple sessionips per session */
-                add_new_session_ip(sess, ie->iecontent + 1, AF_INET6, 128);
+                add_new_session_ip(sess, ie->iecontent + 1, AF_INET6, 128,
+                        ie->ielength - 1);
 
                 gsess->pdptype = htons(0x018d);
             } else {
@@ -1096,11 +1099,13 @@ static void extract_gtp_assigned_ip_address(gtp_saved_pkt_t *gpkt,
 
             if ((pdptype & 0x0fff) == 0x0121 && ie->ielength >= 6) {
                 /* IPv4 */
-                add_new_session_ip(sess, ie->iecontent + 2, AF_INET, 32);
+                add_new_session_ip(sess, ie->iecontent + 2, AF_INET, 32,
+                        ie->ielength - 2);
                 gsess->pdptype = htons(0x0121);
             } else if ((pdptype & 0x0fff) == 0x0157 && ie->ielength >= 18) {
                 /* IPv6 */
-                add_new_session_ip(sess, ie->iecontent + 2, AF_INET6, 128);
+                add_new_session_ip(sess, ie->iecontent + 2, AF_INET6, 128,
+                        ie->ielength - 2);
                 gsess->pdptype = htons(0x0157);
             }
             gsess->pdpaddrs = sess->sessionips;

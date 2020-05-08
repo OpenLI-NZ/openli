@@ -193,7 +193,7 @@ access_plugin_t *get_gtp_access_plugin(void);
 access_session_t *create_access_session(access_plugin_t *p,
         char *idstr, int idstr_len);
 void add_new_session_ip(access_session_t *sess, void *att_val,
-        int family, uint8_t pfxbits);
+        int family, uint8_t pfxbits, int att_len);
 
 const char *accesstype_to_string(internet_access_method_t am);
 
