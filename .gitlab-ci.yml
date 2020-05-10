@@ -86,6 +86,20 @@ build-amd64-ubuntu-eoan:
   only:
     - tags
 
+build-amd64-ubuntu-focal:
+  stage: build
+  image: ubuntu:focal
+  script:
+    - ./gitlab-build.sh
+    - mkdir -p built-packages/focal/
+    - mv ../*.deb built-packages/focal/
+  artifacts:
+    paths:
+      - built-packages/*
+    expire_in: 1 day
+  only:
+    - tags
+
 build-amd64-fedora-29:
   stage: build
   image: fedora:29
@@ -121,6 +135,20 @@ build-amd64-fedora-31:
     - ./gitlab-build-rpm.sh fedora31
     - mkdir -p built-packages/fedora_31/
     - mv ~/rpmbuild/RPMS/x86_64/*.rpm built-packages/fedora_31/
+  artifacts:
+    paths:
+      - built-packages/*
+    expire_in: 1 day
+  only:
+    - tags
+
+build-amd64-fedora-32:
+  stage: build
+  image: fedora:32
+  script:
+    - ./gitlab-build-rpm.sh fedora32
+    - mkdir -p built-packages/fedora_32/
+    - mv ~/rpmbuild/RPMS/x86_64/*.rpm built-packages/fedora_32/
   artifacts:
     paths:
       - built-packages/*
