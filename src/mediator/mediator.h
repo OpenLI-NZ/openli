@@ -35,6 +35,7 @@
 #include "netcomms.h"
 #include "export_buffer.h"
 #include "util.h"
+#include "openli_tls.h"
 
 typedef struct med_epoll_ev {
     int fdtype;
@@ -209,6 +210,9 @@ struct liidmapping {
     med_epoll_ev_t *ceasetimer;
     UT_hash_handle hh;
 };
+
+
+void *start_pcap_thread(void *params);
 
 #endif
 
