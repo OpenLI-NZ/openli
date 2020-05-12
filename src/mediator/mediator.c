@@ -98,12 +98,6 @@ static void disconnect_handover(mediator_state_t *state, handover_t *ho) {
 
     agstate = (med_agency_state_t *)(ho->outev->state);
 
-    if (ho->disconnect_msg == 0) {
-        logger(LOG_INFO,
-            "OpenLI Mediator: Disconnected from handover %s:%s HI%d",
-            ho->ipstr, ho->portstr, ho->handover_type);
-    }
-
     /* Tidy up all of the epoll event fds related to the handover
      *
      * main_fd -- the fd we use to send records to the LEA on this handover
@@ -119,6 +113,12 @@ static void disconnect_handover(mediator_state_t *state, handover_t *ho) {
         close(agstate->main_fd);
         agstate->main_fd = -1;
         ho->outev->fd = -1;
+
+        if (ho->disconnect_msg == 0) {
+            logger(LOG_INFO,
+                    "OpenLI Mediator: Disconnected from handover %s:%s HI%d",
+                    ho->ipstr, ho->portstr, ho->handover_type);
+        }
     }
 
     if (agstate->katimer_fd != -1) {
@@ -1394,7 +1394,7 @@ static void create_new_agency(mediator_state_t *state, liagency_t *lea) {
 
     /* Start the handover connection thread if necessary */
     if (libtrace_list_get_size(state->agencies) == 1 &&
-            state->connectthread != -1) {
+            state->connectthread == -1) {
         pthread_create(&(state->connectthread), NULL, start_connect_thread,
                 state);
     }
