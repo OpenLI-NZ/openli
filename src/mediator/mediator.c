@@ -1879,6 +1879,15 @@ static liid_map_t *match_etsi_to_agency(mediator_state_t *state,
     return (liid_map_t *)(*jval);
 }
 
+/** Append an ETSI record to the outgoing queue for the appropriate handover.
+ *
+ *  @param state        The global state for this mediator
+ *  @param ho           The handover that will send this record
+ *  @param etsimsg      Pointer to the start of the ETSI record
+ *  @param msglen       Length of the ETSI record, in bytes.
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
 static int enqueue_etsi(mediator_state_t *state, handover_t *ho,
         uint8_t *etsimsg, uint16_t msglen) {
 
@@ -1916,6 +1925,15 @@ static int enqueue_etsi(mediator_state_t *state, handover_t *ho,
     return 0;
 }
 
+/** Disables the epoll write event for a socket.
+ *
+ *  @param state            The global state for this mediator.
+ *  @param mas              The agency that this socket is sending to.
+ *  @param ho               The handover that this socket applies to.
+ *  @param mev              The epoll event structure for the socket.
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
 static inline int disable_epoll_write(mediator_state_t *state,
         med_agency_state_t *mas, handover_t *ho, med_epoll_ev_t *mev) {
 
@@ -1935,7 +1953,16 @@ static inline int disable_epoll_write(mediator_state_t *state,
     return 0;
 }
 
-
+/** Send some buffered ETSI records out via a handover.
+ *
+ *  If there is a keep alive message pending for this handover, that will
+ *  be sent before sending any buffered records.
+ *
+ *  @param state            The global state for this mediator
+ *  @param mev              The epoll event for the handover
+ *
+ *  @return -1 is an error occurs, 0 otherwise.
+ */
 static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     med_agency_state_t *mas = (med_agency_state_t *)(mev->state);
@@ -1944,9 +1971,12 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
     struct timeval tv;
 
     if (mas->pending_ka) {
+        /* There's a keep alive to be sent */
         ret = send(mev->fd, mas->pending_ka->encoded, mas->pending_ka->len,
                 MSG_DONTWAIT);
         if (ret < 0) {
+            /* XXX should be worry about EAGAIN here? */
+
             if (ho->disconnect_msg == 0) {
                 logger(LOG_INFO,
                         "OpenLI Mediator: error while transmitting keepalive for handover %s:%s HI%d -- %s",
@@ -1967,6 +1997,7 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
             logger(LOG_INFO, "successfully sent keep alive to %s:%s HI%d",
                     ho->ipstr, ho->portstr, ho->handover_type);
 */
+            /* Start the timer for the response */
             if (start_mediator_timer(state, ho->aliverespev,
                         mas->kawait) == -1) {
                 if (ho->disconnect_msg == 0) {
@@ -1977,6 +2008,7 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
                 return -1;
             }
             if (ho->aliverespev) {
+                /* Make sure we're ready to receive the response */
                 mas->karesptimer_fd = ho->aliverespev->fd;
             } else if (ho->aliverespev == NULL && ho->disconnect_msg == 1) {
                 /* Not expecting a response, so we have to assume that
@@ -1988,6 +2020,10 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
                     ho->ipstr, ho->portstr, ho->handover_type);
             }
 
+            /* If there are no actual records waiting to be sent, then
+             * we can disable write on this handover and go back to the
+             * epoll loop.
+             */
             if (get_buffered_amount(&(mas->buf)) == 0) {
                 if (disable_epoll_write(state, mas, ho, mev) < 0) {
                     return -1;
@@ -2003,11 +2039,21 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
         return 0;
     }
 
+    /* As long as we have an unanswered keep alive, hold off on sending
+     * any buffered records -- the recipient may be unavailable and we'd
+     * be better off to keep those records in our buffer until we're
+     * confident that they're able to receive them.
+     */
     if (ho->aliverespev && mas->karesptimer_fd != -1) {
         return 0;
     }
 
-    if ((ret = transmit_buffered_records(&(mas->buf), mev->fd, 16000, NULL)) == -1) { //handover doesnt use TLS, so NULL
+    /* Send some of our buffered records, but no more than 16,000 bytes at
+     * a time -- we need to go back to our epoll loop to handle other events
+     * rather than getting stuck trying to send massive amounts of data in
+     * one go.
+     */
+    if ((ret = transmit_buffered_records(&(mas->buf), mev->fd, 16000, NULL)) == -1) {
         return -1;
     }
 
@@ -2015,6 +2061,9 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
         return 0;
     }
 
+    /* If we've sent everything that we've got, we can disable the epoll
+     * write event for this handover.
+     */
     if (get_buffered_amount(&(mas->buf)) == 0) {
         if (disable_epoll_write(state, mas, ho, mev) < 0) {
             return -1;
@@ -2051,10 +2100,17 @@ static inline int xmit_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
     }
 
     return 0;
-
-
 }
 
+/** Parse and action an instruction from a provisioner to remove an
+ *  LIID->agency mapping.
+ *
+ *  @param state            The global state for this mediator
+ *  @param msgbody          Pointer to the start of the cease message body
+ *  @param msglen           The size of the cease message, in bytes.
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
 static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
 
@@ -2063,6 +2119,7 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     int sock;
     PWord_t jval;
 
+    /** See netcomms.c for this method */
     if (decode_cease_mediation(msgbody, msglen, &liid) == -1) {
         if (state->provisioner.disable_log == 0) {
             logger(LOG_INFO,
@@ -2071,12 +2128,15 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
         return -1;
     }
 
+    /* Error while decoding, stop */
     if (liid == NULL) {
         return -1;
     }
 
+    /* Is this LIID in our existing LIID->agency map */
     JSLG(jval, state->liid_array, (unsigned char *)liid);
     if (jval == NULL) {
+        /* If not, ceasing is pretty straightforward */
         free(liid);
         return 0;
     }
@@ -2084,6 +2144,14 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     m = (liid_map_t *)(*jval);
 
     /* TODO end any pcap trace for this LIID */
+
+    /* We cease mediation on a time-wait basis, i.e. we wait 15 seconds
+     * after receiving the cease instruction before removing the LIID mapping.
+     * This allows any remaining records that were actually intercepted
+     * before the cease was issued, but are sitting in a buffer somewhere
+     * (either on the mediator or the collector), to be forwarded to the
+     * agencies.
+     */
 
     if (m->ceasetimer != NULL) {
         /* This LIID has already been scheduled to cease? */
@@ -2108,6 +2176,15 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     return 0;
 }
 
+/** Removes an entry from the LIID->agency map, following the expiry of
+ *  a "cease mediation" timer.
+ *
+ *  @param state            The global state for this mediator
+ *  @param mev              The epoll event for the cease mediation timer that
+ *                          has triggered.
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
 static inline int remove_mediator_liid_mapping(mediator_state_t *state,
         med_epoll_ev_t *mev) {
 
@@ -2117,8 +2194,8 @@ static inline int remove_mediator_liid_mapping(mediator_state_t *state,
     logger(LOG_INFO, "OpenLI Mediator: removed agency mapping for LIID %s.",
             m->liid);
     JSLD(err, state->liid_array, (unsigned char *)m->liid);
-    //HASH_DEL(state->liids, m);
 
+    /* Make sure that the timer event is removed from epoll */
     halt_mediator_timer(state, mev);
     free(m->ceasetimer);
     free(m->liid);
@@ -2126,6 +2203,16 @@ static inline int remove_mediator_liid_mapping(mediator_state_t *state,
     return 0;
 }
 
+/** Parses and actions a new LIID->agency mapping received from the
+ *  provisioner.
+ *
+ *  @param state            The global state for this mediator
+ *  @param msgbody          Pointer to the start of the LIID mapping message
+ *                          body
+ *  @param msglen           Length of the LIID mapping message, in bytes.
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
 static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
 
@@ -2138,6 +2225,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     agencyid = NULL;
     liid = NULL;
 
+    /* See netcomms.c for this method */
     if (decode_liid_mapping(msgbody, msglen, &agencyid, &liid) == -1) {
         logger(LOG_INFO, "OpenLI Mediator: receive invalid LIID mapping from provisioner.");
         return -1;
@@ -2175,6 +2263,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
 
     JSLG(jval, state->liid_array, (unsigned char *)liid);
     if (jval != NULL) {
+        /* We've seen this LIID before? Possibly a re-announcement? */
         m = (liid_map_t *)(*jval);
 
         if (m->ceasetimer) {
@@ -2184,6 +2273,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         }
         free(m->liid);
     } else {
+        /* Create a new entry in the mapping array */
         JSLI(jval, state->liid_array, (unsigned char *)liid);
         if (jval == NULL) {
             logger(LOG_INFO, "OpenLI Mediator: OOM when allocating memory for new LIID.");
@@ -2199,7 +2289,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
 
         /* If this was previously a "unknown" LIID, we can now remove
          * it from our missing LIID list -- if it gets withdrawn later,
-         * we will then alert again about it being missing. */ 
+         * we will then alert again about it being missing. */
         JSLG(jval, state->missing_liids, (unsigned char *)liid);
         if (jval != NULL) {
             JSLD(err, state->missing_liids, (unsigned char *)liid);
@@ -2220,7 +2310,13 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     return 0;
 }
 
-
+/** Sends any pending messages to the provisioner.
+ *
+ *  @param state            The global state for this mediator.
+ *  @param mev              The epoll event for the provisioner socket.
+ *
+ *  @return -1 if an error occurs, 1 otherwise.
+ */
 static int transmit_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     mediator_prov_t *prov = &(state->provisioner);
@@ -2228,6 +2324,7 @@ static int transmit_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
     int ret;
     openli_proto_msgtype_t err;
 
+    /* Try to send whatever we've got in the netcomms buffer */
     ret = transmit_net_buffer(prov->outgoing, &err);
     if (ret == -1) {
         if (prov->disable_log == 0) {
@@ -2254,6 +2351,14 @@ static int transmit_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
     return 1;
 }
 
+/** React to a handover's failure to respond to a keep alive before the
+ *  response timer expired.
+ *
+ *  @param state            The global state for this mediator
+ *  @param mev              The epoll event for the keep alive response timer
+ *
+ *  @return 0 always.
+ */
 static int trigger_ka_failure(mediator_state_t *state, med_epoll_ev_t *mev) {
     med_agency_state_t *ms = (med_agency_state_t *)(mev->state);
 
@@ -2263,13 +2368,19 @@ static int trigger_ka_failure(mediator_state_t *state, med_epoll_ev_t *mev) {
                 ms->parent->handover_type);
     }
 
-
     pthread_mutex_lock(&(state->agency_mutex));
     disconnect_handover(state, ms->parent);
     pthread_mutex_unlock(&(state->agency_mutex));
     return 0;
 }
 
+/** Receives and actions one or more messages received from the provisioner.
+ *
+ *  @param state            The global state for this mediator
+ *  @param mev              The epoll event for the provisioner socket
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
 static int receive_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     uint8_t *msgbody = NULL;
@@ -2330,6 +2441,14 @@ static int receive_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
     return 0;
 }
 
+/** Receives and actions a message sent to the mediator over a handover
+ *  (typically a keep alive response).
+ *
+ *  @param state            The global state for the mediator
+ *  @param mev              The epoll event for the handover
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
 static int receive_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
     med_agency_state_t *mas = (med_agency_state_t *)(mev->state);
     int ret;
@@ -2337,6 +2456,7 @@ static int receive_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
     uint32_t reclen = 0;
     uint32_t available;
 
+    /* receive the incoming message into a local SCB */
     ret = libtrace_scb_recv_sock(mas->incoming, mev->fd, MSG_DONTWAIT);
     if (ret == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -2365,6 +2485,11 @@ static int receive_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
         if (available == 0 || ptr == NULL) {
             break;
         }
+
+        /* We're only expecting to get keep alive responses back over the
+         * handover socket -- however, we will need to decode them to
+         * make sure they are valid.
+         */
         if (mas->decoder == NULL) {
             mas->decoder = wandder_create_etsili_decoder();
         }
@@ -2377,6 +2502,7 @@ static int receive_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
             /* Still need to recv more data */
             break;
         }
+
         if (wandder_etsili_is_keepalive_response(mas->decoder)) {
             int64_t recvseq;
             recvseq = wandder_etsili_get_sequence_number(mas->decoder);
@@ -2423,6 +2549,12 @@ static int receive_handover(mediator_state_t *state, med_epoll_ev_t *mev) {
     return 0;
 }
 
+/** Re-enables log messages for a collector that has re-connected.
+ *
+ *  @param state            The global state for this mediator
+ *  @param cs               The collector that has re-connected
+ *
+ */
 static inline void reenable_collector_logging(mediator_state_t *state,
         med_coll_state_t *cs) {
 
@@ -2439,6 +2571,14 @@ static inline void reenable_collector_logging(mediator_state_t *state,
     }
 }
 
+/** Receives and actions a message from a collector, which can include
+ *  an encoded ETSI CC or IRI.
+ *
+ *  @param state            The global state for this mediator.
+ *  @param mev              The epoll event for the collector socket.
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
 static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     uint8_t *msgbody = NULL;
@@ -2464,7 +2604,6 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
         }
 
         switch(msgtype) {
-
             case OPENLI_PROTO_DISCONNECT:
                 logger(LOG_INFO,
                         "OpenLI Mediator: error receiving message from collector.");
@@ -2472,6 +2611,8 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
             case OPENLI_PROTO_NO_MESSAGE:
                 break;
             case OPENLI_PROTO_RAWIP_SYNC:
+                /* This is a raw IP packet capture, rather than a properly
+                 * encoded ETSI CC. */
                 /* msgbody should be an LIID + an IP packet */
                 thisint = match_etsi_to_agency(state, msgbody, msglen,
                         &liidlen);
@@ -2493,7 +2634,7 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
 
                 break;
             case OPENLI_PROTO_ETSI_CC:
-                /* msgbody should contain a full ETSI record */
+                /* msgbody should contain an LIID + a full ETSI CC record */
                 thisint = match_etsi_to_agency(state, msgbody, msglen,
                         &liidlen);
                 if (thisint == NULL) {
@@ -2517,7 +2658,7 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                 }
                 break;
             case OPENLI_PROTO_ETSI_IRI:
-                /* msgbody should contain a full ETSI record */
+                /* msgbody should contain an LIID + a full ETSI IRI record */
                 thisint = match_etsi_to_agency(state, msgbody, msglen,
                         &liidlen);
                 if (thisint == NULL) {
@@ -2549,10 +2690,19 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
     return 0;
 }
 
+/** Attempts to complete an ongoing TLS handshake with a collector.
+ *
+ *  @param state            The global state for the mediator
+ *  @param mev              The epoll event for the collector socket
+ *
+ *  @return -1 if an error occurs, 0 if the handshake is not yet complete,
+ *          1 if the handshake has now completed.
+ */
 static int continue_handshake(mediator_state_t *state, med_epoll_ev_t *mev) {
     med_coll_state_t *cs = (med_coll_state_t *)(mev->state);
 
-    int ret = SSL_accept(cs->ssl); //either keep running handshake or return when error 
+    //either keep running handshake or return when error
+    int ret = SSL_accept(cs->ssl);
 
     if (ret <= 0){
         ret = SSL_get_error(cs->ssl, ret);
@@ -2575,6 +2725,14 @@ static int continue_handshake(mediator_state_t *state, med_epoll_ev_t *mev) {
     return 1;
 }
 
+/** React to an event on a file descriptor reported by our epoll loop.
+ *
+ *  @param state            The global state for the mediator
+ *  @param ev               The epoll event that has triggered
+ *
+ *  @return -1 if an error occurs, 1 if the epoll loop timer event has
+ *          triggered, 0 otherwise.
+ */
 static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 
 	med_epoll_ev_t *mev = (med_epoll_ev_t *)(ev->data.ptr);
@@ -2582,6 +2740,7 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 
 	switch(mev->fdtype) {
 		case MED_EPOLL_SIGCHECK_TIMER:
+            /* Time to stop epolling and do some housekeeping */
 			if (ev->events & EPOLLIN) {
 				return 1;
 			}
@@ -2589,40 +2748,50 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
                     "OpenLI Mediator: main epoll timer has failed.");
             return -1;
         case MED_EPOLL_PCAP_TIMER:
+            /* pcap timer has fired, flush or rotate any pcap output */
             assert(ev->events == EPOLLIN);
             ret = trigger_pcap_flush(state, mev);
             break;
         case MED_EPOLL_SIGNAL:
+            /* we got a signal that needs to be handled */
             ret = process_signal(state, mev->fd);
             break;
         case MED_EPOLL_COLL_CONN:
+            /* a connection is occuring on our listening socket */
             ret = accept_collector(state);
             break;
         case MED_EPOLL_CEASE_LIID_TIMER:
+            /* an LIID->agency mapping can now be safely removed */
             assert(ev->events == EPOLLIN);
             ret = remove_mediator_liid_mapping(state, mev);
             break;
         case MED_EPOLL_KA_TIMER:
+            /* a handover is due to send a keep alive message */
             assert(ev->events == EPOLLIN);
             ret = trigger_keepalive(state, mev);
             break;
         case MED_EPOLL_KA_RESPONSE_TIMER:
+            /* a handover target has not responded to a keep alive message
+             * and is due to be disconnected */
             assert(ev->events == EPOLLIN);
             ret = trigger_ka_failure(state, mev);
             break;
         case MED_EPOLL_PROVRECONNECT:
+            /* we're due to try reconnecting to a lost provisioner */
             assert(ev->events == EPOLLIN);
             halt_mediator_timer(state, mev);
             state->provisioner.tryconnect = 1;
             break;
 
         case MED_EPOLL_LEA:
+            /* the handover is available for writing or reading */
             if (ev->events & EPOLLRDHUP) {
                 ret = -1;
             } else if (ev->events & EPOLLIN) {
                 /* message from LEA -- hopefully a keep-alive response */
                 ret = receive_handover(state, mev);
             } else if (ev->events & EPOLLOUT) {
+                /* handover is able to send buffered records */
                 ret = xmit_handover(state, mev);
             } else {
                 ret = -1;
@@ -2636,11 +2805,14 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             break;
 
         case MED_EPOLL_PROVISIONER:
+            /* the provisioner socket is available for reading or writing */
             if (ev->events & EPOLLRDHUP) {
                 ret = -1;
             } else if (ev->events & EPOLLOUT) {
+                /* we can send a pending message to the provisioner */
                 ret = transmit_provisioner(state, mev);
             } else if (ev->events & EPOLLIN) {
+                /* provisioner has sent us an instruction */
                 ret = receive_provisioner(state, mev);
                 if (ret == 0 && state->provisioner.disable_log == 1) {
                     logger(LOG_INFO,
@@ -2663,13 +2835,14 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             }
             break;
         case MED_EPOLL_COLLECTOR_HANDSHAKE:
-            //continue handshake process
+            /* socket with an incomplete SSL handshake is available */
             ret = continue_handshake(state, mev);
             if (ret == -1) {
                 drop_collector(state, mev, 1);
             }
             break;
         case MED_EPOLL_COLLECTOR:
+            /* a collector is sending us some data */
             if (ev->events & EPOLLRDHUP) {
                 ret = -1;
             } else if (ev->events & EPOLLIN) {
@@ -2690,6 +2863,18 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 
 }
 
+/** Forms a message containing the IP address and port of this mediator's
+ *  listening socket (for collector connections) and queues it to be sent
+ *  to the provisioner. The provisioner will then pass that on to all
+ *  registered collectors, so they can connect to us and forward ETSI
+ *  that we can then distribute to the agencies.
+ *
+ *  @param state            The global state for this mediator.
+ *  @param justcreated      A boolean flag indicating whether the connection
+ *                          to the provisioner has recently been completed.
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
 static int send_mediator_listen_details(mediator_state_t *state,
         int justcreated) {
     openli_mediator_t meddeets;
@@ -2699,7 +2884,6 @@ static int send_mediator_listen_details(mediator_state_t *state,
     char listenname[NI_MAXHOST];
     int ret;
     struct epoll_event ev;
-
 
     memset(&sa, 0, sizeof(sa));
     meddeets.mediatorid = state->mediatorid;
@@ -2727,15 +2911,26 @@ static int send_mediator_listen_details(mediator_state_t *state,
     /* The configured port should match though, so we can just use that. */
     meddeets.portstr = state->listenport;
 
+    /* Add the mediator details message to the outgoing buffer for the
+     * provisioner socket.
+     */
     if (push_mediator_onto_net_buffer(prov->outgoing, &meddeets) == -1) {
         logger(LOG_INFO, "OpenLI Mediator: unable to push mediator details to provisioner.");
         return -1;
     }
 
+    /* If the socket was just created, then we've already configured the
+     * corresponding epoll event for writing.
+     */
     if (justcreated) {
         return 0;
     }
 
+
+    /* Otherwise, we may have disabled writing when we last emptied the
+     * outgoing buffer so make sure it is enabled again to send this queued
+     * message.
+     */
     ev.data.ptr = prov->provev;
     ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
 
@@ -2750,6 +2945,14 @@ static int send_mediator_listen_details(mediator_state_t *state,
     return 0;
 }
 
+/** Initialises local state for a successful connection to the provisioner
+ *
+ *  @param state            The global state for this mediator
+ *  @param sock             The file descriptor of the provisioner connection
+ *  @param ctx              The SSL context for this process
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
 static int init_provisioner_connection(mediator_state_t *state, int sock, SSL_CTX *ctx) {
 
     struct epoll_event ev;
@@ -2767,18 +2970,21 @@ static int init_provisioner_connection(mediator_state_t *state, int sock, SSL_CT
     prov->provev->fdtype = MED_EPOLL_PROVISIONER;
     prov->provev->state = NULL;
 
-    if (ctx != NULL){
+    if (ctx != NULL) {
+        /* We're using TLS, so attempt an SSL connection */
 
-        fd_set_block(sock); 
-        //mediator cannt do anything untill it has instructions fom provisioner so blocking is fine
+        /* mediator can't do anything until it has instructions from
+         * provisioner so blocking is fine */
+        fd_set_block(sock);
 
         int errr;
         prov->ssl = SSL_new(ctx);
         SSL_set_fd(prov->ssl, sock);
-        
+
         errr = SSL_connect(prov->ssl);
-        fd_set_nonblock(sock); 
-        if(errr <= 0){
+        fd_set_nonblock(sock);
+
+        if (errr <= 0){
             errr = SSL_get_error(prov->ssl, errr);
             if (errr != SSL_ERROR_WANT_WRITE && errr != SSL_ERROR_WANT_READ){ //handshake failed badly
                 SSL_free(prov->ssl);
@@ -2792,17 +2998,22 @@ static int init_provisioner_connection(mediator_state_t *state, int sock, SSL_CT
                 return -1;
             }
         }
-        logger(LOG_DEBUG, "OpenLI: SSL Handshake started for connection to provisioner");
+        logger(LOG_INFO,
+                "OpenLI mediator: SSL Handshake complete for connection to provisioner");
         state->lastsslerror_connect = 0;
     }
     else {
         prov->ssl = NULL;
     }
 
+    /* Create buffers for both receiving and sending messages on this socket */
     prov->sentinfo = 0;
     prov->outgoing = create_net_buffer(NETBUF_SEND, sock, prov->ssl);
     prov->incoming = create_net_buffer(NETBUF_RECV, sock, prov->ssl);
 
+    /* We're about to enqueue our "auth" message, so immediately configure
+     * this socket for an epoll write event (as well as read, of course).
+     */
     ev.data.ptr = prov->provev;
     ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
 
@@ -2823,9 +3034,15 @@ static int init_provisioner_connection(mediator_state_t *state, int sock, SSL_CT
         return -1;
     }
 
+    /* Epoll write is enabled, so pass in '1' here */
     return send_mediator_listen_details(state, 1);
 }
 
+/** Disconnects a provisioner socket and releases local state for that
+ *  connection.
+ *
+ *  @param currstate            The global state for this mediator.
+ */
 static inline void drop_provisioner(mediator_state_t *currstate) {
 
     liid_map_t *m;
@@ -2835,6 +3052,8 @@ static inline void drop_provisioner(mediator_state_t *currstate) {
 
     /* Disconnect from provisioner and reset all state received
      * from the old provisioner (just to be safe). */
+
+    /* Purge the LIID->agency mappings */
     index[0] = '\0';
     JSLF(pval, currstate->liid_array, index);
     while (pval != NULL) {
@@ -2852,12 +3071,22 @@ static inline void drop_provisioner(mediator_state_t *currstate) {
 
     free_provisioner(currstate->epoll_fd, &(currstate->provisioner));
 
+    /* Dump all known agencies -- we'll get new ones when we get a usable
+     * provisioner again */
     pthread_mutex_lock(&(currstate->agency_mutex));
     drop_all_agencies(currstate, currstate->agencies);
     pthread_mutex_unlock(&(currstate->agency_mutex));
 
 }
 
+/** Applies any changes to the provisioner socket configuration following
+ *  a user-triggered config reload.
+ *
+ *  @param currstate            The pre-reload global state of the mediator.
+ *  @param newstate             A global state instance containing the updated
+ *                              configuration.
+ *  @return 0 if the configuration is unchanged, 1 if it has changed.
+ */
 static int reload_provisioner_socket_config(mediator_state_t *currstate,
         mediator_state_t *newstate) {
 
@@ -2866,6 +3095,10 @@ static int reload_provisioner_socket_config(mediator_state_t *currstate,
     if (strcmp(newstate->provaddr, currstate->provaddr) != 0 ||
             strcmp(newstate->provport, currstate->provport) != 0) {
 
+        /* The provisioner is supposedly listening on a different IP and/or
+         * port to before, so we should definitely not be talking to
+         * whoever is on the old IP+port.
+         */
         drop_provisioner(currstate);
 
         /* Replace existing IP and port strings */
@@ -2888,6 +3121,11 @@ static int reload_provisioner_socket_config(mediator_state_t *currstate,
     return changed;
 }
 
+/** Closes the socket that is listening for collector connections and
+ *  drops any collectors that are connected through it.
+ *
+ *  @param currstate            The global state for the mediator
+ */
 static inline void halt_listening_socket(mediator_state_t *currstate) {
     struct epoll_event ev;
 
@@ -2897,7 +3135,7 @@ static inline void halt_listening_socket(mediator_state_t *currstate) {
             sizeof(mediator_collector_t));
 
 
-    /* Close listen socket */
+    /* Close listen socket and disable epoll event */
     if (currstate->listenerev) {
         if (currstate->listenerev->fd != -1) {
             logger(LOG_INFO, "OpenLI mediator: closing listening socket on %s:%s",
@@ -2916,6 +3154,14 @@ static inline void halt_listening_socket(mediator_state_t *currstate) {
     currstate->listenerev = NULL;
 }
 
+/** Applies any changes to the listening socket configuration following
+ *  a user-triggered config reload.
+ *
+ *  @param currstate            The pre-reload global state of the mediator.
+ *  @param newstate             A global state instance containing the updated
+ *                              configuration.
+ *  @return 0 if the configuration is unchanged, 1 if it has changed.
+ */
 static int reload_listener_socket_config(mediator_state_t *currstate,
         mediator_state_t *newstate) {
 
@@ -2924,6 +3170,10 @@ static int reload_listener_socket_config(mediator_state_t *currstate,
     if (strcmp(newstate->listenaddr, currstate->listenaddr) != 0 ||
             strcmp(newstate->listenport, currstate->listenport) != 0) {
 
+        /* We're supposed to be listening on a different port and/or IP,
+         * so we should close the existing socket and drop any collectors
+         * that used it to reach us.
+         */
         halt_listening_socket(currstate);
 
         /* Replace existing IP and port strings */
@@ -2956,6 +3206,66 @@ static int reload_listener_socket_config(mediator_state_t *currstate,
     return changed;
 }
 
+/** Attempts to connect to the provisioner.
+ *
+ *  @param state            The global state for this mediator.
+ *  @param provfail         Set to 1 if the most recent connection attempt
+ *                          failed, 0 otherwise.
+ *
+ *  @return 1 if the connection attempt fails, 0 otherwise.
+ */
+static int attempt_provisioner_connect(mediator_state_t *state, int provfail) {
+
+    /* If provfail is 1, this function won't log any failures to connect.
+     * This prevents log spam in cases where we repeatedly fail to connect,
+     * e.g. because the provisioner is down.
+     */
+    int s = connect_socket(state->provaddr, state->provport, provfail,
+            0);
+
+    provfail = 0;
+    if (s == -1) {
+        if (state->provisioner.disable_log == 0) {
+            logger(LOG_INFO,
+                    "OpenLI Mediator: Error - Unable to connect to provisioner.");
+        }
+        setup_provisioner_reconnect_timer(state);
+        provfail = 1;
+    } else if (s == 0) {
+        setup_provisioner_reconnect_timer(state);
+        provfail = 1;
+    }
+
+    if (!provfail) {
+        if (init_provisioner_connection(state, s, state->sslconf.ctx) == -1) {
+            /* Something went wrong (probably an SSL error), so clear any
+             * initialised state and set a timer to try again soon.
+             */
+            destroy_net_buffer(state->provisioner.outgoing);
+            destroy_net_buffer(state->provisioner.incoming);
+            close(s);
+            if (state->provisioner.provev) {
+                state->provisioner.provev->fd = -1;
+            }
+            state->provisioner.outgoing = NULL;
+            state->provisioner.incoming = NULL;
+            setup_provisioner_reconnect_timer(state);
+        } else if (state->provisioner.disable_log == 0) {
+            logger(LOG_INFO,
+                    "OpenLI mediator has connected to provisioner at %s:%s",
+                    state->provaddr, state->provport);
+        }
+    }
+    return provfail;
+}
+
+/** Re-read the mediator configuration file and apply any changes to the
+ *  running config.
+ *
+ *  @param currstate            The pre-reload global state of this mediator
+ *
+ *  @return -1 if an error occurs, 0 otherwise
+ */
 static int reload_mediator_config(mediator_state_t *currstate) {
 
     mediator_state_t newstate;
@@ -2963,22 +3273,33 @@ static int reload_mediator_config(mediator_state_t *currstate) {
     int provchanged = 0;
     int tlschanged = 0;
 
+    /* Load the updated config into a spare "global state" instance */
     if (init_med_state(&newstate, currstate->conffile) == -1) {
         logger(LOG_INFO,
                 "OpenLI Mediator: error reloading config file for mediator.");
         return -1;
     }
 
+    /* Check if the location of the provisioner has changed -- we'll need
+     * to reconnect if that is the case.
+     */
     if ((provchanged = reload_provisioner_socket_config(currstate,
             &newstate)) < 0) {
         return -1;
     }
 
+    /* Check if we are going to be listening on a different IP or port
+     * for collection connections -- if so, we need to close the old
+     * listen socket and create a new one.
+     */
     if ((listenchanged = reload_listener_socket_config(currstate,
             &newstate)) < 0) {
         return -1;
     }
 
+    /* Check if our TLS configuration has changed. If so, we'll need to
+     * drop all connections to other OpenLI components and create them anew.
+     */
     tlschanged = reload_ssl_config(&(currstate->sslconf), &(newstate.sslconf));
     if (tlschanged == -1) {
         return -1;
@@ -3002,18 +3323,30 @@ static int reload_mediator_config(mediator_state_t *currstate) {
     }
 
     if (listenchanged && !provchanged) {
-        /* Need to re-announce our details */
+        /* Need to re-announce our listen socket (or mediator ID) details */
         if (send_mediator_listen_details(currstate, 0) < 0) {
             return -1;
         }
 
     }
 
+    /* newstate was just temporary, so we can tidy it up now */
     clear_med_config(&newstate);
     return 0;
 
 }
 
+/** The main loop of the mediator process.
+ *
+ *  Continually checks for registered epoll events, e.g. timers expiring,
+ *  sockets available for reading or writing, signals being received, then
+ *  acts upon on those events that do occur.
+ *
+ *  Loops until an error occurs or a signal causes the 'mediator_halt' flag
+ *  to be set (i.e. SIGTERM or SIGINT).
+ *
+ *  @param state        The global state for the mediator
+ */
 static void run(mediator_state_t *state) {
 
 	int i, nfds;
@@ -3025,6 +3358,7 @@ static void run(mediator_state_t *state) {
     struct timeval tv;
     uint32_t firstflush;
 
+    /* Register the epoll event for received signals */
 	ev.data.ptr = state->signalev;
 	ev.events = EPOLLIN;
 
@@ -3044,8 +3378,8 @@ static void run(mediator_state_t *state) {
 	state->timerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
 	state->pcaptimerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
 
+    /* Set our first pcap file flush timer */
     firstflush = (((tv.tv_sec / 60) * 60) + 60) - tv.tv_sec;
-
     timerfd = epoll_add_timer(state->epoll_fd, firstflush, state->pcaptimerev);
     if (timerfd == -1) {
         logger(LOG_INFO,
@@ -3057,6 +3391,7 @@ static void run(mediator_state_t *state) {
     state->pcaptimerev->state = NULL;
 
 	while (!mediator_halt) {
+        /* If we've had a SIGHUP recently, reload the config file */
         if (reload_config) {
             if (reload_mediator_config(state) == -1) {
                 break;
@@ -3064,42 +3399,20 @@ static void run(mediator_state_t *state) {
             reload_config = 0;
         }
 
-	    /* Attempt to connect to the provisioner */
+	    /* Attempt to connect to the provisioner, if we don't already have
+         * a connection active */
         if (state->provisioner.provev == NULL &&
                 state->provisioner.tryconnect) {
-            int s = connect_socket(state->provaddr, state->provport, provfail,
-                    0);
-
-            provfail = 0;
-            if (s == -1) {
-                if (state->provisioner.disable_log == 0) {
-                    logger(LOG_INFO,
-                            "OpenLI Mediator: Error - Unable to connect to provisioner.");
-                }
-                provfail = 1;
-            } else if (s == 0) {
-                provfail = 1;
-            }
-
-            if (!provfail) {
-                if (init_provisioner_connection(state, s, state->sslconf.ctx) == -1) {
-                    destroy_net_buffer(state->provisioner.outgoing);
-                    destroy_net_buffer(state->provisioner.incoming);
-                    close(s);
-                    if (state->provisioner.provev) {
-                        state->provisioner.provev->fd = -1;
-                    }
-                    state->provisioner.outgoing = NULL;
-                    state->provisioner.incoming = NULL;
-                    setup_provisioner_reconnect_timer(state);
-                } else if (state->provisioner.disable_log == 0) {
-                    logger(LOG_INFO,
-                            "OpenLI mediator has connected to provisioner at %s:%s",
-                            state->provaddr, state->provport);
-                }
-            }
+            provfail = attempt_provisioner_connect(state, provfail);
         }
 
+        /* This timer will force us to stop checking epoll and go back
+         * to the start of this loop (i.e. checking if we should halt the
+         * entire mediator) every second.
+         *
+         * Otherwise, if we're very busy, we may never respond to a halt
+         * request.
+         */
         timerfd = epoll_add_timer(state->epoll_fd, 1, state->timerev);
         if (timerfd == -1) {
             logger(LOG_INFO,
@@ -3111,6 +3424,10 @@ static void run(mediator_state_t *state) {
         state->timerev->state = NULL;
         timerexpired = 0;
 
+        /* Simple epoll loop -- check for active fds or expired timers
+         * continuously, but break out once per second to allow us to act
+         * on any signals.
+         */
         while (!timerexpired) {
             nfds = epoll_wait(state->epoll_fd, evs, 64, -1);
             if (nfds < 0) {
@@ -3126,12 +3443,22 @@ static void run(mediator_state_t *state) {
 
             for (i = 0; i < nfds; i++) {
                 timerexpired = check_epoll_fd(state, &(evs[i]));
+                /* timerexpired will be set to 1 if the one second loop
+                 * breaking timer fires.
+                 */
+
                 if (timerexpired == -1) {
+                    /* Something went wrong, may also be a good time to
+                     * break out.
+                     */
                     break;
                 }
             }
         }
 
+        /* Remove the old 1 second timer, but it will get replaced if we
+         * go around again.
+         */
         if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, timerfd, &ev) == -1) {
             logger(LOG_INFO,
                 "OpenLI Mediator: unable to remove mediator timer from epoll set: %s",
@@ -3142,10 +3469,18 @@ static void run(mediator_state_t *state) {
         close(timerfd);
 		state->timerev->fd = -1;
     }
-    mediator_halt = true;
 
+    /* Make sure mediator_halt is set so that any other threads can recognise
+     * that it is time to stop (i.e. if we broke out of the main loop due to
+     * an error condition rather than a user signal).
+     */
+    mediator_halt = true;
 }
 
+/** Halt all ongoing pcap outputs and close their respective files.
+ *
+ *  @param pstate           The state for the pcap output thread
+ */
 static void halt_pcap_outputs(pcap_thread_state_t *pstate) {
 
     active_pcap_output_t *out, *tmp;
@@ -3158,6 +3493,13 @@ static void halt_pcap_outputs(pcap_thread_state_t *pstate) {
     }
 }
 
+/** Opens a pcap output file using libtrace, named after the current time.
+ *
+ *  @param pstate           The state for the pcap output thread
+ *  @param act              The intercept that requires a new pcap file
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
 static int open_pcap_output_file(pcap_thread_state_t *pstate,
         active_pcap_output_t *act) {
 
@@ -3166,6 +3508,7 @@ static int open_pcap_output_file(pcap_thread_state_t *pstate,
     int compresslevel = 1;
     struct timeval tv;
 
+    /* Make sure the user configured a directory for us to put files into */
     if (pstate->dir == NULL) {
         if (!pstate->dirwarned) {
             logger(LOG_INFO,
@@ -3181,10 +3524,19 @@ static int open_pcap_output_file(pcap_thread_state_t *pstate,
         return -1;
     }
 
+    /* Name the file after the LIID and current timestamp -- this ensures we
+     * will have files that have unique and meaningful names, even if we have
+     * multiple intercepts that last over multiple rotation periods.
+     */
     gettimeofday(&tv, NULL);
 
     snprintf(uri, 4096, "pcapfile:%s/openli-%s-%lu.pcap.gz", pstate->dir,
             act->liid, tv.tv_sec);
+
+    /* Libtrace boiler-plate for creating an output file - we use zlib
+     * compression level 1 here for a good balance between compression ratio
+     * and inter-operability with other software.
+     */
     act->out = trace_create_output(uri);
     if (trace_is_err_output(act->out)) {
         libtrace_err_t err;
@@ -3231,11 +3583,20 @@ static int open_pcap_output_file(pcap_thread_state_t *pstate,
     return 0;
 
 pcaptraceerr:
+    /* Tidying up in the event that something went wrong. */
     trace_destroy_output(act->out);
     act->out = NULL;
     return -1;
 }
 
+/** Start a new pcap output for a particular LIID
+ *
+ *  @param pstate           The state for the pcap output thread
+ *  @param liid             The LIID to create a pcap output for, as a string.
+ *
+ *  @return a pointer to a new pcap output structure, or NULL if an error
+ *          occurred.
+ */
 static active_pcap_output_t *create_new_pcap_output(pcap_thread_state_t *pstate,
         char *liid) {
 
@@ -3253,6 +3614,15 @@ static active_pcap_output_t *create_new_pcap_output(pcap_thread_state_t *pstate,
     return act;
 }
 
+/** Writes a raw captured IP packet to a pcap trace file.
+ *
+ *  The IP packet must be prepended with the LIID of the intercept that
+ *  triggered this packet's capture.
+ *
+ *  @param pstate           The state for the pcap output thread
+ *  @param pcapmsg          The message containing the captured packet, as
+ *                          received from the collector.
+ */
 static void write_rawpcap_packet(pcap_thread_state_t *pstate,
         mediator_pcap_msg_t *pcapmsg) {
 
@@ -3265,6 +3635,7 @@ static void write_rawpcap_packet(pcap_thread_state_t *pstate,
         return;
     }
 
+    /* Strip off the LIID that is at the start of the message */
     extract_liid_from_exported_msg(pcapmsg->msgbody, pcapmsg->msglen,
             liidspace, 2048, &liidlen);
 
@@ -3272,8 +3643,10 @@ static void write_rawpcap_packet(pcap_thread_state_t *pstate,
         return;
     }
 
+    /* The IP header starts immediately after the LIID */
     rawip = pcapmsg->msgbody + liidlen;
 
+    /* Have we seen this LIID before? -- if not, create a new pcap output */
     HASH_FIND(hh, pstate->active, liidspace, strlen((char *)liidspace),
             pcapout);
     if (!pcapout) {
@@ -3281,11 +3654,15 @@ static void write_rawpcap_packet(pcap_thread_state_t *pstate,
     }
 
     if (pcapout) {
-
         if (!pstate->packet) {
             pstate->packet = trace_create_packet();
         }
 
+        /* To use the libtrace API to write this packet and construct an
+         * appropriate pcap header for it, we'll need to use
+         * trace_construct_packet() to turn our buffer containing the IP
+         * packet into a libtrace packet.
+         */
         trace_construct_packet(pstate->packet, TRACE_TYPE_NONE,
                 (const void *)rawip, (uint16_t)pcapmsg->msglen - liidlen);
 
@@ -3306,6 +3683,16 @@ static void write_rawpcap_packet(pcap_thread_state_t *pstate,
     free(pcapmsg->msgbody);
 }
 
+/** Writes the IP packet contents of an encoded ETSI record to a pcap trace
+ *  file.
+ *
+ *  The IP packet must be prepended with the LIID of the intercept that
+ *  triggered this packet's capture.
+ *
+ *  @param pstate           The state for the pcap output thread
+ *  @param pcapmsg          The message containing the captured packet, as
+ *                          received from the collector.
+ */
 static void write_pcap_packet(pcap_thread_state_t *pstate,
         mediator_pcap_msg_t *pcapmsg) {
 
@@ -3318,6 +3705,7 @@ static void write_pcap_packet(pcap_thread_state_t *pstate,
         return;
     }
 
+    /* First, we're going to need to decode the ETSI encoding */
     if (pstate->decoder == NULL) {
         pstate->decoder = wandder_create_etsili_decoder();
     }
@@ -3331,12 +3719,14 @@ static void write_pcap_packet(pcap_thread_state_t *pstate,
         return;
     }
 
+    /* Use the decoder to figure out the LIID for this record */
     if (wandder_etsili_get_liid(pstate->decoder, liidspace, 1024) == NULL) {
         logger(LOG_INFO,
                 "OpenLI Mediator: unable to find LIID for ETSI CC in pcap thread");
         return;
     }
 
+    /* Have we seen this LIID before? -- if not, create a new pcap output */
     HASH_FIND(hh, pstate->active, liidspace, strlen(liidspace), pcapout);
     if (!pcapout) {
         pcapout = create_new_pcap_output(pstate, liidspace);
@@ -3350,13 +3740,18 @@ static void write_pcap_packet(pcap_thread_state_t *pstate,
             pstate->packet = trace_create_packet();
         }
 
-        /* turn the ETSI CC into a pcap packet */
+        /* Turn the ETSI CC into a libtrace pcap packet */
         rawip = wandder_etsili_get_cc_contents(pstate->decoder, &cclen,
                 ccname, 128);
         if (cclen > 65535) {
             logger(LOG_INFO,
                     "OpenLI Mediator: ETSI CC record is too large to write as a pcap packet -- possibly corrupt.");
         } else {
+            /* To use the libtrace API to write this packet and construct an
+             * appropriate pcap header for it, we'll need to use
+             * trace_construct_packet() to turn our buffer containing the IP
+             * packet into a libtrace packet.
+             */
             trace_construct_packet(pstate->packet, TRACE_TYPE_NONE,
                     (const void *)rawip, (uint16_t)cclen);
 
@@ -3379,10 +3774,23 @@ static void write_pcap_packet(pcap_thread_state_t *pstate,
     free(pcapmsg->msgbody);
 }
 
+/** Flush any outstanding packets for each active pcap output.
+ *
+ *  Regular libtrace writes may buffer captured packets for quite some
+ *  time before actually writing them to disk, which can lead users to think
+ *  that the intercept is not working. Therefore, we regularly trigger
+ *  flushing of the pcap outputs to ensure that the file on disk is more
+ *  representative of what has been intercepted thus far.
+ *
+ *  @param pstate           The state for the pcap output thread
+ */
 static void pcap_flush_traces(pcap_thread_state_t *pstate) {
     active_pcap_output_t *pcapout, *tmp;
 
     HASH_ITER(hh, pstate->active, pcapout, tmp) {
+        /* if pktwritten is zero, then no packets have been added since the
+         * last flush so no need to bother with an explicit flush call.
+         */
         if (pcapout->out && pcapout->pktwritten &&
                 trace_flush_output(pcapout->out) < 0) {
             libtrace_err_t err = trace_get_err_output(pcapout->out);
@@ -3395,15 +3803,29 @@ static void pcap_flush_traces(pcap_thread_state_t *pstate) {
             free(pcapout->liid);
             free(pcapout);
         }
+        pcapout->pktwritten = 0;
     }
 }
 
+/** Rotate the output files being used by each pcap output.
+ *
+ *  This is done regularly to ensure that there are complete pcap files
+ *  (i.e. with no half-written packets and proper footers) available for the
+ *  user to hand over to LEAs, if they accept pcap output.
+ *
+ *  @param pstate           The state for the pcap output thread
+ */
 static void pcap_rotate_traces(pcap_thread_state_t *pstate) {
     active_pcap_output_t *pcapout, *tmp;
 
     HASH_ITER(hh, pstate->active, pcapout, tmp) {
+        /* Close the existing output file -- this will also flush any
+         * remaining output and append any appropriate footer to the file.
+         */
         trace_destroy_output(pcapout->out);
         pcapout->out = NULL;
+
+        /* Open a new file, which will be named using the current time */
         if (open_pcap_output_file(pstate, pcapout) == -1) {
             logger(LOG_INFO,
                     "OpenLI Mediator: error while rotating pcap trace file");
@@ -3419,6 +3841,16 @@ static void pcap_rotate_traces(pcap_thread_state_t *pstate) {
     }
 }
 
+/** Main loop for the pcap output thread.
+ *
+ *  This thread handles any intercepted packets that the user has requested
+ *  to be written to pcap files on disk, instead of mediated over the
+ *  network using the ETSI LI handovers.
+ *
+ *  @param params           The message queue on which the main thread will
+ *                          be sending packets and instructions to this
+ *                          thread.
+ */
 static void *start_pcap_thread(void *params) {
 
     pcap_thread_state_t pstate;
@@ -3439,21 +3871,29 @@ static void *start_pcap_thread(void *params) {
         }
 
         if (pcapmsg.msgtype == PCAP_MESSAGE_HALT) {
+            /* Time to halt this thread */
             break;
         }
 
         if (pcapmsg.msgtype == PCAP_MESSAGE_FLUSH) {
+            /* Time to do our regular flush of the output files */
             pcap_flush_traces(&pstate);
             continue;
         }
 
         if (pcapmsg.msgtype == PCAP_MESSAGE_ROTATE) {
+            /* Time to rotate the output files */
             pcap_rotate_traces(&pstate);
             continue;
         }
 
         if (pcapmsg.msgtype == PCAP_MESSAGE_CHANGE_DIR) {
+            /* The main thread wants us to write pcap files to this directory */
             if (pstate.dir) {
+                /* If we already had a configured directory, we'll need to
+                 * close all of our existing files and switch over to the
+                 * new directory.
+                 */
                 free(pstate.dir);
                 if (strcmp(pstate.dir, (char *)pcapmsg.msgbody) != 0) {
                     halt_pcap_outputs(&pstate);
@@ -3472,13 +3912,18 @@ static void *start_pcap_thread(void *params) {
         }
 
         if (pcapmsg.msgtype == PCAP_MESSAGE_RAWIP) {
+            /* We've received a "raw" IP packet to be written to disk */
             write_rawpcap_packet(&pstate, &pcapmsg);
             continue;
         }
 
+        /* If we get here, we've received an ETSI record that needs to be
+         * reverted back to an IP packet and written to disk.
+         */
         write_pcap_packet(&pstate, &pcapmsg);
     }
 
+    /* Clean up any remaining thread state before exiting */
     if (pstate.dir) {
         free(pstate.dir);
         halt_pcap_outputs(&pstate);
@@ -3493,6 +3938,15 @@ static void *start_pcap_thread(void *params) {
     pthread_exit(NULL);
 }
 
+/** Main function for the OpenLI mediator.
+ *
+ *  Tasks:
+ *    - parses user configuration and initialises global state
+ *    - starts supporting threads (pcap output thread, listener thread)
+ *    - enters main loop via run()
+ *    - once loop exits, wait for supporting threads to exit
+ *    - free remaining global state
+ */
 int main(int argc, char *argv[]) {
     char *configfile = NULL;
     sigset_t sigblock;
@@ -3555,6 +4009,7 @@ int main(int argc, char *argv[]) {
     sigaddset(&sigblock, SIGINT);
     sigprocmask(SIG_BLOCK, &sigblock, NULL);
 
+    /* Read the config file and set up our global state structure */
     if (init_med_state(&medstate, configfile) == -1) {
         logger(LOG_INFO, "OpenLI Mediator: Error initialising mediator.");
         return 1;
@@ -3564,6 +4019,9 @@ int main(int argc, char *argv[]) {
 
     logger(LOG_INFO, "OpenLI Mediator: '%u' has started.", medstate.mediatorid);
 
+    /* A directory for pcap output has been configured, so send that through
+     * to the pcap output thread.
+     */
     if (medstate.pcapdirectory != NULL) {
         memset(&pcapmsg, 0, sizeof(pcapmsg));
         pcapmsg.msgtype = PCAP_MESSAGE_CHANGE_DIR;
@@ -3573,17 +4031,23 @@ int main(int argc, char *argv[]) {
         libtrace_message_queue_put(&(medstate.pcapqueue), &pcapmsg);
     }
 
+    /* Start the pcap output thread */
     pthread_create(&(medstate.pcapthread), NULL, start_pcap_thread,
             &(medstate.pcapqueue));
 
+    /* Start the thread that listens for connections from collectors */
     if (start_collector_listener(&medstate) == -1) {
         logger(LOG_INFO,
                 "OpenLI Mediator: could not start collector listener socket.");
         return 1;
     }
 
+    /* Start the main epoll loop - this will return when the mediator is
+     * ready to be shut down.
+     */
     run(&medstate);
 
+    /* Clean up */
     destroy_med_state(&medstate);
     clear_med_config(&medstate);
 
