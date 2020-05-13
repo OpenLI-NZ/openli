@@ -63,8 +63,11 @@ endif
 if BUILD_MEDIATOR
 bin_PROGRAMS += openlimediator
 openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
-		mediator/pcapthread.c \
-                byteswap.c byteswap.h \
+		mediator/pcapthread.c mediator/pcapthread.h \
+                mediator/handover.c mediator/handover.h \
+                mediator/med_epoll.c mediator/liidmapping.c \
+                mediator/liidmapping.h \
+                mediator/med_epoll.h byteswap.c byteswap.h \
                 configparser.c configparser.h util.c util.h \
                 agency.h logger.c logger.h netcomms.c \
                 netcomms.h export_buffer.c intercept.c \

@@ -25,6 +25,8 @@
  */
 
 #include <sys/epoll.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include "med_epoll.h"
 #include "util.h"
 
@@ -105,7 +107,7 @@ void destroy_mediator_timer(med_epoll_ev_t *timerev) {
 		return;
 	}
 
-	if (timerev->fd != -1)
+	if (timerev->fd != -1) {
 		halt_mediator_timer(timerev);
 	}
 	free(timerev);
@@ -222,8 +224,8 @@ int modify_mediator_fdevent(med_epoll_ev_t *modev, uint32_t events) {
 
 /** Removes a mediator epoll event for an active file descriptor.
  *
- * 	This function will close the file descriptor and free the mediator
- *  epoll event structure.
+ * 	This function will close the file descriptor *and* free the
+ *  mediator epoll event structure.
  *
  *  @param remev			The epoll event to remove.
  *
@@ -234,14 +236,12 @@ int remove_mediator_fdevent(med_epoll_ev_t *remev) {
 
 	if (remev && remev->fd != -1) {
 		if (epoll_ctl(remev->epoll_fd, EPOLL_CTL_DEL, remev->fd, &ev) == -1) {
+		    close(remev->fd);
 			return -1;
 		}
 		close(remev->fd);
 	}
 
-	if (remev) {
-		free(remev);
-	}
 	return 0;
 }
 

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2018-2020 The University of Waikato, Hamilton, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -30,33 +30,14 @@
 #include <Judy.h>
 #include <libwandder.h>
 #include <libwandder_etsili.h>
-#include <libtrace/simple_circular_buffer.h>
 #include <uthash.h>
 #include "netcomms.h"
 #include "export_buffer.h"
 #include "util.h"
 #include "openli_tls.h"
-
-typedef struct med_epoll_ev {
-    int fdtype;
-    int fd;
-    void *state;
-} med_epoll_ev_t;
-
-enum {
-    MED_EPOLL_COLL_CONN,
-    MED_EPOLL_PROVISIONER,
-    MED_EPOLL_LEA,
-    MED_EPOLL_COLLECTOR,
-    MED_EPOLL_KA_TIMER,
-    MED_EPOLL_KA_RESPONSE_TIMER,
-    MED_EPOLL_SIGNAL,
-    MED_EPOLL_SIGCHECK_TIMER,
-    MED_EPOLL_PCAP_TIMER,
-    MED_EPOLL_CEASE_LIID_TIMER,
-    MED_EPOLL_PROVRECONNECT,
-    MED_EPOLL_COLLECTOR_HANDSHAKE,
-};
+#include "med_epoll.h"
+#include "pcapthread.h"
+#include "liidmapping.h"
 
 typedef struct disabled_collector {
     char *ipaddr;
@@ -69,33 +50,6 @@ typedef struct med_coll_state {
     int disabled_log;
     SSL *ssl;
 } med_coll_state_t;
-
-typedef struct handover {
-    char *ipstr;
-    char *portstr;
-    int handover_type;
-    med_epoll_ev_t *outev;
-    med_epoll_ev_t *aliveev;
-    med_epoll_ev_t *aliverespev;
-    uint8_t disconnect_msg;
-} handover_t;
-
-typedef struct med_agency_state {
-    export_buffer_t buf;
-    libtrace_scb_t *incoming;
-    int outenabled;
-    int main_fd;
-    int katimer_fd;
-    uint32_t katimer_setsec;
-    int karesptimer_fd;
-    wandder_encoded_result_t *pending_ka;
-    int64_t lastkaseq;
-    wandder_encoder_t *encoder;
-    wandder_etsispec_t *decoder;
-    uint32_t kafreq;
-    uint32_t kawait;
-    handover_t *parent;
-} med_agency_state_t;
 
 typedef struct mediator_collector {
     med_epoll_ev_t *colev;
@@ -112,22 +66,6 @@ typedef struct mediator_provisioner {
     SSL *ssl;
 } mediator_prov_t;
 
-enum {
-    HANDOVER_HI2 = 2,
-    HANDOVER_HI3 = 3,
-};
-
-typedef struct liidmapping liid_map_t;
-
-typedef struct mediator_agency {
-    char *agencyid;
-    int awaitingconfirm;
-    int disabled;
-    int disabled_msg;
-    handover_t *hi2;
-    handover_t *hi3;
-} mediator_agency_t;
-
 typedef struct med_state {
     uint32_t mediatorid;
     char *conffile;
@@ -141,9 +79,10 @@ typedef struct med_state {
     char *provport;
     char *pcapdirectory;
 
+    handover_state_t handover_state;
+    liid_map_t liidmap;
+
     libtrace_list_t *collectors;
-    libtrace_list_t *agencies;
-    pthread_mutex_t agency_mutex;
 
     int epoll_fd;
     med_epoll_ev_t *listenerev;
@@ -154,13 +93,8 @@ typedef struct med_state {
 
     mediator_prov_t provisioner;
 
-    Pvoid_t liid_array;
-    Pvoid_t missing_liids;
-//    liid_map_t *liids;
-
     uint32_t pcaprotatefreq;
     pthread_t pcapthread;
-    pthread_t connectthread;
     libtrace_message_queue_t pcapqueue;
     wandder_etsispec_t *etsidecoder;
     disabled_collector_t *disabledcols;
@@ -169,50 +103,6 @@ typedef struct med_state {
     int lastsslerror_connect;
 
 } mediator_state_t;
-
-enum {
-    PCAP_MESSAGE_CHANGE_DIR,
-    PCAP_MESSAGE_HALT,
-    PCAP_MESSAGE_PACKET,
-    PCAP_MESSAGE_FLUSH,
-    PCAP_MESSAGE_ROTATE,
-    PCAP_MESSAGE_RAWIP,
-};
-
-typedef struct active_pcap_output {
-    char *liid;
-    libtrace_out_t *out;
-    int pktwritten;
-
-    UT_hash_handle hh;
-} active_pcap_output_t;
-
-typedef struct pcap_thread_state {
-
-    libtrace_message_queue_t *inqueue;
-    libtrace_packet_t *packet;
-    active_pcap_output_t *active;
-    char *dir;
-    int dirwarned;
-    wandder_etsispec_t *decoder;
-
-} pcap_thread_state_t;
-
-typedef struct mediator_pcap_message {
-    uint8_t msgtype;
-    uint8_t *msgbody;
-    uint16_t msglen;
-} mediator_pcap_msg_t;
-
-struct liidmapping {
-    char *liid;
-    mediator_agency_t *agency;
-    med_epoll_ev_t *ceasetimer;
-    UT_hash_handle hh;
-};
-
-
-void *start_pcap_thread(void *params);
 
 #endif
 
