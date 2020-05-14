@@ -1471,7 +1471,6 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
                 ret = transmit_provisioner(state, mev);
             } else if (ev->events & EPOLLIN) {
                 /* provisioner has sent us an instruction */
-                fprintf(stderr, "ping\n");
                 ret = receive_provisioner(state, mev);
                 if (ret == 0 && state->provisioner.disable_log == 1) {
                     logger(LOG_INFO,
@@ -1479,7 +1478,6 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
                             state->provaddr, state->provport);
                     state->provisioner.disable_log = 0;
                 }
-                fprintf(stderr, "pong\n");
             } else {
                 ret = -1;
             }
