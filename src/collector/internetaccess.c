@@ -203,6 +203,49 @@ int free_single_session(internet_user_t *user, access_session_t *sess) {
     return 0;
 }
 
+int remove_session_ip(access_session_t *sess, internetaccess_ip_t *sessip) {
+
+    int i;
+    int nullips = 0;
+
+    for (i = 0; i < sess->sessipcount; i++) {
+        if (sess->sessionips[i].ipfamily == 0) {
+            nullips ++;
+            continue;
+        }
+
+        if (sess->sessionips[i].ipfamily == sessip->ipfamily &&
+                sess->sessionips[i].prefixbits == sessip->prefixbits) {
+
+            if (sessip->ipfamily == AF_INET) {
+                struct sockaddr_in *in, *this;
+                in = (struct sockaddr_in *)&(sessip->assignedip);
+                this = (struct sockaddr_in *)&(sess->sessionips[i].assignedip);
+
+                if (this->sin_addr.s_addr == in->sin_addr.s_addr) {
+                    sess->sessionips[i].ipfamily = 0;
+                    nullips ++;
+                }
+            } else if (sessip->ipfamily == AF_INET6) {
+                struct sockaddr_in6 *in, *this;
+                in = (struct sockaddr_in6 *)&(sessip->assignedip);
+                this = (struct sockaddr_in6 *)&(sess->sessionips[i].assignedip);
+
+                if (memcmp(&(this->sin6_addr.s6_addr), &(in->sin6_addr.s6_addr),
+                        16) == 0) {
+                    sess->sessionips[i].ipfamily = 0;
+                    nullips ++;
+                }
+            }
+        }
+    }
+
+    if (nullips == sess->sessipcount) {
+        return 1;
+    }
+    return 0;
+}
+
 const char *accesstype_to_string(internet_access_method_t am) {
     switch(am) {
         case INTERNET_ACCESS_TYPE_UNDEFINED:

@@ -1703,9 +1703,7 @@ static int remove_ip_to_session_mapping(collector_sync_t *sync,
     char ipstr[128];
     int i, j, errs = 0, nullsess = 0;
 
-
     for (i = 0; i < sess->sessipcount; i++) {
-
         HASH_FIND(hh, sync->activeips, &(sess->sessionips[i]),
                 sizeof(internetaccess_ip_t), mapping);
 
@@ -1778,11 +1776,14 @@ static inline int report_silent_logoffs(collector_sync_t *sync,
                         prev->session[i], ipint);
             }
         }
-        free_single_session(prev->owner[i], prev->session[i]);
+
+        if (remove_session_ip(prev->session[i], prev->ip) == 1) {
+            free_single_session(prev->owner[i], prev->session[i]);
+        }
     }
+    HASH_DELETE(hh, sync->activeips, prev);
     free(prev->session);
     free(prev->owner);
-    HASH_DELETE(hh, sync->activeips, prev);
     free(prev);
     return 1;
 }
@@ -1802,6 +1803,7 @@ static int add_ip_to_session_mapping(collector_sync_t *sync,
     }
 
     for (i = 0; i < sess->sessipcount; i++) {
+
         HASH_FIND(hh, sync->activeips, &(sess->sessionips[i]),
                 sizeof(internetaccess_ip_t), prev);
 
