@@ -185,7 +185,6 @@ int receive_handover(med_epoll_ev_t *mev);
  *  @return a pointer to the agency with the given ID, or NULL if no such
  *          agency is found.
  */
-
 mediator_agency_t *lookup_agency(handover_state_t *state, char *id);
 
 #endif
