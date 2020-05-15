@@ -30,6 +30,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <amqp.h>
+#include <amqp_tcp_socket.h>
 
 #include "netcomms.h"
 #include "logger.h"
@@ -966,6 +968,40 @@ static inline int push_mediator_msg_onto_net_buffer(net_buffer_t *nb,
     return (int)totallen;
 }
 
+
+int push_rmq_invite_onto_net_buffer(net_buffer_t *nb,
+        char *ipstr) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+    int ret;
+
+    totallen = strlen(ipstr)+1;
+
+    /* Pre-compute our body length so we can write it in the header */
+    if (totallen > 65535) {
+        logger(LOG_INFO,
+                "OpenLI: mediator invite is too long to fit in a single message (%d).",
+                totallen);
+        return -1;
+    }
+
+    /* Push on header */
+    populate_header(&hdr, OPENLI_PROTO_INVITE_RMQ, totallen, 0);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t))) == -1) {
+        return -1;
+    }
+
+    /* Push on each invite field */ //TODO, this can be better than a string
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)ipstr,
+            totallen)) == -1) {
+        return -1;
+    }
+
+    return (int)totallen;
+}
+
 int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med) {
 
     return push_mediator_msg_onto_net_buffer(nb, med,
@@ -1778,6 +1814,119 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
     }
 
     nb->appendptr += ret;
+
+    rettype = parse_received_message(nb, msgbody, msglen, intid);
+    return rettype;
+}
+
+openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb, 
+        amqp_connection_state_t *amqp_state, 
+        uint8_t **msgbody, uint16_t *msglen, uint64_t *intid) {
+
+    amqp_frame_t frame;
+    amqp_rpc_reply_t ret;
+    amqp_envelope_t envelope;
+
+    openli_proto_msgtype_t rettype;
+    ii_header_t *hdr;
+
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 10;
+
+    if (nb == NULL) {
+        return OPENLI_PROTO_NULL_BUFFER;
+    }
+
+    if (nb->buftype != NETBUF_RECV) {
+        return OPENLI_PROTO_WRONG_BUFFER_TYPE;
+    }
+
+    rettype = parse_received_message(nb, msgbody, msglen, intid);
+    if (rettype != OPENLI_PROTO_NO_MESSAGE) {
+        return rettype;
+    }
+
+    amqp_maybe_release_buffers(*amqp_state);
+    ret = amqp_consume_message(*amqp_state, &envelope, &tv, 0);
+
+    if (AMQP_RESPONSE_NORMAL != ret.reply_type) {
+        if (AMQP_RESPONSE_LIBRARY_EXCEPTION == ret.reply_type &&
+                AMQP_STATUS_UNEXPECTED_STATE == ret.library_error) {
+            if (AMQP_STATUS_OK != amqp_simple_wait_frame(*amqp_state, &frame)) {
+                return OPENLI_PROTO_NO_MESSAGE;
+            }
+
+            if (AMQP_FRAME_METHOD == frame.frame_type) {
+                switch (frame.payload.method.id) {
+                    case AMQP_BASIC_ACK_METHOD: 
+                        /* if we've turned publisher confirms on, and we've published a
+                        * message here is a message being confirmed.
+                        */
+                        logger(LOG_INFO, "basic ack");
+                        //break;
+                        return OPENLI_PROTO_NO_MESSAGE;
+                    case AMQP_BASIC_RETURN_METHOD:
+                        /* if a published message couldn't be routed and the mandatory
+                        * flag was set this is what would be returned. The message then
+                        * needs to be read.
+                        */
+                        {
+                            amqp_message_t message;
+                            ret = amqp_read_message(*amqp_state, frame.channel, &message, 0);
+                            if (AMQP_RESPONSE_NORMAL != ret.reply_type) {
+                                return OPENLI_PROTO_RECV_ERROR;
+                            }
+                            amqp_destroy_message(&message);
+                        }
+
+                        //break;
+                        return OPENLI_PROTO_NO_MESSAGE;
+
+                    case AMQP_CHANNEL_CLOSE_METHOD:
+                        /* a channel.close method happens when a channel exception occurs,
+                        * this can happen by publishing to an exchange that doesn't exist
+                        * for example.
+                        *
+                        * In this case you would need to open another channel redeclare
+                        * any queues that were declared auto-delete, and restart any
+                        * consumers that were attached to the previous channel.
+                        */
+                        logger(LOG_INFO, "channel close");
+                        return OPENLI_PROTO_RECV_ERROR;
+
+                    case AMQP_CONNECTION_CLOSE_METHOD:
+                        /* a connection.close method happens when a connection exception
+                        * occurs, this can happen by trying to use a channel that isn't
+                        * open for example.
+                        *
+                        * In this case the whole connection must be restarted.
+                        */
+                        logger(LOG_INFO, "connection close");
+                        return OPENLI_PROTO_PEER_DISCONNECTED;
+
+                    default:
+                        logger(LOG_INFO, "An unexpected method was received %u\n",
+                        frame.payload.method.id);
+                        return OPENLI_PROTO_RECV_ERROR;
+                }
+            }
+        }
+    }
+
+    /* Ensure the buffer is big enough to hold the new message. */
+    if (NETBUF_SPACE_REM(nb) < envelope.message.body.len) {
+        if (extend_net_buffer(nb, envelope.message.body.len) == -1) {
+            return OPENLI_PROTO_BUFFER_TOO_FULL;
+        }
+    }
+
+
+    memcpy(nb->appendptr, 
+            envelope.message.body.bytes,
+            envelope.message.body.len);
+    nb->appendptr += envelope.message.body.len;
+    amqp_destroy_envelope(&envelope);
 
     rettype = parse_received_message(nb, msgbody, msglen, intid);
     return rettype;

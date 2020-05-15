@@ -44,6 +44,7 @@ AC_CHECK_LIB([ssl], [SSL_library_init],libssl_found=1,)
 AC_CHECK_LIB([ssl], [OPENSSL_init_ssl],libssl_found=1,)
 AC_CHECK_LIB([crypto], [ERR_load_crypto_strings],libcrypto_found=1,)
 AC_CHECK_LIB([crypto], [EVP_CIPHER_CTX_new],libcrypto_found=1,)
+AC_CHECK_LIB([rabbitmq], [amqp_new_connection],rabbit_found=1,rabbit_found=0)
 
 if test "x$libzmq_found" = "x1"; then
         COLLECTOR_LIBS="$COLLECTOR_LIBS -lzmq"
@@ -52,6 +53,7 @@ fi
 
 AC_CHECK_HEADERS([uthash.h], [uthash_avail=yes; break;])
 AC_CHECK_HEADERS([syslog.h])
+AC_CHECK_HEADER(amqp.h, ampq_h_found=1, amqp_h_found=0)
 
 AC_CONFIG_FILES([Makefile src/Makefile extlib/Makefile
                 extlib/libpatricia/Makefile])
@@ -123,6 +125,22 @@ else
         MEDIATOR_LIBS="$MEDIATOR_LIBS -lcrypto"
         PROVISIONER_LIBS="$PROVISIONER_LIBS -lcrypto"
 fi
+
+
+if test "$rabbit_found" != 1; then
+    AC_MSG_ERROR(Required library librabbitmq not found; use LDFLAGS to specify library location)
+else
+        if test "$amqp_h_found" = 0; then
+                AC_MSG_ERROR(Required headers for librabbitmq not found; use CFLAGS to specify header location)
+        else
+                COLLECTOR_LIBS="$COLLECTOR_LIBS -lrabbitmq"
+                MEDIATOR_LIBS="$MEDIATOR_LIBS -lrabbitmq"
+                PROVISIONER_LIBS="$PROVISIONER_LIBS -lrabbitmq"
+        fi
+fi
+
+
+
 
 if test "$libyaml_found" = 0; then
         AC_MSG_ERROR(Required library libyaml not found; use LDFLAGS to specify library location)

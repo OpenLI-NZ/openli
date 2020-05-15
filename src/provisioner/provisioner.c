@@ -792,6 +792,17 @@ static int respond_mediator_auth(provision_state_t *state,
         }
         h = h->hh.next;
     }
+
+    //TODO tell this mediator about collecotrs
+
+    //can either subscribe to all of them or just the ones with approiate queues
+    prov_collector_t *col, *temp_col;
+    HASH_ITER(hh, state->collectors, col, temp_col) {
+        logger(LOG_INFO, "Telling mediator about collector:%s",col->identifier);
+        //we dont know about collectors yet as they ahvent joined
+        push_rmq_invite_onto_net_buffer(outgoing, col->identifier);
+    }
+
     pthread_mutex_unlock(&(state->interceptconf.safelock));
 
     /* Update our epoll event for this mediator to allow transmit. */
@@ -867,6 +878,18 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 cs->ipaddr, pev->fd);
         halt_provisioner_client_authtimer(state->epoll_fd, pev->client,
                 cs->ipaddr);
+
+        //TODO we need to tell all mediators about this collector,
+        //can either tell all of them or just the ones with approiate queues(not sure how to do) 
+        prov_mediator_t *med, *temp_med;
+        HASH_ITER(hh, state->mediators, med, temp_med) {
+            // logger(LOG_INFO, "Telling mediator:%s about collector:%s",
+            //         med->identifier,
+            //         cs->ipaddr);
+        }
+        
+
+
         return respond_collector_auth(state, pev, cs->outgoing);
    }
 

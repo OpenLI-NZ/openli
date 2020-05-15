@@ -32,6 +32,7 @@
 #include <libwandder_etsili.h>
 #include <libtrace/simple_circular_buffer.h>
 #include <uthash.h>
+#include <amqp.h>
 #include "netcomms.h"
 #include "export_buffer.h"
 #include "util.h"
@@ -55,6 +56,7 @@ enum {
     MED_EPOLL_CEASE_LIID_TIMER,
     MED_EPOLL_PROVRECONNECT,
     MED_EPOLL_COLLECTOR_HANDSHAKE,
+    MED_EPOLL_COL_RMQ,
 };
 
 typedef struct disabled_collector {
@@ -68,6 +70,13 @@ typedef struct med_coll_state {
     int disabled_log;
     SSL *ssl;
 } med_coll_state_t;
+
+typedef struct med_coll_RMQ_state {
+    char *ipaddr;
+    net_buffer_t *incoming;
+    int disabled_log;
+    amqp_connection_state_t amqp_state;
+} med_coll_RMQ_state_t;
 
 typedef struct handover {
     char *ipstr;

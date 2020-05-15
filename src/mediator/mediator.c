@@ -41,6 +41,8 @@
 #include <assert.h>
 #include <libwandder_etsili.h>
 #include <Judy.h>
+#include <amqp_tcp_socket.h>
+#include <amqp.h>
 
 #include "config.h"
 #include "configparser.h"
@@ -51,6 +53,8 @@
 #include "mediator.h"
 #include "etsili_core.h"
 #include "openli_tls.h"
+
+#define AMPQ_BYTES_FROM(x) (amqp_bytes_t){.len=sizeof(x),.bytes=&x}
 
 volatile int mediator_halt = 0;
 volatile int reload_config = 0;
@@ -1675,6 +1679,101 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     return 0;
 }
 
+static int receive_rmq_invite(mediator_state_t *state, uint8_t *msgbody,
+        uint16_t msglen) {
+    logger(LOG_INFO, "invited to collector %s", msgbody);
+
+    amqp_rpc_reply_t ret;
+    amqp_envelope_t envelope;
+    amqp_frame_t frame;
+
+    //try connect to RMQ server at address and join the approiate queue (medID)
+
+    amqp_connection_state_t amqp_state = amqp_new_connection();
+    amqp_socket_t *ampq_sock = amqp_tcp_socket_new(amqp_state);
+    if (amqp_socket_open(ampq_sock, "localhost", 5672 )){
+        logger(LOG_INFO, 
+                "OpenLI: med failed to open amqp socket");
+    }
+
+    // AMQP_FRAME_MAX 131072
+    /* login using PLAIN, must specify username and password */
+    //TODO set username/password
+    if ( (amqp_login(amqp_state, "/", 0, 131072,0,
+                    AMQP_SASL_METHOD_PLAIN, "guest", "guest")
+            ).reply_type != AMQP_RESPONSE_NORMAL ) {
+        logger(LOG_INFO, "Failed to login to broker using PLAIN auth");
+    }
+    logger(LOG_INFO, "OpenLI: mediator started AMQP socket");
+
+    amqp_channel_open_ok_t *r = amqp_channel_open(amqp_state, 1);
+    
+    if ( (amqp_get_rpc_reply(amqp_state).reply_type) != AMQP_RESPONSE_NORMAL ) {
+        logger(LOG_ERR, "Failed to open channel");
+    } else {
+        logger(LOG_INFO, "Opened channel with %d",1);
+    }
+    //sub queue
+
+    amqp_queue_declare_ok_t *queue_result = amqp_queue_declare(amqp_state,
+            1,
+            AMPQ_BYTES_FROM(state->mediatorid),
+            0,
+            1,
+            0,
+            0,
+            amqp_empty_table);
+
+    if (amqp_get_rpc_reply(amqp_state).reply_type != AMQP_RESPONSE_NORMAL ) {
+        logger(LOG_INFO, "failed to declear queue");
+    } else {
+            logger(LOG_INFO, "Queue Decleared: %d:%d", *(uint32_t*)queue_result->queue.bytes, state->mediatorid);
+    }
+
+    amqp_basic_consume_ok_t *con_ok = amqp_basic_consume(amqp_state,
+            1,
+            AMPQ_BYTES_FROM(state->mediatorid),
+            amqp_empty_bytes,
+            0,
+            1,
+            0,
+            amqp_empty_table);
+    
+    if (amqp_get_rpc_reply(amqp_state).reply_type != AMQP_RESPONSE_NORMAL ) {
+        logger(LOG_INFO, "failed to register consumer");
+    } else {
+            logger(LOG_INFO, "consumer registered as %s", con_ok->consumer_tag.bytes);
+    }
+
+    int sock_fd = amqp_get_sockfd(amqp_state); //add this to Epoll
+
+    mediator_collector_t col;
+    med_coll_RMQ_state_t *mstate = malloc(sizeof(med_coll_RMQ_state_t));
+    col.colev = (med_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
+    col.colev->fdtype = MED_EPOLL_COL_RMQ;
+    col.colev->fd = sock_fd;
+    col.colev->state = mstate;
+    mstate->amqp_state = amqp_state;
+    mstate->incoming = create_net_buffer(NETBUF_RECV, 0, NULL);
+    //todo handle dereferejnce of this new amqp_state
+
+
+    struct epoll_event ev;
+    ev.data.ptr = (void *)col.colev;
+    ev.events = EPOLLIN;
+
+    if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, sock_fd, &ev)
+            == -1) {
+        logger(LOG_INFO,
+                "OpenLI: Failed to register RMQ socket: %s.",
+                strerror(errno));
+        return -1;
+    }
+    logger(LOG_INFO,"registered RMQ socket: to epoll");
+
+    return 0; 
+}
+
 static inline int remove_mediator_liid_mapping(mediator_state_t *state,
         med_epoll_ev_t *mev) {
 
@@ -1884,6 +1983,11 @@ static int receive_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
                 break;
             case OPENLI_PROTO_CEASE_MEDIATION:
                 if (receive_cease(state, msgbody, msglen) == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_INVITE_RMQ:
+                if (receive_rmq_invite(state, msgbody, msglen) == -1) {
                     return -1;
                 }
                 break;
@@ -2119,6 +2223,120 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
     return 0;
 }
 
+static int receive_collector_from_RMQ(mediator_state_t *state, 
+        med_epoll_ev_t *mev) {
+
+
+    uint8_t *msgbody = NULL;
+    uint16_t msglen = 0;
+    uint64_t internalid;
+    liid_map_t *thisint;
+    med_coll_RMQ_state_t *cs = mev->state;
+    openli_proto_msgtype_t msgtype;
+    mediator_pcap_msg_t pcapmsg;
+    uint16_t liidlen;
+    amqp_envelope_t *envelope;
+
+    do {
+        msgtype = receive_RMQ_buffer(cs->incoming, 
+                &cs->amqp_state, 
+                &msgbody, &msglen, &internalid);
+
+        if (msgtype < 0) {
+            if (cs->disabled_log == 0) {
+                nb_log_receive_error(msgtype);
+                logger(LOG_INFO,
+                        "OpenLI Mediator: error receiving message from collector.");
+            }
+            return -1;
+        }
+
+        switch(msgtype) {
+
+            case OPENLI_PROTO_DISCONNECT:
+                logger(LOG_INFO,
+                        "OpenLI Mediator: error receiving message from collector.");
+                return -1;
+            case OPENLI_PROTO_NO_MESSAGE:
+                break;
+            case OPENLI_PROTO_RAWIP_SYNC:
+                /* msgbody should be an LIID + an IP packet */
+                thisint = match_etsi_to_agency(state, msgbody, msglen,
+                        &liidlen);
+                if (thisint == NULL) {
+                    break;
+                }
+                if (cs->disabled_log == 1) {
+                    //reenable_collector_logging(state, cs); //TODO
+                }
+
+                if (thisint->agency == NULL) {
+                    /* Write IP packet directly to pcap */
+                    pcapmsg.msgtype = PCAP_MESSAGE_RAWIP;
+                    pcapmsg.msgbody = (uint8_t *)malloc(msglen);
+                    memcpy(pcapmsg.msgbody, msgbody, msglen);
+                    pcapmsg.msglen = msglen;
+                    libtrace_message_queue_put(&(state->pcapqueue), &pcapmsg);
+                }
+
+                break;
+            case OPENLI_PROTO_ETSI_CC:
+                /* msgbody should contain a full ETSI record */
+                thisint = match_etsi_to_agency(state, msgbody, msglen,
+                        &liidlen);
+                if (thisint == NULL) {
+                    break;
+                }
+                if (cs->disabled_log == 1) {
+                    //reenable_collector_logging(state, cs); //TODO
+                }
+                if (thisint->agency == NULL) {
+                    /* Destined for a pcap file rather than an agency */
+                    /* TODO freelist rather than repeated malloc/free */
+                    pcapmsg.msgtype = PCAP_MESSAGE_PACKET;
+                    pcapmsg.msgbody = (uint8_t *)malloc(msglen - liidlen);
+                    memcpy(pcapmsg.msgbody, msgbody + liidlen,
+                            msglen - liidlen);
+                    pcapmsg.msglen = msglen - liidlen;
+                    libtrace_message_queue_put(&(state->pcapqueue), &pcapmsg);
+                } else if (enqueue_etsi(state, thisint->agency->hi3,
+                        msgbody + liidlen, msglen - liidlen) == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_ETSI_IRI:
+                /* msgbody should contain a full ETSI record */
+                thisint = match_etsi_to_agency(state, msgbody, msglen,
+                        &liidlen);
+                if (thisint == NULL) {
+                    break;
+                }
+                if (cs->disabled_log == 1) {
+                    //reenable_collector_logging(state, cs); //TODO
+                }
+                if (thisint->agency == NULL) {
+                    /* Destined for a pcap file rather than an agency */
+                    /* IRIs don't make sense for a pcap, so just ignore it */
+                    break;
+                }
+                if (enqueue_etsi(state, thisint->agency->hi2, msgbody + liidlen,
+                            msglen - liidlen) == -1) {
+                    return -1;
+                }
+                break;
+            default:
+                if (cs->disabled_log == 0) {
+                   logger(LOG_INFO,
+                            "OpenLI Mediator: unexpected message type %d received from collector.",
+                            msgtype);
+                }
+                return -1;
+        }
+    } while (msgtype != OPENLI_PROTO_NO_MESSAGE);
+
+    return 0;
+}
+
 static int continue_handshake(mediator_state_t *state, med_epoll_ev_t *mev) {
     med_coll_state_t *cs = (med_coll_state_t *)(mev->state);
 
@@ -2248,6 +2466,10 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             if (ret == -1) {
                 drop_collector(state, mev, 1);
             }
+            break;
+        case MED_EPOLL_COL_RMQ:
+                //logger(LOG_INFO, "RMQ EPOLL instance");
+                ret = receive_collector_from_RMQ(state, mev);
             break;
         default:
             logger(LOG_INFO,

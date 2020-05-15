@@ -33,6 +33,7 @@
 #include <libwandder.h>
 #include <zmq.h>
 #include <Judy.h>
+#include <amqp.h>
 
 #include "export_shared.h"
 #include "etsili_core.h"
@@ -193,6 +194,9 @@ typedef struct forwarding_thread_data {
 
     SSL_CTX *ctx;
     pthread_mutex_t sslmutex;
+
+    amqp_connection_state_t ampq_conn;
+    amqp_socket_t *ampq_sock;
 
 } forwarding_thread_data_t;
 
