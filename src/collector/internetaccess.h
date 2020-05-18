@@ -99,7 +99,7 @@ typedef struct internetaccess_ip {
 } internetaccess_ip_t;
 
 typedef struct ip_to_session {
-    internetaccess_ip_t *ip;
+    internetaccess_ip_t ip;
     int sessioncount;
     access_session_t **session;
     internet_user_t **owner;
