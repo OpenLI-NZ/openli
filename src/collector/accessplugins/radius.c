@@ -543,7 +543,7 @@ static void radius_destroy_parsed_data(access_plugin_t *p, void *parsed) {
      */
     if (rparsed->msgtype == RADIUS_CODE_ACCESS_REQUEST ||
                     rparsed->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
-        if (rparsed->savedresp) {
+        if (rparsed->savedresp || rparsed->muser_count == 0) {
             release_attribute_list(&(glob->freeattrs), rparsed->attrs);
         }
     }
@@ -926,20 +926,23 @@ static radius_user_t *add_user_identity(uint8_t att_type, uint8_t *att_val,
 
 }
 
-static void process_username_attribute(radius_parsed_t *raddata) {
+static int process_username_attribute(radius_parsed_t *raddata) {
 
     radius_attribute_t *userattr;
     radius_user_t *raduser;
+    int gotusername = -1;
 
     if (raddata->msgtype != RADIUS_CODE_ACCESS_REQUEST &&
             raddata->msgtype != RADIUS_CODE_ACCOUNT_REQUEST) {
-        return;
+        return 0;
     }
 
     userattr = raddata->attrs;
     while (userattr) {
         switch(userattr->att_type) {
             case RADIUS_ATTR_USERNAME:
+                gotusername = 1;
+                // fall through
             case RADIUS_ATTR_CALLING_STATION_ID:
                 raduser = add_user_identity(userattr->att_type,
                         userattr->att_val, userattr->att_len, raddata);
@@ -949,6 +952,7 @@ static void process_username_attribute(radius_parsed_t *raddata) {
         userattr = userattr->next;
     }
 
+    return gotusername;
 }
 
 static uint32_t assign_cin(radius_parsed_t *raddata) {
@@ -1230,7 +1234,10 @@ static user_identity_t *radius_get_userid(access_plugin_t *p, void *parsed,
             return NULL;
         }
 
-        process_username_attribute(raddata);
+        if (process_username_attribute(raddata) == -1) {
+            raddata->muser_count = 0;
+            return NULL;
+        }
     }
 
     //process_nasport_attribute(raddata);
@@ -1354,7 +1361,6 @@ static inline void apply_fsm_logic(radius_parsed_t *raddata,
         radsess->current = SESSION_STATE_ACTIVE;
         *action = ACCESS_ACTION_ALREADY_ACTIVE;
     }
-
 
     *newstate = radsess->current;
 }
