@@ -100,20 +100,6 @@ build-amd64-ubuntu-focal:
   only:
     - tags
 
-build-amd64-fedora-29:
-  stage: build
-  image: fedora:29
-  script:
-    - ./gitlab-build-rpm.sh fedora29
-    - mkdir -p built-packages/fedora_29/
-    - mv ~/rpmbuild/RPMS/x86_64/*.rpm built-packages/fedora_29/
-  artifacts:
-    paths:
-      - built-packages/*
-    expire_in: 1 day
-  only:
-    - tags
-
 build-amd64-fedora-30:
   stage: build
   image: fedora:30
