@@ -184,6 +184,14 @@ struct sipregister {
     UT_hash_handle hh;
 };
 
+#define RTP_STREAM_ALLOC 8
+
+struct sipmediastream {
+    uint16_t targetport;
+    uint16_t otherport;
+    char *mediatype;
+};
+
 struct rtpstreaminf {
     char *streamkey;
     uint32_t cin;
@@ -191,8 +199,10 @@ struct rtpstreaminf {
     int ai_family;
     struct sockaddr_storage *targetaddr;
     struct sockaddr_storage *otheraddr;
-    uint16_t targetport;
-    uint16_t otherport;
+
+    int streamcount;
+    struct sipmediastream *mediastreams;
+
     uint32_t seqno;
     uint8_t active;
     uint8_t byematched;
@@ -212,6 +222,7 @@ struct ipsession {
     uint32_t cin;
     int ai_family;
     struct sockaddr_storage *targetip;
+    uint8_t prefixlen;
     uint32_t nextseqno;
     internet_access_method_t accesstype;
 
@@ -279,7 +290,7 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin);
 rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *rtp);
 
 ipsession_t *create_ipsession(ipintercept_t *ipint, uint32_t cin,
-        int ipfamily, struct sockaddr *assignedip);
+        int ipfamily, struct sockaddr *assignedip, uint8_t prefixlen);
 
 vendmirror_intercept_t *create_vendmirror_intercept(ipintercept_t *ipint);
 

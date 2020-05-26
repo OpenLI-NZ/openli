@@ -122,7 +122,6 @@ static void purge_removedints(seqtracker_thread_data_t *seqdata) {
 
 #ifdef HAVE_BER_ENCODING
         if(rem->ber_top){
-            wandder_etsili_clear_preencoded_fields_ber((wandder_buf_t**) rem->preencoded);
             wandder_free_top(rem->ber_top);
         }
         else {
@@ -151,19 +150,11 @@ static inline void remove_preencoded(seqtracker_thread_data_t *seqdata,
 	gettimeofday(&tv, NULL);
 	rem->haltedat = tv.tv_sec;
 	
-    //if top is not NULL that means BER is in use so its the two BER fields that need to be free'd
 #ifdef HAVE_BER_ENCODING
+    //only one of theses will be non-null so its ok to assign both
     rem->ber_top = intstate->top;
-    if (rem->ber_top){
-        rem->preencoded = intstate->preencoded_ber;
-    }
-    else {
-        rem->preencoded = intstate->preencoded;
-    }
-#else
-    rem->preencoded = intstate->preencoded;
 #endif
-
+    rem->preencoded = intstate->preencoded;
 
 	if (seqdata->removedints == NULL) {
 		seqdata->removedints = rem;
@@ -209,6 +200,9 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
         intstate->cinsequencing = NULL;
+#ifdef HAVE_BER_ENCODING
+        intstate->top = NULL;
+#endif
 
         HASH_ADD_KEYPTR(hh, seqdata->intercepts, intstate->details.liid,
                 intstate->details.liid_len, intstate);
@@ -231,12 +225,8 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
     else {
 
 #ifdef HAVE_BER_ENCODING
-        intstate->preencoded_ber = calloc(WANDDER_PREENCODE_LAST, sizeof intstate->preencoded_ber);
-        wandder_etsili_preencode_static_fields_ber(intstate->preencoded_ber, (wandder_etsili_intercept_details_t*)&intdetails);
-        
-        //intstate->top = calloc(sizeof *intstate->top,1);
-        //wandder_init_pshdr_ber(intstate->preencoded_ber, intstate->top);
-        //this should be done inside calls to libwandder, not here
+        intstate->top = wandder_encode_init_top_ber(seqdata->enc_ber, 
+                (wandder_etsili_intercept_details_t *)&intdetails);
 #endif
     }
 }
@@ -355,7 +345,53 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 	job.preencoded = intstate->preencoded;
 
 #ifdef HAVE_BER_ENCODING
-    job.preencoded_ber = intstate->preencoded_ber;
+    wandder_etsili_child_t * child = NULL; 
+    if (intstate->top){
+        wandder_etsili_top_t * top = intstate->top;
+        wandder_encoder_ber_t *enc_ber = seqdata->enc_ber;
+        switch(recvd->type) {
+            case OPENLI_EXPORT_IPCC:
+                if (!top->ipcc.buf) {
+                    wandder_init_etsili_ipcc(enc_ber, top);
+                    top->ipcc.flist = wandder_create_etsili_child_freelist();
+                }
+                break;
+            case OPENLI_EXPORT_IPMMCC:
+                if (!top->ipmmcc.buf) {
+                    wandder_init_etsili_ipmmcc(enc_ber, top);
+                    top->ipmmcc.flist = wandder_create_etsili_child_freelist();
+                }
+                break;
+            case OPENLI_EXPORT_IPMMIRI:
+                if (!top->ipmmiri.buf) {
+                    wandder_init_etsili_ipmmiri(enc_ber, top);
+                    top->ipmmiri.flist = wandder_create_etsili_child_freelist();
+                }
+                break;
+            case OPENLI_EXPORT_IPIRI:
+                if (!top->ipiri.buf) {
+                    wandder_init_etsili_ipiri(enc_ber, top);
+                    top->ipiri.flist = wandder_create_etsili_child_freelist();
+                }
+                break;
+            case OPENLI_EXPORT_UMTSCC:
+                if (!top->umtscc.buf) {
+                    wandder_init_etsili_umtscc(enc_ber, top);
+                    top->umtscc.flist = wandder_create_etsili_child_freelist();
+                }
+                break;
+            case OPENLI_EXPORT_UMTSIRI:
+                if (!top->umtsiri.buf) {
+                    wandder_init_etsili_umtsiri(enc_ber, top);
+                    top->umtsiri.flist = wandder_create_etsili_child_freelist();
+                }
+                break;
+            default:
+                logger(LOG_INFO, "OpenLI: Error Unknown encoding type");
+        }
+        job.top = top;
+
+    }
 #endif
 	job.origreq = recvd;
 	job.liid = strdup(liid);
@@ -456,7 +492,7 @@ void *start_seqtracker_thread(void *data) {
     char sockname[128];
     seqtracker_thread_data_t *seqdata = (seqtracker_thread_data_t *)data;
     openli_export_recv_t *job = NULL;
-    int x, zero = 0, large=1000000;
+    int x, zero = 0, large=1000000, sndtimeo=1000;
     exporter_intercept_state_t *intstate, *tmpexp;
 
     seqdata->zmq_recvpublished = zmq_socket(seqdata->zmq_ctxt, ZMQ_PULL);
@@ -479,12 +515,6 @@ void *start_seqtracker_thread(void *data) {
 
     seqdata->zmq_pushjobsock = zmq_socket(seqdata->zmq_ctxt, ZMQ_PUSH);
     snprintf(sockname, 128, "inproc://openliseqpush-%d", seqdata->trackerid);
-    if (zmq_bind(seqdata->zmq_pushjobsock, sockname) < 0) {
-        logger(LOG_INFO,
-                "OpenLI: tracker thread %d failed to bind to push zmq: %s",
-                seqdata->trackerid, strerror(errno));
-        goto haltseqtracker;
-    }
     if (zmq_setsockopt(seqdata->zmq_pushjobsock, ZMQ_LINGER, &zero,
                 sizeof(zero)) != 0) {
         logger(LOG_INFO,
@@ -496,6 +526,19 @@ void *start_seqtracker_thread(void *data) {
                 sizeof(large)) != 0) {
         logger(LOG_INFO,
                 "OpenLI: tracker thread %d failed to configure push zmq: %s",
+                seqdata->trackerid, strerror(errno));
+        goto haltseqtracker;
+    }
+    if (zmq_setsockopt(seqdata->zmq_pushjobsock, ZMQ_SNDTIMEO, &sndtimeo,
+                sizeof(sndtimeo)) != 0) {
+        logger(LOG_INFO,
+                "OpenLI: tracker thread %d failed to configure push zmq: %s",
+                seqdata->trackerid, strerror(errno));
+        goto haltseqtracker;
+    }
+    if (zmq_bind(seqdata->zmq_pushjobsock, sockname) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: tracker thread %d failed to bind to push zmq: %s",
                 seqdata->trackerid, strerror(errno));
         goto haltseqtracker;
     }
@@ -526,6 +569,11 @@ haltseqtracker:
         free_intercept_state(seqdata, intstate);
     }
 
+#ifdef HAVE_BER_ENCODING
+    if (seqdata->enc_ber){
+        wandder_free_encoder_ber(seqdata->enc_ber);
+    }
+#endif
 
     zmq_close(seqdata->zmq_recvpublished);
     zmq_close(seqdata->zmq_pushjobsock);
@@ -540,18 +588,18 @@ void clean_seqtracker(seqtracker_thread_data_t *seqdata) {
 
 #ifdef HAVE_BER_ENCODING
         if(rem->ber_top){ //if top exists its the BER encoding that needs to be free'd
-            wandder_etsili_clear_preencoded_fields_ber((wandder_buf_t**) rem->preencoded);
             wandder_free_top(rem->ber_top);
         }
         else {
             etsili_clear_preencoded_fields((wandder_encode_job_t *)rem->preencoded);
+            free(rem->preencoded);
         }
 #else
         etsili_clear_preencoded_fields((wandder_encode_job_t *)rem->preencoded);
+        free(rem->preencoded);
 #endif
 
 		seqdata->removedints = seqdata->removedints->next;
-        free(rem->preencoded);
 		free(rem);
 	}
 }

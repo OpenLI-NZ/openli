@@ -80,6 +80,13 @@ typedef struct etsili_ipaddress {
     uint8_t *ipvalue;
 } etsili_ipaddress_t;
 
+typedef struct etsili_other_targets {
+
+    uint8_t count;
+    uint8_t alloced;
+    etsili_ipaddress_t *targets;
+} etsili_other_targets_t;
+
 typedef enum {
     ETSILI_IRI_NONE = 0,
     ETSILI_IRI_BEGIN = 1,
@@ -175,7 +182,7 @@ wandder_encoded_result_t *encode_etsi_ipmmiri(wandder_encoder_t *encoder,
 wandder_encoded_result_t *encode_etsi_ipiri(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
         etsili_iri_type_t iritype, struct timeval *tv,
-        etsili_generic_t *params);
+        etsili_generic_t **params);
 
 wandder_encoded_result_t *encode_etsi_umtsiri(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,

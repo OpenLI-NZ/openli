@@ -66,30 +66,29 @@ int encode_ipcc(wandder_encoder_t *encoder, wandder_encode_job_t *precomputed,
 
 #ifdef HAVE_BER_ENCODING
 
-int encode_ipcc_ber(wandder_buf_t **preencoded_ber,
+int encode_ipcc_ber(
         openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
-        openli_encoded_result_t *msg, wandder_etsili_top_t *top, wandder_encoder_t *encoder) {
+        openli_encoded_result_t *msg, wandder_etsili_child_t *child, wandder_encoder_t *encoder) {
 
-    uint32_t liidlen = (uint32_t)((size_t)preencoded_ber[WANDDER_PREENCODE_LIID_LEN]);
+    uint32_t liidlen = (uint32_t)((size_t)child->owner->preencoded[WANDDER_PREENCODE_LIID_LEN]);
 
     memset(msg, 0, sizeof(openli_encoded_result_t));
 
     wandder_encode_etsi_ipcc_ber(   //new way
-        preencoded_ber,
         (int64_t)job->cin,
         (int64_t)seqno,
         tv, 
         job->ipcontent,
         job->ipclen, 
         job->dir, 
-        top);
+        child);
 
     msg->msgbody = malloc(sizeof(wandder_encoded_result_t));
 
     msg->msgbody->encoder = NULL;
-    msg->msgbody->encoded = top->buf;
-    msg->msgbody->len = top->len;
-    msg->msgbody->alloced = top->alloc_len;
+    msg->msgbody->encoded = child->buf;
+    msg->msgbody->len = child->len;
+    msg->msgbody->alloced = child->alloc_len;
     msg->msgbody->next = NULL;
 
     msg->ipcontents = NULL;
@@ -147,7 +146,7 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
         int family, libtrace_packet_t *pkt, uint8_t dir,
         colthread_local_t *loc) {
 
-    int matched = 0, queueused = 0;
+    int matched = 0;
     patricia_node_t *pnode = NULL;
     prefix_t prefix;
     openli_export_recv_t *msg;
@@ -206,14 +205,58 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
     return matched;
 }
 
+static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
+        colthread_local_t *loc, int *matched, libtrace_packet_t *pkt) {
+
+    patricia_node_t *pnode = NULL;
+    prefix_t prefix;
+    openli_export_recv_t *msg;
+    ipv6_target_t *tgt;
+    ipsession_t *sess, *tmp;
+
+    memset(&prefix, 0, sizeof(prefix_t));
+    memcpy(&(prefix.add.sin6), &(cmp->sin6_addr), 16);
+    prefix.bitlen = 128;
+    prefix.family = AF_INET6;
+    prefix.ref_count = 0;
+
+    pnode = patricia_search_best2(loc->dynamicv6ranges, &prefix, 1);
+
+    while (pnode) {
+        liid_set_t **all, *sliid, *tmp2;
+
+        all = (liid_set_t **)(&(pnode->data));
+        HASH_ITER(hh, *all, sliid, tmp2) {
+            HASH_FIND(hh, loc->activeipv6intercepts, sliid->key, sliid->keylen,
+                    tgt);
+            if (!tgt) {
+                logger(LOG_INFO,
+                        "OpenLI: matched an IPv6 range for intercept %s but this intercept is not present in activeipv6intercepts?",
+                        sliid->key);
+            } else {
+                HASH_ITER(hh, tgt->intercepts, sess, tmp) {
+                    *matched = ((*matched) + 1);
+                    msg = create_ipcc_job(sess->cin, sess->common.liid,
+                            sess->common.destid, pkt, 0);
+                    if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg)
+                    {
+                        msg->type = OPENLI_EXPORT_UMTSCC;
+                    }
+                    if (msg != NULL) {
+                        publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
+                    }
+                }
+            }
+        }
+        pnode = pnode->parent;
+    }
+}
+
 int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip6_t *ip, uint32_t rem, colthread_local_t *loc) {
 
-    struct sockaddr_in6 *intaddr, *cmp;
-    openli_export_recv_t *msg;
-    int matched = 0, queueused = 0;
-    ipv6_target_t *tgt;
-    ipsession_t *sess, *tmp;
+    struct sockaddr_in6 *cmp;
+    int matched = 0;
 
     if (rem < sizeof(libtrace_ip6_t)) {
         /* Truncated IP header */
@@ -226,63 +269,26 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
      */
 
     cmp = (struct sockaddr_in6 *)(&pinfo->srcip);
-    HASH_FIND(hh, loc->activeipv6intercepts, &(cmp->sin6_addr.s6_addr),
-            sizeof(cmp->sin6_addr.s6_addr), tgt);
-
-    if (tgt) {
-        HASH_ITER(hh, tgt->intercepts, sess, tmp) {
-            matched ++;
-            msg = create_ipcc_job(sess->cin, sess->common.liid,
-                    sess->common.destid, pkt, 0);
-            if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg) {
-                msg->type = OPENLI_EXPORT_UMTSCC;
-            }
-            if (msg != NULL) {
-                publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
-            }
-        }
-    }
+    singlev6_conn_contents(cmp, loc, &matched, pkt);
 
     cmp = (struct sockaddr_in6 *)(&pinfo->destip);
-    HASH_FIND(hh, loc->activeipv6intercepts, &(cmp->sin6_addr.s6_addr),
-            sizeof(cmp->sin6_addr.s6_addr), tgt);
-
-    if (tgt) {
-        HASH_ITER(hh, tgt->intercepts, sess, tmp) {
-            matched ++;
-            msg = create_ipcc_job(sess->cin, sess->common.liid,
-                    sess->common.destid, pkt, 1);
-            if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg) {
-                msg->type = OPENLI_EXPORT_UMTSCC;
-            }
-            if (msg != NULL) {
-                publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
-            }
-        }
-    }
-
-    if (loc->staticv6ranges == NULL) {
-        goto ipv6ccdone;
-    }
+    singlev6_conn_contents(cmp, loc, &matched, pkt);
 
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->srcip),
             AF_INET6, pkt, 0, loc);
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->destip),
             AF_INET6, pkt, 1, loc);
 
-
-ipv6ccdone:
     return matched;
-
 }
 
 
 int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip_t *ip, uint32_t rem, colthread_local_t *loc) {
 
-    struct sockaddr_in *intaddr, *cmp;
+    struct sockaddr_in *cmp;
     openli_export_recv_t *msg;
-    int matched = 0, queueused = 0;
+    int matched = 0;
     ipv4_target_t *tgt;
     ipsession_t *sess, *tmp;
 

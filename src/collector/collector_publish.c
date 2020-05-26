@@ -70,6 +70,9 @@ void free_published_message(openli_export_recv_t *msg) {
         if (msg->data.ipiri.username) {
             free(msg->data.ipiri.username);
         }
+        if (msg->data.ipiri.assignedips) {
+            free(msg->data.ipiri.assignedips);
+        }
     } else if (msg->type == OPENLI_EXPORT_UMTSIRI) {
         if (msg->data.mobiri.liid) {
             free(msg->data.mobiri.liid);
@@ -116,6 +119,12 @@ openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,
         msg->data.ipcc.liid = realloc(msg->data.ipcc.liid, x);
         msg->data.ipcc.liidalloc = x;
     }
+    if (msg->data.ipcc.liid == NULL) {
+        msg->data.ipcc.liidalloc = 0;
+        free(msg);
+        return NULL;
+    }
+
     memcpy(msg->data.ipcc.liid, liid, liidlen);
     msg->data.ipcc.liid[liidlen] = '\0';
 
@@ -129,6 +138,11 @@ openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,
         msg->data.ipcc.ipcalloc = x;
     }
 
+    if (msg->data.ipcc.ipcontent == NULL) {
+        msg->data.ipcc.ipcalloc = 0;
+        free(msg);
+        return NULL;
+    }
     memcpy(msg->data.ipcc.ipcontent, l3, rem);
     msg->data.ipcc.ipclen = rem;
     msg->data.ipcc.cin = cin;

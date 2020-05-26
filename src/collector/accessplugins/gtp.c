@@ -144,7 +144,8 @@ typedef struct gtp_session {
     int idstr_len;
     uint32_t teid;
 
-    internetaccess_ip_t pdpaddr;
+    internetaccess_ip_t *pdpaddrs;
+    uint8_t pdpaddrcount;
     uint16_t pdptype;
     int64_t cin;
 
@@ -302,7 +303,7 @@ static inline void gtp_free_ie_list(gtp_infoelem_t *ies) {
 
 static void gtp_destroy_plugin_data(access_plugin_t *p) {
     gtp_global_t *glob;
-    char index[64];
+    unsigned char index[64];
     PWord_t pval;
     Word_t res, indexnum;
 
@@ -347,7 +348,6 @@ static void gtp_uncouple_parsed_data(access_plugin_t *p) {
 
 static void gtp_destroy_parsed_data(access_plugin_t *p, void *parsed) {
 
-    gtp_global_t *glob = (gtp_global_t *)(p->plugindata);
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parsed;
 
     if (!gparsed) {
@@ -477,7 +477,7 @@ static inline void get_gtpnum_from_ie(gtp_infoelem_t *gtpel, char *field,
     int i, j;
 
     j = 0;
-    for (i = 0; i < gtpel->ielength; i++) {
+    for (i = 0; i < gtpel->ielength - skipfront; i++) {
         uint8_t num = *(ptr + i);
         field[j] = (char)('0' + (num & 0x0f));
 
@@ -543,7 +543,7 @@ static int walk_gtpv1_ies(gtp_parsed_t *parsedpkt, uint8_t *ptr, uint32_t rem,
     while (rem > 2 && used < gtplen) {
         uint8_t ietype;
         uint16_t ielen;
-        gtp_infoelem_t *gtpel;
+        gtp_infoelem_t *gtpel = NULL;
 
         ietype = *ptr;
 
@@ -571,24 +571,26 @@ static int walk_gtpv1_ies(gtp_parsed_t *parsedpkt, uint8_t *ptr, uint32_t rem,
             parsedpkt->ies = gtpel;
         }
 
-        if (parsedpkt->msgtype == GTPV1_CREATE_PDP_CONTEXT_REQUEST) {
+        if (gtpel) {
+            if (parsedpkt->msgtype == GTPV1_CREATE_PDP_CONTEXT_REQUEST) {
+                if (ietype == GTPV1_IE_TEID_CTRL) {
+                    parsedpkt->teid = get_teid_from_teidctl(gtpel);
+                }
+                if (ietype == GTPV1_IE_IMSI) {
+                    get_gtpnum_from_ie(gtpel, parsedpkt->imsi, 0);
+                }
+                if (ietype == GTPV1_IE_MSISDN) {
+                    get_gtpnum_from_ie(gtpel, parsedpkt->msisdn, 1);
+                }
+            }
+
             if (ietype == GTPV1_IE_TEID_CTRL) {
-                parsedpkt->teid = get_teid_from_teidctl(gtpel);
+                parsedpkt->teid_ctl = get_teid_from_teidctl(gtpel);
             }
-            if (ietype == GTPV1_IE_IMSI) {
-                get_gtpnum_from_ie(gtpel, parsedpkt->imsi, 0);
-            }
-            if (ietype == GTPV1_IE_MSISDN) {
-                get_gtpnum_from_ie(gtpel, parsedpkt->msisdn, 1);
-            }
-        }
 
-        if (ietype == GTPV1_IE_TEID_CTRL) {
-            parsedpkt->teid_ctl = get_teid_from_teidctl(gtpel);
-        }
-
-        if (ietype == GTPV1_IE_CAUSE) {
-            parsedpkt->response_cause = get_cause_from_ie(gtpel);
+            if (ietype == GTPV1_IE_CAUSE) {
+                parsedpkt->response_cause = get_cause_from_ie(gtpel);
+            }
         }
 
         if (ietype & 0x80) {
@@ -882,8 +884,8 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
 
     gtp_global_t *glob = (gtp_global_t *)(p->plugindata);
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parsed;
-    char sessid[64];
-    char alt_sessid[64];
+    unsigned char sessid[64];
+    unsigned char alt_sessid[64];
     gtp_session_t *sess;
     PWord_t pval;
     user_identity_t *uids;
@@ -907,7 +909,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
     }
 
     /* Need to look up the session */
-    GEN_SESSID(sessid, gparsed, gparsed->teid);
+    GEN_SESSID((char *)sessid, gparsed, gparsed->teid);
 
     if (gparsed->msgtype == GTPV1_DELETE_PDP_CONTEXT_REQUEST) {
         search = glob->alt_session_map;
@@ -938,7 +940,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
          * for that TEID as well. Otherwise we'll miss the delete requests.
          */
         if (gparsed->msgtype == GTPV1_CREATE_PDP_CONTEXT_RESPONSE) {
-            GEN_SESSID(alt_sessid, gparsed, gparsed->teid_ctl);
+            GEN_SESSID((char *)alt_sessid, gparsed, gparsed->teid_ctl);
             JSLG(pval, glob->alt_session_map, alt_sessid);
 
             if (!pval) {
@@ -998,9 +1000,11 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
     }
 
     sess = calloc(1, sizeof(gtp_session_t));
-    sess->sessid = strdup(sessid);
+    sess->sessid = strdup((char *)sessid);
     sess->current = SESSION_STATE_NEW;
     sess->teid = gparsed->teid;
+    sess->pdpaddrs = NULL;
+    sess->pdpaddrcount = 0;
 
     memcpy(sess->serverid, gparsed->serverid, 16);
     sess->serveripfamily = gparsed->serveripfamily;
@@ -1021,7 +1025,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
         sess->userid.imsi = strdup(gparsed->imsi);
     }
 
-    JSLI(pval, glob->session_map, sess->sessid);
+    JSLI(pval, glob->session_map, (unsigned char *)sess->sessid);
     *pval = (Word_t)sess;
 
     gparsed->matched_session = sess;
@@ -1054,15 +1058,8 @@ static void extract_gtp_assigned_ip_address(gtp_saved_pkt_t *gpkt,
         if (gpkt->version == 2 && ie->ietype == GTPV2_IE_PDN_ALLOC) {
             if (*((uint8_t *)(ie->iecontent)) == 0x01) {
                 /* IPv4 */
-                struct sockaddr_in *in;
-
-                in = (struct sockaddr_in *)&(sess->sessionip.assignedip);
-                in->sin_family = AF_INET;
-                in->sin_port = 0;
-                in->sin_addr.s_addr = *((uint32_t *)(ie->iecontent + 1));
-
-                sess->sessionip.ipfamily = AF_INET;
-                sess->sessionip.prefixbits = 32;
+                add_new_session_ip(sess, ie->iecontent + 1, AF_INET, 32,
+                        ie->ielength - 1);
 
                 /* These weird numbers are derived from bytes 3 and 4 of
                  * the Packet Data Protocol Address IE defined in
@@ -1077,68 +1074,42 @@ static void extract_gtp_assigned_ip_address(gtp_saved_pkt_t *gpkt,
 
             } else if (*((uint8_t *)(ie->iecontent)) == 0x02) {
                 /* IPv6 */
-                struct sockaddr_in6 *in6;
-
-                in6 = (struct sockaddr_in6 *)&(sess->sessionip.assignedip);
-                in6->sin6_family = AF_INET6;
-                in6->sin6_port = 0;
-                memcpy(&(in6->sin6_addr.s6_addr), ie->iecontent + 1, 16);
-
-                sess->sessionip.ipfamily = AF_INET6;
-                sess->sessionip.prefixbits = 128;
+                add_new_session_ip(sess, ie->iecontent + 1, AF_INET6, 128,
+                        ie->ielength - 1);
                 gsess->pdptype = htons(0x0157);
             } else if (*((uint8_t *)(ie->iecontent)) == 0x03) {
                 /* IPv4 AND IPv6 */
 
                 /* TODO support multiple sessionips per session */
-                struct sockaddr_in6 *in6;
+                add_new_session_ip(sess, ie->iecontent + 1, AF_INET6, 128,
+                        ie->ielength - 1);
 
-                in6 = (struct sockaddr_in6 *)&(sess->sessionip.assignedip);
-                in6->sin6_family = AF_INET6;
-                in6->sin6_port = 0;
-                memcpy(&(in6->sin6_addr.s6_addr), ie->iecontent + 1, 16);
-
-                sess->sessionip.ipfamily = AF_INET6;
-                sess->sessionip.prefixbits = 128;
                 gsess->pdptype = htons(0x018d);
             } else {
                 break;
             }
 
-            memcpy(&(gsess->pdpaddr), sess, sizeof(internetaccess_ip_t));
+            gsess->pdpaddrs = sess->sessionips;
+            gsess->pdpaddrcount = sess->sessipcount;
             break;
         }
 
         if (gpkt->version == 1 && ie->ietype == GTPV1_IE_END_USER_ADDRESS) {
             uint16_t pdptype = ntohs(*((uint16_t *)(ie->iecontent)));
 
-            if ((pdptype & 0x0fff) == 0x0121) {
+            if ((pdptype & 0x0fff) == 0x0121 && ie->ielength >= 6) {
                 /* IPv4 */
-                struct sockaddr_in *in;
-
+                add_new_session_ip(sess, ie->iecontent + 2, AF_INET, 32,
+                        ie->ielength - 2);
                 gsess->pdptype = htons(0x0121);
-
-                in = (struct sockaddr_in *)&(sess->sessionip.assignedip);
-                in->sin_family = AF_INET;
-                in->sin_port = 0;
-                in->sin_addr.s_addr = *((uint32_t *)(ie->iecontent + 2));
-
-                sess->sessionip.ipfamily = AF_INET;
-                sess->sessionip.prefixbits = 32;
-            } else if ((pdptype & 0x0fff) == 0x0157) {
+            } else if ((pdptype & 0x0fff) == 0x0157 && ie->ielength >= 18) {
                 /* IPv6 */
-                struct sockaddr_in6 *in6;
-
-                in6 = (struct sockaddr_in6 *)&(sess->sessionip.assignedip);
-                in6->sin6_family = AF_INET6;
-                in6->sin6_port = 0;
-                memcpy(&(in6->sin6_addr.s6_addr), ie->iecontent + 2, 16);
-
-                sess->sessionip.ipfamily = AF_INET6;
-                sess->sessionip.prefixbits = 128;
+                add_new_session_ip(sess, ie->iecontent + 2, AF_INET6, 128,
+                        ie->ielength - 2);
                 gsess->pdptype = htons(0x0157);
             }
-            memcpy(&(gsess->pdpaddr), sess, sizeof(internetaccess_ip_t));
+            gsess->pdpaddrs = sess->sessionips;
+            gsess->pdpaddrcount = sess->sessipcount;
             break;
         }
 
@@ -1349,7 +1320,6 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
     access_session_t *thissess = NULL;
     gtp_saved_pkt_t *saved, *check;
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parsed;
-    gtp_session_t *gsession = NULL;
     PWord_t pval;
     Word_t rcint;
 
@@ -1568,7 +1538,6 @@ static int gtp_create_pdp_generic_iri(gtp_parsed_t *gparsed,
 
     etsili_generic_t *np;
     etsili_ipaddress_t ipaddr;
-    gtp_infoelem_t *el;
     uint32_t initiator = 1;
     struct timeval tv;
 
@@ -1602,20 +1571,25 @@ static int gtp_create_pdp_generic_iri(gtp_parsed_t *gparsed,
         gsess->saved.apname_len, (uint8_t *)gsess->saved.apname);
     HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
 
-    if (gsess->pdpaddr.ipfamily == AF_INET) {
-        struct sockaddr_in *sin = (struct sockaddr_in *)
-                &(gsess->pdpaddr.assignedip);
+    /* TODO encode all PDP addresses according to the standards */
+    if (gsess->pdpaddrcount > 0) {
+        if (gsess->pdpaddrs[0].ipfamily == AF_INET) {
+            struct sockaddr_in *sin = (struct sockaddr_in *)
+                    &(gsess->pdpaddrs[0].assignedip);
 
-        etsili_create_ipaddress_v4((uint32_t *)&(sin->sin_addr.s_addr),
-                ETSILI_IPV4_SUBNET_UNKNOWN, ETSILI_IPADDRESS_ASSIGNED_DYNAMIC,
-                &ipaddr);
-    } else {
-        struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)
-                &(gsess->pdpaddr.assignedip);
+            etsili_create_ipaddress_v4((uint32_t *)&(sin->sin_addr.s_addr),
+                    ETSILI_IPV4_SUBNET_UNKNOWN,
+                    ETSILI_IPADDRESS_ASSIGNED_DYNAMIC,
+                    &ipaddr);
+        } else {
+            struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)
+                    &(gsess->pdpaddrs[0].assignedip);
 
-        etsili_create_ipaddress_v6((uint8_t *)(sin6->sin6_addr.s6_addr),
-                ETSILI_IPV6_SUBNET_UNKNOWN, ETSILI_IPADDRESS_ASSIGNED_DYNAMIC,
-                &ipaddr);
+            etsili_create_ipaddress_v6((uint8_t *)(sin6->sin6_addr.s6_addr),
+                    ETSILI_IPV6_SUBNET_UNKNOWN,
+                    ETSILI_IPADDRESS_ASSIGNED_DYNAMIC,
+                    &ipaddr);
+        }
     }
 
     np = create_etsili_generic(freelist, UMTSIRI_CONTENTS_PDP_ADDRESS,
@@ -1791,7 +1765,6 @@ static int gtp_generate_iri_data(access_plugin_t *p, void *parseddata,
         etsili_generic_t **params, etsili_iri_type_t *iritype,
         etsili_generic_freelist_t *freelist, int iteration) {
 
-    gtp_global_t *glob = (gtp_global_t *)(p->plugindata);
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parseddata;
 
     if (gparsed->action == ACCESS_ACTION_ACCEPT) {
@@ -1905,7 +1878,6 @@ static void gtp_destroy_session_data(access_plugin_t *p,
 
 static uint32_t gtp_get_packet_sequence(access_plugin_t *p, void *parseddata) {
 
-    gtp_global_t *glob = (gtp_global_t *)(p->plugindata);
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parseddata;
 
     /* bottom 8 bits of seqno are "spare" */

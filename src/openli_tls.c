@@ -24,6 +24,7 @@
  *
  */
 
+#include <string.h>
 #include <openssl/ssl.h>
 #include "logger.h"
 #include "openli_tls.h"
@@ -254,8 +255,59 @@ int reload_ssl_config(openli_ssl_config_t *current,
     current->ctx = newconf->ctx;
     newconf->ctx = NULL;
     return 1;
+}
+
+#define PEM_READ_SIZE 1024
+
+int load_pem_into_memory(char *pemfile, char **memspace) {
+
+    FILE *f = NULL;
+    char *ptr;
+    int result = 0;
+    int totalread = 0;
+    size_t totalsize = PEM_READ_SIZE;
+
+    if (*memspace) {
+        free(*memspace);
+    }
+
+    *memspace = calloc(totalsize, sizeof(char));
+    ptr = *memspace;
+
+    f = fopen(pemfile, "r");
+    if (!f) {
+        logger(LOG_INFO, "OpenLI: unable to open TLS .pem file %s: %s",
+                pemfile, strerror(errno));
+        return -1;
+    }
+
+    do {
+        size_t ret;
+
+        ret = fread(ptr, 1, PEM_READ_SIZE, f);
+        if (ferror(f)) {
+            logger(LOG_INFO, "OpenLI: error while reading TLS .pem file %s: %s",
+                    pemfile, strerror(errno));
+            result = -1;
+            break;
+        }
+
+        if (ret == PEM_READ_SIZE) {
+            *memspace = realloc(*memspace, totalsize + PEM_READ_SIZE);
+            ptr = (*memspace) + totalsize;
+            totalsize += PEM_READ_SIZE;
+        }
+        totalread += ret;
+
+    } while (!feof(f));
 
 
+    if (result != -1) {
+        (*memspace)[totalread] = '\0';
+    }
+
+    fclose(f);
+    return result;
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

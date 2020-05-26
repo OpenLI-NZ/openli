@@ -58,6 +58,17 @@ logstatfrequency: 5
 # well.
 #etsitls: yes
 
+# If set to 'yes', SIP packets with the same identifiers in the SDP O field
+# will *not* be assumed to be different legs of the same SIP call. Some
+# VOIP implementations do not generate sufficiently unique O fields for
+# each call and therefore, for those implementations, the SDP O data needs to
+# ignored to prevent OpenLI from erroneously including extra SIP traffic in a
+# VOIP intercept.
+# Defaults to 'no', because SDP O fields *should* be unique and this is
+# clearly stated in the ETSI LI spec that O fields are meant to be used
+# in this way to group call legs.
+# sipignoresdpo: no
+
 # List of Juniper mirrors that we are acting as a mediator for.
 # NOTE: This should be the IP and port of the *recipient* of the mirrored
 #       traffic, not the host that is doing the mirroring.

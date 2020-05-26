@@ -36,6 +36,13 @@ In addition to intercepts, the update socket can be used to manage the agencies
 that the OpenLI system will export intercepts to, as well as the set of
 known SIP and RADIUS servers on the network being monitored by OpenLI.
 
+If the provisioner has been configured to use TLS for internal communications,
+then the update socket will only accept connections over HTTPS. If you are
+using `curl` as a client to push commands to the update socket and have
+generated self-signed certificates for OpenLI, you will need to use the
+`--cacert` option (with the self-generated CA certificate) to allow `curl`
+to validate the provisioner's certificate.
+
 The running intercept config is stored in a file on disk. You may edit this
 file directly, but be warned that any changes to the file will only be
 applied when the OpenLI provisioner is restarted. In addition, the file is
@@ -47,10 +54,10 @@ intercepted traffic should be sent, be **very** careful about which hosts
 on your network can communicate with this socket.
 
 The update socket can be disabled by configuring it to listen on port 0.
-This will remove any capacity for the running intercept config to updated
-without having to restart the provisioner, but users who are concerned
-about having an open socket that can start, stop or modify intercepts may
-find this to be a preferable option.
+This will remove any capacity for the running intercept config to be updated
+without having to manually trigger a reload of the provisioner configuration,
+but users who are concerned about having an open socket that can start, stop or
+modify intercepts may find this to be a preferable option.
 
 ### Agencies
 In this context, an agency refers to an LEA (Law Enforcement Agency) that

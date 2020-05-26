@@ -1,4 +1,61 @@
-openli (1.0.4-1) UNRELEASED; urgency=medium
+openli (1.0.5-1) unstable; urgency=medium
+
+  * Add config option to disable joining VOIP calls with the same
+    SDP O identifier into the same CIN.
+  * Add HTTPS support to REST API.
+  * Improve IPv6 address handling in RADIUS parser.
+  * Fix erroneous "duplicate intercept" announcements bug.
+  * Add support for RADIUS sessions with both IPv4 and IPv6 addresses.
+  * Fix log spam caused by RADIUS Accounting-On messages.
+  * Fix "bad file descriptor" bug in mediator.
+  * Add ability to intercept multiple RTP streams from the same SIP session.
+  * Fix segfaults when RADIUS messages are missing a Username field.
+  * Fix silent logoff bugs when a RADIUS session has two identifiers.
+  * Fix slow memory leak related to RADIUS session expiry.
+  * Fix collector segfaults when the host runs out of memory.
+  * Fix bug where a reconnecting mediator would not receive buffered records
+    from the collectors.
+  * Fix bug where a mediator could steal records intended for another
+    mediator if it was using the same IP and port for connections.
+  * Fix SSL_write() errors when forwarding records to a mediator.
+  * Fix issues where collectors can end up hanging after being halted.
+  * Fix bug where a provisioner disconnection would cause the collectors
+    to drop all of the mediators, rather than continue forwarding records
+    until the provisioner returned.
+  * Fix minor memory leaks when the provisioner disconnects and reconnects.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Fri, 08 May 2020 11:46:29 +1200
+
+openli (1.0.5-1~prerel01) UNRELEASED; urgency=medium
+
+  * Pre-release packaging of 1.0.5 to allow clients to beta-test
+    recent RADIUS parsing fixes.
+  * Add config option to disable joining VOIP calls with the same
+    SDP O identifier into the same CIN.
+  * Add HTTPS support to REST API.
+  * Improve IPv6 address handling in RADIUS parser.
+  * Fix erroneous "duplicate intercept" announcements bug.
+  * Add support for RADIUS sessions with both IPv4 and IPv6 addresses.
+  * Fix log spam caused by RADIUS Accounting-On messages.
+  * Fix "bad file descriptor" bug in mediator.
+  * Add ability to intercept multiple RTP streams from the same SIP session.
+  * Fix segfaults when RADIUS messages are missing a Username field.
+  * Fix silent logoff bugs when a RADIUS session has two identifiers.
+  * Fix slow memory leak related to RADIUS session expiry.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Thu, 02 Apr 2020 16:54:21 +1300
+
+openli (1.0.5-1~sdpofix) UNRELEASED; urgency=medium
+
+  * Pre-release packaging of 1.0.5 to allow clients to beta-test
+    the SDP O patch.
+  * Add config option to disable joining VOIP calls with the same
+    SDP O identifier into the same CIN.
+  * Add HTTPS support to REST API.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Thu, 13 Feb 2020 13:58:21 +1300
+
+openli (1.0.4-1) unstable; urgency=medium
 
   * Added REST API to provisioner to allow intercepts, agencies and
     core servers to be manipulated by sending HTTP requests to a

@@ -80,7 +80,6 @@ static int parse_udp_sip_packet(openli_sip_parser_t *p, libtrace_udp_t *udp,
         uint32_t udprem) {
 
     void *payload = NULL;
-    int ret;
 
     payload = trace_get_payload_from_udp(udp, &udprem);
     if (payload == NULL || udprem == 0) {
@@ -296,8 +295,7 @@ int add_sip_packet_to_parser(openli_sip_parser_t **parser,
 
     char *completefrag = NULL;
     uint8_t proto, moreflag, isfrag;
-    uint32_t rem, plen;
-    int i, ret;
+    int ret;
     openli_sip_parser_t *p;
     uint16_t fragoff, fraglen;
     struct timeval tstamp;
@@ -742,7 +740,7 @@ char *get_sip_media_ipaddr(openli_sip_parser_t *parser) {
     return ipaddr;
 }
 
-char *get_sip_media_port(openli_sip_parser_t *parser) {
+char *get_sip_media_port(openli_sip_parser_t *parser, int index) {
     char *port;
 
     if (!parser->sdp) {
@@ -750,8 +748,20 @@ char *get_sip_media_port(openli_sip_parser_t *parser) {
             return NULL;
         }
     }
-    port = sdp_message_m_port_get(parser->sdp, 0);
+    port = sdp_message_m_port_get(parser->sdp, index);
     return port;
+}
+
+char *get_sip_media_type(openli_sip_parser_t *parser, int index) {
+    char *media;
+
+    if (!parser->sdp) {
+        if (parse_sdp_body(parser) == -1) {
+            return NULL;
+        }
+    }
+    media = sdp_message_m_media_get(parser->sdp, index);
+    return media;
 }
 
 int sip_is_invite(openli_sip_parser_t *parser) {

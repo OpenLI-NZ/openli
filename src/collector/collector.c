@@ -70,57 +70,6 @@ static void usage(char *prog) {
     fprintf(stderr, "Usage: %s -c configfile\n", prog);
 }
 
-#if 0
-static void dump_ip_intercept(ipintercept_t *ipint) {
-    char ipbuf[256];
-
-    printf("Intercept %u  %s\n", ipint->internalid,
-            ipint->active ? "ACTIVE": "INACTIVE");
-    printf("LI ID: %s\n", ipint->liid);
-    printf("Auth CC: %s     Delivery CC: %s\n", ipint->authcc,
-            ipint->delivcc);
-    if (ipint->username) {
-        printf("Username: %s\n", ipint->username);
-    } else {
-        printf("Username: Unknown\n");
-    }
-
-    if (ipint->ipaddr && ipint->ai_family == AF_INET) {
-        struct sockaddr_in *sin = (struct sockaddr_in *)ipint->ipaddr;
-        inet_ntop(AF_INET, (void *)&(sin->sin_addr), ipbuf, 256);
-        printf("User IPv4 address: %s\n", ipbuf);
-    } else {
-        printf("User IP address: Unknown\n");
-    }
-
-    printf("Communication ID: %u\n", ipint->cin);
-    printf("------\n");
-}
-#endif
-
-static void dump_rtp_intercept(rtpstreaminf_t *rtp) {
-    char ipbuf[256];
-
-    printf("LI ID: %s\n", rtp->common.liid);
-    printf("Auth CC: %s     Delivery CC: %s\n", rtp->common.authcc,
-            rtp->common.delivcc);
-
-    if (rtp->targetaddr && rtp->ai_family == AF_INET) {
-        struct sockaddr_in *sin = (struct sockaddr_in *)rtp->targetaddr;
-        inet_ntop(AF_INET, (void *)&(sin->sin_addr), ipbuf, 256);
-        printf("Target RTP endpoint: %s:%u\n", ipbuf, rtp->targetport);
-    }
-
-    if (rtp->otheraddr && rtp->ai_family == AF_INET) {
-        struct sockaddr_in *sin = (struct sockaddr_in *)rtp->otheraddr;
-        inet_ntop(AF_INET, (void *)&(sin->sin_addr), ipbuf, 256);
-        printf("Remote RTP endpoint: %s:%u\n", ipbuf, rtp->otherport);
-    }
-
-    printf("Communication ID: %u\n", rtp->cin);
-    printf("------\n");
-}
-
 static void reset_collector_stats(collector_global_t *glob) {
 
     glob->stats.packets_dropped = 0;
@@ -263,6 +212,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
     loc->sipservers = NULL;
     loc->staticv4ranges = New_Patricia(32);
     loc->staticv6ranges = New_Patricia(128);
+    loc->dynamicv6ranges = New_Patricia(128);
     loc->staticcache = NULL;
     loc->tosyncq_ip = NULL;
     loc->tosyncq_voip = NULL;
@@ -333,6 +283,56 @@ static void free_staticcache(static_ipcache_t *cache) {
     }
 }
 
+static void process_incoming_messages(libtrace_thread_t *t,
+        collector_global_t *glob, colthread_local_t *loc,
+        openli_pushed_t *syncpush) {
+
+    if (syncpush->type == OPENLI_PUSH_IPINTERCEPT) {
+        handle_push_ipintercept(t, loc, syncpush->data.ipsess);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_HALT_IPINTERCEPT) {
+        handle_halt_ipintercept(t, loc, syncpush->data.ipsess);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_IPMMINTERCEPT) {
+        handle_push_ipmmintercept(t, loc, syncpush->data.ipmmint);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_HALT_IPMMINTERCEPT) {
+        handle_halt_ipmmintercept(t, loc, syncpush->data.rtpstreamkey);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_CORESERVER) {
+        handle_push_coreserver(t, loc, syncpush->data.coreserver);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_REMOVE_CORESERVER) {
+        handle_remove_coreserver(t, loc, syncpush->data.coreserver);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_VENDMIRROR_INTERCEPT) {
+        handle_push_mirror_intercept(t, loc, syncpush->data.mirror);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_HALT_VENDMIRROR_INTERCEPT) {
+        handle_halt_mirror_intercept(t, loc, syncpush->data.mirror);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_IPRANGE) {
+        handle_iprange(t, loc, syncpush->data.iprange);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_REMOVE_IPRANGE) {
+        handle_remove_iprange(t, loc, syncpush->data.iprange);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_MODIFY_IPRANGE) {
+        handle_modify_iprange(t, loc, syncpush->data.iprange);
+    }
+
+}
+
 static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
         void *global, void *tls) {
 
@@ -340,6 +340,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     colthread_local_t *loc = (colthread_local_t *)tls;
     ipv4_target_t *v4, *tmp;
     ipv6_target_t *v6, *tmp2;
+    openli_pushed_t syncpush;
     int zero = 0, i;
 
     if (trace_is_err(trace)) {
@@ -348,12 +349,18 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
                 err.problem);
     }
 
+    while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
+            (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
+        process_incoming_messages(t, glob, loc, &syncpush);
+    }
+
+    while (libtrace_message_queue_try_get(&(loc->fromsyncq_voip),
+            (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
+        process_incoming_messages(t, glob, loc, &syncpush);
+    }
+
     deregister_sync_queues(&(glob->syncip), t);
     deregister_sync_queues(&(glob->syncvoip), t);
-
-    /* TODO drain fromsync message queue so we don't leak SIP URIs
-     * and any other malloced memory in the messages.
-     */
 
     libtrace_message_queue_destroy(&(loc->fromsyncq_ip));
     libtrace_message_queue_destroy(&(loc->fromsyncq_voip));
@@ -379,8 +386,10 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     HASH_ITER(hh, loc->activeipv6intercepts, v6, tmp2) {
         free_all_ipsessions(&(v6->intercepts));
         HASH_DELETE(hh, loc->activeipv6intercepts, v6);
+        free(v6->prefixstr);
         free(v6);
     }
+
 
     free_all_staticipsessions(&(loc->activestaticintercepts));
     free_all_rtpstreams(&(loc->activertpintercepts));
@@ -393,6 +402,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     Destroy_Patricia(loc->staticv4ranges, free_staticrange_data);
     Destroy_Patricia(loc->staticv6ranges, free_staticrange_data);
+    Destroy_Patricia(loc->dynamicv6ranges, free_staticrange_data);
 
     free_staticcache(loc->staticcache);
 }
@@ -508,56 +518,6 @@ static inline uint8_t check_for_invalid_sip(libtrace_packet_t *pkt,
     return 0;
 }
 
-static void process_incoming_messages(libtrace_thread_t *t,
-        collector_global_t *glob, colthread_local_t *loc,
-        openli_pushed_t *syncpush) {
-
-    if (syncpush->type == OPENLI_PUSH_IPINTERCEPT) {
-        handle_push_ipintercept(t, loc, syncpush->data.ipsess);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_HALT_IPINTERCEPT) {
-        handle_halt_ipintercept(t, loc, syncpush->data.ipsess);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_IPMMINTERCEPT) {
-        handle_push_ipmmintercept(t, loc, syncpush->data.ipmmint);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_HALT_IPMMINTERCEPT) {
-        handle_halt_ipmmintercept(t, loc, syncpush->data.rtpstreamkey);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_CORESERVER) {
-        handle_push_coreserver(t, loc, syncpush->data.coreserver);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_REMOVE_CORESERVER) {
-        handle_remove_coreserver(t, loc, syncpush->data.coreserver);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_VENDMIRROR_INTERCEPT) {
-        handle_push_mirror_intercept(t, loc, syncpush->data.mirror);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_HALT_VENDMIRROR_INTERCEPT) {
-        handle_halt_mirror_intercept(t, loc, syncpush->data.mirror);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_IPRANGE) {
-        handle_iprange(t, loc, syncpush->data.iprange);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_REMOVE_IPRANGE) {
-        handle_remove_iprange(t, loc, syncpush->data.iprange);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_MODIFY_IPRANGE) {
-        handle_modify_iprange(t, loc, syncpush->data.iprange);
-    }
-
-}
-
 static inline int is_core_server_packet(libtrace_packet_t *pkt,
         packet_info_t *pinfo, coreserver_t *servers) {
 
@@ -625,7 +585,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     uint16_t ethertype;
     uint32_t rem, iprem;
     uint8_t proto;
-    int forwarded = 0, i, ret;
+    int forwarded = 0, ret;
     int ipsynced = 0, voipsynced = 0;
     uint16_t fragoff = 0;
 
@@ -968,6 +928,7 @@ static inline void init_sync_thread_data(collector_global_t *glob,
     sup->collector_queues = NULL;
     sup->epollevs = NULL;
     sup->epoll_fd = epoll_create1(0);
+    sup->total_col_threads = glob->total_col_threads;
 
     sup->stats_mutex = &(glob->stats_mutex);
     sup->stats = &(glob->stats);
@@ -988,7 +949,7 @@ static inline void free_sync_thread_data(sync_thread_global_t *sup) {
 
 static void destroy_collector_state(collector_global_t *glob) {
 
-    colinput_t *inp, *tmp;
+    colinput_t *inp;
     int i;
 
     if (glob->expired_inputs) {
@@ -1102,10 +1063,7 @@ int register_sync_queues(sync_thread_global_t *glob,
         void *recvq, libtrace_message_queue_t *sendq,
         libtrace_thread_t *parent) {
 
-    struct epoll_event ev;
-    sync_epoll_t *syncev, *syncev_hash;
-    sync_sendq_t *syncq, *sendq_hash, *a, *b;
-    int ind;
+    sync_sendq_t *syncq, *sendq_hash;
 
     syncq = (sync_sendq_t *)malloc(sizeof(sync_sendq_t));
     syncq->q = sendq;
@@ -1126,9 +1084,7 @@ int register_sync_queues(sync_thread_global_t *glob,
 void deregister_sync_queues(sync_thread_global_t *glob,
 		libtrace_thread_t *t) {
 
-    sync_epoll_t *syncev, *syncev_hash;
     sync_sendq_t *syncq, *sendq_hash;
-    struct epoll_event ev;
 
     pthread_mutex_lock(&(glob->mutex));
     sendq_hash = (sync_sendq_t *)(glob->collector_queues);
@@ -1217,6 +1173,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->sslconf.ctx = NULL;
 
     glob->etsitls = 1;
+    glob->ignore_sdpo_matches = 0;
     glob->encoding_method = OPENLI_ENCODING_DER;
 
     memset(&(glob->stats), 0, sizeof(glob->stats));
@@ -1365,7 +1322,7 @@ static int reload_collector_config(collector_global_t *glob,
 static void *start_voip_sync_thread(void *params) {
 
     collector_global_t *glob = (collector_global_t *)params;
-    int ret, i;
+    int ret;
     collector_sync_voip_t *sync = init_voip_sync_data(glob);
     sync_sendq_t *sq;
 
@@ -1403,7 +1360,7 @@ void halt_processing_threads(collector_global_t *glob) {
 static void *start_ip_sync_thread(void *params) {
 
     collector_global_t *glob = (collector_global_t *)params;
-    int ret, i;
+    int ret;
     collector_sync_t *sync = init_sync_data(glob);
     sync_sendq_t *sq;
 
@@ -1539,7 +1496,8 @@ int main(int argc, char *argv[]) {
 
     sigaction(SIGINT, &sigact, NULL);
     sigaction(SIGTERM, &sigact, NULL);
-	signal(SIGPIPE, SIG_IGN);
+    sigaction(SIGPIPE, &(struct sigaction){SIG_IGN}, NULL);
+	//signal(SIGPIPE, SIG_IGN);
 
     sigact.sa_handler = reload_signal;
     sigemptyset(&sigact.sa_mask);
@@ -1596,7 +1554,9 @@ int main(int argc, char *argv[]) {
         glob->seqtrackers[i].intercepts = NULL;
         glob->seqtrackers[i].colident = &(glob->sharedinfo);
         glob->seqtrackers[i].encoding_method = glob->encoding_method;
-
+#ifdef HAVE_BER_ENCODING
+        glob->seqtrackers[i].enc_ber = wandder_init_encoder_ber(1000, 512);
+#endif
         pthread_create(&(glob->seqtrackers[i].threadid), NULL,
                 start_seqtracker_thread, (void *)&(glob->seqtrackers[i]));
     }

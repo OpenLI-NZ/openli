@@ -49,8 +49,7 @@
 
 collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
 
-    struct epoll_event ev;
-    int zero = 0, i;
+    int i;
     char sockname[128];
 
     collector_sync_voip_t *sync = (collector_sync_voip_t *)
@@ -103,17 +102,23 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
 
     sync->sipdebugupdate = NULL;
     sync->sipdebugout = NULL;
+    sync->ignore_sdpo_matches = glob->ignore_sdpo_matches;
+
+    if (glob->ignore_sdpo_matches) {
+        logger(LOG_INFO, "OpenLI: disabling tracking of multiple SIP legs using SDP O identifier");
+    }
 
     if (glob->sipdebugfile) {
         sync->sipdebugfile = glob->sipdebugfile;
         glob->sipdebugfile = NULL;
+    } else {
+        sync->sipdebugfile = NULL;
     }
 
     return sync;
 }
 
 void clean_sync_voip_data(collector_sync_voip_t *sync) {
-    struct epoll_event ev;
     int zero = 0, i;
     sync_epoll_t *syncev, *tmp;
 
@@ -276,12 +281,13 @@ static void push_all_active_voipstreams(collector_sync_voip_t *sync,
 }
 
 static int update_rtp_stream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp,
-        voipintercept_t *vint, char *ipstr, char *portstr, uint8_t dir) {
+        voipintercept_t *vint, char *ipstr, char *portstr, char *mediatype,
+        uint8_t dir) {
 
     uint32_t port;
     struct sockaddr_storage *saddr;
     int family, i;
-    sync_sendq_t *sendq, *tmp;
+    struct sipmediastream *mstream = NULL;
 
     errno = 0;
     port = strtoul(portstr, NULL, 0);
@@ -295,6 +301,30 @@ static int update_rtp_stream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp,
 
     convert_ipstr_to_sockaddr(ipstr, &(saddr), &(family));
 
+    for (i = 0; i < rtp->streamcount; i++) {
+
+        if (strcmp(rtp->mediastreams[i].mediatype, mediatype) == 0) {
+            mstream = &(rtp->mediastreams[i]);
+            break;
+        }
+    }
+
+    if (mstream == NULL) {
+        if (rtp->streamcount > 0 && (rtp->streamcount %
+                RTP_STREAM_ALLOC) == 0) {
+            rtp->mediastreams = realloc(rtp->mediastreams,
+                    (rtp->streamcount + RTP_STREAM_ALLOC) *
+                        sizeof(struct sipmediastream));
+            mstream = &(rtp->mediastreams[rtp->streamcount]);
+        }
+        mstream = &(rtp->mediastreams[rtp->streamcount]);
+        rtp->streamcount ++;
+
+        mstream->targetport = 0;
+        mstream->otherport = 0;
+        mstream->mediatype = strdup(mediatype);
+    }
+
     /* If we get here, the RTP stream is not in our list. */
     if (dir == ETSI_DIR_FROM_TARGET) {
         if (rtp->targetaddr) {
@@ -303,7 +333,7 @@ static int update_rtp_stream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp,
         }
         rtp->ai_family = family;
         rtp->targetaddr = saddr;
-        rtp->targetport = (uint16_t)port;
+        mstream->targetport = (uint16_t)port;
 
     } else {
         if (rtp->otheraddr) {
@@ -312,11 +342,27 @@ static int update_rtp_stream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp,
         }
         rtp->ai_family = family;
         rtp->otheraddr = saddr;
-        rtp->otherport = (uint16_t)port;
+        mstream->otherport = (uint16_t)port;
+    }
+    return 0;
+}
+
+static inline int announce_rtp_streams_if_required(
+        collector_sync_voip_t *sync, rtpstreaminf_t *rtp) {
+
+    sync_sendq_t *sendq, *tmp;
+
+    /* Not got the full 5-tuple for the RTP stream yet
+     *
+     * This naively assumes that all media streams are fully announced
+     * at the same time -- if different media streams are announced
+     * in different SIP messages, then this is going to need to get smarter.
+     */
+    if (!rtp->targetaddr || !rtp->otheraddr) {
+        return 0;
     }
 
-    /* Not got the full 5-tuple for the RTP stream yet */
-    if (!rtp->targetaddr || !rtp->otheraddr) {
+    if (rtp->active == 1) {
         return 0;
     }
 
@@ -328,7 +374,7 @@ static int update_rtp_stream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp,
         }
     }
     rtp->active = 1;
-    return 0;
+    return 1;
 }
 
 /* TODO very similar to code in intercept.c */
@@ -556,7 +602,8 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
         rtpstreaminf_t *thisrtp, voipintercept_t *vint,
         etsili_iri_type_t *iritype) {
 
-    char *cseqstr, *ipstr, *portstr;
+    char *cseqstr, *ipstr, *portstr, *mediatype;
+    int i = 1;
 
     cseqstr = get_sip_cseq(sync->sipparser);
 
@@ -564,22 +611,29 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
                 cseqstr) == 0) {
 
         ipstr = get_sip_media_ipaddr(sync->sipparser);
-        portstr = get_sip_media_port(sync->sipparser);
+        portstr = get_sip_media_port(sync->sipparser, 0);
+        mediatype = get_sip_media_type(sync->sipparser, 0);
 
-        if (ipstr && portstr) {
-            if (update_rtp_stream(sync, thisrtp, vint, ipstr,
-                        portstr, 1) == -1) {
+        while (ipstr && portstr && mediatype) {
+
+            if (update_rtp_stream(sync, thisrtp, vint, ipstr, portstr,
+                    mediatype, 1) == -1) {
                 if (sync->log_bad_sip) {
                     logger(LOG_INFO,
-                            "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
-                            vint->common.liid, ipstr, portstr);
+                        "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
+                        vint->common.liid, ipstr, portstr);
                 }
                 free(cseqstr);
                 return -1;
             }
-            free(thisrtp->invitecseq);
-            thisrtp->invitecseq = NULL;
+            portstr = get_sip_media_port(sync->sipparser, i);
+            mediatype = get_sip_media_type(sync->sipparser, i);
+            i++;
         }
+        free(thisrtp->invitecseq);
+        thisrtp->invitecseq = NULL;
+
+        announce_rtp_streams_if_required(sync, thisrtp);
     }
     free(cseqstr);
     return 0;
@@ -588,7 +642,8 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
 static int process_sip_200ok(collector_sync_voip_t *sync, rtpstreaminf_t *thisrtp,
         voipintercept_t *vint, etsili_iri_type_t *iritype) {
 
-    char *ipstr, *portstr, *cseqstr;
+    char *ipstr, *portstr, *cseqstr, *mediatype;
+    int i = 1;
 
     cseqstr = get_sip_cseq(sync->sipparser);
 
@@ -596,22 +651,28 @@ static int process_sip_200ok(collector_sync_voip_t *sync, rtpstreaminf_t *thisrt
                 cseqstr) == 0) {
 
         ipstr = get_sip_media_ipaddr(sync->sipparser);
-        portstr = get_sip_media_port(sync->sipparser);
+        portstr = get_sip_media_port(sync->sipparser, 0);
+        mediatype = get_sip_media_type(sync->sipparser, 0);
 
-        if (ipstr && portstr) {
-            if (update_rtp_stream(sync, thisrtp, vint, ipstr,
-                        portstr, 1) == -1) {
+        while (ipstr && portstr && mediatype) {
+            if (update_rtp_stream(sync, thisrtp, vint, ipstr, portstr,
+                    mediatype, 1) == -1) {
                 if (sync->log_bad_sip) {
                     logger(LOG_INFO,
-                            "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
-                            vint->common.liid, ipstr, portstr);
+                        "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
+                        vint->common.liid, ipstr, portstr);
                 }
                 free(cseqstr);
                 return -1;
             }
-            free(thisrtp->invitecseq);
-            thisrtp->invitecseq = NULL;
+            portstr = get_sip_media_port(sync->sipparser, i);
+            mediatype = get_sip_media_type(sync->sipparser, i);
+            i++;
         }
+        free(thisrtp->invitecseq);
+        thisrtp->invitecseq = NULL;
+
+        announce_rtp_streams_if_required(sync, thisrtp);
     } else if (thisrtp->byecseq && strcmp(thisrtp->byecseq,
                 cseqstr) == 0 && thisrtp->byematched == 0) {
         sync_epoll_t *timeout = (sync_epoll_t *)calloc(1,
@@ -665,7 +726,7 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
             irimsg->data.ipmmiri.contentlen);
 
     pthread_mutex_lock(sync->glob->stats_mutex);
-    sync->glob->stats->ipmmiri_created;
+    sync->glob->stats->ipmmiri_created ++;
     pthread_mutex_unlock(sync->glob->stats_mutex);
     publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], copy);
 }
@@ -693,7 +754,6 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
     int badsip = 0;
 
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
-        int queueused;
 
         /* Is this call ID associated with this intercept? */
         HASH_FIND(hh_callid, vint->cin_callid_map, callid, strlen(callid),
@@ -766,7 +826,7 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
 static int process_sip_register(collector_sync_voip_t *sync, char *callid,
         openli_export_recv_t *irimsg) {
 
-    openli_sip_identity_t touriid, authid;
+    openli_sip_identity_t touriid;
     voipintercept_t *vint, *tmp;
     sipregister_t *sipreg;
     int exportcount = 0;
@@ -812,13 +872,14 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     voipcinmap_t *findcin;
     voipsdpmap_t *findsdp = NULL;
     voipintshared_t *vshared;
-    openli_sip_identity_t touriid, authid;
+    openli_sip_identity_t touriid;
     char rtpkey[256];
     rtpstreaminf_t *thisrtp;
-    char *ipstr, *portstr, *cseqstr;
+    char *ipstr, *portstr, *mediatype;
     int exportcount = 0;
     etsili_iri_type_t iritype = ETSILI_IRI_REPORT;
     int badsip = 0;
+    int i = 1;
 
     if (get_sip_to_uri_identity(sync->sipparser, &touriid) < 0) {
         if (sync->log_bad_sip) {
@@ -829,7 +890,6 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     }
 
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
-        int queueused;
         vshared = NULL;
 
         /* Is this a call ID we've seen already? */
@@ -856,7 +916,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
             vshared = findcin->shared;
             iritype = ETSILI_IRI_CONTINUE;
 
-        } else if (findsdp) {
+        } else if (findsdp && !sync->ignore_sdpo_matches) {
             /* New call ID but already seen this session */
             update_cin_callid_map(&(vint->cin_callid_map), callid,
                         findsdp->shared);
@@ -903,23 +963,32 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         }
 
         ipstr = get_sip_media_ipaddr(sync->sipparser);
-        portstr = get_sip_media_port(sync->sipparser);
+        portstr = get_sip_media_port(sync->sipparser, 0);
+        mediatype = get_sip_media_type(sync->sipparser, 0);
 
-        if (ipstr && portstr) {
+        while (ipstr && portstr && !badsip && mediatype) {
             if (update_rtp_stream(sync, thisrtp, vint, ipstr, portstr,
-                        0) == -1) {
+                    mediatype, 0) == -1) {
                 if (sync->log_bad_sip) {
                     logger(LOG_INFO,
                         "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
                         vint->common.liid, ipstr, portstr);
                 }
                 badsip = 1;
-                continue;
+                break;
             }
+            portstr = get_sip_media_port(sync->sipparser, i);
+            mediatype = get_sip_media_type(sync->sipparser, i);
+            i++;
         }
+
+        announce_rtp_streams_if_required(sync, thisrtp);
 
         if (thisrtp->invitecseq != NULL) {
             free(thisrtp->invitecseq);
+        }
+        if (badsip) {
+            continue;
         }
         thisrtp->invitecseq = get_sip_cseq(sync->sipparser);
         create_sip_ipiri(sync, vint, irimsg, iritype, vshared->cin);
@@ -937,10 +1006,9 @@ static int update_sip_state(collector_sync_voip_t *sync,
         libtrace_packet_t *pkt, openli_export_recv_t *irimsg) {
 
     char *callid, *sessid, *sessversion, *sessaddr, *sessuser;
-    openli_sip_identity_t authid, touriid;
     sip_sdp_identifier_t sdpo;
     int iserr = 0;
-    int ret, authcount, i;
+    int ret;
 
     callid = get_sip_callid(sync->sipparser);
     sessid = get_sip_session_id(sync->sipparser);
@@ -1048,9 +1116,6 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
     voipintercept_t *vint, tomod;
-    sync_sendq_t *sendq, *tmp;
-    int i;
-    openli_export_recv_t *expmsg;
 
     if (decode_voipintercept_modify(intmsg, msglen, &tomod) == -1) {
         if (sync->log_bad_instruct) {
@@ -1098,8 +1163,6 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
     voipintercept_t *vint, torem;
-    sync_sendq_t *sendq, *tmp;
-    int i;
     openli_export_recv_t *expmsg;
 
     if (decode_voipintercept_halt(intmsg, msglen, &torem) == -1) {
@@ -1140,9 +1203,7 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
 }
 
 static int halt_single_rtpstream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp) {
-    int i;
 
-    struct epoll_event ev;
     voipcinmap_t *cin_callid, *tmp;
     voipsdpmap_t *cin_sdp, *tmp2;
     sync_sendq_t *sendq, *tmp3;
@@ -1215,7 +1276,7 @@ static int halt_single_rtpstream(collector_sync_voip_t *sync, rtpstreaminf_t *rt
 static inline void disable_sip_target(voipintercept_t *vint,
         openli_sip_identity_t *sipid) {
 
-    openli_sip_identity_t *newid, *iter;
+    openli_sip_identity_t *iter;
     libtrace_list_node_t *n;
 
     n = vint->targets->head;
@@ -1271,6 +1332,12 @@ static inline void add_new_sip_target_to_list(voipintercept_t *vint,
                 iter->active = 1;
             }
             iter->awaitingconfirm = 0;
+            if (sipid->username) {
+                free(sipid->username);
+            }
+            if (sipid->realm) {
+                free(sipid->realm);
+            }
             return;
         }
         n = n->next;
@@ -1363,17 +1430,18 @@ static int withdraw_voip_sip_target(collector_sync_voip_t *sync,
 
     sync->log_bad_instruct = 1;
     disable_sip_target(vint, &sipid);
+    return 0;
 }
 
 static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
-    voipintercept_t *vint, toadd;
+    voipintercept_t *vint, *toadd;
     sync_sendq_t *sendq, *tmp;
-    int i;
     openli_export_recv_t *expmsg;
 
-    if (decode_voipintercept_start(intmsg, msglen, &toadd) == -1) {
+    toadd = (voipintercept_t *)malloc(sizeof(voipintercept_t));
+    if (decode_voipintercept_start(intmsg, msglen, toadd) == -1) {
         if (sync->log_bad_instruct) {
             logger(LOG_INFO,
                 "OpenLI: received invalid VOIP intercept from provisioner.");
@@ -1385,18 +1453,19 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         sync->log_bad_instruct = 1;
     }
 
-    HASH_FIND(hh_liid, sync->voipintercepts, toadd.common.liid,
-            toadd.common.liid_len, vint);
+    HASH_FIND(hh_liid, sync->voipintercepts, toadd->common.liid,
+            toadd->common.liid_len, vint);
     if (vint) {
-        vint->internalid = toadd.internalid;
+        vint->internalid = toadd->internalid;
         vint->awaitingconfirm = 0;
         vint->active = 1;
-        vint->options = toadd.options;
+        vint->options = toadd->options;
+        free_single_voipintercept(toadd);
         return 0;
+    } else {
+        vint = toadd;
     }
 
-    vint = (voipintercept_t *)malloc(sizeof(voipintercept_t));
-    memcpy(vint, &toadd, sizeof(voipintercept_t));
     vint->common.seqtrackerid = hash_liid(vint->common.liid) %
             sync->pubsockcount;
 

@@ -81,6 +81,7 @@ verbose. The value you set for this option will determine the number of
 minutes between statistic dumps from the collector -- setting this to zero
 will disable the statistic logging altogether.
 
+
 ### Inputs
 The inputs option is used to describe which interfaces should be used to
 intercept traffic. Each interface should be expressed using either its
@@ -146,6 +147,9 @@ The basic option keys are:
 * logstatfrequency  -- set the frequency (in minutes) that the collector
                        should dump detailed statistics about the collection
                        process to the logger. Defaults to 0 (no stat logging).
+* sipignoresdpo     -- set to 'yes' to prevent OpenLI from using SDP O fields
+                       to group multiple legs for the same VOIP call. See
+                       notes below for more explanation. Defaults to 'no'.
 
 Inputs are specified as a YAML sequence with a key of `inputs:`. Each
 sequence item represents a single traffic source to intercept traffic from
@@ -175,6 +179,64 @@ for message-passing and connection maintenance, which will also be
 contending for CPU time. A good rule of thumb is that the total number
 of input threads, sequence tracker threads, encoding threads and forwarding
 threads should NOT exceed the number of CPU cores on your machine.
+
+
+### SIP Ignore SDP O option
+When testing OpenLI VOIP intercepts, you may discover that the IRI stream for
+a given voice intercept includes some erroneous SIP packets that belong to
+another call that should definitely not be part of the intercept.
+
+If this happens to you, try adding the `sipignoresdpo` option to your
+collector config and set the value to `yes`.
+
+---
+
+More detailed explanation (only bother if you are really curious and have
+a good understanding of SIP + LI): SIP sessions that pass through SIP proxies
+are said to be split into multiple "legs", where each leg is the portion of the
+path between two SIP proxies / endpoints. Because each proxy is a termination
+point for the session, the Call-ID (which the field we usually use to map
+SIP packets to their session) changes from leg to leg. Thus, if packets from
+two separate legs are intercepted by the same OpenLI collector, packets from
+the first leg would be assigned to one session (based on the Call-ID assigned
+by the sender of the first leg) and packets from the second leg would assigned
+to a different session (again, because the Call-ID is different to that from
+the first leg).
+
+However, the ETSI LI specifications require that the interception process
+recognise the two legs as being from the same session/call (despite the
+Call-ID being different), and therefore should be assigned the same
+communication identifier and use the same sequencing space when numbering the
+IRI records. The specs suggest (in Sec 5.3.1 of ETSI TS 102 232-5) that the
+intercept process can use the O field in the SDP payload to recognise different
+call legs, as this should be unique but consistent across call legs (as per
+RFC 4566). And thus OpenLI will indeed try to do this: if we see a SIP packet
+with a new Call-ID but its SDP O identifiers match the ones we've seen for a
+previous Call-ID then OpenLI considers them to be different legs for the same
+call and joins the Call-IDs into a single intercepted session.
+
+In reality, there are VOIP implementations where the values that get put in
+an SDP O field are *not* unique for each call. Some implementations just hard
+code some of the values, others appear to re-use them. The end result is that
+the one thing OpenLI is relying on to recognise sessions that have been spread
+across multiple legs is not that reliable any more.
+
+Hence, there is now an option in OpenLI to tell a collector to not attempt
+to use SDP O data to recognise other legs of a SIP session. This will prevent
+OpenLI from doing exactly what Sec 5.3.1 of ETSI TS 102 232-5 wants it to do,
+so each call leg will end up with its own communication identifier, but this
+is a much better outcome than the overcollection that will occur if the SDP O
+data is not globally unique.
+
+In summary, if you are seeing some weird problems with SIP over-collection
+on your VOIP intercepts, set `sipignoresdpo` to `yes` and the problems will
+likely go away. If the LEAs give you grief about your call legs being split
+across multiple communication identifiers, feel free to a) blame your VOIP
+vendor for not implementing SDP O properly and b) send them a copy of this
+detailed explanation as to why your intercept software is unable to join the
+legs together.
+
+
 
 
 

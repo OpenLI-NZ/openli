@@ -46,7 +46,7 @@ typedef struct encoder_result {
     uint8_t isDer;
     openli_export_recv_t *origreq;
 #ifdef HAVE_BER_ENCODING
-    wandder_etsili_top_t *top;
+    wandder_etsili_child_t *child;
 #endif
 } PACKED openli_encoded_result_t;
 

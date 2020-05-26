@@ -244,7 +244,6 @@ static int reload_voipintercepts(provision_state_t *currstate,
 		prov_intercept_conf_t *intconf, int droppedcols, int droppedmeds) {
 
     voipintercept_t *voipint, *tmp, *newequiv;
-    char *str;
 
     /* TODO error handling in the "inform other components about changes"
      * functions?
@@ -319,7 +318,7 @@ static int reload_voipintercepts(provision_state_t *currstate,
         }
 
         if (currstate->ignorertpcomfort) {
-            newequiv->options |= (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
+            voipint->options |= (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
         }
 
         /* Add the LIID mapping */
@@ -354,7 +353,6 @@ static int reload_ipintercepts(provision_state_t *currstate,
 		prov_intercept_conf_t *intconf, int droppedcols, int droppedmeds) {
 
     ipintercept_t *ipint, *tmp, *newequiv;
-    char *str;
     liid_hash_t *h = NULL;
 
     /* TODO error handling in the "inform other components about changes"
@@ -586,7 +584,8 @@ static inline int reload_mediator_socket_config(provision_state_t *currstate,
     if (strcmp(newstate->mediateaddr, currstate->mediateaddr) != 0 ||
             strcmp(newstate->mediateport, currstate->mediateport) != 0) {
 
-        free_all_mediators(currstate->epoll_fd, &(currstate->mediators));
+        free_all_mediators(currstate->epoll_fd, &(currstate->mediators),
+                &(currstate->knownmeds));
 
         if (epoll_ctl(currstate->epoll_fd, EPOLL_CTL_DEL,
                 currstate->mediatorfd->fd, &ev) == -1) {
@@ -618,7 +617,6 @@ static inline int reload_mediator_socket_config(provision_state_t *currstate,
 static inline int reload_push_socket_config(provision_state_t *currstate,
         provision_state_t *newstate) {
 
-    struct epoll_event ev;
     int changed = 0;
 
     /* TODO this will trigger on a whitespace change */
@@ -685,7 +683,6 @@ int reload_provisioner_config(provision_state_t *currstate) {
     int mediatorchanged = 0;
     int clientchanged = 0;
     int pushchanged = 0;
-    int leachanged = 0;
     int tlschanged = 0;
     int voipoptschanged = 0;
 
@@ -747,7 +744,8 @@ int reload_provisioner_config(provision_state_t *currstate) {
 
     if (tlschanged != 0) {
         if (!mediatorchanged) {
-            free_all_mediators(currstate->epoll_fd, &(currstate->mediators));
+            free_all_mediators(currstate->epoll_fd, &(currstate->mediators),
+                    &(currstate->knownmeds));
             mediatorchanged = 1;
         }
         if (!clientchanged) {

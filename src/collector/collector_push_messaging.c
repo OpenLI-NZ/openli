@@ -52,6 +52,117 @@ static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
     return 1;
 }
 
+int add_iprange_to_patricia(patricia_tree_t *ptree, char *iprangestr,
+        intercept_common_t *common, uint32_t cin) {
+
+    patricia_node_t *node = NULL;
+    liid_set_t **all, *found;
+    prefix_t *prefix = NULL;
+
+    prefix = ascii2prefix(0, iprangestr);
+    if (prefix == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: error converting %s into a valid IP prefix",
+                iprangestr);
+        return -1;
+    }
+
+    node = patricia_lookup(ptree, prefix);
+
+    if (!node) {
+        logger(LOG_INFO,
+                "OpenLI: error while adding IP prefix %s to LIID %s",
+                iprangestr, common->liid);
+        free(prefix);
+        return -1;
+    }
+
+    all = (liid_set_t **)&(node->data);
+    if (*all != NULL) {
+        free(prefix);
+    } else {
+        prefix->ref_count --;
+    }
+
+    HASH_FIND(hh, *all, common->liid, common->liid_len, found);
+    if (found) {
+        return 0;
+    } else {
+        char key[128];
+
+        found = (liid_set_t *)malloc(sizeof(liid_set_t));
+        found->liid = strdup(common->liid);
+        found->cin = cin;
+
+        snprintf(key, 127, "%s-%u", found->liid, found->cin);
+        found->key = strdup(key);
+        found->keylen = strlen(found->key);
+
+
+        HASH_ADD_KEYPTR(hh, *all, found->liid, strlen(found->liid), found);
+        /*
+        logger(LOG_INFO,
+                "OpenLI: added LIID %s:%u to prefix %s (%d refs total)",
+                common->liid, cin, iprangestr, HASH_CNT(hh, *all));
+        */
+    }
+    return 1;
+
+}
+
+void remove_iprange_from_patricia(patricia_tree_t *ptree, char *iprangestr,
+        intercept_common_t *common) {
+
+    patricia_node_t *node = NULL;
+    prefix_t *prefix = NULL;
+    liid_set_t **all, *found;
+
+    prefix = ascii2prefix(0, iprangestr);
+    if (prefix == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: error converting %s into a valid IP prefix",
+                iprangestr);
+        goto bailremoverange;
+    }
+
+    node = patricia_search_exact(ptree, prefix);
+
+    if (!node) {
+        logger(LOG_INFO,
+                "OpenLI: supposed to remove IP prefix %s for LIID %s but no such prefix exists in the tree.",
+                iprangestr, common->liid);
+        goto bailremoverange;
+    }
+
+    all = (liid_set_t **)&(node->data);
+    HASH_FIND(hh, *all, common->liid, common->liid_len, found);
+    if (!found) {
+        logger(LOG_INFO,
+                "OpenLI: supposed to remove IP prefix %s for LIID %s but the LIID is not associated with that prefix.",
+                iprangestr, common->liid);
+        goto bailremoverange;
+    }
+
+    HASH_DELETE(hh, *all, found);
+    /*
+    logger(LOG_INFO,
+            "OpenLI: removed LIID %s from prefix %s (%d refs remaining)",
+            common->liid, iprangestr, HASH_CNT(hh, *all));
+    */
+    if (*all == NULL) {
+        patricia_remove(ptree, node);
+    }
+    free(found->liid);
+    free(found->key);
+    free(found);
+
+bailremoverange:
+    if (prefix) {
+        free(prefix);
+    }
+    return;
+}
+
 static int add_ipv4_intercept(colthread_local_t *loc, ipsession_t *sess) {
 
     uint32_t v4addr;
@@ -91,10 +202,11 @@ static int add_ipv4_intercept(colthread_local_t *loc, ipsession_t *sess) {
 
 static int add_ipv6_intercept(colthread_local_t *loc, ipsession_t *sess) {
 
-    uint8_t *v6addr;
     struct sockaddr_in6 *sin6;
     ipv6_target_t *tgt;
     ipsession_t *check;
+    char prefixstr[100];
+    char inet[INET6_ADDRSTRLEN];
 
     sin6 = (struct sockaddr_in6 *)(sess->targetip);
     if (sin6 == NULL) {
@@ -102,18 +214,32 @@ static int add_ipv6_intercept(colthread_local_t *loc, ipsession_t *sess) {
         return -1;
     }
 
-    v6addr = sin6->sin6_addr.s6_addr;
+    if (inet_ntop(AF_INET6, &(sin6->sin6_addr), inet, INET6_ADDRSTRLEN)
+            == NULL) {
+        logger(LOG_INFO, "OpenLI: IPv6 intercept prefix does not contain a valid IPv6 address");
+        return -1;
+    }
 
-    HASH_FIND(hh, loc->activeipv6intercepts, v6addr, 16, tgt);
+    snprintf(prefixstr, 100, "%s/%u", inet, sess->prefixlen);
+
+    if (add_iprange_to_patricia(loc->dynamicv6ranges, prefixstr,
+            &(sess->common), sess->cin) < 0) {
+        return -1;
+    }
+
+    HASH_FIND(hh, loc->activeipv6intercepts, prefixstr, strlen(prefixstr), tgt);
     if (tgt == NULL) {
         tgt = (ipv6_target_t *)malloc(sizeof(ipv6_target_t));
         if (!tgt) {
             logger(LOG_INFO, "OpenLI: ran out of memory while adding IPv6 intercept address.");
             return -1;
         }
-        memcpy(tgt->address, v6addr, 16);
+        memcpy(tgt->address, sin6->sin6_addr.s6_addr, 16);
+        tgt->prefixlen = sess->prefixlen;
+        tgt->prefixstr = strdup(prefixstr);
         tgt->intercepts = NULL;
-        HASH_ADD_KEYPTR(hh, loc->activeipv6intercepts, tgt->address, 16, tgt);
+        HASH_ADD_KEYPTR(hh, loc->activeipv6intercepts, tgt->prefixstr,
+                strlen(tgt->prefixstr), tgt);
     }
 
     HASH_FIND(hh, tgt->intercepts, sess->streamkey, strlen(sess->streamkey),
@@ -165,8 +291,9 @@ static int remove_ipv6_intercept(colthread_local_t *loc, ipsession_t *torem) {
 
     ipv6_target_t *v6;
     struct sockaddr_in6 *sin6;
-    uint8_t *v6addr;
     ipsession_t *found;
+    char prefixstr[100];
+    char inet[INET6_ADDRSTRLEN];
 
     sin6 = (struct sockaddr_in6 *)(torem->targetip);
     if (sin6 == NULL) {
@@ -174,8 +301,15 @@ static int remove_ipv6_intercept(colthread_local_t *loc, ipsession_t *torem) {
         return -1;
     }
 
-    v6addr = sin6->sin6_addr.s6_addr;
-    HASH_FIND(hh, loc->activeipv6intercepts, v6addr, 16, v6);
+    if (inet_ntop(AF_INET6, &(sin6->sin6_addr), inet, INET6_ADDRSTRLEN)
+            == NULL) {
+        logger(LOG_INFO, "OpenLI: IPv6 intercept prefix does not contain a valid IPv6 address");
+        return -1;
+    }
+
+    snprintf(prefixstr, 100, "%s/%u", inet, torem->prefixlen);
+
+    HASH_FIND(hh, loc->activeipv6intercepts, prefixstr, strlen(prefixstr), v6);
     if (!v6) {
         return 0;
     }
@@ -186,11 +320,15 @@ static int remove_ipv6_intercept(colthread_local_t *loc, ipsession_t *torem) {
         return 0;
     }
 
+    remove_iprange_from_patricia(loc->dynamicv6ranges, prefixstr,
+            &(found->common));
+
     HASH_DELETE(hh, v6->intercepts, found);
     free_single_ipsession(found);
 
     if (HASH_CNT(hh, v6->intercepts) == 0) {
         HASH_DELETE(hh, loc->activeipv6intercepts, v6);
+        free(v6->prefixstr);
         free(v6);
     }
 
@@ -251,9 +389,13 @@ void handle_halt_mirror_intercept(libtrace_thread_t *t,
     }
 
     HASH_DELETE(hh, parent->intercepts, found);
+    free_single_vendmirror_intercept(found);
+
     if (HASH_CNT(hh, parent->intercepts) == 0) {
         HASH_DELETE(hh, loc->activemirrorintercepts, parent);
+        free(parent);
     }
+    free_single_vendmirror_intercept(vmi);
 }
 
 void handle_push_ipintercept(libtrace_thread_t *t, colthread_local_t *loc,
@@ -408,74 +550,31 @@ void handle_remove_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
 void handle_iprange(libtrace_thread_t *t, colthread_local_t *loc,
         staticipsession_t *ipr) {
 
-    patricia_node_t *node = NULL;
-    liid_set_t **all, *found;
-    prefix_t *prefix = NULL;
-    staticipsession_t *newsess, *ipr_exist;
+    staticipsession_t *ipr_exist;
+    patricia_tree_t *ptree = NULL;
 
-    prefix = ascii2prefix(0, ipr->rangestr);
-    if (prefix == NULL) {
-        logger(LOG_INFO,
-                "OpenLI: error converting %s into a valid IP prefix in thread %d",
-                ipr->rangestr, trace_get_perpkt_thread_id(t));
+    if (strchr(ipr->rangestr, ':')) {
+        ptree = loc->staticv6ranges;
+    } else {
+        ptree = loc->staticv4ranges;
+    }
+
+    if (add_iprange_to_patricia(ptree, ipr->rangestr, &(ipr->common),
+            ipr->cin) <= 0) {
+
         free_single_staticipsession(ipr);
         return;
     }
 
-    if (prefix->family == AF_INET) {
-        node = patricia_lookup(loc->staticv4ranges, prefix);
-    } else if (prefix->family == AF_INET6) {
-        node = patricia_lookup(loc->staticv6ranges, prefix);
-    }
-
-    if (!node) {
-        logger(LOG_INFO,
-                "OpenLI: error while adding static IP prefix %s to LIID %s for thread %d",
-                ipr->rangestr, ipr->common.liid, trace_get_perpkt_thread_id(t));
-        free_single_staticipsession(ipr);
-        free(prefix);
-        return;
-    }
-
-    all = (liid_set_t **)&(node->data);
-    if (*all != NULL) {
-        free(prefix);
+    HASH_FIND(hh, loc->activestaticintercepts, ipr->key,
+            strlen(ipr->key), ipr_exist);
+    if (!ipr_exist) {
+        ipr->references = 1;
+        HASH_ADD_KEYPTR(hh, loc->activestaticintercepts, ipr->key,
+                strlen(ipr->key), ipr);
     } else {
-        prefix->ref_count --;
-    }
-
-    HASH_FIND(hh, *all, ipr->common.liid, ipr->common.liid_len, found);
-    if (found) {
+        ipr_exist->references ++;
         free_single_staticipsession(ipr);
-    } else {
-        char key[128];
-
-        found = (liid_set_t *)malloc(sizeof(liid_set_t));
-        found->liid = strdup(ipr->common.liid);
-        found->cin = ipr->cin;
-
-        snprintf(key, 127, "%s-%u", found->liid, found->cin);
-        found->key = strdup(key);
-        found->keylen = strlen(found->key);
-
-
-        HASH_ADD_KEYPTR(hh, *all, found->liid, strlen(found->liid), found);
-        /*
-        logger(LOG_INFO,
-                "OpenLI: added LIID %s:%u to prefix %s (%d refs total)",
-                ipr->common.liid, ipr->cin, ipr->rangestr, HASH_CNT(hh, *all));
-        */
-
-        HASH_FIND(hh, loc->activestaticintercepts, ipr->key,
-                strlen(ipr->key), ipr_exist);
-        if (!ipr_exist) {
-            ipr->references = 1;
-            HASH_ADD_KEYPTR(hh, loc->activestaticintercepts, ipr->key,
-                    strlen(ipr->key), ipr);
-        } else {
-            ipr_exist->references ++;
-            free_single_staticipsession(ipr);
-        }
     }
 }
 
@@ -564,41 +663,16 @@ bailmodrange:
 void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
         staticipsession_t *ipr) {
 
-    patricia_node_t *node = NULL;
-    prefix_t *prefix;
-    liid_set_t **all, *found;
-    liid_set_t *a, *b;
     staticipsession_t *sessrec;
+    patricia_tree_t *ptree;
 
-    prefix = ascii2prefix(0, ipr->rangestr);
-    if (prefix == NULL) {
-        logger(LOG_INFO,
-                "OpenLI: error converting %s into a valid IP prefix in thread %d",
-                ipr->rangestr, trace_get_perpkt_thread_id(t));
-        goto bailremoverange;
+    if (strchr(ipr->rangestr, ':')) {
+        ptree = loc->staticv6ranges;
+    } else {
+        ptree = loc->staticv4ranges;
     }
 
-    if (prefix->family == AF_INET) {
-        node = patricia_search_exact(loc->staticv4ranges, prefix);
-    } else if (prefix->family == AF_INET6) {
-        node = patricia_search_exact(loc->staticv6ranges, prefix);
-    }
-
-    if (!node) {
-        logger(LOG_INFO,
-                "OpenLI: thread %d was supposed to remove IP prefix %s for LIID %s but no such prefix exists in the tree.",
-                trace_get_perpkt_thread_id(t), ipr->rangestr, ipr->common.liid);
-        goto bailremoverange;
-    }
-
-    all = (liid_set_t **)&(node->data);
-    HASH_FIND(hh, *all, ipr->common.liid, ipr->common.liid_len, found);
-    if (!found) {
-        logger(LOG_INFO,
-                "OpenLI: thread %d was supposed to remove IP prefix %s for LIID %s but the LIID is not associated with that prefix.",
-                trace_get_perpkt_thread_id(t), ipr->rangestr, ipr->common.liid);
-        goto bailremoverange;
-    }
+    remove_iprange_from_patricia(ptree, ipr->rangestr, &(ipr->common));
 
     HASH_FIND(hh, loc->activestaticintercepts, ipr->key, strlen(ipr->key),
             sessrec);
@@ -614,29 +688,6 @@ void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
                 ipr->key);
     }
 
-    HASH_DELETE(hh, *all, found);
-    /*
-    logger(LOG_INFO,
-            "OpenLI: removed LIID %s from prefix %s (%d refs remaining)",
-            ipr->common.liid, ipr->rangestr, HASH_CNT(hh, *all));
-    */
-    if (*all == NULL) {
-        if (prefix->family == AF_INET) {
-            patricia_remove(loc->staticv4ranges, node);
-        } else {
-            patricia_remove(loc->staticv6ranges, node);
-        }
-    }
-    free(found->liid);
-    free(found->key);
-    free(found);
-
-
-
-bailremoverange:
-    if (prefix) {
-        free(prefix);
-    }
     free_single_staticipsession(ipr);
     return;
 }

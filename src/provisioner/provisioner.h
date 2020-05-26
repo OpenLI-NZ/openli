@@ -124,6 +124,10 @@ typedef struct prov_sock_state prov_sock_state_t;
  */
 struct prov_client {
 
+    char *identifier;
+
+    int clientrole;
+
     /** Epoll event for the main communication socket */
     prov_epoll_ev_t *commev;
 
@@ -145,6 +149,8 @@ struct prov_client {
     /** Flag to indicate whether our last connection failed for a non-SSL
      *  reason */
     uint8_t lastothererror;
+
+    UT_hash_handle hh;
 };
 
 /* Describes a collector that is being served by the provisioner */
@@ -153,7 +159,7 @@ typedef struct prov_collector {
     char *identifier;
 
     /** Common "client" state */
-    prov_client_t client;
+    prov_client_t *client;
 
     UT_hash_handle hh;
 } prov_collector_t;
@@ -161,10 +167,10 @@ typedef struct prov_collector {
 /* Describes a mediator that is being served by the provisioner */
 typedef struct prov_mediator {
 
-    /** Unique identifier for the mediator (using the IP address for now) */
-    char *identifier;
+    /** Unique identifier for the mediator */
+    uint32_t mediatorid;
     /** Common "client" state */
-    prov_client_t client;
+    prov_client_t *client;
 
     /** The IP address and port that the mediator is listening on for
      *  connections from collectors */
@@ -196,6 +202,13 @@ typedef struct prov_intercept_conf {
     pthread_mutex_t safelock;
 } prov_intercept_conf_t;
 
+typedef struct mediator_address {
+    char *ipportstr;
+    uint32_t medid;
+
+    UT_hash_handle hh;
+} mediator_address_t;
+
 /** Global state for the provisioner instance */
 typedef struct prov_state {
 
@@ -219,7 +232,11 @@ typedef struct prov_state {
     /** The file descriptor that is used for polling using epoll */
     int epoll_fd;
 
-    /** The set of mediators that we are managing */
+    prov_client_t *pendingclients;
+
+    mediator_address_t *knownmeds;
+
+    /** The set of mediators that we are managing, keyed by mediator ID */
     prov_mediator_t *mediators;
 
     /** The set of collectors that we are managing */
@@ -237,6 +254,9 @@ typedef struct prov_state {
     prov_epoll_ev_t *signalfd;
 
     prov_intercept_conf_t interceptconf;
+
+    char *key_pem;
+    char *cert_pem;
     struct MHD_Daemon *updatedaemon;
     MHD_socket updatesockfd;
 
@@ -252,7 +272,7 @@ typedef struct prov_state {
 
 /** Socket state information for a single client */
 struct prov_sock_state {
-    /** The IP address of the client, used for identification purposes */
+    /** The IP address and port of the client, used for identification */
     char *ipaddr;
 
     /** A flag indicating whether we should log errors that occur when
@@ -264,6 +284,8 @@ struct prov_sock_state {
     net_buffer_t *incoming;
     /** Buffer for storing messages that are to be sent to the client */
     net_buffer_t *outgoing;
+
+    void *parent;
 
     /** Set to 1 if the client has authenticated, 0 otherwise */
     uint8_t trusted;
@@ -280,7 +302,8 @@ struct prov_sock_state {
  */
 int init_prov_state(provision_state_t *state, char *configfile);
 void clear_prov_state(provision_state_t *state);
-void free_all_mediators(int epollfd, prov_mediator_t **mediators);
+void free_all_mediators(int epollfd, prov_mediator_t **mediators,
+        mediator_address_t **knownmeds);
 void stop_all_collectors(int epollfd, prov_collector_t **collectors);
 int start_main_listener(provision_state_t *state);
 int start_mediator_listener(provision_state_t *state);

@@ -105,7 +105,10 @@ void daemonise(char *name, char *pidfile) {
         default:
             _exit(0);
     }
-    chdir("/");
+    if (chdir("/") < 0) {
+        perror("chdir");
+        exit(1);
+    }
     umask(0133);
     close(0);
     close(1);

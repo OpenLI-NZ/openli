@@ -66,31 +66,30 @@ int encode_ipmmcc(wandder_encoder_t *encoder,
 
 #ifdef HAVE_BER_ENCODING
 
-int encode_ipmmcc_ber(wandder_buf_t **preencoded_ber,
+int encode_ipmmcc_ber(
         openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
-        openli_encoded_result_t *msg, wandder_etsili_top_t *top,
+        openli_encoded_result_t *msg, wandder_etsili_child_t *child,
         wandder_encoder_t *encoder) {
 
-    uint32_t liidlen = (uint32_t)((size_t)preencoded_ber[WANDDER_PREENCODE_LIID_LEN]);
+    uint32_t liidlen = (uint32_t)((size_t)child->owner->preencoded[WANDDER_PREENCODE_LIID_LEN]);
 
     memset(msg, 0, sizeof(openli_encoded_result_t));
 
     wandder_encode_etsi_ipmmcc_ber(   //new way
-        preencoded_ber,
         (int64_t)job->cin,
         (int64_t)seqno,
         tv, 
         job->ipcontent,
         job->ipclen, 
         job->dir, 
-        top);
+        child);
 
     msg->msgbody = malloc(sizeof(wandder_encoded_result_t));
 
     msg->msgbody->encoder = NULL;
-    msg->msgbody->encoded = top->buf;
-    msg->msgbody->len = top->len;
-    msg->msgbody->alloced = top->len;
+    msg->msgbody->encoded = child->buf;
+    msg->msgbody->len = child->len;
+    msg->msgbody->alloced = child->alloc_len;
     msg->msgbody->next = NULL;
 
     msg->ipcontents = NULL;
@@ -143,25 +142,32 @@ static inline int match_rtp_stream(rtpstreaminf_t *rtp, uint16_t porta,
         uint8_t *is_comfort, libtrace_packet_t *pkt) {
 
     struct sockaddr *tgt, *other;
+    int i;
+
     tgt = (struct sockaddr *)(rtp->targetaddr);
     other = (struct sockaddr *)(rtp->otheraddr);
 
-    if ((rtp->targetport == porta && rtp->otherport == portb) ||
-            (rtp->targetport + 1 == porta && rtp->otherport + 1 == portb)) {
+    for (i = 0; i < rtp->streamcount; i++) {
 
-        if (sockaddr_match(rtp->ai_family, ipa, tgt) &&
-                sockaddr_match(rtp->ai_family, ipb, other)) {
+        if ((rtp->mediastreams[i].targetport == porta &&
+                rtp->mediastreams[i].otherport == portb) ||
+                (rtp->mediastreams[i].targetport + 1 == porta &&
+                rtp->mediastreams[i].otherport + 1 == portb)) {
 
-            if (rtp->skip_comfort) {
-                if (*is_comfort == 255) {
-                    *is_comfort = is_rtp_comfort_noise(pkt);
+            if (sockaddr_match(rtp->ai_family, ipa, tgt) &&
+                    sockaddr_match(rtp->ai_family, ipb, other)) {
+
+                if (rtp->skip_comfort) {
+                    if (*is_comfort == 255) {
+                        *is_comfort = is_rtp_comfort_noise(pkt);
+                    }
+                    if (*is_comfort == 1) {
+                        return 0;
+                    }
                 }
-                if (*is_comfort == 1) {
-                    return 0;
-                }
+
+                return 1;
             }
-
-            return 1;
         }
     }
     return 0;
@@ -172,8 +178,7 @@ static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
 
     openli_export_recv_t *msg;
     rtpstreaminf_t *rtp, *tmp;
-    int matched = 0, queueused;
-    struct sockaddr *cmp, *tgt, *other;
+    int matched = 0;
     uint8_t is_comfort = 255;
 
     /* TODO change active RTP so we can look up by 5 tuple? */
@@ -216,6 +221,7 @@ static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
             continue;
         }
     }
+
     return matched;
 }
 

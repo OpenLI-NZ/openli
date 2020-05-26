@@ -57,23 +57,23 @@ static inline int enable_epoll_write(provision_state_t *state,
     prov_collector_t *col, *coltmp; \
     prov_sock_state_t *sock; \
     HASH_ITER(hh, state->collectors, col, coltmp) { \
-        if (col->client.commev == NULL) { \
+        if (col->client == NULL || col->client->commev == NULL) { \
             continue; \
         } \
-        sock = (prov_sock_state_t *)(col->client.state); \
+        sock = (prov_sock_state_t *)(col->client->state); \
         if (!sock->trusted || sock->halted) { \
             continue; \
         }
 
 #define SEND_ALL_COLLECTORS_END \
-        if (enable_epoll_write(state, col->client.commev) == -1) { \
+        if (enable_epoll_write(state, col->client->commev) == -1) { \
             if (sock->log_allowed) { \
                 logger(LOG_INFO, \
                         "OpenLI: unable to enable epoll write event for collector %s -- %s", \
                         col->identifier, strerror(errno)); \
             } \
             disconnect_provisioner_client(state->epoll_fd, \
-                    &(col->client), col->identifier); \
+                    col->client, col->identifier); \
         } \
     }
 
@@ -81,23 +81,23 @@ static inline int enable_epoll_write(provision_state_t *state,
     prov_mediator_t *med, *medtmp; \
     prov_sock_state_t *sock; \
     HASH_ITER(hh, state->mediators, med, medtmp) { \
-        if (med->client.commev == NULL) { \
+        if (med->client == NULL || med->client->commev == NULL) { \
             continue; \
         } \
-        sock = (prov_sock_state_t *)(med->client.state); \
+        sock = (prov_sock_state_t *)(med->client->state); \
         if (!sock->trusted || sock->halted) { \
             continue; \
         }
 
 #define SEND_ALL_MEDIATORS_END \
-        if (enable_epoll_write(state, med->client.commev) == -1) { \
+        if (enable_epoll_write(state, med->client->commev) == -1) { \
             if (sock->log_allowed) { \
                 logger(LOG_INFO, \
-                        "OpenLI: unable to enable epoll write event for mediator %s -- %s", \
-                        med->identifier, strerror(errno)); \
+                        "OpenLI: unable to enable epoll write event for mediator %u -- %s", \
+                        med->mediatorid, strerror(errno)); \
             } \
             disconnect_provisioner_client(state->epoll_fd, \
-                    &(med->client), med->identifier); \
+                    med->client, med->details->ipstr); \
         } \
     }
 
@@ -108,10 +108,10 @@ int announce_lea_to_mediators(provision_state_t *state,
     SEND_ALL_MEDIATORS_BEGIN
         if (push_lea_onto_net_buffer(sock->outgoing, lea->ag) == -1) {
             logger(LOG_INFO,
-                    "OpenLI provisioner: unable to send LEA %s to mediator %s.",
-                    lea->ag->agencyid, med->identifier);
-            disconnect_provisioner_client(state->epoll_fd, &(med->client),
-                    med->identifier);
+                    "OpenLI provisioner: unable to send LEA %s to mediator %u.",
+                    lea->ag->agencyid, med->mediatorid);
+            disconnect_provisioner_client(state->epoll_fd, med->client,
+                    med->details->ipstr);
             continue;
         }
     SEND_ALL_MEDIATORS_END
@@ -127,10 +127,10 @@ int withdraw_agency_from_mediators(provision_state_t *state,
         if (push_lea_withdrawal_onto_net_buffer(sock->outgoing,
                     lea->ag) == -1) {
             logger(LOG_INFO,
-                    "OpenLI provisioner: unable to send withdrawal of LEA %s to mediator %s.",
-                    lea->ag->agencyid, med->identifier);
-            disconnect_provisioner_client(state->epoll_fd, &(med->client),
-                    med->identifier);
+                    "OpenLI provisioner: unable to send withdrawal of LEA %s to mediator %u.",
+                    lea->ag->agencyid, med->mediatorid);
+            disconnect_provisioner_client(state->epoll_fd, med->client,
+                    med->details->ipstr);
             continue;
         }
     SEND_ALL_MEDIATORS_END
@@ -145,11 +145,12 @@ int announce_default_radius_username(provision_state_t *state,
 
         if (push_default_radius_onto_net_buffer(sock->outgoing, raduser) < 0) {
             disconnect_provisioner_client(state->epoll_fd,
-                    &(col->client), col->identifier);
+                    col->client, col->identifier);
             continue;
         }
 
     SEND_ALL_COLLECTORS_END
+    return 0;
 }
 
 int withdraw_default_radius_username(provision_state_t *state,
@@ -160,11 +161,12 @@ int withdraw_default_radius_username(provision_state_t *state,
         if (push_default_radius_withdraw_onto_net_buffer(sock->outgoing,
                 raduser) < 0) {
             disconnect_provisioner_client(state->epoll_fd,
-                    &(col->client), col->identifier);
+                    col->client, col->identifier);
             continue;
         }
 
     SEND_ALL_COLLECTORS_END
+    return 0;
 }
 
 void add_new_staticip_range(provision_state_t *state,
@@ -175,7 +177,7 @@ void add_new_staticip_range(provision_state_t *state,
         if (push_static_ipranges_onto_net_buffer(sock->outgoing,
                 ipint, ipr) < 0) {
             disconnect_provisioner_client(state->epoll_fd,
-                    &(col->client), col->identifier);
+                    col->client, col->identifier);
             continue;
         }
 
@@ -191,7 +193,7 @@ void modify_existing_staticip_range(provision_state_t *state,
         if (push_static_ipranges_modify_onto_net_buffer(sock->outgoing,
                 ipint, ipr) < 0) {
             disconnect_provisioner_client(state->epoll_fd,
-                    &(col->client), col->identifier);
+                    col->client, col->identifier);
             continue;
         }
 
@@ -207,7 +209,7 @@ void remove_existing_staticip_range(provision_state_t *state,
         if (push_static_ipranges_removal_onto_net_buffer(sock->outgoing,
                 ipint, ipr) < 0) {
             disconnect_provisioner_client(state->epoll_fd,
-                    &(col->client), col->identifier);
+                    col->client, col->identifier);
             continue;
         }
 
@@ -222,7 +224,7 @@ int halt_existing_intercept(provision_state_t *state,
         if (push_intercept_withdrawal_onto_net_buffer(sock->outgoing,
                 cept, wdtype) == -1) {
             disconnect_provisioner_client(state->epoll_fd,
-                    &(col->client), col->identifier);
+                    col->client, col->identifier);
             continue;
         }
 
@@ -239,7 +241,7 @@ int modify_existing_intercept_options(provision_state_t *state,
         if (push_intercept_modify_onto_net_buffer(sock->outgoing,
                 cept, modtype) == -1) {
             disconnect_provisioner_client(state->epoll_fd,
-                    &(col->client), col->identifier);
+                    col->client, col->identifier);
             continue;
         }
 
@@ -259,7 +261,7 @@ int disconnect_mediators_from_collectors(provision_state_t *state) {
 
         if (push_disconnect_mediators_onto_net_buffer(sock->outgoing) == -1) {
             disconnect_provisioner_client(state->epoll_fd,
-                    &(col->client), col->identifier);
+                    col->client, col->identifier);
             continue;
         }
 
@@ -296,11 +298,11 @@ int remove_liid_mapping(provision_state_t *state,
                     liid, liid_len) == -1) {
             if (sock->log_allowed) {
                 logger(LOG_INFO,
-                        "OpenLI provisioner: unable to halt mediation of intercept %s on mediator %s.",
-                        liid, med->identifier);
+                        "OpenLI provisioner: unable to halt mediation of intercept %s on mediator %u.",
+                        liid, med->mediatorid);
             }
-            disconnect_provisioner_client(state->epoll_fd, &(med->client),
-                    med->identifier);
+            disconnect_provisioner_client(state->epoll_fd, med->client,
+                    med->details->ipstr);
             continue;
         }
     SEND_ALL_MEDIATORS_END
@@ -319,10 +321,10 @@ int announce_liidmapping_to_mediators(provision_state_t *state,
         if (push_liid_mapping_onto_net_buffer(sock->outgoing, liidmap->agency,
                 liidmap->liid) == -1) {
             logger(LOG_INFO,
-                    "OpenLI provisioner: unable to send mapping for LIID %s to mediator %s.",
-                    liidmap->liid, med->identifier);
-            disconnect_provisioner_client(state->epoll_fd, &(med->client),
-                    med->identifier);
+                    "OpenLI provisioner: unable to send mapping for LIID %s to mediator %u.",
+                    liidmap->liid, med->mediatorid);
+            disconnect_provisioner_client(state->epoll_fd, med->client,
+                    med->details->ipstr);
             continue;
         }
     SEND_ALL_MEDIATORS_END
@@ -341,7 +343,7 @@ int announce_coreserver_change(provision_state_t *state,
                         "OpenLI: Unable to push new %s server to collector %s",
                         coreserver_type_to_string(cs->servertype),
                         col->identifier);
-                disconnect_provisioner_client(state->epoll_fd, &(col->client),
+                disconnect_provisioner_client(state->epoll_fd, col->client,
                         col->identifier);
                 continue;
             }
@@ -352,7 +354,7 @@ int announce_coreserver_change(provision_state_t *state,
                         "OpenLI: Unable to push removal of %s server to collector %s",
                         coreserver_type_to_string(cs->servertype),
                         col->identifier);
-                disconnect_provisioner_client(state->epoll_fd, &(col->client),
+                disconnect_provisioner_client(state->epoll_fd, col->client,
                         col->identifier);
                 continue;
             }
@@ -372,7 +374,7 @@ int announce_sip_target_change(provision_state_t *state,
                 logger(LOG_INFO,
                         "OpenLI: Unable to push SIP target to collector %s",
                         col->identifier);
-                disconnect_provisioner_client(state->epoll_fd, &(col->client),
+                disconnect_provisioner_client(state->epoll_fd, col->client,
                         col->identifier);
                 continue;
             }
@@ -382,7 +384,7 @@ int announce_sip_target_change(provision_state_t *state,
                 logger(LOG_INFO,
                         "OpenLI: Unable to push removal of SIP target to collector %s",
                         col->identifier);
-                disconnect_provisioner_client(state->epoll_fd, &(col->client),
+                disconnect_provisioner_client(state->epoll_fd, col->client,
                         col->identifier);
                 continue;
             }
@@ -406,6 +408,7 @@ int announce_all_sip_targets(provision_state_t *state, voipintercept_t *vint) {
 		sipid->awaitingconfirm = 0;
         n = n->next;
     }
+    return 0;
 }
 
 int remove_all_sip_targets(provision_state_t *state, voipintercept_t *vint) {
@@ -421,6 +424,7 @@ int remove_all_sip_targets(provision_state_t *state, voipintercept_t *vint) {
         }
         n = n->next;
     }
+    return 0;
 }
 
 int announce_single_intercept(provision_state_t *state,
@@ -429,7 +433,7 @@ int announce_single_intercept(provision_state_t *state,
     SEND_ALL_COLLECTORS_BEGIN
 
         if (sendfunc(sock->outgoing, cept) == -1) {
-            disconnect_provisioner_client(state->epoll_fd, &(col->client),
+            disconnect_provisioner_client(state->epoll_fd, col->client,
                     col->identifier);
             continue;
         }

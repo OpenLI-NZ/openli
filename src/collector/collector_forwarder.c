@@ -24,6 +24,8 @@
  *
  */
 
+#include "config.h"
+
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -50,8 +52,17 @@ static inline void free_encoded_result(openli_encoded_result_t *res) {
     }
 
     if (res->msgbody) {
+
         if (res->msgbody->encoded) {
+#ifdef HAVE_BER_ENCODING
+            if (!res->child) {
+                //if child exists, then msgbody->encoded is owned by child
+                //dont free so it can be reused
+                free(res->msgbody->encoded);
+            }
+#else
             free(res->msgbody->encoded);
+#endif
         }
         free(res->msgbody);
     }
@@ -59,6 +70,12 @@ static inline void free_encoded_result(openli_encoded_result_t *res) {
     if (res->origreq) {
         free_published_message(res->origreq);
     }
+
+#ifdef HAVE_BER_ENCODING
+    if (res->child){
+        wandder_free_child(res->child);
+    }
+#endif
 }
 
 static int add_new_destination(forwarding_thread_data_t *fwd,
@@ -108,6 +125,7 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
                     strcmp(found->portstr, msg->data.med.portstr) != 0) {
                 /* Mediator has changed IP or port */
                 logger(LOG_INFO, "OpenLI: mediator %u has changed location from %s:%s to %s:%s",
+                        found->mediatorid,
                         found->ipstr, found->portstr, msg->data.med.ipstr,
                         msg->data.med.portstr);
                 free(found->ipstr);
@@ -120,6 +138,9 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
                     close(found->fd);
                     found->fd = -1;
                 }
+            } else {
+                free(msg->data.med.ipstr);
+                free(msg->data.med.portstr);
             }
             found->awaitingconfirm = 0;
             found->halted = 0;
@@ -150,7 +171,9 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
 static inline void disconnect_mediator(forwarding_thread_data_t *fwd,
         export_dest_t *med) {
 
-    close(med->fd);
+    if (med->fd != -1) {
+        close(med->fd);
+    }
     med->fd = -1;
 
     if (med->logallowed) {
@@ -269,6 +292,11 @@ static void flag_all_destinations(forwarding_thread_data_t *fwd) {
         med->awaitingconfirm = 1;
     }
     fwd->awaitingconfirm = 1;
+
+    if (fwd->flagtimerfd != -1) {
+        close(fwd->flagtimerfd);
+        fwd->flagtimerfd = -1;
+    }
 }
 
 static int handle_ctrl_message(forwarding_thread_data_t *fwd,
@@ -286,7 +314,6 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         free(msg->data.cept.liid);
         free(msg->data.cept.authcc);
         free(msg->data.cept.delivcc);
-        free(msg);
     } else if (msg->type == OPENLI_EXPORT_MEDIATOR) {
         return add_new_destination(fwd, msg);
     } else if (msg->type == OPENLI_EXPORT_DROP_SINGLE_MEDIATOR) {
@@ -297,6 +324,7 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         if (jval == NULL) {
             logger(LOG_DEBUG, "asked to remove mediator %d but cannot find it?",
                     msg->data.med.mediatorid);
+            free(msg);
             return 1;
         }
         med = (export_dest_t *)(*jval);
@@ -311,21 +339,7 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         logger(LOG_DEBUG, "causing all mediators to reconnect");
         disconnect_all_destinations(fwd);
     }
-
-    return 1;
-}
-
-static inline int enqueue_raw(forwarding_thread_data_t *fwd,
-        export_dest_t *med, openli_encoded_result_t *res) {
-
-    if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
-        logger(LOG_INFO,
-                "OpenLI: forced to drop mediator %s:%s because we cannot buffer any more records for it -- please investigate asap!",
-                med->ipstr, med->portstr);
-        remove_destination(fwd, med);
-        return 1;
-    }
-
+    free(msg);
     return 1;
 }
 
@@ -334,7 +348,6 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
     PWord_t jval;
     int_reorderer_t *reord;
-    openli_encoded_result_t *rescopy;
     Pvoid_t *reorderer;
     stored_result_t *stored, *tmp;
 
@@ -349,9 +362,9 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
 
     /* reordering of results if required for each LIID/CIN */
-    JSLG(jval, *reorderer, res->cinstr);
+    JSLG(jval, *reorderer, (unsigned char *)res->cinstr);
     if (jval == NULL) {
-        JSLI(jval, *reorderer, res->cinstr);
+        JSLI(jval, *reorderer, (unsigned char *)res->cinstr);
 
         if (jval == NULL) {
             logger(LOG_INFO,
@@ -385,8 +398,8 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
     if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
         logger(LOG_INFO,
-                "OpenLI: forced to drop mediator %s:%s because we cannot buffer any more records for it -- please investigate asap!",
-                med->ipstr, med->portstr);
+                "OpenLI: forced to drop mediator %u because we cannot buffer any more records for it -- please investigate now!",
+                med->mediatorid);
         remove_destination(fwd, med);
         return 1;
     }
@@ -402,10 +415,10 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
         if (append_message_to_buffer(&(med->buffer), &(stored->res), 0) == 0) {
             logger(LOG_INFO,
-                    "OpenLI: forced to drop mediator %s:%s because we cannot buffer any more records for it -- please investigate asap!",
-                    med->ipstr, med->portstr);
+                    "OpenLI: forced to drop mediator %u because we cannot buffer any more records for it -- please investigate asap!",
+                    med->mediatorid);
             remove_destination(fwd, med);
-            break;
+            return -1;
         }
         reord->expectedseqno = stored->res.seqno + 1;
 
@@ -459,7 +472,7 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
 
     ret = enqueue_result(fwd, med, res);
 
-    if (ret == 1) {
+    if (ret != 0) {
         free_encoded_result(res);
     }
 
@@ -545,7 +558,7 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx) {
 
 static void connect_export_targets(forwarding_thread_data_t *fwd) {
 
-    export_dest_t *dest, *tmp;
+    export_dest_t *dest;
     int ind;
     PWord_t jval, jval2;
     Word_t index;
@@ -610,6 +623,33 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
 
 }
 
+static int drain_incoming_etsi(forwarding_thread_data_t *fwd) {
+
+    int x, encoders_over = 0;
+    openli_encoded_result_t res;
+
+    do {
+        x = zmq_recv(fwd->zmq_pullressock, &res, sizeof(res),
+                ZMQ_DONTWAIT);
+        if (x < 0 && errno != EAGAIN) {
+            return -1;
+        }
+
+        if (x < 0) {
+            continue;
+        }
+
+        if (res.liid == NULL && res.destid == 0) {
+            logger(LOG_INFO, "encoder %d has ceased encoding", encoders_over);
+            encoders_over ++;
+        }
+
+        free_encoded_result(&res);
+    } while (encoders_over < fwd->encoders);
+
+    return 1;
+}
+
 static int receive_incoming_etsi(forwarding_thread_data_t *fwd) {
     int x, processed;
     openli_encoded_result_t res;
@@ -671,7 +711,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
     /* Add the mediator confirmation timer to our poll item list, if
      * required.
      */
-    if (fwd->awaitingconfirm) {
+    if (fwd->awaitingconfirm && fwd->flagtimerfd != -1) {
         fwd->topoll[fwd->nextpoll].socket = NULL;
         fwd->topoll[fwd->nextpoll].fd = fwd->flagtimerfd;
         fwd->topoll[fwd->nextpoll].events = ZMQ_POLLIN;
@@ -721,7 +761,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         fwd->topoll[1].revents = 0;
     }
 
-    if (fwd->awaitingconfirm) {
+    if (fwd->awaitingconfirm && fwd->flagtimerfd != -1) {
         if (fwd->topoll[fwd->nextpoll].revents & ZMQ_POLLIN) {
             purge_unconfirmed_mediators(fwd);
             fwd->awaitingconfirm = 0;
@@ -815,7 +855,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
 
 static void forwarder_main(forwarding_thread_data_t *fwd) {
 
-    int halted = 0, x, i;
+    int x;
     struct itimerspec its;
 
     fwd->destinations_by_id = NULL;
@@ -862,6 +902,11 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
 
     remove_reorderers(fwd, NULL, &(fwd->intreorderer_cc));
     remove_reorderers(fwd, NULL, &(fwd->intreorderer_iri));
+
+    if (x == 0) {
+        drain_incoming_etsi(fwd);
+    }
+
     free(fwd->topoll);
     fwd->topoll = NULL;
     free(fwd->forcesend);

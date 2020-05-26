@@ -25,6 +25,7 @@
  */
 
 #include "logger.h"
+#include "util.h"
 #include "internetaccess.h"
 
 access_plugin_t *init_access_plugin(uint8_t accessmethod) {
@@ -63,6 +64,9 @@ static inline void free_session(access_session_t *sess) {
     /* session id and state data should be handled by the appropriate plugin */
     if (sess->plugin) {
         sess->plugin->destroy_session_data(sess->plugin, sess);
+    }
+    if (sess->sessionips) {
+        free(sess->sessionips);
     }
     free(sess);
 }
@@ -110,19 +114,83 @@ access_session_t *create_access_session(access_plugin_t *p, char *sessid,
 	newsess->statedata = NULL;
 	newsess->idlength = sessid_len;
 	newsess->cin = 0;
-	memset(&(newsess->sessionip), 0, sizeof(newsess->sessionip));
+    newsess->sessionips = calloc(SESSION_IP_INCR, sizeof(internetaccess_ip_t));
+    newsess->sessipcount = 0;
+    newsess->sessipversion = SESSION_IP_VERSION_NONE;
 
 	newsess->iriseqno = 0;
 	newsess->started.tv_sec = 0;
 	newsess->started.tv_usec = 0;
-	newsess->activeipentry = NULL;
 
 	return newsess;
 }
 
-int free_single_session(internet_user_t *user, access_session_t *sess) {
+void add_new_session_ip(access_session_t *sess, void *att_val,
+        int family, uint8_t pfxbits, int att_len) {
 
-    access_session_t *prev, *tmp;
+	    int ind = sess->sessipcount;
+
+    if (sess->sessipcount > 0 && (sess->sessipcount % SESSION_IP_INCR) == 0) {
+        sess->sessionips = realloc(sess->sessionips,
+                (sess->sessipcount + SESSION_IP_INCR) *
+                sizeof(internetaccess_ip_t));
+
+    }
+
+    if (family == AF_INET) {
+        struct sockaddr_in *in;
+
+        in = (struct sockaddr_in *)&(sess->sessionips[ind].assignedip);
+
+        if (att_len != 4) {
+            logger(LOG_INFO, "OpenLI: unexpected attribute length for an IPv4 address: %d\n", att_len);
+            return;
+        }
+
+        in->sin_family = AF_INET;
+        in->sin_port = 0;
+        in->sin_addr.s_addr = *((uint32_t *)att_val);
+
+        if (sess->sessipversion == SESSION_IP_VERSION_NONE) {
+            sess->sessipversion = SESSION_IP_VERSION_V4;
+        } else if (sess->sessipversion == SESSION_IP_VERSION_V6) {
+            sess->sessipversion = SESSION_IP_VERSION_DUAL;
+        }
+
+
+    } else if (family == AF_INET6) {
+
+        struct sockaddr_in6 *in6;
+        int tocopy = 16;
+
+        if (att_len < tocopy) {
+            tocopy = att_len;
+        }
+
+        in6 = (struct sockaddr_in6 *)&(sess->sessionips[ind].assignedip);
+
+        in6->sin6_family = AF_INET6;
+        in6->sin6_port = 0;
+        in6->sin6_flowinfo = 0;
+
+        memset(in6->sin6_addr.s6_addr, 0, sizeof(in6->sin6_addr.s6_addr));
+        memcpy(in6->sin6_addr.s6_addr, att_val, tocopy);
+
+        if (sess->sessipversion == SESSION_IP_VERSION_NONE) {
+            sess->sessipversion = SESSION_IP_VERSION_V6;
+        } else if (sess->sessipversion == SESSION_IP_VERSION_V4) {
+            sess->sessipversion = SESSION_IP_VERSION_DUAL;
+        }
+    } else {
+        return;
+    }
+
+    sess->sessionips[ind].ipfamily = family;
+    sess->sessionips[ind].prefixbits = pfxbits;
+    sess->sessipcount ++;
+}
+
+int free_single_session(internet_user_t *user, access_session_t *sess) {
 
     if (user == NULL) {
         logger(LOG_INFO,
@@ -132,6 +200,49 @@ int free_single_session(internet_user_t *user, access_session_t *sess) {
 
     HASH_DELETE(hh, user->sessions, sess);
     free_session(sess);
+    return 0;
+}
+
+int remove_session_ip(access_session_t *sess, internetaccess_ip_t *sessip) {
+
+    int i;
+    int nullips = 0;
+
+    for (i = 0; i < sess->sessipcount; i++) {
+        if (sess->sessionips[i].ipfamily == 0) {
+            nullips ++;
+            continue;
+        }
+
+        if (sess->sessionips[i].ipfamily == sessip->ipfamily &&
+                sess->sessionips[i].prefixbits == sessip->prefixbits) {
+
+            if (sessip->ipfamily == AF_INET) {
+                struct sockaddr_in *in, *this;
+                in = (struct sockaddr_in *)&(sessip->assignedip);
+                this = (struct sockaddr_in *)&(sess->sessionips[i].assignedip);
+
+                if (this->sin_addr.s_addr == in->sin_addr.s_addr) {
+                    sess->sessionips[i].ipfamily = 0;
+                    nullips ++;
+                }
+            } else if (sessip->ipfamily == AF_INET6) {
+                struct sockaddr_in6 *in, *this;
+                in = (struct sockaddr_in6 *)&(sessip->assignedip);
+                this = (struct sockaddr_in6 *)&(sess->sessionips[i].assignedip);
+
+                if (memcmp(&(this->sin6_addr.s6_addr), &(in->sin6_addr.s6_addr),
+                        16) == 0) {
+                    sess->sessionips[i].ipfamily = 0;
+                    nullips ++;
+                }
+            }
+        }
+    }
+
+    if (nullips == sess->sessipcount) {
+        return 1;
+    }
     return 0;
 }
 
