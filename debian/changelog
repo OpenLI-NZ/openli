@@ -1,3 +1,9 @@
+openli (1.0.5-2) unstable; urgency=medium
+
+  * Fix missing dependency on rsyslog
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Thu, 28 May 2020 10:46:43 +1200
+
 openli (1.0.5-1) unstable; urgency=medium
 
   * Add config option to disable joining VOIP calls with the same
