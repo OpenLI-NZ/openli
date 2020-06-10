@@ -971,7 +971,7 @@ static int global_parser(void *arg, yaml_document_t *doc,
   * Still TODO:
   *   BER encoding for IPIRIs, UMTSIRIs and UMTSCCs
   */
-#if 1
+#if 0
         if (strcasecmp(value->data.scalar.value, "BER") == 0) {
 #ifdef HAVE_BER_ENCODING
             glob->encoding_method = OPENLI_ENCODING_BER;

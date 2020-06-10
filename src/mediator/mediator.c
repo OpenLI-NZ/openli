@@ -42,6 +42,7 @@
 #include <libwandder_etsili.h>
 #include <Judy.h>
 #include <amqp_tcp_socket.h>
+#include <amqp_ssl_socket.h>
 #include <amqp.h>
 
 #include "config.h"
@@ -1681,39 +1682,65 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
 
 static int receive_rmq_invite(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
-    logger(LOG_INFO, "invited to collector %s", msgbody);
+    logger(LOG_INFO, "invited to collector RMQ %s", msgbody);
 
     amqp_rpc_reply_t ret;
     amqp_envelope_t envelope;
     amqp_frame_t frame;
 
     //try connect to RMQ server at address and join the approiate queue (medID)
-
+    amqp_set_initialize_ssl_library(0);
     amqp_connection_state_t amqp_state = amqp_new_connection();
-    amqp_socket_t *ampq_sock = amqp_tcp_socket_new(amqp_state);
-    if (amqp_socket_open(ampq_sock, "localhost", 5672 )){
+    amqp_socket_t *ampq_sock = amqp_ssl_socket_new(amqp_state);
+
+    if (!ampq_sock) {
+        logger(LOG_INFO, "error in ssl socket new");
+        return -1;
+    }
+
+    amqp_ssl_socket_set_verify_peer(ampq_sock, 0);
+    amqp_ssl_socket_set_verify_hostname(ampq_sock, 0);
+
+    if (amqp_ssl_socket_set_cacert(ampq_sock, "/home/openli-testsuite/openli-ca-crt.pem") != AMQP_STATUS_OK) {
+        logger(LOG_INFO, "error in set cert");
+        return -1;
+    }
+
+    //TODO take these values from config
+    if (amqp_ssl_socket_set_key(
+            ampq_sock, 
+            "/home/openli-testsuite/openli-mediator-crt.pem",
+            "/home/openli-testsuite/openli-mediator-key.pem") 
+            != AMQP_STATUS_OK ){
+        logger(LOG_INFO, 
+                "OpenLI: med failed to load crt/key");
+        return -1;
+    }   
+
+    if (amqp_socket_open_noblock(ampq_sock, msgbody, 5671, NULL)){
         logger(LOG_INFO, 
                 "OpenLI: med failed to open amqp socket");
+        return -1;
     }
 
     // AMQP_FRAME_MAX 131072
     /* login using PLAIN, must specify username and password */
     //TODO set username/password
     if ( (amqp_login(amqp_state, "/", 0, 131072,0,
-                    AMQP_SASL_METHOD_PLAIN, "guest", "guest")
+                    AMQP_SASL_METHOD_EXTERNAL, "EXTERNAL")
             ).reply_type != AMQP_RESPONSE_NORMAL ) {
-        logger(LOG_INFO, "Failed to login to broker using PLAIN auth");
+        logger(LOG_INFO, "Failed to login to broker using EXTERNAL auth");
+        return -1;
     }
-    logger(LOG_INFO, "OpenLI: mediator started AMQP socket");
 
     amqp_channel_open_ok_t *r = amqp_channel_open(amqp_state, 1);
     
     if ( (amqp_get_rpc_reply(amqp_state).reply_type) != AMQP_RESPONSE_NORMAL ) {
         logger(LOG_ERR, "Failed to open channel");
+        return -1;
     } else {
         logger(LOG_INFO, "Opened channel with %d",1);
     }
-    //sub queue
 
     amqp_queue_declare_ok_t *queue_result = amqp_queue_declare(amqp_state,
             1,
@@ -1726,8 +1753,7 @@ static int receive_rmq_invite(mediator_state_t *state, uint8_t *msgbody,
 
     if (amqp_get_rpc_reply(amqp_state).reply_type != AMQP_RESPONSE_NORMAL ) {
         logger(LOG_INFO, "failed to declear queue");
-    } else {
-            logger(LOG_INFO, "Queue Decleared: %d:%d", *(uint32_t*)queue_result->queue.bytes, state->mediatorid);
+        return -1;
     }
 
     amqp_basic_consume_ok_t *con_ok = amqp_basic_consume(amqp_state,
@@ -1741,8 +1767,7 @@ static int receive_rmq_invite(mediator_state_t *state, uint8_t *msgbody,
     
     if (amqp_get_rpc_reply(amqp_state).reply_type != AMQP_RESPONSE_NORMAL ) {
         logger(LOG_INFO, "failed to register consumer");
-    } else {
-            logger(LOG_INFO, "consumer registered as %s", con_ok->consumer_tag.bytes);
+        return -1;
     }
 
     int sock_fd = amqp_get_sockfd(amqp_state); //add this to Epoll
@@ -2468,7 +2493,6 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             }
             break;
         case MED_EPOLL_COL_RMQ:
-                //logger(LOG_INFO, "RMQ EPOLL instance");
                 ret = receive_collector_from_RMQ(state, mev);
             break;
         default:

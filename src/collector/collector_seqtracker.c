@@ -200,7 +200,9 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
         intstate->cinsequencing = NULL;
+#ifdef HAVE_BER_ENCODING
         intstate->top = NULL;
+#endif
 
         HASH_ADD_KEYPTR(hh, seqdata->intercepts, intstate->details.liid,
                 intstate->details.liid_len, intstate);
@@ -559,10 +561,11 @@ haltseqtracker:
         HASH_DELETE(hh, seqdata->intercepts, intstate);
         free_intercept_state(seqdata, intstate);
     }
-
+#ifdef HAVE_BER_ENCODING
     if (seqdata->enc_ber){
         wandder_free_encoder_ber(seqdata->enc_ber);
     }
+#endif
 
     zmq_close(seqdata->zmq_recvpublished);
     zmq_close(seqdata->zmq_pushjobsock);

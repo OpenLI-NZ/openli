@@ -595,22 +595,29 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
             continue;
         }
 
+        if (fwd->ampq_conn) {
+            amqp_queue_declare_ok_t *queue_result = amqp_queue_declare(
+                    fwd->ampq_conn,
+                    1,
+                    AMPQ_BYTES_FROM(dest->mediatorid),
+                    0,
+                    1,
+                    0,
+                    0,
+                    amqp_empty_table);
 
-        amqp_queue_declare_ok_t *queue_result = amqp_queue_declare(
-                fwd->ampq_conn,
-                1,
-                AMPQ_BYTES_FROM(dest->mediatorid),
-                0,
-                1,
-                0,
-                0,
-                amqp_empty_table);
-
-        if (amqp_get_rpc_reply(fwd->ampq_conn).reply_type != AMQP_RESPONSE_NORMAL ) {
-            logger(LOG_INFO, "OpenLI: Failed to declare queue");
-        } else {
-             logger(LOG_INFO, "OpenLI: Queue Decleared");
+            if (amqp_get_rpc_reply(fwd->ampq_conn).reply_type != AMQP_RESPONSE_NORMAL ) {
+                logger(LOG_INFO, "OpenLI: Failed to declare queue");
+            }
         }
+        
+        
+        //invite mediator to RMQ here
+
+        // push_rmq_invite_onto_net_buffer(dest->buffer, col->identifier);
+        
+        //push a packet onto the buffer with the type OPENLI_PROTO_INVITE_RMQ
+        //mediator can infer the dest is where the msg came from
 
         JLI(jval2, fwd->destinations_by_fd, dest->fd);
         if (jval2 == NULL) {
@@ -833,7 +840,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             continue;
         }
 
-        if ( 1 ) {
+        if ( fwd->ampq_conn ) {
             if (transmit_buffered_records_RMQ(&(dest->buffer), 
                     fwd->ampq_conn, 
                     1,
@@ -967,35 +974,35 @@ void *start_forwarding_thread(void *data) {
         goto haltforwarder;
     }
 
-    fwd->ampq_conn = amqp_new_connection();
-    fwd->ampq_sock = amqp_tcp_socket_new(fwd->ampq_conn);
-    if (amqp_socket_open(fwd->ampq_sock, "localhost", 5672 )){
-        logger(LOG_INFO, 
-                "OpenLI: forwarding thread %d failed to open amqp socket",
-                fwd->forwardid);
-        goto haltforwarder;
-    }
+    if ( 1 ) {
+        fwd->ampq_conn = amqp_new_connection();
+        fwd->ampq_sock = amqp_tcp_socket_new(fwd->ampq_conn);
 
-    // AMQP_FRAME_MAX 131072
-    /* login using PLAIN, must specify username and password */
-    //TODO set username/password
-    if ( (amqp_login(fwd->ampq_conn, "/", 0, 131072,0,
-                    AMQP_SASL_METHOD_PLAIN, "guest", "guest")
-            ).reply_type != AMQP_RESPONSE_NORMAL ) {
-        logger(LOG_ERR, "Failed to login to broker using PLAIN auth");
-        goto haltforwarder;
-    }
-    logger(LOG_INFO, "OpenLI: forwarding thread started AMQP socket");
+        //TODO RMQ instance will always be on localhost?
+        if (amqp_socket_open(fwd->ampq_sock, "localhost", 5672 )){
+            logger(LOG_INFO, 
+                    "OpenLI: forwarding thread %d failed to open amqp socket",
+                    fwd->forwardid);
+            goto haltforwarder;
+        }
 
-    //replace with connection to rabbitmq server queue specfially for this target.
-    amqp_channel_open_ok_t *r = amqp_channel_open(fwd->ampq_conn, 1);
-    //threadsafty?
-    
-    if ( (amqp_get_rpc_reply(fwd->ampq_conn).reply_type) != AMQP_RESPONSE_NORMAL ) {
-        logger(LOG_ERR, "Failed to open channel");
-    } else {
-        logger(LOG_INFO, "Opened channel with %d",1);
+        // AMQP_FRAME_MAX 131072
+        /* login using PLAIN, must specify username and password */
+        //TODO set username/password
+        if ( (amqp_login(fwd->ampq_conn, "/", 0, 131072,0,
+                        AMQP_SASL_METHOD_PLAIN, "OpenLIcollector", "password")
+                ).reply_type != AMQP_RESPONSE_NORMAL ) {
+            logger(LOG_ERR, "Failed to login to broker using PLAIN auth");
+            goto haltforwarder;
+        }
 
+        amqp_channel_open_ok_t *r = amqp_channel_open(fwd->ampq_conn, 1);
+        
+        if ( (amqp_get_rpc_reply(fwd->ampq_conn).reply_type) != AMQP_RESPONSE_NORMAL ) {
+            logger(LOG_ERR, "Failed to open channel");
+        } else {
+            logger(LOG_INFO, "Opened channel");
+        }
     }
 
     forwarder_main(fwd);
