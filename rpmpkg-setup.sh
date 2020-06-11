@@ -70,12 +70,11 @@ fi
 if [[ "$1" =~ fedora* ]]; then
         dnf install -y rpm-build rpmdevtools 'dnf-command(builddep)' which
         dnf group install -y "C Development Tools and Libraries"
-        dnf builddep -y rpm/libtrace4.spec
+        dnf builddep -y rpm/openli.spec
 else
         yum install -y rpm-build yum-utils rpmdevtools which
         yum groupinstall -y 'Development Tools'
-        yum-builddep -y rpm/libtrace4.spec
-        #yum-builddep -y rpm/libtrace4-dag.spec
+        yum-builddep -y rpm/openli.spec
 fi
 
 rpmdev-setuptree
