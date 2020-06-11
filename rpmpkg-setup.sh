@@ -51,6 +51,7 @@ yum update -y
 
 
 if [ "$1" = "centos:8" ]; then
+        yum module -y disable mariadb
         yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm || true
         dnf install -y 'dnf-command(config-manager)' || true
         yum config-manager --set-enabled PowerTools || true
