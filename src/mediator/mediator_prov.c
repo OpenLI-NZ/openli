@@ -383,6 +383,11 @@ int reload_provisioner_socket_config(mediator_prov_t *currstate,
                 "OpenLI Mediator: provisioner socket configuration is unchanged.");
     }
 
+    free(newstate->provaddr);
+    free(newstate->provport);
+    newstate->provaddr = NULL;
+    newstate->provport = NULL;
+
 	return changed;
 }
 
