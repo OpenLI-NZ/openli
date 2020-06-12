@@ -1005,13 +1005,13 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "provisionerport") == 0) {
-        SET_CONFIG_STRING_OPTION(state->provport, value);
+        SET_CONFIG_STRING_OPTION(state->provisioner.provport, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "provisioneraddr") == 0) {
-        SET_CONFIG_STRING_OPTION(state->provaddr, value);
+        SET_CONFIG_STRING_OPTION(state->provisioner.provaddr, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
