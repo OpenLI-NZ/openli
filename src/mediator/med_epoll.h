@@ -27,6 +27,8 @@
 #ifndef OPENLI_MEDIATOR_EPOLL_H_
 #define OPENLI_MEDIATOR_EPOLL_H_
 
+#include <inttypes.h>
+
 typedef struct med_epoll_ev {
     int fdtype;
     int fd;

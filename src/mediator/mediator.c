@@ -86,55 +86,6 @@ static void usage(char *prog) {
         fprintf(stderr, "\nSet the -d flag to run as a daemon.\n");
 }
 
-/** Create an epoll timer event for the next attempt to reconnect to the
- *  provisioner.
- *
- *  Should only be called when the provisioner connection has broken down
- *  for some reason, obviously.
- *
- *  @param state    The global state for this mediator.
- */
-static inline void setup_provisioner_reconnect_timer(mediator_state_t *state) {
-
-    state->provisioner.tryconnect = 0;
-    start_mediator_timer(state->provreconnect, 1);
-
-}
-
-/** Releases all memory associated with a provisioner that this mediator
- *  was connected to.
- *
- *  @param prov         The provisioner to be released.
- */
-static void free_provisioner(mediator_prov_t *prov) {
-
-    /* If we were using SSL to communicate, tidy up the SSL context */
-    if (prov->ssl) {
-        SSL_free(prov->ssl);
-        prov->ssl = NULL;
-    }
-
-    /* Remove the provisioner socket from our epoll event set */
-    if (remove_mediator_fdevent(prov->provev) == -1) {
-        logger(LOG_INFO,
-                "OpenLI Mediator: problem removing provisioner fd from epoll: %s.",
-                strerror(errno));
-    }
-    prov->provev = NULL;
-
-    /* Release the buffers used to store messages sent to and received from
-     * the provisioner.
-     */
-    if (prov->outgoing) {
-        destroy_net_buffer(prov->outgoing);
-        prov->outgoing = NULL;
-    }
-    if (prov->incoming) {
-        destroy_net_buffer(prov->incoming);
-        prov->incoming = NULL;
-    }
-}
-
 /** Drops the connection to a collector and moves the collector to the
  *  disabled collector list.
  *
@@ -240,12 +191,6 @@ static void clear_med_config(mediator_state_t *state) {
     if (state->listenaddr) {
         free(state->listenaddr);
     }
-    if (state->provport) {
-        free(state->provport);
-    }
-    if (state->provaddr) {
-        free(state->provaddr);
-    }
     if (state->pcapdirectory) {
         free(state->pcapdirectory);
     }
@@ -306,14 +251,6 @@ static void destroy_med_state(mediator_state_t *state) {
     if (state->listenerev) {
         close(state->listenerev->fd);
         free(state->listenerev);
-    }
-
-    /* Halt the provisioner reconnection timer, if it is running */
-    if (state->provreconnect) {
-        if (state->provreconnect->fd != -1) {
-            close(state->provreconnect->fd);
-        }
-        free(state->provreconnect);
     }
 
     /* Halt the epoll loop timer */
@@ -381,25 +318,15 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
     state->lastsslerror_connect = 0;
 
     state->operatorid = NULL;
-    state->provaddr = NULL;
-    state->provport = NULL;
     state->pcapdirectory = NULL;
     state->pcapthread = -1;
     state->pcaprotatefreq = 30;
     state->disabledcols = NULL;
     state->listenerev = NULL;
     state->timerev = NULL;
-    state->provreconnect = NULL;
     state->pcaptimerev = NULL;
-    state->provisioner.provev = NULL;
-    state->provisioner.incoming = NULL;
-    state->provisioner.outgoing = NULL;
-    state->provisioner.disable_log = 0;
-    state->provisioner.tryconnect = 1;
-    state->provisioner.ssl = NULL;
     state->collectors = NULL;
     state->epoll_fd = -1;
-
 
     state->handover_state.epoll_fd = -1;
     state->handover_state.agencies = NULL;
@@ -417,17 +344,21 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
     libtrace_message_queue_init(&(state->pcapqueue),
             sizeof(mediator_pcap_msg_t));
 
+    init_provisioner_instance(&(state->provisioner), &(state->sslconf.ctx));
+
     /* Parse the provided config file */
     if (parse_mediator_config(configfile, state) == -1) {
         return -1;
     }
 
-    logger(LOG_DEBUG, "OpenLI Mediator: ETSI TLS encryption %s",
-        state->etsitls ? "enabled" : "disabled");
-
     if (create_ssl_context(&(state->sslconf)) < 0) {
         return -1;
     }
+
+
+
+    logger(LOG_DEBUG, "OpenLI Mediator: ETSI TLS encryption %s",
+        state->etsitls ? "enabled" : "disabled");
 
     if (state->mediatorid == 0) {
         logger(LOG_INFO, "OpenLI Mediator: ID is not present in the config file or is set to zero.");
@@ -439,8 +370,8 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
         state->listenport = strdup("61000");
     }
 
-    if (state->provport == NULL) {
-        state->provport = strdup("8993");
+    if (state->provisioner.provport == NULL) {
+        state->provisioner.provport = strdup("8993");
     }
 
     return 0;
@@ -466,6 +397,7 @@ static void prepare_mediator_state(mediator_state_t *state) {
 
     state->handover_state.agencies = libtrace_list_init(sizeof(mediator_agency_t));
     state->handover_state.epoll_fd = state->epoll_fd;
+    state->provisioner.epoll_fd = state->epoll_fd;
 
     /* Use an fd to catch signals during our main epoll loop, so that we
      * can provide our own signal handling without causing epoll_wait to
@@ -481,11 +413,6 @@ static void prepare_mediator_state(mediator_state_t *state) {
     state->signalev->fd = signalfd(-1, &sigmask, 0);
     state->signalev->epoll_fd = state->epoll_fd;
     state->signalev->state = NULL;
-
-    /* Create an epoll event for regulating reconnect attempts to the
-     * provisioner */
-    state->provreconnect = create_mediator_timer(state->epoll_fd, NULL,
-            MED_EPOLL_PROVRECONNECT, 0);
 
     return;
 }
@@ -1084,45 +1011,6 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     return 0;
 }
 
-/** Sends any pending messages to the provisioner.
- *
- *  @param state            The global state for this mediator.
- *  @param mev              The epoll event for the provisioner socket.
- *
- *  @return -1 if an error occurs, 1 otherwise.
- */
-static int transmit_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
-
-    mediator_prov_t *prov = &(state->provisioner);
-    struct epoll_event ev;
-    int ret;
-    openli_proto_msgtype_t err;
-
-    /* Try to send whatever we've got in the netcomms buffer */
-    ret = transmit_net_buffer(prov->outgoing, &err);
-    if (ret == -1) {
-        if (prov->disable_log == 0) {
-            nb_log_transmit_error(err);
-            logger(LOG_INFO, "OpenLI Mediator: failed to transmit message to provisioner.");
-        }
-        return -1;
-    }
-
-    if (ret == 0) {
-        /* No more outstanding data, remove EPOLLOUT event */
-        if (modify_mediator_fdevent(prov->provev, EPOLLIN | EPOLLRDHUP) < 0) {
-            if (prov->disable_log == 0) {
-                logger(LOG_INFO,
-                        "OpenLI Mediator: error disabling EPOLLOUT for provisioner fd: %s.",
-                        strerror(errno));
-            }
-            return -1;
-        }
-    }
-
-    return 1;
-}
-
 /** React to a handover's failure to respond to a keep alive before the
  *  response timer expired.
  *
@@ -1468,14 +1356,15 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
                 ret = -1;
             } else if (ev->events & EPOLLOUT) {
                 /* we can send a pending message to the provisioner */
-                ret = transmit_provisioner(state, mev);
+                ret = transmit_provisioner(&(state->provisioner), mev);
             } else if (ev->events & EPOLLIN) {
                 /* provisioner has sent us an instruction */
                 ret = receive_provisioner(state, mev);
                 if (ret == 0 && state->provisioner.disable_log == 1) {
                     logger(LOG_INFO,
                             "OpenLI Mediator: Connected to provisioner at %s:%s",
-                            state->provaddr, state->provport);
+                            state->provisioner.provaddr,
+                            state->provisioner.provport);
                     state->provisioner.disable_log = 0;
                 }
             } else {
@@ -1483,13 +1372,7 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             }
 
             if (ret == -1) {
-                if (state->provisioner.disable_log == 0) {
-                    logger(LOG_INFO,
-                            "OpenLI Mediator: Disconnected from provisioner.");
-                }
-                free_provisioner(&(state->provisioner));
-                setup_provisioner_reconnect_timer(state);
-                state->provisioner.disable_log = 1;
+                disconnect_provisioner(&(state->provisioner), 1);
             }
             break;
         case MED_EPOLL_COLLECTOR_HANDSHAKE:
@@ -1536,12 +1419,10 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 static int send_mediator_listen_details(mediator_state_t *state,
         int justcreated) {
     openli_mediator_t meddeets;
-    mediator_prov_t *prov = (mediator_prov_t *)&(state->provisioner);
     struct sockaddr_storage sa;
     socklen_t salen = sizeof(struct sockaddr_storage);
     char listenname[NI_MAXHOST];
     int ret;
-    struct epoll_event ev;
 
     memset(&sa, 0, sizeof(sa));
     meddeets.mediatorid = state->mediatorid;
@@ -1569,120 +1450,8 @@ static int send_mediator_listen_details(mediator_state_t *state,
     /* The configured port should match though, so we can just use that. */
     meddeets.portstr = state->listenport;
 
-    /* Add the mediator details message to the outgoing buffer for the
-     * provisioner socket.
-     */
-    if (push_mediator_onto_net_buffer(prov->outgoing, &meddeets) == -1) {
-        logger(LOG_INFO, "OpenLI Mediator: unable to push mediator details to provisioner.");
-        return -1;
-    }
-
-    /* If the socket was just created, then we've already configured the
-     * corresponding epoll event for writing.
-     */
-    if (justcreated) {
-        return 0;
-    }
-
-
-    /* Otherwise, we may have disabled writing when we last emptied the
-     * outgoing buffer so make sure it is enabled again to send this queued
-     * message.
-     */
-    if (modify_mediator_fdevent(prov->provev,
-            EPOLLIN | EPOLLOUT | EPOLLRDHUP) < 0) {
-        logger(LOG_INFO,
-                "OpenLI Mediator: failed to re-enable transmit on provisioner socket: %s.",
-                strerror(errno));
-        return -1;
-    }
-
-    return 0;
-}
-
-/** Initialises local state for a successful connection to the provisioner
- *
- *  @param state            The global state for this mediator
- *  @param sock             The file descriptor of the provisioner connection
- *  @param ctx              The SSL context for this process
- *
- *  @return -1 if an error occurs, 0 otherwise.
- */
-static int init_provisioner_connection(mediator_state_t *state, int sock, SSL_CTX *ctx) {
-
-    struct epoll_event ev;
-    mediator_prov_t *prov = (mediator_prov_t *)&(state->provisioner);
-
-    if (sock == 0) {
-        return 0;
-    }
-
-    if (ctx != NULL) {
-        /* We're using TLS, so attempt an SSL connection */
-
-        /* mediator can't do anything until it has instructions from
-         * provisioner so blocking is fine */
-        fd_set_block(sock);
-
-        int errr;
-        prov->ssl = SSL_new(ctx);
-        SSL_set_fd(prov->ssl, sock);
-
-        errr = SSL_connect(prov->ssl);
-        fd_set_nonblock(sock);
-
-        if (errr <= 0){
-            errr = SSL_get_error(prov->ssl, errr);
-            if (errr != SSL_ERROR_WANT_WRITE && errr != SSL_ERROR_WANT_READ){ //handshake failed badly
-                SSL_free(prov->ssl);
-                prov->ssl = NULL;
-                if (state->lastsslerror_connect == 0) {
-                    logger(LOG_INFO, "OpenLI: SSL Handshake failed when connecting to provisioner");
-                    state->lastsslerror_connect = 1;
-                }
-                return -1;
-            }
-        }
-        logger(LOG_INFO,
-                "OpenLI mediator: SSL Handshake complete for connection to provisioner");
-        state->lastsslerror_connect = 0;
-    }
-    else {
-        prov->ssl = NULL;
-    }
-
-    /* Create buffers for both receiving and sending messages on this socket */
-    prov->sentinfo = 0;
-    prov->outgoing = create_net_buffer(NETBUF_SEND, sock, prov->ssl);
-    prov->incoming = create_net_buffer(NETBUF_RECV, sock, prov->ssl);
-
-    if (push_auth_onto_net_buffer(prov->outgoing,
-                OPENLI_PROTO_MEDIATOR_AUTH) == -1) {
-        if (prov->disable_log == 0) {
-            logger(LOG_INFO, "OpenLI Mediator: unable to push auth message for provisioner.");
-        }
-        return -1;
-    }
-
-    /* We're about to enqueue our "auth" message, so immediately configure
-     * this socket for an epoll write event (as well as read, of course).
-     */
-    if (prov->provev == NULL) {
-        prov->provev = create_mediator_fdevent(state->epoll_fd,
-                prov, MED_EPOLL_PROVISIONER, sock,
-                EPOLLIN | EPOLLOUT | EPOLLRDHUP);
-
-    }
-
-    if (!prov->provev) {
-        if (prov->disable_log == 0) {
-            logger(LOG_INFO, "OpenLI Mediator: unable to create epoll event for provisioner socket.");
-        }
-        return -1;
-    }
-
-    /* Epoll write is enabled, so pass in '1' here */
-    return send_mediator_listen_details(state, 1);
+    return send_mediator_details_to_provisioner(&(state->provisioner),
+            &meddeets, justcreated);
 }
 
 /** Disconnects a provisioner socket and releases local state for that
@@ -1703,54 +1472,12 @@ static inline void drop_provisioner(mediator_state_t *currstate) {
     /* Purge the LIID->agency mappings */
     purge_liid_map(&(currstate->liidmap));
 
-    free_provisioner(&(currstate->provisioner));
+    disconnect_provisioner(&(currstate->provisioner), 1);
 
     /* Dump all known agencies -- we'll get new ones when we get a usable
      * provisioner again */
     drop_all_agencies(&(currstate->handover_state));
 
-}
-
-/** Applies any changes to the provisioner socket configuration following
- *  a user-triggered config reload.
- *
- *  @param currstate            The pre-reload global state of the mediator.
- *  @param newstate             A global state instance containing the updated
- *                              configuration.
- *  @return 0 if the configuration is unchanged, 1 if it has changed.
- */
-static int reload_provisioner_socket_config(mediator_state_t *currstate,
-        mediator_state_t *newstate) {
-
-    int changed = 0;
-
-    if (strcmp(newstate->provaddr, currstate->provaddr) != 0 ||
-            strcmp(newstate->provport, currstate->provport) != 0) {
-
-        /* The provisioner is supposedly listening on a different IP and/or
-         * port to before, so we should definitely not be talking to
-         * whoever is on the old IP+port.
-         */
-        drop_provisioner(currstate);
-
-        /* Replace existing IP and port strings */
-        free(currstate->provaddr);
-        free(currstate->provport);
-        currstate->provaddr = strdup(newstate->provaddr);
-        currstate->provport = strdup(newstate->provport);
-
-        /* Don't bother connecting right now, the run() loop will do this
-         * as soon as we return.
-         */
-        changed = 1;
-    }
-
-    if (!changed) {
-        logger(LOG_INFO,
-                "OpenLI Mediator: provisioner socket configuration is unchanged.");
-    }
-
-    return changed;
 }
 
 /** Closes the socket that is listening for collector connections and
@@ -1824,56 +1551,6 @@ static int reload_listener_socket_config(mediator_state_t *currstate,
     return changed;
 }
 
-/** Attempts to connect to the provisioner.
- *
- *  @param state            The global state for this mediator.
- *  @param provfail         Set to 1 if the most recent connection attempt
- *                          failed, 0 otherwise.
- *
- *  @return 1 if the connection attempt fails, 0 otherwise.
- */
-static int attempt_provisioner_connect(mediator_state_t *state, int provfail) {
-
-    /* If provfail is 1, this function won't log any failures to connect.
-     * This prevents log spam in cases where we repeatedly fail to connect,
-     * e.g. because the provisioner is down.
-     */
-    int s = connect_socket(state->provaddr, state->provport, provfail,
-            0);
-
-    provfail = 0;
-    if (s == -1) {
-        if (state->provisioner.disable_log == 0) {
-            logger(LOG_INFO,
-                    "OpenLI Mediator: Error - Unable to connect to provisioner.");
-        }
-        setup_provisioner_reconnect_timer(state);
-        provfail = 1;
-    } else if (s == 0) {
-        setup_provisioner_reconnect_timer(state);
-        provfail = 1;
-    }
-
-    if (!provfail) {
-        if (init_provisioner_connection(state, s, state->sslconf.ctx) == -1) {
-            /* Something went wrong (probably an SSL error), so clear any
-             * initialised state and set a timer to try again soon.
-             */
-            destroy_net_buffer(state->provisioner.outgoing);
-            destroy_net_buffer(state->provisioner.incoming);
-            close(s);
-            state->provisioner.outgoing = NULL;
-            state->provisioner.incoming = NULL;
-            setup_provisioner_reconnect_timer(state);
-        } else if (state->provisioner.disable_log == 0) {
-            logger(LOG_INFO,
-                    "OpenLI mediator has connected to provisioner at %s:%s",
-                    state->provaddr, state->provport);
-        }
-    }
-    return provfail;
-}
-
 /** Re-read the mediator configuration file and apply any changes to the
  *  running config.
  *
@@ -1898,9 +1575,18 @@ static int reload_mediator_config(mediator_state_t *currstate) {
     /* Check if the location of the provisioner has changed -- we'll need
      * to reconnect if that is the case.
      */
-    if ((provchanged = reload_provisioner_socket_config(currstate,
-            &newstate)) < 0) {
+    if ((provchanged = reload_provisioner_socket_config(
+            &(currstate->provisioner), &(newstate.provisioner))) < 0) {
         return -1;
+    }
+
+    if (provchanged) {
+        /* The provisioner is supposedly listening on a different IP and/or
+         * port to before, so we should definitely not be talking to
+         * whoever is on the old IP+port.
+         */
+
+        drop_provisioner(currstate);
     }
 
     /* Check if we are going to be listening on a different IP or port
@@ -2014,11 +1700,14 @@ static void run(mediator_state_t *state) {
 
 	    /* Attempt to connect to the provisioner, if we don't already have
          * a connection active */
-        if (state->provisioner.provev == NULL &&
-                state->provisioner.tryconnect) {
-            provfail = attempt_provisioner_connect(state, provfail);
-        }
+        provfail = attempt_provisioner_connect(&(state->provisioner), provfail);
 
+        if (!provfail) {
+            if (send_mediator_listen_details(state, 1) < 0) {
+                disconnect_provisioner(&(state->provisioner), 1);
+                continue;
+            }
+        }
         /* This timer will force us to stop checking epoll and go back
          * to the start of this loop (i.e. checking if we should halt the
          * entire mediator) every second.
