@@ -595,11 +595,16 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
             continue;
         }
 
+        amqp_bytes_t queueID;
+        char srtingSpace [32];
+        queueID.bytes = &srtingSpace;
+        queueID.len = snprintf(queueID.bytes, sizeof(srtingSpace), "ID%d", dest->mediatorid);
+
         if (fwd->ampq_conn) {
             amqp_queue_declare_ok_t *queue_result = amqp_queue_declare(
                     fwd->ampq_conn,
                     1,
-                    AMPQ_BYTES_FROM(dest->mediatorid),
+                    queueID,
                     0,
                     1,
                     0,
@@ -610,14 +615,6 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
                 logger(LOG_INFO, "OpenLI: Failed to declare queue");
             }
         }
-        
-        
-        //invite mediator to RMQ here
-
-        // push_rmq_invite_onto_net_buffer(dest->buffer, col->identifier);
-        
-        //push a packet onto the buffer with the type OPENLI_PROTO_INVITE_RMQ
-        //mediator can infer the dest is where the msg came from
 
         JLI(jval2, fwd->destinations_by_fd, dest->fd);
         if (jval2 == NULL) {
@@ -840,12 +837,17 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             continue;
         }
 
+        amqp_bytes_t queueID;
+        char srtingSpace [32];
+        queueID.bytes = &srtingSpace;
+        queueID.len = snprintf(queueID.bytes, sizeof(srtingSpace), "ID%d", dest->mediatorid);
+
         if ( fwd->ampq_conn ) {
             if (transmit_buffered_records_RMQ(&(dest->buffer), 
                     fwd->ampq_conn, 
                     1,
                     amqp_cstring_bytes(""),
-                    AMPQ_BYTES_FROM(dest->mediatorid),
+                    queueID,
                     BUF_BATCH_SIZE) < 0 ) {
                 logger(LOG_INFO, "OpenLI: Error Publishing to RMQ");
             }

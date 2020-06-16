@@ -1819,6 +1819,9 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
     return rettype;
 }
 
+
+//Check the RMQ connection for new frames/messages, new messages will be placed
+//inside the netbuffer 
 openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb, 
         amqp_connection_state_t *amqp_state, 
         uint8_t **msgbody, uint16_t *msglen, uint64_t *intid) {
@@ -1902,7 +1905,6 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
                         *
                         * In this case the whole connection must be restarted.
                         */
-                        logger(LOG_INFO, "connection close");
                         return OPENLI_PROTO_PEER_DISCONNECTED;
 
                     default:
@@ -1913,6 +1915,15 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
             }
         }
     }
+    // else {
+    //     if (amqp_basic_ack (*amqp_state,
+    //             envelope.channel,
+    //             envelope.delivery_tag,
+    //             0) != 0 ) {
+    //         logger(LOG_INFO, "error with basic_ack");
+    //     }
+
+    // }
 
     /* Ensure the buffer is big enough to hold the new message. */
     if (NETBUF_SPACE_REM(nb) < envelope.message.body.len) {

@@ -678,7 +678,7 @@ static int respond_collector_auth(provision_state_t *state,
         prov_mediator_t *med, *temp_med;
         prov_sock_state_t *cs = (prov_sock_state_t *)(pev->client->state);
         HASH_ITER(hh, state->mediators, med, temp_med) {
-            push_rmq_invite_onto_net_buffer(med->client.state->outgoing, cs->ipaddr);
+            push_rmq_invite_onto_net_buffer(med->client.state->outgoing, /*cs->ipaddr*/ "172.20.1.2"); //hardcoded to test severing the connection
             
             if (enable_epoll_write(state, med->client.commev) == -1) {
                 logger(LOG_INFO,

@@ -73,9 +73,10 @@ typedef struct med_coll_state {
 
 typedef struct med_coll_RMQ_state {
     char *ipaddr;
+    int iplen;
     net_buffer_t *incoming;
     int disabled_log;
-    amqp_connection_state_t amqp_state;
+    amqp_connection_state_t *amqp_state;
 } med_coll_RMQ_state_t;
 
 typedef struct handover {
