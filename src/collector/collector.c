@@ -1221,6 +1221,11 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->sslconf.cacertfile = NULL;
     glob->sslconf.ctx = NULL;
 
+    glob->RMQ_conf.name = NULL;
+    glob->RMQ_conf.pass = NULL;
+    glob->RMQ_conf.hostname = NULL;
+    glob->RMQ_conf.port = NULL;
+
     glob->etsitls = 1;
     glob->ignore_sdpo_matches = 0;
     glob->encoding_method = OPENLI_ENCODING_DER;
@@ -1586,6 +1591,7 @@ int main(int argc, char *argv[]) {
         glob->forwarders[i].ctx =
                 (glob->sslconf.ctx && glob->etsitls) ? glob->sslconf.ctx : NULL;
         //forwarder only needs CTX if ctx exists and is enabled 
+        glob->forwarders[i].RMQ_conf = glob->RMQ_conf;
 
         pthread_create(&(glob->forwarders[i].threadid), NULL,
                 start_forwarding_thread, (void *)&(glob->forwarders[i]));

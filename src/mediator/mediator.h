@@ -76,7 +76,7 @@ typedef struct med_coll_RMQ_state {
     int iplen;
     net_buffer_t *incoming;
     int disabled_log;
-    amqp_connection_state_t *amqp_state;
+    amqp_connection_state_t amqp_state;
 } med_coll_RMQ_state_t;
 
 typedef struct handover {
@@ -174,6 +174,7 @@ typedef struct med_state {
     wandder_etsispec_t *etsidecoder;
     disabled_collector_t *disabledcols;
     openli_ssl_config_t sslconf;
+    openli_RMQ_config_t RMQ_conf;
     int lastsslerror_accept;
     int lastsslerror_connect;
 

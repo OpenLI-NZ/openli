@@ -200,7 +200,7 @@ int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
 int push_rmq_invite_onto_net_buffer(net_buffer_t *nb, char *ipstr);
 
 openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
-        amqp_connection_state_t *amqp_state, uint8_t **msgbody,
+        amqp_connection_state_t amqp_state, uint8_t **msgbody,
         uint16_t *msglen, uint64_t *intid);
 openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
         uint16_t *msglen, uint64_t *intid);

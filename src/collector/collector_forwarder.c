@@ -976,7 +976,7 @@ void *start_forwarding_thread(void *data) {
         goto haltforwarder;
     }
 
-    if ( 1 ) {
+    if ( fwd->RMQ_conf.name && fwd->RMQ_conf.name ) {
         fwd->ampq_conn = amqp_new_connection();
         fwd->ampq_sock = amqp_tcp_socket_new(fwd->ampq_conn);
 
@@ -992,7 +992,7 @@ void *start_forwarding_thread(void *data) {
         /* login using PLAIN, must specify username and password */
         //TODO set username/password
         if ( (amqp_login(fwd->ampq_conn, "/", 0, 131072,0,
-                        AMQP_SASL_METHOD_PLAIN, "OpenLIcollector", "password")
+                        AMQP_SASL_METHOD_PLAIN, fwd->RMQ_conf.name, fwd->RMQ_conf.pass)
                 ).reply_type != AMQP_RESPONSE_NORMAL ) {
             logger(LOG_ERR, "Failed to login to broker using PLAIN auth");
             goto haltforwarder;
@@ -1002,9 +1002,12 @@ void *start_forwarding_thread(void *data) {
         
         if ( (amqp_get_rpc_reply(fwd->ampq_conn).reply_type) != AMQP_RESPONSE_NORMAL ) {
             logger(LOG_ERR, "Failed to open channel");
-        } else {
-            logger(LOG_INFO, "Opened channel");
+            goto haltforwarder;
         }
+        logger(LOG_INFO, "OpenLI Collector: Connected to RMQ instance");
+    } else if (fwd->RMQ_conf.name || fwd->RMQ_conf.name) {
+        logger(LOG_INFO, "OpenLI Collector: Incompleate RMQ login information supplied");
+        goto haltforwarder;
     }
 
     forwarder_main(fwd);

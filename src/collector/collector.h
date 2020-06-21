@@ -278,6 +278,7 @@ typedef struct collector_global {
 
     uint8_t encoding_method;
     openli_ssl_config_t sslconf;
+    openli_RMQ_config_t RMQ_conf; 
 
 } collector_global_t;
 

@@ -271,11 +271,62 @@ static void free_handover(handover_t *ho) {
     free(ho);
 }
 
+static void drop_RMQ_collector(mediator_state_t *state, med_epoll_ev_t *colev,
+        int disablelog) {
+    med_coll_RMQ_state_t *mstate;
+
+    if (!colev) {
+        return;
+    }
+
+    mstate = colev->state;
+    if (mstate->disabled_log == 0 && colev->fd != -1) {
+        logger(LOG_INFO,
+                "OpenLI Mediator: disconnecting from RMQ %d.",
+                colev->fd);
+    }
+
+    if (mstate && disablelog) {
+        disabled_collector_t *discol;
+
+        HASH_FIND(hh, state->disabledcols, mstate->ipaddr,
+                strlen(mstate->ipaddr), discol);
+        if (discol == NULL) {
+            discol = (disabled_collector_t *)calloc(1,
+                    sizeof(disabled_collector_t));
+            discol->ipaddr = mstate->ipaddr;
+            mstate->ipaddr = NULL;
+
+            HASH_ADD_KEYPTR(hh, state->disabledcols, discol->ipaddr,
+                    strlen(discol->ipaddr), discol);
+        }
+    }
+
+    if (mstate && mstate->incoming) {
+        destroy_net_buffer(mstate->incoming);
+        mstate->incoming = NULL;
+    }
+
+    if (mstate->ipaddr) {
+        free(mstate->ipaddr);
+        mstate->ipaddr = NULL;
+    }
+
+    if (mstate->amqp_state) {
+        amqp_destroy_connection(mstate->amqp_state);
+    }
+}
+
 static void drop_collector(mediator_state_t *state, med_epoll_ev_t *colev,
         int disablelog) {
     med_coll_state_t *mstate;
 
     if (!colev) {
+        return;
+    }
+
+    if (colev->fdtype == MED_EPOLL_COL_RMQ) {
+        drop_RMQ_collector(state, colev, disablelog);
         return;
     }
 
@@ -477,6 +528,11 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->sslconf.keyfile = NULL;
     state->sslconf.cacertfile = NULL;
     state->sslconf.ctx = NULL;
+    state->RMQ_conf.name = NULL;
+    state->RMQ_conf.pass = NULL;
+    state->RMQ_conf.hostname = NULL;
+    state->RMQ_conf.port = NULL;
+    state->RMQ_conf.heartbeatFreq = 0;
     state->lastsslerror_accept = 0;
     state->lastsslerror_connect = 0;
 
@@ -1375,6 +1431,7 @@ freelea:
     free(lea.hi2_ipstr);
     free(lea.hi3_portstr);
     free(lea.hi3_ipstr);
+    free(lea.agencyid);
     return ret;
 }
 
@@ -1680,7 +1737,7 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     return 0;
 }
 
-static amqp_connection_state_t* join_RMQ(mediator_state_t *state, uint8_t *msgbody,
+static amqp_connection_state_t join_RMQ(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
 
     amqp_rpc_reply_t ret;
@@ -1692,59 +1749,95 @@ static amqp_connection_state_t* join_RMQ(mediator_state_t *state, uint8_t *msgbo
 
     //try connect to RMQ server at address and join the approiate queue (medID)
     amqp_set_initialize_ssl_library(0);
-    amqp_connection_state_t *amqp_state = malloc(sizeof(amqp_connection_state_t));
-    *amqp_state = amqp_new_connection();
-    amqp_socket_t *ampq_sock = amqp_ssl_socket_new(*amqp_state);
+    amqp_connection_state_t amqp_state = amqp_new_connection();
 
-    if (!ampq_sock) {
-        logger(LOG_INFO, "error in ssl socket new");
-        return NULL;
-    }
+    amqp_socket_t *ampq_sock = NULL;
+    if (state->sslconf.cacertfile && 
+            state->sslconf.certfile && 
+            state->sslconf.keyfile) {
 
-    amqp_ssl_socket_set_verify_peer(ampq_sock, 0);
-    amqp_ssl_socket_set_verify_hostname(ampq_sock, 0);
+        if (state->RMQ_conf.port){
+
+        }
+
+        ampq_sock = amqp_ssl_socket_new(amqp_state);
+        //TODO handle non SSL connections and auth
+
+        if (!ampq_sock) {
+            logger(LOG_INFO, "error in ssl socket new");
+            amqp_destroy_connection(amqp_state);
+            return NULL;
+        }
+
+        amqp_ssl_socket_set_verify_peer(ampq_sock, 0);
+        amqp_ssl_socket_set_verify_hostname(ampq_sock, 0);
 
 
-    //TODO handle this through config
-    if (amqp_ssl_socket_set_cacert(ampq_sock, "/home/openli-testsuite/openli-ca-crt.pem") != AMQP_STATUS_OK) {
-        logger(LOG_INFO, "error in set cert");
-        return NULL;
-    }
+        if (amqp_ssl_socket_set_cacert(ampq_sock, state->sslconf.cacertfile) != AMQP_STATUS_OK) {
+            logger(LOG_INFO, "OpenLI Mediator: error in loading cacert");
+            amqp_destroy_connection(amqp_state);
+            return NULL;
+        }
 
-    //TODO take these values from config
-    if (amqp_ssl_socket_set_key(
-            ampq_sock, 
-            "/home/openli-testsuite/openli-mediator-crt.pem",
-            "/home/openli-testsuite/openli-mediator-key.pem") 
-            != AMQP_STATUS_OK ){
-        logger(LOG_INFO, 
-                "OpenLI: med failed to load crt/key");
-        return NULL;
-    }   
+        if (amqp_ssl_socket_set_key(
+                ampq_sock,
+                state->sslconf.certfile,
+                state->sslconf.keyfile
+                ) != AMQP_STATUS_OK ){
+            logger(LOG_INFO,
+                    "OpenLI: med failed to load crt/key");
+            amqp_destroy_connection(amqp_state);
+            return NULL;
+        }
 
-    if (amqp_socket_open_noblock(ampq_sock, msgbody, 5671, &tv)){
-        logger(LOG_INFO, 
-                "OpenLI: med failed to open amqp socket");
-        return NULL;
-    }
+        if (amqp_socket_open_noblock(ampq_sock, msgbody, 5671, &tv)){
+            logger(LOG_INFO,
+                    "OpenLI: med failed to open amqp socket");
+            amqp_destroy_connection(amqp_state);
+            return NULL;
+        }
 
-    // AMQP_FRAME_MAX 131072
-    /* login using PLAIN, must specify username and password */
-    //TODO set username/password
-    if ( (amqp_login(*amqp_state, "/", 0, 131072, 2,
-                    AMQP_SASL_METHOD_EXTERNAL, "EXTERNAL")
-            ).reply_type != AMQP_RESPONSE_NORMAL ) {
-        logger(LOG_INFO, "Failed to login to broker using EXTERNAL auth");
-        return NULL;
-    }
+        if ( (amqp_login(amqp_state, "/", 0, 131072, state->RMQ_conf.heartbeatFreq,
+                        AMQP_SASL_METHOD_EXTERNAL, "EXTERNAL")
+                ).reply_type != AMQP_RESPONSE_NORMAL ) {
+            logger(LOG_INFO, "Failed to login to RMQ using EXTERNAL auth");
+            amqp_destroy_connection(amqp_state);
+            return NULL;
+        }
+    } else if (state->RMQ_conf.name && state->RMQ_conf.pass) {
+        //start up socket with non SSL auth
+        ampq_sock = amqp_tcp_socket_new(amqp_state);
 
-    amqp_channel_open_ok_t *r = amqp_channel_open(*amqp_state, 1);
-    
-    if ( (amqp_get_rpc_reply(*amqp_state).reply_type) != AMQP_RESPONSE_NORMAL ) {
-        logger(LOG_ERR, "Failed to open channel");
-        return NULL;
+        if (!ampq_sock) {
+            logger(LOG_INFO, "error in tcp socket new");
+            amqp_destroy_connection(amqp_state);
+            return NULL;
+        }
+
+        if (amqp_socket_open_noblock(ampq_sock, msgbody, 5672, &tv)){
+            logger(LOG_INFO, 
+                    "OpenLI: med failed to open amqp socket");
+            amqp_destroy_connection(amqp_state);
+            return NULL;
+        }
+
+        if (amqp_login(amqp_state, "/", 0, 131072, state->RMQ_conf.heartbeatFreq, AMQP_SASL_METHOD_PLAIN,
+                                    state->RMQ_conf.name, state->RMQ_conf.pass).reply_type != AMQP_RESPONSE_NORMAL) {
+            logger(LOG_INFO, "Failed to login using PLAIN auth");
+            amqp_destroy_connection(amqp_state);
+            return NULL;
+        }
     } else {
-        logger(LOG_INFO, "Opened channel with %d",1);
+        logger(LOG_INFO, "OpenLI Mediator: Was invited to RMQ but no login was provided");
+        return NULL;
+    }
+
+    amqp_channel_open_ok_t *r = amqp_channel_open(amqp_state, 1);
+    
+    if ( (amqp_get_rpc_reply(amqp_state).reply_type) != AMQP_RESPONSE_NORMAL ) {
+        logger(LOG_ERR, "OpenLI Mediator: Failed to open RMQ channel");
+        amqp_destroy_connection(amqp_state);
+        return NULL;
     }
 
     amqp_bytes_t queueID;
@@ -1754,7 +1847,7 @@ static amqp_connection_state_t* join_RMQ(mediator_state_t *state, uint8_t *msgbo
 
 
     amqp_queue_declare_ok_t *queue_result = amqp_queue_declare(
-            *amqp_state,
+            amqp_state,
             1,
             queueID,
             0,
@@ -1763,12 +1856,14 @@ static amqp_connection_state_t* join_RMQ(mediator_state_t *state, uint8_t *msgbo
             0,
             amqp_empty_table);
 
-    if (amqp_get_rpc_reply(*amqp_state).reply_type != AMQP_RESPONSE_NORMAL ) {
+    if (amqp_get_rpc_reply(amqp_state).reply_type != AMQP_RESPONSE_NORMAL ) {
         logger(LOG_INFO, "OpenLI: Failed to declare queue");
+        amqp_destroy_connection(amqp_state);
+        return NULL;
     }
 
 
-    amqp_basic_consume_ok_t *con_ok = amqp_basic_consume(*amqp_state,
+    amqp_basic_consume_ok_t *con_ok = amqp_basic_consume(amqp_state,
             1,
             queueID,
             amqp_empty_bytes,
@@ -1777,9 +1872,12 @@ static amqp_connection_state_t* join_RMQ(mediator_state_t *state, uint8_t *msgbo
             0,
             amqp_empty_table);
     
-    if (amqp_get_rpc_reply(*amqp_state).reply_type != AMQP_RESPONSE_NORMAL ) {
-        logger(LOG_INFO, "failed to register consumer");
+    if (amqp_get_rpc_reply(amqp_state).reply_type != AMQP_RESPONSE_NORMAL ) {
+        logger(LOG_INFO, "OpenLI: failed to register consumer");
+        amqp_destroy_connection(amqp_state);
         return NULL;
+    } else {
+        logger(LOG_INFO, "OpenLI: Registered consumer %s", queueID.bytes);
     }
 
     return amqp_state;
@@ -1789,9 +1887,10 @@ static int receive_rmq_invite(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
     logger(LOG_INFO, "invited to collector RMQ %s", msgbody);
 
-    amqp_connection_state_t* amqp_state = join_RMQ(state, msgbody,msglen);
+    amqp_connection_state_t amqp_state = join_RMQ(state, msgbody,msglen);
+    if (!amqp_state) return 0;
 
-    int sock_fd = amqp_get_sockfd(*amqp_state); //add this to Epoll
+    int sock_fd = amqp_get_sockfd(amqp_state); //add this to Epoll
 
     mediator_collector_t col;
     med_coll_RMQ_state_t *mstate = malloc(sizeof(med_coll_RMQ_state_t));
@@ -1799,14 +1898,17 @@ static int receive_rmq_invite(mediator_state_t *state, uint8_t *msgbody,
     col.colev->fdtype = MED_EPOLL_COL_RMQ;
     col.colev->fd = sock_fd;
     col.colev->state = mstate;
+    col.ssl = NULL;
     mstate->amqp_state = amqp_state;
     mstate->incoming = create_net_buffer(NETBUF_RECV, 0, NULL);
     mstate->ipaddr = malloc(msglen);
+    mstate->disabled_log = 0;
     memcpy(mstate->ipaddr, msgbody, msglen);
     mstate->iplen = msglen;
     //todo handle dereferejnce of this new amqp_state
 
-    libtrace_list_push_back(state->collectors, &col);
+    libtrace_list_push_back(state->collectors, &col); //NEW collector
+
 
 
     struct epoll_event ev;
@@ -2886,7 +2988,7 @@ void service_RMQ_connections(mediator_state_t *state) {
                 med_coll_RMQ_state_t *RMQ_state = col->colev->state;
 
                 if (RMQ_state->amqp_state) {
-                    int  ret = amqp_simple_wait_frame_noblock(*RMQ_state->amqp_state, &frame, &tv);
+                    int  ret = amqp_simple_wait_frame_noblock(RMQ_state->amqp_state, &frame, &tv);
                     switch (ret) {
                         case AMQP_STATUS_INVALID_PARAMETER:
                         case AMQP_STATUS_NO_MEMORY:
@@ -2906,7 +3008,7 @@ void service_RMQ_connections(mediator_state_t *state) {
                             epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL,
                                 col->colev->fd, &ev);
                             col->colev->fd = 0;
-                            amqp_destroy_connection(*RMQ_state->amqp_state);
+                            amqp_destroy_connection(RMQ_state->amqp_state);
                             RMQ_state->amqp_state = NULL;
                         break;
                         case AMQP_STATUS_OK:
@@ -2920,7 +3022,7 @@ void service_RMQ_connections(mediator_state_t *state) {
                             RMQ_state->iplen);
                     //reregister EPOLL
                     if (RMQ_state->amqp_state) {
-                        col->colev->fd =  amqp_get_sockfd(*RMQ_state->amqp_state);
+                        col->colev->fd =  amqp_get_sockfd(RMQ_state->amqp_state);
 
                         struct epoll_event ev;
                         ev.data.ptr = (void *)col->colev;

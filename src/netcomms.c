@@ -1823,7 +1823,7 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
 //Check the RMQ connection for new frames/messages, new messages will be placed
 //inside the netbuffer 
 openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb, 
-        amqp_connection_state_t *amqp_state, 
+        amqp_connection_state_t amqp_state, 
         uint8_t **msgbody, uint16_t *msglen, uint64_t *intid) {
 
     amqp_frame_t frame;
@@ -1850,13 +1850,13 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
         return rettype;
     }
 
-    amqp_maybe_release_buffers(*amqp_state);
-    ret = amqp_consume_message(*amqp_state, &envelope, &tv, 0);
+    amqp_maybe_release_buffers(amqp_state);
+    ret = amqp_consume_message(amqp_state, &envelope, &tv, 0);
 
     if (AMQP_RESPONSE_NORMAL != ret.reply_type) {
         if (AMQP_RESPONSE_LIBRARY_EXCEPTION == ret.reply_type &&
                 AMQP_STATUS_UNEXPECTED_STATE == ret.library_error) {
-            if (AMQP_STATUS_OK != amqp_simple_wait_frame(*amqp_state, &frame)) {
+            if (AMQP_STATUS_OK != amqp_simple_wait_frame(amqp_state, &frame)) {
                 return OPENLI_PROTO_NO_MESSAGE;
             }
 
@@ -1876,7 +1876,7 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
                         */
                         {
                             amqp_message_t message;
-                            ret = amqp_read_message(*amqp_state, frame.channel, &message, 0);
+                            ret = amqp_read_message(amqp_state, frame.channel, &message, 0);
                             if (AMQP_RESPONSE_NORMAL != ret.reply_type) {
                                 return OPENLI_PROTO_RECV_ERROR;
                             }
@@ -1915,15 +1915,15 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
             }
         }
     }
-    // else {
-    //     if (amqp_basic_ack (*amqp_state,
-    //             envelope.channel,
-    //             envelope.delivery_tag,
-    //             0) != 0 ) {
-    //         logger(LOG_INFO, "error with basic_ack");
-    //     }
+    else {
+        if (amqp_basic_ack (amqp_state,
+                envelope.channel,
+                envelope.delivery_tag,
+                0) != 0 ) {
+            logger(LOG_INFO, "error with basic_ack");
+        }
 
-    // }
+    }
 
     /* Ensure the buffer is big enough to hold the new message. */
     if (NETBUF_SPACE_REM(nb) < envelope.message.body.len) {
