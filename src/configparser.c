@@ -987,14 +987,40 @@ static int global_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
-            strcmp((char *)key->data.scalar.value, "RMQ_name") == 0) {
+            strcmp((char *)key->data.scalar.value, "RMQname") == 0) {
         SET_CONFIG_STRING_OPTION(glob->RMQ_conf.name, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
-            strcmp((char *)key->data.scalar.value, "RMQ_pass") == 0) {
+            strcmp((char *)key->data.scalar.value, "RMQpass") == 0) {
         SET_CONFIG_STRING_OPTION(glob->RMQ_conf.pass, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQhostname") == 0) {
+        SET_CONFIG_STRING_OPTION(glob->RMQ_conf.hostname, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQheartbeatfreq") == 0) {
+        glob->RMQ_conf.heartbeatFreq = strtoul((char *)value->data.scalar.value,
+                NULL, 10);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQenabled") == 0) {
+        glob->RMQ_conf.enabled = check_onoff(value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQport") == 0) {
+        glob->RMQ_conf.port = strtoul((char *)value->data.scalar.value,
+                NULL, 10);
     }
     
     return 0;
@@ -1090,20 +1116,39 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
-            strcmp((char *)key->data.scalar.value, "RMQ_name") == 0) {
+            strcmp((char *)key->data.scalar.value, "RMQname") == 0) {
         SET_CONFIG_STRING_OPTION(state->RMQ_conf.name, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
-            strcmp((char *)key->data.scalar.value, "RMQ_pass") == 0) {
+            strcmp((char *)key->data.scalar.value, "RMQpass") == 0) {
         SET_CONFIG_STRING_OPTION(state->RMQ_conf.pass, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
-            strcmp((char *)key->data.scalar.value, "RMQHeartbeatfreq") == 0) {
+            strcmp((char *)key->data.scalar.value, "RMQhostname") == 0) {
+        SET_CONFIG_STRING_OPTION(state->RMQ_conf.hostname, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQheartbeatfreq") == 0) {
         state->RMQ_conf.heartbeatFreq = strtoul((char *)value->data.scalar.value,
+                NULL, 10);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQenabled") == 0) {
+        state->RMQ_conf.enabled = check_onoff(value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQport") == 0) {
+        state->RMQ_conf.port = strtoul((char *)value->data.scalar.value,
                 NULL, 10);
     }
 

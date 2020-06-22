@@ -139,9 +139,6 @@ else
         fi
 fi
 
-
-
-
 if test "$libyaml_found" = 0; then
         AC_MSG_ERROR(Required library libyaml not found; use LDFLAGS to specify library location)
 fi

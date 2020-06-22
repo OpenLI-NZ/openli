@@ -968,40 +968,6 @@ static inline int push_mediator_msg_onto_net_buffer(net_buffer_t *nb,
     return (int)totallen;
 }
 
-
-int push_rmq_invite_onto_net_buffer(net_buffer_t *nb,
-        char *ipstr) {
-
-    ii_header_t hdr;
-    uint16_t totallen;
-    int ret;
-
-    totallen = strlen(ipstr)+1;
-
-    /* Pre-compute our body length so we can write it in the header */
-    if (totallen > 65535) {
-        logger(LOG_INFO,
-                "OpenLI: mediator invite is too long to fit in a single message (%d).",
-                totallen);
-        return -1;
-    }
-
-    /* Push on header */
-    populate_header(&hdr, OPENLI_PROTO_INVITE_RMQ, totallen, 0);
-    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
-            sizeof(ii_header_t))) == -1) {
-        return -1;
-    }
-
-    /* Push on each invite field */ //TODO, this can be better than a string
-    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)ipstr,
-            totallen)) == -1) {
-        return -1;
-    }
-
-    return (int)totallen;
-}
-
 int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med) {
 
     return push_mediator_msg_onto_net_buffer(nb, med,
@@ -1895,7 +1861,7 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
                         * any queues that were declared auto-delete, and restart any
                         * consumers that were attached to the previous channel.
                         */
-                        logger(LOG_INFO, "channel close");
+                        logger(LOG_INFO, "OpenLI: RMQ Channel closed");
                         return OPENLI_PROTO_RECV_ERROR;
 
                     case AMQP_CONNECTION_CLOSE_METHOD:
@@ -1920,9 +1886,8 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
                 envelope.channel,
                 envelope.delivery_tag,
                 0) != 0 ) {
-            logger(LOG_INFO, "error with basic_ack");
+            logger(LOG_INFO, "OpenLI: RMQ error in basic acknowledgement");
         }
-
     }
 
     /* Ensure the buffer is big enough to hold the new message. */
@@ -1931,7 +1896,6 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
             return OPENLI_PROTO_BUFFER_TOO_FULL;
         }
     }
-
 
     memcpy(nb->appendptr, 
             envelope.message.body.bytes,

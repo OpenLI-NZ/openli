@@ -674,21 +674,6 @@ static int respond_collector_auth(provision_state_t *state,
         return 0;
     }
 
-    if ( 1 ) {
-        prov_mediator_t *med, *temp_med;
-        prov_sock_state_t *cs = (prov_sock_state_t *)(pev->client->state);
-        HASH_ITER(hh, state->mediators, med, temp_med) {
-            push_rmq_invite_onto_net_buffer(med->client.state->outgoing, /*cs->ipaddr*/ "172.20.1.2"); //hardcoded to test severing the connection
-            
-            if (enable_epoll_write(state, med->client.commev) == -1) {
-                logger(LOG_INFO,
-                        "OpenLI: unable to enable epoll write event for newly invited mediator on fd %d: %s",
-                        pev->fd, strerror(errno));
-                return -1;
-            }
-        }
-    }
-
     /* No need to wrap our log messages with checks for log_allowed, as
      * we should have just set log_allowed to 1 before calling this function
      */
@@ -807,18 +792,6 @@ static int respond_mediator_auth(provision_state_t *state,
         }
         h = h->hh.next;
     }
-
-    if ( 1 ) {
-        prov_collector_t *col, *temp_col;
-        HASH_ITER(hh, state->collectors, col, temp_col) {
-            logger(LOG_INFO, "Inviting new mediator: %s to collector-RMQ:%s",
-                    col->identifier, 
-                    ((prov_sock_state_t *)(pev->client->state))->ipaddr
-                    );
-            push_rmq_invite_onto_net_buffer(outgoing, col->identifier);
-        }
-    }
-
     pthread_mutex_unlock(&(state->interceptconf.safelock));
 
     /* Update our epoll event for this mediator to allow transmit. */
@@ -894,8 +867,6 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 cs->ipaddr, pev->fd);
         halt_provisioner_client_authtimer(state->epoll_fd, pev->client,
                 cs->ipaddr);
-
-
         return respond_collector_auth(state, pev, cs->outgoing);
    }
 

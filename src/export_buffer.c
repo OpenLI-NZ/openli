@@ -281,13 +281,10 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
 
         if ( pub_ret != 0 ){
             logger(LOG_INFO,
-                    "OpenLI: publish error %d", pub_ret);
+                    "OpenLI: RMQ publish error %d", pub_ret);
         } else {
             ret = sent;
         }
-
-        //TODO check the broker recieved it, (should be safe as broker is 
-        //always on local machine)
 
         buf->deadfront += ((uint32_t)ret + buf->partialfront);
     }

@@ -43,9 +43,7 @@
 #define BUF_BATCH_SIZE (100 * 1024 * 1024)
 #define MIN_SEND_AMOUNT (1 * 1024 * 1024)
 #define AMPQ_BYTES_FROM(x) (amqp_bytes_t){.len=sizeof(x),.bytes=&x}
-
-#define EXCHANGE_NAME "openli_ex"
-#define EXCHANGE_TYPE "dircet"
+#define AMQP_FRAME_MAX 131072
 
 static inline void free_encoded_result(openli_encoded_result_t *res) {
     if (res->liid) {
@@ -595,12 +593,11 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
             continue;
         }
 
-        amqp_bytes_t queueID;
-        char srtingSpace [32];
-        queueID.bytes = &srtingSpace;
-        queueID.len = snprintf(queueID.bytes, sizeof(srtingSpace), "ID%d", dest->mediatorid);
-
         if (fwd->ampq_conn) {
+            amqp_bytes_t queueID;
+            char stringSpace [32];
+            generate_medID(&queueID, &stringSpace, sizeof(stringSpace), dest->mediatorid);
+
             amqp_queue_declare_ok_t *queue_result = amqp_queue_declare(
                     fwd->ampq_conn,
                     1,
@@ -837,12 +834,10 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             continue;
         }
 
-        amqp_bytes_t queueID;
-        char srtingSpace [32];
-        queueID.bytes = &srtingSpace;
-        queueID.len = snprintf(queueID.bytes, sizeof(srtingSpace), "ID%d", dest->mediatorid);
-
         if ( fwd->ampq_conn ) {
+            amqp_bytes_t queueID;
+            char stringSpace [32];
+            generate_medID(&queueID, &stringSpace, sizeof(stringSpace), dest->mediatorid);
             if (transmit_buffered_records_RMQ(&(dest->buffer), 
                     fwd->ampq_conn, 
                     1,
@@ -851,7 +846,6 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
                     BUF_BATCH_SIZE) < 0 ) {
                 logger(LOG_INFO, "OpenLI: Error Publishing to RMQ");
             }
-
         } else {
 
             if (transmit_buffered_records(&(dest->buffer), dest->fd,
@@ -980,33 +974,31 @@ void *start_forwarding_thread(void *data) {
         fwd->ampq_conn = amqp_new_connection();
         fwd->ampq_sock = amqp_tcp_socket_new(fwd->ampq_conn);
 
-        //TODO RMQ instance will always be on localhost?
+        //TODO RMQ instance will always be on localhost? (for collector)
         if (amqp_socket_open(fwd->ampq_sock, "localhost", 5672 )){
             logger(LOG_INFO, 
-                    "OpenLI: forwarding thread %d failed to open amqp socket",
+                    "OpenLI: RMQ forwarding thread %d failed to open amqp socket",
                     fwd->forwardid);
             goto haltforwarder;
         }
 
-        // AMQP_FRAME_MAX 131072
         /* login using PLAIN, must specify username and password */
-        //TODO set username/password
-        if ( (amqp_login(fwd->ampq_conn, "/", 0, 131072,0,
+        if ( (amqp_login(fwd->ampq_conn, "/", 0, AMQP_FRAME_MAX,0,
                         AMQP_SASL_METHOD_PLAIN, fwd->RMQ_conf.name, fwd->RMQ_conf.pass)
                 ).reply_type != AMQP_RESPONSE_NORMAL ) {
-            logger(LOG_ERR, "Failed to login to broker using PLAIN auth");
+            logger(LOG_ERR, "OpenLI: RMQ Failed to login to broker using PLAIN auth");
             goto haltforwarder;
         }
 
         amqp_channel_open_ok_t *r = amqp_channel_open(fwd->ampq_conn, 1);
         
         if ( (amqp_get_rpc_reply(fwd->ampq_conn).reply_type) != AMQP_RESPONSE_NORMAL ) {
-            logger(LOG_ERR, "Failed to open channel");
+            logger(LOG_ERR, "OpenLI: Failed to open channel");
             goto haltforwarder;
         }
-        logger(LOG_INFO, "OpenLI Collector: Connected to RMQ instance");
+        logger(LOG_INFO, "OpenLI: Connected to RMQ instance");
     } else if (fwd->RMQ_conf.name || fwd->RMQ_conf.name) {
-        logger(LOG_INFO, "OpenLI Collector: Incompleate RMQ login information supplied");
+        logger(LOG_INFO, "OpenLI: Incompleate RMQ login information supplied");
         goto haltforwarder;
     }
 
@@ -1036,6 +1028,9 @@ void *start_forwarding_thread(void *data) {
     } while (x > 0);
 
 haltforwarder:
+    if (fwd->ampq_conn){
+        amqp_destroy_connection(fwd->ampq_conn);
+    }
     zmq_close(fwd->zmq_ctrlsock);
     remove_all_destinations(fwd);
     logger(LOG_DEBUG, "OpenLI: halting forwarding thread %d",

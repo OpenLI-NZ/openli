@@ -1224,7 +1224,9 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->RMQ_conf.name = NULL;
     glob->RMQ_conf.pass = NULL;
     glob->RMQ_conf.hostname = NULL;
-    glob->RMQ_conf.port = NULL;
+    glob->RMQ_conf.port = 0;
+    glob->RMQ_conf.heartbeatFreq = 0;
+    glob->RMQ_conf.enabled = 0;
 
     glob->etsitls = 1;
     glob->ignore_sdpo_matches = 0;
