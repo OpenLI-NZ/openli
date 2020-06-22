@@ -220,7 +220,6 @@ static int init_provisioner_connection(mediator_prov_t *prov, int sock) {
     }
 
     /* Create buffers for both receiving and sending messages on this socket */
-    prov->sentinfo = 0;
     prov->outgoing = create_net_buffer(NETBUF_SEND, sock, prov->ssl);
     prov->incoming = create_net_buffer(NETBUF_RECV, sock, prov->ssl);
 
