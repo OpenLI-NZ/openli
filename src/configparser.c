@@ -1147,6 +1147,12 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQSSL") == 0) {
+        state->RMQ_conf.SSLenabled = check_onoff(value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "RMQport") == 0) {
         state->RMQ_conf.port = strtoul((char *)value->data.scalar.value,
                 NULL, 10);

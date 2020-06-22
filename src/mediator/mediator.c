@@ -522,6 +522,7 @@ static int init_med_state(mediator_state_t *state, char *configfile,
     state->RMQ_conf.port = 0;
     state->RMQ_conf.heartbeatFreq = 0;
     state->RMQ_conf.enabled = 0;
+    state->RMQ_conf.SSLenabled = 0;
 
     state->operatorid = NULL;
     state->provaddr = NULL;
@@ -960,7 +961,8 @@ static amqp_connection_state_t join_RMQ(mediator_state_t *state, uint8_t *msgbod
     amqp_connection_state_t amqp_state = amqp_new_connection();
 
     amqp_socket_t *ampq_sock = NULL;
-    if (state->sslconf.cacertfile && 
+    if (state->RMQ_conf.SSLenabled &&
+            state->sslconf.cacertfile && 
             state->sslconf.certfile && 
             state->sslconf.keyfile) {
 
@@ -1057,7 +1059,7 @@ static amqp_connection_state_t join_RMQ(mediator_state_t *state, uint8_t *msgbod
     } else {
         if (!logDisabled)
             logger(LOG_INFO, 
-                    "OpenLI Mediator: Was invited to RMQ but no login was provided");
+                    "OpenLI Mediator: RMQ no valid login was provided");
         amqp_destroy_connection(amqp_state);
         return NULL;
     }
