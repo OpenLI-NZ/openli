@@ -29,6 +29,14 @@
 #include "med_epoll.h"
 #include "logger.h"
 
+/** Finds an LIID in an LIID map and returns its corresponding agency
+ *
+ *  @param map          The LIID map to search
+ *  @param liidstr      The LIID to look for (as a string)
+ *
+ *  @return the LIID mapping entry for the LIID, if it is in the map. Returns
+ *          NULL if the given LIID is not present in the map.
+ */
 liid_map_entry_t *lookup_liid_agency_mapping(liid_map_t *map, char *liidstr) {
     PWord_t jval;
 
@@ -39,6 +47,13 @@ liid_map_entry_t *lookup_liid_agency_mapping(liid_map_t *map, char *liidstr) {
     return (liid_map_entry_t *)(*jval);
 }
 
+/** Removes an LIID->agency mapping from an LIID map.
+ *
+ *  @param map          The LIID map to remove the mapping from
+ *  @param liidstr      The LIID that is to be removed from the map (as a
+ *                      string)
+ *
+ */
 void remove_liid_agency_mapping(liid_map_t *map, char *liidstr) {
     int err;
 
@@ -47,6 +62,14 @@ void remove_liid_agency_mapping(liid_map_t *map, char *liidstr) {
     JSLD(err, map->liid_array, (unsigned char *)liidstr);
 }
 
+/** Adds a new LIID->agency mapping to an LIID map.
+ *
+ *  @param map          The LIID map to add the new mapping to
+ *  @param liidstr      The LIID for the new mapping (as a string)
+ *  @param agency       The agency that requested the LIID
+ *
+ *  @return -1 if an error occurs, 0 if the addition is successful
+ */
 int add_liid_agency_mapping(liid_map_t *map, char *liidstr,
         mediator_agency_t *agency) {
 
@@ -101,6 +124,13 @@ int add_liid_agency_mapping(liid_map_t *map, char *liidstr,
 	return 0;
 }
 
+/** Adds an LIID to the set of LIIDs without agencies in an LIID map.
+ *
+ *  @param map          The LIID map to add the missing LIID to
+ *  @param liidstr      The LIID that has no corresponding agency (as a string)
+ *
+ *  @return -1 if an error occurs (e.g. OOM), 0 if successful.
+ */
 int add_missing_liid(liid_map_t *map, char *liidstr) {
     PWord_t jval;
 
@@ -118,6 +148,10 @@ int add_missing_liid(liid_map_t *map, char *liidstr) {
     return 0;
 }
 
+/** Removes all current LIID->agency mappings from the LIID map.
+ *
+ *  @param map          The LIID map to remove the mappings from
+ */
 void purge_liid_map(liid_map_t *map) {
 
     unsigned char index[1024];
@@ -145,6 +179,10 @@ void purge_liid_map(liid_map_t *map) {
 	JSLFA(bytes, map->liid_array);
 }
 
+/** Removes all entries from the missing LIID map
+ *
+ *  @param map          The LIID map to purge missing LIIDs from
+ */
 void purge_missing_liids(liid_map_t *map) {
     Word_t bytes;
 
