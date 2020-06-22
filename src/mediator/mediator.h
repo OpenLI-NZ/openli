@@ -41,33 +41,70 @@
 #include "mediator_prov.h"
 #include "mediator_coll.h"
 
+/** Global state variables for a mediator instance */
 typedef struct med_state {
+
+    /** A unique identifier for the mediator, provided via config */
     uint32_t mediatorid;
+
+    /** Path to the mediator config file */
     char *conffile;
-    char *mediatorname;
+
+    /** The operator ID string (to be inserted into keep-alive messages) */
     char *operatorid;
+
+    /** The IP address to listen on for incoming collector connections */
     char *listenaddr;
+
+    /** The port to listen on for incoming collector connections
+     *  (as a string) */
     char *listenport;
+
+    /** A flag indicating whether collector connections should use TLS to
+     *  encrypt exported records.
+     */
     uint8_t etsitls;
 
+    /** Directory in which any pcap files should be written */
     char *pcapdirectory;
 
+    /** State for managing all connected handovers */
     handover_state_t handover_state;
+
+    /** A map of LIIDs to their corresponding agencies */
     liid_map_t liidmap;
 
+    /** The global epoll file descriptor for this mediator */
     int epoll_fd;
+
+    /** The epoll event for the socket listening for collectors */
     med_epoll_ev_t *listenerev;
+
+    /** The epoll event for the socket watching for signals */
     med_epoll_ev_t *signalev;
+
+    /** The epoll event for the epoll loop timer */
     med_epoll_ev_t *timerev;
+
+    /** The epoll event for the pcap file rotation timer */
     med_epoll_ev_t *pcaptimerev;
 
+    /** State for managing the connection back to the provisioner */
     mediator_prov_t provisioner;
+
+    /** State for managing the connections from collectors */
     mediator_collector_t collectors;
 
+    /** The frequency to rotate the pcap files (in minutes) */
     uint32_t pcaprotatefreq;
+
+    /** The pthread ID for the pcap file writing thread */
     pthread_t pcapthread;
+
+    /** The queue for pushing packets to the pcap file writing thread */
     libtrace_message_queue_t pcapqueue;
-    wandder_etsispec_t *etsidecoder;
+
+    /** The SSL configuration for the mediator */
     openli_ssl_config_t sslconf;
 
 } mediator_state_t;
