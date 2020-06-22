@@ -32,41 +32,90 @@
 #include <libwandder_etsili.h>
 #include <uthash.h>
 
+/** State for a particular pcap output file */
 typedef struct active_pcap_output {
+    /** The LIID for the intercept that is being written to this file */
     char *liid;
+
+    /** The libtrace output file handle for the output file */
     libtrace_out_t *out;
+
+    /** The number of packets written to this file so far */
     int pktwritten;
 
     UT_hash_handle hh;
 } active_pcap_output_t;
 
+/** State for the pcap thread */
 typedef struct pcap_thread_state {
 
+    /** The queue which this thread will receive messages from the mediator */
     libtrace_message_queue_t *inqueue;
+
+    /** A libtrace packet used to convert raw IP blobs into a usable packet */
     libtrace_packet_t *packet;
+
+    /** A map of open pcap outputs, one per LIID */
     active_pcap_output_t *active;
+
+    /** The directory where pcap file are to be written into */
     char *dir;
+
+    /** A flag that indicates whether we have logged an error due to there
+     *  being no valid directory configured to write pcaps into
+     */
     int dirwarned;
+
+    /** A libwandder decoder for converting ETSI-encoded packets into pcap
+     *  formatted packets.
+     */
     wandder_etsispec_t *decoder;
 
 } pcap_thread_state_t;
 
+/** Simple wrapper structure for a message sent to the pcap thread */
 typedef struct mediator_pcap_message {
+
+    /** The message type (see enum below for possible values) */
     uint8_t msgtype;
+
+    /** Pointer to the message body (e.g. the packet to be written) */
     uint8_t *msgbody;
+
+    /** Length of the msgbody, in bytes */
     uint16_t msglen;
 } mediator_pcap_msg_t;
 
+/** Types of messages that can be sent to a pcap thread */
 enum {
+    /** Changes the directory where pcap files are written into */
     PCAP_MESSAGE_CHANGE_DIR,
+
+    /** Tells the pcap thread to exit */
     PCAP_MESSAGE_HALT,
+
+    /** Message contains an encoded ETSI record to be written as pcap */
     PCAP_MESSAGE_PACKET,
+
+    /** Tells the pcap thread to flush any buffered output to disk */
     PCAP_MESSAGE_FLUSH,
+
+    /** Triggers a rotation of all active pcap files */
     PCAP_MESSAGE_ROTATE,
+
+    /** Message contains a raw IP packet to be written as pcap */
     PCAP_MESSAGE_RAWIP,
 };
 
 
+/** Starts the pcap file writing thread, which will listen on a queue for
+ *  messages containing packets that will be written to pcap output files
+ *  (as opposed to being emitted via an ETSI handover).
+ *
+ *  @param params       A pointer to the libtrace message queue that the
+ *                      packets for pcap export will be sent to by the main
+ *                      thread.
+ */
 void *start_pcap_thread(void *params);
 
 #endif
