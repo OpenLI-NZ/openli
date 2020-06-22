@@ -39,23 +39,7 @@
 #include "pcapthread.h"
 #include "liidmapping.h"
 #include "mediator_prov.h"
-
-typedef struct disabled_collector {
-    char *ipaddr;
-    UT_hash_handle hh;
-} disabled_collector_t;
-
-typedef struct med_coll_state {
-    char *ipaddr;
-    net_buffer_t *incoming;
-    int disabled_log;
-    SSL *ssl;
-} med_coll_state_t;
-
-typedef struct mediator_collector {
-    med_epoll_ev_t *colev;
-    SSL *ssl;
-} mediator_collector_t;
+#include "mediator_coll.h"
 
 typedef struct med_state {
     uint32_t mediatorid;
@@ -71,8 +55,6 @@ typedef struct med_state {
     handover_state_t handover_state;
     liid_map_t liidmap;
 
-    libtrace_list_t *collectors;
-
     int epoll_fd;
     med_epoll_ev_t *listenerev;
     med_epoll_ev_t *signalev;
@@ -80,15 +62,13 @@ typedef struct med_state {
     med_epoll_ev_t *pcaptimerev;
 
     mediator_prov_t provisioner;
+    mediator_collector_t collectors;
 
     uint32_t pcaprotatefreq;
     pthread_t pcapthread;
     libtrace_message_queue_t pcapqueue;
     wandder_etsispec_t *etsidecoder;
-    disabled_collector_t *disabledcols;
     openli_ssl_config_t sslconf;
-    int lastsslerror_accept;
-    int lastsslerror_connect;
 
 } mediator_state_t;
 

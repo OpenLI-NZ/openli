@@ -86,91 +86,6 @@ static void usage(char *prog) {
         fprintf(stderr, "\nSet the -d flag to run as a daemon.\n");
 }
 
-/** Drops the connection to a collector and moves the collector to the
- *  disabled collector list.
- *
- *  @param state        The global state for this mediator
- *  @param colev        The epoll event for this collection connection
- *  @param disablelog   A flag that indicates whether we should log about
- *                      this incident
- */
-static void drop_collector(mediator_state_t *state, med_epoll_ev_t *colev,
-        int disablelog) {
-    med_coll_state_t *mstate;
-
-    if (!colev) {
-        return;
-    }
-
-    mstate = (med_coll_state_t *)(colev->state);
-    if (mstate->disabled_log == 0 && colev->fd != -1) {
-        logger(LOG_INFO,
-                "OpenLI Mediator: disconnecting from collector %d.",
-                colev->fd);
-    }
-
-    if (mstate && disablelog) {
-        disabled_collector_t *discol;
-
-        /* Add this collector to the disabled collectors list. */
-        HASH_FIND(hh, state->disabledcols, mstate->ipaddr,
-                strlen(mstate->ipaddr), discol);
-        if (discol == NULL) {
-            discol = (disabled_collector_t *)calloc(1,
-                    sizeof(disabled_collector_t));
-            discol->ipaddr = mstate->ipaddr;
-            mstate->ipaddr = NULL;
-
-            HASH_ADD_KEYPTR(hh, state->disabledcols, discol->ipaddr,
-                    strlen(discol->ipaddr), discol);
-        }
-    }
-
-    if (mstate && mstate->incoming) {
-        destroy_net_buffer(mstate->incoming);
-        mstate->incoming = NULL;
-    }
-
-    if (mstate->ipaddr) {
-        free(mstate->ipaddr);
-        mstate->ipaddr = NULL;
-    }
-
-    if (colev->fd != -1) {
-        close(colev->fd);
-        colev->fd = -1;
-    }
-}
-
-/** Drops *all* currently connected collectors.
- *
- *  @param state        The global state for this mediator
- *  @param c            The list of collectors connected to the mediator
- */
-static void drop_all_collectors(mediator_state_t *state, libtrace_list_t *c) {
-
-    /* TODO send disconnect messages to all collectors? */
-    libtrace_list_node_t *n;
-    mediator_collector_t *col;
-
-    n = c->head;
-    while (n) {
-        col = (mediator_collector_t *)n->data;
-
-        /* No need to log every collector we're dropping, so we pass in 0
-         * as the last parameter */
-        drop_collector(state, col->colev, 0);
-        free(col->colev->state);
-        free(col->colev);
-        if (col->ssl){
-            SSL_free(col->ssl);
-        }
-        n = n->next;
-    }
-
-    libtrace_list_deinit(c);
-}
-
 /** Tidy up the global configuration for this mediator instance.
  *
  *  @param state        The global state for this mediator.
@@ -210,16 +125,6 @@ static void destroy_med_state(mediator_state_t *state) {
     liid_map_t *m;
     PWord_t jval;
     Word_t bytes;
-    unsigned char index[1024];
-    disabled_collector_t *discol, *dtmp;
-
-    /* Purge the disabled collector list */
-    index[0] = '\0';
-    HASH_ITER(hh, state->disabledcols, discol, dtmp) {
-        HASH_DELETE(hh, state->disabledcols, discol);
-        free(discol->ipaddr);
-        free(discol);
-    }
 
     /* Remove all known LIIDs */
     purge_liid_map(&(state->liidmap));
@@ -230,8 +135,7 @@ static void destroy_med_state(mediator_state_t *state) {
     /* Tear down the connection to the provisioner */
     free_provisioner(&(state->provisioner));
 
-    /* Dump all connected collectors */
-    drop_all_collectors(state, state->collectors);
+    destroy_med_collector_state(&(state->collectors));
 
     /* Delete all of the agencies and shut down any active handovers */
     drop_all_agencies(&(state->handover_state));
@@ -314,18 +218,14 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
     state->sslconf.keyfile = NULL;
     state->sslconf.cacertfile = NULL;
     state->sslconf.ctx = NULL;
-    state->lastsslerror_accept = 0;
-    state->lastsslerror_connect = 0;
 
     state->operatorid = NULL;
     state->pcapdirectory = NULL;
     state->pcapthread = -1;
     state->pcaprotatefreq = 30;
-    state->disabledcols = NULL;
     state->listenerev = NULL;
     state->timerev = NULL;
     state->pcaptimerev = NULL;
-    state->collectors = NULL;
     state->epoll_fd = -1;
 
     state->handover_state.epoll_fd = -1;
@@ -345,6 +245,8 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
             sizeof(mediator_pcap_msg_t));
 
     init_provisioner_instance(&(state->provisioner), &(state->sslconf.ctx));
+    init_med_collector_state(&(state->collectors), &(state->etsitls),
+            &(state->sslconf));
 
     /* Parse the provided config file */
     if (parse_mediator_config(configfile, state) == -1) {
@@ -393,12 +295,14 @@ static void prepare_mediator_state(mediator_state_t *state) {
     sigset_t sigmask;
 
     state->epoll_fd = epoll_create1(0);
-    state->collectors = libtrace_list_init(sizeof(mediator_collector_t));
 
     state->handover_state.agencies = libtrace_list_init(sizeof(mediator_agency_t));
     state->handover_state.epoll_fd = state->epoll_fd;
     state->provisioner.epoll_fd = state->epoll_fd;
-
+    state->collectors.epoll_fd = state->epoll_fd;
+    state->collectors.collectors =
+            libtrace_list_init(sizeof(active_collector_t));
+    
     /* Use an fd to catch signals during our main epoll loop, so that we
      * can provide our own signal handling without causing epoll_wait to
      * return EINTR.
@@ -620,109 +524,6 @@ static int process_signal(mediator_state_t *state, int sigfd) {
     }
 
     return 0;
-}
-
-/** Accepts a connection from a collector and prepares to receive encoded
- *  ETSI records from that collector.
- *
- *  @param state        The global state for the mediator
- *
- *  @return -1 if an error occurs, otherwise the file descriptor for the
- *          collector connection.
- */
-static int accept_collector(mediator_state_t *state) {
-
-    int newfd;
-    struct sockaddr_storage saddr;
-    socklen_t socklen = sizeof(saddr);
-    char strbuf[INET6_ADDRSTRLEN];
-    mediator_collector_t col;
-    med_coll_state_t *mstate;
-    disabled_collector_t *discol = NULL;
-    int fdtype;
-    int r = OPENLI_SSL_CONNECT_NOSSL;
-
-    /* TODO check for EPOLLHUP or EPOLLERR */
-
-    /* Accept, then add to list of collectors. Push all active intercepts
-     * out to the collector. */
-    newfd = accept(state->listenerev->fd, (struct sockaddr *)&saddr, &socklen);
-    fd_set_nonblock(newfd);
-
-    if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, sizeof(strbuf),
-                0, 0, NI_NUMERICHOST) != 0) {
-        logger(LOG_INFO, "OpenLI Mediator: getnameinfo error in mediator: %s.",
-                strerror(errno));
-    }
-
-    if (newfd < 0) {
-        return newfd;
-    }
-
-    col.ssl = NULL;
-
-    if (state->etsitls) {
-        /* We're using TLS so create an OpenSSL socket */
-        r = listen_ssl_socket(&(state->sslconf), &(col.ssl), newfd);
-
-        if (r == OPENLI_SSL_CONNECT_FAILED) {
-            close(newfd);
-            SSL_free(col.ssl);
-
-            if (r != state->lastsslerror_accept) {
-                logger(LOG_INFO,
-                        "OpenLI: SSL Handshake failed for collector %s",
-                        strbuf);
-            }
-            state->lastsslerror_accept = r;
-            return -1;
-        }
-
-        if (r == OPENLI_SSL_CONNECT_WAITING) {
-            /* Handshake is not yet complete, so we need to wait for that */
-            fdtype = MED_EPOLL_COLLECTOR_HANDSHAKE;
-        } else {
-            /* Handshake completed, go straight to "Ready" mode */
-            fdtype = MED_EPOLL_COLLECTOR;
-            state->lastsslerror_accept = 0;
-        }
-    } else {
-        /* Not using TLS, we're good to go right away */
-        fdtype = MED_EPOLL_COLLECTOR;
-    }
-
-    mstate = (med_coll_state_t *)malloc(sizeof(med_coll_state_t));
-    /* Add fd to epoll */
-    col.colev = create_mediator_fdevent(state->epoll_fd, mstate, fdtype,
-            newfd, EPOLLIN | EPOLLRDHUP);
-    if (col.colev == NULL) {
-        logger(LOG_INFO,
-                "OpenLI Mediator: unable to add collector fd to epoll: %s.",
-                strerror(errno));
-        return -1;
-    }
-
-    mstate->ssl = col.ssl;
-    mstate->incoming = create_net_buffer(NETBUF_RECV, newfd, col.ssl);
-    mstate->ipaddr = strdup(strbuf);
-
-    /* Check if this is a reconnection case */
-    HASH_FIND(hh, state->disabledcols, mstate->ipaddr,
-            strlen(mstate->ipaddr), discol);
-
-    if (discol) {
-        mstate->disabled_log = 1;
-    } else {
-        logger(LOG_INFO,
-                "OpenLI Mediator: accepted connection from collector %s.",
-                strbuf);
-        mstate->disabled_log = 0;
-    }
-
-    /* Add this collector to the set of active collectors */
-    libtrace_list_push_back(state->collectors, &col);
-
-    return newfd;
 }
 
 /** Parse and action a withdrawal of an LEA by the provisioner
@@ -1097,28 +898,6 @@ static int receive_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
     return 0;
 }
 
-/** Re-enables log messages for a collector that has re-connected.
- *
- *  @param state            The global state for this mediator
- *  @param cs               The collector that has re-connected
- *
- */
-static inline void reenable_collector_logging(mediator_state_t *state,
-        med_coll_state_t *cs) {
-
-    disabled_collector_t *discol = NULL;
-
-    cs->disabled_log = 0;
-    HASH_FIND(hh, state->disabledcols, cs->ipaddr, strlen(cs->ipaddr), discol);
-    if (discol) {
-        HASH_DELETE(hh, state->disabledcols, discol);
-        free(discol->ipaddr);
-        free(discol);
-        logger(LOG_INFO, "collector %s has successfully re-connected",
-                cs->ipaddr);
-    }
-}
-
 /** Receives and actions a message from a collector, which can include
  *  an encoded ETSI CC or IRI.
  *
@@ -1133,7 +912,7 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
     uint16_t msglen = 0;
     uint64_t internalid;
     liid_map_entry_t *thisint;
-    med_coll_state_t *cs = (med_coll_state_t *)(mev->state);
+    single_coll_state_t *cs = (single_coll_state_t *)(mev->state);
     openli_proto_msgtype_t msgtype;
     mediator_pcap_msg_t pcapmsg;
     uint16_t liidlen;
@@ -1168,7 +947,7 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                     break;
                 }
                 if (cs->disabled_log == 1) {
-                    reenable_collector_logging(state, cs);
+                    reenable_collector_logging(&(state->collectors), cs);
                 }
 
                 if (thisint->agency == NULL) {
@@ -1189,7 +968,7 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                     break;
                 }
                 if (cs->disabled_log == 1) {
-                    reenable_collector_logging(state, cs);
+                    reenable_collector_logging(&(state->collectors), cs);
                 }
                 if (thisint->agency == NULL) {
                     /* Destined for a pcap file rather than an agency */
@@ -1213,7 +992,7 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                     break;
                 }
                 if (cs->disabled_log == 1) {
-                    reenable_collector_logging(state, cs);
+                    reenable_collector_logging(&(state->collectors), cs);
                 }
                 if (thisint->agency == NULL) {
                     /* Destined for a pcap file rather than an agency */
@@ -1236,41 +1015,6 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
     } while (msgtype != OPENLI_PROTO_NO_MESSAGE);
 
     return 0;
-}
-
-/** Attempts to complete an ongoing TLS handshake with a collector.
- *
- *  @param state            The global state for the mediator
- *  @param mev              The epoll event for the collector socket
- *
- *  @return -1 if an error occurs, 0 if the handshake is not yet complete,
- *          1 if the handshake has now completed.
- */
-static int continue_handshake(mediator_state_t *state, med_epoll_ev_t *mev) {
-    med_coll_state_t *cs = (med_coll_state_t *)(mev->state);
-
-    //either keep running handshake or return when error
-    int ret = SSL_accept(cs->ssl);
-
-    if (ret <= 0){
-        ret = SSL_get_error(cs->ssl, ret);
-        if(ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE){
-            //keep trying
-            return 0;
-        }
-        else {
-            //fail out
-            logger(LOG_INFO,
-                    "OpenLI: Pending SSL Handshake for collector failed");
-            return -1;
-        }
-    }
-    logger(LOG_INFO, "OpenLI: Pending SSL Handshake for collector accepted");
-    state->lastsslerror_accept = 0;
-
-    //handshake has finished
-    mev->fdtype = MED_EPOLL_COLLECTOR;
-    return 1;
 }
 
 /** React to an event on a file descriptor reported by our epoll loop.
@@ -1306,7 +1050,8 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             break;
         case MED_EPOLL_COLL_CONN:
             /* a connection is occuring on our listening socket */
-            ret = accept_collector(state);
+            ret = mediator_accept_collector(&(state->collectors),
+                    state->listenerev->fd);
             break;
         case MED_EPOLL_CEASE_LIID_TIMER:
             /* an LIID->agency mapping can now be safely removed */
@@ -1377,9 +1122,9 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             break;
         case MED_EPOLL_COLLECTOR_HANDSHAKE:
             /* socket with an incomplete SSL handshake is available */
-            ret = continue_handshake(state, mev);
+            ret = continue_collector_handshake(&(state->collectors), mev);
             if (ret == -1) {
-                drop_collector(state, mev, 1);
+                drop_collector(&(state->collectors), mev, 1);
             }
             break;
         case MED_EPOLL_COLLECTOR:
@@ -1390,7 +1135,7 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
                 ret = receive_collector(state, mev);
             }
             if (ret == -1) {
-                drop_collector(state, mev, 1);
+                drop_collector(&(state->collectors), mev, 1);
             }
             break;
         default:
@@ -1489,9 +1234,9 @@ static inline void halt_listening_socket(mediator_state_t *currstate) {
     struct epoll_event ev;
 
     /* Disconnect all collectors */
-    drop_all_collectors(currstate, currstate->collectors);
-    currstate->collectors = libtrace_list_init(
-            sizeof(mediator_collector_t));
+    drop_all_collectors(&(currstate->collectors));
+    currstate->collectors.collectors = libtrace_list_init(
+            sizeof(active_collector_t));
 
 
     /* Close listen socket and disable epoll event */
@@ -1611,9 +1356,9 @@ static int reload_mediator_config(mediator_state_t *currstate) {
 
         if (!listenchanged) {
             /* Disconnect all collectors */
-            drop_all_collectors(currstate, currstate->collectors);
-            currstate->collectors = libtrace_list_init(
-                    sizeof(mediator_collector_t));
+            drop_all_collectors(&(currstate->collectors));
+            currstate->collectors.collectors = libtrace_list_init(
+                    sizeof(active_collector_t));
 
             listenchanged = 1;
         }
