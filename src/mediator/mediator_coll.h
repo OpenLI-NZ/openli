@@ -32,36 +32,86 @@
 #include "med_epoll.h"
 #include "netcomms.h"
 
+/** Describes a collector which has been temporarily disabled, e.g. due to
+ *  a connection breaking down.
+ */
 typedef struct disabled_collector {
+    /** The IP address that the collector connected from */
     char *ipaddr;
     UT_hash_handle hh;
 } disabled_collector_t;
 
+/** State associated with a single collector connection */
 typedef struct single_coll_state {
+
+    /** The IP address that the collector has connected from */
     char *ipaddr;
+
+    /** The buffer used to store ETSI records received from the collector */
     net_buffer_t *incoming;
+
+    /** A flag indicating whether error logging is disabled for this
+     *  collector.
+     */
     int disabled_log;
+
+    /** The SSL socker for this collector connection */
     SSL *ssl;
 } single_coll_state_t;
 
+/** An instance of an active collector */
 typedef struct active_collector {
+    /** The epoll event for the collector connection socket */
     med_epoll_ev_t *colev;
+
+    /** The SSL socket for this collector connection, if required */
     SSL *ssl;
 } active_collector_t;
 
+/** Structure for storing global state for all collectors managed by a
+ *  mediator instance.
+ */
 typedef struct mediator_collector_glob_state {
+    /* The error code for the most recent SSL error when accepting a collector
+     * connection.
+     */
     int lastsslerror;
+
+    /** Points to the flag that indicates whether collector connections are
+     *  using TLS.
+     */
     uint8_t *usingtls;
+
+    /** The global epoll fd for this mediator instance. */
     int epoll_fd;
 
+    /** The list of currently active collector connections. */
     libtrace_list_t *collectors;
+
+    /** A map containing all collectors that are currently disconnected. */
     disabled_collector_t *disabledcols;
+
+    /** The SSL configuration for this mediator instance. */
     openli_ssl_config_t *sslconf;
 } mediator_collector_t;
 
+/** Initialises the state for the collectors managed by a mediator.
+ *
+ *  @param medcol       The global state for the collectors that is to be
+ *                      initialised.
+ *  @param usetls       A pointer to the global flag that indicates whether
+ *                      new collector connections must use TLS.
+ *  @param sslconf      A pointer to the SSL configuration for this mediator.
+ */
 void init_med_collector_state(mediator_collector_t *medcol, uint8_t *usetls,
         openli_ssl_config_t *sslconf);
 
+/** Destroys the state for the collectors managed by mediator, including
+ *  dropping any remaining collector connections.
+ *
+ *  @param medcol       The global state for the collectors that is to be
+ *                      destroyed.
+ */
 void destroy_med_collector_state(mediator_collector_t *medcol);
 
 /** Accepts a connection from a collector and prepares to receive encoded

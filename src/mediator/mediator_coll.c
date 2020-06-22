@@ -30,6 +30,14 @@
 #include "logger.h"
 
 
+/** Initialises the state for the collectors managed by a mediator.
+ *
+ *  @param medcol       The global state for the collectors that is to be
+ *                      initialised.
+ *  @param usetls       A pointer to the global flag that indicates whether
+ *                      new collector connections must use TLS.
+ *  @param sslconf      A pointer to the SSL configuration for this mediator.
+ */
 void init_med_collector_state(mediator_collector_t *medcol, uint8_t *usetls,
         openli_ssl_config_t *sslconf) {
 
@@ -41,6 +49,12 @@ void init_med_collector_state(mediator_collector_t *medcol, uint8_t *usetls,
     medcol->epoll_fd = -1;
 }
 
+/** Destroys the state for the collectors managed by mediator, including
+ *  dropping any remaining collector connections.
+ *
+ *  @param medcol       The global state for the collectors that is to be
+ *                      destroyed.
+ */
 void destroy_med_collector_state(mediator_collector_t *medcol) {
 
     unsigned char index[1024];

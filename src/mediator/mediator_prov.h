@@ -32,25 +32,66 @@
 #include "netcomms.h"
 #include "openli_tls.h"
 
+/** Global state for the mediator's connection to the provisioner */
 typedef struct mediator_provisioner {
+
+    /** Epoll event for the socket when the connection is active */
     med_epoll_ev_t *provev;
+
+    /** Epoll timer event for attempting to reconnect to the provisioner
+     *  when the connection has failed */
     med_epoll_ev_t *provreconnect;
-    int sentinfo;
+
+    /** Netcomms buffer for sending messages to the provisioner */
     net_buffer_t *outgoing;
+
+    /** Netcomms buffer for receiving messages from the provisioner */
     net_buffer_t *incoming;
+
+    /** Flag indicating whether connection errors should be logged -- if true,
+     *  logging is disabled.
+     */
     uint8_t disable_log;
+
+    /** Flag indicating if the mediator should attempt to connect to the
+     *  provisioner at the next opportunity.
+     */
     uint8_t tryconnect;
+
+    /** The SSL socket for the connection to the provisioner */
     SSL *ssl;
+
+    /** The SSL context for this mediator instance */
     SSL_CTX **sslctxt;
+
+    /** The global epoll fd for this mediator instance */
     int epoll_fd;
+
+    /** If set to 1, the most recent connection attempt failed with an SSL
+     *  error.
+     */
     int lastsslerror;
 
+    /** The IP address of the provisioner, derived from the config file */
     char *provaddr;
+
+    /** The port number of the provisioner, derived from the config file */
     char *provport;
 } mediator_prov_t;
 
+/** Initialises a provisioner instance with an OpenLI mediator
+ *
+ *  @param prov         The reference to the provisioner that is to be
+ *                      initialised
+ */
 void init_provisioner_instance(mediator_prov_t *prov, SSL_CTX **ctx);
 
+/** Disconnects the currently connected provisioner.
+ *
+ *  @param prov             The provisioner to disconnect.
+ *  @param enable_reconnect Flag that indicates whether the mediator should
+ *                          try to reconnect to the provisioner.
+ */
 void disconnect_provisioner(mediator_prov_t *prov, int enable_reconnect);
 
 /** Releases all memory associated with a provisioner that this mediator
@@ -79,6 +120,17 @@ int transmit_provisioner(mediator_prov_t *prov, med_epoll_ev_t *mev);
  */
 int attempt_provisioner_connect(mediator_prov_t *prov, int provfail);
 
+/** Sends the mediator details message to a connected provisioner.
+ *  Mediator details include the port and IP that it is listening on for
+ *  collector connections.
+ *
+ *  @param prov         The provisioner that is to receive the message.
+ *  @param meddeets     The details to be included in the message.
+ *  @param justcreated  A flag indicating whether the socket for the
+ *                      provisioner connection has just been created.
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
 int send_mediator_details_to_provisioner(mediator_prov_t *prov,
         openli_mediator_t *meddeets, int justcreated);
 
