@@ -115,7 +115,7 @@ int mediator_accept_collector(mediator_collector_t *medcol, int listenfd) {
 
     col.ssl = NULL;
 
-    if (medcol->usingtls) {
+    if (*(medcol->usingtls)) {
         /* We're using TLS so create an OpenSSL socket */
         r = listen_ssl_socket(medcol->sslconf, &(col.ssl), newfd);
 
