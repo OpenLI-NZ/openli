@@ -29,25 +29,61 @@
 
 #include <inttypes.h>
 
+/** Structure that stores state for a single epoll event */
 typedef struct med_epoll_ev {
+    /** The type of epoll event -- see enum below for possible values */
     int fdtype;
+
+    /** The file descriptor that this event applies to */
     int fd;
+
+    /** The global epoll file descriptor */
     int epoll_fd;
+
+    /** The event-specific state -- cast to an appropriate type when handling
+     *  the event.
+     */
     void *state;
 } med_epoll_ev_t;
 
+/** The different types of events that are triggered through the mediator epoll
+ *  interface.
+ */
 enum {
+    /** A collector is attempting to connect on the listening socket */
     MED_EPOLL_COLL_CONN,
+
+    /** The provisioner socket is available for reading or writing */
     MED_EPOLL_PROVISIONER,
+
+    /** A agency handover is available for reading or writing */
     MED_EPOLL_LEA,
+
+    /** A collector socket is available for reading */
     MED_EPOLL_COLLECTOR,
+
+    /** The mediator is due to send a keep alive on a handover */
     MED_EPOLL_KA_TIMER,
+
+    /** A handover has failed to respond to a keep alive in time */
     MED_EPOLL_KA_RESPONSE_TIMER,
+
+    /** A signal has been detected */
     MED_EPOLL_SIGNAL,
+
+    /** The epoll loop should halt and act on any recent signals */
     MED_EPOLL_SIGCHECK_TIMER,
+
+    /** The pcap output files are due to be flushed or rotated */
     MED_EPOLL_PCAP_TIMER,
+
+    /** An LIID->agency mapping has expired and should be removed */
     MED_EPOLL_CEASE_LIID_TIMER,
+
+    /** The mediator should now attempt to reconnect to a lost provisioner */
     MED_EPOLL_PROVRECONNECT,
+
+    /** An incomplete SSL handshake with a collector can now be resumed */
     MED_EPOLL_COLLECTOR_HANDSHAKE,
 };
 
