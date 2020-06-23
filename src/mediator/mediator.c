@@ -410,6 +410,12 @@ static void clear_med_config(mediator_state_t *state) {
     if (state->operatorid) {
         free(state->operatorid);
     }
+    if (state->RMQ_conf.name) {
+        free(state->RMQ_conf.name);
+    }
+    if (state->RMQ_conf.pass) {
+        free(state->RMQ_conf.pass);
+    }
 
     free_ssl_config(&(state->sslconf));
     pthread_mutex_destroy(&(state->agency_mutex));
@@ -485,6 +491,13 @@ static void destroy_med_state(mediator_state_t *state) {
 		}
 		free(state->timerev);
 	}
+
+    if (state->RMQtimerev) {
+        if (state->RMQtimerev->fd != -1) {
+            close(state->RMQtimerev->fd);
+        }
+        free(state->RMQtimerev);
+    }
 
     pthread_join(state->pcapthread, NULL);
     if (state->pcaptimerev) {
@@ -1123,7 +1136,6 @@ static amqp_connection_state_t join_RMQ(mediator_state_t *state, uint8_t *msgbod
 static int receive_rmq_invite(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
     logger(LOG_INFO, "OpenLI Mediator: Joining RMQ at %s", msgbody);
-
     amqp_connection_state_t amqp_state = join_RMQ(state, msgbody,msglen, 0);
     if (!amqp_state) return 0;
 
@@ -1223,7 +1235,7 @@ static int accept_collector(mediator_state_t *state) {
 
         if ( col.colev->fdtype == MED_EPOLL_COLLECTOR && 
                 state->RMQ_conf.enabled ){
-            receive_rmq_invite(state, strbuf, strlen(strbuf));
+            receive_rmq_invite(state, strbuf, strlen(strbuf)+1);
         }
 
         col.colev->fd = newfd;
@@ -2528,9 +2540,113 @@ static int continue_handshake(mediator_state_t *state, med_epoll_ev_t *mev) {
     //handshake has finished
     mev->fdtype = MED_EPOLL_COLLECTOR;
     if (state->RMQ_conf.enabled) {
-        receive_rmq_invite(state, cs->ipaddr, strlen(cs->ipaddr));
+        receive_rmq_invite(state, cs->ipaddr, strlen(cs->ipaddr)+1);
     }
     return 1;
+}
+
+void RMQ_timer(mediator_state_t *state){
+
+    int timerfd = epoll_add_timer(state->epoll_fd, 
+            state->RMQ_conf.heartbeatFreq, state->RMQtimerev);
+        if (timerfd == -1) {
+            logger(LOG_INFO,
+                "OpenLI Mediator: Failed to add timer to epoll in mediator.");
+            return;
+        }
+        state->RMQtimerev->fd = timerfd;
+        state->RMQtimerev->fdtype = MED_EPOLL_RMQCHECK_TIMER;
+        state->RMQtimerev->state = NULL;
+}
+
+//go over the list of collecotors and service their RMQ connections
+//handles sending heartbeats, closing errored connections and reconnecting lost
+//connections
+void service_RMQ_connections(mediator_state_t *state) {
+
+    //RMQ heartbeat here
+    amqp_frame_t frame;
+    struct timeval tv;
+    tv.tv_usec = 1;
+    tv.tv_sec = 0;
+
+    if (state->collectors){
+        libtrace_list_node_t **prev = &(state->collectors->head);
+        libtrace_list_node_t *curr = state->collectors->head;
+
+        while (curr!= NULL) {
+            mediator_collector_t *col = curr->data;
+            if (col->colev->fdtype == MED_EPOLL_COL_RMQ) {
+
+                med_coll_RMQ_state_t *RMQ_state = col->colev->state;
+
+                if (RMQ_state->amqp_state) {
+                    int  ret = amqp_simple_wait_frame_noblock(RMQ_state->amqp_state, &frame, &tv);
+                    switch (ret) {
+                        case AMQP_STATUS_INVALID_PARAMETER:
+                        case AMQP_STATUS_NO_MEMORY:
+                        case AMQP_STATUS_BAD_AMQP_DATA:
+                        case AMQP_STATUS_UNKNOWN_METHOD:
+                        case AMQP_STATUS_UNKNOWN_CLASS:
+                        case AMQP_STATUS_TIMER_FAILURE:
+                        case AMQP_STATUS_SOCKET_ERROR:
+                        case AMQP_STATUS_SSL_ERROR:
+                        case AMQP_STATUS_HEARTBEAT_TIMEOUT:
+                            if (ret == AMQP_STATUS_HEARTBEAT_TIMEOUT) {
+                                logger(LOG_INFO, 
+                                        "OpenLI Mediator: RMQ Heartbeat timmer expired for %s",
+                                        RMQ_state->ipaddr);
+                                struct epoll_event ev;
+                                epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL,
+                                    col->colev->fd, &ev);
+                                col->colev->fd = 0;
+                                amqp_destroy_connection(RMQ_state->amqp_state);
+                                RMQ_state->amqp_state = NULL;
+                            } else {
+                                logger(LOG_INFO,
+                                        "OpenLI Mediator: RMQ connection error, closing");
+                                drop_collector(state, col->colev, 0);
+                                free(col->colev->state);
+                                free(col->colev);
+                                if (col->ssl){
+                                    SSL_free(col->ssl);
+                                }
+                            }
+                            break;
+                        case AMQP_STATUS_OK:
+                        case AMQP_STATUS_TIMEOUT:
+                            break;
+                    }
+                }
+                else {
+                    RMQ_state->amqp_state = join_RMQ(state,
+                            RMQ_state->ipaddr,
+                            RMQ_state->iplen,
+                            1);
+                    //reregister EPOLL
+                    if (RMQ_state->amqp_state) {
+                        col->colev->fd =  amqp_get_sockfd(RMQ_state->amqp_state);
+
+                        struct epoll_event ev;
+                        ev.data.ptr = (void *)col->colev;
+                        ev.events = EPOLLIN;
+
+                        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, col->colev->fd, &ev)
+                                == -1) {
+                            logger(LOG_INFO,
+                                    "OpenLI: Failed to reregister RMQ socket: %s.",
+                                    strerror(errno));
+                                    break;
+                        }
+                        logger(LOG_INFO,"OpenLI Mediator: RMQ reconnected %s", RMQ_state->ipaddr);
+                    }
+                }
+            }
+
+            prev = &((*prev)->next);  
+            curr=curr->next;
+        }
+    }
 }
 
 static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
@@ -2546,6 +2662,19 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 			logger(LOG_INFO,
                     "OpenLI Mediator: main epoll timer has failed.");
             return -1;
+        case MED_EPOLL_RMQCHECK_TIMER:
+            if (1) {
+                if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, mev->fd, ev) == -1) {
+                    logger(LOG_INFO,
+                        "OpenLI Mediator: unable to remove RMQ timer from epoll set: %s",
+                        strerror(errno));
+                    break;
+                }
+                service_RMQ_connections(state);
+                RMQ_timer(state);
+                return 1;
+            }
+            break;
         case MED_EPOLL_PCAP_TIMER:
             assert(ev->events == EPOLLIN);
             ret = trigger_pcap_flush(state, mev);
@@ -2985,96 +3114,6 @@ static int reload_mediator_config(mediator_state_t *currstate) {
 
 }
 
-
-//go over the list of collecotors and service their RMQ connections
-//handles sending heartbeats, closing errored connections and reconnecting lost
-//connections
-void service_RMQ_connections(mediator_state_t *state) {
-
-    //RMQ heartbeat here
-    amqp_frame_t frame;
-    struct timeval tv;
-    tv.tv_usec = 1;
-    tv.tv_sec = 0;
-
-    if (state->collectors){
-        libtrace_list_node_t **prev = &(state->collectors->head);
-        libtrace_list_node_t *curr = state->collectors->head;
-
-        while (curr!= NULL) {
-            mediator_collector_t *col = curr->data;
-            if (col->colev->fdtype == MED_EPOLL_COL_RMQ) {
-
-                med_coll_RMQ_state_t *RMQ_state = col->colev->state;
-
-                if (RMQ_state->amqp_state) {
-                    int  ret = amqp_simple_wait_frame_noblock(RMQ_state->amqp_state, &frame, &tv);
-                    switch (ret) {
-                        case AMQP_STATUS_INVALID_PARAMETER:
-                        case AMQP_STATUS_NO_MEMORY:
-                        case AMQP_STATUS_BAD_AMQP_DATA:
-                        case AMQP_STATUS_UNKNOWN_METHOD:
-                        case AMQP_STATUS_UNKNOWN_CLASS:
-                        case AMQP_STATUS_TIMER_FAILURE:
-                        case AMQP_STATUS_SOCKET_ERROR:
-                        case AMQP_STATUS_SSL_ERROR:
-                        case AMQP_STATUS_HEARTBEAT_TIMEOUT:
-                            if (ret == AMQP_STATUS_HEARTBEAT_TIMEOUT) {
-                                logger(LOG_INFO, 
-                                        "OpenLI Mediator: RMQ Heartbeat timmer expired");
-                                struct epoll_event ev;
-                                epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL,
-                                    col->colev->fd, &ev);
-                                col->colev->fd = 0;
-                                amqp_destroy_connection(RMQ_state->amqp_state);
-                                RMQ_state->amqp_state = NULL;
-                            } else {
-                                logger(LOG_INFO,
-                                        "OpenLI Mediator: RMQ connection error, closing");
-                                drop_collector(state, col->colev, 0);
-                                free(col->colev->state);
-                                free(col->colev);
-                                if (col->ssl){
-                                    SSL_free(col->ssl);
-                                }
-                            }
-                            break;
-                        case AMQP_STATUS_OK:
-                        case AMQP_STATUS_TIMEOUT:
-                            break;
-                    }
-                }
-                else {
-                    RMQ_state->amqp_state = join_RMQ(state,
-                            RMQ_state->ipaddr,
-                            RMQ_state->iplen,
-                            1);
-                    //reregister EPOLL
-                    if (RMQ_state->amqp_state) {
-                        col->colev->fd =  amqp_get_sockfd(RMQ_state->amqp_state);
-
-                        struct epoll_event ev;
-                        ev.data.ptr = (void *)col->colev;
-                        ev.events = EPOLLIN;
-
-                        if (epoll_ctl(state->epoll_fd, EPOLL_CTL_ADD, col->colev->fd, &ev)
-                                == -1) {
-                            logger(LOG_INFO,
-                                    "OpenLI: Failed to reregister RMQ socket: %s.",
-                                    strerror(errno));
-                                    break;
-                        }
-                        logger(LOG_INFO,"OpenLI Mediator: RMQ reconnected %s", RMQ_state->ipaddr);
-                    }
-                }
-            }
-
-            prev = &((*prev)->next);  
-            curr=curr->next;
-        }
-    }
-}
-
 static void run(mediator_state_t *state) {
 
 	int i, nfds;
@@ -3105,6 +3144,7 @@ static void run(mediator_state_t *state) {
     gettimeofday(&tv, NULL);
 	state->timerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
 	state->pcaptimerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
+    state->RMQtimerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
 
     firstflush = (((tv.tv_sec / 60) * 60) + 60) - tv.tv_sec;
 
@@ -3117,6 +3157,8 @@ static void run(mediator_state_t *state) {
     state->pcaptimerev->fd = timerfd;
     state->pcaptimerev->fdtype = MED_EPOLL_PCAP_TIMER;
     state->pcaptimerev->state = NULL;
+
+    RMQ_timer(state);
 
 	while (!mediator_halt) {
         if (reload_config) {
@@ -3161,8 +3203,6 @@ static void run(mediator_state_t *state) {
                 }
             }
         }
-
-        service_RMQ_connections(state);
 
         timerfd = epoll_add_timer(state->epoll_fd, 1, state->timerev);
         if (timerfd == -1) {

@@ -57,6 +57,7 @@ enum {
     MED_EPOLL_PROVRECONNECT,
     MED_EPOLL_COLLECTOR_HANDSHAKE,
     MED_EPOLL_COL_RMQ,
+    MED_EPOLL_RMQCHECK_TIMER
 };
 
 typedef struct disabled_collector {
@@ -160,6 +161,7 @@ typedef struct med_state {
     med_epoll_ev_t *timerev;
     med_epoll_ev_t *pcaptimerev;
     med_epoll_ev_t *provreconnect;
+    med_epoll_ev_t *RMQtimerev;
 
     mediator_prov_t provisioner;
 
