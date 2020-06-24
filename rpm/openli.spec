@@ -25,6 +25,7 @@ BuildRequires: openssl-devel
 BuildRequires: json-c-devel
 BuildRequires: libmicrohttpd-devel
 BuildRequires: systemd
+BuildRequires: libsqlcipher-devel
 
 %description
 Software for performing ETSI-compliant lawful intercept
