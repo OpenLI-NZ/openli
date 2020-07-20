@@ -15,14 +15,20 @@ apt-get install -y equivs devscripts dpkg-dev quilt curl apt-transport-https \
 
 DISTRO=$(lsb_release -sc)
 
-echo "deb https://dl.bintray.com/wand/general ${DISTRO} main" | \
-    tee -a /etc/apt/sources.list.d/wand.list
-echo "deb https://dl.bintray.com/wand/libtrace ${DISTRO} main" | \
-    tee -a /etc/apt/sources.list.d/wand.list
+curl -1sLf 'https://dl.cloudsmith.io/public/wand/libwandio/cfg/setup/bash.deb.sh' | bash
+curl -1sLf 'https://dl.cloudsmith.io/public/wand/libwandder/cfg/setup/bash.deb.sh' | bash
+curl -1sLf 'https://dl.cloudsmith.io/public/wand/libtrace/cfg/setup/bash.deb.sh' | bash
+curl -1sLf 'https://dl.cloudsmith.io/public/wand/openli/cfg/setup/bash.deb.sh' | bash
+
+DISTRO=$(lsb_release -sc)
+
+case ${DISTRO} in
+        jessie | xenial | stretch )
+                curl -1sLf 'https://dl.cloudsmith.io/public/wand/dpdk-wand/cfg/setup/bash.deb.sh' | bash
+        ;;
+esac
 
 
-curl --silent "https://bintray.com/user/downloadSubjectPublicKey?username=wand"\
-    | apt-key add -
 
 apt-get update
 apt-get upgrade -y
