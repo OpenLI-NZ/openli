@@ -15,38 +15,19 @@ mkdir -p /run/user/${UID}
 chmod 0700 /run/user/${UID}
 yum install -y wget make gcc
 
-cat << EOF > /etc/yum.repos.d/bintray-wand-general-rpm.repo
-#bintray-wand-general-rpm - packages by wand from Bintray
-[bintray-wand-general-rpm]
-name=bintray-wand-general-rpm
-baseurl=https://dl.bintray.com/wand/general-rpm/${DISTRO}/\$releasever/\$basearch/
-gpgkey=https://bintray.com/user/downloadSubjectPublicKey?username=wand
-gpgcheck=0
-repo_gpgcheck=1
-enabled=1
-EOF
+curl -1sLf \
+  'https://dl.cloudsmith.io/public/wand/libwandio/cfg/setup/bash.rpm.sh' \
+    | bash
 
-cat << EOF > /etc/yum.repos.d/bintray-wand-libtrace-rpm.repo
-#bintray-wand-libtrace-rpm - packages by wand from Bintray
-[bintray-wand-libtrace-rpm]
-name=bintray-wand-libtrace-rpm
-baseurl=https://dl.bintray.com/wand/libtrace-rpm/${DISTRO}/\$releasever/\$basearch/
-gpgkey=https://bintray.com/user/downloadSubjectPublicKey?username=wand
-gpgcheck=0
-repo_gpgcheck=1
-enabled=1
-EOF
+curl -1sLf \
+  'https://dl.cloudsmith.io/public/wand/libwandder/cfg/setup/bash.rpm.sh' \
+    | bash
 
-cat << EOF > /etc/yum.repos.d/bintray-wand-openli-rpm.repo
-#bintray-wand-openli-rpm - packages by wand from Bintray
-[bintray-wand-openli-rpm]
-name=bintray-wand-openli-rpm
-baseurl=https://dl.bintray.com/wand/OpenLI-rpm/${DISTRO}/\$releasever/\$basearch/
-gpgkey=https://bintray.com/user/downloadSubjectPublicKey?username=wand
-gpgcheck=0
-repo_gpgcheck=1
-enabled=1
-EOF
+curl -1sLf \
+  'https://dl.cloudsmith.io/public/wand/libtrace/cfg/setup/bash.rpm.sh' \
+    | bash
+
+
 yum update -y
 
 
@@ -55,12 +36,6 @@ if [ "$1" = "centos:8" ]; then
         yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm || true
         dnf install -y 'dnf-command(config-manager)' || true
         yum config-manager --set-enabled PowerTools || true
-
-	# XXX Temporary, until Centos updates to 8.2 where libzstd is
-        # included in the base OS
-        # ref: https://lists.fedoraproject.org/archives/list/epel-devel@lists.fedoraproject.org/thread/MFZCRQCULJALRIJJFSSAETSDZ4RL6GCU/
-        yum install -y wget pkgconf-pkg-config
-        wget -N https://archives.fedoraproject.org/pub/archive/epel/8.1/Everything/x86_64/Packages/l/libzstd-1.4.4-1.el8.x86_64.rpm && rpm -i libzstd-1.4.4-1.el8.x86_64.rpm
 
 fi
 
