@@ -40,6 +40,9 @@ if [ "$1" = "centos:8" ]; then
         dnf install -y 'dnf-command(config-manager)' || true
         yum config-manager --set-enabled PowerTools || true
 
+        # Install Judy-devel directly because RHEL / CentOS is dumb
+        yum install -y http://mirror.centos.org/centos/8/PowerTools/x86_64/os/Packages/Judy-devel-1.0.5-18.module_el8.1.0+217+4d875839.x86_64.rpm
+
 fi
 
 if [ "$1" = "centos:7" ]; then
