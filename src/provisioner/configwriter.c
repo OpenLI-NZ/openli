@@ -58,6 +58,8 @@ static const char *access_type_to_string(internet_access_method_t method) {
             return "wifi-other";
         case INTERNET_ACCESS_TYPE_MOBILE:
             return "mobile";
+        case INTERNET_ACCESS_TYPE_UNDEFINED:
+            break;
     }
     return "undefined";
 
@@ -410,7 +412,6 @@ static int emit_voipintercepts(voipintercept_t *vints, yaml_emitter_t *emitter)
 {
     yaml_event_t event;
     voipintercept_t *v, *tmp;
-    char buffer[64];
 
     yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
             (yaml_char_t *)"voipintercepts", strlen("voipintercepts"), 1, 0,
@@ -628,7 +629,8 @@ int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf) {
     if (!yaml_emitter_emit(&emitter, &event)) goto error;
 
     yaml_mapping_start_event_initialize(&event, NULL,
-            YAML_DEFAULT_MAPPING_TAG, 1, YAML_ANY_MAPPING_STYLE);
+            (unsigned char *)YAML_DEFAULT_MAPPING_TAG, 1,
+            YAML_ANY_MAPPING_STYLE);
     if (!yaml_emitter_emit(&emitter, &event)) goto error;
 
     if (emit_core_server_list(conf->sipservers, "sipservers", &emitter) < 0) {

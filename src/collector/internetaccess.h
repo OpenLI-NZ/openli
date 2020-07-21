@@ -99,9 +99,11 @@ typedef struct internetaccess_ip {
 } internetaccess_ip_t;
 
 typedef struct ip_to_session {
-    internetaccess_ip_t *ip;
-    access_session_t *session;
-    internet_user_t *owner;
+    internetaccess_ip_t ip;
+    int sessioncount;
+    access_session_t **session;
+    internet_user_t **owner;
+    uint32_t cin;
     UT_hash_handle hh;
 } ip_to_session_t;
 
@@ -117,7 +119,6 @@ struct access_session {
     int idlength;
     uint32_t cin;
     uint32_t iriseqno;
-    ip_to_session_t *activeipentry;
 
     struct timeval started;
 
@@ -192,7 +193,8 @@ access_plugin_t *get_gtp_access_plugin(void);
 access_session_t *create_access_session(access_plugin_t *p,
         char *idstr, int idstr_len);
 void add_new_session_ip(access_session_t *sess, void *att_val,
-        int family, uint8_t pfxbits);
+        int family, uint8_t pfxbits, int att_len);
+int remove_session_ip(access_session_t *sess, internetaccess_ip_t *sessip);
 
 const char *accesstype_to_string(internet_access_method_t am);
 

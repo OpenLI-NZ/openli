@@ -103,13 +103,15 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
     newcin->targetaddr = NULL;
     newcin->otheraddr = NULL;
     newcin->ai_family = 0;
-    newcin->targetport = 0;
-    newcin->otherport = 0;
     newcin->seqno = 0;
     newcin->invitecseq = NULL;
     newcin->byecseq = NULL;
     newcin->timeout_ev = NULL;
     newcin->byematched = 0;
+
+    newcin->streamcount = 0;
+    newcin->mediastreams = calloc(RTP_STREAM_ALLOC,
+            sizeof(struct sipmediastream));
 
     if (vint->options & (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
         newcin->skip_comfort = 1;
@@ -124,6 +126,7 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
 
 rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *orig) {
     rtpstreaminf_t *copy = NULL;
+    int i;
 
     copy = (rtpstreaminf_t *)malloc(sizeof(rtpstreaminf_t));
     if (!copy) {
@@ -152,9 +155,17 @@ rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *orig) {
         return NULL;
     }
 
+    copy->streamcount = orig->streamcount;
+    copy->mediastreams = calloc(orig->streamcount,
+            sizeof(struct sipmediastream));
+    for (i = 0; i < copy->streamcount; i++) {
+        copy->mediastreams[i].targetport = orig->mediastreams[i].targetport;
+        copy->mediastreams[i].otherport = orig->mediastreams[i].otherport;
+        copy->mediastreams[i].mediatype =
+                strdup(orig->mediastreams[i].mediatype);
+    }
+
     memcpy(copy->otheraddr, orig->otheraddr, sizeof(struct sockaddr_storage));
-    copy->targetport = orig->targetport;
-    copy->otherport = orig->otherport;
     copy->skip_comfort = orig->skip_comfort;
     copy->seqno = 0;
     copy->active = 1;
@@ -343,6 +354,16 @@ void free_all_voipintercepts(voipintercept_t **vints) {
 }
 
 void free_single_rtpstream(rtpstreaminf_t *rtp) {
+    int i;
+
+    if (rtp->mediastreams) {
+        for (i = 0; i < rtp->streamcount; i++) {
+            free(rtp->mediastreams[i].mediatype);
+        }
+
+        free(rtp->mediastreams);
+    }
+
     free_intercept_common(&(rtp->common));
     if (rtp->targetaddr) {
         free(rtp->targetaddr);
@@ -650,6 +671,8 @@ const char *get_access_type_string(internet_access_method_t method) {
             return "mobile";
         case INTERNET_ACCESS_TYPE_WIRELESS_OTHER:
             return "wireless-other";
+        default:
+            break;
     }
 
     return "undefined";

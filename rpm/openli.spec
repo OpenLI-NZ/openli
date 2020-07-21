@@ -1,6 +1,6 @@
 Name:           openli
-Version:        1.0.4
-Release:        1%{?dist}
+Version:        1.0.5
+Release:        2%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
 License:        GPLv3
@@ -31,6 +31,7 @@ Software for performing ETSI-compliant lawful intercept
 
 %package        provisioner
 Summary:        Central provisioning daemon for an OpenLI system
+Requires:       rsyslog
 
 %description provisioner
 OpenLI is a software suite that allows network operators to conduct
@@ -45,6 +46,7 @@ and mediators.
 
 %package        mediator
 Summary:        Mediation daemon for an OpenLI system
+Requires:       rsyslog
 
 %description mediator
 OpenLI is a software suite that allows network operators to conduct
@@ -59,6 +61,7 @@ interface 2 and 3, using keep-alives as per the ETSI standard.
 
 %package        collector
 Summary:        Collector daemon for an OpenLI system
+Requires:       rsyslog
 
 %description collector
 OpenLI is a software suite that allows network operators to conduct
@@ -173,6 +176,12 @@ fi
 
 
 %changelog
+* Thu May 28 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.5-2
+- Add explicit rsyslog dependency to each component package
+
+* Fri May 8 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.5-1
+- Updated for 1.0.5 release
+
 * Mon Jan 13 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.4-1
 - Updated for 1.0.4 release
 

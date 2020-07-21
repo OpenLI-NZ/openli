@@ -239,10 +239,12 @@ static inline void encode_sipiri_body(wandder_encoder_t *encoder,
         encipsrc.v6prefixlen = 0;
         encipsrc.v4subnetmask = 0xffffffff;
         encipsrc.valtype = ETSILI_IPADDRESS_REP_BINARY;
-        encipsrc.ipvalue = ipsrc;
+        encipsrc.ipvalue = calloc(1, sizeof(uint32_t));
+        memcpy(encipsrc.ipvalue, ipsrc, sizeof(uint32_t));
 
         encipdst = encipsrc;
-        encipdst.ipvalue = ipdest;
+        encipdst.ipvalue = calloc(1, sizeof(uint32_t));
+        memcpy(encipdst.ipvalue, ipdest, sizeof(uint32_t));
     } else if (ipfamily == AF_INET6) {
         encipsrc.iptype = ETSILI_IPADDRESS_VERSION_6;
         encipsrc.assignment = ETSILI_IPADDRESS_ASSIGNED_UNKNOWN;
@@ -250,10 +252,12 @@ static inline void encode_sipiri_body(wandder_encoder_t *encoder,
         encipsrc.v4subnetmask = 0;
         encipsrc.valtype = ETSILI_IPADDRESS_REP_BINARY;
 
-        encipsrc.ipvalue = ipsrc;
+        encipsrc.ipvalue = calloc(16, sizeof(uint8_t));
+        memcpy(encipsrc.ipvalue, ipsrc, 16);
 
         encipdst = encipsrc;
-        encipdst.ipvalue = ipdest;
+        encipdst.ipvalue = calloc(16, sizeof(uint8_t));
+        memcpy(encipdst.ipvalue, ipdest, 16);
     } else {
         END_ENCODED_SEQUENCE(encoder, 1);  // ends outermost sequence
         return;
@@ -586,7 +590,7 @@ static inline void encode_umtsiri_body(wandder_encoder_t *encoder,
 
 static inline void encode_ipiri_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed,
-        etsili_iri_type_t iritype, etsili_generic_t *params) {
+        etsili_iri_type_t iritype, etsili_generic_t **params) {
 
     etsili_generic_t *p, *tmp;
     wandder_encode_job_t *jobarray[4];
@@ -609,9 +613,9 @@ static inline void encode_ipiri_body(wandder_encoder_t *encoder,
     /* Sort the parameter list by item ID, since we have to provide the
      * IRI contents in order.
      */
-    HASH_SRT(hh, params, sort_etsili_generic);
+    HASH_SRT(hh, *params, sort_etsili_generic);
 
-    HASH_ITER(hh, params, p, tmp) {
+    HASH_ITER(hh, *params, p, tmp) {
         switch(p->itemnum) {
             case IPIRI_CONTENTS_ACCESS_EVENT_TYPE:
             case IPIRI_CONTENTS_INTERNET_ACCESS_TYPE:
@@ -927,7 +931,15 @@ wandder_encoded_result_t *encode_etsi_ipmmiri(wandder_encoder_t *encoder,
 wandder_encoded_result_t *encode_etsi_ipiri(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
         etsili_iri_type_t iritype, struct timeval *tv,
-        etsili_generic_t *params) {
+        etsili_generic_t **params) {
+
+    /* Note: params is a double pointer here because we are going to
+     * use HASH_SRT(), which may change which item should be the "start"
+     * of the hashed collection. If we want that change to persist back
+     * to our caller, e.g. to properly release all of the items in the
+     * collection, we need to pass in a reference to the collection
+     * to encode_ipiri_body().
+     */
 
     encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
     encode_ipiri_body(encoder, precomputed, iritype, params);

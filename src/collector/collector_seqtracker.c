@@ -492,7 +492,7 @@ void *start_seqtracker_thread(void *data) {
     char sockname[128];
     seqtracker_thread_data_t *seqdata = (seqtracker_thread_data_t *)data;
     openli_export_recv_t *job = NULL;
-    int x, zero = 0, large=1000000;
+    int x, zero = 0, large=1000000, sndtimeo=1000;
     exporter_intercept_state_t *intstate, *tmpexp;
 
     seqdata->zmq_recvpublished = zmq_socket(seqdata->zmq_ctxt, ZMQ_PULL);
@@ -515,12 +515,6 @@ void *start_seqtracker_thread(void *data) {
 
     seqdata->zmq_pushjobsock = zmq_socket(seqdata->zmq_ctxt, ZMQ_PUSH);
     snprintf(sockname, 128, "inproc://openliseqpush-%d", seqdata->trackerid);
-    if (zmq_bind(seqdata->zmq_pushjobsock, sockname) < 0) {
-        logger(LOG_INFO,
-                "OpenLI: tracker thread %d failed to bind to push zmq: %s",
-                seqdata->trackerid, strerror(errno));
-        goto haltseqtracker;
-    }
     if (zmq_setsockopt(seqdata->zmq_pushjobsock, ZMQ_LINGER, &zero,
                 sizeof(zero)) != 0) {
         logger(LOG_INFO,
@@ -532,6 +526,19 @@ void *start_seqtracker_thread(void *data) {
                 sizeof(large)) != 0) {
         logger(LOG_INFO,
                 "OpenLI: tracker thread %d failed to configure push zmq: %s",
+                seqdata->trackerid, strerror(errno));
+        goto haltseqtracker;
+    }
+    if (zmq_setsockopt(seqdata->zmq_pushjobsock, ZMQ_SNDTIMEO, &sndtimeo,
+                sizeof(sndtimeo)) != 0) {
+        logger(LOG_INFO,
+                "OpenLI: tracker thread %d failed to configure push zmq: %s",
+                seqdata->trackerid, strerror(errno));
+        goto haltseqtracker;
+    }
+    if (zmq_bind(seqdata->zmq_pushjobsock, sockname) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: tracker thread %d failed to bind to push zmq: %s",
                 seqdata->trackerid, strerror(errno));
         goto haltseqtracker;
     }
@@ -561,6 +568,7 @@ haltseqtracker:
         HASH_DELETE(hh, seqdata->intercepts, intstate);
         free_intercept_state(seqdata, intstate);
     }
+
 #ifdef HAVE_BER_ENCODING
     if (seqdata->enc_ber){
         wandder_free_encoder_ber(seqdata->enc_ber);

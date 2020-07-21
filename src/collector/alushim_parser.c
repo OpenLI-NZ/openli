@@ -88,8 +88,6 @@ static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
         collector_identity_t *info, void *l3, uint32_t rem) {
 
     openli_export_recv_t *msg;
-    int queueused;
-
     msg = calloc(1, sizeof(openli_export_recv_t));
 
     msg->type = OPENLI_EXPORT_IPCC;
@@ -118,9 +116,6 @@ int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
     alushimhdr_t *aluhdr = NULL;
     uint32_t rem = 0, shimintid, cin;
     void *l3, *l2;
-    openli_export_recv_t msg;
-    struct timeval tv;
-    int aludir;
 
     if ((cs = match_packet_to_coreserver(alusources, pinfo)) == NULL) {
         return 0;
@@ -141,7 +136,6 @@ int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
     }
 
     /* Strip the extra headers + shim */
-    tv = trace_get_timeval(packet);
     l2 = ((char *)aluhdr) + sizeof(alushimhdr_t);
     rem -= sizeof(alushimhdr_t);
 

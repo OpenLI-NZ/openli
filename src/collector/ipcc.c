@@ -146,7 +146,7 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
         int family, libtrace_packet_t *pkt, uint8_t dir,
         colthread_local_t *loc) {
 
-    int matched = 0, queueused = 0;
+    int matched = 0;
     patricia_node_t *pnode = NULL;
     prefix_t prefix;
     openli_export_recv_t *msg;
@@ -235,7 +235,7 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
                         sliid->key);
             } else {
                 HASH_ITER(hh, tgt->intercepts, sess, tmp) {
-                    *matched ++;
+                    *matched = ((*matched) + 1);
                     msg = create_ipcc_job(sess->cin, sess->common.liid,
                             sess->common.destid, pkt, 0);
                     if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg)
@@ -256,7 +256,7 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip6_t *ip, uint32_t rem, colthread_local_t *loc) {
 
     struct sockaddr_in6 *cmp;
-    int matched = 0, queueused = 0;
+    int matched = 0;
 
     if (rem < sizeof(libtrace_ip6_t)) {
         /* Truncated IP header */
@@ -279,19 +279,16 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->destip),
             AF_INET6, pkt, 1, loc);
 
-
-ipv6ccdone:
     return matched;
-
 }
 
 
 int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip_t *ip, uint32_t rem, colthread_local_t *loc) {
 
-    struct sockaddr_in *intaddr, *cmp;
+    struct sockaddr_in *cmp;
     openli_export_recv_t *msg;
-    int matched = 0, queueused = 0;
+    int matched = 0;
     ipv4_target_t *tgt;
     ipsession_t *sess, *tmp;
 

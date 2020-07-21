@@ -131,15 +131,24 @@ static void halt_provisioner_client_mainfd(int epollfd, prov_client_t *client,
 void disconnect_provisioner_client(int epollfd, prov_client_t *client,
 		char *identifier) {
 
+	prov_sock_state_t *cs = client->state;
 	/* If we were waiting on auth, make sure to remove the timer */
 	halt_provisioner_client_authtimer(epollfd, client, identifier);
 	halt_provisioner_client_mainfd(epollfd, client, identifier);
 
-	/* Start the idle timer, so we can remove this client if it is no
-     * longer being used.
-     */
-	start_provisioner_client_idletimer(epollfd, client, identifier,
-			PROVISIONER_IDLE_TIMEOUT_SECS);
+    if (cs->clientrole == PROV_EPOLL_MEDIATOR) {
+        /* Don't expire and withdraw idle mediators -- we want the
+         * collectors to keep buffering for them in case they come back.
+         */
+        halt_provisioner_client_idletimer(epollfd, client, identifier);
+    } else {
+    	/* Start the idle timer, so we can remove this client if it is no
+         * longer being used.
+        */
+	    start_provisioner_client_idletimer(epollfd, client, identifier,
+	    		PROVISIONER_IDLE_TIMEOUT_SECS);
+    }
+
 	if (client->ssl) {
 		SSL_free(client->ssl);
 		client->ssl = NULL;
@@ -161,7 +170,11 @@ void destroy_provisioner_client(int epollfd, prov_client_t *client,
 	disconnect_provisioner_client(epollfd, client, identifier);
 	halt_provisioner_client_idletimer(epollfd, client, identifier);
 
+    if (client->identifier) {
+        free(client->identifier);
+    }
 	destroy_client_state(client->state);
+    free(client);
 }
 
 /** Create fresh socket state for a newly connected client */
@@ -187,6 +200,7 @@ static void create_prov_socket_state(prov_client_t *client, int authtimerfd,
     cs->trusted = 0;
     cs->halted = 0;
     cs->clientrole = fdtype;
+    cs->parent = NULL;
 
     client->state = cs;
 }

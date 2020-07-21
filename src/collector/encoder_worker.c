@@ -149,7 +149,7 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
     for (i = 0; i < enc->seqtrackers; i++) {
         do {
             x = zmq_recv(enc->zmq_recvjobs[i], &job,
-                    sizeof(openli_encoding_job_t), ZMQ_DONTWAIT);
+                    sizeof(openli_encoding_job_t), 0);
             if (x < 0) {
                 if (errno == EAGAIN) {
                     continue;
@@ -161,6 +161,12 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
                 free_published_message(job.origreq);
             } else {
                 free(job.origreq);
+            }
+            if (job.liid) {
+                free(job.liid);
+            }
+            if (job.cinstr) {
+                free(job.cinstr);
             }
             drained ++;
 
@@ -174,6 +180,10 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
 
     for (i = 0; i < enc->forwarders; i++) {
         if (enc->zmq_pushresults[i]) {
+            openli_encoded_result_t final;
+
+            memset(&final, 0, sizeof(final));
+            zmq_send(enc->zmq_pushresults[i], &final, sizeof(final), 0);
             zmq_close(enc->zmq_pushresults[i]);
         }
     }
@@ -309,7 +319,8 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             opid[opidlen] = '\0';
 
             np = create_etsili_generic(enc->freegenerics,
-                    UMTSIRI_CONTENTS_OPERATOR_IDENTIFIER, opidlen, opid);
+                    UMTSIRI_CONTENTS_OPERATOR_IDENTIFIER, opidlen,
+                    (uint8_t *)opid);
             HASH_ADD_KEYPTR(hh, job->origreq->data.mobiri.customparams,
                     &(np->itemnum), sizeof(np->itemnum), np);
 
