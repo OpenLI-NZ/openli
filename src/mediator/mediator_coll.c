@@ -28,6 +28,7 @@
 #include "mediator_coll.h"
 #include "util.h"
 #include "logger.h"
+#include <unistd.h>
 
 
 /** Initialises the state for the collectors managed by a mediator.
