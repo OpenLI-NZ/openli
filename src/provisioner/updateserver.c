@@ -402,6 +402,82 @@ static unsigned char *lookup_user_digest(provision_state_t *provstate,
 }
 #endif
 
+static int validate_user_apikey(provision_state_t *provstate,
+        const char *apikey) {
+
+#ifdef HAVE_SQLCIPHER
+    int rc, step;
+    sqlite3_stmt *res;
+    char *sql = "SELECT username, apikey FROM authcreds where apikey = ?";
+
+    rc = sqlite3_prepare_v2(provstate->authdb, sql, -1, &res, 0);
+    if (rc != SQLITE_OK) {
+        logger(LOG_INFO, "OpenLI: Failed to prepare SQL SELECT to lookup API key: %s",
+                sqlite3_errmsg(provstate->authdb));
+        return MHD_NO;
+    }
+
+    sqlite3_bind_text(res, 1, apikey, -1, SQLITE_TRANSIENT);
+
+    step = sqlite3_step(res);
+    if (step == SQLITE_ROW) {
+        logger(LOG_INFO, "OpenLI: User %s has used their API key to send a request via the REST API", sqlite3_column_text(res, 0));
+        sqlite3_finalize(res);
+        return MHD_YES;
+    }
+
+    sqlite3_finalize(res);
+#endif
+    return MHD_NO;
+}
+
+static int authenticate_request(provision_state_t *provstate,
+        struct MHD_Connection *conn, const char *realm) {
+
+    unsigned char digest[16];
+    const char *apikey;
+    char *username;
+    int ret;
+
+
+    username = MHD_digest_auth_get_username(conn);
+    if (username == NULL) {
+        apikey = MHD_lookup_connection_value(conn, MHD_HEADER_KIND,
+                "X-API-KEY");
+        if (apikey != NULL) {
+            if (validate_user_apikey(provstate, apikey) == 0) {
+                logger(LOG_INFO,
+                        "OpenLI: user attempted to provide an invalid API key");
+                return send_auth_failure(conn, realm, MHD_NO);
+            } else {
+                return MHD_YES;
+            }
+        }
+        return send_auth_failure(conn, realm, MHD_NO);
+    }
+
+    ret = MHD_NO;
+#ifdef HAVE_SQLCIPHER
+    if (lookup_user_digest(provstate, username, digest) == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: user '%s' attempted to authenticate against provisioner update service, but they don't exist in the database", username);
+        return send_auth_failure(conn, realm, MHD_NO);
+    }
+
+    ret = MHD_digest_auth_check_digest(conn, realm, username, digest,
+            300);
+#endif
+    if ( ret == MHD_INVALID_NONCE || ret == MHD_NO) {
+        logger(LOG_INFO, "OpenLI: user '%s' failed to authenticate against provisioner update service", username);
+        free(username);
+        return send_auth_failure(conn, realm, ret);
+    }
+    logger(LOG_INFO, "OpenLI: user '%s' successfully authenticated against provisioner update service", username);
+    free(username);
+
+    return MHD_YES;
+}
+
 int handle_update_request(void *cls, struct MHD_Connection *conn,
         const char *url, const char *method, const char *version,
         const char *upload_data, size_t *upload_data_size,
@@ -410,31 +486,13 @@ int handle_update_request(void *cls, struct MHD_Connection *conn,
     update_con_info_t *cinfo;
     provision_state_t *provstate = (provision_state_t *)cls;
     int ret;
-    char *username;
     const char *realm = "provisioner@openli.nz";
-    unsigned char digest[16];
 
     if (*con_cls == NULL) {
         if (provstate->restauthenabled) {
-            username = MHD_digest_auth_get_username(conn);
-            if (username == NULL) {
-                return send_auth_failure(conn, realm, MHD_NO);
-            }
+            ret = authenticate_request(provstate, conn, realm);
 
-            ret = MHD_NO;
-#ifdef HAVE_SQLCIPHER
-            if (lookup_user_digest(provstate, username, digest) == NULL) {
-                logger(LOG_INFO,
-                        "OpenLI: user '%s' attempted to authenticate against provisioner update service, but they don't exist in the database", username);
-                return send_auth_failure(conn, realm, MHD_NO);
-            }
-            logger(LOG_INFO, "OpenLI: user '%s' successfully authenticated against provisioner update service", username);
-
-            ret = MHD_digest_auth_check_digest(conn, realm, username, digest,
-                    300);
-#endif
-            free(username);
-            if ( ret == MHD_INVALID_NONCE || ret == MHD_NO) {
+            if (ret != MHD_YES) {
                 return send_auth_failure(conn, realm, ret);
             }
         } else {
