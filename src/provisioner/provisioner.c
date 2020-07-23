@@ -234,35 +234,6 @@ void free_openli_mediator(openli_mediator_t *med) {
     free(med);
 }
 
-#ifdef HAVE_SQLCIPHER
-static void init_restauth_db(provision_state_t *state) {
-
-    int rc;
-
-    assert(state != NULL);
-    rc = sqlite3_open(state->restauthdbfile, (sqlite3 **)(&(state->authdb)));
-    if (rc != SQLITE_OK) {
-        logger(LOG_INFO, "Failed to open REST authentication database: %s: %s",
-                state->restauthdbfile, sqlite3_errmsg(state->authdb));
-        sqlite3_close(state->authdb);
-        state->authdb = NULL;
-        return;
-    }
-
-    sqlite3_key(state->authdb, state->restauthkey, strlen(state->restauthkey));
-
-    if (sqlite3_exec(state->authdb, "SELECT count(*) from sqlite_master;",
-            NULL, NULL, NULL) != SQLITE_OK) {
-        logger(LOG_INFO, "Failed to open REST authentication database due to incorrect key");
-        sqlite3_close(state->authdb);
-        state->authdb = NULL;
-        return;
-    }
-
-    state->restauthenabled = 1;
-}
-#endif
-
 int init_prov_state(provision_state_t *state, char *configfile) {
 
     sigset_t sigmask;
@@ -312,15 +283,6 @@ int init_prov_state(provision_state_t *state, char *configfile) {
     if (parse_provisioning_config(configfile, state) == -1) {
         logger(LOG_INFO, "OpenLI provisioner: error while parsing provisioner config in %s", configfile);
         return -1;
-    }
-
-    if (state->restauthdbfile && state->restauthkey) {
-#ifdef HAVE_SQLCIPHER
-        init_restauth_db(state);
-#else
-        logger(LOG_INFO, "OpenLI provisioner: REST Auth DB options are set, but your system does not support using an Auth DB.");
-        logger(LOG_INFO, "OpenLI provisioner: Auth DB options ignored.");
-#endif
     }
 
     if (state->pushport == NULL) {
@@ -736,6 +698,12 @@ void clear_prov_state(provision_state_t *state) {
     }
     if (state->cert_pem) {
         free(state->cert_pem);
+    }
+    if (state->restauthdbfile) {
+        free(state->restauthdbfile);
+    }
+    if (state->restauthkey) {
+        free(state->restauthkey);
     }
 
     free_ssl_config(&(state->sslconf));
@@ -1748,6 +1716,20 @@ int main(int argc, char *argv[]) {
     if (init_prov_state(&provstate, configfile) == -1) {
         logger(LOG_INFO, "OpenLI: Error initialising provisioner.");
         return 1;
+    }
+
+    if (provstate.restauthdbfile && provstate.restauthkey) {
+#ifdef HAVE_SQLCIPHER
+        if (init_restauth_db(&provstate) < 0) {
+            logger(LOG_INFO, "OpenLI provisioner: error while opening REST authentication database");
+            return -1;
+        }
+#else
+        logger(LOG_INFO, "OpenLI provisioner: REST Auth DB options are set, but your system does not support using an Auth DB.");
+        logger(LOG_INFO, "OpenLI provisioner: Auth DB options ignored.");
+#endif
+    } else {
+        logger(LOG_INFO, "OpenLI provisioner: REST API does NOT require authentication");
     }
 
     if (provstate.ignorertpcomfort) {
