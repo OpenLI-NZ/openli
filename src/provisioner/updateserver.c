@@ -33,6 +33,7 @@
 #include <microhttpd.h>
 #include <json-c/json.h>
 #include <pthread.h>
+#include <assert.h>
 
 #ifdef HAVE_SQLCIPHER
 #include <sqlcipher/sqlite3.h>
@@ -48,6 +49,45 @@
 #define MICRO_DELETE 2
 
 #define OPAQUE_TOKEN "a7844291bd990a17bfe389e1ccb0981ed6d187a"
+
+int init_restauth_db(provision_state_t *state) {
+#ifdef HAVE_SQLCIPHER
+    int rc;
+
+    assert(state != NULL);
+
+    if (state->authdb) {
+        sqlite3_close(state->authdb);
+    }
+
+    rc = sqlite3_open(state->restauthdbfile, (sqlite3 **)(&(state->authdb)));
+    if (rc != SQLITE_OK) {
+        logger(LOG_INFO, "OpenLI provisioner: Failed to open REST authentication database: %s: %s",
+                state->restauthdbfile, sqlite3_errmsg(state->authdb));
+        sqlite3_close(state->authdb);
+        state->authdb = NULL;
+        return -1;
+    }
+
+    sqlite3_key(state->authdb, state->restauthkey, strlen(state->restauthkey));
+
+    if (sqlite3_exec(state->authdb, "SELECT count(*) from sqlite_master;",
+            NULL, NULL, NULL) != SQLITE_OK) {
+        logger(LOG_INFO, "OpenLI provisioner: Failed to open REST authentication database due to incorrect key");
+        sqlite3_close(state->authdb);
+        state->authdb = NULL;
+        return -1;
+    }
+
+    logger(LOG_INFO, "OpenLI provisioner: Authentication enabled for the REST API (using DB %s)",
+            state->restauthdbfile);
+    state->restauthenabled = 1;
+	return 1;
+#else
+	state->restauthenabled = 0;
+    return 0;
+#endif
+}
 
 static int send_auth_failure(struct MHD_Connection *connection,
         const char *realm, int cause) {

@@ -81,6 +81,8 @@ void complete_update_request(void *cls, struct MHD_Connection *conn,
         void **con_cls, enum MHD_RequestTerminationCode toe);
 
 
+int init_restauth_db(provision_state_t *state);
+
 int remove_agency(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr);
 int remove_coreserver(update_con_info_t *cinfo, provision_state_t *state,
