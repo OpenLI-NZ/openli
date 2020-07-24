@@ -1,4 +1,5 @@
 usr/bin/openliprovisioner
+usr/sbin/openli-prov-*.sh
 etc/openli/provisioner*
 etc/openli/running-intercept-example.yaml
 etc/rsyslog.d/10-openli-provisioner.conf

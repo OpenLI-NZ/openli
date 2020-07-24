@@ -13,7 +13,7 @@ Homepage: https://openli.nz
 Package: openli-provisioner
 Section: net
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, rsyslog, lsb-base
+Depends: ${shlibs:Depends}, ${misc:Depends}, rsyslog, lsb-base, sqlcipher, bash
 Description: Central provisioning daemon for an OpenLI system
  OpenLI is a software suite that allows network operators to conduct
  lawful interception of Internet traffic that is compliant with the

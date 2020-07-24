@@ -1,5 +1,5 @@
 #!/bin/sh
-# postinst script for amplet2
+# postinst script for openli provisioner
 #
 # see: dh_installdeb(1)
 
