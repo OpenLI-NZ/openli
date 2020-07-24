@@ -18,6 +18,7 @@ updateport: 9009
 # one OpenLI component, that you also do so on all of the others.
 #
 # Leave these commented out for unencrypted inter-component communications.
+
 #tlscert: /etc/openli/openli-provisioner-crt.pem
 #tlskey: /etc/openli/openli-provisioner-key.pem
 #tlsca: /etc/openli/openli-ca-crt.pem
@@ -31,4 +32,16 @@ intercept-config-file: /etc/openli/running-intercept-config.yaml
 # if an LEA reports difficulty with decoding your intercepted RTP streams.
 voip-ignorecomfort: no
 
+# Location of the SQLite3 database where credentials and API keys are stored
+# for authorised access to the REST API. If this option is not present,
+# then the REST API can be used without authentication.
+# See https://github.com/wanduow/openli/wiki/Authenticated-REST-API for more
+# information about authentication and the REST API.
 
+# restauthdb: /var/lib/openli/provauth.db
+
+# The passphrase required to decrypt the Authentication database for the
+# REST API. If this option is not present, then the REST API can be used
+# without authentication.
+
+# restauthkey: mydbpassphrase
