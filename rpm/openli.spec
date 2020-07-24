@@ -97,6 +97,19 @@ find $RPM_BUILD_ROOT -name '*.la' -exec rm -f {} ';'
 %post provisioner
 if [ $1 -eq 1 ]; then
         /bin/systemctl enable openli-provisioner.service openli-provisioner.socket >/dev/null 2>&1 || :
+
+        # Set provisioner config examples to be 0640, so if a user copies
+        # them to create their own config then they won't be readable by
+        # everyone
+        chmod 0640 /etc/openli/provisioner-example.yaml
+        chmod 0640 /etc/openli/running-intercept-example.yaml
+
+        # Create provisioner auth database
+        DBPHRASE=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
+        mkdir -p /var/lib/openli
+        /usr/sbin/openli-prov-authsetup.sh ${DBPHRASE} /var/lib/openli/provauth.db
+        echo ${DBPHRASE} > /etc/openli/provauthdb.phrase
+        chmod 0640 /etc/openli/provauthdb.phrase
 fi
 
 %preun provisioner
@@ -104,6 +117,10 @@ if [ $1 -eq 0 ]; then
         # Disable and stop the units
         /bin/systemctl disable openli-provisioner.service openli-provisioner.socket >/dev/null 2>&1 || :
         /bin/systemctl stop openli-provisioner.service openli-provisioner.socket >/dev/null 2>&1 || :
+
+        # Remove provisioner auth database
+        rm -f /var/lib/openli/provauth.db
+        rm -f /etc/openli/provauthdb.phrase
 fi
 
 %postun provisioner
@@ -112,6 +129,7 @@ if [ $1 -ge 1 ]; then
         /bin/systemctl daemon-reload >/dev/null 2>&1 || :
         # On upgrade, restart the daemon
         /bin/systemctl try-restart openli-provisioner.service >/dev/null 2>&1 || :
+
 fi
 
 %post mediator
