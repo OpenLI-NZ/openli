@@ -1,6 +1,6 @@
 Name:           openli
-Version:        1.0.5
-Release:        2%{?dist}
+Version:        1.0.6
+Release:        1%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
 License:        GPLv3
@@ -33,6 +33,8 @@ Software for performing ETSI-compliant lawful intercept
 %package        provisioner
 Summary:        Central provisioning daemon for an OpenLI system
 Requires:       rsyslog
+Requires:       bash
+Requires:       sqlcipher
 
 %description provisioner
 OpenLI is a software suite that allows network operators to conduct
@@ -154,6 +156,8 @@ fi
 
 %files provisioner
 %{_bindir}/openliprovisioner
+%{_sbindir}/openli-prov-adduser.sh
+%{_sbindir}/openli-prov-authsetup.sh
 %{_unitdir}/openli-provisioner.service
 %config %{_sysconfdir}/rsyslog.d/10-openli-provisioner.conf
 %config %{_sysconfdir}/openli/provisioner-example.yaml
@@ -177,6 +181,9 @@ fi
 
 
 %changelog
+* Fri Jul 24 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.6-1
+- Updated for 1.0.6 release
+
 * Thu May 28 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.5-2
 - Add explicit rsyslog dependency to each component package
 
