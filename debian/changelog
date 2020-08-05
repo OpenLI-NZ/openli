@@ -13,8 +13,10 @@ openli (1.0.6-1) unstable; urgency=medium
     done this.
   * Fixed bug where multiple configuration changes to an agency handover
     would not be applied correctly on the mediator.
+  * Fixed crash when a RADIUS user has been removed but still had an
+    outstanding request for which we then later saw the response.
 
- -- Shane Alcock <shane.alcock@waikato.ac.nz>  Fri, 24 Jul 2020 14:10:13 +1200
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Wed, 5 Aug 2020 16:33:17 +1200
 
 openli (1.0.5-2) unstable; urgency=medium
 
