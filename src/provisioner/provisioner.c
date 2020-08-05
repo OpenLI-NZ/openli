@@ -76,7 +76,30 @@ static inline char *get_event_description(prov_epoll_ev_t *pev) {
 
 void start_mhd_daemon(provision_state_t *state) {
 
+    int started = 0, fd, off, len;
+    char rndseed[8];
+
     assert(state->updatesockfd >= 0);
+
+    fd = open("/dev/urandom", O_RDONLY);
+    if (fd == -1) {
+        if (state->restauthenabled == 1) {
+            logger(LOG_INFO, "Failed to generate random seed for REST authentication: %s", strerror(errno));
+            return;
+        }
+    }
+    off = 0;
+    while (off < 8) {
+        if ((len = read(fd, rndseed + off, 8 - off)) == -1) {
+            if (state->restauthenabled == 1) {
+                logger(LOG_INFO, "Failed to populate random seed for REST authentication: %s", strerror(errno));
+                close(fd);
+                return;
+            }
+        }
+        off += len;
+    }
+    close(fd);
 
     if (state->sslconf.certfile && state->sslconf.keyfile) {
         if (load_pem_into_memory(state->sslconf.keyfile, &(state->key_pem)) < 0)
@@ -104,6 +127,10 @@ void start_mhd_daemon(provision_state_t *state) {
                 state->key_pem,
                 MHD_OPTION_HTTPS_MEM_CERT,
                 state->cert_pem,
+                MHD_OPTION_NONCE_NC_SIZE,
+                300,
+                MHD_OPTION_DIGEST_AUTH_RANDOM,
+                sizeof(rndseed), rndseed,
                 MHD_OPTION_END);
         return;
     }
@@ -120,6 +147,10 @@ startnotls:
             MHD_OPTION_NOTIFY_COMPLETED,
             &complete_update_request,
             state,
+            MHD_OPTION_NONCE_NC_SIZE,
+            300,
+            MHD_OPTION_DIGEST_AUTH_RANDOM,
+            sizeof(rndseed), rndseed,
             MHD_OPTION_END);
 }
 
@@ -241,6 +272,11 @@ int init_prov_state(provision_state_t *state, char *configfile) {
     state->cert_pem = NULL;
 
     state->ignorertpcomfort = 0;
+
+    state->restauthenabled = 0;
+    state->restauthdbfile = NULL;
+    state->restauthkey = NULL;
+    state->authdb = NULL;
 
     init_intercept_config(&(state->interceptconf));
 
@@ -662,6 +698,12 @@ void clear_prov_state(provision_state_t *state) {
     }
     if (state->cert_pem) {
         free(state->cert_pem);
+    }
+    if (state->restauthdbfile) {
+        free(state->restauthdbfile);
+    }
+    if (state->restauthkey) {
+        free(state->restauthkey);
     }
 
     free_ssl_config(&(state->sslconf));
@@ -1674,6 +1716,20 @@ int main(int argc, char *argv[]) {
     if (init_prov_state(&provstate, configfile) == -1) {
         logger(LOG_INFO, "OpenLI: Error initialising provisioner.");
         return 1;
+    }
+
+    if (provstate.restauthdbfile && provstate.restauthkey) {
+#ifdef HAVE_SQLCIPHER
+        if (init_restauth_db(&provstate) < 0) {
+            logger(LOG_INFO, "OpenLI provisioner: error while opening REST authentication database");
+            return -1;
+        }
+#else
+        logger(LOG_INFO, "OpenLI provisioner: REST Auth DB options are set, but your system does not support using an Auth DB.");
+        logger(LOG_INFO, "OpenLI provisioner: Auth DB options ignored.");
+#endif
+    } else {
+        logger(LOG_INFO, "OpenLI provisioner: REST API does NOT require authentication");
     }
 
     if (provstate.ignorertpcomfort) {

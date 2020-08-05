@@ -24,10 +24,12 @@
  *
  */
 
+#include "config.h"
 #include "provisioner.h"
 #include "logger.h"
 #include "util.h"
 #include "configparser.h"
+#include "updateserver.h"
 
 static inline int reload_staticips(provision_state_t *currstate,
         ipintercept_t *ipint, ipintercept_t *newequiv) {
@@ -614,6 +616,76 @@ static inline int reload_mediator_socket_config(provision_state_t *currstate,
     return 0;
 }
 
+static inline void replace_restauth_config(provision_state_t *currstate,
+        provision_state_t *newstate) {
+
+    if (currstate->restauthdbfile) {
+        free(currstate->restauthdbfile);
+    }
+    if (currstate->restauthkey) {
+        free(currstate->restauthkey);
+    }
+    currstate->restauthdbfile = newstate->restauthdbfile;
+    currstate->restauthkey = newstate->restauthkey;
+    newstate->restauthdbfile = NULL;
+    newstate->restauthkey = NULL;
+}
+
+static int reload_restauth_config(provision_state_t *currstate,
+        provision_state_t *newstate) {
+
+    int changed = 0;
+
+    if (currstate->restauthenabled == 0 &&
+            (newstate->restauthdbfile == NULL || newstate->restauthkey == NULL)
+            ) {
+    
+        /* Auth was disabled and the new config doesn't change that */
+        logger(LOG_INFO, "OpenLI provisioner: REST API authentication will remain disabled.");
+        return 0;
+    }
+
+    if (currstate->restauthenabled == 0) {
+        /* Auth was disabled and the new config wants to enable it */
+        replace_restauth_config(currstate, newstate);
+        changed = 1;
+    } else {
+        if (newstate->restauthdbfile == NULL || newstate->restauthkey == NULL) {
+            /* Auth was enabled and now it has been disabled */
+            replace_restauth_config(currstate, newstate);
+            changed = 1;
+        } else if (strcmp(currstate->restauthdbfile,
+                    newstate->restauthdbfile) == 0 &&
+                strcmp(currstate->restauthkey, newstate->restauthkey) == 0) {
+            /* Auth is enabled but database etc is unchanged, leave as is */
+            logger(LOG_INFO, "OpenLI provisioner: REST API authentication config is unchanged.");
+            return 0;
+        } else {
+            /* Auth was enabled but database or key has changed */
+            replace_restauth_config(currstate, newstate);
+            changed = 1;
+        }
+    }
+
+    if (currstate->restauthdbfile && currstate->restauthkey) {
+#ifdef HAVE_SQLCIPHER
+        if (init_restauth_db(currstate) < 0) {
+            logger(LOG_INFO, "OpenLI provisioner: error while opening REST authentication database");
+            return -1;
+        }
+#else
+        logger(LOG_INFO, "OpenLI provisioner: REST Auth DB options are set, but your system does not support using an Auth DB.");
+        logger(LOG_INFO, "OpenLI provisioner: Auth DB options ignored.");
+        currstate->restauthenabled = 0;
+#endif
+    } else {
+        logger(LOG_INFO, "OpenLI provisioner: REST API does NOT require authentication");
+        currstate->restauthenabled = 0;
+    }
+
+    return 1;
+}
+
 static inline int reload_push_socket_config(provision_state_t *currstate,
         provision_state_t *newstate) {
 
@@ -685,6 +757,7 @@ int reload_provisioner_config(provision_state_t *currstate) {
     int pushchanged = 0;
     int tlschanged = 0;
     int voipoptschanged = 0;
+    int restauthchanged = 0;
 
     if (init_prov_state(&newstate, currstate->conffile) == -1) {
         logger(LOG_INFO,
@@ -703,6 +776,12 @@ int reload_provisioner_config(provision_state_t *currstate) {
 
     pushchanged = reload_push_socket_config(currstate, &newstate);
     if (pushchanged == -1) {
+        clear_prov_state(&newstate);
+        return -1;
+    }
+
+    restauthchanged = reload_restauth_config(currstate, &newstate);
+    if (restauthchanged == -1) {
         clear_prov_state(&newstate);
         return -1;
     }

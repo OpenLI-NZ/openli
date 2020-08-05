@@ -1,4 +1,5 @@
 bin_PROGRAMS=
+dist_sbin_SCRIPTS=
 
 if BUILD_PROVISIONER
 bin_PROGRAMS += openliprovisioner
@@ -18,7 +19,11 @@ openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
 
 openliprovisioner_LDFLAGS = -lpthread @PROVISIONER_LIBS@
 openliprovisioner_LDADD = @ADD_LIBS@
-openliprovisioner_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/
+openliprovisioner_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ @PROVISIONER_CFLAGS@
+
+dist_sbin_SCRIPTS += provisioner/authsetup/openli-prov-authsetup.sh \
+                provisioner/authsetup/openli-prov-adduser.sh
+
 endif
 
 if BUILD_COLLECTOR

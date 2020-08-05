@@ -33,6 +33,11 @@
 #include <microhttpd.h>
 #include <json-c/json.h>
 #include <pthread.h>
+#include <assert.h>
+
+#ifdef HAVE_SQLCIPHER
+#include <sqlcipher/sqlite3.h>
+#endif
 
 #include "provisioner.h"
 #include "logger.h"
@@ -43,19 +48,62 @@
 #define MICRO_GET 1
 #define MICRO_DELETE 2
 
-static const char *update_success_page =
-"<html><body>OpenLI provisioner configuration was successfully updated.</body></html>\n";
+#define OPAQUE_TOKEN "a7844291bd990a17bfe389e1ccb0981ed6d187a"
 
-static const char *update_failure_page_start =
-"<html><body><p>OpenLI provisioner configuration failed.";
-static const char *update_failure_page_end = "</body></html>\n";
+int init_restauth_db(provision_state_t *state) {
+#ifdef HAVE_SQLCIPHER
+    int rc;
 
-static const char *unsupported_operation =
-"<html><body>OpenLI provisioner does not support that type of request.</body></html>\n";
+    assert(state != NULL);
 
-static const char *get404 =
-"<html><body>OpenLI provisioner was unable to find the requested resource in its running intercept configuration.</body></html>\n";
+    if (state->authdb) {
+        sqlite3_close(state->authdb);
+    }
 
+    rc = sqlite3_open(state->restauthdbfile, (sqlite3 **)(&(state->authdb)));
+    if (rc != SQLITE_OK) {
+        logger(LOG_INFO, "OpenLI provisioner: Failed to open REST authentication database: %s: %s",
+                state->restauthdbfile, sqlite3_errmsg(state->authdb));
+        sqlite3_close(state->authdb);
+        state->authdb = NULL;
+        return -1;
+    }
+
+    sqlite3_key(state->authdb, state->restauthkey, strlen(state->restauthkey));
+
+    if (sqlite3_exec(state->authdb, "SELECT count(*) from sqlite_master;",
+            NULL, NULL, NULL) != SQLITE_OK) {
+        logger(LOG_INFO, "OpenLI provisioner: Failed to open REST authentication database due to incorrect key");
+        sqlite3_close(state->authdb);
+        state->authdb = NULL;
+        return -1;
+    }
+
+    logger(LOG_INFO, "OpenLI provisioner: Authentication enabled for the REST API (using DB %s)",
+            state->restauthdbfile);
+    state->restauthenabled = 1;
+	return 1;
+#else
+	state->restauthenabled = 0;
+    return 0;
+#endif
+}
+
+static int send_auth_failure(struct MHD_Connection *connection,
+        const char *realm, int cause) {
+    int ret;
+    struct MHD_Response *resp;
+
+    resp = MHD_create_response_from_buffer(strlen(auth_failed),
+            (void *)auth_failed, MHD_RESPMEM_MUST_COPY);
+    if (!resp) {
+        return MHD_NO;
+    }
+    ret = MHD_queue_auth_fail_response(connection, realm, OPAQUE_TOKEN, resp,
+            (cause == MHD_INVALID_NONCE) ? MHD_YES : MHD_NO);
+    MHD_destroy_response(resp);
+    return ret;
+}
 
 static int send_http_page(struct MHD_Connection *connection, const char *page,
         int status_code) {
@@ -363,6 +411,113 @@ void complete_update_request(void *cls, struct MHD_Connection *conn,
     *con_cls = NULL;
 }
 
+#ifdef HAVE_SQLCIPHER
+static unsigned char *lookup_user_digest(provision_state_t *provstate,
+        char *username, unsigned char *digestres) {
+
+    int rc, step;
+    sqlite3_stmt *res;
+    char *sql = "SELECT username, digesthash FROM authcreds where username = ?";
+    unsigned char *returning = NULL;
+
+    rc = sqlite3_prepare_v2(provstate->authdb, sql, -1, &res, 0);
+    if (rc != SQLITE_OK) {
+        logger(LOG_INFO, "OpenLI: Failed to prepare SQL SELECT to lookup user credentials for %s: %s",
+                username, sqlite3_errmsg(provstate->authdb));
+        return NULL;
+    }
+
+    sqlite3_bind_text(res, 1, username, -1, SQLITE_TRANSIENT);
+
+    memset(digestres, 0, 16);
+
+    step = sqlite3_step(res);
+    if (step == SQLITE_ROW) {
+        memcpy(digestres, sqlite3_column_blob(res, 1), 16);
+        returning = digestres;
+    }
+
+    sqlite3_finalize(res);
+    return returning;
+}
+#endif
+
+static int validate_user_apikey(provision_state_t *provstate,
+        const char *apikey) {
+
+#ifdef HAVE_SQLCIPHER
+    int rc, step;
+    sqlite3_stmt *res;
+    char *sql = "SELECT username, apikey FROM authcreds where apikey = ?";
+
+    rc = sqlite3_prepare_v2(provstate->authdb, sql, -1, &res, 0);
+    if (rc != SQLITE_OK) {
+        logger(LOG_INFO, "OpenLI: Failed to prepare SQL SELECT to lookup API key: %s",
+                sqlite3_errmsg(provstate->authdb));
+        return MHD_NO;
+    }
+
+    sqlite3_bind_text(res, 1, apikey, -1, SQLITE_TRANSIENT);
+
+    step = sqlite3_step(res);
+    if (step == SQLITE_ROW) {
+        logger(LOG_INFO, "OpenLI: User %s has used their API key to send a request via the REST API", sqlite3_column_text(res, 0));
+        sqlite3_finalize(res);
+        return MHD_YES;
+    }
+
+    sqlite3_finalize(res);
+#endif
+    return MHD_NO;
+}
+
+static int authenticate_request(provision_state_t *provstate,
+        struct MHD_Connection *conn, const char *realm) {
+
+    unsigned char digest[16];
+    const char *apikey;
+    char *username;
+    int ret;
+
+
+    username = MHD_digest_auth_get_username(conn);
+    if (username == NULL) {
+        apikey = MHD_lookup_connection_value(conn, MHD_HEADER_KIND,
+                "X-API-KEY");
+        if (apikey != NULL) {
+            if (validate_user_apikey(provstate, apikey) == 0) {
+                logger(LOG_INFO,
+                        "OpenLI: user attempted to provide an invalid API key");
+                return send_auth_failure(conn, realm, MHD_NO);
+            } else {
+                return MHD_YES;
+            }
+        }
+        return send_auth_failure(conn, realm, MHD_NO);
+    }
+
+    ret = MHD_NO;
+#ifdef HAVE_SQLCIPHER
+    if (lookup_user_digest(provstate, username, digest) == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: user '%s' attempted to authenticate against provisioner update service, but they don't exist in the database", username);
+        return send_auth_failure(conn, realm, MHD_NO);
+    }
+
+    ret = MHD_digest_auth_check_digest(conn, realm, username, digest,
+            300);
+#endif
+    if ( ret == MHD_INVALID_NONCE || ret == MHD_NO) {
+        logger(LOG_INFO, "OpenLI: user '%s' failed to authenticate against provisioner update service", username);
+        free(username);
+        return send_auth_failure(conn, realm, ret);
+    }
+    logger(LOG_INFO, "OpenLI: user '%s' successfully authenticated against provisioner update service", username);
+    free(username);
+
+    return MHD_YES;
+}
+
 int handle_update_request(void *cls, struct MHD_Connection *conn,
         const char *url, const char *method, const char *version,
         const char *upload_data, size_t *upload_data_size,
@@ -371,8 +526,19 @@ int handle_update_request(void *cls, struct MHD_Connection *conn,
     update_con_info_t *cinfo;
     provision_state_t *provstate = (provision_state_t *)cls;
     int ret;
+    const char *realm = "provisioner@openli.nz";
 
     if (*con_cls == NULL) {
+        if (provstate->restauthenabled) {
+            ret = authenticate_request(provstate, conn, realm);
+
+            if (ret != MHD_YES) {
+                return send_auth_failure(conn, realm, ret);
+            }
+        } else {
+            /* TODO log all "anonymous" accesses to this socket? */
+        }
+
         cinfo = calloc(1, sizeof(update_con_info_t));
         if (cinfo == NULL) {
             return MHD_NO;

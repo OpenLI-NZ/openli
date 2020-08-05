@@ -1,3 +1,21 @@
+openli (1.0.6-1) unstable; urgency=medium
+
+  * Added authentication layer to the provisioner REST API. If enabled,
+    REST API requests must either provide a valid API key or use Digest
+    Authentication to confirm that the request has been issued by an
+    authorised party.
+  * Added scripts (openli-prov-authsetup.sh and openli-prov-adduser.sh) to
+    assist in the creation and management of user credentials for the
+    provisioner REST API.
+  * Completely refactored mediator code to be easier to maintain. This
+    in theory should have no impact on end users, but any code refactor
+    may introduce new bugs so we want to make sure users know that we have
+    done this.
+  * Fixed bug where multiple configuration changes to an agency handover
+    would not be applied correctly on the mediator.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Fri, 24 Jul 2020 14:10:13 +1200
+
 openli (1.0.5-2) unstable; urgency=medium
 
   * Fix missing dependency on rsyslog

@@ -27,6 +27,9 @@ curl -1sLf \
   'https://dl.cloudsmith.io/public/wand/libtrace/cfg/setup/bash.rpm.sh' \
     | bash
 
+curl -1sLf \
+  'https://dl.cloudsmith.io/public/wand/openli/cfg/setup/bash.rpm.sh' \
+    | bash
 
 yum update -y
 
