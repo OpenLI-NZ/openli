@@ -104,6 +104,7 @@ struct radius_user {
     int nasid_len;
 
     Pvoid_t sessions;
+    Pvoid_t savedrequests;
     radius_nas_t *parent_nas;
 };
 
@@ -134,6 +135,7 @@ struct radius_saved_request {
 
     radius_user_t *targetusers[USER_IDENT_MAX];
     int targetuser_count;
+    int active_targets;
 
     radius_saved_req_t *next;
     UT_hash_handle hh;
@@ -359,7 +361,7 @@ static inline void free_attribute_list(radius_attribute_t *attrlist) {
 
 static void destroy_radius_user(radius_user_t *user, unsigned char *userind) {
 
-    Word_t res, index2;
+    Word_t res, index;
     PWord_t pval;
     int rcint;
 
@@ -371,8 +373,8 @@ static void destroy_radius_user(radius_user_t *user, unsigned char *userind) {
         free(user->nasidentifier);
     }
 
-    index2 = 0;
-    JLF(pval, user->sessions, index2);
+    index = 0;
+    JLF(pval, user->sessions, index);
     while (pval) {
         radius_user_session_t *usess = (radius_user_session_t *)(*pval);
         if (usess->nasidentifier) {
@@ -383,8 +385,32 @@ static void destroy_radius_user(radius_user_t *user, unsigned char *userind) {
         }
 
         free(usess);
-        JLN(pval, user->sessions, index2);
+        JLN(pval, user->sessions, index);
     }
+    index = 0;
+    JLF(pval, user->savedrequests, index);
+    while (pval) {
+        radius_saved_req_t *req = (radius_saved_req_t *)(*pval);
+
+        for (int i = 0; i < req->targetuser_count; i++) {
+            if (req->targetusers[i] == NULL) {
+                continue;
+            }
+            if (req->targetusers[i] == user) {
+                req->targetusers[i] = NULL;
+                req->active_targets --;
+                break;
+            }
+        }
+        if (req->active_targets <= 0) {
+            HASH_DELETE(hh, user->parent_nas->request_map, req);
+            free_attribute_list(req->attrs);
+            free(req);
+        }
+        JLN(pval, user->savedrequests, index);
+    }
+
+    JLFA(res, user->savedrequests);
     JLFA(res, user->sessions);
     free(user);
 }
@@ -832,6 +858,10 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
         att_len = *(ptr+1);
         ptr += 2;
 
+        if (att_len <= 2) {
+            break;
+        }
+
         if (rem < att_len) {
             break;
         }
@@ -914,6 +944,7 @@ static radius_user_t *add_user_identity(uint8_t att_type, uint8_t *att_val,
     user->nasidentifier = NULL;
     user->nasid_len = 0;
     user->sessions = NULL;
+    user->savedrequests = NULL;
     user->parent_nas = raddata->matchednas;
     //user->current = SESSION_STATE_NEW;
 
@@ -1050,7 +1081,6 @@ static inline void process_nasid_attribute(radius_parsed_t *raddata) {
     nasid_to_string(nasattr, nasid, 1024, &keylen);
 
     for (i = 0; i < raddata->muser_count; i++) {
-
         if (raddata->matchedusers[i]->nasidentifier) {
             if (strcmp(nasid, raddata->matchedusers[i]->nasidentifier) != 0) {
             /*
@@ -1177,6 +1207,7 @@ static inline void find_matching_request(radius_global_t *glob,
         radius_parsed_t *raddata) {
 
     uint32_t reqid;
+    int rcint;
 
     if (raddata->msgtype == RADIUS_CODE_ACCOUNT_RESPONSE) {
         reqid = DERIVE_REQUEST_ID(raddata, RADIUS_CODE_ACCOUNT_REQUEST);
@@ -1208,6 +1239,12 @@ static inline void find_matching_request(radius_global_t *glob,
         memcpy(raddata->matchedusers, raddata->savedreq->targetusers,
                 sizeof(radius_user_t *) * USER_IDENT_MAX);
         raddata->muser_count = raddata->savedreq->targetuser_count;
+
+        for (int i = 0; i < raddata->muser_count; i++) {
+            if (raddata->matchedusers[i]) {
+                JLD(rcint, raddata->matchedusers[i]->savedrequests, reqid);
+            }
+        }
 
         HASH_DELETE(hh, raddata->matchednas->request_map, req);
     }
@@ -1638,9 +1675,18 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
                 if (check) {
                     /* The old one is probably an unanswered request, replace
                      * it with this one instead. */
+                    for (int i = 0; i < check->targetuser_count; i++) {
+                        int rcint;
+                        if (check->targetusers[i] == NULL) {
+                            continue;
+                        }
+                        JLD(rcint, check->targetusers[i]->savedrequests, reqid);
+                    }
+
                     release_attribute_list(&(glob->freeattrs), check->attrs);
                     release_saved_request(&(glob->freeaccreqs), check);
                     HASH_DELETE(hh, raddata->matchednas->request_map, check);
+
                 }
 
                 if (glob->freeaccreqs == NULL) {
@@ -1658,11 +1704,17 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
                 req->next = NULL;
                 req->attrs = raddata->attrs;
                 req->targetuser_count = raddata->muser_count;
+                req->active_targets = raddata->muser_count;
                 memcpy(req->targetusers, raddata->matchedusers,
                         sizeof(radius_user_t *) * USER_IDENT_MAX);
 
                 HASH_ADD_KEYPTR(hh, raddata->matchednas->request_map,
                         &(req->reqid), sizeof(req->reqid), req);
+
+                for (int i = 0; i < raddata->muser_count; i++) {
+                    JLI(pval, raddata->matchedusers[i]->savedrequests, req->reqid);
+                    *pval = (Word_t)req;
+                }
             }
         }
     }
@@ -2100,6 +2152,7 @@ static void radius_destroy_session_data(access_plugin_t *p,
         }
     }
 
+    usess->parent = NULL;
     free(usess);
 }
 
