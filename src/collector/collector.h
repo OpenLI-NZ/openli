@@ -49,6 +49,7 @@
 #include "collector_publish.h"
 #include "collector_base.h"
 #include "openli_tls.h"
+#include "radius_hasher.h"
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
@@ -102,12 +103,20 @@ typedef struct openli_ii_msg {
 
 } PACKED openli_pushed_t;
 
+enum {
+    OPENLI_HASHER_BALANCE,
+    OPENLI_HASHER_BIDIR,
+    OPENLI_HASHER_RADIUS,
+};
+
 typedef struct colinput {
     char *uri;
     int threadcount;
     libtrace_t *trace;
     libtrace_callback_set_t *pktcbs;
 
+    uint8_t hasher_apply;
+    hash_radius_conf_t hashradconf;
     uint8_t report_drops;
     uint8_t running;
     UT_hash_handle hh;

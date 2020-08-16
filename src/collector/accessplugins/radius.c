@@ -363,7 +363,7 @@ static void destroy_radius_user(radius_user_t *user, unsigned char *userind) {
 
     Word_t res, index;
     PWord_t pval;
-    int rcint;
+    int rcint, i;
 
     JSLD(rcint, user->parent_nas->user_map, userind);
     if (user->userid) {
@@ -392,7 +392,7 @@ static void destroy_radius_user(radius_user_t *user, unsigned char *userind) {
     while (pval) {
         radius_saved_req_t *req = (radius_saved_req_t *)(*pval);
 
-        for (int i = 0; i < req->targetuser_count; i++) {
+        for (i = 0; i < req->targetuser_count; i++) {
             if (req->targetusers[i] == NULL) {
                 continue;
             }
@@ -1207,7 +1207,7 @@ static inline void find_matching_request(radius_global_t *glob,
         radius_parsed_t *raddata) {
 
     uint32_t reqid;
-    int rcint;
+    int rcint, i;
 
     if (raddata->msgtype == RADIUS_CODE_ACCOUNT_RESPONSE) {
         reqid = DERIVE_REQUEST_ID(raddata, RADIUS_CODE_ACCOUNT_REQUEST);
@@ -1240,7 +1240,7 @@ static inline void find_matching_request(radius_global_t *glob,
                 sizeof(radius_user_t *) * USER_IDENT_MAX);
         raddata->muser_count = raddata->savedreq->targetuser_count;
 
-        for (int i = 0; i < raddata->muser_count; i++) {
+        for (i = 0; i < raddata->muser_count; i++) {
             if (raddata->matchedusers[i]) {
                 JLD(rcint, raddata->matchedusers[i]->savedrequests, reqid);
             }
@@ -1608,7 +1608,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     char sessionid[5000];
     char tempstr[24];
     char *ptr;
-    int rem = 5000;
+    int rem = 5000, i;
     PWord_t pval;
 
     glob = (radius_global_t *)(p->plugindata);
@@ -1675,7 +1675,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
                 if (check) {
                     /* The old one is probably an unanswered request, replace
                      * it with this one instead. */
-                    for (int i = 0; i < check->targetuser_count; i++) {
+                    for (i = 0; i < check->targetuser_count; i++) {
                         int rcint;
                         if (check->targetusers[i] == NULL) {
                             continue;
@@ -1711,7 +1711,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
                 HASH_ADD_KEYPTR(hh, raddata->matchednas->request_map,
                         &(req->reqid), sizeof(req->reqid), req);
 
-                for (int i = 0; i < raddata->muser_count; i++) {
+                for (i = 0; i < raddata->muser_count; i++) {
                     JLI(pval, raddata->matchedusers[i]->savedrequests, req->reqid);
                     *pval = (Word_t)req;
                 }

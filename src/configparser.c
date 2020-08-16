@@ -105,6 +105,7 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         inp->pktcbs = NULL;
         inp->running = 0;
         inp->report_drops = 1;
+        inp->hasher_apply = OPENLI_HASHER_BIDIR;
 
         /* Mappings describe the parameters for each input */
         for (pair = node->data.mapping.pairs.start;
@@ -136,6 +137,23 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
                     strcmp((char *)key->data.scalar.value, "threads") == 0) {
                 inp->threadcount = strtoul(
                         (char *)value->data.scalar.value, NULL, 10);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "hasher") == 0) {
+                if (strcasecmp((char *)value->data.scalar.value,
+                        "balanced") == 0) {
+                    inp->hasher_apply = OPENLI_HASHER_BALANCE;
+                } else if (strcasecmp((char *)value->data.scalar.value,
+                        "bidirectional") == 0) {
+                    inp->hasher_apply = OPENLI_HASHER_BIDIR;
+                } else if (strcasecmp((char *)value->data.scalar.value,
+                        "radius") == 0) {
+                    inp->hasher_apply = OPENLI_HASHER_RADIUS;
+                } else {
+                    logger(LOG_INFO, "OpenLI: unexpected hasher type '%s' in config, ignoring.", (char *)value->data.scalar.value);
+                }
             }
         }
         if (!inp->uri) {

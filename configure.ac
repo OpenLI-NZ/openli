@@ -38,7 +38,7 @@ MEDIATOR_LIBS=
 
 PROVISIONER_CFLAGS=
 
-AC_CHECK_LIB([trace], [trace_increment_packet_refcount],,libtrace_found=0)
+AC_CHECK_LIB([trace], [trace_get_radius],,libtrace_found=0)
 AC_CHECK_LIB([yaml], [yaml_document_get_node],,libyaml_found=0)
 AC_CHECK_LIB([zmq], [zmq_poll],libzmq_found=1,libzmq_found=0)
 AC_CHECK_LIB([m], [pow],,libm_found=0)
@@ -123,7 +123,7 @@ if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then
 fi
 
 if test "$libtrace_found" = 0; then
-        AC_MSG_ERROR(Required library libtrace 4.0.4 not found; use LDFLAGS to specify library location)
+        AC_MSG_ERROR(Required library libtrace 4.0.14 not found; use LDFLAGS to specify library location)
 fi
 
 if test "$libssl_found" != 1 -a "$libssl11_found" != 1; then
