@@ -85,7 +85,8 @@ static uint32_t hash_djb(const char *str, uint8_t len) {
 
     /* djb hashing algorithm */
     unsigned long hash = 5381;
-    for (int i = 0; i < len; str++, i++) {
+    int i;
+    for (i = 0; i < len; str++, i++) {
         hash = ((hash << 5) + hash) + (*str);
     }
 
@@ -207,8 +208,11 @@ uint64_t hash_radius_packet(const libtrace_packet_t *packet, void *arg) {
                 port = trace_get_source_port(packet);
                 username = trace_get_radius_username(radius, radrem, &namelen);
 
-                trace_get_source_address(packet, (struct sockaddr *)&ip);
-                ip_hash = ip_to_hash(&ip);
+                if (trace_get_source_address(packet, (struct sockaddr *)&ip)) {
+                    ip_hash = ip_to_hash(&ip);
+                } else {
+                    return toeplitz_hash_packet(packet, &conf->toeplitz);
+                }
 
                 /* RFC2865 says all requests SHOULD have a username.
                  * In the odd case that we do not have one just set the queue to 1.
@@ -238,8 +242,12 @@ uint64_t hash_radius_packet(const libtrace_packet_t *packet, void *arg) {
             case LIBTRACE_RADIUS_COA_NAK:
                 port = trace_get_destination_port(packet);
 
-		        trace_get_destination_address(packet, (struct sockaddr *)&ip);
-                ip_hash = ip_to_hash(&ip);
+		        if (trace_get_destination_address(packet,
+                        (struct sockaddr *)&ip)) {
+                    ip_hash = ip_to_hash(&ip);
+                } else {
+                    return toeplitz_hash_packet(packet, &conf->toeplitz);
+                }
 
                 /* pull the queue from the state information */
                 queue = state_get_queue(&conf->jarray,
