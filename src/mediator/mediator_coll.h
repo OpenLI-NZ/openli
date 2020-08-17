@@ -29,8 +29,10 @@
 
 #include <uthash.h>
 #include <libtrace/linked_list.h>
+#include <amqp.h>
 #include "med_epoll.h"
 #include "netcomms.h"
+#include "openli_tls.h"
 
 /** Describes a collector which has been temporarily disabled, e.g. due to
  *  a connection breaking down.
@@ -47,6 +49,9 @@ typedef struct single_coll_state {
     /** The IP address that the collector has connected from */
     char *ipaddr;
 
+    /** The length of the IP address string */
+    int iplen;
+
     /** The buffer used to store ETSI records received from the collector */
     net_buffer_t *incoming;
 
@@ -55,8 +60,11 @@ typedef struct single_coll_state {
      */
     int disabled_log;
 
-    /** The SSL socker for this collector connection */
+    /** The SSL socket for this collector connection, if not using RMQ */
     SSL *ssl;
+
+    /** The AMQP connection state for this collector connection, if using RMQ */
+    amqp_connection_state_t amqp_state;
 } single_coll_state_t;
 
 /** An instance of an active collector */
@@ -93,6 +101,9 @@ typedef struct mediator_collector_glob_state {
 
     /** The SSL configuration for this mediator instance. */
     openli_ssl_config_t *sslconf;
+
+    /* The RabbitMQ configuration for this mediator instance */
+    openli_RMQ_config_t *rmqconf;
 } mediator_collector_t;
 
 /** Initialises the state for the collectors managed by a mediator.
@@ -102,9 +113,11 @@ typedef struct mediator_collector_glob_state {
  *  @param usetls       A pointer to the global flag that indicates whether
  *                      new collector connections must use TLS.
  *  @param sslconf      A pointer to the SSL configuration for this mediator.
+ *  @param rmqconf      A pointer to the RabbitMQ configuration for this
+ *                      mediator
  */
 void init_med_collector_state(mediator_collector_t *medcol, uint8_t *usetls,
-        openli_ssl_config_t *sslconf);
+        openli_ssl_config_t *sslconf, openli_RMQ_config_t *rmqconf);
 
 /** Destroys the state for the collectors managed by mediator, including
  *  dropping any remaining collector connections.
@@ -163,6 +176,13 @@ void drop_all_collectors(mediator_collector_t *medcol);
  */
 void reenable_collector_logging(mediator_collector_t *medcol,
         single_coll_state_t *cs);
+
+int receive_rmq_invite(mediator_collector_t *medcol,
+        single_coll_state_t *mstate);
+
+int check_rmq_status(mediator_collector_t *medcol, active_collector_t *col);
+
+void service_RMQ_connections(mediator_collector_t *medcol);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

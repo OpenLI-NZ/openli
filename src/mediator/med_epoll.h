@@ -62,6 +62,9 @@ enum {
     /** A collector socket is available for reading */
     MED_EPOLL_COLLECTOR,
 
+    /** A collector RabbitMQ queue is available for reading */
+    MED_EPOLL_COL_RMQ,
+
     /** The mediator is due to send a keep alive on a handover */
     MED_EPOLL_KA_TIMER,
 
@@ -85,6 +88,9 @@ enum {
 
     /** An incomplete SSL handshake with a collector can now be resumed */
     MED_EPOLL_COLLECTOR_HANDSHAKE,
+
+    /** The mediator needs to send heartbeats to the RabbitMQ connections */
+    MED_EPOLL_RMQCHECK_TIMER,
 };
 
 /** Starts an existing timer and adds it to the global epoll event set.

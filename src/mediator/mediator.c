@@ -41,6 +41,9 @@
 #include <assert.h>
 #include <libwandder_etsili.h>
 #include <Judy.h>
+#include <amqp_tcp_socket.h>
+#include <amqp_ssl_socket.h>
+#include <amqp.h>
 
 #include "config.h"
 #include "configparser.h"
@@ -54,6 +57,8 @@
 #include "handover.h"
 #include "med_epoll.h"
 #include "pcapthread.h"
+
+#define AMPQ_BYTES_FROM(x) (amqp_bytes_t){.len=sizeof(x),.bytes=&x}
 
 /** Flag used to indicate that the mediator is being halted, usually due
  *  to a signal or a fatal error.
@@ -112,6 +117,12 @@ static void clear_med_config(mediator_state_t *state) {
     if (state->operatorid) {
         free(state->operatorid);
     }
+    if (state->RMQ_conf.name) {
+        free(state->RMQ_conf.name);
+    }
+    if (state->RMQ_conf.pass) {
+        free(state->RMQ_conf.pass);
+    }
 
     free_ssl_config(&(state->sslconf));
 }
@@ -165,7 +176,13 @@ static void destroy_med_state(mediator_state_t *state) {
 		free(state->timerev);
 	}
 
-    /* Make sure the pcap thread has stopped */
+    if (state->RMQtimerev) {
+        if (state->RMQtimerev->fd != -1) {
+            close(state->RMQtimerev->fd);
+        }
+        free(state->RMQtimerev);
+    }
+
     pthread_join(state->pcapthread, NULL);
 
     /* Halt the pcap file rotation timer */
@@ -219,6 +236,14 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
     state->sslconf.cacertfile = NULL;
     state->sslconf.ctx = NULL;
 
+    state->RMQ_conf.name = NULL;
+    state->RMQ_conf.pass = NULL;
+    state->RMQ_conf.hostname = NULL;
+    state->RMQ_conf.port = 0;
+    state->RMQ_conf.heartbeatFreq = 0;
+    state->RMQ_conf.enabled = 0;
+    state->RMQ_conf.SSLenabled = 0;
+
     state->operatorid = NULL;
     state->pcapdirectory = NULL;
     state->pcapthread = -1;
@@ -246,7 +271,7 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
 
     init_provisioner_instance(&(state->provisioner), &(state->sslconf.ctx));
     init_med_collector_state(&(state->collectors), &(state->etsitls),
-            &(state->sslconf));
+            &(state->sslconf), &(state->RMQ_conf));
 
     /* Parse the provided config file */
     if (parse_mediator_config(configfile, state) == -1) {
@@ -563,7 +588,6 @@ static int receive_lea_withdrawal(mediator_state_t *state, uint8_t *msgbody,
  *
  *  @return -1 if an error occurs, 0 if the LEA is added successfully
  */
-
 static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
 
@@ -918,8 +942,13 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
     uint16_t liidlen;
 
     do {
-        msgtype = receive_net_buffer(cs->incoming, &msgbody,
-                &msglen, &internalid);
+        if (mev->fdtype == MED_EPOLL_COL_RMQ) {
+            msgtype = receive_RMQ_buffer(cs->incoming, cs->amqp_state,
+                    &msgbody, &msglen, &internalid);
+        } else {
+            msgtype = receive_net_buffer(cs->incoming, &msgbody,
+                    &msglen, &internalid);
+        }
 
         if (msgtype < 0) {
             if (cs->disabled_log == 0) {
@@ -1039,6 +1068,15 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 			logger(LOG_INFO,
                     "OpenLI Mediator: main epoll timer has failed.");
             return -1;
+        case MED_EPOLL_RMQCHECK_TIMER:
+            halt_mediator_timer(mev);
+            service_RMQ_connections(&(state->collectors));
+            if (start_mediator_timer(state->RMQtimerev,
+                    state->RMQ_conf.heartbeatFreq) < 0) {
+                logger(LOG_INFO, "OpenLI Mediator: unable to reset RMQ heartbeat timer: %s", strerror(errno));
+                return -1;
+            }
+            return 1;
         case MED_EPOLL_PCAP_TIMER:
             /* pcap timer has fired, flush or rotate any pcap output */
             assert(ev->events == EPOLLIN);
@@ -1433,6 +1471,9 @@ static void run(mediator_state_t *state) {
         logger(LOG_INFO, "OpenLI Mediator: failed to create main loop timer");
         goto runfailure;
     }
+
+    state->RMQtimerev = create_mediator_timer(state->epoll_fd, NULL,
+            MED_EPOLL_RMQCHECK_TIMER, state->RMQ_conf.heartbeatFreq);
 
 	while (!mediator_halt) {
         /* If we've had a SIGHUP recently, reload the config file */

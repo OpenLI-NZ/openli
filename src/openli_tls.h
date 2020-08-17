@@ -30,6 +30,7 @@
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
+#include <amqp_tcp_socket.h>
 
 typedef struct openli_ssl_config {
     char *keyfile;
@@ -45,6 +46,16 @@ enum {
     OPENLI_SSL_CONNECT_NOSSL
 };
 
+typedef struct openli_RMQ_config {
+    char *name;
+    char *pass;
+    char *hostname;
+    int port;
+    int heartbeatFreq;
+    int enabled;
+    int SSLenabled;
+} openli_RMQ_config_t;
+
 int create_ssl_context(openli_ssl_config_t *sslconf);
 void free_ssl_config(openli_ssl_config_t *sslconf);
 int reload_ssl_config(openli_ssl_config_t *current,
@@ -52,6 +63,7 @@ int reload_ssl_config(openli_ssl_config_t *current,
 int listen_ssl_socket(openli_ssl_config_t *sslconf, SSL **ssl, int newfd);
 
 int load_pem_into_memory(char *pemfile, char **memspace);
+void generate_medID(amqp_bytes_t *queueID, void* buf, int len, int medID);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

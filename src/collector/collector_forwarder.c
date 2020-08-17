@@ -33,6 +33,7 @@
 #include <assert.h>
 #include <unistd.h>
 #include <sys/timerfd.h>
+#include <amqp_tcp_socket.h>
 
 #include "util.h"
 #include "logger.h"
@@ -41,6 +42,8 @@
 
 #define BUF_BATCH_SIZE (100 * 1024 * 1024)
 #define MIN_SEND_AMOUNT (1 * 1024 * 1024)
+#define AMPQ_BYTES_FROM(x) (amqp_bytes_t){.len=sizeof(x),.bytes=&x}
+#define AMQP_FRAME_MAX 131072
 
 static inline void free_encoded_result(openli_encoded_result_t *res) {
     if (res->liid) {
@@ -586,6 +589,26 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
             continue;
         }
 
+        if (fwd->ampq_conn) {
+            amqp_bytes_t queueID;
+            char stringSpace [32];
+            generate_medID(&queueID, &stringSpace, sizeof(stringSpace), dest->mediatorid);
+
+            amqp_queue_declare_ok_t *queue_result = amqp_queue_declare(
+                    fwd->ampq_conn,
+                    1,
+                    queueID,
+                    0,
+                    1,
+                    0,
+                    0,
+                    amqp_empty_table);
+
+            if (amqp_get_rpc_reply(fwd->ampq_conn).reply_type != AMQP_RESPONSE_NORMAL ) {
+                logger(LOG_INFO, "OpenLI: Failed to declare queue");
+            }
+        }
+
         JLI(jval2, fwd->destinations_by_fd, dest->fd);
         if (jval2 == NULL) {
             logger(LOG_INFO, "memory issue while connecting to export target");
@@ -834,18 +857,33 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             continue;
         }
 
-        if (transmit_buffered_records(&(dest->buffer), dest->fd,
-                BUF_BATCH_SIZE, dest->ssl) < 0) {
-            if (dest->logallowed) {
-                logger(LOG_INFO,
-                    "OpenLI: error transmitting records to mediator %s:%s: %s",
-                    dest->ipstr, dest->portstr, strerror(errno));
+        if ( fwd->ampq_conn ) {
+            amqp_bytes_t queueID;
+            char stringSpace [32];
+            generate_medID(&queueID, &stringSpace, sizeof(stringSpace), dest->mediatorid);
+            if (transmit_buffered_records_RMQ(&(dest->buffer), 
+                    fwd->ampq_conn, 
+                    1,
+                    amqp_cstring_bytes(""),
+                    queueID,
+                    BUF_BATCH_SIZE) < 0 ) {
+                logger(LOG_INFO, "OpenLI: Error Publishing to RMQ");
             }
-            disconnect_mediator(fwd, dest);
-        } else if (dest->logallowed == 0) {
-            logger(LOG_INFO,
-                    "OpenLI: successfully started transmitting records to mediator %s:%s", dest->ipstr, dest->portstr);
-            dest->logallowed = 1;
+        } else {
+
+            if (transmit_buffered_records(&(dest->buffer), dest->fd,
+                    BUF_BATCH_SIZE, dest->ssl) < 0) {
+                if (dest->logallowed) {
+                    logger(LOG_INFO,
+                        "OpenLI: error transmitting records to mediator %s:%s: %s",
+                        dest->ipstr, dest->portstr, strerror(errno));
+                }
+                disconnect_mediator(fwd, dest);
+            } else if (dest->logallowed == 0) {
+                logger(LOG_INFO,
+                        "OpenLI: successfully started transmitting records to mediator %s:%s", dest->ipstr, dest->portstr);
+                dest->logallowed = 1;
+            }
         }
         fwd->forcesend[i] = 0;
 
@@ -960,6 +998,38 @@ void *start_forwarding_thread(void *data) {
         goto haltforwarder;
     }
 
+    if ( fwd->RMQ_conf.name && fwd->RMQ_conf.name ) {
+        fwd->ampq_conn = amqp_new_connection();
+        fwd->ampq_sock = amqp_tcp_socket_new(fwd->ampq_conn);
+
+        //TODO RMQ instance will always be on localhost? (for collector)
+        if (amqp_socket_open(fwd->ampq_sock, "localhost", 5672 )){
+            logger(LOG_INFO, 
+                    "OpenLI: RMQ forwarding thread %d failed to open amqp socket",
+                    fwd->forwardid);
+            goto haltforwarder;
+        }
+
+        /* login using PLAIN, must specify username and password */
+        if ( (amqp_login(fwd->ampq_conn, "/", 0, AMQP_FRAME_MAX,0,
+                        AMQP_SASL_METHOD_PLAIN, fwd->RMQ_conf.name, fwd->RMQ_conf.pass)
+                ).reply_type != AMQP_RESPONSE_NORMAL ) {
+            logger(LOG_ERR, "OpenLI: RMQ Failed to login to broker using PLAIN auth");
+            goto haltforwarder;
+        }
+
+        amqp_channel_open_ok_t *r = amqp_channel_open(fwd->ampq_conn, 1);
+        
+        if ( (amqp_get_rpc_reply(fwd->ampq_conn).reply_type) != AMQP_RESPONSE_NORMAL ) {
+            logger(LOG_ERR, "OpenLI: Failed to open channel");
+            goto haltforwarder;
+        }
+        logger(LOG_INFO, "OpenLI: Connected to RMQ instance");
+    } else if (fwd->RMQ_conf.name || fwd->RMQ_conf.name) {
+        logger(LOG_INFO, "OpenLI: Incompleate RMQ login information supplied");
+        goto haltforwarder;
+    }
+
     forwarder_main(fwd);
 
     do {
@@ -986,6 +1056,9 @@ void *start_forwarding_thread(void *data) {
     } while (x > 0);
 
 haltforwarder:
+    if (fwd->ampq_conn){
+        amqp_destroy_connection(fwd->ampq_conn);
+    }
     zmq_close(fwd->zmq_ctrlsock);
     remove_all_destinations(fwd);
     logger(LOG_DEBUG, "OpenLI: halting forwarding thread %d",

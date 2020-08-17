@@ -38,9 +38,11 @@
  *  @param usetls       A pointer to the global flag that indicates whether
  *                      new collector connections must use TLS.
  *  @param sslconf      A pointer to the SSL configuration for this mediator.
+ *  @param rmqconf      A pointer to the RabbitMQ configuration for this
+ *                      mediator.
  */
 void init_med_collector_state(mediator_collector_t *medcol, uint8_t *usetls,
-        openli_ssl_config_t *sslconf) {
+        openli_ssl_config_t *sslconf, openli_RMQ_config_t *rmqconf) {
 
     medcol->usingtls = usetls;
     medcol->sslconf = sslconf;
@@ -48,6 +50,7 @@ void init_med_collector_state(mediator_collector_t *medcol, uint8_t *usetls,
     medcol->disabledcols = NULL;
     medcol->collectors = NULL;
     medcol->epoll_fd = -1;
+    medcol->rmqconf = rmqconf;
 }
 
 /** Destroys the state for the collectors managed by mediator, including
@@ -146,19 +149,35 @@ int mediator_accept_collector(mediator_collector_t *medcol, int listenfd) {
         fdtype = MED_EPOLL_COLLECTOR;
     }
 
-    mstate = (single_coll_state_t *)malloc(sizeof(single_coll_state_t));
+    mstate = (single_coll_state_t *)calloc(1, sizeof(single_coll_state_t));
+    mstate->ipaddr = strdup(strbuf);
+    mstate->iplen = strlen(strbuf);
+
+    if (fdtype == MED_EPOLL_COLLECTOR && medcol->rmqconf->enabled) {
+        newfd = receive_rmq_invite(medcol, mstate);
+        if (newfd < 0) {
+            logger(LOG_INFO,
+                    "OpenLI Mediator: error while joining RMQ for collector %s",
+                    strbuf);
+            goto acceptfail;
+        }
+        fdtype = MED_EPOLL_COL_RMQ;
+    }
+
     /* Add fd to epoll */
     col.colev = create_mediator_fdevent(medcol->epoll_fd, mstate, fdtype,
             newfd, EPOLLIN | EPOLLRDHUP);
+
     if (col.colev == NULL) {
         logger(LOG_INFO,
                 "OpenLI Mediator: unable to add collector fd to epoll: %s.",
                 strerror(errno));
-        return -1;
+        goto acceptfail;
     }
     mstate->ssl = col.ssl;
-    mstate->incoming = create_net_buffer(NETBUF_RECV, newfd, col.ssl);
-    mstate->ipaddr = strdup(strbuf);
+    if (!mstate->incoming) {
+        mstate->incoming = create_net_buffer(NETBUF_RECV, newfd, col.ssl);
+    }
 
     /* Check if this is a reconnection case */
     HASH_FIND(hh, medcol->disabledcols, mstate->ipaddr,
@@ -177,6 +196,11 @@ int mediator_accept_collector(mediator_collector_t *medcol, int listenfd) {
     libtrace_list_push_back(medcol->collectors, &col);
 
     return newfd;
+
+acceptfail:
+    free(mstate->ipaddr);
+    free(mstate);
+    return -1;
 }
 
 /** Attempts to complete an ongoing TLS handshake with a collector.
@@ -212,10 +236,19 @@ int continue_collector_handshake(mediator_collector_t *medcol,
     medcol->lastsslerror = 0;
 
     //handshake has finished
-    mev->fdtype = MED_EPOLL_COLLECTOR;
+    if (medcol->rmqconf->enabled) {
+        if (receive_rmq_invite(medcol, cs) < 0) {
+            logger(LOG_INFO, "OpenLI: Failed to join RMQ for collector %s",
+                    cs->ipaddr);
+            return -1;
+        } else {
+            mev->fdtype = MED_EPOLL_COL_RMQ;
+        }
+    } else {
+        mev->fdtype = MED_EPOLL_COLLECTOR;
+    }
     return 1;
 }
-
 
 /** Drops the connection to a collector and moves the collector to the
  *  disabled collector list.
@@ -267,7 +300,12 @@ void drop_collector(mediator_collector_t *medcol,
         mstate->ipaddr = NULL;
     }
 
-    if (colev->fd != -1) {
+    if (mstate->amqp_state) {
+        amqp_destroy_connection(mstate->amqp_state);
+        mstate->amqp_state = NULL;
+    }
+
+	if (colev->fd != -1) {
         close(colev->fd);
         colev->fd = -1;
     }
@@ -323,7 +361,51 @@ void reenable_collector_logging(mediator_collector_t *medcol,
     }
 }
 
+void service_RMQ_connections(mediator_collector_t *medcol) {
 
+    libtrace_list_node_t *curr;
+    int ret;
+    single_coll_state_t *cs;
+
+    if (medcol == NULL) {
+        return;
+    }
+    curr = medcol->collectors->head;
+
+    while (curr) {
+        active_collector_t *col = curr->data;
+        cs = (single_coll_state_t *)(col->colev->state);
+
+        if (col->colev->fdtype != MED_EPOLL_COL_RMQ) {
+            curr = curr->next;
+            continue;
+        }
+
+        ret = check_rmq_status(medcol, col);
+        if (ret == -1) {
+            drop_collector(medcol, col->colev, 0);
+            free(col->colev->state);
+            free(col->colev);
+            if (col->ssl){
+                SSL_free(col->ssl);
+            }
+        } else if (ret == 0) {
+            if (receive_rmq_invite(medcol, cs) < 0) {
+                if (cs->disabled_log == 0) {
+                    logger(LOG_INFO,
+                            "OpenLI mediator: failed to reconnect to RMQ socket: %s",
+                            strerror(errno));
+                }
+                cs->disabled_log = 1;
+            } else {
+                logger(LOG_INFO, "OpenLI mediator: reconnected to RMQ at %s",
+                        cs->ipaddr);
+                cs->disabled_log = 0;
+            }
+        }
+        curr = curr->next;
+    }
+}
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 

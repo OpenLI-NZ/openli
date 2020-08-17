@@ -254,4 +254,78 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
     return sent;
 }
 
+int transmit_buffered_records_RMQ(export_buffer_t *buf, 
+        amqp_connection_state_t amqp_state, amqp_channel_t channel, 
+        amqp_bytes_t exchange, amqp_bytes_t routing_key,
+        uint64_t bytelimit) {
+
+    uint64_t sent = 0;
+    uint64_t rem = 0;
+    uint8_t *bhead = buf->bufhead + buf->deadfront;
+    uint64_t offset = buf->partialfront;
+    int ret;
+    ii_header_t *header = NULL;
+
+    sent = (buf->buftail - (bhead + offset));
+
+    if (sent > bytelimit) {
+        sent = bytelimit;
+    }
+
+    if (sent != 0) {
+       
+        amqp_bytes_t message_bytes;
+        message_bytes.len = sent;
+        message_bytes.bytes = bhead + offset;
+
+        int pub_ret = amqp_basic_publish(
+                amqp_state,
+                channel,
+                exchange,
+                routing_key,
+                0, 
+                0, 
+                NULL,
+                message_bytes);
+
+        if ( pub_ret != 0 ){
+            logger(LOG_INFO,
+                    "OpenLI: RMQ publish error %d", pub_ret);
+        } else {
+            ret = sent;
+        }
+
+        buf->deadfront += ((uint32_t)ret + buf->partialfront);
+    }
+
+    assert(buf->buftail >= buf->bufhead + buf->deadfront);
+    rem = (buf->buftail - (buf->bufhead + buf->deadfront));
+
+    /* Consider shrinking buffer if it is now way too large */
+    if (rem < buf->alloced / 2 && buf->alloced > 10 * BUFFER_ALLOC_SIZE) {
+
+        uint8_t *newbuf = NULL;
+        uint64_t resize = 0;
+        resize = ((rem / BUFFER_ALLOC_SIZE) + 1) * BUFFER_ALLOC_SIZE;
+
+        memmove(buf->bufhead, bhead + sent + offset, rem);
+        newbuf = (uint8_t *)realloc(buf->bufhead, resize);
+        buf->buftail = newbuf + rem;
+        buf->bufhead = newbuf;
+        buf->alloced = resize;
+        buf->deadfront = 0;
+    } else if (buf->alloced - (buf->buftail - buf->bufhead) <
+            0.25 * buf->alloced && buf->deadfront >= 0.25 * buf->alloced) {
+        if (rem > 0) {
+            memmove(buf->bufhead, bhead + sent + offset, rem);
+        }
+        buf->buftail = buf->bufhead + rem;
+        assert(buf->buftail < buf->bufhead + buf->alloced);
+        buf->deadfront = 0;
+    }
+
+    buf->partialfront = 0;
+    return sent;
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

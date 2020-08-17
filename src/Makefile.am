@@ -75,6 +75,7 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
                 mediator/liidmapping.h mediator/mediator_prov.c \
                 mediator/med_epoll.h mediator/mediator_prov.h \
                 mediator/mediator_coll.c mediator/mediator_coll.h \
+                mediator/mediator_rmq.c \
                 byteswap.c byteswap.h \
                 configparser.c configparser.h util.c util.h \
                 agency.h logger.c logger.h netcomms.c \

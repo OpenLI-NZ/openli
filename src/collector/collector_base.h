@@ -33,11 +33,13 @@
 #include <libwandder.h>
 #include <zmq.h>
 #include <Judy.h>
+#include <amqp.h>
 
 #include "export_shared.h"
 #include "etsili_core.h"
 #include "collector_publish.h"
 #include "export_buffer.h"
+#include "openli_tls.h"
 
 typedef struct export_dest {
     int failmsg;
@@ -193,6 +195,10 @@ typedef struct forwarding_thread_data {
 
     SSL_CTX *ctx;
     pthread_mutex_t sslmutex;
+
+    amqp_connection_state_t ampq_conn;
+    amqp_socket_t *ampq_sock;
+    openli_RMQ_config_t RMQ_conf;
 
 } forwarding_thread_data_t;
 
