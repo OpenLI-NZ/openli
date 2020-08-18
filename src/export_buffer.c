@@ -172,6 +172,51 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     return (buf->buftail - buf->bufhead);
 }
 
+int transmit_heartbeat(int fd, SSL *ssl) {
+    ii_header_t hbeat;
+    char *ptr;
+    int ret;
+    int tosend = sizeof(hbeat);
+
+    hbeat.magic = htonl(OPENLI_PROTO_MAGIC);
+    hbeat.bodylen = 0;
+    hbeat.intercepttype = htons((uint16_t)OPENLI_PROTO_HEARTBEAT);
+    hbeat.internalid = 0;
+
+    ptr = (char *)(&hbeat);
+    while (tosend > 0) {
+        if (ssl) {
+            ret = SSL_write(ssl, ptr, tosend);
+            if (ret <= 0 ) {
+                char errstring[128];
+                int errr = SSL_get_error(ssl, ret);
+                if (errr == SSL_ERROR_WANT_WRITE) {
+                    continue;
+                }
+                logger(LOG_INFO,
+                        "OpenLI: ssl_write error (%d) when sending heartbeat: %s",
+                        errr, ERR_error_string(ERR_get_error(), errstring));
+                return -1;
+            }
+        } else {
+            ret = send(fd, ptr, tosend, MSG_DONTWAIT);
+            if (ret < 0) {
+                if (errno != EAGAIN) {
+                    logger(LOG_INFO,
+                            "OpenLI: error while sending heartbeat: %s",
+                            strerror(errno));
+                    return -1;
+                }
+                continue;
+            }
+        }
+
+        tosend -= ret;
+        ptr += ret;
+    }
+    return (int)(sizeof(hbeat));
+}
+
 int transmit_buffered_records(export_buffer_t *buf, int fd,
         uint64_t bytelimit, SSL *ssl) {
 

@@ -29,7 +29,7 @@
 #include "util.h"
 #include "logger.h"
 #include <unistd.h>
-
+#include <assert.h>
 
 /** Initialises the state for the collectors managed by a mediator.
  *
@@ -42,7 +42,8 @@
  *                      mediator.
  */
 void init_med_collector_state(mediator_collector_t *medcol, uint8_t *usetls,
-        openli_ssl_config_t *sslconf, openli_RMQ_config_t *rmqconf) {
+        openli_ssl_config_t *sslconf, openli_RMQ_config_t *rmqconf,
+        uint32_t mediatorid) {
 
     medcol->usingtls = usetls;
     medcol->sslconf = sslconf;
@@ -51,6 +52,7 @@ void init_med_collector_state(mediator_collector_t *medcol, uint8_t *usetls,
     medcol->collectors = NULL;
     medcol->epoll_fd = -1;
     medcol->rmqconf = rmqconf;
+    medcol->parent_mediatorid = mediatorid;
 }
 
 /** Destroys the state for the collectors managed by mediator, including
@@ -90,11 +92,11 @@ void destroy_med_collector_state(mediator_collector_t *medcol) {
  */
 int mediator_accept_collector(mediator_collector_t *medcol, int listenfd) {
 
-    int newfd;
+    int newfd = -1, rmqfd = -1;
     struct sockaddr_storage saddr;
     socklen_t socklen = sizeof(saddr);
     char strbuf[INET6_ADDRSTRLEN];
-    active_collector_t col;
+    active_collector_t *col = NULL;
     single_coll_state_t *mstate;
     disabled_collector_t *discol = NULL;
     int fdtype;
@@ -117,15 +119,17 @@ int mediator_accept_collector(mediator_collector_t *medcol, int listenfd) {
         return newfd;
     }
 
-    col.ssl = NULL;
+    col = (active_collector_t *)calloc(1, sizeof(active_collector_t));
+    col->ssl = NULL;
 
     if (*(medcol->usingtls)) {
         /* We're using TLS so create an OpenSSL socket */
-        r = listen_ssl_socket(medcol->sslconf, &(col.ssl), newfd);
+        r = listen_ssl_socket(medcol->sslconf, &(col->ssl), newfd);
 
         if (r == OPENLI_SSL_CONNECT_FAILED) {
             close(newfd);
-            SSL_free(col.ssl);
+            SSL_free(col->ssl);
+            col->ssl = NULL;
 
             if (r != medcol->lastsslerror) {
                 logger(LOG_INFO,
@@ -153,30 +157,41 @@ int mediator_accept_collector(mediator_collector_t *medcol, int listenfd) {
     mstate->ipaddr = strdup(strbuf);
     mstate->iplen = strlen(strbuf);
 
+    col->rmqev = NULL;
+    col->colev = NULL;
+
     if (fdtype == MED_EPOLL_COLLECTOR && medcol->rmqconf->enabled) {
-        newfd = receive_rmq_invite(medcol, mstate);
-        if (newfd < 0) {
+        rmqfd = receive_rmq_invite(medcol, mstate);
+        if (rmqfd < 0) {
             logger(LOG_INFO,
                     "OpenLI Mediator: error while joining RMQ for collector %s",
                     strbuf);
             goto acceptfail;
         }
-        fdtype = MED_EPOLL_COL_RMQ;
+        col->rmqev = create_mediator_fdevent(medcol->epoll_fd, mstate,
+                MED_EPOLL_COL_RMQ, rmqfd, EPOLLIN | EPOLLRDHUP);
+        if (col->rmqev == NULL) {
+            logger(LOG_INFO,
+                    "OpenLI Mediator: unable to add collector RMQ fd to epoll: %s.",
+                    strerror(errno));
+            goto acceptfail;
+        }
     }
 
     /* Add fd to epoll */
-    col.colev = create_mediator_fdevent(medcol->epoll_fd, mstate, fdtype,
+    col->colev = create_mediator_fdevent(medcol->epoll_fd, mstate, fdtype,
             newfd, EPOLLIN | EPOLLRDHUP);
 
-    if (col.colev == NULL) {
+    if (col->colev == NULL) {
         logger(LOG_INFO,
                 "OpenLI Mediator: unable to add collector fd to epoll: %s.",
                 strerror(errno));
         goto acceptfail;
     }
-    mstate->ssl = col.ssl;
+    mstate->ssl = col->ssl;
+    mstate->owner = col;
     if (!mstate->incoming) {
-        mstate->incoming = create_net_buffer(NETBUF_RECV, newfd, col.ssl);
+        mstate->incoming = create_net_buffer(NETBUF_RECV, newfd, col->ssl);
     }
 
     /* Check if this is a reconnection case */
@@ -198,6 +213,22 @@ int mediator_accept_collector(mediator_collector_t *medcol, int listenfd) {
     return newfd;
 
 acceptfail:
+    if (newfd != -1) {
+        close(newfd);
+    }
+    if (rmqfd != -1) {
+        close(rmqfd);
+    }
+    if (col) {
+        if (col->colev) {
+            free(col->colev);
+        }
+        if (col->rmqev) {
+            free(col->rpmev);
+        }
+        free(col);
+    }
+
     free(mstate->ipaddr);
     free(mstate);
     return -1;
@@ -237,16 +268,24 @@ int continue_collector_handshake(mediator_collector_t *medcol,
 
     //handshake has finished
     if (medcol->rmqconf->enabled) {
-        if (receive_rmq_invite(medcol, cs) < 0) {
-            logger(LOG_INFO, "OpenLI: Failed to join RMQ for collector %s",
+        int rmqfd = receive_rmq_invite(medcol, cs);
+        if (rmqfd < 0) {
+            logger(LOG_INFO,
+                    "OpenLI Mediator: error while joining RMQ for collector %s",
                     cs->ipaddr);
             return -1;
-        } else {
-            mev->fdtype = MED_EPOLL_COL_RMQ;
         }
-    } else {
-        mev->fdtype = MED_EPOLL_COLLECTOR;
+        assert(cs->owner);
+        cs->owner->rmqev = create_mediator_fdevent(medcol->epoll_fd, cs,
+                MED_EPOLL_COL_RMQ, rmqfd, EPOLLIN | EPOLLRDHUP);
+        if (cs->owner->rmqev == NULL) {
+            logger(LOG_INFO,
+                    "OpenLI Mediator: unable to add collector RMQ fd to epoll: %s.",
+                    strerror(errno));
+            return -1;
+        }
     }
+    mev->fdtype = MED_EPOLL_COLLECTOR;
     return 1;
 }
 
@@ -295,6 +334,11 @@ void drop_collector(mediator_collector_t *medcol,
         mstate->incoming = NULL;
     }
 
+    if (mstate && mstate->incoming_rmq) {
+        destroy_net_buffer(mstate->incoming_rmq);
+        mstate->incoming_rmq = NULL;
+    }
+
     if (mstate->ipaddr) {
         free(mstate->ipaddr);
         mstate->ipaddr = NULL;
@@ -323,12 +367,15 @@ void drop_all_collectors(mediator_collector_t *medcol) {
 
     n = medcol->collectors->head;
     while (n) {
-        col = (active_collector_t *)n->data;
+        col = *((active_collector_t **)(n->data));
 
         /* No need to log every collector we're dropping, so we pass in 0
          * as the last parameter */
         drop_collector(medcol, col->colev, 0);
         free(col->colev->state);
+        if (col->rmqev) {
+            free(col->rmqev);
+        }
         free(col->colev);
         if (col->ssl){
             SSL_free(col->ssl);
@@ -373,10 +420,10 @@ void service_RMQ_connections(mediator_collector_t *medcol) {
     curr = medcol->collectors->head;
 
     while (curr) {
-        active_collector_t *col = curr->data;
+        active_collector_t *col = *((active_collector_t **)(curr->data));
         cs = (single_coll_state_t *)(col->colev->state);
 
-        if (col->colev->fdtype != MED_EPOLL_COL_RMQ) {
+        if (!col->rmqev || col->rmqev->fdtype != MED_EPOLL_COL_RMQ) {
             curr = curr->next;
             continue;
         }
@@ -386,6 +433,7 @@ void service_RMQ_connections(mediator_collector_t *medcol) {
             drop_collector(medcol, col->colev, 0);
             free(col->colev->state);
             free(col->colev);
+            free(col->rmqev);
             if (col->ssl){
                 SSL_free(col->ssl);
             }

@@ -270,9 +270,6 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
             sizeof(mediator_pcap_msg_t));
 
     init_provisioner_instance(&(state->provisioner), &(state->sslconf.ctx));
-    init_med_collector_state(&(state->collectors), &(state->etsitls),
-            &(state->sslconf), &(state->RMQ_conf));
-
     /* Parse the provided config file */
     if (parse_mediator_config(configfile, state) == -1) {
         return -1;
@@ -282,7 +279,8 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
         return -1;
     }
 
-
+    init_med_collector_state(&(state->collectors), &(state->etsitls),
+            &(state->sslconf), &(state->RMQ_conf), state->mediatorid);
 
     logger(LOG_DEBUG, "OpenLI Mediator: ETSI TLS encryption %s",
         state->etsitls ? "enabled" : "disabled");
@@ -326,7 +324,7 @@ static void prepare_mediator_state(mediator_state_t *state) {
     state->provisioner.epoll_fd = state->epoll_fd;
     state->collectors.epoll_fd = state->epoll_fd;
     state->collectors.collectors =
-            libtrace_list_init(sizeof(active_collector_t));
+            libtrace_list_init(sizeof(active_collector_t *));
     
     /* Use an fd to catch signals during our main epoll loop, so that we
      * can provide our own signal handling without causing epoll_wait to
@@ -943,11 +941,11 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     do {
         if (mev->fdtype == MED_EPOLL_COL_RMQ) {
-            msgtype = receive_RMQ_buffer(cs->incoming, cs->amqp_state,
+            msgtype = receive_RMQ_buffer(cs->incoming_rmq, cs->amqp_state,
                     &msgbody, &msglen, &internalid);
         } else {
             msgtype = receive_net_buffer(cs->incoming, &msgbody,
-                    &msglen, &internalid);
+                        &msglen, &internalid);
         }
 
         if (msgtype < 0) {
@@ -965,6 +963,8 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                         "OpenLI Mediator: error receiving message from collector.");
                 return -1;
             case OPENLI_PROTO_NO_MESSAGE:
+                break;
+            case OPENLI_PROTO_HEARTBEAT:
                 break;
             case OPENLI_PROTO_RAWIP_SYNC:
                 /* This is a raw IP packet capture, rather than a properly
@@ -1166,6 +1166,7 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             }
             break;
         case MED_EPOLL_COLLECTOR:
+        case MED_EPOLL_COL_RMQ:
             /* a collector is sending us some data */
             if (ev->events & EPOLLRDHUP) {
                 ret = -1;
@@ -1274,7 +1275,7 @@ static inline void halt_listening_socket(mediator_state_t *currstate) {
     /* Disconnect all collectors */
     drop_all_collectors(&(currstate->collectors));
     currstate->collectors.collectors = libtrace_list_init(
-            sizeof(active_collector_t));
+            sizeof(active_collector_t *));
 
 
     /* Close listen socket and disable epoll event */
@@ -1396,7 +1397,7 @@ static int reload_mediator_config(mediator_state_t *currstate) {
             /* Disconnect all collectors */
             drop_all_collectors(&(currstate->collectors));
             currstate->collectors.collectors = libtrace_list_init(
-                    sizeof(active_collector_t));
+                    sizeof(active_collector_t *));
 
             listenchanged = 1;
         }

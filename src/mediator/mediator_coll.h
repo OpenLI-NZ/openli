@@ -34,6 +34,8 @@
 #include "netcomms.h"
 #include "openli_tls.h"
 
+typedef struct active_collector active_collector_t;
+
 /** Describes a collector which has been temporarily disabled, e.g. due to
  *  a connection breaking down.
  */
@@ -52,8 +54,13 @@ typedef struct single_coll_state {
     /** The length of the IP address string */
     int iplen;
 
-    /** The buffer used to store ETSI records received from the collector */
+    /** The buffer used to store ETSI records received from the collector via
+     *  a network connection */
     net_buffer_t *incoming;
+
+    /** The buffer used to store ETSI records received from the collector via
+     *  RabbitMQ */
+    net_buffer_t *incoming_rmq;
 
     /** A flag indicating whether error logging is disabled for this
      *  collector.
@@ -65,16 +72,21 @@ typedef struct single_coll_state {
 
     /** The AMQP connection state for this collector connection, if using RMQ */
     amqp_connection_state_t amqp_state;
+
+    active_collector_t *owner;
 } single_coll_state_t;
 
 /** An instance of an active collector */
-typedef struct active_collector {
+struct active_collector {
     /** The epoll event for the collector connection socket */
     med_epoll_ev_t *colev;
 
+    /** The epoll event for the collector RMQ socket */
+    med_epoll_ev_t *rmqev;
+
     /** The SSL socket for this collector connection, if required */
     SSL *ssl;
-} active_collector_t;
+};
 
 /** Structure for storing global state for all collectors managed by a
  *  mediator instance.
@@ -102,8 +114,11 @@ typedef struct mediator_collector_glob_state {
     /** The SSL configuration for this mediator instance. */
     openli_ssl_config_t *sslconf;
 
-    /* The RabbitMQ configuration for this mediator instance */
+    /** The RabbitMQ configuration for this mediator instance */
     openli_RMQ_config_t *rmqconf;
+
+    /** The ID of the mediator instance */
+    uint32_t parent_mediatorid;
 } mediator_collector_t;
 
 /** Initialises the state for the collectors managed by a mediator.
@@ -114,10 +129,12 @@ typedef struct mediator_collector_glob_state {
  *                      new collector connections must use TLS.
  *  @param sslconf      A pointer to the SSL configuration for this mediator.
  *  @param rmqconf      A pointer to the RabbitMQ configuration for this
- *                      mediator
+ *                      mediator.
+ *  @param mediatorid   The ID of the mediator that is managing the collectors.
  */
 void init_med_collector_state(mediator_collector_t *medcol, uint8_t *usetls,
-        openli_ssl_config_t *sslconf, openli_RMQ_config_t *rmqconf);
+        openli_ssl_config_t *sslconf, openli_RMQ_config_t *rmqconf,
+        uint32_t mediatorid);
 
 /** Destroys the state for the collectors managed by mediator, including
  *  dropping any remaining collector connections.

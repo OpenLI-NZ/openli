@@ -24,7 +24,11 @@
  *
  */
 
+#include <amqp.h>
+#include <amqp_tcp_socket.h>
+#include <amqp_ssl_socket.h>
 #include "mediator_coll.h"
+#include "logger.h"
 
 static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
 		uint8_t *msgbody, uint16_t msglen, int logDisabled) {
@@ -33,6 +37,7 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
     amqp_envelope_t envelope;
     amqp_frame_t frame;
     struct timeval tv;
+    int status;
     tv.tv_usec = 0;
     tv.tv_sec = 1;
 
@@ -42,10 +47,10 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
     amqp_connection_state_t amqp_state = amqp_new_connection();
 
     amqp_socket_t *ampq_sock = NULL;
-    if (medcol->rmqconf.SSLenabled &&
-            medcol->sslconf.cacertfile && 
-            medcol->sslconf.certfile && 
-            medcol->sslconf.keyfile) {
+    if (medcol->rmqconf->SSLenabled &&
+            medcol->sslconf->cacertfile && 
+            medcol->sslconf->certfile && 
+            medcol->sslconf->keyfile) {
 
         ampq_sock = amqp_ssl_socket_new(amqp_state);
 
@@ -59,7 +64,7 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
         amqp_ssl_socket_set_verify_peer(ampq_sock, 0);
         amqp_ssl_socket_set_verify_hostname(ampq_sock, 0);
 
-        if (amqp_ssl_socket_set_cacert(ampq_sock, medcol->sslconf.cacertfile) 
+        if (amqp_ssl_socket_set_cacert(ampq_sock, medcol->sslconf->cacertfile) 
                 != AMQP_STATUS_OK) {
             if (!logDisabled)
                 logger(LOG_INFO, "OpenLI Mediator: RMQ Failed to load cacert");
@@ -69,8 +74,8 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
 
         if (amqp_ssl_socket_set_key(
                 ampq_sock,
-                medcol->sslconf.certfile,
-                medcol->sslconf.keyfile
+                medcol->sslconf->certfile,
+                medcol->sslconf->keyfile
                 ) != AMQP_STATUS_OK ) {
             if (!logDisabled)
                 logger(LOG_INFO,
@@ -80,19 +85,22 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
         }
 
         //If no port is supplied use defualt
-        if (medcol->rmqconf.port == 0) {
-            medcol->rmqconf.port = 5671;
+        if (medcol->rmqconf->port == 0) {
+            medcol->rmqconf->port = 5671;
         }
 
-        if (amqp_socket_open_noblock(ampq_sock, msgbody, medcol->rmqconf.port, &tv)){
+        logger(LOG_INFO, "OpenLI Mediator: attempting to connect to RMQ using SSL on port %u", medcol->rmqconf->port);
+
+        if (status = amqp_socket_open_noblock(ampq_sock, msgbody, medcol->rmqconf->port, &tv)){
             if (!logDisabled)
                 logger(LOG_INFO,
-                        "OpenLI Mediator: RMQ failed to open AMQP socket");
+                        "OpenLI Mediator: RMQ failed to open AMQP socket: %d",
+                        status);
             amqp_destroy_connection(amqp_state);
             return NULL;
         }
-        if ( (amqp_login(amqp_state, "/", 0, 131072, 
-                medcol->rmqconf.heartbeatFreq,
+        if ( (amqp_login(amqp_state, "OpenLI", 0, 131072, 
+                medcol->rmqconf->heartbeatFreq,
                 AMQP_SASL_METHOD_EXTERNAL, "EXTERNAL")
                 ).reply_type != AMQP_RESPONSE_NORMAL ) {
             if (!logDisabled)
@@ -101,7 +109,7 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
             amqp_destroy_connection(amqp_state);
             return NULL;
         }
-    } else if (medcol->rmqconf.name && medcol->rmqconf.pass) {
+    } else if (medcol->rmqconf->name && medcol->rmqconf->pass) {
         //start up socket with non SSL auth
         ampq_sock = amqp_tcp_socket_new(amqp_state);
 
@@ -114,8 +122,8 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
         }
 
         //If no port is supplied use defualt
-        if (medcol->rmqconf.port == 0) {
-            medcol->rmqconf.port = 5672;
+        if (medcol->rmqconf->port == 0) {
+            medcol->rmqconf->port = 5672;
         }
 
         if (amqp_socket_open_noblock(ampq_sock, msgbody, 5672, &tv)){
@@ -126,10 +134,10 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
             return NULL;
         }
 
-        if (amqp_login(amqp_state, "/", 0, 131072, 
-                medcol->rmqconf.heartbeatFreq, AMQP_SASL_METHOD_PLAIN,
-                medcol->rmqconf.name, 
-                medcol->rmqconf.pass).reply_type != AMQP_RESPONSE_NORMAL) {
+        if (amqp_login(amqp_state, "OpenLI", 0, 131072, 
+                medcol->rmqconf->heartbeatFreq, AMQP_SASL_METHOD_PLAIN,
+                medcol->rmqconf->name, 
+                medcol->rmqconf->pass).reply_type != AMQP_RESPONSE_NORMAL) {
             if (!logDisabled)
                 logger(LOG_INFO, 
                         "OpenLI Mediator: RMQ Failed to login using PLAIN auth");
@@ -154,9 +162,9 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
     }
 
     amqp_bytes_t queueID;
-    char srtingSpace [32];
-    queueID.bytes = &srtingSpace;
-    queueID.len = snprintf(queueID.bytes, sizeof(srtingSpace), "ID%d", state->mediatorid);
+    char stringSpace [32];
+    queueID.bytes = &stringSpace;
+    queueID.len = snprintf(queueID.bytes, sizeof(stringSpace), "ID%d", medcol->parent_mediatorid);
 
 
     amqp_queue_declare_ok_t *queue_result = amqp_queue_declare(
@@ -192,11 +200,6 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
         amqp_destroy_connection(amqp_state);
         return NULL;
     } else {
-if (!logDisabled)
-            logger(LOG_INFO, "OpenLI Mediator: RMQ Failed to register consumer");
-        amqp_destroy_connection(amqp_state);
-        return NULL;
-    } else {
         if (!logDisabled)
             logger(LOG_INFO, "OpenLI Mediator: RMQ Registered consumer %s", 
                 queueID.bytes);
@@ -219,8 +222,8 @@ int receive_rmq_invite(mediator_collector_t *medcol,
 	}
 
 	mstate->amqp_state = amqp_state;
-	if (mstate->incoming == NULL) {
-	    mstate->incoming = create_net_buffer(NETBUF_RECV, 0, NULL);
+	if (mstate->incoming_rmq == NULL) {
+	    mstate->incoming_rmq = create_net_buffer(NETBUF_RECV, 0, NULL);
 	}
 
     return sock_fd;
@@ -242,7 +245,7 @@ int check_rmq_status(mediator_collector_t *medcol, active_collector_t *col) {
 		return 0;
 	}
 
-	ret = amqp_simple_wait_frame_noblock(cs->amqp_state, &frame, &tv)
+	ret = amqp_simple_wait_frame_noblock(cs->amqp_state, &frame, &tv);
 	switch(ret) {
 		case AMQP_STATUS_HEARTBEAT_TIMEOUT:
 			logger(LOG_INFO,
