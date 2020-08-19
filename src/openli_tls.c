@@ -310,9 +310,4 @@ int load_pem_into_memory(char *pemfile, char **memspace) {
     return result;
 }
 
-void generate_medID(amqp_bytes_t *queueID, void* buf, int len, int medID){
-    queueID->bytes = buf;
-    queueID->len = snprintf(buf, len, "ID%d", medID);
-}
-
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

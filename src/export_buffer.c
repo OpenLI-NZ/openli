@@ -320,8 +320,12 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
     if (sent != 0) {
        
         amqp_bytes_t message_bytes;
+        amqp_basic_properties_t props;
         message_bytes.len = sent;
         message_bytes.bytes = bhead + offset;
+
+        props._flags = AMQP_BASIC_DELIVERY_MODE_FLAG;
+        props.delivery_mode = 2;        /* persistent mode */
 
         int pub_ret = amqp_basic_publish(
                 amqp_state,
@@ -330,7 +334,7 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
                 routing_key,
                 0, 
                 0, 
-                NULL,
+                &props,
                 message_bytes);
 
         if ( pub_ret != 0 ){

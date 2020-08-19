@@ -224,7 +224,7 @@ acceptfail:
             free(col->colev);
         }
         if (col->rmqev) {
-            free(col->rpmev);
+            free(col->rmqev);
         }
         free(col);
     }
@@ -353,6 +353,23 @@ void drop_collector(mediator_collector_t *medcol,
         close(colev->fd);
         colev->fd = -1;
     }
+
+    if (mstate->owner) {
+        if (mstate->owner->rmqev) {
+            if (mstate->owner->rmqev->fd != -1) {
+                close(mstate->owner->rmqev->fd);
+                mstate->owner->rmqev->fd = -1;
+            }
+            free(mstate->owner->rmqev);
+        }
+
+        mstate->owner->rmqev = NULL;
+    }
+    mstate->owner->colev = NULL;
+
+    if (mstate->owner->ssl) {
+        SSL_free(mstate->owner->ssl);
+    }
 }
 
 /** Drops *all* currently connected collectors.
@@ -372,14 +389,6 @@ void drop_all_collectors(mediator_collector_t *medcol) {
         /* No need to log every collector we're dropping, so we pass in 0
          * as the last parameter */
         drop_collector(medcol, col->colev, 0);
-        free(col->colev->state);
-        if (col->rmqev) {
-            free(col->rmqev);
-        }
-        free(col->colev);
-        if (col->ssl){
-            SSL_free(col->ssl);
-        }
         n = n->next;
     }
 
@@ -423,7 +432,7 @@ void service_RMQ_connections(mediator_collector_t *medcol) {
         active_collector_t *col = *((active_collector_t **)(curr->data));
         cs = (single_coll_state_t *)(col->colev->state);
 
-        if (!col->rmqev || col->rmqev->fdtype != MED_EPOLL_COL_RMQ) {
+        if (col->rmqev == NULL || col->rmqev->fdtype != MED_EPOLL_COL_RMQ) {
             curr = curr->next;
             continue;
         }
@@ -431,12 +440,6 @@ void service_RMQ_connections(mediator_collector_t *medcol) {
         ret = check_rmq_status(medcol, col);
         if (ret == -1) {
             drop_collector(medcol, col->colev, 0);
-            free(col->colev->state);
-            free(col->colev);
-            free(col->rmqev);
-            if (col->ssl){
-                SSL_free(col->ssl);
-            }
         } else if (ret == 0) {
             if (receive_rmq_invite(medcol, cs) < 0) {
                 if (cs->disabled_log == 0) {

@@ -57,6 +57,8 @@ typedef struct export_dest {
     int waitingforhandshake;
     int ssllasterror;
 
+    amqp_bytes_t rmq_queueid;
+
     UT_hash_handle hh_fd;
     UT_hash_handle hh_medid;
 } export_dest_t;
@@ -186,6 +188,7 @@ typedef struct forwarding_thread_data {
 
     int conntimerfd;
     int flagtimerfd;
+    uint8_t forcesend_rmq;
 
     Pvoid_t destinations_by_fd;
     Pvoid_t destinations_by_id;
