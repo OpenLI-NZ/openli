@@ -1059,6 +1059,16 @@ static void clear_global_config(collector_global_t *glob) {
         free(glob->sharedinfo.provisionerport);
     }
 
+    if (glob->RMQ_conf.name) {
+        free(glob->RMQ_conf.name);
+    }
+    if (glob->RMQ_conf.pass) {
+        free(glob->RMQ_conf.pass);
+    }
+    if (glob->RMQ_conf.hostname) {
+        free(glob->RMQ_conf.hostname);
+    }
+
     pthread_mutex_destroy(&(glob->stats_mutex));
     pthread_rwlock_destroy(&glob->config_mutex);
 }
