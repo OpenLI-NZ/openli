@@ -488,8 +488,6 @@ static int start_collector_listener(mediator_state_t *state) {
     struct epoll_event ev;
     int sockfd;
 
-    state->listenerev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
-
     /* Creates a listening socket using the method from utils.c */
     sockfd = create_listener(state->listenaddr, state->listenport,
             "Mediator");

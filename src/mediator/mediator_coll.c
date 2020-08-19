@@ -220,12 +220,8 @@ acceptfail:
         close(rmqfd);
     }
     if (col) {
-        if (col->colev) {
-            free(col->colev);
-        }
-        if (col->rmqev) {
-            free(col->rmqev);
-        }
+        remove_mediator_fdevent(col->colev);
+        remove_mediator_fdevent(col->rmqev);
         free(col);
     }
 
@@ -349,27 +345,17 @@ void drop_collector(mediator_collector_t *medcol,
         mstate->amqp_state = NULL;
     }
 
-	if (colev->fd != -1) {
-        close(colev->fd);
-        colev->fd = -1;
-    }
-
+    remove_mediator_fdevent(colev);
     if (mstate->owner) {
-        if (mstate->owner->rmqev) {
-            if (mstate->owner->rmqev->fd != -1) {
-                close(mstate->owner->rmqev->fd);
-                mstate->owner->rmqev->fd = -1;
-            }
-            free(mstate->owner->rmqev);
+        remove_mediator_fdevent(mstate->owner->rmqev);
+        if (mstate->owner->ssl) {
+            SSL_free(mstate->owner->ssl);
         }
-
         mstate->owner->rmqev = NULL;
+        mstate->owner->colev = NULL;
     }
-    mstate->owner->colev = NULL;
 
-    if (mstate->owner->ssl) {
-        SSL_free(mstate->owner->ssl);
-    }
+    free(mstate);
 }
 
 /** Drops *all* currently connected collectors.
@@ -389,6 +375,7 @@ void drop_all_collectors(mediator_collector_t *medcol) {
         /* No need to log every collector we're dropping, so we pass in 0
          * as the last parameter */
         drop_collector(medcol, col->colev, 0);
+        free(col);
         n = n->next;
     }
 
