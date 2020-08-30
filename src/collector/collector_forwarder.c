@@ -879,7 +879,6 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
          */
         rmq_write_buffered(fwd);
         fwd->forcesend_rmq = 0;
-        return 1;
     }
 
 
@@ -909,6 +908,10 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
 
         if (dest->waitingforhandshake){
             complete_ssl_handshake(fwd, dest);
+            continue;
+        }
+
+        if (fwd->ampq_conn) {
             continue;
         }
 
