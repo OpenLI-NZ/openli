@@ -73,6 +73,8 @@ typedef struct single_coll_state {
     /** The AMQP connection state for this collector connection, if using RMQ */
     amqp_connection_state_t amqp_state;
 
+    amqp_bytes_t rmq_queueid;
+
     active_collector_t *owner;
 } single_coll_state_t;
 

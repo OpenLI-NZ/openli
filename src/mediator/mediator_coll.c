@@ -101,6 +101,7 @@ int mediator_accept_collector(mediator_collector_t *medcol, int listenfd) {
     disabled_collector_t *discol = NULL;
     int fdtype;
     int r = OPENLI_SSL_CONNECT_NOSSL;
+    char stringspace[32];
 
     /* TODO check for EPOLLHUP or EPOLLERR */
 
@@ -156,6 +157,10 @@ int mediator_accept_collector(mediator_collector_t *medcol, int listenfd) {
     mstate = (single_coll_state_t *)calloc(1, sizeof(single_coll_state_t));
     mstate->ipaddr = strdup(strbuf);
     mstate->iplen = strlen(strbuf);
+    
+    mstate->rmq_queueid.len = snprintf(stringspace, sizeof(stringspace), "ID%d",
+            medcol->parent_mediatorid);
+    mstate->rmq_queueid.bytes = (void *)strdup(stringspace);
 
     col->rmqev = NULL;
     col->colev = NULL;
@@ -343,6 +348,10 @@ void drop_collector(mediator_collector_t *medcol,
     if (mstate->amqp_state) {
         amqp_destroy_connection(mstate->amqp_state);
         mstate->amqp_state = NULL;
+    }
+
+    if (mstate->rmq_queueid.bytes) {
+        free(mstate->rmq_queueid.bytes);
     }
 
     remove_mediator_fdevent(colev);

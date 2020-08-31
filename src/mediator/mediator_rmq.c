@@ -31,7 +31,8 @@
 #include "logger.h"
 
 static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
-		uint8_t *msgbody, uint16_t msglen, int logDisabled) {
+		uint8_t *msgbody, uint16_t msglen, int logDisabled,
+        single_coll_state_t *mstate) {
 
     amqp_rpc_reply_t ret;
     amqp_envelope_t envelope;
@@ -47,6 +48,7 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
     amqp_connection_state_t amqp_state = amqp_new_connection();
 
     amqp_socket_t *ampq_sock = NULL;
+
     if (medcol->rmqconf->SSLenabled &&
             medcol->sslconf->cacertfile && 
             medcol->sslconf->certfile && 
@@ -161,16 +163,10 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
         return NULL;
     }
 
-    amqp_bytes_t queueID;
-    char stringSpace [32];
-    queueID.bytes = &stringSpace;
-    queueID.len = snprintf(queueID.bytes, sizeof(stringSpace), "ID%d", medcol->parent_mediatorid);
-
-
     amqp_queue_declare_ok_t *queue_result = amqp_queue_declare(
             amqp_state,
             1,
-            queueID,
+            mstate->rmq_queueid,
             0,
             1,
             0,
@@ -187,7 +183,7 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
 
     amqp_basic_consume_ok_t *con_ok = amqp_basic_consume(amqp_state,
             1,
-            queueID,
+            mstate->rmq_queueid,
             amqp_empty_bytes,
             0,
             0,
@@ -202,7 +198,7 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
     } else {
         if (!logDisabled)
             logger(LOG_INFO, "OpenLI Mediator: RMQ Registered consumer %s", 
-                queueID.bytes);
+                (char *)(mstate->rmq_queueid.bytes));
     }
 
     return amqp_state;
@@ -211,7 +207,7 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
 int receive_rmq_invite(mediator_collector_t *medcol,
 		single_coll_state_t *mstate) {
     amqp_connection_state_t amqp_state = join_RMQ(medcol, mstate->ipaddr,
-			mstate->iplen, 0);
+			mstate->iplen, 0, mstate);
 	int sock_fd;
 
 	if (!amqp_state) return -1;
