@@ -457,6 +457,7 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
 
     JLG(jval, fwd->destinations_by_id, res->destid);
     if (jval == NULL) {
+        char stringspace[32];
         JLI(jval, fwd->destinations_by_id, res->destid);
 
         if (jval == NULL) {
@@ -478,6 +479,12 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
         med->mediatorid = res->destid;
         init_export_buffer(&(med->buffer));
 
+        if (fwd->ampq_conn) {
+            snprintf(stringspace, 32, "ID%d", med->mediatorid);
+
+            med->rmq_queueid.len = strlen(stringspace);
+            med->rmq_queueid.bytes = (void *)(strdup(stringspace));
+        }
         *jval = (Word_t) med;
     } else {
         med = (export_dest_t *)(*jval);
