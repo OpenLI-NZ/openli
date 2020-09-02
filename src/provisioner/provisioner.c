@@ -1448,6 +1448,17 @@ static void expire_unauthed(provision_state_t *state, prov_epoll_ev_t *pev) {
                     "OpenLI Provisioner: dropping unauthed mediator.");
         }
     }
+
+    if (cs->parent == NULL) {
+        prov_client_t *client;
+
+        HASH_FIND(hh, state->pendingclients, cs->ipaddr, strlen(cs->ipaddr),
+                client);
+        if (client) {
+            logger(LOG_DEBUG, "OpenLI: removed pending client %s from internal list", cs->ipaddr);
+            HASH_DELETE(hh, state->pendingclients, client);
+        }
+    }
     destroy_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);
 
 }
