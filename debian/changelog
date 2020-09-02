@@ -27,6 +27,8 @@ openli (1.0.6-1) unstable; urgency=medium
     response.
   * Fixed hanging when collector processes a RADIUS packet that has been
     padded to the minimum frame size.
+  * Fix provisioner crashes after expiring an unauthorised client that has
+    connected to one of its listening ports.
 
  -- Shane Alcock <shane.alcock@waikato.ac.nz>  Wed, 2 Sep 2020 17:17:53 +1200
 
