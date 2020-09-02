@@ -17,7 +17,7 @@ BuildRequires: libyaml-devel
 BuildRequires: libtrace4-devel >= 4.0.14
 BuildRequires: Judy-devel
 BuildRequires: uthash-devel
-BuildRequires: libwandder1-devel
+BuildRequires: libwandder2-devel
 BuildRequires: zeromq-devel
 BuildRequires: gperftools-devel
 BuildRequires: libosip2-devel
