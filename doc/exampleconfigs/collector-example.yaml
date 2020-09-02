@@ -79,11 +79,30 @@ jmirrors:
    port: 30030
 
 
+# If set to true, then the collector will use RabbitMQ to buffer encoded
+# ETSI records to be forwarded to the mediators. The buffered packets will
+# be persisted to disk and therefore will still be available if the collector
+# process terminates.
+# If set to false, then the collector will buffer the records in memory
+# instead. Buffered packets will be lost if the collector is restarted, and
+# your buffer capacity will be limited by the amount of RAM you have spare.
+RMQenabled: false
+
+# The username to use when authenticating against a local RabbitMQ instance
+RMQname: "rmquser"
+
+# The password to use when authenticating against a local RabbitMQ instance
+RMQpass: "rmqpassword"
 
 # List of interfaces to capture packets on
 inputs:
- - uri: lo            # capture on interface eth1
+ - uri: eth1            # capture on interface eth1
    threads: 2           # use 2 processing threads for this input
+
+ - uri: eth2            # capture on interface eth2
+   threads: 2           # use 2 processing threads for this input
+   hasher: radius       # hash packets based on RADIUS session
 
 # - uri: dpdk:0000:42:00.0     # capture on DPDK interface with this PCI address
 #   threads: 4                 # use 4 processing threads for this input
+#   hasher: bidirectional      # hash based on bidirectional flow 5-tuple

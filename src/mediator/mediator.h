@@ -31,6 +31,7 @@
 #include <libwandder.h>
 #include <libwandder_etsili.h>
 #include <uthash.h>
+#include <amqp.h>
 #include "netcomms.h"
 #include "export_buffer.h"
 #include "util.h"
@@ -89,6 +90,9 @@ typedef struct med_state {
     /** The epoll event for the pcap file rotation timer */
     med_epoll_ev_t *pcaptimerev;
 
+    /** The epoll event for the RabbitMQ heartbeat check timer */
+    med_epoll_ev_t *RMQtimerev;
+
     /** State for managing the connection back to the provisioner */
     mediator_prov_t provisioner;
 
@@ -106,6 +110,7 @@ typedef struct med_state {
 
     /** The SSL configuration for the mediator */
     openli_ssl_config_t sslconf;
+    openli_RMQ_config_t RMQ_conf;
 
 } mediator_state_t;
 

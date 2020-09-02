@@ -32,9 +32,23 @@ pcaprotatefreq: 30
 # one OpenLI component, that you also do so on all of the others.
 #
 # Leave these commented out for unencrypted inter-component communications.
+# Note that if you wish you use SSL authentication for RabbitMQ (see below),
+# then you will need to provide these options regardless (and therefore will
+# have to accept encrypted inter-component communication).
+#
 #tlscert: /etc/openli/openli-mediator-crt.pem
 #tlskey: /etc/openli/openli-mediator-key.pem
 #tlsca: /etc/openli/openli-ca-crt.pem
+
+# To receive records from collectors that are using RabbitMQ to persist
+# unacknowledged data, you will need to provide the credentials necessary
+# for the mediator to authenticate against the RabbitMQ server running on the
+# collectors.
+RMQenabled: false               # set to true to enable RabbitMQ sessions
+RMQname: "rmquser"
+RMQpass: "rmqpassword"          # not required if using SSL auth
+RMQSSL: true                    # set to false to use plain auth instead
+RMQheartbeatfreq: 30            # time between heartbeats in seconds
 
 # If set to 'no', intercepted packets streamed to this mediator by the
 # collectors will be treated as unencrypted -- this may be desirable for

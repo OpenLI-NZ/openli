@@ -30,6 +30,7 @@
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
+#include <amqp_tcp_socket.h>
 
 typedef struct openli_ssl_config {
     char *keyfile;
@@ -44,6 +45,16 @@ enum {
     OPENLI_SSL_CONNECT_WAITING,
     OPENLI_SSL_CONNECT_NOSSL
 };
+
+typedef struct openli_RMQ_config {
+    char *name;
+    char *pass;
+    char *hostname;
+    int port;
+    int heartbeatFreq;
+    int enabled;
+    int SSLenabled;
+} openli_RMQ_config_t;
 
 int create_ssl_context(openli_ssl_config_t *sslconf);
 void free_ssl_config(openli_ssl_config_t *sslconf);

@@ -172,6 +172,51 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     return (buf->buftail - buf->bufhead);
 }
 
+int transmit_heartbeat(int fd, SSL *ssl) {
+    ii_header_t hbeat;
+    char *ptr;
+    int ret;
+    int tosend = sizeof(hbeat);
+
+    hbeat.magic = htonl(OPENLI_PROTO_MAGIC);
+    hbeat.bodylen = 0;
+    hbeat.intercepttype = htons((uint16_t)OPENLI_PROTO_HEARTBEAT);
+    hbeat.internalid = 0;
+
+    ptr = (char *)(&hbeat);
+    while (tosend > 0) {
+        if (ssl) {
+            ret = SSL_write(ssl, ptr, tosend);
+            if (ret <= 0 ) {
+                char errstring[128];
+                int errr = SSL_get_error(ssl, ret);
+                if (errr == SSL_ERROR_WANT_WRITE) {
+                    continue;
+                }
+                logger(LOG_INFO,
+                        "OpenLI: ssl_write error (%d) when sending heartbeat: %s",
+                        errr, ERR_error_string(ERR_get_error(), errstring));
+                return -1;
+            }
+        } else {
+            ret = send(fd, ptr, tosend, MSG_DONTWAIT);
+            if (ret < 0) {
+                if (errno != EAGAIN) {
+                    logger(LOG_INFO,
+                            "OpenLI: error while sending heartbeat: %s",
+                            strerror(errno));
+                    return -1;
+                }
+                continue;
+            }
+        }
+
+        tosend -= ret;
+        ptr += ret;
+    }
+    return (int)(sizeof(hbeat));
+}
+
 int transmit_buffered_records(export_buffer_t *buf, int fd,
         uint64_t bytelimit, SSL *ssl) {
 
@@ -221,6 +266,84 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
             buf->partialfront += (uint32_t)ret;
             return ret;
         }
+        buf->deadfront += ((uint32_t)ret + buf->partialfront);
+    }
+
+    assert(buf->buftail >= buf->bufhead + buf->deadfront);
+    rem = (buf->buftail - (buf->bufhead + buf->deadfront));
+
+    /* Consider shrinking buffer if it is now way too large */
+    if (rem < buf->alloced / 2 && buf->alloced > 10 * BUFFER_ALLOC_SIZE) {
+
+        uint8_t *newbuf = NULL;
+        uint64_t resize = 0;
+        resize = ((rem / BUFFER_ALLOC_SIZE) + 1) * BUFFER_ALLOC_SIZE;
+
+        memmove(buf->bufhead, bhead + sent + offset, rem);
+        newbuf = (uint8_t *)realloc(buf->bufhead, resize);
+        buf->buftail = newbuf + rem;
+        buf->bufhead = newbuf;
+        buf->alloced = resize;
+        buf->deadfront = 0;
+    } else if (buf->alloced - (buf->buftail - buf->bufhead) <
+            0.25 * buf->alloced && buf->deadfront >= 0.25 * buf->alloced) {
+        if (rem > 0) {
+            memmove(buf->bufhead, bhead + sent + offset, rem);
+        }
+        buf->buftail = buf->bufhead + rem;
+        assert(buf->buftail < buf->bufhead + buf->alloced);
+        buf->deadfront = 0;
+    }
+
+    buf->partialfront = 0;
+    return sent;
+}
+
+int transmit_buffered_records_RMQ(export_buffer_t *buf, 
+        amqp_connection_state_t amqp_state, amqp_channel_t channel, 
+        amqp_bytes_t exchange, amqp_bytes_t routing_key,
+        uint64_t bytelimit) {
+
+    uint64_t sent = 0;
+    uint64_t rem = 0;
+    uint8_t *bhead = buf->bufhead + buf->deadfront;
+    uint64_t offset = buf->partialfront;
+    int ret;
+    ii_header_t *header = NULL;
+
+    sent = (buf->buftail - (bhead + offset));
+
+    if (sent > bytelimit) {
+        sent = bytelimit;
+    }
+
+    if (sent != 0) {
+       
+        amqp_bytes_t message_bytes;
+        amqp_basic_properties_t props;
+        message_bytes.len = sent;
+        message_bytes.bytes = bhead + offset;
+
+        props._flags = AMQP_BASIC_DELIVERY_MODE_FLAG;
+        props.delivery_mode = 2;        /* persistent mode */
+
+        int pub_ret = amqp_basic_publish(
+                amqp_state,
+                channel,
+                exchange,
+                routing_key,
+                0, 
+                0, 
+                &props,
+                message_bytes);
+
+        if ( pub_ret != 0 ){
+            logger(LOG_INFO,
+                    "OpenLI: RMQ publish error %d", pub_ret);
+        } else {
+            ret = sent;
+        }
+
         buf->deadfront += ((uint32_t)ret + buf->partialfront);
     }
 

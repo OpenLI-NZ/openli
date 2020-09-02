@@ -233,16 +233,17 @@ int modify_mediator_fdevent(med_epoll_ev_t *modev, uint32_t events) {
  */
 int remove_mediator_fdevent(med_epoll_ev_t *remev) {
 	struct epoll_event ev;
+    int ret = 0;
 
 	if (remev && remev->fd != -1) {
-		if (epoll_ctl(remev->epoll_fd, EPOLL_CTL_DEL, remev->fd, &ev) == -1) {
-		    close(remev->fd);
-			return -1;
-		}
+        ret = epoll_ctl(remev->epoll_fd, EPOLL_CTL_DEL, remev->fd, &ev);
 		close(remev->fd);
 	}
+    if (remev) {
+        free(remev);
+    }
 
-	return 0;
+	return ret;
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

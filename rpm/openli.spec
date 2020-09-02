@@ -17,7 +17,7 @@ BuildRequires: libyaml-devel
 BuildRequires: libtrace4-devel >= 4.0.14
 BuildRequires: Judy-devel
 BuildRequires: uthash-devel
-BuildRequires: libwandder1-devel
+BuildRequires: libwandder2-devel
 BuildRequires: zeromq-devel
 BuildRequires: gperftools-devel
 BuildRequires: libosip2-devel
@@ -26,6 +26,7 @@ BuildRequires: json-c-devel
 BuildRequires: libmicrohttpd-devel
 BuildRequires: systemd
 BuildRequires: sqlcipher-devel
+BuildRequires: librabbitmq-devel
 
 %description
 Software for performing ETSI-compliant lawful intercept
@@ -65,6 +66,7 @@ interface 2 and 3, using keep-alives as per the ETSI standard.
 %package        collector
 Summary:        Collector daemon for an OpenLI system
 Requires:       rsyslog
+Requires:       rabbitmq-server
 
 %description collector
 OpenLI is a software suite that allows network operators to conduct

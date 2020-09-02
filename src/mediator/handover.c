@@ -263,8 +263,14 @@ static void free_handover(handover_t *ho) {
     /* This should close all of our sockets and halt any running timers */
     disconnect_handover(ho);
 
-	release_export_buffer(&(ho->ho_state->buf));
-	pthread_mutex_destroy(&(ho->ho_state->ho_mutex));
+    destroy_mediator_timer(ho->aliveev);
+    destroy_mediator_timer(ho->aliverespev);
+
+    if (ho->ho_state) {
+    	release_export_buffer(&(ho->ho_state->buf));
+	    pthread_mutex_destroy(&(ho->ho_state->ho_mutex));
+        free(ho->ho_state);
+    }
 
     if (ho->ipstr) {
         free(ho->ipstr);

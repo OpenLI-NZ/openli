@@ -95,6 +95,15 @@ main limiting factor for performance is actually packet rate rather than
 raw throughput, i.e. intercepting 500,000 64 byte packets per second is a
 much higher workload than intercepting 100,000 1500 byte packets.
 
+Finally, you can optionally choose a hashing method for your input stream
+that will decide how received packets will be assigned to processing threads
+within the OpenLI collector. The main use of this feature is to notify OpenLI
+of inputs where the incoming traffic will be predominately RADIUS traffic and
+therefore OpenLI should use a custom hashing method to ensure that all RADIUS
+packets for the same user session are received by the same processing thread.
+Valid values for the `hasher` option are `bidirectional` (default), `radius`
+and `balanced`.
+
 ### ALU Mirror Configuration
 If you are using OpenLI to translate the intercept records produced by
 Alcatel-Lucent devices into ETSI-compliant output, any collectors that
@@ -127,6 +136,26 @@ Each sequence entry is defined using two parameters:
 Note that in this context, the sink refers to the destination IP address
 and port of the mirrored traffic.
 
+### RabbitMQ Configuration
+OpenLI supports the use of RabbitMQ to persist intercepted packets on the
+collector which are not currently able to be sent to their corresponding
+mediator (because the mediator is down or busy). The packets will be persisted
+to disk by RabbitMQ, allowing OpenLI to sustain a relatively large backlog of
+packets if need be.
+
+A collector that does not use RabbitMQ will instead persist packets in memory
+only. A memory backlog obviously has a much smaller amount of space available
+and will be lost if the collector process is halted for any reason. Therefore,
+for the best reliability, we recommend configuring your collectors and mediators
+to use RabbitMQ as an intermediary.
+
+More details on how to configure RabbitMQ for a collector can be found at
+https://github.com/wanduow/openli/wiki/Using-RabbitMQ-for-disk-backed-buffers-in-OpenLI.
+A collector only requires a small amount of configuration: a username and
+password that can be used to authenticate against a local RabbitMQ instance,
+and a flag to inform the collector that RabbitMQ output is enabled.
+
+
 ### Configuration Syntax
 All config options aside from the input configuration are standard YAML
 key-value pairs, where the key is the option name and the value is your chosen
@@ -150,6 +179,14 @@ The basic option keys are:
 * sipignoresdpo     -- set to 'yes' to prevent OpenLI from using SDP O fields
                        to group multiple legs for the same VOIP call. See
                        notes below for more explanation. Defaults to 'no'.
+* RMQenabled        -- a flag indicating whether RabbitMQ should be used to
+                       buffer encoded ETSI records that are to be sent to the
+                       mediators. Defaults to 'false'. If set to 'true', the
+                       `RMQname` and `RMQpass` options must also be set.
+* RMQname           -- the username to use when authenticating against a local
+                       RabbitMQ instance.
+* RMQpass           -- the password to use when authenticating against a local
+                       RabbitMQ instance.
 
 Inputs are specified as a YAML sequence with a key of `inputs:`. Each
 sequence item represents a single traffic source to intercept traffic from
@@ -157,6 +194,10 @@ and must contain the following two key-value elements:
 * uri              -- [a libtrace URI](https://github.com/LibtraceTeam/libtrace/wiki/Supported-Trace-Formats)
                       describing which interface to intercept packets on.
 * threads          -- the number of processing threads to use with this input.
+* hasher           -- the hashing method to use for this input (either
+                      balanced, bidirectional or radius). Inputs that receive
+                      RADIUS packets are strongly recommended to use `radius`
+                      here, `bidirectional` otherwise.
 
 As described above, ALU mirrors are defined as a YAML sequence with a key
 of `alumirrors:`. Each sequence item must contain the following two
