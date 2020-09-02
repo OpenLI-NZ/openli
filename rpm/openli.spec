@@ -201,7 +201,7 @@ fi
 
 
 %changelog
-* Fri Jul 24 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.6-1
+* Wed Sep 2 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.6-1
 - Updated for 1.0.6 release
 
 * Thu May 28 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.5-2

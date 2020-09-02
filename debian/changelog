@@ -4,6 +4,15 @@ openli (1.0.6-1) unstable; urgency=medium
     REST API requests must either provide a valid API key or use Digest
     Authentication to confirm that the request has been issued by an
     authorised party.
+  * Collectors may now use rabbitmq to "buffer" encoded records before
+    sending them to their mediator. The records will be persistently
+    buffered to disk, so we are not solely relying on memory to retain
+    records for mediators that have failed or disappeared.
+  * Added RADIUS-friendly hashing option for collector input sources.
+    This option should be used on all inputs that are going to receive
+    RADIUS packets. Resolves issues with RADIUS packet ordering that
+    required users to decrease the number of processing threads for
+    their RADIUS inputs to 1.
   * Added scripts (openli-prov-authsetup.sh and openli-prov-adduser.sh) to
     assist in the creation and management of user credentials for the
     provisioner REST API.
@@ -14,9 +23,12 @@ openli (1.0.6-1) unstable; urgency=medium
   * Fixed bug where multiple configuration changes to an agency handover
     would not be applied correctly on the mediator.
   * Fixed crash when a RADIUS user has been removed but still had an
-    outstanding request for which we then later saw the response.
+    outstanding request. The crash would occur if we then later saw the
+    response.
+  * Fixed hanging when collector processes a RADIUS packet that has been
+    padded to the minimum frame size.
 
- -- Shane Alcock <shane.alcock@waikato.ac.nz>  Wed, 5 Aug 2020 16:33:17 +1200
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Wed, 2 Sep 2020 17:17:53 +1200
 
 openli (1.0.5-2) unstable; urgency=medium
 
