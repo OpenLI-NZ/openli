@@ -89,6 +89,16 @@ int init_restauth_db(provision_state_t *state) {
 #endif
 }
 
+void close_restauth_db(provision_state_t *state) {
+#ifdef HAVE_SQLCIPHER
+    if (state->authdb) {
+        sqlite3_close(state->authdb);
+    }
+#endif
+    state->authdb = NULL;
+    return;
+}
+
 static int send_auth_failure(struct MHD_Connection *connection,
         const char *realm, int cause) {
     int ret;

@@ -524,7 +524,6 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
      * the old mediator.
      */
     snprintf(identifier, 1024, "%s-%s", med->ipstr, med->portstr);
-    logger(LOG_INFO, "identifier is %s\n", identifier);
 
     HASH_FIND(hh, state->knownmeds, identifier, strlen(identifier), knownaddr);
     if (!knownaddr) {
@@ -652,6 +651,7 @@ void clear_prov_state(provision_state_t *state) {
             &(state->knownmeds));
 
     close(state->epoll_fd);
+    close_restauth_db(state);
 
     if (state->clientfd) {
         close(state->clientfd->fd);
@@ -1020,7 +1020,7 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
             if (cs->log_allowed) {
                 nb_log_receive_error(msgtype);
                 logger(LOG_INFO,
-                        "OpenLI provisioner: error receiving message from collector.");
+                        "OpenLI Provisioner: error receiving message from collector.");
             }
             return -1;
         }
