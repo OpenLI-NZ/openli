@@ -1559,7 +1559,10 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
             SSL_free(sync->ssl);
             sync->ssl = NULL;
             sync->instruct_fail = 1;
-            return 0;
+            /* Our SSL configuration is probably bad, so retrying is not going
+             * to help?
+             */
+            return -1;
         }
 
         logger(LOG_DEBUG, "OpenLI: SSL Handshake to provisioner finished");

@@ -257,7 +257,9 @@ static int init_provisioner_connection(mediator_prov_t *prov, int sock) {
  *  @param provfail         Set to 1 if the most recent connection attempt
  *                          failed, 0 otherwise.
  *
- *  @return 1 if the connection attempt fails, 0 otherwise.
+ *  @return 1 if the connection attempt fails for non-fatal reason, 0 if
+ *            the attempt succeeded (or we were already connected), -1
+ *            if the connection attempt failed for an unresolvable reason.
  */
 int attempt_provisioner_connect(mediator_prov_t *prov, int provfail) {
 
@@ -294,9 +296,10 @@ int attempt_provisioner_connect(mediator_prov_t *prov, int provfail) {
 
         if (ret != 0) {
             /* Something went wrong (probably an SSL error), so clear any
-             * initialised state and set a timer to try again soon.
+             * initialised state and make sure we halt the mediator.
              */
-			disconnect_provisioner(prov, 1);
+			disconnect_provisioner(prov, 0);
+            provfail = -1;
         } else {
             if (prov->disable_log == 0) {
                 logger(LOG_INFO,

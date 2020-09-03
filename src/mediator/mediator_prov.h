@@ -116,7 +116,9 @@ int transmit_provisioner(mediator_prov_t *prov, med_epoll_ev_t *mev);
  *  @param provfail         Set to 1 if the most recent connection attempt
  *                          failed, 0 otherwise.
  *
- *  @return 1 if the connection attempt fails, 0 otherwise.
+ *  @return 1 if the connection attempt fails for non-fatal reason, 0 if
+ *            the attempt succeeded (or we were already connected), -1
+ *            if the connection attempt failed for an unresolvable reason.
  */
 int attempt_provisioner_connect(mediator_prov_t *prov, int provfail);
 

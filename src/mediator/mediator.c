@@ -1487,6 +1487,10 @@ static void run(mediator_state_t *state) {
          * a connection active */
         provfail = attempt_provisioner_connect(&(state->provisioner), provfail);
 
+        if (provfail < 0) {
+            break;
+        }
+
         if (!provfail) {
             if (send_mediator_listen_details(state, 1) < 0) {
                 disconnect_provisioner(&(state->provisioner), 1);

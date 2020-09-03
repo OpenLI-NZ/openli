@@ -1457,6 +1457,8 @@ haltsyncthread:
 
     free(sync);
     logger(LOG_DEBUG, "OpenLI: exiting sync thread.");
+    /* Sync thread may have fatally exited, so halt the entire collector? */
+    collector_halt = 1;
     pthread_exit(NULL);
 
 }
