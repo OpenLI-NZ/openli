@@ -107,6 +107,7 @@ typedef enum {
     OPENLI_PROTO_ANNOUNCE_DEFAULT_RADIUS,
     OPENLI_PROTO_WITHDRAW_DEFAULT_RADIUS,
     OPENLI_PROTO_HEARTBEAT,
+    OPENLI_PROTO_SSL_REQUIRED,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -190,6 +191,7 @@ int push_sip_target_onto_net_buffer(net_buffer_t *nb,
 int push_sip_target_withdrawal_onto_net_buffer(net_buffer_t *nb,
         openli_sip_identity_t *sipid, voipintercept_t *vint);
 int push_nomore_intercepts(net_buffer_t *nb);
+int push_ssl_required(net_buffer_t *nb);
 int transmit_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t *err);
 int push_static_ipranges_removal_onto_net_buffer(net_buffer_t *nb,
         ipintercept_t *ipint, static_ipranges_t *ipr);

@@ -298,7 +298,7 @@ int attempt_provisioner_connect(mediator_prov_t *prov, int provfail) {
             /* Something went wrong (probably an SSL error), so clear any
              * initialised state and make sure we halt the mediator.
              */
-			disconnect_provisioner(prov, 0);
+            disconnect_provisioner(prov, 0);
             provfail = -1;
         } else {
             if (prov->disable_log == 0) {

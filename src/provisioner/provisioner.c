@@ -1081,6 +1081,10 @@ static int receive_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
     openli_proto_msgtype_t msgtype;
     uint8_t justauthed = 0;
 
+    if (pev->client->lastsslerror == 1) {
+        return 0;
+    }
+
     do {
         msgtype = receive_net_buffer(cs->incoming, &msgbody, &msglen,
                 &internalid);
@@ -1543,18 +1547,26 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
             ret = continue_provisioner_client_handshake(state->epoll_fd,
                     pev->client, cs);
             if (ret == -1) {
-                disconnect_provisioner_client(state->epoll_fd, pev->client,
-                        cs->ipaddr);
+                /* don't disconnect, instead enable writing on our socket
+                 * so we can send the "SSL required" message
+                 */
+                if (enable_epoll_write(state, pev) == -1) {
+                    logger(LOG_INFO,
+                            "OpenLI: unable to enable epoll write event for SSL-requiring mediator on fd %d: %s",
+                            pev->fd, strerror(errno));
+                    disconnect_provisioner_client(state->epoll_fd, pev->client,
+                            cs->ipaddr);
+                }
             }
             break;
 
         case PROV_EPOLL_MEDIATOR:
             if (ev->events & EPOLLRDHUP) {
                 ret = -1;
-            } else if (ev->events & EPOLLIN) {
-                ret = receive_mediator(state, pev);
             } else if (ev->events & EPOLLOUT) {
                 ret = transmit_socket(state, pev);
+            } else if (ev->events & EPOLLIN) {
+                ret = receive_mediator(state, pev);
             } else {
                 ret = -1;
             }

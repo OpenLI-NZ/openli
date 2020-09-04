@@ -232,7 +232,7 @@ int accept_provisioner_client(openli_ssl_config_t *sslconf, int epollfd,
         char *identifier, prov_client_t *client, int newfd,
 		int successfdtype, int waitfdtype) {
 
-	int r;
+	int r, sslreqmessage = 0;
 	const char *label;
     struct epoll_event ev;
 
@@ -251,6 +251,19 @@ int accept_provisioner_client(openli_ssl_config_t *sslconf, int epollfd,
 	/* If client->ssl is NULL, this will complete a non-TLS connection */
     r = listen_ssl_socket(sslconf, &(client->ssl), newfd);
 
+    if (r == OPENLI_SSL_CONNECT_FAILED) {
+		/* SSL handshake failed -- drop the client */
+        SSL_free(client->ssl);
+        client->ssl = NULL;
+
+        if (client->lastsslerror == 0) {
+            logger(LOG_INFO, "OpenLI: SSL Handshake failed for %s %s", label,
+					identifier);
+        }
+        client->lastsslerror = 1;
+        sslreqmessage = 1;
+    }
+
 	if (!client->state) {
     	create_prov_socket_state(client, -1, identifier, 0, newfd,
 				successfdtype);
@@ -261,18 +274,8 @@ int accept_provisioner_client(openli_ssl_config_t *sslconf, int epollfd,
 				client->ssl);
 	}
 
-    if (r == OPENLI_SSL_CONNECT_FAILED) {
-		/* SSL handshake failed -- drop the client */
+    if (sslreqmessage && push_ssl_required(client->state->outgoing) < 0) {
         close(newfd);
-        SSL_free(client->ssl);
-        client->ssl = NULL;
-
-        if (client->lastsslerror == 0) {
-            logger(LOG_INFO, "OpenLI: SSL Handshake failed for %s %s", label,
-					identifier);
-        }
-
-        client->lastsslerror = 1;
         goto colconnfail;
     }
 
@@ -289,6 +292,10 @@ int accept_provisioner_client(openli_ssl_config_t *sslconf, int epollfd,
     /* Add fd to epoll */
     ev.data.ptr = (void *)client->commev;
     ev.events = EPOLLIN | EPOLLRDHUP;
+
+    if (sslreqmessage) {
+        ev.events |= EPOLLOUT;
+    }
 
     if (epoll_ctl(epollfd, EPOLL_CTL_ADD, client->commev->fd, &ev) < 0) {
         if (client->lastothererror == 0) {
@@ -385,8 +392,15 @@ int continue_provisioner_client_handshake(int epollfd, prov_client_t *client,
                         label, cs->ipaddr);
             }
             client->lastsslerror = 1;
-			start_provisioner_client_idletimer(epollfd, client, cs->ipaddr,
-					PROVISIONER_IDLE_TIMEOUT_SECS);
+
+            destroy_net_buffer(cs->incoming);
+            cs->incoming = NULL;
+            destroy_net_buffer(cs->outgoing);
+            cs->outgoing = create_net_buffer(NETBUF_SEND, client->commev->fd,
+                    NULL);
+
+            push_ssl_required(client->state->outgoing);
+		    client->commev->fdtype = cs->clientrole;
             return -1;
         }
     }

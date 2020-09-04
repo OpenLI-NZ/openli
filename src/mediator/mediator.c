@@ -885,6 +885,13 @@ static int receive_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
                 return -1;
             case OPENLI_PROTO_NO_MESSAGE:
                 break;
+            case OPENLI_PROTO_SSL_REQUIRED:
+                if (state->provisioner.disable_log == 0) {
+                    logger(LOG_INFO,
+                            "OpenLI Mediator: provisioner requires the mediator to use TLS encryption, disconnecting.");
+                }
+                mediator_halt = true;
+                return -1;
             case OPENLI_PROTO_ANNOUNCE_LEA:
                 if (receive_lea_announce(state, msgbody, msglen) == -1) {
                     return -1;
