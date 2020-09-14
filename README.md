@@ -1,6 +1,6 @@
 OpenLI -- open source ETSI-compliant Lawful Intercept software
 
-Version: 1.0.5
+Version: 1.0.6
 
 ---------------------------------------------------------------------------
 
@@ -37,13 +37,13 @@ quality of OpenLI for all of our users.
 
 ## Dependencies
 
-* [libtrace 4.0.5 or later](http://research.wand.net.nz/software/libtrace.php)
+* [libtrace 4.0.14 or later](http://research.wand.net.nz/software/libtrace.php)
   (packages for Debian / Ubuntu are available
-  [from WAND](http://packages.wand.net.nz) as well).
+  [from WAND](https://cloudsmith.io/~wand/repos/libtrace/packages/) as well).
 
-* [libwandder 1.1.0 or later](https://github.com/wanduow/libwandder/)
+* [libwandder 2.0.0 or later](https://github.com/wanduow/libwandder/)
   (packages for Debian / Ubuntu are available
-  [from WAND](http://packages.wand.net.nz) as well).
+  [from WAND](https://cloudsmith.io/~wand/repos/libwandder/packages/) as well).
 
 * libyaml -- Debian / Ubuntu users can install the libyaml-dev package.
   Required for all components.

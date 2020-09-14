@@ -33,11 +33,13 @@
 #include <libwandder.h>
 #include <zmq.h>
 #include <Judy.h>
+#include <amqp.h>
 
 #include "export_shared.h"
 #include "etsili_core.h"
 #include "collector_publish.h"
 #include "export_buffer.h"
+#include "openli_tls.h"
 
 typedef struct export_dest {
     int failmsg;
@@ -54,6 +56,8 @@ typedef struct export_dest {
     SSL *ssl;
     int waitingforhandshake;
     int ssllasterror;
+
+    amqp_bytes_t rmq_queueid;
 
     UT_hash_handle hh_fd;
     UT_hash_handle hh_medid;
@@ -184,6 +188,7 @@ typedef struct forwarding_thread_data {
 
     int conntimerfd;
     int flagtimerfd;
+    uint8_t forcesend_rmq;
 
     Pvoid_t destinations_by_fd;
     Pvoid_t destinations_by_id;
@@ -193,6 +198,10 @@ typedef struct forwarding_thread_data {
 
     SSL_CTX *ctx;
     pthread_mutex_t sslmutex;
+
+    amqp_connection_state_t ampq_conn;
+    amqp_socket_t *ampq_sock;
+    openli_RMQ_config_t RMQ_conf;
 
 } forwarding_thread_data_t;
 

@@ -76,7 +76,30 @@ static inline char *get_event_description(prov_epoll_ev_t *pev) {
 
 void start_mhd_daemon(provision_state_t *state) {
 
+    int started = 0, fd, off, len;
+    char rndseed[8];
+
     assert(state->updatesockfd >= 0);
+
+    fd = open("/dev/urandom", O_RDONLY);
+    if (fd == -1) {
+        if (state->restauthenabled == 1) {
+            logger(LOG_INFO, "Failed to generate random seed for REST authentication: %s", strerror(errno));
+            return;
+        }
+    }
+    off = 0;
+    while (off < 8) {
+        if ((len = read(fd, rndseed + off, 8 - off)) == -1) {
+            if (state->restauthenabled == 1) {
+                logger(LOG_INFO, "Failed to populate random seed for REST authentication: %s", strerror(errno));
+                close(fd);
+                return;
+            }
+        }
+        off += len;
+    }
+    close(fd);
 
     if (state->sslconf.certfile && state->sslconf.keyfile) {
         if (load_pem_into_memory(state->sslconf.keyfile, &(state->key_pem)) < 0)
@@ -104,6 +127,10 @@ void start_mhd_daemon(provision_state_t *state) {
                 state->key_pem,
                 MHD_OPTION_HTTPS_MEM_CERT,
                 state->cert_pem,
+                MHD_OPTION_NONCE_NC_SIZE,
+                300,
+                MHD_OPTION_DIGEST_AUTH_RANDOM,
+                sizeof(rndseed), rndseed,
                 MHD_OPTION_END);
         return;
     }
@@ -120,6 +147,10 @@ startnotls:
             MHD_OPTION_NOTIFY_COMPLETED,
             &complete_update_request,
             state,
+            MHD_OPTION_NONCE_NC_SIZE,
+            300,
+            MHD_OPTION_DIGEST_AUTH_RANDOM,
+            sizeof(rndseed), rndseed,
             MHD_OPTION_END);
 }
 
@@ -241,6 +272,11 @@ int init_prov_state(provision_state_t *state, char *configfile) {
     state->cert_pem = NULL;
 
     state->ignorertpcomfort = 0;
+
+    state->restauthenabled = 0;
+    state->restauthdbfile = NULL;
+    state->restauthkey = NULL;
+    state->authdb = NULL;
 
     init_intercept_config(&(state->interceptconf));
 
@@ -488,7 +524,6 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
      * the old mediator.
      */
     snprintf(identifier, 1024, "%s-%s", med->ipstr, med->portstr);
-    logger(LOG_INFO, "identifier is %s\n", identifier);
 
     HASH_FIND(hh, state->knownmeds, identifier, strlen(identifier), knownaddr);
     if (!knownaddr) {
@@ -616,6 +651,7 @@ void clear_prov_state(provision_state_t *state) {
             &(state->knownmeds));
 
     close(state->epoll_fd);
+    close_restauth_db(state);
 
     if (state->clientfd) {
         close(state->clientfd->fd);
@@ -662,6 +698,12 @@ void clear_prov_state(provision_state_t *state) {
     }
     if (state->cert_pem) {
         free(state->cert_pem);
+    }
+    if (state->restauthdbfile) {
+        free(state->restauthdbfile);
+    }
+    if (state->restauthkey) {
+        free(state->restauthkey);
     }
 
     free_ssl_config(&(state->sslconf));
@@ -978,7 +1020,7 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
             if (cs->log_allowed) {
                 nb_log_receive_error(msgtype);
                 logger(LOG_INFO,
-                        "OpenLI provisioner: error receiving message from collector.");
+                        "OpenLI Provisioner: error receiving message from collector.");
             }
             return -1;
         }
@@ -1038,6 +1080,10 @@ static int receive_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
     uint64_t internalid;
     openli_proto_msgtype_t msgtype;
     uint8_t justauthed = 0;
+
+    if (pev->client->lastsslerror == 1) {
+        return 0;
+    }
 
     do {
         msgtype = receive_net_buffer(cs->incoming, &msgbody, &msglen,
@@ -1406,6 +1452,17 @@ static void expire_unauthed(provision_state_t *state, prov_epoll_ev_t *pev) {
                     "OpenLI Provisioner: dropping unauthed mediator.");
         }
     }
+
+    if (cs->parent == NULL) {
+        prov_client_t *client;
+
+        HASH_FIND(hh, state->pendingclients, cs->ipaddr, strlen(cs->ipaddr),
+                client);
+        if (client) {
+            logger(LOG_DEBUG, "OpenLI: removed pending client %s from internal list", cs->ipaddr);
+            HASH_DELETE(hh, state->pendingclients, client);
+        }
+    }
     destroy_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);
 
 }
@@ -1490,18 +1547,26 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
             ret = continue_provisioner_client_handshake(state->epoll_fd,
                     pev->client, cs);
             if (ret == -1) {
-                disconnect_provisioner_client(state->epoll_fd, pev->client,
-                        cs->ipaddr);
+                /* don't disconnect, instead enable writing on our socket
+                 * so we can send the "SSL required" message
+                 */
+                if (enable_epoll_write(state, pev) == -1) {
+                    logger(LOG_INFO,
+                            "OpenLI: unable to enable epoll write event for SSL-requiring mediator on fd %d: %s",
+                            pev->fd, strerror(errno));
+                    disconnect_provisioner_client(state->epoll_fd, pev->client,
+                            cs->ipaddr);
+                }
             }
             break;
 
         case PROV_EPOLL_MEDIATOR:
             if (ev->events & EPOLLRDHUP) {
                 ret = -1;
-            } else if (ev->events & EPOLLIN) {
-                ret = receive_mediator(state, pev);
             } else if (ev->events & EPOLLOUT) {
                 ret = transmit_socket(state, pev);
+            } else if (ev->events & EPOLLIN) {
+                ret = receive_mediator(state, pev);
             } else {
                 ret = -1;
             }
@@ -1674,6 +1739,20 @@ int main(int argc, char *argv[]) {
     if (init_prov_state(&provstate, configfile) == -1) {
         logger(LOG_INFO, "OpenLI: Error initialising provisioner.");
         return 1;
+    }
+
+    if (provstate.restauthdbfile && provstate.restauthkey) {
+#ifdef HAVE_SQLCIPHER
+        if (init_restauth_db(&provstate) < 0) {
+            logger(LOG_INFO, "OpenLI provisioner: error while opening REST authentication database");
+            return -1;
+        }
+#else
+        logger(LOG_INFO, "OpenLI provisioner: REST Auth DB options are set, but your system does not support using an Auth DB.");
+        logger(LOG_INFO, "OpenLI provisioner: Auth DB options ignored.");
+#endif
+    } else {
+        logger(LOG_INFO, "OpenLI provisioner: REST API does NOT require authentication");
     }
 
     if (provstate.ignorertpcomfort) {

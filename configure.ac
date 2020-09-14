@@ -1,6 +1,6 @@
 # Super primitive configure script
 
-AC_INIT(openli, 1.0.5, salcock@waikato.ac.nz)
+AC_INIT(openli, 1.0.6, salcock@waikato.ac.nz)
 
 AM_INIT_AUTOMAKE([subdir-objects])
 AC_CONFIG_SRCDIR(src/collector/collector.c)
@@ -36,22 +36,29 @@ PROVISIONER_LIBS=
 COLLECTOR_LIBS=
 MEDIATOR_LIBS=
 
-AC_CHECK_LIB([trace], [trace_increment_packet_refcount],,libtrace_found=0)
+PROVISIONER_CFLAGS=
+
+AC_CHECK_LIB([trace], [trace_get_radius],,libtrace_found=0)
 AC_CHECK_LIB([yaml], [yaml_document_get_node],,libyaml_found=0)
 AC_CHECK_LIB([zmq], [zmq_poll],libzmq_found=1,libzmq_found=0)
 AC_CHECK_LIB([m], [pow],,libm_found=0)
 AC_CHECK_LIB([ssl], [SSL_library_init],libssl_found=1,)
-AC_CHECK_LIB([ssl], [OPENSSL_init_ssl],libssl_found=1,)
+AC_CHECK_LIB([ssl], [OPENSSL_init_ssl],libssl11_found=1,)
 AC_CHECK_LIB([crypto], [ERR_load_crypto_strings],libcrypto_found=1,)
 AC_CHECK_LIB([crypto], [EVP_CIPHER_CTX_new],libcrypto_found=1,)
+AC_CHECK_LIB([rabbitmq], [amqp_new_connection],rabbit_found=1,rabbit_found=0)
 
 if test "x$libzmq_found" = "x1"; then
         COLLECTOR_LIBS="$COLLECTOR_LIBS -lzmq"
 fi
 
+if test "x$libssl11_found" = "x1"; then
+        AC_DEFINE(HAVE_LIBSSL_11, 1, [defined to 1 if the system is using libssl 1.1])
+fi
 
 AC_CHECK_HEADERS([uthash.h], [uthash_avail=yes; break;])
 AC_CHECK_HEADERS([syslog.h])
+AC_CHECK_HEADER(amqp.h, ampq_h_found=1, amqp_h_found=0)
 
 AC_CONFIG_FILES([Makefile src/Makefile extlib/Makefile
                 extlib/libpatricia/Makefile])
@@ -80,7 +87,20 @@ if test "x$enable_provisioner" != "xno"; then
         if test "$libjsonc_found" = 0; then
                 AC_MSG_ERROR(Required library libjson-c not found; use LDFLAGS to specify library location)
         fi
+
         PROVISIONER_LIBS="$PROVISIONER_LIBS -lmicrohttpd -ljson-c"
+
+        if test "x$libssl11_found" = "x1"; then
+                AC_CHECK_LIB([sqlcipher], [sqlite3_key], sqlcipher_found=1, sqlcipher_found=0)
+
+                if test "$sqlcipher_found" = 0; then
+                        AC_MSG_ERROR(Required library libsqlcipher not found; use LDFLAGS to specify library location)
+                fi
+
+		AC_DEFINE(HAVE_SQLCIPHER, 1, [defined to 1 if SQLCipher is available])
+                PROVISIONER_LIBS="$PROVISIONER_LIBS -lsqlcipher"
+                PROVISIONER_CFLAGS="-DSQLITE_HAS_CODEC"
+        fi
 fi
 
 if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then
@@ -105,10 +125,10 @@ if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then
 fi
 
 if test "$libtrace_found" = 0; then
-        AC_MSG_ERROR(Required library libtrace 4.0.4 not found; use LDFLAGS to specify library location)
+        AC_MSG_ERROR(Required library libtrace 4.0.14 not found; use LDFLAGS to specify library location)
 fi
 
-if test "$libssl_found" != 1; then
+if test "$libssl_found" != 1 -a "$libssl11_found" != 1; then
         AC_MSG_ERROR(Required library libssl not found; use LDFLAGS to specify library location)
 else
         COLLECTOR_LIBS="$COLLECTOR_LIBS -lssl"
@@ -122,6 +142,19 @@ else
         COLLECTOR_LIBS="$COLLECTOR_LIBS -lcrypto"
         MEDIATOR_LIBS="$MEDIATOR_LIBS -lcrypto"
         PROVISIONER_LIBS="$PROVISIONER_LIBS -lcrypto"
+fi
+
+
+if test "$rabbit_found" != 1; then
+    AC_MSG_ERROR(Required library librabbitmq not found; use LDFLAGS to specify library location)
+else
+        if test "$amqp_h_found" = 0; then
+                AC_MSG_ERROR(Required headers for librabbitmq not found; use CFLAGS to specify header location)
+        else
+                COLLECTOR_LIBS="$COLLECTOR_LIBS -lrabbitmq"
+                MEDIATOR_LIBS="$MEDIATOR_LIBS -lrabbitmq"
+                PROVISIONER_LIBS="$PROVISIONER_LIBS -lrabbitmq"
+        fi
 fi
 
 if test "$libyaml_found" = 0; then
@@ -145,6 +178,7 @@ AC_SUBST([LTLIBOBJS])
 AC_SUBST([COLLECTOR_LIBS])
 AC_SUBST([MEDIATOR_LIBS])
 AC_SUBST([PROVISIONER_LIBS])
+AC_SUBST([PROVISIONER_CFLAGS])
 
 AC_OUTPUT
 

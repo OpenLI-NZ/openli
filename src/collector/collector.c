@@ -851,7 +851,21 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
     }
 
     trace_set_perpkt_threads(inp->trace, inp->threadcount);
-    trace_set_hasher(inp->trace, HASHER_BIDIRECTIONAL, NULL, NULL);
+    hash_radius_init_config(&(inp->hashradconf), 1);
+
+    if (inp->hasher_apply == OPENLI_HASHER_BIDIR) {
+        logger(LOG_INFO, "OpenLI: collector is using a bidirectional hasher for input %s", inp->uri);
+        trace_set_hasher(inp->trace, HASHER_BIDIRECTIONAL, NULL, NULL);
+    } else if (inp->hasher_apply == OPENLI_HASHER_BALANCE) {
+        logger(LOG_INFO, "OpenLI: collector is using a balanced hasher for input %s", inp->uri);
+        trace_set_hasher(inp->trace, HASHER_BALANCE, NULL, NULL);
+    } else if (inp->hasher_apply == OPENLI_HASHER_RADIUS) {
+        logger(LOG_INFO, "OpenLI: collector is using a RADIUS-session hasher for input %s", inp->uri);
+        trace_set_hasher(inp->trace, HASHER_CUSTOM, hash_radius_packet,
+                (void *)&(inp->hashradconf));
+    }
+
+
     trace_set_tick_interval(inp->trace, 1000);
 
     if (trace_pstart(inp->trace, glob, inp->pktcbs, NULL) == -1) {
@@ -876,7 +890,8 @@ static void reload_inputs(collector_global_t *glob,
     HASH_ITER(hh, glob->inputs, oldinp, tmp) {
         HASH_FIND(hh, newstate->inputs, oldinp->uri, strlen(oldinp->uri),
                 newinp);
-        if (!newinp || newinp->threadcount != oldinp->threadcount) {
+        if (!newinp || newinp->threadcount != oldinp->threadcount ||
+                newinp->hasher_apply != oldinp->hasher_apply) {
             /* This input is no longer wanted at all */
             logger(LOG_INFO,
                     "OpenLI collector: stop reading packets from %s\n",
@@ -918,6 +933,7 @@ static void clear_input(colinput_t *input) {
     if (input->uri) {
         free(input->uri);
     }
+    hash_radius_cleanup(&(input->hashradconf));
 }
 
 static inline void init_sync_thread_data(collector_global_t *glob,
@@ -1041,6 +1057,16 @@ static void clear_global_config(collector_global_t *glob) {
 
     if (glob->sharedinfo.provisionerport) {
         free(glob->sharedinfo.provisionerport);
+    }
+
+    if (glob->RMQ_conf.name) {
+        free(glob->RMQ_conf.name);
+    }
+    if (glob->RMQ_conf.pass) {
+        free(glob->RMQ_conf.pass);
+    }
+    if (glob->RMQ_conf.hostname) {
+        free(glob->RMQ_conf.hostname);
     }
 
     pthread_mutex_destroy(&(glob->stats_mutex));
@@ -1171,6 +1197,13 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->sslconf.keyfile = NULL;
     glob->sslconf.cacertfile = NULL;
     glob->sslconf.ctx = NULL;
+
+    glob->RMQ_conf.name = NULL;
+    glob->RMQ_conf.pass = NULL;
+    glob->RMQ_conf.hostname = NULL;
+    glob->RMQ_conf.port = 0;
+    glob->RMQ_conf.heartbeatFreq = 0;
+    glob->RMQ_conf.enabled = 0;
 
     glob->etsitls = 1;
     glob->ignore_sdpo_matches = 0;
@@ -1424,6 +1457,8 @@ haltsyncthread:
 
     free(sync);
     logger(LOG_DEBUG, "OpenLI: exiting sync thread.");
+    /* Sync thread may have fatally exited, so halt the entire collector? */
+    collector_halt = 1;
     pthread_exit(NULL);
 
 }
@@ -1538,6 +1573,7 @@ int main(int argc, char *argv[]) {
         glob->forwarders[i].ctx =
                 (glob->sslconf.ctx && glob->etsitls) ? glob->sslconf.ctx : NULL;
         //forwarder only needs CTX if ctx exists and is enabled 
+        glob->forwarders[i].RMQ_conf = glob->RMQ_conf;
 
         pthread_create(&(glob->forwarders[i].threadid), NULL,
                 start_forwarding_thread, (void *)&(glob->forwarders[i]));

@@ -33,6 +33,7 @@
 #include <assert.h>
 #include <unistd.h>
 #include <sys/timerfd.h>
+#include <amqp_tcp_socket.h>
 
 #include "util.h"
 #include "logger.h"
@@ -41,6 +42,8 @@
 
 #define BUF_BATCH_SIZE (100 * 1024 * 1024)
 #define MIN_SEND_AMOUNT (1 * 1024 * 1024)
+#define AMPQ_BYTES_FROM(x) (amqp_bytes_t){.len=sizeof(x),.bytes=&x}
+#define AMQP_FRAME_MAX 131072
 
 static inline void free_encoded_result(openli_encoded_result_t *res) {
     if (res->liid) {
@@ -88,6 +91,8 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
     JLG(jval, fwd->destinations_by_id, msg->data.med.mediatorid);
 
     if (jval == NULL) {
+        char stringspace[32];
+
         newdest = (export_dest_t *)calloc(1, sizeof(export_dest_t));
 
         newdest->fd = -1;
@@ -102,6 +107,13 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
         newdest->ssl = NULL;
         newdest->ssllasterror = 0;
         newdest->waitingforhandshake = 0;
+
+        if (fwd->ampq_conn) {
+            snprintf(stringspace, 32, "ID%d", newdest->mediatorid);
+
+            newdest->rmq_queueid.len = strlen(stringspace);
+            newdest->rmq_queueid.bytes = (void *)(strdup(stringspace));
+        }
 
         init_export_buffer(&(newdest->buffer));
 
@@ -211,7 +223,9 @@ static void remove_destination(forwarding_thread_data_t *fwd,
     if (med->portstr) {
         free(med->portstr);
     }
-
+    if (med->rmq_queueid.bytes) {
+        free(med->rmq_queueid.bytes);
+    }
 
     free(med);
 }
@@ -395,7 +409,6 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
         return 0;
     }
 
-
     if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
         logger(LOG_INFO,
                 "OpenLI: forced to drop mediator %u because we cannot buffer any more records for it -- please investigate now!",
@@ -444,6 +457,7 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
 
     JLG(jval, fwd->destinations_by_id, res->destid);
     if (jval == NULL) {
+        char stringspace[32];
         JLI(jval, fwd->destinations_by_id, res->destid);
 
         if (jval == NULL) {
@@ -465,6 +479,12 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
         med->mediatorid = res->destid;
         init_export_buffer(&(med->buffer));
 
+        if (fwd->ampq_conn) {
+            snprintf(stringspace, 32, "ID%d", med->mediatorid);
+
+            med->rmq_queueid.len = strlen(stringspace);
+            med->rmq_queueid.bytes = (void *)(strdup(stringspace));
+        }
         *jval = (Word_t) med;
     } else {
         med = (export_dest_t *)(*jval);
@@ -586,6 +606,22 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
             continue;
         }
 
+        if (fwd->ampq_conn) {
+            amqp_queue_declare_ok_t *queue_result = amqp_queue_declare(
+                    fwd->ampq_conn,
+                    1,
+                    dest->rmq_queueid,
+                    0,
+                    1,
+                    0,
+                    0,
+                    amqp_empty_table);
+
+            if (amqp_get_rpc_reply(fwd->ampq_conn).reply_type != AMQP_RESPONSE_NORMAL ) {
+                logger(LOG_INFO, "OpenLI: Failed to declare queue");
+            }
+        }
+
         JLI(jval2, fwd->destinations_by_fd, dest->fd);
         if (jval2 == NULL) {
             logger(LOG_INFO, "memory issue while connecting to export target");
@@ -705,6 +741,79 @@ static int process_control_message(forwarding_thread_data_t *fwd) {
     return 1;
 }
 
+static void rmq_write_buffered(forwarding_thread_data_t *fwd) {
+
+    export_dest_t *dest;
+    PWord_t jval;
+    uint64_t availsend = 0;
+    Word_t index = 0;
+
+    JLF(jval, fwd->destinations_by_id, index);
+    while (jval) {
+        dest = (export_dest_t *)(*jval);
+        JLN(jval, fwd->destinations_by_id, index);
+
+        if (dest->fd != -1 && fwd->forcesend_rmq &&
+                !dest->waitingforhandshake) {
+            /* XXX Warning: will block */
+            if (transmit_heartbeat(dest->fd, dest->ssl) < 0) {
+                logger(LOG_INFO,
+                        "OpenLI: failed to send heartbeat to mediator %s:%s",
+                        dest->ipstr, dest->portstr);
+                disconnect_mediator(fwd, dest);
+            }
+        }
+
+        availsend = get_buffered_amount(&(dest->buffer));
+        if (availsend == 0) {
+            continue;
+        }
+
+        if (availsend < MIN_SEND_AMOUNT && fwd->forcesend_rmq == 0) {
+            continue;
+        }
+
+        if (transmit_buffered_records_RMQ(&(dest->buffer), 
+                fwd->ampq_conn,
+                1,
+                amqp_cstring_bytes(""),
+                dest->rmq_queueid,
+                BUF_BATCH_SIZE) < 0 ) {
+            logger(LOG_INFO, "OpenLI: Error Publishing to RMQ");
+        }
+    }
+}
+
+static void complete_ssl_handshake(forwarding_thread_data_t *fwd,
+        export_dest_t *dest) {
+
+    //either keep running handshake or fail when error
+    int ret = SSL_connect(dest->ssl);
+
+    if (ret <= 0) {
+        ret = SSL_get_error(dest->ssl, ret);
+        if(ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE){
+            //keep trying
+            return;
+        }
+        else {
+            //fail out
+            if (dest->ssllasterror == 0) {
+                logger(LOG_INFO,
+                        "OpenLI: error in continuing SSL handshake with mediator: %s:%s",
+                        dest->ipstr, dest->portstr);
+            }
+            dest->waitingforhandshake = 0;
+            dest->ssllasterror = 1;
+            disconnect_mediator(fwd, dest);
+        }
+    } else {
+        logger(LOG_DEBUG, "OpenLI: SSL Handshake from mediator accepted");
+        dest->waitingforhandshake = 0;
+        dest->ssllasterror = 0;
+    }
+}
+
 static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
     int topollc, x, i;
 
@@ -745,6 +854,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             fwd->forcesend[i] = 1;
         }
 
+        fwd->forcesend_rmq = 1;
         its.it_interval.tv_sec = 0;
         its.it_interval.tv_nsec = 0;
         its.it_value.tv_sec = 1;
@@ -769,6 +879,15 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             fwd->flagtimerfd = -1;
         }
     }
+
+    if (fwd->ampq_conn) {
+        /* Loop over all destinations and see if they have anything to
+         * write to their queue.
+         */
+        rmq_write_buffered(fwd);
+        fwd->forcesend_rmq = 0;
+    }
+
 
     for (i = 3; i < fwd->nextpoll; i++) {
         export_dest_t *dest;
@@ -795,32 +914,11 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         dest = (export_dest_t *)(*jval);
 
         if (dest->waitingforhandshake){
+            complete_ssl_handshake(fwd, dest);
+            continue;
+        }
 
-            int ret = SSL_connect(dest->ssl); //either keep running handshake or fail when error 
-
-            if (ret <= 0){
-                ret = SSL_get_error(dest->ssl, ret);
-                if(ret == SSL_ERROR_WANT_READ || ret == SSL_ERROR_WANT_WRITE){
-                    //keep trying
-                }
-                else {
-                    //fail out
-                    if (dest->ssllasterror == 0) {
-                        logger(LOG_INFO,
-                                "OpenLI: error in continuing SSL handshake with mediator: %s:%s",
-                                dest->ipstr, dest->portstr);
-                    }
-                    dest->waitingforhandshake = 0;
-                    dest->ssllasterror = 1;
-                    disconnect_mediator(fwd, dest);
-                    continue;
-                }
-            }
-            else {
-                logger(LOG_DEBUG, "OpenLI: SSL Handshake from mediator accepted");
-                dest->waitingforhandshake = 0;
-                dest->ssllasterror = 0;
-            }
+        if (fwd->ampq_conn) {
             continue;
         }
 
@@ -848,7 +946,6 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             dest->logallowed = 1;
         }
         fwd->forcesend[i] = 0;
-
     }
     return 1;
 }
@@ -882,7 +979,7 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
 
     fwd->topoll = (zmq_pollitem_t *)calloc(10, sizeof(zmq_pollitem_t));
     fwd->forcesend = (uint8_t *)calloc(10, sizeof(uint8_t));
-
+    fwd->forcesend_rmq = 0;
     fwd->pollsize = 10;
     fwd->nextpoll = 3;
 
@@ -960,6 +1057,41 @@ void *start_forwarding_thread(void *data) {
         goto haltforwarder;
     }
 
+    if (fwd->RMQ_conf.enabled) {
+        if ( fwd->RMQ_conf.name && fwd->RMQ_conf.pass ) {
+            fwd->ampq_conn = amqp_new_connection();
+            fwd->ampq_sock = amqp_tcp_socket_new(fwd->ampq_conn);
+
+            //TODO RMQ instance will always be on localhost? (for collector)
+            if (amqp_socket_open(fwd->ampq_sock, "localhost", 5672 )){
+                logger(LOG_INFO, 
+                        "OpenLI: RMQ forwarding thread %d failed to open amqp socket",
+                        fwd->forwardid);
+                goto haltforwarder;
+            }
+
+            /* login using PLAIN, must specify username and password */
+            if ( (amqp_login(fwd->ampq_conn, "OpenLI", 0, AMQP_FRAME_MAX,0,
+                            AMQP_SASL_METHOD_PLAIN, fwd->RMQ_conf.name,
+                            fwd->RMQ_conf.pass)
+                    ).reply_type != AMQP_RESPONSE_NORMAL ) {
+                logger(LOG_ERR, "OpenLI: RMQ Failed to login to broker using PLAIN auth");
+                goto haltforwarder;
+            }
+
+            amqp_channel_open_ok_t *r = amqp_channel_open(fwd->ampq_conn, 1);
+
+            if ( (amqp_get_rpc_reply(fwd->ampq_conn).reply_type) != AMQP_RESPONSE_NORMAL ) {
+                logger(LOG_ERR, "OpenLI: Failed to open channel");
+                goto haltforwarder;
+            }
+            logger(LOG_INFO, "OpenLI: Connected to RMQ instance");
+        } else {
+            logger(LOG_INFO, "OpenLI: Incomplete RMQ login information supplied");
+            goto haltforwarder;
+        }
+    }
+
     forwarder_main(fwd);
 
     do {
@@ -986,6 +1118,9 @@ void *start_forwarding_thread(void *data) {
     } while (x > 0);
 
 haltforwarder:
+    if (fwd->ampq_conn){
+        amqp_destroy_connection(fwd->ampq_conn);
+    }
     zmq_close(fwd->zmq_ctrlsock);
     remove_all_destinations(fwd);
     logger(LOG_DEBUG, "OpenLI: halting forwarding thread %d",

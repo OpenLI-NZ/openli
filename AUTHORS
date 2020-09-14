@@ -14,7 +14,8 @@ contributed something back to the OpenLI project already.
 In no particular order, we would like to thank the following people:
 
  * Tyler Marriner for adding support for encrypting inter-component
-   communications using TLS.
+   communications using TLS and adding RabbitMQ support to the collector.
+ * Neil Tapp for pointing out many bugs and logging inaccuracies.
 
 Apologies to anyone that has made a contribution but we've forgotten to
 mention you here -- if this has happened to you, please get in touch with the

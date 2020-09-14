@@ -1372,6 +1372,9 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 return -1;
             case OPENLI_PROTO_NO_MESSAGE:
                 break;
+            case OPENLI_PROTO_SSL_REQUIRED:
+                logger(LOG_INFO, "OpenLI collector: provisioner requested that we connect using SSL. Disconnecting.");
+                return -2;
             case OPENLI_PROTO_DISCONNECT_MEDIATORS:
                 sync_drop_all_mediators(sync);
                 ret = 1;
@@ -1559,7 +1562,10 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
             SSL_free(sync->ssl);
             sync->ssl = NULL;
             sync->instruct_fail = 1;
-            return 0;
+            /* Our SSL configuration is probably bad, so retrying is not going
+             * to help?
+             */
+            return -1;
         }
 
         logger(LOG_DEBUG, "OpenLI: SSL Handshake to provisioner finished");
@@ -2135,9 +2141,13 @@ int sync_thread_main(collector_sync_t *sync) {
      */
     if ((items[1].revents & ZMQ_POLLIN) &&
             sync->hellosreceived >= sync->glob->total_col_threads) {
-        if (recv_from_provisioner(sync) <= 0) {
+        if ((rc = recv_from_provisioner(sync)) <= 0) {
             sync_disconnect_provisioner(sync, 0);
-            return 0;
+            if (rc == 0 || rc == -1) {
+                return 0;
+            } else {
+                return -1;
+            }
         }
     }
 
