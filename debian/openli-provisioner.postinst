@@ -1,9 +1,11 @@
 #!/bin/sh
-# postinst script for amplet2
+# postinst script for openli provisioner
 #
 # see: dh_installdeb(1)
 
 set -e
+
+DBPHRASE=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
 
 case "$1" in
     configure)
@@ -12,6 +14,11 @@ case "$1" in
         else
             /etc/init.d/rsyslog restart || exit $?
         fi
+
+        mkdir -p /var/lib/openli/
+        /usr/sbin/openli-prov-authsetup.sh ${DBPHRASE} /var/lib/openli/provauth.db
+        echo ${DBPHRASE} > /etc/openli/provauthdb.phrase
+        chmod 0640 /etc/openli/provauthdb.phrase
         ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)

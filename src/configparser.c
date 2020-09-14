@@ -105,6 +105,7 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         inp->pktcbs = NULL;
         inp->running = 0;
         inp->report_drops = 1;
+        inp->hasher_apply = OPENLI_HASHER_BIDIR;
 
         /* Mappings describe the parameters for each input */
         for (pair = node->data.mapping.pairs.start;
@@ -136,6 +137,23 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
                     strcmp((char *)key->data.scalar.value, "threads") == 0) {
                 inp->threadcount = strtoul(
                         (char *)value->data.scalar.value, NULL, 10);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "hasher") == 0) {
+                if (strcasecmp((char *)value->data.scalar.value,
+                        "balanced") == 0) {
+                    inp->hasher_apply = OPENLI_HASHER_BALANCE;
+                } else if (strcasecmp((char *)value->data.scalar.value,
+                        "bidirectional") == 0) {
+                    inp->hasher_apply = OPENLI_HASHER_BIDIR;
+                } else if (strcasecmp((char *)value->data.scalar.value,
+                        "radius") == 0) {
+                    inp->hasher_apply = OPENLI_HASHER_RADIUS;
+                } else {
+                    logger(LOG_INFO, "OpenLI: unexpected hasher type '%s' in config, ignoring.", (char *)value->data.scalar.value);
+                }
             }
         }
         if (!inp->uri) {
@@ -967,7 +985,7 @@ static int global_parser(void *arg, yaml_document_t *doc,
   * Still TODO:
   *   BER encoding for IPIRIs, UMTSIRIs and UMTSCCs
   */
-#if 0
+#if 1
         if (strcasecmp(value->data.scalar.value, "BER") == 0) {
 #ifdef HAVE_BER_ENCODING
             glob->encoding_method = OPENLI_ENCODING_BER;
@@ -979,6 +997,44 @@ static int global_parser(void *arg, yaml_document_t *doc,
             glob->encoding_method = OPENLI_ENCODING_DER;
         }
 #endif
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQname") == 0) {
+        SET_CONFIG_STRING_OPTION(glob->RMQ_conf.name, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQpass") == 0) {
+        SET_CONFIG_STRING_OPTION(glob->RMQ_conf.pass, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQhostname") == 0) {
+        SET_CONFIG_STRING_OPTION(glob->RMQ_conf.hostname, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQheartbeatfreq") == 0) {
+        glob->RMQ_conf.heartbeatFreq = strtoul((char *)value->data.scalar.value,
+                NULL, 10);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQenabled") == 0) {
+        glob->RMQ_conf.enabled = check_onoff(value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQport") == 0) {
+        glob->RMQ_conf.port = strtoul((char *)value->data.scalar.value,
+                NULL, 10);
     }
     
     return 0;
@@ -1005,13 +1061,13 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "provisionerport") == 0) {
-        SET_CONFIG_STRING_OPTION(state->provport, value);
+        SET_CONFIG_STRING_OPTION(state->provisioner.provport, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "provisioneraddr") == 0) {
-        SET_CONFIG_STRING_OPTION(state->provaddr, value);
+        SET_CONFIG_STRING_OPTION(state->provisioner.provaddr, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -1070,6 +1126,50 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "etsitls") == 0) {
             state->etsitls = check_onoff((char *)value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQname") == 0) {
+        SET_CONFIG_STRING_OPTION(state->RMQ_conf.name, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQpass") == 0) {
+        SET_CONFIG_STRING_OPTION(state->RMQ_conf.pass, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQhostname") == 0) {
+        SET_CONFIG_STRING_OPTION(state->RMQ_conf.hostname, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQheartbeatfreq") == 0) {
+        state->RMQ_conf.heartbeatFreq = strtoul((char *)value->data.scalar.value,
+                NULL, 10);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQenabled") == 0) {
+        state->RMQ_conf.enabled = check_onoff(value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQSSL") == 0) {
+        state->RMQ_conf.SSLenabled = check_onoff(value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQport") == 0) {
+        state->RMQ_conf.port = strtoul((char *)value->data.scalar.value,
+                NULL, 10);
     }
 
     return 0;
@@ -1215,6 +1315,18 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "tlsca") == 0) {
         SET_CONFIG_STRING_OPTION(state->sslconf.cacertfile, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "restauthdb") == 0) {
+        SET_CONFIG_STRING_OPTION(state->restauthdbfile, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "restauthkey") == 0) {
+        SET_CONFIG_STRING_OPTION(state->restauthkey, value);
     }
 
     return 0;

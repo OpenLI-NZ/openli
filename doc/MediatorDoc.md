@@ -58,6 +58,44 @@ Note: a pcap file should not be considered usable until *after* it has been
 rotated -- in-progress pcap traces do not contain all of the necessary
 trailers to allow them to be correctly parsed by a reader.
 
+### RabbitMQ Configuration
+If you have using RabbitMQ to reliably persist the intercepted packets that
+have not yet been received by your mediator, you will need to also provide
+additional configuration on your mediator to allow it to read those packets
+from the RabbitMQ queue on the collector.
+
+OpenLI supports (and recommends!) the use of SSL / TLS to authenticate with the
+RabbitMQ server that is running on the collector, but you may also choose to
+authenticate using the plain method with a password.
+
+Plain authentication will require you to provide the following options in your
+configuration file:
+
+* RMQenabled       -- must be set to `true` to enable RabbitMQ support
+* RMQname          -- the username to use when authenticating with RabbitMQ
+* RMQpass          -- the password to use when authenticating with RabbitMQ
+* RMQSSL           -- must be set to `false` to disable SSL authentication
+* RMQheartbeatfreq -- time between RMQ heartbeat packets that are used to
+                      detect a connection breakdown (default is 0, which
+                      disables heartbeats)
+
+SSL authentication will require you to provide the following options instead:
+
+* RMQenabled       -- must be set to `true` to enable RabbitMQ support
+* RMQname          -- the username to use when authenticating with RabbitMQ
+* RMQSSL           -- must be set to `true` to enable SSL authentication
+* RMQheartbeatfreq -- time between RMQ heartbeat packets that are used to
+                      detect a connection breakdown (default is 0, which
+                      disables heartbeats)
+* tlscert          -- the file containing an SSL certificate for the mediator
+* tlskey           -- the file containing an SSL key for the mediator
+* tlsca            -- the file containing the SSL certificate for the CA that
+                      signed your mediator certificate
+
+See TLSDoc.md for more details on the SSL certificate files required by
+OpenLI, as these will be the same certificates that you will/would use to
+encrypt other inter-component messages in an OpenLI deployment.
+
 ### Configuration Syntax
 All of the mediator config options are standard YAML key-value pairs, where
 the key is the option name and the value is your chosen value for that option.
@@ -71,3 +109,17 @@ The supported option keys are:
 * listenport       -- listen on this port for collectors
 * pcapdirectory    -- the directory to write any pcap trace files to
 * pcaprotatefreq   -- the number of minutes to wait before rotating pcap traces
+* RMQenabled       -- set to `true` if your collectors are using RabbitMQ
+                      to buffer ETSI records destined for this mediator
+* RMQname          -- the username to use when authenticating with RabbitMQ
+* RMQpass          -- the password to use when authenticating with RabbitMQ
+                      (required for plain auth only).
+* RMQSSL           -- set to `true` to use SSL authentication instead of plain
+* RMQheartbeatfreq -- time between RMQ heartbeat packets that are used to
+                      detect a connection breakdown (default is 0, which
+                      disables heartbeats)
+* tlscert          -- the file containing an SSL certificate for the mediator
+* tlskey           -- the file containing an SSL key for the mediator
+* tlsca            -- the file containing the SSL certificate for the CA that
+                      signed your mediator certificate
+

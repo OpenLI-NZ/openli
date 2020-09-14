@@ -1,4 +1,5 @@
 bin_PROGRAMS=
+dist_sbin_SCRIPTS=
 
 if BUILD_PROVISIONER
 bin_PROGRAMS += openliprovisioner
@@ -18,7 +19,11 @@ openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
 
 openliprovisioner_LDFLAGS = -lpthread @PROVISIONER_LIBS@
 openliprovisioner_LDADD = @ADD_LIBS@
-openliprovisioner_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/
+openliprovisioner_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ @PROVISIONER_CFLAGS@
+
+dist_sbin_SCRIPTS += provisioner/authsetup/openli-prov-authsetup.sh \
+                provisioner/authsetup/openli-prov-adduser.sh
+
 endif
 
 if BUILD_COLLECTOR
@@ -52,6 +57,7 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/jmirror_parser.h openli_tls.c openli_tls.h \
                 collector/umtscc.h collector/umtscc.c \
                 collector/umtsiri.h collector/umtsiri.c \
+                collector/radius_hasher.c collector/radius_hasher.h \
                 $(PLUGIN_SRCS)
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 
@@ -63,7 +69,14 @@ endif
 if BUILD_MEDIATOR
 bin_PROGRAMS += openlimediator
 openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
-		byteswap.c byteswap.h \
+		mediator/pcapthread.c mediator/pcapthread.h \
+                mediator/handover.c mediator/handover.h \
+                mediator/med_epoll.c mediator/liidmapping.c \
+                mediator/liidmapping.h mediator/mediator_prov.c \
+                mediator/med_epoll.h mediator/mediator_prov.h \
+                mediator/mediator_coll.c mediator/mediator_coll.h \
+                mediator/mediator_rmq.c \
+                byteswap.c byteswap.h \
                 configparser.c configparser.h util.c util.h \
                 agency.h logger.c logger.h netcomms.c \
                 netcomms.h export_buffer.c intercept.c \
