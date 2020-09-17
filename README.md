@@ -35,6 +35,24 @@ please report them to us via our Github page
 (https://github.com/wanduow/openli) so that we can continue to improve the
 quality of OpenLI for all of our users.
 
+## ALSO IMPORTANT
+We acknowledge that lawful interception is a tool that can easily be abused
+by authoritarian regimes to violate the human rights and privacy of
+innocent citizens. OpenLI is free and open-source software and therefore we
+cannot directly control who uses OpenLI and where OpenLI is used. However, we
+must state that we categorically do not approve of or condone the use of OpenLI
+in countries or territories where the interception of communications can take
+place without the prior approval of a suitable independent legal authority
+(such as a judge or magistrate).
+
+This software was created to allow network operators to comply with their legal
+obligations to assist law enforcement to prevent criminal or terrorist activity.
+Any use of this software to assist with the violation of human rights or the
+oppression of a populace is forbidden. If you are unsure as to whether your use
+of this software may violate these conditions, please contact us as
+<openli-support@waikato.ac.nz> and explain your situation to receive our advice
+on whether you may use OpenLI or not.
+
 ## Dependencies
 
 * [libtrace 4.0.14 or later](http://research.wand.net.nz/software/libtrace.php)
