@@ -5,6 +5,7 @@
 
 set -e
 
+USER=openli
 DBPHRASE=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
 
 case "$1" in
@@ -15,10 +16,17 @@ case "$1" in
             /etc/init.d/rsyslog restart || exit $?
         fi
 
+        adduser --quiet --system --group --no-create-home \
+                --home /etc/openli ${USER}
+
         mkdir -p /var/lib/openli/
         /usr/sbin/openli-prov-authsetup.sh ${DBPHRASE} /var/lib/openli/provauth.db
         echo ${DBPHRASE} > /etc/openli/provauthdb.phrase
         chmod 0640 /etc/openli/provauthdb.phrase
+        chmod 0640 /var/lib/openli/provauth.db
+        chown -R ${USER}: /etc/openli
+        chown -R ${USER}: /var/lib/openli
+        chmod 2750 /etc/openli
         ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)
