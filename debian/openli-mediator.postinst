@@ -5,6 +5,8 @@
 
 set -e
 
+USER="openli"
+
 case "$1" in
     configure)
         if [ -x "`which invoke-rc.d 2>/dev/null`" ]; then
@@ -12,7 +14,13 @@ case "$1" in
         else
             /etc/init.d/rsyslog restart || exit $?
         fi
-        ;;
+
+        adduser --quiet --system --group --no-create-home \
+                --home /etc/openli ${USER}
+
+        chown -R ${USER}: /etc/openli
+        chmod 2750 /etc/openli
+;;
 
     abort-upgrade|abort-remove|abort-deconfigure)
         ;;

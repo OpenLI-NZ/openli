@@ -1,3 +1,9 @@
+openli (1.0.7-1) unstable; urgency=medium
+
+  * OpenLI provisioner and mediator no longer run as root.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Fri, 18 Sep 2020 14:54:27 +1200
+
 openli (1.0.6-1) unstable; urgency=medium
 
   * Added authentication layer to the provisioner REST API. If enabled,
