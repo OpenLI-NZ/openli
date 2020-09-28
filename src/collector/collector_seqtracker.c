@@ -429,6 +429,9 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
     while (!halted) {
         x = zmq_recv(seqdata->zmq_recvpublished, &job, sizeof(job), 0);
         if (x < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
             logger(LOG_INFO, "OpenLI: tracker thread %d got an error receiving from publish queue: %s",
                     seqdata->trackerid, strerror(errno));
             break;

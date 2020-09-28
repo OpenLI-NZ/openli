@@ -356,7 +356,7 @@ static int process_job(openli_encoder_t *enc, void *socket) {
     while (batch < 50) {
         memset(&job, 0, sizeof(openli_encoding_job_t));
         x = zmq_recv(socket, &job, sizeof(openli_encoding_job_t), 0);
-        if (x < 0 && errno != EAGAIN) {
+        if (x < 0 && (errno != EAGAIN && errno != EINTR)) {
             logger(LOG_INFO,
                     "OpenLI: error reading job in encoder worker %d",
                     enc->workerid);

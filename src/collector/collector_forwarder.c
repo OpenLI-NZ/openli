@@ -830,11 +830,17 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         topollc = fwd->nextpoll;
     }
 
-    if (zmq_poll(fwd->topoll, topollc, -1) < 0) {
-        logger(LOG_INFO,
-                "OpenLI: error while polling in forwarder %d: %s",
-                fwd->forwardid, strerror(errno));
-        return -1;
+    while (1) {
+        if (zmq_poll(fwd->topoll, topollc, -1) < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            logger(LOG_INFO,
+                    "OpenLI: error while polling in forwarder %d: %s",
+                    fwd->forwardid, strerror(errno));
+            return -1;
+        }
+        break;
     }
 
     if (fwd->topoll[0].revents & ZMQ_POLLIN) {
