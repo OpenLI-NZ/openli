@@ -36,6 +36,7 @@ Summary:        Central provisioning daemon for an OpenLI system
 Requires:       rsyslog
 Requires:       bash
 Requires:       sqlcipher
+Requires(pre):  shadow-utils
 
 %description provisioner
 OpenLI is a software suite that allows network operators to conduct
@@ -51,6 +52,7 @@ and mediators.
 %package        mediator
 Summary:        Mediation daemon for an OpenLI system
 Requires:       rsyslog
+Requires(pre):  shadow-utils
 
 %description mediator
 OpenLI is a software suite that allows network operators to conduct
@@ -96,6 +98,13 @@ rm -rf $RPM_BUILD_ROOT
 %make_install
 find $RPM_BUILD_ROOT -name '*.la' -exec rm -f {} ';'
 
+%pre provisioner
+getent group openli >/dev/null || groupadd -r openli
+getent passwd openli >/dev/null || \
+    useradd -r -g openli -d /etc/openli -s /sbin/nologin \
+    -c "User for OpenLI" openli
+exit 0
+
 %post provisioner
 if [ $1 -eq 1 ]; then
         /bin/systemctl enable openli-provisioner.service openli-provisioner.socket >/dev/null 2>&1 || :
@@ -112,6 +121,10 @@ if [ $1 -eq 1 ]; then
         /usr/sbin/openli-prov-authsetup.sh ${DBPHRASE} /var/lib/openli/provauth.db
         echo ${DBPHRASE} > /etc/openli/provauthdb.phrase
         chmod 0640 /etc/openli/provauthdb.phrase
+
+        chown -R openli: /etc/openli
+        chown -R openli: /var/lib/openli
+        chmod 2750 /etc/openli
 fi
 
 %preun provisioner
@@ -134,9 +147,19 @@ if [ $1 -ge 1 ]; then
 
 fi
 
+%pre mediator
+getent group openli >/dev/null || groupadd -r openli
+getent passwd openli >/dev/null || \
+    useradd -r -g openli -d /etc/openli -s /sbin/nologin \
+    -c "User for OpenLI" openli
+exit 0
+
 %post mediator
 if [ $1 -eq 1 ]; then
         /bin/systemctl enable openli-mediator.service openli-mediator.socket >/dev/null 2>&1 || :
+        chown -R openli: /etc/openli
+        chown -R openli: /var/lib/openli
+        chmod 2750 /etc/openli
 fi
 
 %preun mediator
