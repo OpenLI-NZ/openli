@@ -118,12 +118,14 @@ if [ $1 -eq 1 ]; then
         # Create provisioner auth database
         DBPHRASE=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
         mkdir -p /var/lib/openli
+        mkdir -p /var/run/openli
         /usr/sbin/openli-prov-authsetup.sh ${DBPHRASE} /var/lib/openli/provauth.db
         echo ${DBPHRASE} > /etc/openli/provauthdb.phrase
         chmod 0640 /etc/openli/provauthdb.phrase
 
         chown -R openli: /etc/openli
         chown -R openli: /var/lib/openli
+        chown -R openli: /var/run/openli
         chmod 2750 /etc/openli
 fi
 
@@ -156,9 +158,11 @@ exit 0
 
 %post mediator
 if [ $1 -eq 1 ]; then
+        mkdir -p /var/run/openli
         /bin/systemctl enable openli-mediator.service openli-mediator.socket >/dev/null 2>&1 || :
         chown -R openli: /etc/openli
         chown -R openli: /var/lib/openli
+        chown -R openli: /var/run/openli
         chmod 2750 /etc/openli
 fi
 

@@ -20,6 +20,7 @@ case "$1" in
                 --home /etc/openli ${USER}
 
         mkdir -p /var/lib/openli/
+        mkdir -p /var/run/openli/
 
         if [ ! -f /var/lib/openli/provauth.db ]; then
             /usr/sbin/openli-prov-authsetup.sh ${DBPHRASE} /var/lib/openli/provauth.db
@@ -30,6 +31,7 @@ case "$1" in
 
         chown -R ${USER}: /etc/openli
         chown -R ${USER}: /var/lib/openli
+        chown -R ${USER}: /var/run/openli
         chmod 2750 /etc/openli
         ;;
 
