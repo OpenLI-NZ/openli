@@ -3,6 +3,7 @@ Description=OpenLI provisioner daemon
 Documentation=http://github.com/wanduow/openli/wiki
 
 [Service]
+User=openli
 Type=simple
 ExecStart=/usr/bin/openliprovisioner -c /etc/openli/provisioner-config.yaml
 ExecReload=/bin/kill -s HUP $MAINPID
