@@ -20,10 +20,14 @@ case "$1" in
                 --home /etc/openli ${USER}
 
         mkdir -p /var/lib/openli/
-        /usr/sbin/openli-prov-authsetup.sh ${DBPHRASE} /var/lib/openli/provauth.db
-        echo ${DBPHRASE} > /etc/openli/provauthdb.phrase
-        chmod 0640 /etc/openli/provauthdb.phrase
-        chmod 0640 /var/lib/openli/provauth.db
+
+        if [ ! -f /var/lib/openli/provauth.db ]; then
+            /usr/sbin/openli-prov-authsetup.sh ${DBPHRASE} /var/lib/openli/provauth.db
+            echo ${DBPHRASE} > /etc/openli/provauthdb.phrase
+            chmod 0640 /etc/openli/provauthdb.phrase
+            chmod 0640 /var/lib/openli/provauth.db
+        fi
+
         chown -R ${USER}: /etc/openli
         chown -R ${USER}: /var/lib/openli
         chmod 2750 /etc/openli
