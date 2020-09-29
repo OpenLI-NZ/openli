@@ -3,6 +3,7 @@ Description=OpenLI mediator daemon
 Documentation=http://github.com/wanduow/openli/wiki
 
 [Service]
+User=openli
 Type=simple
 ExecStart=/usr/bin/openlimediator -c /etc/openli/mediator-config.yaml
 ExecReload=/bin/kill -s HUP $MAINPID

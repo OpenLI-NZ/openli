@@ -1,5 +1,5 @@
 Name:           openli
-Version:        1.0.6
+Version:        1.0.7
 Release:        1%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
@@ -36,6 +36,7 @@ Summary:        Central provisioning daemon for an OpenLI system
 Requires:       rsyslog
 Requires:       bash
 Requires:       sqlcipher
+Requires(pre):  shadow-utils
 
 %description provisioner
 OpenLI is a software suite that allows network operators to conduct
@@ -51,6 +52,7 @@ and mediators.
 %package        mediator
 Summary:        Mediation daemon for an OpenLI system
 Requires:       rsyslog
+Requires(pre):  shadow-utils
 
 %description mediator
 OpenLI is a software suite that allows network operators to conduct
@@ -96,7 +98,16 @@ rm -rf $RPM_BUILD_ROOT
 %make_install
 find $RPM_BUILD_ROOT -name '*.la' -exec rm -f {} ';'
 
+%pre provisioner
+getent group openli >/dev/null || groupadd -r openli
+getent passwd openli >/dev/null || \
+    useradd -r -g openli -d /etc/openli -s /sbin/nologin \
+    -c "User for OpenLI" openli
+exit 0
+
 %post provisioner
+mkdir -p /var/lib/openli
+
 if [ $1 -eq 1 ]; then
         /bin/systemctl enable openli-provisioner.service openli-provisioner.socket >/dev/null 2>&1 || :
 
@@ -108,11 +119,18 @@ if [ $1 -eq 1 ]; then
 
         # Create provisioner auth database
         DBPHRASE=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
-        mkdir -p /var/lib/openli
         /usr/sbin/openli-prov-authsetup.sh ${DBPHRASE} /var/lib/openli/provauth.db
         echo ${DBPHRASE} > /etc/openli/provauthdb.phrase
         chmod 0640 /etc/openli/provauthdb.phrase
 fi
+
+chown -R openli: /etc/openli
+chown -R openli: /var/lib/openli
+
+if [ -d /var/run/openli ]; then
+    chown -R openli: /var/run/openli
+fi
+chmod 2750 /etc/openli
 
 %preun provisioner
 if [ $1 -eq 0 ]; then
@@ -134,10 +152,23 @@ if [ $1 -ge 1 ]; then
 
 fi
 
+%pre mediator
+getent group openli >/dev/null || groupadd -r openli
+getent passwd openli >/dev/null || \
+    useradd -r -g openli -d /etc/openli -s /sbin/nologin \
+    -c "User for OpenLI" openli
+exit 0
+
 %post mediator
 if [ $1 -eq 1 ]; then
         /bin/systemctl enable openli-mediator.service openli-mediator.socket >/dev/null 2>&1 || :
 fi
+
+chown -R openli: /etc/openli
+if [ -d /var/run/openli ]; then
+    chown -R openli: /var/run/openli
+fi
+chmod 2750 /etc/openli
 
 %preun mediator
 if [ $1 -eq 0 ]; then
@@ -201,6 +232,9 @@ fi
 
 
 %changelog
+* Mon Sep 28 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.7-1
+- Updated for 1.0.7 release
+
 * Wed Sep 2 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.6-1
 - Updated for 1.0.6 release
 
