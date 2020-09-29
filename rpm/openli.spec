@@ -129,6 +129,13 @@ if [ $1 -eq 1 ]; then
         chmod 2750 /etc/openli
 fi
 
+if [ $1 -eq 2 ]; then
+        chown -R openli: /etc/openli
+        chown -R openli: /var/lib/openli
+        chown -R openli: /var/run/openli
+        chmod 2750 /etc/openli
+fi
+
 %preun provisioner
 if [ $1 -eq 0 ]; then
         # Disable and stop the units
@@ -160,6 +167,13 @@ exit 0
 if [ $1 -eq 1 ]; then
         mkdir -p /var/run/openli
         /bin/systemctl enable openli-mediator.service openli-mediator.socket >/dev/null 2>&1 || :
+        chown -R openli: /etc/openli
+        chown -R openli: /var/lib/openli
+        chown -R openli: /var/run/openli
+        chmod 2750 /etc/openli
+fi
+
+if [ $1 -eq 2 ]; then
         chown -R openli: /etc/openli
         chown -R openli: /var/lib/openli
         chown -R openli: /var/run/openli
