@@ -127,7 +127,7 @@ fi
 chown -R openli: /etc/openli
 chown -R openli: /var/lib/openli
 
-if [ test -d /var/run/openli ]; then
+if [ -d /var/run/openli ]; then
     chown -R openli: /var/run/openli
 fi
 chmod 2750 /etc/openli
@@ -165,7 +165,7 @@ if [ $1 -eq 1 ]; then
 fi
 
 chown -R openli: /etc/openli
-if [ test -d /var/run/openli ]; then
+if [ -d /var/run/openli ]; then
     chown -R openli: /var/run/openli
 fi
 chmod 2750 /etc/openli
