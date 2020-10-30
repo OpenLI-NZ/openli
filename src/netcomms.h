@@ -108,6 +108,7 @@ typedef enum {
     OPENLI_PROTO_WITHDRAW_DEFAULT_RADIUS,
     OPENLI_PROTO_HEARTBEAT,
     OPENLI_PROTO_SSL_REQUIRED,
+    OPENLI_PROTO_HI1_NOTIFICATION,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -147,6 +148,10 @@ typedef enum {
     OPENLI_PROTO_FIELD_STATICIP_RANGE,
     OPENLI_PROTO_FIELD_CIN,
     OPENLI_PROTO_FIELD_INTOPTIONS,
+    OPENLI_PROTO_FIELD_HI1_NOTIFY_TYPE,
+    OPENLI_PROTO_FIELD_SEQNO,
+    OPENLI_PROTO_FIELD_TS_SEC,
+    OPENLI_PROTO_FIELD_TS_USEC,
 } openli_proto_fieldtype_t;
 
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl);
@@ -199,6 +204,8 @@ int push_static_ipranges_modify_onto_net_buffer(net_buffer_t *nb,
         ipintercept_t *ipint, static_ipranges_t *ipr);
 int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
         ipintercept_t *ipint, static_ipranges_t *ipr);
+int push_hi1_notification_onto_net_buffer(net_buffer_t *nb,
+        hi1_notify_data_t *ndata);
 
 openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
         amqp_connection_state_t amqp_state, uint8_t **msgbody,
@@ -244,6 +251,8 @@ int decode_staticip_removal(uint8_t *msgbody, uint16_t len,
         static_ipranges_t *ipr);
 int decode_staticip_modify(uint8_t *msgbody, uint16_t len,
         static_ipranges_t *ipr);
+int decode_hi1_notification(uint8_t *msgbody, uint16_t len,
+        hi1_notify_data_t *ndata);
 void nb_log_receive_error(openli_proto_msgtype_t err);
 void nb_log_transmit_error(openli_proto_msgtype_t err);
 #endif

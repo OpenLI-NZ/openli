@@ -675,6 +675,54 @@ static int enqueue_etsi(mediator_state_t *state, handover_t *ho,
     return 0;
 }
 
+/** Parse and action an instruction from a provisioner to publish an HI1
+ *  notification to an agency.
+ *
+ *  @param state            The global state for this mediator
+ *  @param msgbody          Pointer to the start of the cease message body
+ *  @param msglen           The size of the cease message, in bytes.
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
+static int receive_hi1_notification(mediator_state_t *state, uint8_t *msgbody,
+        uint16_t msglen) {
+
+    hi1_notify_data_t ndata;
+    char *nottype_strings[] = {
+        "INVALID", "Activated", "Deactivated", "Modified", "ALARM"
+    };
+
+    /** See netcomms.c for this method */
+    if (decode_hi1_notification(msgbody, msglen, &ndata) == -1) {
+        if (state->provisioner.disable_log == 0) {
+            logger(LOG_INFO,
+                    "OpenLI Mediator: received invalid HI1 notification from provisioner.");
+        }
+        return -1;
+    }
+
+    if (ndata.notify_type < 0 || ndata.notify_type > HI1_ALARM) {
+        if (state->provisioner.disable_log == 0) {
+            logger(LOG_INFO,
+                    "OpenLI Mediator: invalid HI1 notification type %u received from provisioner.", ndata.notify_type);
+        }
+        return -1;
+    }
+
+    if (state->provisioner.disable_log == 0) {
+        logger(LOG_INFO,
+                "OpenLI Mediator: received \"%s\" HI1 Notification from provisioner for LIID %s (target agency = %s)",
+                nottype_strings[ndata.notify_type], ndata.liid,
+                ndata.agencyid);
+    }
+
+    /* TODO encode a HI1 notification message and put it on the right
+     * handover queue
+     */
+
+    return 0;
+}
+
 /** Parse and action an instruction from a provisioner to remove an
  *  LIID->agency mapping.
  *
@@ -909,6 +957,11 @@ static int receive_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
                 break;
             case OPENLI_PROTO_CEASE_MEDIATION:
                 if (receive_cease(state, msgbody, msglen) == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_HI1_NOTIFICATION:
+                if (receive_hi1_notification(state, msgbody, msglen) == -1) {
                     return -1;
                 }
                 break;

@@ -266,6 +266,10 @@ static int reload_voipintercepts(provision_state_t *currstate,
             }
             remove_liid_mapping(currstate, voipint->common.liid,
                     voipint->common.liid_len, droppedmeds);
+            if (!droppedmeds) {
+                announce_hi1_notification_to_mediators(currstate,
+                        &(voipint->common), HI1_LI_DEACTIVATED);
+            }
             continue;
         } else if (!voip_intercept_equal(voipint, newequiv)) {
             /* VOIP intercept has changed somehow -- this probably
@@ -279,6 +283,10 @@ static int reload_voipintercepts(provision_state_t *currstate,
                 halt_existing_intercept(currstate, (void *)voipint,
                         OPENLI_PROTO_HALT_VOIPINTERCEPT);
             }
+            if (!droppedmeds) {
+                announce_hi1_notification_to_mediators(currstate,
+                        &(voipint->common), HI1_LI_MODIFIED);
+            }
             remove_liid_mapping(currstate, voipint->common.liid,
                     voipint->common.liid_len, droppedmeds);
 
@@ -291,6 +299,8 @@ static int reload_voipintercepts(provision_state_t *currstate,
                 modify_existing_intercept_options(currstate, (void *)newequiv,
                         OPENLI_PROTO_MODIFY_IPINTERCEPT);
             }
+            /* Probably don't need to announce an HI1 modification here, as
+             * these options are not part of the intercept definition */
         } else {
             if (compare_sip_targets(currstate, voipint, newequiv) < 0) {
                 return -1;
@@ -327,12 +337,20 @@ static int reload_voipintercepts(provision_state_t *currstate,
         h = add_liid_mapping(intconf, voipint->common.liid,
                 voipint->common.targetagency);
 
+        if (!droppedmeds && announce_hi1_notification_to_mediators(currstate,
+                &(voipint->common), HI1_LI_ACTIVATED) == -1) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to send HI1 notification for new VOIP intercept to mediators.");
+            return -1;
+        }
+
         if (!droppedmeds && announce_liidmapping_to_mediators(currstate,
                 h) == -1) {
             logger(LOG_INFO,
                     "OpenLI provisioner: unable to announce new VOIP intercept to mediators.");
             return -1;
         }
+
         if (!droppedcols && announce_single_intercept(currstate,
                 (void *)voipint, push_voipintercept_onto_net_buffer) == -1) {
             logger(LOG_INFO,
@@ -371,6 +389,10 @@ static int reload_ipintercepts(provision_state_t *currstate,
             }
             remove_liid_mapping(currstate, ipint->common.liid,
                     ipint->common.liid_len, droppedmeds);
+            if (!droppedmeds) {
+                announce_hi1_notification_to_mediators(currstate,
+                        &(ipint->common), HI1_LI_DEACTIVATED);
+            }
             logger(LOG_INFO, "OpenLI provisioner: LIID %s has been withdrawn",
                     ipint->common.liid);
             continue;
@@ -380,6 +402,11 @@ static int reload_ipintercepts(provision_state_t *currstate,
              */
             logger(LOG_INFO, "OpenLI provisioner: Details for IP intercept %s have changed -- updating collectors",
                     ipint->common.liid);
+
+            if (!droppedmeds) {
+                announce_hi1_notification_to_mediators(currstate,
+                        &(newequiv->common), HI1_LI_MODIFIED);
+            }
 
             if (!droppedcols) {
                 modify_existing_intercept_options(currstate, (void *)newequiv,
@@ -433,6 +460,13 @@ static int reload_ipintercepts(provision_state_t *currstate,
         /* Add the LIID mapping */
         h = add_liid_mapping(intconf, ipint->common.liid,
                 ipint->common.targetagency);
+
+        if (!droppedmeds && announce_hi1_notification_to_mediators(currstate,
+                &(ipint->common), HI1_LI_ACTIVATED) == -1) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to send HI1 notification for new IP intercept to mediators.");
+            return -1;
+        }
 
         if (!droppedmeds && announce_liidmapping_to_mediators(currstate,
                 h) == -1) {
@@ -817,6 +851,8 @@ int reload_provisioner_config(provision_state_t *currstate) {
 
             modify_existing_intercept_options(currstate, (void *)vint,
                     OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
+            announce_hi1_notification_to_mediators(currstate,
+                    &(vint->common), HI1_LI_MODIFIED);
         }
         pthread_mutex_unlock(&(currstate->interceptconf.safelock));
     }
