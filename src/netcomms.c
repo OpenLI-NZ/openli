@@ -989,6 +989,73 @@ int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
             OPENLI_PROTO_WITHDRAW_MEDIATOR);
 }
 
+#define HI1_NOTIFY_BODY_LEN(ndata) \
+    (sizeof(ndata->notify_type) + sizeof(ndata->seqno) + sizeof(ndata->ts_sec) \
+    + sizeof(ndata->ts_usec) + strlen(ndata->liid) + strlen(ndata->authcc) + \
+    strlen(ndata->delivcc) + strlen(ndata->agencyid) + (8 * 4))
+
+int push_hi1_notification_onto_net_buffer(net_buffer_t *nb,
+        hi1_notify_data_t *ndata) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+    int ret;
+
+    if (HI1_NOTIFY_BODY_LEN(ndata) > 65535) {
+        logger(LOG_INFO,
+                "OpenLI: HI1 notification message is too long to fit in a single message (%d).",
+                HI1_NOTIFY_BODY_LEN(ndata));
+        return -1;
+    }
+
+    totallen = HI1_NOTIFY_BODY_LEN(ndata);
+    populate_header(&hdr, OPENLI_PROTO_HI1_NOTIFICATION, totallen, 0);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_HI1_NOTIFY_TYPE,
+            (uint8_t *)&(ndata->notify_type),
+            sizeof(ndata->notify_type))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID,
+            (uint8_t *)(ndata->liid), strlen(ndata->liid))) == -1) {
+        return -1;
+    }
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC,
+            (uint8_t *)(ndata->authcc), strlen(ndata->authcc))) == -1) {
+        return -1;
+    }
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC,
+            (uint8_t *)(ndata->delivcc), strlen(ndata->delivcc))) == -1) {
+        return -1;
+    }
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LEAID,
+            (uint8_t *)(ndata->agencyid), strlen(ndata->agencyid))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_SEQNO,
+            (uint8_t *)&(ndata->seqno),  sizeof(ndata->seqno))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_TS_SEC,
+            (uint8_t *)&(ndata->ts_sec), sizeof(ndata->ts_sec))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_TS_USEC,
+            (uint8_t *)&(ndata->ts_usec), sizeof(ndata->ts_usec))) == -1) {
+        return -1;
+    }
+
+    return (int)totallen;
+}
+
 #define DEF_RADIUS_BODY_LEN(def) \
     (def->namelen + (1 * 4))
 
@@ -1119,6 +1186,7 @@ int push_ssl_required(net_buffer_t *nb) {
     return push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
             sizeof(ii_header_t));
 }
+
 
 
 int transmit_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t *err) {
@@ -1640,6 +1708,51 @@ int decode_staticip_removal(uint8_t *msgbody, uint16_t len,
 int decode_staticip_modify(uint8_t *msgbody, uint16_t len,
         static_ipranges_t *ipr) {
     return decode_staticip_announcement(msgbody, len, ipr);
+}
+
+int decode_hi1_notification(uint8_t *msgbody, uint16_t len,
+        hi1_notify_data_t *ndata) {
+
+    uint8_t *msgend = msgbody + len;
+
+    memset(ndata, 0, sizeof(hi1_notify_data_t));
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_LEAID) {
+            DECODE_STRING_FIELD(ndata->agencyid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_LIID) {
+            DECODE_STRING_FIELD(ndata->liid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_AUTHCC) {
+            DECODE_STRING_FIELD(ndata->authcc, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_DELIVCC) {
+            DECODE_STRING_FIELD(ndata->delivcc, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_HI1_NOTIFY_TYPE) {
+            ndata->notify_type = *((hi1_notify_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_SEQNO) {
+            ndata->seqno = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_TS_SEC) {
+            ndata->ts_sec = *((uint64_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_TS_USEC) {
+            ndata->ts_usec = *((uint32_t *)valptr);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_INFO,
+                "OpenLI: invalid field in received HI1 Notification: %d.",
+                f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+
+    return 0;
 }
 
 int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {

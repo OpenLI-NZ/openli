@@ -32,6 +32,7 @@
 #include "logger.h"
 #include "netcomms.h"
 #include "provisioner_client.h"
+#include "intercept.h"
 
 /* XXX Duplicated from provisioner.c */
 static inline int enable_epoll_write(provision_state_t *state,
@@ -269,6 +270,48 @@ int disconnect_mediators_from_collectors(provision_state_t *state) {
 
     return 0;
 
+}
+
+int announce_hi1_notification_to_mediators(provision_state_t *state,
+        intercept_common_t *intcomm, hi1_notify_t not_type) {
+
+    /* For now, I'm just going to send the notification to all mediators
+     * and rely on them to ignore those that are not for agencies that
+     * they talk to -- ideally, we would limit these announcements to
+     * only mediators that need to know, but that can be future work...
+     */
+
+    hi1_notify_data_t ndata;
+    struct timeval tv;
+
+    if (intcomm == NULL) {
+        return -1;
+    }
+
+    gettimeofday(&tv, NULL);
+
+    ndata.notify_type = not_type;
+    ndata.liid = intcomm->liid;
+    ndata.authcc = intcomm->authcc;
+    ndata.delivcc = intcomm->delivcc;
+    ndata.agencyid = intcomm->targetagency;
+    ndata.seqno = intcomm->hi1_seqno;
+    ndata.ts_sec = tv.tv_sec;
+    ndata.ts_usec = tv.tv_usec;
+
+    SEND_ALL_MEDIATORS_BEGIN
+        if (push_hi1_notification_onto_net_buffer(sock->outgoing, &ndata) == -1)
+        {
+            if (sock->log_allowed) {
+                logger(LOG_INFO,
+                        "OpenLI provisioner: unable to send HI1 notification for intercept %s to mediator %u.", intcomm->liid, med->mediatorid);
+            }
+            disconnect_provisioner_client(state->epoll_fd, med->client,
+                    med->details->ipstr);
+            continue;
+        }
+    SEND_ALL_MEDIATORS_END
+    return 0;
 }
 
 int remove_liid_mapping(provision_state_t *state,

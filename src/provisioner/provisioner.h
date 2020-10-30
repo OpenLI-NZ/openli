@@ -361,6 +361,8 @@ int announce_single_intercept(provision_state_t *state,
         void *cept, int (*sendfunc)(net_buffer_t *, void *));
 liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
         char *liid, char *agency);
+int announce_hi1_notification_to_mediators(provision_state_t *state,
+        intercept_common_t *intcomm, hi1_notify_t not_type);
 
 /* Implemented in hup_reload.c */
 int reload_provisioner_config(provision_state_t *state);
