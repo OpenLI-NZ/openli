@@ -311,6 +311,7 @@ int announce_hi1_notification_to_mediators(provision_state_t *state,
             continue;
         }
     SEND_ALL_MEDIATORS_END
+    intcomm->hi1_seqno ++;
     return 0;
 }
 
