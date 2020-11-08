@@ -605,7 +605,6 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
         free(found->username);
         free(found);
     }
-    printf("removed %s:%s\n", ipint->username, ipint->common.liid);
     return 0;
 }
 
