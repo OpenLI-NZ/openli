@@ -56,6 +56,8 @@ static inline void encode_tri_body(wandder_encoder_t *encoder) {
 static inline void encode_hi1_notification_body(wandder_encoder_t *encoder,
         hi1_notify_data_t *not_data, char *operatorid ) {
 
+    struct timeval tv;
+
     /* We're not likely to be doing too many of these, so we can
      * get away without having to rely on pre-computing encoded fields
      * and all that extra optimization that we do for IRIs and CCs.
@@ -92,12 +94,12 @@ static inline void encode_hi1_notification_body(wandder_encoder_t *encoder,
         wandder_encode_endseq(encoder);     // End CommunicationIdentifier
 
         ENC_CSEQUENCE(encoder, 3);      // Timestamp
-        wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
-                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &(not_data->ts_sec),
-                sizeof(not_data->ts_sec));
-        wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
-                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(not_data->ts_usec),
-                sizeof(not_data->ts_usec));
+        tv.tv_sec = not_data->ts_sec;
+        tv.tv_usec = not_data->ts_usec;
+
+        wandder_encode_next(encoder, WANDDER_TAG_UTCTIME,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &tv,
+                sizeof(tv));
         wandder_encode_endseq(encoder); // End Timestamp
 
         /* TODO? target-Information? */
