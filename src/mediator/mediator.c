@@ -688,6 +688,9 @@ static int receive_hi1_notification(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
 
     hi1_notify_data_t ndata;
+    wandder_encoded_result_t *encoded_hi1 = NULL;
+    mediator_agency_t *agency;
+
     char *nottype_strings[] = {
         "INVALID", "Activated", "Deactivated", "Modified", "ALARM"
     };
@@ -719,7 +722,38 @@ static int receive_hi1_notification(mediator_state_t *state, uint8_t *msgbody,
     /* TODO encode a HI1 notification message and put it on the right
      * handover queue
      */
+    agency = lookup_agency(&(state->handover_state), ndata.agencyid);
+    if (agency == NULL) {
+        /* We don't know about this supposed agency, but maybe that's
+         * because they only talk to another mediator -- silently ignore
+         * until we've got code that doesn't just broadcast these
+         * notifications to all mediators.
+         */
+         return 0;
+    }
 
+    if (agency->hi2->ho_state->encoder == NULL) {
+        agency->hi2->ho_state->encoder = init_wandder_encoder();
+    } else {
+        reset_wandder_encoder(agency->hi2->ho_state->encoder);
+    }
+
+    encoded_hi1 = encode_etsi_hi1_notification(agency->hi2->ho_state->encoder,
+            &ndata, state->operatorid);
+    if (encoded_hi1 == NULL) {
+        logger(LOG_INFO, "OpenLI Mediator: failed to construct HI1 Notifcation message");
+        return -1;
+    }
+
+    if (enqueue_etsi(state, agency->hi2, encoded_hi1->encoded,
+            encoded_hi1->len) < 0) {
+        wandder_release_encoded_result(agency->hi2->ho_state->encoder,
+                encoded_hi1);
+        return -1;
+    }
+
+    wandder_release_encoded_result(agency->hi2->ho_state->encoder,
+            encoded_hi1);
     return 0;
 }
 

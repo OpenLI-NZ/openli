@@ -38,6 +38,7 @@ uint8_t etsi_ipirioid[4] = {0x05, 0x03, 0x0a, 0x01};
 uint8_t etsi_ipmmccoid[4] = {0x05, 0x05, 0x06, 0x02};
 uint8_t etsi_ipmmirioid[4] = {0x05, 0x05, 0x06, 0x01};
 uint8_t etsi_umtsirioid[9] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x04, 0x01, 0x0f, 0x05};
+uint8_t etsi_hi1operationoid[8] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x00, 0x01, 0x06};
 
 #define END_ENCODED_SEQUENCE(enc, x) \
         wandder_encode_endseq_repeat(enc, x);
@@ -48,6 +49,65 @@ static inline void encode_tri_body(wandder_encoder_t *encoder) {
     wandder_encode_next(encoder, WANDDER_TAG_NULL,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 3, NULL, 0);
     wandder_encode_endseq(encoder);     // End TRIPayload
+    wandder_encode_endseq(encoder);     // End Payload
+    wandder_encode_endseq(encoder);     // End Outermost Sequence
+}
+
+static inline void encode_hi1_notification_body(wandder_encoder_t *encoder,
+        hi1_notify_data_t *not_data, char *operatorid ) {
+
+    /* We're not likely to be doing too many of these, so we can
+     * get away without having to rely on pre-computing encoded fields
+     * and all that extra optimization that we do for IRIs and CCs.
+     */
+
+    ENC_CSEQUENCE(encoder, 2);          // Payload
+    ENC_CSEQUENCE(encoder, 3);          // HI1-Operation
+
+    if (not_data->notify_type >= HI1_LI_ACTIVATED &&
+            not_data->notify_type <= HI1_LI_MODIFIED) {
+        ENC_CSEQUENCE(encoder, not_data->notify_type);   // Notification
+        wandder_encode_next(encoder, WANDDER_TAG_OID,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0,
+                etsi_hi1operationoid, sizeof(etsi_hi1operationoid));
+
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, not_data->liid,
+                strlen(not_data->liid));
+
+        ENC_CSEQUENCE(encoder, 2);      // CommunicationIdentifier
+
+        ENC_CSEQUENCE(encoder, 0);      // NetworkIdentifier
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, operatorid,
+                strlen(operatorid));
+
+        /* No network element ID required for this HI1 record (?) */
+
+        wandder_encode_endseq(encoder); // End NetworkIdentifier
+
+        wandder_encode_next(encoder, WANDDER_TAG_PRINTABLE,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, not_data->delivcc,
+                strlen(not_data->delivcc));
+        wandder_encode_endseq(encoder);     // End CommunicationIdentifier
+
+        ENC_CSEQUENCE(encoder, 3);      // Timestamp
+        wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &(not_data->ts_sec),
+                sizeof(not_data->ts_sec));
+        wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(not_data->ts_usec),
+                sizeof(not_data->ts_usec));
+        wandder_encode_endseq(encoder); // End Timestamp
+
+        /* TODO? target-Information? */
+
+        wandder_encode_endseq(encoder); // End Notification
+    }
+
+    /* TODO add support for alarm notifications */
+
+    wandder_encode_endseq(encoder);     // End HI1-Operation
     wandder_encode_endseq(encoder);     // End Payload
     wandder_encode_endseq(encoder);     // End Outermost Sequence
 }
@@ -845,9 +905,11 @@ static inline void encode_etsili_pshdr(wandder_encoder_t *encoder,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, hdrdata->operatorid,
             hdrdata->operatorid_len);
 
-    wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, hdrdata->networkelemid,
-            hdrdata->networkelemid_len);
+    if (hdrdata->networkelemid) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, hdrdata->networkelemid,
+                hdrdata->networkelemid_len);
+    }
     wandder_encode_endseq(encoder);
 
     wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
@@ -978,6 +1040,32 @@ wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
     encode_etsili_pshdr(encoder, hdrdata, 0, seqno, &tv);
     encode_tri_body(encoder);
 
+    return wandder_encode_finish(encoder);
+}
+
+wandder_encoded_result_t *encode_etsi_hi1_notification(
+        wandder_encoder_t *encoder, hi1_notify_data_t *not_data,
+        char *operatorid) {
+
+    struct timeval tv;
+    wandder_etsipshdr_data_t hdrdata;
+
+    hdrdata.liid = not_data->liid;
+    hdrdata.liid_len = strlen(not_data->liid);
+    hdrdata.authcc = not_data->authcc;
+    hdrdata.authcc_len = strlen(not_data->authcc);
+    hdrdata.delivcc = not_data->delivcc;
+    hdrdata.delivcc_len = strlen(not_data->delivcc);
+    hdrdata.operatorid = operatorid;
+    hdrdata.operatorid_len = strlen(operatorid);
+    hdrdata.networkelemid = NULL;
+    hdrdata.networkelemid_len = 0;
+    hdrdata.intpointid = NULL;
+    hdrdata.intpointid_len = 0;
+
+    gettimeofday(&tv, NULL);
+    encode_etsili_pshdr(encoder, &hdrdata, 0, (int64_t)not_data->seqno, &tv);
+    encode_hi1_notification_body(encoder, not_data, operatorid);
     return wandder_encode_finish(encoder);
 }
 
@@ -1197,10 +1285,15 @@ void etsili_preencode_static_fields(
     wandder_encode_preencoded_value(p, details->operatorid, strlen(details->operatorid));
 
     p = &(pendarray[OPENLI_PREENCODE_NETWORKELEMID]);
-    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
-    p->identifier = 1;
-    p->encodeas = WANDDER_TAG_OCTETSTRING;
-    wandder_encode_preencoded_value(p, details->networkelemid, strlen(details->networkelemid));
+    if (details->networkelemid) {
+        p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+        p->identifier = 1;
+        p->encodeas = WANDDER_TAG_OCTETSTRING;
+        wandder_encode_preencoded_value(p, details->networkelemid, strlen(details->networkelemid));
+    } else {
+        p->valspace = NULL;
+        p->vallen = 0;
+    }
 
     p = &(pendarray[OPENLI_PREENCODE_DELIVCC]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
