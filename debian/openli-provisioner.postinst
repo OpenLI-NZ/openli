@@ -6,7 +6,10 @@
 set -e
 
 USER=openli
-DBPHRASE=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
+s=""
+until s="$s$(dd bs=24 count=1 if=/dev/urandom 2>/dev/null | LC_ALL=C tr -cd 'a-zA-Z0-9')"
+    [ ${#s} -ge 16 ]; do :; done
+DBPHRASE=$(printf %.16s $s)
 
 case "$1" in
     configure)
