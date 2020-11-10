@@ -58,6 +58,13 @@ typedef enum {
     OPENLI_IPINT_OPTION_RADIUS_IDENT_USER = 1,
 } ipintercept_options_t;
 
+typedef enum {
+    HI1_LI_ACTIVATED = 1,
+    HI1_LI_DEACTIVATED = 2,
+    HI1_LI_MODIFIED = 3,
+    HI1_ALARM = 4
+} hi1_notify_t;
+
 typedef struct static_ipranges {
     char *rangestr;
     char *liid;
@@ -76,7 +83,19 @@ typedef struct intercept_common {
     uint32_t destid;
     char *targetagency;
     int seqtrackerid;
+    uint32_t hi1_seqno;
 } intercept_common_t;
+
+typedef struct hi1_notify_data {
+    hi1_notify_t notify_type;
+    char *liid;
+    char *authcc;
+    char *delivcc;
+    char *agencyid;
+    uint32_t seqno;
+    uint64_t ts_sec;
+    uint32_t ts_usec;
+} hi1_notify_data_t;
 
 typedef struct ipintercept {
     intercept_common_t common;

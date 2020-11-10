@@ -37,10 +37,16 @@
 
 int publish_openli_msg(void *pubsock, openli_export_recv_t *msg) {
 
-    if (zmq_send(pubsock, &msg, sizeof(openli_export_recv_t *), 0) < 0) {
-        logger(LOG_INFO, "Error while publishing OpenLI export message: %s",
-                strerror(errno));
-        return -1;
+    while (1) {
+        if (zmq_send(pubsock, &msg, sizeof(openli_export_recv_t *), 0) < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            logger(LOG_INFO, "Error while publishing OpenLI export message: %s",
+                    strerror(errno));
+            return -1;
+        }
+        break;
     }
 
     return 0;

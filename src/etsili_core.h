@@ -31,6 +31,8 @@
 #include <libwandder.h>
 #include <uthash.h>
 
+#include "src/intercept.h"
+
 #define ENC_USEQUENCE(enc) wandder_encode_next(enc, WANDDER_TAG_SEQUENCE, \
         WANDDER_CLASS_UNIVERSAL_CONSTRUCT, WANDDER_TAG_SEQUENCE, NULL, 0)
 
@@ -197,6 +199,10 @@ wandder_encoded_result_t *encode_etsi_sipiri(wandder_encoder_t *encoder,
 wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t seqno);
 
+
+wandder_encoded_result_t *encode_etsi_hi1_notification(
+        wandder_encoder_t *encoder, hi1_notify_data_t *not_data,
+        char *operatorid);
 
 etsili_generic_freelist_t *create_etsili_generic_freelist(uint8_t needmutex);
 etsili_generic_t *create_etsili_generic(etsili_generic_freelist_t *freelist,

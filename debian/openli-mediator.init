@@ -19,6 +19,7 @@ DAEMON=/usr/bin/$DAEMON_NAME
 PIDDIR=/var/run/openli
 CONFDIR=/etc/openli
 SCRIPTNAME=/etc/init.d/$PKG_NAME
+USER=openli
 
 if [ ! -x $DAEMON ]; then
         echo "Cannot find $DAEMON, aborting"
@@ -35,6 +36,7 @@ do_local_config()
 {
     if [ ! -d $PIDDIR ]; then
 	mkdir -p $PIDDIR
+        chown ${USER}: ${PIDDIR}
     fi
 }
 
@@ -71,7 +73,7 @@ do_start()
     do_local_config
     log_daemon_msg "Starting ${DESC}" "$CONFFILE"
 
-    start-stop-daemon --start --quiet --exec $DAEMON \
+    start-stop-daemon --start --quiet --chuid ${USER} --exec $DAEMON \
 	--pidfile $PIDFILE -- -p $PIDFILE -d -c $CONFFILE
 
     if [ $? -eq 0 ]; then
