@@ -119,7 +119,7 @@ if [ $1 -eq 1 ]; then
 
         # Create provisioner auth database
         s=""
-        until s+=$(dd bs=24 count=1 if=/dev/urandom | LC_ALL=C tr -cd 'a-zA-Z0-9')
+        until s+=$(dd bs=24 count=1 if=/dev/urandom 2>/dev/null | LC_ALL=C tr -cd 'a-zA-Z0-9')
              ((${#s} >= 16)); do :; done
         DBPHRASE=${s:0:16}
         /usr/sbin/openli-prov-authsetup.sh ${DBPHRASE} /var/lib/openli/provauth.db
