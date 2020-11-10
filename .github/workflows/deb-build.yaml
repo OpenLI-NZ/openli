@@ -16,13 +16,12 @@ jobs:
          arch:
            - amd64
          target:
-           - "debian:jessie"
            - "debian:stretch"
            - "debian:buster"
            - "ubuntu:xenial"
            - "ubuntu:bionic"
-           - "ubuntu:eoan"
            - "ubuntu:focal"
+           - "ubuntu:groovy"
 
      steps:
       - name: Checkout repo
