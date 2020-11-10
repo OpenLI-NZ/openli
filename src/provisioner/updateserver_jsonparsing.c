@@ -253,6 +253,8 @@ int remove_voip_intercept(update_con_info_t *cinfo, provision_state_t *state,
                 OPENLI_PROTO_HALT_VOIPINTERCEPT);
         remove_liid_mapping(state, found->common.liid, found->common.liid_len,
                 0);
+        announce_hi1_notification_to_mediators(state, &(found->common),
+                HI1_LI_DEACTIVATED);
         free_single_voipintercept(found);
         logger(LOG_INFO,
                 "OpenLI: removed VOIP intercept '%s' via update socket.",
@@ -276,6 +278,8 @@ int remove_ip_intercept(update_con_info_t *cinfo, provision_state_t *state,
                 OPENLI_PROTO_HALT_IPINTERCEPT);
         remove_liid_mapping(state, found->common.liid, found->common.liid_len,
                 0);
+        announce_hi1_notification_to_mediators(state, &(found->common),
+                HI1_LI_DEACTIVATED);
         free_single_ipintercept(found);
         logger(LOG_INFO,
                 "OpenLI: removed IP intercept '%s' via update socket.",
@@ -796,6 +800,13 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                 vint->common.liid);
     }
 
+    if (announce_hi1_notification_to_mediators(state, &(vint->common),
+            HI1_LI_ACTIVATED) < 0) {
+        logger(LOG_INFO,
+                "OpenLI provisioner: unable to send HI1 notification for new VOIP intercept %s to mediators.",
+                vint->common.liid);
+    }
+
     vint->awaitingconfirm = 0;
     logger(LOG_INFO,
             "OpenLI provisioner: added new VOIP intercept %s via update socket.",
@@ -931,6 +942,13 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                 ipint->common.liid);
     }
 
+    if (announce_hi1_notification_to_mediators(state, &(ipint->common),
+            HI1_LI_ACTIVATED) < 0) {
+        logger(LOG_INFO,
+                "OpenLI provisioner: unable to send HI1 notification for new VOIP intercept %s to mediators.",
+                ipint->common.liid);
+    }
+
     ipint->awaitingconfirm = 0;
     logger(LOG_INFO,
             "OpenLI provisioner: added new IP intercept %s via update socket.",
@@ -1039,6 +1057,8 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     if (changed) {
         modify_existing_intercept_options(state, (void *)found,
                     OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
+        announce_hi1_notification_to_mediators(state, &(found->common),
+                HI1_LI_MODIFIED);
     }
 
     logger(LOG_INFO,
@@ -1220,6 +1240,8 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     if (changed) {
         modify_existing_intercept_options(state, (void *)found,
                     OPENLI_PROTO_MODIFY_IPINTERCEPT);
+        announce_hi1_notification_to_mediators(state, &(found->common),
+                HI1_LI_MODIFIED);
     }
 
     logger(LOG_INFO,

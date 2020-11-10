@@ -516,6 +516,7 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         newcept->active = 1;
         newcept->common.destid = 0;
         newcept->common.targetagency = NULL;
+        newcept->common.hi1_seqno = 0;
         newcept->awaitingconfirm = 1;
         newcept->options = 0;
 
@@ -612,6 +613,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->username = NULL;
         newcept->common.destid = 0;
         newcept->common.targetagency = NULL;
+        newcept->common.hi1_seqno = 0;
         newcept->awaitingconfirm = 1;
         newcept->common.liid_len = 0;
         newcept->username_len = 0;

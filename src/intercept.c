@@ -45,6 +45,7 @@ static inline void copy_intercept_common(intercept_common_t *src,
     dest->authcc_len = src->authcc_len;
     dest->delivcc_len = src->delivcc_len;
     dest->destid = src->destid;
+    dest->hi1_seqno = src->hi1_seqno;
 }
 
 int are_sip_identities_same(openli_sip_identity_t *a,
@@ -604,7 +605,6 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
         free(found->username);
         free(found);
     }
-    printf("removed %s:%s\n", ipint->username, ipint->common.liid);
     return 0;
 }
 

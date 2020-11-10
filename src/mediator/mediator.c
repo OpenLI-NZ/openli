@@ -675,6 +675,88 @@ static int enqueue_etsi(mediator_state_t *state, handover_t *ho,
     return 0;
 }
 
+/** Parse and action an instruction from a provisioner to publish an HI1
+ *  notification to an agency.
+ *
+ *  @param state            The global state for this mediator
+ *  @param msgbody          Pointer to the start of the cease message body
+ *  @param msglen           The size of the cease message, in bytes.
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
+static int receive_hi1_notification(mediator_state_t *state, uint8_t *msgbody,
+        uint16_t msglen) {
+
+    hi1_notify_data_t ndata;
+    wandder_encoded_result_t *encoded_hi1 = NULL;
+    mediator_agency_t *agency;
+
+    char *nottype_strings[] = {
+        "INVALID", "Activated", "Deactivated", "Modified", "ALARM"
+    };
+
+    /** See netcomms.c for this method */
+    if (decode_hi1_notification(msgbody, msglen, &ndata) == -1) {
+        if (state->provisioner.disable_log == 0) {
+            logger(LOG_INFO,
+                    "OpenLI Mediator: received invalid HI1 notification from provisioner.");
+        }
+        return -1;
+    }
+
+    if (ndata.notify_type < 0 || ndata.notify_type > HI1_ALARM) {
+        if (state->provisioner.disable_log == 0) {
+            logger(LOG_INFO,
+                    "OpenLI Mediator: invalid HI1 notification type %u received from provisioner.", ndata.notify_type);
+        }
+        return -1;
+    }
+
+    if (state->provisioner.disable_log == 0) {
+        logger(LOG_INFO,
+                "OpenLI Mediator: received \"%s\" HI1 Notification from provisioner for LIID %s (target agency = %s)",
+                nottype_strings[ndata.notify_type], ndata.liid,
+                ndata.agencyid);
+    }
+
+    /* TODO encode a HI1 notification message and put it on the right
+     * handover queue
+     */
+    agency = lookup_agency(&(state->handover_state), ndata.agencyid);
+    if (agency == NULL) {
+        /* We don't know about this supposed agency, but maybe that's
+         * because they only talk to another mediator -- silently ignore
+         * until we've got code that doesn't just broadcast these
+         * notifications to all mediators.
+         */
+         return 0;
+    }
+
+    if (agency->hi2->ho_state->encoder == NULL) {
+        agency->hi2->ho_state->encoder = init_wandder_encoder();
+    } else {
+        reset_wandder_encoder(agency->hi2->ho_state->encoder);
+    }
+
+    encoded_hi1 = encode_etsi_hi1_notification(agency->hi2->ho_state->encoder,
+            &ndata, state->operatorid);
+    if (encoded_hi1 == NULL) {
+        logger(LOG_INFO, "OpenLI Mediator: failed to construct HI1 Notifcation message");
+        return -1;
+    }
+
+    if (enqueue_etsi(state, agency->hi2, encoded_hi1->encoded,
+            encoded_hi1->len) < 0) {
+        wandder_release_encoded_result(agency->hi2->ho_state->encoder,
+                encoded_hi1);
+        return -1;
+    }
+
+    wandder_release_encoded_result(agency->hi2->ho_state->encoder,
+            encoded_hi1);
+    return 0;
+}
+
 /** Parse and action an instruction from a provisioner to remove an
  *  LIID->agency mapping.
  *
@@ -909,6 +991,11 @@ static int receive_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
                 break;
             case OPENLI_PROTO_CEASE_MEDIATION:
                 if (receive_cease(state, msgbody, msglen) == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_HI1_NOTIFICATION:
+                if (receive_hi1_notification(state, msgbody, msglen) == -1) {
                     return -1;
                 }
                 break;

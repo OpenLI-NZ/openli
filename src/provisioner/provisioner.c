@@ -451,11 +451,24 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
     mediator_address_t *knownaddr;
     prov_mediator_t *provmed = NULL, *prevmed = NULL;
     char identifier[1024];
-    int ret = 0;
+    int ret = 0, skipannounce = 0;
 
     if (decode_mediator_announcement(medmsg, msglen, med) == -1) {
         logger(LOG_INFO,
                 "OpenLI: provisioner received bogus mediator announcement.");
+        free(med);
+        return -1;
+    }
+
+    HASH_FIND(hh, state->pendingclients, clientname, strlen(clientname),
+            pending);
+
+    if (!pending) {
+        logger(LOG_INFO,
+                "OpenLI provisioner: received an announcement from mediator %u via %s, but this mediator is unknown to us?",
+                med->mediatorid, clientname);
+        free(med->ipstr);
+        free(med->portstr);
         free(med);
         return -1;
     }
@@ -471,21 +484,15 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
             logger(LOG_INFO,
                     "OpenLI provisioner: mediator %u has reconnected (%s:%s)",
                     med->mediatorid, med->ipstr, med->portstr);
+            skipannounce = 1;
+        } else {
 
-            /* Don't need to inform collectors, they should reconnect on
-             * their own once the mediator starts listening.
-             */
-            free(med->ipstr);
-            free(med->portstr);
-            free(med);
-            return 0;
+            logger(LOG_INFO,
+                    "OpenLI provisioner: replacing mediator %u (%s:%s) with %u (%s:%s)",
+                    prevmed->mediatorid, prevmed->details->ipstr,
+                    prevmed->details->portstr,
+                    med->mediatorid, med->ipstr, med->portstr);
         }
-
-        logger(LOG_INFO,
-                "OpenLI provisioner: replacing mediator %u (%s:%s) with %u (%s:%s)",
-                prevmed->mediatorid, prevmed->details->ipstr,
-                prevmed->details->portstr,
-                med->mediatorid, med->ipstr, med->portstr);
 
         //announce_mediator_withdraw(state, prevmed);
         tmp = prevmed->details;
@@ -496,27 +503,26 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
         free(tmp->portstr);
         free(tmp);
     } else {
-        HASH_FIND(hh, state->pendingclients, clientname, strlen(clientname),
-                pending);
-
-        if (!pending) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: received an announcement from mediator %u via %s, but this mediator is unknown to us?",
-                    med->mediatorid, clientname);
-            free(med->ipstr);
-            free(med->portstr);
-            free(med);
-            return -1;
-        }
 
         provmed = calloc(1, sizeof(prov_mediator_t));
         provmed->mediatorid = med->mediatorid;
         provmed->details = med;
-        provmed->client = pending;
-        HASH_DELETE(hh, state->pendingclients, pending);
+
         HASH_ADD_KEYPTR(hh, state->mediators, &(provmed->mediatorid),
                 sizeof(provmed->mediatorid), provmed);
-        cs->parent = (void *)provmed;
+    }
+
+    if (provmed->client != NULL) {
+        destroy_provisioner_client(state->epoll_fd, provmed->client,
+                provmed->client->identifier);
+    }
+
+    provmed->client = pending;
+    HASH_DELETE(hh, state->pendingclients, pending);
+    cs->parent = (void *)provmed;
+
+    if (skipannounce) {
+        return ret;
     }
 
     /* If another mediator is using the same IP + port as a previous one,
