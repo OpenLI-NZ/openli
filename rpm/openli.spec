@@ -232,7 +232,7 @@ fi
 
 
 %changelog
-* Mon Sep 28 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.7-1
+* Tue Nov 10 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.7-1
 - Updated for 1.0.7 release
 
 * Wed Sep 2 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.6-1
