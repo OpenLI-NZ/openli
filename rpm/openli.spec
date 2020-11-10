@@ -118,7 +118,10 @@ if [ $1 -eq 1 ]; then
         chmod 0640 /etc/openli/running-intercept-example.yaml
 
         # Create provisioner auth database
-        DBPHRASE=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
+        s=""
+        until s+=$(dd bs=24 count=1 if=/dev/urandom | LC_ALL=C tr -cd 'a-zA-Z0-9')
+             ((${#s} >= 16)); do :; done
+        DBPHRASE=${s:0:16}
         /usr/sbin/openli-prov-authsetup.sh ${DBPHRASE} /var/lib/openli/provauth.db
         echo ${DBPHRASE} > /etc/openli/provauthdb.phrase
         chmod 0640 /etc/openli/provauthdb.phrase
