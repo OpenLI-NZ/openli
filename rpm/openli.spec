@@ -1,6 +1,6 @@
 Name:           openli
 Version:        1.0.7
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
 License:        GPLv3
@@ -118,7 +118,10 @@ if [ $1 -eq 1 ]; then
         chmod 0640 /etc/openli/running-intercept-example.yaml
 
         # Create provisioner auth database
-        DBPHRASE=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
+        s=""
+        until s+=$(dd bs=24 count=1 if=/dev/urandom 2>/dev/null | LC_ALL=C tr -cd 'a-zA-Z0-9')
+             ((${#s} >= 16)); do :; done
+        DBPHRASE=${s:0:16}
         /usr/sbin/openli-prov-authsetup.sh ${DBPHRASE} /var/lib/openli/provauth.db
         echo ${DBPHRASE} > /etc/openli/provauthdb.phrase
         chmod 0640 /etc/openli/provauthdb.phrase
@@ -232,6 +235,9 @@ fi
 
 
 %changelog
+* Wed Nov 11 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.7-2
+- Fix hanging in provisioner postinst script
+
 * Tue Nov 10 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.7-1
 - Updated for 1.0.7 release
 

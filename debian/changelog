@@ -1,3 +1,10 @@
+openli (1.0.7-2) unstable; urgency=medium
+
+  * Fix potential hang in postinst script when generating a password
+    for the provisioner authentication database.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Wed, 11 Nov 2020 10:36:18 +1300
+
 openli (1.0.7-1) unstable; urgency=medium
 
   * OpenLI provisioner and mediator no longer run as root.
