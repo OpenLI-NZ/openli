@@ -35,12 +35,14 @@ static inline int reload_staticips(provision_state_t *currstate,
         ipintercept_t *ipint, ipintercept_t *newequiv) {
 
     static_ipranges_t *ipr, *tmp, *found;
+    int changed = 0;
 
     HASH_ITER(hh, ipint->statics, ipr, tmp) {
         HASH_FIND(hh, newequiv->statics, ipr->rangestr, strlen(ipr->rangestr),
                 found);
         if (!found || found->cin != ipr->cin) {
             remove_existing_staticip_range(currstate, ipint, ipr);
+            changed = 1;
         } else {
             found->awaitingconfirm = 0;
         }
@@ -51,9 +53,10 @@ static inline int reload_staticips(provision_state_t *currstate,
             continue;
         }
         add_new_staticip_range(currstate, ipint, ipr);
+        changed = 1;
     }
 
-    return 0;
+    return changed;
 }
 
 static inline int ip_intercept_equal(ipintercept_t *a, ipintercept_t *b) {
@@ -184,68 +187,12 @@ static int reload_coreservers(provision_state_t *state, coreserver_t *currserv,
     return 0;
 }
 
-static inline int compare_sip_targets(provision_state_t *currstate,
-        voipintercept_t *existing, voipintercept_t *reload) {
-
-    openli_sip_identity_t *oldtgt, *newtgt;
-    libtrace_list_node_t *n1, *n2;
-
-    /* Sluggish (n^2), but hopefully we don't have many IDs per intercept */
-
-    n1 = existing->targets->head;
-    while (n1) {
-        oldtgt = *((openli_sip_identity_t **)(n1->data));
-        n1 = n1->next;
-
-        oldtgt->awaitingconfirm = 1;
-        n2 = reload->targets->head;
-        while (n2) {
-            newtgt = *((openli_sip_identity_t **)(n2->data));
-            n2 = n2->next;
-            if (newtgt->awaitingconfirm == 0) {
-                continue;
-            }
-
-            if (are_sip_identities_same(newtgt, oldtgt)) {
-                oldtgt->awaitingconfirm = 0;
-                newtgt->awaitingconfirm = 0;
-                break;
-            }
-        }
-
-        if (oldtgt->awaitingconfirm) {
-            /* This target is no longer in the intercept config so
-             * withdraw it. */
-            if (announce_sip_target_change(currstate, oldtgt, existing, 0) < 0)
-            {
-                return -1;
-            }
-        }
-    }
-
-    n2 = reload->targets->head;
-    while (n2) {
-        newtgt = *((openli_sip_identity_t **)(n2->data));
-        n2 = n2->next;
-        if (newtgt->awaitingconfirm == 0) {
-            continue;
-        }
-
-        /* This target has been added since we last reloaded config so
-         * announce it. */
-        if (announce_sip_target_change(currstate, newtgt, existing, 1) < 0) {
-            return -1;
-        }
-    }
-
-    return 0;
-}
-
 static int reload_voipintercepts(provision_state_t *currstate,
         voipintercept_t *currvoip, voipintercept_t *newvoip,
 		prov_intercept_conf_t *intconf, int droppedcols, int droppedmeds) {
 
     voipintercept_t *voipint, *tmp, *newequiv;
+    int changedtargets = 0;
 
     /* TODO error handling in the "inform other components about changes"
      * functions?
@@ -290,7 +237,25 @@ static int reload_voipintercepts(provision_state_t *currstate,
             remove_liid_mapping(currstate, voipint->common.liid,
                     voipint->common.liid_len, droppedmeds);
 
-        } else if (voipint->options != newequiv->options &&
+        } else {
+            if ((changedtargets = compare_sip_targets(currstate, voipint,
+                    newequiv)) < 0) {
+                return -1;
+            }
+            if (changedtargets > 0) {
+                if (announce_hi1_notification_to_mediators(currstate,
+                        &(voipint->common), HI1_LI_MODIFIED) == -1) {
+                    logger(LOG_INFO,
+                            "OpenLI provisioner: unable to send HI1 notification for modified VOIP intercept to mediators.");
+                    return -1;
+                }
+            }
+            newequiv->awaitingconfirm = 0;
+        }
+
+        newequiv->common.hi1_seqno = voipint->common.hi1_seqno;
+
+        if (voipint->options != newequiv->options &&
                 HASH_CNT(hh, currstate->collectors) > 0) {
             logger(LOG_INFO,
                     "OpenLI provisioner: Options for VOIP intercept %s have changed",
@@ -301,11 +266,6 @@ static int reload_voipintercepts(provision_state_t *currstate,
             }
             /* Probably don't need to announce an HI1 modification here, as
              * these options are not part of the intercept definition */
-        } else {
-            if (compare_sip_targets(currstate, voipint, newequiv) < 0) {
-                return -1;
-            }
-            newequiv->awaitingconfirm = 0;
         }
     }
 
@@ -403,6 +363,8 @@ static int reload_ipintercepts(provision_state_t *currstate,
             logger(LOG_INFO, "OpenLI provisioner: Details for IP intercept %s have changed -- updating collectors",
                     ipint->common.liid);
 
+            newequiv->common.hi1_seqno = ipint->common.hi1_seqno;
+
             if (!droppedmeds) {
                 announce_hi1_notification_to_mediators(currstate,
                         &(newequiv->common), HI1_LI_MODIFIED);
@@ -433,7 +395,15 @@ static int reload_ipintercepts(provision_state_t *currstate,
                 }
             }
         } else {
-            reload_staticips(currstate, ipint, newequiv);
+            newequiv->common.hi1_seqno = ipint->common.hi1_seqno;
+            if (reload_staticips(currstate, ipint, newequiv) > 0) {
+                if (!droppedmeds) {
+                    announce_hi1_notification_to_mediators(currstate,
+                            &(newequiv->common), HI1_LI_MODIFIED);
+
+                }
+            }
+
             newequiv->awaitingconfirm = 0;
         }
     }

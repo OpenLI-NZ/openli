@@ -182,63 +182,6 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "siptargets", &(ipjson->siptargets));
 }
 
-static inline int compare_sip_targets(provision_state_t *currstate,
-        voipintercept_t *existing, voipintercept_t *reload) {
-
-    openli_sip_identity_t *oldtgt, *newtgt;
-    libtrace_list_node_t *n1, *n2;
-
-    /* Sluggish (n^2), but hopefully we don't have many IDs per intercept */
-
-    n1 = existing->targets->head;
-    while (n1) {
-        oldtgt = *((openli_sip_identity_t **)(n1->data));
-        n1 = n1->next;
-
-        oldtgt->awaitingconfirm = 1;
-        n2 = reload->targets->head;
-        while (n2) {
-            newtgt = *((openli_sip_identity_t **)(n2->data));
-            n2 = n2->next;
-            if (newtgt->awaitingconfirm == 0) {
-                continue;
-            }
-
-            if (are_sip_identities_same(newtgt, oldtgt)) {
-                oldtgt->awaitingconfirm = 0;
-                newtgt->awaitingconfirm = 0;
-                break;
-            }
-        }
-
-        if (oldtgt->awaitingconfirm) {
-            /* This target is no longer in the intercept config so
-             * withdraw it. */
-            if (announce_sip_target_change(currstate, oldtgt, existing, 0) < 0)
-            {
-                return -1;
-            }
-        }
-    }
-
-    n2 = reload->targets->head;
-    while (n2) {
-        newtgt = *((openli_sip_identity_t **)(n2->data));
-        n2 = n2->next;
-        if (newtgt->awaitingconfirm == 0) {
-            continue;
-        }
-
-        /* This target has been added since we last reloaded config so
-         * announce it. */
-        if (announce_sip_target_change(currstate, newtgt, existing, 1) < 0) {
-            return -1;
-        }
-    }
-
-    return 0;
-}
-
 int remove_voip_intercept(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr) {
 
@@ -984,6 +927,8 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     struct json_object *parsed = NULL;
     voipintercept_t *found = NULL;
     voipintercept_t *vint = NULL;
+    int changedtargets = 0;
+    libtrace_list_t *tmp;
 
     char *liidstr = NULL;
     int parseerr = 0, changed = 0;
@@ -1029,20 +974,20 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (voipjson.siptargets != NULL) {
-        libtrace_list_t *tmp;
 
         if (parse_voipintercept_siptargets(state, vint, voipjson.siptargets,
                 cinfo) < 0) {
             goto cepterr;
         }
-
-        if (compare_sip_targets(state, found, vint) < 0) {
-            goto cepterr;
-        }
-		tmp = found->targets;
-		found->targets = vint->targets;
-		vint->targets = tmp;
     }
+
+    if ((changedtargets = compare_sip_targets(state, found, vint)) < 0) {
+        goto cepterr;
+    }
+
+    tmp = found->targets;
+    found->targets = vint->targets;
+    vint->targets = tmp;
 
     /* TODO: warn if user tries to change fields that we don't support
      * changing (e.g. mediator) ?
@@ -1057,10 +1002,14 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     if (changed) {
         modify_existing_intercept_options(state, (void *)found,
                     OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
+    }
+
+    if (changedtargets) {
         announce_hi1_notification_to_mediators(state, &(found->common),
                 HI1_LI_MODIFIED);
     }
 
+    vint->common.hi1_seqno = found->common.hi1_seqno;
     logger(LOG_INFO,
             "OpenLI provisioner: updated VOIP intercept %s via update socket.",
             found->common.liid);
@@ -1244,6 +1193,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                 HI1_LI_MODIFIED);
     }
 
+    ipint->common.hi1_seqno = found->common.hi1_seqno;
     logger(LOG_INFO,
             "OpenLI provisioner: updated IP intercept %s via update socket.",
             found->common.liid);
