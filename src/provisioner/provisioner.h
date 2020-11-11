@@ -328,6 +328,8 @@ int map_intercepts_to_leas(prov_intercept_conf_t *conf);
 int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf);
 
 /* Implemented in clientupdates.c */
+int compare_sip_targets(provision_state_t *currstate,
+        voipintercept_t *existing, voipintercept_t *reload);
 int announce_default_radius_username(provision_state_t *state,
         default_radius_user_t *raduser);
 int withdraw_default_radius_username(provision_state_t *state,

@@ -53,6 +53,77 @@ static inline int enable_epoll_write(provision_state_t *state,
     return 0;
 }
 
+int compare_sip_targets(provision_state_t *currstate,
+        voipintercept_t *existing, voipintercept_t *reload) {
+
+    openli_sip_identity_t *oldtgt, *newtgt;
+    libtrace_list_node_t *n1, *n2;
+    int changes = 0;
+
+    /* Sluggish (n^2), but hopefully we don't have many IDs per intercept */
+
+    if (existing->targets) {
+        n1 = existing->targets->head;
+    } else {
+        n1 = NULL;
+    }
+
+    while (n1) {
+        oldtgt = *((openli_sip_identity_t **)(n1->data));
+        n1 = n1->next;
+
+        oldtgt->awaitingconfirm = 1;
+        n2 = reload->targets->head;
+        while (n2) {
+            newtgt = *((openli_sip_identity_t **)(n2->data));
+            n2 = n2->next;
+            if (newtgt->awaitingconfirm == 0) {
+                continue;
+            }
+
+            if (are_sip_identities_same(newtgt, oldtgt)) {
+                oldtgt->awaitingconfirm = 0;
+                newtgt->awaitingconfirm = 0;
+                break;
+            }
+        }
+
+        if (oldtgt->awaitingconfirm) {
+            /* This target is no longer in the intercept config so
+             * withdraw it. */
+            if (announce_sip_target_change(currstate, oldtgt, existing, 0) < 0)
+            {
+                return -1;
+            }
+            changes ++;
+        }
+    }
+
+    if (reload->targets) {
+        n2 = reload->targets->head;
+    } else {
+        n2 = NULL;
+    }
+
+    while (n2) {
+        newtgt = *((openli_sip_identity_t **)(n2->data));
+        n2 = n2->next;
+        if (newtgt->awaitingconfirm == 0) {
+            continue;
+        }
+
+        /* This target has been added since we last reloaded config so
+         * announce it. */
+        if (announce_sip_target_change(currstate, newtgt, existing, 1) < 0) {
+            return -1;
+        }
+        changes ++;
+    }
+
+    return changes;
+}
+
+
 
 #define SEND_ALL_COLLECTORS_BEGIN \
     prov_collector_t *col, *coltmp; \
