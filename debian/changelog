@@ -1,3 +1,13 @@
+openli (1.0.8-1) unstable; urgency=medium
+
+  * Fix bugs that were causing HI1Operation messages to not be generated
+    under certain circumstances.
+  * Fix bugs that were causing HI1Operation messages to have an incorrect
+    sequence number if generated following an intercept configuration
+    file reload.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Wed, 11 Nov 2020 17:22:52 +1300
+
 openli (1.0.7-2) unstable; urgency=medium
 
   * Fix potential hang in postinst script when generating a password
