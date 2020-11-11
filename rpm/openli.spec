@@ -1,6 +1,6 @@
 Name:           openli
-Version:        1.0.7
-Release:        2%{?dist}
+Version:        1.0.8
+Release:        1%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
 License:        GPLv3
@@ -235,6 +235,9 @@ fi
 
 
 %changelog
+* Wed Nov 11 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.7-1
+- Updated for 1.0.8 release
+
 * Wed Nov 11 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.7-2
 - Fix hanging in provisioner postinst script
 
