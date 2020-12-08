@@ -1082,6 +1082,24 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "operatorid") == 0) {
         SET_CONFIG_STRING_OPTION(state->operatorid, value);
+        /* 16 chars max allowed for this field (defined in
+         * ETSI LI-PS-PDU spec) */
+        if (strlen(state->operatorid) > 16) {
+            state->operatorid[16] = '\0';
+            logger(LOG_INFO, "OpenLI: warning, 'operatorid' must be no longer than 16 characters -- truncated to %s", state->operatorid);
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "altoperatorid") == 0) {
+        SET_CONFIG_STRING_OPTION(state->shortoperatorid, value);
+
+        /* 5 chars max allowed for this field (defined in ETSI HI2 spec) */
+        if (strlen(state->shortoperatorid) > 5) {
+            state->shortoperatorid[5] = '\0';
+            logger(LOG_INFO, "OpenLI: warning, 'altoperatorid' must be no longer than 5 characters -- truncated to %s", state->shortoperatorid);
+        }
     }
 
     if (key->type == YAML_SCALAR_NODE &&
