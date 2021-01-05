@@ -54,6 +54,10 @@ typedef struct med_state {
     /** The operator ID string (to be inserted into keep-alive messages) */
     char *operatorid;
 
+    /** The five character operator ID string (used for HI2
+     *  Network-Identifiers) */
+    char *shortoperatorid;
+
     /** The IP address to listen on for incoming collector connections */
     char *listenaddr;
 

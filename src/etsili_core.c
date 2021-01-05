@@ -54,7 +54,7 @@ static inline void encode_tri_body(wandder_encoder_t *encoder) {
 }
 
 static inline void encode_hi1_notification_body(wandder_encoder_t *encoder,
-        hi1_notify_data_t *not_data, char *operatorid ) {
+        hi1_notify_data_t *not_data, char *shortopid) {
 
     struct timeval tv;
 
@@ -77,21 +77,17 @@ static inline void encode_hi1_notification_body(wandder_encoder_t *encoder,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, not_data->liid,
                 strlen(not_data->liid));
 
-        ENC_CSEQUENCE(encoder, 2);      // CommunicationIdentifier
+        ENC_CSEQUENCE(encoder, 2);      // CommunicationIdentifier (HI2)
 
-        ENC_CSEQUENCE(encoder, 0);      // NetworkIdentifier
+        ENC_CSEQUENCE(encoder, 1);      // Network-Identifier
         wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
-                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, operatorid,
-                strlen(operatorid));
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, shortopid,
+                strlen(shortopid));
 
         /* No network element ID required for this HI1 record (?) */
 
-        wandder_encode_endseq(encoder); // End NetworkIdentifier
-
-        wandder_encode_next(encoder, WANDDER_TAG_PRINTABLE,
-                WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, not_data->delivcc,
-                strlen(not_data->delivcc));
-        wandder_encode_endseq(encoder);     // End CommunicationIdentifier
+        wandder_encode_endseq(encoder); // End Network-Identifier
+        wandder_encode_endseq(encoder);     // End CommunicationIdentifier (HI2)
 
         ENC_CSEQUENCE(encoder, 3);      // Timestamp
         tv.tv_sec = not_data->ts_sec;
@@ -1047,7 +1043,7 @@ wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
 
 wandder_encoded_result_t *encode_etsi_hi1_notification(
         wandder_encoder_t *encoder, hi1_notify_data_t *not_data,
-        char *operatorid) {
+        char *operatorid, char *shortopid) {
 
     struct timeval tv;
     wandder_etsipshdr_data_t hdrdata;
@@ -1067,7 +1063,7 @@ wandder_encoded_result_t *encode_etsi_hi1_notification(
 
     gettimeofday(&tv, NULL);
     encode_etsili_pshdr(encoder, &hdrdata, 0, (int64_t)not_data->seqno, &tv);
-    encode_hi1_notification_body(encoder, not_data, operatorid);
+    encode_hi1_notification_body(encoder, not_data, shortopid);
     return wandder_encode_finish(encoder);
 }
 

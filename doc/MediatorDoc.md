@@ -18,6 +18,13 @@ between your mediator and the law enforcement agencies.
 Ideally, the operator ID configured for your mediator(s) should match
 the operator ID that you are using for your collectors.
 
+There is also a special type of Operator ID which is used in HI1 Operations
+messages that is limited to 5 characters in length -- this is an annoying
+inconsistency in the ETSI standards that we cannot work around easily. This
+may be set using the `altoperatorid` configuration option. If this
+option is not configured, OpenLI will instead use the first 5 characters from
+your regular operator ID.
+
 ### Mediator ID
 Each mediator that you are running needs to be assigned a unique mediator
 ID. The mediator ID should be a number between 0 and 1,000,000.
@@ -102,6 +109,8 @@ the key is the option name and the value is your chosen value for that option.
 
 The supported option keys are:
 * operatorid       -- set the operator ID
+* altoperatorid    -- sets the operator ID for HI1 Operations messages, which
+                      must be no more than 5 characters long.
 * mediatorid       -- sets the mediator ID number
 * provisioneraddr  -- connect to a provisioner at this IP address
 * provisionerport  -- connect to a provisioner listening on this port
