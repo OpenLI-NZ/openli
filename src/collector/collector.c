@@ -866,6 +866,22 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
     }
 
 
+    if (inp->filterstring) {
+        inp->filter = trace_create_filter(inp->filterstring);
+
+        if (inp->filter) {
+            logger(LOG_INFO, "OpenLI: unable to create input filter for %s",
+                    inp->uri);
+        }
+        if (trace_config(inp->trace, TRACE_OPTION_FILTER, inp->filter) < 0) {
+            logger(LOG_INFO, "OpenLI: unable to set input filter for %s",
+                    inp->uri);
+        }
+
+        logger(LOG_INFO, "OpenLI: applying filter '%s' to input %s",
+                inp->filterstring, inp->uri);
+    }
+
     trace_set_tick_interval(inp->trace, 1000);
 
     if (trace_pstart(inp->trace, glob, inp->pktcbs, NULL) == -1) {
@@ -891,7 +907,8 @@ static void reload_inputs(collector_global_t *glob,
         HASH_FIND(hh, newstate->inputs, oldinp->uri, strlen(oldinp->uri),
                 newinp);
         if (!newinp || newinp->threadcount != oldinp->threadcount ||
-                newinp->hasher_apply != oldinp->hasher_apply) {
+                newinp->hasher_apply != oldinp->hasher_apply ||
+                strcmp(newinp->filterstring, oldinp->filterstring) != 0) {
             /* This input is no longer wanted at all */
             logger(LOG_INFO,
                     "OpenLI collector: stop reading packets from %s\n",
@@ -932,6 +949,12 @@ static void clear_input(colinput_t *input) {
     }
     if (input->uri) {
         free(input->uri);
+    }
+    if (input->filter) {
+        trace_destroy_filter(input->filter);
+    }
+    if (input->filterstring) {
+        free(input->filterstring);
     }
     hash_radius_cleanup(&(input->hashradconf));
 }
