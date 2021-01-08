@@ -8,6 +8,7 @@
         delaycompress
         sharedscripts
         postrotate
-                invoke-rc.d rsyslog rotate > /dev/null
+                service rsyslog rotate > /dev/null
+                service syslog-ng rotate > /dev/null
         endscript
 }
