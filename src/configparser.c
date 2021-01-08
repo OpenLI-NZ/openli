@@ -106,6 +106,8 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         inp->running = 0;
         inp->report_drops = 1;
         inp->hasher_apply = OPENLI_HASHER_BIDIR;
+        inp->filterstring = NULL;
+        inp->filter = NULL;
 
         /* Mappings describe the parameters for each input */
         for (pair = node->data.mapping.pairs.start;
@@ -119,6 +121,12 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value, "uri") == 0) {
                 SET_CONFIG_STRING_OPTION(inp->uri, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "filter") == 0) {
+                SET_CONFIG_STRING_OPTION(inp->filterstring, value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
