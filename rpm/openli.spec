@@ -33,7 +33,6 @@ Software for performing ETSI-compliant lawful intercept
 
 %package        provisioner
 Summary:        Central provisioning daemon for an OpenLI system
-Requires:       rsyslog
 Requires:       bash
 Requires:       sqlcipher
 Requires(pre):  shadow-utils
@@ -51,7 +50,6 @@ and mediators.
 
 %package        mediator
 Summary:        Mediation daemon for an OpenLI system
-Requires:       rsyslog
 Requires(pre):  shadow-utils
 
 %description mediator
@@ -67,7 +65,6 @@ interface 2 and 3, using keep-alives as per the ETSI standard.
 
 %package        collector
 Summary:        Collector daemon for an OpenLI system
-Requires:       rsyslog
 Requires:       rabbitmq-server
 
 %description collector
@@ -213,7 +210,7 @@ fi
 %{_sbindir}/openli-prov-adduser.sh
 %{_sbindir}/openli-prov-authsetup.sh
 %{_unitdir}/openli-provisioner.service
-%config %{_sysconfdir}/rsyslog.d/10-openli-provisioner.conf
+%config %{_sysconfdir}/openli/rsyslog.d/10-openli-provisioner.conf
 %config %{_sysconfdir}/openli/provisioner-example.yaml
 %config %{_sysconfdir}/openli/running-intercept-example.yaml
 %doc %{_docdir}/openli/ProvisionerDoc.md
@@ -222,20 +219,20 @@ fi
 %files mediator
 %{_bindir}/openlimediator
 %{_unitdir}/openli-mediator.service
-%config %{_sysconfdir}/rsyslog.d/10-openli-mediator.conf
+%config %{_sysconfdir}/openli/rsyslog.d/10-openli-mediator.conf
 %config %{_sysconfdir}/openli/mediator-example.yaml
 %doc %{_docdir}/openli/MediatorDoc.md
 
 %files collector
 %{_bindir}/openlicollector
 %{_unitdir}/openli-collector.service
-%config %{_sysconfdir}/rsyslog.d/10-openli-collector.conf
+%config %{_sysconfdir}/openli/rsyslog.d/10-openli-collector.conf
 %config %{_sysconfdir}/openli/collector-example.yaml
 %doc %{_docdir}/openli/CollectorDoc.md
 
 
 %changelog
-* Wed Nov 11 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.7-1
+* Wed Nov 11 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.8-1
 - Updated for 1.0.8 release
 
 * Wed Nov 11 2020 Shane Alcock <salcock@waikato.ac.nz> - 1.0.7-2
