@@ -6,15 +6,7 @@
 set -e
 
 case "$1" in
-    configure)
-        if [ -x "`which invoke-rc.d 2>/dev/null`" ]; then
-            invoke-rc.d rsyslog restart || exit $?
-        else
-            /etc/init.d/rsyslog restart || exit $?
-        fi
-        ;;
-
-    abort-upgrade|abort-remove|abort-deconfigure)
+    configure|abort-upgrade|abort-remove|abort-deconfigure)
         ;;
 
     *)
