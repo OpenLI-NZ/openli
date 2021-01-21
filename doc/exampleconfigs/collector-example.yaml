@@ -28,6 +28,11 @@ encoderthreads: 2
 # mediators. You probably don't need to change this.
 forwardingthreads: 1
 
+# The encoding method to use for generating ETSI records. DER is the default
+# method. BER is an alternative that should be more efficient, but not all
+# LEAs may be able to decode it.
+encoding: der
+
 # Number of minutes between each dump of performance statistics to the
 # logger. Set to zero to disable this extra logging altogether.
 logstatfrequency: 5
