@@ -1,3 +1,14 @@
+openli (1.0.9-1) unstable; urgency=medium
+
+  * Reduce collector CPU usage when the forwarding thread is idle.
+  * Fix HI1Operation messages that were not able to be decoded by LEAs.
+  * Allow a BPF filter to be applied to any collector input.
+  * Remove dependency on rsyslog -- syslog-ng can now be used instead, if
+    desired.
+  * Allow use of BER encoding for faster record encoding by the collector.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Thu, 21 Jan 2021 15:58:17 +1300
+
 openli (1.0.8-1) unstable; urgency=medium
 
   * Fix bugs that were causing HI1Operation messages to not be generated
