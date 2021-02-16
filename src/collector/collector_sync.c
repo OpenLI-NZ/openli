@@ -195,6 +195,24 @@ void clean_sync_data(collector_sync_t *sync) {
         haltfails = 0;
 
         if (sync->zmq_colsock) {
+            int x;
+            openli_state_update_t recvd;
+
+            do {
+                x = zmq_recv(sync->zmq_colsock, &recvd, sizeof(recvd),
+                        ZMQ_DONTWAIT);
+                if (x < 0 && errno == EAGAIN) {
+                    continue;
+                }
+                if (x < 0) {
+                    break;
+                }
+
+                if (recvd.type == OPENLI_UPDATE_RADIUS ||
+                        recvd.type == OPENLI_UPDATE_GTP) {
+                    trace_destroy_packet(recvd.data.pkt);
+                }
+            } while (x >= 0);
             zmq_setsockopt(sync->zmq_colsock, ZMQ_LINGER, &zero, sizeof(zero));
             zmq_close(sync->zmq_colsock);
             sync->zmq_colsock = NULL;
