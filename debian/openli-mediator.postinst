@@ -9,12 +9,6 @@ USER="openli"
 
 case "$1" in
     configure)
-        if [ -x "`which invoke-rc.d 2>/dev/null`" ]; then
-            invoke-rc.d rsyslog restart || exit $?
-        else
-            /etc/init.d/rsyslog restart || exit $?
-        fi
-
         mkdir -p /var/run/openli
 
         adduser --quiet --system --group --no-create-home \

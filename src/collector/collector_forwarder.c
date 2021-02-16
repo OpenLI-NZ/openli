@@ -816,6 +816,7 @@ static void complete_ssl_handshake(forwarding_thread_data_t *fwd,
 
 static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
     int topollc, x, i;
+    int towait = 10000;
 
     /* Add the mediator confirmation timer to our poll item list, if
      * required.
@@ -831,7 +832,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
     }
 
     while (1) {
-        if (zmq_poll(fwd->topoll, topollc, -1) < 0) {
+        if ((x = zmq_poll(fwd->topoll, topollc, 10)) < 0) {
             if (errno == EINTR) {
                 continue;
             }
@@ -839,6 +840,10 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
                     "OpenLI: error while polling in forwarder %d: %s",
                     fwd->forwardid, strerror(errno));
             return -1;
+        }
+        if (x == 0) {
+            usleep(towait);
+            continue;
         }
         break;
     }
@@ -849,6 +854,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             return 0;
         }
         fwd->topoll[0].revents = 0;
+        towait = 0;
     }
 
     if (fwd->topoll[2].revents & ZMQ_POLLIN) {
@@ -867,6 +873,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         its.it_value.tv_nsec = 0;
 
         timerfd_settime(fwd->conntimerfd, 0, &its, NULL);
+        towait = 0;
     }
 
     if (fwd->topoll[1].revents & ZMQ_POLLIN) {
@@ -875,6 +882,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             return 0;
         }
         fwd->topoll[1].revents = 0;
+        towait = 0;
     }
 
     if (fwd->awaitingconfirm && fwd->flagtimerfd != -1) {
@@ -883,6 +891,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             fwd->awaitingconfirm = 0;
             close(fwd->flagtimerfd);
             fwd->flagtimerfd = -1;
+            towait = 0;
         }
     }
 
@@ -921,6 +930,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
 
         if (dest->waitingforhandshake){
             complete_ssl_handshake(fwd, dest);
+            towait = 0;
             continue;
         }
 
@@ -951,7 +961,12 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
                     "OpenLI: successfully started transmitting records to mediator %s:%s", dest->ipstr, dest->portstr);
             dest->logallowed = 1;
         }
+        towait = 0;
         fwd->forcesend[i] = 0;
+    }
+
+    if (towait != 0) {
+        usleep(towait);
     }
     return 1;
 }

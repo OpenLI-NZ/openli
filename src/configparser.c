@@ -106,6 +106,8 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         inp->running = 0;
         inp->report_drops = 1;
         inp->hasher_apply = OPENLI_HASHER_BIDIR;
+        inp->filterstring = NULL;
+        inp->filter = NULL;
 
         /* Mappings describe the parameters for each input */
         for (pair = node->data.mapping.pairs.start;
@@ -119,6 +121,12 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value, "uri") == 0) {
                 SET_CONFIG_STRING_OPTION(inp->uri, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "filter") == 0) {
+                SET_CONFIG_STRING_OPTION(inp->filterstring, value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -1082,6 +1090,24 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "operatorid") == 0) {
         SET_CONFIG_STRING_OPTION(state->operatorid, value);
+        /* 16 chars max allowed for this field (defined in
+         * ETSI LI-PS-PDU spec) */
+        if (strlen(state->operatorid) > 16) {
+            state->operatorid[16] = '\0';
+            logger(LOG_INFO, "OpenLI: warning, 'operatorid' must be no longer than 16 characters -- truncated to %s", state->operatorid);
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "altoperatorid") == 0) {
+        SET_CONFIG_STRING_OPTION(state->shortoperatorid, value);
+
+        /* 5 chars max allowed for this field (defined in ETSI HI2 spec) */
+        if (strlen(state->shortoperatorid) > 5) {
+            state->shortoperatorid[5] = '\0';
+            logger(LOG_INFO, "OpenLI: warning, 'altoperatorid' must be no longer than 5 characters -- truncated to %s", state->shortoperatorid);
+        }
     }
 
     if (key->type == YAML_SCALAR_NODE &&

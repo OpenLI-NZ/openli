@@ -111,8 +111,10 @@ enum {
 
 typedef struct colinput {
     char *uri;
+    char *filterstring;
     int threadcount;
     libtrace_t *trace;
+    libtrace_filter_t *filter;
     libtrace_callback_set_t *pktcbs;
 
     uint8_t hasher_apply;

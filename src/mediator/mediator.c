@@ -117,6 +117,9 @@ static void clear_med_config(mediator_state_t *state) {
     if (state->operatorid) {
         free(state->operatorid);
     }
+    if (state->shortoperatorid) {
+        free(state->shortoperatorid);
+    }
     if (state->RMQ_conf.name) {
         free(state->RMQ_conf.name);
     }
@@ -245,6 +248,7 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
     state->RMQ_conf.SSLenabled = 0;
 
     state->operatorid = NULL;
+    state->shortoperatorid = NULL;
     state->pcapdirectory = NULL;
     state->pcapthread = -1;
     state->pcaprotatefreq = 30;
@@ -297,6 +301,18 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
 
     if (state->provisioner.provport == NULL) {
         state->provisioner.provport = strdup("8993");
+    }
+
+    if (state->shortoperatorid == NULL) {
+        if (state->operatorid != NULL) {
+            state->shortoperatorid = strndup(state->operatorid, 5);
+        } else {
+            state->shortoperatorid = strdup("?????");
+        }
+    }
+
+    if (state->operatorid == NULL) {
+        state->operatorid = strdup("unspecified");
     }
 
     return 0;
@@ -739,7 +755,7 @@ static int receive_hi1_notification(mediator_state_t *state, uint8_t *msgbody,
     }
 
     encoded_hi1 = encode_etsi_hi1_notification(agency->hi2->ho_state->encoder,
-            &ndata, state->operatorid);
+            &ndata, state->operatorid, state->shortoperatorid);
     if (encoded_hi1 == NULL) {
         logger(LOG_INFO, "OpenLI Mediator: failed to construct HI1 Notifcation message");
         return -1;

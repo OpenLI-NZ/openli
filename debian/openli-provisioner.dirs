@@ -2,5 +2,5 @@
 /usr/sbin
 /usr/share/doc/openli
 /etc/openli
-/etc/rsyslog.d
+/etc/openli/rsyslog.d
 /var/lib/openli

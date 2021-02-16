@@ -12,7 +12,7 @@ dist_openliconf_DATA=doc/exampleconfigs/collector-example.yaml \
         doc/exampleconfigs/running-intercept-example.yaml \
         doc/exampleconfigs/provisioner-example.yaml
 
-syslogdir=$(sysconfdir)/rsyslog.d/
+syslogdir=$(sysconfdir)/openli/rsyslog.d/
 dist_syslog_DATA=rsyslog/*
 
 dist_doc_DATA=doc/CollectorDoc.md doc/MediatorDoc.md doc/ProvisionerDoc.md \

@@ -202,7 +202,7 @@ wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
 
 wandder_encoded_result_t *encode_etsi_hi1_notification(
         wandder_encoder_t *encoder, hi1_notify_data_t *not_data,
-        char *operatorid);
+        char *operatorid, char *shortopid);
 
 etsili_generic_freelist_t *create_etsili_generic_freelist(uint8_t needmutex);
 etsili_generic_t *create_etsili_generic(etsili_generic_freelist_t *freelist,

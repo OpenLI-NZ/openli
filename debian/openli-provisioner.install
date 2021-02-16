@@ -2,6 +2,6 @@ usr/bin/openliprovisioner
 usr/sbin/openli-prov-*.sh
 etc/openli/provisioner*
 etc/openli/running-intercept-example.yaml
-etc/rsyslog.d/10-openli-provisioner.conf
+etc/openli/rsyslog.d/10-openli-provisioner.conf
 usr/share/doc/openli/ProvisionerDoc.md
 usr/share/doc/openli/TLSDoc.md
