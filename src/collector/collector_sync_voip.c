@@ -568,6 +568,55 @@ static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
     return vshared;
 }
 
+static inline int check_sip_identity_fields(collector_sync_voip_t *sync,
+        voipintercept_t *vint) {
+
+    int ret;
+    openli_sip_identity_t authid;
+
+    authid.realm = NULL;
+    authid.username = NULL;
+
+    ret = get_sip_passerted_identity(sync->sipparser, &authid);
+
+    if (ret == -1) {
+        sync->log_bad_sip = 0;
+        return 0;
+    }
+
+    if (ret > 0) {
+        if (sipid_matches_target(vint->targets, &authid)) {
+            ret = 1;
+        } else {
+            ret = 0;
+        }
+    } else {
+        ret = get_sip_remote_party(sync->sipparser, &authid);
+
+        if (ret == -1) {
+            sync->log_bad_sip = 0;
+            return 0;
+        }
+
+        if (ret > 0) {
+            if (sipid_matches_target(vint->targets, &authid)) {
+                ret = 1;
+            } else {
+                ret = 0;
+            }
+        }
+    }
+
+    if (authid.username) {
+        free(authid.username);
+    }
+    if (authid.realm) {
+        free(authid.realm);
+    }
+    return ret;
+
+}
+
 static inline int check_sip_auth_fields(collector_sync_voip_t *sync,
         voipintercept_t *vint, char *callid, uint8_t isproxy) {
 
@@ -847,10 +896,15 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
             sipreg = create_new_voip_registration(sync, vint, callid);
         } else {
             int found;
-            found = check_sip_auth_fields(sync, vint, callid, 1);
+
+            found = check_sip_identity_fields(sync, vint);
+            if (!found) {
+                found = check_sip_auth_fields(sync, vint, callid, 1);
+            }
             if (!found) {
                 found = check_sip_auth_fields(sync, vint, callid, 0);
             }
+
             if (found) {
                 sipreg = create_new_voip_registration(sync, vint, callid);
             }
@@ -934,7 +988,10 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
                         vint);
             } else {
                 int found;
-                found = check_sip_auth_fields(sync, vint, callid, 1);
+                found = check_sip_identity_fields(sync, vint);
+                if (!found) {
+                    found = check_sip_auth_fields(sync, vint, callid, 1);
+                }
                 if (!found) {
                     found = check_sip_auth_fields(sync, vint, callid, 0);
                 }
