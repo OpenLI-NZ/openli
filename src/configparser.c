@@ -1088,6 +1088,12 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "pcapfilename") == 0) {
+        SET_CONFIG_STRING_OPTION(state->pcaptemplate, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "operatorid") == 0) {
         SET_CONFIG_STRING_OPTION(state->operatorid, value);
         /* 16 chars max allowed for this field (defined in
@@ -1118,6 +1124,17 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
         if (state->mediatorid == 0) {
             logger(LOG_INFO, "OpenLI: 0 is not a valid value for the 'mediatorid' config option.");
             return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "pcapcompress") == 0) {
+        state->pcapcompress = strtoul((char *)value->data.scalar.value,
+                NULL, 10);
+        if (state->pcapcompress > 9) {
+            logger(LOG_INFO, "OpenLI: maximum pcap compression level is 9, setting to that instead.");
+            state->pcapcompress = 9;
         }
     }
 

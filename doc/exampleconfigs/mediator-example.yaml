@@ -30,6 +30,24 @@ pcapdirectory: /traces/openlipcaps/
 # one at 11:30am etc.
 pcaprotatefreq: 30
 
+# This option specifies how any pcap trace files should be named, using a
+# format template much like those used by the C strftime() function.
+# All formatting tokens supported by strftime() are also supported here,
+# with the addition of '%L' which will be substituted with the intercept's
+# LIID and '%s' which will be substituted with the Unix timestamp when the
+# file was created.
+# If not specified, the default template of 'openli_%L_%s' will be used.
+# Note the ".pcap.gz" will be appended to any compressed pcap files, and
+# ".pcap" will be appended to any uncompressed pcap files.
+pcapfilename: example-%L-%d%m%y-%H%M%S
+
+# Set the gzip compression level to be applied when writing pcap files.
+# If set to zero, then files will not be compressed. The default value is
+# 1. and cannot be set higher than 9. Higher compression levels will require
+# significantly more CPU to compress, so we do not recommend using values
+# higher than 1 without a very good reason.
+pcapcompress: 1
+
 # If you wish to encrypt your internal OpenLI communications between
 # components, these three options must be point to valid certificates / keys
 # to be used for TLS encryption. Make sure that if you enable TLS on

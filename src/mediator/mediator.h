@@ -73,6 +73,12 @@ typedef struct med_state {
     /** Directory in which any pcap files should be written */
     char *pcapdirectory;
 
+    /** Template used for naming pcap files */
+    char *pcaptemplate;
+
+    /** Compression level to use when writing pcap files */
+    uint8_t pcapcompress;
+
     /** State for managing all connected handovers */
     handover_state_t handover_state;
 

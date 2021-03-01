@@ -61,6 +61,12 @@ typedef struct pcap_thread_state {
     /** The directory where pcap file are to be written into */
     char *dir;
 
+    /** The template that is used to name the pcap files */
+    char *outtemplate;
+
+    /** The compression level to use when writing pcap files */
+    uint8_t compresslevel;
+
     /** A flag that indicates whether we have logged an error due to there
      *  being no valid directory configured to write pcaps into
      */
@@ -105,6 +111,12 @@ enum {
 
     /** Message contains a raw IP packet to be written as pcap */
     PCAP_MESSAGE_RAWIP,
+
+    /** Changes the template used to name pcap files */
+    PCAP_MESSAGE_CHANGE_TEMPLATE,
+
+    /** Changes the compression level used when writing pcap files */
+    PCAP_MESSAGE_CHANGE_COMPRESS,
 };
 
 
