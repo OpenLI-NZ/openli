@@ -49,17 +49,32 @@ available and therefore no collectors will be told to connect to it. If
 the provisioner goes down for some reason, the mediator will periodically
 attempt to reconnect to it.
 
-### Pcap Directory
+### Pcap Output
 OpenLI allows intercepts to be written to disk as pcap trace files instead
 of being live streamed to the requesting agency. If you wish to do this for
 any intercepts, you will need to set the pcap directory option in your
 mediator configuration. All pcap traces created by this mediator will be
-written into this directory; filenames will include the LIID for the intercept
-so should be unique and easily identifiable.
+written into this directory; by default, the filenames for the pcap traces
+will include the LIID for the intercept so should be unique and easily
+identifiable.
 
 The pcap output files will be rotated every 30 minutes. If no traffic is
 observed for that intercept during the 30 minute period, no output file will
 be created. The rotation frequency can be configured.
+
+The default pcap file name format is `openli_$(LIID)_$(UNIXTIMESTAMP)`. This
+can be changed if necessary using the `pcapfilename` config option. The value
+for this option should be a format template, much like what is used by the
+`strftime()` function. All formatting tokens supported by strftime() are also
+supported by this option, with the addition of '%L' (which will be replaced
+with the LIID for the intercept) and '%s' (which will be replaced with the
+Unix timestamp at the creation time of the file). Hence, the default template
+would be expressed as `openli_%L_%s`.
+
+By default, pcap output files are compressed using gzip compression (level 1).
+Compression may be disabled by setting the compression level to 0. Higher
+compression levels are also supported, although discouraged due to diminishing
+returns compared with the increase in CPU load to compress at those levels.
 
 Note: a pcap file should not be considered usable until *after* it has been
 rotated -- in-progress pcap traces do not contain all of the necessary
@@ -118,6 +133,9 @@ The supported option keys are:
 * listenport       -- listen on this port for collectors
 * pcapdirectory    -- the directory to write any pcap trace files to
 * pcaprotatefreq   -- the number of minutes to wait before rotating pcap traces
+* pcapcompress     -- the compression level for pcap trace files (default is 1,                       set to 0 to disable compression)
+* pcapfilename     -- format template to use for naming pcap files (default is
+                      `openli_%L_%s`
 * RMQenabled       -- set to `true` if your collectors are using RabbitMQ
                       to buffer ETSI records destined for this mediator
 * RMQname          -- the username to use when authenticating with RabbitMQ
