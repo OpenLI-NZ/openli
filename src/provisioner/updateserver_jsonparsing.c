@@ -94,18 +94,11 @@ struct json_intercept {
     }
 
 #define MODIFY_STRING_MEMBER(newmem, oldmem, changeflag) \
-    if (newmem != NULL && oldmem != NULL) { \
-        if (strcmp(newmem, oldmem) != 0) { \
-            free(oldmem); oldmem = newmem; *changeflag = 1; \
-        } else { \
-            free(newmem); \
-        } \
+    if (newmem != NULL && strcmp(newmem, oldmem) != 0) { \
+        free(oldmem); oldmem = newmem; *changeflag = 1; \
         newmem = NULL; \
-    } else if (oldmem != NULL && newmem == NULL) { \
-        free(oldmem); oldmem = NULL; *changeflag = 1; \
-        newmem = NULL; \
-    } else if (oldmem == NULL && newmem != NULL) { \
-        oldmem = newmem; newmem = NULL; *changeflag = 1; \
+    } else if (newmem) { \
+        free(newmem); newmem = NULL; \
     }
 
 #define INIT_JSON_INTERCEPT_PARSING \
@@ -649,6 +642,10 @@ static inline void new_intercept_liidmapping(provision_state_t *state,
     int liidmapped = 0;
     prov_agency_t *lea = NULL;
 
+    if (targetagency == NULL) {
+        return;
+    }
+
     if (strcmp(targetagency, "pcapdisk") != 0) {
         HASH_FIND_STR(state->interceptconf.leas, targetagency, lea);
         if (lea) {
@@ -989,8 +986,6 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     /* TODO: warn if user tries to change fields that we don't support
      * changing (e.g. mediator) ?
      *
-     * TODO: allow target agency to be changed, we just need to remove and
-     * then announce the new LIID mapping...
      */
 
     MODIFY_STRING_MEMBER(vint->common.authcc, found->common.authcc, &changed);
