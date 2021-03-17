@@ -1153,8 +1153,6 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     /* TODO: warn if user tries to change fields that we don't support
      * changing (e.g. mediator) ?
      *
-     * TODO: allow target agency to be changed, we just need to remove and
-     * then announce the new LIID mapping...
      */
 
     MODIFY_STRING_MEMBER(ipint->common.authcc, found->common.authcc, &changed);
