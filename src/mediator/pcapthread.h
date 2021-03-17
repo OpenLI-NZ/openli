@@ -117,6 +117,9 @@ enum {
 
     /** Changes the compression level used when writing pcap files */
     PCAP_MESSAGE_CHANGE_COMPRESS,
+
+    /** Removes an LIID from the set of active pcap outputs */
+    PCAP_MESSAGE_DISABLE_LIID,
 };
 
 

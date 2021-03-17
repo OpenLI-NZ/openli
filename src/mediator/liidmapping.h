@@ -89,7 +89,9 @@ void remove_liid_agency_mapping(liid_map_t *map, char *liidstr);
  *  @param liidstr      The LIID for the new mapping (as a string)
  *  @param agency       The agency that requested the LIID
  *
- *  @return -1 if an error occurs, 0 if the addition is successful
+ *  @return -1 if an error occurs, 0 if the addition is successful, 1 if
+ *          the pcap thread needs to know that this LIID is no longer
+ *          being written to disk
  */
 int add_liid_agency_mapping(liid_map_t *map, char *liidstr,
         mediator_agency_t *agency);

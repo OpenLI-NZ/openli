@@ -776,9 +776,6 @@ static int receive_hi1_notification(mediator_state_t *state, uint8_t *msgbody,
                 ndata.agencyid);
     }
 
-    /* TODO encode a HI1 notification message and put it on the right
-     * handover queue
-     */
     agency = lookup_agency(&(state->handover_state), ndata.agencyid);
     if (agency == NULL) {
         /* We don't know about this supposed agency, but maybe that's
@@ -830,6 +827,7 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     liid_map_entry_t *m;
     int sock;
     PWord_t jval;
+    mediator_pcap_msg_t pcapmsg;
 
     /** See netcomms.c for this method */
     if (decode_cease_mediation(msgbody, msglen, &liid) == -1) {
@@ -853,7 +851,15 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
         return 0;
     }
 
-    /* TODO end any pcap trace for this LIID */
+    /* end any pcap trace for this LIID */
+    if (m->agency == NULL) {
+        memset(&pcapmsg, 0, sizeof(pcapmsg));
+
+        pcapmsg.msgtype = PCAP_MESSAGE_DISABLE_LIID;
+        pcapmsg.msgbody = strdup(liid);
+        pcapmsg.msglen = strlen(liid) + 1;
+        libtrace_message_queue_put(&(state->pcapqueue), &pcapmsg);
+    }
 
     /* We cease mediation on a time-wait basis, i.e. we wait 15 seconds
      * after receiving the cease instruction before removing the LIID mapping.
@@ -964,8 +970,21 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     }
     free(agencyid);
 
-    if (add_liid_agency_mapping(&(state->liidmap), liid, agency) < 0) {
+    err = add_liid_agency_mapping(&(state->liidmap), liid, agency);
+
+    if (err < 0) {
         return -1;
+    }
+
+    if (err == 1) {
+        /* tell pcap thread that it no longer gets this LIID */
+        mediator_pcap_msg_t pcapmsg;
+        memset(&pcapmsg, 0, sizeof(pcapmsg));
+
+        pcapmsg.msgtype = PCAP_MESSAGE_DISABLE_LIID;
+        pcapmsg.msgbody = strdup(liid);
+        pcapmsg.msglen = strlen(liid) + 1;
+        libtrace_message_queue_put(&(state->pcapqueue), &pcapmsg);
     }
 
     return 0;

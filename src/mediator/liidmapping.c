@@ -68,7 +68,9 @@ void remove_liid_agency_mapping(liid_map_t *map, char *liidstr) {
  *  @param liidstr      The LIID for the new mapping (as a string)
  *  @param agency       The agency that requested the LIID
  *
- *  @return -1 if an error occurs, 0 if the addition is successful
+ *  @return -1 if an error occurs, 0 if the addition is successful, 1 if
+ *          the pcap thread needs to know that this LIID is no longer
+ *          being written to disk
  */
 int add_liid_agency_mapping(liid_map_t *map, char *liidstr,
         mediator_agency_t *agency) {
@@ -76,6 +78,7 @@ int add_liid_agency_mapping(liid_map_t *map, char *liidstr,
     PWord_t jval;
 	liid_map_entry_t *m;
 	int err;
+    int ret = 0;
 
     JSLG(jval, map->liid_array, (unsigned char *)liidstr);
     if (jval != NULL) {
@@ -85,6 +88,13 @@ int add_liid_agency_mapping(liid_map_t *map, char *liidstr,
         if (m->ceasetimer) {
             /* was scheduled to be ceased, so halt the timer */
             halt_mediator_timer(m->ceasetimer);
+        }
+
+        if (m->agency == NULL && agency != NULL) {
+            /* this LIID used to be written to pcap, now we need to
+             * tell the pcap thread to stop creating files for it
+             */
+            ret = 1;
         }
         free(m->liid);
     } else {
@@ -121,7 +131,7 @@ int add_liid_agency_mapping(liid_map_t *map, char *liidstr,
         logger(LOG_INFO, "OpenLI Mediator: added %s -> pcapdisk to LIID map",
                 m->liid);
     }
-	return 0;
+	return ret;
 }
 
 /** Adds an LIID to the set of LIIDs without agencies in an LIID map.

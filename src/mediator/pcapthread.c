@@ -478,6 +478,28 @@ static void pcap_rotate_traces(pcap_thread_state_t *pstate) {
     }
 }
 
+static void pcap_disable_liid(pcap_thread_state_t *pstate, char *liid,
+        uint16_t liidlen) {
+
+    active_pcap_output_t *pcapout;
+
+    logger(LOG_INFO, "OpenLI mediator: disabling pcap output for '%s'",
+            liid);
+    HASH_FIND(hh, pstate->active, liid, strlen(liid), pcapout);
+    if (!pcapout) {
+        return;
+    }
+
+    if (pcapout->out) {
+        trace_destroy_output(pcapout->out);
+        pcapout->out = NULL;
+    }
+    HASH_DELETE(hh, pstate->active, pcapout);
+    free(pcapout->liid);
+    free(pcapout);
+    free(liid);
+}
+
 /** Main loop for the pcap output thread.
  *
  *  This thread handles any intercepted packets that the user has requested
@@ -523,6 +545,11 @@ void *start_pcap_thread(void *params) {
         if (pcapmsg.msgtype == PCAP_MESSAGE_ROTATE) {
             /* Time to rotate the output files */
             pcap_rotate_traces(&pstate);
+            continue;
+        }
+
+        if (pcapmsg.msgtype == PCAP_MESSAGE_DISABLE_LIID) {
+            pcap_disable_liid(&pstate, (char *)pcapmsg.msgbody, pcapmsg.msglen);
             continue;
         }
 
