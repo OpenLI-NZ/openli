@@ -94,11 +94,18 @@ struct json_intercept {
     }
 
 #define MODIFY_STRING_MEMBER(newmem, oldmem, changeflag) \
-    if (newmem != NULL && strcmp(newmem, oldmem) != 0) { \
-        free(oldmem); oldmem = newmem; *changeflag = 1; \
+    if (newmem != NULL && oldmem != NULL) { \
+        if (strcmp(newmem, oldmem) != 0) { \
+            free(oldmem); oldmem = newmem; *changeflag = 1; \
+        } else { \
+            free(newmem); \
+        } \
         newmem = NULL; \
-    } else if (newmem) { \
-        free(newmem); newmem = NULL; \
+    } else if (oldmem != NULL && newmem == NULL) { \
+        free(oldmem); oldmem = NULL; *changeflag = 1; \
+        newmem = NULL; \
+    } else if (oldmem == NULL && newmem != NULL) { \
+        oldmem = newmem; newmem = NULL; *changeflag = 1; \
     }
 
 #define INIT_JSON_INTERCEPT_PARSING \
@@ -636,14 +643,39 @@ staticerr:
 
 }
 
+static inline void new_intercept_liidmapping(provision_state_t *state,
+        char *targetagency, char *liid) {
+
+    int liidmapped = 0;
+    prov_agency_t *lea = NULL;
+
+    if (strcmp(targetagency, "pcapdisk") != 0) {
+        HASH_FIND_STR(state->interceptconf.leas, targetagency, lea);
+        if (lea) {
+            liidmapped = 1;
+        }
+    } else {
+        liidmapped = 1;
+    }
+
+    if (liidmapped) {
+        liid_hash_t *h = add_liid_mapping(&(state->interceptconf),
+                liid, targetagency);
+        if (announce_liidmapping_to_mediators(state, h) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to announce new IP intercept %s to mediators.",
+                    liid);
+        }
+    }
+}
+
 int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     struct json_intercept voipjson;
     struct json_tokener *tknr;
     struct json_object *parsed = NULL;
     voipintercept_t *found = NULL;
     voipintercept_t *vint = NULL;
-    int parseerr = 0, r, liidmapped = 0;
-    prov_agency_t *lea = NULL;
+    int parseerr = 0, r;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&voipjson, parsed);
@@ -710,25 +742,8 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     HASH_ADD_KEYPTR(hh_liid, state->interceptconf.voipintercepts,
             vint->common.liid, vint->common.liid_len, vint);
 
-    if (strcmp(vint->common.targetagency, "pcapdisk") != 0) {
-        HASH_FIND_STR(state->interceptconf.leas, vint->common.targetagency,
-                lea);
-        if (lea) {
-            liidmapped = 1;
-        }
-    } else {
-        liidmapped = 1;
-    }
-
-    if (liidmapped) {
-        liid_hash_t *h = add_liid_mapping(&(state->interceptconf),
-                vint->common.liid, vint->common.targetagency);
-        if (announce_liidmapping_to_mediators(state, h) < 0) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: unable to announce new VOIP intercept %s to mediators.",
-                    vint->common.liid);
-        }
-    }
+    new_intercept_liidmapping(state, vint->common.targetagency,
+            vint->common.liid);
 
     if (announce_single_intercept(state, (void *)vint,
             push_voipintercept_onto_net_buffer) < 0) {
@@ -781,8 +796,7 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *accessstring = NULL;
     char *radiusidentstring = NULL;
     ipintercept_t *ipint = NULL;
-    int parseerr = 0, liidmapped = 0;
-    prov_agency_t *lea = NULL;
+    int parseerr = 0;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&ipjson, parsed);
@@ -858,25 +872,8 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     HASH_ADD_KEYPTR(hh_liid, state->interceptconf.ipintercepts,
             ipint->common.liid, ipint->common.liid_len, ipint);
 
-    if (strcmp(ipint->common.targetagency, "pcapdisk") != 0) {
-        HASH_FIND_STR(state->interceptconf.leas, ipint->common.targetagency,
-                lea);
-        if (lea) {
-            liidmapped = 1;
-        }
-    } else {
-        liidmapped = 1;
-    }
-
-    if (liidmapped) {
-        liid_hash_t *h = add_liid_mapping(&(state->interceptconf),
-                ipint->common.liid, ipint->common.targetagency);
-        if (announce_liidmapping_to_mediators(state, h) < 0) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: unable to announce new IP intercept %s to mediators.",
-                    ipint->common.liid);
-        }
-    }
+    new_intercept_liidmapping(state, ipint->common.targetagency,
+            ipint->common.liid);
 
     if (announce_single_intercept(state, (void *)ipint,
             push_ipintercept_onto_net_buffer) < 0) {
@@ -931,7 +928,7 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     libtrace_list_t *tmp;
 
     char *liidstr = NULL;
-    int parseerr = 0, changed = 0;
+    int parseerr = 0, changed = 0, agencychanged = 0;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&voipjson, parsed);
@@ -999,6 +996,14 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     MODIFY_STRING_MEMBER(vint->common.authcc, found->common.authcc, &changed);
     found->common.authcc_len  = strlen(found->common.authcc);
 
+    MODIFY_STRING_MEMBER(vint->common.targetagency, found->common.targetagency,
+            &agencychanged);
+
+    if (agencychanged) {
+        new_intercept_liidmapping(state, found->common.targetagency,
+                found->common.liid);
+    }
+
     if (changed) {
         modify_existing_intercept_options(state, (void *)found,
                     OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
@@ -1045,7 +1050,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *liidstr = NULL;
     char *accessstring = NULL;
     char *radiusidentstring = NULL;
-    int parseerr = 0, changed = 0;
+    int parseerr = 0, changed = 0, agencychanged = 0;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&ipjson, parsed);
@@ -1162,6 +1167,14 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     MODIFY_STRING_MEMBER(ipint->username, found->username, &changed);
     found->username_len = strlen(found->username);
 
+    MODIFY_STRING_MEMBER(ipint->common.targetagency, found->common.targetagency,
+            &agencychanged);
+
+    if (agencychanged) {
+        new_intercept_liidmapping(state, found->common.targetagency,
+                found->common.liid);
+    }
+
     if (accessstring && ipint->accesstype != found->accesstype) {
         changed = 1;
         found->accesstype = ipint->accesstype;
@@ -1186,11 +1199,18 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         found->vendmirrorid = ipint->vendmirrorid;
     }
 
+    if (agencychanged) {
+        announce_hi1_notification_to_mediators(state, &(found->common),
+                HI1_LI_ACTIVATED);
+    }
+
     if (changed) {
         modify_existing_intercept_options(state, (void *)found,
                     OPENLI_PROTO_MODIFY_IPINTERCEPT);
-        announce_hi1_notification_to_mediators(state, &(found->common),
-                HI1_LI_MODIFIED);
+        if (!agencychanged) {
+            announce_hi1_notification_to_mediators(state, &(found->common),
+                    HI1_LI_MODIFIED);
+        }
     }
 
     ipint->common.hi1_seqno = found->common.hi1_seqno;

@@ -121,7 +121,7 @@ static int open_pcap_output_file(pcap_thread_state_t *pstate,
 
     char uri[4096];
     int compressmethod = TRACE_OPTION_COMPRESSTYPE_ZLIB;
-    int compresslevel = 1;
+    int compresslevel = pstate->compresslevel;
     struct timeval tv;
 
     /* Make sure the user configured a directory for us to put files into */
@@ -189,8 +189,12 @@ static int open_pcap_output_file(pcap_thread_state_t *pstate,
             goto pcaptraceerr;
         }
 
+        /* Make sure we use an "int" here rather than pstate->compresslevel
+         * directly, just to avoid libtrace trying to read inappropriate
+         * bits of memory.
+         */
         if (trace_config_output(act->out, TRACE_OPTION_OUTPUT_COMPRESS,
-                &pstate->compresslevel) == -1) {
+                &compresslevel) == -1) {
             libtrace_err_t err;
             err = trace_get_err_output(act->out);
             logger(LOG_INFO,
