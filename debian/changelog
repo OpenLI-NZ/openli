@@ -1,3 +1,9 @@
+openli (1.0.9-2) unstable; urgency=medium
+
+  * Rebuild package to support latest libtrace release
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Mon, 22 Mar 2021 11:28:34 +1300
+
 openli (1.0.9-1) unstable; urgency=medium
 
   * Reduce collector CPU usage when the forwarding thread is idle.

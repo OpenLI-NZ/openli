@@ -1,6 +1,6 @@
 Name:           openli
 Version:        1.0.9
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
 License:        GPLv3
@@ -232,6 +232,9 @@ fi
 
 
 %changelog
+* Mon Mar 22 2021 Shane Alcock <salcock@waikato.ac.nz> - 1.0.9-2
+- Rebuild package to be able to use latest libtrace release
+
 * Thu Jan 21 2021 Shane Alcock <salcock@waikato.ac.nz> - 1.0.9-1
 - Updated for 1.0.9 release
 - Remove dependency on rsyslog
