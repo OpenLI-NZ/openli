@@ -232,7 +232,6 @@ fi
 
 
 %changelog
-
 * Thu Jan 21 2021 Shane Alcock <salcock@waikato.ac.nz> - 1.0.9-1
 - Updated for 1.0.9 release
 - Remove dependency on rsyslog
