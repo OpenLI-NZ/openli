@@ -59,6 +59,10 @@ void hash_radius_cleanup(hash_radius_conf_t *conf) {
 
     Word_t word;
 
+    if (conf->jarray == NULL) {
+        return;
+    }
+
     /* free each IP jarray */
     Pip_index = 0;
     JLN(Pip, conf->jarray, Pip_index);
