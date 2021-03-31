@@ -84,6 +84,8 @@ typedef struct intercept_common {
     char *targetagency;
     int seqtrackerid;
     uint32_t hi1_seqno;
+    uint64_t tostart_time;
+    uint64_t toend_time;
 } intercept_common_t;
 
 typedef struct hi1_notify_data {
@@ -173,7 +175,10 @@ typedef struct sipregister sipregister_t;
 #define voip_intercept_equal(a,b) \
     ((strcmp(a->common.authcc, b->common.authcc) == 0) && \
      (strcmp(a->common.delivcc, b->common.delivcc) == 0) && \
-     (strcmp(a->common.targetagency, b->common.targetagency) == 0))
+     (strcmp(a->common.targetagency, b->common.targetagency) == 0) && \
+     (a->common.tostart_time == b->common.tostart_time) && \
+     (a->common.toend_time == b->common.toend_time) && \
+     (a->options == b->options))
 
 
 typedef struct voipintercept {

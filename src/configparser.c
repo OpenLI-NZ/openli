@@ -527,7 +527,8 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         newcept->common.hi1_seqno = 0;
         newcept->awaitingconfirm = 1;
         newcept->options = 0;
-
+        newcept->common.tostart_time = 0;
+        newcept->common.toend_time = 0;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -575,6 +576,20 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
                     logger(LOG_INFO, "OpenLI: 0 is not a valid value for the 'mediator' config option.");
                 }
             }
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "starttime") == 0) {
+                newcept->common.tostart_time = strtoul(
+                        (char *)value->data.scalar.value, NULL, 10);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "endtime") == 0) {
+                newcept->common.toend_time = strtoul(
+                        (char *)value->data.scalar.value, NULL, 10);
+            }
+
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value, "agencyid") == 0) {
@@ -631,6 +646,8 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED; 
         newcept->statics = NULL;
         newcept->options = 0;
+        newcept->common.tostart_time = 0;
+        newcept->common.toend_time = 0;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -737,6 +754,21 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                 }
 
             }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "starttime") == 0) {
+                newcept->common.tostart_time = strtoul(
+                        (char *)value->data.scalar.value, NULL, 10);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "endtime") == 0) {
+                newcept->common.toend_time = strtoul(
+                        (char *)value->data.scalar.value, NULL, 10);
+            }
+
         }
 
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&

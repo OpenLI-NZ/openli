@@ -331,6 +331,18 @@ static void process_incoming_messages(libtrace_thread_t *t,
         handle_modify_iprange(t, loc, syncpush->data.iprange);
     }
 
+    if (syncpush->type == OPENLI_PUSH_UPDATE_VOIPINTERCEPT) {
+        handle_change_voip_intercept(t, loc, syncpush->data.ipmmint);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_UPDATE_IPINTERCEPT) {
+        handle_change_ipint_intercept(t, loc, syncpush->data.ipsess);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_UPDATE_VENDMIRROR_INTERCEPT) {
+        handle_change_vendmirror_intercept(t, loc, syncpush->data.mirror);
+    }
+
 }
 
 static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,

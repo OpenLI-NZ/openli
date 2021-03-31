@@ -881,8 +881,10 @@ static inline void announce_vendormirror_id(collector_sync_t *sync,
 
     sync_sendq_t *sendq, *tmp;
     logger(LOG_INFO,
-            "OpenLI: received IP intercept from provisioner for Vendor Mirrored ID %u (LIID %s, authCC %s), target is %s",
+            "OpenLI: received IP intercept from provisioner for Vendor Mirrored ID %u (LIID %s, authCC %s, start time %lu, end time %lu), target is %s",
             ipint->vendmirrorid, ipint->common.liid, ipint->common.authcc,
+            ipint->common.tostart_time,
+            ipint->common.toend_time,
             ipint->username ? ipint->username : "unknown");
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
             sendq, tmp) {
@@ -940,8 +942,9 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
         announce_vendormirror_id(sync, cept);
     } else if (cept->username != NULL) {
         logger(LOG_INFO,
-                "OpenLI: received IP intercept for target %s from provisioner (LIID %s, authCC %s)",
-                cept->username, cept->common.liid, cept->common.authcc);
+                "OpenLI: received IP intercept for target %s from provisioner (LIID %s, authCC %s, start time %lu, end time %lu)",
+                cept->username, cept->common.liid, cept->common.authcc,
+                cept->common.tostart_time, cept->common.toend_time);
     }
 
     if (sync->pubsockcount <= 1) {
@@ -1034,6 +1037,7 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
     ipintercept_t *ipint, modified;
+    int timechanged = 0;
 
     if (decode_ipintercept_modify(intmsg, msglen, &modified) == -1) {
         if (sync->instruct_log) {
@@ -1049,6 +1053,8 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     if (!ipint) {
         return insert_new_ipintercept(sync, &modified);
     }
+
+    /* TODO apply any changes to authcc or delivcc */
 
     if (strcmp(ipint->username, modified.username) != 0) {
         push_ipintercept_halt_to_threads(sync, ipint);
@@ -1071,6 +1077,20 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
             announce_vendormirror_id(sync, ipint);
         }
+    }
+
+    if (ipint->common.tostart_time != modified.common.tostart_time ||
+            ipint->common.toend_time != modified.common.toend_time) {
+        logger(LOG_INFO,
+                "OpenLI: IP intercept %s has changed start / end times -- now %lu, %lu", ipint->common.liid, modified.common.tostart_time, modified.common.toend_time);
+        timechanged = 1;
+    }
+
+    ipint->common.tostart_time = modified.common.tostart_time;
+    ipint->common.toend_time = modified.common.toend_time;
+
+    if (timechanged) {
+        /* TODO */
     }
 
     return 0;

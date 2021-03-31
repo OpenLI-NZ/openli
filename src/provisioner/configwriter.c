@@ -405,6 +405,30 @@ static int emit_intercept_common(intercept_common_t *intcom,
             (yaml_char_t *)buffer, strlen(buffer), 1, 0,
             YAML_PLAIN_SCALAR_STYLE);
     if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    snprintf(buffer, 64, "%lu", intcom->tostart_time);
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)"starttime", strlen("starttime"), 1, 0,
+            YAML_PLAIN_SCALAR_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)buffer, strlen(buffer), 1, 0,
+            YAML_PLAIN_SCALAR_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    snprintf(buffer, 64, "%lu", intcom->toend_time);
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)"endtime", strlen("endtime"), 1, 0,
+            YAML_PLAIN_SCALAR_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)buffer, strlen(buffer), 1, 0,
+            YAML_PLAIN_SCALAR_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
     return 0;
 }
 

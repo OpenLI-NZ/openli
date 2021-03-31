@@ -357,12 +357,14 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
         (ipint->common.liid_len + ipint->common.authcc_len + \
          ipint->username_len + sizeof(ipint->accesstype) + \
          sizeof(ipint->options) + \
-         sizeof(ipint->vendmirrorid) + (6 * 4))
+         sizeof(ipint->common.tostart_time) + sizeof(ipint->common.toend_time) \
+         + sizeof(ipint->vendmirrorid) + (8 * 4))
 
 #define IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
          ipint->username_len + sizeof(ipint->accesstype) + \
-         sizeof(ipint->options) + (5 * 4))
+         sizeof(ipint->common.tostart_time) + sizeof(ipint->common.toend_time) \
+         + sizeof(ipint->options) + (7 * 4))
 
 static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
 
@@ -427,6 +429,19 @@ static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
         }
     }
 
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_START_TIME,
+            (uint8_t *)&(ipint->common.tostart_time),
+            sizeof(ipint->common.tostart_time)) == -1) {
+        goto pushmodfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_END_TIME,
+            (uint8_t *)&(ipint->common.toend_time),
+            sizeof(ipint->common.toend_time)) == -1) {
+        goto pushmodfail;
+    }
+
+
     return (int)totallen;
 
 pushmodfail:
@@ -439,7 +454,9 @@ pushmodfail:
 
 #define VOIPINTERCEPT_MODIFY_BODY_LEN(vint) \
         (vint->common.liid_len + vint->common.authcc_len + \
-         sizeof(vint->options) + (3 * 4))
+         vint->common.delivcc_len + \
+         sizeof(vint->options) + sizeof(vint->common.toend_time) + \
+         sizeof(vint->common.tostart_time) + (6 * 4))
 
 static int _push_voipintercept_modify(net_buffer_t *nb, voipintercept_t *vint)
 {
@@ -481,6 +498,23 @@ static int _push_voipintercept_modify(net_buffer_t *nb, voipintercept_t *vint)
         goto pushmodfail;
     }
 
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC, (uint8_t *)vint->common.delivcc,
+            strlen(vint->common.delivcc)) == -1) {
+        goto pushmodfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_START_TIME,
+            (uint8_t *)&(vint->common.tostart_time),
+            sizeof(vint->common.tostart_time)) == -1) {
+        goto pushmodfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_END_TIME,
+            (uint8_t *)&(vint->common.toend_time),
+            sizeof(vint->common.toend_time)) == -1) {
+        goto pushmodfail;
+    }
+
 
     return (int)totallen;
 
@@ -508,7 +542,8 @@ int push_intercept_modify_onto_net_buffer(net_buffer_t *nb, void *data,
         (vint->common.liid_len + vint->common.authcc_len + \
          vint->common.delivcc_len + strlen(vint->common.targetagency) + \
          sizeof(vint->common.destid) + sizeof(vint->options) \
-         + (6 * 4))
+         + sizeof(vint->common.tostart_time) + sizeof(vint->common.toend_time) \
+         + (8 * 4))
 
 #define INTERCEPT_WITHDRAW_BODY_LEN(liid, authcc) \
         (strlen(liid) + strlen(authcc) + (2 * 4))
@@ -632,6 +667,18 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_INTOPTIONS,
             (uint8_t *)&(vint->options), sizeof(vint->options))) == -1) {
+        goto pushvoipintfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_START_TIME,
+            (uint8_t *)&(vint->common.tostart_time),
+            sizeof(vint->common.tostart_time)) == -1) {
+        goto pushvoipintfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_END_TIME,
+            (uint8_t *)&(vint->common.toend_time),
+            sizeof(vint->common.toend_time)) == -1) {
         goto pushvoipintfail;
     }
 
@@ -818,7 +865,8 @@ int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
          ipint->username_len + sizeof(ipint->common.destid) + \
          strlen(ipint->common.targetagency) + \
          sizeof(ipint->options) + \
-         sizeof(ipint->accesstype) + (8 * 4))
+         sizeof(ipint->common.tostart_time) + sizeof(ipint->common.toend_time) \
+         + sizeof(ipint->accesstype) + (10 * 4))
 
 #define VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
@@ -826,7 +874,8 @@ int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
          strlen(ipint->common.targetagency) + \
          sizeof(ipint->vendmirrorid) + sizeof(ipint->common.destid) + \
          sizeof(ipint->options) + \
-         sizeof(ipint->accesstype) + (9 * 4))
+         sizeof(ipint->common.tostart_time) + sizeof(ipint->common.toend_time) \
+         + sizeof(ipint->accesstype) + (11 * 4))
 
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
@@ -911,6 +960,18 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_MEDIATORID,
             (uint8_t *)&(ipint->common.destid),
             sizeof(ipint->common.destid))) == -1) {
+        goto pushipintfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_START_TIME,
+            (uint8_t *)&(ipint->common.tostart_time),
+            sizeof(ipint->common.tostart_time)) == -1) {
+        goto pushipintfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_END_TIME,
+            (uint8_t *)&(ipint->common.toend_time),
+            sizeof(ipint->common.toend_time)) == -1) {
         goto pushipintfail;
     }
 
@@ -1338,6 +1399,8 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
     vint->common.liid_len = 0;
     vint->common.authcc_len = 0;
     vint->common.delivcc_len = 0;
+    vint->common.tostart_time = 0;
+    vint->common.toend_time = 0;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -1365,6 +1428,10 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
             vint->common.delivcc_len = vallen;
         } else if (f == OPENLI_PROTO_FIELD_INTERCEPTID) {
             vint->internalid = *((uint64_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTERCEPT_START_TIME) {
+            vint->common.tostart_time = *((uint64_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTERCEPT_END_TIME) {
+            vint->common.toend_time = *((uint64_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
@@ -1417,6 +1484,8 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->common.liid_len = 0;
     ipint->common.authcc_len = 0;
     ipint->common.delivcc_len = 0;
+    ipint->common.tostart_time = 0;
+    ipint->common.toend_time = 0;
     ipint->username_len = 0;
 
     while (msgbody < msgend) {
@@ -1448,6 +1517,10 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
             DECODE_STRING_FIELD(ipint->common.targetagency, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_INTOPTIONS) {
             ipint->options = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTERCEPT_START_TIME) {
+            ipint->common.tostart_time = *((uint64_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTERCEPT_END_TIME) {
+            ipint->common.toend_time = *((uint64_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_USERNAME) {
             DECODE_STRING_FIELD(ipint->username, valptr, vallen);
             if (vallen == 0) {

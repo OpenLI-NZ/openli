@@ -692,4 +692,54 @@ void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
     return;
 }
 
+void handle_change_voip_intercept(libtrace_thread_t *t, colthread_local_t *loc,
+        rtpstreaminf_t *tochange) {
+
+    rtpstreaminf_t *rtp;
+
+    if (tochange->streamkey == NULL) {
+        return;
+    }
+
+    HASH_FIND(hh, loc->activertpintercepts, tochange->streamkey,
+            strlen(tochange->streamkey), rtp);
+
+    if (rtp == NULL) {
+        logger(LOG_INFO, "OpenLI: collector thread was unable to modify RTP stream %s, as it was not present in its intercept set.",
+                tochange->streamkey);
+        return;
+    }
+
+    rtp->common.tostart_time = tochange->common.tostart_time;
+    rtp->common.toend_time = tochange->common.toend_time;
+
+    free_single_rtpstream(tochange);
+}
+
+void handle_change_vendmirror_intercept(libtrace_thread_t *t,
+        colthread_local_t *loc, vendmirror_intercept_t *vend) {
+
+}
+
+void handle_change_ipint_intercept(libtrace_thread_t *t, colthread_local_t *loc,
+        ipsession_t *sess) {
+
+    /*
+    if (sess->ai_family == AF_INET) {
+        if (update_ipv4_intercept(loc, sess) > 0) {
+
+        }
+    } else if (sess->ai_family == AF_INET6) {
+        if (update_ipv6_intercept(loc, sess) > 0) {
+
+        }
+    } else {
+        logger(LOG_INFO,
+                 "OpenLI: invalid address family for new IP intercept: %d",
+                 sess->ai_family);
+    }
+    */
+    free_single_ipsession(sess);
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
