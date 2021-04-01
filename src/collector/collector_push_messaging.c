@@ -251,28 +251,53 @@ static int add_ipv6_intercept(colthread_local_t *loc, ipsession_t *sess) {
     return 0;
 }
 
-static int remove_ipv4_intercept(colthread_local_t *loc, ipsession_t *torem) {
+static inline ipsession_t *find_ipv4_intercept(colthread_local_t *loc,
+        ipsession_t *tofind, ipv4_target_t **v4) {
 
-    ipv4_target_t *v4;
     struct sockaddr_in *sin;
     uint32_t v4addr;
     ipsession_t *found;
 
-    sin = (struct sockaddr_in *)(torem->targetip);
+    sin = (struct sockaddr_in *)(tofind->targetip);
     if (sin == NULL) {
-        logger(LOG_INFO, "OpenLI: attempted to remove IPv4 intercept but target IP was NULL?");
-        return -1;
+        logger(LOG_INFO, "OpenLI: attempted to find IPv4 intercept but target IP was NULL?");
+        return NULL;
     }
 
     v4addr = sin->sin_addr.s_addr;
-    HASH_FIND(hh, loc->activeipv4intercepts, &v4addr, sizeof(v4addr), v4);
-    if (!v4) {
+    *v4 = NULL;
+    HASH_FIND(hh, loc->activeipv4intercepts, &v4addr, sizeof(v4addr), *v4);
+    if ((*v4) == NULL) {
+        return NULL;
+    }
+
+    HASH_FIND(hh, (*v4)->intercepts, tofind->streamkey,
+            strlen(tofind->streamkey), found);
+    return found;
+}
+
+static int update_ipv4_intercept(colthread_local_t *loc, ipsession_t *toup) {
+
+    ipsession_t *found;
+    ipv4_target_t *v4;
+
+    found = find_ipv4_intercept(loc, toup, &v4);
+    if (!found) {
         return 0;
     }
 
-    HASH_FIND(hh, v4->intercepts, torem->streamkey, strlen(torem->streamkey),
-            found);
-    if (!found) {
+    found->common.tostart_time = toup->common.tostart_time;
+    found->common.toend_time = toup->common.toend_time;
+
+}
+
+static int remove_ipv4_intercept(colthread_local_t *loc, ipsession_t *torem) {
+
+    ipsession_t *found;
+    ipv4_target_t *v4;
+
+    found = find_ipv4_intercept(loc, torem, &v4);
+    if (!found || v4 == NULL) {
         return 0;
     }
 
@@ -287,36 +312,64 @@ static int remove_ipv4_intercept(colthread_local_t *loc, ipsession_t *torem) {
     return 1;
 }
 
-static int remove_ipv6_intercept(colthread_local_t *loc, ipsession_t *torem) {
+static inline ipsession_t *find_ipv6_intercept(colthread_local_t *loc,
+        ipsession_t *tofind, ipv6_target_t **v6, char *prefixstr,
+        int pfxstrlen) {
 
-    ipv6_target_t *v6;
     struct sockaddr_in6 *sin6;
     ipsession_t *found;
-    char prefixstr[100];
     char inet[INET6_ADDRSTRLEN];
 
-    sin6 = (struct sockaddr_in6 *)(torem->targetip);
+    sin6 = (struct sockaddr_in6 *)(tofind->targetip);
     if (sin6 == NULL) {
-        logger(LOG_INFO, "OpenLI: attempted to remove IPv6 intercept but target IP was NULL?");
-        return -1;
+        logger(LOG_INFO, "OpenLI: attempted to find IPv6 intercept but target IP was NULL?");
+        return NULL;
     }
 
     if (inet_ntop(AF_INET6, &(sin6->sin6_addr), inet, INET6_ADDRSTRLEN)
             == NULL) {
         logger(LOG_INFO, "OpenLI: IPv6 intercept prefix does not contain a valid IPv6 address");
-        return -1;
+        return NULL;
     }
 
-    snprintf(prefixstr, 100, "%s/%u", inet, torem->prefixlen);
+    snprintf(prefixstr, pfxstrlen, "%s/%u", inet, tofind->prefixlen);
+    *v6 = NULL;
 
-    HASH_FIND(hh, loc->activeipv6intercepts, prefixstr, strlen(prefixstr), v6);
-    if (!v6) {
+    HASH_FIND(hh, loc->activeipv6intercepts, prefixstr, strlen(prefixstr), *v6);
+    if ((*v6) == NULL) {
+        return NULL;
+    }
+
+    HASH_FIND(hh, (*v6)->intercepts, tofind->streamkey,
+            strlen(tofind->streamkey), found);
+    return found;
+}
+
+static int update_ipv6_intercept(colthread_local_t *loc, ipsession_t *toup) {
+
+    ipsession_t *found;
+    ipv6_target_t *v6;
+    char prefixstr[100];
+
+    found = find_ipv6_intercept(loc, toup, &v6, prefixstr, 100);
+    if (!found) {
         return 0;
     }
 
-    HASH_FIND(hh, v6->intercepts, torem->streamkey, strlen(torem->streamkey),
-            found);
-    if (!found) {
+    found->common.tostart_time = toup->common.tostart_time;
+    found->common.toend_time = toup->common.toend_time;
+
+    return 1;
+}
+
+static int remove_ipv6_intercept(colthread_local_t *loc, ipsession_t *torem) {
+
+    ipsession_t *found;
+    ipv6_target_t *v6;
+    char prefixstr[100];
+
+    found = find_ipv6_intercept(loc, torem, &v6, prefixstr, 100);
+    if (!found || v6 == NULL) {
         return 0;
     }
 
@@ -721,10 +774,14 @@ void handle_change_vendmirror_intercept(libtrace_thread_t *t,
 
 }
 
+void handle_change_iprange_intercept(libtrace_thread_t *t,
+        colthread_local_t *loc, staticipsession_t *ipr) {
+
+}
+
 void handle_change_ipint_intercept(libtrace_thread_t *t, colthread_local_t *loc,
         ipsession_t *sess) {
 
-    /*
     if (sess->ai_family == AF_INET) {
         if (update_ipv4_intercept(loc, sess) > 0) {
 
@@ -738,7 +795,6 @@ void handle_change_ipint_intercept(libtrace_thread_t *t, colthread_local_t *loc,
                  "OpenLI: invalid address family for new IP intercept: %d",
                  sess->ai_family);
     }
-    */
     free_single_ipsession(sess);
 }
 

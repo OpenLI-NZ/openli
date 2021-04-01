@@ -632,6 +632,14 @@ static int modify_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
     return 1;
 }
 
+static int update_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr,
+        ipintercept_t *ipint, int irirequired) {
+
+    /* TODO */
+
+    return 0;
+}
+
 static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
 {
 
@@ -679,8 +687,19 @@ static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
     return 1;
 }
 
-static inline void push_session_halt_to_threads(void *sendqs,
-        access_session_t *sess, ipintercept_t *ipint) {
+static void update_vendmirror_intercept(collector_sync_t *sync,
+        ipintercept_t *ipint, int irirequired) {
+
+    /* TODO */
+
+}
+
+
+/* Used to push either OPENLI_PUSH_HALT_IPINTERCEPT or
+ * OPENLI_PUSH_UPDATE_IPINTERCEPT to all collector threads.
+ */
+static void push_session_update_to_threads(void *sendqs,
+        access_session_t *sess, ipintercept_t *ipint, int updatetype) {
 
     sync_sendq_t *sendq, *tmp;
     int i;
@@ -691,7 +710,7 @@ static inline void push_session_halt_to_threads(void *sendqs,
 
         HASH_ITER(hh, (sync_sendq_t *)sendqs, sendq, tmp) {
             memset(&pmsg, 0, sizeof(openli_pushed_t));
-            pmsg.type = OPENLI_PUSH_HALT_IPINTERCEPT;
+            pmsg.type = updatetype;
             sessdup = create_ipsession(ipint, sess->cin,
                     sess->sessionips[i].ipfamily,
                     (struct sockaddr *)&(sess->sessionips[i].assignedip),
@@ -702,6 +721,7 @@ static inline void push_session_halt_to_threads(void *sendqs,
         }
 
     }
+
 }
 
 static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
@@ -730,8 +750,72 @@ static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
         /* TODO skip sessions that were never active */
 
         create_iri_from_session(sync, sess, ipint, OPENLI_IPIRI_ENDWHILEACTIVE);
-        push_session_halt_to_threads(sync->glob->collector_queues, sess,
-                ipint);
+        push_session_update_to_threads(sync->glob->collector_queues, sess,
+                ipint, OPENLI_PUSH_HALT_IPINTERCEPT);
+    }
+
+}
+
+static void push_ipintercept_update_to_threads(collector_sync_t *sync,
+        ipintercept_t *ipint, ipintercept_t *modified) {
+
+    internet_user_t *user;
+    access_session_t *sess, *tmp2;
+    static_ipranges_t *ipr, *tmpr;
+    struct timeval now;
+    int irirequired = -1;
+
+    logger(LOG_INFO, "OpenLI: collector is updating intercept for target %s (LIID = %s)", ipint->username, ipint->common.liid);
+
+    /* In cases where a change to start or end time have changed whether
+     * an active session is now being intercepted or not, we need to force
+     * an appropriate IRI.
+     */
+    gettimeofday(&now, NULL);
+    if (ipint->common.toend_time > now.tv_sec &&
+            (modified->common.toend_time > 0 &&
+             modified->common.toend_time <= now.tv_sec) &&
+            ipint->common.tostart_time < now.tv_sec) {
+        /* End time has been brought forward and intercept is now inactive */
+        irirequired = OPENLI_IPIRI_ENDWHILEACTIVE;
+    } else if (ipint->common.tostart_time >= now.tv_sec &&
+            modified->common.tostart_time < now.tv_sec &&
+            (modified->common.toend_time == 0 ||
+             modified->common.toend_time > now.tv_sec)) {
+        /* Start time has come forward and intercept is now active */
+        irirequired = OPENLI_IPIRI_STARTWHILEACTIVE;
+    }
+
+    ipint->common.tostart_time = modified->common.tostart_time;
+    ipint->common.toend_time = modified->common.toend_time;
+
+    /* Update all static IP ranges for this intercept */
+    HASH_ITER(hh, ipint->statics, ipr, tmpr) {
+        update_staticiprange(sync, ipr, ipint, irirequired);
+    }
+
+    /* If this is a vendmirror intercept, update it */
+    if (ipint->vendmirrorid == modified->vendmirrorid) {
+        if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
+            update_vendmirror_intercept(sync, ipint, irirequired);
+        }
+    }
+
+    HASH_FIND(hh, sync->allusers, ipint->username, ipint->username_len,
+            user);
+
+    if (user == NULL) {
+        return;
+    }
+
+    /* Update all IP sessions for the target */
+    HASH_ITER(hh, user->sessions, sess, tmp2) {
+        if (irirequired != -1) {
+            create_iri_from_session(sync, sess, ipint, irirequired);
+        }
+
+        push_session_update_to_threads(sync->glob->collector_queues, sess,
+                ipint, OPENLI_PUSH_UPDATE_IPINTERCEPT);
     }
 
 }
@@ -1037,7 +1121,6 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
     ipintercept_t *ipint, modified;
-    int timechanged = 0;
 
     if (decode_ipintercept_modify(intmsg, msglen, &modified) == -1) {
         if (sync->instruct_log) {
@@ -1083,14 +1166,7 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             ipint->common.toend_time != modified.common.toend_time) {
         logger(LOG_INFO,
                 "OpenLI: IP intercept %s has changed start / end times -- now %lu, %lu", ipint->common.liid, modified.common.tostart_time, modified.common.toend_time);
-        timechanged = 1;
-    }
-
-    ipint->common.tostart_time = modified.common.tostart_time;
-    ipint->common.toend_time = modified.common.toend_time;
-
-    if (timechanged) {
-        /* TODO */
+        push_ipintercept_update_to_threads(sync, ipint, &modified);
     }
 
     return 0;
@@ -1823,8 +1899,8 @@ static inline int report_silent_logoffs(collector_sync_t *sync,
                 create_iri_from_session(sync,
                         prev->session[i],
                         ipint, OPENLI_IPIRI_SILENTLOGOFF);
-                push_session_halt_to_threads(sync->glob->collector_queues,
-                        prev->session[i], ipint);
+                push_session_update_to_threads(sync->glob->collector_queues,
+                        prev->session[i], ipint, OPENLI_PUSH_HALT_IPINTERCEPT);
             }
         }
 
@@ -2072,9 +2148,9 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
                 if (userint) {
                     HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
                         if (identity_match_intercept(ipint, &(identities[i]))) {
-                            push_session_halt_to_threads(
+                            push_session_update_to_threads(
                                     sync->glob->collector_queues,
-                                    sess, ipint);
+                                    sess, ipint, OPENLI_PUSH_HALT_IPINTERCEPT);
                         }
                     }
                     pthread_mutex_lock(sync->glob->stats_mutex);

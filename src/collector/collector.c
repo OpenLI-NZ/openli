@@ -343,6 +343,10 @@ static void process_incoming_messages(libtrace_thread_t *t,
         handle_change_vendmirror_intercept(t, loc, syncpush->data.mirror);
     }
 
+    if (syncpush->type == OPENLI_PUSH_UPDATE_IPRANGE_INTERCEPT) {
+        handle_change_iprange_intercept(t, loc, syncpush->data.iprange);
+    }
+
 }
 
 static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
@@ -625,6 +629,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     //trace_increment_packet_refcount(pkt);
 
+    pinfo.tv = trace_get_timeval(pkt);
     iprem = rem;
     if (ethertype == TRACE_ETHERTYPE_IP) {
         uint8_t moreflag;

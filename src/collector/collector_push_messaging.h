@@ -57,6 +57,8 @@ void handle_change_voip_intercept(libtrace_thread_t *t, colthread_local_t *loc,
         rtpstreaminf_t *tochange);
 void handle_change_vendmirror_intercept(libtrace_thread_t *t,
         colthread_local_t *loc, vendmirror_intercept_t *vend);
+void handle_change_iprange_intercept(libtrace_thread_t *t,
+        colthread_local_t *loc, staticipsession_t *ipr);
 void handle_change_ipint_intercept(libtrace_thread_t *t, colthread_local_t *loc,
         ipsession_t *sess);
 #endif

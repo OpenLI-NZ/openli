@@ -791,6 +791,14 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
 
     openli_export_recv_t *copy;
 
+    if (vint->common.tostart_time > irimsg->ts.tv_sec) {
+        return;
+    }
+
+    if (vint->common.toend_time > 0 && vint->common.toend_time <= irimsg->ts.tv_sec) {
+        return;
+    }
+
     /* TODO consider recycling IRI messages like we do with IPCCs */
 
     /* Wrap this packet up in an IRI and forward it on to the exporter.
