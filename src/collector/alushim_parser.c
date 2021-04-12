@@ -189,7 +189,7 @@ int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
             continue;
         }
         if (alu->common.toend_time > 0 &&
-                alu->common.toend_time >= pinfo->tv.tv_sec) {
+                alu->common.toend_time < pinfo->tv.tv_sec) {
             continue;
         }
 

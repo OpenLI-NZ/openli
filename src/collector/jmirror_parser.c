@@ -108,7 +108,7 @@ int check_jmirror_intercept(collector_identity_t *info, colthread_local_t *loc,
             continue;
         }
         if (cept->common.toend_time > 0 &&
-                cept->common.toend_time >= pinfo->tv.tv_sec) {
+                cept->common.toend_time < pinfo->tv.tv_sec) {
             continue;
         }
         push_jmirror_ipcc_job(loc, packet, cept, cin, info, l3, rem);
