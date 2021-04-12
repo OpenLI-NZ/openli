@@ -306,6 +306,7 @@ void free_single_ipsession(ipsession_t *sess);
 void free_single_rtpstream(rtpstreaminf_t *rtp);
 void free_single_vendmirror_intercept(vendmirror_intercept_t *mirror);
 void free_single_staticipsession(staticipsession_t *statint);
+void free_single_staticiprange(static_ipranges_t *ipr);
 
 sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
         uint32_t cin);

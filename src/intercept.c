@@ -210,13 +210,7 @@ void free_single_ipintercept(ipintercept_t *cept) {
 
     HASH_ITER(hh, cept->statics, ipr, tmp) {
         HASH_DELETE(hh, cept->statics, ipr);
-        if (ipr->rangestr) {
-            free(ipr->rangestr);
-        }
-        if (ipr->liid) {
-            free(ipr->liid);
-        }
-        free(ipr);
+        free_single_staticiprange(ipr);
     }
 
     free(cept);
@@ -449,6 +443,19 @@ staticipsession_t *create_staticipsession(ipintercept_t *ipint, char *rangestr,
     snprintf(statint->key, 127, "%s-%u", ipint->common.liid, cin);
 
     return statint;
+}
+
+void free_single_staticiprange(static_ipranges_t *ipr) {
+    if (!ipr) {
+        return;
+    }
+    if (ipr->rangestr) {
+        free(ipr->rangestr);
+    }
+    if (ipr->liid) {
+        free(ipr->liid);
+    }
+    free(ipr);
 }
 
 void free_single_staticipsession(staticipsession_t *statint) {
