@@ -568,9 +568,7 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
     HASH_FIND(hh, ipint->statics, ipr->rangestr, strlen(ipr->rangestr), found);
     if (found) {
         found->awaitingconfirm = 0;
-        free(ipr->liid);
-        free(ipr->rangestr);
-        free(ipr);
+        free_single_staticiprange(ipr);
         return 1;
     }
 
@@ -635,8 +633,25 @@ static int modify_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
 static int update_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr,
         ipintercept_t *ipint, int irirequired) {
 
-    /* TODO */
+    static_ipranges_t *found;
+    sync_sendq_t *tmp, *sendq;
 
+    HASH_FIND(hh, ipint->statics, ipr->rangestr, strlen(ipr->rangestr), found);
+    if (found) {
+        openli_pushed_t pmsg;
+        if (irirequired != -1) {
+            create_ipiri_job_from_iprange(sync, found, ipint, irirequired);
+        }
+        HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
+                sendq, tmp) {
+
+            memset(&pmsg, 0, sizeof(pmsg));
+            pmsg.type = OPENLI_PUSH_UPDATE_IPRANGE_INTERCEPT;
+            pmsg.data.iprange = create_staticipsession(ipint, found->rangestr,
+                    found->cin);
+            libtrace_message_queue_put(sendq->q, &pmsg);
+        }
+    }
     return 0;
 }
 
@@ -679,9 +694,7 @@ static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
         sync->glob->stats->ipsessions_ended_total ++;
         pthread_mutex_unlock(sync->glob->stats_mutex);
         HASH_DELETE(hh, ipint->statics, found);
-        free(found->liid);
-        free(found->rangestr);
-        free(found);
+        free_single_staticiprange(found);
     }
 
     return 1;
@@ -690,8 +703,24 @@ static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
 static void update_vendmirror_intercept(collector_sync_t *sync,
         ipintercept_t *ipint, int irirequired) {
 
-    /* TODO */
+    openli_pushed_t pmsg;
+    vendmirror_intercept_t *mirror;
+    sync_sendq_t *sendq, *tmp;
 
+    HASH_ITER(hh, (sync_sendq_t *)sync->glob->collector_queues, sendq, tmp) {
+        mirror = create_vendmirror_intercept(ipint);
+        memset(&pmsg, 0, sizeof(openli_pushed_t));
+        pmsg.type = OPENLI_PUSH_UPDATE_VENDMIRROR_INTERCEPT;
+
+        pmsg.data.mirror = mirror;
+        libtrace_message_queue_put(sendq->q, &pmsg);
+    }
+
+    /* TODO create an IRI for this vendmirror intercept, if required */
+    /* This requires us to know the CIN, which we currently do not have
+     * access to -- just another bit of information we need to get from the
+     * collector threads eventually...
+     */
 }
 
 
@@ -1532,9 +1561,7 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 if (ret == -1) {
                     return -1;
                 }
-                free(ipr->liid);
-                free(ipr->rangestr);
-                free(ipr);
+                free_single_staticiprange(ipr);
                 break;
             case OPENLI_PROTO_REMOVE_STATICIPS:
                 ipr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
@@ -1551,9 +1578,7 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 if (ret == -1) {
                     return -1;
                 }
-                free(ipr->liid);
-                free(ipr->rangestr);
-                free(ipr);
+                free_single_staticiprange(ipr);
                 break;
             case OPENLI_PROTO_HALT_IPINTERCEPT:
                 ret = halt_ipintercept(sync, provmsg, msglen);

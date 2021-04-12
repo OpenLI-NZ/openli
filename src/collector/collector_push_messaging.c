@@ -772,11 +772,44 @@ void handle_change_voip_intercept(libtrace_thread_t *t, colthread_local_t *loc,
 void handle_change_vendmirror_intercept(libtrace_thread_t *t,
         colthread_local_t *loc, vendmirror_intercept_t *vend) {
 
+    vendmirror_intercept_t *found;
+    vendmirror_intercept_list_t *parent;
+
+    HASH_FIND(hh, loc->activemirrorintercepts, &(vend->sessionid),
+            sizeof(vend->sessionid), parent);
+
+    if (parent == NULL) {
+        logger(LOG_INFO, "OpenLI: collector thread was unable to modify Vendor Mirror intercept %u:%s, as the session ID was not present in its intercept set.",
+                vend->sessionid, vend->common.liid);
+        return;
+    }
+
+    HASH_FIND(hh, parent->intercepts, vend->common.liid, vend->common.liid_len,
+            found);
+    if (found == NULL) {
+        logger(LOG_INFO, "OpenLI: collector thread was unable to modify Vendor Mirror intercept %u:%s, as the LIID was not present in its intercept list.",
+                vend->sessionid, vend->common.liid);
+        return;
+    }
+
+    found->common.tostart_time = vend->common.tostart_time;
+    found->common.toend_time = vend->common.toend_time;
+    free_single_vendmirror_intercept(vend);
 }
 
 void handle_change_iprange_intercept(libtrace_thread_t *t,
         colthread_local_t *loc, staticipsession_t *ipr) {
 
+    staticipsession_t *sessrec;
+
+    HASH_FIND(hh, loc->activestaticintercepts, ipr->key, strlen(ipr->key),
+            sessrec);
+    if (sessrec) {
+        sessrec->common.tostart_time = ipr->common.tostart_time;
+        sessrec->common.toend_time = ipr->common.toend_time;
+    }
+
+    free_single_staticipsession(ipr);
 }
 
 void handle_change_ipint_intercept(libtrace_thread_t *t, colthread_local_t *loc,
