@@ -185,6 +185,13 @@ int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
     cin = ntohl(aluhdr->sessionid);
 
     HASH_ITER(hh, vmilist->intercepts, alu, tmp) {
+        if (pinfo->tv.tv_sec < alu->common.tostart_time) {
+            continue;
+        }
+        if (alu->common.toend_time > 0 &&
+                alu->common.toend_time < pinfo->tv.tv_sec) {
+            continue;
+        }
 
         /* Create an appropriate IPCC and export it */
         push_alu_ipcc_job(loc, packet, alu, cin,

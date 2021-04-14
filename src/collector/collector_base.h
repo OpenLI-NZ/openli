@@ -111,6 +111,23 @@ typedef struct sync_thread_global {
 
 } sync_thread_global_t;
 
+enum {
+    OPENLI_UPCOMING_INTERCEPT_EVENT_START,
+    OPENLI_UPCOMING_INTERCEPT_EVENT_END
+};
+
+struct upcoming_intercept_event {
+    uint8_t event_type;
+    void *intercept;
+    char *liid;
+    UT_hash_handle hh;
+};
+
+typedef struct upcoming_intercept_time {
+    uint64_t timestamp;
+    struct upcoming_intercept_event *events;
+} upcoming_intercept_time_t;
+
 typedef struct collector_identity {
     char *operatorid;
     char *networkelemid;

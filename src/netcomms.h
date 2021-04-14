@@ -152,6 +152,8 @@ typedef enum {
     OPENLI_PROTO_FIELD_SEQNO,
     OPENLI_PROTO_FIELD_TS_SEC,
     OPENLI_PROTO_FIELD_TS_USEC,
+    OPENLI_PROTO_FIELD_INTERCEPT_START_TIME,
+    OPENLI_PROTO_FIELD_INTERCEPT_END_TIME,
 } openli_proto_fieldtype_t;
 
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl);

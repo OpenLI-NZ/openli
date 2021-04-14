@@ -51,6 +51,7 @@ typedef struct packetinfo {
     struct sockaddr_storage destip;
     uint16_t srcport;
     uint16_t destport;
+    struct timeval tv;
 } packet_info_t;
 
 

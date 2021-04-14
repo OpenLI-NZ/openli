@@ -144,7 +144,7 @@ static inline int add_static_cached(prefix_t *prefix, patricia_node_t *pnode,
 
 static inline int lookup_static_ranges(struct sockaddr *cmp,
         int family, libtrace_packet_t *pkt, uint8_t dir,
-        colthread_local_t *loc) {
+        colthread_local_t *loc, struct timeval *tv) {
 
     int matched = 0;
     patricia_node_t *pnode = NULL;
@@ -194,6 +194,15 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
                         "OpenLI: matched an IP range for intercept %s but this is not present in activestaticintercepts",
                         sliid->key);
             } else {
+                if (tv->tv_sec < matchsess->common.tostart_time) {
+                    continue;
+                }
+
+                if (matchsess->common.toend_time > 0 &&
+                        tv->tv_sec >= matchsess->common.toend_time) {
+                    continue;
+                }
+
                 matched ++;
                 msg = create_ipcc_job(matchsess->cin, matchsess->common.liid,
                         matchsess->common.destid, pkt, dir);
@@ -206,7 +215,8 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
 }
 
 static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
-        colthread_local_t *loc, int *matched, libtrace_packet_t *pkt) {
+        colthread_local_t *loc, int *matched, libtrace_packet_t *pkt,
+        struct timeval *tv) {
 
     patricia_node_t *pnode = NULL;
     prefix_t prefix;
@@ -235,6 +245,15 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
                         sliid->key);
             } else {
                 HASH_ITER(hh, tgt->intercepts, sess, tmp) {
+                    if (tv->tv_sec < sess->common.tostart_time) {
+                        continue;
+                    }
+
+                    if (sess->common.toend_time > 0 && tv->tv_sec >=
+                            sess->common.toend_time) {
+                        continue;
+                    }
+
                     *matched = ((*matched) + 1);
                     msg = create_ipcc_job(sess->cin, sess->common.liid,
                             sess->common.destid, pkt, 0);
@@ -267,17 +286,16 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     /* Check if ipsrc or ipdst match any of our active intercepts.
      * NOTE: a packet can match multiple intercepts so don't break early.
      */
-
     cmp = (struct sockaddr_in6 *)(&pinfo->srcip);
-    singlev6_conn_contents(cmp, loc, &matched, pkt);
+    singlev6_conn_contents(cmp, loc, &matched, pkt, &pinfo->tv);
 
     cmp = (struct sockaddr_in6 *)(&pinfo->destip);
-    singlev6_conn_contents(cmp, loc, &matched, pkt);
+    singlev6_conn_contents(cmp, loc, &matched, pkt, &pinfo->tv);
 
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->srcip),
-            AF_INET6, pkt, 0, loc);
+            AF_INET6, pkt, 0, loc, &pinfo->tv);
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->destip),
-            AF_INET6, pkt, 1, loc);
+            AF_INET6, pkt, 1, loc, &pinfo->tv);
 
     return matched;
 }
@@ -308,6 +326,15 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
 
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
+            if (pinfo->tv.tv_sec < sess->common.tostart_time) {
+                continue;
+            }
+
+            if (sess->common.toend_time > 0 && pinfo->tv.tv_sec >=
+                    sess->common.toend_time) {
+                continue;
+            }
+
             matched ++;
             msg = create_ipcc_job(sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 0);
@@ -326,6 +353,15 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
 
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
+            if (pinfo->tv.tv_sec < sess->common.tostart_time) {
+                continue;
+            }
+
+            if (sess->common.toend_time > 0 && pinfo->tv.tv_sec >=
+                    sess->common.toend_time) {
+                continue;
+            }
+
             matched ++;
             msg = create_ipcc_job(sess->cin, sess->common.liid,
                     sess->common.destid, pkt, 1);
@@ -343,9 +379,9 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     }
 
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->srcip),
-            AF_INET, pkt, 0, loc);
+            AF_INET, pkt, 0, loc, &pinfo->tv);
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->destip),
-            AF_INET, pkt, 1, loc);
+            AF_INET, pkt, 1, loc, &pinfo->tv);
 
 
 ipv4ccdone:

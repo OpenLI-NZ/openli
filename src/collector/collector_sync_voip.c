@@ -204,6 +204,30 @@ static inline void push_single_voipstreamintercept(collector_sync_voip_t *sync,
     libtrace_message_queue_put(q, (void *)(&msg));
 }
 
+static void push_time_update_active_voipstreams(collector_sync_voip_t *sync,
+        libtrace_message_queue_t *q, voipintercept_t *vint) {
+
+    openli_pushed_t msg;
+    char *streamdup;
+    rtpstreaminf_t *cin = NULL;
+
+    if (vint->active_cins == NULL) {
+        return;
+    }
+
+    for (cin = vint->active_cins; cin != NULL; cin=cin->hh.next) {
+        if (cin->active == 0) {
+            continue;
+        }
+        streamdup = strdup(cin->streamkey);
+        memset(&msg, 0, sizeof(openli_pushed_t));
+        msg.type = OPENLI_PUSH_UPDATE_VOIPINTERCEPT;
+        msg.data.ipmmint = create_rtpstream(vint, cin->cin);
+
+        libtrace_message_queue_put(q, (void *)(&msg));
+    }
+}
+
 static void push_halt_active_voipstreams(collector_sync_voip_t *sync,
         libtrace_message_queue_t *q, voipintercept_t *vint, int epollfd) {
 
@@ -258,6 +282,16 @@ static void push_voipintercept_halt_to_threads(collector_sync_voip_t *sync,
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
         push_halt_active_voipstreams(sync, sendq->q, vint,
                 sync->glob->epoll_fd);
+    }
+}
+
+static void push_voip_intercept_update_to_threads(collector_sync_voip_t *sync,
+        voipintercept_t *vint) {
+
+    sync_sendq_t *sendq, *tmp;
+
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
+        push_time_update_active_voipstreams(sync, sendq->q, vint);
     }
 }
 
@@ -757,6 +791,14 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
 
     openli_export_recv_t *copy;
 
+    if (vint->common.tostart_time > irimsg->ts.tv_sec) {
+        return;
+    }
+
+    if (vint->common.toend_time > 0 && vint->common.toend_time <= irimsg->ts.tv_sec) {
+        return;
+    }
+
     /* TODO consider recycling IRI messages like we do with IPCCs */
 
     /* Wrap this packet up in an IRI and forward it on to the exporter.
@@ -1173,6 +1215,7 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
     voipintercept_t *vint, tomod;
+    int timechanged = 0;
 
     if (decode_voipintercept_modify(intmsg, msglen, &tomod) == -1) {
         if (sync->log_bad_instruct) {
@@ -1195,23 +1238,35 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
 
     sync->log_bad_instruct = 1;
 
-    if (tomod.options & (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
+    /* TODO apply any changes to authcc or delivcc */
 
-        logger(LOG_INFO,
-                "OpenLI: VOIP intercept %s is now ignoring RTP comfort noise",
-                tomod.common.liid);
-    } else {
-        logger(LOG_INFO,
-                "OpenLI: VOIP intercept %s is now intercepting RTP comfort noise",
-                tomod.common.liid);
+    if (tomod.options != vint->options) {
+        if (tomod.options & (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
+            logger(LOG_INFO,
+                    "OpenLI: VOIP intercept %s is now ignoring RTP comfort noise",
+                    tomod.common.liid);
+        } else {
+            logger(LOG_INFO,
+                    "OpenLI: VOIP intercept %s is now intercepting RTP comfort noise",
+                    tomod.common.liid);
+        }
+    }
+
+    if (tomod.common.tostart_time != vint->common.tostart_time ||
+            tomod.common.toend_time != vint->common.toend_time) {
+        timechanged = 1;
     }
 
     vint->options = tomod.options;
+    vint->common.tostart_time = tomod.common.tostart_time;
+    vint->common.toend_time = tomod.common.toend_time;
 
-    /* Don't need to push anything to the collectors or seqtrackers.
-     * Existing RTP sessions will continue using the same options as before,
-     * but new sessions will have the options applied.
-     */
+    if (timechanged) {
+        logger(LOG_INFO,
+                "OpenLI: VOIP intercept %s has changed start / end times -- now %lu, %lu", tomod.common.liid, tomod.common.tostart_time, tomod.common.toend_time);
+        push_voip_intercept_update_to_threads(sync, vint);
+    }
+
     return 0;
 
 }
@@ -1551,7 +1606,7 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
 
     pthread_mutex_unlock(&(sync->glob->mutex));
     logger(LOG_INFO,
-            "OpenLI: adding new VOIP intercept %s", vint->common.liid);
+            "OpenLI: adding new VOIP intercept %s (start time %lu, end time %lu)", vint->common.liid, vint->common.tostart_time, vint->common.toend_time);
     return 0;
 }
 

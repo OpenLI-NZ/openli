@@ -104,6 +104,13 @@ int check_jmirror_intercept(collector_identity_t *info, colthread_local_t *loc,
     cin = ntohl(header->sessionid);
 
     HASH_ITER(hh, vmilist->intercepts, cept, tmp) {
+        if (pinfo->tv.tv_sec < cept->common.tostart_time) {
+            continue;
+        }
+        if (cept->common.toend_time > 0 &&
+                cept->common.toend_time < pinfo->tv.tv_sec) {
+            continue;
+        }
         push_jmirror_ipcc_job(loc, packet, cept, cin, info, l3, rem);
     }
     return 1;
