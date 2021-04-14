@@ -32,12 +32,14 @@
 #include <libwandder.h>
 #include <libtrace/linked_list.h>
 #include <uthash.h>
+#include <Judy.h>
 #include "collector.h"
 #include "netcomms.h"
 #include "intercept.h"
 #include "internetaccess.h"
 #include "coreserver.h"
 #include "sipparsing.h"
+#include "timed_intercept.h"
 
 typedef struct colsync_data {
 
@@ -55,6 +57,9 @@ typedef struct colsync_data {
     user_intercept_list_t *userintercepts;
     voipintercept_t *knownvoips;
     default_radius_user_t *defaultradiususers;
+
+    Pvoid_t upcoming_intercept_events;
+    int upcomingtimerfd;
 
     coreserver_t *coreservers;
 

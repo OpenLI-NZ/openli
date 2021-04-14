@@ -34,6 +34,7 @@
 #include <netdb.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <sys/timerfd.h>
 
 #include "etsili_core.h"
 #include "collector.h"
@@ -48,6 +49,10 @@
 #include "ipmmiri.h"
 #include "umtsiri.h"
 #include "ipiri.h"
+
+#define INTERCEPT_IS_ACTIVE(cept, now) \
+    (cept->common.tostart_time <= now.tv_sec && ( \
+        cept->common.toend_time == 0 || cept->common.toend_time > now.tv_sec))
 
 collector_sync_t *init_sync_data(collector_global_t *glob) {
 
@@ -73,6 +78,9 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->outgoing = NULL;
     sync->incoming = NULL;
     sync->info = &(glob->sharedinfo);
+
+    sync->upcoming_intercept_events = NULL;
+    sync->upcomingtimerfd = -1;
 
     sync->radiusplugin = init_access_plugin(ACCESS_RADIUS);
     sync->gtpplugin = init_access_plugin(ACCESS_GTP);
@@ -153,6 +161,10 @@ void clean_sync_data(collector_sync_t *sync) {
         free(raditer);
     }
 
+    clear_intercept_time_events(&(sync->upcoming_intercept_events));
+    if (sync->upcomingtimerfd != -1) {
+        close(sync->upcomingtimerfd);
+    }
 
     free_all_users(sync->allusers);
     clear_user_intercept_list(sync->userintercepts);
@@ -367,6 +379,12 @@ static int export_raw_sync_packet_content(access_plugin_t *p,
 static int create_iri_from_packet_event(collector_sync_t *sync,
         access_session_t *sess, ipintercept_t *ipint, access_plugin_t *p,
         void *parseddata) {
+	struct timeval now;
+
+	gettimeofday(&now, NULL);
+	if (!INTERCEPT_IS_ACTIVE(ipint, now)) {
+		return 0;
+	}
 
     if (ipint->accesstype == INTERNET_ACCESS_TYPE_MOBILE) {
         return create_mobiri_job_from_packet(sync, sess, ipint, p, parseddata);
@@ -378,6 +396,13 @@ static int create_iri_from_packet_event(collector_sync_t *sync,
 static int create_iri_from_session(collector_sync_t *sync,
         access_session_t *sess, ipintercept_t *ipint, uint8_t special) {
 
+	struct timeval now;
+
+	gettimeofday(&now, NULL);
+	if (!INTERCEPT_IS_ACTIVE(ipint, now)) {
+		return 0;
+	}
+
     if (ipint->accesstype == INTERNET_ACCESS_TYPE_MOBILE) {
         return create_mobiri_job_from_session(sync, sess, ipint, special);
     }
@@ -385,6 +410,41 @@ static int create_iri_from_session(collector_sync_t *sync,
     return create_ipiri_job_from_session(sync, sess, ipint, special);
 
 }
+
+static void generate_startend_ipiris(collector_sync_t *sync,
+		ipintercept_t *ipint, time_t tstamp) {
+
+    int irirequired;
+    access_session_t *sess, *tmp2;
+    static_ipranges_t *ipr, *tmpr;
+    internet_user_t *user;
+
+    if (ipint->common.toend_time <= tstamp && ipint->common.toend_time != 0) {
+        irirequired = OPENLI_IPIRI_ENDWHILEACTIVE;
+    } else if (ipint->common.tostart_time <= tstamp &&
+				ipint->common.tostart_time != 0) {
+        irirequired = OPENLI_IPIRI_STARTWHILEACTIVE;
+    } else {
+        return;
+    }
+
+    HASH_ITER(hh, ipint->statics, ipr, tmpr) {
+        create_ipiri_job_from_iprange(sync, ipr, ipint, irirequired);
+    }
+
+    HASH_FIND(hh, sync->allusers, ipint->username, ipint->username_len,
+            user);
+
+    if (user == NULL) {
+        return;
+    }
+
+    /* Update all IP sessions for the target */
+    HASH_ITER(hh, user->sessions, sess, tmp2) {
+        create_iri_from_session(sync, sess, ipint, irirequired);
+    }
+}
+
 
 static inline void push_static_iprange_to_collectors(
         libtrace_message_queue_t *q, ipintercept_t *ipint,
@@ -542,6 +602,7 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
     static_ipranges_t *ipr, *found;
     ipintercept_t *ipint;
     sync_sendq_t *tmp, *sendq;
+	struct timeval now;
 
     ipr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
 
@@ -587,7 +648,10 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
     HASH_ADD_KEYPTR(hh, ipint->statics, ipr->rangestr,
             strlen(ipr->rangestr), ipr);
 
-    create_ipiri_job_from_iprange(sync, ipr, ipint, OPENLI_IPIRI_STARTWHILEACTIVE);
+	gettimeofday(&now, NULL);
+	if (INTERCEPT_IS_ACTIVE(ipint, now)) {
+	    create_ipiri_job_from_iprange(sync, ipr, ipint, OPENLI_IPIRI_STARTWHILEACTIVE);
+	}
 
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
             sendq, tmp) {
@@ -801,6 +865,7 @@ static void push_ipintercept_update_to_threads(collector_sync_t *sync,
      * an appropriate IRI.
      */
     gettimeofday(&now, NULL);
+
     if (ipint->common.toend_time > now.tv_sec &&
             (modified->common.toend_time > 0 &&
              modified->common.toend_time <= now.tv_sec) &&
@@ -812,6 +877,19 @@ static void push_ipintercept_update_to_threads(collector_sync_t *sync,
             (modified->common.toend_time == 0 ||
              modified->common.toend_time > now.tv_sec)) {
         /* Start time has come forward and intercept is now active */
+        irirequired = OPENLI_IPIRI_STARTWHILEACTIVE;
+    } else if (modified->common.tostart_time < now.tv_sec &&
+            ipint->common.tostart_time < now.tv_sec &&
+            ipint->common.toend_time != 0 &&
+            ipint->common.toend_time <= now.tv_sec &&
+            (modified->common.toend_time == 0 ||
+             modified->common.toend_time > now.tv_sec)) {
+        /* Catch case where an intercept had ended, but has been extended
+         * to become active again.
+         *
+         * XXX can LEAs handle the combination of IRIs that is going to
+         * result? does the spec say anything about this?
+         */
         irirequired = OPENLI_IPIRI_STARTWHILEACTIVE;
     }
 
@@ -1069,6 +1147,9 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
     HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
             cept->common.liid_len, cept);
 
+    add_new_intercept_time_event(&(sync->upcoming_intercept_events), cept,
+            &(cept->common));
+
     pthread_mutex_lock(sync->glob->stats_mutex);
     sync->glob->stats->ipintercepts_added_diff ++;
     sync->glob->stats->ipintercepts_added_total ++;
@@ -1126,6 +1207,8 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
     if (ipint->username) {
         remove_intercept_from_user_intercept_list(&sync->userintercepts, ipint);
     }
+    remove_intercept_time_event(&(sync->upcoming_intercept_events),
+            &(ipint->common));
 
     expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
     expmsg->type = OPENLI_EXPORT_INTERCEPT_OVER;
@@ -1149,9 +1232,11 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
 static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
-    ipintercept_t *ipint, modified;
+    ipintercept_t *ipint, *modified;
 
-    if (decode_ipintercept_modify(intmsg, msglen, &modified) == -1) {
+    modified = calloc(1, sizeof(ipintercept_t));
+
+    if (decode_ipintercept_modify(intmsg, msglen, modified) == -1) {
         if (sync->instruct_log) {
             logger(LOG_INFO,
                     "OpenLI: received invalid IP intercept modification from provisioner.");
@@ -1159,54 +1244,59 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sync->ipintercepts, modified.common.liid,
-            modified.common.liid_len, ipint);
+    HASH_FIND(hh_liid, sync->ipintercepts, modified->common.liid,
+            modified->common.liid_len, ipint);
 
     if (!ipint) {
-        return insert_new_ipintercept(sync, &modified);
+        return insert_new_ipintercept(sync, modified);
     }
 
     /* TODO apply any changes to authcc or delivcc */
 
-    if (strcmp(ipint->username, modified.username) != 0) {
+    if (strcmp(ipint->username, modified->username) != 0) {
         push_ipintercept_halt_to_threads(sync, ipint);
         remove_intercept_from_user_intercept_list(&sync->userintercepts, ipint);
 
         free(ipint->username);
-        ipint->username = modified.username;
+        ipint->username = modified->username;
         add_intercept_to_user_intercept_list(&sync->userintercepts, ipint);
 
         push_existing_user_sessions(sync, ipint);
         logger(LOG_INFO, "OpenLI: IP intercept %s is now using '%s' as the designated target", ipint->common.liid, ipint->username);
     }
 
-    if (ipint->vendmirrorid != modified.vendmirrorid) {
+    if (ipint->vendmirrorid != modified->vendmirrorid) {
         if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
             remove_vendormirror_id(sync, ipint);
         }
 
-        ipint->vendmirrorid = modified.vendmirrorid;
+        ipint->vendmirrorid = modified->vendmirrorid;
         if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
             announce_vendormirror_id(sync, ipint);
         }
     }
 
-    if (ipint->common.tostart_time != modified.common.tostart_time ||
-            ipint->common.toend_time != modified.common.toend_time) {
+    if (ipint->common.tostart_time != modified->common.tostart_time ||
+            ipint->common.toend_time != modified->common.toend_time) {
         logger(LOG_INFO,
-                "OpenLI: IP intercept %s has changed start / end times -- now %lu, %lu", ipint->common.liid, modified.common.tostart_time, modified.common.toend_time);
-        push_ipintercept_update_to_threads(sync, ipint, &modified);
+                "OpenLI: IP intercept %s has changed start / end times -- now %lu, %lu", ipint->common.liid, modified->common.tostart_time, modified->common.toend_time);
+        update_intercept_time_event(&(sync->upcoming_intercept_events),
+                ipint, &(ipint->common), &(modified->common));
+        push_ipintercept_update_to_threads(sync, ipint, modified);
     }
 
+    free_single_ipintercept(modified);
     return 0;
 }
 
 static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
-    ipintercept_t *ipint, torem;
+    ipintercept_t *ipint, *torem;
 
-    if (decode_ipintercept_halt(intmsg, msglen, &torem) == -1) {
+    torem = calloc(1, sizeof(ipintercept_t));
+
+    if (decode_ipintercept_halt(intmsg, msglen, torem) == -1) {
         if (sync->instruct_log) {
             logger(LOG_INFO,
                     "OpenLI: received invalid IP intercept withdrawal from provisioner.");
@@ -1214,29 +1304,17 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sync->ipintercepts, torem.common.liid,
-            torem.common.liid_len, ipint);
+    HASH_FIND(hh_liid, sync->ipintercepts, torem->common.liid,
+            torem->common.liid_len, ipint);
 
     if (!ipint) {
         logger(LOG_INFO,
-                "OpenLI: tried to halt IP intercept %s but this was not present in the intercept map?", torem.common.liid);
+                "OpenLI: tried to halt IP intercept %s but this was not present in the intercept map?", torem->common.liid);
         return -1;
     }
 
     remove_ip_intercept(sync, ipint);
-    if (torem.common.liid) {
-        free(torem.common.liid);
-    }
-
-    if (torem.common.authcc) {
-        free(torem.common.authcc);
-    }
-
-    if (torem.common.delivcc) {
-        free(torem.common.delivcc);
-    }
-
-
+    free_single_ipintercept(torem);
     return 1;
 }
 
@@ -2243,8 +2321,31 @@ endupdate:
     return 1;
 }
 
+static int set_upcoming_timer(collector_sync_t *sync) {
+    struct itimerspec its;
+    sync->upcomingtimerfd = timerfd_create(CLOCK_MONOTONIC, 0);
+
+    if (sync->upcomingtimerfd == -1) {
+        return -1;
+    }
+
+    if (fcntl(sync->upcomingtimerfd, F_SETFL, fcntl(sync->upcomingtimerfd,
+            F_GETFL, 0) | O_NONBLOCK) < 0) {
+        return -1;
+    }
+
+    its.it_interval.tv_sec = 1;
+    its.it_interval.tv_nsec = 0;
+    its.it_value.tv_sec = 1;
+    its.it_value.tv_nsec = 0;
+
+    timerfd_settime(sync->upcomingtimerfd, 0, &its, NULL);
+
+
+}
+
 int sync_thread_main(collector_sync_t *sync) {
-    zmq_pollitem_t items[2];
+    zmq_pollitem_t items[3];
     openli_state_update_t recvd;
     int rc;
 
@@ -2255,8 +2356,37 @@ int sync_thread_main(collector_sync_t *sync) {
     items[1].fd = sync->instruct_fd;
     items[1].events = sync->instruct_events;
 
-    if (zmq_poll(items, 2, 50) < 0) {
+    if (sync->upcomingtimerfd == -1) {
+        set_upcoming_timer(sync);
+    }
+
+    if (sync->upcomingtimerfd != -1) {
+        items[2].socket = NULL;
+        items[2].fd = sync->upcomingtimerfd;
+        items[2].events = ZMQ_POLLIN;
+    }
+
+    if (zmq_poll(items, 3, 50) < 0) {
         return -1;
+    }
+
+    if (items[2].revents & ZMQ_POLLIN) {
+        struct timeval tv;
+        char readbuf[16];
+        ipintercept_t *ipint_v;
+
+        if (read(sync->upcomingtimerfd, readbuf, 16) > 0) {
+            gettimeofday(&tv, NULL);
+
+            do {
+                ipint_v = (ipintercept_t *)check_intercept_time_event(
+                        &(sync->upcoming_intercept_events), tv.tv_sec);
+                if (ipint_v) {
+                    generate_startend_ipiris(sync, ipint_v, tv.tv_sec);
+                }
+            } while (ipint_v);
+
+        }
     }
 
     if (items[1].revents & ZMQ_POLLOUT) {
