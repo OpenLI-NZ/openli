@@ -61,6 +61,7 @@ typedef struct collector_sync_voip_data {
     uint8_t log_bad_instruct;
     uint8_t log_bad_sip;
     uint8_t ignore_sdpo_matches;
+    uint8_t trust_sip_from;
 
     zmq_pollitem_t *topoll;
     struct rtpstreaminf **expiring_streams;

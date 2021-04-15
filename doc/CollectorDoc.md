@@ -177,6 +177,25 @@ BER has the potential to be much more efficient, but we recommend doing some
 specific testing with your local LEAs before switching over to BER as not all
 LEA equipment may be able to decode it.
 
+### Target Identification for VOIP Intercepts
+By default, OpenLI does NOT trust the "From:" field in SIP packets when it is
+determining whether a SIP packet has been sent by an intercept target. This
+is because this field can be spoofed by the caller and is not validated.
+Instead, OpenLI relies on fields such as Proxy-Authorization and
+P-Asserted-Identity which are much more reliable.
+
+However, some VOIP deployments may not include any of the more reliable
+fields and therefore outgoing calls by a target can only be recognised by
+examining the "From:" field. For those cases, there is a config option
+"sipallowfromident" which can be used to tell OpenLI collectors that they
+should trust the SIP "From:" field and use it for target identification
+purposes.
+
+Only enable this option if you absolutely trust that the SIP "From:" fields
+are not spoofed (maybe because the SIP is being generated from inside your
+network) and you are unable to include any of the more reliable fields in
+your SIP traffic.
+
 ### Configuration Syntax
 All config options aside from the input configuration are standard YAML
 key-value pairs, where the key is the option name and the value is your chosen
@@ -210,6 +229,8 @@ The basic option keys are:
                        RabbitMQ instance.
 * RMQpass           -- the password to use when authenticating against a local
                        RabbitMQ instance.
+* sipallowfromident -- set to 'yes' to allow the SIP "From:" field to be used
+                       for target identification. Defaults to "no".
 
 Inputs are specified as a YAML sequence with a key of `inputs:`. Each
 sequence item represents a single traffic source to intercept traffic from

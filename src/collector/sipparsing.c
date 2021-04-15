@@ -500,6 +500,19 @@ char *get_sip_to_uri(openli_sip_parser_t *parser) {
     return uristr;
 }
 
+char *get_sip_from_uri_username(openli_sip_parser_t *parser) {
+
+    char *uriuser;
+    osip_from_t *from = osip_message_get_from(parser->osip);
+
+    if (from == NULL) {
+        return NULL;
+    }
+
+    uriuser = osip_uri_get_username(osip_from_get_url(from));
+    return uriuser;
+}
+
 char *get_sip_to_uri_username(openli_sip_parser_t *parser) {
 
     char *uriuser;
@@ -529,6 +542,22 @@ char *get_sip_to_uri_realm(openli_sip_parser_t *parser) {
     return urihost;
 }
 
+char *get_sip_from_uri_realm(openli_sip_parser_t *parser) {
+    /* I use the term 'realm' here to be consistent with Authorization
+     * header fields, but really this part of a To: uri is generally
+     * called a 'host'.
+     */
+    char *urihost;
+    osip_from_t *from = osip_message_get_from(parser->osip);
+
+    if (from == NULL) {
+        return NULL;
+    }
+
+    urihost = osip_uri_get_host(osip_to_get_url(from));
+    return urihost;
+}
+
 int get_sip_to_uri_identity(openli_sip_parser_t *parser,
         openli_sip_identity_t *sipid) {
 
@@ -539,6 +568,23 @@ int get_sip_to_uri_identity(openli_sip_parser_t *parser,
     sipid->username_len = strlen(sipid->username);
 
     sipid->realm = get_sip_to_uri_realm(parser);
+    if (sipid->realm == NULL) {
+        return -1;
+    }
+    sipid->realm_len = strlen(sipid->realm);
+    return 1;
+}
+
+int get_sip_from_uri_identity(openli_sip_parser_t *parser,
+        openli_sip_identity_t *sipid) {
+
+    sipid->username = get_sip_from_uri_username(parser);
+    if (sipid->username == NULL) {
+        return -1;
+    }
+    sipid->username_len = strlen(sipid->username);
+
+    sipid->realm = get_sip_from_uri_realm(parser);
     if (sipid->realm == NULL) {
         return -1;
     }
