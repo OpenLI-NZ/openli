@@ -914,6 +914,9 @@ freelea:
      * IP address or port strings that were unchanged).
      */
     pthread_mutex_unlock(state->agency_mutex);
+    if (lea->agencyid) {
+        free(lea->agencyid);
+    }
     if (lea->hi2_portstr) {
         free(lea->hi2_portstr);
     }
