@@ -33,6 +33,11 @@ forwardingthreads: 1
 # LEAs may be able to decode it.
 encoding: der
 
+# Set this to yes if you want to override the policy of not trusting the
+# contents of the "From:" field in SIP packets (as this field is not
+# validated and can be easily spoofed).
+sipallowfromident: no
+
 # Number of minutes between each dump of performance statistics to the
 # logger. Set to zero to disable this extra logging altogether.
 logstatfrequency: 5
