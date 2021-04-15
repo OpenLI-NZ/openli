@@ -59,6 +59,7 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
     sync->glob = &(glob->syncvoip);
     sync->info = &(glob->sharedinfo);
 
+    sync->trust_sip_from = glob->trust_sip_from;
     sync->log_bad_instruct = 1;
     sync->log_bad_sip = 1;
     sync->pubsockcount = glob->seqtracker_threads;
@@ -968,7 +969,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     voipcinmap_t *findcin;
     voipsdpmap_t *findsdp = NULL;
     voipintshared_t *vshared;
-    openli_sip_identity_t touriid;
+    openli_sip_identity_t touriid, fromuriid;
     char rtpkey[256];
     rtpstreaminf_t *thisrtp;
     char *ipstr, *portstr, *mediatype;
@@ -983,6 +984,17 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
                     "OpenLI: unable to derive SIP identity from To: URI");
         }
         return -1;
+    }
+
+    if (sync->trust_sip_from &&
+            get_sip_from_uri_identity(sync->sipparser, &fromuriid) < 0) {
+
+        if (sync->log_bad_sip) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to derive SIP identity from To: URI");
+        }
+        return -1;
+
     }
 
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
@@ -1025,6 +1037,11 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
 
             /* Try the To: uri first */
             if (sipid_matches_target(vint->targets, &touriid)) {
+
+                vshared = create_new_voip_session(sync, callid, sdpo,
+                        vint);
+            } else if (sync->trust_sip_from &&
+                    sipid_matches_target(vint->targets, &fromuriid)) {
 
                 vshared = create_new_voip_session(sync, callid, sdpo,
                         vint);

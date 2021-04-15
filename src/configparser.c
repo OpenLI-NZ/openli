@@ -1043,6 +1043,14 @@ static int global_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
+                    "SIPallowfromident") == 0) {
+
+       glob->trust_sip_from = check_onoff((char *)value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "RMQname") == 0) {
         SET_CONFIG_STRING_OPTION(glob->RMQ_conf.name, value);
     }

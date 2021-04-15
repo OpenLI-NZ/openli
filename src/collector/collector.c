@@ -1336,6 +1336,10 @@ static collector_global_t *parse_global_config(char *configfile) {
     logger(LOG_DEBUG, "OpenLI: ETSI TLS encryption %s",
         glob->etsitls ? "enabled" : "disabled");
 
+    if (glob->trust_sip_from) {
+        logger(LOG_INFO, "Allowing SIP From: URIs to be used for target identification");
+    }
+
     if (create_ssl_context(&(glob->sslconf)) < 0) {
         return NULL;
     }
