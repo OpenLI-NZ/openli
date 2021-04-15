@@ -604,81 +604,109 @@ static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
 }
 
 static inline int check_sip_identity_fields(collector_sync_voip_t *sync,
-        voipintercept_t *vint) {
+        voipintercept_t *vint, openli_sip_identity_t *passertid,
+        openli_sip_identity_t *remotepartyid) {
 
-    int ret;
-    openli_sip_identity_t authid;
+    int ret = 1;
 
-    authid.realm = NULL;
-    authid.username = NULL;
-
-    ret = get_sip_passerted_identity(sync->sipparser, &authid);
-
-    if (ret == -1) {
-        sync->log_bad_sip = 0;
-        return 0;
-    }
-
-    if (ret > 0) {
-        if (sipid_matches_target(vint->targets, &authid)) {
-            ret = 1;
-        } else {
-            ret = 0;
-        }
-    } else {
-        ret = get_sip_remote_party(sync->sipparser, &authid);
+    if (passertid->username == NULL) {
+        ret = get_sip_passerted_identity(sync->sipparser, passertid);
 
         if (ret == -1) {
             sync->log_bad_sip = 0;
             return 0;
         }
 
-        if (ret > 0) {
-            if (sipid_matches_target(vint->targets, &authid)) {
-                ret = 1;
-            } else {
-                ret = 0;
-            }
-        }
     }
 
-    if (authid.username) {
-        free(authid.username);
+    if (ret > 0 && sipid_matches_target(vint->targets, passertid)) {
+        return 1;
     }
-    if (authid.realm) {
-        free(authid.realm);
-    }
-    return ret;
 
-}
-
-static inline int check_sip_auth_fields(collector_sync_voip_t *sync,
-        voipintercept_t *vint, char *callid, uint8_t isproxy) {
-
-    int i, authcount, ret;
-    openli_sip_identity_t authid;
-
-    i = authcount = 0;
-    do {
-        if (isproxy) {
-            ret = get_sip_proxy_auth_identity(sync->sipparser, i, &authcount,
-                    &authid, sync->log_bad_sip);
-        } else {
-            ret = get_sip_auth_identity(sync->sipparser, i, &authcount,
-                    &authid, sync->log_bad_sip);
-        }
+    ret = 1;
+    if (remotepartyid->username == NULL) {
+        ret = get_sip_remote_party(sync->sipparser, remotepartyid);
 
         if (ret == -1) {
             sync->log_bad_sip = 0;
-            break;
+            return 0;
         }
-        if (ret > 0) {
-            if (sipid_matches_target(vint->targets, &authid)) {
-                return 1;
-            }
+    }
+
+    if (ret > 0 && sipid_matches_target(vint->targets, remotepartyid)) {
+        return 1;
+    }
+
+    return 0;
+}
+
+static inline int _extract_sip_auth_fields_flag(collector_sync_voip_t *sync,
+        openli_sip_identity_t **autharray, int *authcount, uint8_t isproxy) {
+
+    openli_sip_identity_t authid;
+    int ret, i;
+
+    ret = get_sip_proxy_auth_identity(sync->sipparser, 0, authcount,
+            &authid, sync->log_bad_sip);
+
+    if (ret == -1) {
+        sync->log_bad_sip = 0;
+        *authcount = 0;
+        return -1;
+    }
+
+    if (ret == 0) {
+        *authcount = 0;
+        return 0;
+    }
+
+    (*autharray) = calloc(*authcount, sizeof(openli_sip_identity_t));
+    memcpy(&((*autharray)[0]), &authid, sizeof(openli_sip_identity_t));
+
+    for (i = 1; i < *authcount; i++) {
+        if (isproxy) {
+            ret = get_sip_proxy_auth_identity(sync->sipparser, i, authcount,
+                    &((*autharray)[i]), sync->log_bad_sip);
+        } else {
+            ret = get_sip_auth_identity(sync->sipparser, i, authcount,
+                    &((*autharray)[i]), sync->log_bad_sip);
         }
-        i ++;
-    } while (i < authcount);
+        if (ret == -1) {
+            sync->log_bad_sip = 0;
+            free(*autharray);
+            *authcount = 0;
+            return -1;
+        }
+    }
+
+    return 1;
+}
+
+static int extract_sip_auth_fields(collector_sync_voip_t *sync,
+        openli_sip_identity_t **proxyauth, openli_sip_identity_t **regauth,
+        int *proxyauthcount, int *regauthcount) {
+
+    int waserr = 0;
+    if (_extract_sip_auth_fields_flag(sync, proxyauth, proxyauthcount, 1) < 0) {
+        waserr = -1;
+    }
+    if (_extract_sip_auth_fields_flag(sync, regauth, regauthcount, 0) < 0) {
+        waserr = -1;
+    }
+    return waserr;
+}
+
+static inline int check_sip_auth_fields(collector_sync_voip_t *sync,
+        voipintercept_t *vint, char *callid, openli_sip_identity_t *auths,
+        int authcount) {
+
+    int i, ret;
+
+    for (i = 0; i < authcount; i++) {
+        if (sipid_matches_target(vint->targets, &(auths[i]))) {
+            return 1;
+        }
+    }
     return 0;
 }
 
@@ -919,9 +947,12 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
         openli_export_recv_t *irimsg) {
 
     openli_sip_identity_t touriid, fromuriid;
+    openli_sip_identity_t remotepartyid, passertid;
+    openli_sip_identity_t *proxyauths, *regauths;
     voipintercept_t *vint, *tmp;
     sipregister_t *sipreg;
     int exportcount = 0;
+    int proxyauthcount = 0, regauthcount = 0;
 
     if (get_sip_to_uri_identity(sync->sipparser, &touriid) < 0) {
         if (sync->log_bad_sip) {
@@ -942,6 +973,16 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
 
     }
 
+    if (extract_sip_auth_fields(sync, &proxyauths, &regauths, &proxyauthcount,
+            &regauthcount) < 0) {
+        return -1;
+    }
+
+    passertid.username = NULL;
+    passertid.realm = NULL;
+    remotepartyid.username = NULL;
+    remotepartyid.realm = NULL;
+
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
         sipreg = NULL;
 
@@ -955,12 +996,15 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
         } else {
             int found;
 
-            found = check_sip_identity_fields(sync, vint);
+            found = check_sip_identity_fields(sync, vint, &passertid,
+                    &remotepartyid);
             if (!found) {
-                found = check_sip_auth_fields(sync, vint, callid, 1);
+                found = check_sip_auth_fields(sync, vint, callid, proxyauths,
+                        proxyauthcount);
             }
             if (!found) {
-                found = check_sip_auth_fields(sync, vint, callid, 0);
+                found = check_sip_auth_fields(sync, vint, callid, regauths,
+                        regauthcount);
             }
 
             if (found) {
@@ -974,6 +1018,27 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
         create_sip_ipiri(sync, vint, irimsg, ETSILI_IRI_REPORT, sipreg->cin);
         exportcount += 1;
     }
+
+    if (passertid.username) {
+        free(passertid.username);
+    }
+    if (passertid.realm) {
+        free(passertid.realm);
+    }
+    if (remotepartyid.username) {
+        free(remotepartyid.username);
+    }
+    if (remotepartyid.realm) {
+        free(remotepartyid.realm);
+    }
+
+    if (proxyauthcount != 0) {
+        free(proxyauths);
+    }
+    if (regauthcount != 0) {
+        free(regauths);
+    }
+
     return exportcount;
 }
 
@@ -985,6 +1050,9 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     voipsdpmap_t *findsdp = NULL;
     voipintshared_t *vshared;
     openli_sip_identity_t touriid, fromuriid;
+    openli_sip_identity_t remotepartyid, passertid;
+    openli_sip_identity_t *proxyauths, *regauths;
+    int proxyauthcount = 0, regauthcount = 0;
     char rtpkey[256];
     rtpstreaminf_t *thisrtp;
     char *ipstr, *portstr, *mediatype;
@@ -1012,6 +1080,16 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
 
     }
 
+    if (extract_sip_auth_fields(sync, &proxyauths, &regauths, &proxyauthcount,
+            &regauthcount) < 0) {
+        return -1;
+    }
+
+    passertid.username = NULL;
+    passertid.realm = NULL;
+    remotepartyid.username = NULL;
+    remotepartyid.realm = NULL;
+
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
         vshared = NULL;
 
@@ -1031,7 +1109,8 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
                                 sdpo->sessionid, sdpo->version, sdpo->username,
                                 sdpo->address);
                     }
-                    return -1;
+                    badsip = 1;
+                    break;
                 }
             }
 
@@ -1062,12 +1141,15 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
                         vint);
             } else {
                 int found;
-                found = check_sip_identity_fields(sync, vint);
+                found = check_sip_identity_fields(sync, vint, &passertid,
+                        &remotepartyid);
                 if (!found) {
-                    found = check_sip_auth_fields(sync, vint, callid, 1);
+                    found = check_sip_auth_fields(sync, vint, callid,
+                            proxyauths, proxyauthcount);
                 }
                 if (!found) {
-                    found = check_sip_auth_fields(sync, vint, callid, 0);
+                    found = check_sip_auth_fields(sync, vint, callid, regauths,
+                            regauthcount);
                 }
                 if (found) {
                     vshared = create_new_voip_session(sync, callid, sdpo, vint);
@@ -1124,6 +1206,25 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         thisrtp->invitecseq = get_sip_cseq(sync->sipparser);
         create_sip_ipiri(sync, vint, irimsg, iritype, vshared->cin);
         exportcount += 1;
+    }
+
+    if (passertid.username) {
+        free(passertid.username);
+    }
+    if (passertid.realm) {
+        free(passertid.realm);
+    }
+    if (remotepartyid.username) {
+        free(remotepartyid.username);
+    }
+    if (remotepartyid.realm) {
+        free(remotepartyid.realm);
+    }
+    if (proxyauthcount != 0) {
+        free(proxyauths);
+    }
+    if (regauthcount != 0) {
+        free(regauths);
     }
 
     if (badsip) {
