@@ -918,7 +918,7 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
 static int process_sip_register(collector_sync_voip_t *sync, char *callid,
         openli_export_recv_t *irimsg) {
 
-    openli_sip_identity_t touriid;
+    openli_sip_identity_t touriid, fromuriid;
     voipintercept_t *vint, *tmp;
     sipregister_t *sipreg;
     int exportcount = 0;
@@ -931,11 +931,26 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
         return -1;
     }
 
+    if (sync->trust_sip_from &&
+            get_sip_from_uri_identity(sync->sipparser, &fromuriid) < 0) {
+
+        if (sync->log_bad_sip) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to derive SIP identity from To: URI");
+        }
+        return -1;
+
+    }
+
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
         sipreg = NULL;
 
         /* Try the To: uri first */
         if (sipid_matches_target(vint->targets, &touriid)) {
+            sipreg = create_new_voip_registration(sync, vint, callid);
+        } else if (sync->trust_sip_from &&
+                    sipid_matches_target(vint->targets, &fromuriid)) {
+
             sipreg = create_new_voip_registration(sync, vint, callid);
         } else {
             int found;
