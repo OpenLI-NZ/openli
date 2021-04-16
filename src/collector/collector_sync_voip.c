@@ -646,8 +646,13 @@ static inline int _extract_sip_auth_fields_flag(collector_sync_voip_t *sync,
     openli_sip_identity_t authid;
     int ret, i;
 
-    ret = get_sip_proxy_auth_identity(sync->sipparser, 0, authcount,
-            &authid, sync->log_bad_sip);
+    if (isproxy) {
+        ret = get_sip_proxy_auth_identity(sync->sipparser, 0, authcount,
+                &authid, sync->log_bad_sip);
+    } else {
+        ret = get_sip_auth_identity(sync->sipparser, 0, authcount,
+                &authid, sync->log_bad_sip);
+    }
 
     if (ret == -1) {
         sync->log_bad_sip = 0;
@@ -1074,7 +1079,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
 
         if (sync->log_bad_sip) {
             logger(LOG_INFO,
-                    "OpenLI: unable to derive SIP identity from To: URI");
+                    "OpenLI: unable to derive SIP identity from From: URI");
         }
         return -1;
 

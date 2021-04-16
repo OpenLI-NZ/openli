@@ -1287,6 +1287,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->sipdebugfile = NULL;
     glob->nextloc = 0;
     glob->syncgenericfreelist = NULL;
+    glob->trust_sip_from = 0;
 
     glob->sslconf.certfile = NULL;
     glob->sslconf.keyfile = NULL;
