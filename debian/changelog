@@ -1,4 +1,4 @@
-openli (1.0.9-2) unstable; urgency=medium
+openli (1.0.10-1) unstable; urgency=medium
 
   * Intercepts can now be configured with a start and/or end time (unix
     timestamp only).
@@ -16,7 +16,7 @@ openli (1.0.9-2) unstable; urgency=medium
   * Improve performance when analysing SIP traffic while having a large number
     of active VOIP intercepts.
 
- -- Shane Alcock <shane.alcock@waikato.ac.nz>  Tue, 26 Apr 2021 15:36:17 +1200
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Tue, 26 Apr 2021 16:30:17 +1200
 
 openli (1.0.9-2) unstable; urgency=medium
 
