@@ -46,6 +46,8 @@ static inline void copy_intercept_common(intercept_common_t *src,
     dest->delivcc_len = src->delivcc_len;
     dest->destid = src->destid;
     dest->hi1_seqno = src->hi1_seqno;
+    dest->tostart_time = src->tostart_time;
+    dest->toend_time = src->toend_time;
 }
 
 int are_sip_identities_same(openli_sip_identity_t *a,
@@ -208,13 +210,7 @@ void free_single_ipintercept(ipintercept_t *cept) {
 
     HASH_ITER(hh, cept->statics, ipr, tmp) {
         HASH_DELETE(hh, cept->statics, ipr);
-        if (ipr->rangestr) {
-            free(ipr->rangestr);
-        }
-        if (ipr->liid) {
-            free(ipr->liid);
-        }
-        free(ipr);
+        free_single_staticiprange(ipr);
     }
 
     free(cept);
@@ -447,6 +443,19 @@ staticipsession_t *create_staticipsession(ipintercept_t *ipint, char *rangestr,
     snprintf(statint->key, 127, "%s-%u", ipint->common.liid, cin);
 
     return statint;
+}
+
+void free_single_staticiprange(static_ipranges_t *ipr) {
+    if (!ipr) {
+        return;
+    }
+    if (ipr->rangestr) {
+        free(ipr->rangestr);
+    }
+    if (ipr->liid) {
+        free(ipr->liid);
+    }
+    free(ipr);
 }
 
 void free_single_staticipsession(staticipsession_t *statint) {

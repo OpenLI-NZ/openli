@@ -1,5 +1,25 @@
 openli (1.0.9-2) unstable; urgency=medium
 
+  * Intercepts can now be configured with a start and/or end time (unix
+    timestamp only).
+  * SIP-based VOIP intercepts will now check the `P-Asserted-Identity` and
+    `Remote-Party-ID` fields for matches against the target identities.
+  * Added config option to allow the "From:" URI in a SIP packet to be used for
+    target identification. Defaults to not allowed.
+  * Added config options to adjust pcap output filenames and compression levels.
+  * Fixed bug where the agencyID for an intercept could not be modified via the
+    REST API.
+  * Fixed oversight where the set of active pcap intercepts was not properly
+    updated whenever intercepts are deactivated.
+  * Fixed various crashes and memory leaks when reloading the collector config
+    file.
+  * Improve performance when analysing SIP traffic while having a large number
+    of active VOIP intercepts.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Tue, 26 Apr 2021 15:36:17 +1200
+
+openli (1.0.9-2) unstable; urgency=medium
+
   * Rebuild package to support latest libtrace release
 
  -- Shane Alcock <shane.alcock@waikato.ac.nz>  Mon, 22 Mar 2021 11:28:34 +1300

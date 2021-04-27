@@ -527,7 +527,8 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         newcept->common.hi1_seqno = 0;
         newcept->awaitingconfirm = 1;
         newcept->options = 0;
-
+        newcept->common.tostart_time = 0;
+        newcept->common.toend_time = 0;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -575,6 +576,20 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
                     logger(LOG_INFO, "OpenLI: 0 is not a valid value for the 'mediator' config option.");
                 }
             }
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "starttime") == 0) {
+                newcept->common.tostart_time = strtoul(
+                        (char *)value->data.scalar.value, NULL, 10);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "endtime") == 0) {
+                newcept->common.toend_time = strtoul(
+                        (char *)value->data.scalar.value, NULL, 10);
+            }
+
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value, "agencyid") == 0) {
@@ -631,6 +646,8 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED; 
         newcept->statics = NULL;
         newcept->options = 0;
+        newcept->common.tostart_time = 0;
+        newcept->common.toend_time = 0;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -737,6 +754,21 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                 }
 
             }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "starttime") == 0) {
+                newcept->common.tostart_time = strtoul(
+                        (char *)value->data.scalar.value, NULL, 10);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "endtime") == 0) {
+                newcept->common.toend_time = strtoul(
+                        (char *)value->data.scalar.value, NULL, 10);
+            }
+
         }
 
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
@@ -1011,6 +1043,14 @@ static int global_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
+                    "SIPallowfromident") == 0) {
+
+       glob->trust_sip_from = check_onoff((char *)value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "RMQname") == 0) {
         SET_CONFIG_STRING_OPTION(glob->RMQ_conf.name, value);
     }
@@ -1088,6 +1128,12 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "pcapfilename") == 0) {
+        SET_CONFIG_STRING_OPTION(state->pcaptemplate, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "operatorid") == 0) {
         SET_CONFIG_STRING_OPTION(state->operatorid, value);
         /* 16 chars max allowed for this field (defined in
@@ -1118,6 +1164,17 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
         if (state->mediatorid == 0) {
             logger(LOG_INFO, "OpenLI: 0 is not a valid value for the 'mediatorid' config option.");
             return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "pcapcompress") == 0) {
+        state->pcapcompress = strtoul((char *)value->data.scalar.value,
+                NULL, 10);
+        if (state->pcapcompress > 9) {
+            logger(LOG_INFO, "OpenLI: maximum pcap compression level is 9, setting to that instead.");
+            state->pcapcompress = 9;
         }
     }
 

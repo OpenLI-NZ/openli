@@ -114,6 +114,9 @@ static void clear_med_config(mediator_state_t *state) {
     if (state->pcapdirectory) {
         free(state->pcapdirectory);
     }
+    if (state->pcaptemplate) {
+        free(state->pcaptemplate);
+    }
     if (state->operatorid) {
         free(state->operatorid);
     }
@@ -212,6 +215,42 @@ static void destroy_med_state(mediator_state_t *state) {
     free(state->handover_state.agency_mutex);
 }
 
+/** Sends the current pcap output configuration to the pcap writing thread
+ *
+ * @param medstate      The global state for this mediator instance
+ */
+static inline void update_pcap_msg_thread(mediator_state_t *medstate) {
+    mediator_pcap_msg_t pcapmsg;
+
+    memset(&pcapmsg, 0, sizeof(pcapmsg));
+    pcapmsg.msgtype = PCAP_MESSAGE_CHANGE_DIR;
+    if (medstate->pcapdirectory != NULL) {
+        pcapmsg.msgbody = (uint8_t *)strdup(medstate->pcapdirectory);
+        pcapmsg.msglen = strlen(medstate->pcapdirectory);
+    } else {
+        pcapmsg.msgbody = NULL;
+        pcapmsg.msglen = 0;
+    }
+    libtrace_message_queue_put(&(medstate->pcapqueue), &pcapmsg);
+
+    memset(&pcapmsg, 0, sizeof(pcapmsg));
+    pcapmsg.msgtype = PCAP_MESSAGE_CHANGE_TEMPLATE;
+    if (medstate->pcaptemplate != NULL) {
+        pcapmsg.msgbody = (uint8_t *)strdup(medstate->pcaptemplate);
+        pcapmsg.msglen = strlen(medstate->pcaptemplate);
+    } else {
+        pcapmsg.msgbody = NULL;
+        pcapmsg.msglen = 0;
+    }
+    libtrace_message_queue_put(&(medstate->pcapqueue), &pcapmsg);
+
+    memset(&pcapmsg, 0, sizeof(pcapmsg));
+    pcapmsg.msgtype = PCAP_MESSAGE_CHANGE_COMPRESS;
+    pcapmsg.msgbody = (uint8_t *)&(medstate->pcapcompress);
+    pcapmsg.msglen = sizeof(medstate->pcapcompress);
+    libtrace_message_queue_put(&(medstate->pcapqueue), &pcapmsg);
+}
+
 /** Initialises the global state for a mediator instance.
  *
  *  This includes parsing the provided configuration file and setting
@@ -250,6 +289,8 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
     state->operatorid = NULL;
     state->shortoperatorid = NULL;
     state->pcapdirectory = NULL;
+    state->pcaptemplate = NULL;
+    state->pcapcompress = 1;
     state->pcapthread = -1;
     state->pcaprotatefreq = 30;
     state->listenerev = NULL;
@@ -706,6 +747,7 @@ static int receive_hi1_notification(mediator_state_t *state, uint8_t *msgbody,
     hi1_notify_data_t ndata;
     wandder_encoded_result_t *encoded_hi1 = NULL;
     mediator_agency_t *agency;
+    int ret = -1;
 
     char *nottype_strings[] = {
         "INVALID", "Activated", "Deactivated", "Modified", "ALARM"
@@ -717,7 +759,7 @@ static int receive_hi1_notification(mediator_state_t *state, uint8_t *msgbody,
             logger(LOG_INFO,
                     "OpenLI Mediator: received invalid HI1 notification from provisioner.");
         }
-        return -1;
+        goto freehi1;
     }
 
     if (ndata.notify_type < 0 || ndata.notify_type > HI1_ALARM) {
@@ -725,7 +767,7 @@ static int receive_hi1_notification(mediator_state_t *state, uint8_t *msgbody,
             logger(LOG_INFO,
                     "OpenLI Mediator: invalid HI1 notification type %u received from provisioner.", ndata.notify_type);
         }
-        return -1;
+        goto freehi1;
     }
 
     if (state->provisioner.disable_log == 0) {
@@ -735,9 +777,6 @@ static int receive_hi1_notification(mediator_state_t *state, uint8_t *msgbody,
                 ndata.agencyid);
     }
 
-    /* TODO encode a HI1 notification message and put it on the right
-     * handover queue
-     */
     agency = lookup_agency(&(state->handover_state), ndata.agencyid);
     if (agency == NULL) {
         /* We don't know about this supposed agency, but maybe that's
@@ -745,7 +784,8 @@ static int receive_hi1_notification(mediator_state_t *state, uint8_t *msgbody,
          * until we've got code that doesn't just broadcast these
          * notifications to all mediators.
          */
-         return 0;
+        ret = 0;
+        goto freehi1;
     }
 
     if (agency->hi2->ho_state->encoder == NULL) {
@@ -758,19 +798,34 @@ static int receive_hi1_notification(mediator_state_t *state, uint8_t *msgbody,
             &ndata, state->operatorid, state->shortoperatorid);
     if (encoded_hi1 == NULL) {
         logger(LOG_INFO, "OpenLI Mediator: failed to construct HI1 Notifcation message");
-        return -1;
+        goto freehi1;
     }
 
     if (enqueue_etsi(state, agency->hi2, encoded_hi1->encoded,
             encoded_hi1->len) < 0) {
         wandder_release_encoded_result(agency->hi2->ho_state->encoder,
                 encoded_hi1);
-        return -1;
+        goto freehi1;
     }
 
     wandder_release_encoded_result(agency->hi2->ho_state->encoder,
             encoded_hi1);
-    return 0;
+    ret = 0;
+
+freehi1:
+    if (ndata.agencyid) {
+        free(ndata.agencyid);
+    }
+    if (ndata.liid) {
+        free(ndata.liid);
+    }
+    if (ndata.authcc) {
+        free(ndata.authcc);
+    }
+    if (ndata.delivcc) {
+        free(ndata.delivcc);
+    }
+    return ret;
 }
 
 /** Parse and action an instruction from a provisioner to remove an
@@ -789,6 +844,7 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     liid_map_entry_t *m;
     int sock;
     PWord_t jval;
+    mediator_pcap_msg_t pcapmsg;
 
     /** See netcomms.c for this method */
     if (decode_cease_mediation(msgbody, msglen, &liid) == -1) {
@@ -812,7 +868,15 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
         return 0;
     }
 
-    /* TODO end any pcap trace for this LIID */
+    /* end any pcap trace for this LIID */
+    if (m->agency == NULL) {
+        memset(&pcapmsg, 0, sizeof(pcapmsg));
+
+        pcapmsg.msgtype = PCAP_MESSAGE_DISABLE_LIID;
+        pcapmsg.msgbody = strdup(liid);
+        pcapmsg.msglen = strlen(liid) + 1;
+        libtrace_message_queue_put(&(state->pcapqueue), &pcapmsg);
+    }
 
     /* We cease mediation on a time-wait basis, i.e. we wait 15 seconds
      * after receiving the cease instruction before removing the LIID mapping.
@@ -923,8 +987,21 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     }
     free(agencyid);
 
-    if (add_liid_agency_mapping(&(state->liidmap), liid, agency) < 0) {
+    err = add_liid_agency_mapping(&(state->liidmap), liid, agency);
+
+    if (err < 0) {
         return -1;
+    }
+
+    if (err == 1) {
+        /* tell pcap thread that it no longer gets this LIID */
+        mediator_pcap_msg_t pcapmsg;
+        memset(&pcapmsg, 0, sizeof(pcapmsg));
+
+        pcapmsg.msgtype = PCAP_MESSAGE_DISABLE_LIID;
+        pcapmsg.msgbody = strdup(liid);
+        pcapmsg.msglen = strlen(liid) + 1;
+        libtrace_message_queue_put(&(state->pcapqueue), &pcapmsg);
     }
 
     return 0;
@@ -1391,6 +1468,55 @@ static inline void halt_listening_socket(mediator_state_t *currstate) {
     currstate->listenerev = NULL;
 }
 
+static int reload_pcap_config(mediator_state_t *currstate,
+        mediator_state_t *newstate) {
+
+    int changed = 0;
+
+    if (newstate->pcapdirectory == NULL && currstate->pcapdirectory != NULL) {
+        free(currstate->pcapdirectory);
+        changed = 1;
+    } else if (currstate->pcapdirectory == NULL &&
+            newstate->pcapdirectory != NULL) {
+        changed = 1;
+    } else if (currstate->pcapdirectory == NULL &&
+            newstate->pcapdirectory == NULL) {
+        changed = 0;
+    } else if (strcmp(currstate->pcapdirectory, newstate->pcapdirectory) == 0) {
+        changed = 0;
+    } else {
+        changed = 1;
+    }
+
+    if (newstate->pcaptemplate == NULL && currstate->pcaptemplate != NULL) {
+        free(currstate->pcaptemplate);
+        changed = 1;
+    } else if (currstate->pcaptemplate == NULL &&
+            newstate->pcaptemplate != NULL) {
+        changed = 1;
+    } else if (currstate->pcaptemplate == NULL &&
+            newstate->pcaptemplate == NULL) {
+        /* leave changed as is */
+        (int)(changed);
+    } else if (strcmp(currstate->pcaptemplate, newstate->pcaptemplate) == 0) {
+        /* leave changed as is */
+        (int)(changed);
+    } else {
+        changed = 1;
+    }
+
+    if (currstate->pcapcompress != newstate->pcapcompress) {
+        changed = 1;
+    }
+
+    currstate->pcapdirectory = newstate->pcapdirectory;
+    currstate->pcaptemplate = newstate->pcaptemplate;
+    currstate->pcapcompress = newstate->pcapcompress;
+
+    return changed;
+}
+
+
 /** Applies any changes to the listening socket configuration following
  *  a user-triggered config reload.
  *
@@ -1456,6 +1582,7 @@ static int reload_mediator_config(mediator_state_t *currstate) {
     int listenchanged = 0;
     int provchanged = 0;
     int tlschanged = 0;
+    int pcapchanged = 0;
 
     /* Load the updated config into a spare "global state" instance */
     if (init_med_state(&newstate, currstate->conffile) == -1) {
@@ -1496,6 +1623,13 @@ static int reload_mediator_config(mediator_state_t *currstate) {
     tlschanged = reload_ssl_config(&(currstate->sslconf), &(newstate.sslconf));
     if (tlschanged == -1) {
         return -1;
+    }
+
+    pcapchanged = reload_pcap_config(currstate, &newstate);
+    if (pcapchanged == -1) {
+        return -1;
+    } else if (pcapchanged == 1) {
+        update_pcap_msg_thread(currstate);
     }
 
     if (tlschanged != 0 || newstate.etsitls != currstate->etsitls) {
@@ -1757,17 +1891,7 @@ int main(int argc, char *argv[]) {
 
     logger(LOG_INFO, "OpenLI Mediator: '%u' has started.", medstate.mediatorid);
 
-    /* A directory for pcap output has been configured, so send that through
-     * to the pcap output thread.
-     */
-    if (medstate.pcapdirectory != NULL) {
-        memset(&pcapmsg, 0, sizeof(pcapmsg));
-        pcapmsg.msgtype = PCAP_MESSAGE_CHANGE_DIR;
-        pcapmsg.msgbody = (uint8_t *)strdup(medstate.pcapdirectory);
-        pcapmsg.msglen = strlen(medstate.pcapdirectory);
-
-        libtrace_message_queue_put(&(medstate.pcapqueue), &pcapmsg);
-    }
+    update_pcap_msg_thread(&medstate);
 
     /* Start the pcap output thread */
     pthread_create(&(medstate.pcapthread), NULL, start_pcap_thread,

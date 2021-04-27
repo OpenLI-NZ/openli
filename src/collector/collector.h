@@ -63,6 +63,10 @@ enum {
     OPENLI_PUSH_IPRANGE = 11,
     OPENLI_PUSH_REMOVE_IPRANGE = 12,
     OPENLI_PUSH_MODIFY_IPRANGE = 13,
+    OPENLI_PUSH_UPDATE_IPINTERCEPT=14,
+    OPENLI_PUSH_UPDATE_VENDMIRROR_INTERCEPT=15,
+    OPENLI_PUSH_UPDATE_IPRANGE_INTERCEPT=16,
+    OPENLI_PUSH_UPDATE_VOIPINTERCEPT=17,
 };
 
 enum {
@@ -263,7 +267,7 @@ typedef struct collector_global {
     seqtracker_thread_data_t *seqtrackers;
     openli_encoder_t *encoders;
     forwarding_thread_data_t *forwarders;
-    colthread_local_t *collocals;
+    colthread_local_t **collocals;
     int nextloc;
 
     libtrace_message_queue_t intersyncq;
@@ -286,6 +290,7 @@ typedef struct collector_global {
     pthread_mutex_t stats_mutex;
 
     uint8_t etsitls;
+    uint8_t trust_sip_from;
 
     uint8_t encoding_method;
     openli_ssl_config_t sslconf;

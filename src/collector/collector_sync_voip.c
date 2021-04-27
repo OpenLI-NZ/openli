@@ -59,6 +59,7 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
     sync->glob = &(glob->syncvoip);
     sync->info = &(glob->sharedinfo);
 
+    sync->trust_sip_from = glob->trust_sip_from;
     sync->log_bad_instruct = 1;
     sync->log_bad_sip = 1;
     sync->pubsockcount = glob->seqtracker_threads;
@@ -204,6 +205,30 @@ static inline void push_single_voipstreamintercept(collector_sync_voip_t *sync,
     libtrace_message_queue_put(q, (void *)(&msg));
 }
 
+static void push_time_update_active_voipstreams(collector_sync_voip_t *sync,
+        libtrace_message_queue_t *q, voipintercept_t *vint) {
+
+    openli_pushed_t msg;
+    char *streamdup;
+    rtpstreaminf_t *cin = NULL;
+
+    if (vint->active_cins == NULL) {
+        return;
+    }
+
+    for (cin = vint->active_cins; cin != NULL; cin=cin->hh.next) {
+        if (cin->active == 0) {
+            continue;
+        }
+        streamdup = strdup(cin->streamkey);
+        memset(&msg, 0, sizeof(openli_pushed_t));
+        msg.type = OPENLI_PUSH_UPDATE_VOIPINTERCEPT;
+        msg.data.ipmmint = create_rtpstream(vint, cin->cin);
+
+        libtrace_message_queue_put(q, (void *)(&msg));
+    }
+}
+
 static void push_halt_active_voipstreams(collector_sync_voip_t *sync,
         libtrace_message_queue_t *q, voipintercept_t *vint, int epollfd) {
 
@@ -258,6 +283,16 @@ static void push_voipintercept_halt_to_threads(collector_sync_voip_t *sync,
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
         push_halt_active_voipstreams(sync, sendq->q, vint,
                 sync->glob->epoll_fd);
+    }
+}
+
+static void push_voip_intercept_update_to_threads(collector_sync_voip_t *sync,
+        voipintercept_t *vint) {
+
+    sync_sendq_t *sendq, *tmp;
+
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
+        push_time_update_active_voipstreams(sync, sendq->q, vint);
     }
 }
 
@@ -568,33 +603,115 @@ static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
     return vshared;
 }
 
-static inline int check_sip_auth_fields(collector_sync_voip_t *sync,
-        voipintercept_t *vint, char *callid, uint8_t isproxy) {
+static inline int check_sip_identity_fields(collector_sync_voip_t *sync,
+        voipintercept_t *vint, openli_sip_identity_t *passertid,
+        openli_sip_identity_t *remotepartyid) {
 
-    int i, authcount, ret;
-    openli_sip_identity_t authid;
+    int ret = 1;
 
-    i = authcount = 0;
-    do {
-        if (isproxy) {
-            ret = get_sip_proxy_auth_identity(sync->sipparser, i, &authcount,
-                    &authid, sync->log_bad_sip);
-        } else {
-            ret = get_sip_auth_identity(sync->sipparser, i, &authcount,
-                    &authid, sync->log_bad_sip);
-        }
+    if (passertid->username == NULL) {
+        ret = get_sip_passerted_identity(sync->sipparser, passertid);
 
         if (ret == -1) {
             sync->log_bad_sip = 0;
-            break;
+            return 0;
         }
-        if (ret > 0) {
-            if (sipid_matches_target(vint->targets, &authid)) {
-                return 1;
-            }
+
+    }
+
+    if (ret > 0 && sipid_matches_target(vint->targets, passertid)) {
+        return 1;
+    }
+
+    ret = 1;
+    if (remotepartyid->username == NULL) {
+        ret = get_sip_remote_party(sync->sipparser, remotepartyid);
+
+        if (ret == -1) {
+            sync->log_bad_sip = 0;
+            return 0;
         }
-        i ++;
-    } while (i < authcount);
+    }
+
+    if (ret > 0 && sipid_matches_target(vint->targets, remotepartyid)) {
+        return 1;
+    }
+
+    return 0;
+}
+
+static inline int _extract_sip_auth_fields_flag(collector_sync_voip_t *sync,
+        openli_sip_identity_t **autharray, int *authcount, uint8_t isproxy) {
+
+    openli_sip_identity_t authid;
+    int ret, i;
+
+    if (isproxy) {
+        ret = get_sip_proxy_auth_identity(sync->sipparser, 0, authcount,
+                &authid, sync->log_bad_sip);
+    } else {
+        ret = get_sip_auth_identity(sync->sipparser, 0, authcount,
+                &authid, sync->log_bad_sip);
+    }
+
+    if (ret == -1) {
+        sync->log_bad_sip = 0;
+        *authcount = 0;
+        return -1;
+    }
+
+    if (ret == 0) {
+        *authcount = 0;
+        return 0;
+    }
+
+    (*autharray) = calloc(*authcount, sizeof(openli_sip_identity_t));
+    memcpy(&((*autharray)[0]), &authid, sizeof(openli_sip_identity_t));
+
+    for (i = 1; i < *authcount; i++) {
+        if (isproxy) {
+            ret = get_sip_proxy_auth_identity(sync->sipparser, i, authcount,
+                    &((*autharray)[i]), sync->log_bad_sip);
+        } else {
+            ret = get_sip_auth_identity(sync->sipparser, i, authcount,
+                    &((*autharray)[i]), sync->log_bad_sip);
+        }
+        if (ret == -1) {
+            sync->log_bad_sip = 0;
+            free(*autharray);
+            *authcount = 0;
+            return -1;
+        }
+    }
+
+    return 1;
+}
+
+static int extract_sip_auth_fields(collector_sync_voip_t *sync,
+        openli_sip_identity_t **proxyauth, openli_sip_identity_t **regauth,
+        int *proxyauthcount, int *regauthcount) {
+
+    int waserr = 0;
+    if (_extract_sip_auth_fields_flag(sync, proxyauth, proxyauthcount, 1) < 0) {
+        waserr = -1;
+    }
+    if (_extract_sip_auth_fields_flag(sync, regauth, regauthcount, 0) < 0) {
+        waserr = -1;
+    }
+    return waserr;
+}
+
+static inline int check_sip_auth_fields(collector_sync_voip_t *sync,
+        voipintercept_t *vint, char *callid, openli_sip_identity_t *auths,
+        int authcount) {
+
+    int i, ret;
+
+    for (i = 0; i < authcount; i++) {
+        if (sipid_matches_target(vint->targets, &(auths[i]))) {
+            return 1;
+        }
+    }
     return 0;
 }
 
@@ -707,6 +824,14 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
         etsili_iri_type_t iritype, int64_t cin) {
 
     openli_export_recv_t *copy;
+
+    if (vint->common.tostart_time > irimsg->ts.tv_sec) {
+        return;
+    }
+
+    if (vint->common.toend_time > 0 && vint->common.toend_time <= irimsg->ts.tv_sec) {
+        return;
+    }
 
     /* TODO consider recycling IRI messages like we do with IPCCs */
 
@@ -826,10 +951,13 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
 static int process_sip_register(collector_sync_voip_t *sync, char *callid,
         openli_export_recv_t *irimsg) {
 
-    openli_sip_identity_t touriid;
+    openli_sip_identity_t touriid, fromuriid;
+    openli_sip_identity_t remotepartyid, passertid;
+    openli_sip_identity_t *proxyauths, *regauths;
     voipintercept_t *vint, *tmp;
     sipregister_t *sipreg;
     int exportcount = 0;
+    int proxyauthcount = 0, regauthcount = 0;
 
     if (get_sip_to_uri_identity(sync->sipparser, &touriid) < 0) {
         if (sync->log_bad_sip) {
@@ -839,18 +967,51 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
         return -1;
     }
 
+    if (sync->trust_sip_from &&
+            get_sip_from_uri_identity(sync->sipparser, &fromuriid) < 0) {
+
+        if (sync->log_bad_sip) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to derive SIP identity from To: URI");
+        }
+        return -1;
+
+    }
+
+    if (extract_sip_auth_fields(sync, &proxyauths, &regauths, &proxyauthcount,
+            &regauthcount) < 0) {
+        return -1;
+    }
+
+    passertid.username = NULL;
+    passertid.realm = NULL;
+    remotepartyid.username = NULL;
+    remotepartyid.realm = NULL;
+
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
         sipreg = NULL;
 
         /* Try the To: uri first */
         if (sipid_matches_target(vint->targets, &touriid)) {
             sipreg = create_new_voip_registration(sync, vint, callid);
+        } else if (sync->trust_sip_from &&
+                    sipid_matches_target(vint->targets, &fromuriid)) {
+
+            sipreg = create_new_voip_registration(sync, vint, callid);
         } else {
             int found;
-            found = check_sip_auth_fields(sync, vint, callid, 1);
+
+            found = check_sip_identity_fields(sync, vint, &passertid,
+                    &remotepartyid);
             if (!found) {
-                found = check_sip_auth_fields(sync, vint, callid, 0);
+                found = check_sip_auth_fields(sync, vint, callid, proxyauths,
+                        proxyauthcount);
             }
+            if (!found) {
+                found = check_sip_auth_fields(sync, vint, callid, regauths,
+                        regauthcount);
+            }
+
             if (found) {
                 sipreg = create_new_voip_registration(sync, vint, callid);
             }
@@ -862,6 +1023,27 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
         create_sip_ipiri(sync, vint, irimsg, ETSILI_IRI_REPORT, sipreg->cin);
         exportcount += 1;
     }
+
+    if (passertid.username) {
+        free(passertid.username);
+    }
+    if (passertid.realm) {
+        free(passertid.realm);
+    }
+    if (remotepartyid.username) {
+        free(remotepartyid.username);
+    }
+    if (remotepartyid.realm) {
+        free(remotepartyid.realm);
+    }
+
+    if (proxyauthcount != 0) {
+        free(proxyauths);
+    }
+    if (regauthcount != 0) {
+        free(regauths);
+    }
+
     return exportcount;
 }
 
@@ -872,7 +1054,10 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     voipcinmap_t *findcin;
     voipsdpmap_t *findsdp = NULL;
     voipintshared_t *vshared;
-    openli_sip_identity_t touriid;
+    openli_sip_identity_t touriid, fromuriid;
+    openli_sip_identity_t remotepartyid, passertid;
+    openli_sip_identity_t *proxyauths, *regauths;
+    int proxyauthcount = 0, regauthcount = 0;
     char rtpkey[256];
     rtpstreaminf_t *thisrtp;
     char *ipstr, *portstr, *mediatype;
@@ -888,6 +1073,27 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         }
         return -1;
     }
+
+    if (sync->trust_sip_from &&
+            get_sip_from_uri_identity(sync->sipparser, &fromuriid) < 0) {
+
+        if (sync->log_bad_sip) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to derive SIP identity from From: URI");
+        }
+        return -1;
+
+    }
+
+    if (extract_sip_auth_fields(sync, &proxyauths, &regauths, &proxyauthcount,
+            &regauthcount) < 0) {
+        return -1;
+    }
+
+    passertid.username = NULL;
+    passertid.realm = NULL;
+    remotepartyid.username = NULL;
+    remotepartyid.realm = NULL;
 
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
         vshared = NULL;
@@ -908,7 +1114,8 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
                                 sdpo->sessionid, sdpo->version, sdpo->username,
                                 sdpo->address);
                     }
-                    return -1;
+                    badsip = 1;
+                    break;
                 }
             }
 
@@ -932,11 +1139,22 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
 
                 vshared = create_new_voip_session(sync, callid, sdpo,
                         vint);
+            } else if (sync->trust_sip_from &&
+                    sipid_matches_target(vint->targets, &fromuriid)) {
+
+                vshared = create_new_voip_session(sync, callid, sdpo,
+                        vint);
             } else {
                 int found;
-                found = check_sip_auth_fields(sync, vint, callid, 1);
+                found = check_sip_identity_fields(sync, vint, &passertid,
+                        &remotepartyid);
                 if (!found) {
-                    found = check_sip_auth_fields(sync, vint, callid, 0);
+                    found = check_sip_auth_fields(sync, vint, callid,
+                            proxyauths, proxyauthcount);
+                }
+                if (!found) {
+                    found = check_sip_auth_fields(sync, vint, callid, regauths,
+                            regauthcount);
                 }
                 if (found) {
                     vshared = create_new_voip_session(sync, callid, sdpo, vint);
@@ -993,6 +1211,25 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         thisrtp->invitecseq = get_sip_cseq(sync->sipparser);
         create_sip_ipiri(sync, vint, irimsg, iritype, vshared->cin);
         exportcount += 1;
+    }
+
+    if (passertid.username) {
+        free(passertid.username);
+    }
+    if (passertid.realm) {
+        free(passertid.realm);
+    }
+    if (remotepartyid.username) {
+        free(remotepartyid.username);
+    }
+    if (remotepartyid.realm) {
+        free(remotepartyid.realm);
+    }
+    if (proxyauthcount != 0) {
+        free(proxyauths);
+    }
+    if (regauthcount != 0) {
+        free(regauths);
     }
 
     if (badsip) {
@@ -1116,6 +1353,7 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
     voipintercept_t *vint, tomod;
+    int timechanged = 0;
 
     if (decode_voipintercept_modify(intmsg, msglen, &tomod) == -1) {
         if (sync->log_bad_instruct) {
@@ -1138,23 +1376,35 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
 
     sync->log_bad_instruct = 1;
 
-    if (tomod.options & (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
+    /* TODO apply any changes to authcc or delivcc */
 
-        logger(LOG_INFO,
-                "OpenLI: VOIP intercept %s is now ignoring RTP comfort noise",
-                tomod.common.liid);
-    } else {
-        logger(LOG_INFO,
-                "OpenLI: VOIP intercept %s is now intercepting RTP comfort noise",
-                tomod.common.liid);
+    if (tomod.options != vint->options) {
+        if (tomod.options & (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
+            logger(LOG_INFO,
+                    "OpenLI: VOIP intercept %s is now ignoring RTP comfort noise",
+                    tomod.common.liid);
+        } else {
+            logger(LOG_INFO,
+                    "OpenLI: VOIP intercept %s is now intercepting RTP comfort noise",
+                    tomod.common.liid);
+        }
+    }
+
+    if (tomod.common.tostart_time != vint->common.tostart_time ||
+            tomod.common.toend_time != vint->common.toend_time) {
+        timechanged = 1;
     }
 
     vint->options = tomod.options;
+    vint->common.tostart_time = tomod.common.tostart_time;
+    vint->common.toend_time = tomod.common.toend_time;
 
-    /* Don't need to push anything to the collectors or seqtrackers.
-     * Existing RTP sessions will continue using the same options as before,
-     * but new sessions will have the options applied.
-     */
+    if (timechanged) {
+        logger(LOG_INFO,
+                "OpenLI: VOIP intercept %s has changed start / end times -- now %lu, %lu", tomod.common.liid, tomod.common.tostart_time, tomod.common.toend_time);
+        push_voip_intercept_update_to_threads(sync, vint);
+    }
+
     return 0;
 
 }
@@ -1494,7 +1744,7 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
 
     pthread_mutex_unlock(&(sync->glob->mutex));
     logger(LOG_INFO,
-            "OpenLI: adding new VOIP intercept %s", vint->common.liid);
+            "OpenLI: adding new VOIP intercept %s (start time %lu, end time %lu)", vint->common.liid, vint->common.tostart_time, vint->common.toend_time);
     return 0;
 }
 

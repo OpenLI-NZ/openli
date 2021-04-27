@@ -180,6 +180,9 @@ static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
     rtpstreaminf_t *rtp, *tmp;
     int matched = 0;
     uint8_t is_comfort = 255;
+    struct timeval tv;
+
+    tv = trace_get_timeval(pkt);
 
     /* TODO change active RTP so we can look up by 5 tuple? */
     HASH_ITER(hh, loc->activertpintercepts, rtp, tmp) {
@@ -192,6 +195,14 @@ static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
         }
 
         if (pinfo->family != rtp->ai_family) {
+            continue;
+        }
+
+        if (tv.tv_sec < rtp->common.tostart_time) {
+            continue;
+        }
+
+        if (rtp->common.toend_time > 0 && tv.tv_sec >= rtp->common.toend_time) {
             continue;
         }
 

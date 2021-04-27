@@ -70,7 +70,7 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     json_object *jobj;
     json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
     json_object *vendmirrorid, *user, *accesstype, *radiusident;
-    json_object *staticips;
+    json_object *staticips, *starttime, *endtime;
 
     jobj = json_object_new_object();
 
@@ -93,6 +93,16 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     json_object_object_add(jobj, "user", user);
     json_object_object_add(jobj, "accesstype", accesstype);
     json_object_object_add(jobj, "radiusident", radiusident);
+
+    if (ipint->common.tostart_time != 0) {
+        starttime = json_object_new_int(ipint->common.tostart_time);
+        json_object_object_add(jobj, "starttime", starttime);
+    }
+
+    if (ipint->common.toend_time != 0) {
+        endtime = json_object_new_int(ipint->common.toend_time);
+        json_object_object_add(jobj, "endtime", endtime);
+    }
 
     if (ipint->vendmirrorid != 0xFFFFFFFF) {
         vendmirrorid = json_object_new_int(ipint->vendmirrorid);
@@ -126,7 +136,7 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
 static json_object *convert_voipintercept_to_json(voipintercept_t *vint) {
     json_object *jobj;
     json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
-    json_object *siptargets;
+    json_object *siptargets, *starttime, *endtime;
     libtrace_list_node_t *n;
 
     jobj = json_object_new_object();
@@ -143,6 +153,16 @@ static json_object *convert_voipintercept_to_json(voipintercept_t *vint) {
     json_object_object_add(jobj, "delivcc", delivcc);
     json_object_object_add(jobj, "agencyid", agencyid);
     json_object_object_add(jobj, "mediator", mediator);
+
+    if (vint->common.tostart_time != 0) {
+        starttime = json_object_new_int(vint->common.tostart_time);
+        json_object_object_add(jobj, "starttime", starttime);
+    }
+
+    if (vint->common.toend_time != 0) {
+        endtime = json_object_new_int(vint->common.toend_time);
+        json_object_object_add(jobj, "endtime", endtime);
+    }
 
     n = vint->targets->head;
     while (n) {

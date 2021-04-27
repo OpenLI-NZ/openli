@@ -500,6 +500,19 @@ char *get_sip_to_uri(openli_sip_parser_t *parser) {
     return uristr;
 }
 
+char *get_sip_from_uri_username(openli_sip_parser_t *parser) {
+
+    char *uriuser;
+    osip_from_t *from = osip_message_get_from(parser->osip);
+
+    if (from == NULL) {
+        return NULL;
+    }
+
+    uriuser = osip_uri_get_username(osip_from_get_url(from));
+    return uriuser;
+}
+
 char *get_sip_to_uri_username(openli_sip_parser_t *parser) {
 
     char *uriuser;
@@ -529,6 +542,22 @@ char *get_sip_to_uri_realm(openli_sip_parser_t *parser) {
     return urihost;
 }
 
+char *get_sip_from_uri_realm(openli_sip_parser_t *parser) {
+    /* I use the term 'realm' here to be consistent with Authorization
+     * header fields, but really this part of a To: uri is generally
+     * called a 'host'.
+     */
+    char *urihost;
+    osip_from_t *from = osip_message_get_from(parser->osip);
+
+    if (from == NULL) {
+        return NULL;
+    }
+
+    urihost = osip_uri_get_host(osip_to_get_url(from));
+    return urihost;
+}
+
 int get_sip_to_uri_identity(openli_sip_parser_t *parser,
         openli_sip_identity_t *sipid) {
 
@@ -539,6 +568,23 @@ int get_sip_to_uri_identity(openli_sip_parser_t *parser,
     sipid->username_len = strlen(sipid->username);
 
     sipid->realm = get_sip_to_uri_realm(parser);
+    if (sipid->realm == NULL) {
+        return -1;
+    }
+    sipid->realm_len = strlen(sipid->realm);
+    return 1;
+}
+
+int get_sip_from_uri_identity(openli_sip_parser_t *parser,
+        openli_sip_identity_t *sipid) {
+
+    sipid->username = get_sip_from_uri_username(parser);
+    if (sipid->username == NULL) {
+        return -1;
+    }
+    sipid->username_len = strlen(sipid->username);
+
+    sipid->realm = get_sip_from_uri_realm(parser);
     if (sipid->realm == NULL) {
         return -1;
     }
@@ -663,6 +709,96 @@ char *get_sip_callid(openli_sip_parser_t *parser) {
 
     callidstr = osip_call_id_get_number(cid);
     return callidstr;
+}
+
+static inline int extract_identity(openli_sip_identity_t *sipid, char *start) {
+    char *idstring, *at, *end, *ptr;
+
+    /* Make sure we strip the '<' and '>' that wrap the identity value */
+    start = strchr((const char *)start, '<');
+    if (start == NULL) {
+        return -1;
+    }
+
+    idstring = strdup(start + 1);
+    ptr = strip_sip_uri(idstring);
+    if (ptr == NULL) {
+        free(idstring);
+        return -1;
+    }
+
+    ptr = strchr((const char *)ptr, ':');
+    if (ptr == NULL) {
+        free(idstring);
+        return -1;
+    }
+
+    ptr += 1;
+    end = strchr((const char *)ptr, '>');
+    if (end != NULL) {
+        *end = '\0';
+    }
+
+    if (ptr[strlen(ptr) - 1] == '>') {
+        ptr[strlen(ptr) - 1] = '\0';
+    }
+
+    at = strchr((const char *)ptr, '@');
+    if (at == NULL) {
+        sipid->realm = NULL;
+        sipid->realm_len = 0;
+        sipid->username_len = strlen(ptr);
+        sipid->username = strdup(ptr);
+    } else {
+        sipid->realm = strdup(at + 1);
+        sipid->realm_len = strlen(sipid->realm);
+        sipid->username_len = at - ptr;
+        sipid->username = strdup(ptr);
+        sipid->username[sipid->username_len] = '\0';
+    }
+
+    free(idstring);
+
+    return 1;
+}
+
+int get_sip_remote_party(openli_sip_parser_t *parser,
+        openli_sip_identity_t *sipid) {
+
+    char *start;
+    osip_header_t *hdr;
+
+    osip_message_header_get_byname(parser->osip, "Remote-Party-ID",
+            0, &hdr);
+    if (hdr == NULL) {
+        return 0;
+    }
+
+    /* dangerously assuming that this will be null terminated... */
+    start = osip_header_get_value(hdr);
+    if (start == NULL) {
+        return 0;
+    }
+    return extract_identity(sipid, start);
+}
+
+int get_sip_passerted_identity(openli_sip_parser_t *parser,
+        openli_sip_identity_t *sipid) {
+    char *start;
+    osip_header_t *hdr;
+
+    osip_message_header_get_byname(parser->osip, "P-Asserted-Identity",
+            0, &hdr);
+    if (hdr == NULL) {
+        return 0;
+    }
+
+    /* dangerously assuming that this will be null terminated... */
+    start = osip_header_get_value(hdr);
+    if (start == NULL) {
+        return 0;
+    }
+    return extract_identity(sipid, start);
 }
 
 static inline int parse_sdp_body(openli_sip_parser_t *parser) {

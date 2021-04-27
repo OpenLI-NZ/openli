@@ -250,7 +250,7 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     colthread_local_t *loc = NULL;
 
     pthread_rwlock_wrlock(&(glob->config_mutex));
-    loc = &(glob->collocals[glob->nextloc]);
+    loc = glob->collocals[glob->nextloc];
     glob->nextloc ++;
     pthread_rwlock_unlock(&(glob->config_mutex));
 
@@ -329,6 +329,22 @@ static void process_incoming_messages(libtrace_thread_t *t,
 
     if (syncpush->type == OPENLI_PUSH_MODIFY_IPRANGE) {
         handle_modify_iprange(t, loc, syncpush->data.iprange);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_UPDATE_VOIPINTERCEPT) {
+        handle_change_voip_intercept(t, loc, syncpush->data.ipmmint);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_UPDATE_IPINTERCEPT) {
+        handle_change_ipint_intercept(t, loc, syncpush->data.ipsess);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_UPDATE_VENDMIRROR_INTERCEPT) {
+        handle_change_vendmirror_intercept(t, loc, syncpush->data.mirror);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_UPDATE_IPRANGE_INTERCEPT) {
+        handle_change_iprange_intercept(t, loc, syncpush->data.iprange);
     }
 
 }
@@ -613,6 +629,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     //trace_increment_packet_refcount(pkt);
 
+    pinfo.tv = trace_get_timeval(pkt);
     iprem = rem;
     if (ethertype == TRACE_ETHERTYPE_IP) {
         uint8_t moreflag;
@@ -869,17 +886,18 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
     if (inp->filterstring) {
         inp->filter = trace_create_filter(inp->filterstring);
 
-        if (inp->filter) {
+        if (inp->filter == NULL) {
             logger(LOG_INFO, "OpenLI: unable to create input filter for %s",
                     inp->uri);
-        }
-        if (trace_config(inp->trace, TRACE_OPTION_FILTER, inp->filter) < 0) {
-            logger(LOG_INFO, "OpenLI: unable to set input filter for %s",
-                    inp->uri);
+        } else {
+            if (trace_config(inp->trace, TRACE_OPTION_FILTER, inp->filter) < 0) {
+                logger(LOG_INFO, "OpenLI: unable to set input filter for %s",
+                        inp->uri);
+            }
+            logger(LOG_INFO, "OpenLI: applying filter '%s' to input %s",
+                    inp->filterstring, inp->uri);
         }
 
-        logger(LOG_INFO, "OpenLI: applying filter '%s' to input %s",
-                inp->filterstring, inp->uri);
     }
 
     trace_set_tick_interval(inp->trace, 1000);
@@ -902,16 +920,37 @@ static void reload_inputs(collector_global_t *glob,
         collector_global_t *newstate) {
 
     colinput_t *oldinp, *newinp, *tmp;
+    int filterchanged = 0, i;
+    int oldcolthreads = glob->total_col_threads;
+
+    logger(LOG_INFO,
+            "OpenLI: collector is reloading input configuration.");
 
     HASH_ITER(hh, glob->inputs, oldinp, tmp) {
         HASH_FIND(hh, newstate->inputs, oldinp->uri, strlen(oldinp->uri),
                 newinp);
+        filterchanged = 0;
+        if (newinp) {
+            if (oldinp->filterstring) {
+                if (newinp->filterstring == NULL) {
+                    filterchanged = 1;
+                } else if (strcmp(newinp->filterstring,
+                        oldinp->filterstring) != 0) {
+                    filterchanged = 1;
+                }
+            } else {
+                if (newinp->filterstring) {
+                    filterchanged = 1;
+                }
+            }
+        }
+
         if (!newinp || newinp->threadcount != oldinp->threadcount ||
                 newinp->hasher_apply != oldinp->hasher_apply ||
-                strcmp(newinp->filterstring, oldinp->filterstring) != 0) {
+                filterchanged) {
             /* This input is no longer wanted at all */
             logger(LOG_INFO,
-                    "OpenLI collector: stop reading packets from %s\n",
+                    "OpenLI collector: stop reading packets from %s",
                     oldinp->uri);
             trace_pstop(oldinp->trace);
             HASH_DELETE(hh, glob->inputs, oldinp);
@@ -932,6 +971,31 @@ static void reload_inputs(collector_global_t *glob,
         HASH_DELETE(hh, newstate->inputs, newinp);
         HASH_ADD_KEYPTR(hh, glob->inputs, newinp->uri, strlen(newinp->uri),
                 newinp);
+        glob->total_col_threads += newinp->threadcount;
+    }
+
+    /* XXX one thing to be aware of -- we never reclaim the memory
+     * allocated to collector threads that are no longer used (because
+     * we called trace_pstop() on the input). In theory, that means
+     * we will slowly leak colthread_local_t's whenever the collector
+     * config is reloaded AND an input is changed. Realistically, this
+     * won't happen often so shouldn't be a big deal but I want to note
+     * that I am aware of this potential issue.
+     *
+     * The correct answer would be to replace this array with a dynamic
+     * data structure that we can remove items from easily whenever their
+     * parent input is stopped. Not worth the effort right now, but would
+     * be a good task to assign to a new developer on the project?
+     */
+
+    if (glob->total_col_threads > oldcolthreads) {
+        glob->collocals = (colthread_local_t **)realloc(glob->collocals,
+                sizeof(colthread_local_t *) * glob->total_col_threads);
+
+        for (i = oldcolthreads; i < glob->total_col_threads; i++) {
+            glob->collocals[i] = calloc(1, sizeof(colthread_local_t));
+            init_collocal(glob->collocals[i], glob, i);
+        }
     }
 
 }
@@ -1003,8 +1067,6 @@ static void destroy_collector_state(collector_global_t *glob) {
         libtrace_list_deinit(glob->expired_inputs);
     }
 
-    free_coreserver_list(glob->alumirrors);
-    free_coreserver_list(glob->jmirrors);
 	free_sync_thread_data(&(glob->syncip));
 	free_sync_thread_data(&(glob->syncvoip));
 
@@ -1018,7 +1080,9 @@ static void destroy_collector_state(collector_global_t *glob) {
         zmq_close(glob->zmq_encoder_ctrl);
     }
 
-    free_etsili_generics(glob->syncgenericfreelist);
+    if (glob->syncgenericfreelist) {
+        free_etsili_generics(glob->syncgenericfreelist);
+    }
 
     if (glob->forwarders) {
         for (i = 0; i < glob->forwarding_threads; i++) {
@@ -1046,10 +1110,16 @@ static void destroy_collector_state(collector_global_t *glob) {
     }
 
     if (glob->collocals) {
+        for (i = 0; i < glob->total_col_threads; i++) {
+            if (glob->collocals[i]) {
+                free(glob->collocals[i]);
+            }
+        }
         free(glob->collocals);
     }
 
-    free_ssl_config(&(glob->sslconf));
+    pthread_mutex_destroy(&(glob->stats_mutex));
+    pthread_rwlock_destroy(&glob->config_mutex);
     free(glob);
 }
 
@@ -1092,8 +1162,14 @@ static void clear_global_config(collector_global_t *glob) {
         free(glob->RMQ_conf.hostname);
     }
 
-    pthread_mutex_destroy(&(glob->stats_mutex));
-    pthread_rwlock_destroy(&glob->config_mutex);
+    free_ssl_config(&(glob->sslconf));
+
+    if (glob->alumirrors) {
+        free_coreserver_list(glob->alumirrors);
+    }
+    if (glob->jmirrors) {
+        free_coreserver_list(glob->jmirrors);
+    }
 }
 
 static inline void push_hello_message(void *atob,
@@ -1160,11 +1236,12 @@ static int prepare_collector_glob(collector_global_t *glob) {
     init_sync_thread_data(glob, &(glob->syncip));
     init_sync_thread_data(glob, &(glob->syncvoip));
 
-    glob->collocals = (colthread_local_t *)calloc(glob->total_col_threads,
-            sizeof(colthread_local_t));
+    glob->collocals = (colthread_local_t **)calloc(glob->total_col_threads,
+            sizeof(colthread_local_t *));
 
     for (i = 0; i < glob->total_col_threads; i++) {
-        init_collocal(&(glob->collocals[i]), glob, i);
+        glob->collocals[i] = calloc(1, sizeof(colthread_local_t));
+        init_collocal(glob->collocals[i], glob, i);
     }
 
     glob->syncgenericfreelist = create_etsili_generic_freelist(1);
@@ -1186,12 +1263,7 @@ static int prepare_collector_glob(collector_global_t *glob) {
     return 0;
 }
 
-static collector_global_t *parse_global_config(char *configfile) {
-
-    collector_global_t *glob = NULL;
-
-    glob = (collector_global_t *)calloc(1, sizeof(collector_global_t));
-
+static void init_collector_global(collector_global_t *glob) {
     glob->zmq_ctxt = NULL;
     glob->inputs = NULL;
     glob->seqtracker_threads = 1;
@@ -1207,7 +1279,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->collocals = NULL;
     glob->expired_inputs = NULL;
 
-    glob->configfile = configfile;
+    glob->configfile = NULL;
     glob->sharedinfo.provisionerip = NULL;
     glob->sharedinfo.provisionerport = NULL;
     glob->alumirrors = NULL;
@@ -1215,6 +1287,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->sipdebugfile = NULL;
     glob->nextloc = 0;
     glob->syncgenericfreelist = NULL;
+    glob->trust_sip_from = 0;
 
     glob->sslconf.certfile = NULL;
     glob->sslconf.keyfile = NULL;
@@ -1235,6 +1308,17 @@ static collector_global_t *parse_global_config(char *configfile) {
     memset(&(glob->stats), 0, sizeof(glob->stats));
     glob->stat_frequency = 0;
     glob->ticks_since_last_stat = 0;
+
+}
+
+static collector_global_t *parse_global_config(char *configfile) {
+
+    collector_global_t *glob = NULL;
+
+    glob = (collector_global_t *)calloc(1, sizeof(collector_global_t));
+    init_collector_global(glob);
+    glob->configfile = configfile;
+
     pthread_mutex_init(&(glob->stats_mutex), NULL);
 
     libtrace_message_queue_init(&glob->intersyncq,
@@ -1252,6 +1336,10 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     logger(LOG_DEBUG, "OpenLI: ETSI TLS encryption %s",
         glob->etsitls ? "enabled" : "disabled");
+
+    if (glob->trust_sip_from) {
+        logger(LOG_INFO, "Allowing SIP From: URIs to be used for target identification");
+    }
 
     if (create_ssl_context(&(glob->sslconf)) < 0) {
         return NULL;
@@ -1287,25 +1375,27 @@ static collector_global_t *parse_global_config(char *configfile) {
 static int reload_collector_config(collector_global_t *glob,
         collector_sync_t *sync) {
 
-    collector_global_t *newstate;
-    int i, tlschanged;
+    collector_global_t newstate;
+    int i, tlschanged, ret;
 
-    newstate = parse_global_config(glob->configfile);
-    if (newstate == NULL) {
-        logger(LOG_INFO,
-                "OpenLI: error reloading config file for collector.");
-        return -1;
+    ret = 0;
+
+    init_collector_global(&newstate);
+    if (parse_collector_config(glob->configfile, &newstate) == -1) {
+        ret = -1;
+        goto endreload;
     }
 
-    tlschanged = reload_ssl_config(&(glob->sslconf), &(newstate->sslconf));
+    tlschanged = reload_ssl_config(&(glob->sslconf), &(newstate.sslconf));
 
     if (tlschanged == -1) {
-        return -1;
+        ret = -1;
+        goto endreload;
     }
 
-    if (strcmp(newstate->sharedinfo.provisionerip,
+    if (strcmp(newstate.sharedinfo.provisionerip,
                 glob->sharedinfo.provisionerip) != 0 ||
-            strcmp(newstate->sharedinfo.provisionerport,
+            strcmp(newstate.sharedinfo.provisionerport,
                     glob->sharedinfo.provisionerport) != 0) {
         logger(LOG_INFO,
                 "OpenLI collector: disconnecting from provisioner due to config change.");
@@ -1313,8 +1403,8 @@ static int reload_collector_config(collector_global_t *glob,
         sync->instruct_log = 1;
         free(glob->sharedinfo.provisionerip);
         free(glob->sharedinfo.provisionerport);
-        glob->sharedinfo.provisionerip = strdup(newstate->sharedinfo.provisionerip);
-        glob->sharedinfo.provisionerport = strdup(newstate->sharedinfo.provisionerport);
+        glob->sharedinfo.provisionerip = strdup(newstate.sharedinfo.provisionerip);
+        glob->sharedinfo.provisionerport = strdup(newstate.sharedinfo.provisionerport);
     } else {
         logger(LOG_INFO,
                 "OpenLI collector: provisioner socket configuration is unchanged.");
@@ -1325,12 +1415,12 @@ static int reload_collector_config(collector_global_t *glob,
             sync_disconnect_provisioner(sync, 1);
             sync->instruct_log = 1;
         }
-    } else if (glob->etsitls != newstate->etsitls) {
+    } else if (glob->etsitls != newstate.etsitls) {
         sync_reconnect_all_mediators(sync);
     }
 
-    if (tlschanged || (glob->etsitls != newstate->etsitls)) {
-        glob->etsitls = newstate->etsitls;
+    if (tlschanged || (glob->etsitls != newstate.etsitls)) {
+        glob->etsitls = newstate.etsitls;
 
         for (i = 0; i < glob->forwarding_threads; i++) {
             pthread_mutex_lock(&(glob->forwarders[i].sslmutex));
@@ -1342,8 +1432,8 @@ static int reload_collector_config(collector_global_t *glob,
 
     pthread_rwlock_wrlock(&(glob->config_mutex));
 
-    glob->stat_frequency = newstate->stat_frequency;
-    reload_inputs(glob, newstate);
+    glob->stat_frequency = newstate.stat_frequency;
+    reload_inputs(glob, &newstate);
 
     /* Just update these, regardless of whether they've changed. It's more
      * effort to check for a change than it is worth and there are no
@@ -1352,27 +1442,29 @@ static int reload_collector_config(collector_global_t *glob,
     if (glob->sharedinfo.operatorid) {
         free(glob->sharedinfo.operatorid);
     }
-    glob->sharedinfo.operatorid = newstate->sharedinfo.operatorid;
-    glob->sharedinfo.operatorid_len = newstate->sharedinfo.operatorid_len;
-    newstate->sharedinfo.operatorid = NULL;
+    glob->sharedinfo.operatorid = newstate.sharedinfo.operatorid;
+    glob->sharedinfo.operatorid_len = newstate.sharedinfo.operatorid_len;
+    newstate.sharedinfo.operatorid = NULL;
 
     if (glob->sharedinfo.networkelemid) {
         free(glob->sharedinfo.networkelemid);
     }
-    glob->sharedinfo.networkelemid = newstate->sharedinfo.networkelemid;
-    glob->sharedinfo.networkelemid_len = newstate->sharedinfo.networkelemid_len;
-    newstate->sharedinfo.networkelemid = NULL;
+    glob->sharedinfo.networkelemid = newstate.sharedinfo.networkelemid;
+    glob->sharedinfo.networkelemid_len = newstate.sharedinfo.networkelemid_len;
+    newstate.sharedinfo.networkelemid = NULL;
 
     if (glob->sharedinfo.intpointid) {
         free(glob->sharedinfo.intpointid);
     }
-    glob->sharedinfo.intpointid = newstate->sharedinfo.intpointid;
-    glob->sharedinfo.intpointid_len = newstate->sharedinfo.intpointid_len;
-    newstate->sharedinfo.intpointid = NULL;
+    glob->sharedinfo.intpointid = newstate.sharedinfo.intpointid;
+    glob->sharedinfo.intpointid_len = newstate.sharedinfo.intpointid_len;
+    newstate.sharedinfo.intpointid = NULL;
 
     pthread_rwlock_unlock(&(glob->config_mutex));
-    clear_global_config(newstate);
-    return 0;
+
+endreload:
+    clear_global_config(&newstate);
+    return ret;
 }
 
 static void *start_voip_sync_thread(void *params) {

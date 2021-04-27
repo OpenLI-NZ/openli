@@ -30,6 +30,7 @@
 #include "mediator.h"
 #include "util.h"
 #include <libtrace.h>
+#include <assert.h>
 
 /** Halt all ongoing pcap outputs and close their respective files.
  *
@@ -47,6 +48,67 @@ static void halt_pcap_outputs(pcap_thread_state_t *pstate) {
     }
 }
 
+static char *stradd(const char *str, char *bufp, char *buflim) {
+    while (bufp < buflim && (*bufp = *str++) != '\0') {
+        ++bufp;
+    }
+    return bufp;
+}
+
+static int populate_pcap_uri(pcap_thread_state_t *pstate, char *urispace,
+        int urispacelen, active_pcap_output_t *act) {
+
+    char *ptr = pstate->outtemplate;
+    struct timeval tv;
+    char tsbuf[12];
+    char scratch[9500];
+    char *w = scratch;
+    char *end = scratch + urispacelen;
+
+    assert(ptr);
+    gettimeofday(&tv, NULL);
+    w = stradd("pcapfile:", w, end);
+
+    w = stradd(pstate->dir, w, end);
+
+    for (; *ptr; ++ptr) {
+        if (*ptr == '%') {
+            switch(*(++ptr)) {
+                case '\0':
+                    --ptr;
+                    break;
+                case 'L':
+                    w = stradd(act->liid, w, end);
+                    continue;
+                case 's':
+                    snprintf(tsbuf, sizeof(tsbuf), "%ld", tv.tv_sec);
+                    w = stradd(tsbuf, w, end);
+                    continue;
+                default:
+                    /* all other tokens will be handled by strftime */
+                    --ptr;
+            }
+        }
+        if (w == end) {
+            break;
+        }
+        *w++ = *ptr;
+    }
+
+    w = stradd(".pcap", w, end);
+    if (pstate->compresslevel > 0) {
+        w = stradd(".gz", w, end);
+    }
+
+    if (w >= end || w - scratch >= urispacelen) {
+        return 0;
+    }
+
+    *w = '\0';
+    strftime(urispace, urispacelen, scratch, gmtime(&(tv.tv_sec)));
+    return 1;
+}
+
 /** Opens a pcap output file using libtrace, named after the current time.
  *
  *  @param pstate           The state for the pcap output thread
@@ -59,7 +121,7 @@ static int open_pcap_output_file(pcap_thread_state_t *pstate,
 
     char uri[4096];
     int compressmethod = TRACE_OPTION_COMPRESSTYPE_ZLIB;
-    int compresslevel = 1;
+    int compresslevel = pstate->compresslevel;
     struct timeval tv;
 
     /* Make sure the user configured a directory for us to put files into */
@@ -78,14 +140,29 @@ static int open_pcap_output_file(pcap_thread_state_t *pstate,
         return -1;
     }
 
-    /* Name the file after the LIID and current timestamp -- this ensures we
-     * will have files that have unique and meaningful names, even if we have
-     * multiple intercepts that last over multiple rotation periods.
-     */
-    gettimeofday(&tv, NULL);
+    if (pstate->outtemplate == NULL) {
 
-    snprintf(uri, 4096, "pcapfile:%s/openli-%s-%lu.pcap.gz", pstate->dir,
-            act->liid, tv.tv_sec);
+        /* Name the file after the LIID and current timestamp -- this ensures we
+         * will have files that have unique and meaningful names, even if we
+         * have multiple intercepts that last over multiple rotation periods.
+         */
+        gettimeofday(&tv, NULL);
+
+        if (pstate->compresslevel > 0) {
+            snprintf(uri, 4096, "pcapfile:%s/openli_%s_%lu.pcap.gz",
+                pstate->dir, act->liid, tv.tv_sec);
+        } else {
+            snprintf(uri, 4096, "pcapfile:%s/openli_%s_%lu.pcap",
+                pstate->dir, act->liid, tv.tv_sec);
+        }
+    } else {
+        if (populate_pcap_uri(pstate, uri, 4096, act) == 0) {
+            logger(LOG_INFO,
+                    "OpenLI Mediator: unable to create pcap output file name from template '%s'",
+                    pstate->outtemplate);
+            return -1;
+        }
+    }
 
     /* Libtrace boiler-plate for creating an output file - we use zlib
      * compression level 1 here for a good balance between compression ratio
@@ -101,24 +178,30 @@ static int open_pcap_output_file(pcap_thread_state_t *pstate,
         goto pcaptraceerr;
     }
 
-    if (trace_config_output(act->out, TRACE_OPTION_OUTPUT_COMPRESSTYPE,
-            &compressmethod) == -1) {
-        libtrace_err_t err;
-        err = trace_get_err_output(act->out);
-        logger(LOG_INFO,
-                "OpenLI Mediator: Error configuring compression for writing trace file %s: %s",
-                uri, err.problem);
-        goto pcaptraceerr;
-    }
+    if (pstate->compresslevel > 0) {
+        if (trace_config_output(act->out, TRACE_OPTION_OUTPUT_COMPRESSTYPE,
+                &compressmethod) == -1) {
+            libtrace_err_t err;
+            err = trace_get_err_output(act->out);
+            logger(LOG_INFO,
+                    "OpenLI Mediator: Error configuring compression for writing trace file %s: %s",
+                    uri, err.problem);
+            goto pcaptraceerr;
+        }
 
-    if (trace_config_output(act->out, TRACE_OPTION_OUTPUT_COMPRESS,
-            &compresslevel) == -1) {
-        libtrace_err_t err;
-        err = trace_get_err_output(act->out);
-        logger(LOG_INFO,
-                "OpenLI Mediator: Error configuring compression for writing trace file %s: %s",
-                uri, err.problem);
-        goto pcaptraceerr;
+        /* Make sure we use an "int" here rather than pstate->compresslevel
+         * directly, just to avoid libtrace trying to read inappropriate
+         * bits of memory.
+         */
+        if (trace_config_output(act->out, TRACE_OPTION_OUTPUT_COMPRESS,
+                &compresslevel) == -1) {
+            libtrace_err_t err;
+            err = trace_get_err_output(act->out);
+            logger(LOG_INFO,
+                    "OpenLI Mediator: Error configuring compression for writing trace file %s: %s",
+                    uri, err.problem);
+            goto pcaptraceerr;
+        }
     }
 
     if (trace_start_output(act->out) == -1) {
@@ -395,6 +478,28 @@ static void pcap_rotate_traces(pcap_thread_state_t *pstate) {
     }
 }
 
+static void pcap_disable_liid(pcap_thread_state_t *pstate, char *liid,
+        uint16_t liidlen) {
+
+    active_pcap_output_t *pcapout;
+
+    logger(LOG_INFO, "OpenLI mediator: disabling pcap output for '%s'",
+            liid);
+    HASH_FIND(hh, pstate->active, liid, strlen(liid), pcapout);
+    if (!pcapout) {
+        return;
+    }
+
+    if (pcapout->out) {
+        trace_destroy_output(pcapout->out);
+        pcapout->out = NULL;
+    }
+    HASH_DELETE(hh, pstate->active, pcapout);
+    free(pcapout->liid);
+    free(pcapout);
+    free(liid);
+}
+
 /** Main loop for the pcap output thread.
  *
  *  This thread handles any intercepted packets that the user has requested
@@ -412,6 +517,8 @@ void *start_pcap_thread(void *params) {
 
     pstate.active = NULL;
     pstate.dir = NULL;
+    pstate.compresslevel = 10;
+    pstate.outtemplate = NULL;
     pstate.dirwarned = 0;
     pstate.inqueue = (libtrace_message_queue_t *)params;
     pstate.decoder = NULL;
@@ -441,6 +548,11 @@ void *start_pcap_thread(void *params) {
             continue;
         }
 
+        if (pcapmsg.msgtype == PCAP_MESSAGE_DISABLE_LIID) {
+            pcap_disable_liid(&pstate, (char *)pcapmsg.msgbody, pcapmsg.msglen);
+            continue;
+        }
+
         if (pcapmsg.msgtype == PCAP_MESSAGE_CHANGE_DIR) {
             /* The main thread wants us to write pcap files to this directory */
             if (pstate.dir) {
@@ -459,9 +571,45 @@ void *start_pcap_thread(void *params) {
                         "OpenLI Mediator: any pcap trace files will be written to %s",
                         pstate.dir);
             } else {
-logger(LOG_INFO,
+                logger(LOG_INFO,
                         "OpenLI Mediator: pcap trace file directory has been set to NULL");
             }
+            continue;
+        }
+
+        if (pcapmsg.msgtype == PCAP_MESSAGE_CHANGE_TEMPLATE) {
+            /* The main thread wants us to write pcap files using a new
+             * naming scheme */
+            if (pstate.outtemplate) {
+                /* If we already had a configured template, we'll need to
+                 * close all of our existing files and switch over to the
+                 * new template.
+                 */
+                free(pstate.outtemplate);
+                if (strcmp(pstate.outtemplate, (char *)pcapmsg.msgbody) != 0) {
+                    halt_pcap_outputs(&pstate);
+                }
+            }
+            pstate.outtemplate = (char *)pcapmsg.msgbody;
+            if (pstate.outtemplate) {
+                logger(LOG_INFO,
+                        "OpenLI Mediator: pcap trace files are now named according to the template '%s'",
+                        pstate.outtemplate);
+            } else {
+                logger(LOG_INFO,
+                        "OpenLI Mediator: pcap trace files are named using the default template");
+            }
+            continue;
+        }
+
+        if (pcapmsg.msgtype == PCAP_MESSAGE_CHANGE_COMPRESS) {
+            uint8_t *val = (uint8_t *)pcapmsg.msgbody;
+
+            if (*val != pstate.compresslevel) {
+                logger(LOG_INFO, "OpenLI Mediator: changing pcap trace compression level to %u (from next file onwards)", *val);
+            }
+
+            pstate.compresslevel = *val;
             continue;
         }
 

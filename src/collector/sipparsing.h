@@ -97,8 +97,12 @@ char *get_sip_contents(openli_sip_parser_t *parser, uint16_t *siplen);
 char *get_sip_from_uri(openli_sip_parser_t *parser);
 char *get_sip_to_uri(openli_sip_parser_t *parser);
 char *get_sip_to_uri_username(openli_sip_parser_t *parser);
+char *get_sip_from_uri_username(openli_sip_parser_t *parser);
 char *get_sip_to_uri_realm(openli_sip_parser_t *parser);
+char *get_sip_from_uri_realm(openli_sip_parser_t *parser);
 int get_sip_to_uri_identity(openli_sip_parser_t *parser,
+        openli_sip_identity_t *sipid);
+int get_sip_from_uri_identity(openli_sip_parser_t *parser,
         openli_sip_identity_t *sipid);
 int get_sip_auth_identity(openli_sip_parser_t *parser, int index,
         int *authcount, openli_sip_identity_t *sipid,
@@ -106,6 +110,10 @@ int get_sip_auth_identity(openli_sip_parser_t *parser, int index,
 int get_sip_proxy_auth_identity(openli_sip_parser_t *parser, int index,
         int *authcount, openli_sip_identity_t *sipid,
         uint8_t logallowed);
+int get_sip_passerted_identity(openli_sip_parser_t *parser,
+        openli_sip_identity_t *sipid);
+int get_sip_remote_party(openli_sip_parser_t *parser,
+        openli_sip_identity_t *sipid);
 char *get_sip_cseq(openli_sip_parser_t *parser);
 char *get_sip_callid(openli_sip_parser_t *parser);
 char *get_sip_session_id(openli_sip_parser_t *parser);
