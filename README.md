@@ -1,6 +1,6 @@
 OpenLI -- open source ETSI-compliant Lawful Intercept software
 
-Version: 1.0.9
+Version: 1.0.10
 
 ---------------------------------------------------------------------------
 
@@ -55,7 +55,7 @@ on whether you may use OpenLI or not.
 
 ## Dependencies
 
-* [libtrace 4.0.14 or later](http://research.wand.net.nz/software/libtrace.php)
+* [libtrace 4.0.16 or later](http://research.wand.net.nz/software/libtrace.php)
   (packages for Debian / Ubuntu are available
   [from WAND](https://cloudsmith.io/~wand/repos/libtrace/packages/) as well).
 
