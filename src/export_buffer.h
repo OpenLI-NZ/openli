@@ -30,6 +30,7 @@
 #include "config.h"
 #include <libwandder.h>
 #include <libwandder_etsili.h>
+#include <Judy.h>
 #include "netcomms.h"
 #include "collector/collector_publish.h"
 
@@ -60,6 +61,8 @@ typedef struct export_buffer {
     uint32_t partialfront;
 
     uint64_t nextwarn;
+
+    Pvoid_t record_offsets;
 } export_buffer_t;
 
 
