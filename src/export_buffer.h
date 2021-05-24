@@ -63,6 +63,7 @@ typedef struct export_buffer {
     uint64_t nextwarn;
 
     Pvoid_t record_offsets;
+    uint32_t since_last_saved_offset;
 } export_buffer_t;
 
 

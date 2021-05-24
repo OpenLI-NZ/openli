@@ -35,6 +35,7 @@
 
 #define BUFFER_ALLOC_SIZE (1024 * 1024 * 50)
 #define BUFFER_WARNING_THRESH (1024 * 1024 * 1024)
+#define BUF_OFFSET_FREQUENCY (1024 * 32)
 
 void init_export_buffer(export_buffer_t *buf) {
     buf->bufhead = NULL;
@@ -44,6 +45,7 @@ void init_export_buffer(export_buffer_t *buf) {
     buf->deadfront = 0;
     buf->nextwarn = BUFFER_WARNING_THRESH;
     buf->record_offsets = NULL;
+    buf->since_last_saved_offset = 0;
 }
 
 void release_export_buffer(export_buffer_t *buf) {
@@ -151,8 +153,13 @@ uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
     }
 
     memcpy(buf->buftail, (void *)pdustart, pdulen);
-    J1S(rcint, buf->record_offsets, bufused);
 
+    if (buf->since_last_saved_offset + pdulen >= BUF_OFFSET_FREQUENCY) {
+        J1S(rcint, buf->record_offsets, bufused);
+        buf->since_last_saved_offset = 0;
+    }
+
+    buf->since_last_saved_offset += pdulen;
     buf->buftail += pdulen;
     return (buf->buftail - buf->bufhead);
 
