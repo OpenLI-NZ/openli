@@ -45,15 +45,6 @@
 #define AMPQ_BYTES_FROM(x) (amqp_bytes_t){.len=sizeof(x),.bytes=&x}
 #define AMQP_FRAME_MAX 131072
 
-static int compare_stored_results(void *a, void *b) {
-    stored_result_t *res_a = (stored_result_t *)a;
-    stored_result_t *res_b = (stored_result_t *)b;
-
-    if (res_a->res.seqno == res_b->res.seqno) return 0;
-    if (res_a->res.seqno < res_b->res.seqno) return -1;
-    return 1;
-}
-
 static inline void free_encoded_result(openli_encoded_result_t *res) {
     if (res->liid) {
         free(res->liid);
@@ -274,10 +265,11 @@ static void remove_reorderers(forwarding_thread_data_t *fwd, char *liid,
         Pvoid_t *reorderer_array) {
 
     PWord_t jval;
+    PWord_t pval;
     uint8_t index[256];
     int_reorderer_t *reord;
-    stored_result_t *stored, *tmp;
     int err;
+    Word_t seqindex;
 
     index[0] = '\0';
     JSLF(jval, *reorderer_array, index);
@@ -289,11 +281,19 @@ static void remove_reorderers(forwarding_thread_data_t *fwd, char *liid,
             continue;
         }
         JSLD(err, *reorderer_array, index);
-        HASH_ITER(hh, reord->pending, stored, tmp) {
-            HASH_DELETE(hh, reord->pending, stored);
-            free_encoded_result(&(stored->res));
-            free(stored);
+
+        seqindex = 0;
+        JLF(pval, reord->pending, seqindex);
+        while (pval) {
+            openli_encoded_result_t *res;
+
+            res = (openli_encoded_result_t *)(*pval);
+            free_encoded_result(res);
+            free(res);
+            JLN(pval, reord->pending, seqindex);
         }
+        JLFA(err, reord->pending);
+
         free(reord->liid);
         free(reord->key);
         free(reord);
@@ -370,9 +370,11 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
         export_dest_t *med, openli_encoded_result_t *res) {
 
     PWord_t jval;
+    PWord_t pval;
     int_reorderer_t *reord;
     Pvoid_t *reorderer;
-    stored_result_t *stored, *tmp;
+    openli_encoded_result_t *stored;
+    int rcint;
 
     if (res->origreq->type == OPENLI_EXPORT_IPCC ||
             res->origreq->type == OPENLI_EXPORT_IPMMCC ||
@@ -408,13 +410,17 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
     }
 
     if (res->seqno != reord->expectedseqno) {
+        openli_encoded_result_t *tosave = calloc(1,
+                sizeof(openli_encoded_result_t));
+        memcpy(tosave, res, sizeof(openli_encoded_result_t));
 
-        stored = (stored_result_t *)calloc(1, sizeof(stored_result_t));
-        memcpy(&(stored->res), res, sizeof(openli_encoded_result_t));
+        JLI(pval, reord->pending, res->seqno);
+        if (pval == NULL) {
+            logger(LOG_INFO, "OpenLI: unable to create stored intercept record due to lack of memory");
+            exit(-3);
+        }
 
-        HASH_ADD_KEYPTR(hh, reord->pending, &(stored->res.seqno),
-                sizeof(stored->res.seqno), stored);
-
+        *pval = (Word_t)tosave;
         return 0;
     }
 
@@ -427,27 +433,25 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
     }
 
     reord->expectedseqno = res->seqno + 1;
-    HASH_SRT(hh, reord->pending, compare_stored_results);
 
-    HASH_ITER(hh, reord->pending, stored, tmp) {
-        if (stored->res.seqno != reord->expectedseqno) {
-            break;
-        }
+    JLG(pval, reord->pending, reord->expectedseqno);
+    while (pval != NULL) {
+        stored = (openli_encoded_result_t *)(*pval);
 
-        HASH_DELETE(hh, reord->pending, stored);
+        JLD(rcint, reord->pending, reord->expectedseqno);
 
-        if (append_message_to_buffer(&(med->buffer), &(stored->res), 0) == 0) {
+        if (append_message_to_buffer(&(med->buffer), stored, 0) == 0) {
             logger(LOG_INFO,
                     "OpenLI: forced to drop mediator %u because we cannot buffer any more records for it -- please investigate asap!",
                     med->mediatorid);
             remove_destination(fwd, med);
             return -1;
         }
-        reord->expectedseqno = stored->res.seqno + 1;
+        reord->expectedseqno = stored->seqno + 1;
 
-        free_encoded_result(&(stored->res));
+        free_encoded_result(stored);
         free(stored);
-
+        JLG(pval, reord->pending, reord->expectedseqno);
     }
 
     return 1;

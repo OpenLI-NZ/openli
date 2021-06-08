@@ -173,17 +173,12 @@ typedef struct seqtracker_thread_data {
 
 } seqtracker_thread_data_t;
 
-typedef struct stored_result {
-    openli_encoded_result_t res;
-    UT_hash_handle hh;
-} stored_result_t;
-
 typedef struct intercept_reorderer {
 
     char *liid;
     char *key;
     uint32_t expectedseqno;
-    stored_result_t *pending;
+    Pvoid_t pending;
 
 } int_reorderer_t;
 
