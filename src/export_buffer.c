@@ -35,7 +35,7 @@
 
 #define BUFFER_ALLOC_SIZE (1024 * 1024 * 50)
 #define BUFFER_WARNING_THRESH (1024 * 1024 * 1024)
-#define BUF_OFFSET_FREQUENCY (1024 * 32)
+#define BUF_OFFSET_FREQUENCY (1024 * 256)
 
 void init_export_buffer(export_buffer_t *buf) {
     buf->bufhead = NULL;
@@ -176,6 +176,8 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     uint32_t enclen = res->msgbody->len - res->ipclen;
     uint64_t bufused = buf->buftail - buf->bufhead;
     uint64_t spaceleft = buf->alloced - bufused;
+    uint32_t added = 0;
+    int rcint;
 
     int liidlen;
 
@@ -199,12 +201,14 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
 
     memcpy(buf->buftail, &res->header, sizeof(res->header));
     buf->buftail += sizeof(res->header);
+    added += sizeof(res->header);
 
     if (res->liid) {
         uint16_t l = htons(liidlen);
         memcpy(buf->buftail, &l, sizeof(uint16_t));
         memcpy(buf->buftail + 2, res->liid, liidlen);
         buf->buftail += (liidlen + 2);
+        added += (liidlen + 2);
     }
 
     if (res->isDer){
@@ -224,7 +228,13 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
         //BER has the payload already encoded into the result, DER leaves the payload out untill now
         //BER has a set of trailing ending octets (number varies by msg type)
     }
+    added += res->msgbody->len;
 
+    if (buf->since_last_saved_offset + added >= BUF_OFFSET_FREQUENCY) {
+        J1S(rcint, buf->record_offsets, bufused);
+        buf->since_last_saved_offset = 0;
+    }
+    buf->since_last_saved_offset += added;
     return (buf->buftail - buf->bufhead);
 }
 
