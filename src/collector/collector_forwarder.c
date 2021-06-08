@@ -45,6 +45,15 @@
 #define AMPQ_BYTES_FROM(x) (amqp_bytes_t){.len=sizeof(x),.bytes=&x}
 #define AMQP_FRAME_MAX 131072
 
+static int compare_stored_results(void *a, void *b) {
+    stored_result_t *res_a = (stored_result_t *)a;
+    stored_result_t *res_b = (stored_result_t *)b;
+
+    if (res_a->res.seqno == res_b->res.seqno) return 0;
+    if (res_a->res.seqno < res_b->res.seqno) return -1;
+    return 1;
+}
+
 static inline void free_encoded_result(openli_encoded_result_t *res) {
     if (res->liid) {
         free(res->liid);
@@ -418,6 +427,7 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
     }
 
     reord->expectedseqno = res->seqno + 1;
+    HASH_SRT(hh, reord->pending, compare_stored_results);
 
     HASH_ITER(hh, reord->pending, stored, tmp) {
         if (stored->res.seqno != reord->expectedseqno) {
