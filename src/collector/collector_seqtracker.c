@@ -407,13 +407,18 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         cinseq->iri_seqno ++;
 	}
 
-
-    if (zmq_send(seqdata->zmq_pushjobsock, (char *)&job,
-            sizeof(openli_encoding_job_t), 0) < 0) {
-        logger(LOG_INFO,
-                "Error while pushing encoding job to worker threads: %s",
-                strerror(errno));
-        return -1;
+    while (1) {
+        if ((ret = zmq_send(seqdata->zmq_pushjobsock, (char *)&job,
+                sizeof(openli_encoding_job_t), 0)) < 0) {
+            if (errno == EAGAIN) {
+                continue;
+            }
+            logger(LOG_INFO,
+                    "Error while pushing encoding job to worker threads: %s",
+                    strerror(errno));
+            return -1;
+        }
+        break;
     }
 
     return ret;
