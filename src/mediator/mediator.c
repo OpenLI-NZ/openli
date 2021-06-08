@@ -1105,6 +1105,8 @@ static int receive_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
     return 0;
 }
 
+#define MAX_COLL_RECV (10 * 1024 * 1024)
+
 /** Receives and actions a message from a collector, which can include
  *  an encoded ETSI CC or IRI.
  *
@@ -1123,6 +1125,7 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
     openli_proto_msgtype_t msgtype;
     mediator_pcap_msg_t pcapmsg;
     uint16_t liidlen;
+    uint32_t total_recvd = 0;
 
     do {
         if (mev->fdtype == MED_EPOLL_COL_RMQ) {
@@ -1141,6 +1144,8 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
             }
             return -1;
         }
+
+        total_recvd += msglen;
 
         switch(msgtype) {
             case OPENLI_PROTO_DISCONNECT:
@@ -1226,7 +1231,7 @@ static int receive_collector(mediator_state_t *state, med_epoll_ev_t *mev) {
                 }
                 return -1;
         }
-    } while (msgtype != OPENLI_PROTO_NO_MESSAGE);
+    } while (msgtype != OPENLI_PROTO_NO_MESSAGE && total_recvd < MAX_COLL_RECV);
 
     return 0;
 }
