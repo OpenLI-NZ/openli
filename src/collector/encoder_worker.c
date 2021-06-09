@@ -159,11 +159,11 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
     uint32_t drained = 0;
     PWord_t pval;
     uint8_t index[1000];
-    Word_t rcw;
+    Word_t rcw, indexint;
 
     index[0] = '\0';
 
-    JSLF(pval, enc->saved_templates, index);
+    JSLF(pval, enc->saved_intercept_templates, index);
     while (pval) {
         saved_encoding_templates_t *t_set;
 
@@ -178,9 +178,28 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
         assert(t_set->iripayloads == NULL);
         free(t_set);
 
-        JSLN(pval, enc->saved_templates, index);
+        JSLN(pval, enc->saved_intercept_templates, index);
     }
-    JSLFA(rcw, enc->saved_templates);
+    JSLFA(rcw, enc->saved_intercept_templates);
+
+    indexint = 0;
+    JLF(pval, enc->saved_global_templates, indexint);
+    while (pval) {
+        encoded_global_template_t *t;
+
+        t = (encoded_global_template_t *)(*pval);
+        switch (t->cctype) {
+            case TEMPLATE_TYPE_IPCC_DIRFROM:
+            case TEMPLATE_TYPE_IPCC_DIRTO:
+            case TEMPLATE_TYPE_IPCC_DIROTHER:
+                if (t->data.ipcc.ipcc_wrap) {
+                    free(t->data.ipcc.ipcc_wrap);
+                }
+                break;
+        }
+        JLN(pval, enc->saved_global_templates, indexint);
+    }
+    JLFA(rcint, enc->saved_global_templates);
 
     if (enc->encoder) {
         free_wandder_encoder(enc->encoder);
@@ -273,11 +292,11 @@ static inline uint8_t DERIVE_INTEGER_LENGTH(uint64_t x) {
 
 static int encode_templated_ipcc(wandder_encoder_t *encoder,
         openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
-        openli_encoded_result_t *res, saved_encoding_templates_t *t_set) {
+        openli_encoded_result_t *res, Pvoid_t *global_templates) {
 
     PWord_t pval;
     uint32_t key = 0;
-    encoded_ipcc_template_t *ipcc_tplate = NULL;
+    encoded_global_template_t *ipcc_tplate = NULL;
     uint32_t liidlen = job->preencoded[OPENLI_PREENCODE_LIID].vallen;
     openli_ipcc_job_t *ipccjob;
 
@@ -291,9 +310,9 @@ static int encode_templated_ipcc(wandder_encoder_t *encoder,
         key = (TEMPLATE_TYPE_IPCC_DIROTHER << 16) + ipccjob->ipclen;
     }
 
-    JLG(pval, t_set->ccpayloads, key);
+    JLG(pval, (*global_templates), key);
     if (!pval) {
-        ipcc_tplate = calloc(1, sizeof(encoded_ipcc_template_t));
+        ipcc_tplate = calloc(1, sizeof(encoded_global_template_t));
         if (etsili_create_ipcc_template(encoder, job->preencoded,
                 ipccjob->dir, ipccjob->ipclen, ipcc_tplate) < 0) {
             free(ipcc_tplate);
@@ -301,7 +320,7 @@ static int encode_templated_ipcc(wandder_encoder_t *encoder,
         }
         *pval = (Word_t)ipcc_tplate;
     } else {
-        ipcc_tplate = (encoded_ipcc_template_t *)(*pval);
+        ipcc_tplate = (encoded_global_template_t *)(*pval);
 
         /* We have very specific templates for each observed packet size, so
          * this will not require updating */
@@ -375,7 +394,7 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
     encoded_header_template_t *hdr_tplate = NULL;
 
     snprintf(keystr, 1000, "%s-%s", job->liid, job->cinstr);
-    JSLI(pval, enc->saved_templates, keystr);
+    JSLI(pval, enc->saved_intercept_templates, keystr);
     if ((*pval)) {
         t_set = (saved_encoding_templates_t *)(*pval);
     } else {
@@ -390,7 +409,7 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
         case OPENLI_EXPORT_IPCC:
             /* IPCC "header" can be templated */
             ret = encode_templated_ipcc(enc->encoder, job, hdr_tplate, res,
-                    t_set);
+                    &(enc->saved_global_templates));
             break;
         default:
             ret = 0;

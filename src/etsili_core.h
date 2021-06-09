@@ -178,13 +178,21 @@ typedef struct encoded_header_template {
 } encoded_header_template_t;
 
 typedef struct encoded_ipcc_template {
-    uint32_t key;
-    uint8_t cctype;
     uint16_t content_size;
 
     uint8_t *ipcc_wrap;
     uint16_t ipcc_wrap_len;
 } encoded_ipcc_template_t;
+
+typedef struct encoded_global_template {
+    uint32_t key;
+    uint8_t cctype;
+
+    union {
+        encoded_ipcc_template_t ipcc;
+        uint8_t foobar;
+    } data;
+} encoded_global_template_t;
 
 
 wandder_encoded_result_t *encode_etsi_ipcc(wandder_encoder_t *encoder,
@@ -251,7 +259,7 @@ int etsili_update_header_template(encoded_header_template_t *tplate,
         int64_t seqno, struct timeval *tv);
 int etsili_create_ipcc_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
-        encoded_ipcc_template_t *tplate);
+        encoded_global_template_t *tplate);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

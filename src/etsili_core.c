@@ -1512,7 +1512,7 @@ int etsili_update_header_template(encoded_header_template_t *tplate,
 
 int etsili_create_ipcc_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
-        encoded_ipcc_template_t *tplate) {
+        encoded_global_template_t *tplate) {
 
 
 }

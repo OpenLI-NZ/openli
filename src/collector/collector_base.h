@@ -229,7 +229,9 @@ typedef struct encoder_state {
     collector_identity_t *shared;
     wandder_encoder_t *encoder;
     etsili_generic_freelist_t *freegenerics;
-    Pvoid_t saved_templates;
+
+    Pvoid_t saved_intercept_templates;
+    Pvoid_t saved_global_templates;
 
     int seqtrackers;
     int forwarders;
