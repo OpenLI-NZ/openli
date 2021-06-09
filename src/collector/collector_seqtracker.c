@@ -396,6 +396,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 	job.origreq = recvd;
 	job.liid = strdup(liid);
     job.cinstr = strdup(cinseq->cin_string);
+    job.cin = (int64_t)cin;
 
 	if (recvd->type == OPENLI_EXPORT_IPMMCC ||
 			recvd->type == OPENLI_EXPORT_IPCC ||

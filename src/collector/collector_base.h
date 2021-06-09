@@ -229,6 +229,7 @@ typedef struct encoder_state {
     collector_identity_t *shared;
     wandder_encoder_t *encoder;
     etsili_generic_freelist_t *freegenerics;
+    Pvoid_t saved_templates;
 
     int seqtrackers;
     int forwarders;
@@ -242,6 +243,7 @@ typedef struct encoder_job {
     wandder_etsili_child_t *child;
 #endif
     uint32_t seqno;
+    int64_t cin;
     char *cinstr;
     openli_export_recv_t *origreq;
     char *liid;

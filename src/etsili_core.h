@@ -164,6 +164,29 @@ typedef struct wandder_etsipshdr_data {
 
 } wandder_etsipshdr_data_t;
 
+typedef struct encoded_header_template {
+    uint32_t key;
+    uint8_t *header;
+    uint16_t header_len;
+    uint8_t seqno_size;
+    uint8_t tssec_size;
+    uint8_t tsusec_size;
+    uint8_t *seqno_ptr;
+    uint8_t *tssec_ptr;
+    uint8_t *tsusec_ptr;
+
+} encoded_header_template_t;
+
+typedef struct encoded_ipcc_template {
+    uint32_t key;
+    uint8_t cctype;
+    uint16_t content_size;
+
+    uint8_t *ipcc_wrap;
+    uint16_t ipcc_wrap_len;
+} encoded_ipcc_template_t;
+
+
 wandder_encoded_result_t *encode_etsi_ipcc(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
         struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir);
@@ -220,6 +243,15 @@ void etsili_preencode_static_fields(wandder_encode_job_t *pendarray,
 void etsili_clear_preencoded_fields(wandder_encode_job_t *pendarray);
 void etsili_copy_preencoded(wandder_encode_job_t *dest,
         wandder_encode_job_t *src);
+
+int etsili_create_header_template(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
+        struct timeval *tv, encoded_header_template_t *tplate);
+int etsili_update_header_template(encoded_header_template_t *tplate,
+        int64_t seqno, struct timeval *tv);
+int etsili_create_ipcc_template(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
+        encoded_ipcc_template_t *tplate);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

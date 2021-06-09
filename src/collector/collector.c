@@ -1724,6 +1724,7 @@ int main(int argc, char *argv[]) {
         glob->encoders[i].shared = &(glob->sharedinfo);
         glob->encoders[i].encoder = NULL;
         glob->encoders[i].freegenerics = NULL;
+        glob->encoders[i].saved_templates = NULL;
 
         glob->encoders[i].seqtrackers = glob->seqtracker_threads;
         glob->encoders[i].forwarders = glob->forwarding_threads;

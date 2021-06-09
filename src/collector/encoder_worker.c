@@ -35,6 +35,8 @@
 #include "umtsiri.h"
 #include "collector_base.h"
 #include "logger.h"
+#include "etsili_core.h"
+#include "encoder_worker.h"
 
 static int init_worker(openli_encoder_t *enc) {
     int zero = 0, rto = 10;
@@ -133,10 +135,52 @@ static int init_worker(openli_encoder_t *enc) {
 
 }
 
+static void free_encoded_header_templates(Pvoid_t headers) {
+    PWord_t pval;
+    Word_t index = 0;
+
+    JLF(pval, headers, index);
+    while (pval) {
+        encoded_header_template_t *tplate;
+
+        tplate = (encoded_header_template_t *)(*pval);
+        if (tplate->header) {
+            free(tplate->header);
+        }
+        free(tplate);
+        JLN(pval, headers, index);
+    }
+}
+
+
 void destroy_encoder_worker(openli_encoder_t *enc) {
-    int x, i;
+    int x, i, rcint;
     openli_encoding_job_t job;
     uint32_t drained = 0;
+    PWord_t pval;
+    uint8_t index[1000];
+    Word_t rcw;
+
+    index[0] = '\0';
+
+    JSLF(pval, enc->saved_templates, index);
+    while (pval) {
+        saved_encoding_templates_t *t_set;
+
+        t_set = (saved_encoding_templates_t *)(*pval);
+        if (t_set->key) {
+            free(t_set->key);
+        }
+        free_encoded_header_templates(t_set->headers);
+        JLFA(rcint, t_set->headers);
+
+        assert(t_set->ccpayloads == NULL);
+        assert(t_set->iripayloads == NULL);
+        free(t_set);
+
+        JSLN(pval, enc->saved_templates, index);
+    }
+    JSLFA(rcw, enc->saved_templates);
 
     if (enc->encoder) {
         free_wandder_encoder(enc->encoder);
@@ -219,21 +263,147 @@ static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
     return 0;
 }
 
+static inline uint8_t DERIVE_INTEGER_LENGTH(uint64_t x) {
+    if (x < 128) return 1;
+    if (x < 32768) return 2;
+    if (x < 8388608) return 3;
+    if (x < 2147483648) return 4;
+    return 5;
+}
+
+static int encode_templated_ipcc(wandder_encoder_t *encoder,
+        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res, saved_encoding_templates_t *t_set) {
+
+    PWord_t pval;
+    uint32_t key = 0;
+    encoded_ipcc_template_t *ipcc_tplate = NULL;
+    uint32_t liidlen = job->preencoded[OPENLI_PREENCODE_LIID].vallen;
+    openli_ipcc_job_t *ipccjob;
+
+    ipccjob = (openli_ipcc_job_t *)&(job->origreq->data.ipcc);
+
+    if (ipccjob->dir == ETSI_DIR_FROM_TARGET) {
+        key = (TEMPLATE_TYPE_IPCC_DIRFROM << 16) + ipccjob->ipclen;
+    } else if (ipccjob->dir == ETSI_DIR_TO_TARGET) {
+        key = (TEMPLATE_TYPE_IPCC_DIRTO << 16) + ipccjob->ipclen;
+    } else {
+        key = (TEMPLATE_TYPE_IPCC_DIROTHER << 16) + ipccjob->ipclen;
+    }
+
+    JLG(pval, t_set->ccpayloads, key);
+    if (!pval) {
+        ipcc_tplate = calloc(1, sizeof(encoded_ipcc_template_t));
+        if (etsili_create_ipcc_template(encoder, job->preencoded,
+                ipccjob->dir, ipccjob->ipclen, ipcc_tplate) < 0) {
+            free(ipcc_tplate);
+            return -1;
+        }
+        *pval = (Word_t)ipcc_tplate;
+    } else {
+        ipcc_tplate = (encoded_ipcc_template_t *)(*pval);
+
+        /* We have very specific templates for each observed packet size, so
+         * this will not require updating */
+
+    }
+
+    /* Create a msgbody by concatenating hdr_tplate and ipcc_tplate, plus
+     * a preceding pS-PDU sequence with the appropriate length...
+     */
+
+    /* Set ipcontents in the result */
+    res->ipcontents = (uint8_t *)ipccjob->ipcontent;
+    res->ipclen = ipccjob->ipclen;
+
+    /* Set the remaining msg->header properties */
+    res->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    res->header.bodylen = htons(res->msgbody->len + liidlen + sizeof(uint16_t));
+
+    /* Success */
+    return 1;
+
+}
+
+static encoded_header_template_t *encode_templated_psheader(
+        wandder_encoder_t *encoder, saved_encoding_templates_t *t_set,
+        openli_encoding_job_t *job) {
+
+    uint8_t seqlen, tvsec_len, tvusec_len;
+    uint32_t key = 0;
+    PWord_t pval;
+    encoded_header_template_t *tplate = NULL;
+
+    seqlen = DERIVE_INTEGER_LENGTH(job->seqno);
+    tvsec_len = DERIVE_INTEGER_LENGTH(job->origreq->ts.tv_sec);
+    tvusec_len = DERIVE_INTEGER_LENGTH(job->origreq->ts.tv_usec);
+
+    key = (seqlen << 16) + (tvsec_len << 8) + tvusec_len;
+
+    JLG(pval, t_set->headers, key);
+    if (!pval) {
+        tplate = calloc(1, sizeof(encoded_header_template_t));
+
+        if (etsili_create_header_template(encoder, job->preencoded,
+                (int64_t)job->cin, (int64_t)job->seqno, &(job->origreq->ts),
+                tplate) < 0) {
+            free(tplate);
+            return NULL;
+        }
+
+        *pval = (Word_t)tplate;
+
+    } else {
+        tplate = (encoded_header_template_t *)(*pval);
+
+        if (etsili_update_header_template(tplate, (int64_t)job->seqno,
+                &(job->origreq->ts)) < 0) {
+            return NULL;
+        }
+    }
+
+    return tplate;
+}
+
 static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
         openli_encoded_result_t *res) {
 
     int ret = -1;
-    uint8_t isDer = 1;
-    etsili_generic_t *np;
+    char keystr[1000];
+    PWord_t pval;
+    saved_encoding_templates_t *t_set = NULL;
+    encoded_header_template_t *hdr_tplate = NULL;
 
+    snprintf(keystr, 1000, "%s-%s", job->liid, job->cinstr);
+    JSLI(pval, enc->saved_templates, keystr);
+    if ((*pval)) {
+        t_set = (saved_encoding_templates_t *)(*pval);
+    } else {
+        t_set = calloc(1, sizeof(saved_encoding_templates_t));
+        t_set->key = strdup(keystr);
+        (*pval) = (Word_t)t_set;
+    }
+
+    hdr_tplate = encode_templated_psheader(enc->encoder, t_set, job);
+
+    switch (job->origreq->type) {
+        case OPENLI_EXPORT_IPCC:
+            /* IPCC "header" can be templated */
+            ret = encode_templated_ipcc(enc->encoder, job, hdr_tplate, res,
+                    t_set);
+            break;
+        default:
+            ret = 0;
+    }
+
+#if 0
 #ifdef HAVE_BER_ENCODING
     if (job->top != NULL) {
         isDer = 0;
     }
 #endif
 
-    switch(job->origreq->type) {
-        case OPENLI_EXPORT_IPCC:
+
             if (isDer){
                 ret = encode_ipcc(enc->encoder, job->preencoded,
                         &(job->origreq->data.ipcc), job->seqno,
@@ -342,6 +512,7 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
     }
 
     res->isDer = isDer; //encodeing typeto be stored in result
+#endif
 
     return ret;
 }
@@ -371,12 +542,23 @@ static int process_job(openli_encoder_t *enc, void *socket) {
             encode_rawip(enc, &job, &result);
         } else {
 
-            if (encode_etsi(enc, &job, &result) < 0) {
+            if ((x = encode_etsi(enc, &job, &result)) <= 0) {
                 /* What do we do in the event of an error? */
-                logger(LOG_INFO,
-                        "OpenLI: encoder worker had an error when encoding %d record",
-                        job.origreq->type);
+                if (x < 0) {
+                    logger(LOG_INFO,
+                            "OpenLI: encoder worker had an error when encoding %d record",
+                            job.origreq->type);
+                }
 
+                if (job.cinstr) {
+                    free(job.cinstr);
+                }
+                if (job.liid) {
+                    free(job.liid);
+                }
+                if (job.origreq) {
+                    free_published_message(job.origreq);
+                }
                 continue;
             }
         }

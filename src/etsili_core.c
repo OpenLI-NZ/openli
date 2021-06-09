@@ -819,19 +819,18 @@ static inline void encode_etsili_pshdr_pc(wandder_encoder_t *encoder,
      * into separate parameters.
      */
 
-    wandder_encode_job_t *jobarray[9];
+    wandder_encode_job_t *jobarray[8];
 
-    jobarray[0] = &(precomputed[OPENLI_PREENCODE_USEQUENCE]);
-    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
-    jobarray[2] = &(precomputed[OPENLI_PREENCODE_PSDOMAINID]);
-    jobarray[3] = &(precomputed[OPENLI_PREENCODE_LIID]);
-    jobarray[4] = &(precomputed[OPENLI_PREENCODE_AUTHCC]);
-    jobarray[5] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_3]);
-    jobarray[6] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_0]);
-    jobarray[7] = &(precomputed[OPENLI_PREENCODE_OPERATORID]);
-    jobarray[8] = &(precomputed[OPENLI_PREENCODE_NETWORKELEMID]);
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_PSDOMAINID]);
+    jobarray[2] = &(precomputed[OPENLI_PREENCODE_LIID]);
+    jobarray[3] = &(precomputed[OPENLI_PREENCODE_AUTHCC]);
+    jobarray[4] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_3]);
+    jobarray[5] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_0]);
+    jobarray[6] = &(precomputed[OPENLI_PREENCODE_OPERATORID]);
+    jobarray[7] = &(precomputed[OPENLI_PREENCODE_NETWORKELEMID]);
 
-    wandder_encode_next_preencoded(encoder, jobarray, 9);
+    wandder_encode_next_preencoded(encoder, jobarray, 8);
     END_ENCODED_SEQUENCE(encoder, 1)
 
     wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
@@ -953,6 +952,7 @@ wandder_encoded_result_t *encode_etsi_ipcc(wandder_encoder_t *encoder,
         struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir) {
 
 
+    ENC_USEQUENCE(encoder);             // starts outermost sequence
     encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
     encode_ipcc_body(encoder, precomputed, ipcontents, iplen, dir);
     return wandder_encode_finish(encoder);
@@ -963,6 +963,7 @@ wandder_encoded_result_t *encode_etsi_umtscc(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
         struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir) {
 
+    ENC_USEQUENCE(encoder);             // starts outermost sequence
     encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
     encode_umtscc_body(encoder, precomputed, ipcontents, iplen, dir);
     return wandder_encode_finish(encoder);
@@ -972,6 +973,7 @@ wandder_encoded_result_t *encode_etsi_ipmmcc(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
         struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir) {
 
+    ENC_USEQUENCE(encoder);             // starts outermost sequence
     encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
     encode_ipmmcc_body(encoder, precomputed, ipcontents, iplen, dir);
     return wandder_encode_finish(encoder);
@@ -983,6 +985,7 @@ wandder_encoded_result_t *encode_etsi_ipmmiri(wandder_encoder_t *encoder,
         etsili_iri_type_t iritype, struct timeval *tv, void *ipcontents,
         uint32_t iplen) {
 
+    ENC_USEQUENCE(encoder);             // starts outermost sequence
     encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
     encode_ipmmiri_body(encoder, precomputed, iritype, ipcontents, iplen);
     return wandder_encode_finish(encoder);
@@ -1001,6 +1004,7 @@ wandder_encoded_result_t *encode_etsi_ipiri(wandder_encoder_t *encoder,
      * to encode_ipiri_body().
      */
 
+    ENC_USEQUENCE(encoder);             // starts outermost sequence
     encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
     encode_ipiri_body(encoder, precomputed, iritype, params);
     return wandder_encode_finish(encoder);
@@ -1012,6 +1016,7 @@ wandder_encoded_result_t *encode_etsi_umtsiri(wandder_encoder_t *encoder,
         etsili_iri_type_t iritype, struct timeval *tv,
         etsili_generic_t *params) {
 
+    ENC_USEQUENCE(encoder);             // starts outermost sequence
     encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
     encode_umtsiri_body(encoder, precomputed, iritype, params);
     return wandder_encode_finish(encoder);
@@ -1022,6 +1027,7 @@ wandder_encoded_result_t *encode_etsi_sipiri(wandder_encoder_t *encoder,
         etsili_iri_type_t iritype, struct timeval *tv, uint8_t *ipsrc,
         uint8_t *ipdest, int ipfamily, void *sipcontents, uint32_t siplen) {
 
+    ENC_USEQUENCE(encoder);             // starts outermost sequence
     encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
     encode_sipiri_body(encoder, precomputed, iritype, ipsrc, ipdest, ipfamily,
             sipcontents, siplen);
@@ -1398,6 +1404,117 @@ void etsili_copy_preencoded(wandder_encode_job_t *dest,
         dest[i].encodedspace = malloc(src[i].encodedlen);
         memcpy(dest[i].encodedspace, src[i].encodedspace, src[i].encodedlen);
     }
+}
+
+int etsili_create_header_template(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
+        struct timeval *tv, encoded_header_template_t *tplate) {
+
+    wandder_encoded_result_t *encres;
+    wandder_decoder_t *dec;
+
+
+    if (tplate == NULL) {
+        logger(LOG_INFO, "OpenLI: called etsili_create_header_template with NULL template?");
+        return -1;
+    }
+
+    if (encoder == NULL) {
+        logger(LOG_INFO, "OpenLI: called etsili_create_header_template with NULL encoder?");
+        return -1;
+    }
+
+    reset_wandder_encoder(encoder);
+
+    /* Create an encoded header */
+    encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
+    encres = wandder_encode_finish(encoder);
+
+    if (encres == NULL || encres->len == 0 || encres->encoded == NULL) {
+        logger(LOG_INFO, "OpenLI: failed to encode ETSI PS header for template");
+        if (encres) {
+            wandder_release_encoded_result(encoder, encres);
+        }
+        return -1;
+    }
+
+    /* Copy the encoded header to the template */
+    tplate->header = malloc(encres->len);
+    memcpy(tplate->header, encres->encoded, encres->len);
+    tplate->header_len = encres->len;
+
+    /* Release the encoded result -- the caller will use the templated copy */
+    wandder_release_encoded_result(encoder, encres);
+
+    /* Use a decoder to find the locations of the sequence number, timestamp
+     * seconds and timestamp microseconds
+     */
+    dec = init_wandder_decoder(NULL, tplate->header, tplate->header_len, 0);
+    if (dec == NULL) {
+        logger(LOG_INFO, "OpenLI: unable to create decoder for templated ETSI PS header");
+        return -1;
+    }
+
+    if (wandder_decode_next(dec) <= 0) {
+        logger(LOG_INFO, "OpenLI: cannot decode templated ETSI PS header");
+        free_wandder_decoder(dec);
+        return -1;
+    }
+
+    if (wandder_decode_sequence_until(dec, 4) == 1) {
+        tplate->seqno_ptr = wandder_get_itemptr(dec);
+        tplate->seqno_size = wandder_get_itemlen(dec);
+    } else {
+        logger(LOG_INFO, "OpenLI: cannot find sequence number in templated ETSI PS header");
+        free_wandder_decoder(dec);
+        return -1;
+    }
+
+    if (wandder_decode_sequence_until(dec, 7) == 1) {
+        if (wandder_decode_next(dec) <= 0) {
+            logger(LOG_INFO, "OpenLI: cannot decode timestamp section of templated ETSI PS header");
+            free_wandder_decoder(dec);
+            return -1;
+        }
+
+        tplate->tssec_ptr = wandder_get_itemptr(dec);
+        tplate->tssec_size = wandder_get_itemlen(dec);
+
+        if (wandder_decode_next(dec) <= 0) {
+            logger(LOG_INFO, "OpenLI: cannot decode timestamp section of templated ETSI PS header");
+            free_wandder_decoder(dec);
+            return -1;
+        }
+
+        tplate->tsusec_ptr = wandder_get_itemptr(dec);
+        tplate->tsusec_size = wandder_get_itemlen(dec);
+    }
+
+    /* Return success */
+    free_wandder_decoder(dec);
+    return 0;
+
+}
+
+int etsili_update_header_template(encoded_header_template_t *tplate,
+        int64_t seqno, struct timeval *tv) {
+
+    /* Assume that we've been provided the right template with sufficient
+     * space to fit the sequence number and timestamps -- ideally we would
+     * validate this, but the point of the template is to save CPU cycles
+     * not waste them on double-checking something that we should get
+     * right anyway...
+     */
+
+
+    return 0;
+}
+
+int etsili_create_ipcc_template(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
+        encoded_ipcc_template_t *tplate) {
+
+
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
