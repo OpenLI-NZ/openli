@@ -1012,7 +1012,9 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
  *
  *  @param mev              The epoll event for the keep alive response timer
  *
- *  @return 0 always.
+ *  @return -1 to force the epoll loop to restart, rather than try to
+ *          continue processing events (in case the handover that we've
+ *          just disconnected is one of the upcoming events).
  */
 static int trigger_ka_failure(med_epoll_ev_t *mev) {
     handover_t *ho = (handover_t *)(mev->state);
@@ -1023,7 +1025,9 @@ static int trigger_ka_failure(med_epoll_ev_t *mev) {
     }
 
     disconnect_handover(ho);
-    return 0;
+
+    /* Return -1 here to force a fresh call to epoll_wait() */
+    return -1;
 }
 
 /** Receives and actions one or more messages received from the provisioner.
@@ -1319,6 +1323,7 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             }
             if (ret == -1) {
                 handover_t *ho = (handover_t *)(mev->state);
+                logger(LOG_INFO, "fail %u", ev->events & EPOLLIN);
                 disconnect_handover(ho);
             }
             break;
