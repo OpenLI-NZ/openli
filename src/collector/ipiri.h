@@ -129,26 +129,13 @@ typedef struct ipiri_id {
     } content;
 } ipiri_id_t;
 
-int ip_iri(collector_identity_t *info, wandder_encoder_t **encoder,
-                libtrace_message_queue_t *q, access_session_t *sess,
-                ipintercept_t *ipint, etsili_iri_type_t iritype,
-                struct timeval *tv, etsili_generic_t *params);
 
-int encode_ipiri(wandder_encoder_t *encoder,
-        etsili_generic_freelist_t *freegenerics,
-        wandder_encode_job_t *precomputed,
-        openli_ipiri_job_t *job, uint32_t seqno,
-        openli_encoded_result_t *res);
+void free_ipiri_parameters(etsili_generic_t *params);
 
-#ifdef HAVE_BER_ENCODING
-int encode_ipiri_ber(
+void prepare_ipiri_parameters(etsili_generic_freelist_t *freegenerics,
         openli_ipiri_job_t *job,
-        etsili_generic_freelist_t *freegenerics,
-        uint32_t seqno, struct timeval *tv,
-        openli_encoded_result_t *res,
-        wandder_etsili_child_t *child, 
-        wandder_encoder_t *encoder);
-#endif
+        etsili_iri_type_t *iritype_p,
+        etsili_generic_t **params_p);
 
 /* TODO consider adding free lists to these APIs to avoid excess mallocs */
 int ipiri_create_id_printable(char *idstr, int length, ipiri_id_t *ipiriid);

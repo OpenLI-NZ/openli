@@ -212,9 +212,8 @@ wandder_encoded_result_t *encode_etsi_ipmmiri(wandder_encoder_t *encoder,
         etsili_iri_type_t iritype, struct timeval *tv, void *ipcontents,
         uint32_t iplen);
 
-wandder_encoded_result_t *encode_etsi_ipiri(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        etsili_iri_type_t iritype, struct timeval *tv,
+wandder_encoded_result_t *encode_ipiri_body(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, etsili_iri_type_t iritype,
         etsili_generic_t **params);
 
 wandder_encoded_result_t *encode_etsi_umtsiri(wandder_encoder_t *encoder,

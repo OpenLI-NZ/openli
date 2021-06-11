@@ -197,6 +197,7 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
                 }
                 break;
         }
+        free(t);
         JLN(pval, enc->saved_global_templates, indexint);
     }
     JLFA(rcint, enc->saved_global_templates);
@@ -290,14 +291,132 @@ static inline uint8_t DERIVE_INTEGER_LENGTH(uint64_t x) {
     return 5;
 }
 
-static int encode_templated_ipcc(wandder_encoder_t *encoder,
+static inline uint8_t encode_pspdu_sequence(uint8_t *space, uint8_t space_len,
+        uint32_t contentsize) {
+
+    uint8_t len_space_req = DERIVE_INTEGER_LENGTH(contentsize);
+    int i;
+
+    *space = (uint8_t)((WANDDER_CLASS_UNIVERSAL_CONSTRUCT << 5) |
+            WANDDER_TAG_SEQUENCE);
+    space ++;
+
+    if (len_space_req == 1) {
+        *space = (uint8_t)contentsize;
+        return 2;
+    }
+
+    if (len_space_req > (space_len - 2)) {
+        logger(LOG_INFO,
+                "OpenLI: invalid PSPDU sequence length %u", contentsize);
+        return 0;
+    }
+
+    *space = len_space_req | 0x80;
+    space ++;
+
+    for (i = len_space_req - 1; i >= 0; i--) {
+        *(space + i) = (contentsize & 0xff);
+        contentsize = contentsize >> 8;
+    }
+
+    return len_space_req + 2;
+}
+
+static int create_encoded_message_body(openli_encoded_result_t *res,
+        encoded_header_template_t *hdr_tplate, uint8_t *bodycontent,
+        uint16_t bodylen, uint16_t liidlen) {
+
+    uint8_t pspdu[8];
+    uint8_t pspdu_len;
+    /* Create a msgbody by concatenating hdr_tplate and ipcc_tplate, plus
+     * a preceding pS-PDU sequence with the appropriate length...
+     */
+    pspdu_len = encode_pspdu_sequence(pspdu, 8, hdr_tplate->header_len +
+            bodylen);
+
+    if (pspdu_len == 0) {
+        return -1;
+    }
+
+    res->msgbody = calloc(1, sizeof(wandder_encoded_result_t));
+    res->msgbody->encoder = NULL;
+    res->msgbody->len = pspdu_len + hdr_tplate->header_len + bodylen;
+
+    res->msgbody->encoded = malloc(res->msgbody->len);
+    res->msgbody->alloced = res->msgbody->len;
+    res->msgbody->next = NULL;
+
+    memcpy(res->msgbody->encoded, pspdu, pspdu_len);
+    memcpy(res->msgbody->encoded + pspdu_len, hdr_tplate->header,
+            hdr_tplate->header_len);
+    memcpy(res->msgbody->encoded + pspdu_len + hdr_tplate->header_len,
+            bodycontent, bodylen);
+
+    /* Set the remaining msg->header properties */
+    res->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    res->header.bodylen = htons(res->msgbody->len + liidlen + sizeof(uint16_t));
+    res->header.internalid = 0;
+
+    res->isDer = 1;
+}
+
+static int encode_templated_ipiri(openli_encoder_t *enc,
         openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
-        openli_encoded_result_t *res, Pvoid_t *global_templates) {
+        openli_encoded_result_t *res) {
+
+    /* Doesn't really make sense to template the IPIRI payload itself, since
+     * the content is quite variable and IPIRIs should be generated
+     * relatively infrequently.
+     */
+
+    wandder_encoded_result_t *body = NULL;
+    openli_ipiri_job_t *ipirijob;
+    etsili_iri_type_t iritype;
+    etsili_generic_t *params = NULL;
+
+    ipirijob = (openli_ipiri_job_t *)&(job->origreq->data.ipiri);
+
+    /* in ipiri.c */
+    prepare_ipiri_parameters(enc->freegenerics, ipirijob, &iritype, &params);
+
+    reset_wandder_encoder(enc->encoder);
+    body = encode_ipiri_body(enc->encoder, job->preencoded, iritype, &params);
+
+    if (body == NULL || body->len == 0 || body->encoded == NULL) {
+        logger(LOG_INFO, "OpenLI: failed to encode ETSI IPIRI body");
+        if (body) {
+            wandder_release_encoded_result(enc->encoder, body);
+            free_ipiri_parameters(params);
+        }
+        return -1;
+    }
+
+    if (create_encoded_message_body(res, hdr_tplate, body->encoded, body->len,
+            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
+        wandder_release_encoded_result(enc->encoder, body);
+        free_ipiri_parameters(params);
+        return -1;
+    }
+
+    res->ipcontents = NULL;
+    res->ipclen = 0;
+    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
+
+    wandder_release_encoded_result(enc->encoder, body);
+    free_ipiri_parameters(params);
+
+    /* Success */
+    return 1;
+}
+
+static int encode_templated_ipcc(openli_encoder_t *enc,
+        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res) {
 
     PWord_t pval;
     uint32_t key = 0;
     encoded_global_template_t *ipcc_tplate = NULL;
-    uint32_t liidlen = job->preencoded[OPENLI_PREENCODE_LIID].vallen;
     openli_ipcc_job_t *ipccjob;
 
     ipccjob = (openli_ipcc_job_t *)&(job->origreq->data.ipcc);
@@ -310,14 +429,16 @@ static int encode_templated_ipcc(wandder_encoder_t *encoder,
         key = (TEMPLATE_TYPE_IPCC_DIROTHER << 16) + ipccjob->ipclen;
     }
 
-    JLG(pval, (*global_templates), key);
-    if (!pval) {
+    JLI(pval, enc->saved_global_templates, key);
+    if (*pval == 0) {
         ipcc_tplate = calloc(1, sizeof(encoded_global_template_t));
-        if (etsili_create_ipcc_template(encoder, job->preencoded,
+        if (etsili_create_ipcc_template(enc->encoder, job->preencoded,
                 ipccjob->dir, ipccjob->ipclen, ipcc_tplate) < 0) {
             free(ipcc_tplate);
             return -1;
         }
+        ipcc_tplate->key = key;
+        ipcc_tplate->cctype = (key >> 16);
         *pval = (Word_t)ipcc_tplate;
     } else {
         ipcc_tplate = (encoded_global_template_t *)(*pval);
@@ -327,17 +448,17 @@ static int encode_templated_ipcc(wandder_encoder_t *encoder,
 
     }
 
-    /* Create a msgbody by concatenating hdr_tplate and ipcc_tplate, plus
-     * a preceding pS-PDU sequence with the appropriate length...
-     */
+    if (create_encoded_message_body(res, hdr_tplate,
+            ipcc_tplate->data.ipcc.ipcc_wrap,
+            ipcc_tplate->data.ipcc.ipcc_wrap_len,
+            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
+        return -1;
+    }
 
     /* Set ipcontents in the result */
     res->ipcontents = (uint8_t *)ipccjob->ipcontent;
     res->ipclen = ipccjob->ipclen;
-
-    /* Set the remaining msg->header properties */
-    res->header.magic = htonl(OPENLI_PROTO_MAGIC);
-    res->header.bodylen = htons(res->msgbody->len + liidlen + sizeof(uint16_t));
+    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
 
     /* Success */
     return 1;
@@ -353,14 +474,18 @@ static encoded_header_template_t *encode_templated_psheader(
     PWord_t pval;
     encoded_header_template_t *tplate = NULL;
 
+    if (job->origreq->ts.tv_sec == 0) {
+        gettimeofday(&(job->origreq->ts), NULL);
+    }
+
     seqlen = DERIVE_INTEGER_LENGTH(job->seqno);
     tvsec_len = DERIVE_INTEGER_LENGTH(job->origreq->ts.tv_sec);
     tvusec_len = DERIVE_INTEGER_LENGTH(job->origreq->ts.tv_usec);
 
     key = (seqlen << 16) + (tvsec_len << 8) + tvusec_len;
 
-    JLG(pval, t_set->headers, key);
-    if (!pval) {
+    JLI(pval, t_set->headers, key);
+    if (*pval == 0) {
         tplate = calloc(1, sizeof(encoded_header_template_t));
 
         if (etsili_create_header_template(encoder, job->preencoded,
@@ -408,8 +533,11 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
     switch (job->origreq->type) {
         case OPENLI_EXPORT_IPCC:
             /* IPCC "header" can be templated */
-            ret = encode_templated_ipcc(enc->encoder, job, hdr_tplate, res,
-                    &(enc->saved_global_templates));
+            ret = encode_templated_ipcc(enc, job, hdr_tplate, res);
+
+            break;
+        case OPENLI_EXPORT_IPIRI:
+            ret = encode_templated_ipiri(enc, job, hdr_tplate, res);
             break;
         default:
             ret = 0;
