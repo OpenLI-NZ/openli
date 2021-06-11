@@ -177,21 +177,20 @@ typedef struct encoded_header_template {
 
 } encoded_header_template_t;
 
-typedef struct encoded_ipcc_template {
+typedef struct encoded_cc_template {
+    uint8_t *content_ptr;
     uint16_t content_size;
 
-    uint8_t *ipcc_wrap;
-    uint16_t ipcc_wrap_len;
-} encoded_ipcc_template_t;
+    uint8_t *cc_wrap;
+    uint16_t cc_wrap_len;
+
+} encoded_cc_template_t;
 
 typedef struct encoded_global_template {
     uint32_t key;
     uint8_t cctype;
 
-    union {
-        encoded_ipcc_template_t ipcc;
-        uint8_t foobar;
-    } data;
+    encoded_cc_template_t cc_content;
 } encoded_global_template_t;
 
 
@@ -251,6 +250,12 @@ void etsili_clear_preencoded_fields(wandder_encode_job_t *pendarray);
 void etsili_copy_preencoded(wandder_encode_job_t *dest,
         wandder_encode_job_t *src);
 
+
+int etsili_update_ipmmcc_template(encoded_global_template_t *tplate,
+        uint8_t *ipcontent, uint16_t ipclen);
+int etsili_create_ipmmcc_template(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, uint8_t dir, uint8_t *ipcontent,
+        uint16_t ipclen, encoded_global_template_t *tplate);
 int etsili_create_header_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
         struct timeval *tv, encoded_header_template_t *tplate);

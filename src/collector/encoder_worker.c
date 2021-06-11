@@ -192,8 +192,8 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
             case TEMPLATE_TYPE_IPCC_DIRFROM:
             case TEMPLATE_TYPE_IPCC_DIRTO:
             case TEMPLATE_TYPE_IPCC_DIROTHER:
-                if (t->data.ipcc.ipcc_wrap) {
-                    free(t->data.ipcc.ipcc_wrap);
+                if (t->cc_content.cc_wrap) {
+                    free(t->cc_content.cc_wrap);
                 }
                 break;
         }
@@ -410,14 +410,88 @@ static int encode_templated_ipiri(openli_encoder_t *enc,
     return 1;
 }
 
+static inline encoded_global_template_t *lookup_global_template(
+        openli_encoder_t *enc, uint32_t key, uint8_t *is_new) {
+
+    PWord_t pval;
+    encoded_global_template_t *ipcc_tplate = NULL;
+
+    JLI(pval, enc->saved_global_templates, key);
+    if (*pval == 0) {
+        ipcc_tplate = calloc(1, sizeof(encoded_global_template_t));
+        ipcc_tplate->key = key;
+        ipcc_tplate->cctype = (key >> 16);
+        *pval = (Word_t)ipcc_tplate;
+        *is_new = 1;
+    } else {
+        ipcc_tplate = (encoded_global_template_t *)(*pval);
+        *is_new = 0;
+    }
+
+    return ipcc_tplate;
+}
+
+static int encode_templated_ipmmcc(openli_encoder_t *enc,
+        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res) {
+
+    uint32_t key = 0;
+    encoded_global_template_t *ipmmcc_tplate = NULL;
+    openli_ipcc_job_t *mmccjob;
+    uint8_t is_new = 0;
+
+    mmccjob = (openli_ipcc_job_t *)&(job->origreq->data.ipcc);
+
+    /* We only handle IP frames and RTP protocol for IPMM so far... */
+
+    if (mmccjob->dir == ETSI_DIR_FROM_TARGET) {
+        key = (TEMPLATE_TYPE_IPMMCC_DIRFROM_IP_RTP << 16) + mmccjob->ipclen;
+    } else if (mmccjob->dir == ETSI_DIR_TO_TARGET) {
+        key = (TEMPLATE_TYPE_IPMMCC_DIRTO_IP_RTP << 16) + mmccjob->ipclen;
+    } else {
+        key = (TEMPLATE_TYPE_IPMMCC_DIROTHER_IP_RTP << 16) + mmccjob->ipclen;
+    }
+
+    ipmmcc_tplate = lookup_global_template(enc, key, &is_new);
+
+    if (is_new) {
+        if (etsili_create_ipmmcc_template(enc->encoder, job->preencoded,
+                mmccjob->dir, mmccjob->ipcontent, mmccjob->ipclen,
+                ipmmcc_tplate) < 0) {
+            return -1;
+        }
+    } else {
+        /* Overwrite the existing MMCCContents field */
+        if (etsili_update_ipmmcc_template(ipmmcc_tplate, mmccjob->ipcontent,
+                mmccjob->ipclen) < 0) {
+            return -1;
+        }
+    }
+
+    if (create_encoded_message_body(res, hdr_tplate,
+            ipmmcc_tplate->cc_content.cc_wrap,
+            ipmmcc_tplate->cc_content.cc_wrap_len,
+            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
+        return -1;
+    }
+
+    /* No ipcontents in the result, as it is encoded already in cc_content */
+    res->ipcontents = NULL;
+    res->ipclen = 0;
+    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
+
+    /* Success */
+    return 1;
+}
+
 static int encode_templated_ipcc(openli_encoder_t *enc,
         openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
 
-    PWord_t pval;
     uint32_t key = 0;
     encoded_global_template_t *ipcc_tplate = NULL;
     openli_ipcc_job_t *ipccjob;
+    uint8_t is_new = 0;
 
     ipccjob = (openli_ipcc_job_t *)&(job->origreq->data.ipcc);
 
@@ -429,28 +503,20 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
         key = (TEMPLATE_TYPE_IPCC_DIROTHER << 16) + ipccjob->ipclen;
     }
 
-    JLI(pval, enc->saved_global_templates, key);
-    if (*pval == 0) {
-        ipcc_tplate = calloc(1, sizeof(encoded_global_template_t));
+    ipcc_tplate = lookup_global_template(enc, key, &is_new);
+
+    if (is_new) {
         if (etsili_create_ipcc_template(enc->encoder, job->preencoded,
                 ipccjob->dir, ipccjob->ipclen, ipcc_tplate) < 0) {
-            free(ipcc_tplate);
             return -1;
         }
-        ipcc_tplate->key = key;
-        ipcc_tplate->cctype = (key >> 16);
-        *pval = (Word_t)ipcc_tplate;
-    } else {
-        ipcc_tplate = (encoded_global_template_t *)(*pval);
-
-        /* We have very specific templates for each observed packet size, so
-         * this will not require updating */
-
     }
+    /* We have very specific templates for each observed packet size, so
+     * this will not require updating */
 
     if (create_encoded_message_body(res, hdr_tplate,
-            ipcc_tplate->data.ipcc.ipcc_wrap,
-            ipcc_tplate->data.ipcc.ipcc_wrap_len,
+            ipcc_tplate->cc_content.cc_wrap,
+            ipcc_tplate->cc_content.cc_wrap_len,
             job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
         return -1;
     }
@@ -535,6 +601,9 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             /* IPCC "header" can be templated */
             ret = encode_templated_ipcc(enc, job, hdr_tplate, res);
 
+            break;
+        case OPENLI_EXPORT_IPMMCC:
+            ret = encode_templated_ipmmcc(enc, job, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_IPIRI:
             ret = encode_templated_ipiri(enc, job, hdr_tplate, res);
