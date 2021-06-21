@@ -40,7 +40,7 @@
 
 static int init_worker(openli_encoder_t *enc) {
     int zero = 0, rto = 10;
-    int hwm = 1000000;
+    int hwm = 1000;
     int i;
     char sockname[128];
 
@@ -359,6 +359,7 @@ static int create_encoded_message_body(openli_encoded_result_t *res,
     res->header.internalid = 0;
 
     res->isDer = 1;
+    return 0;
 }
 
 static int encode_templated_ipiri(openli_encoder_t *enc,
@@ -416,11 +417,12 @@ static inline encoded_global_template_t *lookup_global_template(
     PWord_t pval;
     encoded_global_template_t *ipcc_tplate = NULL;
 
-    JLI(pval, enc->saved_global_templates, key);
-    if (*pval == 0) {
+    JLG(pval, enc->saved_global_templates, key);
+    if (pval == NULL) {
         ipcc_tplate = calloc(1, sizeof(encoded_global_template_t));
         ipcc_tplate->key = key;
         ipcc_tplate->cctype = (key >> 16);
+        JLI(pval, enc->saved_global_templates, key);
         *pval = (Word_t)ipcc_tplate;
         *is_new = 1;
     } else {

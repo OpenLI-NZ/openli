@@ -24,7 +24,7 @@
  *
  */
 
-
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -196,7 +196,7 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
 static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
         int threadid) {
 
-    int zero = 0, i;
+    int zero = 0, i, hwm=1000;
     libtrace_message_queue_init(&(loc->fromsyncq_ip),
             sizeof(openli_pushed_t));
     libtrace_message_queue_init(&(loc->fromsyncq_voip),
@@ -227,18 +227,18 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
 
         snprintf(pubsockname, 128, "inproc://openlipub-%d", i);
         loc->zmq_pubsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
-        zmq_setsockopt(loc->zmq_pubsocks[i], ZMQ_SNDHWM, &zero, sizeof(zero));
+        zmq_setsockopt(loc->zmq_pubsocks[i], ZMQ_SNDHWM, &hwm, sizeof(hwm));
         zmq_connect(loc->zmq_pubsocks[i], pubsockname);
     }
 
     loc->fragreass = create_new_ipfrag_reassembler();
 
     loc->tosyncq_ip = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
-    zmq_setsockopt(loc->tosyncq_ip, ZMQ_SNDHWM, &zero, sizeof(zero));
+    zmq_setsockopt(loc->tosyncq_ip, ZMQ_SNDHWM, &hwm, sizeof(hwm));
     zmq_connect(loc->tosyncq_ip, "inproc://openli-ipsync");
 
     loc->tosyncq_voip = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
-    zmq_setsockopt(loc->tosyncq_voip, ZMQ_SNDHWM, &zero, sizeof(zero));
+    zmq_setsockopt(loc->tosyncq_voip, ZMQ_SNDHWM, &hwm, sizeof(hwm));
     zmq_connect(loc->tosyncq_voip, "inproc://openli-voipsync");
 
 }
@@ -1588,6 +1588,7 @@ int main(int argc, char *argv[]) {
     collector_global_t *glob = NULL;
     int i, ret, todaemon;
     colinput_t *inp, *tmp;
+    char name[1024];
 
     todaemon = 0;
     while (1) {
@@ -1678,6 +1679,9 @@ int main(int argc, char *argv[]) {
             sizeof(forwarding_thread_data_t));
 
     for (i = 0; i < glob->forwarding_threads; i++) {
+
+        snprintf(name, 1024, "forwarder-%d", i);
+
         glob->forwarders[i].zmq_ctxt = glob->zmq_ctxt;
         glob->forwarders[i].forwardid = i;
         glob->forwarders[i].encoders = glob->encoding_threads;
@@ -1692,12 +1696,14 @@ int main(int argc, char *argv[]) {
 
         pthread_create(&(glob->forwarders[i].threadid), NULL,
                 start_forwarding_thread, (void *)&(glob->forwarders[i]));
+        pthread_setname_np(glob->forwarders[i].threadid, name);
     }
 
     glob->seqtrackers = calloc(glob->seqtracker_threads,
             sizeof(seqtracker_thread_data_t));
 
     for (i = 0; i < glob->seqtracker_threads; i++) {
+        snprintf(name, 1024, "seqtracker-%d", i);
         glob->seqtrackers[i].zmq_ctxt = glob->zmq_ctxt;
         glob->seqtrackers[i].trackerid = i;
         glob->seqtrackers[i].zmq_pushjobsock = NULL;
@@ -1710,11 +1716,13 @@ int main(int argc, char *argv[]) {
 #endif
         pthread_create(&(glob->seqtrackers[i].threadid), NULL,
                 start_seqtracker_thread, (void *)&(glob->seqtrackers[i]));
+        pthread_setname_np(glob->seqtrackers[i].threadid, name);
     }
 
     glob->encoders = calloc(glob->encoding_threads, sizeof(openli_encoder_t));
 
     for (i = 0; i < glob->encoding_threads; i++) {
+        snprintf(name, 1024, "encoder-%d", i);
         glob->encoders[i].zmq_ctxt = glob->zmq_ctxt;
         glob->encoders[i].zmq_recvjobs = NULL;
         glob->encoders[i].zmq_pushresults = NULL;
@@ -1732,6 +1740,7 @@ int main(int argc, char *argv[]) {
 
         pthread_create(&(glob->encoders[i].threadid), NULL,
                 run_encoder_worker, (void *)&(glob->encoders[i]));
+        pthread_setname_np(glob->encoders[i].threadid, name);
     }
 
     /* Start IP intercept sync thread */
@@ -1741,6 +1750,8 @@ int main(int argc, char *argv[]) {
         logger(LOG_INFO, "OpenLI: error creating IP sync thread. Exiting.");
         return 1;
     }
+    snprintf(name, 1024, "sync-ip");
+    pthread_setname_np(glob->syncip.threadid, name);
 
     /* Start VOIP intercept sync thread */
     ret = pthread_create(&(glob->syncvoip.threadid), NULL,
@@ -1749,6 +1760,8 @@ int main(int argc, char *argv[]) {
         logger(LOG_INFO, "OpenLI: error creating VOIP sync thread. Exiting.");
         return 1;
     }
+    snprintf(name, 1024, "sync-voip");
+    pthread_setname_np(glob->syncvoip.threadid, name);
 
     if (pthread_sigmask(SIG_SETMASK, &sig_before, NULL)) {
         logger(LOG_INFO, "Unable to re-enable signals after starting threads.");

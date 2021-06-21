@@ -501,7 +501,7 @@ void *start_seqtracker_thread(void *data) {
     char sockname[128];
     seqtracker_thread_data_t *seqdata = (seqtracker_thread_data_t *)data;
     openli_export_recv_t *job = NULL;
-    int x, zero = 0, large=1000000, sndtimeo=1000;
+    int x, zero = 0, large=1000, sndtimeo=1000;
     exporter_intercept_state_t *intstate, *tmpexp;
 
     seqdata->zmq_recvpublished = zmq_socket(seqdata->zmq_ctxt, ZMQ_PULL);
