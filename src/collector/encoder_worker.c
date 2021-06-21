@@ -274,7 +274,7 @@ static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
     res->ipcontents = job->origreq->data.rawip.ipcontent;
     res->ipclen = job->origreq->data.rawip.ipclen;
     res->header.magic = htonl(OPENLI_PROTO_MAGIC);
-    res->header.bodylen = htons(res->msgbody->len + liidlen + sizeof(uint16_t));
+    res->header.bodylen = htons(res->msgbody->len);
     res->header.intercepttype = htons(OPENLI_PROTO_RAWIP_SYNC);
     res->header.internalid = 0;
     res->isDer = 1;         /* Must be set as DER for the forwarder to handle
@@ -292,10 +292,22 @@ static inline uint8_t DERIVE_INTEGER_LENGTH(uint64_t x) {
 }
 
 static inline uint8_t encode_pspdu_sequence(uint8_t *space, uint8_t space_len,
-        uint32_t contentsize) {
+        uint32_t contentsize, char *liid, uint16_t liidlen) {
 
     uint8_t len_space_req = DERIVE_INTEGER_LENGTH(contentsize);
     int i;
+    uint16_t l;
+
+    if (liidlen > space_len - 8) {
+        logger(LOG_INFO,
+                "OpenLI: invalid LIID for PSPDU: %s (%u %u)", liid, liidlen, space_len);
+        return 0;
+    }
+
+    l = htons(liidlen);
+    memcpy(space, &l, sizeof(uint16_t));
+    memcpy(space + 2, liid, liidlen);
+    space += (2 + liidlen);
 
     *space = (uint8_t)((WANDDER_CLASS_UNIVERSAL_CONSTRUCT << 5) |
             WANDDER_TAG_SEQUENCE);
@@ -303,7 +315,7 @@ static inline uint8_t encode_pspdu_sequence(uint8_t *space, uint8_t space_len,
 
     if (len_space_req == 1) {
         *space = (uint8_t)contentsize;
-        return 2;
+        return 2 + (2 + liidlen);
     }
 
     if (len_space_req > (space_len - 2)) {
@@ -320,20 +332,20 @@ static inline uint8_t encode_pspdu_sequence(uint8_t *space, uint8_t space_len,
         contentsize = contentsize >> 8;
     }
 
-    return len_space_req + 2;
+    return len_space_req + 2 + (2 + liidlen);
 }
 
 static int create_encoded_message_body(openli_encoded_result_t *res,
         encoded_header_template_t *hdr_tplate, uint8_t *bodycontent,
-        uint16_t bodylen, uint16_t liidlen) {
+        uint16_t bodylen, char *liid, uint16_t liidlen) {
 
-    uint8_t pspdu[8];
+    uint8_t pspdu[108];
     uint8_t pspdu_len;
     /* Create a msgbody by concatenating hdr_tplate and ipcc_tplate, plus
      * a preceding pS-PDU sequence with the appropriate length...
      */
-    pspdu_len = encode_pspdu_sequence(pspdu, 8, hdr_tplate->header_len +
-            bodylen);
+    pspdu_len = encode_pspdu_sequence(pspdu, sizeof(pspdu),
+            hdr_tplate->header_len + bodylen, liid, liidlen);
 
     if (pspdu_len == 0) {
         return -1;
@@ -355,7 +367,7 @@ static int create_encoded_message_body(openli_encoded_result_t *res,
 
     /* Set the remaining msg->header properties */
     res->header.magic = htonl(OPENLI_PROTO_MAGIC);
-    res->header.bodylen = htons(res->msgbody->len + liidlen + sizeof(uint16_t));
+    res->header.bodylen = htons(res->msgbody->len);
     res->header.internalid = 0;
 
     res->isDer = 1;
@@ -394,6 +406,7 @@ static int encode_templated_ipiri(openli_encoder_t *enc,
     }
 
     if (create_encoded_message_body(res, hdr_tplate, body->encoded, body->len,
+            job->liid,
             job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
         wandder_release_encoded_result(enc->encoder, body);
         free_ipiri_parameters(params);
@@ -473,6 +486,7 @@ static int encode_templated_ipmmcc(openli_encoder_t *enc,
     if (create_encoded_message_body(res, hdr_tplate,
             ipmmcc_tplate->cc_content.cc_wrap,
             ipmmcc_tplate->cc_content.cc_wrap_len,
+            job->liid,
             job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
         return -1;
     }
@@ -519,6 +533,7 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
     if (create_encoded_message_body(res, hdr_tplate,
             ipcc_tplate->cc_content.cc_wrap,
             ipcc_tplate->cc_content.cc_wrap_len,
+            job->liid,
             job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
         return -1;
     }

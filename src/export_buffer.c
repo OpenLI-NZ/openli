@@ -179,19 +179,11 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     uint32_t added = 0;
     int rcint;
 
-    int liidlen;
-
-    if (res->liid == NULL) {
-        return 0;
-    }
-
-    liidlen = strlen(res->liid);
-
     if (bufused == 0) {
         buf->partialfront = beensent;
     }
 
-    while (spaceleft < res->msgbody->len + sizeof(res->header) + liidlen + 2) {
+    while (spaceleft < res->msgbody->len + sizeof(res->header)) {
         /* Add some space to the buffer */
         spaceleft = extend_buffer(buf);
         if (spaceleft == 0) {
@@ -202,14 +194,6 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     memcpy(buf->buftail, &res->header, sizeof(res->header));
     buf->buftail += sizeof(res->header);
     added += sizeof(res->header);
-
-    if (res->liid) {
-        uint16_t l = htons(liidlen);
-        memcpy(buf->buftail, &l, sizeof(uint16_t));
-        memcpy(buf->buftail + 2, res->liid, liidlen);
-        buf->buftail += (liidlen + 2);
-        added += (liidlen + 2);
-    }
 
     if (res->isDer){
         if (enclen > 0) {
