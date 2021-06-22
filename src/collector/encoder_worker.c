@@ -500,6 +500,55 @@ static int encode_templated_ipmmcc(openli_encoder_t *enc,
     return 1;
 }
 
+static int encode_templated_ipmmiri(openli_encoder_t *enc,
+        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res) {
+
+    wandder_encoded_result_t *body = NULL;
+    openli_ipmmiri_job_t *irijob =
+            (openli_ipmmiri_job_t *)&(job->origreq->data.ipmmiri);
+
+    /* We could consider templating the body portion of IPMMIRIs if we
+     * really need the performance -- we'd need to create templates for each
+     * SIP message size + IP version + IRI type, with saved pointers to the SIP
+     * content, IRI type, source IP address and dest IP address.
+     */
+
+    /* For now though, let's just encode the body each time... */
+
+    reset_wandder_encoder(enc->encoder);
+
+    /* Assuming SIP here for now, other protocols can be supported later */
+    body = encode_sipiri_body(enc->encoder, job->preencoded, irijob->iritype,
+            irijob->ipsrc, irijob->ipdest, irijob->ipfamily,
+            irijob->content, irijob->contentlen);
+
+
+    if (body == NULL || body->len == 0 || body->encoded == NULL) {
+        logger(LOG_INFO, "OpenLI: failed to encode ETSI SIP IPMMIRI body");
+        if (body) {
+            wandder_release_encoded_result(enc->encoder, body);
+        }
+        return -1;
+    }
+
+    if (create_encoded_message_body(res, hdr_tplate, body->encoded, body->len,
+            job->liid,
+            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
+        wandder_release_encoded_result(enc->encoder, body);
+        return -1;
+    }
+
+    res->ipcontents = (uint8_t *)(irijob->content);
+    res->ipclen = irijob->contentlen;
+    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
+
+    wandder_release_encoded_result(enc->encoder, body);
+
+    /* Success */
+    return 1;
+}
+
 static int encode_templated_ipcc(openli_encoder_t *enc,
         openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
@@ -524,6 +573,7 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
     if (is_new) {
         if (etsili_create_ipcc_template(enc->encoder, job->preencoded,
                 ipccjob->dir, ipccjob->ipclen, ipcc_tplate) < 0) {
+            logger(LOG_INFO, "Failed to create IPCC template?");
             return -1;
         }
     }
@@ -624,6 +674,9 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             break;
         case OPENLI_EXPORT_IPIRI:
             ret = encode_templated_ipiri(enc, job, hdr_tplate, res);
+            break;
+        case OPENLI_EXPORT_IPMMIRI:
+            ret = encode_templated_ipmmiri(enc, job, hdr_tplate, res);
             break;
         default:
             ret = 0;

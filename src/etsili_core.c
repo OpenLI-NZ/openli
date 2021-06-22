@@ -279,11 +279,11 @@ static inline void encode_ipmmiri_body(wandder_encoder_t *encoder,
     encode_ipmmiri_body_common(encoder, precomputed, iritype);
     wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, ipcontent, iplen);
-    END_ENCODED_SEQUENCE(encoder, 7);
+    END_ENCODED_SEQUENCE(encoder, 6);
 
 }
 
-static inline void encode_sipiri_body(wandder_encoder_t *encoder,
+wandder_encoded_result_t *encode_sipiri_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed,
         etsili_iri_type_t iritype, uint8_t *ipsrc, uint8_t *ipdest,
         int ipfamily, void *sipcontent, uint32_t siplen) {
@@ -317,8 +317,7 @@ static inline void encode_sipiri_body(wandder_encoder_t *encoder,
         encipdst.ipvalue = calloc(16, sizeof(uint8_t));
         memcpy(encipdst.ipvalue, ipdest, 16);
     } else {
-        END_ENCODED_SEQUENCE(encoder, 1);  // ends outermost sequence
-        return;
+        return NULL;
     }
 
     encode_ipmmiri_body_common(encoder, precomputed, iritype);
@@ -334,7 +333,9 @@ static inline void encode_sipiri_body(wandder_encoder_t *encoder,
     END_ENCODED_SEQUENCE(encoder, 1);
     wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, sipcontent, siplen);
-    END_ENCODED_SEQUENCE(encoder, 8);
+    END_ENCODED_SEQUENCE(encoder, 7);
+
+    return wandder_encode_finish(encoder);
 }
 
 static inline void encode_ipiri_id(wandder_encoder_t *encoder,
