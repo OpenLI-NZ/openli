@@ -675,11 +675,11 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
 
 static int drain_incoming_etsi(forwarding_thread_data_t *fwd) {
 
-    int x, encoders_over = 0;
-    openli_encoded_result_t res;
+    int x, encoders_over = 0, i, msgcnt;
+    openli_encoded_result_t res[MAX_ENCODED_RESULT_BATCH];
 
     do {
-        x = zmq_recv(fwd->zmq_pullressock, &res, sizeof(res),
+        x = zmq_recv(fwd->zmq_pullressock, res, sizeof(res),
                 ZMQ_DONTWAIT);
         if (x < 0 && errno != EAGAIN) {
             return -1;
@@ -689,20 +689,30 @@ static int drain_incoming_etsi(forwarding_thread_data_t *fwd) {
             continue;
         }
 
-        if (res.liid == NULL && res.destid == 0) {
-            logger(LOG_INFO, "encoder %d has ceased encoding", encoders_over);
-            encoders_over ++;
+        if (x % sizeof(openli_encoded_result_t) != 0) {
+            logger(LOG_INFO, "forwarder received odd sized message (%d bytes)?",
+                    x);
+            return -1;
         }
+        msgcnt = x / sizeof(openli_encoded_result_t);
 
-        free_encoded_result(&res);
+        for (i = 0; i < msgcnt; i++) {
+
+            if (res[i].liid == NULL && res[i].destid == 0) {
+                logger(LOG_INFO, "encoder %d has ceased encoding", encoders_over);
+                encoders_over ++;
+            }
+
+            free_encoded_result(&(res[i]));
+        }
     } while (encoders_over < fwd->encoders);
 
     return 1;
 }
 
 static int receive_incoming_etsi(forwarding_thread_data_t *fwd) {
-    int x, processed;
-    openli_encoded_result_t res;
+    int x, processed, i, msgcnt;
+    openli_encoded_result_t res[MAX_ENCODED_RESULT_BATCH];
 
     processed = 0;
     do {
@@ -719,10 +729,19 @@ static int receive_incoming_etsi(forwarding_thread_data_t *fwd) {
             break;
         }
 
-        if (handle_encoded_result(fwd, &res) < 0) {
+        if (x % sizeof(openli_encoded_result_t) != 0) {
+            logger(LOG_INFO, "forwarder received odd sized message (%d bytes)?",
+                    x);
             return -1;
         }
-        processed ++;
+        msgcnt = x / sizeof(openli_encoded_result_t);
+
+        for (i = 0; i < msgcnt; i++) {
+            if (handle_encoded_result(fwd, &(res[i])) < 0) {
+                return -1;
+            }
+            processed ++;
+        }
     } while (x > 0 && processed < 100000);
     return 1;
 }

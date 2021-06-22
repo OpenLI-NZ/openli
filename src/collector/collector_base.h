@@ -41,6 +41,8 @@
 #include "export_buffer.h"
 #include "openli_tls.h"
 
+#define MAX_ENCODED_RESULT_BATCH 50
+
 typedef struct export_dest {
     int failmsg;
     int fd;

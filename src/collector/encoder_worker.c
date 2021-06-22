@@ -750,14 +750,13 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
     return ret;
 }
 
-
 static int process_job(openli_encoder_t *enc, void *socket) {
     int x;
     int batch = 0;
     openli_encoding_job_t job;
-    openli_encoded_result_t result;
+    openli_encoded_result_t result[MAX_ENCODED_RESULT_BATCH];
 
-    while (batch < 50) {
+    while (batch < MAX_ENCODED_RESULT_BATCH) {
         memset(&job, 0, sizeof(openli_encoding_job_t));
         x = zmq_recv(socket, &job, sizeof(openli_encoding_job_t), 0);
         if (x < 0 && (errno != EAGAIN && errno != EINTR)) {
@@ -772,10 +771,10 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         }
 
         if (job.origreq->type == OPENLI_EXPORT_RAW_SYNC) {
-            encode_rawip(enc, &job, &result);
+            encode_rawip(enc, &job, &(result[batch]));
         } else {
 
-            if ((x = encode_etsi(enc, &job, &result)) <= 0) {
+            if ((x = encode_etsi(enc, &job, &(result[batch]))) <= 0) {
                 /* What do we do in the event of an error? */
                 if (x < 0) {
                     logger(LOG_INFO,
@@ -796,25 +795,33 @@ static int process_job(openli_encoder_t *enc, void *socket) {
             }
         }
 
-        result.cinstr = job.cinstr;
-        result.liid = job.liid;
-        result.seqno = job.seqno;
-        result.destid = job.origreq->destid;
-        result.origreq = job.origreq;
-        result.encodedby = enc->workerid;
+        result[batch].cinstr = job.cinstr;
+        result[batch].liid = job.liid;
+        result[batch].seqno = job.seqno;
+        result[batch].destid = job.origreq->destid;
+        result[batch].origreq = job.origreq;
+        result[batch].encodedby = enc->workerid;
 
 #ifdef HAVE_BER_ENCODING
-        result.child = job.child;
+        result[batch].child = job.child;
 #endif
 
-        // FIXME -- hash result based on LIID (and CIN?)
-        assert(enc->zmq_pushresults[0] != NULL);
-        if (zmq_send(enc->zmq_pushresults[0], &result, sizeof(result), 0) < 0) {
-            logger(LOG_INFO, "OpenLI: error while pushing encoded result back to exporter (worker=%d)", enc->workerid);
-            break;
-        }
         batch++;
     }
+
+    /* TODO if we have multiple forwarding threads, we will need to
+     * assign individual results to the forwarder based on its LIID --
+     * this will also require multiple result[] arrays (one per forwarder)
+     * for message batching.
+     */
+    if (batch > 0) {
+        if (zmq_send(enc->zmq_pushresults[0], result,
+                    batch * sizeof(openli_encoded_result_t), 0) < 0) {
+            logger(LOG_INFO, "OpenLI: error while pushing encoded result back to exporter (worker=%d)", enc->workerid);
+            return -1;
+        }
+    }
+
     return batch;
 }
 
