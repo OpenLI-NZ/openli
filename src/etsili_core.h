@@ -194,22 +194,9 @@ typedef struct encoded_global_template {
 } encoded_global_template_t;
 
 
-wandder_encoded_result_t *encode_etsi_ipcc(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir);
-
-wandder_encoded_result_t *encode_etsi_ipmmcc(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir);
-
-wandder_encoded_result_t *encode_etsi_umtscc(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir);
-
-wandder_encoded_result_t *encode_etsi_ipmmiri(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        etsili_iri_type_t iritype, struct timeval *tv, void *ipcontents,
-        uint32_t iplen);
+wandder_encoded_result_t *encode_umtscc_body(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, void *ipcontent, uint32_t iplen,
+        uint8_t dir);
 
 wandder_encoded_result_t *encode_ipiri_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, etsili_iri_type_t iritype,
@@ -223,11 +210,6 @@ wandder_encoded_result_t *encode_sipiri_body(wandder_encoder_t *encoder,
 wandder_encoded_result_t *encode_umtsiri_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed,
         etsili_iri_type_t iritype, etsili_generic_t *params);
-
-wandder_encoded_result_t *encode_etsi_sipiri(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        etsili_iri_type_t iritype, struct timeval *tv, uint8_t *ipsrc,
-        uint8_t *ipdest, int ipfamily, void *sipcontents, uint32_t siplen);
 
 wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t seqno);
@@ -255,6 +237,9 @@ void etsili_copy_preencoded(wandder_encode_job_t *dest,
         wandder_encode_job_t *src);
 
 
+int etsili_create_umtscc_template(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
+        encoded_global_template_t *tplate);
 int etsili_update_ipmmcc_template(encoded_global_template_t *tplate,
         uint8_t *ipcontent, uint16_t ipclen);
 int etsili_create_ipmmcc_template(wandder_encoder_t *encoder,

@@ -31,7 +31,6 @@
 #include "ipmmcc.h"
 #include "ipcc.h"
 #include "ipmmiri.h"
-#include "umtscc.h"
 #include "umtsiri.h"
 #include "collector_base.h"
 #include "logger.h"
@@ -622,6 +621,55 @@ static int encode_templated_ipmmiri(openli_encoder_t *enc,
     return 1;
 }
 
+static int encode_templated_umtscc(openli_encoder_t *enc,
+        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res) {
+
+    uint32_t key = 0;
+    encoded_global_template_t *umtscc_tplate = NULL;
+    openli_ipcc_job_t *ccjob;
+    uint8_t is_new = 0;
+
+    ccjob = (openli_ipcc_job_t *)&(job->origreq->data.ipcc);
+
+    if (ccjob->dir == ETSI_DIR_FROM_TARGET) {
+        key = (TEMPLATE_TYPE_UMTSCC_DIRFROM << 16) + ccjob->ipclen;
+    } else if (ccjob->dir == ETSI_DIR_TO_TARGET) {
+        key = (TEMPLATE_TYPE_UMTSCC_DIRTO << 16) + ccjob->ipclen;
+    } else {
+        key = (TEMPLATE_TYPE_UMTSCC_DIROTHER << 16) + ccjob->ipclen;
+    }
+
+    umtscc_tplate = lookup_global_template(enc, key, &is_new);
+
+    if (is_new) {
+        if (etsili_create_umtscc_template(enc->encoder, job->preencoded,
+                ccjob->dir, ccjob->ipclen, umtscc_tplate) < 0) {
+            logger(LOG_INFO, "OpenLI: Failed to create UMTSCC template?");
+            return -1;
+        }
+    }
+    /* We have very specific templates for each observed packet size, so
+     * this will not require updating */
+
+    if (create_encoded_message_body(res, hdr_tplate,
+            umtscc_tplate->cc_content.cc_wrap,
+            umtscc_tplate->cc_content.cc_wrap_len,
+            job->liid,
+            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
+        return -1;
+    }
+
+    /* Set ipcontents in the result */
+    res->ipcontents = (uint8_t *)ccjob->ipcontent;
+    res->ipclen = ccjob->ipclen;
+    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
+
+    /* Success */
+    return 1;
+
+}
+
 static int encode_templated_ipcc(openli_encoder_t *enc,
         openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
@@ -646,7 +694,7 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
     if (is_new) {
         if (etsili_create_ipcc_template(enc->encoder, job->preencoded,
                 ipccjob->dir, ipccjob->ipclen, ipcc_tplate) < 0) {
-            logger(LOG_INFO, "Failed to create IPCC template?");
+            logger(LOG_INFO, "OpenLI: Failed to create IPCC template?");
             return -1;
         }
     }
@@ -740,10 +788,12 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
         case OPENLI_EXPORT_IPCC:
             /* IPCC "header" can be templated */
             ret = encode_templated_ipcc(enc, job, hdr_tplate, res);
-
             break;
         case OPENLI_EXPORT_IPMMCC:
             ret = encode_templated_ipmmcc(enc, job, hdr_tplate, res);
+            break;
+        case OPENLI_EXPORT_UMTSCC:
+            ret = encode_templated_umtscc(enc, job, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_IPIRI:
             ret = encode_templated_ipiri(enc, job, hdr_tplate, res);
@@ -757,124 +807,6 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
         default:
             ret = 0;
     }
-
-#if 0
-#ifdef HAVE_BER_ENCODING
-    if (job->top != NULL) {
-        isDer = 0;
-    }
-#endif
-
-
-            if (isDer){
-                ret = encode_ipcc(enc->encoder, job->preencoded,
-                        &(job->origreq->data.ipcc), job->seqno,
-                        &(job->origreq->ts), res);
-#ifdef HAVE_BER_ENCODING
-            }else {                
-                job->child = wandder_create_etsili_child(job->top, &(job->top->ipcc));
-                ret = encode_ipcc_ber(
-                        &(job->origreq->data.ipcc), job->seqno,
-                        &(job->origreq->ts), res, job->child, enc->encoder);
-#endif
-            }
-            break;
-        case OPENLI_EXPORT_IPIRI:
-            if(isDer){
-                ret = encode_ipiri(enc->encoder, enc->freegenerics,
-                        job->preencoded,
-                        &(job->origreq->data.ipiri), job->seqno, res);
-#ifdef HAVE_BER_ENCODING
-            }
-            else{
-                job->child = wandder_create_etsili_child(job->top, &(job->top->ipiri));
-                ret = encode_ipiri_ber(
-                        &(job->origreq->data.ipiri), enc->freegenerics,
-                        job->seqno, &(job->origreq->ts), res, job->child, 
-                        enc->encoder);
-#endif
-            }
-            break;
-        case OPENLI_EXPORT_IPMMIRI:
-            if (isDer){
-                ret = encode_ipmmiri(enc->encoder, job->preencoded,
-                    &(job->origreq->data.ipmmiri), job->seqno, res,
-                    &(job->origreq->ts));
-#ifdef HAVE_BER_ENCODING
-            }else {      
-                job->child = wandder_create_etsili_child(job->top, &(job->top->ipmmiri));          
-                ret = encode_ipmmiri_ber(
-                        &(job->origreq->data.ipmmiri), job->seqno,
-                        &(job->origreq->ts), res, job->child, enc->encoder);
-#endif
-            }
-            break;
-        case OPENLI_EXPORT_IPMMCC:
-            if (isDer){
-                ret = encode_ipmmcc(enc->encoder, job->preencoded,
-                        &(job->origreq->data.ipcc), job->seqno,
-                        &(job->origreq->ts), res);
-#ifdef HAVE_BER_ENCODING
-            } else {
-                job->child = wandder_create_etsili_child(job->top, &(job->top->ipmmcc));
-                ret = encode_ipmmcc_ber(
-                        &(job->origreq->data.ipcc), job->seqno,
-                        &(job->origreq->ts), res, job->child, enc->encoder);
-#endif
-            }
-            break;
-        case OPENLI_EXPORT_UMTSCC:
-            if (isDer) {
-                ret = encode_umtscc(enc->encoder, job->preencoded,
-                        &(job->origreq->data.ipcc), job->seqno,
-                        &(job->origreq->ts), res);
-#ifdef HAVE_BER_ENCODING
-            }
-            else {
-                job->child = wandder_create_etsili_child(job->top, &(job->top->umtscc));
-                ret = encode_umtscc_ber(
-                        &(job->origreq->data.ipcc), job->seqno,
-                        &(job->origreq->ts), res, job->child, enc->encoder);
-
-#endif
-            }
-            break;
-        case OPENLI_EXPORT_UMTSIRI: {
-            char opid[6];
-            int opidlen = enc->shared->operatorid_len;
-
-            if (opidlen > 5) {
-                opidlen = 5;
-            }
-
-            memcpy(opid, enc->shared->operatorid, opidlen);
-            opid[opidlen] = '\0';
-
-            np = create_etsili_generic(enc->freegenerics,
-                    UMTSIRI_CONTENTS_OPERATOR_IDENTIFIER, opidlen,
-                    (uint8_t *)opid);
-            HASH_ADD_KEYPTR(hh, job->origreq->data.mobiri.customparams,
-                    &(np->itemnum), sizeof(np->itemnum), np);
-
-            if (isDer) {
-                ret = encode_umtsiri(enc->encoder, enc->freegenerics,
-                        job->preencoded, &(job->origreq->data.mobiri),
-                        job->seqno, res);
-#ifdef HAVE_BER_ENCODING
-            }
-            else{
-                job->child = wandder_create_etsili_child(job->top, &(job->top->umtsiri));
-                ret = encode_umtsiri_ber(
-                        &(job->origreq->data.mobiri), enc->freegenerics,
-                        job->seqno, res, job->child);
-#endif
-            }
-            break;
-        }
-    }
-
-    res->isDer = isDer; //encodeing typeto be stored in result
-#endif
 
     return ret;
 }

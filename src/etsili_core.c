@@ -110,7 +110,7 @@ static inline void encode_hi1_notification_body(wandder_encoder_t *encoder,
     wandder_encode_endseq(encoder);     // End Outermost Sequence
 }
 
-static inline void encode_umtscc_body(wandder_encoder_t *encoder,
+wandder_encoded_result_t *encode_umtscc_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, void *ipcontent, uint32_t iplen,
         uint8_t dir) {
 
@@ -146,7 +146,8 @@ static inline void encode_umtscc_body(wandder_encoder_t *encoder,
     wandder_encode_next_preencoded(encoder, jobarray, nextjob);
     wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, ipcontent, iplen);
-    END_ENCODED_SEQUENCE(encoder, 5);
+    END_ENCODED_SEQUENCE(encoder, 4);
+    return wandder_encode_finish(encoder);
 }
 
 static inline void encode_ipcc_body(wandder_encoder_t *encoder,
@@ -949,94 +950,6 @@ static inline void encode_etsili_pshdr(wandder_encoder_t *encoder,
 
 }
 
-wandder_encoded_result_t *encode_etsi_ipcc(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir) {
-
-
-    ENC_USEQUENCE(encoder);             // starts outermost sequence
-    encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
-    encode_ipcc_body(encoder, precomputed, ipcontents, iplen, dir);
-    return wandder_encode_finish(encoder);
-
-}
-
-wandder_encoded_result_t *encode_etsi_umtscc(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir) {
-
-    ENC_USEQUENCE(encoder);             // starts outermost sequence
-    encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
-    encode_umtscc_body(encoder, precomputed, ipcontents, iplen, dir);
-    return wandder_encode_finish(encoder);
-}
-
-wandder_encoded_result_t *encode_etsi_ipmmcc(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir) {
-
-    ENC_USEQUENCE(encoder);             // starts outermost sequence
-    encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
-    encode_ipmmcc_body(encoder, precomputed, ipcontents, iplen, dir);
-    return wandder_encode_finish(encoder);
-
-}
-
-wandder_encoded_result_t *encode_etsi_ipmmiri(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        etsili_iri_type_t iritype, struct timeval *tv, void *ipcontents,
-        uint32_t iplen) {
-
-    ENC_USEQUENCE(encoder);             // starts outermost sequence
-    encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
-    encode_ipmmiri_body(encoder, precomputed, iritype, ipcontents, iplen);
-    return wandder_encode_finish(encoder);
-}
-
-wandder_encoded_result_t *encode_etsi_ipiri(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        etsili_iri_type_t iritype, struct timeval *tv,
-        etsili_generic_t **params) {
-
-    /* Note: params is a double pointer here because we are going to
-     * use HASH_SRT(), which may change which item should be the "start"
-     * of the hashed collection. If we want that change to persist back
-     * to our caller, e.g. to properly release all of the items in the
-     * collection, we need to pass in a reference to the collection
-     * to encode_ipiri_body().
-     */
-
-    ENC_USEQUENCE(encoder);             // starts outermost sequence
-    encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
-    encode_ipiri_body(encoder, precomputed, iritype, params);
-    return wandder_encode_finish(encoder);
-
-}
-
-wandder_encoded_result_t *encode_etsi_umtsiri(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        etsili_iri_type_t iritype, struct timeval *tv,
-        etsili_generic_t *params) {
-
-    ENC_USEQUENCE(encoder);             // starts outermost sequence
-    encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
-    encode_umtsiri_body(encoder, precomputed, iritype, params);
-    return wandder_encode_finish(encoder);
-}
-
-wandder_encoded_result_t *encode_etsi_sipiri(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        etsili_iri_type_t iritype, struct timeval *tv, uint8_t *ipsrc,
-        uint8_t *ipdest, int ipfamily, void *sipcontents, uint32_t siplen) {
-
-    ENC_USEQUENCE(encoder);             // starts outermost sequence
-    encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
-    encode_sipiri_body(encoder, precomputed, iritype, ipsrc, ipdest, ipfamily,
-            sipcontents, siplen);
-    return wandder_encode_finish(encoder);
-}
-
-
 wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t seqno) {
 
@@ -1630,32 +1543,55 @@ int etsili_create_ipmmcc_template(wandder_encoder_t *encoder,
     wandder_release_encoded_result(encoder, encres);
 }
 
-int etsili_create_ipcc_template(wandder_encoder_t *encoder,
+enum {
+    CC_TEMPLATE_TYPE_IPCC,
+    CC_TEMPLATE_TYPE_UMTSCC
+};
+
+static int etsili_create_generic_cc_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
-        encoded_global_template_t *tplate) {
+        encoded_global_template_t *tplate, int templatetype) {
 
     wandder_encoded_result_t *encres;
+    const char *funcname;
+
+    if (templatetype == CC_TEMPLATE_TYPE_IPCC) {
+        funcname = "etsili_create_ipcc_template";
+    } else if (templatetype == CC_TEMPLATE_TYPE_UMTSCC) {
+        funcname = "etsili_create_umtscc_template";
+    } else {
+        funcname = "etsili_create_generic_cc_template";
+    }
 
     if (tplate == NULL) {
-        logger(LOG_INFO, "OpenLI: called etsili_create_ipcc_template with NULL template?");
+        logger(LOG_INFO, "OpenLI: called %s with NULL template?", funcname);
         return -1;
     }
 
     if (encoder == NULL) {
-        logger(LOG_INFO, "OpenLI: called etsili_create_ipcc_template with NULL encoder?");
+        logger(LOG_INFO, "OpenLI: called %s with NULL encoder?", funcname);
         return -1;
     }
 
     reset_wandder_encoder(encoder);
 
-    /* Create an encoded IPCC body -- NULL should be OK for the IPcontents,
-     * since it won't be touched by libwandder (we copy it in ourselves
-     * manually later on).  */
-    encode_ipcc_body(encoder, precomputed, NULL, ipclen, dir);
+    if (templatetype == CC_TEMPLATE_TYPE_IPCC) {
+        /* Create an encoded IPCC body -- NULL should be OK for the IPcontents,
+         * since it won't be touched by libwandder (we copy it in ourselves
+         * manually later on).  */
+        encode_ipcc_body(encoder, precomputed, NULL, ipclen, dir);
+    } else if (templatetype == CC_TEMPLATE_TYPE_UMTSCC) {
+        encode_umtscc_body(encoder, precomputed, NULL, ipclen, dir);
+    } else {
+        logger(LOG_INFO, "OpenLI: unexpected CC template type: %d",
+                templatetype);
+        return -1;
+    }
     encres = wandder_encode_finish(encoder);
 
     if (encres == NULL || encres->len == 0 || encres->encoded == NULL) {
-        logger(LOG_INFO, "OpenLI: failed to encode ETSI IPCC body for template");
+        logger(LOG_INFO, "OpenLI: failed to encode ETSI CC body in %s",
+                funcname);
         if (encres) {
             wandder_release_encoded_result(encoder, encres);
         }
@@ -1671,6 +1607,24 @@ int etsili_create_ipcc_template(wandder_encoder_t *encoder,
 
     /* Release the encoded result -- the caller will use the templated copy */
     wandder_release_encoded_result(encoder, encres);
+    return 0;
+}
+
+int etsili_create_umtscc_template(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
+        encoded_global_template_t *tplate) {
+
+    return etsili_create_generic_cc_template(encoder, precomputed, dir,
+            ipclen, tplate, CC_TEMPLATE_TYPE_UMTSCC);
+}
+
+int etsili_create_ipcc_template(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
+        encoded_global_template_t *tplate) {
+
+    return etsili_create_generic_cc_template(encoder, precomputed, dir,
+            ipclen, tplate, CC_TEMPLATE_TYPE_IPCC);
+
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
