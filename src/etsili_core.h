@@ -220,10 +220,9 @@ wandder_encoded_result_t *encode_sipiri_body(wandder_encoder_t *encoder,
         etsili_iri_type_t iritype, uint8_t *ipsrc, uint8_t *ipdest,
         int ipfamily, void *sipcontent, uint32_t siplen);
 
-wandder_encoded_result_t *encode_etsi_umtsiri(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        etsili_iri_type_t iritype, struct timeval *tv,
-        etsili_generic_t *params);
+wandder_encoded_result_t *encode_umtsiri_body(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed,
+        etsili_iri_type_t iritype, etsili_generic_t *params);
 
 wandder_encoded_result_t *encode_etsi_sipiri(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,

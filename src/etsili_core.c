@@ -381,7 +381,7 @@ static int sort_etsili_generic(etsili_generic_t *a, etsili_generic_t *b) {
     return 0;
 }
 
-static inline void encode_umtsiri_body(wandder_encoder_t *encoder,
+wandder_encoded_result_t *encode_umtsiri_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed,
         etsili_iri_type_t iritype, etsili_generic_t *params) {
 
@@ -643,7 +643,8 @@ static inline void encode_umtsiri_body(wandder_encoder_t *encoder,
         logger(LOG_INFO, "OpenLI: UMTS IRI record may be invalid...");
     }
 
-    END_ENCODED_SEQUENCE(encoder, 8);
+    END_ENCODED_SEQUENCE(encoder, 7);
+    return wandder_encode_finish(encoder);
 }
 
 

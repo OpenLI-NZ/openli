@@ -152,6 +152,16 @@ static void free_encoded_header_templates(Pvoid_t headers) {
     }
 }
 
+static void free_umtsiri_parameters(etsili_generic_t *params) {
+
+    etsili_generic_t *oldp, *tmp;
+
+    HASH_ITER(hh, params, oldp, tmp) {
+        HASH_DELETE(hh, params, oldp);
+        release_etsili_generic(oldp);
+    }
+
+}
 
 void destroy_encoder_worker(openli_encoder_t *enc) {
     int x, i, rcint;
@@ -500,6 +510,69 @@ static int encode_templated_ipmmcc(openli_encoder_t *enc,
     return 1;
 }
 
+static int encode_templated_umtsiri(openli_encoder_t *enc,
+        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res) {
+
+    wandder_encoded_result_t *body = NULL;
+    openli_mobiri_job_t *irijob =
+            (openli_mobiri_job_t *)&(job->origreq->data.mobiri);
+    etsili_generic_t *np = NULL;
+    char opid[6];
+    int opidlen = enc->shared->operatorid_len;
+
+    /* TODO maybe we could find a way to reuse this instead of creating
+     * every time?
+     */
+    if (opidlen > 5) {
+        opidlen = 5;
+    }
+
+    memcpy(opid, enc->shared->operatorid, opidlen);
+    opid[opidlen] = '\0';
+
+    np = create_etsili_generic(enc->freegenerics,
+            UMTSIRI_CONTENTS_OPERATOR_IDENTIFIER, opidlen,
+            (uint8_t *)opid);
+    HASH_ADD_KEYPTR(hh, irijob->customparams,
+            &(np->itemnum), sizeof(np->itemnum), np);
+
+    /* Not worth trying to template the body of UMTS IRIs -- way too
+     * many variables in here that may or may not change on a semi-regular
+     * basis.
+     */
+    reset_wandder_encoder(enc->encoder);
+
+    /* Assuming SIP here for now, other protocols can be supported later */
+    body = encode_umtsiri_body(enc->encoder, job->preencoded, irijob->iritype,
+            irijob->customparams);
+
+
+    if (body == NULL || body->len == 0 || body->encoded == NULL) {
+        logger(LOG_INFO, "OpenLI: failed to encode ETSI UMTSIRI body");
+        if (body) {
+            wandder_release_encoded_result(enc->encoder, body);
+        }
+        return -1;
+    }
+
+    if (create_encoded_message_body(res, hdr_tplate, body->encoded, body->len,
+            job->liid,
+            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
+        wandder_release_encoded_result(enc->encoder, body);
+        return -1;
+    }
+
+    res->ipcontents = NULL;
+    res->ipclen = 0;
+    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
+
+    wandder_release_encoded_result(enc->encoder, body);
+    free_umtsiri_parameters(irijob->customparams);
+    /* Success */
+    return 1;
+}
+
 static int encode_templated_ipmmiri(openli_encoder_t *enc,
         openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
@@ -677,6 +750,9 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             break;
         case OPENLI_EXPORT_IPMMIRI:
             ret = encode_templated_ipmmiri(enc, job, hdr_tplate, res);
+            break;
+        case OPENLI_EXPORT_UMTSIRI:
+            ret = encode_templated_umtsiri(enc, job, hdr_tplate, res);
             break;
         default:
             ret = 0;
