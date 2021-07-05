@@ -286,8 +286,6 @@ static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
     res->header.bodylen = htons(res->msgbody->len);
     res->header.intercepttype = htons(OPENLI_PROTO_RAWIP_SYNC);
     res->header.internalid = 0;
-    res->isDer = 1;         /* Must be set as DER for the forwarder to handle
-                             * correctly */
 
     return 0;
 }
@@ -379,7 +377,6 @@ static int create_encoded_message_body(openli_encoded_result_t *res,
     res->header.bodylen = htons(res->msgbody->len);
     res->header.internalid = 0;
 
-    res->isDer = 1;
     return 0;
 }
 
@@ -862,10 +859,6 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         result[batch].destid = job.origreq->destid;
         result[batch].origreq = job.origreq;
         result[batch].encodedby = enc->workerid;
-
-#ifdef HAVE_BER_ENCODING
-        result[batch].child = job.child;
-#endif
 
         batch++;
     }

@@ -195,22 +195,14 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     buf->buftail += sizeof(res->header);
     added += sizeof(res->header);
 
-    if (res->isDer){
-        if (enclen > 0) {
-            memcpy(buf->buftail, res->msgbody->encoded, enclen);
-            buf->buftail += enclen;
-        }
-
-        if (res->ipclen > 0) {
-            memcpy(buf->buftail, res->ipcontents, res->ipclen);
-            buf->buftail += res->ipclen;
-        }
+    if (enclen > 0) {
+        memcpy(buf->buftail, res->msgbody->encoded, enclen);
+        buf->buftail += enclen;
     }
-    else {
-        memcpy(buf->buftail, res->msgbody->encoded, res->msgbody->len);
-        buf->buftail += res->msgbody->len;
-        //BER has the payload already encoded into the result, DER leaves the payload out untill now
-        //BER has a set of trailing ending octets (number varies by msg type)
+
+    if (res->ipclen > 0) {
+        memcpy(buf->buftail, res->ipcontents, res->ipclen);
+        buf->buftail += res->ipclen;
     }
     added += res->msgbody->len;
 

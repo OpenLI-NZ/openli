@@ -41,16 +41,4 @@ enum {
     OPENLI_IPMMIRI_H323,
 };
 
-int encode_ipmmiri(wandder_encoder_t *encoder,
-        wandder_encode_job_t *preencoded, openli_ipmmiri_job_t *job,
-        uint32_t seqno,
-        openli_encoded_result_t *res, struct timeval *ts);
-
-#ifdef HAVE_BER_ENCODING
-int encode_ipmmiri_ber(
-        openli_ipmmiri_job_t *job, uint32_t seqno, struct timeval *tv,
-        openli_encoded_result_t *res, wandder_etsili_child_t *child, 
-        wandder_encoder_t *encoder);
-#endif
-
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
