@@ -80,14 +80,14 @@ typedef struct openli_ipmmiri_job {
     uint8_t ipsrc[16];
     uint8_t ipdest[16];
     int ipfamily;
-} PACKED openli_ipmmiri_job_t;
+}  openli_ipmmiri_job_t;
 
 typedef struct openli_mobiri_job {
     char *liid;
     uint32_t cin;
     etsili_iri_type_t iritype;
     etsili_generic_t *customparams;
-} PACKED openli_mobiri_job_t;
+}  openli_mobiri_job_t;
 
 typedef struct openli_ipiri_job {
     char *liid;
@@ -105,7 +105,7 @@ typedef struct openli_ipiri_job {
     etsili_iri_type_t iritype;
     etsili_generic_t *customparams;
 
-} PACKED openli_ipiri_job_t;
+}  openli_ipiri_job_t;
 
 typedef struct openli_rawip_job {
     char *liid;
@@ -113,7 +113,7 @@ typedef struct openli_rawip_job {
     uint32_t ipclen;
     uint32_t seqno;
     uint32_t cin;
-} PACKED openli_rawip_job_t;
+}  openli_rawip_job_t;
 
 enum {
     OPENLI_IPIRI_STANDARD,
@@ -151,7 +151,7 @@ struct openli_export_recv {
         openli_mobiri_job_t mobiri;
         openli_rawip_job_t rawip;
     } data;
-} PACKED;
+};
 
 int publish_openli_msg(void *pubsock, openli_export_recv_t *msg);
 void free_published_message(openli_export_recv_t *msg);

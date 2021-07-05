@@ -30,12 +30,37 @@
 #include <time.h>
 #include <pthread.h>
 #include <libwandder.h>
+#include <Judy.h>
 
 #include "collector_publish.h"
 #include "collector.h"
 #include "netcomms.h"
 #include "etsili_core.h"
 #include "export_shared.h"
+
+enum {
+    TEMPLATE_TYPE_IPCC_DIRFROM,
+    TEMPLATE_TYPE_IPCC_DIRTO,
+    TEMPLATE_TYPE_IPCC_DIROTHER,
+
+    TEMPLATE_TYPE_IPMMCC_DIRFROM_IP_RTP,
+    TEMPLATE_TYPE_IPMMCC_DIRTO_IP_RTP,
+    TEMPLATE_TYPE_IPMMCC_DIROTHER_IP_RTP,
+
+    TEMPLATE_TYPE_UMTSCC_DIRFROM,
+    TEMPLATE_TYPE_UMTSCC_DIRTO,
+    TEMPLATE_TYPE_UMTSCC_DIROTHER,
+
+};
+
+typedef struct saved_encoding_templates {
+
+    char *key;
+    Pvoid_t headers;
+    Pvoid_t ccpayloads;
+    Pvoid_t iripayloads;
+
+} saved_encoding_templates_t;
 
 void destroy_encoder_worker(openli_encoder_t *enc);
 void *run_encoder_worker(void *encstate);

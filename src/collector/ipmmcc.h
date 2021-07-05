@@ -30,22 +30,11 @@
 #include <libtrace.h>
 #include "collector.h"
 
-int encode_ipmmcc(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, openli_ipcc_job_t *job,
-        uint32_t seqno, struct timeval *tv, openli_encoded_result_t *msg);
-
 int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip_t *ip, uint32_t rem, colthread_local_t *loc);
 
 int ip6mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         libtrace_ip6_t *ip6, uint32_t rem, colthread_local_t *loc);
-
-#ifdef HAVE_BER_ENCODING
-int encode_ipmmcc_ber(
-        openli_ipcc_job_t *job, uint32_t seqno, struct timeval *tv,
-        openli_encoded_result_t *msg, wandder_etsili_child_t *child, 
-        wandder_encoder_t *encoder);
-#endif
 
 #endif
 

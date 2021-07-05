@@ -164,37 +164,52 @@ typedef struct wandder_etsipshdr_data {
 
 } wandder_etsipshdr_data_t;
 
-wandder_encoded_result_t *encode_etsi_ipcc(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir);
+typedef struct encoded_header_template {
+    uint32_t key;
+    uint8_t *header;
+    uint16_t header_len;
+    uint8_t seqno_size;
+    uint8_t tssec_size;
+    uint8_t tsusec_size;
+    uint8_t *seqno_ptr;
+    uint8_t *tssec_ptr;
+    uint8_t *tsusec_ptr;
 
-wandder_encoded_result_t *encode_etsi_ipmmcc(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir);
+} encoded_header_template_t;
 
-wandder_encoded_result_t *encode_etsi_umtscc(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        struct timeval *tv, void *ipcontents, uint32_t iplen, uint8_t dir);
+typedef struct encoded_cc_template {
+    uint8_t *content_ptr;
+    uint16_t content_size;
 
-wandder_encoded_result_t *encode_etsi_ipmmiri(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        etsili_iri_type_t iritype, struct timeval *tv, void *ipcontents,
-        uint32_t iplen);
+    uint8_t *cc_wrap;
+    uint16_t cc_wrap_len;
 
-wandder_encoded_result_t *encode_etsi_ipiri(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        etsili_iri_type_t iritype, struct timeval *tv,
+} encoded_cc_template_t;
+
+typedef struct encoded_global_template {
+    uint32_t key;
+    uint8_t cctype;
+
+    encoded_cc_template_t cc_content;
+} encoded_global_template_t;
+
+
+wandder_encoded_result_t *encode_umtscc_body(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, void *ipcontent, uint32_t iplen,
+        uint8_t dir);
+
+wandder_encoded_result_t *encode_ipiri_body(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, etsili_iri_type_t iritype,
         etsili_generic_t **params);
 
-wandder_encoded_result_t *encode_etsi_umtsiri(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        etsili_iri_type_t iritype, struct timeval *tv,
-        etsili_generic_t *params);
+wandder_encoded_result_t *encode_sipiri_body(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed,
+        etsili_iri_type_t iritype, uint8_t *ipsrc, uint8_t *ipdest,
+        int ipfamily, void *sipcontent, uint32_t siplen);
 
-wandder_encoded_result_t *encode_etsi_sipiri(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        etsili_iri_type_t iritype, struct timeval *tv, uint8_t *ipsrc,
-        uint8_t *ipdest, int ipfamily, void *sipcontents, uint32_t siplen);
+wandder_encoded_result_t *encode_umtsiri_body(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed,
+        etsili_iri_type_t iritype, etsili_generic_t *params);
 
 wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t seqno);
@@ -220,6 +235,24 @@ void etsili_preencode_static_fields(wandder_encode_job_t *pendarray,
 void etsili_clear_preencoded_fields(wandder_encode_job_t *pendarray);
 void etsili_copy_preencoded(wandder_encode_job_t *dest,
         wandder_encode_job_t *src);
+
+
+int etsili_create_umtscc_template(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
+        encoded_global_template_t *tplate);
+int etsili_update_ipmmcc_template(encoded_global_template_t *tplate,
+        uint8_t *ipcontent, uint16_t ipclen);
+int etsili_create_ipmmcc_template(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, uint8_t dir, uint8_t *ipcontent,
+        uint16_t ipclen, encoded_global_template_t *tplate);
+int etsili_create_header_template(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
+        struct timeval *tv, encoded_header_template_t *tplate);
+int etsili_update_header_template(encoded_header_template_t *tplate,
+        int64_t seqno, struct timeval *tv);
+int etsili_create_ipcc_template(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
+        encoded_global_template_t *tplate);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

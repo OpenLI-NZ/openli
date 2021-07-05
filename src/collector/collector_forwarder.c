@@ -57,15 +57,7 @@ static inline void free_encoded_result(openli_encoded_result_t *res) {
     if (res->msgbody) {
 
         if (res->msgbody->encoded) {
-#ifdef HAVE_BER_ENCODING
-            if (!res->child) {
-                //if child exists, then msgbody->encoded is owned by child
-                //dont free so it can be reused
-                free(res->msgbody->encoded);
-            }
-#else
             free(res->msgbody->encoded);
-#endif
         }
         free(res->msgbody);
     }
@@ -74,11 +66,6 @@ static inline void free_encoded_result(openli_encoded_result_t *res) {
         free_published_message(res->origreq);
     }
 
-#ifdef HAVE_BER_ENCODING
-    if (res->child){
-        wandder_free_child(res->child);
-    }
-#endif
 }
 
 static int add_new_destination(forwarding_thread_data_t *fwd,
@@ -265,10 +252,11 @@ static void remove_reorderers(forwarding_thread_data_t *fwd, char *liid,
         Pvoid_t *reorderer_array) {
 
     PWord_t jval;
+    PWord_t pval;
     uint8_t index[256];
     int_reorderer_t *reord;
-    stored_result_t *stored, *tmp;
     int err;
+    Word_t seqindex;
 
     index[0] = '\0';
     JSLF(jval, *reorderer_array, index);
@@ -280,11 +268,19 @@ static void remove_reorderers(forwarding_thread_data_t *fwd, char *liid,
             continue;
         }
         JSLD(err, *reorderer_array, index);
-        HASH_ITER(hh, reord->pending, stored, tmp) {
-            HASH_DELETE(hh, reord->pending, stored);
-            free_encoded_result(&(stored->res));
-            free(stored);
+
+        seqindex = 0;
+        JLF(pval, reord->pending, seqindex);
+        while (pval) {
+            openli_encoded_result_t *res;
+
+            res = (openli_encoded_result_t *)(*pval);
+            free_encoded_result(res);
+            free(res);
+            JLN(pval, reord->pending, seqindex);
         }
+        JLFA(err, reord->pending);
+
         free(reord->liid);
         free(reord->key);
         free(reord);
@@ -361,9 +357,11 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
         export_dest_t *med, openli_encoded_result_t *res) {
 
     PWord_t jval;
+    PWord_t pval;
     int_reorderer_t *reord;
     Pvoid_t *reorderer;
-    stored_result_t *stored, *tmp;
+    openli_encoded_result_t *stored;
+    int rcint;
 
     if (res->origreq->type == OPENLI_EXPORT_IPCC ||
             res->origreq->type == OPENLI_EXPORT_IPMMCC ||
@@ -399,13 +397,17 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
     }
 
     if (res->seqno != reord->expectedseqno) {
+        openli_encoded_result_t *tosave = calloc(1,
+                sizeof(openli_encoded_result_t));
+        memcpy(tosave, res, sizeof(openli_encoded_result_t));
 
-        stored = (stored_result_t *)calloc(1, sizeof(stored_result_t));
-        memcpy(&(stored->res), res, sizeof(openli_encoded_result_t));
+        JLI(pval, reord->pending, res->seqno);
+        if (pval == NULL) {
+            logger(LOG_INFO, "OpenLI: unable to create stored intercept record due to lack of memory");
+            exit(-3);
+        }
 
-        HASH_ADD_KEYPTR(hh, reord->pending, &(stored->res.seqno),
-                sizeof(stored->res.seqno), stored);
-
+        *pval = (Word_t)tosave;
         return 0;
     }
 
@@ -419,25 +421,24 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
     reord->expectedseqno = res->seqno + 1;
 
-    HASH_ITER(hh, reord->pending, stored, tmp) {
-        if (stored->res.seqno != reord->expectedseqno) {
-            break;
-        }
+    JLG(pval, reord->pending, reord->expectedseqno);
+    while (pval != NULL) {
+        stored = (openli_encoded_result_t *)(*pval);
 
-        HASH_DELETE(hh, reord->pending, stored);
+        JLD(rcint, reord->pending, reord->expectedseqno);
 
-        if (append_message_to_buffer(&(med->buffer), &(stored->res), 0) == 0) {
+        if (append_message_to_buffer(&(med->buffer), stored, 0) == 0) {
             logger(LOG_INFO,
                     "OpenLI: forced to drop mediator %u because we cannot buffer any more records for it -- please investigate asap!",
                     med->mediatorid);
             remove_destination(fwd, med);
             return -1;
         }
-        reord->expectedseqno = stored->res.seqno + 1;
+        reord->expectedseqno = stored->seqno + 1;
 
-        free_encoded_result(&(stored->res));
+        free_encoded_result(stored);
         free(stored);
-
+        JLG(pval, reord->pending, reord->expectedseqno);
     }
 
     return 1;
@@ -661,11 +662,11 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
 
 static int drain_incoming_etsi(forwarding_thread_data_t *fwd) {
 
-    int x, encoders_over = 0;
-    openli_encoded_result_t res;
+    int x, encoders_over = 0, i, msgcnt;
+    openli_encoded_result_t res[MAX_ENCODED_RESULT_BATCH];
 
     do {
-        x = zmq_recv(fwd->zmq_pullressock, &res, sizeof(res),
+        x = zmq_recv(fwd->zmq_pullressock, res, sizeof(res),
                 ZMQ_DONTWAIT);
         if (x < 0 && errno != EAGAIN) {
             return -1;
@@ -675,20 +676,30 @@ static int drain_incoming_etsi(forwarding_thread_data_t *fwd) {
             continue;
         }
 
-        if (res.liid == NULL && res.destid == 0) {
-            logger(LOG_INFO, "encoder %d has ceased encoding", encoders_over);
-            encoders_over ++;
+        if (x % sizeof(openli_encoded_result_t) != 0) {
+            logger(LOG_INFO, "forwarder received odd sized message (%d bytes)?",
+                    x);
+            return -1;
         }
+        msgcnt = x / sizeof(openli_encoded_result_t);
 
-        free_encoded_result(&res);
+        for (i = 0; i < msgcnt; i++) {
+
+            if (res[i].liid == NULL && res[i].destid == 0) {
+                logger(LOG_INFO, "encoder %d has ceased encoding", encoders_over);
+                encoders_over ++;
+            }
+
+            free_encoded_result(&(res[i]));
+        }
     } while (encoders_over < fwd->encoders);
 
     return 1;
 }
 
 static int receive_incoming_etsi(forwarding_thread_data_t *fwd) {
-    int x, processed;
-    openli_encoded_result_t res;
+    int x, processed, i, msgcnt;
+    openli_encoded_result_t res[MAX_ENCODED_RESULT_BATCH];
 
     processed = 0;
     do {
@@ -705,10 +716,19 @@ static int receive_incoming_etsi(forwarding_thread_data_t *fwd) {
             break;
         }
 
-        if (handle_encoded_result(fwd, &res) < 0) {
+        if (x % sizeof(openli_encoded_result_t) != 0) {
+            logger(LOG_INFO, "forwarder received odd sized message (%d bytes)?",
+                    x);
             return -1;
         }
-        processed ++;
+        msgcnt = x / sizeof(openli_encoded_result_t);
+
+        for (i = 0; i < msgcnt; i++) {
+            if (handle_encoded_result(fwd, &(res[i])) < 0) {
+                return -1;
+            }
+            processed ++;
+        }
     } while (x > 0 && processed < 100000);
     return 1;
 }

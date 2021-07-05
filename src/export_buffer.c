@@ -35,13 +35,14 @@
 
 #define BUFFER_ALLOC_SIZE (1024 * 1024 * 50)
 #define BUFFER_WARNING_THRESH (1024 * 1024 * 1024)
-#define BUF_OFFSET_FREQUENCY (1024 * 32)
+#define BUF_OFFSET_FREQUENCY (1024 * 256)
 
 void init_export_buffer(export_buffer_t *buf) {
     buf->bufhead = NULL;
     buf->buftail = NULL;
     buf->alloced = 0;
     buf->partialfront = 0;
+    buf->partialrem = 0;
     buf->deadfront = 0;
     buf->nextwarn = BUFFER_WARNING_THRESH;
     buf->record_offsets = NULL;
@@ -58,6 +59,10 @@ uint64_t get_buffered_amount(export_buffer_t *buf) {
     return (buf->buftail - (buf->bufhead + buf->deadfront));
 }
 
+void reset_export_buffer(export_buffer_t *buf) {
+    buf->partialfront = 0;
+    buf->partialrem = 0;
+}
 
 static inline void dump_buffer_offsets(export_buffer_t *buf) {
 
@@ -171,20 +176,14 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     uint32_t enclen = res->msgbody->len - res->ipclen;
     uint64_t bufused = buf->buftail - buf->bufhead;
     uint64_t spaceleft = buf->alloced - bufused;
-
-    int liidlen;
-
-    if (res->liid == NULL) {
-        return 0;
-    }
-
-    liidlen = strlen(res->liid);
+    uint32_t added = 0;
+    int rcint;
 
     if (bufused == 0) {
         buf->partialfront = beensent;
     }
 
-    while (spaceleft < res->msgbody->len + sizeof(res->header) + liidlen + 2) {
+    while (spaceleft < res->msgbody->len + sizeof(res->header)) {
         /* Add some space to the buffer */
         spaceleft = extend_buffer(buf);
         if (spaceleft == 0) {
@@ -194,32 +193,24 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
 
     memcpy(buf->buftail, &res->header, sizeof(res->header));
     buf->buftail += sizeof(res->header);
+    added += sizeof(res->header);
 
-    if (res->liid) {
-        uint16_t l = htons(liidlen);
-        memcpy(buf->buftail, &l, sizeof(uint16_t));
-        memcpy(buf->buftail + 2, res->liid, liidlen);
-        buf->buftail += (liidlen + 2);
+    if (enclen > 0) {
+        memcpy(buf->buftail, res->msgbody->encoded, enclen);
+        buf->buftail += enclen;
     }
 
-    if (res->isDer){
-        if (enclen > 0) {
-            memcpy(buf->buftail, res->msgbody->encoded, enclen);
-            buf->buftail += enclen;
-        }
-
-        if (res->ipclen > 0) {
-            memcpy(buf->buftail, res->ipcontents, res->ipclen);
-            buf->buftail += res->ipclen;
-        }
+    if (res->ipclen > 0) {
+        memcpy(buf->buftail, res->ipcontents, res->ipclen);
+        buf->buftail += res->ipclen;
     }
-    else {
-        memcpy(buf->buftail, res->msgbody->encoded, res->msgbody->len);
-        buf->buftail += res->msgbody->len;
-        //BER has the payload already encoded into the result, DER leaves the payload out untill now
-        //BER has a set of trailing ending octets (number varies by msg type)
-    }
+    added += res->msgbody->len;
 
+    if (buf->since_last_saved_offset + added >= BUF_OFFSET_FREQUENCY) {
+        J1S(rcint, buf->record_offsets, bufused);
+        buf->since_last_saved_offset = 0;
+    }
+    buf->since_last_saved_offset += added;
     return (buf->buftail - buf->bufhead);
 }
 
@@ -281,7 +272,7 @@ static inline void post_transmit(export_buffer_t *buf) {
     if (rem < buf->alloced / 2 && buf->alloced > 10 * BUFFER_ALLOC_SIZE) {
 
         resize = ((rem / BUFFER_ALLOC_SIZE) + 1) * BUFFER_ALLOC_SIZE;
-        slide_buffer(buf, buf->bufhead + buf->deadfront + buf->partialfront,
+        slide_buffer(buf, buf->bufhead + buf->deadfront,
                 rem);
         newbuf = (uint8_t *)realloc(buf->bufhead, resize);
         buf->buftail = newbuf + rem;
@@ -290,7 +281,7 @@ static inline void post_transmit(export_buffer_t *buf) {
         buf->deadfront = 0;
     } else if (buf->alloced - (buf->buftail - buf->bufhead) <
             0.25 * buf->alloced && buf->deadfront >= 0.25 * buf->alloced) {
-        slide_buffer(buf, buf->bufhead + buf->deadfront + buf->partialfront,
+        slide_buffer(buf, buf->bufhead + buf->deadfront,
                 rem);
         buf->buftail = buf->bufhead + rem;
         assert(buf->buftail < buf->bufhead + buf->alloced);
@@ -298,6 +289,7 @@ static inline void post_transmit(export_buffer_t *buf) {
     }
 
     buf->partialfront = 0;
+    buf->partialrem = 0;
 }
 
 int transmit_buffered_records(export_buffer_t *buf, int fd,
@@ -307,21 +299,26 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
     uint8_t *bhead = buf->bufhead + buf->deadfront;
     uint64_t offset = buf->partialfront;
     int ret, rcint;
-    Word_t index;
+    Word_t index = 0;
 
-    sent = (buf->buftail - (bhead + offset));
+    if (buf->partialrem > 0) {
+        sent = buf->partialrem;
+    } else {
+        sent = (buf->buftail - (bhead + offset));
 
-    if (sent > bytelimit) {
-        index = bytelimit + 1;
-        J1P(rcint, buf->record_offsets, index);
-        if (rcint == 0) {
-            return 0;
+        if (sent > bytelimit) {
+            index = bytelimit + 1 + buf->deadfront;
+            J1P(rcint, buf->record_offsets, index);
+            if (rcint == 0) {
+                assert(rcint != 0);
+                return 0;
+            }
+            sent = index - buf->deadfront;
         }
-        sent = index;
+        buf->partialrem = sent;
     }
 
     if (sent != 0) {
-
         if (ssl != NULL) {
             while (1) {
                 ret = SSL_write(ssl, bhead + offset, (int)sent);
@@ -352,6 +349,7 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         } else if (ret < sent) {
             /* Partial send, move partialfront ahead by whatever we did send. */
             buf->partialfront += (uint32_t)ret;
+            buf->partialrem -= (uint32_t)ret;
             return ret;
         }
         buf->deadfront += ((uint32_t)ret + buf->partialfront);
@@ -369,11 +367,10 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
     uint64_t sent = 0;
     uint64_t rem = 0;
     uint8_t *bhead = buf->bufhead + buf->deadfront;
-    uint64_t offset = buf->partialfront;
     int ret;
     ii_header_t *header = NULL;
 
-    sent = (buf->buftail - (bhead + offset));
+    sent = (buf->buftail - (bhead));
 
     if (sent > bytelimit) {
         sent = bytelimit;
@@ -383,7 +380,7 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
         amqp_bytes_t message_bytes;
         amqp_basic_properties_t props;
         message_bytes.len = sent;
-        message_bytes.bytes = bhead + offset;
+        message_bytes.bytes = bhead;
 
         props._flags = AMQP_BASIC_DELIVERY_MODE_FLAG;
         props.delivery_mode = 2;        /* persistent mode */
@@ -405,7 +402,7 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
             ret = sent;
         }
 
-        buf->deadfront += ((uint32_t)ret + buf->partialfront);
+        buf->deadfront += ((uint32_t)ret);
     }
 
     post_transmit(buf);

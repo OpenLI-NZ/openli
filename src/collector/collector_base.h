@@ -41,6 +41,8 @@
 #include "export_buffer.h"
 #include "openli_tls.h"
 
+#define MAX_ENCODED_RESULT_BATCH 50
+
 typedef struct export_dest {
     int failmsg;
     int fd;
@@ -167,23 +169,15 @@ typedef struct seqtracker_thread_data {
     exporter_intercept_state_t *intercepts;
     removed_intercept_t *removedints;
     uint8_t encoding_method;
-#if HAVE_BER_ENCODING
-    wandder_encoder_ber_t *enc_ber;
-#endif
 
 } seqtracker_thread_data_t;
-
-typedef struct stored_result {
-    openli_encoded_result_t res;
-    UT_hash_handle hh;
-} stored_result_t;
 
 typedef struct intercept_reorderer {
 
     char *liid;
     char *key;
     uint32_t expectedseqno;
-    stored_result_t *pending;
+    Pvoid_t pending;
 
 } int_reorderer_t;
 
@@ -235,6 +229,9 @@ typedef struct encoder_state {
     wandder_encoder_t *encoder;
     etsili_generic_freelist_t *freegenerics;
 
+    Pvoid_t saved_intercept_templates;
+    Pvoid_t saved_global_templates;
+
     int seqtrackers;
     int forwarders;
     uint8_t halted;
@@ -242,11 +239,8 @@ typedef struct encoder_state {
 
 typedef struct encoder_job {
     wandder_encode_job_t *preencoded;
-#ifdef HAVE_BER_ENCODING
-    wandder_etsili_top_t *top;
-    wandder_etsili_child_t *child;
-#endif
     uint32_t seqno;
+    int64_t cin;
     char *cinstr;
     openli_export_recv_t *origreq;
     char *liid;
