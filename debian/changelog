@@ -19,7 +19,7 @@ openli (1.0.11-1) unstable; urgency=medium
   * Fix issue where collector memory usage would be extremely high when under
     load.
 
- -- Shane Alcock <shane.alcock@waikato.ac.nz>  Mon, 5 Jul 2021 15:41:48 +1200
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Wed, 21 Jul 2021 10:56:13 +1200
 
 openli (1.0.10-1) unstable; urgency=medium
 
