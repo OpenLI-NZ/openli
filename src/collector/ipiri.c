@@ -38,7 +38,7 @@
 #include "ipiri.h"
 #include "internetaccess.h"
 
-static void free_ipiri_parameters(etsili_generic_t *params) {
+void free_ipiri_parameters(etsili_generic_t *params) {
 
     etsili_generic_t *oldp, *tmp;
 
@@ -83,8 +83,7 @@ static inline void add_another_target_identifier(internetaccess_ip_t *nextip,
 
 }
 
-static inline void encode_ipiri_shared(wandder_encoder_t *encoder,
-        etsili_generic_freelist_t *freegenerics,
+void prepare_ipiri_parameters(etsili_generic_freelist_t *freegenerics,
         openli_ipiri_job_t *job,
         etsili_iri_type_t *iritype_p,
         etsili_generic_t **params_p) {
@@ -260,47 +259,9 @@ static inline void encode_ipiri_shared(wandder_encoder_t *encoder,
                 np);
     }
 
-    reset_wandder_encoder(encoder);
-
     *iritype_p = iritype;
     *params_p = params;
 
-}
-
-int encode_ipiri(wandder_encoder_t *encoder,
-        etsili_generic_freelist_t *freegenerics,
-        wandder_encode_job_t *precomputed,
-        openli_ipiri_job_t *job, uint32_t seqno,
-        openli_encoded_result_t *res) {
-
-    
-    etsili_generic_t *params = NULL;
-    etsili_iri_type_t iritype;
-    struct timeval tv;
-    int ret = 0;
-    uint32_t liidlen = precomputed[OPENLI_PREENCODE_LIID].vallen;
-
-    encode_ipiri_shared(encoder,
-        freegenerics,
-        job,
-        &iritype,
-        &params);
-
-    gettimeofday(&tv, NULL);
-
-    memset(res, 0, sizeof(openli_encoded_result_t));
-    res->msgbody = encode_etsi_ipiri(encoder, precomputed,
-            (int64_t)(job->cin), (int64_t)seqno, iritype, &tv, &params);
-
-    res->ipcontents = NULL;
-    res->ipclen = 0;
-    res->header.magic = htonl(OPENLI_PROTO_MAGIC);
-    res->header.bodylen = htons(res->msgbody->len + liidlen + sizeof(uint16_t));
-    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
-    res->header.internalid = 0;
-
-    free_ipiri_parameters(params);
-    return ret;
 }
 
 int ipiri_create_id_printable(char *idstr, int length, ipiri_id_t *iriid) {
@@ -340,61 +301,6 @@ void ipiri_free_id(ipiri_id_t *iriid) {
         free(iriid->content.printable);
     }
 }
-
-#ifdef HAVE_BER_ENCODING
-int encode_ipiri_ber(
-        openli_ipiri_job_t *job,
-        etsili_generic_freelist_t *freegenerics,
-        uint32_t seqno, struct timeval *tv,
-        openli_encoded_result_t *res,
-        wandder_etsili_child_t *child, 
-        wandder_encoder_t *encoder) {
-
-    memset(res, 0, sizeof(openli_encoded_result_t));
-
-    etsili_generic_t *params = NULL;
-    etsili_iri_type_t iritype;
-    struct timeval current_tv;
-    int ret = 0;
-    uint32_t liidlen = (uint32_t)((size_t)child->owner->preencoded[WANDDER_PREENCODE_LIID_LEN]);
-
-    encode_ipiri_shared(encoder,
-        freegenerics,
-        job,
-        &iritype,
-        &params);
-
-    gettimeofday(&current_tv, NULL);
-
-    memset(res, 0, sizeof(openli_encoded_result_t));
-
-    wandder_encode_etsi_ipiri_ber (
-            (int64_t)(job->cin),
-            (int64_t)seqno,
-            &current_tv,
-            params,
-            iritype,
-            child);
-
-    res->msgbody = malloc(sizeof(wandder_encoded_result_t));
-    res->msgbody->encoder = NULL;
-    res->msgbody->encoded = child->buf;
-    res->msgbody->len = child->len;
-    res->msgbody->alloced = child->alloc_len;
-    res->msgbody->next = NULL;
-
-    res->ipcontents = NULL;
-    res->ipclen = 0;
-    
-    res->header.magic = htonl(OPENLI_PROTO_MAGIC);
-    res->header.bodylen = htons(res->msgbody->len + liidlen + sizeof(uint16_t));
-    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
-    res->header.internalid = 0;
-
-    free_ipiri_parameters(params);
-    return ret;
-}
-#endif
 
 static inline void finish_ipiri_job(collector_sync_t *sync,
         access_session_t *sess, ipintercept_t *ipint,

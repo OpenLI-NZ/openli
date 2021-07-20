@@ -155,28 +155,6 @@ A collector only requires a small amount of configuration: a username and
 password that can be used to authenticate against a local RabbitMQ instance,
 and a flag to inform the collector that RabbitMQ output is enabled.
 
-### Encoding Methods
-OpenLI supports two methods for encoding the intercepted records and meta-data
-so that they conform to the ETSI standard. The first method is DER encoding,
-whereby all fields are encoded in the most space-efficient way. The advantage
-of DER is that there is only one "correct" result for encoding a given input,
-so it is less likely to be incompatible with what the receiver is expecting.
-However, this encoding method is slower and therefore may limit your
-maximum interception capability.
-
-The second method is BER encoding, which allows us to encode numeric values
-using a fixed-width field, e.g. every integer consumes eight bytes, regardless
-of whether it is a small number or a large one. This is less space-efficient
-and relies on the receiver being prepared for fields that consume more space
-than they might need, but is much faster for OpenLI to encode because each
-record will have a relatively static structure.
-
-OpenLI versions prior to 1.0.9 supported DER encoding only, and this is the
-default encoding method as it has been well tested in production deployments.
-BER has the potential to be much more efficient, but we recommend doing some
-specific testing with your local LEAs before switching over to BER as not all
-LEA equipment may be able to decode it.
-
 ### Target Identification for VOIP Intercepts
 By default, OpenLI does NOT trust the "From:" field in SIP packets when it is
 determining whether a SIP packet has been sent by an intercept target. This
@@ -209,8 +187,6 @@ The basic option keys are:
 * interceptpointid  -- set the interception point ID
 * seqtrackerthreads -- set the number of threads to use for sequence number
                        tracking (defaults to 1).
-* encoding          -- choose the encoding method to use, either `ber` or
-                       `der` (defaults to `der`).
 * encoderthreads    -- set the number of threads to use for encoding ETSI
                        records (defaults to 2).
 * forwardingthreads -- set the number of threads to use for forwarding

@@ -78,10 +78,10 @@ int xmit_handover(med_epoll_ev_t *mev) {
             wandder_release_encoded_result(NULL, ho->ho_state->pending_ka);
             ho->ho_state->pending_ka = NULL;
 
-/*
+            /*
             logger(LOG_INFO, "successfully sent keep alive to %s:%s HI%d",
                     ho->ipstr, ho->portstr, ho->handover_type);
-*/
+            */
             /* Start the timer for the response */
             if (start_mediator_timer(ho->aliverespev,
 					ho->ho_state->kawait) == -1) {
@@ -133,13 +133,13 @@ int xmit_handover(med_epoll_ev_t *mev) {
         return 0;
     }
 
-    /* Send some of our buffered records, but no more than 16,000 bytes at
+    /* Send some of our buffered records, but no more than 1MB at
      * a time -- we need to go back to our epoll loop to handle other events
      * rather than getting stuck trying to send massive amounts of data in
      * one go.
      */
     if ((ret = transmit_buffered_records(&(ho->ho_state->buf), mev->fd,
-			16000, NULL)) == -1) {
+			(1024 * 1024), NULL)) == -1) {
         return -1;
     }
 
@@ -247,6 +247,11 @@ void disconnect_handover(handover_t *ho) {
         ho->ho_state->incoming = NULL;
     }
 
+    /* Reset any connection-specific state in the export buffer for this
+     * handover.
+     */
+    reset_export_buffer(&(ho->ho_state->buf));
+
     /* This handover is officially disconnected, so no more logging for it
      * until / unless it reconnects.
      */
@@ -293,11 +298,10 @@ int disable_handover_writing(handover_t *ho) {
 	int ret = 0;
 	uint32_t events = EPOLLRDHUP | EPOLLIN ;
 
-	pthread_mutex_lock(&(ho->ho_state->ho_mutex));
-
-	if (ho->ho_state->outenabled) {
-		ret = modify_mediator_fdevent(ho->outev, events);
-	}
+	if (!ho->ho_state->outenabled) {
+        return 0;
+    }
+    ret = modify_mediator_fdevent(ho->outev, events);
 
 	if (ret == -1) {
 		logger(LOG_INFO,
@@ -308,7 +312,6 @@ int disable_handover_writing(handover_t *ho) {
 		ho->ho_state->outenabled = 0;
 	}
 
-	pthread_mutex_unlock(&(ho->ho_state->ho_mutex));
 	return ret;
 }
 
@@ -324,11 +327,11 @@ int enable_handover_writing(handover_t *ho) {
 	int ret = 0;
 	uint32_t events = EPOLLRDHUP | EPOLLIN | EPOLLOUT;
 
-	pthread_mutex_lock(&(ho->ho_state->ho_mutex));
+    if (ho->ho_state->outenabled) {
+        return 0;
+    }
 
-	if (!ho->ho_state->outenabled) {
-		ret = modify_mediator_fdevent(ho->outev, events);
-	}
+	ret = modify_mediator_fdevent(ho->outev, events);
 
 	if (ret == -1) {
 		logger(LOG_INFO,
@@ -338,7 +341,6 @@ int enable_handover_writing(handover_t *ho) {
 	} else {
 		ho->ho_state->outenabled = 1;
 	}
-	pthread_mutex_unlock(&(ho->ho_state->ho_mutex));
 	return ret;
 }
 

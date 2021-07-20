@@ -1022,23 +1022,14 @@ static int global_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "encoding") == 0) {
 
-/** Don't let users enable BER just yet, it's still incomplete.
- *
-  * Still TODO:
-  *   BER encoding for IPIRIs, UMTSIRIs and UMTSCCs
-  */
-#if 1
+        /* We're back to only having one encoding method now, but
+         * allow users to choose "BER" without breaking anything.
+         */
         if (strcasecmp(value->data.scalar.value, "BER") == 0) {
-#ifdef HAVE_BER_ENCODING
-            glob->encoding_method = OPENLI_ENCODING_BER;
-#else
-            logger(LOG_INFO, "BER encoding not supported by your version of libwandder, falling back to DER");
             glob->encoding_method = OPENLI_ENCODING_DER;
-#endif
         } else {
             glob->encoding_method = OPENLI_ENCODING_DER;
         }
-#endif
     }
 
     if (key->type == YAML_SCALAR_NODE &&

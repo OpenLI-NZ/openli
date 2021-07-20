@@ -11,7 +11,7 @@ export SOURCENAME=`echo ${GITHUB_REF##*/} | cut -d '-' -f 1`
 apt-get update
 apt-get install -y equivs devscripts dpkg-dev quilt curl apt-transport-https \
     apt-utils ssl-cert ca-certificates gnupg lsb-release debhelper git \
-    pkg-config
+    pkg-config sed
 
 DISTRO=$(lsb_release -sc)
 
@@ -21,8 +21,23 @@ curl -1sLf 'https://dl.cloudsmith.io/public/wand/libtrace/cfg/setup/bash.deb.sh'
 curl -1sLf 'https://dl.cloudsmith.io/public/wand/openli/cfg/setup/bash.deb.sh' | bash
 
 case ${DISTRO} in
-        jessie | xenial | stretch )
+        xenial )
                 curl -1sLf 'https://dl.cloudsmith.io/public/wand/dpdk-wand/cfg/setup/bash.deb.sh' | bash
+                apt-get install -y debhelper dh-systemd -t xenial-backports
+                sed -i 's/debhelper-compat (= 12)/debhelper (>= 10)/' debian/control
+                sed -i 's/--with auto/--with=systemd --with auto/' debian/rules
+                echo "10" > debian/compat
+        ;;
+
+        stretch )
+                curl -1sLf 'https://dl.cloudsmith.io/public/wand/dpdk-wand/cfg/setup/bash.deb.sh' | bash
+                sed -i 's/debhelper-compat (= 12)/debhelper (>= 10)/' debian/control
+                sed -i 's/--with auto/--with=systemd --with auto/' debian/rules
+                echo "10" > debian/compat
+        ;;
+
+        bionic )
+                apt-get install -y debhelper -t bionic-backports
         ;;
 esac
 

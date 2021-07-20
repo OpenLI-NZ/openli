@@ -30,6 +30,7 @@
 #include "config.h"
 #include <libwandder.h>
 #include <libwandder_etsili.h>
+#include <Judy.h>
 #include "netcomms.h"
 #include "collector/collector_publish.h"
 
@@ -43,11 +44,7 @@ typedef struct encoder_result {
     char *liid;
     char *cinstr;
     uint8_t encodedby;
-    uint8_t isDer;
     openli_export_recv_t *origreq;
-#ifdef HAVE_BER_ENCODING
-    wandder_etsili_child_t *child;
-#endif
 } PACKED openli_encoded_result_t;
 
 
@@ -58,12 +55,17 @@ typedef struct export_buffer {
 
     uint32_t deadfront;
     uint32_t partialfront;
+    uint32_t partialrem;
 
     uint64_t nextwarn;
+
+    Pvoid_t record_offsets;
+    uint32_t since_last_saved_offset;
 } export_buffer_t;
 
 
 void init_export_buffer(export_buffer_t *buf);
+void reset_export_buffer(export_buffer_t *buf);
 void release_export_buffer(export_buffer_t *buf);
 uint64_t get_buffered_amount(export_buffer_t *buf);
 uint64_t append_message_to_buffer(export_buffer_t *buf,

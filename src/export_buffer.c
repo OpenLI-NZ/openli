@@ -35,17 +35,23 @@
 
 #define BUFFER_ALLOC_SIZE (1024 * 1024 * 50)
 #define BUFFER_WARNING_THRESH (1024 * 1024 * 1024)
+#define BUF_OFFSET_FREQUENCY (1024 * 256)
 
 void init_export_buffer(export_buffer_t *buf) {
     buf->bufhead = NULL;
     buf->buftail = NULL;
     buf->alloced = 0;
     buf->partialfront = 0;
+    buf->partialrem = 0;
     buf->deadfront = 0;
     buf->nextwarn = BUFFER_WARNING_THRESH;
+    buf->record_offsets = NULL;
+    buf->since_last_saved_offset = 0;
 }
 
 void release_export_buffer(export_buffer_t *buf) {
+    Word_t rc;
+    J1FA(rc, buf->record_offsets);
     free(buf->bufhead);
 }
 
@@ -53,6 +59,49 @@ uint64_t get_buffered_amount(export_buffer_t *buf) {
     return (buf->buftail - (buf->bufhead + buf->deadfront));
 }
 
+void reset_export_buffer(export_buffer_t *buf) {
+    buf->partialfront = 0;
+    buf->partialrem = 0;
+}
+
+static inline void dump_buffer_offsets(export_buffer_t *buf) {
+
+    Word_t index = 0;
+    int rcint;
+
+    J1F(rcint, buf->record_offsets, index);
+    fprintf(stderr, "Offsets: ");
+    while(rcint) {
+        fprintf(stderr, "%lu ", index);
+        J1N(rcint, buf->record_offsets, index);
+    }
+    fprintf(stderr, "\n");
+}
+
+static inline int slide_buffer(export_buffer_t *buf, uint8_t *start,
+        uint64_t amount) {
+
+    uint64_t slide = start - buf->bufhead;
+    Word_t index = 0;
+    int rcint, x;
+
+    if (amount == 0) {
+        J1FA(rcint, buf->record_offsets);
+        return 0;
+    }
+
+    memmove(buf->bufhead, start, amount);
+
+    J1F(rcint, buf->record_offsets, index);
+    while (rcint) {
+        J1U(x, buf->record_offsets, index);
+        if (index >= slide) {
+            J1S(x, buf->record_offsets, index - slide);
+        }
+        J1N(rcint, buf->record_offsets, index);
+    }
+    return 0;
+}
 
 static inline uint64_t extend_buffer(export_buffer_t *buf) {
 
@@ -61,7 +110,7 @@ static inline uint64_t extend_buffer(export_buffer_t *buf) {
     uint64_t bufused = buf->buftail - (buf->bufhead + buf->deadfront);
 
     if (buf->deadfront > 0) {
-        memmove(buf->bufhead, buf->bufhead + buf->deadfront, bufused);
+        slide_buffer(buf, buf->bufhead + buf->deadfront, bufused);
     }
 
     space = (uint8_t *)realloc(buf->bufhead, buf->alloced + BUFFER_ALLOC_SIZE);
@@ -95,6 +144,7 @@ uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
 
     uint64_t bufused = buf->buftail - (buf->bufhead);
     uint64_t spaceleft = buf->alloced - bufused;
+    int rcint;
 
     if (bufused == 0) {
         buf->partialfront = beensent;
@@ -109,6 +159,12 @@ uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
 
     memcpy(buf->buftail, (void *)pdustart, pdulen);
 
+    if (buf->since_last_saved_offset + pdulen >= BUF_OFFSET_FREQUENCY) {
+        J1S(rcint, buf->record_offsets, bufused);
+        buf->since_last_saved_offset = 0;
+    }
+
+    buf->since_last_saved_offset += pdulen;
     buf->buftail += pdulen;
     return (buf->buftail - buf->bufhead);
 
@@ -120,20 +176,14 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     uint32_t enclen = res->msgbody->len - res->ipclen;
     uint64_t bufused = buf->buftail - buf->bufhead;
     uint64_t spaceleft = buf->alloced - bufused;
-
-    int liidlen;
-
-    if (res->liid == NULL) {
-        return 0;
-    }
-
-    liidlen = strlen(res->liid);
+    uint32_t added = 0;
+    int rcint;
 
     if (bufused == 0) {
         buf->partialfront = beensent;
     }
 
-    while (spaceleft < res->msgbody->len + sizeof(res->header) + liidlen + 2) {
+    while (spaceleft < res->msgbody->len + sizeof(res->header)) {
         /* Add some space to the buffer */
         spaceleft = extend_buffer(buf);
         if (spaceleft == 0) {
@@ -143,32 +193,24 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
 
     memcpy(buf->buftail, &res->header, sizeof(res->header));
     buf->buftail += sizeof(res->header);
+    added += sizeof(res->header);
 
-    if (res->liid) {
-        uint16_t l = htons(liidlen);
-        memcpy(buf->buftail, &l, sizeof(uint16_t));
-        memcpy(buf->buftail + 2, res->liid, liidlen);
-        buf->buftail += (liidlen + 2);
+    if (enclen > 0) {
+        memcpy(buf->buftail, res->msgbody->encoded, enclen);
+        buf->buftail += enclen;
     }
 
-    if (res->isDer){
-        if (enclen > 0) {
-            memcpy(buf->buftail, res->msgbody->encoded, enclen);
-            buf->buftail += enclen;
-        }
-
-        if (res->ipclen > 0) {
-            memcpy(buf->buftail, res->ipcontents, res->ipclen);
-            buf->buftail += res->ipclen;
-        }
+    if (res->ipclen > 0) {
+        memcpy(buf->buftail, res->ipcontents, res->ipclen);
+        buf->buftail += res->ipclen;
     }
-    else {
-        memcpy(buf->buftail, res->msgbody->encoded, res->msgbody->len);
-        buf->buftail += res->msgbody->len;
-        //BER has the payload already encoded into the result, DER leaves the payload out untill now
-        //BER has a set of trailing ending octets (number varies by msg type)
-    }
+    added += res->msgbody->len;
 
+    if (buf->since_last_saved_offset + added >= BUF_OFFSET_FREQUENCY) {
+        J1S(rcint, buf->record_offsets, bufused);
+        buf->since_last_saved_offset = 0;
+    }
+    buf->since_last_saved_offset += added;
     return (buf->buftail - buf->bufhead);
 }
 
@@ -217,23 +259,66 @@ int transmit_heartbeat(int fd, SSL *ssl) {
     return (int)(sizeof(hbeat));
 }
 
+static inline void post_transmit(export_buffer_t *buf) {
+
+    uint64_t rem = 0;
+    uint8_t *newbuf = NULL;
+    uint64_t resize = 0;
+
+    assert(buf->buftail >= buf->bufhead + buf->deadfront);
+    rem = (buf->buftail - (buf->bufhead + buf->deadfront));
+
+    /* Consider shrinking buffer if it is now way too large */
+    if (rem < buf->alloced / 2 && buf->alloced > 10 * BUFFER_ALLOC_SIZE) {
+
+        resize = ((rem / BUFFER_ALLOC_SIZE) + 1) * BUFFER_ALLOC_SIZE;
+        slide_buffer(buf, buf->bufhead + buf->deadfront,
+                rem);
+        newbuf = (uint8_t *)realloc(buf->bufhead, resize);
+        buf->buftail = newbuf + rem;
+        buf->bufhead = newbuf;
+        buf->alloced = resize;
+        buf->deadfront = 0;
+    } else if (buf->alloced - (buf->buftail - buf->bufhead) <
+            0.25 * buf->alloced && buf->deadfront >= 0.25 * buf->alloced) {
+        slide_buffer(buf, buf->bufhead + buf->deadfront,
+                rem);
+        buf->buftail = buf->bufhead + rem;
+        assert(buf->buftail < buf->bufhead + buf->alloced);
+        buf->deadfront = 0;
+    }
+
+    buf->partialfront = 0;
+    buf->partialrem = 0;
+}
+
 int transmit_buffered_records(export_buffer_t *buf, int fd,
         uint64_t bytelimit, SSL *ssl) {
 
     uint64_t sent = 0;
-    uint64_t rem = 0;
     uint8_t *bhead = buf->bufhead + buf->deadfront;
     uint64_t offset = buf->partialfront;
-    int ret;
+    int ret, rcint;
+    Word_t index = 0;
 
-    sent = (buf->buftail - (bhead + offset));
+    if (buf->partialrem > 0) {
+        sent = buf->partialrem;
+    } else {
+        sent = (buf->buftail - (bhead + offset));
 
-    if (sent > bytelimit) {
-        sent = bytelimit;
+        if (sent > bytelimit) {
+            index = bytelimit + 1 + buf->deadfront;
+            J1P(rcint, buf->record_offsets, index);
+            if (rcint == 0) {
+                assert(rcint != 0);
+                return 0;
+            }
+            sent = index - buf->deadfront;
+        }
+        buf->partialrem = sent;
     }
 
     if (sent != 0) {
-
         if (ssl != NULL) {
             while (1) {
                 ret = SSL_write(ssl, bhead + offset, (int)sent);
@@ -264,38 +349,13 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         } else if (ret < sent) {
             /* Partial send, move partialfront ahead by whatever we did send. */
             buf->partialfront += (uint32_t)ret;
+            buf->partialrem -= (uint32_t)ret;
             return ret;
         }
         buf->deadfront += ((uint32_t)ret + buf->partialfront);
     }
 
-    assert(buf->buftail >= buf->bufhead + buf->deadfront);
-    rem = (buf->buftail - (buf->bufhead + buf->deadfront));
-
-    /* Consider shrinking buffer if it is now way too large */
-    if (rem < buf->alloced / 2 && buf->alloced > 10 * BUFFER_ALLOC_SIZE) {
-
-        uint8_t *newbuf = NULL;
-        uint64_t resize = 0;
-        resize = ((rem / BUFFER_ALLOC_SIZE) + 1) * BUFFER_ALLOC_SIZE;
-
-        memmove(buf->bufhead, bhead + sent + offset, rem);
-        newbuf = (uint8_t *)realloc(buf->bufhead, resize);
-        buf->buftail = newbuf + rem;
-        buf->bufhead = newbuf;
-        buf->alloced = resize;
-        buf->deadfront = 0;
-    } else if (buf->alloced - (buf->buftail - buf->bufhead) <
-            0.25 * buf->alloced && buf->deadfront >= 0.25 * buf->alloced) {
-        if (rem > 0) {
-            memmove(buf->bufhead, bhead + sent + offset, rem);
-        }
-        buf->buftail = buf->bufhead + rem;
-        assert(buf->buftail < buf->bufhead + buf->alloced);
-        buf->deadfront = 0;
-    }
-
-    buf->partialfront = 0;
+    post_transmit(buf);
     return sent;
 }
 
@@ -307,22 +367,20 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
     uint64_t sent = 0;
     uint64_t rem = 0;
     uint8_t *bhead = buf->bufhead + buf->deadfront;
-    uint64_t offset = buf->partialfront;
     int ret;
     ii_header_t *header = NULL;
 
-    sent = (buf->buftail - (bhead + offset));
+    sent = (buf->buftail - (bhead));
 
     if (sent > bytelimit) {
         sent = bytelimit;
     }
 
     if (sent != 0) {
-       
         amqp_bytes_t message_bytes;
         amqp_basic_properties_t props;
         message_bytes.len = sent;
-        message_bytes.bytes = bhead + offset;
+        message_bytes.bytes = bhead;
 
         props._flags = AMQP_BASIC_DELIVERY_MODE_FLAG;
         props.delivery_mode = 2;        /* persistent mode */
@@ -332,8 +390,8 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
                 channel,
                 exchange,
                 routing_key,
-                0, 
-                0, 
+                0,
+                0,
                 &props,
                 message_bytes);
 
@@ -344,36 +402,10 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
             ret = sent;
         }
 
-        buf->deadfront += ((uint32_t)ret + buf->partialfront);
+        buf->deadfront += ((uint32_t)ret);
     }
 
-    assert(buf->buftail >= buf->bufhead + buf->deadfront);
-    rem = (buf->buftail - (buf->bufhead + buf->deadfront));
-
-    /* Consider shrinking buffer if it is now way too large */
-    if (rem < buf->alloced / 2 && buf->alloced > 10 * BUFFER_ALLOC_SIZE) {
-
-        uint8_t *newbuf = NULL;
-        uint64_t resize = 0;
-        resize = ((rem / BUFFER_ALLOC_SIZE) + 1) * BUFFER_ALLOC_SIZE;
-
-        memmove(buf->bufhead, bhead + sent + offset, rem);
-        newbuf = (uint8_t *)realloc(buf->bufhead, resize);
-        buf->buftail = newbuf + rem;
-        buf->bufhead = newbuf;
-        buf->alloced = resize;
-        buf->deadfront = 0;
-    } else if (buf->alloced - (buf->buftail - buf->bufhead) <
-            0.25 * buf->alloced && buf->deadfront >= 0.25 * buf->alloced) {
-        if (rem > 0) {
-            memmove(buf->bufhead, bhead + sent + offset, rem);
-        }
-        buf->buftail = buf->bufhead + rem;
-        assert(buf->buftail < buf->bufhead + buf->alloced);
-        buf->deadfront = 0;
-    }
-
-    buf->partialfront = 0;
+    post_transmit(buf);
     return sent;
 }
 

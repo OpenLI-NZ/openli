@@ -1,3 +1,26 @@
+openli (1.0.11-1) unstable; urgency=medium
+
+  * Improved collector encoding performance by saving and reusing
+    previously-encoded records that have the exact same layout.
+  * Improved encoding performance at high packet rates by sending encoded
+    records to the forwarding thread in batches.
+  * Mediators will now actively avoid splitting a record across multiple send
+    calls wherever possible.
+  * Fixed bug where a collector would simply stop forwarding records for an
+    LIID on to the mediator for no apparent reason, especially when more
+    encoder threads were being used.
+  * Fixed bug where encoding jobs would be lost without being seen by the
+    encoder thread.
+  * Fixed performance-related issue where an overwhelmed mediator would never
+    send data to its handovers.
+  * Fixed crash in mediator after a handover is disconnected for failing to
+    send a keep alive response.
+  * BER encoding optimization has been removed.
+  * Fix issue where collector memory usage would be extremely high when under
+    load.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Wed, 21 Jul 2021 10:56:13 +1200
+
 openli (1.0.10-1) unstable; urgency=medium
 
   * Intercepts can now be configured with a start and/or end time (unix
