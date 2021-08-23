@@ -36,6 +36,10 @@ case ${DISTRO} in
                 echo "10" > debian/compat
         ;;
 
+        bullseye )
+                sed -i 's/ dh-systemd (>=1.5),//' debian/control
+        ;;
+
         bionic )
                 apt-get install -y debhelper -t bionic-backports
         ;;
