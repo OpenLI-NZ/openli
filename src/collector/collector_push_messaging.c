@@ -749,6 +749,7 @@ void handle_change_voip_intercept(libtrace_thread_t *t, colthread_local_t *loc,
         rtpstreaminf_t *tochange) {
 
     rtpstreaminf_t *rtp;
+    char *tmp;
 
     if (tochange->streamkey == NULL) {
         return;
@@ -762,6 +763,16 @@ void handle_change_voip_intercept(libtrace_thread_t *t, colthread_local_t *loc,
                 tochange->streamkey);
         return;
     }
+
+    tmp = rtp->common.authcc;
+    rtp->common.authcc = tochange->common.authcc;
+    rtp->common.authcc_len = tochange->common.authcc_len;
+    tochange->common.authcc = tmp;
+
+    tmp = rtp->common.delivcc;
+    rtp->common.delivcc = tochange->common.delivcc;
+    rtp->common.delivcc_len = tochange->common.delivcc_len;
+    tochange->common.delivcc = tmp;
 
     rtp->common.tostart_time = tochange->common.tostart_time;
     rtp->common.toend_time = tochange->common.toend_time;

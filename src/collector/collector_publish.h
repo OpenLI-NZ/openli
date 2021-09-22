@@ -54,7 +54,7 @@ enum {
     OPENLI_EXPORT_UMTSCC = 16,
     OPENLI_EXPORT_UMTSIRI = 17,
     OPENLI_EXPORT_RAW_SYNC = 18,
-
+    OPENLI_EXPORT_INTERCEPT_CHANGED = 19,
 };
 
 /* This structure is also used for IPMMCCs since they require the same

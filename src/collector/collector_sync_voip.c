@@ -209,6 +209,7 @@ static void push_time_update_active_voipstreams(collector_sync_voip_t *sync,
         libtrace_message_queue_t *q, voipintercept_t *vint) {
 
     openli_pushed_t msg;
+
     char *streamdup;
     rtpstreaminf_t *cin = NULL;
 
@@ -227,6 +228,7 @@ static void push_time_update_active_voipstreams(collector_sync_voip_t *sync,
 
         libtrace_message_queue_put(q, (void *)(&msg));
     }
+
 }
 
 static void push_halt_active_voipstreams(collector_sync_voip_t *sync,
@@ -290,6 +292,14 @@ static void push_voip_intercept_update_to_threads(collector_sync_voip_t *sync,
         voipintercept_t *vint) {
 
     sync_sendq_t *sendq, *tmp;
+    openli_export_recv_t *expmsg;
+
+    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
+    expmsg->data.cept.liid = strdup(vint->common.liid);
+    expmsg->data.cept.authcc = strdup(vint->common.authcc);
+    expmsg->data.cept.delivcc = strdup(vint->common.delivcc);
+    publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], expmsg);
 
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
         push_time_update_active_voipstreams(sync, sendq->q, vint);
@@ -1353,7 +1363,7 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
     voipintercept_t *vint, tomod;
-    int timechanged = 0;
+    int changed = 0;
 
     if (decode_voipintercept_modify(intmsg, msglen, &tomod) == -1) {
         if (sync->log_bad_instruct) {
@@ -1376,8 +1386,6 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
 
     sync->log_bad_instruct = 1;
 
-    /* TODO apply any changes to authcc or delivcc */
-
     if (tomod.options != vint->options) {
         if (tomod.options & (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
             logger(LOG_INFO,
@@ -1392,16 +1400,33 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
 
     if (tomod.common.tostart_time != vint->common.tostart_time ||
             tomod.common.toend_time != vint->common.toend_time) {
-        timechanged = 1;
+        changed = 1;
+        logger(LOG_INFO,
+                "OpenLI: VOIP intercept %s has changed start / end times -- now %lu, %lu", tomod.common.liid, tomod.common.tostart_time, tomod.common.toend_time);
+    }
+
+    if (strcmp(tomod.common.delivcc, vint->common.delivcc) != 0 ||
+            strcmp(tomod.common.authcc, vint->common.authcc) != 0) {
+        char *tmp;
+
+        changed = 1;
+        tmp = vint->common.authcc;
+        vint->common.authcc = tomod.common.authcc;
+        vint->common.authcc_len = tomod.common.authcc_len;
+        tomod.common.authcc = tmp;
+
+        tmp = vint->common.delivcc;
+        vint->common.delivcc = tomod.common.delivcc;
+        vint->common.delivcc_len = tomod.common.delivcc_len;
+        tomod.common.delivcc = tmp;
+
     }
 
     vint->options = tomod.options;
     vint->common.tostart_time = tomod.common.tostart_time;
     vint->common.toend_time = tomod.common.toend_time;
 
-    if (timechanged) {
-        logger(LOG_INFO,
-                "OpenLI: VOIP intercept %s has changed start / end times -- now %lu, %lu", tomod.common.liid, tomod.common.tostart_time, tomod.common.toend_time);
+    if (changed) {
         push_voip_intercept_update_to_threads(sync, vint);
     }
 

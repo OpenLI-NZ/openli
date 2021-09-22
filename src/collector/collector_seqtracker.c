@@ -151,6 +151,24 @@ static inline void remove_preencoded(seqtracker_thread_data_t *seqdata,
 
 }
 
+static inline preencode_etsi_fields(seqtracker_thread_data_t *seqdata,
+        exporter_intercept_state_t *intstate) {
+
+    etsili_intercept_details_t intdetails;
+
+    intdetails.liid = intstate->details.liid;
+    intdetails.authcc = intstate->details.authcc;
+    intdetails.delivcc = intstate->details.delivcc;
+
+    intdetails.operatorid = seqdata->colident->operatorid;
+    intdetails.networkelemid = seqdata->colident->networkelemid;
+    intdetails.intpointid = seqdata->colident->intpointid;
+
+    intstate->preencoded = calloc(OPENLI_PREENCODE_LAST,
+            sizeof(wandder_encode_job_t));
+    etsili_preencode_static_fields(intstate->preencoded, &intdetails);
+}
+
 
 static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         published_intercept_msg_t *cept) {
@@ -191,42 +209,18 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
                 intstate->details.liid_len, intstate);
     }
 
-    intdetails.liid = cept->liid;
-    intdetails.authcc = cept->authcc;
-    intdetails.delivcc = cept->delivcc;
-
-    intdetails.operatorid = seqdata->colident->operatorid;
-    intdetails.networkelemid = seqdata->colident->networkelemid;
-    intdetails.intpointid = seqdata->colident->intpointid;
-
-    if(seqdata->encoding_method == OPENLI_ENCODING_DER){
-        intstate->preencoded = calloc(OPENLI_PREENCODE_LAST,
-                sizeof(wandder_encode_job_t));
-        etsili_preencode_static_fields(intstate->preencoded, &intdetails);
-    }
+    preencode_etsi_fields(seqdata, intstate);
 }
 
 static void reconfigure_intercepts(seqtracker_thread_data_t *seqdata) {
 
     exporter_intercept_state_t *intstate, *tmp;
-    etsili_intercept_details_t intdetails;
 
     logger(LOG_INFO, "OpenLI configuration reloaded -- updating pre-encoded intercept fields");
 
     HASH_ITER(hh, seqdata->intercepts, intstate, tmp) {
         remove_preencoded(seqdata, intstate);
-
-        intdetails.liid = intstate->details.liid;
-        intdetails.authcc = intstate->details.authcc;
-        intdetails.delivcc = intstate->details.delivcc;
-
-        intdetails.operatorid = seqdata->colident->operatorid;
-        intdetails.networkelemid = seqdata->colident->networkelemid;
-        intdetails.intpointid = seqdata->colident->intpointid;
-
-        intstate->preencoded = calloc(OPENLI_PREENCODE_LAST,
-                sizeof(wandder_encode_job_t));
-        etsili_preencode_static_fields(intstate->preencoded, &intdetails);
+        preencode_etsi_fields(seqdata, intstate);
     }
 
 }
@@ -239,6 +233,38 @@ static inline void free_intercept_state(seqtracker_thread_data_t *seqdata,
 
     free_cinsequencing(intstate);
     free(intstate);
+}
+
+static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
+        published_intercept_msg_t *msg) {
+
+    exporter_intercept_state_t *intstate;
+    HASH_FIND(hh, seqdata->intercepts, msg->liid, strlen(msg->liid), intstate);
+    etsili_intercept_details_t intdetails;
+
+    if (!intstate) {
+        logger(LOG_INFO, "OpenLI collector: tracker thread was told to modify intercept LIID %s, but it is not a valid ID?",
+                msg->liid);
+        return -1;
+    }
+
+    if (intstate->details.authcc) {
+        free(intstate->details.authcc);
+    }
+    intstate->details.authcc = msg->authcc;
+
+    if (intstate->details.delivcc) {
+        free(intstate->details.delivcc);
+    }
+    intstate->details.delivcc = msg->delivcc;
+
+    remove_preencoded(seqdata, intstate);
+    preencode_etsi_fields(seqdata, intstate);
+
+    if (msg->liid) {
+        free(msg->liid);
+    }
+    return 0;
 }
 
 static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
@@ -392,6 +418,11 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
 					remove_tracked_intercept(seqdata, &(job->data.cept));
 					free(job);
 					break;
+
+                case OPENLI_EXPORT_INTERCEPT_CHANGED:
+                    modify_tracked_intercept(seqdata, &(job->data.cept));
+                    free(job);
+                    break;
 
                 case OPENLI_EXPORT_IPMMCC:
                 case OPENLI_EXPORT_IPMMIRI:
