@@ -151,7 +151,7 @@ static inline void remove_preencoded(seqtracker_thread_data_t *seqdata,
 
 }
 
-static inline preencode_etsi_fields(seqtracker_thread_data_t *seqdata,
+static inline void preencode_etsi_fields(seqtracker_thread_data_t *seqdata,
         exporter_intercept_state_t *intstate) {
 
     etsili_intercept_details_t intdetails;
@@ -174,7 +174,6 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         published_intercept_msg_t *cept) {
 
     exporter_intercept_state_t *intstate;
-    etsili_intercept_details_t intdetails;
 
     /* If this LIID already exists, we'll need to replace it */
     HASH_FIND(hh, seqdata->intercepts, cept->liid, strlen(cept->liid),
@@ -191,6 +190,7 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate->details.liid_len = strlen(cept->liid);
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
+        intstate->version ++;
 
     } else {
 
@@ -204,6 +204,7 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
         intstate->cinsequencing = NULL;
+        intstate->version = 0;
 
         HASH_ADD_KEYPTR(hh, seqdata->intercepts, intstate->details.liid,
                 intstate->details.liid_len, intstate);
@@ -221,6 +222,7 @@ static void reconfigure_intercepts(seqtracker_thread_data_t *seqdata) {
     HASH_ITER(hh, seqdata->intercepts, intstate, tmp) {
         remove_preencoded(seqdata, intstate);
         preencode_etsi_fields(seqdata, intstate);
+        intstate->version ++;
     }
 
 }
@@ -260,6 +262,7 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
 
     remove_preencoded(seqdata, intstate);
     preencode_etsi_fields(seqdata, intstate);
+    intstate->version ++;
 
     if (msg->liid) {
         free(msg->liid);
@@ -279,6 +282,9 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
         return -1;
     }
 
+    /* TODO All encoders need to know that they should clear all templates
+     * for this particular intercept, somehow?
+     */
 /*
     logger(LOG_INFO, "OpenLI collector: tracker thread %d removed intercept %s",
             seqdata->trackerid, msg->liid);
@@ -348,6 +354,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 	job.liid = strdup(liid);
     job.cinstr = strdup(cinseq->cin_string);
     job.cin = (int64_t)cin;
+    job.cept_version = intstate->version;
 
 	if (recvd->type == OPENLI_EXPORT_IPMMCC ||
 			recvd->type == OPENLI_EXPORT_IPCC ||
