@@ -421,6 +421,12 @@ void complete_update_request(void *cls, struct MHD_Connection *conn,
     *con_cls = NULL;
 }
 
+#define VALID_DIGEST_CHAR(x) \
+    ((x >= 'a' && x <= 'f') || (x >= '0' && x <= '9'))
+
+#define CHAR_TO_VALUE(x) \
+    ((x >= 'a' && x <= 'f') ? (x - 'a' + 10) : (x - '0'))
+
 #ifdef HAVE_SQLCIPHER
 static unsigned char *lookup_user_digest(provision_state_t *provstate,
         char *username, unsigned char *digestres) {
@@ -429,6 +435,7 @@ static unsigned char *lookup_user_digest(provision_state_t *provstate,
     sqlite3_stmt *res;
     char *sql = "SELECT username, digesthash FROM authcreds where username = ?";
     unsigned char *returning = NULL;
+    const unsigned char *hashtext;
 
     rc = sqlite3_prepare_v2(provstate->authdb, sql, -1, &res, 0);
     if (rc != SQLITE_OK) {
@@ -443,7 +450,24 @@ static unsigned char *lookup_user_digest(provision_state_t *provstate,
 
     step = sqlite3_step(res);
     if (step == SQLITE_ROW) {
-        memcpy(digestres, sqlite3_column_blob(res, 1), 16);
+        int i;
+        hashtext = sqlite3_column_blob(res, 1);
+
+        if (strlen(hashtext) < 32) {
+            logger(LOG_INFO, "OpenLI: Invalid digest hash in database for user %s", username);
+            return NULL;
+        }
+
+        for (i = 0; i < 16; i++) {
+            if (!(VALID_DIGEST_CHAR(hashtext[i * 2])) ||
+                    !(VALID_DIGEST_CHAR(hashtext[(i * 2) + 1]))) {
+                logger(LOG_INFO, "OpenLI: Invalid digest hash contents in database for user %s", username);
+                return NULL;
+            }
+            digestres[i] = (CHAR_TO_VALUE(hashtext[i * 2]) << 4) +
+                    (CHAR_TO_VALUE(hashtext[(i * 2) + 1]));
+        }
+
         returning = digestres;
     }
 
