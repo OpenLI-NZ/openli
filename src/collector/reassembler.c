@@ -345,6 +345,25 @@ void destroy_tcp_reassemble_stream(tcp_reassemble_stream_t *stream) {
     free(stream);
 }
 
+/**
+ * Given received SIP content in a buffer, attempt to find the end of the
+ * the first SIP message in the buffer.
+ *
+ * Due to TCP segmentation, aggregation or general IP fragmentation, we
+ * cannot guarantee that each packet we receive corresponds to one entire
+ * SIP message. There may be multiple messages in the packet, or a message
+ * may be spread across multiple packets.
+ *
+ * This function will determine if there is a complete SIP message in the
+ * given buffer and return a pointer to the first byte of the FOLLOWING
+ * message.
+ *
+ * @param content   The buffer containing received SIP payload
+ * @param contlen   The amount of SIP payload in the buffer
+ *
+ * @return NULL if there is no complete SIP message in the buffer, otherwise
+ * a pointer to the byte AFTER the end of the first complete SIP message.
+ */
 static uint8_t *find_sip_message_end(uint8_t *content, uint16_t contlen) {
 
     uint8_t *crlf;
@@ -352,30 +371,54 @@ static uint8_t *find_sip_message_end(uint8_t *content, uint16_t contlen) {
     char clenstr[12];
     unsigned long int clenval;
 
+    /* First, look for a double \r\n to indicate the end of the SIP header */
     crlf = memmem(content, contlen, SIP_END_SEQUENCE, strlen(SIP_END_SEQUENCE));
     if (crlf == NULL) {
         return NULL;
     }
     crlf += strlen(SIP_END_SEQUENCE);
 
+    /* Some SIP messages, e.g. INVITE, will also have SDP content after the
+     * SIP header. The Content-Length field in the SIP header will tell us
+     * how much SDP content there is going to be.
+     */
     clengthfield = memmem(content, contlen, SIP_CONTENT_LENGTH_FIELD,
             strlen(SIP_CONTENT_LENGTH_FIELD));
     if (clengthfield == NULL) {
         return NULL;
     }
 
+    /* The value of Content-Length is an integer encoded as ASCII text,
+     * sandwiched between "Content-Length: " and "\r\n"
+     */
     clengthstart = clengthfield + strlen(SIP_CONTENT_LENGTH_FIELD);
 
     clengthend = memmem(clengthstart, contlen - (clengthstart - content),
             SINGLE_CRLF, strlen(SINGLE_CRLF));
 
+    if (clengthend == NULL) {
+        return NULL;
+    }
+
+    /* Copy the value into a nulled blob of memory, so that it will be
+     * null-terminated and can be parsed using strtoul to get the number
+     * as an integer.
+     */
     assert(clengthend - clengthstart < 12);
     memset(clenstr, 0, 12);
     memcpy(clenstr, (char *)clengthstart, clengthend - clengthstart);
     clenval = strtoul(clenstr, NULL, 10);
 
-    assert(crlf + clenval <= content + contlen);
+    /* Our message is only complete if we have both the SIP header and any
+     * SDP payload in the buffer.
+     */
 
+    if (crlf + clenval > content + contlen) {
+        /* Some message payload is in an upcoming segment, so return NULL to
+         * let the caller know that the message is incomplete.
+         */
+        return NULL;
+    }
     return crlf + clenval;
 }
 
