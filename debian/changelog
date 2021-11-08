@@ -1,3 +1,18 @@
+openli (1.0.12-1) unstable; urgency=medium
+
+  * Fixed bugs where changes to certain intercept properties
+    were not being applied to the encoded ETSI header fields.
+  * Fixed bug where the 'username' property for a static IP
+    intercept was not being encoded as the ETSI targetUsername
+    field.
+  * Fixed bug where digest hashes added to the provisioner auth
+    database using our helper script were not readable by the
+    provisioner itself.
+  * Fixed crash when processing a SIP message that is spread across
+    multiple packets.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Mon, 8 Nov 2021 14:08:42 +1300
+
 openli (1.0.11-1) unstable; urgency=medium
 
   * Improved collector encoding performance by saving and reusing
