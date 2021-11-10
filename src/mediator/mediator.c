@@ -1323,7 +1323,6 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             }
             if (ret == -1) {
                 handover_t *ho = (handover_t *)(mev->state);
-                logger(LOG_INFO, "fail %u", ev->events & EPOLLIN);
                 disconnect_handover(ho);
             }
             break;

@@ -1044,6 +1044,9 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     MODIFY_STRING_MEMBER(vint->common.authcc, found->common.authcc, &changed);
     found->common.authcc_len  = strlen(found->common.authcc);
 
+    MODIFY_STRING_MEMBER(vint->common.delivcc, found->common.delivcc, &changed);
+    found->common.delivcc_len  = strlen(found->common.delivcc);
+
     MODIFY_STRING_MEMBER(vint->common.targetagency, found->common.targetagency,
             &agencychanged);
 
@@ -1218,6 +1221,10 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     MODIFY_STRING_MEMBER(ipint->common.authcc, found->common.authcc, &changed);
     found->common.authcc_len  = strlen(found->common.authcc);
+    MODIFY_STRING_MEMBER(ipint->common.delivcc, found->common.delivcc,
+            &changed);
+    found->common.delivcc_len  = strlen(found->common.delivcc);
+
     MODIFY_STRING_MEMBER(ipint->username, found->username, &changed);
     found->username_len = strlen(found->username);
 

@@ -733,7 +733,8 @@ static encoded_header_template_t *encode_templated_psheader(
     tvsec_len = DERIVE_INTEGER_LENGTH(job->origreq->ts.tv_sec);
     tvusec_len = DERIVE_INTEGER_LENGTH(job->origreq->ts.tv_usec);
 
-    key = (seqlen << 16) + (tvsec_len << 8) + tvusec_len;
+    key = (job->cept_version << 24) + (seqlen << 16) +
+            (tvsec_len << 8) + tvusec_len;
 
     JLI(pval, t_set->headers, key);
     if (*pval == 0) {

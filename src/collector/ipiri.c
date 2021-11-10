@@ -359,6 +359,7 @@ int create_ipiri_job_from_iprange(collector_sync_t *sync,
 
     prefix_t *prefix = NULL;
     openli_export_recv_t *irimsg;
+    char *uname = NULL;
 
     prefix = ascii2prefix(0, staticsess->rangestr);
     if (prefix == NULL) {
@@ -368,8 +369,12 @@ int create_ipiri_job_from_iprange(collector_sync_t *sync,
         return -1;
     }
 
-    irimsg = _create_ipiri_job_basic(sync, ipint, "unknownuser",
-            staticsess->cin);
+    if (ipint->username == NULL) {
+        uname = (char *)"unknownuser";
+    } else {
+        uname = ipint->username;
+    }
+    irimsg = _create_ipiri_job_basic(sync, ipint, uname, staticsess->cin);
 
     irimsg->data.ipiri.special = special;
     irimsg->data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_STATIC;

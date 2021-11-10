@@ -857,6 +857,7 @@ static void push_ipintercept_update_to_threads(collector_sync_t *sync,
     static_ipranges_t *ipr, *tmpr;
     struct timeval now;
     int irirequired = -1;
+    char *tmp;
 
     logger(LOG_INFO, "OpenLI: collector is updating intercept for target %s (LIID = %s)", ipint->username, ipint->common.liid);
 
@@ -892,6 +893,16 @@ static void push_ipintercept_update_to_threads(collector_sync_t *sync,
          */
         irirequired = OPENLI_IPIRI_STARTWHILEACTIVE;
     }
+
+    tmp = ipint->common.authcc;
+    ipint->common.authcc = modified->common.authcc;
+    ipint->common.authcc_len = modified->common.authcc_len;
+    modified->common.authcc = tmp;
+
+    tmp = ipint->common.delivcc;
+    ipint->common.delivcc = modified->common.delivcc;
+    ipint->common.delivcc_len = modified->common.delivcc_len;
+    modified->common.delivcc = tmp;
 
     ipint->common.tostart_time = modified->common.tostart_time;
     ipint->common.toend_time = modified->common.toend_time;
@@ -1233,6 +1244,7 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
     ipintercept_t *ipint, *modified;
+    openli_export_recv_t *expmsg;
 
     modified = calloc(1, sizeof(ipintercept_t));
 
@@ -1283,6 +1295,13 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         update_intercept_time_event(&(sync->upcoming_intercept_events),
                 ipint, &(ipint->common), &(modified->common));
         push_ipintercept_update_to_threads(sync, ipint, modified);
+    } else if (strcmp(ipint->common.delivcc, modified->common.delivcc) != 0 ||
+            strcmp(ipint->common.authcc, modified->common.authcc) != 0) {
+        push_ipintercept_update_to_threads(sync, ipint, modified);
+        expmsg = create_intercept_details_msg(&(ipint->common));
+        expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
+        publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid],
+                expmsg);
     }
 
     free_single_ipintercept(modified);

@@ -362,9 +362,10 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
 
 #define IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
+        ipint->common.delivcc_len + \
          ipint->username_len + sizeof(ipint->accesstype) + \
          sizeof(ipint->common.tostart_time) + sizeof(ipint->common.toend_time) \
-         + sizeof(ipint->options) + (7 * 4))
+         + sizeof(ipint->options) + (8 * 4))
 
 static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
 
@@ -401,6 +402,12 @@ static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, (uint8_t *)ipint->common.authcc,
             strlen(ipint->common.authcc)) == -1) {
+        goto pushmodfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC,
+            (uint8_t *)ipint->common.delivcc,
+            strlen(ipint->common.delivcc)) == -1) {
         goto pushmodfail;
     }
 
