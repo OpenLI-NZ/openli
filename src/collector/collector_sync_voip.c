@@ -982,7 +982,7 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
 
         if (sync->log_bad_sip) {
             logger(LOG_INFO,
-                    "OpenLI: unable to derive SIP identity from To: URI");
+                    "OpenLI: unable to derive SIP identity from From: URI");
         }
         return -1;
 
