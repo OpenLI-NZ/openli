@@ -509,21 +509,50 @@ char *get_sip_from_uri_username(openli_sip_parser_t *parser) {
         return NULL;
     }
 
-    uriuser = osip_uri_get_username(osip_from_get_url(from));
-    return uriuser;
+    if ((uriuser = osip_uri_get_username(uri)) != NULL) {
+        return uriuser;
+    }
+
+    /* I have (rarely) seen SIP URIs where there is no username, just
+     * an IP address -- in this case, it is probably best to just assume
+     * that the IP address is a suitable username?
+     *
+     * Note that this will mean username and realm will end up having the
+     * same value -- probably not a big deal, as anyone who uses an IP
+     * address for SIP identity is probably going to want to declare it as
+     * the username and leave the realm option blank.
+     */
+    return osip_uri_get_host(uri);
 }
 
 char *get_sip_to_uri_username(openli_sip_parser_t *parser) {
 
     char *uriuser;
+    osip_uri_t *uri;
     osip_to_t *to = osip_message_get_to(parser->osip);
 
     if (to == NULL) {
         return NULL;
     }
+    uri = osip_to_get_url(to);
+    if (uri == NULL) {
+        return NULL;
+    }
 
-    uriuser = osip_uri_get_username(osip_to_get_url(to));
-    return uriuser;
+    if ((uriuser = osip_uri_get_username(uri)) != NULL) {
+        return uriuser;
+    }
+
+    /* I have (rarely) seen SIP URIs where there is no username, just
+     * an IP address -- in this case, it is probably best to just assume
+     * that the IP address is a suitable username?
+     *
+     * Note that this will mean username and realm will end up having the
+     * same value -- probably not a big deal, as anyone who uses an IP
+     * address for SIP identity is probably going to want to declare it as
+     * the username and leave the realm option blank.
+     */
+    return osip_uri_get_host(uri);
 }
 
 char *get_sip_to_uri_realm(openli_sip_parser_t *parser) {
