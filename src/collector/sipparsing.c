@@ -503,9 +503,16 @@ char *get_sip_to_uri(openli_sip_parser_t *parser) {
 char *get_sip_from_uri_username(openli_sip_parser_t *parser) {
 
     char *uriuser;
+    osip_uri_t *uri;
+
     osip_from_t *from = osip_message_get_from(parser->osip);
 
     if (from == NULL) {
+        return NULL;
+    }
+
+    uri = osip_from_get_url(from);
+    if (uri == NULL) {
         return NULL;
     }
 
