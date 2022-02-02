@@ -1,3 +1,12 @@
+openli (1.0.13-1) unstable; urgency=medium
+
+  * RADIUS parser now copes with situations where an assigned IP is
+    not included in the access-Accept message.
+  * SIP parser now copes with SIP URIs that are just "sip:" followed
+    by an IP address.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Thu, 03 Feb 2022 11:50:53 +1300
+
 openli (1.0.12-1) unstable; urgency=medium
 
   * Fixed bugs where changes to certain intercept properties

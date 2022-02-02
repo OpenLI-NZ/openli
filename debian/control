@@ -3,7 +3,7 @@ Section: net
 Priority: optional
 Maintainer: Shane Alcock <shane.alcock@waikato.ac.nz>
 Build-Depends: debhelper-compat (= 12), dh-autoreconf, dh-systemd (>=1.5),
- libtrace4-dev (>= 4.0.16), libyaml-dev, uthash-dev, libwandder2-dev,
+ libtrace4-dev (>= 4.0.17), libyaml-dev, uthash-dev, libwandder2-dev (>=2.0.4),
  libjudy-dev, libzmq3-dev, libgoogle-perftools-dev, libosip2-dev,
  libssl1.0-dev (>=1.0.2r) | libssl-dev, librabbitmq-dev,
  libmicrohttpd-dev, libjson-c-dev, libsqlcipher-dev

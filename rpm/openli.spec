@@ -1,5 +1,5 @@
 Name:           openli
-Version:        1.0.12
+Version:        1.0.13
 Release:        1%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
@@ -14,10 +14,10 @@ BuildRequires: bison
 BuildRequires: doxygen
 BuildRequires: flex
 BuildRequires: libyaml-devel
-BuildRequires: libtrace4-devel >= 4.0.16
+BuildRequires: libtrace4-devel >= 4.0.17
 BuildRequires: Judy-devel
 BuildRequires: uthash-devel
-BuildRequires: libwandder2-devel
+BuildRequires: libwandder2-devel >= 2.0.4
 BuildRequires: zeromq-devel
 BuildRequires: gperftools-devel
 BuildRequires: libosip2-devel
@@ -232,6 +232,9 @@ fi
 
 
 %changelog
+* Thu Feb 3 2022 Shane Alcock <salcock@waikato.ac.nz> - 1.0.13-1
+- Updated for 1.0.13 release
+
 * Mon Nov 8 2021 Shane Alcock <salcock@waikato.ac.nz> - 1.0.12-1
 - Updated for 1.0.12 release
 
