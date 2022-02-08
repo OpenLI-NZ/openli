@@ -1,16 +1,6 @@
 #!/bin/bash
 set -x -e -o pipefail
 
-
-DISTRO=fedora
-if [ "$1" = "centos:8" ]; then
-        DISTRO=centos
-fi
-
-if [ "$1" = "centos:7" ]; then
-        DISTRO=centos
-fi
-
 mkdir -p /run/user/${UID}
 chmod 0700 /run/user/${UID}
 yum install -y wget make gcc
@@ -33,6 +23,15 @@ curl -1sLf \
 
 yum update -y
 
+if [[ "$1" =~ rocky* ]]; then
+        dnf install -y dnf-plugins-core epel-release || true
+        dnf config-manager --set-enabled powertools || true
+fi
+
+if [[ "$1" =~ alma* ]]; then
+        dnf install -y dnf-plugins-core epel-release || true
+        dnf config-manager --set-enabled powertools || true
+fi
 
 if [ "$1" = "centos:8" ]; then
         yum module -y disable mariadb
