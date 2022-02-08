@@ -966,6 +966,8 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
     int exportcount = 0;
     int proxyauthcount = 0, regauthcount = 0;
 
+    proxyauths = regauths = NULL;
+
     if (get_sip_to_uri_identity(sync->sipparser, &touriid) < 0) {
         if (sync->log_bad_sip) {
             logger(LOG_INFO,

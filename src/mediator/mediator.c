@@ -686,7 +686,7 @@ static liid_map_entry_t *match_etsi_to_agency(mediator_state_t *state,
     /* Is this an LIID that we have a suitable agency mapping for? */
     found = lookup_liid_agency_mapping(&(state->liidmap), (char *)liidstr);
     if (!found) {
-        if (add_missing_liid(&(state->liidmap), liidstr) < 0) {
+        if (add_missing_liid(&(state->liidmap), (char *)liidstr) < 0) {
             exit(-2);
         }
         return NULL;
