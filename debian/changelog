@@ -5,7 +5,7 @@ openli (1.0.13-1) unstable; urgency=medium
   * SIP parser now copes with SIP URIs that are just "sip:" followed
     by an IP address.
 
- -- Shane Alcock <shane.alcock@waikato.ac.nz>  Thu, 03 Feb 2022 11:50:53 +1300
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Wed, 09 Feb 2022 12:46:13 +1300
 
 openli (1.0.12-1) unstable; urgency=medium
 

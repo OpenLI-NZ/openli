@@ -232,7 +232,7 @@ fi
 
 
 %changelog
-* Thu Feb 3 2022 Shane Alcock <salcock@waikato.ac.nz> - 1.0.13-1
+* Wed Feb 9 2022 Shane Alcock <salcock@waikato.ac.nz> - 1.0.13-1
 - Updated for 1.0.13 release
 
 * Mon Nov 8 2021 Shane Alcock <salcock@waikato.ac.nz> - 1.0.12-1
@@ -241,7 +241,7 @@ fi
 * Mon Jul 5 2021 Shane Alcock <salcock@waikato.ac.nz> - 1.0.11-1
 - Updated for 1.0.11 release
 
-* Tue Apr 26 2021 Shane Alcock <salcock@waikato.ac.nz> - 1.0.10-1
+* Tue Apr 27 2021 Shane Alcock <salcock@waikato.ac.nz> - 1.0.10-1
 - Updated for 1.0.10 release
 
 * Mon Mar 22 2021 Shane Alcock <salcock@waikato.ac.nz> - 1.0.9-2
