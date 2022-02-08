@@ -2008,8 +2008,6 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
     amqp_envelope_t envelope;
 
     openli_proto_msgtype_t rettype;
-    ii_header_t *hdr;
-
     struct timeval tv;
     tv.tv_sec = 0;
     tv.tv_usec = 10;

@@ -365,10 +365,8 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
         uint64_t bytelimit) {
 
     uint64_t sent = 0;
-    uint64_t rem = 0;
     uint8_t *bhead = buf->bufhead + buf->deadfront;
     int ret;
-    ii_header_t *header = NULL;
 
     sent = (buf->buftail - (bhead));
 
@@ -398,6 +396,7 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
         if ( pub_ret != 0 ){
             logger(LOG_INFO,
                     "OpenLI: RMQ publish error %d", pub_ret);
+            ret = 0;
         } else {
             ret = sent;
         }

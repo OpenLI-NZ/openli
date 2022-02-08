@@ -269,8 +269,6 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
 static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
         openli_encoded_result_t *res) {
 
-    uint32_t liidlen = strlen(job->liid);
-
     memset(res, 0, sizeof(openli_encoded_result_t));
 
     res->msgbody = calloc(1, sizeof(wandder_encoded_result_t));
@@ -771,7 +769,7 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
     encoded_header_template_t *hdr_tplate = NULL;
 
     snprintf(keystr, 1000, "%s-%s", job->liid, job->cinstr);
-    JSLI(pval, enc->saved_intercept_templates, keystr);
+    JSLI(pval, enc->saved_intercept_templates, (const uint8_t *)keystr);
     if ((*pval)) {
         t_set = (saved_encoding_templates_t *)(*pval);
     } else {

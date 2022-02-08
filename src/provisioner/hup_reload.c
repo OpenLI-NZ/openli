@@ -643,12 +643,9 @@ static inline void replace_restauth_config(provision_state_t *currstate,
 static int reload_restauth_config(provision_state_t *currstate,
         provision_state_t *newstate) {
 
-    int changed = 0;
-
     if (currstate->restauthenabled == 0 &&
             (newstate->restauthdbfile == NULL || newstate->restauthkey == NULL)
             ) {
-    
         /* Auth was disabled and the new config doesn't change that */
         logger(LOG_INFO, "OpenLI provisioner: REST API authentication will remain disabled.");
         return 0;
@@ -657,12 +654,10 @@ static int reload_restauth_config(provision_state_t *currstate,
     if (currstate->restauthenabled == 0) {
         /* Auth was disabled and the new config wants to enable it */
         replace_restauth_config(currstate, newstate);
-        changed = 1;
     } else {
         if (newstate->restauthdbfile == NULL || newstate->restauthkey == NULL) {
             /* Auth was enabled and now it has been disabled */
             replace_restauth_config(currstate, newstate);
-            changed = 1;
         } else if (strcmp(currstate->restauthdbfile,
                     newstate->restauthdbfile) == 0 &&
                 strcmp(currstate->restauthkey, newstate->restauthkey) == 0) {
@@ -672,7 +667,6 @@ static int reload_restauth_config(provision_state_t *currstate,
         } else {
             /* Auth was enabled but database or key has changed */
             replace_restauth_config(currstate, newstate);
-            changed = 1;
         }
     }
 

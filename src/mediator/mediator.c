@@ -139,10 +139,6 @@ static void clear_med_config(mediator_state_t *state) {
  */
 static void destroy_med_state(mediator_state_t *state) {
 
-    liid_map_t *m;
-    PWord_t jval;
-    Word_t bytes;
-
     /* Remove all known LIIDs */
     purge_liid_map(&(state->liidmap));
 
@@ -417,7 +413,6 @@ static int trigger_pcap_flush(mediator_state_t *state, med_epoll_ev_t *mev) {
 
     mediator_pcap_msg_t pmsg;
     struct timeval tv;
-    int timerfd;
 
     memset(&pmsg, 0, sizeof(pmsg));
     gettimeofday(&tv, NULL);
@@ -542,7 +537,6 @@ static int trigger_keepalive(mediator_state_t *state, med_epoll_ev_t *mev) {
  *  the collector listening socket.
  */
 static int start_collector_listener(mediator_state_t *state) {
-    struct epoll_event ev;
     int sockfd;
 
     /* Creates a listening socket using the method from utils.c */
@@ -690,7 +684,7 @@ static liid_map_entry_t *match_etsi_to_agency(mediator_state_t *state,
     extract_liid_from_exported_msg(etsimsg, msglen, liidstr, 65536, liidlen);
 
     /* Is this an LIID that we have a suitable agency mapping for? */
-    found = lookup_liid_agency_mapping(&(state->liidmap), liidstr);
+    found = lookup_liid_agency_mapping(&(state->liidmap), (char *)liidstr);
     if (!found) {
         if (add_missing_liid(&(state->liidmap), liidstr) < 0) {
             exit(-2);
@@ -842,8 +836,6 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
 
     char *liid = NULL;
     liid_map_entry_t *m;
-    int sock;
-    PWord_t jval;
     mediator_pcap_msg_t pcapmsg;
 
     /** See netcomms.c for this method */
@@ -873,7 +865,7 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
         memset(&pcapmsg, 0, sizeof(pcapmsg));
 
         pcapmsg.msgtype = PCAP_MESSAGE_DISABLE_LIID;
-        pcapmsg.msgbody = strdup(liid);
+        pcapmsg.msgbody = (unsigned char *)strdup(liid);
         pcapmsg.msglen = strlen(liid) + 1;
         libtrace_message_queue_put(&(state->pcapqueue), &pcapmsg);
     }
@@ -945,8 +937,6 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
 
     char *agencyid, *liid;
     mediator_agency_t *agency;
-    liid_map_t *m;
-    PWord_t jval;
     int err;
 
     agencyid = NULL;
@@ -999,7 +989,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         memset(&pcapmsg, 0, sizeof(pcapmsg));
 
         pcapmsg.msgtype = PCAP_MESSAGE_DISABLE_LIID;
-        pcapmsg.msgbody = strdup(liid);
+        pcapmsg.msgbody = (unsigned char *)strdup(liid);
         pcapmsg.msglen = strlen(liid) + 1;
         libtrace_message_queue_put(&(state->pcapqueue), &pcapmsg);
     }
@@ -1439,11 +1429,6 @@ static int send_mediator_listen_details(mediator_state_t *state,
  */
 static inline void drop_provisioner(mediator_state_t *currstate) {
 
-    liid_map_t *m;
-    PWord_t pval;
-    unsigned char index[1024];
-    Word_t bytes;
-
     /* Disconnect from provisioner and reset all state received
      * from the old provisioner (just to be safe). */
 
@@ -1464,7 +1449,6 @@ static inline void drop_provisioner(mediator_state_t *currstate) {
  *  @param currstate            The global state for the mediator
  */
 static inline void halt_listening_socket(mediator_state_t *currstate) {
-    struct epoll_event ev;
 
     /* Disconnect all collectors */
     drop_all_collectors(&(currstate->collectors));
@@ -1506,10 +1490,8 @@ static int reload_pcap_config(mediator_state_t *currstate,
     } else if (currstate->pcaptemplate == NULL &&
             newstate->pcaptemplate == NULL) {
         /* leave changed as is */
-        (int)(changed);
     } else if (strcmp(currstate->pcaptemplate, newstate->pcaptemplate) == 0) {
         /* leave changed as is */
-        (int)(changed);
     } else {
         changed = 1;
     }
@@ -1686,10 +1668,8 @@ static int reload_mediator_config(mediator_state_t *currstate) {
 static void run(mediator_state_t *state) {
 
 	int i, nfds;
-	int timerfd;
 	int timerexpired = 0;
 	struct epoll_event evs[64];
-	struct epoll_event ev;
     int provfail = 0;
     struct timeval tv;
     uint32_t firstflush;

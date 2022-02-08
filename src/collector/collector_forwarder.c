@@ -608,7 +608,7 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
         }
 
         if (fwd->ampq_conn) {
-            amqp_queue_declare_ok_t *queue_result = amqp_queue_declare(
+            amqp_queue_declare(
                     fwd->ampq_conn,
                     1,
                     dest->rmq_queueid,
@@ -1120,7 +1120,7 @@ void *start_forwarding_thread(void *data) {
                 goto haltforwarder;
             }
 
-            amqp_channel_open_ok_t *r = amqp_channel_open(fwd->ampq_conn, 1);
+            amqp_channel_open(fwd->ampq_conn, 1);
 
             if ( (amqp_get_rpc_reply(fwd->ampq_conn).reply_type) != AMQP_RESPONSE_NORMAL ) {
                 logger(LOG_ERR, "OpenLI: Failed to open channel");

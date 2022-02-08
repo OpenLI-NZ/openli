@@ -2042,7 +2042,6 @@ static int add_ip_to_session_mapping(collector_sync_t *sync,
 
     int i, replaced = 0;
     ip_to_session_t *prev;
-    char ipstr[128];
 
     prev = NULL;
     ip_to_session_t *newmap;
@@ -2359,8 +2358,7 @@ static int set_upcoming_timer(collector_sync_t *sync) {
     its.it_value.tv_nsec = 0;
 
     timerfd_settime(sync->upcomingtimerfd, 0, &its, NULL);
-
-
+    return 0;
 }
 
 int sync_thread_main(collector_sync_t *sync) {

@@ -76,7 +76,7 @@ static inline char *get_event_description(prov_epoll_ev_t *pev) {
 
 void start_mhd_daemon(provision_state_t *state) {
 
-    int started = 0, fd, off, len;
+    int fd, off, len;
     char rndseed[8];
 
     assert(state->updatesockfd >= 0);

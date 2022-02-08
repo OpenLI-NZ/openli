@@ -453,7 +453,7 @@ static unsigned char *lookup_user_digest(provision_state_t *provstate,
         int i;
         hashtext = sqlite3_column_blob(res, 1);
 
-        if (strlen(hashtext) < 32) {
+        if (strlen((const char *)hashtext) < 32) {
             logger(LOG_INFO, "OpenLI: Invalid digest hash in database for user %s", username);
             return NULL;
         }
