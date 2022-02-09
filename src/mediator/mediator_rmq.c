@@ -34,9 +34,6 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
 		uint8_t *msgbody, uint16_t msglen, int logDisabled,
         single_coll_state_t *mstate) {
 
-    amqp_rpc_reply_t ret;
-    amqp_envelope_t envelope;
-    amqp_frame_t frame;
     struct timeval tv;
     int status;
     tv.tv_usec = 0;
@@ -93,7 +90,8 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
 
         logger(LOG_INFO, "OpenLI Mediator: attempting to connect to RMQ using SSL on port %u", medcol->rmqconf->port);
 
-        if (status = amqp_socket_open_noblock(ampq_sock, msgbody, medcol->rmqconf->port, &tv)){
+        if ((status = amqp_socket_open_noblock(ampq_sock, (const char *)msgbody,
+                    medcol->rmqconf->port, &tv))){
             if (!logDisabled)
                 logger(LOG_INFO,
                         "OpenLI Mediator: RMQ failed to open AMQP socket: %d",
@@ -128,7 +126,8 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
             medcol->rmqconf->port = 5672;
         }
 
-        if (amqp_socket_open_noblock(ampq_sock, msgbody, 5672, &tv)){
+        if (amqp_socket_open_noblock(ampq_sock, (const char *)msgbody,
+                5672, &tv)){
             if (!logDisabled)
                 logger(LOG_INFO, 
                         "OpenLI Mediator: RMQ failed to open AMQP socket");
@@ -154,7 +153,7 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
         return NULL;
     }
 
-    amqp_channel_open_ok_t *r = amqp_channel_open(amqp_state, 1);
+    amqp_channel_open(amqp_state, 1);
     
     if ( (amqp_get_rpc_reply(amqp_state).reply_type) != AMQP_RESPONSE_NORMAL ) {
         if (!logDisabled)
@@ -163,7 +162,7 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
         return NULL;
     }
 
-    amqp_queue_declare_ok_t *queue_result = amqp_queue_declare(
+    amqp_queue_declare(
             amqp_state,
             1,
             mstate->rmq_queueid,
@@ -181,7 +180,7 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
     }
 
 
-    amqp_basic_consume_ok_t *con_ok = amqp_basic_consume(amqp_state,
+    amqp_basic_consume(amqp_state,
             1,
             mstate->rmq_queueid,
             amqp_empty_bytes,
@@ -206,8 +205,8 @@ static amqp_connection_state_t join_RMQ(mediator_collector_t *medcol,
 
 int receive_rmq_invite(mediator_collector_t *medcol,
 		single_coll_state_t *mstate) {
-    amqp_connection_state_t amqp_state = join_RMQ(medcol, mstate->ipaddr,
-			mstate->iplen, 0, mstate);
+    amqp_connection_state_t amqp_state = join_RMQ(medcol,
+            (uint8_t *)mstate->ipaddr, mstate->iplen, 0, mstate);
 	int sock_fd;
 
 	if (!amqp_state) return -1;

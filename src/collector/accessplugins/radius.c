@@ -1372,15 +1372,21 @@ static inline void apply_fsm_logic(radius_parsed_t *raddata,
         radsess->current = SESSION_STATE_ACTIVE;
         *action = ACCESS_ACTION_ACCEPT;
 
-    } else if (radsess->current == SESSION_STATE_ACTIVE && (
-            msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
+    } else if ((radsess->current == SESSION_STATE_ACTIVE ||
+                radsess->current == SESSION_STATE_ACTIVE_NO_IP) &&
+            (msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
             (accttype == RADIUS_ACCT_START ||
                 accttype == RADIUS_ACCT_INTERIM_UPDATE))) {
 
+        /* Always set to "active" -- we'll later reset to "active NO IP"
+         * if we still don't have an IP before we return the sync thread.
+         */
+        radsess->current = SESSION_STATE_ACTIVE;
         *action = ACCESS_ACTION_INTERIM_UPDATE;
 
-    } else if (radsess->current == SESSION_STATE_ACTIVE && (
-            msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
+    } else if ((radsess->current == SESSION_STATE_ACTIVE ||
+                radsess->current == SESSION_STATE_ACTIVE_NO_IP) &&
+            (msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
             accttype == RADIUS_ACCT_STOP)) {
 
         radsess->current = SESSION_STATE_OVER;
@@ -1554,6 +1560,16 @@ static inline void update_first_action(radius_global_t *glob,
             raddata->firstattrs = raddata->attrs;
             break;
         case ACCESS_ACTION_INTERIM_UPDATE:
+            /* handle rare case where assigned IPs were missing from access
+             * accept message -- seen this in the wild */
+            raddata->firstattrs = raddata->savedreq->attrs;
+            if (raddata->msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
+                    raddata->accttype == RADIUS_ACCT_START &&
+                    sess->sessipcount == 0) {
+                extract_assigned_ip_address(glob, raddata, raddata->firstattrs,
+                        sess);
+            }
+            break;
         case ACCESS_ACTION_END:
             raddata->firstattrs = raddata->savedreq->attrs;
             break;
@@ -1753,6 +1769,12 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
 
     update_first_action(glob, raddata, thissess);
     update_second_action(glob, raddata, thissess);
+
+    /* Handle case where we're "active" but have no assigned IP yet" */
+    if (thissess->sessipcount == 0 && *newstate == SESSION_STATE_ACTIVE) {
+        *newstate = SESSION_STATE_ACTIVE_NO_IP;
+        usess->current = SESSION_STATE_ACTIVE_NO_IP;
+    }
 
     if (raddata->firstaction != ACCESS_ACTION_NONE) {
         *action = raddata->firstaction;

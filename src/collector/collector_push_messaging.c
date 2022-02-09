@@ -299,7 +299,7 @@ static int update_ipv4_intercept(colthread_local_t *loc, ipsession_t *toup) {
 
     found->common.tostart_time = toup->common.tostart_time;
     found->common.toend_time = toup->common.toend_time;
-
+    return 1;
 }
 
 static int remove_ipv4_intercept(colthread_local_t *loc, ipsession_t *torem) {

@@ -242,7 +242,6 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
 
     exporter_intercept_state_t *intstate;
     HASH_FIND(hh, seqdata->intercepts, msg->liid, strlen(msg->liid), intstate);
-    etsili_intercept_details_t intdetails;
 
     if (!intstate) {
         logger(LOG_INFO, "OpenLI collector: tracker thread was told to modify intercept LIID %s, but it is not a valid ID?",

@@ -173,7 +173,7 @@ void *check_intercept_time_event(Pvoid_t *timeevents, time_t currtime) {
 
     PWord_t pval;
     Word_t index;
-    struct upcoming_intercept_event *ev, *tmp;
+    struct upcoming_intercept_event *ev;
     upcoming_intercept_time_t *upts;
     int rcint;
     void *toret = NULL;

@@ -63,11 +63,9 @@ void init_med_collector_state(mediator_collector_t *medcol, uint8_t *usetls,
  */
 void destroy_med_collector_state(mediator_collector_t *medcol) {
 
-    unsigned char index[1024];
     disabled_collector_t *discol, *dtmp;
 
     /* Purge the disabled collector list */
-    index[0] = '\0';
     HASH_ITER(hh, medcol->disabledcols, discol, dtmp) {
         HASH_DELETE(hh, medcol->disabledcols, discol);
         free(discol->ipaddr);

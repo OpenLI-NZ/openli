@@ -209,8 +209,6 @@ static void push_time_update_active_voipstreams(collector_sync_voip_t *sync,
         libtrace_message_queue_t *q, voipintercept_t *vint) {
 
     openli_pushed_t msg;
-
-    char *streamdup;
     rtpstreaminf_t *cin = NULL;
 
     if (vint->active_cins == NULL) {
@@ -221,7 +219,6 @@ static void push_time_update_active_voipstreams(collector_sync_voip_t *sync,
         if (cin->active == 0) {
             continue;
         }
-        streamdup = strdup(cin->streamkey);
         memset(&msg, 0, sizeof(openli_pushed_t));
         msg.type = OPENLI_PUSH_UPDATE_VOIPINTERCEPT;
         msg.data.ipmmint = create_rtpstream(vint, cin->cin);
@@ -715,7 +712,7 @@ static inline int check_sip_auth_fields(collector_sync_voip_t *sync,
         voipintercept_t *vint, char *callid, openli_sip_identity_t *auths,
         int authcount) {
 
-    int i, ret;
+    int i;
 
     for (i = 0; i < authcount; i++) {
         if (sipid_matches_target(vint->targets, &(auths[i]))) {
@@ -969,6 +966,8 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
     int exportcount = 0;
     int proxyauthcount = 0, regauthcount = 0;
 
+    proxyauths = regauths = NULL;
+
     if (get_sip_to_uri_identity(sync->sipparser, &touriid) < 0) {
         if (sync->log_bad_sip) {
             logger(LOG_INFO,
@@ -982,7 +981,7 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
 
         if (sync->log_bad_sip) {
             logger(LOG_INFO,
-                    "OpenLI: unable to derive SIP identity from To: URI");
+                    "OpenLI: unable to derive SIP identity from From: URI");
         }
         return -1;
 
@@ -1075,6 +1074,9 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     etsili_iri_type_t iritype = ETSILI_IRI_REPORT;
     int badsip = 0;
     int i = 1;
+
+    regauths = NULL;
+    proxyauths = NULL;
 
     if (get_sip_to_uri_identity(sync->sipparser, &touriid) < 0) {
         if (sync->log_bad_sip) {

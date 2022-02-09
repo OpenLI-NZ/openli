@@ -1025,7 +1025,7 @@ static int global_parser(void *arg, yaml_document_t *doc,
         /* We're back to only having one encoding method now, but
          * allow users to choose "BER" without breaking anything.
          */
-        if (strcasecmp(value->data.scalar.value, "BER") == 0) {
+        if (strcasecmp((char *)value->data.scalar.value, "BER") == 0) {
             glob->encoding_method = OPENLI_ENCODING_DER;
         } else {
             glob->encoding_method = OPENLI_ENCODING_DER;
@@ -1068,7 +1068,7 @@ static int global_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "RMQenabled") == 0) {
-        glob->RMQ_conf.enabled = check_onoff(value->data.scalar.value);
+        glob->RMQ_conf.enabled = check_onoff((char *)value->data.scalar.value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -1232,13 +1232,13 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "RMQenabled") == 0) {
-        state->RMQ_conf.enabled = check_onoff(value->data.scalar.value);
+        state->RMQ_conf.enabled = check_onoff((char *)value->data.scalar.value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "RMQSSL") == 0) {
-        state->RMQ_conf.SSLenabled = check_onoff(value->data.scalar.value);
+        state->RMQ_conf.SSLenabled = check_onoff((char *)value->data.scalar.value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&

@@ -196,7 +196,7 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
 static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
         int threadid) {
 
-    int zero = 0, i, hwm=1000;
+    int i, hwm=1000;
     libtrace_message_queue_init(&(loc->fromsyncq_ip),
             sizeof(openli_pushed_t));
     libtrace_message_queue_init(&(loc->fromsyncq_voip),
@@ -1581,7 +1581,7 @@ haltsyncthread:
 
 int main(int argc, char *argv[]) {
 
-	struct sigaction sigact;
+	struct sigaction sigact, sigign;
     sigset_t sig_before, sig_block_all;
     char *configfile = NULL;
     char *pidfile = NULL;
@@ -1647,8 +1647,12 @@ int main(int argc, char *argv[]) {
 
     sigaction(SIGINT, &sigact, NULL);
     sigaction(SIGTERM, &sigact, NULL);
-    sigaction(SIGPIPE, &(struct sigaction){SIG_IGN}, NULL);
-	//signal(SIGPIPE, SIG_IGN);
+
+    memset(&sigign, 0, sizeof(sigign));
+    sigign.sa_handler = SIG_IGN;
+    sigign.sa_flags = SA_RESTART;
+
+    sigaction(SIGPIPE, &sigign, NULL);
 
     sigact.sa_handler = reload_signal;
     sigemptyset(&sigact.sa_mask);

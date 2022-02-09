@@ -179,9 +179,6 @@ int send_mediator_details_to_provisioner(mediator_prov_t *prov,
  */
 static int init_provisioner_connection(mediator_prov_t *prov, int sock) {
 
-    struct epoll_event ev;
-	int ret = 0;
-
     if (sock == 0) {
         return 0;
     }
@@ -323,7 +320,6 @@ int attempt_provisioner_connect(mediator_prov_t *prov, int provfail) {
  */
 int transmit_provisioner(mediator_prov_t *prov, med_epoll_ev_t *mev) {
 
-    struct epoll_event ev;
     int ret;
     openli_proto_msgtype_t err;
 
