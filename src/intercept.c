@@ -234,6 +234,12 @@ void free_voip_cinmap(voipcinmap_t *cins) {
         if (c->shared) {
             free(c->shared);
         }
+        if (c->username) {
+            free(c->username);
+        }
+        if (c->realm) {
+            free(c->realm);
+        }
         free(c->callid);
         free(c);
     }
@@ -245,6 +251,12 @@ static inline void free_voip_sdpmap(voipsdpmap_t *sdps) {
 
     HASH_ITER(hh_sdp, sdps, s, tmp) {
         HASH_DELETE(hh_sdp, sdps, s);
+        if (s->username) {
+            free(s->username);
+        }
+        if (s->realm) {
+            free(s->realm);
+        }
         free(s);
     }
 }

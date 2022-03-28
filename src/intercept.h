@@ -154,6 +154,8 @@ typedef struct voipintshared {
 typedef struct voipcinmap {
 
     char *callid;
+    char *username;
+    char *realm;
     voipintshared_t *shared;
     UT_hash_handle hh_callid;
 
@@ -161,6 +163,8 @@ typedef struct voipcinmap {
 
 typedef struct voipsdpmap {
     sip_sdp_identifier_t sdpkey;
+    char *username;
+    char *realm;
     voipintshared_t *shared;
     UT_hash_handle hh_sdp;
 } voipsdpmap_t;

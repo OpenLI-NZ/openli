@@ -427,15 +427,102 @@ static inline void remove_cin_callid_from_map(voipcinmap_t **cinmap,
     HASH_FIND(hh_callid, *cinmap, callid, strlen(callid), c);
     if (c) {
         HASH_DELETE(hh_callid, *cinmap, c);
+        if (c->shared) {
+            c->shared->refs --;
+            if (c->shared->refs == 0) {
+                free(c->shared);
+            }
+        }
+        if (c->username) {
+            free(c->username);
+        }
+        if (c->realm) {
+            free(c->realm);
+        }
         free(c->callid);
         free(c);
     }
 }
 
+static void remove_cin_sdpkeys_for_target(voipsdpmap_t **sdpmap,
+        char *username, char *realm) {
+
+    voipsdpmap_t *s, *tmp;
+    openli_sip_identity_t a, b;
+
+    a.username = username;
+    a.realm = realm;
+    HASH_ITER(hh_sdp, *sdpmap, s, tmp) {
+        b.username = s->username;
+        b.realm = s->realm;
+
+        if (!are_sip_identities_same(&a, &b)) {
+            continue;
+        }
+
+        HASH_DELETE(hh_sdp, *sdpmap, s);
+        if (s->shared) {
+            s->shared->refs --;
+            if (s->shared->refs == 0) {
+                free(s->shared);
+            }
+        }
+        if (s->username) {
+            free(s->username);
+        }
+        if (s->realm) {
+            free(s->realm);
+        }
+        free(s);
+    }
+
+}
+
+static void remove_cin_callids_for_target(voipcinmap_t **cinmap,
+        char *username, char *realm) {
+
+    voipcinmap_t *c, *tmp;
+    openli_sip_identity_t a, b;
+
+    a.username = username;
+    a.realm = realm;
+    HASH_ITER(hh_callid, *cinmap, c, tmp) {
+        b.username = c->username;
+        b.realm = c->realm;
+
+        if (!are_sip_identities_same(&a, &b)) {
+            continue;
+        }
+
+        HASH_DELETE(hh_callid, *cinmap, c);
+        if (c->shared) {
+            c->shared->refs --;
+            if (c->shared->refs == 0) {
+                free(c->shared);
+            }
+        }
+        if (c->username) {
+            free(c->username);
+        }
+        if (c->realm) {
+            free(c->realm);
+        }
+        free(c->callid);
+        free(c);
+    }
+
+}
+
 static inline voipcinmap_t *update_cin_callid_map(voipcinmap_t **cinmap,
-        char *callid, voipintshared_t *vshared) {
+        char *callid, voipintshared_t *vshared,
+        char *targetuser, char *targetrealm) {
 
     voipcinmap_t *newcinmap;
+
+    HASH_FIND(hh_callid, *cinmap, callid, strlen(callid), newcinmap);
+    if (newcinmap) {
+        return newcinmap;
+    }
 
     newcinmap = (voipcinmap_t *)malloc(sizeof(voipcinmap_t));
     if (!newcinmap) {
@@ -446,6 +533,12 @@ static inline voipcinmap_t *update_cin_callid_map(voipcinmap_t **cinmap,
         exit(-2);
     }
     newcinmap->callid = strdup(callid);
+    newcinmap->username = strdup(targetuser);
+    if (targetrealm) {
+        newcinmap->realm = strdup(targetrealm);
+    } else {
+        newcinmap->realm = NULL;
+    }
     newcinmap->shared = vshared;
     if (newcinmap->shared) {
         newcinmap->shared->refs ++;
@@ -457,7 +550,8 @@ static inline voipcinmap_t *update_cin_callid_map(voipcinmap_t **cinmap,
 }
 
 static inline voipsdpmap_t *update_cin_sdp_map(voipintercept_t *vint,
-        sip_sdp_identifier_t *sdpo, voipintshared_t *vshared) {
+        sip_sdp_identifier_t *sdpo, voipintshared_t *vshared, char *targetuser,
+        char *targetrealm) {
 
     voipsdpmap_t *newsdpmap;
 
@@ -476,6 +570,12 @@ static inline voipsdpmap_t *update_cin_sdp_map(voipintercept_t *vint,
     strncpy(newsdpmap->sdpkey.username, sdpo->username,
             sizeof(newsdpmap->sdpkey.username) - 1);
 
+    newsdpmap->username = strdup(targetuser);
+    if (targetrealm) {
+        newsdpmap->realm = strdup(targetrealm);
+    } else {
+        newsdpmap->realm = NULL;
+    }
     newsdpmap->shared = vshared;
     if (newsdpmap->shared) {
         newsdpmap->shared->refs ++;
@@ -507,7 +607,7 @@ static int create_new_voipcin(rtpstreaminf_t **activecins, uint32_t cin_id,
 
 }
 
-static int sipid_matches_target(libtrace_list_t *targets,
+static openli_sip_identity_t *sipid_matches_target(libtrace_list_t *targets,
         openli_sip_identity_t *sipid) {
 
     libtrace_list_node_t *n;
@@ -517,15 +617,40 @@ static int sipid_matches_target(libtrace_list_t *targets,
         openli_sip_identity_t *x = *((openli_sip_identity_t **) (n->data));
         n = n->next;
 
-        if (strcmp(x->username, sipid->username) != 0) {
+        if (x->active == 0) {
+            continue;
+        }
+
+        if (x->username == NULL || strlen(x->username) == 0) {
+            continue;
+        }
+
+        /* treat a '*' at the beginning of a SIP username as a wildcard,
+         * so users can specify phone numbers as targets without worrying
+         * about all possible combinations of (with area codes, without
+         * area codes, with '+', without '+', etc.)
+         */
+        if (x->username[0] == '*') {
+            int termlen = strlen(x->username) - 1;
+            int idlen = strlen(sipid->username);
+
+            if (idlen < termlen) {
+                continue;
+            }
+            if (strncmp(x->username + 1, sipid->username + (idlen - termlen),
+                    termlen) != 0) {
+                continue;
+            }
+
+        } else if (strcmp(x->username, sipid->username) != 0) {
             continue;
         }
 
         if (x->realm == NULL || strcmp(x->realm, sipid->realm) == 0) {
-            return 1;
+            return x;
         }
     }
-    return 0;
+    return NULL;
 }
 
 static inline int lookup_sip_callid(collector_sync_voip_t *sync, char *callid) {
@@ -540,21 +665,20 @@ static inline int lookup_sip_callid(collector_sync_voip_t *sync, char *callid) {
 }
 
 static sipregister_t *create_new_voip_registration(collector_sync_voip_t *sync,
-        voipintercept_t *vint, char *callid) {
+        voipintercept_t *vint, char *callid,
+        openli_sip_identity_t *targetuser) {
 
     sipregister_t *newreg = NULL;
     uint32_t cin_id = 0;
 
+    if (update_cin_callid_map(&(sync->knowncallids), callid, NULL,
+            targetuser->username, targetuser->realm) == NULL) {
+        remove_cin_callid_from_map(&(vint->cin_callid_map), callid);
+        return NULL;
+    }
+
     HASH_FIND(hh, vint->active_registrations, callid, strlen(callid), newreg);
-
     if (!newreg) {
-
-        if (update_cin_callid_map(&(sync->knowncallids), callid, NULL)
-                    == NULL) {
-            remove_cin_callid_from_map(&(vint->cin_callid_map), callid);
-            return NULL;
-        }
-
         cin_id = hashlittle(callid, strlen(callid), 0xceefface);
         cin_id = (cin_id % (uint32_t)(pow(2, 31)));
         newreg = create_sipregister(vint, callid, cin_id);
@@ -568,7 +692,8 @@ static sipregister_t *create_new_voip_registration(collector_sync_voip_t *sync,
 }
 
 static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
-        char *callid, sip_sdp_identifier_t *sdpo, voipintercept_t *vint) {
+        char *callid, sip_sdp_identifier_t *sdpo, voipintercept_t *vint,
+        openli_sip_identity_t *targetuser) {
 
     voipintshared_t *vshared = NULL;
     uint32_t cin_id = 0;
@@ -589,18 +714,20 @@ static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
     vshared->refs = 0;
 
     if (update_cin_callid_map(&(vint->cin_callid_map), callid,
-                vshared) == NULL) {
+                vshared, targetuser->username, targetuser->realm) == NULL) {
         free(vshared);
         return NULL;
     }
 
-    if (update_cin_callid_map(&(sync->knowncallids), callid, NULL) == NULL) {
+    if (update_cin_callid_map(&(sync->knowncallids), callid, NULL,
+                targetuser->username, targetuser->realm) == NULL) {
         remove_cin_callid_from_map(&(vint->cin_callid_map), callid);
         free(vshared);
         return NULL;
     }
 
-    if (sdpo && update_cin_sdp_map(vint, sdpo, vshared) == NULL) {
+    if (sdpo && update_cin_sdp_map(vint, sdpo, vshared,
+                targetuser->username, targetuser->realm) == NULL) {
         remove_cin_callid_from_map(&(vint->cin_callid_map), callid);
         remove_cin_callid_from_map(&(sync->knowncallids), callid);
 
@@ -610,24 +737,26 @@ static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
     return vshared;
 }
 
-static inline int check_sip_identity_fields(collector_sync_voip_t *sync,
+static inline openli_sip_identity_t *check_sip_identity_fields(
+        collector_sync_voip_t *sync,
         voipintercept_t *vint, openli_sip_identity_t *passertid,
         openli_sip_identity_t *remotepartyid) {
 
     int ret = 1;
+    openli_sip_identity_t *found = NULL;
 
     if (passertid->username == NULL) {
         ret = get_sip_passerted_identity(sync->sipparser, passertid);
 
         if (ret == -1) {
             sync->log_bad_sip = 0;
-            return 0;
+            return NULL;
         }
 
     }
 
-    if (ret > 0 && sipid_matches_target(vint->targets, passertid)) {
-        return 1;
+    if (ret > 0 && (found = sipid_matches_target(vint->targets, passertid))) {
+        return found;
     }
 
     ret = 1;
@@ -636,15 +765,16 @@ static inline int check_sip_identity_fields(collector_sync_voip_t *sync,
 
         if (ret == -1) {
             sync->log_bad_sip = 0;
-            return 0;
+            return NULL;
         }
     }
 
-    if (ret > 0 && sipid_matches_target(vint->targets, remotepartyid)) {
-        return 1;
+    if (ret > 0 && (found = sipid_matches_target(vint->targets,
+            remotepartyid)) ){
+        return found;
     }
 
-    return 0;
+    return NULL;
 }
 
 static inline int _extract_sip_auth_fields_flag(collector_sync_voip_t *sync,
@@ -708,18 +838,20 @@ static int extract_sip_auth_fields(collector_sync_voip_t *sync,
     return waserr;
 }
 
-static inline int check_sip_auth_fields(collector_sync_voip_t *sync,
+static inline openli_sip_identity_t *check_sip_auth_fields(
+        collector_sync_voip_t *sync,
         voipintercept_t *vint, char *callid, openli_sip_identity_t *auths,
         int authcount) {
 
     int i;
+    openli_sip_identity_t *found;
 
     for (i = 0; i < authcount; i++) {
-        if (sipid_matches_target(vint->targets, &(auths[i]))) {
-            return 1;
+        if ((found = sipid_matches_target(vint->targets, &(auths[i])))) {
+            return found;
         }
     }
-    return 0;
+    return NULL;
 }
 
 static int process_sip_183sessprog(collector_sync_voip_t *sync,
@@ -961,6 +1093,7 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
     openli_sip_identity_t touriid, fromuriid;
     openli_sip_identity_t remotepartyid, passertid;
     openli_sip_identity_t *proxyauths, *regauths;
+    openli_sip_identity_t *matched = NULL;
     voipintercept_t *vint, *tmp;
     sipregister_t *sipreg;
     int exportcount = 0;
@@ -1001,28 +1134,30 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
         sipreg = NULL;
 
         /* Try the To: uri first */
-        if (sipid_matches_target(vint->targets, &touriid)) {
-            sipreg = create_new_voip_registration(sync, vint, callid);
+        if ((matched = sipid_matches_target(vint->targets, &touriid))) {
+            sipreg = create_new_voip_registration(sync, vint, callid, matched);
         } else if (sync->trust_sip_from &&
-                    sipid_matches_target(vint->targets, &fromuriid)) {
+                    (matched = sipid_matches_target(vint->targets,
+                            &fromuriid))) {
 
-            sipreg = create_new_voip_registration(sync, vint, callid);
+            sipreg = create_new_voip_registration(sync, vint, callid, matched);
         } else {
             int found;
 
-            found = check_sip_identity_fields(sync, vint, &passertid,
+            matched = check_sip_identity_fields(sync, vint, &passertid,
                     &remotepartyid);
-            if (!found) {
-                found = check_sip_auth_fields(sync, vint, callid, proxyauths,
+            if (!matched) {
+                 matched = check_sip_auth_fields(sync, vint, callid, proxyauths,
                         proxyauthcount);
             }
-            if (!found) {
-                found = check_sip_auth_fields(sync, vint, callid, regauths,
+            if (!matched) {
+                matched = check_sip_auth_fields(sync, vint, callid, regauths,
                         regauthcount);
             }
 
-            if (found) {
-                sipreg = create_new_voip_registration(sync, vint, callid);
+            if (matched) {
+                sipreg = create_new_voip_registration(sync, vint, callid,
+                        matched);
             }
         }
 
@@ -1066,6 +1201,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     openli_sip_identity_t touriid, fromuriid;
     openli_sip_identity_t remotepartyid, passertid;
     openli_sip_identity_t *proxyauths, *regauths;
+    openli_sip_identity_t *matched = NULL;
     int proxyauthcount = 0, regauthcount = 0;
     char rtpkey[256];
     rtpstreaminf_t *thisrtp;
@@ -1131,14 +1267,15 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
                 }
             }
 
-            update_cin_sdp_map(vint, sdpo, findcin->shared);
+            update_cin_sdp_map(vint, sdpo, findcin->shared, findcin->username,
+                    findcin->realm);
             vshared = findcin->shared;
             iritype = ETSILI_IRI_CONTINUE;
 
         } else if (findsdp && !sync->ignore_sdpo_matches) {
             /* New call ID but already seen this session */
             update_cin_callid_map(&(vint->cin_callid_map), callid,
-                        findsdp->shared);
+                        findsdp->shared, findsdp->username, findsdp->realm);
             vshared = findsdp->shared;
             iritype = ETSILI_IRI_CONTINUE;
 
@@ -1147,29 +1284,30 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
              * our target identities */
 
             /* Try the To: uri first */
-            if (sipid_matches_target(vint->targets, &touriid)) {
+            if ((matched = sipid_matches_target(vint->targets, &touriid))) {
 
                 vshared = create_new_voip_session(sync, callid, sdpo,
-                        vint);
+                        vint, matched);
             } else if (sync->trust_sip_from &&
-                    sipid_matches_target(vint->targets, &fromuriid)) {
+                    (matched = sipid_matches_target(vint->targets,
+                            &fromuriid))) {
 
                 vshared = create_new_voip_session(sync, callid, sdpo,
-                        vint);
+                        vint, matched);
             } else {
-                int found;
-                found = check_sip_identity_fields(sync, vint, &passertid,
+                matched = check_sip_identity_fields(sync, vint, &passertid,
                         &remotepartyid);
-                if (!found) {
-                    found = check_sip_auth_fields(sync, vint, callid,
+                if (!matched) {
+                    matched = check_sip_auth_fields(sync, vint, callid,
                             proxyauths, proxyauthcount);
                 }
-                if (!found) {
-                    found = check_sip_auth_fields(sync, vint, callid, regauths,
-                            regauthcount);
+                if (!matched) {
+                    matched = check_sip_auth_fields(sync, vint, callid,
+                            regauths, regauthcount);
                 }
-                if (found) {
-                    vshared = create_new_voip_session(sync, callid, sdpo, vint);
+                if (matched) {
+                    vshared = create_new_voip_session(sync, callid, sdpo, vint,
+                            matched);
                 }
 
             }
@@ -1436,11 +1574,33 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
 
 }
 
+static inline void remove_voipintercept(collector_sync_voip_t *sync,
+        voipintercept_t *vint) {
+
+    openli_export_recv_t *expmsg;
+
+    push_voipintercept_halt_to_threads(sync, vint);
+
+    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    expmsg->type = OPENLI_EXPORT_INTERCEPT_OVER;
+    expmsg->data.cept.liid = strdup(vint->common.liid);
+    expmsg->data.cept.authcc = strdup(vint->common.authcc);
+    expmsg->data.cept.delivcc = strdup(vint->common.delivcc);
+
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->voipintercepts_ended_diff ++;
+    sync->glob->stats->voipintercepts_ended_total ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
+    publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], expmsg);
+
+    HASH_DELETE(hh_liid, sync->voipintercepts, vint);
+    free_single_voipintercept(vint);
+}
+
 static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
     voipintercept_t *vint, torem;
-    openli_export_recv_t *expmsg;
 
     if (decode_voipintercept_halt(intmsg, msglen, &torem) == -1) {
         if (sync->log_bad_instruct) {
@@ -1460,22 +1620,7 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     logger(LOG_INFO, "OpenLI: sync thread withdrawing VOIP intercept %s",
             torem.common.liid);
 
-    push_voipintercept_halt_to_threads(sync, vint);
-
-    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
-    expmsg->type = OPENLI_EXPORT_INTERCEPT_OVER;
-    expmsg->data.cept.liid = strdup(vint->common.liid);
-    expmsg->data.cept.authcc = strdup(vint->common.authcc);
-    expmsg->data.cept.delivcc = strdup(vint->common.delivcc);
-
-    pthread_mutex_lock(sync->glob->stats_mutex);
-    sync->glob->stats->voipintercepts_ended_diff ++;
-    sync->glob->stats->voipintercepts_ended_total ++;
-    pthread_mutex_unlock(sync->glob->stats_mutex);
-    publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], expmsg);
-
-    HASH_DELETE(hh_liid, sync->voipintercepts, vint);
-    free_single_voipintercept(vint);
+    remove_voipintercept(sync, vint);
     return 0;
 }
 
@@ -1525,6 +1670,12 @@ static int halt_single_rtpstream(collector_sync_voip_t *sync, rtpstreaminf_t *rt
                 free(cin_callid->shared);
                 break;
             }
+            if (cin_callid->username) {
+                free(cin_callid->username);
+            }
+            if (cin_callid->realm) {
+                free(cin_callid->realm);
+            }
             free(cin_callid);
         }
     }
@@ -1537,6 +1688,12 @@ static int halt_single_rtpstream(collector_sync_voip_t *sync, rtpstreaminf_t *rt
             if (cin_sdp->shared->refs == 0) {
                 free(cin_sdp->shared);
                 stop = 1;
+            }
+            if (cin_sdp->username) {
+                free(cin_sdp->username);
+            }
+            if (cin_sdp->realm) {
+                free(cin_sdp->realm);
             }
             free(cin_sdp);
             if (stop) {
@@ -2029,10 +2186,6 @@ static void disable_unconfirmed_voip_intercepts(collector_sync_voip_t *sync) {
         if (v->awaitingconfirm && v->active) {
             v->active = 0;
 
-            if (v->active_cins == NULL) {
-                continue;
-            }
-
             push_voipintercept_halt_to_threads(sync, v);
             HASH_DELETE(hh_liid, sync->voipintercepts, v);
             free_single_voipintercept(v);
@@ -2054,6 +2207,14 @@ static void disable_unconfirmed_voip_intercepts(collector_sync_voip_t *sync) {
                         logger(LOG_INFO, "OpenLI: removing unconfirmed SIP target %s@* for LIID %s",
                                 sipid->username, v->common.liid);
                     }
+
+                    /* remove any active calls for this identity */
+                    remove_cin_callids_for_target(&(v->cin_callid_map),
+                            sipid->username, sipid->realm);
+                    remove_cin_sdpkeys_for_target(&(v->cin_sdp_map),
+                            sipid->username, sipid->realm);
+                    remove_cin_callids_for_target(&(sync->knowncallids),
+                            sipid->username, sipid->realm);
                 }
             }
         }
