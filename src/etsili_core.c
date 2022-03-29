@@ -1541,6 +1541,7 @@ int etsili_create_ipmmcc_template(wandder_encoder_t *encoder,
 
     /* Release the encoded result -- the caller will use the templated copy */
     wandder_release_encoded_result(encoder, encres);
+    free_wandder_decoder(dec);
     return 0;
 }
 

@@ -1702,7 +1702,7 @@ static int halt_single_rtpstream(collector_sync_voip_t *sync, rtpstreaminf_t *rt
         }
     }
 
-    free_single_voip_cin(rtp);
+    free_single_rtpstream(rtp);
 
     return 0;
 }

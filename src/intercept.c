@@ -261,35 +261,12 @@ static inline void free_voip_sdpmap(voipsdpmap_t *sdps) {
     }
 }
 
-void free_single_voip_cin(rtpstreaminf_t *rtp) {
-    free_intercept_common(&(rtp->common));
-    if (rtp->invitecseq) {
-        free(rtp->invitecseq);
-    }
-    if (rtp->byecseq) {
-        free(rtp->byecseq);
-    }
-    if (rtp->targetaddr) {
-        free(rtp->targetaddr);
-    }
-    if (rtp->otheraddr) {
-        free(rtp->otheraddr);
-    }
-    if (rtp->streamkey) {
-        free(rtp->streamkey);
-    }
-    if (rtp->timeout_ev) {
-        free(rtp->timeout_ev);
-    }
-    free(rtp);
-}
-
 static void free_voip_cins(rtpstreaminf_t *cins) {
     rtpstreaminf_t *rtp, *tmp;
 
     HASH_ITER(hh, cins, rtp, tmp) {
         HASH_DEL(cins, rtp);
-        free_single_voip_cin(rtp);
+        free_single_rtpstream(rtp);
     }
 
 }
@@ -382,6 +359,15 @@ void free_single_rtpstream(rtpstreaminf_t *rtp) {
     }
     if (rtp->streamkey) {
         free(rtp->streamkey);
+    }
+    if (rtp->invitecseq) {
+        free(rtp->invitecseq);
+    }
+    if (rtp->byecseq) {
+        free(rtp->byecseq);
+    }
+    if (rtp->timeout_ev) {
+        free(rtp->timeout_ev);
     }
     free(rtp);
 

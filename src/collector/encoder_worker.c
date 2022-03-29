@@ -197,14 +197,8 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
         encoded_global_template_t *t;
 
         t = (encoded_global_template_t *)(*pval);
-        switch (t->cctype) {
-            case TEMPLATE_TYPE_IPCC_DIRFROM:
-            case TEMPLATE_TYPE_IPCC_DIRTO:
-            case TEMPLATE_TYPE_IPCC_DIROTHER:
-                if (t->cc_content.cc_wrap) {
-                    free(t->cc_content.cc_wrap);
-                }
-                break;
+        if (t->cc_content.cc_wrap) {
+            free(t->cc_content.cc_wrap);
         }
         free(t);
         JLN(pval, enc->saved_global_templates, indexint);

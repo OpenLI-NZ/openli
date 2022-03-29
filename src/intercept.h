@@ -303,7 +303,6 @@ void free_all_vendmirror_intercepts(vendmirror_intercept_list_t **mirror_interce
 void free_all_staticipsessions(staticipsession_t **statintercepts);
 
 void free_voip_cinmap(voipcinmap_t *cins);
-void free_single_voip_cin(rtpstreaminf_t *rtp);
 void free_single_ipintercept(ipintercept_t *cept);
 void free_single_voipintercept(voipintercept_t *v);
 void free_single_ipsession(ipsession_t *sess);

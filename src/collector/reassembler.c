@@ -735,6 +735,9 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
         expseqno += iter->length;
         checked = contused;
 
+        free(iter->content);
+        free(iter);
+
     }
 
     /* If we get here, we've either run out of segments or we've found a
