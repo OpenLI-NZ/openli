@@ -1394,8 +1394,9 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         mediatype = get_sip_media_type(sync->sipparser, 0);
 
         while (ipstr && portstr && !badsip && mediatype) {
-            if (update_rtp_stream(sync, thisrtp, vint, ipstr, portstr,
-                    mediatype, 0) == -1) {
+            int changed;
+            if ((changed = update_rtp_stream(sync, thisrtp, vint, ipstr,
+                    portstr, mediatype, 0)) == -1) {
                 if (sync->log_bad_sip) {
                     logger(LOG_INFO,
                         "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
@@ -1407,9 +1408,12 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
             portstr = get_sip_media_port(sync->sipparser, i);
             mediatype = get_sip_media_type(sync->sipparser, i);
             i++;
+            if (changed) {
+                thisrtp->changed = 1;
+            }
         }
 
-        announce_rtp_streams_if_required(sync, thisrtp);
+        //announce_rtp_streams_if_required(sync, thisrtp);
 
         if (thisrtp->invitecseq != NULL) {
             free(thisrtp->invitecseq);

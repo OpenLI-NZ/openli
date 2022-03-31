@@ -42,8 +42,6 @@ static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
             rtp);
 
     if (rtp == NULL) {
-        logger(LOG_INFO, "OpenLI: collector thread was unable to remove RTP stream %s, as it was not present in its intercept set.",
-                rtpstreamkey);
         return 0;
     }
 
@@ -503,6 +501,9 @@ void handle_push_ipintercept(libtrace_thread_t *t, colthread_local_t *loc,
 
 void handle_push_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
         rtpstreaminf_t *rtp) {
+
+    /* If stream key already exists, remove it and replace it */
+    remove_rtp_stream(loc, rtp->streamkey);
 
     HASH_ADD_KEYPTR(hh, loc->activertpintercepts, rtp->streamkey,
             strlen(rtp->streamkey), rtp);
