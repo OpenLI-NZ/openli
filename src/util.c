@@ -298,7 +298,7 @@ void convert_ipstr_to_sockaddr(char *knownip,
     }
 
     *family = res->ai_family;
-    *saddr = (struct sockaddr_storage *)malloc(
+    *saddr = (struct sockaddr_storage *)calloc(1,
             sizeof(struct sockaddr_storage));
     memcpy(*saddr, res->ai_addr, res->ai_addrlen);
 

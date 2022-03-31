@@ -103,6 +103,7 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
     newcin->cin = cin;
     newcin->parent = vint;
     newcin->active = 0;
+    newcin->changed = 0;
     newcin->targetaddr = NULL;
     newcin->otheraddr = NULL;
     newcin->ai_family = 0;

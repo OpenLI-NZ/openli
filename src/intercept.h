@@ -233,6 +233,7 @@ struct rtpstreaminf {
 
     uint32_t seqno;
     uint8_t active;
+    uint8_t changed;
     uint8_t byematched;
     char *invitecseq;
     char *byecseq;

@@ -330,6 +330,7 @@ static int update_rtp_stream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp,
     struct sockaddr_storage *saddr;
     int family, i;
     struct sipmediastream *mstream = NULL;
+    int changed = 0;
 
     errno = 0;
     port = strtoul(portstr, NULL, 0);
@@ -371,22 +372,37 @@ static int update_rtp_stream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp,
     if (dir == ETSI_DIR_FROM_TARGET) {
         if (rtp->targetaddr) {
             /* has the address or port changed? should we warn? */
+            if (memcmp(rtp->targetaddr, saddr, sizeof(struct sockaddr_storage))
+                    != 0) {
+                changed = 1;
+            }
             free(rtp->targetaddr);
         }
         rtp->ai_family = family;
         rtp->targetaddr = saddr;
+        if (mstream->targetport != 0 && port != mstream->targetport) {
+            changed = 1;
+        }
         mstream->targetport = (uint16_t)port;
+
 
     } else {
         if (rtp->otheraddr) {
             /* has the address or port changed? should we warn? */
+            if (memcmp(rtp->otheraddr, saddr, sizeof(struct sockaddr_storage))
+                    != 0) {
+                changed = 1;
+            }
             free(rtp->otheraddr);
         }
         rtp->ai_family = family;
         rtp->otheraddr = saddr;
+        if (mstream->otherport != 0 && port != mstream->otherport) {
+            changed = 1;
+        }
         mstream->otherport = (uint16_t)port;
     }
-    return 0;
+    return changed;
 }
 
 static inline int announce_rtp_streams_if_required(
@@ -404,18 +420,17 @@ static inline int announce_rtp_streams_if_required(
         return 0;
     }
 
-    if (rtp->active == 1) {
+    if (rtp->active == 1 && rtp->changed == 0) {
         return 0;
     }
 
     /* If we get here, we need to push the RTP stream details to the
      * processing threads. */
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
-        if (rtp->active == 0) {
-            push_single_voipstreamintercept(sync, sendq->q, rtp);
-        }
+        push_single_voipstreamintercept(sync, sendq->q, rtp);
     }
     rtp->active = 1;
+    rtp->changed = 0;
     return 1;
 }
 
@@ -860,6 +875,7 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
 
     char *cseqstr, *ipstr, *portstr, *mediatype;
     int i = 1;
+    int changed = 0;
 
     cseqstr = get_sip_cseq(sync->sipparser);
 
@@ -872,8 +888,8 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
 
         while (ipstr && portstr && mediatype) {
 
-            if (update_rtp_stream(sync, thisrtp, vint, ipstr, portstr,
-                    mediatype, 1) == -1) {
+            if ((changed = update_rtp_stream(sync, thisrtp, vint, ipstr,
+                    portstr, mediatype, 1)) == -1) {
                 if (sync->log_bad_sip) {
                     logger(LOG_INFO,
                         "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
@@ -885,6 +901,9 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
             portstr = get_sip_media_port(sync->sipparser, i);
             mediatype = get_sip_media_type(sync->sipparser, i);
             i++;
+            if (changed) {
+                thisrtp->changed = 1;
+            }
         }
         free(thisrtp->invitecseq);
         thisrtp->invitecseq = NULL;
@@ -900,6 +919,7 @@ static int process_sip_200ok(collector_sync_voip_t *sync, rtpstreaminf_t *thisrt
 
     char *ipstr, *portstr, *cseqstr, *mediatype;
     int i = 1;
+    int changed = 0;
 
     cseqstr = get_sip_cseq(sync->sipparser);
 
@@ -911,8 +931,8 @@ static int process_sip_200ok(collector_sync_voip_t *sync, rtpstreaminf_t *thisrt
         mediatype = get_sip_media_type(sync->sipparser, 0);
 
         while (ipstr && portstr && mediatype) {
-            if (update_rtp_stream(sync, thisrtp, vint, ipstr, portstr,
-                    mediatype, 1) == -1) {
+            if ((changed = update_rtp_stream(sync, thisrtp, vint, ipstr,
+                    portstr, mediatype, 1)) == -1) {
                 if (sync->log_bad_sip) {
                     logger(LOG_INFO,
                         "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
@@ -924,6 +944,9 @@ static int process_sip_200ok(collector_sync_voip_t *sync, rtpstreaminf_t *thisrt
             portstr = get_sip_media_port(sync->sipparser, i);
             mediatype = get_sip_media_type(sync->sipparser, i);
             i++;
+            if (changed) {
+                thisrtp->changed = 1;
+            }
         }
         free(thisrtp->invitecseq);
         thisrtp->invitecseq = NULL;
@@ -1046,6 +1069,42 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
             badsip = 1;
             continue;
         }
+
+        /* One thing to note here -- we only track the RTP streams for the
+         * SIP exchange that BEGAN most recently.
+         * If we're capturing both sides of a SIP proxy / SBC, we may see (for
+         * example) the INVITE enter the proxy, then the same INVITE being
+         * forwarded on to the next hop. We'll also see something
+         * similar for the response coming back.
+         *
+         * Imagine a scenario where we have two clients: A and B, with a proxy
+         * P between them. Our collector capture sees everything sent to and
+         * from the proxy.
+         *
+         * So we might see (in approximate order):
+         * INVITE from A to P  (RTP port 10001)
+         * 100 Trying from P to A
+         * INVITE from P to B  (RTP port 40000)
+         * 100 Trying from B to P
+         * 180 Ringing from B to P
+         * 183 Session Progress from B to P (port 40001)
+         * 180 Ringing from P to A
+         * 183 Session Progress from P to A (port 12344)
+         *
+         *
+         * In this case, we will look for RTP on ports 40000 and 40001,
+         * because that is the most recent INVITE for this call. 10001
+         * and 12344 are ignored, i.e. we capture RTP from the P to B link.
+         *
+         * If the call direction is reversed, we would instead try to capture
+         * RTP from the P to A side, as P to A would be the most recent INVITE.
+         *
+         * This could become a gotcha when an existing callee in a case like
+         * this decides to change RTP ports and issue a new INVITE in the
+         * middle of the call -- that will change which side of the proxy we
+         * are looking for RTP on, so hopefully the collector is able to
+         * see the RTP on both sides...
+         */
 
         /* Check for a new RTP stream announcement in a 200 OK */
         if (sip_is_200ok(sync->sipparser)) {
