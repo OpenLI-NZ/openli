@@ -202,6 +202,8 @@ static void parse_sip_targets(libtrace_list_t *targets, yaml_document_t *doc,
                     strcmp((char *)key->data.scalar.value, "username") == 0) {
                 SET_CONFIG_STRING_OPTION(newtgt->username, value);
                 newtgt->username_len = strlen(newtgt->username);
+
+                    continue;
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -213,7 +215,15 @@ static void parse_sip_targets(libtrace_list_t *targets, yaml_document_t *doc,
         }
 
         if (newtgt->username) {
-            libtrace_list_push_back(targets, &newtgt);
+            if (newtgt->username_len == 1 && newtgt->username[0] == '*' &&
+                    newtgt->realm == NULL) {
+                logger(LOG_INFO,
+                        "OpenLI: a SIP target of '*' requires a realm, skipping.");
+                free(newtgt->username);
+                free(newtgt);
+            } else {
+                libtrace_list_push_back(targets, &newtgt);
+            }
         } else {
             logger(LOG_INFO,
                     "OpenLI: a SIP target requires a username, skipping.");

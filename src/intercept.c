@@ -103,6 +103,7 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
     newcin->cin = cin;
     newcin->parent = vint;
     newcin->active = 0;
+    newcin->changed = 0;
     newcin->targetaddr = NULL;
     newcin->otheraddr = NULL;
     newcin->ai_family = 0;
@@ -234,6 +235,12 @@ void free_voip_cinmap(voipcinmap_t *cins) {
         if (c->shared) {
             free(c->shared);
         }
+        if (c->username) {
+            free(c->username);
+        }
+        if (c->realm) {
+            free(c->realm);
+        }
         free(c->callid);
         free(c);
     }
@@ -245,31 +252,14 @@ static inline void free_voip_sdpmap(voipsdpmap_t *sdps) {
 
     HASH_ITER(hh_sdp, sdps, s, tmp) {
         HASH_DELETE(hh_sdp, sdps, s);
+        if (s->username) {
+            free(s->username);
+        }
+        if (s->realm) {
+            free(s->realm);
+        }
         free(s);
     }
-}
-
-void free_single_voip_cin(rtpstreaminf_t *rtp) {
-    free_intercept_common(&(rtp->common));
-    if (rtp->invitecseq) {
-        free(rtp->invitecseq);
-    }
-    if (rtp->byecseq) {
-        free(rtp->byecseq);
-    }
-    if (rtp->targetaddr) {
-        free(rtp->targetaddr);
-    }
-    if (rtp->otheraddr) {
-        free(rtp->otheraddr);
-    }
-    if (rtp->streamkey) {
-        free(rtp->streamkey);
-    }
-    if (rtp->timeout_ev) {
-        free(rtp->timeout_ev);
-    }
-    free(rtp);
 }
 
 static void free_voip_cins(rtpstreaminf_t *cins) {
@@ -277,7 +267,7 @@ static void free_voip_cins(rtpstreaminf_t *cins) {
 
     HASH_ITER(hh, cins, rtp, tmp) {
         HASH_DEL(cins, rtp);
-        free_single_voip_cin(rtp);
+        free_single_rtpstream(rtp);
     }
 
 }
@@ -370,6 +360,15 @@ void free_single_rtpstream(rtpstreaminf_t *rtp) {
     }
     if (rtp->streamkey) {
         free(rtp->streamkey);
+    }
+    if (rtp->invitecseq) {
+        free(rtp->invitecseq);
+    }
+    if (rtp->byecseq) {
+        free(rtp->byecseq);
+    }
+    if (rtp->timeout_ev) {
+        free(rtp->timeout_ev);
     }
     free(rtp);
 

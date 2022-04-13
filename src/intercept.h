@@ -154,6 +154,8 @@ typedef struct voipintshared {
 typedef struct voipcinmap {
 
     char *callid;
+    char *username;
+    char *realm;
     voipintshared_t *shared;
     UT_hash_handle hh_callid;
 
@@ -161,6 +163,8 @@ typedef struct voipcinmap {
 
 typedef struct voipsdpmap {
     sip_sdp_identifier_t sdpkey;
+    char *username;
+    char *realm;
     voipintshared_t *shared;
     UT_hash_handle hh_sdp;
 } voipsdpmap_t;
@@ -229,6 +233,7 @@ struct rtpstreaminf {
 
     uint32_t seqno;
     uint8_t active;
+    uint8_t changed;
     uint8_t byematched;
     char *invitecseq;
     char *byecseq;
@@ -299,7 +304,6 @@ void free_all_vendmirror_intercepts(vendmirror_intercept_list_t **mirror_interce
 void free_all_staticipsessions(staticipsession_t **statintercepts);
 
 void free_voip_cinmap(voipcinmap_t *cins);
-void free_single_voip_cin(rtpstreaminf_t *rtp);
 void free_single_ipintercept(ipintercept_t *cept);
 void free_single_voipintercept(voipintercept_t *v);
 void free_single_ipsession(ipsession_t *sess);

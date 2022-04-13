@@ -734,6 +734,22 @@ int get_sip_proxy_auth_identity(openli_sip_parser_t *parser, int index,
     return 1;
 }
 
+char *get_sip_branch_id(openli_sip_parser_t *parser) {
+    osip_generic_param_t *param;
+    osip_via_t *via;
+
+    via = (osip_via_t *) osip_list_get(&(parser->osip->vias), 0);
+    if (via == NULL) {
+        return NULL;
+    }
+
+    osip_via_param_get_byname(via, "branch", &param);
+    if (param == NULL) {
+        return NULL;
+    }
+    return (char *)param->gvalue;
+}
+
 char *get_sip_callid(openli_sip_parser_t *parser) {
     char *callidstr;
     osip_call_id_t *cid;

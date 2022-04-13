@@ -197,7 +197,6 @@ static void remove_destination(forwarding_thread_data_t *fwd,
     int err;
 
     JLD(err, fwd->destinations_by_id, med->mediatorid);
-
     if (med->fd != -1) {
         JLD(err, fwd->destinations_by_fd, med->fd);
         disconnect_mediator(fwd, med);
@@ -226,9 +225,8 @@ static void remove_all_destinations(forwarding_thread_data_t *fwd) {
     JLF(jval, fwd->destinations_by_id, index);
     while (jval != NULL) {
         med = (export_dest_t *)(*jval);
-        JLN(jval, fwd->destinations_by_id, index);
-
         remove_destination(fwd, med);
+        JLN(jval, fwd->destinations_by_id, index);
     }
 }
 
@@ -510,11 +508,11 @@ static void purge_unconfirmed_mediators(forwarding_thread_data_t *fwd) {
     JLF(jval, fwd->destinations_by_id, index);
     while (jval != NULL) {
         med = (export_dest_t *)(*jval);
-        JLN(jval, fwd->destinations_by_id, index);
 
         if (med->awaitingconfirm) {
             remove_destination(fwd, med);
         }
+        JLN(jval, fwd->destinations_by_id, index);
     }
 
 }
