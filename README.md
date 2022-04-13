@@ -55,11 +55,11 @@ on whether you may use OpenLI or not.
 
 ## Dependencies
 
-* [libtrace 4.0.16 or later](http://research.wand.net.nz/software/libtrace.php)
+* [libtrace 4.0.18 or later](http://research.wand.net.nz/software/libtrace.php)
   (packages for Debian / Ubuntu are available
   [from WAND](https://cloudsmith.io/~wand/repos/libtrace/packages/) as well).
 
-* [libwandder 2.0.0 or later](https://github.com/wanduow/libwandder/)
+* [libwandder 2.0.4 or later](https://github.com/wanduow/libwandder/)
   (packages for Debian / Ubuntu are available
   [from WAND](https://cloudsmith.io/~wand/repos/libwandder/packages/) as well).
 
@@ -81,8 +81,17 @@ on whether you may use OpenLI or not.
 * libmicrohttpd -- Debian / Ubuntu users can install the libmicrohttpd-dev
   package. Required for the provisioner.
 
-* libjson-c -- Debian/Ubuntu users can install the libjson-c-dev package.
+* libjson-c -- Debian / Ubuntu users can install the libjson-c-dev package.
   Required for the provisioner.
+
+* libssl -- Debian / Ubuntu users can install the libssl-dev package.
+  Required for all components.
+
+* libsqlcipher -- Debian / Ubuntu users can install the libsqlcipher-dev
+  package. Required for the provisioner.
+
+* librabbitmq -- Debian / Ubuntu users can install the librabbitmq-dev
+  package. Required for the collector and mediator.
 
 * libtcmalloc -- Debian / Ubuntu users can install the libgoogle-perftools-dev
   package. Optional, but highly recommended for performance reasons.
@@ -155,10 +164,14 @@ corresponding RTP or IP sessions. A collector can capture using multiple
 input sources (i.e. capture interfaces) and use multiple threads to spread
 the collection workload across multiple CPU cores.
 
+The recommended way to learn about OpenLI is by taking our tutorial, which can
+be found at https://github.com/wanduow/openli/wiki/OpenLI-Tutorial -- the
+tutorial includes practical exercises using containers that will help
+you become familiar with the OpenLI components and how to configure them.
+
 More details on how to configure and run each component can be found in the
 relevant document in the `doc/` directory included with the OpenLI source.
 Example configuration for each component is also included in this directory.
-
 
 ## Changing configuration of a running OpenLI system
 
