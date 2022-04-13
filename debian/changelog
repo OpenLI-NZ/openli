@@ -1,3 +1,13 @@
+openli (1.0.14-1) unstable; urgency=medium
+
+  * Fix bug where VoIP intercepts would stop collecting media traffic
+    if an INVITE was issued during the ongoing call.
+  * SIP target usernames now support the use of a leading '*' as a wildcard
+    (e.g. to represent different combinations of dialing codes that may
+     precede a phone number identifier).
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Wed, 13 Apr 2022 14:55:36 +1200
+
 openli (1.0.13-1) unstable; urgency=medium
 
   * RADIUS parser now copes with situations where an assigned IP is

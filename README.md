@@ -1,6 +1,6 @@
 OpenLI -- open source ETSI-compliant Lawful Intercept software
 
-Version: 1.0.13
+Version: 1.0.14
 
 ---------------------------------------------------------------------------
 
