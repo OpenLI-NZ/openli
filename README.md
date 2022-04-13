@@ -53,7 +53,30 @@ of this software may violate these conditions, please contact us as
 <openli-support@waikato.ac.nz> and explain your situation to receive our advice
 on whether you may use OpenLI or not.
 
-## Dependencies
+## Software Packages
+
+We currently package OpenLI for many common Linux distributions. We strongly
+recommend that you install OpenLI using a package if you can, rather than
+building from source.
+
+Instructions on packaged installs can be found at:
+  https://github.com/wanduow/openli/wiki/Installing-Debian-Packaged-Version
+  https://github.com/wanduow/openli/wiki/Installing-via-RPM
+
+
+## The OpenLI Wiki
+
+The best source of documentation for OpenLI is the OpenLI wiki at
+https://github.com/wanduow/openli/wiki -- we have specific pages on a number
+of topics that may be relevant to OpenLI users (e.g. encryption, the REST
+API, DPDK with OpenLI, etc.). The wiki tends to be updated more often than
+the in-code documentation (e.g. the `doc/` directory) as well.
+
+If there is content that you would like to contribute to the OpenLI wiki,
+please feel free to reach out to us at <openli-support@waikato.ac.nz> and we
+will be more than happy to accept your contribution.
+
+## Dependencies for building from source
 
 * [libtrace 4.0.18 or later](http://research.wand.net.nz/software/libtrace.php)
   (packages for Debian / Ubuntu are available
@@ -238,7 +261,8 @@ A. This means that your collector is not keeping up with the number of
   collectors (only if the workload is coming from multiple intercepts).
 
 * accept that your LI needs are too large to be handled by a simple
-  open-source project and ask your vendors if they can supply you with
-  a better solution.
+  open-source project and ask a commercial LI vendor if they can supply you
+  with a solution that can scale to your network size (be prepared to pay
+  a significant sum for this, of course).
 
 
