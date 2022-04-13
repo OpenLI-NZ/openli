@@ -482,14 +482,23 @@ A SIP target can be described using the following key-value elements:
 
 ### SIP Target Specifics
 
-OpenLI currently supports three approaches for associating a SIP session
-with a VOIP intercept: using the To: URI, using the Authorization header,
-and using the Proxy-Authorization header. OpenLI does NOT attempt to match
-SIP traffic to a target based on the contents of the From: URI -- this field
-can be re-written by SIP clients as they please and therefore is not a
-reliable indicator of who is attempting to create a SIP session.
+OpenLI currently supports five approaches for associating a SIP session
+with a VOIP intercept:
+  * using the P-Asserted-Identity header;
+  * using the Remote-Party-Id header;
+  * using the To: URI;
+  * using the Authorization header;
+  * using the Proxy-Authorization header.
 
-The To: URI is used for matching incoming calls. As an example, the URI
+OpenLI does NOT attempt to match SIP traffic to a target based on the contents
+of the From: URI by default -- this field can be re-written by SIP clients as
+they please and therefore is not a reliable indicator of who is attempting to
+create a SIP session. This behaviour may be overridden (and therefore
+the From: URI will be treated as valid identifier) by setting the
+`sipallowfromident` configuration option to true in the collector
+configuration file.
+
+The To: URI can be used for matching incoming calls. As an example, the URI
 typically takes the form "sip:roger@sip.example.net". If our goal is to
 intercept any incoming calls to that SIP address, we could add the following
 SIP target to our VOIP intercept config:
@@ -541,5 +550,12 @@ this user, despite the discrepancies between outgoing Auth and the address
 used for routing incoming calls. Once again, "realm:" may be left unspecified,
 provided the "username:" is unique within your SIP deployment.
 
-
+Usernames may be preceded by a `*` character that will act as a wildcard
+when comparing the specified target username against the username found
+inside the SIP invitations. This can be useful if, for example, your usernames
+are phone numbers and may appear in invitations in a variety of different
+permutations based on which dialing codes are prepended to the number by
+the software that has formed the invite. For instance, a username of
+`*3257781` will match any of the following SIP identities: `3257781`,
+`643257781`, `+643257781`, or `00643257781`.
 
