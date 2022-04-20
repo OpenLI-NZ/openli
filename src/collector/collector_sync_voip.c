@@ -1318,6 +1318,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
                     if (sync->log_bad_sip) {
                         logger(LOG_INFO,
                                 "OpenLI: mismatched CINs for call %s and SDP identifier %u:%u:%s:%s",
+                                callid,
                                 sdpo->sessionid, sdpo->version, sdpo->username,
                                 sdpo->address);
                     }
