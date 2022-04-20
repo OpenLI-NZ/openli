@@ -115,6 +115,7 @@ int get_sip_passerted_identity(openli_sip_parser_t *parser,
 int get_sip_remote_party(openli_sip_parser_t *parser,
         openli_sip_identity_t *sipid);
 char *get_sip_cseq(openli_sip_parser_t *parser);
+char *get_sip_branch_id(openli_sip_parser_t *parser);
 char *get_sip_callid(openli_sip_parser_t *parser);
 char *get_sip_session_id(openli_sip_parser_t *parser);
 char *get_sip_session_address(openli_sip_parser_t *parser);

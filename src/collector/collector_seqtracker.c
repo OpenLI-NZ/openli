@@ -181,19 +181,18 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
 
     if (intstate) {
         remove_preencoded(seqdata, intstate);
-        free_intercept_msg(&(intstate->details));
+        free(cept->liid);
+        free(intstate->details.authcc);
+        free(intstate->details.delivcc);
 
         /* leave the CIN seqno state as is for now */
-        intstate->details.liid = cept->liid;
         intstate->details.authcc = cept->authcc;
         intstate->details.delivcc = cept->delivcc;
-        intstate->details.liid_len = strlen(cept->liid);
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
         intstate->version ++;
 
     } else {
-
         /* New LIID, create fresh intercept state */
         intstate = (exporter_intercept_state_t *)malloc(
                 sizeof(exporter_intercept_state_t));

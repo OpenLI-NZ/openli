@@ -1,6 +1,6 @@
 OpenLI -- open source ETSI-compliant Lawful Intercept software
 
-Version: 1.0.13
+Version: 1.0.14
 
 ---------------------------------------------------------------------------
 
@@ -53,13 +53,36 @@ of this software may violate these conditions, please contact us as
 <openli-support@waikato.ac.nz> and explain your situation to receive our advice
 on whether you may use OpenLI or not.
 
-## Dependencies
+## Software Packages
 
-* [libtrace 4.0.16 or later](http://research.wand.net.nz/software/libtrace.php)
+We currently package OpenLI for many common Linux distributions. We strongly
+recommend that you install OpenLI using a package if you can, rather than
+building from source.
+
+Instructions on packaged installs can be found at:
+  https://github.com/wanduow/openli/wiki/Installing-Debian-Packaged-Version
+  https://github.com/wanduow/openli/wiki/Installing-via-RPM
+
+
+## The OpenLI Wiki
+
+The best source of documentation for OpenLI is the OpenLI wiki at
+https://github.com/wanduow/openli/wiki -- we have specific pages on a number
+of topics that may be relevant to OpenLI users (e.g. encryption, the REST
+API, DPDK with OpenLI, etc.). The wiki tends to be updated more often than
+the in-code documentation (e.g. the `doc/` directory) as well.
+
+If there is content that you would like to contribute to the OpenLI wiki,
+please feel free to reach out to us at <openli-support@waikato.ac.nz> and we
+will be more than happy to accept your contribution.
+
+## Dependencies for building from source
+
+* [libtrace 4.0.18 or later](http://research.wand.net.nz/software/libtrace.php)
   (packages for Debian / Ubuntu are available
   [from WAND](https://cloudsmith.io/~wand/repos/libtrace/packages/) as well).
 
-* [libwandder 2.0.0 or later](https://github.com/wanduow/libwandder/)
+* [libwandder 2.0.4 or later](https://github.com/wanduow/libwandder/)
   (packages for Debian / Ubuntu are available
   [from WAND](https://cloudsmith.io/~wand/repos/libwandder/packages/) as well).
 
@@ -81,8 +104,17 @@ on whether you may use OpenLI or not.
 * libmicrohttpd -- Debian / Ubuntu users can install the libmicrohttpd-dev
   package. Required for the provisioner.
 
-* libjson-c -- Debian/Ubuntu users can install the libjson-c-dev package.
+* libjson-c -- Debian / Ubuntu users can install the libjson-c-dev package.
   Required for the provisioner.
+
+* libssl -- Debian / Ubuntu users can install the libssl-dev package.
+  Required for all components.
+
+* libsqlcipher -- Debian / Ubuntu users can install the libsqlcipher-dev
+  package. Required for the provisioner.
+
+* librabbitmq -- Debian / Ubuntu users can install the librabbitmq-dev
+  package. Required for the collector and mediator.
 
 * libtcmalloc -- Debian / Ubuntu users can install the libgoogle-perftools-dev
   package. Optional, but highly recommended for performance reasons.
@@ -155,10 +187,14 @@ corresponding RTP or IP sessions. A collector can capture using multiple
 input sources (i.e. capture interfaces) and use multiple threads to spread
 the collection workload across multiple CPU cores.
 
+The recommended way to learn about OpenLI is by taking our tutorial, which can
+be found at https://github.com/wanduow/openli/wiki/OpenLI-Tutorial -- the
+tutorial includes practical exercises using containers that will help
+you become familiar with the OpenLI components and how to configure them.
+
 More details on how to configure and run each component can be found in the
 relevant document in the `doc/` directory included with the OpenLI source.
 Example configuration for each component is also included in this directory.
-
 
 ## Changing configuration of a running OpenLI system
 
@@ -225,7 +261,8 @@ A. This means that your collector is not keeping up with the number of
   collectors (only if the workload is coming from multiple intercepts).
 
 * accept that your LI needs are too large to be handled by a simple
-  open-source project and ask your vendors if they can supply you with
-  a better solution.
+  open-source project and ask a commercial LI vendor if they can supply you
+  with a solution that can scale to your network size (be prepared to pay
+  a significant sum for this, of course).
 
 
