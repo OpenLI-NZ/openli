@@ -1309,8 +1309,12 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         HASH_FIND(hh_callid, vint->cin_callid_map, callid, strlen(callid),
                 findcin);
 
-        HASH_FIND(hh_sdp, vint->cin_sdp_map, sdpo, sizeof(sip_sdp_identifier_t),
-                findsdp);
+        if (!sync->ignore_sdpo_matches) {
+            HASH_FIND(hh_sdp, vint->cin_sdp_map, sdpo,
+                    sizeof(sip_sdp_identifier_t), findsdp);
+        } else {
+            findsdp = NULL;
+        }
 
         if (findcin) {
             if (findsdp) {
@@ -1332,8 +1336,10 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
             vshared = findcin->shared;
             iritype = ETSILI_IRI_CONTINUE;
 
-        } else if (findsdp && !sync->ignore_sdpo_matches) {
-            /* New call ID but already seen this session */
+        } else if (findsdp) {
+            /* New call ID but already seen this session from another
+             * call leg
+             */
             update_cin_callid_map(&(vint->cin_callid_map), callid,
                         findsdp->shared, findsdp->username, findsdp->realm);
             vshared = findsdp->shared;
