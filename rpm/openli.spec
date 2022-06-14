@@ -14,7 +14,7 @@ BuildRequires: bison
 BuildRequires: doxygen
 BuildRequires: flex
 BuildRequires: libyaml-devel
-BuildRequires: libtrace4-devel >= 4.0.17
+BuildRequires: libtrace4-devel >= 4.0.19
 BuildRequires: Judy-devel
 BuildRequires: uthash-devel
 BuildRequires: libwandder2-devel >= 2.0.4
