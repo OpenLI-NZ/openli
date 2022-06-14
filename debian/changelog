@@ -1,3 +1,11 @@
+openli (1.0.15-1) unstable; urgency=medium
+
+  * Fix crash when SDP identities are shared amongst multiple Call-IDs.
+  * Fix bad logic that meant `sipignoresdpo` option was ignored in certain
+    situations.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Wed, 15 Jun 2022 10:27:39 +1200
+
 openli (1.0.14-1) unstable; urgency=medium
 
   * Fix bug where VoIP intercepts would stop collecting media traffic
