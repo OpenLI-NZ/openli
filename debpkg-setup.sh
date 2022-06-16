@@ -40,6 +40,10 @@ case ${DISTRO} in
                 sed -i 's/ dh-systemd (>=1.5),//' debian/control
         ;;
 
+        jammy )
+                sed -i 's/ dh-systemd (>=1.5),//' debian/control
+        ;;
+
         bionic )
                 apt-get install -y debhelper -t bionic-backports
         ;;
