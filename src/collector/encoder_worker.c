@@ -263,13 +263,23 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
 static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
         openli_encoded_result_t *res) {
 
+    uint16_t liidlen, l;
+
+    liidlen = strlen(job->liid);
+    l = htons(liidlen);
+
     memset(res, 0, sizeof(openli_encoded_result_t));
 
     res->msgbody = calloc(1, sizeof(wandder_encoded_result_t));
     res->msgbody->encoder = NULL;
-    res->msgbody->encoded = NULL;
-    res->msgbody->len = job->origreq->data.rawip.ipclen;
-    res->msgbody->alloced = 0;
+    res->msgbody->encoded = malloc(liidlen + sizeof(uint16_t));
+
+    memcpy(res->msgbody->encoded, &l, sizeof(uint16_t));
+    memcpy(res->msgbody->encoded + sizeof(uint16_t), job->liid, liidlen);
+
+    res->msgbody->len = job->origreq->data.rawip.ipclen +
+            (liidlen + sizeof(uint16_t));
+    res->msgbody->alloced = liidlen + sizeof(uint16_t);
     res->msgbody->next = NULL;
 
     res->ipcontents = job->origreq->data.rawip.ipcontent;
