@@ -1142,18 +1142,8 @@ void *start_forwarding_thread(void *data) {
             break;
         }
 
-        if (res.msgbody) {
-            free(res.msgbody->encoded);
-            free(res.msgbody);
-        }
+        free_encoded_result(&res);
 
-        if (res.liid) {
-            free(res.liid);
-        }
-
-        if (res.ipcontents) {
-            free(res.ipcontents);
-        }
     } while (x > 0);
 
 haltforwarder:
