@@ -355,6 +355,29 @@ int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr) {
     return timerfd;
 }
 
+int epoll_add_ms_timer(int epoll_fd, uint32_t msecs, void *ptr) {
+    int timerfd;
+    struct epoll_event ev;
+    struct itimerspec its;
+
+    ev.data.ptr = ptr;
+    ev.events = EPOLLIN;
+
+    its.it_interval.tv_sec = 0;
+    its.it_interval.tv_nsec = 0;
+    its.it_value.tv_sec = msecs / 1000;
+    its.it_value.tv_nsec = (msecs % 1000) * 1000000;
+
+    timerfd = timerfd_create(CLOCK_MONOTONIC, 0);
+    timerfd_settime(timerfd, 0, &its, NULL);
+
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, timerfd, &ev) == -1) {
+        return -1;
+    }
+
+    return timerfd;
+}
+
 int extract_ip_addresses(libtrace_packet_t *pkt, uint8_t *srcip,
         uint8_t *destip, int *ipfamily) {
 

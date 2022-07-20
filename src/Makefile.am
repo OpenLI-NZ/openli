@@ -74,11 +74,12 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
                 mediator/med_epoll.c mediator/liidmapping.c \
                 mediator/liidmapping.h mediator/mediator_prov.c \
                 mediator/med_epoll.h mediator/mediator_prov.h \
-                mediator/mediator_coll.c mediator/mediator_coll.h \
-                mediator/mediator_rmq.c \
+                mediator/coll_recv_thread.c mediator/coll_recv_thread.h \
+                mediator/lea_send_thread.c mediator/lea_send_thread.h \
+                mediator/mediator_rmq.c mediator/mediator_rmq.h \
                 byteswap.c byteswap.h \
                 configparser.c configparser.h util.c util.h \
-                agency.h logger.c logger.h netcomms.c \
+                agency.h agency.c logger.c logger.h netcomms.c \
                 netcomms.h export_buffer.c intercept.c \
                 export_buffer.h etsili_core.h etsili_core.c \
                 collector/jenkinshash.c openli_tls.c openli_tls.h \

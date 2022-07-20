@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018-2020 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2018-2022 The University of Waikato, Hamilton, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -33,6 +33,15 @@
 #include "logger.h"
 #include "util.h"
 
+/** This file implements the methods used by the communication channel between
+ *  an OpenLI mediator and an OpenLI provisioner (on the mediator side).
+ */
+
+/** Initialises the state for a provisioner instance
+ *
+ *  @param prov             The provisioner instance
+ *  @param ctx              The SSL context object for the mediator
+ */
 void init_provisioner_instance(mediator_prov_t *prov, SSL_CTX **ctx) {
 	prov->provreconnect = NULL;
 	prov->provev = NULL;
@@ -40,6 +49,7 @@ void init_provisioner_instance(mediator_prov_t *prov, SSL_CTX **ctx) {
 	prov->outgoing = NULL;
 	prov->disable_log = 0;
 	prov->tryconnect = 1;
+    prov->just_connected = 0;
 	prov->ssl = NULL;
 	prov->epoll_fd = -1;
 	prov->sslctxt = ctx;
@@ -66,6 +76,13 @@ static inline void setup_provisioner_reconnect_timer(mediator_prov_t *prov) {
     start_mediator_timer(prov->provreconnect, 1);
 }
 
+/** Disconnects the TCP session to a provisioner and resets any state
+ *  associated with that communication channel.
+ *
+ *  @param prov                 The provisioner instance to disconnect
+ *  @param enable_reconnect     If not zero, we will set a timer to try and
+ *                              reconnect to the provisioner in 1 second.
+ */
 void disconnect_provisioner(mediator_prov_t *prov, int enable_reconnect) {
 
 	if (prov->disable_log == 0) {
@@ -108,6 +125,7 @@ void disconnect_provisioner(mediator_prov_t *prov, int enable_reconnect) {
         prov->incoming = NULL;
     }
 
+    /* Set the reconnection timer, if requested */
 	if (enable_reconnect) {
 		setup_provisioner_reconnect_timer(prov);
 	}
@@ -132,6 +150,17 @@ void free_provisioner(mediator_prov_t *prov) {
 	}
 }
 
+/** Sends the mediator details message to a connected provisioner.
+ *  Mediator details include the port and IP that it is listening on for
+ *  collector connections.
+ *
+ *  @param prov         The provisioner that is to receive the message.
+ *  @param meddeets     The details to be included in the message.
+ *  @param justcreated  A flag indicating whether the socket for the
+ *                      provisioner connection has just been created.
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
 int send_mediator_details_to_provisioner(mediator_prov_t *prov,
 		openli_mediator_t *meddeets, int justcreated) {
 
@@ -220,6 +249,9 @@ static int init_provisioner_connection(mediator_prov_t *prov, int sock) {
     prov->outgoing = create_net_buffer(NETBUF_SEND, sock, prov->ssl);
     prov->incoming = create_net_buffer(NETBUF_RECV, sock, prov->ssl);
 
+    /* The AUTH message indicates to the provisioner that we are an OpenLI
+     * mediator and they can safely start sending us intercept information.
+     */
     if (push_auth_onto_net_buffer(prov->outgoing,
                 OPENLI_PROTO_MEDIATOR_AUTH) == -1) {
         if (prov->disable_log == 0) {
@@ -277,10 +309,10 @@ int attempt_provisioner_connect(mediator_prov_t *prov, int provfail) {
 
     provfail = 0;
     if (s == -1) {
-    //    if (prov->disable_log == 0) {
+        if (prov->disable_log == 0) {
             logger(LOG_INFO,
                     "OpenLI Mediator: Error - Unable to connect to provisioner.");
-   //     }
+        }
         setup_provisioner_reconnect_timer(prov);
         provfail = 1;
     } else if (s == 0) {
@@ -303,7 +335,7 @@ int attempt_provisioner_connect(mediator_prov_t *prov, int provfail) {
                         "OpenLI mediator has connected to provisioner at %s:%s",
                         prov->provaddr, prov->provport);
             }
-
+            prov->just_connected = 1;
         }
     }
     return provfail;

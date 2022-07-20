@@ -1538,6 +1538,7 @@ static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
         for (i = 0; i < sync->forwardcount; i++) {
             expmsg = create_intercept_details_msg(&(vint->common));
+            expmsg->type = OPENLI_EXPORT_INTERCEPT_DETAILS;
             publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
         }
     } else {

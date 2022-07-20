@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018-2020 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2018-2022 The University of Waikato, Hamilton, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -25,8 +25,8 @@
  */
 
 #include <Judy.h>
+#include <string.h>
 #include "liidmapping.h"
-#include "med_epoll.h"
 #include "logger.h"
 
 /** Finds an LIID in an LIID map and returns its corresponding agency
@@ -47,114 +47,174 @@ liid_map_entry_t *lookup_liid_agency_mapping(liid_map_t *map, char *liidstr) {
     return (liid_map_entry_t *)(*jval);
 }
 
-/** Removes an LIID->agency mapping from an LIID map.
+/** Frees any memory allocated for an LIID->agency mapping
+ *
+ *  @param m        The LIID map entry to be freed
+ */
+void destroy_liid_mapping(liid_map_entry_t *m) {
+    free(m->liid);
+    free(m);
+}
+
+/** Removes an LIID->agency mapping from an LIID map and frees any memory
+ *  allocated for that mapping.
  *
  *  @param map          The LIID map to remove the mapping from
- *  @param liidstr      The LIID that is to be removed from the map (as a
- *                      string)
+ *  @param m            The LIID map entry to be removed
  *
  */
-void remove_liid_agency_mapping(liid_map_t *map, char *liidstr) {
+void remove_liid_agency_mapping(liid_map_t *map, liid_map_entry_t *m) {
     int err;
 
-    logger(LOG_DEBUG, "OpenLI Mediator: removed agency mapping for LIID %s.",
-            liidstr);
-    JSLD(err, map->liid_array, (unsigned char *)liidstr);
+    JSLD(err, map->liid_array, (unsigned char *)m->liid);
+    destroy_liid_mapping(m);
+}
+
+/** Flags an LIID->agency mapping as withdrawn.
+ *
+ *  Withdrawn mappings are deleted (along with their corresponding queues)
+ *  once any outstanding messages in their queue have been processed.
+ *
+ *  @param map          The LIID map to search for the mapping
+ *  @param liidstr      The LIID to be withdrawn
+ *
+ */
+void withdraw_liid_agency_mapping(liid_map_t *map, char *liidstr) {
+    int err;
+
+    PWord_t jval;
+    liid_map_entry_t *m;
+
+    JSLG(jval, map->liid_array, (unsigned char *)liidstr);
+    if (jval == NULL) {
+        return;
+    }
+
+    m = (liid_map_entry_t *)(*jval);
+    m->withdrawn = 1;
+
+    logger(LOG_INFO,
+            "OpenLI Mediator: flagged agency mapping for LIID %s as withdrawn.",
+            m->liid);
 }
 
 /** Adds a new LIID->agency mapping to an LIID map.
  *
  *  @param map          The LIID map to add the new mapping to
  *  @param liidstr      The LIID for the new mapping (as a string)
- *  @param agency       The agency that requested the LIID
  *
- *  @return -1 if an error occurs, 0 if the addition is successful, 1 if
- *          the pcap thread needs to know that this LIID is no longer
- *          being written to disk
+ *  @return -1 if an error occurs, 0 if the LIID already existed and was not
+ *          withdrawn, 1 if a new LIID->agency mapping was created or an
+ *          existing mapping has been reactivated.
  */
-int add_liid_agency_mapping(liid_map_t *map, char *liidstr,
-        mediator_agency_t *agency) {
+int add_liid_agency_mapping(liid_map_t *map, char *liidstr) {
 
     PWord_t jval;
 	liid_map_entry_t *m;
-	int err;
-    int ret = 0;
 
     JSLG(jval, map->liid_array, (unsigned char *)liidstr);
     if (jval != NULL) {
+        int ret = 0;
+
         /* We've seen this LIID before? Possibly a re-announcement? */
         m = (liid_map_entry_t *)(*jval);
 
-        if (m->ceasetimer) {
-            /* was scheduled to be ceased, so halt the timer */
-            halt_mediator_timer(m->ceasetimer);
-        }
-
-        if (m->agency == NULL && agency != NULL) {
-            /* this LIID used to be written to pcap, now we need to
-             * tell the pcap thread to stop creating files for it
-             */
+        /* If it was withdrawn, reset it to being active */
+        if (m->withdrawn != 0) {
+            m->withdrawn = 0;
             ret = 1;
+        } else {
+            ret = 0;
         }
-        free(m->liid);
-    } else {
-        /* Create a new entry in the mapping array */
-        JSLI(jval, map->liid_array, (unsigned char *)liidstr);
-        if (jval == NULL) {
-            logger(LOG_INFO, "OpenLI Mediator: OOM when allocating memory for new LIID.");
-            return -1;
-        }
-
-        m = (liid_map_entry_t *)malloc(sizeof(liid_map_entry_t));
-        if (m == NULL) {
-            logger(LOG_INFO, "OpenLI Mediator: OOM when allocating memory for new LIID.");
-            return -1;
-        }
-        *jval = (Word_t)m;
-
-        /* If this was previously a "unknown" LIID, we can now remove
-         * it from our missing LIID list -- if it gets withdrawn later,
-         * we will then alert again about it being missing. */
-        JSLG(jval, map->missing_liids, (unsigned char *)liidstr);
-        if (jval != NULL) {
-            JSLD(err, map->missing_liids, (unsigned char *)liidstr);
-        }
+        m->unconfirmed = 0;
+        m->ccqueue_deleted = 0;
+        m->iriqueue_deleted = 0;
+        return ret;
     }
-    m->liid = liidstr;
-    m->agency = agency;
-    m->ceasetimer = NULL;
 
-	if (agency) {
-        logger(LOG_DEBUG, "OpenLI Mediator: added %s -> %s to LIID map",
-                m->liid, m->agency->agencyid);
-    } else {
-        logger(LOG_INFO, "OpenLI Mediator: added %s -> pcapdisk to LIID map",
-                m->liid);
-    }
-	return ret;
-}
-
-/** Adds an LIID to the set of LIIDs without agencies in an LIID map.
- *
- *  @param map          The LIID map to add the missing LIID to
- *  @param liidstr      The LIID that has no corresponding agency (as a string)
- *
- *  @return -1 if an error occurs (e.g. OOM), 0 if successful.
- */
-int add_missing_liid(liid_map_t *map, char *liidstr) {
-    PWord_t jval;
-
-    JSLI(jval, map->missing_liids, (unsigned char *)liidstr);
+    /* Create a new entry in the mapping array */
+    JSLI(jval, map->liid_array, (unsigned char *)liidstr);
     if (jval == NULL) {
-        logger(LOG_INFO, "OpenLI Mediator: OOM when allocating memory for missing LIID.");
+        logger(LOG_INFO, "OpenLI Mediator: OOM when allocating memory for new LIID.");
         return -1;
     }
 
-    if ((*jval) == 0) {
-        logger(LOG_INFO, "OpenLI Mediator: was unable to find LIID %s in its set of mappings.", liidstr);
+    m = (liid_map_entry_t *)calloc(1, sizeof(liid_map_entry_t));
+    if (m == NULL) {
+        logger(LOG_INFO, "OpenLI Mediator: OOM when allocating memory for new LIID.");
+        return -1;
     }
+    *jval = (Word_t)m;
 
-    (*jval) = 1;
+    m->withdrawn = 0;
+    m->unconfirmed = 0;
+    m->liid = strdup(liidstr);
+    m->ccqueue_deleted = 0;
+    m->iriqueue_deleted = 0;
+
+	return 1;
+}
+
+/** Callback method for setting the "unconfirmed" flag for an LIID map
+ *  entry. Designed for use in combination with foreach_liid_agency_mapping().
+ *
+ *  @param m        The LIID map entry to be marked as unconfirmed
+ *  @param arg      A user-provided argument (unused)
+ *
+ *  @return 0 always
+ */
+int set_liid_as_unconfirmed(liid_map_entry_t *m, void *arg) {
+    m->unconfirmed = 1;
+    return 0;
+}
+
+/** Runs a user-provided function against all LIIDs in the map.
+ *
+ *  @param map      The map to iterate over
+ *  @param arg      A user-provided argument that will be passed into each
+ *                  invocation of the user function
+ *  @param torun    The function to run for each existing LIID.
+ *
+ *  The torun() function must accept two arguments:
+ *    - an liid_map_entry_t * that will point to an LIID mapping
+ *    - a void * that will point to the user-provided argument
+ *
+ *  The torun() function must return 1 if the mapping should be deleted after
+ *  the function has completed, or 0 if it should be retained in the map.
+ */
+int foreach_liid_agency_mapping(liid_map_t *map, void *arg,
+        int (*torun)(liid_map_entry_t *, void *)) {
+
+    unsigned char index[1024];
+    liid_map_entry_t *m;
+    Word_t bytes;
+    PWord_t jval;
+    int r, jrc;
+    int err = 0;
+
+    index[0] = '\0';
+
+	/* Iterate all known LIIDs */
+	JSLF(jval, map->liid_array, index);
+	while (jval != NULL) {
+		m = (liid_map_entry_t *)(*jval);
+
+        if (m) {
+            r = torun(m, arg);
+            if (r == 1) {
+                /* if torun() returns 1, delete the mapping */
+                JSLD(jrc, map->liid_array, index);
+                destroy_liid_mapping(m);
+            } else if (r == -1) {
+                err = 1;
+            }
+        }
+        JSLN(jval, map->liid_array, index);
+	}
+
+    if (err) {
+        return -1;
+    }
     return 0;
 }
 
@@ -175,27 +235,10 @@ void purge_liid_map(liid_map_t *map) {
 	JSLF(jval, map->liid_array, index);
 	while (jval != NULL) {
 		m = (liid_map_entry_t *)(*jval);
-
-		/* If we had a timer running for the removal of a withdrawn LIID,
-		 * make sure we stop that cleanly.
-		 */
-		if (m->ceasetimer) {
-			destroy_mediator_timer(m->ceasetimer);
-		}
-		JSLN(jval, map->liid_array, index);
-		free(m->liid);
-		free(m);
+        JSLN(jval, map->liid_array, index);
+        destroy_liid_mapping(m);
 	}
 	JSLFA(bytes, map->liid_array);
 }
 
-/** Removes all entries from the missing LIID map
- *
- *  @param map          The LIID map to purge missing LIIDs from
- */
-void purge_missing_liids(liid_map_t *map) {
-    Word_t bytes;
-
-    JSLFA(bytes, map->missing_liids);
-}
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

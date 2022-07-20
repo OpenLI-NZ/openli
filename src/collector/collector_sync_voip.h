@@ -41,8 +41,10 @@ typedef struct collector_sync_voip_data {
     collector_identity_t *info;
 
     int pubsockcount;
+    int forwardcount;
     void **zmq_pubsocks;
     void *zmq_colsock;
+    void **zmq_fwdctrlsocks;
 
     voipintercept_t *voipintercepts;
     voipcinmap_t *knowncallids;

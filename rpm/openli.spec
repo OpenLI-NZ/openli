@@ -1,5 +1,5 @@
 Name:           openli
-Version:        1.0.15
+Version:        1.1.0
 Release:        1%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
@@ -51,6 +51,7 @@ and mediators.
 %package        mediator
 Summary:        Mediation daemon for an OpenLI system
 Requires(pre):  shadow-utils
+Requires:       rabbitmq-server
 
 %description mediator
 OpenLI is a software suite that allows network operators to conduct
@@ -232,6 +233,9 @@ fi
 
 
 %changelog
+* Wed Jul 20 2022 Shane Alcock <salcock@waikato.ac.nz> - 1.1.0-1
+- Updated for 1.1.0 release
+
 * Wed Jun 15 2022 Shane Alcock <salcock@waikato.ac.nz> - 1.0.15-1
 - Updated for 1.0.15 release
 

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018-2020 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2018-2022 The University of Waikato, Hamilton, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -30,7 +30,7 @@
 #include "med_epoll.h"
 #include "util.h"
 
-/** Starts an existing timer and adds it to the global epoll event set.
+/** Starts an existing timer and adds it to an epoll event set.
  *
  *  Examples of timers that would use this function:
  *      - sending the next keep alive to a handover
@@ -56,7 +56,52 @@ int start_mediator_timer(med_epoll_ev_t *timerev, int timeoutval) {
         return 0;
     }
 
+    if (timeoutval == 0) {
+        return 0;
+    }
+
     if ((sock = epoll_add_timer(timerev->epoll_fd, timeoutval,
+            timerev)) == -1) {
+        return -1;
+    }
+
+    timerev->fd = sock;
+    return 0;
+}
+
+/** Starts an existing timer and adds it to the global epoll event set.
+ *
+ *  Examples of timers that would use this function:
+ *      - sending the next keep alive to a handover
+ *      - attempting to reconnect to a lost provisioner
+ *      - deciding that a handover has failed to respond to a keep alive
+ *
+ *  Only call this on timers that have had their state and epoll_fd
+ *  members already set via a call to create_mediator_timer().
+ *
+ *  Use this method for timers where you require millisecond precision.
+ *
+ *  @param timerev  	The mediator epoll event for the timer.
+ *  @param timeoutval   The number of milliseconds to wait before triggering the
+ *                      timer event.
+ *
+ *  @return -1 if an error occured, 0 otherwise (including not setting
+ *          a timer because the timer is disabled).
+ */
+int start_mediator_ms_timer(med_epoll_ev_t *timerev, int timeoutval) {
+
+    int sock;
+
+    /* Timer is disabled, ignore */
+    if (timerev == NULL) {
+        return 0;
+    }
+
+    if (timeoutval == 0) {
+        return 0;
+    }
+
+    if ((sock = epoll_add_ms_timer(timerev->epoll_fd, timeoutval,
             timerev)) == -1) {
         return -1;
     }
@@ -83,6 +128,10 @@ int halt_mediator_timer(med_epoll_ev_t *timerev) {
 
     /* Timer is disabled, ignore */
     if (timerev == NULL) {
+        return 0;
+    }
+
+    if (timerev->fd == -1) {
         return 0;
     }
 

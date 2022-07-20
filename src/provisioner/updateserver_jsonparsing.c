@@ -1315,6 +1315,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     struct json_agency agjson;
 
     const char *idstr;
+    const char *verb;
     struct json_object *parsed = NULL;
     struct json_tokener *tknr;
     liagency_t *nag = NULL;
@@ -1355,17 +1356,18 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
             strlen(nag->agencyid), found);
     if (found) {
         HASH_DEL(state->interceptconf.leas, found);
-        withdraw_agency_from_mediators(state, found);
         free_liagency(found->ag);
         free(found);
+        verb = "modified";
+    } else {
+        verb = "added new";
     }
-
     HASH_ADD_KEYPTR(hh, state->interceptconf.leas, nag->agencyid,
             strlen(nag->agencyid), lea);
     announce_lea_to_mediators(state, lea);
 
-    logger(LOG_INFO, "OpenLI: added new agency '%s' via update socket.",
-            nag->agencyid);
+    logger(LOG_INFO, "OpenLI: %s agency '%s' via update socket.",
+            verb, nag->agencyid);
 
     if (parsed) {
         json_object_put(parsed);
@@ -1466,7 +1468,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (changed) {
-        withdraw_agency_from_mediators(state, found);
         announce_lea_to_mediators(state, found);
         logger(LOG_INFO,
                 "OpenLI: modified existing agency '%s' via update socket.",

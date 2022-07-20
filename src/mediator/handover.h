@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018-2020 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2018-2022 The University of Waikato, Hamilton, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -30,19 +30,35 @@
 #include <libtrace/simple_circular_buffer.h>
 #include <libwandder.h>
 #include <libwandder_etsili.h>
+#include <amqp.h>
 
 #include "export_buffer.h"
 #include "med_epoll.h"
+#include "liidmapping.h"
 
+/** Possible handover types */
 enum {
+    /** HI2 -- used for transmiting IRIs and other "meta" messages */
     HANDOVER_HI2 = 2,
+
+    /** HI3 -- used for transmitting CCs */
     HANDOVER_HI3 = 3,
+
+    /** Raw IP -- OpenLI-specific handover for writing raw IP packets to
+     *  pcap files on disk
+     */
+    HANDOVER_RAWIP = 4,
 };
 
+/** State that needs to be retained for each mediator handover */
 typedef struct per_handover_state {
+    /** A buffer for storing data queued for sending over the handover */
     export_buffer_t buf;
+
+    /** A buffer for storing data received over the handover
+     * (e.g. keepalives)
+     */
     libtrace_scb_t *incoming;
-    int outenabled;
     uint32_t katimer_setsec;
     wandder_encoded_result_t *pending_ka;
     int64_t lastkaseq;
@@ -51,27 +67,23 @@ typedef struct per_handover_state {
     uint32_t kafreq;
     uint32_t kawait;
     pthread_mutex_t ho_mutex;
+    uint64_t next_rmq_ack;
+    uint8_t valid_rmq_ack;
 } per_handover_state_t;
 
 typedef struct handover {
     char *ipstr;
     char *portstr;
     int handover_type;
+    amqp_connection_state_t rmq_consumer;
+    int amqp_log_failure;
+    uint8_t rmq_registered;
     med_epoll_ev_t *outev;
     med_epoll_ev_t *aliveev;
     med_epoll_ev_t *aliverespev;
     per_handover_state_t *ho_state;
     uint8_t disconnect_msg;
 } handover_t;
-
-typedef struct handover_state {
-    uint16_t next_handover_id;
-    int epoll_fd;
-    libtrace_list_t *agencies;
-    pthread_mutex_t *agency_mutex;
-    int halt_flag;
-    pthread_t connectthread;
-} handover_state_t;
 
 typedef struct mediator_agency {
     char *agencyid;
@@ -82,16 +94,48 @@ typedef struct mediator_agency {
     handover_t *hi3;
 } mediator_agency_t;
 
-/** Send some buffered ETSI records out via a handover.
+/** Destroys the state for a particular agency entity, including its
+ *  corresponding handovers
  *
- *  If there is a keep alive message pending for this handover, that will
- *  be sent before sending any buffered records.
+ *  @param ag       The agency to be destroyed.
+ */
+void destroy_agency(mediator_agency_t *ag);
+
+/** Sends a buffer of ETSI records out via a handover.
  *
- *  @param mev              The epoll event for the handover
+ *  @param ho              The handover to send the records over
+ *  @param maxsend         The maximum amount of data to send (in bytes)
  *
  *  @return -1 is an error occurs, 0 otherwise.
  */
-int xmit_handover(med_epoll_ev_t *mev);
+int xmit_handover_records(handover_t *ho, uint32_t maxsend);
+
+/** Sends any pending keep-alive message out via a handover.
+ *
+ *  @param ho              The handover to send the keep-alive over
+ *
+ *  @return -1 is an error occurs, 0 otherwise.
+ */
+int xmit_handover_keepalive(handover_t *ho);
+
+/** React to a handover's failure to respond to a keep alive before the
+ *  response timer expired.
+ *
+ *  @param ho              The handover that failed to reply to a KA message
+ *
+ */
+void trigger_handover_ka_failure(handover_t *ho);
+
+/** Creates and sends a keep-alive message over a handover
+ *
+ *  @param ho           The handover that needs to send a keep alive
+ *  @param mediator_id  The ID of this mediator (to be included in the KA msg)
+ *  @param operator_id  The operator ID string (to be included in the KA msg)
+ *
+ *  @return -1 if an error occurs, 0 otherwise
+ */
+int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
+        char *operator_id);
 
 /** Disconnects a single mediator handover connection to an LEA.
  *
@@ -102,91 +146,90 @@ int xmit_handover(med_epoll_ev_t *mev);
  */
 void disconnect_handover(handover_t *ho);
 
-/** Disconnects and drops all known agencies
- *
- *  @param state        The global handover state for this mediator.
- */
-void drop_all_agencies(handover_state_t *state);
-
-/** Attempt to connect all handovers for all known agencies
- *
- *  @param state        The global handover state for this mediator
- */
-void connect_agencies(handover_state_t *state);
-
-/** Adds an agency to the known agency list.
- *
- *  If an agency with the same ID already exists, we update its handovers
- *  to match the details we just received.
- *
- *  If the agency was awaiting confirmation after a lost provisioner
- *  connection, it will be marked as confirmed.
- *
- *  @param state            The global handover state for the mediator
- *  @param agencyid         The agency to add to the list.
- *
- *  @return -1 if an error occurs, 0 otherwise.
- */
-int enable_agency(handover_state_t *state, liagency_t *lea);
-
-/** Disables a specific agency.
- *
- *  A disabled agency will have its handovers disconnected and they
- *  will not be reconnected until the provisioner announces the agency
- *  is valid again.
- *
- *  @param state            The global handover state for the mediator
- *  @param agencyid         The ID of the agency to be disabled, as a string.
- */
-void withdraw_agency(handover_state_t *state, char *agencyid);
-
-/** Modify a handover's epoll event to check if writing is possible.
- *
- *  If an error occurs, the handover will be disconnected.
- *
- *  @param ho               The handover to modify
- *
- *  @return -1 if an error occurs, 0 otherwise.
- */
-int enable_handover_writing(handover_t *ho);
-
-/** Modify a handover's epoll event to NOT check if writing is possible.
- *
- *  If an error occurs, the handover will be disconnected.
- *
- *  @param ho               The handover to modify
- *
- *  @return -1 if an error occurs, 0 otherwise.
- */
-int disable_handover_writing(handover_t *ho);
-
-/** Restarts the keep alive timer for a handover
- *
- *  @param ho           The handover to restart the keep alive timer for
- *
- *  @return -1 if an error occurs, 0 otherwise
- */
-int restart_handover_keepalive(handover_t *ho);
-
 /** Receives and actions a message sent to the mediator over a handover
  *  (typically a keep alive response).
  *
- *  @param mev              The epoll event for the handover
+ *  @param ho              The handover to receive the message on
  *
  *  @return -1 if an error occurs, 0 otherwise.
  */
-int receive_handover(med_epoll_ev_t *mev);
+int receive_handover(handover_t *ho);
 
-/** Finds an agency that matches a given ID in the agency list
+/* Creates a new instance of a handover.
  *
- *  @param state        The global handover state for the mediator
- *  @param id           A string containing the agency ID to search for
+ * @param epoll_fd      The global epoll fd for the mediator.
+ * @param ipstr         The IP address of the handover recipient (as a string).
+ * @param portstr       The port that the handover recipient is listening on
+ *                      (as a string).
+ * @param handover_type Either HANDOVER_HI2 or HANDOVER_HI3, to indicate which
+ *                      type of handover this is.
+ * @param kafreq        The frequency to send keep alive requests (in seconds).
+ * @param kawait        The time to wait before assuming a keep alive has
+ *                      failed (in seconds).
  *
- *  @return a pointer to the agency with the given ID, or NULL if no such
- *          agency is found.
+ * @return a pointer to a new handover instance, or NULL if an error occurs.
  */
-mediator_agency_t *lookup_agency(handover_state_t *state, char *id);
+handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
+        int handover_type, uint32_t kafreq, uint32_t kawait);
 
+/** Establish an agency handover connection
+ *
+ *  The resulting socket will be added to the provided epoll event set as
+ *  available for reading and writing.
+ *
+ *  This method also starts the keepalive timer for the handover, if
+ *  keepalives are required.
+ *
+ *  @param ho           The handover object that is to be connected
+ *  @param epoll_fd     The epoll fd to add handover events to
+ *  @param ho_id        The unique ID number for this handover
+ *  @param agency_id    The name of the agency this handover is connecting to
+ *
+ *  @return -1 if the connection fails, 0 otherwise.
+ */
+int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id,
+        char *agencyid);
+
+/** Releases all memory associated with a single handover object.
+ *
+ *  @param ho       The handover object that is being destroyed
+ */
+void free_handover(handover_t *ho);
+
+/** Creates an RMQ connection for consumption and registers it with
+ *  the IRI or CC queues for each LIID that is to be exported via this
+ *  handover.
+ *
+ *  @param ho       The handover to be registered with RMQ
+ *  @param liidmap  The set of known LIIDs associated with this handover
+ *  @param agencyid The name of the agency that this handover belongs to
+ *
+ *  @return -1 if an error occurs during registration, 1 if all LIIDs
+ *          are successfully registered.
+ */
+int register_handover_RMQ_all(handover_t *ho, liid_map_t *liidmap,
+        char *agencyid);
+
+/** Resets the RMQ state for a given handover.
+ *
+ *  This is typically used when an error occurs with the RMQ consumer for
+ *  a handover, which will then force the handover to re-register its
+ *  connection to the RMQ service.
+ *
+ *  @param ho       The handover to reset RMQ state for
+ */
+void reset_handover_rmq(handover_t *ho);
+
+/** Checks if a handover's RMQ connection is still alive and error-free. If
+ *  not, destroy the connection and reset it to NULL
+ *
+ *  @param ho       The handover which needs its RMQ connection checked.
+ *  @param agencyid The name of the agency that the handover belongs to (for
+ *                  logging purposes).
+ *
+ *  @return -1 if the RMQ connection was destroyed, 0 otherwise
+ */
+int check_handover_rmq_status(handover_t *ho, char *agencyid);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

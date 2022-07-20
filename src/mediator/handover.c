@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018-2020 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2018-2022 The University of Waikato, Hamilton, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -33,18 +33,16 @@
 #include "etsili_core.h"
 #include "handover.h"
 #include "med_epoll.h"
+#include "config.h"
+#include "mediator_rmq.h"
 
-/** Send some buffered ETSI records out via a handover.
+/** Sends any pending keep-alive message out via a handover.
  *
- *  If there is a keep alive message pending for this handover, that will
- *  be sent before sending any buffered records.
- *
- *  @param mev              The epoll event for the handover
+ *  @param ho              The handover to send the keep-alive over
  *
  *  @return -1 is an error occurs, 0 otherwise.
  */
-int xmit_handover(med_epoll_ev_t *mev) {
-	handover_t *ho = (handover_t *)(mev->state);
+int xmit_handover_keepalive(handover_t *ho) {
 
 	/* We don't lock the handover mutex here, because we're going to be
      * doing this a lot and the mutex is mostly protecting logging-related
@@ -53,93 +51,86 @@ int xmit_handover(med_epoll_ev_t *mev) {
      * everytime we want to send a record to a client.
      */
 	int ret = 0;
-    struct timeval tv;
 
-    if (ho->ho_state->pending_ka) {
-        /* There's a keep alive to be sent */
-        ret = send(mev->fd, ho->ho_state->pending_ka->encoded,
-				ho->ho_state->pending_ka->len, MSG_DONTWAIT);
-        if (ret < 0) {
-            /* XXX should be worry about EAGAIN here? */
+    if (!ho->ho_state->pending_ka) {
+        return 0;
+    }
 
+    /* There's a keep alive to be sent */
+    ret = send(ho->outev->fd, ho->ho_state->pending_ka->encoded,
+            ho->ho_state->pending_ka->len, MSG_DONTWAIT);
+
+    if (ret < 0) {
+        /* XXX should be worry about EAGAIN here? */
+
+        if (ho->disconnect_msg == 0) {
+            logger(LOG_INFO,
+                    "OpenLI Mediator: error while transmitting keepalive for handover %s:%s HI%d -- %s",
+                    ho->ipstr, ho->portstr, ho->handover_type,
+                    strerror(errno));
+        }
+        return -1;
+    }
+    if (ret == 0) {
+        return -1;
+    }
+    if (ret == ho->ho_state->pending_ka->len) {
+        /* Sent the whole thing successfully */
+        wandder_release_encoded_result(NULL, ho->ho_state->pending_ka);
+        ho->ho_state->pending_ka = NULL;
+
+        /*
+        logger(LOG_INFO, "successfully sent keep alive to %s:%s HI%d",
+                ho->ipstr, ho->portstr, ho->handover_type);
+        */
+        halt_mediator_timer(ho->aliverespev);
+        /* Start the timer for the response */
+        if (start_mediator_timer(ho->aliverespev,
+                ho->ho_state->kawait) == -1) {
             if (ho->disconnect_msg == 0) {
                 logger(LOG_INFO,
-                        "OpenLI Mediator: error while transmitting keepalive for handover %s:%s HI%d -- %s",
-                        ho->ipstr, ho->portstr, ho->handover_type,
+                        "OpenLI Mediator: unable to start keepalive response timer: %s",
                         strerror(errno));
             }
             return -1;
         }
-        if (ret == 0) {
-            return -1;
+
+        if (ho->aliverespev == NULL && ho->disconnect_msg == 1) {
+            /* Not expecting a response, so we have to assume that
+             * the connection is good again as soon as we successfully
+             * send a KA */
+            ho->disconnect_msg = 0;
+            logger(LOG_INFO,
+                "OpenLI Mediator: reconnected to handover %s:%s HI%d successfully.",
+                ho->ipstr, ho->portstr, ho->handover_type);
         }
-        if (ret == ho->ho_state->pending_ka->len) {
-            /* Sent the whole thing successfully */
-            wandder_release_encoded_result(NULL, ho->ho_state->pending_ka);
-            ho->ho_state->pending_ka = NULL;
-
-            /*
-            logger(LOG_INFO, "successfully sent keep alive to %s:%s HI%d",
-                    ho->ipstr, ho->portstr, ho->handover_type);
-            */
-            /* Start the timer for the response */
-            if (start_mediator_timer(ho->aliverespev,
-					ho->ho_state->kawait) == -1) {
-                if (ho->disconnect_msg == 0) {
-                    logger(LOG_INFO,
-                            "OpenLI Mediator: unable to start keepalive response timer: %s",
-                            strerror(errno));
-                }
-                return -1;
-            }
-
-            if (ho->aliverespev == NULL && ho->disconnect_msg == 1) {
-                /* Not expecting a response, so we have to assume that
-                 * the connection is good again as soon as we successfully
-                 * send a KA */
-                ho->disconnect_msg = 0;
-                logger(LOG_INFO,
-                    "OpenLI Mediator: reconnected to handover %s:%s HI%d successfully.",
-                    ho->ipstr, ho->portstr, ho->handover_type);
-            }
-
-            /* If there are no actual records waiting to be sent, then
-             * we can disable write on this handover and go back to the
-             * epoll loop.
-             */
-            if (get_buffered_amount(&(ho->ho_state->buf)) == 0) {
-                if (disable_handover_writing(ho) < 0)
-                {
-                    return -1;
-                }
-            }
-
-        } else {
-            /* Partial send -- try the rest next time */
-            memmove(ho->ho_state->pending_ka->encoded,
-					ho->ho_state->pending_ka->encoded + ret,
-                    ho->ho_state->pending_ka->len - ret);
-            ho->ho_state->pending_ka->len -= ret;
-        }
-        return 0;
+    } else {
+        /* Partial send -- try the rest next time */
+        memmove(ho->ho_state->pending_ka->encoded,
+                ho->ho_state->pending_ka->encoded + ret,
+                ho->ho_state->pending_ka->len - ret);
+        ho->ho_state->pending_ka->len -= ret;
     }
+    return 0;
+}
 
-    /* As long as we have an unanswered keep alive, hold off on sending
-     * any buffered records -- the recipient may be unavailable and we'd
-     * be better off to keep those records in our buffer until we're
-     * confident that they're able to receive them.
-     */
-    if (ho->aliverespev && ho->aliverespev->fd != -1) {
-        return 0;
-    }
+/** Sends a buffer of ETSI records out via a handover.
+ *
+ *  @param ho              The handover to send the records over
+ *  @param maxsend         The maximum amount of data to send (in bytes)
+ *
+ *  @return -1 is an error occurs, 0 otherwise.
+ */
+int xmit_handover_records(handover_t *ho, uint32_t maxsend) {
+    int ret;
+    struct timeval tv;
 
-    /* Send some of our buffered records, but no more than 1MB at
-     * a time -- we need to go back to our epoll loop to handle other events
-     * rather than getting stuck trying to send massive amounts of data in
-     * one go.
+    /* Send some of our buffered records -- we need to go back to our epoll
+     * loop to handle other events rather than getting stuck trying to send
+     * massive amounts of data in one go.
      */
-    if ((ret = transmit_buffered_records(&(ho->ho_state->buf), mev->fd,
-			(1024 * 1024), NULL)) == -1) {
+    if ((ret = transmit_buffered_records(&(ho->ho_state->buf), ho->outev->fd,
+			maxsend, NULL)) == -1) {
         return -1;
     }
 
@@ -147,42 +138,146 @@ int xmit_handover(med_epoll_ev_t *mev) {
         return 0;
     }
 
-    /* If we've sent everything that we've got, we can disable the epoll
-     * write event for this handover.
-     */
-    if (get_buffered_amount(&(ho->ho_state->buf)) == 0) {
-        if (disable_handover_writing(ho) < 0) {
-            return -1;
-        }
-    }
-
     /* Reset the keep alive timer */
     gettimeofday(&tv, NULL);
-    if (ho->aliveev && ho->ho_state->katimer_setsec < tv.tv_sec) {
+    if (ho->aliveev && ho->ho_state->kafreq != 0 &&
+            ho->ho_state->katimer_setsec < tv.tv_sec) {
         halt_mediator_timer(ho->aliveev);
         if (start_mediator_timer(ho->aliveev, ho->ho_state->kafreq) == -1) {
             if (ho->disconnect_msg == 0) {
                 logger(LOG_INFO,
                     "OpenLI Mediator: error while trying to disable xmit for handover %s:%s HI%d -- %s",
-                    ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
+                    ho->ipstr, ho->portstr, ho->handover_type,
+                    strerror(errno));
             }
             return -1;
         }
         ho->ho_state->katimer_setsec = tv.tv_sec;
     }
 
-    if (ho->aliveev == NULL && ho->disconnect_msg == 1) {
-        /* Keep alives are disabled, so we are going to use a successful
-         * transmit as an indicator that the connection is stable again
-         * and we can stop suppressing logs */
-        logger(LOG_INFO,
-                "OpenLI Mediator: reconnected to handover %s:%s HI%d successfully.",
-                ho->ipstr, ho->portstr, ho->handover_type);
+    return 0;
+}
 
-        ho->disconnect_msg = 0;
+/** Restarts the keep alive timer for a handover
+ *
+ *  @param ho			The handover to restart the keep alive timer for
+ *
+ *  @return	-1 if an error occurs, 0 otherwise
+ */
+static int restart_handover_keepalive(handover_t *ho) {
+
+	int ret = 0;
+	pthread_mutex_lock(&(ho->ho_state->ho_mutex));
+
+	halt_mediator_timer(ho->aliveev);
+	if (start_mediator_timer(ho->aliveev, ho->ho_state->kafreq) == -1) {
+		if (ho->disconnect_msg == 0) {
+			logger(LOG_INFO,
+                "OpenLI Mediator: unable to reset keepalive timer for  %s:%s HI%d :s",
+                ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
+        }
+		ret = -1;
+	}
+
+	pthread_mutex_unlock(&(ho->ho_state->ho_mutex));
+	return ret;
+}
+
+/** React to a handover's failure to respond to a keep alive before the
+ *  response timer expired.
+ *
+ *  @param ho              The handover that failed to reply to a KA message
+ *
+ */
+void trigger_handover_ka_failure(handover_t *ho) {
+
+    if (ho->disconnect_msg == 0) {
+        logger(LOG_INFO, "OpenLI Mediator: failed to receive KA response from LEA on handover %s:%s HI%d, dropping connection.",
+                ho->ipstr, ho->portstr, ho->handover_type);
     }
 
-    return 0;
+    halt_mediator_timer(ho->aliverespev);
+    disconnect_handover(ho);
+}
+
+/** Creates and sends a keep-alive message over a handover
+ *
+ *  @param ho           The handover that needs to send a keep alive
+ *  @param mediator_id  The ID of this mediator (to be included in the KA msg)
+ *  @param operator_id  The operator ID string (to be included in the KA msg)
+ *
+ *  @return -1 if an error occurs, 0 otherwise
+ */
+int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
+        char *operator_id) {
+
+    wandder_encoded_result_t *kamsg;
+    wandder_etsipshdr_data_t hdrdata;
+    char elemstring[16];
+    char liidstring[24];
+    struct timeval tv;
+
+    if (ho->outev == NULL) {
+        return 0;
+    }
+
+    if (ho->ho_state->pending_ka == NULL &&
+            ho->aliverespev->fd == -1 &&
+            get_buffered_amount(&(ho->ho_state->buf)) == 0) {
+        /* Only create a new KA message if we have sent the last one we
+         * had queued up.
+         * Also only create one if we don't already have data to send. We
+         * should only be sending keep alives if the socket is idle.
+         */
+        if (ho->ho_state->encoder == NULL) {
+            ho->ho_state->encoder = init_wandder_encoder();
+        } else {
+            reset_wandder_encoder(ho->ho_state->encoder);
+        }
+
+        /* Include the OpenLI version in the LIID field, so the LEAs can
+         * identify which version of the software is being used by the
+         * sender.
+         */
+        /* PACKAGE_NAME and PACKAGE_VERSION come from config.h */
+        snprintf(liidstring, 24, "%s-%s", PACKAGE_NAME, PACKAGE_VERSION);
+        hdrdata.liid = liidstring;
+        hdrdata.liid_len = strlen(hdrdata.liid);
+
+        hdrdata.authcc = "NA";
+        hdrdata.authcc_len = strlen(hdrdata.authcc);
+        hdrdata.delivcc = "NA";
+        hdrdata.delivcc_len = strlen(hdrdata.delivcc);
+
+        if (operator_id) {
+            hdrdata.operatorid = operator_id;
+        } else {
+            hdrdata.operatorid = "unspecified";
+        }
+        hdrdata.operatorid_len = strlen(hdrdata.operatorid);
+
+        /* Stupid 16 character limit... */
+        snprintf(elemstring, 16, "med-%u", mediator_id);
+        hdrdata.networkelemid = elemstring;
+        hdrdata.networkelemid_len = strlen(hdrdata.networkelemid);
+
+        hdrdata.intpointid = NULL;
+        hdrdata.intpointid_len = 0;
+
+        kamsg = encode_etsi_keepalive(ho->ho_state->encoder, &hdrdata,
+                ho->ho_state->lastkaseq + 1);
+        if (kamsg == NULL) {
+            logger(LOG_INFO,
+                    "OpenLI Mediator: failed to construct a keep-alive.");
+            return -1;
+        }
+
+        ho->ho_state->pending_ka = kamsg;
+        ho->ho_state->lastkaseq += 1;
+    }
+
+    /* Reset the keep alive timer */
+    return restart_handover_keepalive(ho);
 }
 
 /** Disconnects a single mediator handover connection to an LEA.
@@ -252,6 +347,9 @@ void disconnect_handover(handover_t *ho) {
      */
     reset_export_buffer(&(ho->ho_state->buf));
 
+    /* Drop the RMQ connection */
+    reset_handover_rmq(ho);
+
     /* This handover is officially disconnected, so no more logging for it
      * until / unless it reconnects.
      */
@@ -263,13 +361,17 @@ void disconnect_handover(handover_t *ho) {
  *
  *  @param ho       The handover object that is being destroyed
  */
-static void free_handover(handover_t *ho) {
+void free_handover(handover_t *ho) {
 
     /* This should close all of our sockets and halt any running timers */
     disconnect_handover(ho);
 
     destroy_mediator_timer(ho->aliveev);
     destroy_mediator_timer(ho->aliverespev);
+
+    if (ho->rmq_consumer) {
+        amqp_destroy_connection(ho->rmq_consumer);
+    }
 
     if (ho->ho_state) {
     	release_export_buffer(&(ho->ho_state->buf));
@@ -286,157 +388,182 @@ static void free_handover(handover_t *ho) {
     free(ho);
 }
 
-/** Modify a handover's epoll event to NOT check if writing is possible.
+/** Destroys the state for a particular agency entity, including its
+ *  corresponding handovers
  *
- *  If an error occurs, the handover will be disconnected.
- *
- *  @param ho				The handover to modify
- *
- *  @return -1 if an error occurs, 0 otherwise.
+ *  @param ag       The agency to be destroyed.
  */
-int disable_handover_writing(handover_t *ho) {
-	int ret = 0;
-	uint32_t events = EPOLLRDHUP | EPOLLIN ;
-
-	if (!ho->ho_state->outenabled) {
-        return 0;
+void destroy_agency(mediator_agency_t *ag) {
+    /* Disconnect the HI2 and HI3 handovers */
+    if (ag == NULL) {
+        return;
     }
-    ret = modify_mediator_fdevent(ho->outev, events);
-
-	if (ret == -1) {
-		logger(LOG_INFO,
-				"OpenLI Mediator: error while trying to enable xmit for handover %s:%s HI%d -- %s",
-				ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
-		disconnect_handover(ho);
-	} else {
-		ho->ho_state->outenabled = 0;
-	}
-
-	return ret;
+    if (ag->hi2) {
+        free_handover(ag->hi2);
+    }
+    if (ag->hi3) {
+        free_handover(ag->hi3);
+    }
+    if (ag->agencyid) {
+        free(ag->agencyid);
+    }
 }
 
-/** Modify a handover's epoll event to check if writing is possible.
+/** Registers a single RMQ queue for an LIID with the RMQ consumer for a
+ *  handover.
  *
- *  If an error occurs, the handover will be disconnected.
+ *  If the handover is HI2, the IRI queue is registered.
+ *  If the handover is HI3, the CC queue is registered.
  *
- *  @param ho				The handover to modify
+ *  Used as a callback for foreach_liid_agency_mapping() to register all
+ *  LIIDs in a known LIID set.
  *
- *  @return -1 if an error occurs, 0 otherwise.
+ *  @param m        The LIID to be registered with the handover's RMQ consumer
+ *  @param arg      The handover to register with
+ *
+ *  @return 0 always
  */
-int enable_handover_writing(handover_t *ho) {
-	int ret = 0;
-	uint32_t events = EPOLLRDHUP | EPOLLIN | EPOLLOUT;
+static int register_known_liid_consumers(liid_map_entry_t *m, void *arg) {
+    handover_t *ho = (handover_t *)arg;
+    int r;
+    const char *histr = "??";
+    uint8_t *delflag = NULL;
 
-    if (ho->ho_state->outenabled) {
+    if (ho->handover_type == HANDOVER_HI2) {
+        r = register_mediator_iri_RMQ_consumer(ho->rmq_consumer, m->liid);
+        histr = "IRI";
+        delflag = &(m->iriqueue_deleted);
+    } else if (ho->handover_type == HANDOVER_HI3) {
+        r = register_mediator_cc_RMQ_consumer(ho->rmq_consumer, m->liid);
+        histr = "CC";
+        delflag = &(m->ccqueue_deleted);
+    } else {
         return 0;
     }
 
-	ret = modify_mediator_fdevent(ho->outev, events);
+    if (r == -1) {
+        logger(LOG_INFO, "OpenLI Mediator: failed to declare consumer %s queue for LIID %s", histr, m->liid);
+    } else if (r == -2) {
+        logger(LOG_INFO, "OpenLI Mediator: failed to subscribe to consumer %s queue for LIID %s", histr, m->liid);
+        *delflag = 0;
+    } else {
+        *delflag = 0;
+    }
 
-	if (ret == -1) {
-		logger(LOG_INFO,
-				"OpenLI Mediator: error while trying to enable xmit for handover %s:%s HI%d -- %s",
-				ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
-		disconnect_handover(ho);
-	} else {
-		ho->ho_state->outenabled = 1;
-	}
-	return ret;
+    return 0;
 }
 
-/** Disconnects and drops all known agencies
+/** Creates an RMQ connection for consumption and registers it with
+ *  the IRI or CC queues for each LIID that is to be exported via this
+ *  handover.
  *
- *  @param state        The global handover state for this mediator.
+ *  @param ho       The handover to be registered with RMQ
+ *  @param liidmap  The set of known LIIDs associated with this handover
+ *  @param agencyid The name of the agency that this handover belongs to
+ *
+ *  @return -1 if an error occurs during registration, 1 if all LIIDs
+ *          are successfully registered.
  */
-void drop_all_agencies(handover_state_t *state) {
-    mediator_agency_t ag;
-	libtrace_list_t *a = state->agencies;
+int register_handover_RMQ_all(handover_t *ho, liid_map_t *liidmap,
+        char *agencyid) {
 
-	pthread_mutex_lock(state->agency_mutex);
+    /* Attach to RMQ if required */
+    if (ho->rmq_consumer == NULL) {
+        ho->rmq_consumer = join_mediator_RMQ_as_consumer(agencyid,
+                ho->amqp_log_failure);
 
-    while (libtrace_list_get_size(a) > 0) {
-        libtrace_list_pop_back(a, &ag);
-        /* Disconnect the HI2 and HI3 handovers */
-        free_handover(ag.hi2);
-        free_handover(ag.hi3);
-        if (ag.agencyid) {
-            free(ag.agencyid);
+        if (ho->rmq_consumer == NULL) {
+            ho->amqp_log_failure = 0;
+        } else {
+            ho->amqp_log_failure = 1;
         }
     }
-	pthread_mutex_unlock(state->agency_mutex);
 
+    /* If we've just attached to RMQ, register our interest in any existing
+     * LIIDs that we know about.
+     */
+    if (ho->rmq_registered == 0) {
+
+        if (liidmap && foreach_liid_agency_mapping(liidmap, (void *)ho,
+                register_known_liid_consumers) < 0) {
+            if (ho->amqp_log_failure) {
+                logger(LOG_INFO, "OpenLI Mediator: unable to register consumer queues for HI%d for agency %s", ho->handover_type, agencyid);
+
+                ho->amqp_log_failure = 0;
+            }
+            reset_handover_rmq(ho);
+            return -1;
+        }
+        ho->amqp_log_failure = 1;
+        ho->rmq_registered = 1;
+    }
+
+    return 1;
 }
 
-/** Attempt to create a handover connection to an LEA.
+/** Establish an agency handover connection
  *
- *  @param state        The global handover state for this mediator
- *  @param ho           The handover that we attempting to connect
+ *  The resulting socket will be added to the provided epoll event set as
+ *  available for reading and writing.
  *
- *  @return -1 if there was a fatal error, 0 if there was a temporary
- *          error (i.e. try again later) or the handover is already
- *          connected, 1 if a new successful connection is made.
+ *  This method also starts the keepalive timer for the handover, if
+ *  keepalives are required.
+ *
+ *  @param ho           The handover object that is to be connected
+ *  @param epoll_fd     The epoll fd to add handover events to
+ *  @param ho_id        The unique ID number for this handover
+ *  @param agency_id    The name of the agency this handover is connecting to
+ *
+ *  @return -1 if the connection fails, 0 otherwise.
  */
-static int connect_handover(handover_state_t *state, handover_t *ho) {
+int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id,
+        char *agencyid) {
+
 	uint32_t epollev;
 	int outsock;
 
-	/* Grab the lock, just in case the other thread decides to disconnect
-     * us while we're partway through connecting.
-	 */
-	pthread_mutex_lock(&(ho->ho_state->ho_mutex));
-
 	/* Check if we're already connected? */
     if (ho->outev) {
-		pthread_mutex_unlock(&(ho->ho_state->ho_mutex));
         return 0;
     }
 
     /* Connect the handover socket */
     outsock = connect_socket(ho->ipstr, ho->portstr, ho->disconnect_msg, 1);
     if (outsock == -1) {
-		pthread_mutex_unlock(&(ho->ho_state->ho_mutex));
         return -1;
     }
 
     /* If fd is 0, we can try again another time instead */
     if (outsock == 0) {
         ho->disconnect_msg = 1;
-		pthread_mutex_unlock(&(ho->ho_state->ho_mutex));
         return 0;
     }
 
     /* Create a buffer for receiving messages (i.e. keep-alive responses)
      * from the LEA via the handover.
      */
-    ho->ho_state->incoming = (libtrace_scb_t *)malloc(sizeof(libtrace_scb_t));
-    ho->ho_state->incoming->fd = -1;
-    ho->ho_state->incoming->address = NULL;
-    libtrace_scb_init(ho->ho_state->incoming, (64 * 1024 * 1024),
-            state->next_handover_id);
-
-	state->next_handover_id ++;
-
-    /* If we've got records to send via this handover, enable it for
-     * write events in epoll.
-     */
-    if (get_buffered_amount(&(ho->ho_state->buf)) > 0) {
-        epollev = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
-        ho->ho_state->outenabled = 1;
-    } else {
-        epollev = EPOLLIN | EPOLLRDHUP;
-        ho->ho_state->outenabled = 0;
+    if (!ho->ho_state->incoming) {
+        ho->ho_state->incoming =
+                (libtrace_scb_t *)malloc(sizeof(libtrace_scb_t));
+        ho->ho_state->incoming->fd = -1;
+        ho->ho_state->incoming->address = NULL;
+        libtrace_scb_init(ho->ho_state->incoming, (64 * 1024 * 1024), ho_id);
     }
 
-	ho->outev = create_mediator_fdevent(state->epoll_fd, ho, MED_EPOLL_LEA,
+    /* Enable both epoll reading and writing for this handover */
+    epollev = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
+
+	ho->outev = create_mediator_fdevent(epoll_fd, ho, MED_EPOLL_LEA,
 			outsock, epollev);
 
 	if (ho->outev == NULL) {
-		logger(LOG_INFO,
+        if (ho->disconnect_msg == 0) {
+    		logger(LOG_INFO,
 				"OpenLI Mediator: unable to add agency handover for %s:%s HI%d to epoll.",
 				ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
+        }
 		ho->disconnect_msg = 1;
 		close(outsock);
-		pthread_mutex_unlock(&(ho->ho_state->ho_mutex));
 		return 0;
 	}
 
@@ -454,102 +581,8 @@ static int connect_handover(handover_state_t *state, handover_t *ho) {
         }
     }
 
-	pthread_mutex_unlock(&(ho->ho_state->ho_mutex));
+    /* Don't reset disconnect_msg until we've sent a record successfully */
     return 1;
-}
-
-/** Attempt to connect all handovers for all known agencies
- *
- *  @param state        The global handover state for this mediator
- */
-void connect_agencies(handover_state_t *state) {
-    libtrace_list_node_t *n;
-    mediator_agency_t *ag;
-    int ret;
-
-    /* This method will be called regularly by the agency connection 
-     * thread to ensure that as many handovers as up and running as
-     * possible.
-     */
-
-    /* Must have agency_mutex at this point! */
-    n = state->agencies->head;
-    while (n) {
-        ag = (mediator_agency_t *)(n->data);
-        n = n->next;
-
-        /* Skip any disabled agencies */
-        if (ag->disabled) {
-            if (!ag->disabled_msg) {
-                logger(LOG_INFO,
-                    "OpenLI Mediator: cannot connect to agency %s because it is disabled",
-                    ag->agencyid);
-                ag->disabled_msg = 1;
-            }
-            continue;
-        }
-
-        /* Connect the HI2 handover */
-        ret = connect_handover(state, ag->hi2);
-        if (ret == -1) {
-            continue;
-        }
-
-        if (ret == 1) {
-            logger(LOG_INFO,
-                    "OpenLI Mediator: Connected to agency %s on HI2 %s:%s.",
-                    ag->agencyid, ag->hi2->ipstr, ag->hi2->portstr);
-            ag->hi2->disconnect_msg = 0;
-        }
-
-        /* Connect the HI3 handover */
-        ret = connect_handover(state, ag->hi3);
-        if (ret == -1) {
-            ag->disabled = 1;
-            continue;
-        }
-
-        if (ret == 1) {
-            ag->hi3->disconnect_msg = 0;
-            logger(LOG_INFO,
-                    "OpenLI Mediator: Connected to agency %s on HI3 %s:%s.",
-                    ag->agencyid, ag->hi3->ipstr, ag->hi3->portstr);
-        }
-
-    }
-
-}
-
-/** Starts the thread that continuously attempts to connect any handovers
- *  that are not currently active.
- *
- *  @param params       The global state for the mediator
- */
-static void *start_connect_thread(void *params) {
-
-    handover_state_t *state = (handover_state_t *)params;
-
-    while (1) {
-
-        /* We need a mutex lock here because our set of agencies could
-         * be modified by a message from the provisioner, which will be
-         * handled in the main epoll thread.
-         */
-        pthread_mutex_lock(state->agency_mutex);
-		if (state->halt_flag) {
-        	pthread_mutex_unlock(state->agency_mutex);
-			break;
-		}
-        connect_agencies(state);
-        pthread_mutex_unlock(state->agency_mutex);
-
-        /* Try again in 0.5 of a second */
-        usleep(500000);
-    }
-
-    logger(LOG_INFO, "OpenLI Mediator: has ended agency connection thread.");
-    pthread_exit(NULL);
-
 }
 
 
@@ -567,7 +600,7 @@ static void *start_connect_thread(void *params) {
  *
  * @return a pointer to a new handover instance, or NULL if an error occurs.
  */
-static handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
+handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
         int handover_type, uint32_t kafreq, uint32_t kawait) {
 
     handover_t *ho = (handover_t *)malloc(sizeof(handover_t));
@@ -586,7 +619,6 @@ static handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
 
     /* Initialise all of the handover-specific state for this handover */
     init_export_buffer(&(ho->ho_state->buf));
-    ho->ho_state->outenabled = 0;
     ho->ho_state->katimer_setsec = 0;
     ho->ho_state->incoming = NULL;
     ho->ho_state->encoder = NULL;
@@ -594,39 +626,33 @@ static handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
     ho->ho_state->pending_ka = NULL;
     ho->ho_state->kafreq = kafreq;
     ho->ho_state->kawait = kawait;
+    ho->ho_state->next_rmq_ack = 0;
+    ho->ho_state->valid_rmq_ack = 0;
+    ho->rmq_consumer = NULL;
+    ho->rmq_registered = 0;
+    ho->amqp_log_failure = 1;
 
 	pthread_mutex_init(&(ho->ho_state->ho_mutex), NULL);
 
     /* Keep alive frequency of 0 (or less) will mean that no keep alives are
      * sent (this may necessary for some agencies).
      */
-    if (kafreq > 0) {
-		ho->aliveev = create_mediator_timer(epoll_fd, ho, MED_EPOLL_KA_TIMER,
-				0);
-		if (ho->aliveev == NULL) {
-			logger(LOG_INFO, "OpenLI Mediator: unable to create keep alive timer for agency %s:%s", ipstr, portstr);
-		}
-    } else {
-            logger(LOG_INFO, "OpenLI Mediator: Warning, keep alive timer has been disabled for agency %s:%s", ipstr, portstr);
-        ho->aliveev = NULL;
+    ho->aliveev = create_mediator_timer(epoll_fd, ho, MED_EPOLL_KA_TIMER,
+            0);
+    if (ho->aliveev == NULL) {
+        logger(LOG_INFO, "OpenLI Mediator: unable to create keep alive timer for agency %s:%s", ipstr, portstr);
     }
 
     /* If keep alive wait is 0 (or less), then we will not require a response
      * for a successful keep alive.
      */
-    if (kawait > 0) {
-		ho->aliverespev = create_mediator_timer(epoll_fd, ho,
-				MED_EPOLL_KA_RESPONSE_TIMER, 0);
-		if (ho->aliverespev == NULL) {
-			logger(LOG_INFO, "OpenLI Mediator: unable to create keep alive response timer for agency %s:%s", ipstr, portstr);
-		}
-    } else {
-        ho->aliverespev = NULL;
+    ho->aliverespev = create_mediator_timer(epoll_fd, ho,
+            MED_EPOLL_KA_RESPONSE_TIMER, 0);
+    if (ho->aliverespev == NULL) {
+        logger(LOG_INFO, "OpenLI Mediator: unable to create keep alive response timer for agency %s:%s", ipstr, portstr);
     }
 
-	/* The output event will be created when the handover is connected by the
-     * connection thread.
-	 */
+	/* The output event will be created when the handover is connected */
 	ho->outev = NULL;
 
     /* Initialise the remaining handover state */
@@ -638,375 +664,14 @@ static handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
     return ho;
 }
 
-/** Creates a new instance of an agency.
- *
- *  @param state        The global handover state for this mediator.
- *  @param lea          The agency details received from the provisioner.
- */
-static void create_new_agency(handover_state_t *state, liagency_t *lea) {
-
-    mediator_agency_t newagency;
-
-    newagency.agencyid = lea->agencyid;
-    newagency.awaitingconfirm = 0;
-    newagency.disabled = 0;
-    newagency.disabled_msg = 0;
-
-    /* Create the HI2 and HI3 handovers */
-    newagency.hi2 = create_new_handover(state->epoll_fd,
-			lea->hi2_ipstr, lea->hi2_portstr,
-            HANDOVER_HI2, lea->keepalivefreq, lea->keepalivewait);
-    newagency.hi3 = create_new_handover(state->epoll_fd,
-			lea->hi3_ipstr, lea->hi3_portstr,
-            HANDOVER_HI3, lea->keepalivefreq, lea->keepalivewait);
-
-    /* This lock protects the agency list that may be being iterated over
-     * by the handover connection thread */
-    pthread_mutex_lock(state->agency_mutex);
-    libtrace_list_push_back(state->agencies, &newagency);
-
-    /* Start the handover connection thread if necessary */
-    if (libtrace_list_get_size(state->agencies) == 1 &&
-            state->connectthread == -1) {
-        pthread_create(&(state->connectthread), NULL, start_connect_thread,
-                state);
-    }
-    pthread_mutex_unlock(state->agency_mutex);
-
-}
-
-/* Compares a handover announced by the provisioner against an existing
- * local instance of the handover to see if there are any changes that
- * need to made to update the local handover. If so, the changes are
- * actioned (including a possible disconnection of the existing handover if
- * need be).
- *
- * Used when a provisioner re-announces an existing agency -- if the IP
- * address or port for a handover changes, for instance, we would need to
- * close the handover and re-connect to the new IP + port.
- *
- * @param state         The global handover state for the mediator.
- * @param ho            The existing local handover instance.
- * @param ipstr         The IP address of the announced handover (as a string).
- * @param port          The port number of the announced handover (as a string).
- * @param existing      The existing instance of the parent agency.
- * @param newag         The new agency details received from the provisioner.
- *
- * @return -1 if an error occurs, 0 if the handover did not require a reconnect,
- *         1 if a reconnect was required.
- */
-
-static int has_handover_changed(handover_state_t *state,
-        handover_t *ho, char *ipstr, char *portstr, mediator_agency_t *existing,
-        liagency_t *newag) {
-    char *hitypestr;
-    int changedloc = 0;
-    int changedkaresp = 0;
-    int changedkafreq = 0;
-
-    /* TODO this function is a bit awkward at the moment */
-
-    if (ho == NULL) {
-        return -1;
-    }
-
-	pthread_mutex_lock(&(ho->ho_state->ho_mutex));
-
-    if (!ho->ipstr || !ho->portstr || !ipstr || !portstr) {
-		pthread_mutex_unlock(&(ho->ho_state->ho_mutex));
-        return -1;
-    }
-
-    if (newag->keepalivewait != ho->ho_state->kawait &&
-            (newag->keepalivewait == 0 || ho->ho_state->kawait == 0)) {
-        changedkaresp = 1;
-    }
-
-    if (newag->keepalivefreq != ho->ho_state->kafreq &&
-            (newag->keepalivefreq == 0 || ho->ho_state->kafreq == 0)) {
-        changedkafreq = 1;
-    }
-
-    if (strcmp(ho->ipstr, ipstr) != 0 || strcmp(ho->portstr, portstr) != 0) {
-        changedloc = 1;
-    }
-
-    /* Update keep alive timer frequencies */
-    ho->ho_state->kawait = newag->keepalivewait;
-    ho->ho_state->kafreq = newag->keepalivefreq;
-
-    if (!changedkaresp && !changedloc && !changedkafreq) {
-        /* Nothing has changed so nothing more needs to be done */
-		pthread_mutex_unlock(&(ho->ho_state->ho_mutex));
-        return 0;
-    }
-
-    /* Preparing some string bits for logging */
-    if (ho->handover_type == HANDOVER_HI2) {
-        hitypestr = "HI2";
-    } else if (ho->handover_type == HANDOVER_HI3) {
-        hitypestr = "HI3";
-    } else {
-        hitypestr = "Unknown handover";
-    }
-
-    if (changedloc) {
-        /* Re-connect is going to be required */
-        logger(LOG_INFO,
-                "OpenLI Mediator: %s connection info for LEA %s has changed from %s:%s to %s:%s.",
-                hitypestr, existing->agencyid, ho->ipstr, ho->portstr, ipstr, portstr);
-        disconnect_handover(ho);
-        free(ho->ipstr);
-        free(ho->portstr);
-        ho->ipstr = ipstr;
-        ho->portstr = portstr;
-		pthread_mutex_unlock(&(ho->ho_state->ho_mutex));
-        return 1;
-    }
-
-    if (changedkaresp) {
-        if (newag->keepalivewait == 0) {
-            /* Keep alive responses are no longer necessary */
-            if (ho->handover_type == HANDOVER_HI2) {
-                /* We only log for HI2 to prevent duplicate logging when the
-                 * same agency-level option is updated for HI3.
-                 */
-                logger(LOG_INFO,
-                        "OpenLI Mediator: disabled keep-alive response requirement for LEA %s",
-                        existing->agencyid);
-            }
-            /* Stop any existing keep alive response timer to prevent us
-             * from dropping the handover for our most recent keep alive.
-             */
-			destroy_mediator_timer(ho->aliverespev);
-			ho->aliverespev = NULL;
-        } else {
-            /* Keep alive responses are enabled (or have changed frequency) */
-            if (ho->handover_type == HANDOVER_HI2) {
-                /* We only log for HI2 to prevent duplicate logging when the
-                 * same agency-level option is updated for HI3.
-                 */
-                logger(LOG_INFO,
-                        "OpenLI Mediator: enabled keep-alive response requirement for LEA %s",
-                        existing->agencyid);
-            }
-            if (ho->aliverespev == NULL) {
-				ho->aliverespev = create_mediator_timer(state->epoll_fd,
-						ho, MED_EPOLL_KA_RESPONSE_TIMER, 0);
-            }
-        }
-    }
-
-    if (changedkafreq) {
-        if (newag->keepalivefreq == 0) {
-            /* Sending keep alives is now disabled */
-            if (ho->handover_type == HANDOVER_HI2) {
-                /* We only log for HI2 to prevent duplicate logging when the
-                 * same agency-level option is updated for HI3.
-                 */
-                logger(LOG_INFO,
-                        "OpenLI Mediator: disabled keep-alives for LEA %s",
-                        existing->agencyid);
-            }
-            /* Halt the existing keep alive timer */
-            destroy_mediator_timer(ho->aliveev);
-			ho->aliveev = NULL;
-        } else {
-            /* Keep alives have been enabled (or changed frequency) */
-            if (ho->handover_type == HANDOVER_HI2) {
-                /* We only log for HI2 to prevent duplicate logging when the
-                 * same agency-level option is updated for HI3.
-                 */
-                logger(LOG_INFO,
-                        "OpenLI Mediator: enabled keep-alives for LEA %s",
-                        existing->agencyid);
-            }
-
-            /* Start a new keep alive timer with the new frequency */
-            if (ho->aliveev == NULL) {
-                ho->aliveev = create_mediator_timer(state->epoll_fd, ho,
-						MED_EPOLL_KA_TIMER, 0);
-			} else {
-                halt_mediator_timer(ho->aliveev);
-			}
-			if (start_mediator_timer(ho->aliveev, newag->keepalivefreq) < 0) {
-				logger(LOG_INFO,
-						"OpenLI Mediator: unable to restart keepalive timer for handover %s:%s HI%d.",
-						ho->ipstr, ho->portstr, ho->handover_type,
-						strerror(errno));
-				pthread_mutex_unlock(&(ho->ho_state->ho_mutex));
-				return -1;
-			}
-        }
-    }
-	pthread_mutex_unlock(&(ho->ho_state->ho_mutex));
-
-    return 0;
-}
-
-/** Adds an agency to the known agency list.
- *
- *  If an agency with the same ID already exists, we update its handovers
- *  to match the details we just received.
- *
- *  If the agency was awaiting confirmation after a lost provisioner
- *  connection, it will be marked as confirmed.
- *
- *  @param state			The global handover state for the mediator
- *  @param agencyid			The agency to add to the list.
- *
- *  @return -1 if an error occurs, 0 otherwise.
- */
-int enable_agency(handover_state_t *state, liagency_t *lea) {
-
-	int ret = 0;
-	libtrace_list_node_t *n;
-
-    /* Add / enable the agency in the agency list -- note that lock to protect
-     * concurrent access to the list by the handover connection thread.
-     */
-    pthread_mutex_lock(state->agency_mutex);
-    n = state->agencies->head;
-    while (n) {
-        mediator_agency_t *x = (mediator_agency_t *)(n->data);
-        n = n->next;
-
-        if (strcmp(x->agencyid, lea->agencyid) == 0) {
-            /* Agency with this ID already exists; check if this
-             * announcement contains differences to our last knowledge of
-             * this agency.
-             */
-            if ((ret = has_handover_changed(state, x->hi2, lea->hi2_ipstr,
-                    lea->hi2_portstr, x, lea)) == -1) {
-                x->disabled = 1;
-                x->disabled_msg = 0;
-                goto freelea;
-            } else if (ret == 1) {
-                lea->hi2_portstr = NULL;
-                lea->hi2_ipstr = NULL;
-            }
-
-            if ((ret = has_handover_changed(state, x->hi3, lea->hi3_ipstr,
-                    lea->hi3_portstr, x, lea)) == -1) {
-                x->disabled = 1;
-                x->disabled_msg = 0;
-                goto freelea;
-            } else if (ret == 1) {
-                lea->hi3_portstr = NULL;
-                lea->hi3_ipstr = NULL;
-            }
-
-            x->awaitingconfirm = 0;
-            x->disabled = 0;
-            ret = 0;
-            goto freelea;
-        }
-    }
-
-    /* If we get here, this is an entirely new agency so we can create a
-     * fresh instance (plus handovers).
-     */
-    pthread_mutex_unlock(state->agency_mutex);
-    create_new_agency(state, lea);
-    return 0;
-
-freelea:
-    /* If we get here, the agency already existed in our list so we can
-     * remove any extra memory left over from the announcement (e.g.
-     * IP address or port strings that were unchanged).
-     */
-    pthread_mutex_unlock(state->agency_mutex);
-    if (lea->agencyid) {
-        free(lea->agencyid);
-    }
-    if (lea->hi2_portstr) {
-        free(lea->hi2_portstr);
-    }
-    if (lea->hi2_ipstr) {
-        free(lea->hi2_ipstr);
-    }
-    if (lea->hi3_portstr) {
-        free(lea->hi3_portstr);
-    }
-    if (lea->hi3_ipstr) {
-        free(lea->hi3_ipstr);
-    }
-    return ret;
-}
-
-/** Disables a specific agency.
- *
- *  A disabled agency will have its handovers disconnected and they
- *  will not be reconnected until the provisioner announces the agency
- *  is valid again.
- *
- *  @param state			The global handover state for the mediator
- *  @param agencyid			The ID of the agency to be disabled, as a string.
- */
-void withdraw_agency(handover_state_t *state, char *agencyid) {
-    libtrace_list_node_t *n;
-
-	/* Disable the agency in the agency list -- note that lock to protect
-	 * concurrent access to the list by the handover connection thread.
-	 */
-	pthread_mutex_lock(state->agency_mutex);
-	n = state->agencies->head;
-	while (n) {
-		mediator_agency_t *x = (mediator_agency_t *)(n->data);
-		n = n->next;
-
-		if (strcmp(x->agencyid, agencyid) == 0) {
-			/* We've found the agency with the appropriate ID to withdraw */
-			x->disabled = 1;
-			x->disabled_msg = 0;
-			disconnect_handover(x->hi2);
-			disconnect_handover(x->hi3);
-
-			/* Note that we leave the agency in the list -- it's simpler to do
-			 * that than to actually try and remove it.
-			 *
-			 * TODO replace agency list with a Judy map keyed by agency id.
-			 */
-			break;
-		}
-	}
-	pthread_mutex_unlock(state->agency_mutex);
-}
-
-/** Restarts the keep alive timer for a handover
- *
- *  @param ho			The handover to restart the keep alive timer for
- *
- *  @return	-1 if an error occurs, 0 otherwise
- */
-int restart_handover_keepalive(handover_t *ho) {
-
-	int ret = 0;
-	pthread_mutex_lock(&(ho->ho_state->ho_mutex));
-
-	halt_mediator_timer(ho->aliveev);
-	if (start_mediator_timer(ho->aliveev, ho->ho_state->kafreq) == -1) {
-		if (ho->disconnect_msg == 0) {
-			logger(LOG_INFO,
-                "OpenLI Mediator: unable to reset keepalive timer for  %s:%s HI%d :s",
-                ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
-        }
-		ret = -1;
-	}
-
-	pthread_mutex_unlock(&(ho->ho_state->ho_mutex));
-	return ret;
-}
-
 /** Receives and actions a message sent to the mediator over a handover
  *  (typically a keep alive response).
  *
- *  @param mev              The epoll event for the handover
+ *  @param ho            The handover to receive the message on
  *
  *  @return -1 if an error occurs, 0 otherwise.
  */
-int receive_handover(med_epoll_ev_t *mev) {
-	handover_t *ho = (handover_t *)(mev->state);
+int receive_handover(handover_t *ho) {
 	int ret;
     uint8_t *ptr = NULL;
     uint32_t reclen = 0;
@@ -1015,7 +680,8 @@ int receive_handover(med_epoll_ev_t *mev) {
     /* receive the incoming message into a local SCB */
 	pthread_mutex_lock(&(ho->ho_state->ho_mutex));
 
-    ret = libtrace_scb_recv_sock(ho->ho_state->incoming, mev->fd, MSG_DONTWAIT);
+    ret = libtrace_scb_recv_sock(ho->ho_state->incoming, ho->outev->fd,
+            MSG_DONTWAIT);
     if (ret == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
 			pthread_mutex_unlock(&(ho->ho_state->ho_mutex));
@@ -1079,8 +745,8 @@ int receive_handover(med_epoll_ev_t *mev) {
             }
             /*
             logger(LOG_INFO, "OpenLI mediator -- received KA response for %ld from LEA handover %s:%s HI%d",
-                    recvseq, mas->parent->ipstr, mas->parent->portstr,
-                    mas->parent->handover_type);
+                    recvseq, ho->ipstr, ho->portstr,
+                    ho->handover_type);
             */
             halt_mediator_timer(ho->aliverespev);
             libtrace_scb_advance_read(ho->ho_state->incoming, reclen);
@@ -1108,38 +774,58 @@ int receive_handover(med_epoll_ev_t *mev) {
     return 0;
 }
 
-/** Finds an agency that matches a given ID in the agency list
+/** Checks if a handover's RMQ connection is still alive and error-free. If
+ *  not, destroy the connection and reset it to NULL
  *
- *  @param state        The global handover state for the mediator
- *  @param id           A string containing the agency ID to search for
+ *  @param ho       The handover which needs its RMQ connection checked.
+ *  @param agencyid The name of the agency that the handover belongs to (for
+ *                  logging purposes).
  *
- *  @return a pointer to the agency with the given ID, or NULL if no such
- *          agency is found.
+ *  @return -1 if the RMQ connection was destroyed, 0 otherwise
  */
-mediator_agency_t *lookup_agency(handover_state_t *state, char *id) {
+int check_handover_rmq_status(handover_t *ho, char *agencyid) {
+    const char *hi_str = NULL;
+    int r;
 
-    mediator_agency_t *ma;
-    libtrace_list_t *alist;
-    libtrace_list_node_t *n;
-
-    pthread_mutex_lock(state->agency_mutex);
-    alist = state->agencies;
-
-    /* Fingers crossed we don't have too many agencies at any one time. */
-
-    n = alist->head;
-    while (n) {
-        ma = (mediator_agency_t *)(n->data);
-        n = n->next;
-
-        if (strcmp(ma->agencyid, id) == 0) {
-            pthread_mutex_unlock(state->agency_mutex);
-            return ma;
-        }
+    if (ho->handover_type == HANDOVER_HI2) {
+        hi_str = "HI2";
+        r = consume_mediator_iri_messages(ho->rmq_consumer,
+                &(ho->ho_state->buf), 1, &(ho->ho_state->next_rmq_ack));
+    } else {
+        hi_str = "HI3";
+        r = consume_mediator_cc_messages(ho->rmq_consumer,
+                &(ho->ho_state->buf), 1, &(ho->ho_state->next_rmq_ack));
     }
-    pthread_mutex_unlock(state->agency_mutex);
-    return NULL;
+
+    if (r == -2) {
+        logger(LOG_INFO, "OpenLI Mediator: RMQ Heartbeat timer expired for %s handover for agency %s", hi_str, agencyid);
+        reset_handover_rmq(ho);
+        return -1;
+    } else if (r == -1) {
+        logger(LOG_INFO, "OpenLI Mediator: RMQ connection error for %s handover for agency %s", hi_str, agencyid);
+        reset_handover_rmq(ho);
+        return -1;
+    }
+
+    return 0;
 }
 
+/** Resets the RMQ state for a given handover.
+ *
+ *  This is typically used when an error occurs with the RMQ consumer for
+ *  a handover, which will then force the handover to re-register its
+ *  connection to the RMQ service.
+ *
+ *  @param ho       The handover to reset RMQ state for
+ */
+void reset_handover_rmq(handover_t *ho) {
+    if (ho->rmq_consumer) {
+        amqp_destroy_connection(ho->rmq_consumer);
+    }
+    /* MUST set to NULL, so that re-registration will take place */
+    ho->rmq_consumer = NULL;
+    ho->rmq_registered = 0;
+    ho->ho_state->valid_rmq_ack = 0;
+}
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

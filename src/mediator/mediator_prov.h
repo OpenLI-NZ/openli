@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018-2020 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2018-2022 The University of Waikato, Hamilton, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -58,6 +58,12 @@ typedef struct mediator_provisioner {
      */
     uint8_t tryconnect;
 
+    /** Flag indicating if the provisioner connection has just been
+     *  re-established, so that the mediator can let other threads
+     *  know that the provisioner is back.
+     */
+    uint8_t just_connected;
+
     /** The SSL socket for the connection to the provisioner */
     SSL *ssl;
 
@@ -79,18 +85,19 @@ typedef struct mediator_provisioner {
     char *provport;
 } mediator_prov_t;
 
-/** Initialises a provisioner instance with an OpenLI mediator
+/** Initialises the state for a provisioner instance
  *
- *  @param prov         The reference to the provisioner that is to be
- *                      initialised
+ *  @param prov             The provisioner instance
+ *  @param ctx              The SSL context object for the mediator
  */
 void init_provisioner_instance(mediator_prov_t *prov, SSL_CTX **ctx);
 
-/** Disconnects the currently connected provisioner.
+/** Disconnects the TCP session to a provisioner and resets any state
+ *  associated with that communication channel.
  *
- *  @param prov             The provisioner to disconnect.
- *  @param enable_reconnect Flag that indicates whether the mediator should
- *                          try to reconnect to the provisioner.
+ *  @param prov                 The provisioner instance to disconnect
+ *  @param enable_reconnect     If not zero, we will set a timer to try and
+ *                              reconnect to the provisioner in 1 second.
  */
 void disconnect_provisioner(mediator_prov_t *prov, int enable_reconnect);
 

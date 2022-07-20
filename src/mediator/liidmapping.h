@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018-2020 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2018-2022 The University of Waikato, Hamilton, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -28,8 +28,7 @@
 #define OPENLI_LIID_AGENCY_MAPPING_H_
 
 #include <Judy.h>
-#include "med_epoll.h"
-#include "handover.h"
+#include <amqp.h>
 
 typedef struct liidmapping liid_map_entry_t;
 
@@ -40,19 +39,31 @@ struct liidmapping {
     /** The LIID, as a string */
     char *liid;
 
-    /** The agency that should receive this LIID */
-    mediator_agency_t *agency;
+    /** Flag that indicates whether this mapping is unconfirmed by the
+     *  provisioner.
+     */
+    uint8_t unconfirmed;
 
-    /** The epoll timer event for a scheduled removal of this mapping */
-    med_epoll_ev_t *ceasetimer;
+    /** Flag that indicates whether this mapping has been withdrawn by the
+     *  provisioner.
+     */
+    uint8_t withdrawn;
+
+    /** Flag that indicates whether the internal CC queue for this LIID has
+     *  been deleted by the mediator.
+     */
+    uint8_t ccqueue_deleted;
+
+    /** Flag that indicates whether the internal IRI queue for this LIID has
+     *  been deleted by the mediator.
+     */
+    uint8_t iriqueue_deleted;
 };
 
 /** The map used to track which LIIDs should be sent to which agencies */
 typedef struct liid_map {
     /** A map of known LIID->agency mappings */
 	Pvoid_t liid_array;
-    /** A set of LIIDs which have no known corresponding agency (yet) */
-	Pvoid_t missing_liids;
 } liid_map_t;
 
 /** Finds an LIID in an LIID map and returns its corresponding agency
@@ -65,36 +76,54 @@ typedef struct liid_map {
  */
 liid_map_entry_t *lookup_liid_agency_mapping(liid_map_t *map, char *liidstr);
 
-/** Adds an LIID to the set of LIIDs without agencies in an LIID map.
- *
- *  @param map          The LIID map to add the missing LIID to
- *  @param liidstr      The LIID that has no corresponding agency (as a string)
- *
- *  @return -1 if an error occurs (e.g. OOM), 0 if successful.
- */
-int add_missing_liid(liid_map_t *map, char *liidstr);
-
 /** Removes an LIID->agency mapping from an LIID map.
  *
  *  @param map          The LIID map to remove the mapping from
- *  @param liidstr      The LIID that is to be removed from the map (as a
- *                      string)
+ *  @param m            The LIID map entry to be removed
  *
  */
-void remove_liid_agency_mapping(liid_map_t *map, char *liidstr);
+void remove_liid_agency_mapping(liid_map_t *map, liid_map_entry_t *m);
 
 /** Adds a new LIID->agency mapping to an LIID map.
  *
  *  @param map          The LIID map to add the new mapping to
  *  @param liidstr      The LIID for the new mapping (as a string)
- *  @param agency       The agency that requested the LIID
  *
- *  @return -1 if an error occurs, 0 if the addition is successful, 1 if
- *          the pcap thread needs to know that this LIID is no longer
- *          being written to disk
+ *  @return -1 if an error occurs, 0 if the LIID already existed, 1 if
+ *          a new LIID->agency mapping was created
  */
-int add_liid_agency_mapping(liid_map_t *map, char *liidstr,
-        mediator_agency_t *agency);
+int add_liid_agency_mapping(liid_map_t *map, char *liidstr);
+
+/** Flags an LIID->agency mapping as withdrawn.
+ *
+ *  Withdrawn mappings are deleted (along with their corresponding queues)
+ *  once any outstanding messages in their queue have been processed.
+ *
+ *  @param map          The LIID map to search for the mapping
+ *  @param liidstr      The LIID to be withdrawn
+ *
+ */
+void withdraw_liid_agency_mapping(liid_map_t *map, char *liidstr);
+
+/** Runs a user-provided function against all LIIDs in the map.
+ *
+ *  @param map      The map to iterate over
+ *  @param arg      A user-provided argument that will be passed into each
+ *                  invocation of the user function
+ *  @param torun    The function to run for each existing LIID.
+ *
+ *  The torun() function must accept two arguments:
+ *    - an liid_map_entry_t * that will point to an LIID mapping
+ *    - a void * that will point to the user-provided argument
+ *
+ *  The torun() function must return 1 if the mapping should be deleted after
+ *  the function has completed, or 0 if it should be retained in the map.
+ *
+ *  @return -1 if any of the function iterations return -1 (i.e. an error).
+ *  Otherwise will return 0.
+ */
+int foreach_liid_agency_mapping(liid_map_t *map, void *arg,
+        int (*torun)(liid_map_entry_t *, void *));
 
 /** Removes all current LIID->agency mappings from the LIID map.
  *
@@ -102,11 +131,15 @@ int add_liid_agency_mapping(liid_map_t *map, char *liidstr,
  */
 void purge_liid_map(liid_map_t *map);
 
-/** Removes all entries from the missing LIID map
+/** Callback method for setting the "unconfirmed" flag for an LIID map
+ *  entry. Designed for use in combination with foreach_liid_agency_mapping().
  *
- *  @param map          The LIID map to purge missing LIIDs from
+ *  @param m        The LIID map entry to be marked as unconfirmed
+ *  @param arg      A user-provided argument (unused)
+ *
+ *  @return 0 always
  */
-void purge_missing_liids(liid_map_t *map);
+int set_liid_as_unconfirmed(liid_map_entry_t *m, void *arg);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -93,7 +93,8 @@ authenticate using the plain method with a password.
 Plain authentication will require you to provide the following options in your
 configuration file:
 
-* RMQenabled       -- must be set to `true` to enable RabbitMQ support
+* RMQenabled       -- must be set to `true` to enable RabbitMQ support for
+                      receiving intercepted packets from the collector
 * RMQname          -- the username to use when authenticating with RabbitMQ
 * RMQpass          -- the password to use when authenticating with RabbitMQ
 * RMQSSL           -- must be set to `false` to disable SSL authentication
@@ -103,7 +104,8 @@ configuration file:
 
 SSL authentication will require you to provide the following options instead:
 
-* RMQenabled       -- must be set to `true` to enable RabbitMQ support
+* RMQenabled       -- must be set to `true` to enable RabbitMQ support for
+                      receiving intercepted packets from the collector
 * RMQname          -- the username to use when authenticating with RabbitMQ
 * RMQSSL           -- must be set to `true` to enable SSL authentication
 * RMQheartbeatfreq -- time between RMQ heartbeat packets that are used to
@@ -117,6 +119,16 @@ SSL authentication will require you to provide the following options instead:
 See TLSDoc.md for more details on the SSL certificate files required by
 OpenLI, as these will be the same certificates that you will/would use to
 encrypt other inter-component messages in an OpenLI deployment.
+
+As of version 1.1.0, the OpenLI mediator will also use a local RabbitMQ server
+instance to move intercept records between threads and ensure that the records
+are safely buffered on disk whenever a handover is unavailable. No additional
+configuration is required for RabbitMQ to be used in this way, but you will
+need to ensure that a RabbitMQ service is running on your mediator host before
+starting the mediator.
+
+Installing the OpenLI mediator via one of our software packages should
+install and configure a RabbitMQ server for the mediator automatically.
 
 ### Configuration Syntax
 All of the mediator config options are standard YAML key-value pairs, where

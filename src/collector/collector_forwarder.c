@@ -315,7 +315,7 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         return 0;
     }
 
-    if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
+    if (msg->type == OPENLI_EXPORT_INTERCEPT_OVER) {
         remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_cc));
         remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_iri));
 

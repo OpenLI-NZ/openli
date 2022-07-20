@@ -65,6 +65,9 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
     sync->pubsockcount = glob->seqtracker_threads;
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
 
+    sync->forwardcount = glob->forwarding_threads;
+    sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
+
     sync->topoll = calloc(128, sizeof(zmq_pollitem_t));
     sync->topoll_size = 128;
     sync->expiring_streams = calloc(128, sizeof(struct rtpstreaminf *));
@@ -86,6 +89,17 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
         }
 
         /* Do we need to set a HWM? */
+    }
+
+    for (i = 0; i < sync->forwardcount; i++) {
+        sync->zmq_fwdctrlsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+        snprintf(sockname, 128, "inproc://openliforwardercontrol_sync-%d", i);
+        if (zmq_connect(sync->zmq_fwdctrlsocks[i], sockname) != 0) {
+            logger(LOG_INFO, "OpenLI: colsyncvoip thread unable to connect to zmq control socket for forwarding threads: %s",
+                    strerror(errno));
+            zmq_close(sync->zmq_fwdctrlsocks[i]);
+            sync->zmq_fwdctrlsocks[i] = NULL;
+        }
     }
 
     sync->zmq_colsock = zmq_socket(glob->zmq_ctxt, ZMQ_PULL);
@@ -168,13 +182,23 @@ void clean_sync_voip_data(collector_sync_voip_t *sync) {
         zmq_close(sync->zmq_pubsocks[i]);
     }
 
+    for (i = 0; i < sync->forwardcount; i++) {
+        if (sync->zmq_fwdctrlsocks[i] == NULL) {
+            continue;
+        }
+        zmq_setsockopt(sync->zmq_fwdctrlsocks[i], ZMQ_LINGER, &zero,
+                    sizeof(zero));
+        zmq_close(sync->zmq_fwdctrlsocks[i]);
+        sync->zmq_fwdctrlsocks[i] = NULL;
+    }
+
     if (sync->zmq_colsock) {
         zmq_setsockopt(sync->zmq_colsock, ZMQ_LINGER, &zero, sizeof(zero));
         zmq_close(sync->zmq_colsock);
     }
 
     free(sync->zmq_pubsocks);
-
+    free(sync->zmq_fwdctrlsocks);
 
 }
 
@@ -1647,7 +1671,8 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
 static inline void remove_voipintercept(collector_sync_voip_t *sync,
         voipintercept_t *vint) {
 
-    openli_export_recv_t *expmsg;
+    openli_export_recv_t *expmsg, *fwdmsg;
+    int i;
 
     push_voipintercept_halt_to_threads(sync, vint);
 
@@ -1662,6 +1687,17 @@ static inline void remove_voipintercept(collector_sync_voip_t *sync,
     sync->glob->stats->voipintercepts_ended_total ++;
     pthread_mutex_unlock(sync->glob->stats_mutex);
     publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], expmsg);
+
+    for (i = 0; i < sync->forwardcount; i++) {
+        fwdmsg = (openli_export_recv_t *)calloc(1,
+                sizeof(openli_export_recv_t));
+        fwdmsg->type = OPENLI_EXPORT_INTERCEPT_OVER;
+        fwdmsg->data.cept.liid = strdup(vint->common.liid);
+        fwdmsg->data.cept.authcc = strdup(vint->common.authcc);
+        fwdmsg->data.cept.delivcc = strdup(vint->common.delivcc);
+        publish_openli_msg(sync->zmq_fwdctrlsocks[i], fwdmsg);
+    }
+
 
     HASH_DELETE(hh_liid, sync->voipintercepts, vint);
     free_single_voipintercept(vint);

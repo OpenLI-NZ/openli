@@ -355,6 +355,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
             recvd->type == OPENLI_EXPORT_UMTSCC) {
 	    job.seqno = cinseq->cc_seqno;
         cinseq->cc_seqno ++;
+
 	} else {
 		job.seqno = cinseq->iri_seqno;
         cinseq->iri_seqno ++;

@@ -59,6 +59,14 @@ uint64_t get_buffered_amount(export_buffer_t *buf) {
     return (buf->buftail - (buf->bufhead + buf->deadfront));
 }
 
+uint8_t *get_buffered_head(export_buffer_t *buf, uint64_t *rem) {
+    *rem = get_buffered_amount(buf);
+    if (*rem == 0) {
+        return NULL;
+    }
+    return (buf->bufhead + buf->deadfront);
+}
+
 void reset_export_buffer(export_buffer_t *buf) {
     buf->partialfront = 0;
     buf->partialrem = 0;
@@ -406,6 +414,19 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
 
     post_transmit(buf);
     return sent;
+}
+
+int advance_export_buffer_head(export_buffer_t *buf, uint64_t amount) {
+
+    uint64_t rem = get_buffered_amount(buf);
+
+    if (amount > rem) {
+        amount = rem;
+    }
+
+    buf->deadfront += amount;
+    post_transmit(buf);
+    return 0;
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

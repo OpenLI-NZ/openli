@@ -29,7 +29,8 @@ Description: Central provisioning daemon for an OpenLI system
 Package: openli-mediator
 Section: net
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, lsb-base, adduser
+Depends: ${shlibs:Depends}, ${misc:Depends}, lsb-base, adduser,
+    rabbitmq-server
 Recommends: strongswan
 Description: Mediation daemon for an OpenLI system
  OpenLI is a software suite that allows network operators to conduct
