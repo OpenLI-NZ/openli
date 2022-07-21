@@ -89,6 +89,7 @@ if test "x$enable_provisioner" != "xno"; then
         fi
 
         PROVISIONER_LIBS="$PROVISIONER_LIBS -lmicrohttpd -ljson-c"
+        COLLECTOR_LIBS="$COLLECTOR_LIBS -lmicrohttpd -ljson-c"
 
         if test "x$libssl11_found" = "x1"; then
                 AC_CHECK_LIB([sqlcipher], [sqlite3_key], sqlcipher_found=1, sqlcipher_found=0)

@@ -50,6 +50,7 @@
 #include "collector_base.h"
 #include "openli_tls.h"
 #include "radius_hasher.h"
+#include "email_ingest_service.h"
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
@@ -294,7 +295,11 @@ typedef struct collector_global {
 
     uint8_t encoding_method;
     openli_ssl_config_t sslconf;
-    openli_RMQ_config_t RMQ_conf; 
+    openli_RMQ_config_t RMQ_conf;
+    openli_email_ingest_config_t emailconf;
+
+    int emailsockfd;
+    email_ingestor_state_t *email_ingestor;
 
 } collector_global_t;
 

@@ -1170,6 +1170,16 @@ static void clear_global_config(collector_global_t *glob) {
     if (glob->jmirrors) {
         free_coreserver_list(glob->jmirrors);
     }
+
+    if (glob->emailconf.listenaddr) {
+        free(glob->emailconf.listenaddr);
+    }
+    if (glob->emailconf.listenport) {
+        free(glob->emailconf.listenport);
+    }
+    if (glob->email_ingestor) {
+        free(glob->email_ingestor);
+    }
 }
 
 static inline void push_hello_message(void *atob,
@@ -1301,6 +1311,13 @@ static void init_collector_global(collector_global_t *glob) {
     glob->RMQ_conf.heartbeatFreq = 0;
     glob->RMQ_conf.enabled = 0;
 
+    glob->emailconf.enabled = 1;        // TODO default to disabled?
+    glob->emailconf.authrequired = 0;
+    glob->emailconf.tlsrequired = 0;
+    glob->emailconf.maxclients = 20;
+    glob->emailconf.listenport = NULL;
+    glob->emailconf.listenaddr = NULL;
+
     glob->etsitls = 1;
     glob->ignore_sdpo_matches = 0;
     glob->encoding_method = OPENLI_ENCODING_DER;
@@ -1308,6 +1325,9 @@ static void init_collector_global(collector_global_t *glob) {
     memset(&(glob->stats), 0, sizeof(glob->stats));
     glob->stat_frequency = 0;
     glob->ticks_since_last_stat = 0;
+
+    glob->emailsockfd = -1;
+    glob->email_ingestor = NULL;
 
 }
 
@@ -1329,6 +1349,22 @@ static collector_global_t *parse_global_config(char *configfile) {
     if (parse_collector_config(configfile, glob) == -1) {
         clear_global_config(glob);
         return NULL;
+    }
+
+    if (glob->emailconf.enabled) {
+        glob->email_ingestor = calloc(1, sizeof(email_ingestor_state_t));
+        if (glob->emailconf.listenaddr == NULL) {
+            glob->emailconf.listenaddr = strdup("0.0.0.0");
+        }
+        if (glob->emailconf.listenport == NULL) {
+            glob->emailconf.listenport = strdup("19999");
+        }
+        logger(LOG_INFO, "OpenLI: starting email ingestor service on %s:%s -- auth %s, TLS %s",
+                glob->emailconf.listenaddr,
+                glob->emailconf.listenport,
+                glob->emailconf.authrequired ? "required": "disabled",
+                glob->emailconf.tlsrequired ? "required": "disabled");
+
     }
 
     logger(LOG_DEBUG, "OpenLI: Encoding Method: %s",
@@ -1744,6 +1780,18 @@ int main(int argc, char *argv[]) {
         pthread_setname_np(glob->encoders[i].threadid, name);
     }
 
+    /* Start email ingesting daemon, if required */
+    if (glob->emailconf.enabled) {
+        glob->emailsockfd = create_listener(glob->emailconf.listenaddr,
+                glob->emailconf.listenport, "email ingestor socket");
+        if (glob->emailsockfd == -1) {
+            logger(LOG_INFO, "OpenLI: WARNING unable to create listening socket for email ingestion service");
+        } else if (start_email_mhd_daemon(&(glob->emailconf),
+                    glob->emailsockfd, glob->email_ingestor) == NULL) {
+            logger(LOG_INFO, "OpenLI: WARNING unable to start email ingestion service");
+        }
+    }
+
     /* Start IP intercept sync thread */
     ret = pthread_create(&(glob->syncip.threadid), NULL, start_ip_sync_thread,
             (void *)glob);
@@ -1828,6 +1876,10 @@ int main(int argc, char *argv[]) {
                     "OpenLI: error sending halt to encoding threads: %s",
                     strerror(errno));
         }
+    }
+
+    if (glob->email_ingestor && glob->email_ingestor->daemon) {
+        MHD_stop_daemon(glob->email_ingestor->daemon);
     }
 
     pthread_join(glob->syncip.threadid, NULL);

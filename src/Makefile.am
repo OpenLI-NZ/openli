@@ -58,6 +58,8 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/umtsiri.h collector/umtsiri.c \
                 collector/radius_hasher.c collector/radius_hasher.h \
                 collector/timed_intercept.c collector/timed_intercept.h \
+                collector/email_ingest_service.c \
+                collector/email_ingest_service.h \
                 $(PLUGIN_SRCS)
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 
