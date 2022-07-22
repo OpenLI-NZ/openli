@@ -89,9 +89,11 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
     sync->pubsockcount = glob->seqtracker_threads;
     sync->forwardcount = glob->forwarding_threads;
+    sync->emailcount = glob->email_threads;
 
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
     sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
+    sync->zmq_emailsocks = calloc(sync->emailcount, sizeof(void *));
 
     sync->ctx = glob->sslconf.ctx;
     sync->ssl = NULL;
@@ -115,6 +117,17 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
         }
     }
 
+    for (i = 0; i < sync->emailcount; i++) {
+        sync->zmq_emailsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+        snprintf(sockname, 128, "inproc://openliemailcontrol_sync-%d", i);
+        if (zmq_connect(sync->zmq_emailsocks[i], sockname) != 0) {
+            logger(LOG_INFO, "OpenLI: colsync thread unable to connect to zmq control socket for email threads: %s",
+                    strerror(errno));
+            zmq_close(sync->zmq_emailsocks[i]);
+            sync->zmq_emailsocks[i] = NULL;
+        }
+    }
+
     for (i = 0; i < sync->pubsockcount; i++) {
         sync->zmq_pubsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
         snprintf(sockname, 128, "inproc://openlipub-%d", i);
@@ -133,12 +146,34 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
 }
 
+static int send_halt_message_over_zmq(void *zmqsock) {
+    openli_export_recv_t *haltmsg;
+    int zero = 0, ret;
+
+    if (zmqsock == NULL) {
+        return 1;
+    }
+
+    /* Send a halt message to get the tracker thread to stop */
+    haltmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    haltmsg->type = OPENLI_EXPORT_HALT;
+    ret = zmq_send(zmqsock, &haltmsg, sizeof(haltmsg), ZMQ_NOBLOCK);
+    if (ret < 0 && errno == EAGAIN) {
+        free(haltmsg);
+        return 0;
+    } else if (ret <= 0) {
+        free(haltmsg);
+    }
+
+    zmq_setsockopt(zmqsock, ZMQ_LINGER, &zero, sizeof(zero));
+    zmq_close(zmqsock);
+}
+
 void clean_sync_data(collector_sync_t *sync) {
 
     int i = 0, zero=0, ret;
     int haltattempts = 0, haltfails = 0;
     ip_to_session_t *iter, *tmp;
-    openli_export_recv_t *haltmsg;
     default_radius_user_t *raditer, *radtmp;
 
 	if (sync->instruct_fd != -1) {
@@ -231,56 +266,44 @@ void clean_sync_data(collector_sync_t *sync) {
         }
 
         for (i = 0; i < sync->pubsockcount; i++) {
-            if (sync->zmq_pubsocks[i] == NULL) {
-                continue;
-            }
+            int r;
 
-            /* Send a halt message to get the tracker thread to stop */
-            haltmsg = (openli_export_recv_t *)calloc(1,
-                    sizeof(openli_export_recv_t));
-            haltmsg->type = OPENLI_EXPORT_HALT;
-            ret = zmq_send(sync->zmq_pubsocks[i], &haltmsg, sizeof(haltmsg),
-                    ZMQ_NOBLOCK);
-            if (ret < 0 && errno == EAGAIN) {
+            r = send_halt_message_over_zmq(sync->zmq_pubsocks[i]);
+            if (r == 0) {
                 haltfails ++;
-                free(haltmsg);
                 if (haltattempts < 9) {
                     continue;
                 }
-            } else if (ret <= 0) {
-                free(haltmsg);
             }
-
-            zmq_setsockopt(sync->zmq_pubsocks[i], ZMQ_LINGER, &zero,
-                    sizeof(zero));
-            zmq_close(sync->zmq_pubsocks[i]);
             sync->zmq_pubsocks[i] = NULL;
         }
 
         for (i = 0; i < sync->forwardcount; i++) {
-            if (sync->zmq_fwdctrlsocks[i] == NULL) {
-                continue;
-            }
+            int r;
 
-            /* Send a halt message to get the forwarder thread to stop */
-            haltmsg = (openli_export_recv_t *)calloc(1,
-                    sizeof(openli_export_recv_t));
-            haltmsg->type = OPENLI_EXPORT_HALT;
-            ret = zmq_send(sync->zmq_fwdctrlsocks[i], &haltmsg, sizeof(haltmsg),
-                    ZMQ_NOBLOCK);
-            if (ret < 0 && errno == EAGAIN) {
+            r = send_halt_message_over_zmq(sync->zmq_fwdctrlsocks[i]);
+            if (r == 0) {
                 haltfails ++;
-                free(haltmsg);
                 if (haltattempts < 9) {
+                    i--;
                     continue;
                 }
-            } else if (ret <= 0) {
-                free(haltmsg);
             }
-            zmq_setsockopt(sync->zmq_fwdctrlsocks[i], ZMQ_LINGER, &zero,
-                    sizeof(zero));
-            zmq_close(sync->zmq_fwdctrlsocks[i]);
             sync->zmq_fwdctrlsocks[i] = NULL;
+        }
+
+        for (i = 0; i < sync->emailcount; i++) {
+            int r;
+
+            r = send_halt_message_over_zmq(sync->zmq_emailsocks[i]);
+            if (r == 0) {
+                haltfails ++;
+                if (haltattempts < 9) {
+                    i--;
+                    continue;
+                }
+            }
+            sync->zmq_emailsocks[i] = NULL;
         }
 
         if (haltfails == 0) {
@@ -290,6 +313,7 @@ void clean_sync_data(collector_sync_t *sync) {
         usleep(250000);
     }
 
+    free(sync->zmq_emailsocks);
     free(sync->zmq_pubsocks);
     free(sync->zmq_fwdctrlsocks);
 

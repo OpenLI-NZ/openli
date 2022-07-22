@@ -1072,10 +1072,6 @@ static void destroy_collector_state(collector_global_t *glob) {
 
     libtrace_message_queue_destroy(&(glob->intersyncq));
 
-    if (glob->zmq_forwarder_ctrl) {
-        zmq_close(glob->zmq_forwarder_ctrl);
-    }
-
     if (glob->zmq_encoder_ctrl) {
         zmq_close(glob->zmq_encoder_ctrl);
     }
@@ -1256,13 +1252,6 @@ static int prepare_collector_glob(collector_global_t *glob) {
 
     glob->syncgenericfreelist = create_etsili_generic_freelist(1);
 
-    glob->zmq_forwarder_ctrl = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
-    if (zmq_connect(glob->zmq_forwarder_ctrl,
-            "inproc://openliforwardercontrol") != 0) {
-        logger(LOG_INFO, "OpenLI: unable to connect to zmq control socket for forwarding threads. Exiting.");
-        return -1;
-    }
-
     glob->zmq_encoder_ctrl = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
     if (zmq_bind(glob->zmq_encoder_ctrl,
             "inproc://openliencodercontrol") != 0) {
@@ -1279,6 +1268,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->seqtracker_threads = 1;
     glob->forwarding_threads = 1;
     glob->encoding_threads = 2;
+    glob->email_threads = 2;
     glob->sharedinfo.intpointid = NULL;
     glob->sharedinfo.intpointid_len = 0;
     glob->sharedinfo.operatorid = NULL;
@@ -1739,6 +1729,27 @@ int main(int argc, char *argv[]) {
         pthread_setname_np(glob->forwarders[i].threadid, name);
     }
 
+    glob->emailworkers = calloc(glob->email_threads,
+            sizeof(openli_email_worker_t));
+
+    for (i = 0; i < glob->email_threads; i++) {
+        snprintf(name, 1024, "emailworker-%d", i);
+
+        glob->emailworkers[i].zmq_ctxt = glob->zmq_ctxt;
+        glob->emailworkers[i].emailid = i;
+        glob->emailworkers[i].tracker_threads = glob->seqtracker_threads;
+        glob->emailworkers[i].zmq_pubsocks = NULL;
+        glob->emailworkers[i].zmq_ingest_recvsock = NULL;
+        glob->emailworkers[i].zmq_colthread_recvsock = NULL;
+        glob->emailworkers[i].zmq_ii_sock = NULL;
+
+        glob->emailworkers[i].activeintercepts = NULL;
+
+        pthread_create(&(glob->emailworkers[i].threadid), NULL,
+                start_email_worker_thread, (void *)&(glob->emailworkers[i]));
+        pthread_setname_np(glob->emailworkers[i].threadid, name);
+    }
+
     glob->seqtrackers = calloc(glob->seqtracker_threads,
             sizeof(seqtracker_thread_data_t));
 
@@ -1893,6 +1904,9 @@ int main(int argc, char *argv[]) {
     }
     for (i = 0; i < glob->forwarding_threads; i++) {
         pthread_join(glob->forwarders[i].threadid, NULL);
+    }
+    for (i = 0; i < glob->email_threads; i++) {
+        pthread_join(glob->emailworkers[i].threadid, NULL);
     }
 
     logger(LOG_INFO, "OpenLI: exiting OpenLI Collector.");

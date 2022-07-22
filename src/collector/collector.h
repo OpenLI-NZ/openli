@@ -51,6 +51,7 @@
 #include "openli_tls.h"
 #include "radius_hasher.h"
 #include "email_ingest_service.h"
+#include "email_worker.h"
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
@@ -253,8 +254,8 @@ typedef struct collector_global {
     int seqtracker_threads;
     int encoding_threads;
     int forwarding_threads;
+    int email_threads;
 
-    void *zmq_forwarder_ctrl;
     void *zmq_encoder_ctrl;
 
     pthread_rwlock_t config_mutex;
@@ -268,6 +269,7 @@ typedef struct collector_global {
     seqtracker_thread_data_t *seqtrackers;
     openli_encoder_t *encoders;
     forwarding_thread_data_t *forwarders;
+    openli_email_worker_t *emailworkers;
     colthread_local_t **collocals;
     int nextloc;
 
