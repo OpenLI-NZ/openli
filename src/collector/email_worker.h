@@ -28,6 +28,10 @@
 #ifndef OPENLI_EMAIL_WORKER_H_
 #define OPENLI_EMAIL_WORKER_H_
 
+#include <uthash.h>
+
+#include "intercept.h"
+
 typedef enum {
     OPENLI_EMAIL_TYPE_SMTP,
     OPENLI_EMAIL_TYPE_POP3,
@@ -93,6 +97,7 @@ typedef struct openli_email_worker {
 } openli_email_worker_t;
 
 void *start_email_worker_thread(void *arg);
+void free_captured_email(openli_email_captured_t *cap);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

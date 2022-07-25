@@ -1259,6 +1259,12 @@ static int prepare_collector_glob(collector_global_t *glob) {
         return -1;
     }
 
+    if (glob->email_ingestor) {
+        glob->email_ingestor->email_worker_count = glob->email_threads;
+        glob->email_ingestor->zmq_publishers = NULL;
+        glob->email_ingestor->zmq_ctxt = glob->zmq_ctxt;
+    }
+
     return 0;
 }
 
@@ -1889,8 +1895,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (glob->email_ingestor && glob->email_ingestor->daemon) {
-        MHD_stop_daemon(glob->email_ingestor->daemon);
+    if (glob->email_ingestor) {
+        stop_email_mhd_daemon(glob->email_ingestor);
     }
 
     pthread_join(glob->syncip.threadid, NULL);

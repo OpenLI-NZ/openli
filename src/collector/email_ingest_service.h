@@ -30,6 +30,7 @@
 #include <stdlib.h>
 #include <microhttpd.h>
 
+#include "email_worker.h"
 
 typedef struct openli_email_ingest_config {
     uint8_t enabled;
@@ -45,6 +46,10 @@ typedef struct openli_email_ingest_config {
 typedef struct email_ingest_state {
     struct MHD_Daemon *daemon;
     openli_email_ingest_config_t *config;
+    int email_worker_count;
+
+    void *zmq_ctxt;
+    void **zmq_publishers;
 
 } email_ingestor_state_t;
 
@@ -52,9 +57,12 @@ typedef struct email_connection {
     struct MHD_PostProcessor *postproc;
     const char *answerstring;
     int answercode;
-    email_ingestor_state_t *parentstate; 
+    email_ingestor_state_t *parentstate;
+
+    openli_email_captured_t *thismsg;
 } email_connection_t;
 
+void stop_email_mhd_daemon(email_ingestor_state_t *state);
 struct MHD_Daemon *start_email_mhd_daemon(openli_email_ingest_config_t *config,
         int sockfd, email_ingestor_state_t *state);
 

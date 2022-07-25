@@ -31,6 +31,8 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <zmq.h>
+#include <assert.h>
 
 #include "logger.h"
 #include "email_ingest_service.h"
@@ -52,6 +54,7 @@ static void init_email_ingest_state(email_ingestor_state_t *state,
         openli_email_ingest_config_t *config) {
     state->daemon = NULL;
     state->config = config;
+    state->zmq_publishers = NULL;
 }
 
 static int iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
@@ -60,9 +63,61 @@ static int iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
             size_t size) {
 
     email_connection_t *con_info = (email_connection_t *)(coninfo_cls);
+    char *ptr;
 
-    logger(LOG_INFO, "KEY %s", key);
-    logger(LOG_INFO, "VALUE %s", data);
+    if (con_info->thismsg == NULL) {
+        con_info->thismsg = calloc(1, sizeof(openli_email_captured_t));
+    }
+
+    if (strcmp(key, "TARGET_ID") == 0) {
+        con_info->thismsg->target_id = strdup(data);
+    } else if (strcmp(key, "REMOTE_IP") == 0) {
+        con_info->thismsg->remote_ip = strdup(data);
+    } else if (strcmp(key, "REMOTE_PORT") == 0) {
+        con_info->thismsg->remote_port = strdup(data);
+    } else if (strcmp(key, "HOST_IP") == 0) {
+        con_info->thismsg->host_ip = strdup(data);
+    } else if (strcmp(key, "HOST_PORT") == 0) {
+        con_info->thismsg->host_port = strdup(data);
+    } else if (strcmp(key, "DATA_SOURCE") == 0) {
+        con_info->thismsg->datasource = strdup(data);
+    } else if (strcmp(key, "SESSION_ID") == 0) {
+        con_info->thismsg->session_id = strdup(data);
+    } else if (strcmp(key, "DIRECTION") == 0) {
+        /* TODO */
+
+    } else if (strcmp(key, "TIMESTAMP") == 0) {
+        /* TODO */
+
+    } else if (strcmp(key, "MAIL_ID") == 0) {
+        /* TODO */
+
+    } else if (strcmp(key, "SERVICE") == 0) {
+        /* TODO */
+
+    } else if (strcmp(key, "BYTES") == 0) {
+        con_info->thismsg->msg_length = strtoul(data, NULL, 10);
+    } else if (strcmp(key, "BUFFER") == 0) {
+        /* TODO throw proper error */
+        assert(con_info->thismsg->msg_length != 0);
+        con_info->thismsg->content = malloc(con_info->thismsg->msg_length + 1);
+
+        ptr = (char *)data;
+        while (*ptr == 0x0a || *ptr == 0x0d) {
+            ptr ++;
+        }
+
+        if (*ptr == '\0' || ptr - data >= size) {
+            free(con_info->thismsg->content);
+            con_info->thismsg->content = NULL;
+        }
+
+        memcpy(con_info->thismsg->content, ptr, con_info->thismsg->msg_length);
+        con_info->thismsg->content[con_info->thismsg->msg_length] = '\0';
+    }
+
+    //logger(LOG_INFO, "KEY %s", key);
+    //logger(LOG_INFO, "VALUE %s", data);
 
     con_info->answerstring = completepage;
     con_info->answercode = MHD_HTTP_OK;
@@ -99,6 +154,26 @@ static void email_request_completed(void *cls,
 
     if (con_info == NULL) {
         return;
+    }
+
+    if (con_info->thismsg) {
+        int r = 0;
+        while (1) {
+            r = zmq_send(con_info->parentstate->zmq_publishers[0],
+                    &(con_info->thismsg), sizeof(openli_email_captured_t *),
+                    0);
+            if (r < 0 && errno == EAGAIN) {
+                continue;
+            }
+
+            if (r < 0) {
+                logger(LOG_INFO, "OpenLI: email ingestor thread failed to send captured email to worker thread %d: %s", 0, strerror(errno));
+                free_captured_email(con_info->thismsg);
+                break;
+            }
+
+            break;
+        }
     }
 
     if (con_info->postproc) {
@@ -143,6 +218,7 @@ static int answer_email_connection(void *cls, struct MHD_Connection *connection,
             con_info->answerstring = completepage;
         }
 
+        con_info->thismsg = NULL;
         *con_cls = (void *)con_info;
         return MHD_YES;
     }
@@ -160,6 +236,25 @@ static int answer_email_connection(void *cls, struct MHD_Connection *connection,
     }
 
     return send_page(connection, errorpage, MHD_HTTP_BAD_REQUEST);
+}
+
+static void connect_email_worker_sockets(email_ingestor_state_t *state) {
+
+    int i;
+    char sockname[256];
+
+    state->zmq_publishers = calloc(state->email_worker_count, sizeof(void *));
+
+    for (i = 0; i < state->email_worker_count; i++) {
+        state->zmq_publishers[i] = zmq_socket(state->zmq_ctxt, ZMQ_PUSH);
+        snprintf(sockname, 256, "inproc://openliemailworker-ingest%d", i);
+        if (zmq_connect(state->zmq_publishers[i], sockname) != 0) {
+            logger(LOG_INFO, "OpenLI: email ingestor thread is unable to connect to RMQ socket for email worker thread %d: %s", i, strerror(errno));
+            zmq_close(state->zmq_publishers[i]);
+            state->zmq_publishers[i] = NULL;
+        }
+    }
+
 }
 
 struct MHD_Daemon *start_email_mhd_daemon(openli_email_ingest_config_t *config,
@@ -194,6 +289,7 @@ struct MHD_Daemon *start_email_mhd_daemon(openli_email_ingest_config_t *config,
     }
 
     init_email_ingest_state(state, config);
+    connect_email_worker_sockets(state);
 
     /* TODO support TLS */
 
@@ -217,6 +313,24 @@ struct MHD_Daemon *start_email_mhd_daemon(openli_email_ingest_config_t *config,
             MHD_OPTION_END);
 
     return state->daemon;
+
+}
+
+void stop_email_mhd_daemon(email_ingestor_state_t *state) {
+    int i, zero;
+    if (state->daemon) {
+        MHD_stop_daemon(state->daemon);
+    }
+
+    if (state->zmq_publishers) {
+        for (i = 0; i < state->email_worker_count; i++) {
+            zero = 0;
+            zmq_setsockopt(state->zmq_publishers[i],
+                    ZMQ_LINGER, &zero, sizeof(zero));
+            zmq_close(state->zmq_publishers[i]);
+        }
+        free(state->zmq_publishers);
+    }
 
 }
 
