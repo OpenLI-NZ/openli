@@ -118,7 +118,8 @@ static int process_ingested_capture(openli_email_worker_t *state) {
     int x;
 
     do {
-        x = zmq_recv(state->zmq_ingest_recvsock, &cap, sizeof(cap), 0);
+        x = zmq_recv(state->zmq_ingest_recvsock, &cap, sizeof(cap),
+                ZMQ_DONTWAIT);
 
         if (x < 0 && errno != EAGAIN) {
             logger(LOG_INFO,
