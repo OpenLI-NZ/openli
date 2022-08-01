@@ -84,16 +84,31 @@ static int iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
     } else if (strcmp(key, "SESSION_ID") == 0) {
         con_info->thismsg->session_id = strdup(data);
     } else if (strcmp(key, "DIRECTION") == 0) {
-        /* TODO */
+        if (strcasecmp(data, "out") == 0) {
+            con_info->thismsg->direction = OPENLI_EMAIL_DIRECTION_OUTBOUND;
+        } else if (strcasecmp(data, "in") == 0) {
+            con_info->thismsg->direction = OPENLI_EMAIL_DIRECTION_INBOUND;
+        } else {
+            con_info->thismsg->direction = OPENLI_EMAIL_DIRECTION_UNKNOWN;
+        }
 
     } else if (strcmp(key, "TIMESTAMP") == 0) {
-        /* TODO */
+        con_info->thismsg->timestamp = strtoul(data, NULL, 10);
 
     } else if (strcmp(key, "MAIL_ID") == 0) {
-        /* TODO */
-
+        con_info->thismsg->mail_id = strtoul(data, NULL, 10);
     } else if (strcmp(key, "SERVICE") == 0) {
-        /* TODO */
+
+        if (strcasecmp(data, "smtp") == 0) {
+            con_info->thismsg->type = OPENLI_EMAIL_TYPE_SMTP;
+        } else if (strcasecmp(data, "pop3") == 0) {
+            con_info->thismsg->type = OPENLI_EMAIL_TYPE_POP3;
+        } else if (strcasecmp(data, "imap") == 0) {
+            con_info->thismsg->type = OPENLI_EMAIL_TYPE_IMAP;
+        } else {
+            con_info->thismsg->type = OPENLI_EMAIL_TYPE_UNKNOWN;
+        }
+
 
     } else if (strcmp(key, "BYTES") == 0) {
         con_info->thismsg->msg_length = strtoul(data, NULL, 10);

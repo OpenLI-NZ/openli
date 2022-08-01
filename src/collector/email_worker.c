@@ -135,9 +135,6 @@ static int process_ingested_capture(openli_email_worker_t *state) {
             break;
         }
 
-        printf("%s %s %s\n", cap->target_id, cap->session_id, cap->datasource);
-        printf("%s\n\n", cap->content);
-
         free_captured_email(cap);
     } while (x > 0);
 
