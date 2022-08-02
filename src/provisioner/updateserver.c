@@ -257,6 +257,9 @@ static int update_configuration_delete(update_con_info_t *cinfo,
         case TARGET_VOIPINTERCEPT:
             ret = remove_voip_intercept(cinfo, state, target);
             break;
+        case TARGET_EMAILINTERCEPT:
+            ret = remove_email_intercept(cinfo, state, target);
+            break;
         case TARGET_DEFAULTRADIUS:
             ret = remove_defaultradius(cinfo, state, target);
             break;
@@ -312,6 +315,9 @@ static json_object *create_get_response(update_con_info_t *cinfo,
             break;
         case TARGET_VOIPINTERCEPT:
             jobj = get_voip_intercept(cinfo, state, tgtptr);
+            break;
+        case TARGET_EMAILINTERCEPT:
+            jobj = get_email_intercept(cinfo, state, tgtptr);
             break;
     }
 
@@ -372,6 +378,13 @@ static int update_configuration_post(update_con_info_t *cinfo,
                 ret = add_new_voipintercept(cinfo, state);
             } else {
                 ret = modify_voipintercept(cinfo, state);
+            }
+            break;
+        case TARGET_EMAILINTERCEPT:
+            if (strcmp(method, "POST") == 0) {
+                ret = add_new_emailintercept(cinfo, state);
+            } else {
+                ret = modify_emailintercept(cinfo, state);
             }
             break;
     }
@@ -590,6 +603,8 @@ int handle_update_request(void *cls, struct MHD_Connection *conn,
             cinfo->target = TARGET_IPINTERCEPT;
         } else if (strncmp(url, "/voipintercept", 14) == 0) {
             cinfo->target = TARGET_VOIPINTERCEPT;
+        } else if (strncmp(url, "/emailintercept", 15) == 0) {
+            cinfo->target = TARGET_EMAILINTERCEPT;
         } else if (strncmp(url, "/defaultradius", 14) == 0) {
             cinfo->target = TARGET_DEFAULTRADIUS;
         } else {

@@ -64,24 +64,6 @@ typedef struct openli_email_captured {
 
 } openli_email_captured_t;
 
-typedef struct email_session {
-
-    /* TODO probably need a few more fields in here */
-    char *session_id;
-
-    uint32_t next_seqno;
-    intercept_common_t common;
-    UT_hash_handle hh;
-
-} email_session_t;
-
-typedef struct email_target {
-    char *address;
-    email_session_t *sessions;
-
-    UT_hash_handle hh;
-} email_target_t;
-
 typedef struct openli_email_worker {
 
     void *zmq_ctxt;

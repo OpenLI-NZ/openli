@@ -1766,6 +1766,16 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 ret = forward_provmsg_to_voipsync(sync, provmsg, msglen,
                         msgtype);
                 break;
+
+            case OPENLI_PROTO_START_EMAILINTERCEPT:
+            case OPENLI_PROTO_HALT_EMAILINTERCEPT:
+            case OPENLI_PROTO_MODIFY_EMAILINTERCEPT:
+            case OPENLI_PROTO_ANNOUNCE_EMAIL_TARGET:
+            case OPENLI_PROTO_WITHDRAW_EMAIL_TARGET:
+               /* TODO handle these messages
+                * we're going to silently ignore the messages for now... */
+               break; 
+
             default:
                 if (sync->instruct_log) {
                     logger(LOG_INFO, "Received unexpected message of type %d from provisioner.", msgtype);

@@ -133,6 +133,51 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     return jobj;
 }
 
+static json_object *convert_emailintercept_to_json(emailintercept_t *mailint) {
+    json_object *jobj;
+    json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
+    json_object *targets, *starttime, *endtime;
+    email_target_t *tgt, *tmp;
+
+    jobj = json_object_new_object();
+
+    liid = json_object_new_string(mailint->common.liid);
+    authcc = json_object_new_string(mailint->common.authcc);
+    delivcc = json_object_new_string(mailint->common.delivcc);
+    agencyid = json_object_new_string(mailint->common.targetagency);
+    mediator = json_object_new_int(mailint->common.destid);
+    targets = json_object_new_array();
+
+    json_object_object_add(jobj, "liid", liid);
+    json_object_object_add(jobj, "authcc", authcc);
+    json_object_object_add(jobj, "delivcc", delivcc);
+    json_object_object_add(jobj, "agencyid", agencyid);
+    json_object_object_add(jobj, "mediator", mediator);
+
+    if (mailint->common.tostart_time != 0) {
+        starttime = json_object_new_int(mailint->common.tostart_time);
+        json_object_object_add(jobj, "starttime", starttime);
+    }
+
+    if (mailint->common.toend_time != 0) {
+        endtime = json_object_new_int(mailint->common.toend_time);
+        json_object_object_add(jobj, "endtime", endtime);
+    }
+
+    HASH_ITER(hh, mailint->targets, tgt, tmp) {
+        json_object *jsontgt, *address;
+
+        jsontgt = json_object_new_object();
+        address = json_object_new_string(tgt->address);
+        json_object_object_add(jsontgt, "address", address);
+
+        json_object_array_add(targets, jsontgt);
+    }
+
+    json_object_object_add(jobj, "targets", targets);
+    return jobj;
+}
+
 static json_object *convert_voipintercept_to_json(voipintercept_t *vint) {
     json_object *jobj;
     json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
@@ -298,6 +343,32 @@ json_object *get_voip_intercept(update_con_info_t *cinfo,
     jarray = json_object_new_array();
     HASH_ITER(hh_liid, state->interceptconf.voipintercepts, vint, tmp) {
         jobj = convert_voipintercept_to_json(vint);
+        json_object_array_add(jarray, jobj);
+    }
+
+    return jarray;
+}
+
+json_object *get_email_intercept(update_con_info_t *cinfo,
+        provision_state_t *state, char *target) {
+
+    emailintercept_t *mailint, *tmp;
+    json_object *jarray, *jobj;
+
+    if (target) {
+        HASH_FIND(hh_liid, state->interceptconf.emailintercepts, target,
+                strlen(target), mailint);
+        if (!mailint) {
+            return NULL;
+        }
+
+        jobj = convert_emailintercept_to_json(mailint);
+        return jobj;
+    }
+
+    jarray = json_object_new_array();
+    HASH_ITER(hh_liid, state->interceptconf.emailintercepts, mailint, tmp) {
+        jobj = convert_emailintercept_to_json(mailint);
         json_object_array_add(jarray, jobj);
     }
 

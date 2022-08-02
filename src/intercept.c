@@ -86,6 +86,13 @@ sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
     return newreg;
 }
 
+emailsession_t *create_emailsession(emailintercept_t *mailint, char *sessionid,
+        uint32_t cin) {
+
+    /* TODO */
+    return NULL;
+}
+
 rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
 
     rtpstreaminf_t *newcin = NULL;
@@ -201,6 +208,28 @@ static inline void free_intercept_common(intercept_common_t *cept) {
     }
 }
 
+static void free_email_targets(emailintercept_t *m) {
+
+    email_target_t *tgt, *tmp;
+
+    HASH_ITER(hh, m->targets, tgt, tmp) {
+        if (tgt->address) {
+            free(tgt->address);
+        }
+        HASH_DELETE(hh, m->targets, tgt);
+        free(tgt);
+    }
+
+}
+
+void free_single_emailintercept(emailintercept_t *m) {
+
+    free_intercept_common(&(m->common));
+    if (m->targets) {
+        free_email_targets(m);
+    }
+}
+
 void free_single_ipintercept(ipintercept_t *cept) {
     static_ipranges_t *ipr, *tmp;
 
@@ -215,6 +244,14 @@ void free_single_ipintercept(ipintercept_t *cept) {
     }
 
     free(cept);
+}
+
+void free_all_emailintercepts(emailintercept_t **mailintercepts) {
+    emailintercept_t *cept, *tmp;
+    HASH_ITER(hh_liid, *mailintercepts, cept, tmp) {
+        HASH_DELETE(hh_liid, *mailintercepts, cept);
+        free_single_emailintercept(cept);
+    }
 }
 
 void free_all_ipintercepts(ipintercept_t **interceptlist) {
@@ -529,6 +566,11 @@ void free_all_ipsessions(ipsession_t **sessions) {
         HASH_DELETE(hh, *sessions, s);
         free_single_ipsession(s);
     }
+}
+
+void free_all_emailsessions(emailsession_t **sessions) {
+    /* TODO */
+
 }
 
 int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,

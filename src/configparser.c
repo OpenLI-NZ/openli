@@ -175,6 +175,55 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
     return 0;
 }
 
+static void parse_email_targets(email_target_t **targets, yaml_document_t *doc,
+        yaml_node_t *tgtconf) {
+
+    yaml_node_item_t *item;
+
+    for (item = tgtconf->data.sequence.items.start;
+            item != tgtconf->data.sequence.items.top; item ++) {
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+        yaml_node_pair_t *pair;
+
+        email_target_t *newtgt, *found;
+
+        newtgt = (email_target_t *)calloc(1, sizeof(email_target_t));
+        newtgt->awaitingconfirm = 1;
+
+        for (pair = node->data.mapping.pairs.start;
+                pair < node->data.mapping.pairs.top; pair ++) {
+            yaml_node_t *key, *value;
+            key = yaml_document_get_node(doc, pair->key);
+            value = yaml_document_get_node(doc, pair->value);
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "address") == 0) {
+                SET_CONFIG_STRING_OPTION(newtgt->address, value);
+            }
+        }
+
+        if (!newtgt->address) {
+            logger(LOG_INFO,
+                    "OpenLI: a Email target requires an address, skipping.");
+            free(newtgt);
+            continue;
+        }
+
+        HASH_FIND(hh, *targets, newtgt->address, strlen(newtgt->address),
+                    found);
+        if (found) {
+            free(newtgt->address);
+            free(newtgt);
+            continue;
+        }
+
+        HASH_ADD_KEYPTR(hh, *targets, newtgt->address, strlen(newtgt->address),
+                newtgt);
+    }
+
+}
+
 static void parse_sip_targets(libtrace_list_t *targets, yaml_document_t *doc,
         yaml_node_t *tgtconf) {
 
@@ -504,6 +553,113 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
             logger(LOG_INFO, "OpenLI: LEA configuration was incomplete -- skipping.");
         }
     }
+    return 0;
+}
+
+static int parse_emailintercept_list(emailintercept_t **mailints,
+        yaml_document_t *doc, yaml_node_t *inputs) {
+
+    yaml_node_item_t *item;
+
+    for (item = inputs->data.sequence.items.start;
+            item != inputs->data.sequence.items.top; item ++) {
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+        yaml_node_pair_t *pair;
+        emailintercept_t *newcept;
+        unsigned int tgtcount = 0;
+
+        newcept = (emailintercept_t *)calloc(1, sizeof(emailintercept_t));
+        newcept->common.liid = NULL;
+        newcept->common.authcc = NULL;
+        newcept->common.delivcc = NULL;
+        newcept->common.destid = 0;
+        newcept->common.targetagency = NULL;
+        newcept->common.tostart_time = 0;
+        newcept->common.toend_time = 0;
+        newcept->common.hi1_seqno = 0;
+        newcept->awaitingconfirm = 1;
+        newcept->targets = NULL;
+
+        for (pair = node->data.mapping.pairs.start;
+                pair < node->data.mapping.pairs.top; pair ++) {
+            yaml_node_t *key, *value;
+
+            key = yaml_document_get_node(doc, pair->key);
+            value = yaml_document_get_node(doc, pair->value);
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "liid") == 0) {
+                SET_CONFIG_STRING_OPTION(newcept->common.liid, value);
+                newcept->common.liid_len = strlen(newcept->common.liid);
+            }
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                        "authcountrycode") == 0) {
+                SET_CONFIG_STRING_OPTION(newcept->common.authcc, value);
+                newcept->common.authcc_len = strlen(newcept->common.authcc);
+            }
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                        "deliverycountrycode") == 0) {
+                SET_CONFIG_STRING_OPTION(newcept->common.delivcc, value);
+                newcept->common.delivcc_len = strlen(newcept->common.delivcc);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SEQUENCE_NODE &&
+                    strcmp((char *)key->data.scalar.value, "targets") == 0) {
+
+                parse_email_targets(&(newcept->targets), doc, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "mediator") == 0
+                    && newcept->common.destid == 0) {
+                newcept->common.destid = strtoul(
+                        (char *)value->data.scalar.value, NULL, 10);
+                if (newcept->common.destid == 0) {
+                    logger(LOG_INFO, "OpenLI: 0 is not a valid value for the 'mediator' config option.");
+                }
+            }
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "starttime") == 0) {
+                newcept->common.tostart_time = strtoul(
+                        (char *)value->data.scalar.value, NULL, 10);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "endtime") == 0) {
+                newcept->common.toend_time = strtoul(
+                        (char *)value->data.scalar.value, NULL, 10);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "agencyid") == 0) {
+                SET_CONFIG_STRING_OPTION(newcept->common.targetagency, value);
+            }
+
+        }
+
+        tgtcount = HASH_CNT(hh, newcept->targets);
+        if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
+                newcept->common.delivcc != NULL &&
+                tgtcount > 0 &&
+                newcept->common.destid > 0 &&
+                newcept->common.targetagency != NULL) {
+            HASH_ADD_KEYPTR(hh_liid, *mailints, newcept->common.liid,
+                    newcept->common.liid_len, newcept);
+        } else {
+            logger(LOG_INFO, "OpenLI: Email Intercept configuration was incomplete -- skipping.");
+        }
+    }
+
     return 0;
 }
 
@@ -1279,6 +1435,15 @@ static int intercept_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SEQUENCE_NODE &&
             strcmp((char *)key->data.scalar.value, "voipintercepts") == 0) {
         if (parse_voipintercept_list(&state->voipintercepts, doc,
+                    value) == -1) {
+            return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value, "emailintercepts") == 0) {
+        if (parse_emailintercept_list(&state->emailintercepts, doc,
                     value) == -1) {
             return -1;
         }
