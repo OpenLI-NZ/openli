@@ -55,6 +55,7 @@ enum {
     OPENLI_EXPORT_UMTSIRI = 17,
     OPENLI_EXPORT_RAW_SYNC = 18,
     OPENLI_EXPORT_INTERCEPT_CHANGED = 19,
+    OPENLI_EXPORT_PROVISIONER_MESSAGE = 20,
 };
 
 /* This structure is also used for IPMMCCs since they require the same
@@ -135,6 +136,12 @@ typedef struct published_intercept_msg {
     int seqtrackerid;
 } published_intercept_msg_t;
 
+typedef struct provisioner_msg {
+    uint8_t msgtype;
+    uint8_t *msgbody;
+    uint16_t msglen;
+} provisioner_msg_t;
+
 typedef struct openli_export_recv openli_export_recv_t;
 
 struct openli_export_recv {
@@ -145,6 +152,7 @@ struct openli_export_recv {
         openli_mediator_t med;
         libtrace_packet_t *packet;
         published_intercept_msg_t cept;
+        provisioner_msg_t provmsg;
         openli_ipcc_job_t ipcc;
         openli_ipmmiri_job_t ipmmiri;
         openli_ipiri_job_t ipiri;

@@ -319,6 +319,38 @@ void clean_sync_data(collector_sync_t *sync) {
 
 }
 
+static int forward_provmsg_to_email_workers(collector_sync_t *sync,
+        uint8_t *provmsg, uint16_t msglen, openli_proto_msgtype_t msgtype) {
+
+    openli_export_recv_t *topush;
+    int i, ret, errcount = 0;
+
+    for (i = 0; i < sync->emailcount; i++) {
+        topush = (openli_export_recv_t *)calloc(1,
+                sizeof(openli_export_recv_t));
+
+        topush->type = OPENLI_EXPORT_PROVISIONER_MESSAGE;
+        topush->data.provmsg.msgtype = msgtype;
+        topush->data.provmsg.msgbody = (uint8_t *)malloc(msglen);
+        memcpy(topush->data.provmsg.msgbody, provmsg, msglen);
+        topush->data.provmsg.msglen = msglen;
+
+        ret = zmq_send(sync->zmq_emailsocks, &topush, sizeof(topush), 0);
+        if (ret < 0) {
+            logger(LOG_INFO, "Unable to forward provisioner message to email worker %d: %s", i, strerror(errno));
+
+            free(topush->data.provmsg.msgbody);
+            free(topush);
+
+            errcount ++;
+            continue;
+        }
+    }
+
+    return 1;
+
+}
+
 static int forward_provmsg_to_voipsync(collector_sync_t *sync,
         uint8_t *provmsg, uint16_t msglen, openli_proto_msgtype_t msgtype) {
 
@@ -1732,17 +1764,6 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                     return -1;
                 }
                 break;
-            case OPENLI_PROTO_START_VOIPINTERCEPT:
-                ret = new_voipintercept(sync, provmsg, msglen);
-                if (ret == -1) {
-                    return -1;
-                }
-                ret = forward_provmsg_to_voipsync(sync, provmsg, msglen,
-                        msgtype);
-                if (ret == -1) {
-                    return -1;
-                }
-                break;
 
             case OPENLI_PROTO_MODIFY_IPINTERCEPT:
                 ret = modify_ipintercept(sync, provmsg, msglen);
@@ -1751,6 +1772,7 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 }
                 break;
 
+            case OPENLI_PROTO_START_VOIPINTERCEPT:
             case OPENLI_PROTO_HALT_VOIPINTERCEPT:
             case OPENLI_PROTO_MODIFY_VOIPINTERCEPT:
             case OPENLI_PROTO_ANNOUNCE_SIP_TARGET:
@@ -1772,9 +1794,12 @@ static int recv_from_provisioner(collector_sync_t *sync) {
             case OPENLI_PROTO_MODIFY_EMAILINTERCEPT:
             case OPENLI_PROTO_ANNOUNCE_EMAIL_TARGET:
             case OPENLI_PROTO_WITHDRAW_EMAIL_TARGET:
-               /* TODO handle these messages
-                * we're going to silently ignore the messages for now... */
-               break; 
+                ret = forward_provmsg_to_email_workers(sync, provmsg, msglen,
+                        msgtype);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
 
             default:
                 if (sync->instruct_log) {

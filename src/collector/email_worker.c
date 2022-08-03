@@ -81,6 +81,17 @@ void free_captured_email(openli_email_captured_t *cap) {
     free(cap);
 }
 
+static int handle_provisioner_message(openli_email_worker_t *state,
+        openli_export_recv_t *msg) {
+
+
+    if (msg->data.provmsg.msgbody) {
+        free(msg->data.provmsg.msgbody);
+    }
+
+    return 0;
+}
+
 static int process_sync_thread_message(openli_email_worker_t *state) {
 
     openli_export_recv_t *msg;
@@ -103,6 +114,10 @@ static int process_sync_thread_message(openli_email_worker_t *state) {
         if (msg->type == OPENLI_EXPORT_HALT) {
             free(msg);
             return -1;
+        }
+
+        if (msg->type == OPENLI_EXPORT_PROVISIONER_MESSAGE) {
+            handle_provisioner_message(state, msg);
         }
 
         /* TODO handle other message types */
