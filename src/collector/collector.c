@@ -82,17 +82,23 @@ static void reset_collector_stats(collector_global_t *glob) {
     glob->stats.ipiri_created = 0;
     glob->stats.ipmmcc_created = 0;
     glob->stats.ipmmiri_created = 0;
+    glob->stats.emailiri_created = 0;
+    glob->stats.emailcc_created = 0;
     glob->stats.bad_sip_packets = 0;
     glob->stats.bad_ip_session_packets = 0;
 
     glob->stats.ipintercepts_added_diff = 0;
     glob->stats.voipintercepts_added_diff = 0;
+    glob->stats.emailintercepts_added_diff = 0;
     glob->stats.ipintercepts_ended_diff = 0;
     glob->stats.voipintercepts_ended_diff = 0;
+    glob->stats.emailintercepts_ended_diff = 0;
     glob->stats.ipsessions_added_diff = 0;
     glob->stats.voipsessions_added_diff = 0;
+    glob->stats.emailsessions_added_diff = 0;
     glob->stats.ipsessions_ended_diff = 0;
     glob->stats.voipsessions_ended_diff = 0;
+    glob->stats.emailsessions_ended_diff = 0;
 }
 
 static void log_collector_stats(collector_global_t *glob) {
@@ -116,6 +122,8 @@ static void log_collector_stats(collector_global_t *glob) {
             glob->stats.mobiri_created);
     logger(LOG_INFO, "OpenLI: Records created... IPMMCCs: %lu  IPMMIRIs: %lu",
             glob->stats.ipmmcc_created, glob->stats.ipmmiri_created);
+    logger(LOG_INFO, "OpenLI: Records created... EmailCCs: %lu  EmailIRIs: %lu",
+            glob->stats.emailcc_created, glob->stats.emailiri_created);
 
     logger(LOG_INFO, "OpenLI: IP intercepts added: %lu  (all-time: %lu)",
             glob->stats.ipintercepts_added_diff,
@@ -131,6 +139,13 @@ static void log_collector_stats(collector_global_t *glob) {
             glob->stats.voipintercepts_ended_diff,
             glob->stats.voipintercepts_ended_total);
 
+    logger(LOG_INFO, "OpenLI: Email intercepts added: %lu  (all-time: %lu)",
+            glob->stats.emailintercepts_added_diff,
+            glob->stats.emailintercepts_added_total);
+    logger(LOG_INFO, "OpenLI: Email intercepts ended: %lu  (all-time: %lu)",
+            glob->stats.emailintercepts_ended_diff,
+            glob->stats.emailintercepts_ended_total);
+
     logger(LOG_INFO, "OpenLI: IP sessions added: %lu  (all-time: %lu)",
             glob->stats.ipsessions_added_diff,
             glob->stats.ipsessions_added_total);
@@ -144,6 +159,13 @@ static void log_collector_stats(collector_global_t *glob) {
     logger(LOG_INFO, "OpenLI: VOIP sessions ended: %lu  (all-time: %lu)",
             glob->stats.voipsessions_ended_diff,
             glob->stats.voipsessions_ended_total);
+
+    logger(LOG_INFO, "OpenLI: Email sessions added: %lu  (all-time: %lu)",
+            glob->stats.emailsessions_added_diff,
+            glob->stats.emailsessions_added_total);
+    logger(LOG_INFO, "OpenLI: Email sessions ended: %lu  (all-time: %lu)",
+            glob->stats.emailsessions_ended_diff,
+            glob->stats.emailsessions_ended_total);
 
     logger(LOG_INFO, "OpenLI: === statistics complete ===");
 }
@@ -1070,6 +1092,10 @@ static void destroy_collector_state(collector_global_t *glob) {
 	free_sync_thread_data(&(glob->syncip));
 	free_sync_thread_data(&(glob->syncvoip));
 
+    if (glob->emailworkers) {
+        free(glob->emailworkers);
+    }
+
     libtrace_message_queue_destroy(&(glob->intersyncq));
 
     if (glob->zmq_encoder_ctrl) {
@@ -1744,12 +1770,20 @@ int main(int argc, char *argv[]) {
         glob->emailworkers[i].zmq_ctxt = glob->zmq_ctxt;
         glob->emailworkers[i].emailid = i;
         glob->emailworkers[i].tracker_threads = glob->seqtracker_threads;
+        glob->emailworkers[i].fwd_threads = glob->forwarding_threads;
         glob->emailworkers[i].zmq_pubsocks = NULL;
+        glob->emailworkers[i].zmq_fwdsocks = NULL;
         glob->emailworkers[i].zmq_ingest_recvsock = NULL;
         glob->emailworkers[i].zmq_colthread_recvsock = NULL;
         glob->emailworkers[i].zmq_ii_sock = NULL;
 
-        glob->emailworkers[i].activeintercepts = NULL;
+        glob->emailworkers[i].upcoming_intercept_events = NULL;
+        glob->emailworkers[i].upcomingtimerfd = -1;
+        glob->emailworkers[i].allintercepts = NULL;
+        glob->emailworkers[i].alltargets = NULL;
+        glob->emailworkers[i].activesessions = NULL;
+        glob->emailworkers[i].stats_mutex = &(glob->stats_mutex);
+        glob->emailworkers[i].stats = &(glob->stats);
 
         pthread_create(&(glob->emailworkers[i].threadid), NULL,
                 start_email_worker_thread, (void *)&(glob->emailworkers[i]));

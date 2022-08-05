@@ -76,6 +76,8 @@ typedef struct collector_stats {
     uint64_t mobiri_created;
     uint64_t ipmmcc_created;
     uint64_t ipmmiri_created;
+    uint64_t emailcc_created;
+    uint64_t emailiri_created;
     uint64_t bad_sip_packets;
     uint64_t bad_ip_session_packets;
 
@@ -83,19 +85,27 @@ typedef struct collector_stats {
     uint64_t ipintercepts_added_total;
     uint64_t voipintercepts_added_diff;
     uint64_t voipintercepts_added_total;
+    uint64_t emailintercepts_added_diff;
+    uint64_t emailintercepts_added_total;
     uint64_t ipintercepts_ended_diff;
     uint64_t ipintercepts_ended_total;
     uint64_t voipintercepts_ended_diff;
     uint64_t voipintercepts_ended_total;
+    uint64_t emailintercepts_ended_diff;
+    uint64_t emailintercepts_ended_total;
 
     uint64_t ipsessions_added_diff;
     uint64_t ipsessions_added_total;
     uint64_t voipsessions_added_diff;
     uint64_t voipsessions_added_total;
+    uint64_t emailsessions_added_diff;
+    uint64_t emailsessions_added_total;
     uint64_t ipsessions_ended_diff;
     uint64_t ipsessions_ended_total;
     uint64_t voipsessions_ended_diff;
     uint64_t voipsessions_ended_total;
+    uint64_t emailsessions_ended_diff;
+    uint64_t emailsessions_ended_total;
 
 } collector_stats_t;
 

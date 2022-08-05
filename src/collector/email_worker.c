@@ -39,6 +39,8 @@
 #include "collector_base.h"
 #include "collector_publish.h"
 #include "email_worker.h"
+#include "netcomms.h"
+#include "intercept.h"
 
 void free_captured_email(openli_email_captured_t *cap) {
 
@@ -81,15 +83,193 @@ void free_captured_email(openli_email_captured_t *cap) {
     free(cap);
 }
 
+static void start_email_intercept(openli_email_worker_t *state,
+        emailintercept_t *em, int addtargets) {
+
+    openli_export_recv_t *expmsg;
+
+    /* TODO
+     *
+     * add timer event for intercept endtime, if required
+     * add targets to alltargets, if requested
+     */
+
+    if (state->tracker_threads <= 1) {
+        em->common.seqtrackerid = 0;
+    } else {
+        em->common.seqtrackerid = hash_liid(em->common.liid) % state->tracker_threads;
+    }
+
+    HASH_ADD_KEYPTR(hh_liid, state->allintercepts, em->common.liid,
+            em->common.liid_len, em);
+
+    if (state->emailid == 0) {
+        expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+        expmsg->type = OPENLI_EXPORT_INTERCEPT_DETAILS;
+        expmsg->data.cept.liid = strdup(em->common.liid);
+        expmsg->data.cept.authcc = strdup(em->common.authcc);
+        expmsg->data.cept.delivcc = strdup(em->common.delivcc);
+        expmsg->data.cept.seqtrackerid = em->common.seqtrackerid;
+
+        publish_openli_msg(state->zmq_pubsocks[em->common.seqtrackerid],
+                expmsg);
+    }
+}
+
+static void remove_email_intercept(openli_email_worker_t *state,
+        emailintercept_t *em, int removetargets) {
+
+    openli_export_recv_t *expmsg;
+    int i;
+
+    /* TODO
+     *
+     * remove from alltargets, if requested
+     * remove intercept endtime timer
+     */
+
+    HASH_DELETE(hh_liid, state->allintercepts, em);
+
+    if (state->emailid == 0 && removetargets != 0) {
+        expmsg = (openli_export_recv_t *)calloc(1,
+                sizeof(openli_export_recv_t));
+        expmsg->type = OPENLI_EXPORT_INTERCEPT_OVER;
+        expmsg->data.cept.liid = strdup(em->common.liid);
+        expmsg->data.cept.authcc = strdup(em->common.authcc);
+        expmsg->data.cept.delivcc = strdup(em->common.delivcc);
+        expmsg->data.cept.seqtrackerid = em->common.seqtrackerid;
+
+        publish_openli_msg(state->zmq_pubsocks[em->common.seqtrackerid],
+                expmsg);
+
+        for (i = 0; i < state->fwd_threads; i++) {
+
+            expmsg = (openli_export_recv_t *)calloc(1,
+                    sizeof(openli_export_recv_t));
+            expmsg->type = OPENLI_EXPORT_INTERCEPT_OVER;
+            expmsg->data.cept.liid = strdup(em->common.liid);
+            expmsg->data.cept.authcc = strdup(em->common.authcc);
+            expmsg->data.cept.delivcc = strdup(em->common.delivcc);
+            expmsg->data.cept.seqtrackerid = em->common.seqtrackerid;
+
+            publish_openli_msg(state->zmq_fwdsocks[i], expmsg);
+        }
+
+        pthread_mutex_lock(state->stats_mutex);
+        state->stats->emailintercepts_ended_diff ++;
+        state->stats->emailintercepts_ended_total ++;
+        pthread_mutex_unlock(state->stats_mutex);
+
+        logger(LOG_INFO,
+                "OpenLI: removed email intercept %s from email worker threads",
+                em->common.liid);
+    }
+
+    free_single_emailintercept(em);
+
+}
+
+static int add_new_email_intercept(openli_email_worker_t *state,
+        provisioner_msg_t *msg) {
+
+    emailintercept_t *em, *found;
+    int ret = 0;
+
+    em = calloc(1, sizeof(emailintercept_t));
+
+    if (decode_emailintercept_start(msg->msgbody, msg->msglen, em) < 0) {
+        logger(LOG_INFO, "OpenLI: email worker failed to decode email intercept start message from provisioner");
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, state->allintercepts, em->common.liid,
+            em->common.liid_len, found);
+
+    if (found) {
+        /* We're going to replace "found" with our new intercept, but keep
+         * the same targets (for now at least)
+         */
+        em->targets = found->targets;
+        found->targets = NULL;
+
+        /* Don't halt any target intercepts just yet -- hopefully a target
+         * update is going to follow this...
+         */
+        remove_email_intercept(state, found, 0);
+        ret = 1;
+    } else if (state->emailid == 0) {
+        pthread_mutex_lock(state->stats_mutex);
+        state->stats->emailintercepts_added_diff ++;
+        state->stats->emailintercepts_added_total ++;
+        pthread_mutex_unlock(state->stats_mutex);
+
+        logger(LOG_INFO, "OpenLI: added new email intercept for %s to email worker threads", em->common.liid);
+    }
+
+    start_email_intercept(state, em, 0);
+
+    return ret;
+}
+
+static int halt_email_intercept(openli_email_worker_t *state,
+        provisioner_msg_t *provmsg) {
+
+    emailintercept_t *decode, *found;
+
+    decode = calloc(1, sizeof(emailintercept_t));
+    if (decode_emailintercept_halt(provmsg->msgbody, provmsg->msglen,
+            decode) < 0) {
+        logger(LOG_INFO, "OpenLI: received invalid email intercept withdrawal from provisioner");
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, state->allintercepts, decode->common.liid,
+            decode->common.liid_len, found);
+    if (!found && state->emailid == 0) {
+        logger(LOG_INFO, "OpenLI: tried to halt email intercept %s but this was not in the intercept map?", decode->common.liid);
+        free_single_emailintercept(decode);
+        return -1;
+    }
+
+    remove_email_intercept(state, found, 1);
+    free_single_emailintercept(decode);
+    return 0;
+}
+
 static int handle_provisioner_message(openli_email_worker_t *state,
         openli_export_recv_t *msg) {
+
+    int ret = 0;
+
+    switch(msg->data.provmsg.msgtype) {
+        case OPENLI_PROTO_START_EMAILINTERCEPT:
+            ret = add_new_email_intercept(state, &(msg->data.provmsg));
+            break;
+        case OPENLI_PROTO_HALT_EMAILINTERCEPT:
+            ret = halt_email_intercept(state, &(msg->data.provmsg));
+            break;
+        case OPENLI_PROTO_MODIFY_EMAILINTERCEPT:
+            break;
+        case OPENLI_PROTO_ANNOUNCE_EMAIL_TARGET:
+            break;
+        case OPENLI_PROTO_WITHDRAW_EMAIL_TARGET:
+            break;
+        case OPENLI_PROTO_NOMORE_INTERCEPTS:
+            break;
+        case OPENLI_PROTO_DISCONNECT:
+            break;
+        default:
+            logger(LOG_INFO, "OpenLI: email worker thread %d received unexpected message type from provisioner: %u",
+                    state->emailid, msg->data.provmsg.msgtype);
+            ret = -1;
+    }
 
 
     if (msg->data.provmsg.msgbody) {
         free(msg->data.provmsg.msgbody);
     }
 
-    return 0;
+    return ret;
 }
 
 static int process_sync_thread_message(openli_email_worker_t *state) {
@@ -207,11 +387,59 @@ static void email_worker_main(openli_email_worker_t *state) {
     }
 }
 
+static inline void clear_zmqsocks(void **zmq_socks, int sockcount) {
+    int i, zero = 0;
+    if (zmq_socks == NULL) {
+        return;
+    }
+
+    for (i = 0; i < sockcount; i++) {
+        if (zmq_socks[i] == NULL) {
+            continue;
+        }
+        zmq_setsockopt(zmq_socks[i], ZMQ_LINGER, &zero, sizeof(zero));
+        zmq_close(zmq_socks[i]);
+    }
+    free(zmq_socks);
+}
+
+static inline int init_zmqsocks(void **zmq_socks, int sockcount,
+        const char *basename, void *zmq_ctxt) {
+
+    int i, zero = 0;
+    char sockname[256];
+    int ret = 0;
+
+    for (i = 0; i < sockcount; i++) {
+        zmq_socks[i] = zmq_socket(zmq_ctxt, ZMQ_PUSH);
+        snprintf(sockname, 256, "%s-%d", basename, i);
+        if (zmq_connect(zmq_socks[i], sockname) < 0) {
+            ret = -1;
+            logger(LOG_INFO,
+                    "OpenLI: email worker failed to bind to publishing zmq %s: %s",
+                    sockname, strerror(errno));
+
+            zmq_close(zmq_socks[i]);
+            zmq_socks[i] = NULL;
+        }
+    }
+    return ret;
+}
+
 void *start_email_worker_thread(void *arg) {
 
     openli_email_worker_t *state = (openli_email_worker_t *)arg;
-    char sockname[256];
     int x, zero = 0;
+    char sockname[256];
+
+    state->zmq_pubsocks = calloc(state->tracker_threads, sizeof(void *));
+    state->zmq_fwdsocks = calloc(state->fwd_threads, sizeof(void *));
+
+    init_zmqsocks(state->zmq_pubsocks, state->tracker_threads,
+            "inproc://openlipub", state->zmq_ctxt);
+
+    init_zmqsocks(state->zmq_fwdsocks, state->fwd_threads,
+            "inproc://openliforwardercontrol_sync", state->zmq_ctxt);
 
     state->zmq_ii_sock = zmq_socket(state->zmq_ctxt, ZMQ_PULL);
     snprintf(sockname, 256, "inproc://openliemailcontrol_sync-%d",
@@ -257,12 +485,17 @@ haltemailworker:
     logger(LOG_INFO, "OpenLI: halting email processing thread %d",
             state->emailid);
     /* TODO free all state for intercepts and active sessions */
+    free_all_emailintercepts(&(state->allintercepts));
 
     zmq_close(state->zmq_ii_sock);
 
     /* TODO close all other ZMQs */
 
+
     zmq_close(state->zmq_ingest_recvsock);
+
+    clear_zmqsocks(state->zmq_pubsocks, state->tracker_threads);
+    clear_zmqsocks(state->zmq_fwdsocks, state->fwd_threads);
 
     pthread_exit(NULL);
 }

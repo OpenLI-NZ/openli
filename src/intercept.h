@@ -253,6 +253,7 @@ struct sipmediastream {
 typedef struct email_participant {
     char *emailaddr;
     uint8_t is_sender;
+
     UT_hash_handle hh;
 } email_participant_t;
 
@@ -273,7 +274,6 @@ struct emailsession {
     uint8_t currstate;
     void *timeout_ev;
 
-    intercept_common_t common;
     UT_hash_handle hh;
 };
 

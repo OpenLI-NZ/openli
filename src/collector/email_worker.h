@@ -29,8 +29,10 @@
 #define OPENLI_EMAIL_WORKER_H_
 
 #include <uthash.h>
+#include <Judy.h>
 
 #include "intercept.h"
+#include "collector_base.h"
 
 typedef enum {
     OPENLI_EMAIL_TYPE_UNKNOWN,
@@ -70,13 +72,24 @@ typedef struct openli_email_worker {
     pthread_t threadid;
     int emailid;
     int tracker_threads;
+    int fwd_threads;
 
     void *zmq_ii_sock;          /* ZMQ for receiving instructions from sync thread */
     void **zmq_pubsocks;        /* ZMQs for publishing to seqtracker threads */
+    void **zmq_fwdsocks;        /* ZMQs for publishing to forwarding threads */
     void *zmq_ingest_recvsock;      /* ZMQ for receiving from the ingestor */
     void *zmq_colthread_recvsock;   /* ZMQ for receiving from collector threads */
 
-    email_target_t *activeintercepts;
+    emailintercept_t *allintercepts;
+    email_user_intercept_list_t *alltargets;
+
+    emailsession_t *activesessions;
+
+    Pvoid_t upcoming_intercept_events;
+    int upcomingtimerfd;
+
+    pthread_mutex_t *stats_mutex;
+    collector_stats_t *stats;
 
 } openli_email_worker_t;
 

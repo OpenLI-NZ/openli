@@ -228,6 +228,7 @@ void free_single_emailintercept(emailintercept_t *m) {
     if (m->targets) {
         free_email_targets(m);
     }
+    free(m);
 }
 
 void free_single_ipintercept(ipintercept_t *cept) {

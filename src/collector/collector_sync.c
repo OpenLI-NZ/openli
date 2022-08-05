@@ -335,7 +335,7 @@ static int forward_provmsg_to_email_workers(collector_sync_t *sync,
         memcpy(topush->data.provmsg.msgbody, provmsg, msglen);
         topush->data.provmsg.msglen = msglen;
 
-        ret = zmq_send(sync->zmq_emailsocks, &topush, sizeof(topush), 0);
+        ret = zmq_send(sync->zmq_emailsocks[i], &topush, sizeof(topush), 0);
         if (ret < 0) {
             logger(LOG_INFO, "Unable to forward provisioner message to email worker %d: %s", i, strerror(errno));
 
@@ -1376,6 +1376,7 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             logger(LOG_INFO,
                     "OpenLI: received invalid IP intercept withdrawal from provisioner.");
         }
+        free_single_ipintercept(torem);
         return -1;
     }
 
@@ -1385,6 +1386,7 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     if (!ipint) {
         logger(LOG_INFO,
                 "OpenLI: tried to halt IP intercept %s but this was not present in the intercept map?", torem->common.liid);
+        free_single_ipintercept(torem);
         return -1;
     }
 
@@ -1787,6 +1789,14 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 disable_unconfirmed_intercepts(sync);
                 ret = forward_provmsg_to_voipsync(sync, provmsg, msglen,
                         msgtype);
+                if (ret == -1) {
+                    return -1;
+                }
+                ret = forward_provmsg_to_email_workers(sync, provmsg, msglen,
+                        msgtype);
+                if (ret == -1) {
+                    return -1;
+                }
                 break;
 
             case OPENLI_PROTO_START_EMAILINTERCEPT:
@@ -1952,6 +1962,7 @@ void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
 
     /* Tell other sync thread to flag its intercepts too */
     forward_provmsg_to_voipsync(sync, NULL, 0, OPENLI_PROTO_DISCONNECT);
+    forward_provmsg_to_email_workers(sync, NULL, 0, OPENLI_PROTO_DISCONNECT);
 
     /* Same with mediators -- keep exporting to them, but flag them to be
      * disconnected if they are not announced after we reconnect. */
