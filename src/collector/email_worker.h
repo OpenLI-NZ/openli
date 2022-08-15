@@ -85,9 +85,6 @@ typedef struct openli_email_worker {
 
     emailsession_t *activesessions;
 
-    Pvoid_t upcoming_intercept_events;
-    int upcomingtimerfd;
-
     pthread_mutex_t *stats_mutex;
     collector_stats_t *stats;
 

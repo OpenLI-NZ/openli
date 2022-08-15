@@ -1348,10 +1348,14 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             ipint->common.toend_time != modified->common.toend_time) {
         logger(LOG_INFO,
                 "OpenLI: IP intercept %s has changed start / end times -- now %lu, %lu", ipint->common.liid, modified->common.tostart_time, modified->common.toend_time);
+        ipint->common.tostart_time = modified->common.tostart_time;
+        ipint->common.toend_time = modified->common.toend_time;
         update_intercept_time_event(&(sync->upcoming_intercept_events),
                 ipint, &(ipint->common), &(modified->common));
         push_ipintercept_update_to_threads(sync, ipint, modified);
-    } else if (strcmp(ipint->common.delivcc, modified->common.delivcc) != 0 ||
+    }
+
+    if (strcmp(ipint->common.delivcc, modified->common.delivcc) != 0 ||
             strcmp(ipint->common.authcc, modified->common.authcc) != 0) {
         push_ipintercept_update_to_threads(sync, ipint, modified);
         expmsg = create_intercept_details_msg(&(ipint->common));

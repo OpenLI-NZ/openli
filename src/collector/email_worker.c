@@ -41,6 +41,7 @@
 #include "email_worker.h"
 #include "netcomms.h"
 #include "intercept.h"
+#include "timed_intercept.h"
 
 void free_captured_email(openli_email_captured_t *cap) {
 
@@ -87,12 +88,7 @@ static void start_email_intercept(openli_email_worker_t *state,
         emailintercept_t *em, int addtargets) {
 
     openli_export_recv_t *expmsg;
-
-    /* TODO
-     *
-     * add timer event for intercept endtime, if required
-     * add targets to alltargets, if requested
-     */
+    email_target_t *tgt, *tmp;
 
     if (state->tracker_threads <= 1) {
         em->common.seqtrackerid = 0;
@@ -102,6 +98,16 @@ static void start_email_intercept(openli_email_worker_t *state,
 
     HASH_ADD_KEYPTR(hh_liid, state->allintercepts, em->common.liid,
             em->common.liid_len, em);
+
+    if (addtargets) {
+        HASH_ITER(hh, em->targets, tgt, tmp) {
+            if (add_intercept_to_email_user_intercept_list(
+                    &(state->alltargets), em, tgt) < 0) {
+                logger(LOG_INFO, "OpenLI: error while adding all email targets for intercept %s", em->common.liid);
+                break;
+            }
+        }
+    }
 
     if (state->emailid == 0) {
         expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
@@ -121,12 +127,26 @@ static void remove_email_intercept(openli_email_worker_t *state,
 
     openli_export_recv_t *expmsg;
     int i;
+    email_target_t *tgt, *tmp;
 
-    /* TODO
-     *
-     * remove from alltargets, if requested
-     * remove intercept endtime timer
+    /* Either this intercept has been explicitly withdrawn, in which case
+     * we need to also purge any target addresses for it, OR the
+     * intercept has been reannounced so we're going to "update" it. For an
+     * update, we want to keep all existing targets active, but be prepared
+     * to drop any that are not subsequently confirmed by the provisioner.
      */
+    HASH_ITER(hh, em->targets, tgt, tmp) {
+        if (removetargets) {
+            if (remove_intercept_from_email_user_intercept_list(
+                    &(state->alltargets), em, tgt) < 0) {
+                logger(LOG_INFO, "OpenLI: error while removing all email targets for intercept %s", em->common.liid);
+                break;
+            }
+        } else {
+            /* Flag this target as needing confirmation */
+            tgt->awaitingconfirm = 1;
+        }
+    }
 
     HASH_DELETE(hh_liid, state->allintercepts, em);
 
@@ -206,9 +226,65 @@ static int add_new_email_intercept(openli_email_worker_t *state,
         logger(LOG_INFO, "OpenLI: added new email intercept for %s to email worker threads", em->common.liid);
     }
 
+    em->awaitingconfirm = 0;
     start_email_intercept(state, em, 0);
 
     return ret;
+}
+
+static int modify_email_intercept(openli_email_worker_t *state,
+        provisioner_msg_t *provmsg) {
+
+    emailintercept_t *decode, *found;
+    openli_export_recv_t *expmsg;
+
+    decode = calloc(1, sizeof(emailintercept_t));
+    if (decode_emailintercept_modify(provmsg->msgbody, provmsg->msglen,
+            decode) < 0) {
+        logger(LOG_INFO, "OpenLI: received invalie email intercept modification from provisioner");
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, state->allintercepts, decode->common.liid,
+            decode->common.liid_len, found);
+    if (!found) {
+        start_email_intercept(state, decode, 0);
+        return 0;
+    }
+
+    if (decode->common.tostart_time != found->common.tostart_time ||
+            decode->common.toend_time != found->common.toend_time) {
+        logger(LOG_INFO,
+                "OpenLI: Email intercept %s has changed start / end times -- now %lu, %lu",
+                found->common.liid, decode->common.tostart_time,
+                decode->common.toend_time);
+        found->common.tostart_time = decode->common.tostart_time;
+        found->common.toend_time = decode->common.toend_time;
+    }
+
+    if (strcmp(decode->common.delivcc, found->common.delivcc) != 0 ||
+            strcmp(decode->common.authcc, found->common.authcc) != 0) {
+        char *tmp;
+        tmp = decode->common.authcc;
+        decode->common.authcc = found->common.authcc;
+        found->common.authcc = tmp;
+        tmp = decode->common.delivcc;
+        decode->common.delivcc = found->common.delivcc;
+        found->common.delivcc = tmp;
+
+        expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+        expmsg->type = OPENLI_EXPORT_INTERCEPT_DETAILS;
+        expmsg->data.cept.liid = strdup(found->common.liid);
+        expmsg->data.cept.authcc = strdup(found->common.authcc);
+        expmsg->data.cept.delivcc = strdup(found->common.delivcc);
+        expmsg->data.cept.seqtrackerid = found->common.seqtrackerid;
+
+        publish_openli_msg(state->zmq_pubsocks[found->common.seqtrackerid],
+                expmsg);
+    }
+
+    free_single_emailintercept(decode);
+    return 0;
 }
 
 static int halt_email_intercept(openli_email_worker_t *state,
@@ -236,6 +312,154 @@ static int halt_email_intercept(openli_email_worker_t *state,
     return 0;
 }
 
+static int process_email_target_withdraw(openli_email_worker_t *state,
+        email_target_t *tgt, char *liid) {
+
+    emailintercept_t *found;
+    email_target_t *tgtfound;
+
+    HASH_FIND(hh_liid, state->allintercepts, liid, strlen(liid), found);
+    if (!found) {
+        logger(LOG_INFO, "OpenLI: received email target withdrawal for intercept %s, but this intercept is not active according to email worker thread %d",
+                liid, state->emailid);
+        return -1;
+    }
+
+    if (remove_intercept_from_email_user_intercept_list(&(state->alltargets),
+            found, tgt) < 0) {
+        logger(LOG_INFO, "OpenLI: email worker thread %d failed to remove email target %s for intercept %s", state->emailid, tgt->address, liid);
+        return -1;
+    }
+
+    if (state->emailid == 0) {
+        logger(LOG_INFO, "OpenLI: DEVDEBUG removed email address %s as a target for intercept %s", tgt->address, liid);
+    }
+
+    HASH_FIND(hh, found->targets, tgt->address, strlen(tgt->address), tgtfound);
+    if (tgtfound) {
+        HASH_DELETE(hh, found->targets, tgtfound);
+        free(tgtfound->address);
+        free(tgtfound);
+    }
+
+    return 0;
+}
+
+static int remove_email_target(openli_email_worker_t *state,
+        provisioner_msg_t *provmsg) {
+
+    email_target_t *tgt;
+    char liid[256];
+    int ret;
+
+    tgt = calloc(1, sizeof(email_target_t));
+
+    if (decode_email_target_withdraw(provmsg->msgbody, provmsg->msglen,
+            tgt, liid, 256) < 0) {
+        logger(LOG_INFO, "OpenLI: email worker %d received invalid email target withdrawal from provisioner", state->emailid);
+        return -1;
+    }
+
+    ret = process_email_target_withdraw(state, tgt, liid);
+
+    if (tgt->address) {
+        free(tgt->address);
+    }
+    free(tgt);
+    return ret;
+}
+
+static int add_email_target(openli_email_worker_t *state,
+        provisioner_msg_t *provmsg) {
+
+    email_target_t *tgt, *tgtfound;
+    emailintercept_t *found;
+    char liid[256];
+
+    tgt = calloc(1, sizeof(email_target_t));
+    if (decode_email_target_announcement(provmsg->msgbody, provmsg->msglen,
+            tgt, liid, 256) < 0) {
+        logger(LOG_INFO, "OpenLI: email worker %d received invalid email target announcement from provisioner", state->emailid);
+        return -1;
+    }
+
+    assert(tgt->address);
+
+    HASH_FIND(hh_liid, state->allintercepts, liid, strlen(liid), found);
+    if (!found) {
+        logger(LOG_INFO, "OpenLI: received email target announcement for intercept %s, but this intercept is not active according to email worker thread %d",
+        liid, state->emailid);
+        return -1;
+    }
+
+    if (add_intercept_to_email_user_intercept_list(&(state->alltargets),
+            found, tgt) < 0) {
+        logger(LOG_INFO, "OpenLI: email worker thread %d failed to add email target %s for intercept %s", state->emailid, tgt->address, liid);
+        return -1;
+    }
+
+    if (state->emailid == 0) {
+        logger(LOG_INFO, "OpenLI: DEVDEBUG added email address %s as a target for intercept %s", tgt->address, liid);
+    }
+
+    HASH_FIND(hh, found->targets, tgt->address, strlen(tgt->address), tgtfound);
+    if (!tgtfound) {
+        tgt->awaitingconfirm = 0;
+        HASH_ADD_KEYPTR(hh, found->targets, tgt->address, strlen(tgt->address),
+                tgt);
+    } else {
+        tgtfound->awaitingconfirm = 0;
+        if (tgt->address) {
+            free(tgt->address);
+        }
+        free(tgt);
+    }
+    return 0;
+}
+
+static void flag_all_email_intercepts(openli_email_worker_t *state) {
+    emailintercept_t *em, *tmp;
+    email_target_t *tgt, *tmp2;
+
+    HASH_ITER(hh_liid, state->allintercepts, em, tmp) {
+        em->awaitingconfirm = 1;
+        HASH_ITER(hh, em->targets, tgt, tmp2) {
+            tgt->awaitingconfirm = 1;
+        }
+    }
+
+    if (state->emailid == 0) {
+        logger(LOG_INFO, "OpenLI: DEVDEBUG all email intercepts and targets are now awaiting confirmation");
+    }
+}
+
+static void disable_unconfirmed_email_intercepts(openli_email_worker_t *state)
+{
+    emailintercept_t *em, *tmp;
+    email_target_t *tgt, *tmp2;
+
+    HASH_ITER(hh_liid, state->allintercepts, em, tmp) {
+        if (em->awaitingconfirm) {
+            remove_email_intercept(state, em, 1);
+        } else {
+            HASH_ITER(hh, em->targets, tgt, tmp2) {
+                if (tgt->awaitingconfirm) {
+                    process_email_target_withdraw(state, tgt, em->common.liid);
+                }
+                HASH_DELETE(hh, em->targets, tgt);
+                if (tgt->address) {
+                    free(tgt->address);
+                }
+                free(tgt);
+            }
+        }
+    }
+
+    if (state->emailid == 0) {
+        logger(LOG_INFO, "OpenLI: DEVDEBUG finished purging any unconfirmed email intercepts");
+    }
+}
+
 static int handle_provisioner_message(openli_email_worker_t *state,
         openli_export_recv_t *msg) {
 
@@ -249,14 +473,19 @@ static int handle_provisioner_message(openli_email_worker_t *state,
             ret = halt_email_intercept(state, &(msg->data.provmsg));
             break;
         case OPENLI_PROTO_MODIFY_EMAILINTERCEPT:
+            ret = modify_email_intercept(state, &(msg->data.provmsg));
             break;
         case OPENLI_PROTO_ANNOUNCE_EMAIL_TARGET:
+            ret = add_email_target(state, &(msg->data.provmsg));
             break;
         case OPENLI_PROTO_WITHDRAW_EMAIL_TARGET:
+            ret = remove_email_target(state, &(msg->data.provmsg));
             break;
         case OPENLI_PROTO_NOMORE_INTERCEPTS:
+            disable_unconfirmed_email_intercepts(state);
             break;
         case OPENLI_PROTO_DISCONNECT:
+            flag_all_email_intercepts(state);
             break;
         default:
             logger(LOG_INFO, "OpenLI: email worker thread %d received unexpected message type from provisioner: %u",
@@ -355,7 +584,7 @@ static void email_worker_main(openli_email_worker_t *state) {
 
     while (1) {
         /* TODO replace 2 with 3 when we add the other ZMQ sockets */
-        if ((x = zmq_poll(topoll, 2, 10000)) < 0) {
+        if ((x = zmq_poll(topoll, 3, 50)) < 0) {
             if (errno == EINTR) {
                 continue;
             }
@@ -384,6 +613,7 @@ static void email_worker_main(openli_email_worker_t *state) {
             }
             topoll[1].revents = 0;
         }
+
     }
 }
 
@@ -485,6 +715,7 @@ haltemailworker:
     logger(LOG_INFO, "OpenLI: halting email processing thread %d",
             state->emailid);
     /* TODO free all state for intercepts and active sessions */
+    clear_email_user_intercept_list(state->alltargets);
     free_all_emailintercepts(&(state->allintercepts));
 
     zmq_close(state->zmq_ii_sock);

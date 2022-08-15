@@ -574,6 +574,49 @@ void free_all_emailsessions(emailsession_t **sessions) {
 
 }
 
+int add_intercept_to_email_user_intercept_list(
+        email_user_intercept_list_t **ulist, emailintercept_t *em,
+        email_target_t *tgt) {
+
+    email_user_intercept_list_t *found;
+    emailintercept_t *check;
+
+    if (tgt->address == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: attempted to add address-less email intercept to user intercept list.");
+        return -1;
+    }
+
+    HASH_FIND(hh, *ulist, tgt->address, strlen(tgt->address), found);
+    if (!found) {
+        found = (email_user_intercept_list_t *)
+                malloc(sizeof(email_user_intercept_list_t));
+        if (!found) {
+            logger(LOG_INFO,
+                    "OpenLI: out of memory in add_intercept_to_email_user_intercept_list()");
+            return -1;
+        }
+        found->emailaddr = strdup(tgt->address);
+        if (!found->emailaddr) {
+            free(found);
+            logger(LOG_INFO,
+                    "OpenLI: out of memory in add_intercept_to_email_user_intercept_list()");
+            return -1;
+        }
+        found->intlist = NULL;
+        HASH_ADD_KEYPTR(hh, *ulist, found->emailaddr, strlen(found->emailaddr),
+                found);
+    }
+
+    HASH_FIND(hh_user, found->intlist, em->common.liid,
+            em->common.liid_len, check);
+    if (!check) {
+        HASH_ADD_KEYPTR(hh_user, found->intlist, em->common.liid,
+                em->common.liid_len, em);
+    }
+    return 0;
+}
+
 int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
         ipintercept_t *ipint) {
 
@@ -617,6 +660,43 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
 
     HASH_ADD_KEYPTR(hh_user, found->intlist, ipint->common.liid,
             ipint->common.liid_len, ipint);
+    return 0;
+}
+
+int remove_intercept_from_email_user_intercept_list(
+        email_user_intercept_list_t **ulist, emailintercept_t *em,
+        email_target_t *tgt) {
+
+    email_user_intercept_list_t *found;
+    emailintercept_t *existing;
+
+    if (tgt->address == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: attempted to remove address-less email intercept from user intercept list.");
+        return -1;
+    }
+
+    HASH_FIND(hh, *ulist, tgt->address, strlen(tgt->address), found);
+
+    if (!found) {
+        return 0;
+    }
+
+    HASH_FIND(hh_user, found->intlist, em->common.liid,
+            em->common.liid_len, existing);
+    if (!existing) {
+        return 0;
+    }
+
+    HASH_DELETE(hh_user, found->intlist, existing);
+    /* Don't free existing -- the caller should do that instead */
+
+    /* If there are no intercepts left associated with this address, we can
+     * remove them from the user list */
+    if (HASH_CNT(hh_user, found->intlist) == 0) {
+        HASH_DELETE(hh, *ulist, found);
+        free(found);
+    }
     return 0;
 }
 
@@ -671,6 +751,21 @@ void clear_user_intercept_list(user_intercept_list_t *ulist) {
         }
         HASH_DELETE(hh, ulist, u);
         free(u->username);
+        free(u);
+    }
+}
+
+void clear_email_user_intercept_list(email_user_intercept_list_t *ulist) {
+    email_user_intercept_list_t *u, *tmp;
+    emailintercept_t *em, *tmp2;
+
+    HASH_ITER(hh, ulist, u, tmp) {
+        /* Again, don't free the email intercepts in the list -- someone else
+         * should have that covered. */
+        HASH_ITER(hh_user, u->intlist, em, tmp2) {
+            HASH_DELETE(hh_user, u->intlist, em);
+        }
+        HASH_DELETE(hh, ulist, u);
         free(u);
     }
 }

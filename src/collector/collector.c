@@ -1777,8 +1777,6 @@ int main(int argc, char *argv[]) {
         glob->emailworkers[i].zmq_colthread_recvsock = NULL;
         glob->emailworkers[i].zmq_ii_sock = NULL;
 
-        glob->emailworkers[i].upcoming_intercept_events = NULL;
-        glob->emailworkers[i].upcomingtimerfd = -1;
         glob->emailworkers[i].allintercepts = NULL;
         glob->emailworkers[i].alltargets = NULL;
         glob->emailworkers[i].activesessions = NULL;

@@ -137,6 +137,7 @@ typedef struct emailintercept {
 
     uint8_t awaitingconfirm;
     UT_hash_handle hh_liid;
+    UT_hash_handle hh_user;
 
 } emailintercept_t;
 
@@ -398,6 +399,14 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
         ipintercept_t *ipint);
 int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
         ipintercept_t *ipint);
+
+void clear_email_user_intercept_list(email_user_intercept_list_t *ulist);
+int remove_intercept_from_email_user_intercept_list(
+        email_user_intercept_list_t **ulist, emailintercept_t *em,
+        email_target_t *tgt);
+int add_intercept_to_email_user_intercept_list(
+        email_user_intercept_list_t **ulist, emailintercept_t *em,
+        email_target_t *tgt);
 
 const char *get_access_type_string(internet_access_method_t method);
 const char *get_radius_ident_string(uint32_t radoptions);
