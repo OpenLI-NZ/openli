@@ -120,6 +120,36 @@ static void start_email_intercept(openli_email_worker_t *state,
         publish_openli_msg(state->zmq_pubsocks[em->common.seqtrackerid],
                 expmsg);
     }
+    em->awaitingconfirm = 0;
+}
+
+static void update_email_intercept(openli_email_worker_t *state,
+        emailintercept_t *found, emailintercept_t *latest) {
+
+    assert(strcmp(found->common.liid, latest->common.liid) == 0);
+
+    if (found->common.authcc) {
+        free(found->common.authcc);
+    }
+    found->common.authcc = latest->common.authcc;
+    found->common.authcc_len = latest->common.authcc_len;
+    latest->common.authcc = NULL;
+
+    if (found->common.delivcc) {
+        free(found->common.delivcc);
+    }
+    found->common.delivcc = latest->common.delivcc;
+    found->common.delivcc_len = latest->common.delivcc_len;
+    latest->common.delivcc = NULL;
+
+    found->common.tostart_time = latest->common.tostart_time;
+    found->common.toend_time = latest->common.toend_time;
+
+    /* XXX targetagency and destid shouldn't matter, unless we actually
+     * use them in this thread.
+     *
+     * I think they're only relevant in the forwarding thread though */
+
 }
 
 static void remove_email_intercept(openli_email_worker_t *state,
@@ -206,28 +236,30 @@ static int add_new_email_intercept(openli_email_worker_t *state,
             em->common.liid_len, found);
 
     if (found) {
-        /* We're going to replace "found" with our new intercept, but keep
-         * the same targets (for now at least)
-         */
-        em->targets = found->targets;
-        found->targets = NULL;
-
+        email_target_t *tgt, *tmp;
         /* Don't halt any target intercepts just yet -- hopefully a target
          * update is going to follow this...
          */
-        remove_email_intercept(state, found, 0);
-        ret = 1;
-    } else if (state->emailid == 0) {
-        pthread_mutex_lock(state->stats_mutex);
-        state->stats->emailintercepts_added_diff ++;
-        state->stats->emailintercepts_added_total ++;
-        pthread_mutex_unlock(state->stats_mutex);
+        HASH_ITER(hh, found->targets, tgt, tmp) {
+            tgt->awaitingconfirm = 1;
+        }
 
-        logger(LOG_INFO, "OpenLI: added new email intercept for %s to email worker threads", em->common.liid);
+        update_email_intercept(state, found, em);
+        found->awaitingconfirm = 0;
+        free_single_emailintercept(em);
+        ret = 1;
+    } else {
+        start_email_intercept(state, em, 0);
+        if (state->emailid == 0) {
+            pthread_mutex_lock(state->stats_mutex);
+            state->stats->emailintercepts_added_diff ++;
+            state->stats->emailintercepts_added_total ++;
+            pthread_mutex_unlock(state->stats_mutex);
+
+            logger(LOG_INFO, "OpenLI: added new email intercept for %s to email worker threads", em->common.liid);
+        }
     }
 
-    em->awaitingconfirm = 0;
-    start_email_intercept(state, em, 0);
 
     return ret;
 }
@@ -241,7 +273,7 @@ static int modify_email_intercept(openli_email_worker_t *state,
     decode = calloc(1, sizeof(emailintercept_t));
     if (decode_emailintercept_modify(provmsg->msgbody, provmsg->msglen,
             decode) < 0) {
-        logger(LOG_INFO, "OpenLI: received invalie email intercept modification from provisioner");
+        logger(LOG_INFO, "OpenLI: received invalid email intercept modification from provisioner");
         return -1;
     }
 
@@ -331,14 +363,12 @@ static int process_email_target_withdraw(openli_email_worker_t *state,
         return -1;
     }
 
-    if (state->emailid == 0) {
-        logger(LOG_INFO, "OpenLI: DEVDEBUG removed email address %s as a target for intercept %s", tgt->address, liid);
-    }
-
     HASH_FIND(hh, found->targets, tgt->address, strlen(tgt->address), tgtfound);
     if (tgtfound) {
         HASH_DELETE(hh, found->targets, tgtfound);
-        free(tgtfound->address);
+        if (tgtfound->address) {
+            free(tgtfound->address);
+        }
         free(tgtfound);
     }
 
@@ -398,10 +428,6 @@ static int add_email_target(openli_email_worker_t *state,
         return -1;
     }
 
-    if (state->emailid == 0) {
-        logger(LOG_INFO, "OpenLI: DEVDEBUG added email address %s as a target for intercept %s", tgt->address, liid);
-    }
-
     HASH_FIND(hh, found->targets, tgt->address, strlen(tgt->address), tgtfound);
     if (!tgtfound) {
         tgt->awaitingconfirm = 0;
@@ -427,10 +453,6 @@ static void flag_all_email_intercepts(openli_email_worker_t *state) {
             tgt->awaitingconfirm = 1;
         }
     }
-
-    if (state->emailid == 0) {
-        logger(LOG_INFO, "OpenLI: DEVDEBUG all email intercepts and targets are now awaiting confirmation");
-    }
 }
 
 static void disable_unconfirmed_email_intercepts(openli_email_worker_t *state)
@@ -446,17 +468,8 @@ static void disable_unconfirmed_email_intercepts(openli_email_worker_t *state)
                 if (tgt->awaitingconfirm) {
                     process_email_target_withdraw(state, tgt, em->common.liid);
                 }
-                HASH_DELETE(hh, em->targets, tgt);
-                if (tgt->address) {
-                    free(tgt->address);
-                }
-                free(tgt);
             }
         }
-    }
-
-    if (state->emailid == 0) {
-        logger(LOG_INFO, "OpenLI: DEVDEBUG finished purging any unconfirmed email intercepts");
     }
 }
 
@@ -584,7 +597,7 @@ static void email_worker_main(openli_email_worker_t *state) {
 
     while (1) {
         /* TODO replace 2 with 3 when we add the other ZMQ sockets */
-        if ((x = zmq_poll(topoll, 3, 50)) < 0) {
+        if ((x = zmq_poll(topoll, 2, 50)) < 0) {
             if (errno == EINTR) {
                 continue;
             }

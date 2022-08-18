@@ -1196,7 +1196,7 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
 		if (liidstr) {
 			free(liidstr);
 		}
-        return add_new_voipintercept(cinfo, state);
+        return add_new_emailintercept(cinfo, state);
     }
 
     mailint = calloc(1, sizeof(emailintercept_t));

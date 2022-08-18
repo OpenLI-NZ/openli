@@ -579,7 +579,7 @@ int add_intercept_to_email_user_intercept_list(
         email_target_t *tgt) {
 
     email_user_intercept_list_t *found;
-    emailintercept_t *check;
+    email_intercept_ref_t *intref;
 
     if (tgt->address == NULL) {
         logger(LOG_INFO,
@@ -608,11 +608,13 @@ int add_intercept_to_email_user_intercept_list(
                 found);
     }
 
-    HASH_FIND(hh_user, found->intlist, em->common.liid,
-            em->common.liid_len, check);
-    if (!check) {
-        HASH_ADD_KEYPTR(hh_user, found->intlist, em->common.liid,
-                em->common.liid_len, em);
+    HASH_FIND(hh, found->intlist, em->common.liid, em->common.liid_len, intref);
+    if (!intref) {
+        intref = calloc(1, sizeof(email_intercept_ref_t));
+        intref->em = em;
+
+        HASH_ADD_KEYPTR(hh, found->intlist, em->common.liid,
+                em->common.liid_len, intref);
     }
     return 0;
 }
@@ -668,7 +670,7 @@ int remove_intercept_from_email_user_intercept_list(
         email_target_t *tgt) {
 
     email_user_intercept_list_t *found;
-    emailintercept_t *existing;
+    email_intercept_ref_t *existing;
 
     if (tgt->address == NULL) {
         logger(LOG_INFO,
@@ -682,19 +684,20 @@ int remove_intercept_from_email_user_intercept_list(
         return 0;
     }
 
-    HASH_FIND(hh_user, found->intlist, em->common.liid,
-            em->common.liid_len, existing);
+    HASH_FIND(hh, found->intlist, em->common.liid, em->common.liid_len,
+            existing);
     if (!existing) {
         return 0;
     }
 
-    HASH_DELETE(hh_user, found->intlist, existing);
-    /* Don't free existing -- the caller should do that instead */
+    HASH_DELETE(hh, found->intlist, existing);
+    free(existing);
 
     /* If there are no intercepts left associated with this address, we can
      * remove them from the user list */
-    if (HASH_CNT(hh_user, found->intlist) == 0) {
+    if (HASH_CNT(hh, found->intlist) == 0) {
         HASH_DELETE(hh, *ulist, found);
+        free(found->emailaddr);
         free(found);
     }
     return 0;
@@ -757,15 +760,17 @@ void clear_user_intercept_list(user_intercept_list_t *ulist) {
 
 void clear_email_user_intercept_list(email_user_intercept_list_t *ulist) {
     email_user_intercept_list_t *u, *tmp;
-    emailintercept_t *em, *tmp2;
+    email_intercept_ref_t *em, *tmp2;
 
     HASH_ITER(hh, ulist, u, tmp) {
         /* Again, don't free the email intercepts in the list -- someone else
          * should have that covered. */
-        HASH_ITER(hh_user, u->intlist, em, tmp2) {
-            HASH_DELETE(hh_user, u->intlist, em);
+        HASH_ITER(hh, u->intlist, em, tmp2) {
+            HASH_DELETE(hh, u->intlist, em);
+            free(em);
         }
         HASH_DELETE(hh, ulist, u);
+        free(u->emailaddr);
         free(u);
     }
 }

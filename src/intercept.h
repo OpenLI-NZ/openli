@@ -137,13 +137,17 @@ typedef struct emailintercept {
 
     uint8_t awaitingconfirm;
     UT_hash_handle hh_liid;
-    UT_hash_handle hh_user;
 
 } emailintercept_t;
 
+typedef struct email_intercept_ref {
+    emailintercept_t *em;
+    UT_hash_handle hh;
+} email_intercept_ref_t;
+
 typedef struct emailinterceptlist {
     char *emailaddr;
-    emailintercept_t *intlist;
+    email_intercept_ref_t *intlist;
     UT_hash_handle hh;
 } email_user_intercept_list_t;
 
