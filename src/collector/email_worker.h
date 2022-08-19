@@ -47,6 +47,13 @@ enum {
     OPENLI_EMAIL_DIRECTION_INBOUND
 };
 
+typedef struct openli_email_timeouts {
+    uint16_t smtp;
+    uint16_t imap;
+    uint16_t pop3;
+    pthread_mutex_t mutex;
+} openli_email_timeouts_t;
+
 typedef struct openli_email_captured {
 
     openli_email_type_t type;
@@ -69,6 +76,8 @@ typedef struct openli_email_captured {
 typedef struct openli_email_worker {
 
     void *zmq_ctxt;
+    zmq_pollitem_t *topoll;
+    int topoll_size;
     pthread_t threadid;
     int emailid;
     int tracker_threads;
@@ -80,6 +89,8 @@ typedef struct openli_email_worker {
     void *zmq_ingest_recvsock;      /* ZMQ for receiving from the ingestor */
     void *zmq_colthread_recvsock;   /* ZMQ for receiving from collector threads */
 
+    sync_epoll_t *timeouts;
+
     emailintercept_t *allintercepts;
     email_user_intercept_list_t *alltargets;
 
@@ -88,10 +99,16 @@ typedef struct openli_email_worker {
     pthread_mutex_t *stats_mutex;
     collector_stats_t *stats;
 
+    openli_email_timeouts_t *timeout_thresholds;
+
 } openli_email_worker_t;
 
 void *start_email_worker_thread(void *arg);
 void free_captured_email(openli_email_captured_t *cap);
+
+void free_smtp_session_state(emailsession_t *sess, void *smtpstate);
+int update_smtp_session_by_ingestion(openli_email_worker_t *state,
+        emailsession_t *sess, openli_email_captured_t *cap);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

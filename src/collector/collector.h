@@ -160,15 +160,6 @@ typedef struct export_queue_set {
 
 } export_queue_set_t;
 
-
-typedef struct sync_epoll {
-    uint8_t fdtype;
-    int fd;
-    void *ptr;
-    libtrace_thread_t *parent;
-    UT_hash_handle hh;
-} sync_epoll_t;
-
 typedef struct sync_sendq {
     libtrace_message_queue_t *q;
     libtrace_thread_t *parent;
@@ -299,6 +290,8 @@ typedef struct collector_global {
     openli_ssl_config_t sslconf;
     openli_RMQ_config_t RMQ_conf;
     openli_email_ingest_config_t emailconf;
+
+    openli_email_timeouts_t email_timeouts;
 
     int emailsockfd;
     email_ingestor_state_t *email_ingestor;

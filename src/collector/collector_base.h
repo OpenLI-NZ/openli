@@ -34,6 +34,8 @@
 #include <zmq.h>
 #include <Judy.h>
 #include <amqp.h>
+#include <uthash.h>
+#include <libtrace.h>
 
 #include "export_shared.h"
 #include "etsili_core.h"
@@ -42,6 +44,14 @@
 #include "openli_tls.h"
 
 #define MAX_ENCODED_RESULT_BATCH 50
+
+typedef struct sync_epoll {
+    uint8_t fdtype;
+    int fd;
+    void *ptr;
+    libtrace_thread_t *parent;
+    UT_hash_handle hh;
+} sync_epoll_t;
 
 typedef struct export_dest {
     int failmsg;

@@ -1142,6 +1142,7 @@ static void destroy_collector_state(collector_global_t *glob) {
 
     pthread_mutex_destroy(&(glob->stats_mutex));
     pthread_rwlock_destroy(&glob->config_mutex);
+    pthread_mutex_destroy(&(glob->email_timeouts.mutex));
     free(glob);
 }
 
@@ -1300,7 +1301,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->seqtracker_threads = 1;
     glob->forwarding_threads = 1;
     glob->encoding_threads = 2;
-    glob->email_threads = 2;
+    glob->email_threads = 1;
     glob->sharedinfo.intpointid = NULL;
     glob->sharedinfo.intpointid_len = 0;
     glob->sharedinfo.operatorid = NULL;
@@ -1350,6 +1351,13 @@ static void init_collector_global(collector_global_t *glob) {
 
     glob->emailsockfd = -1;
     glob->email_ingestor = NULL;
+
+    /* TODO add config options to change these values
+     *      also make sure changes are actions post config-reload */
+    glob->email_timeouts.smtp = 5;
+    glob->email_timeouts.pop3 = 10;
+    glob->email_timeouts.imap = 30;
+    pthread_mutex_init(&(glob->email_timeouts.mutex), NULL);
 
 }
 
@@ -1768,6 +1776,8 @@ int main(int argc, char *argv[]) {
         snprintf(name, 1024, "emailworker-%d", i);
 
         glob->emailworkers[i].zmq_ctxt = glob->zmq_ctxt;
+        glob->emailworkers[i].topoll = NULL;
+        glob->emailworkers[i].topoll_size = 0;
         glob->emailworkers[i].emailid = i;
         glob->emailworkers[i].tracker_threads = glob->seqtracker_threads;
         glob->emailworkers[i].fwd_threads = glob->forwarding_threads;
@@ -1777,11 +1787,14 @@ int main(int argc, char *argv[]) {
         glob->emailworkers[i].zmq_colthread_recvsock = NULL;
         glob->emailworkers[i].zmq_ii_sock = NULL;
 
+        glob->emailworkers[i].timeouts = NULL;
         glob->emailworkers[i].allintercepts = NULL;
         glob->emailworkers[i].alltargets = NULL;
         glob->emailworkers[i].activesessions = NULL;
         glob->emailworkers[i].stats_mutex = &(glob->stats_mutex);
         glob->emailworkers[i].stats = &(glob->stats);
+
+        glob->emailworkers[i].timeout_thresholds = &(glob->email_timeouts);
 
         pthread_create(&(glob->emailworkers[i].threadid), NULL,
                 start_email_worker_thread, (void *)&(glob->emailworkers[i]));

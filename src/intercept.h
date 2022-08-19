@@ -273,11 +273,11 @@ struct emailsession {
 
     email_participant_t *participants;
 
-    uint32_t seqno;
-    uint8_t active;
     uint8_t protocol;
     uint8_t currstate;
     void *timeout_ev;
+
+    void *proto_state;
 
     UT_hash_handle hh;
 };

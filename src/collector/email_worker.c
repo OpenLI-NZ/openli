@@ -34,6 +34,11 @@
 #include <sys/timerfd.h>
 #include <amqp_tcp_socket.h>
 
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+
 #include "util.h"
 #include "logger.h"
 #include "collector_base.h"
@@ -42,6 +47,181 @@
 #include "netcomms.h"
 #include "intercept.h"
 #include "timed_intercept.h"
+
+static inline const char *email_type_to_string(openli_email_type_t t) {
+    if (t == OPENLI_EMAIL_TYPE_POP3) {
+        return "POP3";
+    }
+    if (t == OPENLI_EMAIL_TYPE_SMTP) {
+        return "SMTP";
+    }
+    if (t == OPENLI_EMAIL_TYPE_IMAP) {
+        return "IMAP";
+    }
+    return "UNKNOWN";
+}
+
+static struct sockaddr_storage *construct_sockaddr(char *ip, char *port,
+        int *family) {
+
+    struct sockaddr_storage *saddr;
+    struct addrinfo hints, *res;
+    int err;
+
+    memset(&hints, 0, sizeof(hints));
+
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    err = getaddrinfo(ip, port, &hints, &res);
+    if (err != 0) {
+        logger(LOG_INFO, "OpenLI: error in email worker thread converting %s:%s into a socket address: %s", ip, port, strerror(errno));
+        return NULL;
+    }
+
+    if (!res) {
+        logger(LOG_INFO, "OpenLI: email worker thread was unable to convert %s:%s into a valid socket address?", ip, port);
+        return NULL;
+    }
+
+    /* Just use the first result -- there should only be one anyway... */
+
+    if (family) {
+        *family = res->ai_family;
+    }
+    saddr = calloc(1, sizeof(struct sockaddr_storage));
+    memcpy(saddr, res->ai_addr, res->ai_addrlen);
+
+    char host[256];
+    char serv[256];
+
+    getnameinfo((struct sockaddr *)saddr, sizeof(struct sockaddr_storage),
+            host, 256, serv, 256, NI_NUMERICHOST | NI_NUMERICSERV);
+    logger(LOG_INFO, "OpenLI: DEVDEBUG sockaddr is %s:%s", host, port);
+
+    freeaddrinfo(res);
+    return saddr;
+}
+
+static void init_email_session(emailsession_t *sess,
+        openli_email_captured_t *cap, char *sesskey) {
+
+    struct sockaddr_storage *saddr;
+
+    sess->key = strdup(sesskey);
+    sess->cin = hashlittle(cap->session_id, strlen(cap->session_id),
+            1872422);
+    sess->session_id = strdup(cap->session_id);
+
+    if (cap->type == OPENLI_EMAIL_TYPE_SMTP) {
+        sess->serveraddr = construct_sockaddr(cap->host_ip, cap->host_port,
+                &sess->ai_family);
+        sess->clientaddr = construct_sockaddr(cap->remote_ip, cap->remote_port,
+                NULL);
+    } else {
+        /* TODO */
+    }
+
+    sess->participants = NULL;
+    sess->protocol = cap->type;
+    sess->currstate = 0;
+    sess->timeout_ev = NULL;
+    sess->proto_state = NULL;
+}
+
+static void free_email_session(openli_email_worker_t *state,
+        emailsession_t *sess) {
+
+    email_participant_t *part, *tmp;
+
+    if (!sess) {
+        return;
+    }
+
+    HASH_ITER(hh, sess->participants, part, tmp) {
+        HASH_DELETE(hh, sess->participants, part);
+        if (part->emailaddr) {
+            free(part->emailaddr);
+        }
+        free(part);
+    }
+
+    if (sess->timeout_ev) {
+        sync_epoll_t *ev, *found;
+        ev = (sync_epoll_t *)sess->timeout_ev;
+        HASH_FIND(hh, state->timeouts, &(ev->fd), sizeof(int), found);
+        if (found) {
+            HASH_DELETE(hh, state->timeouts, found);
+        }
+        close(ev->fd);
+        free(ev);
+
+        logger(LOG_INFO, "OpenLI: DEVDEBUG removed timeout event for %s",
+                sess->key);
+    }
+
+    if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
+        free_smtp_session_state(sess, sess->proto_state);
+    }
+
+    if (sess->serveraddr) {
+        free(sess->serveraddr);
+    }
+    if (sess->clientaddr) {
+        free(sess->clientaddr);
+    }
+    if (sess->session_id) {
+        free(sess->session_id);
+    }
+    if (sess->key) {
+        free(sess->key);
+    }
+    free(sess);
+
+}
+
+static void update_email_session_timeout(openli_email_worker_t *state,
+        emailsession_t *sess) {
+    sync_epoll_t *timerev, *syncev;
+    struct itimerspec its;
+
+    if (sess->timeout_ev) {
+        timerev = (sync_epoll_t *)(sess->timeout_ev);
+
+        HASH_FIND(hh, state->timeouts, &(timerev->fd), sizeof(int), syncev);
+        if (syncev) {
+            HASH_DELETE(hh, state->timeouts, syncev);
+        }
+        close(timerev->fd);
+    } else {
+        timerev = (sync_epoll_t *) calloc(1, sizeof(sync_epoll_t));
+    }
+
+    pthread_mutex_lock(&(state->timeout_thresholds->mutex));
+    if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
+        its.it_value.tv_sec = state->timeout_thresholds->smtp * 60;
+    } else if (sess->protocol == OPENLI_EMAIL_TYPE_POP3) {
+        its.it_value.tv_sec = state->timeout_thresholds->pop3 * 60;
+    } else if (sess->protocol == OPENLI_EMAIL_TYPE_IMAP) {
+        its.it_value.tv_sec = state->timeout_thresholds->imap * 60;
+    } else {
+        its.it_value.tv_sec = 600;
+    }
+    pthread_mutex_unlock(&(state->timeout_thresholds->mutex));
+
+    its.it_value.tv_nsec = 0;
+    its.it_interval.tv_sec = 0;
+    its.it_interval.tv_nsec = 0;
+
+    sess->timeout_ev = (void *)timerev;
+    timerev->fdtype = 0;
+    timerev->fd = timerfd_create(CLOCK_MONOTONIC, 0);
+    timerfd_settime(timerev->fd, 0, &its, NULL);
+
+    timerev->ptr = sess;
+    HASH_ADD_KEYPTR(hh, state->timeouts, &(timerev->fd), sizeof(int), timerev);
+
+}
 
 void free_captured_email(openli_email_captured_t *cap) {
 
@@ -553,6 +733,8 @@ static int process_sync_thread_message(openli_email_worker_t *state) {
 static int process_ingested_capture(openli_email_worker_t *state) {
     openli_email_captured_t *cap = NULL;
     int x;
+    char sesskey[256];
+    emailsession_t *sess;
 
     do {
         x = zmq_recv(state->zmq_ingest_recvsock, &cap, sizeof(cap),
@@ -573,6 +755,27 @@ static int process_ingested_capture(openli_email_worker_t *state) {
             break;
         }
 
+        snprintf(sesskey, 256, "%s-%s", email_type_to_string(cap->type),
+                cap->session_id);
+
+        HASH_FIND(hh, state->activesessions, sesskey, strlen(sesskey), sess);
+        if (!sess) {
+            sess = calloc(1, sizeof(emailsession_t));
+            init_email_session(sess, cap, sesskey);
+            HASH_ADD_KEYPTR(hh, state->activesessions, sess->key,
+                    strlen(sess->key), sess);
+
+            if (state->emailid == 0) {
+                logger(LOG_INFO, "OpenLI: DEVDEBUG adding new session '%s'",
+                        sesskey);
+            }
+        }
+
+        if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
+            update_smtp_session_by_ingestion(state, sess, cap);
+        }
+
+        update_email_session_timeout(state, sess);
         free_captured_email(cap);
     } while (x > 0);
 
@@ -581,23 +784,48 @@ static int process_ingested_capture(openli_email_worker_t *state) {
 
 static void email_worker_main(openli_email_worker_t *state) {
 
-    zmq_pollitem_t topoll[3];
+    emailsession_t **expired = NULL;
     int x;
+    int topoll_req;
+    sync_epoll_t *ev, *tmp;
 
     logger(LOG_INFO, "OpenLI: starting email processing thread %d",
             state->emailid);
-
-    topoll[0].socket = state->zmq_ii_sock;
-    topoll[0].events = ZMQ_POLLIN;
-
-    topoll[1].socket = state->zmq_ingest_recvsock;
-    topoll[1].events = ZMQ_POLLIN;
 
     /* TODO add other consumer sockets to topoll */
 
     while (1) {
         /* TODO replace 2 with 3 when we add the other ZMQ sockets */
-        if ((x = zmq_poll(topoll, 2, 50)) < 0) {
+        topoll_req = 2 + HASH_CNT(hh, state->timeouts);
+
+        if (topoll_req > state->topoll_size) {
+            if (state->topoll) {
+                free(state->topoll);
+            }
+            if (expired) {
+                free(expired);
+            }
+            state->topoll = calloc(topoll_req, sizeof(zmq_pollitem_t));
+            state->topoll_size = topoll_req;
+            expired = calloc(topoll_req, sizeof(emailsession_t *));
+        }
+
+        state->topoll[0].socket = state->zmq_ii_sock;
+        state->topoll[0].events = ZMQ_POLLIN;
+
+        state->topoll[1].socket = state->zmq_ingest_recvsock;
+        state->topoll[1].events = ZMQ_POLLIN;
+
+        x = 2;
+        HASH_ITER(hh, state->timeouts, ev, tmp) {
+            state->topoll[x].socket = NULL;
+            state->topoll[x].fd = ev->fd;
+            state->topoll[x].events = ZMQ_POLLIN;
+            expired[x] = (emailsession_t *)(ev->ptr);
+            x++;
+        }
+
+        if ((x = zmq_poll(state->topoll, topoll_req, 50)) < 0) {
             if (errno == EINTR) {
                 continue;
             }
@@ -609,24 +837,41 @@ static void email_worker_main(openli_email_worker_t *state) {
             continue;
         }
 
-        if (topoll[0].revents & ZMQ_POLLIN) {
+        if (state->topoll[0].revents & ZMQ_POLLIN) {
             /* message from the sync thread */
             x = process_sync_thread_message(state);
             if (x < 0) {
                 break;
             }
-            topoll[0].revents = 0;
+            state->topoll[0].revents = 0;
         }
 
-        if (topoll[1].revents & ZMQ_POLLIN) {
+        if (state->topoll[1].revents & ZMQ_POLLIN) {
             /* message from the email ingesting thread */
             x = process_ingested_capture(state);
             if (x < 0) {
                 break;
             }
-            topoll[1].revents = 0;
+            state->topoll[1].revents = 0;
         }
 
+        for (x = 2; x < topoll_req; x++) {
+            emailsession_t *sessfound;
+
+            if (state->topoll[x].revents & ZMQ_POLLIN) {
+                logger(LOG_INFO, "OpenLI: DEVDEBUG expiring email session '%s' due to inactivity", expired[x]->key);
+
+                HASH_FIND(hh, state->activesessions, expired[x]->key,
+                        strlen(expired[x]->key), sessfound);
+                if (sessfound) {
+                    HASH_DELETE(hh, state->activesessions, sessfound);
+                }
+                free_email_session(state, expired[x]);
+            }
+        }
+    }
+    if (expired) {
+        free(expired);
     }
 }
 
@@ -669,11 +914,23 @@ static inline int init_zmqsocks(void **zmq_socks, int sockcount,
     return ret;
 }
 
+static void free_all_email_sessions(openli_email_worker_t *state) {
+
+    emailsession_t *sess, *tmp;
+
+    HASH_ITER(hh, state->activesessions, sess, tmp) {
+        HASH_DELETE(hh, state->activesessions, sess);
+        free_email_session(state, sess);
+    }
+
+}
+
 void *start_email_worker_thread(void *arg) {
 
     openli_email_worker_t *state = (openli_email_worker_t *)arg;
     int x, zero = 0;
     char sockname[256];
+    sync_epoll_t *syncev, *tmp;
 
     state->zmq_pubsocks = calloc(state->tracker_threads, sizeof(void *));
     state->zmq_fwdsocks = calloc(state->fwd_threads, sizeof(void *));
@@ -730,16 +987,28 @@ haltemailworker:
     /* TODO free all state for intercepts and active sessions */
     clear_email_user_intercept_list(state->alltargets);
     free_all_emailintercepts(&(state->allintercepts));
+    free_all_email_sessions(state);
 
     zmq_close(state->zmq_ii_sock);
 
     /* TODO close all other ZMQs */
 
+    if (state->topoll) {
+        free(state->topoll);
+    }
 
     zmq_close(state->zmq_ingest_recvsock);
 
     clear_zmqsocks(state->zmq_pubsocks, state->tracker_threads);
     clear_zmqsocks(state->zmq_fwdsocks, state->fwd_threads);
+
+    /* All timeouts should be freed when we release the active sessions,
+     * but just in case there are any left floating around...
+     */
+    HASH_ITER(hh, state->timeouts, syncev, tmp) {
+        HASH_DELETE(hh, state->timeouts, syncev);
+        free(syncev);
+    }
 
     pthread_exit(NULL);
 }
