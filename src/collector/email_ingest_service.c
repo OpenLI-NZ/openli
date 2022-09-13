@@ -111,11 +111,10 @@ static int iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
 
 
     } else if (strcmp(key, "BYTES") == 0) {
-        con_info->thismsg->msg_length = strtoul(data, NULL, 10);
+        //con_info->thismsg->msg_length = strtoul(data, NULL, 10);
     } else if (strcmp(key, "BUFFER") == 0) {
-        /* TODO throw proper error */
-        assert(con_info->thismsg->msg_length != 0);
-        con_info->thismsg->content = malloc(con_info->thismsg->msg_length + 1);
+        int datalen = 0;
+        char *revptr;
 
         ptr = (char *)data;
         while (*ptr == 0x0a || *ptr == 0x0d) {
@@ -127,8 +126,9 @@ static int iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
             con_info->thismsg->content = NULL;
         }
 
-        memcpy(con_info->thismsg->content, ptr, con_info->thismsg->msg_length);
-        con_info->thismsg->content[con_info->thismsg->msg_length] = '\0';
+        datalen = strlen(ptr);
+        con_info->thismsg->content = strdup(ptr);
+        con_info->thismsg->msg_length = datalen;
     }
 
     //logger(LOG_INFO, "KEY %s", key);
