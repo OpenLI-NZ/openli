@@ -122,11 +122,40 @@ static void init_email_session(emailsession_t *sess,
         /* TODO */
     }
 
+    memset(&(sess->sender), 0, sizeof(email_participant_t));
     sess->participants = NULL;
     sess->protocol = cap->type;
     sess->currstate = 0;
     sess->timeout_ev = NULL;
     sess->proto_state = NULL;
+}
+
+void add_email_participant(emailsession_t *sess, char *address, int issender) {
+
+    email_participant_t *part;
+
+    if (!issender) {
+        HASH_FIND(hh, sess->participants, address, strlen(address), part);
+        if (!part) {
+            part = calloc(1, sizeof(email_participant_t));
+            part->emailaddr = address;
+            part->is_sender = 0;
+            HASH_ADD_KEYPTR(hh, sess->participants, part->emailaddr,
+                    strlen(part->emailaddr), part);
+
+            logger(LOG_INFO, "OpenLI: DEVDEBUG adding %s as a recipient for email session %s", address, sess->key);
+        }
+    } else {
+        if (sess->sender.emailaddr) {
+            logger(LOG_INFO, "OpenLI: Email session %s has multiple senders? %s and %s", sess->key, sess->sender.emailaddr, address);
+            free(address);
+            return;
+        }
+        sess->sender.emailaddr = address;
+        sess->sender.is_sender = 1;
+        logger(LOG_INFO, "OpenLI: DEVDEBUG adding %s as the sender for email session %s", address, sess->key);
+    }
+
 }
 
 static void free_email_session(openli_email_worker_t *state,
@@ -136,6 +165,10 @@ static void free_email_session(openli_email_worker_t *state,
 
     if (!sess) {
         return;
+    }
+
+    if (sess->sender.emailaddr) {
+        free(sess->sender.emailaddr);
     }
 
     HASH_ITER(hh, sess->participants, part, tmp) {

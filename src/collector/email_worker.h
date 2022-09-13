@@ -47,6 +47,25 @@ enum {
     OPENLI_EMAIL_DIRECTION_INBOUND
 };
 
+typedef enum {
+    OPENLI_SMTP_STATE_INIT = 0,
+    OPENLI_SMTP_STATE_EHLO,
+    OPENLI_SMTP_STATE_EHLO_RESPONSE,
+    OPENLI_SMTP_STATE_EHLO_OVER,
+    OPENLI_SMTP_STATE_MAIL_FROM,
+    OPENLI_SMTP_STATE_MAIL_FROM_REPLY,
+    OPENLI_SMTP_STATE_MAIL_FROM_OVER,
+    OPENLI_SMTP_STATE_RCPT_TO,
+    OPENLI_SMTP_STATE_RCPT_TO_REPLY,
+    OPENLI_SMTP_STATE_RCPT_TO_OVER,
+    OPENLI_SMTP_STATE_DATA,
+    OPENLI_SMTP_STATE_DATA_INIT_REPLY,
+    OPENLI_SMTP_STATE_DATA_CONTENT,
+    OPENLI_SMTP_STATE_DATA_FINAL_REPLY,
+    OPENLI_SMTP_STATE_DATA_OVER,
+    OPENLI_SMTP_STATE_QUIT
+} openli_smtp_status_t;
+
 typedef struct openli_email_timeouts {
     uint16_t smtp;
     uint16_t imap;
@@ -109,6 +128,6 @@ void free_captured_email(openli_email_captured_t *cap);
 void free_smtp_session_state(emailsession_t *sess, void *smtpstate);
 int update_smtp_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
-
+void add_email_participant(emailsession_t *sess, char *address, int issender);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

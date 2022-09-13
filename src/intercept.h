@@ -271,6 +271,7 @@ struct emailsession {
     struct sockaddr_storage *serveraddr;
     struct sockaddr_storage *clientaddr;
 
+    email_participant_t sender;
     email_participant_t *participants;
 
     uint8_t protocol;
@@ -281,6 +282,24 @@ struct emailsession {
 
     UT_hash_handle hh;
 };
+
+typedef struct smtpsession {
+    char *messageid;
+
+    uint8_t *contbuffer;
+    int contbufsize;
+    int contbufused;
+    int contbufread;
+
+    uint16_t ehlo_reply_code;
+    uint16_t mailfrom_reply_code;
+    uint16_t rcptto_reply_code;
+    uint16_t data_reply_code;
+    int ehlo_start;
+    int mailfrom_start;
+    int rcptto_start;
+    int data_start;
+} smtp_session_t;
 
 struct rtpstreaminf {
     char *streamkey;
