@@ -46,8 +46,12 @@ void free_smtp_session_state(emailsession_t *sess, void *smtpstate) {
 static int append_content_to_smtp_buffer(smtp_session_t *smtpsess,
         openli_email_captured_t *cap) {
 
+    /* "16" is just a bit of extra buffer space to account for
+     * special cases where we need to insert missing "DATA" commands
+     * into the application data stream.
+     */
     while (smtpsess->contbufsize - smtpsess->contbufused <=
-            cap->msg_length + 1) {
+            cap->msg_length + 16) {
         smtpsess->contbuffer = realloc(smtpsess->contbuffer,
                 smtpsess->contbufsize + 4096);
         if (smtpsess->contbuffer == NULL) {
@@ -55,6 +59,16 @@ static int append_content_to_smtp_buffer(smtp_session_t *smtpsess,
         }
 
         smtpsess->contbufsize += 4096;
+    }
+
+    /* Special case -- some ingested data sources skip the DATA
+     * command, so we're going to try and squeeze that in ourselves
+     * whenever we see content beginning with the "354 " response.
+     */
+    if (memcmp(cap->content, (const void *)"354 ", 4) == 0) {
+        memcpy(smtpsess->contbuffer + smtpsess->contbufused,
+                "DATA\r\n", 6);
+        smtpsess->contbufused += 6;
     }
 
     memcpy(smtpsess->contbuffer + smtpsess->contbufused,
@@ -141,7 +155,9 @@ static int find_smtp_reply_code(smtp_session_t *sess, uint16_t *storage) {
         return 0;
     }
 
-    (*storage) = strtoul(search + pmatch[0].rm_so, NULL, 10);
+    if (storage) {
+        (*storage) = strtoul(search + pmatch[0].rm_so, NULL, 10);
+    }
     regfree(&lastreply);
     return find_next_crlf(sess, sess->contbufread + pmatch[0].rm_so);
 }
@@ -158,6 +174,18 @@ static int find_rcpt_to_end(smtp_session_t *sess) {
     return find_next_crlf(sess, sess->rcptto_start);
 }
 
+static int find_data_init_reply_code(smtp_session_t *sess) {
+    return find_smtp_reply_code(sess, &(sess->data_reply_code));
+}
+
+static int find_data_final_reply_code(smtp_session_t *sess) {
+    return find_smtp_reply_code(sess, &(sess->data_final_reply_code));
+}
+
+static int find_reset_reply_code(smtp_session_t *sess) {
+    return find_smtp_reply_code(sess, NULL);
+}
+
 static int find_ehlo_response_end(smtp_session_t *sess) {
     return find_smtp_reply_code(sess, &(sess->ehlo_reply_code));
 }
@@ -168,6 +196,65 @@ static int find_mail_from_reply_end(smtp_session_t *sess) {
 
 static int find_rcpt_to_reply_end(smtp_session_t *sess) {
     return find_smtp_reply_code(sess, &(sess->rcptto_reply_code));
+}
+
+static int find_data_start(smtp_session_t *sess) {
+    uint8_t *found = NULL;
+    assert(sess->contbufused >= sess->contbufread);
+    if (sess->contbufused - sess->contbufread < 6) {
+        return 0;
+    }
+
+    found = (uint8_t *)strcasestr(
+            (const char *)(sess->contbuffer + sess->contbufread),
+            "DATA\r\n");
+    if (found == NULL) {
+        return 0;
+    }
+
+    /* Skip past "DATA\r\n" automatically */
+    sess->data_start = (found - sess->contbuffer);
+    sess->contbufread = sess->data_start + 6;
+    return 1;
+}
+
+static int find_reset_command(smtp_session_t *sess) {
+    uint8_t *found = NULL;
+    assert(sess->contbufused >= sess->contbufread);
+    if (sess->contbufused - sess->contbufread < 6) {
+        return 0;
+    }
+
+    found = (uint8_t *)strcasestr(
+            (const char *)(sess->contbuffer + sess->contbufread),
+            "RSET\r\n");
+    if (found == NULL) {
+        return 0;
+    }
+
+    /* Skip past "RSET\r\n" automatically */
+    sess->contbufread = (found - sess->contbuffer);
+    return 1;
+}
+
+static int find_quit_command(smtp_session_t *sess) {
+    uint8_t *found = NULL;
+    assert(sess->contbufused >= sess->contbufread);
+    if (sess->contbufused - sess->contbufread < 6) {
+        return 0;
+    }
+
+    found = (uint8_t *)strcasestr(
+            (const char *)(sess->contbuffer + sess->contbufread),
+            "QUIT\r\n");
+    if (found == NULL) {
+        return 0;
+    }
+
+    /* Skip past "QUIT\r\n" automatically, even though the session is
+     * going to end at this point... */
+    sess->contbufread = (found - sess->contbuffer);
+    return 1;
 }
 
 static int find_mail_from(smtp_session_t *sess) {
@@ -206,20 +293,47 @@ static int find_rcpt_to(smtp_session_t *sess) {
     return 0;
 }
 
-static int find_ehlo_start(smtp_session_t *sess) {
+static int find_data_content_ending(smtp_session_t *sess) {
+    const char *search = (const char *)(sess->contbuffer + sess->contbufread);
     uint8_t *found = NULL;
 
-    if (sess->contbufused < 5) {
-        return 0;
+    /* An "empty" mail message is ".\r\n" -- edge case, but let's try to
+     * handle it regardless.
+     */
+    if (strncmp(search, ".\r\n", 3) == 0) {
+        sess->contbufread += 3;
+        return 1;
+    }
+    printf("%s\n", search);
+    printf("*************\n");
+
+    found = (uint8_t *)strstr(search, "\r\n.\r\n");
+    if (found != NULL) {
+        sess->contbufread = (found - sess->contbuffer) + 5;
+        sess->data_end = sess->contbufread;
+        return 1;
     }
 
-    found = (uint8_t *)strcasestr((const char *)sess->contbuffer, "EHLO ");
+    return 0;
+}
+
+
+static int find_ehlo_start(smtp_session_t *sess) {
+    uint8_t *found = NULL;
+    const char *search;
+
+    if (sess->contbufused - sess->contbufread < 5) {
+        return 0;
+    }
+    search = (const char *)(sess->contbuffer + sess->contbufread);
+
+    found = (uint8_t *)strcasestr(search, "EHLO ");
     if (found != NULL) {
         sess->ehlo_start = (found - sess->contbuffer);
         return 1;
     }
 
-    found = (uint8_t *)strcasestr((const char *)sess->contbuffer, "HELO ");
+    found = (uint8_t *)strcasestr(search, "HELO ");
     if (found != NULL) {
         sess->ehlo_start = (found - sess->contbuffer);
         return 1;
@@ -232,12 +346,34 @@ static int process_next_smtp_state(emailsession_t *sess,
         smtp_session_t *smtpsess) {
     int r;
 
+    if (sess->currstate != OPENLI_SMTP_STATE_DATA_CONTENT) {
+        if ((r = find_quit_command(smtpsess)) == 1) {
+            sess->currstate = OPENLI_SMTP_STATE_QUIT;
+            logger(LOG_INFO, "OpenLI: DEVDEBUG SMTP QUIT observed -- ending session");
+            return 0;
+        } else if (r < 0) {
+            return r;
+        }
+    }
+
+    if (sess->currstate != OPENLI_SMTP_STATE_DATA_CONTENT) {
+        if ((r = find_reset_command(smtpsess)) == 1) {
+            smtpsess->saved_state = sess->currstate;
+            sess->currstate = OPENLI_SMTP_STATE_RESET;
+            logger(LOG_INFO, "OpenLI: DEVDEBUG SMTP RSET observed");
+            return 1;
+        } else if (r < 0) {
+            return r;
+        }
+    }
+
     if (sess->currstate == OPENLI_SMTP_STATE_INIT ||
             sess->currstate == OPENLI_SMTP_STATE_EHLO_OVER) {
         if ((r = find_ehlo_start(smtpsess)) == 1) {
             sess->currstate = OPENLI_SMTP_STATE_EHLO;
             logger(LOG_INFO, "OpenLI: DEVDEBUG SMTP EHLO found at position %d in message content", smtpsess->ehlo_start);
-        } else {
+            return 1;
+        } else if (r < 0) {
             return r;
         }
     }
@@ -246,7 +382,8 @@ static int process_next_smtp_state(emailsession_t *sess,
         if ((r = find_ehlo_end(smtpsess)) == 1) {
             sess->currstate = OPENLI_SMTP_STATE_EHLO_RESPONSE;
             logger(LOG_INFO, "OpenLI: DEVDEBUG SMTP now looking for EHLO response starting from %d", smtpsess->contbufread);
-        } else {
+            return 1;
+        } else if (r < 0) {
             return r;
         }
     }
@@ -257,7 +394,8 @@ static int process_next_smtp_state(emailsession_t *sess,
             logger(LOG_INFO, "OpenLI: DEVDEBUG SMTP server replied to EHLO with code %u, skipped ahead to %d", smtpsess->ehlo_reply_code, smtpsess->contbufread);
 
             /* TODO send email login event IRI (and CC?) */
-        } else {
+            return 1;
+        } else if (r < 0) {
             return r;
         }
 
@@ -267,7 +405,8 @@ static int process_next_smtp_state(emailsession_t *sess,
         if ((r = find_mail_from(smtpsess)) == 1) {
             sess->currstate = OPENLI_SMTP_STATE_MAIL_FROM;
             logger(LOG_INFO, "OpenLI: DEVDEBUG SMTP MAIL FROM found at position %d in message content", smtpsess->mailfrom_start);
-        } else {
+            return 1;
+        } else if (r < 0) {
             return r;
         }
     }
@@ -275,7 +414,8 @@ static int process_next_smtp_state(emailsession_t *sess,
     if (sess->currstate == OPENLI_SMTP_STATE_MAIL_FROM) {
         if ((r = find_mail_from_end(smtpsess)) == 1) {
             sess->currstate = OPENLI_SMTP_STATE_MAIL_FROM_REPLY;
-        } else {
+            return 1;
+        } else if (r < 0) {
             return r;
         }
     }
@@ -295,19 +435,19 @@ static int process_next_smtp_state(emailsession_t *sess,
             } else {
                 logger(LOG_INFO, "OpenLI: DEVDEBUG SMTP MAIL FROM command received reply code %u -- resetting MAIL FROM state", smtpsess->mailfrom_reply_code);
                 sess->currstate = OPENLI_SMTP_STATE_EHLO_OVER;
-                return 1;
             }
-        } else {
+            return 1;
+        } else if (r < 0) {
             return r;
         }
     }
 
-    if (sess->currstate == OPENLI_SMTP_STATE_MAIL_FROM_OVER ||
-            sess->currstate == OPENLI_SMTP_STATE_RCPT_TO_OVER) {
+    if (sess->currstate == OPENLI_SMTP_STATE_MAIL_FROM_OVER) {
         if ((r = find_rcpt_to(smtpsess)) == 1) {
             sess->currstate = OPENLI_SMTP_STATE_RCPT_TO;
             logger(LOG_INFO, "OpenLI: DEVDEBUG RCPT TO command found at position %d in message content", smtpsess->rcptto_start);
-        } else {
+            return 1;
+        } else if (r < 0) {
             return r;
         }
     }
@@ -315,7 +455,8 @@ static int process_next_smtp_state(emailsession_t *sess,
     if (sess->currstate == OPENLI_SMTP_STATE_RCPT_TO) {
         if ((r = find_rcpt_to_end(smtpsess)) == 1) {
             sess->currstate = OPENLI_SMTP_STATE_RCPT_TO_REPLY;
-        } else {
+            return 1;
+        } else if (r < 0) {
             return r;
         }
     }
@@ -335,14 +476,95 @@ static int process_next_smtp_state(emailsession_t *sess,
             } else {
                 logger(LOG_INFO, "OpenLI: DEVDEBUG SMTP RCPT TO command received reply code %u -- resetting RCPT TO state", smtpsess->rcptto_reply_code);
                 sess->currstate = OPENLI_SMTP_STATE_MAIL_FROM_OVER;
-                return 1;
             }
-        } else {
+            return 1;
+        } else if (r < 0) {
             return r;
         }
     }
 
-    return 1;
+    if (sess->currstate == OPENLI_SMTP_STATE_RCPT_TO_OVER) {
+        if ((r = find_rcpt_to(smtpsess)) == 1) {
+            sess->currstate = OPENLI_SMTP_STATE_RCPT_TO;
+            logger(LOG_INFO, "OpenLI: DEVDEBUG RCPT TO command found at position %d in message content", smtpsess->rcptto_start);
+            /* Need to restart the loop to handle RCPT_TO state again */
+            return 1;
+        } else if ((r = find_data_start(smtpsess)) == 1) {
+            sess->currstate = OPENLI_SMTP_STATE_DATA_INIT_REPLY;
+            logger(LOG_INFO, "OpenLI: DEVDEBUG DATA command observed");
+            return 1;
+        } else if (r < 0) {
+            return r;
+        }
+    }
+
+    if (sess->currstate == OPENLI_SMTP_STATE_DATA_INIT_REPLY) {
+        if ((r = find_data_init_reply_code(smtpsess)) == 1) {
+            if (smtpsess->data_reply_code == 354) {
+                sess->currstate = OPENLI_SMTP_STATE_DATA_CONTENT;
+                logger(LOG_INFO, "OpenLI: DEVDEBUG SMTP DATA command acknowledged");
+            } else {
+                logger(LOG_INFO, "OpenLI: DEVDEBUG SMTP DATA command received reply code %u -- resetting state", smtpsess->data_reply_code);
+                sess->currstate = OPENLI_SMTP_STATE_RCPT_TO_OVER;
+            }
+            return 1;
+        } else if (r < 0) {
+            return r;
+        }
+    }
+
+    if (sess->currstate == OPENLI_SMTP_STATE_DATA_CONTENT) {
+        if ((r = find_data_content_ending(smtpsess)) == 1) {
+            sess->currstate = OPENLI_SMTP_STATE_DATA_FINAL_REPLY;
+            logger(LOG_INFO, "OpenLI: DEVDEBUG SMTP DATA has completed");
+            return 1;
+        } else if (r < 0) {
+            return r;
+        }
+    }
+
+    if (sess->currstate == OPENLI_SMTP_STATE_DATA_FINAL_REPLY) {
+        if ((r = find_data_final_reply_code(smtpsess)) == 1) {
+            if (smtpsess->data_final_reply_code == 250) {
+                sess->currstate = OPENLI_SMTP_STATE_DATA_OVER;
+                logger(LOG_INFO, "OpenLI: DEVDEBUG SMTP DATA phase complete");
+                /* TODO generate email send CC and IRI */
+
+            } else {
+                logger(LOG_INFO, "OpenLI: DEVDEBUG SMTP DATA rejected with reply code %u -- resetting state", smtpsess->data_final_reply_code);
+                sess->currstate = OPENLI_SMTP_STATE_RCPT_TO_OVER;
+            }
+            return 1;
+        } else if (r < 0) {
+            return r;
+        }
+    }
+
+    if (sess->currstate == OPENLI_SMTP_STATE_RESET) {
+        if ((r = find_reset_reply_code(smtpsess)) == 1) {
+            if (smtpsess->saved_state == OPENLI_SMTP_STATE_INIT ||
+                    smtpsess->saved_state == OPENLI_SMTP_STATE_EHLO_OVER ||
+                    smtpsess->saved_state == OPENLI_SMTP_STATE_DATA_OVER) {
+                sess->currstate = smtpsess->saved_state;
+                smtpsess->saved_state = OPENLI_SMTP_STATE_INIT;
+            } else {
+                sess->currstate = OPENLI_SMTP_STATE_EHLO_OVER;
+                smtpsess->saved_state = OPENLI_SMTP_STATE_INIT;
+
+                smtpsess->mailfrom_start = 0;
+                smtpsess->rcptto_start = 0;
+                smtpsess->data_start = 0;
+                smtpsess->data_end = 0;
+                clear_email_participant_list(sess);
+            }
+
+            return 1;
+        } else if (r < 0) {
+            return r;
+        }
+    }
+
+    return 0;
 }
 
 int update_smtp_session_by_ingestion(openli_email_worker_t *state,
@@ -374,6 +596,10 @@ int update_smtp_session_by_ingestion(openli_email_worker_t *state,
         if (r = (process_next_smtp_state(sess, smtpsess)) <= 0) {
             break;
         }
+    }
+
+    if (sess->currstate == OPENLI_SMTP_STATE_QUIT) {
+        return 1;
     }
 
     return 0;

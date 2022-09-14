@@ -291,14 +291,18 @@ typedef struct smtpsession {
     int contbufused;
     int contbufread;
 
+    uint8_t saved_state;
+
     uint16_t ehlo_reply_code;
     uint16_t mailfrom_reply_code;
     uint16_t rcptto_reply_code;
     uint16_t data_reply_code;
+    uint16_t data_final_reply_code;
     int ehlo_start;
     int mailfrom_start;
     int rcptto_start;
     int data_start;
+    int data_end;
 } smtp_session_t;
 
 struct rtpstreaminf {

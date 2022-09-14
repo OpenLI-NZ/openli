@@ -158,17 +158,13 @@ void add_email_participant(emailsession_t *sess, char *address, int issender) {
 
 }
 
-static void free_email_session(openli_email_worker_t *state,
-        emailsession_t *sess) {
+void clear_email_participant_list(emailsession_t *sess) {
 
     email_participant_t *part, *tmp;
 
-    if (!sess) {
-        return;
-    }
-
     if (sess->sender.emailaddr) {
         free(sess->sender.emailaddr);
+        sess->sender.emailaddr = NULL;
     }
 
     HASH_ITER(hh, sess->participants, part, tmp) {
@@ -178,6 +174,17 @@ static void free_email_session(openli_email_worker_t *state,
         }
         free(part);
     }
+
+}
+
+static void free_email_session(openli_email_worker_t *state,
+        emailsession_t *sess) {
+
+
+    if (!sess) {
+        return;
+    }
+    clear_email_participant_list(sess);
 
     if (sess->timeout_ev) {
         sync_epoll_t *ev, *found;
@@ -765,7 +772,7 @@ static int process_sync_thread_message(openli_email_worker_t *state) {
 
 static int process_ingested_capture(openli_email_worker_t *state) {
     openli_email_captured_t *cap = NULL;
-    int x;
+    int x, r;
     char sesskey[256];
     emailsession_t *sess;
 
@@ -805,7 +812,19 @@ static int process_ingested_capture(openli_email_worker_t *state) {
         }
 
         if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
-            update_smtp_session_by_ingestion(state, sess, cap);
+            if ((r = update_smtp_session_by_ingestion(state, sess, cap)) < 0) {
+                logger(LOG_INFO,
+                        "OpenLI: error updating SMTP session '%s' -- removing session...",
+                        sess->key);
+
+                HASH_DELETE(hh, state->activesessions, sess);
+                free_email_session(state, sess);
+            } else if (r == 1) {
+                logger(LOG_INFO, "OpenLI: DEVDEBUG SMTP session '%s' is over",
+                        sess->key);
+                HASH_DELETE(hh, state->activesessions, sess);
+                free_email_session(state, sess);
+            }
         }
 
         update_email_session_timeout(state, sess);

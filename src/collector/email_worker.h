@@ -58,11 +58,11 @@ typedef enum {
     OPENLI_SMTP_STATE_RCPT_TO,
     OPENLI_SMTP_STATE_RCPT_TO_REPLY,
     OPENLI_SMTP_STATE_RCPT_TO_OVER,
-    OPENLI_SMTP_STATE_DATA,
     OPENLI_SMTP_STATE_DATA_INIT_REPLY,
     OPENLI_SMTP_STATE_DATA_CONTENT,
     OPENLI_SMTP_STATE_DATA_FINAL_REPLY,
     OPENLI_SMTP_STATE_DATA_OVER,
+    OPENLI_SMTP_STATE_RESET,
     OPENLI_SMTP_STATE_QUIT
 } openli_smtp_status_t;
 
@@ -129,5 +129,6 @@ void free_smtp_session_state(emailsession_t *sess, void *smtpstate);
 int update_smtp_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
 void add_email_participant(emailsession_t *sess, char *address, int issender);
+void clear_email_participant_list(emailsession_t *sess);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
