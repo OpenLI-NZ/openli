@@ -811,6 +811,8 @@ static int process_ingested_capture(openli_email_worker_t *state) {
             }
         }
 
+        update_email_session_timeout(state, sess);
+
         if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
             if ((r = update_smtp_session_by_ingestion(state, sess, cap)) < 0) {
                 logger(LOG_INFO,
@@ -827,7 +829,6 @@ static int process_ingested_capture(openli_email_worker_t *state) {
             }
         }
 
-        update_email_session_timeout(state, sess);
         free_captured_email(cap);
     } while (x > 0);
 
