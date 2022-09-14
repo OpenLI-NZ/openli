@@ -270,6 +270,8 @@ struct emailsession {
     int ai_family;
     struct sockaddr_storage *serveraddr;
     struct sockaddr_storage *clientaddr;
+    uint32_t server_octets;
+    uint32_t client_octets;
 
     email_participant_t sender;
     email_participant_t *participants;
@@ -290,6 +292,7 @@ typedef struct smtpsession {
     int contbufsize;
     int contbufused;
     int contbufread;
+    int reply_start;
 
     uint8_t saved_state;
 

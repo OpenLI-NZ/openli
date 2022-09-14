@@ -63,7 +63,8 @@ typedef enum {
     OPENLI_SMTP_STATE_DATA_FINAL_REPLY,
     OPENLI_SMTP_STATE_DATA_OVER,
     OPENLI_SMTP_STATE_RESET,
-    OPENLI_SMTP_STATE_QUIT
+    OPENLI_SMTP_STATE_QUIT,
+    OPENLI_SMTP_STATE_QUIT_REPLY
 } openli_smtp_status_t;
 
 typedef struct openli_email_timeouts {

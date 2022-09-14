@@ -128,6 +128,8 @@ static void init_email_session(emailsession_t *sess,
     sess->currstate = 0;
     sess->timeout_ev = NULL;
     sess->proto_state = NULL;
+    sess->server_octets = 0;
+    sess->client_octets = 0;
 }
 
 void add_email_participant(emailsession_t *sess, char *address, int issender) {
