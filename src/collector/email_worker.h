@@ -35,10 +35,10 @@
 #include "collector_base.h"
 
 typedef enum {
-    OPENLI_EMAIL_TYPE_UNKNOWN,
-    OPENLI_EMAIL_TYPE_SMTP,
-    OPENLI_EMAIL_TYPE_POP3,
-    OPENLI_EMAIL_TYPE_IMAP,
+    OPENLI_EMAIL_TYPE_UNKNOWN = 0,
+    OPENLI_EMAIL_TYPE_SMTP = 1,
+    OPENLI_EMAIL_TYPE_POP3 = 2,
+    OPENLI_EMAIL_TYPE_IMAP = 3,
 } openli_email_type_t;
 
 enum {
@@ -131,5 +131,11 @@ int update_smtp_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
 void add_email_participant(emailsession_t *sess, char *address, int issender);
 void clear_email_participant_list(emailsession_t *sess);
+
+/* Defined in emailiri.c */
+int generate_email_login_success_iri(openli_email_worker_t *state,
+        emailsession_t *sess);
+int generate_email_login_failure_iri(openli_email_worker_t *state,
+        emailsession_t *sess);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

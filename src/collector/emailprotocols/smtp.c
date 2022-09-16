@@ -321,7 +321,7 @@ static int find_data_content_ending(smtp_session_t *sess) {
 }
 
 
-static int find_ehlo_start(smtp_session_t *sess) {
+static int find_ehlo_start(emailsession_t *mailsess, smtp_session_t *sess) {
     uint8_t *found = NULL;
     const char *search;
 
@@ -331,23 +331,38 @@ static int find_ehlo_start(smtp_session_t *sess) {
     search = (const char *)(sess->contbuffer + sess->contbufread);
 
     found = (uint8_t *)strcasestr(search, "EHLO ");
+
+    /* In theory, we can have multiple EHLOs (e.g. when STARTTLS is used),
+     * so don't reset the EHLO start pointer if we haven't transitioned past
+     * the EHLO OVER state.
+     */
     if (found != NULL) {
-        sess->ehlo_start = (found - sess->contbuffer);
+        if (mailsess->currstate != OPENLI_SMTP_STATE_EHLO_OVER) {
+            sess->ehlo_start = (found - sess->contbuffer);
+        }
         return 1;
     }
 
     found = (uint8_t *)strcasestr(search, "HELO ");
     if (found != NULL) {
-        sess->ehlo_start = (found - sess->contbuffer);
+        if (mailsess->currstate != OPENLI_SMTP_STATE_EHLO_OVER) {
+            sess->ehlo_start = (found - sess->contbuffer);
+        }
         return 1;
     }
 
     return 0;
 }
 
-static int process_next_smtp_state(emailsession_t *sess,
-        smtp_session_t *smtpsess) {
+static int process_next_smtp_state(openli_email_worker_t *state,
+        emailsession_t *sess, smtp_session_t *smtpsess, uint64_t timestamp) {
     int r;
+
+    /* TODO consider adding state parsing for AUTH, STARTTLS, VRFY, EXPN
+     * and any other SMTP commands that exist -- it will only really
+     * matter for octet counting reasons and I doubt the LEAs care that
+     * much, but something to bear in mind...
+     */
 
     if (sess->currstate != OPENLI_SMTP_STATE_DATA_CONTENT) {
         if ((r = find_quit_command(smtpsess)) == 1) {
@@ -374,7 +389,7 @@ static int process_next_smtp_state(emailsession_t *sess,
 
     if (sess->currstate == OPENLI_SMTP_STATE_INIT ||
             sess->currstate == OPENLI_SMTP_STATE_EHLO_OVER) {
-        if ((r = find_ehlo_start(smtpsess)) == 1) {
+        if ((r = find_ehlo_start(sess, smtpsess)) == 1) {
             sess->currstate = OPENLI_SMTP_STATE_EHLO;
             sess->server_octets +=
                     (smtpsess->ehlo_start - smtpsess->contbufread);
@@ -401,8 +416,8 @@ static int process_next_smtp_state(emailsession_t *sess,
             sess->currstate = OPENLI_SMTP_STATE_EHLO_OVER;
             sess->server_octets +=
                     (smtpsess->contbufread - smtpsess->reply_start);
+            sess->login_time = timestamp;
 
-            /* TODO send email login event IRI (and CC?) */
             return 1;
         } else if (r < 0) {
             return r;
@@ -412,6 +427,7 @@ static int process_next_smtp_state(emailsession_t *sess,
 
     if (sess->currstate == OPENLI_SMTP_STATE_EHLO_OVER) {
         if ((r = find_mail_from(smtpsess)) == 1) {
+            smtpsess->ehlo_reply_end = smtpsess->mailfrom_start;
             sess->currstate = OPENLI_SMTP_STATE_MAIL_FROM;
             return 1;
         } else if (r < 0) {
@@ -502,6 +518,16 @@ static int process_next_smtp_state(emailsession_t *sess,
             /* Need to restart the loop to handle RCPT_TO state again */
             return 1;
         } else if ((r = find_data_start(smtpsess)) == 1) {
+            /* TODO send email login event IRI (and CC?) if any of the
+               participants match a known target.
+            */
+            if (smtpsess->ehlo_reply_code >= 200 &&
+                    smtpsess->ehlo_reply_code < 300) {
+                generate_email_login_success_iri(state, sess);
+            } else {
+                generate_email_login_failure_iri(state, sess);
+            }
+
             sess->currstate = OPENLI_SMTP_STATE_DATA_INIT_REPLY;
             sess->client_octets += 6;
             smtpsess->reply_start = smtpsess->contbufread;
@@ -618,7 +644,8 @@ int update_smtp_session_by_ingestion(openli_email_worker_t *state,
     }
 
     while (1) {
-        if (r = (process_next_smtp_state(sess, smtpsess)) <= 0) {
+        if (r = (process_next_smtp_state(state, sess, smtpsess,
+                cap->timestamp)) <= 0) {
             break;
         }
     }

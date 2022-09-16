@@ -272,6 +272,7 @@ struct emailsession {
     struct sockaddr_storage *clientaddr;
     uint32_t server_octets;
     uint32_t client_octets;
+    uint64_t login_time;
 
     email_participant_t sender;
     email_participant_t *participants;
@@ -302,6 +303,7 @@ typedef struct smtpsession {
     uint16_t data_reply_code;
     uint16_t data_final_reply_code;
     int ehlo_start;
+    int ehlo_reply_end;
     int mailfrom_start;
     int rcptto_start;
     int data_start;

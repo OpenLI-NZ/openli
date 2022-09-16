@@ -82,6 +82,20 @@ typedef struct etsili_ipaddress {
     uint8_t *ipvalue;
 } etsili_ipaddress_t;
 
+typedef struct etsili_email_iri {
+    uint8_t eventtype;
+    struct sockaddr_storage *serveraddr;
+    struct sockaddr_storage *clientaddr;
+    uint32_t server_octets;
+    uint32_t client_octets;
+    uint8_t protocol;
+    uint8_t recipient_count;
+    char *sender;
+    char **recipients;
+    uint8_t status;
+    char *messageid;
+} etsili_email_iri_content_t;
+
 typedef struct etsili_other_targets {
 
     uint8_t count;
@@ -105,6 +119,24 @@ enum {
 enum {
     ETSILI_IPADDRESS_REP_BINARY = 1,
     ETSILI_IPADDRESS_REP_TEXT = 2,
+};
+
+enum {
+    ETSILI_EMAIL_STATUS_UNKNOWN = 1,
+    ETSILI_EMAIL_STATUS_FAILED = 2,
+    ETSILI_EMAIL_STATUS_SUCCESS = 3
+};
+
+enum {
+    ETSILI_EMAIL_EVENT_SEND = 1,
+    ETSILI_EMAIL_EVENT_RECEIVE = 2,
+    ETSILI_EMAIL_EVENT_DOWNLOAD = 3,
+    ETSILI_EMAIL_EVENT_LOGON_ATTEMPT = 4,
+    ETSILI_EMAIL_EVENT_LOGON = 5,
+    ETSILI_EMAIL_EVENT_LOGON_FAILURE = 6,
+    ETSILI_EMAIL_EVENT_LOGOFF = 7,
+    ETSILI_EMAIL_EVENT_PARTIAL_DOWNLOAD = 8,
+    ETSILI_EMAIL_EVENT_UPLOAD = 9,
 };
 
 enum {
@@ -208,6 +240,10 @@ wandder_encoded_result_t *encode_sipiri_body(wandder_encoder_t *encoder,
         int ipfamily, void *sipcontent, uint32_t siplen);
 
 wandder_encoded_result_t *encode_umtsiri_body(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed,
+        etsili_iri_type_t iritype, etsili_generic_t *params);
+
+wandder_encoded_result_t *encode_emailiri_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed,
         etsili_iri_type_t iritype, etsili_generic_t *params);
 

@@ -508,6 +508,19 @@ static int encode_templated_ipmmcc(openli_encoder_t *enc,
     return 1;
 }
 
+static int encode_templated_emailiri(openli_encoder_t *enc,
+        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res) {
+
+    wandder_encoded_result_t *body = NULL;
+    openli_emailiri_job_t *irijob =
+            (openli_emailiri_job_t *)&(job->origreq->data.emailiri);
+
+    /* TODO */
+
+    return 1;
+}
+
 static int encode_templated_umtsiri(openli_encoder_t *enc,
         openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
@@ -803,6 +816,9 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             break;
         case OPENLI_EXPORT_UMTSIRI:
             ret = encode_templated_umtsiri(enc, job, hdr_tplate, res);
+            break;
+        case OPENLI_EXPORT_EMAILIRI:
+            ret = encode_templated_emailiri(enc, job, hdr_tplate, res);
             break;
         default:
             ret = 0;

@@ -56,6 +56,8 @@ enum {
     OPENLI_EXPORT_RAW_SYNC = 18,
     OPENLI_EXPORT_INTERCEPT_CHANGED = 19,
     OPENLI_EXPORT_PROVISIONER_MESSAGE = 20,
+    OPENLI_EXPORT_EMAILCC = 21,
+    OPENLI_EXPORT_EMAILIRI = 22,
 };
 
 /* This structure is also used for IPMMCCs since they require the same
@@ -70,6 +72,13 @@ typedef struct openli_ipcc_job {
     uint32_t cin;
     uint8_t dir;
 } PACKED openli_ipcc_job_t;
+
+typedef struct openli_emailiri_job {
+    char *liid;
+    uint32_t cin;
+    etsili_iri_type_t iritype;
+    etsili_email_iri_content_t content;
+} openli_emailiri_job_t;
 
 typedef struct openli_ipmmiri_job {
     char *liid;
@@ -158,6 +167,7 @@ struct openli_export_recv {
         openli_ipiri_job_t ipiri;
         openli_mobiri_job_t mobiri;
         openli_rawip_job_t rawip;
+        openli_emailiri_job_t emailiri;
     } data;
 };
 
