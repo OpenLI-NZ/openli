@@ -73,7 +73,7 @@ static const char *unsupported_operation =
 static const char *get404 =
         "<html><body>OpenLI provisioner was unable to find the requested resource in its running intercept configuration.</body></html>\n";
 
-int handle_update_request(void *cls, struct MHD_Connection *conn,
+enum MHD_Result handle_update_request(void *cls, struct MHD_Connection *conn,
         const char *url, const char *method, const char *version,
         const char *upload_data, size_t *upload_data_size,
         void **con_cls);

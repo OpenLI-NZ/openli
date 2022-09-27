@@ -57,7 +57,7 @@ static void init_email_ingest_state(email_ingestor_state_t *state,
     state->zmq_publishers = NULL;
 }
 
-static int iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
+static enum MHD_Result iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
             const char *key, const char *filename, const char *content_type,
             const char *transfer_encoding, const char *data, uint64_t off,
             size_t size) {
@@ -200,7 +200,8 @@ static void email_request_completed(void *cls,
     *con_cls = NULL;
 }
 
-static int answer_email_connection(void *cls, struct MHD_Connection *connection,
+static enum MHD_Result answer_email_connection(void *cls,
+                      struct MHD_Connection *connection,
                       const char *url, const char *method,
                       const char *version, const char *upload_data,
                       size_t *upload_data_size, void **con_cls) {

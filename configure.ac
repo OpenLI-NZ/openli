@@ -1,10 +1,10 @@
 # Super primitive configure script
 
-AC_INIT(openli, 1.1.0, salcock@waikato.ac.nz)
+AC_INIT([openli],[1.1.0],[salcock@waikato.ac.nz])
 
 AM_INIT_AUTOMAKE([subdir-objects])
 AC_CONFIG_SRCDIR(src/collector/collector.c)
-AM_CONFIG_HEADER(config.h)
+AC_CONFIG_HEADERS(config.h)
 AC_CONFIG_MACRO_DIR([m4])
 
 m4_ifdef([AM_SILENT_RULES],[AM_SILENT_RULES([yes])])
@@ -14,7 +14,7 @@ AC_PREFIX_DEFAULT(/usr/local/)
 AC_PROG_CC
 AC_PROG_INSTALL
 
-AC_PROG_LIBTOOL
+LT_INIT
 
 EXTRA_LIBS=""
 

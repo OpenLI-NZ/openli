@@ -565,14 +565,14 @@ static int authenticate_request(provision_state_t *provstate,
     return MHD_YES;
 }
 
-int handle_update_request(void *cls, struct MHD_Connection *conn,
+enum MHD_Result handle_update_request(void *cls, struct MHD_Connection *conn,
         const char *url, const char *method, const char *version,
         const char *upload_data, size_t *upload_data_size,
         void **con_cls) {
 
     update_con_info_t *cinfo;
     provision_state_t *provstate = (provision_state_t *)cls;
-    int ret;
+    enum MHD_Result ret;
     const char *realm = "provisioner@openli.nz";
 
     if (*con_cls == NULL) {

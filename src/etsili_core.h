@@ -31,7 +31,7 @@
 #include <libwandder.h>
 #include <uthash.h>
 
-#include "src/intercept.h"
+#include "intercept.h"
 
 #define ENC_USEQUENCE(enc) wandder_encode_next(enc, WANDDER_TAG_SEQUENCE, \
         WANDDER_CLASS_UNIVERSAL_CONSTRUCT, WANDDER_TAG_SEQUENCE, NULL, 0)
