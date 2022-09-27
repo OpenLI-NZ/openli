@@ -78,6 +78,7 @@ typedef struct openli_emailiri_job {
     uint32_t cin;
     etsili_iri_type_t iritype;
     etsili_email_iri_content_t content;
+    etsili_generic_t *customparams;
 } openli_emailiri_job_t;
 
 typedef struct openli_ipmmiri_job {

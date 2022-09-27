@@ -103,6 +103,11 @@ typedef struct etsili_other_targets {
     etsili_ipaddress_t *targets;
 } etsili_other_targets_t;
 
+typedef struct etsili_email_recipients {
+    uint8_t count;
+    char **addresses;
+} etsili_email_recipients_t;
+
 typedef enum {
     ETSILI_IRI_NONE = 0,
     ETSILI_IRI_BEGIN = 1,
@@ -170,6 +175,7 @@ typedef enum {
     OPENLI_PREENCODE_IPCCOID,
     OPENLI_PREENCODE_IPIRIOID,
     OPENLI_PREENCODE_UMTSIRIOID,
+    OPENLI_PREENCODE_EMAILIRIOID,
     OPENLI_PREENCODE_IPMMCCOID,
     OPENLI_PREENCODE_DIRFROM,
     OPENLI_PREENCODE_DIRTO,
@@ -245,7 +251,7 @@ wandder_encoded_result_t *encode_umtsiri_body(wandder_encoder_t *encoder,
 
 wandder_encoded_result_t *encode_emailiri_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed,
-        etsili_iri_type_t iritype, etsili_generic_t *params);
+        etsili_iri_type_t iritype, etsili_generic_t **params);
 
 wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t seqno);

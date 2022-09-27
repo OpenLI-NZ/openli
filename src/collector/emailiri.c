@@ -33,6 +33,8 @@
 #include "email_worker.h"
 #include "netcomms.h"
 #include "intercept.h"
+#include "etsili_core.h"
+#include "emailiri.h"
 
 static inline email_user_intercept_list_t *is_address_interceptable(
         openli_email_worker_t *state, char *emailaddr) {
@@ -65,6 +67,7 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
 
     content = &(msg->data.emailiri.content);
 
+    msg->data.emailiri.customparams = NULL;
     msg->data.emailiri.liid = strdup(liid);
     msg->data.emailiri.cin = sess->cin;
     msg->data.emailiri.iritype = iritype;
@@ -170,6 +173,73 @@ int generate_email_login_failure_iri(openli_email_worker_t *state,
     return generate_email_login_iri(state, sess, 0);
 }
 
+static inline void emailiri_free_recipients(
+        etsili_email_recipients_t *recipients) {
 
+    int i;
+    for (i = 0; i < recipients->count; i++) {
+        free(recipients->addresses[i]);
+    }
+    free(recipients->addresses);
+}
+
+static inline void emailiri_populate_recipients(
+        etsili_email_recipients_t *recipients,
+        uint8_t count, char **reciplist) {
+
+    int i;
+
+    recipients->addresses = calloc(count, sizeof(char *));
+    for (i = 0; i < count; i++) {
+        recipients->addresses[i] = reciplist[i];
+        reciplist[i] = NULL;
+    }
+
+}
+
+void free_emailiri_parameters(etsili_generic_t *params) {
+
+    etsili_email_recipients_t *recipients = NULL;
+    etsili_generic_t *oldp, *tmp;
+
+    HASH_ITER(hh, params, oldp, tmp) {
+        HASH_DELETE(hh, params, oldp);
+        if (oldp->itemnum == EMAILIRI_CONTENTS_RECIPIENTS) {
+            recipients = (etsili_email_recipients_t *)oldp->itemptr;
+            emailiri_free_recipients(recipients);
+        }
+
+        release_etsili_generic(oldp);
+    }
+}
+
+void prepare_emailiri_parameters(etsili_generic_freelist_t *freegenerics,
+        openli_emailiri_job_t *job, etsili_generic_t **params_p) {
+
+    etsili_generic_t *np, *params = *params_p;
+    etsili_email_recipients_t recipients;
+
+    memset(&recipients, 0, sizeof(recipients));
+
+    emailiri_populate_recipients(&recipients, job->content.recipient_count,
+            job->content.recipients);
+    np = create_etsili_generic(freegenerics, EMAILIRI_CONTENTS_RECIPIENTS,
+            sizeof(etsili_email_recipients_t), (uint8_t *)(&recipients));
+    HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+
+    np = create_etsili_generic(freegenerics, EMAILIRI_CONTENTS_TOTAL_RECIPIENTS,
+            sizeof(job->content.recipient_count),
+            (uint8_t *)&(job->content.recipient_count));
+    HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+
+    np = create_etsili_generic(freegenerics, EMAILIRI_CONTENTS_EVENT_TYPE,
+            sizeof(job->content.eventtype),
+            (uint8_t *)&(job->content.eventtype));
+    HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+
+    /* TODO prepare the rest of the parameters... */
+
+    *params_p = params;
+}
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -32,6 +32,7 @@
 #include "ipcc.h"
 #include "ipmmiri.h"
 #include "umtsiri.h"
+#include "emailiri.h"
 #include "collector_base.h"
 #include "logger.h"
 #include "etsili_core.h"
@@ -516,8 +517,36 @@ static int encode_templated_emailiri(openli_encoder_t *enc,
     openli_emailiri_job_t *irijob =
             (openli_emailiri_job_t *)&(job->origreq->data.emailiri);
 
-    /* TODO */
+    /* create custom params from job "contents" */
+    prepare_emailiri_parameters(enc->freegenerics, irijob,
+            &(irijob->customparams));
 
+    reset_wandder_encoder(enc->encoder);
+    body = encode_emailiri_body(enc->encoder, job->preencoded, irijob->iritype,
+            &(irijob->customparams));
+    if (body == NULL || body->len == 0 || body->encoded == NULL) {
+        logger(LOG_INFO, "OpenLI: failed to encode ETSI Email IRI body");
+        if (body) {
+            wandder_release_encoded_result(enc->encoder, body);
+        }
+        return -1;
+    }
+
+    if (create_encoded_message_body(res, hdr_tplate, body->encoded, body->len,
+            job->liid,
+            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
+        wandder_release_encoded_result(enc->encoder, body);
+        return -1;
+    }
+
+    res->ipcontents = NULL;
+    res->ipclen = 0;
+    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
+
+    wandder_release_encoded_result(enc->encoder, body);
+    free_emailiri_parameters(irijob->customparams);
+
+    /* Success */
     return 1;
 }
 
