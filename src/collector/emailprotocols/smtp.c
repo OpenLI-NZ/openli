@@ -518,7 +518,7 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             /* Need to restart the loop to handle RCPT_TO state again */
             return 1;
         } else if ((r = find_data_start(smtpsess)) == 1) {
-            /* TODO send email login event IRI (and CC?) if any of the
+            /* send email login event IRI (and CC?) if any of the
                participants match a known target.
             */
             if (smtpsess->ehlo_reply_code >= 200 &&
@@ -571,7 +571,7 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             if (smtpsess->data_final_reply_code == 250) {
                 sess->currstate = OPENLI_SMTP_STATE_DATA_OVER;
                 /* TODO generate email send CC and IRI */
-
+                generate_email_send_iri(state, sess);
             } else {
                 sess->currstate = OPENLI_SMTP_STATE_RCPT_TO_OVER;
             }
@@ -612,6 +612,7 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             sess->server_octets +=
                     (smtpsess->contbufread - smtpsess->reply_start);
             sess->currstate = OPENLI_SMTP_STATE_QUIT_REPLY;
+            generate_email_logoff_iri(state, sess);
             return 0;
         } else if (r < 0) {
             return r;

@@ -121,24 +121,12 @@ static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
 
 }
 
-static int generate_email_login_iri(openli_email_worker_t *state,
-        emailsession_t *sess, uint8_t success) {
+static inline int generate_iris_for_participants(openli_email_worker_t *state,
+        emailsession_t *sess, uint8_t email_ev, uint8_t iri_type,
+        uint8_t status) {
 
     email_user_intercept_list_t *active;
     email_participant_t *recip, *tmp;
-    uint8_t email_ev;
-    uint8_t iri_type;
-    uint8_t status;
-
-    if (success) {
-        email_ev = ETSILI_EMAIL_EVENT_LOGON;
-        iri_type = ETSILI_IRI_BEGIN;
-        status = ETSILI_EMAIL_STATUS_SUCCESS;
-    } else {
-        email_ev = ETSILI_EMAIL_EVENT_LOGON_FAILURE;
-        iri_type = ETSILI_IRI_REPORT;
-        status = ETSILI_EMAIL_STATUS_FAILED;
-    }
 
     active = is_address_interceptable(state, sess->sender.emailaddr);
     if (active) {
@@ -161,6 +149,44 @@ static int generate_email_login_iri(openli_email_worker_t *state,
     }
 
     return 0;
+}
+
+static int generate_email_login_iri(openli_email_worker_t *state,
+        emailsession_t *sess, uint8_t success) {
+
+    uint8_t email_ev;
+    uint8_t iri_type;
+    uint8_t status;
+
+    if (success) {
+        email_ev = ETSILI_EMAIL_EVENT_LOGON;
+        iri_type = ETSILI_IRI_BEGIN;
+        status = ETSILI_EMAIL_STATUS_SUCCESS;
+    } else {
+        email_ev = ETSILI_EMAIL_EVENT_LOGON_FAILURE;
+        iri_type = ETSILI_IRI_REPORT;
+        status = ETSILI_EMAIL_STATUS_FAILED;
+    }
+
+    return generate_iris_for_participants(state, sess, email_ev, iri_type,
+            status);
+}
+
+int generate_email_send_iri(openli_email_worker_t *state,
+        emailsession_t *sess) {
+
+    return generate_iris_for_participants(state, sess, ETSILI_EMAIL_EVENT_SEND,
+            ETSILI_IRI_CONTINUE, ETSILI_EMAIL_STATUS_SUCCESS);
+
+}
+
+int generate_email_logoff_iri(openli_email_worker_t *state,
+        emailsession_t *sess) {
+
+    return generate_iris_for_participants(state, sess,
+            ETSILI_EMAIL_EVENT_LOGOFF, ETSILI_IRI_END,
+            ETSILI_EMAIL_STATUS_SUCCESS);
+
 }
 
 int generate_email_login_success_iri(openli_email_worker_t *state,

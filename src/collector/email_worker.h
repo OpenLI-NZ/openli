@@ -137,5 +137,9 @@ int generate_email_login_success_iri(openli_email_worker_t *state,
         emailsession_t *sess);
 int generate_email_login_failure_iri(openli_email_worker_t *state,
         emailsession_t *sess);
+int generate_email_send_iri(openli_email_worker_t *state,
+        emailsession_t *sess);
+int generate_email_logoff_iri(openli_email_worker_t *state,
+        emailsession_t *sess);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
