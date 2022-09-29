@@ -83,16 +83,16 @@ typedef struct etsili_ipaddress {
 } etsili_ipaddress_t;
 
 typedef struct etsili_email_iri {
-    uint8_t eventtype;
+    uint32_t eventtype;
     struct sockaddr_storage *serveraddr;
     struct sockaddr_storage *clientaddr;
     uint32_t server_octets;
     uint32_t client_octets;
-    uint8_t protocol;
-    uint8_t recipient_count;
+    uint32_t protocol;
+    uint32_t recipient_count;
     char *sender;
     char **recipients;
-    uint8_t status;
+    uint32_t status;
     char *messageid;
 } etsili_email_iri_content_t;
 
@@ -104,7 +104,7 @@ typedef struct etsili_other_targets {
 } etsili_other_targets_t;
 
 typedef struct etsili_email_recipients {
-    uint8_t count;
+    uint32_t count;
     char **addresses;
 } etsili_email_recipients_t;
 

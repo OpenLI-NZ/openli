@@ -185,10 +185,11 @@ static inline void emailiri_free_recipients(
 
 static inline void emailiri_populate_recipients(
         etsili_email_recipients_t *recipients,
-        uint8_t count, char **reciplist) {
+        uint32_t count, char **reciplist) {
 
     int i;
 
+    recipients->count = count;
     recipients->addresses = calloc(count, sizeof(char *));
     for (i = 0; i < count; i++) {
         recipients->addresses[i] = reciplist[i];
@@ -218,6 +219,8 @@ void prepare_emailiri_parameters(etsili_generic_freelist_t *freegenerics,
 
     etsili_generic_t *np, *params = *params_p;
     etsili_email_recipients_t recipients;
+    etsili_ipaddress_t encip;
+    uint32_t port;
 
     memset(&recipients, 0, sizeof(recipients));
 
@@ -237,7 +240,111 @@ void prepare_emailiri_parameters(etsili_generic_freelist_t *freegenerics,
             (uint8_t *)&(job->content.eventtype));
     HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
 
-    /* TODO prepare the rest of the parameters... */
+    np = create_etsili_generic(freegenerics, EMAILIRI_CONTENTS_PROTOCOL_ID,
+            sizeof(job->content.protocol),
+            (uint8_t *)&(job->content.protocol));
+    HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+
+    np = create_etsili_generic(freegenerics, EMAILIRI_CONTENTS_STATUS,
+            sizeof(job->content.status),
+            (uint8_t *)&(job->content.status));
+    HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+
+    np = create_etsili_generic(freegenerics, EMAILIRI_CONTENTS_SENDER,
+            strlen(job->content.sender), (uint8_t *)(job->content.sender));
+    HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+
+    if (job->content.messageid) {
+        np = create_etsili_generic(freegenerics, EMAILIRI_CONTENTS_MESSAGE_ID,
+                strlen(job->content.messageid),
+                (uint8_t *)(job->content.messageid));
+        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+    }
+
+    np = create_etsili_generic(freegenerics,
+            EMAILIRI_CONTENTS_SERVER_OCTETS_SENT,
+            sizeof(job->content.server_octets),
+            (uint8_t *)&(job->content.server_octets));
+    HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+
+    np = create_etsili_generic(freegenerics,
+            EMAILIRI_CONTENTS_CLIENT_OCTETS_SENT,
+            sizeof(job->content.client_octets),
+            (uint8_t *)&(job->content.client_octets));
+    HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+
+    if (job->content.serveraddr &&
+            job->content.serveraddr->ss_family == AF_INET) {
+        struct sockaddr_in *in = (struct sockaddr_in *)
+                (job->content.serveraddr);
+        port = ntohs(in->sin_port);
+
+        etsili_create_ipaddress_v4(
+                (uint32_t *)(&(in->sin_addr.s_addr)), 32,
+                ETSILI_IPADDRESS_ASSIGNED_UNKNOWN, &encip);
+        np = create_etsili_generic(freegenerics,
+                EMAILIRI_CONTENTS_SERVER_ADDRESS,
+                sizeof(etsili_ipaddress_t), (uint8_t *)(&encip));
+        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+
+        np = create_etsili_generic(freegenerics,
+                EMAILIRI_CONTENTS_SERVER_PORT, sizeof(port), (uint8_t *)&port);
+        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+
+    } else if (job->content.serveraddr &&
+            job->content.serveraddr->ss_family == AF_INET6) {
+        struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)
+                (job->content.serveraddr);
+        port = ntohs(in6->sin6_port);
+
+        etsili_create_ipaddress_v6(
+                (uint8_t *)(&(in6->sin6_addr.s6_addr)), 128,
+                ETSILI_IPADDRESS_ASSIGNED_UNKNOWN, &encip);
+        np = create_etsili_generic(freegenerics,
+                EMAILIRI_CONTENTS_SERVER_ADDRESS,
+                sizeof(etsili_ipaddress_t), (uint8_t *)(&encip));
+        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+
+        np = create_etsili_generic(freegenerics,
+                EMAILIRI_CONTENTS_SERVER_PORT, sizeof(port), (uint8_t *)&port);
+        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+    }
+
+    if (job->content.clientaddr &&
+            job->content.clientaddr->ss_family == AF_INET) {
+        struct sockaddr_in *in = (struct sockaddr_in *)
+                (job->content.clientaddr);
+        port = ntohs(in->sin_port);
+
+        etsili_create_ipaddress_v4(
+                (uint32_t *)(&(in->sin_addr.s_addr)), 32,
+                ETSILI_IPADDRESS_ASSIGNED_UNKNOWN, &encip);
+        np = create_etsili_generic(freegenerics,
+                EMAILIRI_CONTENTS_CLIENT_ADDRESS,
+                sizeof(etsili_ipaddress_t), (uint8_t *)(&encip));
+        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+
+        np = create_etsili_generic(freegenerics,
+                EMAILIRI_CONTENTS_CLIENT_PORT, sizeof(port), (uint8_t *)&port);
+        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+    } else if (job->content.clientaddr &&
+            job->content.clientaddr->ss_family == AF_INET6) {
+        struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)
+                (job->content.clientaddr);
+        port = ntohs(in6->sin6_port);
+
+        etsili_create_ipaddress_v6(
+                (uint8_t *)(&(in6->sin6_addr.s6_addr)), 128,
+                ETSILI_IPADDRESS_ASSIGNED_UNKNOWN, &encip);
+        np = create_etsili_generic(freegenerics,
+                EMAILIRI_CONTENTS_CLIENT_ADDRESS,
+                sizeof(etsili_ipaddress_t), (uint8_t *)(&encip));
+        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+
+        np = create_etsili_generic(freegenerics,
+                EMAILIRI_CONTENTS_CLIENT_PORT, sizeof(port), (uint8_t *)&port);
+        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+    }
 
     *params_p = params;
 }

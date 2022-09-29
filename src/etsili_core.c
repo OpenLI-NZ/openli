@@ -363,8 +363,16 @@ static inline void encode_ipiri_id(wandder_encoder_t *encoder,
 static inline void encode_email_recipients(wandder_encoder_t *encoder,
         etsili_email_recipients_t *recipients) {
 
-    /* TODO */
+    int i;
 
+    ENC_USEQUENCE(encoder);
+    for (i = 0; i < recipients->count; i++) {
+        wandder_encode_next(encoder, WANDDER_TAG_UTF8STR,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, recipients->addresses[i],
+                strlen(recipients->addresses[i]));
+    }
+
+    END_ENCODED_SEQUENCE(encoder, 1);
 }
 
 static inline void encode_other_targets(wandder_encoder_t *encoder,
@@ -677,7 +685,7 @@ wandder_encoded_result_t *encode_emailiri_body(wandder_encoder_t *encoder,
     jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
     jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
     jobarray[2] = &(precomputed[OPENLI_PREENCODE_EMAILIRIOID]);
-    wandder_encode_next_preencoded(encoder, jobarray, 2);
+    wandder_encode_next_preencoded(encoder, jobarray, 3);
 
     HASH_SRT(hh, *params, sort_etsili_generic);
 
@@ -707,6 +715,10 @@ wandder_encoded_result_t *encode_emailiri_body(wandder_encoder_t *encoder,
                         p->itemptr, p->itemlen);
                 break;
             case EMAILIRI_CONTENTS_SENDER:
+                wandder_encode_next(encoder, WANDDER_TAG_UTF8STR,
+                        WANDDER_CLASS_CONTEXT_PRIMITIVE, p->itemnum,
+                        p->itemptr, p->itemlen);
+                break;
             case EMAILIRI_CONTENTS_MESSAGE_ID:
             case EMAILIRI_CONTENTS_NATIONAL_PARAMETER:
                 wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
