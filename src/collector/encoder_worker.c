@@ -711,6 +711,69 @@ static int encode_templated_umtscc(openli_encoder_t *enc,
 
 }
 
+static int encode_templated_emailcc(openli_encoder_t *enc,
+        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res) {
+
+    uint32_t key = 0;
+    encoded_global_template_t *emailcc_tplate = NULL;
+    openli_emailcc_job_t *emailccjob;
+    uint8_t is_new = 0;
+
+    emailccjob = (openli_emailcc_job_t *)&(job->origreq->data.emailcc);
+
+    if (emailccjob->format == ETSILI_EMAIL_CC_FORMAT_IP &&
+            emailccjob->dir == ETSI_DIR_FROM_TARGET) {
+        key = (TEMPLATE_TYPE_EMAILCC_IP_DIRFROM << 16) +
+                emailccjob->cc_content_len;
+    } else if (emailccjob->format == ETSILI_EMAIL_CC_FORMAT_APP &&
+            emailccjob->dir == ETSI_DIR_FROM_TARGET) {
+        key = (TEMPLATE_TYPE_EMAILCC_APP_DIRFROM << 16) +
+                emailccjob->cc_content_len;
+    } else if (emailccjob->format == ETSILI_EMAIL_CC_FORMAT_IP &&
+            emailccjob->dir == ETSI_DIR_TO_TARGET) {
+        key = (TEMPLATE_TYPE_EMAILCC_IP_DIRTO << 16) +
+                emailccjob->cc_content_len;
+    } else if (emailccjob->format == ETSILI_EMAIL_CC_FORMAT_APP &&
+            emailccjob->dir == ETSI_DIR_TO_TARGET) {
+        key = (TEMPLATE_TYPE_EMAILCC_APP_DIRTO << 16) +
+                emailccjob->cc_content_len;
+    } else {
+        logger(LOG_INFO, "Unexpected format + direction for EmailCC: %u %u",
+                emailccjob->format, emailccjob->dir);
+        return -1;
+    }
+
+    emailcc_tplate = lookup_global_template(enc, key, &is_new);
+
+    if (is_new) {
+        if (etsili_create_emailcc_template(enc->encoder, job->preencoded,
+                emailccjob->format, emailccjob->dir,
+                emailccjob->cc_content_len, emailcc_tplate) < 0) {
+            logger(LOG_INFO, "OpenLI: Failed to create EmailCC template?");
+            return -1;
+        }
+    }
+    /* We have very specific templates for each observed packet size, so
+     * this will not require updating */
+
+    if (create_encoded_message_body(res, hdr_tplate,
+            emailcc_tplate->cc_content.cc_wrap,
+            emailcc_tplate->cc_content.cc_wrap_len,
+            job->liid,
+            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
+        return -1;
+    }
+
+    /* Set ipcontents in the result */
+    res->ipcontents = (uint8_t *)emailccjob->cc_content;
+    res->ipclen = emailccjob->cc_content_len;
+    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
+
+    /* Success */
+    return 1;
+}
+
 static int encode_templated_ipcc(openli_encoder_t *enc,
         openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
@@ -848,6 +911,9 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             break;
         case OPENLI_EXPORT_EMAILIRI:
             ret = encode_templated_emailiri(enc, job, hdr_tplate, res);
+            break;
+        case OPENLI_EXPORT_EMAILCC:
+            ret = encode_templated_emailcc(enc, job, hdr_tplate, res);
             break;
         default:
             ret = 0;

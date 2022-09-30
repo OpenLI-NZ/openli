@@ -133,6 +133,11 @@ enum {
 };
 
 enum {
+    ETSILI_EMAIL_CC_FORMAT_IP = 1,
+    ETSILI_EMAIL_CC_FORMAT_APP = 2,
+};
+
+enum {
     ETSILI_EMAIL_EVENT_SEND = 1,
     ETSILI_EMAIL_EVENT_RECEIVE = 2,
     ETSILI_EMAIL_EVENT_DOWNLOAD = 3,
@@ -176,6 +181,7 @@ typedef enum {
     OPENLI_PREENCODE_IPIRIOID,
     OPENLI_PREENCODE_UMTSIRIOID,
     OPENLI_PREENCODE_EMAILIRIOID,
+    OPENLI_PREENCODE_EMAILCCOID,
     OPENLI_PREENCODE_IPMMCCOID,
     OPENLI_PREENCODE_DIRFROM,
     OPENLI_PREENCODE_DIRTO,
@@ -295,6 +301,9 @@ int etsili_update_header_template(encoded_header_template_t *tplate,
 int etsili_create_ipcc_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
         encoded_global_template_t *tplate);
+int etsili_create_emailcc_template(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, uint8_t format, uint8_t dir,
+        uint16_t ipclen, encoded_global_template_t *tplate);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

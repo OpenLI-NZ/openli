@@ -570,8 +570,12 @@ static int process_next_smtp_state(openli_email_worker_t *state,
                     (smtpsess->contbufread - smtpsess->reply_start);
             if (smtpsess->data_final_reply_code == 250) {
                 sess->currstate = OPENLI_SMTP_STATE_DATA_OVER;
-                /* TODO generate email send CC and IRI */
+                /* generate email send CC and IRI */
                 generate_email_send_iri(state, sess);
+                generate_email_cc_from_app_payload(state, sess,
+                        smtpsess->contbuffer + smtpsess->data_start,
+                        smtpsess->contbufread - smtpsess->data_start,
+                        timestamp);
             } else {
                 sess->currstate = OPENLI_SMTP_STATE_RCPT_TO_OVER;
             }

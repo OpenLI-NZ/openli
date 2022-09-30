@@ -141,5 +141,10 @@ int generate_email_send_iri(openli_email_worker_t *state,
         emailsession_t *sess);
 int generate_email_logoff_iri(openli_email_worker_t *state,
         emailsession_t *sess);
+
+/* Defined in emailcc.c */
+int generate_email_cc_from_app_payload(openli_email_worker_t *state,
+        emailsession_t *sess, uint8_t *content, int content_len,
+        uint64_t timestamp);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

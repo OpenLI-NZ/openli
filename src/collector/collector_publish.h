@@ -81,6 +81,15 @@ typedef struct openli_emailiri_job {
     etsili_generic_t *customparams;
 } openli_emailiri_job_t;
 
+typedef struct openli_emailcc_job {
+    char *liid;
+    uint32_t cin;
+    uint8_t format;
+    uint8_t dir;
+    uint8_t *cc_content;
+    int cc_content_len;
+} openli_emailcc_job_t;
+
 typedef struct openli_ipmmiri_job {
     char *liid;
     uint32_t cin;
@@ -169,6 +178,7 @@ struct openli_export_recv {
         openli_mobiri_job_t mobiri;
         openli_rawip_job_t rawip;
         openli_emailiri_job_t emailiri;
+        openli_emailcc_job_t emailcc;
     } data;
 };
 
