@@ -47,6 +47,7 @@
 #include "netcomms.h"
 #include "intercept.h"
 #include "timed_intercept.h"
+#include "collector.h"
 
 static inline const char *email_type_to_string(openli_email_type_t t) {
     if (t == OPENLI_EMAIL_TYPE_POP3) {
@@ -97,10 +98,111 @@ static struct sockaddr_storage *construct_sockaddr(char *ip, char *port,
 
     getnameinfo((struct sockaddr *)saddr, sizeof(struct sockaddr_storage),
             host, 256, serv, 256, NI_NUMERICHOST | NI_NUMERICSERV);
-    logger(LOG_INFO, "OpenLI: DEVDEBUG sockaddr is %s:%s", host, port);
 
     freeaddrinfo(res);
     return saddr;
+}
+
+static openli_email_captured_t *convert_packet_to_email_captured(
+        libtrace_packet_t *pkt, uint8_t emailtype) {
+
+    char space[256];
+    int spacelen = 256;
+    char ip_a[INET6_ADDRSTRLEN];
+    char ip_b[INET6_ADDRSTRLEN];
+    char portstr[16];
+    libtrace_tcp_t *tcp;
+    uint32_t rem;
+    uint8_t proto;
+    void *posttcp;
+
+    uint16_t src_port, dest_port, rem_port, host_port;
+    openli_email_captured_t *cap = NULL;
+
+    src_port = trace_get_source_port(pkt);
+    dest_port = trace_get_destination_port(pkt);
+
+    if (src_port == 0 || dest_port == 0) {
+        return NULL;
+    }
+
+    tcp = (libtrace_tcp_t *)(trace_get_transport(pkt, &proto, &rem));
+    if (tcp == NULL || proto != TRACE_IPPROTO_TCP || rem == 0) {
+        return NULL;
+    }
+
+    posttcp = trace_get_payload_from_tcp(tcp, &rem);
+
+    /* Ensure that bi-directional flows return the same session ID by
+     * always putting the IP and port for the endpoint with the smallest of
+     * the two ports first...
+     */
+
+    if (src_port < dest_port) {
+        if (trace_get_source_address_string(pkt, ip_a, INET6_ADDRSTRLEN)
+                == NULL) {
+            return NULL;
+        }
+        if (trace_get_destination_address_string(pkt, ip_b, INET6_ADDRSTRLEN)
+                == NULL) {
+            return NULL;
+        }
+
+        rem_port = dest_port;
+        host_port = src_port;
+    } else {
+        if (trace_get_source_address_string(pkt, ip_b, INET6_ADDRSTRLEN)
+                == NULL) {
+            return NULL;
+        }
+        if (trace_get_destination_address_string(pkt, ip_a, INET6_ADDRSTRLEN)
+                == NULL) {
+            return NULL;
+        }
+        host_port = dest_port;
+        rem_port = src_port;
+    }
+
+    snprintf(space, spacelen, "%s-%s-%u-%u", ip_a, ip_b, host_port,
+            rem_port);
+
+    cap = calloc(1, sizeof(openli_email_captured_t));
+    if (emailtype == OPENLI_UPDATE_SMTP) {
+        cap->type = OPENLI_EMAIL_TYPE_SMTP;
+    } else if (emailtype == OPENLI_UPDATE_IMAP) {
+        cap->type = OPENLI_EMAIL_TYPE_IMAP;
+    } else {
+        cap->type = OPENLI_EMAIL_TYPE_UNKNOWN;
+    }
+
+    cap->session_id = strdup(space);
+    cap->target_id = NULL;
+    cap->datasource = NULL;
+    cap->remote_ip = strdup(ip_b);
+    cap->host_ip = strdup(ip_a);
+
+
+    snprintf(portstr, 16, "%u", rem_port);
+    cap->remote_port = strdup(portstr);
+    snprintf(portstr, 16, "%u", host_port);
+    cap->host_port = strdup(portstr);
+
+    cap->timestamp = (trace_get_seconds(pkt) * 1000);
+    cap->mail_id = 0;
+    cap->msg_length = trace_get_payload_length(pkt);
+
+    if (cap->msg_length > rem) {
+        cap->msg_length = rem;
+    }
+
+
+    if (cap->msg_length > 0 && posttcp != NULL) {
+        cap->content = malloc(cap->msg_length);
+        memcpy(cap->content, posttcp, cap->msg_length);
+    } else {
+        cap->content = NULL;
+    }
+    return cap;
 }
 
 static void init_email_session(emailsession_t *sess,
@@ -772,10 +874,85 @@ static int process_sync_thread_message(openli_email_worker_t *state) {
     return 1;
 }
 
+static int find_and_update_active_session(openli_email_worker_t *state,
+        openli_email_captured_t *cap) {
+
+    char sesskey[256];
+    emailsession_t *sess;
+    int r;
+
+    snprintf(sesskey, 256, "%s-%s", email_type_to_string(cap->type),
+            cap->session_id);
+
+    HASH_FIND(hh, state->activesessions, sesskey, strlen(sesskey), sess);
+    if (!sess) {
+        sess = calloc(1, sizeof(emailsession_t));
+        init_email_session(sess, cap, sesskey);
+        HASH_ADD_KEYPTR(hh, state->activesessions, sess->key,
+                strlen(sess->key), sess);
+
+        if (state->emailid == 0) {
+            logger(LOG_INFO, "OpenLI: DEVDEBUG adding new session '%s'",
+                    sesskey);
+        }
+    }
+
+    update_email_session_timeout(state, sess);
+
+    if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
+        if ((r = update_smtp_session_by_ingestion(state, sess, cap)) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: error updating SMTP session '%s' -- removing session...",
+                    sess->key);
+
+            HASH_DELETE(hh, state->activesessions, sess);
+            free_email_session(state, sess);
+        } else if (r == 1) {
+            logger(LOG_INFO, "OpenLI: DEVDEBUG SMTP session '%s' is over",
+                    sess->key);
+            HASH_DELETE(hh, state->activesessions, sess);
+            free_email_session(state, sess);
+        }
+    }
+
+    free_captured_email(cap);
+}
+
+static int process_received_packet(openli_email_worker_t *state) {
+    openli_state_update_t recvd;
+    int rc;
+    openli_email_captured_t *cap = NULL;
+
+    do {
+        rc = zmq_recv(state->zmq_colthread_recvsock, &recvd, sizeof(recvd),
+                ZMQ_DONTWAIT);
+        if (rc < 0) {
+            if (errno == EAGAIN) {
+                return 0;
+            }
+            logger(LOG_INFO,
+                    "OpenLI: error while receiving email packet in email thread %d: %s", state->emailid, strerror(errno));
+            return -1;
+        }
+
+        cap = convert_packet_to_email_captured(recvd.data.pkt, recvd.type);
+
+        if (cap == NULL) {
+            logger(LOG_INFO, "OpenLI: unable to derive email session ID from received packet in email thread %d", state->emailid);
+            return -1;
+        }
+        if (cap->content != NULL) {
+            find_and_update_active_session(state, cap);
+        }
+        trace_destroy_packet(recvd.data.pkt);
+    } while (rc > 0);
+
+    return 0;
+}
+
 static int process_ingested_capture(openli_email_worker_t *state) {
     openli_email_captured_t *cap = NULL;
     int x, r;
-    char sesskey[256];
     emailsession_t *sess;
 
     do {
@@ -796,42 +973,8 @@ static int process_ingested_capture(openli_email_worker_t *state) {
         if (cap == NULL) {
             break;
         }
+        find_and_update_active_session(state, cap);
 
-        snprintf(sesskey, 256, "%s-%s", email_type_to_string(cap->type),
-                cap->session_id);
-
-        HASH_FIND(hh, state->activesessions, sesskey, strlen(sesskey), sess);
-        if (!sess) {
-            sess = calloc(1, sizeof(emailsession_t));
-            init_email_session(sess, cap, sesskey);
-            HASH_ADD_KEYPTR(hh, state->activesessions, sess->key,
-                    strlen(sess->key), sess);
-
-            if (state->emailid == 0) {
-                logger(LOG_INFO, "OpenLI: DEVDEBUG adding new session '%s'",
-                        sesskey);
-            }
-        }
-
-        update_email_session_timeout(state, sess);
-
-        if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
-            if ((r = update_smtp_session_by_ingestion(state, sess, cap)) < 0) {
-                logger(LOG_INFO,
-                        "OpenLI: error updating SMTP session '%s' -- removing session...",
-                        sess->key);
-
-                HASH_DELETE(hh, state->activesessions, sess);
-                free_email_session(state, sess);
-            } else if (r == 1) {
-                logger(LOG_INFO, "OpenLI: DEVDEBUG SMTP session '%s' is over",
-                        sess->key);
-                HASH_DELETE(hh, state->activesessions, sess);
-                free_email_session(state, sess);
-            }
-        }
-
-        free_captured_email(cap);
     } while (x > 0);
 
     return 1;
@@ -850,8 +993,7 @@ static void email_worker_main(openli_email_worker_t *state) {
     /* TODO add other consumer sockets to topoll */
 
     while (1) {
-        /* TODO replace 2 with 3 when we add the other ZMQ sockets */
-        topoll_req = 2 + HASH_CNT(hh, state->timeouts);
+        topoll_req = 3 + HASH_CNT(hh, state->timeouts);
 
         if (topoll_req > state->topoll_size) {
             if (state->topoll) {
@@ -871,7 +1013,10 @@ static void email_worker_main(openli_email_worker_t *state) {
         state->topoll[1].socket = state->zmq_ingest_recvsock;
         state->topoll[1].events = ZMQ_POLLIN;
 
-        x = 2;
+        state->topoll[2].socket = state->zmq_colthread_recvsock;
+        state->topoll[2].events = ZMQ_POLLIN;
+
+        x = 3;
         HASH_ITER(hh, state->timeouts, ev, tmp) {
             state->topoll[x].socket = NULL;
             state->topoll[x].fd = ev->fd;
@@ -910,7 +1055,16 @@ static void email_worker_main(openli_email_worker_t *state) {
             state->topoll[1].revents = 0;
         }
 
-        for (x = 2; x < topoll_req; x++) {
+        if (state->topoll[2].revents & ZMQ_POLLIN) {
+            /* message from the email ingesting thread */
+            x = process_received_packet(state);
+            if (x < 0) {
+                break;
+            }
+            state->topoll[2].revents = 0;
+        }
+
+        for (x = 3; x < topoll_req; x++) {
             emailsession_t *sessfound;
 
             if (state->topoll[x].revents & ZMQ_POLLIN) {
@@ -986,6 +1140,7 @@ void *start_email_worker_thread(void *arg) {
     int x, zero = 0;
     char sockname[256];
     sync_epoll_t *syncev, *tmp;
+    openli_state_update_t recvd;
 
     state->zmq_pubsocks = calloc(state->tracker_threads, sizeof(void *));
     state->zmq_fwdsocks = calloc(state->fwd_threads, sizeof(void *));
@@ -1010,9 +1165,6 @@ void *start_email_worker_thread(void *arg) {
          goto haltemailworker;
      }
 
-     /* TODO set up ZMQs for consuming email captures and publishing
-      * encoding jobs */
-
     state->zmq_ingest_recvsock = zmq_socket(state->zmq_ctxt, ZMQ_PULL);
     snprintf(sockname, 256, "inproc://openliemailworker-ingest%d",
             state->emailid);
@@ -1022,37 +1174,55 @@ void *start_email_worker_thread(void *arg) {
         goto haltemailworker;
     }
 
-     if (zmq_setsockopt(state->zmq_ingest_recvsock, ZMQ_LINGER, &zero,
+    if (zmq_setsockopt(state->zmq_ingest_recvsock, ZMQ_LINGER, &zero,
             sizeof(zero)) != 0) {
          logger(LOG_INFO, "OpenLI: email processing thread %d failed to configure ingesting zmq: %s", state->emailid, strerror(errno));
          goto haltemailworker;
-     }
+    }
+
+    state->zmq_colthread_recvsock = zmq_socket(state->zmq_ctxt, ZMQ_PULL);
+    snprintf(sockname, 256, "inproc://openliemailworker-colrecv%d",
+            state->emailid);
+
+    if (zmq_bind(state->zmq_colthread_recvsock, sockname) < 0) {
+        logger(LOG_INFO, "OpenLI: email processing thread %d failed to bind to colthread zmq: %s", state->emailid, strerror(errno));
+        goto haltemailworker;
+    }
+
+    if (zmq_setsockopt(state->zmq_colthread_recvsock, ZMQ_LINGER, &zero,
+            sizeof(zero)) != 0) {
+         logger(LOG_INFO, "OpenLI: email processing thread %d failed to configure colthread zmq: %s", state->emailid, strerror(errno));
+         goto haltemailworker;
+    }
 
     email_worker_main(state);
 
     do {
-        /* TODO drain remaining email captures and free them */
-        x = 0;
-
+        /* drain remaining email captures and free them */
+        x = zmq_recv(state->zmq_colthread_recvsock, &recvd, sizeof(recvd),
+                ZMQ_DONTWAIT);
+        if (x > 0) {
+            trace_destroy_packet(recvd.data.pkt);
+        }
     } while (x > 0);
 
 haltemailworker:
     logger(LOG_INFO, "OpenLI: halting email processing thread %d",
             state->emailid);
-    /* TODO free all state for intercepts and active sessions */
+    /* free all state for intercepts and active sessions */
     clear_email_user_intercept_list(state->alltargets);
     free_all_emailintercepts(&(state->allintercepts));
     free_all_email_sessions(state);
 
+    /* close all ZMQs */
     zmq_close(state->zmq_ii_sock);
-
-    /* TODO close all other ZMQs */
 
     if (state->topoll) {
         free(state->topoll);
     }
 
     zmq_close(state->zmq_ingest_recvsock);
+    zmq_close(state->zmq_colthread_recvsock);
 
     clear_zmqsocks(state->zmq_pubsocks, state->tracker_threads);
     clear_zmqsocks(state->zmq_fwdsocks, state->fwd_threads);

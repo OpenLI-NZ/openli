@@ -566,6 +566,12 @@ void handle_push_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
         case OPENLI_CORE_SERVER_SIP:
             servlist = &(loc->sipservers);
             break;
+        case OPENLI_CORE_SERVER_SMTP:
+            servlist = &(loc->smtpservers);
+            break;
+        case OPENLI_CORE_SERVER_IMAP:
+            servlist = &(loc->imapservers);
+            break;
         case OPENLI_CORE_SERVER_GTP:
             servlist = &(loc->gtpservers);
             break;
@@ -600,6 +606,12 @@ void handle_remove_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
             break;
         case OPENLI_CORE_SERVER_SIP:
             servlist = &(loc->sipservers);
+            break;
+        case OPENLI_CORE_SERVER_SMTP:
+            servlist = &(loc->smtpservers);
+            break;
+        case OPENLI_CORE_SERVER_IMAP:
+            servlist = &(loc->imapservers);
             break;
         case OPENLI_CORE_SERVER_GTP:
             servlist = &(loc->gtpservers);

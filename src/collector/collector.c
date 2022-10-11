@@ -115,6 +115,8 @@ static void log_collector_stats(collector_global_t *glob) {
             glob->stats.packets_intercepted);
     logger(LOG_INFO, "OpenLI: Packets sent to IP sync: %lu,  sent to VOIP sync: %lu",
             glob->stats.packets_sync_ip, glob->stats.packets_sync_voip);
+    logger(LOG_INFO, "OpenLI: Packets sent to Email workers: %lu",
+            glob->stats.packets_sync_email);
     logger(LOG_INFO, "OpenLI: Bad SIP packets: %lu   Bad RADIUS packets: %lu",
             glob->stats.bad_sip_packets, glob->stats.bad_ip_session_packets);
     logger(LOG_INFO, "OpenLI: Records created... IPCCs: %lu  IPIRIs: %lu  MobIRIs: %lu",
@@ -232,6 +234,8 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
     loc->radiusservers = NULL;
     loc->gtpservers = NULL;
     loc->sipservers = NULL;
+    loc->smtpservers = NULL;
+    loc->imapservers = NULL;
     loc->staticv4ranges = New_Patricia(32);
     loc->staticv6ranges = New_Patricia(128);
     loc->dynamicv6ranges = New_Patricia(128);
@@ -251,6 +255,17 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
         loc->zmq_pubsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
         zmq_setsockopt(loc->zmq_pubsocks[i], ZMQ_SNDHWM, &hwm, sizeof(hwm));
         zmq_connect(loc->zmq_pubsocks[i], pubsockname);
+    }
+
+    loc->email_worker_queues = calloc(glob->email_threads, sizeof(void *));
+    for (i = 0; i < glob->email_threads; i++) {
+        char pubsockname[128];
+
+        snprintf(pubsockname, 128, "inproc://openliemailworker-colrecv%d", i);
+        loc->email_worker_queues[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+        zmq_setsockopt(loc->email_worker_queues[i], ZMQ_SNDHWM, &hwm,
+                sizeof(hwm));
+        zmq_connect(loc->email_worker_queues[i], pubsockname);
     }
 
     loc->fragreass = create_new_ipfrag_reassembler();
@@ -408,12 +423,19 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
         zmq_close(loc->zmq_pubsocks[i]);
     }
 
+    for (i = 0; i < glob->email_threads; i++) {
+        zmq_setsockopt(loc->email_worker_queues[i], ZMQ_LINGER, &zero,
+                sizeof(zero));
+        zmq_close(loc->email_worker_queues[i]);
+    }
+
     zmq_setsockopt(loc->tosyncq_ip, ZMQ_LINGER, &zero, sizeof(zero));
     zmq_close(loc->tosyncq_ip);
     zmq_setsockopt(loc->tosyncq_voip, ZMQ_LINGER, &zero, sizeof(zero));
     zmq_close(loc->tosyncq_voip);
 
     free(loc->zmq_pubsocks);
+    free(loc->email_worker_queues);
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
         free_all_ipsessions(&(v4->intercepts));
@@ -435,6 +457,8 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     free_coreserver_list(loc->radiusservers);
     free_coreserver_list(loc->gtpservers);
     free_coreserver_list(loc->sipservers);
+    free_coreserver_list(loc->smtpservers);
+    free_coreserver_list(loc->imapservers);
 
     destroy_ipfrag_reassembler(loc->fragreass);
 
@@ -490,6 +514,16 @@ static inline void send_packet_to_sync(libtrace_packet_t *pkt,
 
     //trace_increment_packet_refcount(pkt);
     zmq_send(q, (void *)(&syncup), sizeof(syncup), 0);
+}
+
+static void send_packet_to_emailworker(libtrace_packet_t *pkt,
+        void **queues, int qcount, uint32_t hashval, uint8_t pkttype) {
+
+    int destind;
+
+    assert(hashval != 0);
+    destind = (hashval - 1) % qcount;
+    send_packet_to_sync(pkt, queues[destind], pkttype);
 }
 
 static inline uint8_t check_for_invalid_sip(libtrace_packet_t *pkt,
@@ -556,10 +590,12 @@ static inline uint8_t check_for_invalid_sip(libtrace_packet_t *pkt,
     return 0;
 }
 
-static inline int is_core_server_packet(libtrace_packet_t *pkt,
+static inline uint32_t is_core_server_packet(libtrace_packet_t *pkt,
         packet_info_t *pinfo, coreserver_t *servers) {
 
     coreserver_t *rad, *tmp;
+    coreserver_t *found = NULL;
+    uint32_t hashval = 0;
 
     if (pinfo->srcport == 0 || pinfo->destport == 0) {
         return 0;
@@ -590,27 +626,45 @@ static inline int is_core_server_packet(libtrace_packet_t *pkt,
             sa = (struct sockaddr_in *)(&(pinfo->srcip));
 
             if (CORESERVER_MATCH_V4(rad, sa, pinfo->srcport)) {
-                return 1;
+                found = rad;
+                break;
             }
             sa = (struct sockaddr_in *)(&(pinfo->destip));
             if (CORESERVER_MATCH_V4(rad, sa, pinfo->destport)) {
-                return 1;
+                found = rad;
+                break;
             }
         } else if (pinfo->family == AF_INET6) {
             struct sockaddr_in6 *sa6;
             sa6 = (struct sockaddr_in6 *)(&(pinfo->srcip));
             if (CORESERVER_MATCH_V6(rad, sa6, pinfo->srcport)) {
-                return 1;
+                found = rad;
+                break;
             }
             sa6 = (struct sockaddr_in6 *)(&(pinfo->destip));
             if (CORESERVER_MATCH_V6(rad, sa6, pinfo->destport)) {
-                return 1;
+                found = rad;
+                break;
             }
         }
     }
 
     /* Doesn't match any of our known core servers */
-    return 0;
+    if (found == NULL) {
+        return 0;
+    }
+
+    /* Not technically an LIID, but we just need a hashed ID for the server
+     * entity.
+     */
+    hashval = hash_liid(found->serverkey);
+
+    /* 0 is our value for "not found", so make sure we never use it... */
+    if (hashval == 0) {
+        hashval = 1;
+    }
+    return hashval;
+
 }
 
 static libtrace_packet_t *process_packet(libtrace_t *trace,
@@ -624,8 +678,9 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     uint32_t rem, iprem;
     uint8_t proto;
     int forwarded = 0, ret;
-    int ipsynced = 0, voipsynced = 0;
+    int ipsynced = 0, voipsynced = 0, emailsynced = 0;
     uint16_t fragoff = 0;
+    uint32_t servhash = 0;
 
     openli_pushed_t syncpush;
     packet_info_t pinfo;
@@ -784,6 +839,23 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             send_packet_to_sync(pkt, loc->tosyncq_voip, OPENLI_UPDATE_SIP);
             voipsynced = 1;
         }
+
+        else if (loc->smtpservers &&
+                (servhash = is_core_server_packet(pkt, &pinfo,
+                    loc->smtpservers))) {
+            send_packet_to_emailworker(pkt, loc->email_worker_queues,
+                    glob->email_threads, servhash, OPENLI_UPDATE_SMTP);
+            emailsynced = 1;
+
+        }
+
+        else if (loc->imapservers &&
+                (servhash = is_core_server_packet(pkt, &pinfo,
+                    loc->imapservers))) {
+            send_packet_to_emailworker(pkt, loc->email_worker_queues,
+                    glob->email_threads, servhash, OPENLI_UPDATE_IMAP);
+            emailsynced = 1;
+        }
     }
 
 
@@ -830,6 +902,12 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     }
 
 processdone:
+    if (emailsynced) {
+        pthread_mutex_lock(&(glob->stats_mutex));
+        glob->stats.packets_sync_email ++;
+        pthread_mutex_unlock(&(glob->stats_mutex));
+    }
+
     if (ipsynced) {
         pthread_mutex_lock(&(glob->stats_mutex));
         glob->stats.packets_sync_ip ++;

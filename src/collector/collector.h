@@ -77,6 +77,8 @@ enum {
     OPENLI_UPDATE_DHCP = 2,
     OPENLI_UPDATE_SIP = 3,
     OPENLI_UPDATE_GTP = 4,
+    OPENLI_UPDATE_SMTP = 5,
+    OPENLI_UPDATE_IMAP = 6,
 };
 
 typedef struct openli_intersync_msg {
@@ -196,6 +198,8 @@ typedef struct colthread_local {
        thread */
     libtrace_message_queue_t fromsyncq_voip;
 
+    void **email_worker_queues;
+
 
     /* Current intercepts */
     ipv4_target_t *activeipv4intercepts;
@@ -223,6 +227,16 @@ typedef struct colthread_local {
      * servers, we assume it is GTP.
      */
     coreserver_t *gtpservers;
+
+    /* Known SMTP servers, i.e. if we see traffic to or from these
+     * servers, we assume it is SMTP.
+     */
+    coreserver_t *smtpservers;
+
+    /* Known IMAP servers, i.e. if we see traffic to or from these
+     * servers, we assume it is IMAP.
+     */
+    coreserver_t *imapservers;
 
     patricia_tree_t *staticv4ranges;
     patricia_tree_t *staticv6ranges;
