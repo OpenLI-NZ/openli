@@ -1491,6 +1491,24 @@ static int intercept_parser(void *arg, yaml_document_t *doc,
             return -1;
         }
     }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value, "smtpservers") == 0) {
+        if (parse_core_server_list(&state->smtpservers,
+                OPENLI_CORE_SERVER_SMTP, doc, value) == -1) {
+            return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value, "imapservers") == 0) {
+        if (parse_core_server_list(&state->imapservers,
+                OPENLI_CORE_SERVER_IMAP, doc, value) == -1) {
+            return -1;
+        }
+    }
     return 0;
 }
 

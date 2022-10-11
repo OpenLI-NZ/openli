@@ -193,6 +193,10 @@ typedef struct prov_intercept_conf {
     coreserver_t *gtpservers;
     /** The set of known SIP servers that will be provided to collectors */
     coreserver_t *sipservers;
+    /** The set of known SMTP servers that will be provided to collectors */
+    coreserver_t *smtpservers;
+    /** The set of known IMAP servers that will be provided to collectors */
+    coreserver_t *imapservers;
     /** The set of VOIP intercepts that we are currently running */
     voipintercept_t *voipintercepts;
     /** The set of IP intercepts that we are currently running */

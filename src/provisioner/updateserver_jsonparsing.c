@@ -346,6 +346,14 @@ int remove_coreserver(update_con_info_t *cinfo, provision_state_t *state,
         HASH_FIND(hh, state->interceptconf.radiusservers, idstr, strlen(idstr),
                 found);
         src = &(state->interceptconf.radiusservers);
+    } else if (srvtype == OPENLI_CORE_SERVER_SMTP) {
+        HASH_FIND(hh, state->interceptconf.smtpservers, idstr, strlen(idstr),
+                found);
+        src = &(state->interceptconf.smtpservers);
+    } else if (srvtype == OPENLI_CORE_SERVER_IMAP) {
+        HASH_FIND(hh, state->interceptconf.imapservers, idstr, strlen(idstr),
+                found);
+        src = &(state->interceptconf.imapservers);
     } else if (srvtype == OPENLI_CORE_SERVER_GTP) {
         HASH_FIND(hh, state->interceptconf.gtpservers, idstr, strlen(idstr),
                 found);
@@ -498,6 +506,12 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
     } else if (srvtype == OPENLI_CORE_SERVER_RADIUS) {
         HASH_FIND(hh, state->interceptconf.radiusservers, new_cs->serverkey,
                 strlen(new_cs->serverkey), found);
+    } else if (srvtype == OPENLI_CORE_SERVER_SMTP) {
+        HASH_FIND(hh, state->interceptconf.smtpservers, new_cs->serverkey,
+                strlen(new_cs->serverkey), found);
+    } else if (srvtype == OPENLI_CORE_SERVER_IMAP) {
+        HASH_FIND(hh, state->interceptconf.imapservers, new_cs->serverkey,
+                strlen(new_cs->serverkey), found);
     } else if (srvtype == OPENLI_CORE_SERVER_GTP) {
         HASH_FIND(hh, state->interceptconf.gtpservers, new_cs->serverkey,
                 strlen(new_cs->serverkey), found);
@@ -511,6 +525,12 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
                     new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
         } else if (srvtype == OPENLI_CORE_SERVER_RADIUS) {
             HASH_ADD_KEYPTR(hh, state->interceptconf.radiusservers,
+                    new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
+        } else if (srvtype == OPENLI_CORE_SERVER_SMTP) {
+            HASH_ADD_KEYPTR(hh, state->interceptconf.smtpservers,
+                    new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
+        } else if (srvtype == OPENLI_CORE_SERVER_IMAP) {
+            HASH_ADD_KEYPTR(hh, state->interceptconf.imapservers,
                     new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
         } else if (srvtype == OPENLI_CORE_SERVER_GTP) {
             HASH_ADD_KEYPTR(hh, state->interceptconf.gtpservers,

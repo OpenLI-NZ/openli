@@ -159,6 +159,8 @@ void init_intercept_config(prov_intercept_conf_t *state) {
     state->radiusservers = NULL;
     state->gtpservers = NULL;
     state->sipservers = NULL;
+    state->smtpservers = NULL;
+    state->imapservers = NULL;
     state->voipintercepts = NULL;
     state->emailintercepts = NULL;
     state->ipintercepts = NULL;
@@ -651,6 +653,8 @@ void clear_intercept_state(prov_intercept_conf_t *conf) {
     free_all_emailintercepts(&(conf->emailintercepts));
     free_coreserver_list(conf->radiusservers);
     free_coreserver_list(conf->gtpservers);
+    free_coreserver_list(conf->smtpservers);
+    free_coreserver_list(conf->imapservers);
     free_coreserver_list(conf->sipservers);
 
     pthread_mutex_destroy(&(conf->safelock));
@@ -933,6 +937,8 @@ static int respond_collector_auth(provision_state_t *state,
             HASH_CNT(hh, state->interceptconf.radiusservers) +
             HASH_CNT(hh, state->interceptconf.gtpservers) +
             HASH_CNT(hh, state->interceptconf.sipservers) +
+            HASH_CNT(hh, state->interceptconf.imapservers) +
+            HASH_CNT(hh, state->interceptconf.smtpservers) +
             HASH_CNT(hh_liid, state->interceptconf.ipintercepts) +
             HASH_CNT(hh_liid, state->interceptconf.emailintercepts) +
             HASH_CNT(hh_liid, state->interceptconf.voipintercepts) == 0) {
@@ -980,7 +986,23 @@ static int respond_collector_auth(provision_state_t *state,
     if (push_coreservers(state->interceptconf.sipservers,
             OPENLI_CORE_SERVER_SIP, outgoing) == -1) {
         logger(LOG_INFO,
-                "OpenLI: unable to queue RADIUS server details to be sent to new collector on fd %d", pev->fd);
+                "OpenLI: unable to queue SIP server details to be sent to new collector on fd %d", pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
+        return -1;
+    }
+
+    if (push_coreservers(state->interceptconf.smtpservers,
+            OPENLI_CORE_SERVER_SMTP, outgoing) == -1) {
+        logger(LOG_INFO,
+                "OpenLI: unable to queue SMTP server details to be sent to new collector on fd %d", pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
+        return -1;
+    }
+
+    if (push_coreservers(state->interceptconf.imapservers,
+            OPENLI_CORE_SERVER_IMAP, outgoing) == -1) {
+        logger(LOG_INFO,
+                "OpenLI: unable to queue IMAP server details to be sent to new collector on fd %d", pev->fd);
         pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
     }

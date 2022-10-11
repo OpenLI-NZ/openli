@@ -41,6 +41,10 @@ const char *coreserver_type_to_string(uint8_t cstype) {
             return "DHCP";
         case OPENLI_CORE_SERVER_SIP:
             return "SIP";
+        case OPENLI_CORE_SERVER_SMTP:
+            return "SMTP";
+        case OPENLI_CORE_SERVER_IMAP:
+            return "IMAP";
         case OPENLI_CORE_SERVER_GTP:
             return "GTP";
         case OPENLI_CORE_SERVER_ALUMIRROR:
@@ -90,9 +94,11 @@ char *construct_coreserver_key(coreserver_t *cs) {
     }
 
     if (cs->portstr == NULL) {
-        snprintf(keyspace, 256, "%s-default", cs->ipstr);
+        snprintf(keyspace, 256, "%s-default-%s", cs->ipstr,
+                coreserver_type_to_string(cs->servertype));
     } else {
-        snprintf(keyspace, 256, "%s-%s", cs->ipstr, cs->portstr);
+        snprintf(keyspace, 256, "%s-%s-%s", cs->ipstr, cs->portstr,
+                coreserver_type_to_string(cs->servertype));
     }
     cs->serverkey = strdup(keyspace);
     return cs->serverkey;
@@ -123,7 +129,7 @@ coreserver_t *match_packet_to_coreserver(coreserver_t *serverlist,
             cs->info = populate_addrinfo(cs->ipstr, cs->portstr, SOCK_DGRAM);
             if (!cs->info) {
                 logger(LOG_INFO,
-                        "Removing %s:%s from %s ALU source list due to getaddrinfo error",
+                        "Removing %s:%s from %s core server list due to getaddrinfo error",
                         cs->ipstr, cs->portstr,
                         coreserver_type_to_string(cs->servertype));
                 HASH_DELETE(hh, serverlist, cs);

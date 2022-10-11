@@ -52,6 +52,8 @@ enum {
     TARGET_GTPSERVER,
     TARGET_DEFAULTRADIUS,
     TARGET_EMAILINTERCEPT,
+    TARGET_SMTPSERVER,
+    TARGET_IMAPSERVER,
 };
 
 static const char *update_success_page =

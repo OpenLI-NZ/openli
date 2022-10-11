@@ -751,6 +751,16 @@ int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf) {
         goto error;
     }
 
+    if (emit_core_server_list(conf->smtpservers, "smtpservers",
+            &emitter) < 0) {
+        goto error;
+    }
+
+    if (emit_core_server_list(conf->imapservers, "imapservers",
+            &emitter) < 0) {
+        goto error;
+    }
+
     if (emit_default_radius_usernames(conf->defradusers, &emitter) < 0) {
         goto error;
     }
