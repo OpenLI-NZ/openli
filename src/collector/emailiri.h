@@ -50,6 +50,7 @@ enum {
     EMAILIRI_CONTENTS_SENDER_VALIDITY = 17,
 };
 
+void free_email_iri_content(etsili_email_iri_content_t *content);
 void free_emailiri_parameters(etsili_generic_t *params);
 void prepare_emailiri_parameters(etsili_generic_freelist_t *freegenerics,
         openli_emailiri_job_t *job, etsili_generic_t **params_p);

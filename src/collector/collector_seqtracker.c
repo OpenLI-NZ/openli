@@ -360,7 +360,8 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 
 	if (recvd->type == OPENLI_EXPORT_IPMMCC ||
 			recvd->type == OPENLI_EXPORT_IPCC ||
-            recvd->type == OPENLI_EXPORT_UMTSCC) {
+            recvd->type == OPENLI_EXPORT_UMTSCC ||
+            recvd->type == OPENLI_EXPORT_EMAILCC) {
 	    job.seqno = cinseq->cc_seqno;
         cinseq->cc_seqno ++;
 

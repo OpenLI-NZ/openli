@@ -65,7 +65,8 @@ static int append_content_to_smtp_buffer(smtp_session_t *smtpsess,
      * command, so we're going to try and squeeze that in ourselves
      * whenever we see content beginning with the "354 " response.
      */
-    if (memcmp(cap->content, (const void *)"354 ", 4) == 0) {
+    if (smtpsess->data_start == 0 &&
+            memcmp(cap->content, (const void *)"354 ", 4) == 0) {
         memcpy(smtpsess->contbuffer + smtpsess->contbufused,
                 "DATA\r\n", 6);
         smtpsess->contbufused += 6;
@@ -416,7 +417,6 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             sess->currstate = OPENLI_SMTP_STATE_EHLO_OVER;
             sess->server_octets +=
                     (smtpsess->contbufread - smtpsess->reply_start);
-            sess->login_time = timestamp;
 
             return 1;
         } else if (r < 0) {
@@ -452,13 +452,55 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             sess->server_octets +=
                     (smtpsess->contbufread - smtpsess->reply_start);
             if (smtpsess->mailfrom_reply_code == 250) {
+                char *saved_sender = NULL;
+                int skip_login_iri = 0;
                 sess->currstate = OPENLI_SMTP_STATE_MAIL_FROM_OVER;
 
+                if (sess->login_sent && sess->sender.emailaddr) {
+                    saved_sender = strdup(sess->sender.emailaddr);
+                }
 
-                /* extract sender info from mail from content */
+                /* extract latest sender info from mail from content */
                 if (extract_smtp_participant(sess, smtpsess,
                         smtpsess->mailfrom_start, smtpsess->contbufread) < 0) {
+                    if (saved_sender) {
+                        free(saved_sender);
+                    }
                     return -1;
+                }
+
+                if (sess->login_sent) {
+                    /* If we have sent a login IRI and the MAIL FROM
+                     * address has now changed, send a logoff IRI to indicate
+                     * that this session is no longer being used by the
+                     * previous address (remember, the new address may
+                     * not be a target so we cannot rely on a login event
+                     * IRI for the new address being seen by the LEA.
+                     */
+                    if (strcmp(saved_sender, sess->sender.emailaddr) != 0) {
+                        sess->event_time = timestamp;
+                        generate_email_logoff_iri(state, sess);
+                    } else {
+                        skip_login_iri = 1;
+                    }
+                }
+                if (saved_sender) {
+                    free(saved_sender);
+                }
+                clear_email_participant_list(sess);
+
+                /* send email login event IRI (and CC?) if any of the
+                   participants match a known target.
+                */
+                sess->login_time = timestamp;
+                if (smtpsess->ehlo_reply_code >= 200 &&
+                       smtpsess->ehlo_reply_code < 300) {
+                    if (!skip_login_iri) {
+                        generate_email_login_success_iri(state, sess);
+                        sess->login_sent = 1;
+                    }
+                } else {
+                    generate_email_login_failure_iri(state, sess);
                 }
             } else {
                 sess->currstate = OPENLI_SMTP_STATE_EHLO_OVER;
@@ -497,7 +539,6 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             if (smtpsess->rcptto_reply_code == 250) {
                 sess->currstate = OPENLI_SMTP_STATE_RCPT_TO_OVER;
 
-
                 /* extract recipient info from rcpt to content */
                 if (extract_smtp_participant(sess, smtpsess,
                         smtpsess->rcptto_start, smtpsess->contbufread) < 0) {
@@ -518,19 +559,13 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             /* Need to restart the loop to handle RCPT_TO state again */
             return 1;
         } else if ((r = find_data_start(smtpsess)) == 1) {
-            /* send email login event IRI (and CC?) if any of the
-               participants match a known target.
-            */
-            if (smtpsess->ehlo_reply_code >= 200 &&
-                    smtpsess->ehlo_reply_code < 300) {
-                generate_email_login_success_iri(state, sess);
-            } else {
-                generate_email_login_failure_iri(state, sess);
-            }
 
             sess->currstate = OPENLI_SMTP_STATE_DATA_INIT_REPLY;
             sess->client_octets += 6;
             smtpsess->reply_start = smtpsess->contbufread;
+            return 1;
+        } else if ((r = find_mail_from(smtpsess)) == 1) {
+            sess->currstate = OPENLI_SMTP_STATE_MAIL_FROM;
             return 1;
         } else if (r < 0) {
             return r;
@@ -570,6 +605,7 @@ static int process_next_smtp_state(openli_email_worker_t *state,
                     (smtpsess->contbufread - smtpsess->reply_start);
             if (smtpsess->data_final_reply_code == 250) {
                 sess->currstate = OPENLI_SMTP_STATE_DATA_OVER;
+                sess->event_time = timestamp;
                 /* generate email send CC and IRI */
                 generate_email_send_iri(state, sess);
                 generate_email_cc_from_app_payload(state, sess,
@@ -582,6 +618,14 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             return 1;
         } else if (r < 0) {
             return r;
+        }
+    }
+
+    if (sess->currstate == OPENLI_SMTP_STATE_DATA_OVER) {
+        if ((r = find_mail_from(smtpsess)) == 1) {
+            /* client is re-using the session to send another email? */
+            sess->currstate = OPENLI_SMTP_STATE_MAIL_FROM;
+            return 1;
         }
     }
 
@@ -602,7 +646,6 @@ static int process_next_smtp_state(openli_email_worker_t *state,
                 smtpsess->rcptto_start = 0;
                 smtpsess->data_start = 0;
                 smtpsess->data_end = 0;
-                clear_email_participant_list(sess);
             }
 
             return 1;
@@ -616,6 +659,7 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             sess->server_octets +=
                     (smtpsess->contbufread - smtpsess->reply_start);
             sess->currstate = OPENLI_SMTP_STATE_QUIT_REPLY;
+            sess->event_time = timestamp;
             generate_email_logoff_iri(state, sess);
             return 0;
         } else if (r < 0) {

@@ -196,9 +196,9 @@ static openli_email_captured_t *convert_packet_to_email_captured(
     }
 
 
+    cap->own_content = 0;
     if (cap->msg_length > 0 && posttcp != NULL) {
-        cap->content = malloc(cap->msg_length);
-        memcpy(cap->content, posttcp, cap->msg_length);
+        cap->content = (char *)posttcp;
     } else {
         cap->content = NULL;
     }
@@ -251,9 +251,7 @@ void add_email_participant(emailsession_t *sess, char *address, int issender) {
         }
     } else {
         if (sess->sender.emailaddr) {
-            logger(LOG_INFO, "OpenLI: Email session %s has multiple senders? %s and %s", sess->key, sess->sender.emailaddr, address);
-            free(address);
-            return;
+            free(sess->sender.emailaddr);
         }
         sess->sender.emailaddr = address;
         sess->sender.is_sender = 1;
@@ -266,11 +264,9 @@ void clear_email_participant_list(emailsession_t *sess) {
 
     email_participant_t *part, *tmp;
 
-    if (sess->sender.emailaddr) {
-        free(sess->sender.emailaddr);
-        sess->sender.emailaddr = NULL;
+    if (!sess) {
+        return;
     }
-
     HASH_ITER(hh, sess->participants, part, tmp) {
         HASH_DELETE(hh, sess->participants, part);
         if (part->emailaddr) {
@@ -281,6 +277,17 @@ void clear_email_participant_list(emailsession_t *sess) {
 
 }
 
+void clear_email_sender(emailsession_t *sess) {
+
+    if (!sess) {
+        return;
+    }
+    if (sess->sender.emailaddr) {
+        free(sess->sender.emailaddr);
+        sess->sender.emailaddr = NULL;
+    }
+}
+
 static void free_email_session(openli_email_worker_t *state,
         emailsession_t *sess) {
 
@@ -288,6 +295,8 @@ static void free_email_session(openli_email_worker_t *state,
     if (!sess) {
         return;
     }
+
+    clear_email_sender(sess);
     clear_email_participant_list(sess);
 
     if (sess->timeout_ev) {
@@ -401,7 +410,7 @@ void free_captured_email(openli_email_captured_t *cap) {
         free(cap->datasource);
     }
 
-    if (cap->content) {
+    if (cap->content && cap->own_content) {
         free(cap->content);
     }
 
@@ -943,7 +952,10 @@ static int process_received_packet(openli_email_worker_t *state) {
         }
         if (cap->content != NULL) {
             find_and_update_active_session(state, cap);
+        } else {
+            free_captured_email(cap);
         }
+
         trace_destroy_packet(recvd.data.pkt);
     } while (rc > 0);
 

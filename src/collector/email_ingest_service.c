@@ -127,6 +127,7 @@ static enum MHD_Result iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
         }
 
         datalen = strlen(ptr);
+        con_info->thismsg->own_content = 1;
         con_info->thismsg->content = strdup(ptr);
         con_info->thismsg->msg_length = datalen;
     }

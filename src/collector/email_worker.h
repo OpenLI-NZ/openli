@@ -90,6 +90,7 @@ typedef struct openli_email_captured {
     uint32_t mail_id;
     uint32_t msg_length;
     char *content;
+    uint8_t own_content;
 
 } openli_email_captured_t;
 
@@ -131,6 +132,7 @@ int update_smtp_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
 void add_email_participant(emailsession_t *sess, char *address, int issender);
 void clear_email_participant_list(emailsession_t *sess);
+void clear_email_sender(emailsession_t *sess);
 
 /* Defined in emailiri.c */
 int generate_email_login_success_iri(openli_email_worker_t *state,

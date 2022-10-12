@@ -273,6 +273,8 @@ struct emailsession {
     uint32_t server_octets;
     uint32_t client_octets;
     uint64_t login_time;
+    uint8_t login_sent;
+    uint64_t event_time;
 
     email_participant_t sender;
     email_participant_t *participants;

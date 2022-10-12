@@ -78,6 +78,14 @@ static void create_emailccs_for_intercept_list(openli_email_worker_t *state,
     email_intercept_ref_t *ref, *tmp;
 
     HASH_ITER(hh, active->intlist, ref, tmp) {
+
+        if (timestamp < ref->em->common.tostart_time * 1000) {
+            continue;
+        }
+        if (ref->em->common.toend_time > 0 &&
+                timestamp > ref->em->common.toend_time * 1000) {
+            continue;
+        }
         ccjob = create_emailcc_job(ref->em->common.liid, sess,
                 ref->em->common.destid, timestamp, content, content_len,
                 format, dir);

@@ -45,6 +45,32 @@ static inline email_user_intercept_list_t *is_address_interceptable(
     return active;
 }
 
+void free_email_iri_content(etsili_email_iri_content_t *content) {
+
+    int i;
+
+    if (content->recipients) {
+        for (i = 0; i < content->recipient_count; i++) {
+            free(content->recipients[i]);
+        }
+        free(content->recipients);
+    }
+
+    if (content->sender) {
+        free(content->sender);
+    }
+    if (content->clientaddr) {
+        free(content->clientaddr);
+    }
+    if (content->serveraddr) {
+        free(content->serveraddr);
+    }
+    if (content->messageid) {
+        free(content->messageid);
+    }
+
+}
+
 static openli_export_recv_t *create_emailiri_job(char *liid,
         emailsession_t *sess, uint8_t iritype, uint8_t emailev,
         uint8_t status, uint32_t destid, uint64_t timestamp) {
@@ -100,15 +126,23 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
 
 static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t iri_type, uint8_t email_ev,
-        uint8_t status, email_user_intercept_list_t *active) {
+        uint8_t status, email_user_intercept_list_t *active, uint64_t ts) {
 
     openli_export_recv_t *irijob = NULL;
     email_intercept_ref_t *ref, *tmp;
 
     HASH_ITER(hh, active->intlist, ref, tmp) {
+        if (ts < ref->em->common.tostart_time * 1000) {
+            continue;
+        }
+
+        if (ref->em->common.toend_time > 0 &&
+                ts > ref->em->common.toend_time * 1000) {
+            continue;
+        }
+
         irijob = create_emailiri_job(ref->em->common.liid, sess,
-                iri_type, email_ev, status, ref->em->common.destid,
-                sess->login_time);
+                iri_type, email_ev, status, ref->em->common.destid, ts);
         if (irijob == NULL) {
             continue;
         }
@@ -123,7 +157,7 @@ static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
 
 static inline int generate_iris_for_participants(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t email_ev, uint8_t iri_type,
-        uint8_t status) {
+        uint8_t status, uint64_t timestamp) {
 
     email_user_intercept_list_t *active;
     email_participant_t *recip, *tmp;
@@ -131,7 +165,7 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
     active = is_address_interceptable(state, sess->sender.emailaddr);
     if (active) {
         create_emailiris_for_intercept_list(state, sess, iri_type,
-                email_ev, status, active);
+                email_ev, status, active, timestamp);
     }
 
     HASH_ITER(hh, sess->participants, recip, tmp) {
@@ -145,7 +179,7 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
         }
 
         create_emailiris_for_intercept_list(state, sess, iri_type,
-                email_ev, status, active);
+                email_ev, status, active, timestamp);
     }
 
     return 0;
@@ -169,14 +203,14 @@ static int generate_email_login_iri(openli_email_worker_t *state,
     }
 
     return generate_iris_for_participants(state, sess, email_ev, iri_type,
-            status);
+            status, sess->login_time);
 }
 
 int generate_email_send_iri(openli_email_worker_t *state,
         emailsession_t *sess) {
 
     return generate_iris_for_participants(state, sess, ETSILI_EMAIL_EVENT_SEND,
-            ETSILI_IRI_CONTINUE, ETSILI_EMAIL_STATUS_SUCCESS);
+            ETSILI_IRI_CONTINUE, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
 
 }
 
@@ -185,7 +219,7 @@ int generate_email_logoff_iri(openli_email_worker_t *state,
 
     return generate_iris_for_participants(state, sess,
             ETSILI_EMAIL_EVENT_LOGOFF, ETSILI_IRI_END,
-            ETSILI_EMAIL_STATUS_SUCCESS);
+            ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
 
 }
 
@@ -250,11 +284,13 @@ void prepare_emailiri_parameters(etsili_generic_freelist_t *freegenerics,
 
     memset(&recipients, 0, sizeof(recipients));
 
-    emailiri_populate_recipients(&recipients, job->content.recipient_count,
-            job->content.recipients);
-    np = create_etsili_generic(freegenerics, EMAILIRI_CONTENTS_RECIPIENTS,
-            sizeof(etsili_email_recipients_t), (uint8_t *)(&recipients));
-    HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+    if (job->content.recipient_count > 0) {
+        emailiri_populate_recipients(&recipients, job->content.recipient_count,
+                job->content.recipients);
+        np = create_etsili_generic(freegenerics, EMAILIRI_CONTENTS_RECIPIENTS,
+                sizeof(etsili_email_recipients_t), (uint8_t *)(&recipients));
+        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+    }
 
     np = create_etsili_generic(freegenerics, EMAILIRI_CONTENTS_TOTAL_RECIPIENTS,
             sizeof(job->content.recipient_count),
