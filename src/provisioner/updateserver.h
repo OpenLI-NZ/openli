@@ -31,6 +31,12 @@
 #include <microhttpd.h>
 #include "provisioner.h"
 
+#if MHD_VERSION < 0x0097002
+#define MHD_RESULT int
+#else
+#define MHD_RESULT enum MHD_Result
+#endif
+
 typedef struct con_info {
     int connectiontype;
     int answercode;
@@ -75,7 +81,7 @@ static const char *unsupported_operation =
 static const char *get404 =
         "<html><body>OpenLI provisioner was unable to find the requested resource in its running intercept configuration.</body></html>\n";
 
-enum MHD_Result handle_update_request(void *cls, struct MHD_Connection *conn,
+MHD_RESULT handle_update_request(void *cls, struct MHD_Connection *conn,
         const char *url, const char *method, const char *version,
         const char *upload_data, size_t *upload_data_size,
         void **con_cls);

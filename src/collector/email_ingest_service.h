@@ -32,6 +32,12 @@
 
 #include "email_worker.h"
 
+#if MHD_VERSION >= 0x00097002
+#define MHD_RESULT enum MHD_Result
+#else
+#define MHD_RESULT int
+#endif
+
 typedef struct openli_email_ingest_config {
     uint8_t enabled;
     uint8_t authrequired;
