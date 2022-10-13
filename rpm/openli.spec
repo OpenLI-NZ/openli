@@ -171,6 +171,10 @@ if [ -d /var/run/openli ]; then
 fi
 chmod 2750 /etc/openli
 
+rabbitmqctl add_vhost "OpenLI-med"
+rabbitmqctl add_user "openli.nz" "mediatorinternal"
+rabbitmqctl set_permissions -p "OpenLI-med" "openli.nz" ".*" ".*" ".*"
+
 %preun mediator
 if [ $1 -eq 0 ]; then
         # Disable and stop the units
