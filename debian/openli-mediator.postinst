@@ -17,6 +17,11 @@ case "$1" in
         chown -R ${USER}: /etc/openli
         chown -R ${USER}: /var/run/openli
         chmod 2750 /etc/openli
+
+        rabbitmqctl add_vhost "OpenLI-med"
+        rabbitmqctl add_user "openli.nz" "mediatorinternal"
+        rabbitmqctl set_permissions -p "OpenLI-med" "openli.nz" ".*" ".*" ".*"
+
 ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)

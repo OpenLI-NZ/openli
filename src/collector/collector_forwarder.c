@@ -363,7 +363,8 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
     if (res->origreq->type == OPENLI_EXPORT_IPCC ||
             res->origreq->type == OPENLI_EXPORT_IPMMCC ||
-            res->origreq->type == OPENLI_EXPORT_UMTSCC) {
+            res->origreq->type == OPENLI_EXPORT_UMTSCC ||
+            res->origreq->type == OPENLI_EXPORT_EMAILCC ) {
 
         reorderer = &(fwd->intreorderer_cc);
     } else {

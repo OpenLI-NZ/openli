@@ -159,7 +159,10 @@ void init_intercept_config(prov_intercept_conf_t *state) {
     state->radiusservers = NULL;
     state->gtpservers = NULL;
     state->sipservers = NULL;
+    state->smtpservers = NULL;
+    state->imapservers = NULL;
     state->voipintercepts = NULL;
+    state->emailintercepts = NULL;
     state->ipintercepts = NULL;
     state->liid_map = NULL;
     state->leas = NULL;
@@ -202,6 +205,7 @@ int map_intercepts_to_leas(prov_intercept_conf_t *conf) {
     int failed = 0;
     ipintercept_t *ipint, *iptmp;
     voipintercept_t *vint;
+    emailintercept_t *mailint;
 
     /* Do IP Intercepts */
     HASH_ITER(hh_liid, conf->ipintercepts, ipint, iptmp) {
@@ -212,6 +216,12 @@ int map_intercepts_to_leas(prov_intercept_conf_t *conf) {
     for (vint = conf->voipintercepts; vint != NULL; vint = vint->hh_liid.next)
     {
         add_liid_mapping(conf, vint->common.liid, vint->common.targetagency);
+    }
+
+    for (mailint = conf->emailintercepts; mailint != NULL;
+            mailint = mailint->hh_liid.next) {
+        add_liid_mapping(conf, mailint->common.liid,
+                mailint->common.targetagency);
     }
 
     /* Sort the final mapping nicely */
@@ -640,8 +650,11 @@ void clear_intercept_state(prov_intercept_conf_t *conf) {
 
     free_all_ipintercepts(&(conf->ipintercepts));
     free_all_voipintercepts(&(conf->voipintercepts));
+    free_all_emailintercepts(&(conf->emailintercepts));
     free_coreserver_list(conf->radiusservers);
     free_coreserver_list(conf->gtpservers);
+    free_coreserver_list(conf->smtpservers);
+    free_coreserver_list(conf->imapservers);
     free_coreserver_list(conf->sipservers);
 
     pthread_mutex_destroy(&(conf->safelock));
@@ -766,6 +779,19 @@ static int push_all_mediators(prov_mediator_t *mediators, net_buffer_t *nb) {
     return 0;
 }
 
+static int push_all_email_targets(net_buffer_t *nb, email_target_t *targets,
+        emailintercept_t *mailint) {
+
+    email_target_t *tgt, *tmp;
+
+    HASH_ITER(hh, targets, tgt, tmp) {
+        if (push_email_target_onto_net_buffer(nb, tgt, mailint) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static int push_all_sip_targets(net_buffer_t *nb, libtrace_list_t *targets,
         voipintercept_t *vint) {
 
@@ -830,6 +856,43 @@ static int push_all_voipintercepts(provision_state_t *state,
     return 0;
 }
 
+static int push_all_emailintercepts(provision_state_t *state,
+        emailintercept_t *mailintercepts, net_buffer_t *nb,
+        prov_agency_t *agencies) {
+
+    emailintercept_t *m;
+    prov_agency_t *lea;
+    int skip = 0;
+
+    for (m = mailintercepts; m != NULL; m = m->hh_liid.next) {
+        skip = 0;
+        if (strcmp(m->common.targetagency, "pcapdisk") != 0) {
+            HASH_FIND_STR(agencies, m->common.targetagency, lea);
+            if (lea == NULL) {
+                skip = 1;
+            }
+        }
+
+        if (skip) {
+            continue;
+        }
+
+        if (push_emailintercept_onto_net_buffer(nb, m) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: error pushing Email intercept %s onto buffer for writing to collector.",
+                    m->common.liid);
+            return -1;
+        }
+
+        if (push_all_email_targets(nb, m->targets, m) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: error pushing targets for Email intercept %s onto buffer.", m->common.liid);
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static int push_all_ipintercepts(ipintercept_t *ipintercepts,
         net_buffer_t *nb, prov_agency_t *agencies) {
 
@@ -874,7 +937,10 @@ static int respond_collector_auth(provision_state_t *state,
             HASH_CNT(hh, state->interceptconf.radiusservers) +
             HASH_CNT(hh, state->interceptconf.gtpservers) +
             HASH_CNT(hh, state->interceptconf.sipservers) +
+            HASH_CNT(hh, state->interceptconf.imapservers) +
+            HASH_CNT(hh, state->interceptconf.smtpservers) +
             HASH_CNT(hh_liid, state->interceptconf.ipintercepts) +
+            HASH_CNT(hh_liid, state->interceptconf.emailintercepts) +
             HASH_CNT(hh_liid, state->interceptconf.voipintercepts) == 0) {
         pthread_mutex_unlock(&(state->interceptconf.safelock));
         return 0;
@@ -920,7 +986,23 @@ static int respond_collector_auth(provision_state_t *state,
     if (push_coreservers(state->interceptconf.sipservers,
             OPENLI_CORE_SERVER_SIP, outgoing) == -1) {
         logger(LOG_INFO,
-                "OpenLI: unable to queue RADIUS server details to be sent to new collector on fd %d", pev->fd);
+                "OpenLI: unable to queue SIP server details to be sent to new collector on fd %d", pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
+        return -1;
+    }
+
+    if (push_coreservers(state->interceptconf.smtpservers,
+            OPENLI_CORE_SERVER_SMTP, outgoing) == -1) {
+        logger(LOG_INFO,
+                "OpenLI: unable to queue SMTP server details to be sent to new collector on fd %d", pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
+        return -1;
+    }
+
+    if (push_coreservers(state->interceptconf.imapservers,
+            OPENLI_CORE_SERVER_IMAP, outgoing) == -1) {
+        logger(LOG_INFO,
+                "OpenLI: unable to queue IMAP server details to be sent to new collector on fd %d", pev->fd);
         pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
     }
@@ -938,7 +1020,17 @@ static int respond_collector_auth(provision_state_t *state,
             state->interceptconf.voipintercepts, outgoing,
             state->interceptconf.leas) == -1) {
         logger(LOG_INFO,
-                "OpenLI: unable to queue VOIP IP intercepts to be sent to new collector on fd %d",
+                "OpenLI: unable to queue VOIP intercepts to be sent to new collector on fd %d",
+                pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
+        return -1;
+    }
+
+    if (push_all_emailintercepts(state,
+            state->interceptconf.emailintercepts, outgoing,
+            state->interceptconf.leas) == -1) {
+        logger(LOG_INFO,
+                "OpenLI: unable to queue Email intercepts to be sent to new collector on fd %d",
                 pev->fd);
         pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;

@@ -34,6 +34,8 @@
 #include <zmq.h>
 #include <Judy.h>
 #include <amqp.h>
+#include <uthash.h>
+#include <libtrace.h>
 
 #include "export_shared.h"
 #include "etsili_core.h"
@@ -42,6 +44,14 @@
 #include "openli_tls.h"
 
 #define MAX_ENCODED_RESULT_BATCH 50
+
+typedef struct sync_epoll {
+    uint8_t fdtype;
+    int fd;
+    void *ptr;
+    libtrace_thread_t *parent;
+    UT_hash_handle hh;
+} sync_epoll_t;
 
 typedef struct export_dest {
     int failmsg;
@@ -71,11 +81,14 @@ typedef struct collector_stats {
     uint64_t packets_intercepted;
     uint64_t packets_sync_ip;
     uint64_t packets_sync_voip;
+    uint64_t packets_sync_email;
     uint64_t ipcc_created;
     uint64_t ipiri_created;
     uint64_t mobiri_created;
     uint64_t ipmmcc_created;
     uint64_t ipmmiri_created;
+    uint64_t emailcc_created;
+    uint64_t emailiri_created;
     uint64_t bad_sip_packets;
     uint64_t bad_ip_session_packets;
 
@@ -83,19 +96,27 @@ typedef struct collector_stats {
     uint64_t ipintercepts_added_total;
     uint64_t voipintercepts_added_diff;
     uint64_t voipintercepts_added_total;
+    uint64_t emailintercepts_added_diff;
+    uint64_t emailintercepts_added_total;
     uint64_t ipintercepts_ended_diff;
     uint64_t ipintercepts_ended_total;
     uint64_t voipintercepts_ended_diff;
     uint64_t voipintercepts_ended_total;
+    uint64_t emailintercepts_ended_diff;
+    uint64_t emailintercepts_ended_total;
 
     uint64_t ipsessions_added_diff;
     uint64_t ipsessions_added_total;
     uint64_t voipsessions_added_diff;
     uint64_t voipsessions_added_total;
+    uint64_t emailsessions_added_diff;
+    uint64_t emailsessions_added_total;
     uint64_t ipsessions_ended_diff;
     uint64_t ipsessions_ended_total;
     uint64_t voipsessions_ended_diff;
     uint64_t voipsessions_ended_total;
+    uint64_t emailsessions_ended_diff;
+    uint64_t emailsessions_ended_total;
 
 } collector_stats_t;
 

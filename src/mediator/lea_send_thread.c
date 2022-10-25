@@ -1241,12 +1241,20 @@ void init_med_agency_config(mediator_lea_config_t *config,
 
     config->rmqconf = rmqconf;
     config->mediatorid = mediatorid;
-    config->operatorid = strdup(operatorid);
-    config->shortoperatorid = strdup(shortopid);
+    if (operatorid) {
+        config->operatorid = strdup(operatorid);
+    }
+    if (shortopid) {
+        config->shortoperatorid = strdup(shortopid);
+    }
     config->pcap_compress_level = pcapcompress;
     config->pcap_rotate_frequency = pcaprotate;
-    config->pcap_dir = strdup(pcapdir);
-    config->pcap_outtemplate = strdup(pcaptemplate);
+    if (pcapdir) {
+        config->pcap_dir = strdup(pcapdir);
+    }
+    if (pcaptemplate) {
+        config->pcap_outtemplate = strdup(pcaptemplate);
+    }
 
     pthread_mutex_init(&(config->mutex), NULL);
 }

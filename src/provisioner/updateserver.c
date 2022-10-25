@@ -251,11 +251,22 @@ static int update_configuration_delete(update_con_info_t *cinfo,
             ret = remove_coreserver(cinfo, state, target,
                     OPENLI_CORE_SERVER_GTP);
             break;
+        case TARGET_SMTPSERVER:
+            ret = remove_coreserver(cinfo, state, target,
+                    OPENLI_CORE_SERVER_SMTP);
+            break;
+        case TARGET_IMAPSERVER:
+            ret = remove_coreserver(cinfo, state, target,
+                    OPENLI_CORE_SERVER_IMAP);
+            break;
         case TARGET_IPINTERCEPT:
             ret = remove_ip_intercept(cinfo, state, target);
             break;
         case TARGET_VOIPINTERCEPT:
             ret = remove_voip_intercept(cinfo, state, target);
+            break;
+        case TARGET_EMAILINTERCEPT:
+            ret = remove_email_intercept(cinfo, state, target);
             break;
         case TARGET_DEFAULTRADIUS:
             ret = remove_defaultradius(cinfo, state, target);
@@ -307,11 +318,20 @@ static json_object *create_get_response(update_con_info_t *cinfo,
         case TARGET_GTPSERVER:
             jobj = get_coreservers(cinfo, state, OPENLI_CORE_SERVER_GTP);
             break;
+        case TARGET_SMTPSERVER:
+            jobj = get_coreservers(cinfo, state, OPENLI_CORE_SERVER_SMTP);
+            break;
+        case TARGET_IMAPSERVER:
+            jobj = get_coreservers(cinfo, state, OPENLI_CORE_SERVER_IMAP);
+            break;
         case TARGET_IPINTERCEPT:
             jobj = get_ip_intercept(cinfo, state, tgtptr);
             break;
         case TARGET_VOIPINTERCEPT:
             jobj = get_voip_intercept(cinfo, state, tgtptr);
+            break;
+        case TARGET_EMAILINTERCEPT:
+            jobj = get_email_intercept(cinfo, state, tgtptr);
             break;
     }
 
@@ -360,6 +380,12 @@ static int update_configuration_post(update_con_info_t *cinfo,
         case TARGET_GTPSERVER:
             ret = add_new_coreserver(cinfo, state, OPENLI_CORE_SERVER_GTP);
             break;
+        case TARGET_SMTPSERVER:
+            ret = add_new_coreserver(cinfo, state, OPENLI_CORE_SERVER_SMTP);
+            break;
+        case TARGET_IMAPSERVER:
+            ret = add_new_coreserver(cinfo, state, OPENLI_CORE_SERVER_IMAP);
+            break;
         case TARGET_IPINTERCEPT:
             if (strcmp(method, "POST") == 0) {
                 ret = add_new_ipintercept(cinfo, state);
@@ -372,6 +398,13 @@ static int update_configuration_post(update_con_info_t *cinfo,
                 ret = add_new_voipintercept(cinfo, state);
             } else {
                 ret = modify_voipintercept(cinfo, state);
+            }
+            break;
+        case TARGET_EMAILINTERCEPT:
+            if (strcmp(method, "POST") == 0) {
+                ret = add_new_emailintercept(cinfo, state);
+            } else {
+                ret = modify_emailintercept(cinfo, state);
             }
             break;
     }
@@ -552,14 +585,14 @@ static int authenticate_request(provision_state_t *provstate,
     return MHD_YES;
 }
 
-int handle_update_request(void *cls, struct MHD_Connection *conn,
+MHD_RESULT handle_update_request(void *cls, struct MHD_Connection *conn,
         const char *url, const char *method, const char *version,
         const char *upload_data, size_t *upload_data_size,
         void **con_cls) {
 
     update_con_info_t *cinfo;
     provision_state_t *provstate = (provision_state_t *)cls;
-    int ret;
+    MHD_RESULT ret;
     const char *realm = "provisioner@openli.nz";
 
     if (*con_cls == NULL) {
@@ -586,10 +619,16 @@ int handle_update_request(void *cls, struct MHD_Connection *conn,
             cinfo->target = TARGET_RADIUSSERVER;
         } else if (strncmp(url, "/gtpserver", 10) == 0) {
             cinfo->target = TARGET_GTPSERVER;
+        } else if (strncmp(url, "/smtpserver", 11) == 0) {
+            cinfo->target = TARGET_SMTPSERVER;
+        } else if (strncmp(url, "/imapserver", 11) == 0) {
+            cinfo->target = TARGET_IMAPSERVER;
         } else if (strncmp(url, "/ipintercept", 12) == 0) {
             cinfo->target = TARGET_IPINTERCEPT;
         } else if (strncmp(url, "/voipintercept", 14) == 0) {
             cinfo->target = TARGET_VOIPINTERCEPT;
+        } else if (strncmp(url, "/emailintercept", 15) == 0) {
+            cinfo->target = TARGET_EMAILINTERCEPT;
         } else if (strncmp(url, "/defaultradius", 14) == 0) {
             cinfo->target = TARGET_DEFAULTRADIUS;
         } else {

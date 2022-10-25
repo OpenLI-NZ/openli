@@ -50,6 +50,8 @@
 #include "collector_base.h"
 #include "openli_tls.h"
 #include "radius_hasher.h"
+#include "email_ingest_service.h"
+#include "email_worker.h"
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
@@ -75,6 +77,8 @@ enum {
     OPENLI_UPDATE_DHCP = 2,
     OPENLI_UPDATE_SIP = 3,
     OPENLI_UPDATE_GTP = 4,
+    OPENLI_UPDATE_SMTP = 5,
+    OPENLI_UPDATE_IMAP = 6,
 };
 
 typedef struct openli_intersync_msg {
@@ -158,15 +162,6 @@ typedef struct export_queue_set {
 
 } export_queue_set_t;
 
-
-typedef struct sync_epoll {
-    uint8_t fdtype;
-    int fd;
-    void *ptr;
-    libtrace_thread_t *parent;
-    UT_hash_handle hh;
-} sync_epoll_t;
-
 typedef struct sync_sendq {
     libtrace_message_queue_t *q;
     libtrace_thread_t *parent;
@@ -203,6 +198,8 @@ typedef struct colthread_local {
        thread */
     libtrace_message_queue_t fromsyncq_voip;
 
+    void **email_worker_queues;
+
 
     /* Current intercepts */
     ipv4_target_t *activeipv4intercepts;
@@ -231,6 +228,16 @@ typedef struct colthread_local {
      */
     coreserver_t *gtpservers;
 
+    /* Known SMTP servers, i.e. if we see traffic to or from these
+     * servers, we assume it is SMTP.
+     */
+    coreserver_t *smtpservers;
+
+    /* Known IMAP servers, i.e. if we see traffic to or from these
+     * servers, we assume it is IMAP.
+     */
+    coreserver_t *imapservers;
+
     patricia_tree_t *staticv4ranges;
     patricia_tree_t *staticv6ranges;
     patricia_tree_t *dynamicv6ranges;
@@ -252,8 +259,8 @@ typedef struct collector_global {
     int seqtracker_threads;
     int encoding_threads;
     int forwarding_threads;
+    int email_threads;
 
-    void *zmq_forwarder_ctrl;
     void *zmq_encoder_ctrl;
 
     pthread_rwlock_t config_mutex;
@@ -267,6 +274,7 @@ typedef struct collector_global {
     seqtracker_thread_data_t *seqtrackers;
     openli_encoder_t *encoders;
     forwarding_thread_data_t *forwarders;
+    openli_email_worker_t *emailworkers;
     colthread_local_t **collocals;
     int nextloc;
 
@@ -294,7 +302,13 @@ typedef struct collector_global {
 
     uint8_t encoding_method;
     openli_ssl_config_t sslconf;
-    openli_RMQ_config_t RMQ_conf; 
+    openli_RMQ_config_t RMQ_conf;
+    openli_email_ingest_config_t emailconf;
+
+    openli_email_timeouts_t email_timeouts;
+
+    int emailsockfd;
+    email_ingestor_state_t *email_ingestor;
 
 } collector_global_t;
 

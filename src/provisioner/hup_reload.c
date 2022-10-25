@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2018 - 2022 The University of Waikato, Hamilton, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -195,6 +195,138 @@ static int reload_coreservers(provision_state_t *state, coreserver_t *currserv,
     return 0;
 }
 
+static int reload_emailintercepts(provision_state_t *currstate,
+        emailintercept_t *curremail, emailintercept_t *newemail,
+		prov_intercept_conf_t *intconf, int droppedcols, int droppedmeds) {
+
+    emailintercept_t *mailint, *tmp, *newequiv;
+    liid_hash_t *h = NULL;
+
+    /* TODO error handling in the "inform other components about changes"
+     * functions?
+     */
+    HASH_ITER(hh_liid, curremail, mailint, tmp) {
+        HASH_FIND(hh_liid, newemail, mailint->common.liid,
+                mailint->common.liid_len, newequiv);
+
+        if (!newequiv) {
+            /* Intercept has been withdrawn entirely */
+            if (!droppedcols) {
+                halt_existing_intercept(currstate, (void *)mailint,
+                        OPENLI_PROTO_HALT_EMAILINTERCEPT);
+            }
+            remove_liid_mapping(currstate, mailint->common.liid,
+                    mailint->common.liid_len, droppedmeds);
+            if (!droppedmeds) {
+                announce_hi1_notification_to_mediators(currstate,
+                        &(mailint->common), HI1_LI_DEACTIVATED);
+            }
+            continue;
+        } else {
+            int intsame = email_intercept_equal(mailint, newequiv);
+            int agencychanged = strcmp(mailint->common.targetagency,
+                    newequiv->common.targetagency);
+            int changedtargets = compare_email_targets(currstate, mailint,
+                    newequiv);
+
+            newequiv->common.hi1_seqno = mailint->common.hi1_seqno;
+            newequiv->awaitingconfirm = 0;
+
+            if (intsame && !agencychanged && changedtargets == 0) {
+                continue;
+            }
+
+            logger(LOG_INFO, "OpenLI provisioner: Details for Email intercept %s have changed -- updating collectors",
+                    mailint->common.liid);
+
+            if (!droppedmeds) {
+                if (agencychanged) {
+                    announce_hi1_notification_to_mediators(currstate,
+                            &(mailint->common), HI1_LI_DEACTIVATED);
+                    newequiv->common.hi1_seqno = 0;
+                    announce_hi1_notification_to_mediators(currstate,
+                            &(newequiv->common), HI1_LI_ACTIVATED);
+                } else {
+                    announce_hi1_notification_to_mediators(currstate,
+                            &(newequiv->common), HI1_LI_MODIFIED);
+                }
+            }
+
+            if (!intsame && !droppedcols) {
+                modify_existing_intercept_options(currstate, (void *)newequiv,
+                        OPENLI_PROTO_MODIFY_EMAILINTERCEPT);
+            }
+
+            if (agencychanged) {
+                remove_liid_mapping(currstate, mailint->common.liid,
+                        mailint->common.liid_len, droppedmeds);
+
+                h = add_liid_mapping(intconf, newequiv->common.liid,
+                        newequiv->common.targetagency);
+                if (!droppedmeds && announce_liidmapping_to_mediators(
+                        currstate, h) == -1) {
+                    logger(LOG_INFO,
+                            "OpenLI provisioner: unable to announce new agency for Email intercept to mediators.");
+                    return -1;
+                }
+            }
+        }
+    }
+
+    HASH_ITER(hh_liid, newemail, mailint, tmp) {
+        int skip = 0;
+        prov_agency_t *lea = NULL;
+
+        if (!mailint->awaitingconfirm) {
+            continue;
+        }
+
+        if (strcmp(mailint->common.targetagency, "pcapdisk") != 0) {
+            HASH_FIND_STR(intconf->leas, mailint->common.targetagency, lea);
+            if (lea == NULL) {
+                skip = 1;
+            }
+        }
+
+        if (skip) {
+            continue;
+        }
+
+        /* Add the LIID mapping */
+        h = add_liid_mapping(intconf, mailint->common.liid,
+                mailint->common.targetagency);
+
+        if (!droppedmeds && announce_hi1_notification_to_mediators(currstate,
+                &(mailint->common), HI1_LI_ACTIVATED) == -1) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to send HI1 notification for new Email intercept to mediators.");
+            return -1;
+        }
+
+        if (!droppedmeds && announce_liidmapping_to_mediators(currstate,
+                h) == -1) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to announce new Email intercept to mediators.");
+            return -1;
+        }
+
+        if (!droppedcols && announce_single_intercept(currstate,
+                (void *)mailint, push_emailintercept_onto_net_buffer) == -1) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to announce new Email intercept to collectors.");
+            return -1;
+        }
+
+        if (!droppedcols && announce_all_email_targets(currstate, mailint) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: error pushing targets for Email intercept %s onto buffer.", mailint->common.liid);
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 static int reload_voipintercepts(provision_state_t *currstate,
         voipintercept_t *currvoip, voipintercept_t *newvoip,
 		prov_intercept_conf_t *intconf, int droppedcols, int droppedmeds) {
@@ -270,7 +402,7 @@ static int reload_voipintercepts(provision_state_t *currstate,
                 if (!droppedmeds && announce_liidmapping_to_mediators(
                         currstate, h) == -1) {
                     logger(LOG_INFO,
-                            "OpenLI provisioner: unable to announce new agency for IP intercept to mediators.");
+                            "OpenLI provisioner: unable to announce new agency for VOIP intercept to mediators.");
                     return -1;
                 }
             }
@@ -502,6 +634,18 @@ static int reload_intercept_config(provision_state_t *currstate,
         }
 
         if (reload_coreservers(currstate,
+                currstate->interceptconf.smtpservers,
+                newconf.smtpservers) < 0) {
+            return -1;
+        }
+
+        if (reload_coreservers(currstate,
+                currstate->interceptconf.imapservers,
+                newconf.imapservers) < 0) {
+            return -1;
+        }
+
+        if (reload_coreservers(currstate,
                 currstate->interceptconf.gtpservers, newconf.gtpservers) < 0) {
             return -1;
         }
@@ -516,6 +660,13 @@ static int reload_intercept_config(provision_state_t *currstate,
 	if (reload_voipintercepts(currstate,
 				currstate->interceptconf.voipintercepts,
 				newconf.voipintercepts, &newconf,
+				clientchanged, mediatorchanged) < 0) {
+		return -1;
+	}
+
+	if (reload_emailintercepts(currstate,
+				currstate->interceptconf.emailintercepts,
+				newconf.emailintercepts, &newconf,
 				clientchanged, mediatorchanged) < 0) {
 		return -1;
 	}

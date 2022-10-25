@@ -82,17 +82,23 @@ static void reset_collector_stats(collector_global_t *glob) {
     glob->stats.ipiri_created = 0;
     glob->stats.ipmmcc_created = 0;
     glob->stats.ipmmiri_created = 0;
+    glob->stats.emailiri_created = 0;
+    glob->stats.emailcc_created = 0;
     glob->stats.bad_sip_packets = 0;
     glob->stats.bad_ip_session_packets = 0;
 
     glob->stats.ipintercepts_added_diff = 0;
     glob->stats.voipintercepts_added_diff = 0;
+    glob->stats.emailintercepts_added_diff = 0;
     glob->stats.ipintercepts_ended_diff = 0;
     glob->stats.voipintercepts_ended_diff = 0;
+    glob->stats.emailintercepts_ended_diff = 0;
     glob->stats.ipsessions_added_diff = 0;
     glob->stats.voipsessions_added_diff = 0;
+    glob->stats.emailsessions_added_diff = 0;
     glob->stats.ipsessions_ended_diff = 0;
     glob->stats.voipsessions_ended_diff = 0;
+    glob->stats.emailsessions_ended_diff = 0;
 }
 
 static void log_collector_stats(collector_global_t *glob) {
@@ -109,6 +115,8 @@ static void log_collector_stats(collector_global_t *glob) {
             glob->stats.packets_intercepted);
     logger(LOG_INFO, "OpenLI: Packets sent to IP sync: %lu,  sent to VOIP sync: %lu",
             glob->stats.packets_sync_ip, glob->stats.packets_sync_voip);
+    logger(LOG_INFO, "OpenLI: Packets sent to Email workers: %lu",
+            glob->stats.packets_sync_email);
     logger(LOG_INFO, "OpenLI: Bad SIP packets: %lu   Bad RADIUS packets: %lu",
             glob->stats.bad_sip_packets, glob->stats.bad_ip_session_packets);
     logger(LOG_INFO, "OpenLI: Records created... IPCCs: %lu  IPIRIs: %lu  MobIRIs: %lu",
@@ -116,6 +124,8 @@ static void log_collector_stats(collector_global_t *glob) {
             glob->stats.mobiri_created);
     logger(LOG_INFO, "OpenLI: Records created... IPMMCCs: %lu  IPMMIRIs: %lu",
             glob->stats.ipmmcc_created, glob->stats.ipmmiri_created);
+    logger(LOG_INFO, "OpenLI: Records created... EmailCCs: %lu  EmailIRIs: %lu",
+            glob->stats.emailcc_created, glob->stats.emailiri_created);
 
     logger(LOG_INFO, "OpenLI: IP intercepts added: %lu  (all-time: %lu)",
             glob->stats.ipintercepts_added_diff,
@@ -131,6 +141,13 @@ static void log_collector_stats(collector_global_t *glob) {
             glob->stats.voipintercepts_ended_diff,
             glob->stats.voipintercepts_ended_total);
 
+    logger(LOG_INFO, "OpenLI: Email intercepts added: %lu  (all-time: %lu)",
+            glob->stats.emailintercepts_added_diff,
+            glob->stats.emailintercepts_added_total);
+    logger(LOG_INFO, "OpenLI: Email intercepts ended: %lu  (all-time: %lu)",
+            glob->stats.emailintercepts_ended_diff,
+            glob->stats.emailintercepts_ended_total);
+
     logger(LOG_INFO, "OpenLI: IP sessions added: %lu  (all-time: %lu)",
             glob->stats.ipsessions_added_diff,
             glob->stats.ipsessions_added_total);
@@ -144,6 +161,13 @@ static void log_collector_stats(collector_global_t *glob) {
     logger(LOG_INFO, "OpenLI: VOIP sessions ended: %lu  (all-time: %lu)",
             glob->stats.voipsessions_ended_diff,
             glob->stats.voipsessions_ended_total);
+
+    logger(LOG_INFO, "OpenLI: Email sessions added: %lu  (all-time: %lu)",
+            glob->stats.emailsessions_added_diff,
+            glob->stats.emailsessions_added_total);
+    logger(LOG_INFO, "OpenLI: Email sessions ended: %lu  (all-time: %lu)",
+            glob->stats.emailsessions_ended_diff,
+            glob->stats.emailsessions_ended_total);
 
     logger(LOG_INFO, "OpenLI: === statistics complete ===");
 }
@@ -210,6 +234,8 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
     loc->radiusservers = NULL;
     loc->gtpservers = NULL;
     loc->sipservers = NULL;
+    loc->smtpservers = NULL;
+    loc->imapservers = NULL;
     loc->staticv4ranges = New_Patricia(32);
     loc->staticv6ranges = New_Patricia(128);
     loc->dynamicv6ranges = New_Patricia(128);
@@ -229,6 +255,17 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
         loc->zmq_pubsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
         zmq_setsockopt(loc->zmq_pubsocks[i], ZMQ_SNDHWM, &hwm, sizeof(hwm));
         zmq_connect(loc->zmq_pubsocks[i], pubsockname);
+    }
+
+    loc->email_worker_queues = calloc(glob->email_threads, sizeof(void *));
+    for (i = 0; i < glob->email_threads; i++) {
+        char pubsockname[128];
+
+        snprintf(pubsockname, 128, "inproc://openliemailworker-colrecv%d", i);
+        loc->email_worker_queues[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+        zmq_setsockopt(loc->email_worker_queues[i], ZMQ_SNDHWM, &hwm,
+                sizeof(hwm));
+        zmq_connect(loc->email_worker_queues[i], pubsockname);
     }
 
     loc->fragreass = create_new_ipfrag_reassembler();
@@ -386,12 +423,19 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
         zmq_close(loc->zmq_pubsocks[i]);
     }
 
+    for (i = 0; i < glob->email_threads; i++) {
+        zmq_setsockopt(loc->email_worker_queues[i], ZMQ_LINGER, &zero,
+                sizeof(zero));
+        zmq_close(loc->email_worker_queues[i]);
+    }
+
     zmq_setsockopt(loc->tosyncq_ip, ZMQ_LINGER, &zero, sizeof(zero));
     zmq_close(loc->tosyncq_ip);
     zmq_setsockopt(loc->tosyncq_voip, ZMQ_LINGER, &zero, sizeof(zero));
     zmq_close(loc->tosyncq_voip);
 
     free(loc->zmq_pubsocks);
+    free(loc->email_worker_queues);
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
         free_all_ipsessions(&(v4->intercepts));
@@ -413,6 +457,8 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     free_coreserver_list(loc->radiusservers);
     free_coreserver_list(loc->gtpservers);
     free_coreserver_list(loc->sipservers);
+    free_coreserver_list(loc->smtpservers);
+    free_coreserver_list(loc->imapservers);
 
     destroy_ipfrag_reassembler(loc->fragreass);
 
@@ -468,6 +514,16 @@ static inline void send_packet_to_sync(libtrace_packet_t *pkt,
 
     //trace_increment_packet_refcount(pkt);
     zmq_send(q, (void *)(&syncup), sizeof(syncup), 0);
+}
+
+static void send_packet_to_emailworker(libtrace_packet_t *pkt,
+        void **queues, int qcount, uint32_t hashval, uint8_t pkttype) {
+
+    int destind;
+
+    assert(hashval != 0);
+    destind = (hashval - 1) % qcount;
+    send_packet_to_sync(pkt, queues[destind], pkttype);
 }
 
 static inline uint8_t check_for_invalid_sip(libtrace_packet_t *pkt,
@@ -534,10 +590,12 @@ static inline uint8_t check_for_invalid_sip(libtrace_packet_t *pkt,
     return 0;
 }
 
-static inline int is_core_server_packet(libtrace_packet_t *pkt,
+static inline uint32_t is_core_server_packet(libtrace_packet_t *pkt,
         packet_info_t *pinfo, coreserver_t *servers) {
 
     coreserver_t *rad, *tmp;
+    coreserver_t *found = NULL;
+    uint32_t hashval = 0;
 
     if (pinfo->srcport == 0 || pinfo->destport == 0) {
         return 0;
@@ -568,27 +626,45 @@ static inline int is_core_server_packet(libtrace_packet_t *pkt,
             sa = (struct sockaddr_in *)(&(pinfo->srcip));
 
             if (CORESERVER_MATCH_V4(rad, sa, pinfo->srcport)) {
-                return 1;
+                found = rad;
+                break;
             }
             sa = (struct sockaddr_in *)(&(pinfo->destip));
             if (CORESERVER_MATCH_V4(rad, sa, pinfo->destport)) {
-                return 1;
+                found = rad;
+                break;
             }
         } else if (pinfo->family == AF_INET6) {
             struct sockaddr_in6 *sa6;
             sa6 = (struct sockaddr_in6 *)(&(pinfo->srcip));
             if (CORESERVER_MATCH_V6(rad, sa6, pinfo->srcport)) {
-                return 1;
+                found = rad;
+                break;
             }
             sa6 = (struct sockaddr_in6 *)(&(pinfo->destip));
             if (CORESERVER_MATCH_V6(rad, sa6, pinfo->destport)) {
-                return 1;
+                found = rad;
+                break;
             }
         }
     }
 
     /* Doesn't match any of our known core servers */
-    return 0;
+    if (found == NULL) {
+        return 0;
+    }
+
+    /* Not technically an LIID, but we just need a hashed ID for the server
+     * entity.
+     */
+    hashval = hash_liid(found->serverkey);
+
+    /* 0 is our value for "not found", so make sure we never use it... */
+    if (hashval == 0) {
+        hashval = 1;
+    }
+    return hashval;
+
 }
 
 static libtrace_packet_t *process_packet(libtrace_t *trace,
@@ -602,8 +678,9 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     uint32_t rem, iprem;
     uint8_t proto;
     int forwarded = 0, ret;
-    int ipsynced = 0, voipsynced = 0;
+    int ipsynced = 0, voipsynced = 0, emailsynced = 0;
     uint16_t fragoff = 0;
+    uint32_t servhash = 0;
 
     openli_pushed_t syncpush;
     packet_info_t pinfo;
@@ -762,6 +839,23 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             send_packet_to_sync(pkt, loc->tosyncq_voip, OPENLI_UPDATE_SIP);
             voipsynced = 1;
         }
+
+        else if (loc->smtpservers &&
+                (servhash = is_core_server_packet(pkt, &pinfo,
+                    loc->smtpservers))) {
+            send_packet_to_emailworker(pkt, loc->email_worker_queues,
+                    glob->email_threads, servhash, OPENLI_UPDATE_SMTP);
+            emailsynced = 1;
+
+        }
+
+        else if (loc->imapservers &&
+                (servhash = is_core_server_packet(pkt, &pinfo,
+                    loc->imapservers))) {
+            send_packet_to_emailworker(pkt, loc->email_worker_queues,
+                    glob->email_threads, servhash, OPENLI_UPDATE_IMAP);
+            emailsynced = 1;
+        }
     }
 
 
@@ -808,6 +902,12 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     }
 
 processdone:
+    if (emailsynced) {
+        pthread_mutex_lock(&(glob->stats_mutex));
+        glob->stats.packets_sync_email ++;
+        pthread_mutex_unlock(&(glob->stats_mutex));
+    }
+
     if (ipsynced) {
         pthread_mutex_lock(&(glob->stats_mutex));
         glob->stats.packets_sync_ip ++;
@@ -1070,11 +1170,11 @@ static void destroy_collector_state(collector_global_t *glob) {
 	free_sync_thread_data(&(glob->syncip));
 	free_sync_thread_data(&(glob->syncvoip));
 
-    libtrace_message_queue_destroy(&(glob->intersyncq));
-
-    if (glob->zmq_forwarder_ctrl) {
-        zmq_close(glob->zmq_forwarder_ctrl);
+    if (glob->emailworkers) {
+        free(glob->emailworkers);
     }
+
+    libtrace_message_queue_destroy(&(glob->intersyncq));
 
     if (glob->zmq_encoder_ctrl) {
         zmq_close(glob->zmq_encoder_ctrl);
@@ -1120,6 +1220,7 @@ static void destroy_collector_state(collector_global_t *glob) {
 
     pthread_mutex_destroy(&(glob->stats_mutex));
     pthread_rwlock_destroy(&glob->config_mutex);
+    pthread_mutex_destroy(&(glob->email_timeouts.mutex));
     free(glob);
 }
 
@@ -1169,6 +1270,16 @@ static void clear_global_config(collector_global_t *glob) {
     }
     if (glob->jmirrors) {
         free_coreserver_list(glob->jmirrors);
+    }
+
+    if (glob->emailconf.listenaddr) {
+        free(glob->emailconf.listenaddr);
+    }
+    if (glob->emailconf.listenport) {
+        free(glob->emailconf.listenport);
+    }
+    if (glob->email_ingestor) {
+        free(glob->email_ingestor);
     }
 }
 
@@ -1246,18 +1357,17 @@ static int prepare_collector_glob(collector_global_t *glob) {
 
     glob->syncgenericfreelist = create_etsili_generic_freelist(1);
 
-    glob->zmq_forwarder_ctrl = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
-    if (zmq_connect(glob->zmq_forwarder_ctrl,
-            "inproc://openliforwardercontrol") != 0) {
-        logger(LOG_INFO, "OpenLI: unable to connect to zmq control socket for forwarding threads. Exiting.");
-        return -1;
-    }
-
     glob->zmq_encoder_ctrl = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
     if (zmq_bind(glob->zmq_encoder_ctrl,
             "inproc://openliencodercontrol") != 0) {
         logger(LOG_INFO, "OpenLI: unable to connect to zmq control socket for encoding threads. Exiting.");
         return -1;
+    }
+
+    if (glob->email_ingestor) {
+        glob->email_ingestor->email_worker_count = glob->email_threads;
+        glob->email_ingestor->zmq_publishers = NULL;
+        glob->email_ingestor->zmq_ctxt = glob->zmq_ctxt;
     }
 
     return 0;
@@ -1269,6 +1379,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->seqtracker_threads = 1;
     glob->forwarding_threads = 1;
     glob->encoding_threads = 2;
+    glob->email_threads = 1;
     glob->sharedinfo.intpointid = NULL;
     glob->sharedinfo.intpointid_len = 0;
     glob->sharedinfo.operatorid = NULL;
@@ -1301,6 +1412,13 @@ static void init_collector_global(collector_global_t *glob) {
     glob->RMQ_conf.heartbeatFreq = 0;
     glob->RMQ_conf.enabled = 0;
 
+    glob->emailconf.enabled = 1;        // TODO default to disabled?
+    glob->emailconf.authrequired = 0;
+    glob->emailconf.tlsrequired = 0;
+    glob->emailconf.maxclients = 20;
+    glob->emailconf.listenport = NULL;
+    glob->emailconf.listenaddr = NULL;
+
     glob->etsitls = 1;
     glob->ignore_sdpo_matches = 0;
     glob->encoding_method = OPENLI_ENCODING_DER;
@@ -1308,6 +1426,16 @@ static void init_collector_global(collector_global_t *glob) {
     memset(&(glob->stats), 0, sizeof(glob->stats));
     glob->stat_frequency = 0;
     glob->ticks_since_last_stat = 0;
+
+    glob->emailsockfd = -1;
+    glob->email_ingestor = NULL;
+
+    /* TODO add config options to change these values
+     *      also make sure changes are actions post config-reload */
+    glob->email_timeouts.smtp = 5;
+    glob->email_timeouts.pop3 = 10;
+    glob->email_timeouts.imap = 30;
+    pthread_mutex_init(&(glob->email_timeouts.mutex), NULL);
 
 }
 
@@ -1329,6 +1457,22 @@ static collector_global_t *parse_global_config(char *configfile) {
     if (parse_collector_config(configfile, glob) == -1) {
         clear_global_config(glob);
         return NULL;
+    }
+
+    if (glob->emailconf.enabled) {
+        glob->email_ingestor = calloc(1, sizeof(email_ingestor_state_t));
+        if (glob->emailconf.listenaddr == NULL) {
+            glob->emailconf.listenaddr = strdup("0.0.0.0");
+        }
+        if (glob->emailconf.listenport == NULL) {
+            glob->emailconf.listenport = strdup("19999");
+        }
+        logger(LOG_INFO, "OpenLI: starting email ingestor service on %s:%s -- auth %s, TLS %s",
+                glob->emailconf.listenaddr,
+                glob->emailconf.listenport,
+                glob->emailconf.authrequired ? "required": "disabled",
+                glob->emailconf.tlsrequired ? "required": "disabled");
+
     }
 
     logger(LOG_DEBUG, "OpenLI: Encoding Method: %s",
@@ -1703,6 +1847,38 @@ int main(int argc, char *argv[]) {
         pthread_setname_np(glob->forwarders[i].threadid, name);
     }
 
+    glob->emailworkers = calloc(glob->email_threads,
+            sizeof(openli_email_worker_t));
+
+    for (i = 0; i < glob->email_threads; i++) {
+        snprintf(name, 1024, "emailworker-%d", i);
+
+        glob->emailworkers[i].zmq_ctxt = glob->zmq_ctxt;
+        glob->emailworkers[i].topoll = NULL;
+        glob->emailworkers[i].topoll_size = 0;
+        glob->emailworkers[i].emailid = i;
+        glob->emailworkers[i].tracker_threads = glob->seqtracker_threads;
+        glob->emailworkers[i].fwd_threads = glob->forwarding_threads;
+        glob->emailworkers[i].zmq_pubsocks = NULL;
+        glob->emailworkers[i].zmq_fwdsocks = NULL;
+        glob->emailworkers[i].zmq_ingest_recvsock = NULL;
+        glob->emailworkers[i].zmq_colthread_recvsock = NULL;
+        glob->emailworkers[i].zmq_ii_sock = NULL;
+
+        glob->emailworkers[i].timeouts = NULL;
+        glob->emailworkers[i].allintercepts = NULL;
+        glob->emailworkers[i].alltargets = NULL;
+        glob->emailworkers[i].activesessions = NULL;
+        glob->emailworkers[i].stats_mutex = &(glob->stats_mutex);
+        glob->emailworkers[i].stats = &(glob->stats);
+
+        glob->emailworkers[i].timeout_thresholds = &(glob->email_timeouts);
+
+        pthread_create(&(glob->emailworkers[i].threadid), NULL,
+                start_email_worker_thread, (void *)&(glob->emailworkers[i]));
+        pthread_setname_np(glob->emailworkers[i].threadid, name);
+    }
+
     glob->seqtrackers = calloc(glob->seqtracker_threads,
             sizeof(seqtracker_thread_data_t));
 
@@ -1742,6 +1918,18 @@ int main(int argc, char *argv[]) {
         pthread_create(&(glob->encoders[i].threadid), NULL,
                 run_encoder_worker, (void *)&(glob->encoders[i]));
         pthread_setname_np(glob->encoders[i].threadid, name);
+    }
+
+    /* Start email ingesting daemon, if required */
+    if (glob->emailconf.enabled) {
+        glob->emailsockfd = create_listener(glob->emailconf.listenaddr,
+                glob->emailconf.listenport, "email ingestor socket");
+        if (glob->emailsockfd == -1) {
+            logger(LOG_INFO, "OpenLI: WARNING unable to create listening socket for email ingestion service");
+        } else if (start_email_mhd_daemon(&(glob->emailconf),
+                    glob->emailsockfd, glob->email_ingestor) == NULL) {
+            logger(LOG_INFO, "OpenLI: WARNING unable to start email ingestion service");
+        }
     }
 
     /* Start IP intercept sync thread */
@@ -1830,6 +2018,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    if (glob->email_ingestor) {
+        stop_email_mhd_daemon(glob->email_ingestor);
+    }
+
     pthread_join(glob->syncip.threadid, NULL);
     pthread_join(glob->syncvoip.threadid, NULL);
     for (i = 0; i < glob->seqtracker_threads; i++) {
@@ -1841,6 +2033,9 @@ int main(int argc, char *argv[]) {
     }
     for (i = 0; i < glob->forwarding_threads; i++) {
         pthread_join(glob->forwarders[i].threadid, NULL);
+    }
+    for (i = 0; i < glob->email_threads; i++) {
+        pthread_join(glob->emailworkers[i].threadid, NULL);
     }
 
     logger(LOG_INFO, "OpenLI: exiting OpenLI Collector.");

@@ -53,6 +53,45 @@ static inline int enable_epoll_write(provision_state_t *state,
     return 0;
 }
 
+int compare_email_targets(provision_state_t *currstate,
+        emailintercept_t *existing, emailintercept_t *reload) {
+
+    email_target_t *oldtgt, *newtgt, *tmp, *found;
+    int changes = 0;
+
+    HASH_ITER(hh, existing->targets, oldtgt, tmp) {
+        oldtgt->awaitingconfirm = 1;
+
+        HASH_FIND(hh, reload->targets, oldtgt->address, strlen(oldtgt->address),
+                found);
+        if (found) {
+            found->awaitingconfirm = 0;
+            oldtgt->awaitingconfirm = 0;
+        } else {
+            /* This target is no longer present in the target list */
+            if (announce_email_target_change(currstate, oldtgt,
+                    existing, 0) < 0) {
+                return -1;
+            }
+            changes ++;
+        }
+    }
+
+    HASH_ITER(hh, reload->targets, newtgt, tmp) {
+        if (newtgt->awaitingconfirm == 0) {
+            continue;
+        }
+        /* This target has been added since we last reloaded config so
+         * announce it. */
+        if (announce_email_target_change(currstate, newtgt, existing, 1) < 0) {
+            return -1;
+        }
+        changes ++;
+    }
+
+    return changes;
+}
+
 int compare_sip_targets(provision_state_t *currstate,
         voipintercept_t *existing, voipintercept_t *reload) {
 
@@ -479,6 +518,36 @@ int announce_coreserver_change(provision_state_t *state,
     return 0;
 }
 
+int announce_email_target_change(provision_state_t *state,
+        email_target_t *target, emailintercept_t *mailint, uint8_t isnew) {
+
+    SEND_ALL_COLLECTORS_BEGIN
+        if (isnew) {
+            if (push_email_target_onto_net_buffer(sock->outgoing, target,
+                        mailint) == -1) {
+                logger(LOG_INFO,
+                        "OpenLI: Unable to push Email target to collector %s",
+                        col->identifier);
+                disconnect_provisioner_client(state->epoll_fd, col->client,
+                        col->identifier);
+                continue;
+            }
+        } else {
+            if (push_email_target_withdrawal_onto_net_buffer(sock->outgoing,
+                        target, mailint) == -1) {
+                logger(LOG_INFO,
+                        "OpenLI: Unable to push removal of SIP target to collector %s",
+                        col->identifier);
+                disconnect_provisioner_client(state->epoll_fd, col->client,
+                        col->identifier);
+                continue;
+            }
+        }
+    SEND_ALL_COLLECTORS_END
+
+    return 0;
+}
+
 int announce_sip_target_change(provision_state_t *state,
         openli_sip_identity_t *sipid, voipintercept_t *vint, uint8_t isnew) {
 
@@ -522,6 +591,33 @@ int announce_all_sip_targets(provision_state_t *state, voipintercept_t *vint) {
         }
 		sipid->awaitingconfirm = 0;
         n = n->next;
+    }
+    return 0;
+}
+
+int announce_all_email_targets(provision_state_t *state,
+        emailintercept_t *mailint) {
+    email_target_t *tgt, *tmp;
+
+    HASH_ITER(hh, mailint->targets, tgt, tmp) {
+        if (tgt->awaitingconfirm && announce_email_target_change(state,
+                tgt, mailint, 1) < 0) {
+            return -1;
+        }
+        tgt->awaitingconfirm = 0;
+    }
+    return 0;
+}
+
+int remove_all_email_targets(provision_state_t *state,
+        emailintercept_t *mailint) {
+    email_target_t *tgt, *tmp;
+
+    HASH_ITER(hh, mailint->targets, tgt, tmp) {
+        if (tgt->awaitingconfirm == 0 && announce_email_target_change(state,
+                tgt, mailint, 0) < 0) {
+            return -1;
+        }
     }
     return 0;
 }

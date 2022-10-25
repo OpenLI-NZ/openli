@@ -31,12 +31,15 @@
 #include "etsili_core.h"
 #include "collector/ipiri.h"
 #include "collector/umtsiri.h"
+#include "collector/emailiri.h"
 #include "logger.h"
 
 uint8_t etsi_ipccoid[4] = {0x05, 0x03, 0x0a, 0x02};
 uint8_t etsi_ipirioid[4] = {0x05, 0x03, 0x0a, 0x01};
 uint8_t etsi_ipmmccoid[4] = {0x05, 0x05, 0x06, 0x02};
 uint8_t etsi_ipmmirioid[4] = {0x05, 0x05, 0x06, 0x01};
+uint8_t etsi_emailirioid[4] = {0x05, 0x02, 0x0f, 0x01};
+uint8_t etsi_emailccoid[4] = {0x05, 0x02, 0x0f, 0x02};
 uint8_t etsi_umtsirioid[9] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x04, 0x01, 0x0f, 0x05};
 uint8_t etsi_hi1operationoid[8] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x00, 0x01, 0x06};
 
@@ -148,6 +151,37 @@ wandder_encoded_result_t *encode_umtscc_body(wandder_encoder_t *encoder,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, ipcontent, iplen);
     END_ENCODED_SEQUENCE(encoder, 4);
     return wandder_encode_finish(encoder);
+}
+
+static inline void encode_emailcc_body(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, void *content, uint32_t len,
+        uint8_t format, uint8_t dir) {
+
+    wandder_encode_job_t *jobarray[7];
+    uint32_t format32 = format;
+
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
+    jobarray[2] = &(precomputed[OPENLI_PREENCODE_USEQUENCE]);
+
+    if (dir == 0) {
+        jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRFROM]);
+    } else if (dir == 1) {
+        jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRTO]);
+    } else {
+        jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRUNKNOWN]);
+    }
+    jobarray[4] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
+    jobarray[5] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
+    jobarray[6] = &(precomputed[OPENLI_PREENCODE_EMAILCCOID]);
+    wandder_encode_next_preencoded(encoder, jobarray, 7);
+
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &format32, sizeof(format32));
+    wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, content, len);
+    END_ENCODED_SEQUENCE(encoder, 5);
+
 }
 
 static inline void encode_ipcc_body(wandder_encoder_t *encoder,
@@ -356,6 +390,21 @@ static inline void encode_ipiri_id(wandder_encoder_t *encoder,
     }
 
     wandder_encode_endseq(encoder);
+}
+
+static inline void encode_email_recipients(wandder_encoder_t *encoder,
+        etsili_email_recipients_t *recipients) {
+
+    int i;
+
+    ENC_USEQUENCE(encoder);
+    for (i = 0; i < recipients->count; i++) {
+        wandder_encode_next(encoder, WANDDER_TAG_UTF8STR,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, recipients->addresses[i],
+                strlen(recipients->addresses[i]));
+    }
+
+    END_ENCODED_SEQUENCE(encoder, 1);
 }
 
 static inline void encode_other_targets(wandder_encoder_t *encoder,
@@ -648,6 +697,82 @@ wandder_encoded_result_t *encode_umtsiri_body(wandder_encoder_t *encoder,
     return wandder_encode_finish(encoder);
 }
 
+
+wandder_encoded_result_t *encode_emailiri_body(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed,
+        etsili_iri_type_t iritype, etsili_generic_t **params) {
+
+    etsili_generic_t *p, *tmp;
+    wandder_encode_job_t *jobarray[4];
+
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_0]);
+    jobarray[2] = &(precomputed[OPENLI_PREENCODE_USEQUENCE]);
+    wandder_encode_next_preencoded(encoder, jobarray, 3);
+
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &iritype,
+            sizeof(iritype));
+
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
+    jobarray[2] = &(precomputed[OPENLI_PREENCODE_EMAILIRIOID]);
+    wandder_encode_next_preencoded(encoder, jobarray, 3);
+
+    HASH_SRT(hh, *params, sort_etsili_generic);
+
+    HASH_ITER(hh, *params, p, tmp) {
+        switch(p->itemnum) {
+            case EMAILIRI_CONTENTS_EVENT_TYPE:
+            case EMAILIRI_CONTENTS_PROTOCOL_ID:
+            case EMAILIRI_CONTENTS_STATUS:
+            case EMAILIRI_CONTENTS_SENDER_VALIDITY:
+                wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+                        WANDDER_CLASS_CONTEXT_PRIMITIVE, p->itemnum,
+                        p->itemptr, p->itemlen);
+                break;
+            case EMAILIRI_CONTENTS_CLIENT_ADDRESS:
+            case EMAILIRI_CONTENTS_SERVER_ADDRESS:
+                ENC_CSEQUENCE(encoder, p->itemnum);
+                encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
+                END_ENCODED_SEQUENCE(encoder, 1);
+                break;
+            case EMAILIRI_CONTENTS_CLIENT_PORT:
+            case EMAILIRI_CONTENTS_SERVER_PORT:
+            case EMAILIRI_CONTENTS_SERVER_OCTETS_SENT:
+            case EMAILIRI_CONTENTS_CLIENT_OCTETS_SENT:
+            case EMAILIRI_CONTENTS_TOTAL_RECIPIENTS:
+                wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+                        WANDDER_CLASS_CONTEXT_PRIMITIVE, p->itemnum,
+                        p->itemptr, p->itemlen);
+                break;
+            case EMAILIRI_CONTENTS_SENDER:
+                wandder_encode_next(encoder, WANDDER_TAG_UTF8STR,
+                        WANDDER_CLASS_CONTEXT_PRIMITIVE, p->itemnum,
+                        p->itemptr, p->itemlen);
+                break;
+            case EMAILIRI_CONTENTS_MESSAGE_ID:
+            case EMAILIRI_CONTENTS_NATIONAL_PARAMETER:
+                wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                        WANDDER_CLASS_CONTEXT_PRIMITIVE, p->itemnum,
+                        p->itemptr, p->itemlen);
+                break;
+            case EMAILIRI_CONTENTS_RECIPIENTS:
+                ENC_CSEQUENCE(encoder, p->itemnum);
+                encode_email_recipients(encoder,
+                        (etsili_email_recipients_t *)(p->itemptr));
+                END_ENCODED_SEQUENCE(encoder, 1);
+                break;
+
+            case EMAILIRI_CONTENTS_NATIONAL_ASN1_PARAMETERS:
+            case EMAILIRI_CONTENTS_AAA_INFORMATION:
+                /* TODO? */
+                break;
+        }
+    }
+    END_ENCODED_SEQUENCE(encoder, 5);
+    return wandder_encode_finish(encoder);
+}
 
 wandder_encoded_result_t *encode_ipiri_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed,
@@ -1255,6 +1380,20 @@ void etsili_preencode_static_fields(
     p->encodeas = WANDDER_TAG_RELATIVEOID;
     wandder_encode_preencoded_value(p, etsi_ipirioid, sizeof(etsi_ipirioid));
 
+    p = &(pendarray[OPENLI_PREENCODE_EMAILIRIOID]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_RELATIVEOID;
+    wandder_encode_preencoded_value(p, etsi_emailirioid,
+            sizeof(etsi_emailirioid));
+
+    p = &(pendarray[OPENLI_PREENCODE_EMAILCCOID]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_RELATIVEOID;
+    wandder_encode_preencoded_value(p, etsi_emailccoid,
+            sizeof(etsi_emailccoid));
+
     p = &(pendarray[OPENLI_PREENCODE_UMTSIRIOID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
@@ -1547,7 +1686,8 @@ int etsili_create_ipmmcc_template(wandder_encoder_t *encoder,
 
 enum {
     CC_TEMPLATE_TYPE_IPCC,
-    CC_TEMPLATE_TYPE_UMTSCC
+    CC_TEMPLATE_TYPE_UMTSCC,
+    CC_TEMPLATE_TYPE_EMAILCC,
 };
 
 static int etsili_create_generic_cc_template(wandder_encoder_t *encoder,
@@ -1618,6 +1758,49 @@ int etsili_create_umtscc_template(wandder_encoder_t *encoder,
 
     return etsili_create_generic_cc_template(encoder, precomputed, dir,
             ipclen, tplate, CC_TEMPLATE_TYPE_UMTSCC);
+}
+
+int etsili_create_emailcc_template(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, uint8_t format, uint8_t dir,
+        uint16_t contentlen, encoded_global_template_t *tplate) {
+
+    wandder_encoded_result_t *encres;
+    const char *funcname = "etsili_create_emailcc_template";
+
+    if (tplate == NULL) {
+        logger(LOG_INFO, "OpenLI: called %s with NULL template?", funcname);
+        return -1;
+    }
+
+    if (encoder == NULL) {
+        logger(LOG_INFO, "OpenLI: called %s with NULL encoder?", funcname);
+        return -1;
+    }
+
+    reset_wandder_encoder(encoder);
+
+    encode_emailcc_body(encoder, precomputed, NULL, contentlen, format, dir);
+    encres = wandder_encode_finish(encoder);
+
+    if (encres == NULL || encres->len == 0 || encres->encoded == NULL) {
+        logger(LOG_INFO, "OpenLI: failed to encode ETSI CC body in %s",
+                funcname);
+        if (encres) {
+            wandder_release_encoded_result(encoder, encres);
+        }
+        return -1;
+    }
+
+    /* Copy the encoded header to the template */
+    tplate->cc_content.cc_wrap = malloc(encres->len);
+    memcpy(tplate->cc_content.cc_wrap, encres->encoded, encres->len);
+    tplate->cc_content.cc_wrap_len = encres->len;
+    tplate->cc_content.content_size = contentlen;
+    tplate->cc_content.content_ptr = NULL;
+
+    /* Release the encoded result -- the caller will use the templated copy */
+    wandder_release_encoded_result(encoder, encres);
+    return 0;
 }
 
 int etsili_create_ipcc_template(wandder_encoder_t *encoder,
