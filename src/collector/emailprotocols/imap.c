@@ -194,7 +194,8 @@ static int save_imap_command(imap_session_t *sess, char *sesskey) {
     return index;
 }
 
-static int save_imap_reply(imap_session_t *sess, char *sesskey) {
+static int save_imap_reply(imap_session_t *sess, char *sesskey,
+        char **origcommand) {
 
     int i;
     int comm_start;
@@ -236,7 +237,11 @@ static int save_imap_reply(imap_session_t *sess, char *sesskey) {
     comm->reply_end = comm->commbufused;
     comm->imap_reply = sess->next_command_name;
 
+    *origcommand = comm->imap_command;
+
     free(sess->next_comm_tag);
+    sess->next_comm_tag = NULL;
+    sess->next_command_name = NULL;
 
     return 1;
 }
@@ -349,6 +354,8 @@ static int find_command_end(emailsession_t *sess, imap_session_t *imapsess) {
         return 0;
     }
 
+    sess->client_octets += (imapsess->contbufread - imapsess->next_comm_start);
+
     ind = save_imap_command(imapsess, sess->key);
     if (ind < 0) {
         return ind;
@@ -373,16 +380,26 @@ static int find_command_end(emailsession_t *sess, imap_session_t *imapsess) {
 
 static int find_reply_end(emailsession_t *sess, imap_session_t *imapsess) {
     int r;
+    char *origcommand;
 
     r = find_next_crlf(imapsess, imapsess->next_comm_start);
     if (r == 0) {
         return 0;
     }
+    sess->server_octets += (imapsess->contbufread - imapsess->next_comm_start);
 
-    save_imap_reply(imapsess, sess->key);
+    if ((r = save_imap_reply(imapsess, sess->key, &origcommand)) <= 0) {
+        return r;
+    }
+
     imapsess->next_command_type = OPENLI_IMAP_COMMAND_NONE;
     imapsess->next_comm_start = 0;
     imapsess->reply_start = 0;
+
+    if (strcasecmp(origcommand, "LOGOUT") == 0) {
+        sess->currstate = OPENLI_IMAP_STATE_SESSION_OVER;
+        return 0;
+    }
 
     return 1;
 }
@@ -395,6 +412,7 @@ static int find_partial_reply_end(emailsession_t *sess,
     if (r == 0) {
         return 0;
     }
+    sess->server_octets += (imapsess->contbufread - imapsess->next_comm_start);
 
     logger(LOG_INFO, "OpenLI: DEVDEBUG %s got partial IMAP reply ",
             sess->key);
@@ -442,19 +460,24 @@ static int read_imap_while_idle_state(emailsession_t *sess,
 
     uint8_t *msgstart = imapsess->contbuffer + imapsess->contbufread;
     imap_command_t *comm;
+    uint8_t *found = NULL;
+    int idle_server_length = 0;
+    int comm_start;
 
     assert(imapsess->idle_command_index >= 0);
 
     comm = &(imapsess->commands[imapsess->idle_command_index]);
 
-    /* TODO */
     /* check for "+ " -- server response to the idle command*/
 
-    /*
     if (imapsess->reply_start == 0) {
-        imapsess->reply_start = 
+        found = (uint8_t *)strstr(msgstart, "+ ");
+        if (!found) {
+            return 0;
+        }
+
+        imapsess->reply_start = found - imapsess->contbuffer;
     }
-    */
 
     /* all untagged messages are updates from the server
      * add them to our reply */
@@ -464,7 +487,38 @@ static int read_imap_while_idle_state(emailsession_t *sess,
      *      of "DONE" as a separate server->client CC, then add the
      *      "DONE" as a client->server CC.
      */
-    
+    found = (uint8_t *)strstr(msgstart, "\r\nDONE\r\n");
+    if (!found) {
+        return 0;
+    }
+
+    idle_server_length = (found + 2 - imapsess->contbuffer) -
+            imapsess->reply_start;
+
+    imapsess->contbufread = (found - imapsess->contbuffer) + 8;
+
+    if (extend_command_buffer(comm, idle_server_length + 6) < 0) {
+        return -1;
+    }
+
+    comm_start = comm->commbufused;
+    memcpy(comm->commbuffer + comm->commbufused,
+            imapsess->contbuffer + imapsess->reply_start,
+            idle_server_length + 6);
+    comm->commbufused += (idle_server_length + 6);
+    comm->commbuffer[comm->commbufused] = '\0';
+
+    add_cc_to_imap_command(comm, comm_start,
+            comm_start + idle_server_length, 0);
+    add_cc_to_imap_command(comm, comm_start + idle_server_length,
+            comm_start + idle_server_length + 6, 1);
+
+    sess->server_octets += idle_server_length;
+    sess->client_octets += 6;
+
+    imapsess->reply_start = 0;
+    sess->currstate = OPENLI_IMAP_STATE_AUTHENTICATED;
+
     return 1;
 }
 
@@ -475,14 +529,15 @@ static int find_next_imap_message(emailsession_t *sess,
     char *comm_resp;
     uint8_t *spacefound = NULL;
     uint8_t *spacefound2 = NULL;
+    uint8_t *crlffound = NULL;
     uint8_t *msgstart = imapsess->contbuffer + imapsess->contbufread;
 
+
+    if (sess->currstate == OPENLI_IMAP_STATE_AUTHENTICATING) {
     /* if we see "+\r\n" or "+ \r\n", assume we're doing auth challenges and
      * that we should treat everything as part of the challenge process
      * until we see an eventual server reply (OK, NO or BAD) */
     /* TODO */
-
-    if (sess->currstate == OPENLI_IMAP_STATE_AUTHENTICATING) {
     }
 
     if (sess->currstate == OPENLI_IMAP_STATE_IDLING) {
@@ -498,13 +553,21 @@ static int find_next_imap_message(emailsession_t *sess,
     memcpy(tag, msgstart, spacefound - msgstart);
     tag[spacefound - msgstart] = '\0';
 
+    /* Most commands are "<tag> <type> <extra context>\r\n", but some
+     * have no extra context and are just "<tag> <type>\r\n".
+     * Therefore if we see a \r\n BEFORE the next space, we want to
+     * treat that as our string boundary.
+     */
     spacefound2 = (uint8_t *)strchr(spacefound + 1, ' ');
-    if (!spacefound2) {
-        spacefound2 = (uint8_t *)strstr(spacefound + 1, "\r\n");
-        if (!spacefound2) {
-            free(tag);
-            return 0;
-        }
+    crlffound = (uint8_t *)strstr(spacefound + 1, "\r\n");
+
+    if (!spacefound2 && !crlffound) {
+        free(tag);
+        return 0;
+    }
+
+    if (spacefound2 == NULL || (crlffound != NULL && crlffound < spacefound2)) {
+        spacefound2 = crlffound;
     }
 
     comm_resp = calloc((spacefound2 - spacefound), sizeof(char *));
@@ -522,6 +585,8 @@ static int find_next_imap_message(emailsession_t *sess,
              *      sudden BYE)?
              */
             sess->currstate = OPENLI_IMAP_STATE_SESSION_OVER;
+            free(tag);
+            free(comm_resp);
             return 0;
 
         } else if (strcasecmp(comm_resp, "PREAUTH") == 0) {
@@ -549,6 +614,8 @@ static int find_next_imap_message(emailsession_t *sess,
         imapsess->next_command_type = OPENLI_IMAP_COMMAND_ID;
     } else if (strcasecmp(comm_resp, "IDLE") == 0) {
         imapsess->next_command_type = OPENLI_IMAP_COMMAND_IDLE;
+    } else if (strcasecmp(comm_resp, "LOGOUT") == 0) {
+        imapsess->next_command_type = OPENLI_IMAP_COMMAND_LOGOUT;
     } else if (strcasecmp(comm_resp, "AUTHENTICATE") == 0) {
         imapsess->next_command_type = OPENLI_IMAP_COMMAND_AUTH;
         imapsess->auth_tag = tag;
@@ -558,7 +625,14 @@ static int find_next_imap_message(emailsession_t *sess,
         imapsess->next_command_type = OPENLI_IMAP_COMMAND_GENERIC;
     }
 
+    if (imapsess->next_comm_tag) {
+        free(imapsess->next_comm_tag);
+    }
     imapsess->next_comm_tag = tag;
+
+    if (imapsess->next_command_name) {
+        free(imapsess->next_command_name);
+    }
     imapsess->next_command_name = comm_resp;
     imapsess->next_comm_start = msgstart - imapsess->contbuffer;
 
@@ -581,6 +655,9 @@ static int process_next_imap_state(openli_email_worker_t *state,
         r = find_server_ready_end(imapsess);
         if (r == 1) {
             sess->currstate = OPENLI_IMAP_STATE_PRE_AUTH;
+            sess->server_octets +=
+                    (imapsess->contbufread - imapsess->next_comm_start);
+            imapsess->next_comm_start = 0;
             imapsess->next_command_type = OPENLI_IMAP_COMMAND_NONE;
             logger(LOG_INFO, "OpenLI DEVDEBUG: IMAP Server Ready %s",
                     sess->key);
