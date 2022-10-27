@@ -31,6 +31,30 @@
 #include "email_worker.h"
 #include "logger.h"
 
+typedef struct smtpsession {
+    char *messageid;
+
+    uint8_t *contbuffer;
+    int contbufsize;
+    int contbufused;
+    int contbufread;
+    int reply_start;
+
+    uint8_t saved_state;
+
+    uint16_t ehlo_reply_code;
+    uint16_t mailfrom_reply_code;
+    uint16_t rcptto_reply_code;
+    uint16_t data_reply_code;
+    uint16_t data_final_reply_code;
+    int ehlo_start;
+    int ehlo_reply_end;
+    int mailfrom_start;
+    int rcptto_start;
+    int data_start;
+    int data_end;
+} smtp_session_t;
+
 void free_smtp_session_state(emailsession_t *sess, void *smtpstate) {
 
     smtp_session_t *smtpsess;

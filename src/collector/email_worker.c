@@ -317,6 +317,10 @@ static void free_email_session(openli_email_worker_t *state,
         free_smtp_session_state(sess, sess->proto_state);
     }
 
+    if (sess->protocol == OPENLI_EMAIL_TYPE_IMAP) {
+        free_imap_session_state(sess, sess->proto_state);
+    }
+
     if (sess->serveraddr) {
         free(sess->serveraddr);
     }
@@ -888,7 +892,7 @@ static int find_and_update_active_session(openli_email_worker_t *state,
 
     char sesskey[256];
     emailsession_t *sess;
-    int r;
+    int r = 0;
 
     snprintf(sesskey, 256, "%s-%s", email_type_to_string(cap->type),
             cap->session_id);
@@ -909,19 +913,23 @@ static int find_and_update_active_session(openli_email_worker_t *state,
     update_email_session_timeout(state, sess);
 
     if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
-        if ((r = update_smtp_session_by_ingestion(state, sess, cap)) < 0) {
-            logger(LOG_INFO,
-                    "OpenLI: error updating SMTP session '%s' -- removing session...",
-                    sess->key);
+        r = update_smtp_session_by_ingestion(state, sess, cap);
+    } else if (sess->protocol == OPENLI_EMAIL_TYPE_IMAP) {
+        r = update_imap_session_by_ingestion(state, sess, cap);
+    }
 
-            HASH_DELETE(hh, state->activesessions, sess);
-            free_email_session(state, sess);
-        } else if (r == 1) {
-            logger(LOG_INFO, "OpenLI: DEVDEBUG SMTP session '%s' is over",
-                    sess->key);
-            HASH_DELETE(hh, state->activesessions, sess);
-            free_email_session(state, sess);
-        }
+    if (r < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error updating %s session '%s' -- removing session...",
+                email_type_to_string(cap->type), sess->key);
+
+        HASH_DELETE(hh, state->activesessions, sess);
+        free_email_session(state, sess);
+    } else if (r == 1) {
+        logger(LOG_INFO, "OpenLI: DEVDEBUG %s session '%s' is over",
+                email_type_to_string(cap->type), sess->key);
+        HASH_DELETE(hh, state->activesessions, sess);
+        free_email_session(state, sess);
     }
 
     free_captured_email(cap);
