@@ -74,7 +74,11 @@ if test "x$enable_collector" != "xno"; then
         if test "$libosip2_found" = 0; then
                 AC_MSG_ERROR(Required library libosipparser2 not found; use LDFLAGS to specify library location)
         fi
-        COLLECTOR_LIBS="$COLLECTOR_LIBS -losipparser2"
+        AC_CHECK_LIB([b64], [base64_decode_block],libb64_found=1,libb64_found=0)
+        if test "$libb64_found" = 0; then
+                AC_MSG_ERROR(Required library libb64 not found; use LDFLAGS to specify library location)
+        fi
+        COLLECTOR_LIBS="$COLLECTOR_LIBS -losipparser2 -lb64"
 fi
 
 if test "x$enable_provisioner" != "xno"; then
