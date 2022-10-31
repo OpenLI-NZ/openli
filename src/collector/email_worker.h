@@ -150,6 +150,11 @@ void add_email_participant(emailsession_t *sess, char *address, int issender);
 void clear_email_participant_list(emailsession_t *sess);
 void clear_email_sender(emailsession_t *sess);
 
+void replace_email_session_serveraddr(emailsession_t *sess,
+        char *server_ip, char *server_port);
+void replace_email_session_clientaddr(emailsession_t *sess,
+        char *client_ip, char *client_port);
+
 /* Defined in emailiri.c */
 int generate_email_login_success_iri(openli_email_worker_t *state,
         emailsession_t *sess);

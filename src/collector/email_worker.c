@@ -103,6 +103,29 @@ static struct sockaddr_storage *construct_sockaddr(char *ip, char *port,
     return saddr;
 }
 
+void replace_email_session_serveraddr(emailsession_t *sess,
+        char *server_ip, char *server_port) {
+
+    if (sess->serveraddr) {
+        free(sess->serveraddr);
+    }
+
+    sess->serveraddr = construct_sockaddr(server_ip, server_port,
+            &(sess->ai_family));
+
+}
+
+void replace_email_session_clientaddr(emailsession_t *sess,
+        char *client_ip, char *client_port) {
+
+    if (sess->clientaddr) {
+        free(sess->clientaddr);
+    }
+
+    sess->clientaddr = construct_sockaddr(client_ip, client_port, NULL);
+
+}
+
 static openli_email_captured_t *convert_packet_to_email_captured(
         libtrace_packet_t *pkt, uint8_t emailtype) {
 
@@ -215,7 +238,8 @@ static void init_email_session(emailsession_t *sess,
             1872422);
     sess->session_id = strdup(cap->session_id);
 
-    if (cap->type == OPENLI_EMAIL_TYPE_SMTP) {
+    if (cap->type == OPENLI_EMAIL_TYPE_SMTP ||
+            cap->type == OPENLI_EMAIL_TYPE_IMAP) {
         sess->serveraddr = construct_sockaddr(cap->host_ip, cap->host_port,
                 &sess->ai_family);
         sess->clientaddr = construct_sockaddr(cap->remote_ip, cap->remote_port,

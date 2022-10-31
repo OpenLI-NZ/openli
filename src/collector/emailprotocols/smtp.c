@@ -717,7 +717,7 @@ int update_smtp_session_by_ingestion(openli_email_worker_t *state,
     }
 
     while (1) {
-        if (r = (process_next_smtp_state(state, sess, smtpsess,
+        if ((r = process_next_smtp_state(state, sess, smtpsess,
                 cap->timestamp)) <= 0) {
             break;
         }
