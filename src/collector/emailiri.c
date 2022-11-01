@@ -108,7 +108,11 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
     content->client_octets = sess->client_octets;
     content->protocol = sess->protocol;
     content->recipient_count = HASH_CNT(hh, sess->participants);
-    content->sender = strdup(sess->sender.emailaddr);
+    if (sess->sender.emailaddr) {
+        content->sender = strdup(sess->sender.emailaddr);
+    } else {
+        content->sender = NULL;
+    }
 
     content->recipients = calloc(content->recipient_count,
             sizeof(char *));
@@ -159,17 +163,20 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t email_ev, uint8_t iri_type,
         uint8_t status, uint64_t timestamp) {
 
-    email_user_intercept_list_t *active;
+    email_user_intercept_list_t *active = NULL;
     email_participant_t *recip, *tmp;
 
-    active = is_address_interceptable(state, sess->sender.emailaddr);
+    if (sess->sender.emailaddr) {
+        active = is_address_interceptable(state, sess->sender.emailaddr);
+    }
     if (active) {
         create_emailiris_for_intercept_list(state, sess, iri_type,
                 email_ev, status, active, timestamp);
     }
 
     HASH_ITER(hh, sess->participants, recip, tmp) {
-        if (strcmp(recip->emailaddr, sess->sender.emailaddr) == 0) {
+        if (sess->sender.emailaddr && strcmp(recip->emailaddr,
+                sess->sender.emailaddr) == 0) {
             continue;
         }
 
@@ -212,6 +219,57 @@ int generate_email_send_iri(openli_email_worker_t *state,
     return generate_iris_for_participants(state, sess, ETSILI_EMAIL_EVENT_SEND,
             ETSILI_IRI_CONTINUE, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
 
+}
+
+int generate_email_partial_download_success_iri(openli_email_worker_t *state,
+        emailsession_t *sess) {
+
+    return generate_iris_for_participants(state, sess,
+            ETSILI_EMAIL_EVENT_PARTIAL_DOWNLOAD,
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
+
+}
+
+int generate_email_partial_download_failure_iri(openli_email_worker_t *state,
+        emailsession_t *sess) {
+
+    return generate_iris_for_participants(state, sess,
+            ETSILI_EMAIL_EVENT_PARTIAL_DOWNLOAD,
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time);
+}
+
+int generate_email_upload_success_iri(openli_email_worker_t *state,
+        emailsession_t *sess) {
+
+    return generate_iris_for_participants(state, sess,
+            ETSILI_EMAIL_EVENT_UPLOAD,
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
+
+}
+
+int generate_email_upload_failure_iri(openli_email_worker_t *state,
+        emailsession_t *sess) {
+
+    return generate_iris_for_participants(state, sess,
+            ETSILI_EMAIL_EVENT_UPLOAD,
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time);
+}
+
+int generate_email_download_success_iri(openli_email_worker_t *state,
+        emailsession_t *sess) {
+
+    return generate_iris_for_participants(state, sess,
+            ETSILI_EMAIL_EVENT_DOWNLOAD,
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
+
+}
+
+int generate_email_download_failure_iri(openli_email_worker_t *state,
+        emailsession_t *sess) {
+
+    return generate_iris_for_participants(state, sess,
+            ETSILI_EMAIL_EVENT_DOWNLOAD,
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time);
 }
 
 int generate_email_logoff_iri(openli_email_worker_t *state,
@@ -312,9 +370,11 @@ void prepare_emailiri_parameters(etsili_generic_freelist_t *freegenerics,
             (uint8_t *)&(job->content.status));
     HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
 
-    np = create_etsili_generic(freegenerics, EMAILIRI_CONTENTS_SENDER,
-            strlen(job->content.sender), (uint8_t *)(job->content.sender));
-    HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+    if (job->content.sender) {
+        np = create_etsili_generic(freegenerics, EMAILIRI_CONTENTS_SENDER,
+                strlen(job->content.sender), (uint8_t *)(job->content.sender));
+        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+    }
 
     if (job->content.messageid) {
         np = create_etsili_generic(freegenerics, EMAILIRI_CONTENTS_MESSAGE_ID,

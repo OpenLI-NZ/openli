@@ -54,7 +54,9 @@ typedef enum {
     OPENLI_IMAP_STATE_PRE_AUTH,
     OPENLI_IMAP_STATE_AUTH_STARTED,
     OPENLI_IMAP_STATE_AUTHENTICATING,
+    OPENLI_IMAP_STATE_AUTH_REPLY,
     OPENLI_IMAP_STATE_AUTHENTICATED,
+    OPENLI_IMAP_STATE_APPENDING,
     OPENLI_IMAP_STATE_IDLING,
     OPENLI_IMAP_STATE_LOGOUT,
 } openli_imap_status_t;
@@ -156,9 +158,21 @@ void replace_email_session_clientaddr(emailsession_t *sess,
         char *client_ip, char *client_port);
 
 /* Defined in emailiri.c */
+int generate_email_partial_download_success_iri(openli_email_worker_t *state,
+        emailsession_t *sess);
+int generate_email_partial_download_failure_iri(openli_email_worker_t *state,
+        emailsession_t *sess);
+int generate_email_download_success_iri(openli_email_worker_t *state,
+        emailsession_t *sess);
+int generate_email_download_failure_iri(openli_email_worker_t *state,
+        emailsession_t *sess);
 int generate_email_login_success_iri(openli_email_worker_t *state,
         emailsession_t *sess);
 int generate_email_login_failure_iri(openli_email_worker_t *state,
+        emailsession_t *sess);
+int generate_email_upload_success_iri(openli_email_worker_t *state,
+        emailsession_t *sess);
+int generate_email_upload_failure_iri(openli_email_worker_t *state,
         emailsession_t *sess);
 int generate_email_send_iri(openli_email_worker_t *state,
         emailsession_t *sess);
@@ -166,8 +180,11 @@ int generate_email_logoff_iri(openli_email_worker_t *state,
         emailsession_t *sess);
 
 /* Defined in emailcc.c */
-int generate_email_cc_from_app_payload(openli_email_worker_t *state,
+int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
         uint64_t timestamp);
+int generate_email_cc_from_imap_payload(openli_email_worker_t *state,
+        emailsession_t *sess, uint8_t *content, int content_len,
+        uint64_t timestamp, uint8_t dir);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
