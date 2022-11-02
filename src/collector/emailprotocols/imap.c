@@ -163,8 +163,6 @@ static int complete_imap_append(openli_email_worker_t *state,
         generate_email_upload_failure_iri(state, sess);
     }
 
-    /* TODO generate CCs from comm->ccs */
-
     return 1;
 
 }
@@ -188,8 +186,6 @@ static int complete_imap_fetch(openli_email_worker_t *state,
         generate_email_partial_download_failure_iri(state, sess);
     }
 
-    /* TODO generate CCs from comm->ccs */
-
     return 1;
 
 }
@@ -212,8 +208,6 @@ static int complete_imap_authentication(openli_email_worker_t *state,
         /* generate login failure iri */
         generate_email_login_failure_iri(state, sess);
     }
-
-    /* TODO generate CC for the authenticate command */
 
     return 1;
 }
@@ -1002,16 +996,45 @@ static int find_server_ready(imap_session_t *imapsess) {
     return 0;
 }
 
+static inline int is_tagged_reply(char *msgcontent, char *searchtag) {
+
+    char reply_cmp[2048];
+
+    snprintf(reply_cmp, 2048, "%s OK ", searchtag);
+    if (strncmp(msgcontent, reply_cmp, strlen(reply_cmp)) == 0) {
+        return 1;
+    }
+    snprintf(reply_cmp, 2048, "%s NO ", searchtag);
+    if (strncmp(msgcontent, reply_cmp, strlen(reply_cmp)) == 0) {
+        return 1;
+    }
+    snprintf(reply_cmp, 2048, "%s BAD ", searchtag);
+    if (strncmp(msgcontent, reply_cmp, strlen(reply_cmp)) == 0) {
+        return 1;
+    }
+    return 0;
+}
+
 static int read_imap_while_appending_state(emailsession_t *sess,
         imap_session_t *imapsess) {
 
-    uint8_t *msgstart = imapsess->contbuffer + imapsess->contbufread;
-    /* TODO */
+    char *msgstart = (char *)(imapsess->contbuffer + imapsess->contbufread);
+    char *tmp = NULL, *crlf = NULL;
+    char *appendtag;
 
     /* XXX need some test cases for APPEND */
 
     /* First step, find the next \r\n so we're only working with a
      * complete message */
+    crlf = strstr(msgstart, "\r\n");
+    if (crlf == NULL) {
+        return 0;
+    }
+
+    tmp = calloc((crlf - msgstart) + 1, sizeof(char));
+    memcpy(tmp, msgstart, crlf - msgstart);
+
+    appendtag = imapsess->commands[imapsess->append_command_index].tag;
 
     /* Is this the server reply to the APPEND command? */
         /* If yes, rewind to the start of the reply tag so our normal
@@ -1021,11 +1044,24 @@ static int read_imap_while_appending_state(emailsession_t *sess,
      * keep track of when the append is over, but that is an
      * annoying amount of parsing to deal with...
      */
+    if (is_tagged_reply(tmp, appendtag)) {
+        free(tmp);
+        sess->currstate = OPENLI_IMAP_STATE_AUTHENTICATED;
+        return 1;
+    }
 
     /* Does this begin with a '+'? This is from the server */
+    if (*tmp == '+') {
+        sess->server_octets += (crlf - msgstart);
+    } else {
+        /* Otherwise, this is message content from the client */
+        sess->client_octets += (crlf - msgstart);
+    }
 
-    /* Otherwise, this is message content from the client */
+    /* Advance read pointer to the next line */
+    imapsess->contbufread += (crlf - msgstart);
 
+    free(tmp);
     return 1;
 }
 
@@ -1037,25 +1073,46 @@ static int read_imap_while_auth_state(emailsession_t *sess,
      * authentication (e.g. challenges, responses for GSSAPI, etc.).
      */
 
-    uint8_t *msgstart = imapsess->contbuffer + imapsess->contbufread;
-    /* TODO */
+    char *msgstart = (char *)(imapsess->contbuffer + imapsess->contbufread);
+    char *tmp = NULL, *crlf = NULL;
+    char *authtag;
 
-    /* XXX need some test cases for anything other than just
-     * PLAIN auth followed by immediate success
-     */
+    /* XXX need some test cases for AUTHENTICATE */
 
     /* First step, find the next \r\n so we're only working with a
      * complete message */
+    crlf = strstr(msgstart, "\r\n");
+    if (crlf == NULL) {
+        return 0;
+    }
 
-    /* Is this the server reply to the AUTHENTICATE command? */
+    tmp = calloc((crlf - msgstart) + 1, sizeof(char));
+    memcpy(tmp, msgstart, crlf - msgstart);
+
+    authtag = imapsess->commands[imapsess->auth_command_index].tag;
+
+    /* Is this the server reply to the AUTH command? */
         /* If yes, rewind to the start of the reply tag so our normal
          * processing can be applied when we return...
          */
+    if (is_tagged_reply(tmp, authtag)) {
+        free(tmp);
+        sess->currstate = OPENLI_IMAP_STATE_AUTH_REPLY;
+        return 1;
+    }
 
-    /* Does this begin with a '+'? This is from the server (I think?) */
+    /* Does this begin with a '+'? This is from the server */
+    if (*tmp == '+') {
+        sess->server_octets += (crlf - msgstart);
+    } else {
+        /* Otherwise, this is message content from the client */
+        sess->client_octets += (crlf - msgstart);
+    }
 
-    /* Otherwise, this is probably a client message */
+    /* Advance read pointer to the next line */
+    imapsess->contbufread += (crlf - msgstart);
 
+    free(tmp);
     return 1;
 }
 
@@ -1182,7 +1239,6 @@ static int find_next_imap_message(openli_email_worker_t *state,
     }
 
     if (sess->currstate == OPENLI_IMAP_STATE_APPENDING) {
-        /* TODO */
         return read_imap_while_appending_state(sess, imapsess);
     }
 
