@@ -1,11 +1,13 @@
-openli (1.1.0-1) unstable; urgency=medium
+openli (1.1.0-1~beta01) unstable; urgency=medium
 
   * Mediator now uses RabbitMQ to buffer any intercept records that
     have been received from collectors but not yet pushed onto a handover.
   * Each connected collector is now handled in a separate thread.
   * Each agency is now handled in a separate thread.
+  * Email interception (ETSI TS 102 232-2) is now supported for SMTP and IMAP
+    protocols.
 
- -- Shane Alcock <shane.alcock@waikato.ac.nz>  Wed, 20 Jul 2022 16:47:10 +1200
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Sat, 12 Nov 2022 15:13:10 +1300
 
 openli (1.0.15-1) unstable; urgency=medium
 
