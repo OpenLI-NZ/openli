@@ -73,7 +73,8 @@ void free_email_iri_content(etsili_email_iri_content_t *content) {
 
 static openli_export_recv_t *create_emailiri_job(char *liid,
         emailsession_t *sess, uint8_t iritype, uint8_t emailev,
-        uint8_t status, uint32_t destid, uint64_t timestamp) {
+        uint8_t status, uint32_t destid, uint64_t timestamp,
+        const char *onlyrecipient) {
 
     openli_export_recv_t *msg = NULL;
     etsili_email_iri_content_t *content;
@@ -107,16 +108,30 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
     content->server_octets = sess->server_octets;
     content->client_octets = sess->client_octets;
     content->protocol = sess->protocol;
-    content->recipient_count = HASH_CNT(hh, sess->participants);
-    content->sender = strdup(sess->sender.emailaddr);
-
-    content->recipients = calloc(content->recipient_count,
-            sizeof(char *));
-    i = 0;
-    HASH_ITER(hh, sess->participants, recip, tmp) {
-        content->recipients[i] = strdup(recip->emailaddr);
-        i++;
+    if (sess->sender.emailaddr) {
+        content->sender = strdup(sess->sender.emailaddr);
+    } else {
+        content->sender = NULL;
     }
+
+    /* TODO maybe we need a config option to include ALL recipients
+     * regardless of whether they were intercept targets?
+     */
+    if (onlyrecipient) {
+        content->recipient_count = 1;
+        content->recipients = calloc(1, sizeof(char *));
+        content->recipients[0] = strdup(onlyrecipient);
+    } else {
+        content->recipient_count = HASH_CNT(hh, sess->participants);
+        content->recipients = calloc(content->recipient_count,
+                sizeof(char *));
+        i = 0;
+        HASH_ITER(hh, sess->participants, recip, tmp) {
+            content->recipients[i] = strdup(recip->emailaddr);
+            i++;
+        }
+    }
+
     content->status = status;
     content->messageid = NULL;
 
@@ -126,7 +141,8 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
 
 static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t iri_type, uint8_t email_ev,
-        uint8_t status, email_user_intercept_list_t *active, uint64_t ts) {
+        uint8_t status, email_user_intercept_list_t *active, uint64_t ts,
+        const char *onlyrecipient) {
 
     openli_export_recv_t *irijob = NULL;
     email_intercept_ref_t *ref, *tmp;
@@ -142,7 +158,8 @@ static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
         }
 
         irijob = create_emailiri_job(ref->em->common.liid, sess,
-                iri_type, email_ev, status, ref->em->common.destid, ts);
+                iri_type, email_ev, status, ref->em->common.destid, ts,
+                onlyrecipient);
         if (irijob == NULL) {
             continue;
         }
@@ -159,17 +176,20 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t email_ev, uint8_t iri_type,
         uint8_t status, uint64_t timestamp) {
 
-    email_user_intercept_list_t *active;
+    email_user_intercept_list_t *active = NULL;
     email_participant_t *recip, *tmp;
 
-    active = is_address_interceptable(state, sess->sender.emailaddr);
+    if (sess->sender.emailaddr) {
+        active = is_address_interceptable(state, sess->sender.emailaddr);
+    }
     if (active) {
         create_emailiris_for_intercept_list(state, sess, iri_type,
-                email_ev, status, active, timestamp);
+                email_ev, status, active, timestamp, NULL);
     }
 
     HASH_ITER(hh, sess->participants, recip, tmp) {
-        if (strcmp(recip->emailaddr, sess->sender.emailaddr) == 0) {
+        if (sess->sender.emailaddr && strcmp(recip->emailaddr,
+                sess->sender.emailaddr) == 0) {
             continue;
         }
 
@@ -179,7 +199,7 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
         }
 
         create_emailiris_for_intercept_list(state, sess, iri_type,
-                email_ev, status, active, timestamp);
+                email_ev, status, active, timestamp, recip->emailaddr);
     }
 
     return 0;
@@ -212,6 +232,57 @@ int generate_email_send_iri(openli_email_worker_t *state,
     return generate_iris_for_participants(state, sess, ETSILI_EMAIL_EVENT_SEND,
             ETSILI_IRI_CONTINUE, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
 
+}
+
+int generate_email_partial_download_success_iri(openli_email_worker_t *state,
+        emailsession_t *sess) {
+
+    return generate_iris_for_participants(state, sess,
+            ETSILI_EMAIL_EVENT_PARTIAL_DOWNLOAD,
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
+
+}
+
+int generate_email_partial_download_failure_iri(openli_email_worker_t *state,
+        emailsession_t *sess) {
+
+    return generate_iris_for_participants(state, sess,
+            ETSILI_EMAIL_EVENT_PARTIAL_DOWNLOAD,
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time);
+}
+
+int generate_email_upload_success_iri(openli_email_worker_t *state,
+        emailsession_t *sess) {
+
+    return generate_iris_for_participants(state, sess,
+            ETSILI_EMAIL_EVENT_UPLOAD,
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
+
+}
+
+int generate_email_upload_failure_iri(openli_email_worker_t *state,
+        emailsession_t *sess) {
+
+    return generate_iris_for_participants(state, sess,
+            ETSILI_EMAIL_EVENT_UPLOAD,
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time);
+}
+
+int generate_email_download_success_iri(openli_email_worker_t *state,
+        emailsession_t *sess) {
+
+    return generate_iris_for_participants(state, sess,
+            ETSILI_EMAIL_EVENT_DOWNLOAD,
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
+
+}
+
+int generate_email_download_failure_iri(openli_email_worker_t *state,
+        emailsession_t *sess) {
+
+    return generate_iris_for_participants(state, sess,
+            ETSILI_EMAIL_EVENT_DOWNLOAD,
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time);
 }
 
 int generate_email_logoff_iri(openli_email_worker_t *state,
@@ -312,9 +383,11 @@ void prepare_emailiri_parameters(etsili_generic_freelist_t *freegenerics,
             (uint8_t *)&(job->content.status));
     HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
 
-    np = create_etsili_generic(freegenerics, EMAILIRI_CONTENTS_SENDER,
-            strlen(job->content.sender), (uint8_t *)(job->content.sender));
-    HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+    if (job->content.sender) {
+        np = create_etsili_generic(freegenerics, EMAILIRI_CONTENTS_SENDER,
+                strlen(job->content.sender), (uint8_t *)(job->content.sender));
+        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+    }
 
     if (job->content.messageid) {
         np = create_etsili_generic(freegenerics, EMAILIRI_CONTENTS_MESSAGE_ID,

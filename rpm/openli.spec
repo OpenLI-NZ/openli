@@ -27,6 +27,7 @@ BuildRequires: libmicrohttpd-devel
 BuildRequires: systemd
 BuildRequires: sqlcipher-devel
 BuildRequires: librabbitmq-devel
+BuildRequires: libb64-devel
 
 %description
 Software for performing ETSI-compliant lawful intercept

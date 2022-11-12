@@ -31,6 +31,30 @@
 #include "email_worker.h"
 #include "logger.h"
 
+typedef struct smtpsession {
+    char *messageid;
+
+    uint8_t *contbuffer;
+    int contbufsize;
+    int contbufused;
+    int contbufread;
+    int reply_start;
+
+    uint8_t saved_state;
+
+    uint16_t ehlo_reply_code;
+    uint16_t mailfrom_reply_code;
+    uint16_t rcptto_reply_code;
+    uint16_t data_reply_code;
+    uint16_t data_final_reply_code;
+    int ehlo_start;
+    int ehlo_reply_end;
+    int mailfrom_start;
+    int rcptto_start;
+    int data_start;
+    int data_end;
+} smtp_session_t;
+
 void free_smtp_session_state(emailsession_t *sess, void *smtpstate) {
 
     smtp_session_t *smtpsess;
@@ -608,7 +632,7 @@ static int process_next_smtp_state(openli_email_worker_t *state,
                 sess->event_time = timestamp;
                 /* generate email send CC and IRI */
                 generate_email_send_iri(state, sess);
-                generate_email_cc_from_app_payload(state, sess,
+                generate_email_cc_from_smtp_payload(state, sess,
                         smtpsess->contbuffer + smtpsess->data_start,
                         smtpsess->contbufread - smtpsess->data_start,
                         timestamp);
@@ -693,7 +717,7 @@ int update_smtp_session_by_ingestion(openli_email_worker_t *state,
     }
 
     while (1) {
-        if (r = (process_next_smtp_state(state, sess, smtpsess,
+        if ((r = process_next_smtp_state(state, sess, smtpsess,
                 cap->timestamp)) <= 0) {
             break;
         }

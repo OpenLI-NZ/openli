@@ -62,6 +62,7 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/email_ingest_service.h \
                 collector/email_worker.c collector/email_worker.h \
                 collector/emailprotocols/smtp.c \
+                collector/emailprotocols/imap.c \
                 collector/emailiri.c collector/emailiri.h collector/emailcc.c \
                 $(PLUGIN_SRCS)
 

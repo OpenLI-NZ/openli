@@ -74,7 +74,11 @@ if test "x$enable_collector" != "xno"; then
         if test "$libosip2_found" = 0; then
                 AC_MSG_ERROR(Required library libosipparser2 not found; use LDFLAGS to specify library location)
         fi
-        COLLECTOR_LIBS="$COLLECTOR_LIBS -losipparser2"
+        AC_CHECK_LIB([b64], [base64_decode_block],libb64_found=1,libb64_found=0)
+        if test "$libb64_found" = 0; then
+                AC_MSG_ERROR(Required library libb64 not found; use LDFLAGS to specify library location)
+        fi
+        COLLECTOR_LIBS="$COLLECTOR_LIBS -losipparser2 -lb64"
 fi
 
 if test "x$enable_provisioner" != "xno"; then
@@ -105,15 +109,10 @@ if test "x$enable_provisioner" != "xno"; then
 fi
 
 if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then
-        AC_CHECK_LIB([wandder], [wandder_encode_init_top_ber],libwandder_ber_found=1,libwandder__ber_found=0)
+        AC_CHECK_LIB([wandder], [wandder_decode_integer_value],libwandder_found=1,libwandder_found=0)
 
-        if test "$libwandder_ber_found" = 1; then
-                AC_DEFINE(HAVE_BER_ENCODING, 1, [defined to 1 if libwandder supports BER encoding])
-        else
-                AC_CHECK_LIB([wandder], [init_wandder_encoder],libwandder_found=1,libwandder_found=0)
-                if test "$libwandder_found" = 0; then
-                        AC_MSG_ERROR(Required library libwandder not found; use LDFLAGS to specify library location)
-                fi
+        if test "$libwandder_found" = 0; then
+                AC_MSG_ERROR(Required library libwandder 2.0.6 or later not found; use LDFLAGS to specify library location)
         fi
 
         AC_CHECK_LIB([Judy], [JudySLGet],libjudy_found=1,libjudy_found=0)
