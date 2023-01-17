@@ -335,27 +335,30 @@ int remove_defaultradius(update_con_info_t *cinfo, provision_state_t *state,
 int remove_coreserver(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr, uint8_t srvtype) {
 
+    char search[1024];
     coreserver_t *found = NULL;
     coreserver_t **src;
 
+    snprintf(search, 1024, "%s-%s", idstr, coreserver_type_to_string(srvtype));
+
     if (srvtype == OPENLI_CORE_SERVER_SIP) {
-        HASH_FIND(hh, state->interceptconf.sipservers, idstr, strlen(idstr),
+        HASH_FIND(hh, state->interceptconf.sipservers, search, strlen(search),
                 found);
         src = &(state->interceptconf.sipservers);
     } else if (srvtype == OPENLI_CORE_SERVER_RADIUS) {
-        HASH_FIND(hh, state->interceptconf.radiusservers, idstr, strlen(idstr),
-                found);
+        HASH_FIND(hh, state->interceptconf.radiusservers, search,
+                strlen(search), found);
         src = &(state->interceptconf.radiusservers);
     } else if (srvtype == OPENLI_CORE_SERVER_SMTP) {
-        HASH_FIND(hh, state->interceptconf.smtpservers, idstr, strlen(idstr),
+        HASH_FIND(hh, state->interceptconf.smtpservers, search, strlen(search),
                 found);
         src = &(state->interceptconf.smtpservers);
     } else if (srvtype == OPENLI_CORE_SERVER_IMAP) {
-        HASH_FIND(hh, state->interceptconf.imapservers, idstr, strlen(idstr),
+        HASH_FIND(hh, state->interceptconf.imapservers, search, strlen(search),
                 found);
         src = &(state->interceptconf.imapservers);
     } else if (srvtype == OPENLI_CORE_SERVER_GTP) {
-        HASH_FIND(hh, state->interceptconf.gtpservers, idstr, strlen(idstr),
+        HASH_FIND(hh, state->interceptconf.gtpservers, search, strlen(search),
                 found);
         src = &(state->interceptconf.gtpservers);
     }
@@ -364,9 +367,12 @@ int remove_coreserver(update_con_info_t *cinfo, provision_state_t *state,
         HASH_DEL(*src, found);
         announce_coreserver_change(state, found, false);
         free_single_coreserver(found);
-        logger(LOG_INFO, "OpenLI: removed %s server via update socket.",
-                coreserver_type_to_string(srvtype));
+        logger(LOG_INFO, "OpenLI: removed %s server %s via update socket.",
+                coreserver_type_to_string(srvtype), idstr);
         return 1;
+    } else {
+        logger(LOG_INFO, "OpenLI: unable to remove %s server %s via update socket.",
+                coreserver_type_to_string(srvtype), idstr);
     }
 
     return 0;
