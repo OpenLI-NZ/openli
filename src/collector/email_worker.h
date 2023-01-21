@@ -59,6 +59,7 @@ typedef enum {
     OPENLI_IMAP_STATE_APPENDING,
     OPENLI_IMAP_STATE_IDLING,
     OPENLI_IMAP_STATE_LOGOUT,
+    OPENLI_IMAP_STATE_IGNORING,
 } openli_imap_status_t;
 
 typedef enum {

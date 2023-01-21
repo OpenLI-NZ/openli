@@ -44,6 +44,7 @@ enum {
     OPENLI_IMAP_COMMAND_PREAUTH,
     OPENLI_IMAP_COMMAND_AUTH,
     OPENLI_IMAP_COMMAND_LOGOUT,
+    OPENLI_IMAP_COMMAND_LOGIN,
     OPENLI_IMAP_COMMAND_IDLE,
     OPENLI_IMAP_COMMAND_APPEND,
     OPENLI_IMAP_COMMAND_ID,
@@ -456,6 +457,84 @@ static int get_auth_type(char *authmsg, imap_session_t *imapsess,
     return 1;
 }
 
+static int decode_login_command(emailsession_t *sess,
+        imap_session_t *imapsess) {
+
+    char *loginmsg;
+    int msglen, r;
+    char *lineend = NULL;
+    char *saveptr;
+    char *tag = NULL;
+    char *comm = NULL;
+    char *username = NULL;
+    char *pword = NULL;
+    char *mailbox;
+
+    msglen = imapsess->contbufread - imapsess->auth_read_from;
+    loginmsg = calloc(msglen + 1, sizeof(uint8_t));
+
+    memcpy(loginmsg, imapsess->contbuffer + imapsess->auth_read_from,
+            msglen);
+
+    lineend = strstr(loginmsg, "\r\n");
+    if (lineend == NULL) {
+        return 0;
+    }
+
+    tag = strtok_r(loginmsg, " ", &saveptr);
+    if (!tag) {
+        logger(LOG_INFO, "OpenLI: unable to derive tag from IMAP LOGIN command");
+        goto loginparsefail;
+    }
+
+    comm = strtok_r(NULL, " ", &saveptr);
+    if (!comm) {
+        logger(LOG_INFO, "OpenLI: unable to derive command from IMAP LOGIN command");
+        goto loginparsefail;
+    }
+
+    username = strtok_r(NULL,  " ", &saveptr);
+
+    if (!username) {
+        logger(LOG_INFO, "OpenLI: unable to derive username from IMAP LOGIN command");
+        return -1;
+    }
+
+    pword = strtok_r(NULL,  " \r\n", &saveptr);
+
+    if (!pword) {
+        logger(LOG_INFO, "OpenLI: unable to derive password from IMAP LOGIN command");
+        return -1;
+    }
+
+    if (*username == '"') {
+        /* mailbox is enclosed in quotes that we need to strip */
+        char *endquote = strchrnul(username + 1, '"');
+        imapsess->mailbox = strndup(username + 1, endquote - (username + 1));
+    } else {
+        imapsess->mailbox = strdup(username);
+    }
+
+    add_email_participant(sess, imapsess->mailbox, 0);
+    printf("%s %s %s %s %s\n", tag, comm, username, pword, imapsess->mailbox);
+
+    /* TODO replace username and password with masked credentials */
+
+    free(loginmsg);
+    imapsess->next_command_type = OPENLI_IMAP_COMMAND_NONE;
+    imapsess->next_comm_start = 0;
+    imapsess->reply_start = 0;
+
+    sess->currstate = OPENLI_IMAP_STATE_AUTH_REPLY;
+    return 1;
+
+loginparsefail:
+    sess->currstate = OPENLI_IMAP_STATE_IGNORING;
+    free(loginmsg);
+    return -1;
+
+}
+
 static int decode_plain_auth_content(char *authmsg, imap_session_t *imapsess,
         emailsession_t *sess) {
 
@@ -535,6 +614,9 @@ static int decode_authentication_command(emailsession_t *sess,
                         (imapsess->contbufread - imapsess->auth_read_from));
             }
             free(authmsg);
+            if (r < 0) {
+                sess->currstate = OPENLI_IMAP_STATE_IGNORING;
+            }
             if (r <= 0) {
                 break;
             }
@@ -824,12 +906,46 @@ static int parse_id_command(emailsession_t *sess, imap_session_t *imapsess) {
 static int find_next_crlf(imap_session_t *sess, int start_index) {
     int rem;
     uint8_t *found;
+    uint8_t *openparent = NULL;
+    uint8_t *closeparent = NULL;
+
+    int nests = 0;
 
     assert(sess->contbufused >= start_index);
 
     rem = sess->contbufused - start_index;
 
-    found = (uint8_t *)memmem(sess->contbuffer + start_index, rem, "\r\n", 2);
+    while (1) {
+        openparent = (uint8_t *)memmem(sess->contbuffer + start_index, rem,
+                "(", 1);
+        found = (uint8_t *)memmem(sess->contbuffer + start_index, rem, "\r\n",
+                2);
+        closeparent = (uint8_t *)memmem(sess->contbuffer + start_index, rem,
+                ")", 1);
+
+        if (openparent == NULL && closeparent == NULL && nests == 0) {
+            break;
+        }
+
+        if (closeparent == NULL && nests > 0) {
+            return 0;
+        }
+
+        if ((openparent == NULL || found < openparent) && nests == 0) {
+            break;
+        }
+
+        if (openparent == NULL || closeparent < openparent) {
+            assert(nests > 0);
+            nests -= 1;
+            start_index = (closeparent - sess->contbuffer) + 1;
+        } else {
+            nests += 1;
+            start_index = (openparent - sess->contbuffer) + 1;
+        }
+
+        rem = sess->contbufused - start_index;
+    }
 
     if (found) {
         sess->contbufread = (found - sess->contbuffer) + 2;
@@ -860,6 +976,13 @@ static int find_command_end(emailsession_t *sess, imap_session_t *imapsess) {
         /* Don't count client octets just yet, since we could be rewriting
          * the auth tokens shortly...
          */
+
+    } else if (imapsess->next_command_type == OPENLI_IMAP_COMMAND_LOGIN) {
+
+        sess->currstate = OPENLI_IMAP_STATE_AUTHENTICATING;
+        imapsess->auth_command_index = ind;
+
+        return decode_login_command(sess, imapsess);
 
     } else {
         sess->client_octets += (imapsess->contbufread - imapsess->next_comm_start);
@@ -1052,14 +1175,14 @@ static int read_imap_while_appending_state(emailsession_t *sess,
 
     /* Does this begin with a '+'? This is from the server */
     if (*tmp == '+') {
-        sess->server_octets += (crlf - msgstart);
+        sess->server_octets += ((crlf - msgstart) + 2);
     } else {
         /* Otherwise, this is message content from the client */
-        sess->client_octets += (crlf - msgstart);
+        sess->client_octets += ((crlf - msgstart) + 2);
     }
 
     /* Advance read pointer to the next line */
-    imapsess->contbufread += (crlf - msgstart);
+    imapsess->contbufread += ((crlf - msgstart) + 2);
 
     free(tmp);
     return 1;
@@ -1319,6 +1442,14 @@ static int find_next_imap_message(openli_email_worker_t *state,
         imapsess->next_command_type = OPENLI_IMAP_COMMAND_APPEND;
     } else if (strcasecmp(comm_resp, "LOGOUT") == 0) {
         imapsess->next_command_type = OPENLI_IMAP_COMMAND_LOGOUT;
+    } else if (strcasecmp(comm_resp, "LOGIN") == 0) {
+        imapsess->next_command_type = OPENLI_IMAP_COMMAND_LOGIN;
+        imapsess->auth_read_from = msgstart - imapsess->contbuffer;
+        if (imapsess->auth_tag) {
+            free(imapsess->auth_tag);
+        }
+        imapsess->auth_tag = strdup(tag);
+        sess->currstate = OPENLI_IMAP_STATE_AUTH_STARTED;
     } else if (strcasecmp(comm_resp, "AUTHENTICATE") == 0) {
         imapsess->next_command_type = OPENLI_IMAP_COMMAND_AUTH;
         if (imapsess->auth_tag) {
@@ -1418,6 +1549,10 @@ int update_imap_session_by_ingestion(openli_email_worker_t *state,
         imapsess = (imap_session_t *)sess->proto_state;
     }
 
+    if (sess->currstate == OPENLI_IMAP_STATE_IGNORING) {
+        return 0;
+    }
+
     if (append_content_to_imap_buffer(imapsess, cap) < 0) {
         logger(LOG_INFO, "OpenLI: Failed to append IMAP message content to session buffer for %s", sess->key);
         return -1;
@@ -1426,6 +1561,9 @@ int update_imap_session_by_ingestion(openli_email_worker_t *state,
     while (1) {
         if ((r = process_next_imap_state(state, sess, imapsess,
                 cap->timestamp)) <= 0) {
+            break;
+        }
+        if (sess->currstate == OPENLI_IMAP_STATE_IGNORING) {
             break;
         }
     }
