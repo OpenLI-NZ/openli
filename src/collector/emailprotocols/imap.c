@@ -235,6 +235,51 @@ static int generate_ccs_from_imap_command(openli_email_worker_t *state,
     return 1;
 }
 
+static int update_saved_login_command(imap_session_t *sess, int pwordindex,
+        const char *sesskey) {
+
+    int i, replacelen;
+    imap_command_t *comm = NULL;
+    char *ptr;
+    const char *replacement = "XXX\r\n";
+
+    if (sess->auth_command_index == -1) {
+        logger(LOG_INFO, "OpenLI: %s missing IMAP auth command index?", sesskey);
+        return -1;
+    }
+    comm = &(sess->commands[sess->auth_command_index]);
+
+    if (strcmp(comm->tag, sess->auth_tag) != 0) {
+        logger(LOG_INFO, "OpenLI: %s IMAP login command tags are mismatched? %s vs %s", sesskey, sess->auth_tag, comm->tag);
+        return -1;
+    }
+
+    if (strcmp(comm->imap_command, "LOGIN") != 0) {
+        logger(LOG_INFO, "OpenLI: %s unexpected type for saved IMAP login command: %d", sesskey, comm->imap_command);
+        return -1;
+    }
+
+    if (pwordindex >= comm->commbufused) {
+        logger(LOG_INFO, "OpenLI: cannot find original password token for IMAP login command %s, session %s\n", sess->auth_tag, sesskey);
+        return -1;
+    }
+    ptr = comm->commbuffer + pwordindex;
+
+    replacelen = strlen(replacement);
+    memcpy(ptr, replacement, replacelen);
+    ptr += replacelen;
+
+    comm->commbufused = ((uint8_t *)ptr - comm->commbuffer);
+    comm->reply_start = comm->commbufused;
+    memset(ptr, 0, comm->commbufsize - comm->commbufused);
+
+    assert(comm->cc_used > 0);
+
+    comm->ccs[comm->cc_used - 1].cc_end = comm->commbufused;
+    return 1;
+
+}
+
 static int update_saved_auth_command(imap_session_t *sess, char *replace,
         const char *origtoken, const char *sesskey) {
 
@@ -516,10 +561,12 @@ static int decode_login_command(emailsession_t *sess,
     }
 
     add_email_participant(sess, imapsess->mailbox, 0);
-    printf("%s %s %s %s %s\n", tag, comm, username, pword, imapsess->mailbox);
 
-    /* TODO replace username and password with masked credentials */
-
+    /* replace password with masked credentials
+     *
+     * TODO add config option to disable this behaviour
+     */
+    update_saved_login_command(imapsess, pword - loginmsg, sess->key);
     free(loginmsg);
     imapsess->next_command_type = OPENLI_IMAP_COMMAND_NONE;
     imapsess->next_comm_start = 0;
