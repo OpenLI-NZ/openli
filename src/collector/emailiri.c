@@ -148,6 +148,10 @@ static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
     email_intercept_ref_t *ref, *tmp;
 
     HASH_ITER(hh, active->intlist, ref, tmp) {
+        if (ref->em->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
+            continue;
+        }
+
         if (ts < ref->em->common.tostart_time * 1000) {
             continue;
         }

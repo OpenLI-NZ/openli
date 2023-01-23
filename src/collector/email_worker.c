@@ -514,6 +514,7 @@ static void update_email_intercept(openli_email_worker_t *state,
 
     found->common.tostart_time = latest->common.tostart_time;
     found->common.toend_time = latest->common.toend_time;
+    found->common.tomediate = latest->common.tomediate;
 
     /* XXX targetagency and destid shouldn't matter, unless we actually
      * use them in this thread.
@@ -662,6 +663,16 @@ static int modify_email_intercept(openli_email_worker_t *state,
                 decode->common.toend_time);
         found->common.tostart_time = decode->common.tostart_time;
         found->common.toend_time = decode->common.toend_time;
+    }
+
+    if (decode->common.tomediate != found->common.tomediate) {
+        char space[1024];
+        intercept_mediation_mode_as_string(decode->common.tomediate, space,
+                1024);
+        logger(LOG_INFO,
+                "OpenLI: Email intercept %s has changed mediation mode to: %s",
+                decode->common.liid, space);
+        found->common.tomediate = decode->common.tomediate;
     }
 
     if (strcmp(decode->common.delivcc, found->common.delivcc) != 0 ||

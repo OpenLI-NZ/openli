@@ -58,6 +58,7 @@ struct json_intercept {
     struct json_object *staticips;
     struct json_object *siptargets;
     struct json_object *emailtargets;
+    struct json_object *tomediate;
 };
 
 #define EXTRACT_JSON_INT_PARAM(name, uptype, jsonobj, dest, errflag, force) \
@@ -182,6 +183,7 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "radiusident", &(ipjson->radiusident));
     json_object_object_get_ex(parsed, "starttime", &(ipjson->starttime));
     json_object_object_get_ex(parsed, "endtime", &(ipjson->endtime));
+    json_object_object_get_ex(parsed, "outputhandovers", &(ipjson->tomediate));
     json_object_object_get_ex(parsed, "vendmirrorid", &(ipjson->vendmirrorid));
     json_object_object_get_ex(parsed, "staticips", &(ipjson->staticips));
     json_object_object_get_ex(parsed, "siptargets", &(ipjson->siptargets));
@@ -839,6 +841,9 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
             mailint->common.delivcc, &parseerr, true);
     EXTRACT_JSON_STRING_PARAM("agencyid", "Email intercept", emailjson.agencyid,
             mailint->common.targetagency, &parseerr, true);
+    EXTRACT_JSON_INT_PARAM("outputhandovers", "Email intercept",
+            emailjson.tomediate,
+            mailint->common.tomediate, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("mediator", "Email intercept", emailjson.mediator,
             mailint->common.destid, &parseerr, true);
     EXTRACT_JSON_INT_PARAM("starttime", "Email intercept", emailjson.starttime,
@@ -963,6 +968,9 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             vint->common.delivcc, &parseerr, true);
     EXTRACT_JSON_STRING_PARAM("agencyid", "VOIP intercept", voipjson.agencyid,
             vint->common.targetagency, &parseerr, true);
+    EXTRACT_JSON_INT_PARAM("outputhandovers", "VOIP intercept",
+            voipjson.tomediate,
+            vint->common.tomediate, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("mediator", "VOIP intercept", voipjson.mediator,
             vint->common.destid, &parseerr, true);
     EXTRACT_JSON_INT_PARAM("starttime", "VOIP intercept", voipjson.starttime,
@@ -1084,6 +1092,9 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             ipint->common.delivcc, &parseerr, true);
     EXTRACT_JSON_STRING_PARAM("agencyid", "IP intercept", ipjson.agencyid,
             ipint->common.targetagency, &parseerr, true);
+    EXTRACT_JSON_INT_PARAM("outputhandovers", "IP intercept",
+            ipjson.tomediate,
+            ipint->common.tomediate, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("mediator", "IP intercept", ipjson.mediator,
             ipint->common.destid, &parseerr, true);
     EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
@@ -1238,6 +1249,9 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
             mailint->common.delivcc, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("agencyid", "Email intercept", emailjson.agencyid,
             mailint->common.targetagency, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("outputhandovers", "Email intercept",
+            emailjson.tomediate,
+            mailint->common.tomediate, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("mediator", "Email intercept", emailjson.mediator,
             mailint->common.destid, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("starttime", "Email intercept", emailjson.starttime,
@@ -1283,6 +1297,11 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
             &agencychanged);
 
     timechanged = compare_intercept_times(&(mailint->common), &(found->common));
+
+    if (mailint->common.tomediate != found->common.tomediate) {
+        changed = 1;
+        found->common.tomediate = mailint->common.tomediate;
+    }
 
     if (agencychanged) {
         new_intercept_liidmapping(state, found->common.targetagency,
@@ -1372,6 +1391,9 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             vint->common.delivcc, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("agencyid", "VOIP intercept", voipjson.agencyid,
             vint->common.targetagency, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("outputhandovers", "VOIP intercept",
+            voipjson.tomediate,
+            vint->common.tomediate, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("mediator", "VOIP intercept", voipjson.mediator,
             vint->common.destid, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("starttime", "VOIP intercept", voipjson.starttime,
@@ -1414,6 +1436,11 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     MODIFY_STRING_MEMBER(vint->common.targetagency, found->common.targetagency,
             &agencychanged);
+
+    if (vint->common.tomediate != found->common.tomediate) {
+        changed = 1;
+        found->common.tomediate = vint->common.tomediate;
+    }
 
     timechanged = compare_intercept_times(&(vint->common), &(found->common));
 
@@ -1506,6 +1533,9 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             ipint->common.delivcc, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("agencyid", "IP intercept", ipjson.agencyid,
             ipint->common.targetagency, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("outputhandovers", "IP intercept",
+            ipjson.tomediate,
+            ipint->common.tomediate, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("mediator", "IP intercept", ipjson.mediator,
             ipint->common.destid, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
@@ -1589,6 +1619,11 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     MODIFY_STRING_MEMBER(ipint->common.delivcc, found->common.delivcc,
             &changed);
     found->common.delivcc_len  = strlen(found->common.delivcc);
+
+    if (ipint->common.tomediate != found->common.tomediate) {
+        found->common.tomediate = ipint->common.tomediate;
+        changed = 1;
+    }
 
     MODIFY_STRING_MEMBER(ipint->username, found->username, &changed);
     found->username_len = strlen(found->username);

@@ -79,6 +79,10 @@ static void create_emailccs_for_intercept_list(openli_email_worker_t *state,
 
     HASH_ITER(hh, active->intlist, ref, tmp) {
 
+        if (ref->em->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
+            continue;
+        }
+
         if (timestamp < ref->em->common.tostart_time * 1000) {
             continue;
         }

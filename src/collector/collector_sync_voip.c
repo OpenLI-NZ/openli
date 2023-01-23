@@ -1011,6 +1011,10 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
 
     openli_export_recv_t *copy;
 
+    if (vint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
+        return;
+    }
+
     if (vint->common.tostart_time > irimsg->ts.tv_sec) {
         return;
     }
@@ -1639,6 +1643,16 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
                 "OpenLI: VOIP intercept %s has changed start / end times -- now %lu, %lu", tomod.common.liid, tomod.common.tostart_time, tomod.common.toend_time);
     }
 
+    if (tomod.common.tomediate != vint->common.tomediate) {
+        char space[1024];
+        changed = 1;
+        intercept_mediation_mode_as_string(tomod.common.tomediate, space,
+                1024);
+        logger(LOG_INFO,
+                "OpenLI: VOIP intercept %s has changed mediation mode to: %s",
+                vint->common.liid, space);
+    }
+
     if (strcmp(tomod.common.delivcc, vint->common.delivcc) != 0 ||
             strcmp(tomod.common.authcc, vint->common.authcc) != 0) {
         char *tmp;
@@ -1659,6 +1673,7 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     vint->options = tomod.options;
     vint->common.tostart_time = tomod.common.tostart_time;
     vint->common.toend_time = tomod.common.toend_time;
+    vint->common.tomediate = tomod.common.tomediate;
 
     if (changed) {
         push_voip_intercept_update_to_threads(sync, vint);

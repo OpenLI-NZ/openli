@@ -48,6 +48,7 @@ static inline void copy_intercept_common(intercept_common_t *src,
     dest->hi1_seqno = src->hi1_seqno;
     dest->tostart_time = src->tostart_time;
     dest->toend_time = src->toend_time;
+    dest->tomediate = src->tomediate;
 }
 
 int are_sip_identities_same(openli_sip_identity_t *a,
@@ -70,6 +71,19 @@ int are_sip_identities_same(openli_sip_identity_t *a,
     }
 
     return 0;
+}
+
+void intercept_mediation_mode_as_string(intercept_outputs_t mode,
+        char *space, int spacelen) {
+
+    if (mode == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
+        snprintf(space, spacelen, "IRI-Only");
+    } else if (mode == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
+        snprintf(space, spacelen, "CC-Only");
+    } else {
+        snprintf(space, spacelen, "Both");
+    }
+
 }
 
 sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,

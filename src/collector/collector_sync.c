@@ -437,6 +437,10 @@ static int create_iri_from_packet_event(collector_sync_t *sync,
         void *parseddata) {
 	struct timeval now;
 
+    if (ipint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
+        return 0;
+    }
+
 	gettimeofday(&now, NULL);
 	if (!INTERCEPT_IS_ACTIVE(ipint, now)) {
 		return 0;
@@ -453,6 +457,10 @@ static int create_iri_from_session(collector_sync_t *sync,
         access_session_t *sess, ipintercept_t *ipint, uint8_t special) {
 
 	struct timeval now;
+
+    if (ipint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
+        return 0;
+    }
 
 	gettimeofday(&now, NULL);
 	if (!INTERCEPT_IS_ACTIVE(ipint, now)) {
@@ -704,10 +712,12 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
     HASH_ADD_KEYPTR(hh, ipint->statics, ipr->rangestr,
             strlen(ipr->rangestr), ipr);
 
-	gettimeofday(&now, NULL);
-	if (INTERCEPT_IS_ACTIVE(ipint, now)) {
-	    create_ipiri_job_from_iprange(sync, ipr, ipint, OPENLI_IPIRI_STARTWHILEACTIVE);
-	}
+    if (ipint->common.tomediate != OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
+    	gettimeofday(&now, NULL);
+	    if (INTERCEPT_IS_ACTIVE(ipint, now)) {
+	        create_ipiri_job_from_iprange(sync, ipr, ipint, OPENLI_IPIRI_STARTWHILEACTIVE);
+	    }
+    }
 
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
             sendq, tmp) {
@@ -962,6 +972,7 @@ static void push_ipintercept_update_to_threads(collector_sync_t *sync,
 
     ipint->common.tostart_time = modified->common.tostart_time;
     ipint->common.toend_time = modified->common.toend_time;
+    ipint->common.tomediate = modified->common.tomediate;
 
     /* Update all static IP ranges for this intercept */
     HASH_ITER(hh, ipint->statics, ipr, tmpr) {
@@ -1301,6 +1312,7 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     ipintercept_t *ipint, *modified;
     openli_export_recv_t *expmsg;
+    int changed = 0;
 
     modified = calloc(1, sizeof(ipintercept_t));
 
@@ -1318,8 +1330,6 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     if (!ipint) {
         return insert_new_ipintercept(sync, modified);
     }
-
-    /* TODO apply any changes to authcc or delivcc */
 
     if (strcmp(ipint->username, modified->username) != 0) {
         push_ipintercept_halt_to_threads(sync, ipint);
@@ -1352,16 +1362,33 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         ipint->common.toend_time = modified->common.toend_time;
         update_intercept_time_event(&(sync->upcoming_intercept_events),
                 ipint, &(ipint->common), &(modified->common));
-        push_ipintercept_update_to_threads(sync, ipint, modified);
+        changed = 1;
     }
+
+    if (ipint->common.tomediate != modified->common.tomediate) {
+        char space[1024];
+        intercept_mediation_mode_as_string(modified->common.tomediate, space,
+                1024);
+        logger(LOG_INFO,
+                "OpenLI: IP intercept %s has changed mediation mode to: %s",
+                ipint->common.liid, space);
+        ipint->common.tomediate = modified->common.tomediate;
+        changed = 1;
+
+    }
+
 
     if (strcmp(ipint->common.delivcc, modified->common.delivcc) != 0 ||
             strcmp(ipint->common.authcc, modified->common.authcc) != 0) {
-        push_ipintercept_update_to_threads(sync, ipint, modified);
+        changed = 1;
         expmsg = create_intercept_details_msg(&(ipint->common));
         expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
         publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid],
                 expmsg);
+    }
+
+    if (changed) {
+        push_ipintercept_update_to_threads(sync, ipint, modified);
     }
 
     free_single_ipintercept(modified);

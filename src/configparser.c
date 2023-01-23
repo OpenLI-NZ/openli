@@ -597,6 +597,74 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
     return 0;
 }
 
+static void parse_intercept_common_fields(intercept_common_t *common,
+        yaml_node_t *key, yaml_node_t *value) {
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "liid") == 0) {
+        SET_CONFIG_STRING_OPTION(common->liid, value);
+        common->liid_len = strlen(common->liid);
+    }
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value,
+                "authcountrycode") == 0) {
+        SET_CONFIG_STRING_OPTION(common->authcc, value);
+        common->authcc_len = strlen(common->authcc);
+    }
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value,
+                "deliverycountrycode") == 0) {
+        SET_CONFIG_STRING_OPTION(common->delivcc, value);
+        common->delivcc_len = strlen(common->delivcc);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "mediator") == 0
+            && common->destid == 0) {
+        common->destid = strtoul(
+                (char *)value->data.scalar.value, NULL, 10);
+        if (common->destid == 0) {
+            logger(LOG_INFO, "OpenLI: 0 is not a valid value for the 'mediator' config option.");
+        }
+    }
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "starttime") == 0) {
+        common->tostart_time = strtoul(
+                (char *)value->data.scalar.value, NULL, 10);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "endtime") == 0) {
+        common->toend_time = strtoul(
+                (char *)value->data.scalar.value, NULL, 10);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "agencyid") == 0) {
+        SET_CONFIG_STRING_OPTION(common->targetagency, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "outputhandovers") == 0) {
+
+        if (strcasecmp((char *)value->data.scalar.value, "irionly") == 0) {
+            common->tomediate = OPENLI_INTERCEPT_OUTPUTS_IRIONLY;
+        } else if (strcasecmp((char *)value->data.scalar.value, "cconly") == 0) {
+            common->tomediate = OPENLI_INTERCEPT_OUTPUTS_CCONLY;
+        } else {
+            common->tomediate = OPENLI_INTERCEPT_OUTPUTS_ALL;
+        }
+    }
+}
+
 static int parse_emailintercept_list(emailintercept_t **mailints,
         yaml_document_t *doc, yaml_node_t *inputs) {
 
@@ -617,6 +685,7 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
         newcept->common.targetagency = NULL;
         newcept->common.tostart_time = 0;
         newcept->common.toend_time = 0;
+        newcept->common.tomediate = OPENLI_INTERCEPT_OUTPUTS_ALL;
         newcept->common.hi1_seqno = 0;
         newcept->awaitingconfirm = 1;
         newcept->targets = NULL;
@@ -628,26 +697,7 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
             key = yaml_document_get_node(doc, pair->key);
             value = yaml_document_get_node(doc, pair->value);
 
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "liid") == 0) {
-                SET_CONFIG_STRING_OPTION(newcept->common.liid, value);
-                newcept->common.liid_len = strlen(newcept->common.liid);
-            }
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value,
-                        "authcountrycode") == 0) {
-                SET_CONFIG_STRING_OPTION(newcept->common.authcc, value);
-                newcept->common.authcc_len = strlen(newcept->common.authcc);
-            }
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value,
-                        "deliverycountrycode") == 0) {
-                SET_CONFIG_STRING_OPTION(newcept->common.delivcc, value);
-                newcept->common.delivcc_len = strlen(newcept->common.delivcc);
-            }
+            parse_intercept_common_fields(&(newcept->common), key, value);
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SEQUENCE_NODE &&
@@ -655,37 +705,6 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
 
                 parse_email_targets(&(newcept->targets), doc, value);
             }
-
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "mediator") == 0
-                    && newcept->common.destid == 0) {
-                newcept->common.destid = strtoul(
-                        (char *)value->data.scalar.value, NULL, 10);
-                if (newcept->common.destid == 0) {
-                    logger(LOG_INFO, "OpenLI: 0 is not a valid value for the 'mediator' config option.");
-                }
-            }
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "starttime") == 0) {
-                newcept->common.tostart_time = strtoul(
-                        (char *)value->data.scalar.value, NULL, 10);
-            }
-
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "endtime") == 0) {
-                newcept->common.toend_time = strtoul(
-                        (char *)value->data.scalar.value, NULL, 10);
-            }
-
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "agencyid") == 0) {
-                SET_CONFIG_STRING_OPTION(newcept->common.targetagency, value);
-            }
-
         }
 
         tgtcount = HASH_CNT(hh, newcept->targets);
@@ -736,6 +755,7 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         newcept->options = 0;
         newcept->common.tostart_time = 0;
         newcept->common.toend_time = 0;
+        newcept->common.tomediate = OPENLI_INTERCEPT_OUTPUTS_ALL;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -745,62 +765,12 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
             key = yaml_document_get_node(doc, pair->key);
             value = yaml_document_get_node(doc, pair->value);
 
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "liid") == 0) {
-                SET_CONFIG_STRING_OPTION(newcept->common.liid, value);
-                newcept->common.liid_len = strlen(newcept->common.liid);
-            }
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value,
-                        "authcountrycode") == 0) {
-                SET_CONFIG_STRING_OPTION(newcept->common.authcc, value);
-                newcept->common.authcc_len = strlen(newcept->common.authcc);
-            }
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value,
-                        "deliverycountrycode") == 0) {
-                SET_CONFIG_STRING_OPTION(newcept->common.delivcc, value);
-                newcept->common.delivcc_len = strlen(newcept->common.delivcc);
-            }
-
+            parse_intercept_common_fields(&(newcept->common), key, value);
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SEQUENCE_NODE &&
                     strcmp((char *)key->data.scalar.value, "siptargets") == 0) {
 
                 parse_sip_targets(newcept->targets, doc, value);
-            }
-
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "mediator") == 0
-                    && newcept->common.destid == 0) {
-                newcept->common.destid = strtoul((char *)value->data.scalar.value,
-                        NULL, 10);
-                if (newcept->common.destid == 0) {
-                    logger(LOG_INFO, "OpenLI: 0 is not a valid value for the 'mediator' config option.");
-                }
-            }
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "starttime") == 0) {
-                newcept->common.tostart_time = strtoul(
-                        (char *)value->data.scalar.value, NULL, 10);
-            }
-
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "endtime") == 0) {
-                newcept->common.toend_time = strtoul(
-                        (char *)value->data.scalar.value, NULL, 10);
-            }
-
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "agencyid") == 0) {
-                SET_CONFIG_STRING_OPTION(newcept->common.targetagency, value);
             }
 
         }
@@ -850,11 +820,12 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->common.authcc_len = 0;
         newcept->common.delivcc_len = 0;
         newcept->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
-        newcept->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED; 
+        newcept->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
         newcept->statics = NULL;
         newcept->options = 0;
         newcept->common.tostart_time = 0;
         newcept->common.toend_time = 0;
+        newcept->common.tomediate = OPENLI_INTERCEPT_OUTPUTS_ALL;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -864,34 +835,13 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
             key = yaml_document_get_node(doc, pair->key);
             value = yaml_document_get_node(doc, pair->value);
 
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "liid") == 0) {
-                SET_CONFIG_STRING_OPTION(newcept->common.liid, value);
-                newcept->common.liid_len = strlen(newcept->common.liid);
-            }
-
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value,
-                            "authcountrycode") == 0) {
-                SET_CONFIG_STRING_OPTION(newcept->common.authcc, value);
-                newcept->common.authcc_len = strlen(newcept->common.authcc);
-            }
+            parse_intercept_common_fields(&(newcept->common), key, value);
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SEQUENCE_NODE &&
                     strcmp((char *)key->data.scalar.value,
                             "staticips") == 0) {
                 add_intercept_static_ips(&(newcept->statics), doc, value);
-            }
-
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value,
-                            "deliverycountrycode") == 0) {
-                SET_CONFIG_STRING_OPTION(newcept->common.delivcc, value);
-                newcept->common.delivcc_len = strlen(newcept->common.delivcc);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -930,21 +880,6 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                 }
             }
 
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "mediator") == 0
-                    && newcept->common.destid == 0) {
-                newcept->common.destid = strtoul((char *)value->data.scalar.value,
-                        NULL, 10);
-                if (newcept->common.destid == 0) {
-                    logger(LOG_INFO, "OpenLI: 0 is not a valid value for the 'mediator' config option.");
-                }
-            }
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "agencyid") == 0) {
-                SET_CONFIG_STRING_OPTION(newcept->common.targetagency, value);
-            }
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
@@ -961,21 +896,6 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                 }
 
             }
-
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "starttime") == 0) {
-                newcept->common.tostart_time = strtoul(
-                        (char *)value->data.scalar.value, NULL, 10);
-            }
-
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcmp((char *)key->data.scalar.value, "endtime") == 0) {
-                newcept->common.toend_time = strtoul(
-                        (char *)value->data.scalar.value, NULL, 10);
-            }
-
         }
 
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&

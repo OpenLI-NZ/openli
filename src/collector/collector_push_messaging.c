@@ -297,6 +297,7 @@ static int update_ipv4_intercept(colthread_local_t *loc, ipsession_t *toup) {
 
     found->common.tostart_time = toup->common.tostart_time;
     found->common.toend_time = toup->common.toend_time;
+    found->common.tomediate = toup->common.tomediate;
     return 1;
 }
 
@@ -378,6 +379,7 @@ static int update_ipv6_intercept(colthread_local_t *loc, ipsession_t *toup) {
 
     found->common.tostart_time = toup->common.tostart_time;
     found->common.toend_time = toup->common.toend_time;
+    found->common.tomediate = toup->common.tomediate;
 
     return 1;
 }
@@ -811,6 +813,7 @@ void handle_change_voip_intercept(libtrace_thread_t *t, colthread_local_t *loc,
 
     rtp->common.tostart_time = tochange->common.tostart_time;
     rtp->common.toend_time = tochange->common.toend_time;
+    rtp->common.tomediate = tochange->common.tomediate;
 
     free_single_rtpstream(tochange);
 }
@@ -851,6 +854,7 @@ void handle_change_vendmirror_intercept(libtrace_thread_t *t,
 
     found->common.tostart_time = vend->common.tostart_time;
     found->common.toend_time = vend->common.toend_time;
+    found->common.tomediate = vend->common.tomediate;
     free_single_vendmirror_intercept(vend);
 }
 
@@ -865,6 +869,7 @@ void handle_change_iprange_intercept(libtrace_thread_t *t,
     if (sessrec) {
         sessrec->common.tostart_time = ipr->common.tostart_time;
         sessrec->common.toend_time = ipr->common.toend_time;
+        sessrec->common.tomediate = ipr->common.tomediate;
 
         tmp = sessrec->common.authcc;
         sessrec->common.authcc = ipr->common.authcc;

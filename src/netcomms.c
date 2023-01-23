@@ -356,16 +356,17 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
 #define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
          ipint->username_len + sizeof(ipint->accesstype) + \
-         sizeof(ipint->options) + \
+         sizeof(ipint->options) + sizeof(ipint->common.tomediate) + \
          sizeof(ipint->common.tostart_time) + sizeof(ipint->common.toend_time) \
-         + sizeof(ipint->vendmirrorid) + (8 * 4))
+         + sizeof(ipint->vendmirrorid) + (9 * 4))
 
 #define IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
         ipint->common.delivcc_len + \
          ipint->username_len + sizeof(ipint->accesstype) + \
+         sizeof(ipint->common.tomediate) + \
          sizeof(ipint->common.tostart_time) + sizeof(ipint->common.toend_time) \
-         + sizeof(ipint->options) + (8 * 4))
+         + sizeof(ipint->options) + (9 * 4))
 
 static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
 
@@ -448,6 +449,12 @@ static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
         goto pushmodfail;
     }
 
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_TOMEDIATE,
+            (uint8_t *)&(ipint->common.tomediate),
+            sizeof(ipint->common.tomediate)) == -1) {
+        goto pushmodfail;
+    }
+
 
     return (int)totallen;
 
@@ -462,7 +469,8 @@ pushmodfail:
 #define EMAILINTERCEPT_MODIFY_BODY_LEN(em) \
         (em->common.liid_len + em->common.authcc_len + \
          em->common.delivcc_len + sizeof(em->common.toend_time) + \
-         sizeof(em->common.tostart_time) + (5 * 4))
+         sizeof(em->common.tomediate) + \
+         sizeof(em->common.tostart_time) + (6 * 4))
 
 static int _push_emailintercept_modify(net_buffer_t *nb, emailintercept_t *em) {
     ii_header_t hdr;
@@ -515,6 +523,12 @@ static int _push_emailintercept_modify(net_buffer_t *nb, emailintercept_t *em) {
         goto pushmodfail;
     }
 
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_TOMEDIATE,
+            (uint8_t *)&(em->common.tomediate),
+            sizeof(em->common.tomediate)) == -1) {
+        goto pushmodfail;
+    }
+
 
     return (int)totallen;
 
@@ -530,7 +544,8 @@ pushmodfail:
         (vint->common.liid_len + vint->common.authcc_len + \
          vint->common.delivcc_len + \
          sizeof(vint->options) + sizeof(vint->common.toend_time) + \
-         sizeof(vint->common.tostart_time) + (6 * 4))
+         sizeof(vint->common.tomediate) + \
+         sizeof(vint->common.tostart_time) + (7 * 4))
 
 static int _push_voipintercept_modify(net_buffer_t *nb, voipintercept_t *vint)
 {
@@ -589,6 +604,12 @@ static int _push_voipintercept_modify(net_buffer_t *nb, voipintercept_t *vint)
         goto pushmodfail;
     }
 
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_TOMEDIATE,
+            (uint8_t *)&(vint->common.tomediate),
+            sizeof(vint->common.tomediate)) == -1) {
+        goto pushmodfail;
+    }
+
 
     return (int)totallen;
 
@@ -618,7 +639,8 @@ int push_intercept_modify_onto_net_buffer(net_buffer_t *nb, void *data,
         (em->common.liid_len + em->common.authcc_len + \
          em->common.delivcc_len + strlen(em->common.targetagency) + \
          sizeof(em->common.destid) + sizeof(em->common.tostart_time) + \
-         sizeof(em->common.toend_time) + (7 * 4))
+         sizeof(em->common.tomediate) + \
+         sizeof(em->common.toend_time) + (8 * 4))
 
 int push_emailintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
@@ -641,56 +663,61 @@ int push_emailintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     populate_header(&hdr, OPENLI_PROTO_START_EMAILINTERCEPT, totallen, 0);
     if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
             sizeof(ii_header_t))) == -1) {
-        goto pushvoipintfail;
+        goto pushemailintfail;
     }
 
     /* Push on each intercept field */
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID,
             (uint8_t *)em->common.liid,
             em->common.liid_len)) == -1) {
-        goto pushvoipintfail;
+        goto pushemailintfail;
     }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC,
             (uint8_t *)em->common.authcc,
             em->common.authcc_len)) == -1) {
-        goto pushvoipintfail;
+        goto pushemailintfail;
     }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC,
             (uint8_t *)em->common.delivcc,
             em->common.delivcc_len)) == -1) {
-        goto pushvoipintfail;
+        goto pushemailintfail;
     }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LEAID,
             (uint8_t *)em->common.targetagency,
             strlen(em->common.targetagency))) == -1) {
-        goto pushvoipintfail;
+        goto pushemailintfail;
     }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_MEDIATORID,
             (uint8_t *)&(em->common.destid),
             sizeof(em->common.destid))) == -1) {
-        goto pushvoipintfail;
+        goto pushemailintfail;
     }
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_START_TIME,
             (uint8_t *)&(em->common.tostart_time),
             sizeof(em->common.tostart_time)) == -1) {
-        goto pushvoipintfail;
+        goto pushemailintfail;
     }
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_END_TIME,
             (uint8_t *)&(em->common.toend_time),
             sizeof(em->common.toend_time)) == -1) {
-        goto pushvoipintfail;
+        goto pushemailintfail;
     }
 
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_TOMEDIATE,
+            (uint8_t *)&(em->common.tomediate),
+            sizeof(em->common.tomediate)) == -1) {
+        goto pushemailintfail;
+    }
 
     return (int)totallen;
 
-pushvoipintfail:
+pushemailintfail:
     logger(LOG_INFO,
             "OpenLI: unable to push new Email intercept %s to collector fd %d",
             em->common.liid, nb->fd);
@@ -701,8 +728,9 @@ pushvoipintfail:
         (vint->common.liid_len + vint->common.authcc_len + \
          vint->common.delivcc_len + strlen(vint->common.targetagency) + \
          sizeof(vint->common.destid) + sizeof(vint->options) \
+         + sizeof(vint->common.tomediate) \
          + sizeof(vint->common.tostart_time) + sizeof(vint->common.toend_time) \
-         + (8 * 4))
+         + (9 * 4))
 
 #define INTERCEPT_WITHDRAW_BODY_LEN(liid, authcc) \
         (strlen(liid) + strlen(authcc) + (2 * 4))
@@ -846,6 +874,11 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
         goto pushvoipintfail;
     }
 
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_TOMEDIATE,
+            (uint8_t *)&(vint->common.tomediate),
+            sizeof(vint->common.tomediate)) == -1) {
+        goto pushvoipintfail;
+    }
 
     return (int)totallen;
 
@@ -1102,18 +1135,18 @@ int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
          ipint->common.delivcc_len + \
          ipint->username_len + sizeof(ipint->common.destid) + \
          strlen(ipint->common.targetagency) + \
-         sizeof(ipint->options) + \
+         sizeof(ipint->options) + sizeof(ipint->common.tomediate) + \
          sizeof(ipint->common.tostart_time) + sizeof(ipint->common.toend_time) \
-         + sizeof(ipint->accesstype) + (10 * 4))
+         + sizeof(ipint->accesstype) + (11 * 4))
 
 #define VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint) \
         (ipint->common.liid_len + ipint->common.authcc_len + \
          ipint->common.delivcc_len + ipint->username_len + \
          strlen(ipint->common.targetagency) + \
          sizeof(ipint->vendmirrorid) + sizeof(ipint->common.destid) + \
-         sizeof(ipint->options) + \
+         sizeof(ipint->options) + sizeof(ipint->common.tomediate) + \
          sizeof(ipint->common.tostart_time) + sizeof(ipint->common.toend_time) \
-         + sizeof(ipint->accesstype) + (11 * 4))
+         + sizeof(ipint->accesstype) + (12 * 4))
 
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
@@ -1213,6 +1246,11 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
         goto pushipintfail;
     }
 
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_TOMEDIATE,
+            (uint8_t *)&(ipint->common.tomediate),
+            sizeof(ipint->common.tomediate)) == -1) {
+        goto pushipintfail;
+    }
     HASH_ITER(hh, ipint->statics, ipr, tmpr) {
         if (push_static_ipranges_onto_net_buffer(nb, ipint, ipr) < 0) {
             return -1;
@@ -1632,6 +1670,7 @@ int decode_emailintercept_start(uint8_t *msgbody, uint16_t len,
     mailint->common.delivcc_len = 0;
     mailint->common.tostart_time = 0;
     mailint->common.toend_time = 0;
+    mailint->common.tomediate = 0;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -1659,6 +1698,8 @@ int decode_emailintercept_start(uint8_t *msgbody, uint16_t len,
             mailint->common.tostart_time = *((uint64_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTERCEPT_END_TIME) {
             mailint->common.toend_time = *((uint64_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_TOMEDIATE) {
+            mailint->common.tomediate = *((intercept_outputs_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
@@ -1706,6 +1747,7 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
     vint->common.delivcc_len = 0;
     vint->common.tostart_time = 0;
     vint->common.toend_time = 0;
+    vint->common.tomediate = 0;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -1737,6 +1779,8 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
             vint->common.tostart_time = *((uint64_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTERCEPT_END_TIME) {
             vint->common.toend_time = *((uint64_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_TOMEDIATE) {
+            vint->common.tomediate = *((intercept_outputs_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
@@ -1791,6 +1835,7 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->common.delivcc_len = 0;
     ipint->common.tostart_time = 0;
     ipint->common.toend_time = 0;
+    ipint->common.tomediate = 0;
     ipint->username_len = 0;
 
     while (msgbody < msgend) {
@@ -1826,6 +1871,8 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
             ipint->common.tostart_time = *((uint64_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTERCEPT_END_TIME) {
             ipint->common.toend_time = *((uint64_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_TOMEDIATE) {
+            ipint->common.tomediate = *((intercept_outputs_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_USERNAME) {
             DECODE_STRING_FIELD(ipint->username, valptr, vallen);
             if (vallen == 0) {

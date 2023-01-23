@@ -70,7 +70,7 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     json_object *jobj;
     json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
     json_object *vendmirrorid, *user, *accesstype, *radiusident;
-    json_object *staticips, *starttime, *endtime;
+    json_object *staticips, *starttime, *endtime, *tomediate;
 
     jobj = json_object_new_object();
 
@@ -79,6 +79,7 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     delivcc = json_object_new_string(ipint->common.delivcc);
     agencyid = json_object_new_string(ipint->common.targetagency);
     mediator = json_object_new_int(ipint->common.destid);
+    tomediate = json_object_new_int(ipint->common.tomediate);
     user = json_object_new_string(ipint->username);
     accesstype = json_object_new_string(
             get_access_type_string(ipint->accesstype));
@@ -90,6 +91,7 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     json_object_object_add(jobj, "delivcc", delivcc);
     json_object_object_add(jobj, "agencyid", agencyid);
     json_object_object_add(jobj, "mediator", mediator);
+    json_object_object_add(jobj, "tomediate", tomediate);
     json_object_object_add(jobj, "user", user);
     json_object_object_add(jobj, "accesstype", accesstype);
     json_object_object_add(jobj, "radiusident", radiusident);
@@ -136,7 +138,7 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
 static json_object *convert_emailintercept_to_json(emailintercept_t *mailint) {
     json_object *jobj;
     json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
-    json_object *targets, *starttime, *endtime;
+    json_object *targets, *starttime, *endtime, *tomediate;
     email_target_t *tgt, *tmp;
 
     jobj = json_object_new_object();
@@ -146,6 +148,7 @@ static json_object *convert_emailintercept_to_json(emailintercept_t *mailint) {
     delivcc = json_object_new_string(mailint->common.delivcc);
     agencyid = json_object_new_string(mailint->common.targetagency);
     mediator = json_object_new_int(mailint->common.destid);
+    tomediate = json_object_new_int(mailint->common.tomediate);
     targets = json_object_new_array();
 
     json_object_object_add(jobj, "liid", liid);
@@ -153,6 +156,7 @@ static json_object *convert_emailintercept_to_json(emailintercept_t *mailint) {
     json_object_object_add(jobj, "delivcc", delivcc);
     json_object_object_add(jobj, "agencyid", agencyid);
     json_object_object_add(jobj, "mediator", mediator);
+    json_object_object_add(jobj, "tomediate", tomediate);
 
     if (mailint->common.tostart_time != 0) {
         starttime = json_object_new_int(mailint->common.tostart_time);
@@ -181,7 +185,7 @@ static json_object *convert_emailintercept_to_json(emailintercept_t *mailint) {
 static json_object *convert_voipintercept_to_json(voipintercept_t *vint) {
     json_object *jobj;
     json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
-    json_object *siptargets, *starttime, *endtime;
+    json_object *siptargets, *starttime, *endtime, *tomediate;
     libtrace_list_node_t *n;
 
     jobj = json_object_new_object();
@@ -191,6 +195,7 @@ static json_object *convert_voipintercept_to_json(voipintercept_t *vint) {
     delivcc = json_object_new_string(vint->common.delivcc);
     agencyid = json_object_new_string(vint->common.targetagency);
     mediator = json_object_new_int(vint->common.destid);
+    tomediate = json_object_new_int(vint->common.tomediate);
     siptargets = json_object_new_array();
 
     json_object_object_add(jobj, "liid", liid);
@@ -198,6 +203,7 @@ static json_object *convert_voipintercept_to_json(voipintercept_t *vint) {
     json_object_object_add(jobj, "delivcc", delivcc);
     json_object_object_add(jobj, "agencyid", agencyid);
     json_object_object_add(jobj, "mediator", mediator);
+    json_object_object_add(jobj, "tomediate", tomediate);
 
     if (vint->common.tostart_time != 0) {
         starttime = json_object_new_int(vint->common.tostart_time);

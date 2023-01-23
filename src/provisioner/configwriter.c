@@ -429,6 +429,28 @@ static int emit_intercept_common(intercept_common_t *intcom,
             (yaml_char_t *)buffer, strlen(buffer), 1, 0,
             YAML_PLAIN_SCALAR_STYLE);
     if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)"outputhandovers", strlen("outputhandovers"), 1, 0,
+            YAML_PLAIN_SCALAR_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    if (intcom->tomediate == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"irionly", strlen("irionly"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+    } else if (intcom->tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"cconly", strlen("cconly"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+    } else {
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"all", strlen("all"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+    }
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+
     return 0;
 }
 

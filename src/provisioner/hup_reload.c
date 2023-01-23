@@ -88,6 +88,10 @@ static inline int ip_intercept_equal(ipintercept_t *a, ipintercept_t *b) {
         return 0;
     }
 
+    if (a->common.tomediate != b->common.tomediate) {
+        return 0;
+    }
+
     if (strcmp(a->common.targetagency, b->common.targetagency) != 0) {
         return 0;
     }
