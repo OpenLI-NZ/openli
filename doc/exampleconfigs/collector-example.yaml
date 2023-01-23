@@ -33,6 +33,12 @@ forwardingthreads: 1
 # validated and can be easily spoofed).
 sipallowfromident: no
 
+# Set this to yes if you want OpenLI to replace any plain text or base64
+# encoded credentials (i.e. passwords) in intercepted IMAP traffic with
+# the characters "XXX". Note that this masking will only be applied to
+# IMAP traffic captured using an email intercept, not an IP intercept.
+maskipcreds: yes
+
 # Number of minutes between each dump of performance statistics to the
 # logger. Set to zero to disable this extra logging altogether.
 logstatfrequency: 5

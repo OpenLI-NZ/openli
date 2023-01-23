@@ -480,6 +480,22 @@ A SIP target can be described using the following key-value elements:
                            Authorization header will be associated with the
                            target.
 
+
+All intercept types also support the following optional key-value elements:
+
+* `starttime`             -- do not intercept any traffic observed before this
+                             unix timestamp
+* `endtime`               -- do not intercept any traffic observed after this
+                             unix timestamp
+* `outputhandovers`       -- If set to "all", then both IRI and CCs will be
+                             produced by OpenLI for this intercept.
+                             If set to "irionly", then only IRIs will be
+                             produced by OpenLI for this intercept.
+                             If set to "cconly", then only CCs will be produced
+                             by OpenLI for this intercept.
+                             The default setting is "all".
+
+
 ### SIP Target Specifics
 
 OpenLI currently supports five approaches for associating a SIP session
