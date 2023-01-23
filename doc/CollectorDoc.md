@@ -212,6 +212,15 @@ The basic option keys are:
                        intercepted using an email intercept with "XXX".
                        Defaults to "yes".
 
+Be aware that increasing the number of threads used for sequence number
+tracking, encoding or forwarding can actually decrease OpenLI's performance,
+especially if there are more threads active than CPU cores available on
+the collector host machine. Also, OpenLI uses a number of internal threads
+for message-passing and connection maintenance, which will also be
+contending for CPU time. A good rule of thumb is that the total number
+of input threads, sequence tracker threads, encoding threads and forwarding
+threads should NOT exceed the number of CPU cores on your machine.
+
 Inputs are specified as a YAML sequence with a key of `inputs:`. Each
 sequence item represents a single traffic source to intercept traffic from
 and must contain the following two key-value elements:
@@ -236,14 +245,21 @@ two key-value elements:
 * port -- the port that the sink is listening on for mirrored traffic
 
 
-Be aware that increasing the number of threads used for sequence number
-tracking, encoding or forwarding can actually decrease OpenLI's performance,
-especially if there are more threads active than CPU cores available on
-the collector host machine. Also, OpenLI uses a number of internal threads
-for message-passing and connection maintenance, which will also be
-contending for CPU time. A good rule of thumb is that the total number
-of input threads, sequence tracker threads, encoding threads and forwarding
-threads should NOT exceed the number of CPU cores on your machine.
+When performing email interception, mail protocol sessions will be ended as
+soon as the protocol "closing" command (i.e. "QUIT" for SMTP, "BYE" for IMAP)
+are observed. However, OpenLI will also expire any incomplete mail protocol
+sessions that have been idle for a certain number of minutes. You can
+configure the idle thresholds for each mail protocol by defining a YAML sequence
+with the key `emailsessiontimeouts` and then adding a sequence item for each
+protocol that you wish to define a timeout for. Each sequence item should
+be expressed as a key-value pair, where the key is the protocol name and the
+value is the desired timeout in minutes.
+
+The three mail protocols supported by OpenLI and their default timeout values
+are:
+* smtp (default is 5 minutes)
+* imap (default is 30 minutes)
+* pop3 (default is 10 minutes)
 
 
 ### SIP Ignore SDP O option
