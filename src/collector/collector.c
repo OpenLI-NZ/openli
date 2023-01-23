@@ -1219,8 +1219,8 @@ static void destroy_collector_state(collector_global_t *glob) {
     }
 
     pthread_mutex_destroy(&(glob->stats_mutex));
+    pthread_rwlock_destroy(&(glob->email_config_mutex));
     pthread_rwlock_destroy(&glob->config_mutex);
-    pthread_mutex_destroy(&(glob->email_timeouts.mutex));
     free(glob);
 }
 
@@ -1435,7 +1435,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->email_timeouts.smtp = 5;
     glob->email_timeouts.pop3 = 10;
     glob->email_timeouts.imap = 30;
-    pthread_mutex_init(&(glob->email_timeouts.mutex), NULL);
+    glob->mask_imap_creds = 1;      // defaults to "enabled"
 
 }
 
@@ -1448,6 +1448,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->configfile = configfile;
 
     pthread_mutex_init(&(glob->stats_mutex), NULL);
+    pthread_rwlock_init(&(glob->email_config_mutex), NULL);
 
     libtrace_message_queue_init(&glob->intersyncq,
             sizeof(openli_intersync_msg_t));
@@ -1484,6 +1485,14 @@ static collector_global_t *parse_global_config(char *configfile) {
     if (glob->trust_sip_from) {
         logger(LOG_INFO, "Allowing SIP From: URIs to be used for target identification");
     }
+
+    if (glob->mask_imap_creds) {
+        logger(LOG_INFO, "Email interception: rewriting IMAP auth credentials to avoid leaking passwords to agencies");
+    }
+
+    logger(LOG_DEBUG, "OpenLI: session idle timeout for SMTP sessions: %u minutes", glob->email_timeouts.smtp);
+    logger(LOG_DEBUG, "OpenLI: session idle timeout for IMAP sessions: %u minutes", glob->email_timeouts.imap);
+    logger(LOG_DEBUG, "OpenLI: session idle timeout for POP3 sessions: %u minutes", glob->email_timeouts.pop3);
 
     if (create_ssl_context(&(glob->sslconf)) < 0) {
         return NULL;
@@ -1605,6 +1614,25 @@ static int reload_collector_config(collector_global_t *glob,
     newstate.sharedinfo.intpointid = NULL;
 
     pthread_rwlock_unlock(&(glob->config_mutex));
+
+    pthread_rwlock_wrlock(&(glob->email_config_mutex));
+    if (glob->mask_imap_creds != newstate.mask_imap_creds) {
+        if (newstate.mask_imap_creds) {
+            logger(LOG_INFO, "OpenLI: Email interception: rewriting IMAP auth credentials to avoid leaking passwords to agencies");
+        } else {
+            logger(LOG_INFO, "OpenLI: Email interception: no longer rewriting IMAP auth credentials to avoid leaking passwords to agencies");
+        }
+    }
+
+    glob->mask_imap_creds = newstate.mask_imap_creds;
+    glob->email_timeouts.smtp = newstate.email_timeouts.smtp;
+    glob->email_timeouts.imap = newstate.email_timeouts.imap;
+    glob->email_timeouts.pop3 = newstate.email_timeouts.pop3;
+
+    logger(LOG_DEBUG, "OpenLI: session idle timeout for SMTP sessions is now %u minutes", glob->email_timeouts.smtp);
+    logger(LOG_DEBUG, "OpenLI: session idle timeout for IMAP sessions is now %u minutes", glob->email_timeouts.imap);
+    logger(LOG_DEBUG, "OpenLI: session idle timeout for POP3 sessions is now %u minutes", glob->email_timeouts.pop3);
+    pthread_rwlock_unlock(&(glob->email_config_mutex));
 
 endreload:
     clear_global_config(&newstate);
@@ -1872,6 +1900,8 @@ int main(int argc, char *argv[]) {
         glob->emailworkers[i].stats_mutex = &(glob->stats_mutex);
         glob->emailworkers[i].stats = &(glob->stats);
 
+        glob->emailworkers[i].glob_config_mutex = &(glob->email_config_mutex);
+        glob->emailworkers[i].mask_imap_creds = &(glob->mask_imap_creds);
         glob->emailworkers[i].timeout_thresholds = &(glob->email_timeouts);
 
         pthread_create(&(glob->emailworkers[i].threadid), NULL,

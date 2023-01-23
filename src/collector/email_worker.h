@@ -86,7 +86,6 @@ typedef struct openli_email_timeouts {
     uint16_t smtp;
     uint16_t imap;
     uint16_t pop3;
-    pthread_mutex_t mutex;
 } openli_email_timeouts_t;
 
 typedef struct openli_email_captured {
@@ -136,6 +135,8 @@ typedef struct openli_email_worker {
     collector_stats_t *stats;
 
     openli_email_timeouts_t *timeout_thresholds;
+    uint8_t *mask_imap_creds;
+    pthread_rwlock_t *glob_config_mutex;
 
 } openli_email_worker_t;
 

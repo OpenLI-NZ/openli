@@ -175,6 +175,47 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
     return 0;
 }
 
+static int parse_email_timeouts_config(collector_global_t *glob,
+        yaml_document_t *doc, yaml_node_t *inputs) {
+
+    yaml_node_item_t *item;
+
+    for (item = inputs->data.sequence.items.start;
+            item != inputs->data.sequence.items.top; item ++) {
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+        yaml_node_pair_t *pair;
+
+        for (pair = node->data.mapping.pairs.start;
+                pair < node->data.mapping.pairs.top; pair ++) {
+            yaml_node_t *key, *value;
+
+            key = yaml_document_get_node(doc, pair->key);
+            value = yaml_document_get_node(doc, pair->value);
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE) {
+                if (strcasecmp((char *)key->data.scalar.value, "smtp") == 0) {
+                    glob->email_timeouts.smtp = strtoul(
+                            (char *)value->data.scalar.value, NULL, 10);
+                }
+                else if (strcasecmp((char *)key->data.scalar.value,
+                            "imap") == 0) {
+                    glob->email_timeouts.imap = strtoul(
+                            (char *)value->data.scalar.value, NULL, 10);
+                }
+                else if (strcasecmp((char *)key->data.scalar.value,
+                            "pop3") == 0) {
+                    glob->email_timeouts.pop3 = strtoul(
+                            (char *)value->data.scalar.value, NULL, 10);
+                } else {
+                    logger(LOG_INFO, "OpenLI: unexpected email protocol '%s' in 'emailsessiontimeouts' configuration", (char *)key->data.scalar.value);
+                }
+            }
+        }
+    }
+    return 0;
+}
+
 static void parse_email_targets(email_target_t **targets, yaml_document_t *doc,
         yaml_node_t *tgtconf) {
 
@@ -1204,6 +1245,23 @@ static int global_parser(void *arg, yaml_document_t *doc,
                     "SIPallowfromident") == 0) {
 
        glob->trust_sip_from = check_onoff((char *)value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
+                    "maskimapcreds") == 0) {
+
+       glob->mask_imap_creds = check_onoff((char *)value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value,
+                    "emailsessiontimeouts") == 0) {
+        if (parse_email_timeouts_config(glob, doc, value) == -1) {
+            return -1;
+        }
     }
 
     if (key->type == YAML_SCALAR_NODE &&

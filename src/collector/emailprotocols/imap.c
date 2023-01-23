@@ -562,11 +562,10 @@ static int decode_login_command(emailsession_t *sess,
 
     add_email_participant(sess, imapsess->mailbox, 0);
 
-    /* replace password with masked credentials
-     *
-     * TODO add config option to disable this behaviour
-     */
-    update_saved_login_command(imapsess, pword - loginmsg, sess->key);
+    /* replace password with masked credentials */
+    if (sess->mask_credentials) {
+        update_saved_login_command(imapsess, pword - loginmsg, sess->key);
+    }
     free(loginmsg);
     imapsess->next_command_type = OPENLI_IMAP_COMMAND_NONE;
     imapsess->next_comm_start = 0;
@@ -622,8 +621,10 @@ static int decode_plain_auth_content(char *authmsg, imap_session_t *imapsess,
     /* add "mailbox" as a recipient for this session */
     add_email_participant(sess, imapsess->mailbox, 0);
 
-    /* TODO add config option to allow reencoding to be disabled? */
-    mask_plainauth_creds(imapsess->mailbox, reencoded, 2048);
+    /* replace encoded credentials, if requested by the user */
+    if (sess->mask_credentials) {
+        mask_plainauth_creds(imapsess->mailbox, reencoded, 2048);
+    }
 
     /* replace saved imap command with re-encoded auth token */
     r = update_saved_auth_command(imapsess, reencoded, authmsg, sess->key);

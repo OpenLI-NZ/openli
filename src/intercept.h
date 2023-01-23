@@ -281,6 +281,7 @@ struct emailsession {
 
     uint8_t protocol;
     uint8_t currstate;
+    uint8_t mask_credentials;
     void *timeout_ev;
 
     void *proto_state;

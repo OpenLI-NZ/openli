@@ -229,7 +229,8 @@ static openli_email_captured_t *convert_packet_to_email_captured(
 }
 
 static void init_email_session(emailsession_t *sess,
-        openli_email_captured_t *cap, char *sesskey) {
+        openli_email_captured_t *cap, char *sesskey,
+        openli_email_worker_t *state) {
 
     struct sockaddr_storage *saddr;
 
@@ -246,6 +247,14 @@ static void init_email_session(emailsession_t *sess,
                 NULL);
     } else {
         /* TODO */
+    }
+
+    if (cap->type == OPENLI_EMAIL_TYPE_IMAP) {
+        pthread_rwlock_rdlock(state->glob_config_mutex);
+        sess->mask_credentials = *(state->mask_imap_creds);
+        pthread_rwlock_unlock(state->glob_config_mutex);
+    } else {
+        sess->mask_credentials = 0;
     }
 
     memset(&(sess->sender), 0, sizeof(email_participant_t));
@@ -378,7 +387,7 @@ static void update_email_session_timeout(openli_email_worker_t *state,
         timerev = (sync_epoll_t *) calloc(1, sizeof(sync_epoll_t));
     }
 
-    pthread_mutex_lock(&(state->timeout_thresholds->mutex));
+    pthread_rwlock_rdlock(state->glob_config_mutex);
     if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
         its.it_value.tv_sec = state->timeout_thresholds->smtp * 60;
     } else if (sess->protocol == OPENLI_EMAIL_TYPE_POP3) {
@@ -388,7 +397,7 @@ static void update_email_session_timeout(openli_email_worker_t *state,
     } else {
         its.it_value.tv_sec = 600;
     }
-    pthread_mutex_unlock(&(state->timeout_thresholds->mutex));
+    pthread_rwlock_unlock(state->glob_config_mutex);
 
     its.it_value.tv_nsec = 0;
     its.it_interval.tv_sec = 0;
@@ -924,7 +933,7 @@ static int find_and_update_active_session(openli_email_worker_t *state,
     HASH_FIND(hh, state->activesessions, sesskey, strlen(sesskey), sess);
     if (!sess) {
         sess = calloc(1, sizeof(emailsession_t));
-        init_email_session(sess, cap, sesskey);
+        init_email_session(sess, cap, sesskey, state);
         HASH_ADD_KEYPTR(hh, state->activesessions, sess->key,
                 strlen(sess->key), sess);
 

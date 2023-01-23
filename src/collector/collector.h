@@ -305,7 +305,9 @@ typedef struct collector_global {
     openli_RMQ_config_t RMQ_conf;
     openli_email_ingest_config_t emailconf;
 
+    pthread_rwlock_t email_config_mutex;
     openli_email_timeouts_t email_timeouts;
+    uint8_t mask_imap_creds;
 
     int emailsockfd;
     email_ingestor_state_t *email_ingestor;
