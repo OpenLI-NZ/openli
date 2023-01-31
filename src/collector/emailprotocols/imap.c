@@ -724,6 +724,7 @@ static int save_imap_reply(imap_session_t *sess, char *sesskey,
     if (*comm == NULL) {
         logger(LOG_INFO, "OpenLI: %s unable to match IMAP reply (%s, %s) to any existing commands?", sesskey, sess->next_comm_tag, sess->next_command_name);
         free(sess->next_comm_tag);
+        free(sess->next_command_name);
         sess->next_comm_tag = NULL;
         sess->next_command_name = NULL;
         return 0;

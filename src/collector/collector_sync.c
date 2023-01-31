@@ -1236,11 +1236,6 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
     expmsg = create_intercept_details_msg(&(cept->common));
     publish_openli_msg(sync->zmq_pubsocks[cept->common.seqtrackerid], expmsg);
 
-    for (i = 0; i < sync->forwardcount; i++) {
-        expmsg = create_intercept_details_msg(&(cept->common));
-        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
-    }
-
     if (cept->username) {
         push_existing_user_sessions(sync, cept);
         add_intercept_to_user_intercept_list(&sync->userintercepts, cept);
@@ -1589,52 +1584,6 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     }
 
     return insert_new_ipintercept(sync, cept);
-}
-
-
-static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
-        uint16_t msglen) {
-
-    voipintercept_t *vint, *found;
-    openli_export_recv_t *expmsg;
-    int i;
-
-    /* Most of the new VOIP intercept stuff is handled by the VOIP sync
-     * thread, but we also need to let the forwarder threads know that
-     * a new intercept is starting and only the IP sync thread has
-     * sockets for sending messages to the forwarders.
-     *
-     * Technically, this is only to handle an edge case that should
-     * never happen (i.e. an intercept ID being re-used after it had
-     * previously been used and withdrawn) but we should try to do the
-     * right thing if it ever happens (most likely to be when users
-     * are testing deployments, of course).
-     */
-
-    vint = (voipintercept_t *)calloc(1, sizeof(voipintercept_t));
-
-    if (decode_voipintercept_start(intmsg, msglen, vint) == -1) {
-        /* Don't bother logging, the VOIP sync thread should handle that */
-        return -1;
-    }
-
-    HASH_FIND(hh_liid, sync->knownvoips, vint->common.liid,
-            vint->common.liid_len, found);
-
-    if (found == NULL) {
-        HASH_ADD_KEYPTR(hh_liid, sync->knownvoips, vint->common.liid,
-                vint->common.liid_len, vint);
-
-        for (i = 0; i < sync->forwardcount; i++) {
-            expmsg = create_intercept_details_msg(&(vint->common));
-            expmsg->type = OPENLI_EXPORT_INTERCEPT_DETAILS;
-            publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
-        }
-    } else {
-        free_single_voipintercept(vint);
-    }
-
-    return 1;
 }
 
 static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
