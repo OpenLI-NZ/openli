@@ -1,3 +1,16 @@
+openli (1.1.0-1~beta02) unstable; urgency=medium
+
+  * Fix bug where DELETE was not being properly applied to coreservers
+    via the REST API
+  * Fix IMAP parsing error when "\r\n" appears inside parentheses
+  * Add ability to configure intercepts as IRI or CC only intercepts
+  * Fix IMAP parsing error when parsing LOGIN commands
+  * Add credential masking for IMAP LOGIN commands
+  * Add config option for disabling IMAP credential masking
+  * Add config options to change email session timeouts
+
+ -- Shane Alcock <shane@alcock.co.nz>  Tue, 24 Jan 2023 09:22:18 +1300
+
 openli (1.1.0-1~beta01) unstable; urgency=medium
 
   * Mediator now uses RabbitMQ to buffer any intercept records that
