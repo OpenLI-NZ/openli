@@ -105,6 +105,7 @@ typedef struct imapsession {
     int append_command_index;
     int idle_command_index;
     int auth_command_index;
+    int auth_token_index;
     int auth_read_from;
     int auth_type;
 
@@ -298,8 +299,8 @@ static int update_saved_auth_command(imap_session_t *sess, char *replace,
         return -1;
     }
 
-    if (strcmp(comm->imap_command, "AUTHENTICATE") != 0) {
-        logger(LOG_INFO, "OpenLI: %s unexpected type for saved IMAP auth command: %d", sesskey, comm->imap_command);
+    if (strcasecmp(comm->imap_command, "AUTHENTICATE") != 0) {
+        logger(LOG_INFO, "OpenLI: %s unexpected type for saved IMAP auth command: %s", sesskey, comm->imap_command);
         return -1;
     }
 
@@ -375,6 +376,8 @@ static int save_imap_command(imap_session_t *sess, char *sesskey) {
 
     sess->next_comm_tag = NULL;
     sess->next_command_name = NULL;
+
+    assert(comm->tag != NULL && comm->imap_command != NULL);
 
     logger(LOG_INFO, "OpenLI: DEVDEBUG %s saved IMAP command %s, %s",
             sesskey, comm->tag, comm->imap_command);
@@ -588,8 +591,19 @@ static int decode_plain_auth_content(char *authmsg, imap_session_t *imapsess,
     char reencoded[2048];
     char *ptr;
     int cnt, r;
-    char *mailbox;
+    char *mailbox, *crlf;
     base64_decodestate s;
+
+    if (*authmsg == '\0') {
+        imapsess->next_command_type = OPENLI_IMAP_COMMAND_NONE;
+        sess->currstate = OPENLI_IMAP_STATE_AUTHENTICATING;
+        return 0;
+    }
+
+    crlf = strstr(authmsg, "\r\n");
+    if (crlf == NULL) {
+        return 0;
+    }
 
     /* auth plain can be split across two messages with a
      * "+" from the server in between :( */
@@ -601,22 +615,27 @@ static int decode_plain_auth_content(char *authmsg, imap_session_t *imapsess,
          * the token arrives.
          */
 
-        /* XXX this type of auth pattern is NOT tested, due to a lack
-         * of an example pcap...
-         */
-        imapsess->auth_read_from += strlen(authmsg);
-        sess->server_octets += strlen(authmsg);
+        imapsess->auth_read_from += ((crlf - authmsg) + 2);
+        sess->server_octets += ((crlf - authmsg) + 2);
         return 0;
     }
 
     base64_init_decodestate(&s);
     cnt = base64_decode_block(authmsg, strlen(authmsg), decoded, &s);
+    if (cnt == 0) {
+        return 0;
+    }
     decoded[cnt] = '\0';
 
+    if (decoded[0] == '\0') {
+        ptr = decoded + 1;
+    } else {
+        ptr = decoded;
+    }
     /* username and password are also inside 'decoded', each term is
      * separated by null bytes (e.g. <mailbox> \0 <username> \0 <password>)
      */
-    imapsess->mailbox = strdup(decoded);
+    imapsess->mailbox = strdup(ptr);
 
     /* add "mailbox" as a recipient for this session */
     add_email_participant(sess, imapsess->mailbox, 0);
@@ -634,12 +653,21 @@ static int decode_plain_auth_content(char *authmsg, imap_session_t *imapsess,
 
     sess->client_octets += strlen(reencoded);
 
-    imapsess->next_command_type = OPENLI_IMAP_COMMAND_NONE;
-    imapsess->next_comm_start = 0;
-    imapsess->reply_start = 0;
-
     sess->currstate = OPENLI_IMAP_STATE_AUTH_REPLY;
     return 1;
+}
+
+static inline char *clone_authentication_message(imap_session_t *imapsess) {
+
+    char *authmsg;
+    int msglen;
+
+    msglen = imapsess->contbufread - imapsess->auth_read_from;
+    authmsg = calloc(msglen + 1, sizeof(uint8_t));
+
+    memcpy(authmsg, imapsess->contbuffer + imapsess->auth_read_from,
+            msglen);
+    return authmsg;
 }
 
 static int decode_authentication_command(emailsession_t *sess,
@@ -649,11 +677,16 @@ static int decode_authentication_command(emailsession_t *sess,
     int msglen, r;
 
     while (1) {
-        msglen = imapsess->contbufread - imapsess->auth_read_from;
-        authmsg = calloc(msglen + 1, sizeof(uint8_t));
+        /* There's no readable content in the buffer */
+        if (imapsess->auth_read_from >= imapsess->contbufused) {
+            imapsess->next_command_type = OPENLI_IMAP_COMMAND_NONE;
+            imapsess->next_comm_start = 0;
+            imapsess->reply_start = 0;
+            return 0;
+        }
 
-        memcpy(authmsg, imapsess->contbuffer + imapsess->auth_read_from,
-                msglen);
+        msglen = imapsess->contbufread - imapsess->auth_read_from;
+        authmsg = clone_authentication_message(imapsess);
 
         if (imapsess->auth_type == OPENLI_IMAP_AUTH_NONE) {
             r = get_auth_type(authmsg, imapsess, sess->key);
@@ -673,6 +706,9 @@ static int decode_authentication_command(emailsession_t *sess,
 
         if (imapsess->auth_type == OPENLI_IMAP_AUTH_PLAIN) {
             r = decode_plain_auth_content(authmsg, imapsess, sess);
+            imapsess->next_command_type = OPENLI_IMAP_COMMAND_NONE;
+            imapsess->next_comm_start = 0;
+            imapsess->reply_start = 0;
             free(authmsg);
             return r;
         } else if (imapsess->auth_type == OPENLI_IMAP_AUTH_LOGIN) {
@@ -840,12 +876,14 @@ static int append_content_to_imap_buffer(imap_session_t *imapsess,
         imapsess->contbufsize += 4096;
     }
 
+    char *x = imapsess->contbuffer + imapsess->contbufused;
     memcpy(imapsess->contbuffer + imapsess->contbufused,
             cap->content, cap->msg_length);
     imapsess->contbufused += cap->msg_length;
     imapsess->contbuffer[imapsess->contbufused] = '\0';
 
     assert(imapsess->contbufused <= imapsess->contbufsize);
+    assert(*(imapsess->contbuffer + imapsess->contbufread) != 0);
     return 0;
 }
 
@@ -1020,8 +1058,8 @@ static int find_command_end(emailsession_t *sess, imap_session_t *imapsess) {
         sess->currstate = OPENLI_IMAP_STATE_AUTHENTICATING;
         imapsess->auth_command_index = ind;
 
-        return decode_authentication_command(sess, imapsess);
-
+        r = decode_authentication_command(sess, imapsess);
+        return r;
         /* Don't count client octets just yet, since we could be rewriting
          * the auth tokens shortly...
          */
@@ -1127,8 +1165,6 @@ static int find_partial_reply_end(emailsession_t *sess,
     }
     sess->server_octets += (imapsess->contbufread - imapsess->next_comm_start);
 
-    logger(LOG_INFO, "OpenLI: DEVDEBUG %s got partial IMAP reply ",
-            sess->key);
     imapsess->next_command_type = OPENLI_IMAP_COMMAND_NONE;
     imapsess->next_comm_start = 0;
 
@@ -1190,51 +1226,76 @@ static inline int is_tagged_reply(char *msgcontent, char *searchtag) {
 static int read_imap_while_appending_state(emailsession_t *sess,
         imap_session_t *imapsess) {
 
-    char *msgstart = (char *)(imapsess->contbuffer + imapsess->contbufread);
-    char *tmp = NULL, *crlf = NULL;
+    char *msgstart, *firstchar;
+    char *crlf = NULL;
     char *appendtag;
+    imap_command_t *comm;
+    int comm_start, pluslen, cc_len;
+    int cc_dir = 1;
 
-    /* XXX need some test cases for APPEND */
+    /* XXX need some more test cases for APPEND */
 
-    /* First step, find the next \r\n so we're only working with a
-     * complete message */
-    crlf = strstr(msgstart, "\r\n");
-    if (crlf == NULL) {
-        return 0;
-    }
-
-    tmp = calloc((crlf - msgstart) + 1, sizeof(char));
-    memcpy(tmp, msgstart, crlf - msgstart);
-
-    appendtag = imapsess->commands[imapsess->append_command_index].tag;
-
-    /* Is this the server reply to the APPEND command? */
-        /* If yes, rewind to the start of the reply tag so our normal
-         * processing can be applied when we return...
-         */
-    /* Ideally, we would use the byte count from the APPEND command to
-     * keep track of when the append is over, but that is an
-     * annoying amount of parsing to deal with...
+    /* We have a loop here because we want to try and keep all of
+     * the appended content that is in the same observed packet/message
+     * in a single CC -- this loop allows us to do that easily without
+     * having to maintain state outside of the scope of this function.
      */
-    if (is_tagged_reply(tmp, appendtag)) {
-        free(tmp);
-        sess->currstate = OPENLI_IMAP_STATE_AUTHENTICATED;
-        return 1;
+    cc_len = 0;
+    comm = &(imapsess->commands[imapsess->append_command_index]);
+    appendtag = comm->tag;
+    comm_start = comm->commbufused;
+    firstchar = (char *)(imapsess->contbuffer + imapsess->contbufread);
+
+    while (imapsess->contbufread < imapsess->contbufused) {
+        msgstart = (char *)(imapsess->contbuffer + imapsess->contbufread);
+        /* First step, find the next \r\n so we're only working with a
+         * complete message */
+        crlf = strstr(msgstart, "\r\n");
+        if (crlf == NULL) {
+            return 0;
+        }
+
+        pluslen = (crlf - msgstart) + 2;
+
+        /* Is this the server reply to the APPEND command? */
+            /* If yes, rewind to the start of the reply tag so our normal
+             * processing can be applied when we return...
+             */
+        /* Ideally, we would use the byte count from the APPEND command to
+         * keep track of when the append is over, but that is an
+         * annoying amount of parsing to deal with...
+         */
+        if (is_tagged_reply(msgstart, appendtag)) {
+            sess->currstate = OPENLI_IMAP_STATE_AUTHENTICATED;
+            return 1;
+        }
+
+        if (extend_command_buffer(comm, pluslen) < 0) {
+            return -1;
+        }
+        memcpy(comm->commbuffer + comm->commbufused, msgstart, pluslen);
+        comm->commbufused += pluslen;
+        comm->commbuffer[comm->commbufused] = '\0';
+
+        /* Does this begin with a '+'? This is from the server */
+        if (*firstchar == '+' && msgstart == firstchar) {
+            sess->server_octets += pluslen;
+            cc_dir = 0;
+        } else {
+            /* Otherwise, this is message content from the client */
+            sess->client_octets += pluslen;
+        }
+
+        /* Advance read pointer to the next line */
+        cc_len += pluslen;
+        imapsess->contbufread += pluslen;
     }
 
-    /* Does this begin with a '+'? This is from the server */
-    if (*tmp == '+') {
-        sess->server_octets += ((crlf - msgstart) + 2);
-    } else {
-        /* Otherwise, this is message content from the client */
-        sess->client_octets += ((crlf - msgstart) + 2);
+    if (cc_len > 0) {
+        add_cc_to_imap_command(comm, comm_start, comm_start + cc_len, cc_dir);
     }
 
-    /* Advance read pointer to the next line */
-    imapsess->contbufread += ((crlf - msgstart) + 2);
-
-    free(tmp);
-    return 1;
+    return 0;
 }
 
 static int read_imap_while_auth_state(emailsession_t *sess,
@@ -1248,8 +1309,14 @@ static int read_imap_while_auth_state(emailsession_t *sess,
     char *msgstart = (char *)(imapsess->contbuffer + imapsess->contbufread);
     char *tmp = NULL, *crlf = NULL;
     char *authtag;
+    imap_command_t *comm;
+    int comm_start, pluslen;
 
     /* XXX need some test cases for AUTHENTICATE */
+
+    if (imapsess->contbufread >= imapsess->contbufused) {
+        return 0;
+    }
 
     /* First step, find the next \r\n so we're only working with a
      * complete message */
@@ -1258,10 +1325,12 @@ static int read_imap_while_auth_state(emailsession_t *sess,
         return 0;
     }
 
+    pluslen = (crlf - msgstart) + 2;
     tmp = calloc((crlf - msgstart) + 1, sizeof(char));
     memcpy(tmp, msgstart, crlf - msgstart);
 
-    authtag = imapsess->commands[imapsess->auth_command_index].tag;
+    comm = &(imapsess->commands[imapsess->auth_command_index]);
+    authtag = comm->tag;
 
     /* Is this the server reply to the AUTH command? */
         /* If yes, rewind to the start of the reply tag so our normal
@@ -1269,21 +1338,57 @@ static int read_imap_while_auth_state(emailsession_t *sess,
          */
     if (is_tagged_reply(tmp, authtag)) {
         free(tmp);
+        if (imapsess->auth_type == OPENLI_IMAP_AUTH_PLAIN) {
+            int r = 0;
+            char *authmsg;
+            /* Bit wasteful to be constantly strduping here XXX */
+            while (r == 0) {
+                authmsg = clone_authentication_message(imapsess);
+                if (*authmsg == '\0') {
+                    /* This is bad, we somehow decoded the whole plain
+                     * auth content and didn't find what we were looking
+                     * for...
+                     */
+                    logger(LOG_INFO, "OpenLI: failed to decode plain auth content for IMAP session: %s", sess->key);
+                    r = 1;
+                } else {
+                    r = decode_plain_auth_content(authmsg, imapsess, sess);
+                }
+                free(authmsg);
+            }
+            return r;
+        }
         sess->currstate = OPENLI_IMAP_STATE_AUTH_REPLY;
         return 1;
     }
 
+    if (extend_command_buffer(comm, pluslen) < 0) {
+        return -1;
+    }
+    comm_start = comm->commbufused;
+    memcpy(comm->commbuffer + comm->commbufused, msgstart, pluslen);
+    comm->commbufused += pluslen;
+    comm->commbuffer[comm->commbufused] = '\0';
+
+    /* We'll update the byte counts for plain auth later on when we decode the
+     * entire auth message
+     */
     /* Does this begin with a '+'? This is from the server */
     if (*tmp == '+') {
-        sess->server_octets += (crlf - msgstart);
+        if (imapsess->auth_type != OPENLI_IMAP_AUTH_PLAIN) {
+            sess->server_octets += pluslen;
+        }
+        add_cc_to_imap_command(comm, comm_start, comm_start + pluslen, 0);
     } else {
         /* Otherwise, this is message content from the client */
-        sess->client_octets += (crlf - msgstart);
+        if (imapsess->auth_type != OPENLI_IMAP_AUTH_PLAIN) {
+            sess->client_octets += pluslen;
+        }
+        add_cc_to_imap_command(comm, comm_start, comm_start + pluslen, 1);
     }
 
     /* Advance read pointer to the next line */
-    imapsess->contbufread += (crlf - msgstart);
-
+    imapsess->contbufread += pluslen;
     free(tmp);
     return 1;
 }
