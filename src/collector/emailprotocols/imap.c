@@ -876,7 +876,6 @@ static int append_content_to_imap_buffer(imap_session_t *imapsess,
         imapsess->contbufsize += 4096;
     }
 
-    char *x = imapsess->contbuffer + imapsess->contbufused;
     memcpy(imapsess->contbuffer + imapsess->contbufused,
             cap->content, cap->msg_length);
     imapsess->contbufused += cap->msg_length;
