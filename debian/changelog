@@ -1,3 +1,13 @@
+openli (1.1.0-1~beta03) unstable; urgency=medium
+
+  * Fix various errors when parsing IMAP AUTHENTICATE PLAIN messages.
+  * Fix bug where not all IMAP APPEND content was being included in
+    exported CC records.
+  * Fix install error when upgrading mediator from a previous 1.1.0
+    beta version.
+
+ -- Shane Alcock <shane@alcock.co.nz>  Fri, 03 Feb 2023 15:24:51 +1300
+
 openli (1.1.0-1~beta02) unstable; urgency=medium
 
   * Fix bug where DELETE was not being properly applied to coreservers
