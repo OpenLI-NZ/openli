@@ -155,6 +155,57 @@ static int find_multi_end(pop3_session_t *pop3sess, int start_index) {
 
 static int parse_pop3_command(pop3_session_t *pop3sess) {
 
+    int comm_size = (pop3sess->contbufread - pop3sess->command_start) - 2;
+    char comm_copy[1024];
+    assert(pop3sess->contbufread > (pop3sess->command_start + 2));
+
+    if (comm_size >= 1024) {
+        comm_size = 1023;
+    }
+
+    memcpy(comm_copy, pop3sess->contbuffer + pop3sess->command_start, comm_size);
+    comm_copy[comm_size] = '\0';
+
+    if (strcmp(comm_copy, "CAPA") == 0) {
+        pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_MULTI;
+    }
+    if (strncmp(comm_copy, "USER ", 5) == 0) {
+        pop3sess->last_command_type = OPENLI_POP3_COMMAND_USER;
+    }
+    if (strncmp(comm_copy, "PASS ", 5) == 0) {
+        pop3sess->last_command_type = OPENLI_POP3_COMMAND_PASS;
+    }
+    if (strncmp(comm_copy, "RETR ", 5) == 0) {
+        pop3sess->last_command_type = OPENLI_POP3_COMMAND_RETR;
+    }
+    if (strncmp(comm_copy, "TOP ", 4) == 0) {
+        pop3sess->last_command_type = OPENLI_POP3_COMMAND_TOP;
+    }
+    if (strncmp(comm_copy, "LIST", 4) == 0) {
+        pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_MULTI;
+    }
+    if (strncmp(comm_copy, "APOP ", 5) == 0) {
+        pop3sess->last_command_type = OPENLI_POP3_COMMAND_APOP;
+    }
+    if (strncmp(comm_copy, "NOOP", 4) == 0) {
+        pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_SINGLE;
+    }
+    if (strncmp(comm_copy, "RSET", 4) == 0) {
+        pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_SINGLE;
+    }
+    if (strncmp(comm_copy, "STAT", 4) == 0) {
+        pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_SINGLE;
+    }
+    if (strncmp(comm_copy, "UIDL", 4) == 0) {
+        pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_MULTI;
+    }
+    if (strncmp(comm_copy, "DELE ", 5) == 0) {
+        pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_SINGLE;
+    }
+    if (strncmp(comm_copy, "QUIT", 4) == 0) {
+        pop3sess->last_command_type = OPENLI_POP3_COMMAND_QUIT;
+        pop3sess->auth_state = OPENLI_POP3_POSTQUIT;
+    }
 
     return 0;
 }
@@ -163,20 +214,31 @@ static int process_server_indicator(pop3_session_t *pop3sess) {
     int rem = pop3sess->contbufused - pop3sess->reply_start;
     uint8_t *found;
 
+    if (rem < 3) {
+        return -1;
+    }
+
     found = (uint8_t *)memmem(pop3sess->contbuffer + pop3sess->reply_start,
-            rem, "+OK ", 4);
+            rem, "+OK", 3);
     if (found) {
         pop3sess->server_indicator = OPENLI_POP3_SERV_OK;
         return 1;
     }
 
+    if (rem < 4) {
+        return -1;
+    }
+
     found = (uint8_t *)memmem(pop3sess->contbuffer + pop3sess->reply_start,
-            rem, "-ERR ", 5);
+            rem, "-ERR", 4);
     if (found) {
         pop3sess->server_indicator = OPENLI_POP3_SERV_ERR;
         return 1;
     }
 
+    printf("%d \"%s\"\n", rem, (char *) pop3sess->contbuffer + pop3sess->reply_start);
+
+    printf("?WHAT\n");
     return 0;
 }
 
@@ -186,10 +248,10 @@ static int is_single_line_response(pop3_session_t *pop3sess) {
         case OPENLI_POP3_COMMAND_RETR:
         case OPENLI_POP3_COMMAND_TOP:
         case OPENLI_POP3_COMMAND_OTHER_MULTI:
-            return 1;
+            return 0;
     }
 
-    return 0;
+    return 1;
 }
 
 static int process_next_pop3_line(openli_email_worker_t *state,
@@ -206,7 +268,7 @@ static int process_next_pop3_line(openli_email_worker_t *state,
 
             r = process_server_indicator(pop3sess);
             if (r < 0) {
-                return r;
+                return 0;
             }
             if (r == 0) {
                 sess->currstate = OPENLI_POP3_STATE_CONSUME_SERVER;
@@ -221,6 +283,7 @@ static int process_next_pop3_line(openli_email_worker_t *state,
             if ((r = find_next_crlf(pop3sess, pop3sess->reply_start)) == 1) {
                 sess->currstate = OPENLI_POP3_STATE_WAITING_SERVER;
                 pop3sess->reply_start = pop3sess->contbufread;
+                return 1;
             }
             break;
 
@@ -230,6 +293,7 @@ static int process_next_pop3_line(openli_email_worker_t *state,
                     sess->currstate = OPENLI_POP3_STATE_OVER;
 
                     /* TODO generate email logoff IRI */
+                    printf("LOGOFF\n");
                     return 0;
                 }
 
@@ -241,13 +305,28 @@ static int process_next_pop3_line(openli_email_worker_t *state,
                     return 1;
                 }
 
-                /* TODO command response is complete -- generate the CCs */
+                if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_PASS ||
+                        pop3sess->last_command_type ==
+                                OPENLI_POP3_COMMAND_APOP) {
+                    if (pop3sess->server_indicator == OPENLI_POP3_SERV_OK) {
+                        pop3sess->auth_state = OPENLI_POP3_POSTAUTH;
 
+                        printf("LOGIN\n");
+                    } else {
+                        printf("LOGIN FAIL\n");
+                    }
+                }
+
+                /* TODO command response is complete -- generate the CCs */
+                if (pop3sess->last_command_type != OPENLI_POP3_COMMAND_NONE) {
+                    printf("CCs REQUIRED for completed command\n");
+                }
                 /* if command was PASS or APOP and server said OK,
                  * generate a login event IRI */
                 /* if command was PASS or APOP and server said ERR,
                  * generate a login failed IRI */
 
+                return 1;
             } else if (r < 0) {
                 return r;
             }
@@ -258,26 +337,34 @@ static int process_next_pop3_line(openli_email_worker_t *state,
                 pop3sess->command_start = pop3sess->contbufread;
                 sess->currstate = OPENLI_POP3_STATE_WAITING_COMMAND;
 
+                /* TODO command response is complete -- generate the CCs */
                 if (pop3sess->server_indicator == OPENLI_POP3_SERV_OK) {
-                    /* TODO command response is complete -- generate the CCs */
 
                     /* if command was RETR, generate an email download IRI */
-
                     /* if command was TOP, generate a partial download IRI */
-                }
+                    if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_RETR) {
+                        printf("email download IRI\n");
+                    } else if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_TOP) {
+                        printf("partial download IRI\n");
+                    }
 
+                }
+                printf("CCs REQUIRED for completed multi command\n");
+                return 1;
             } else if (r < 0) {
                 return r;
             }
             break;
 
         case OPENLI_POP3_STATE_WAITING_COMMAND:
+
             if ((r = find_next_crlf(pop3sess, pop3sess->command_start)) == 1) {
                 sess->currstate = OPENLI_POP3_STATE_WAITING_SERVER;
                 if (parse_pop3_command(pop3sess) < 0) {
                     return -1;
                 }
                 pop3sess->reply_start = pop3sess->contbufread;
+                return 1;
             }
             break;
 
@@ -286,10 +373,8 @@ static int process_next_pop3_line(openli_email_worker_t *state,
             return 0;
     }
 
-        /* USER, PASS, QUIT, and APOP are valid here */
-        /* STATE, LIST, RETR, DELE, NOOP, RSET, QUIT, TOP, and UIDL are valid */
 
-    return 1;
+    return 0;
 }
 
 void free_pop3_session_state(emailsession_t *sess, void *pop3state) {

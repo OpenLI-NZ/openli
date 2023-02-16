@@ -194,6 +194,8 @@ static openli_email_captured_t *convert_packet_to_email_captured(
         cap->type = OPENLI_EMAIL_TYPE_SMTP;
     } else if (emailtype == OPENLI_UPDATE_IMAP) {
         cap->type = OPENLI_EMAIL_TYPE_IMAP;
+    } else if (emailtype == OPENLI_UPDATE_POP3) {
+        cap->type = OPENLI_EMAIL_TYPE_POP3;
     } else {
         cap->type = OPENLI_EMAIL_TYPE_UNKNOWN;
     }
@@ -240,7 +242,8 @@ static void init_email_session(emailsession_t *sess,
     sess->session_id = strdup(cap->session_id);
 
     if (cap->type == OPENLI_EMAIL_TYPE_SMTP ||
-            cap->type == OPENLI_EMAIL_TYPE_IMAP) {
+            cap->type == OPENLI_EMAIL_TYPE_IMAP ||
+            cap->type == OPENLI_EMAIL_TYPE_POP3) {
         sess->serveraddr = construct_sockaddr(cap->host_ip, cap->host_port,
                 &sess->ai_family);
         sess->clientaddr = construct_sockaddr(cap->remote_ip, cap->remote_port,
