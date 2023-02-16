@@ -45,6 +45,8 @@ const char *coreserver_type_to_string(uint8_t cstype) {
             return "SMTP";
         case OPENLI_CORE_SERVER_IMAP:
             return "IMAP";
+        case OPENLI_CORE_SERVER_POP3:
+            return "POP3";
         case OPENLI_CORE_SERVER_GTP:
             return "GTP";
         case OPENLI_CORE_SERVER_ALUMIRROR:

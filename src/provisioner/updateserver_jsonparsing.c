@@ -359,6 +359,10 @@ int remove_coreserver(update_con_info_t *cinfo, provision_state_t *state,
         HASH_FIND(hh, state->interceptconf.imapservers, search, strlen(search),
                 found);
         src = &(state->interceptconf.imapservers);
+    } else if (srvtype == OPENLI_CORE_SERVER_POP3) {
+        HASH_FIND(hh, state->interceptconf.pop3servers, search, strlen(search),
+                found);
+        src = &(state->interceptconf.pop3servers);
     } else if (srvtype == OPENLI_CORE_SERVER_GTP) {
         HASH_FIND(hh, state->interceptconf.gtpservers, search, strlen(search),
                 found);
@@ -520,6 +524,9 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
     } else if (srvtype == OPENLI_CORE_SERVER_IMAP) {
         HASH_FIND(hh, state->interceptconf.imapservers, new_cs->serverkey,
                 strlen(new_cs->serverkey), found);
+    } else if (srvtype == OPENLI_CORE_SERVER_POP3) {
+        HASH_FIND(hh, state->interceptconf.pop3servers, new_cs->serverkey,
+                strlen(new_cs->serverkey), found);
     } else if (srvtype == OPENLI_CORE_SERVER_GTP) {
         HASH_FIND(hh, state->interceptconf.gtpservers, new_cs->serverkey,
                 strlen(new_cs->serverkey), found);
@@ -539,6 +546,9 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
                     new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
         } else if (srvtype == OPENLI_CORE_SERVER_IMAP) {
             HASH_ADD_KEYPTR(hh, state->interceptconf.imapservers,
+                    new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
+        } else if (srvtype == OPENLI_CORE_SERVER_POP3) {
+            HASH_ADD_KEYPTR(hh, state->interceptconf.pop3servers,
                     new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
         } else if (srvtype == OPENLI_CORE_SERVER_GTP) {
             HASH_ADD_KEYPTR(hh, state->interceptconf.gtpservers,

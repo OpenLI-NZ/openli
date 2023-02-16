@@ -60,6 +60,7 @@ enum {
     TARGET_EMAILINTERCEPT,
     TARGET_SMTPSERVER,
     TARGET_IMAPSERVER,
+    TARGET_POP3SERVER,
 };
 
 static const char *update_success_page =

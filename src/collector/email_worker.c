@@ -354,6 +354,10 @@ static void free_email_session(openli_email_worker_t *state,
         free_imap_session_state(sess, sess->proto_state);
     }
 
+    if (sess->protocol == OPENLI_EMAIL_TYPE_POP3) {
+        free_pop3_session_state(sess, sess->proto_state);
+    }
+
     if (sess->serveraddr) {
         free(sess->serveraddr);
     }
@@ -960,6 +964,8 @@ static int find_and_update_active_session(openli_email_worker_t *state,
         r = update_smtp_session_by_ingestion(state, sess, cap);
     } else if (sess->protocol == OPENLI_EMAIL_TYPE_IMAP) {
         r = update_imap_session_by_ingestion(state, sess, cap);
+    } else if (sess->protocol == OPENLI_EMAIL_TYPE_POP3) {
+        r = update_pop3_session_by_ingestion(state, sess, cap);
     }
 
     if (r < 0) {

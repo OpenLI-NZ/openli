@@ -149,6 +149,9 @@ int update_smtp_session_by_ingestion(openli_email_worker_t *state,
 void free_imap_session_state(emailsession_t *sess, void *smtpstate);
 int update_imap_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
+void free_pop3_session_state(emailsession_t *sess, void *smtpstate);
+int update_pop3_session_by_ingestion(openli_email_worker_t *state,
+        emailsession_t *sess, openli_email_captured_t *cap);
 
 void add_email_participant(emailsession_t *sess, char *address, int issender);
 void clear_email_participant_list(emailsession_t *sess);
@@ -186,6 +189,9 @@ int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
         uint64_t timestamp);
 int generate_email_cc_from_imap_payload(openli_email_worker_t *state,
+        emailsession_t *sess, uint8_t *content, int content_len,
+        uint64_t timestamp, uint8_t dir);
+int generate_email_cc_from_pop3_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
         uint64_t timestamp, uint8_t dir);
 #endif

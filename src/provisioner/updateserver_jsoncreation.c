@@ -287,6 +287,9 @@ json_object *get_coreservers(update_con_info_t *cinfo, provision_state_t *state,
         case OPENLI_CORE_SERVER_IMAP:
             toiter = state->interceptconf.imapservers;
             break;
+        case OPENLI_CORE_SERVER_POP3:
+            toiter = state->interceptconf.pop3servers;
+            break;
         case OPENLI_CORE_SERVER_RADIUS:
             toiter = state->interceptconf.radiusservers;
             break;

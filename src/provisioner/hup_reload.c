@@ -650,6 +650,12 @@ static int reload_intercept_config(provision_state_t *currstate,
         }
 
         if (reload_coreservers(currstate,
+                currstate->interceptconf.pop3servers,
+                newconf.pop3servers) < 0) {
+            return -1;
+        }
+
+        if (reload_coreservers(currstate,
                 currstate->interceptconf.gtpservers, newconf.gtpservers) < 0) {
             return -1;
         }

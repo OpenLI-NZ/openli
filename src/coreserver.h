@@ -45,6 +45,7 @@ enum {
     OPENLI_CORE_SERVER_GTP,
     OPENLI_CORE_SERVER_SMTP,
     OPENLI_CORE_SERVER_IMAP,
+    OPENLI_CORE_SERVER_POP3,
 };
 
 typedef struct packetinfo {

@@ -161,6 +161,7 @@ void init_intercept_config(prov_intercept_conf_t *state) {
     state->sipservers = NULL;
     state->smtpservers = NULL;
     state->imapservers = NULL;
+    state->pop3servers = NULL;
     state->voipintercepts = NULL;
     state->emailintercepts = NULL;
     state->ipintercepts = NULL;
@@ -655,6 +656,7 @@ void clear_intercept_state(prov_intercept_conf_t *conf) {
     free_coreserver_list(conf->gtpservers);
     free_coreserver_list(conf->smtpservers);
     free_coreserver_list(conf->imapservers);
+    free_coreserver_list(conf->pop3servers);
     free_coreserver_list(conf->sipservers);
 
     pthread_mutex_destroy(&(conf->safelock));
@@ -938,6 +940,7 @@ static int respond_collector_auth(provision_state_t *state,
             HASH_CNT(hh, state->interceptconf.gtpservers) +
             HASH_CNT(hh, state->interceptconf.sipservers) +
             HASH_CNT(hh, state->interceptconf.imapservers) +
+            HASH_CNT(hh, state->interceptconf.pop3servers) +
             HASH_CNT(hh, state->interceptconf.smtpservers) +
             HASH_CNT(hh_liid, state->interceptconf.ipintercepts) +
             HASH_CNT(hh_liid, state->interceptconf.emailintercepts) +
@@ -1003,6 +1006,14 @@ static int respond_collector_auth(provision_state_t *state,
             OPENLI_CORE_SERVER_IMAP, outgoing) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue IMAP server details to be sent to new collector on fd %d", pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
+        return -1;
+    }
+
+    if (push_coreservers(state->interceptconf.pop3servers,
+            OPENLI_CORE_SERVER_POP3, outgoing) == -1) {
+        logger(LOG_INFO,
+                "OpenLI: unable to queue POP3 server details to be sent to new collector on fd %d", pev->fd);
         pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
     }

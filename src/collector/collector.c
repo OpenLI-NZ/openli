@@ -236,6 +236,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
     loc->sipservers = NULL;
     loc->smtpservers = NULL;
     loc->imapservers = NULL;
+    loc->pop3servers = NULL;
     loc->staticv4ranges = New_Patricia(32);
     loc->staticv6ranges = New_Patricia(128);
     loc->dynamicv6ranges = New_Patricia(128);
@@ -459,6 +460,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     free_coreserver_list(loc->sipservers);
     free_coreserver_list(loc->smtpservers);
     free_coreserver_list(loc->imapservers);
+    free_coreserver_list(loc->pop3servers);
 
     destroy_ipfrag_reassembler(loc->fragreass);
 
@@ -854,6 +856,14 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                     loc->imapservers))) {
             send_packet_to_emailworker(pkt, loc->email_worker_queues,
                     glob->email_threads, servhash, OPENLI_UPDATE_IMAP);
+            emailsynced = 1;
+        }
+
+        else if (loc->pop3servers &&
+                (servhash = is_core_server_packet(pkt, &pinfo,
+                    loc->pop3servers))) {
+            send_packet_to_emailworker(pkt, loc->email_worker_queues,
+                    glob->email_threads, servhash, OPENLI_UPDATE_POP3);
             emailsynced = 1;
         }
     }

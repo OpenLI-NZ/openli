@@ -79,6 +79,7 @@ enum {
     OPENLI_UPDATE_GTP = 4,
     OPENLI_UPDATE_SMTP = 5,
     OPENLI_UPDATE_IMAP = 6,
+    OPENLI_UPDATE_POP3 = 7,
 };
 
 typedef struct openli_intersync_msg {
@@ -237,6 +238,11 @@ typedef struct colthread_local {
      * servers, we assume it is IMAP.
      */
     coreserver_t *imapservers;
+
+    /* Known POP3 servers, i.e. if we see traffic to or from these
+     * servers, we assume it is POP3.
+     */
+    coreserver_t *pop3servers;
 
     patricia_tree_t *staticv4ranges;
     patricia_tree_t *staticv6ranges;

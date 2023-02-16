@@ -141,6 +141,32 @@ int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
     return 0;
 }
 
+int generate_email_cc_from_pop3_payload(openli_email_worker_t *state,
+        emailsession_t *sess, uint8_t *content, int content_len,
+        uint64_t timestamp, uint8_t etsidir) {
+
+    email_user_intercept_list_t *active = NULL;
+    email_participant_t *recip, *tmp;
+
+    /* POP3 is purely a mail receiving protocol so sender should be
+     * irrelevant.
+     */
+
+    HASH_ITER(hh, sess->participants, recip, tmp) {
+        active = is_address_interceptable(state, recip->emailaddr);
+        if (!active) {
+            continue;
+        }
+
+        create_emailccs_for_intercept_list(state, sess, content, content_len,
+                ETSILI_EMAIL_CC_FORMAT_APP, active, timestamp,
+                etsidir);
+    }
+
+    return 0;
+}
+
+
 int generate_email_cc_from_imap_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
         uint64_t timestamp, uint8_t etsidir) {

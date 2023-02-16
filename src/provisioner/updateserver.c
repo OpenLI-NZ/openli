@@ -259,6 +259,10 @@ static int update_configuration_delete(update_con_info_t *cinfo,
             ret = remove_coreserver(cinfo, state, target,
                     OPENLI_CORE_SERVER_IMAP);
             break;
+        case TARGET_POP3SERVER:
+            ret = remove_coreserver(cinfo, state, target,
+                    OPENLI_CORE_SERVER_POP3);
+            break;
         case TARGET_IPINTERCEPT:
             ret = remove_ip_intercept(cinfo, state, target);
             break;
@@ -324,6 +328,9 @@ static json_object *create_get_response(update_con_info_t *cinfo,
         case TARGET_IMAPSERVER:
             jobj = get_coreservers(cinfo, state, OPENLI_CORE_SERVER_IMAP);
             break;
+        case TARGET_POP3SERVER:
+            jobj = get_coreservers(cinfo, state, OPENLI_CORE_SERVER_POP3);
+            break;
         case TARGET_IPINTERCEPT:
             jobj = get_ip_intercept(cinfo, state, tgtptr);
             break;
@@ -385,6 +392,9 @@ static int update_configuration_post(update_con_info_t *cinfo,
             break;
         case TARGET_IMAPSERVER:
             ret = add_new_coreserver(cinfo, state, OPENLI_CORE_SERVER_IMAP);
+            break;
+        case TARGET_POP3SERVER:
+            ret = add_new_coreserver(cinfo, state, OPENLI_CORE_SERVER_POP3);
             break;
         case TARGET_IPINTERCEPT:
             if (strcmp(method, "POST") == 0) {
@@ -623,6 +633,8 @@ MHD_RESULT handle_update_request(void *cls, struct MHD_Connection *conn,
             cinfo->target = TARGET_SMTPSERVER;
         } else if (strncmp(url, "/imapserver", 11) == 0) {
             cinfo->target = TARGET_IMAPSERVER;
+        } else if (strncmp(url, "/pop3server", 11) == 0) {
+            cinfo->target = TARGET_POP3SERVER;
         } else if (strncmp(url, "/ipintercept", 12) == 0) {
             cinfo->target = TARGET_IPINTERCEPT;
         } else if (strncmp(url, "/voipintercept", 14) == 0) {

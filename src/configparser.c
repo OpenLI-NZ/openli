@@ -1487,6 +1487,15 @@ static int intercept_parser(void *arg, yaml_document_t *doc,
             return -1;
         }
     }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value, "pop3servers") == 0) {
+        if (parse_core_server_list(&state->pop3servers,
+                OPENLI_CORE_SERVER_POP3, doc, value) == -1) {
+            return -1;
+        }
+    }
     return 0;
 }
 
