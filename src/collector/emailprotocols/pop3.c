@@ -36,6 +36,7 @@
 enum {
     OPENLI_POP3_STATE_START,
     OPENLI_POP3_STATE_SERVER_REPLY,
+    OPENLI_POP3_STATE_XCLIENT_SEEN,
     OPENLI_POP3_STATE_WAITING_COMMAND,
     OPENLI_POP3_STATE_WAITING_SERVER,
     OPENLI_POP3_STATE_MULTI_CONTENT,
@@ -61,6 +62,7 @@ enum {
     OPENLI_POP3_COMMAND_RETR,
     OPENLI_POP3_COMMAND_TOP,
     OPENLI_POP3_COMMAND_QUIT,
+    OPENLI_POP3_COMMAND_XCLIENT,
     OPENLI_POP3_COMMAND_OTHER_MULTI,
     OPENLI_POP3_COMMAND_OTHER_SINGLE,
     OPENLI_POP3_COMMAND_UNKNOWN,
@@ -83,10 +85,18 @@ typedef struct pop3session {
     int server_indicator;
 
     int command_start;
+    int command_end;
     int reply_start;
 
     char *mailbox;
     char *mail_sender;
+
+    char *client_ip;
+    char *client_port;
+    char *server_ip;
+    char *server_port;
+    int seen_xclient;
+    int seen_xclient_reply;
 
 } pop3_session_t;
 
@@ -153,6 +163,87 @@ static int find_multi_end(pop3_session_t *pop3sess, int start_index) {
     return 0;
 }
 
+static int parse_xclient_content(pop3_session_t *pop3sess) {
+
+
+    char *xcontent = (char *)pop3sess->contbuffer + pop3sess->command_start;
+    int xcontlen = (pop3sess->command_end - pop3sess->command_start) - 2;
+    char xcopy[2048];
+    int ret = 0;
+    char *key, *value, *next;
+
+    char *ptr = xcopy;
+
+    memcpy(xcopy, xcontent, xcontlen);
+    xcopy[xcontlen] = '\0';
+
+    /* TODO replace pop3sess->server_port with pop3sess->client_port */
+
+    /* XCLIENT means that the POP3 session has been proxied to mirror it
+     * towards us, so what we see as the client is actually the real POP3
+     * server and the "server" is just the proxy target.
+     */
+
+    /* The real client IP and port will be contained in the XCLIENT
+     * message payload, and what we have currently saved as the "client"
+     * is more likely to be the real server */
+
+    if (pop3sess->server_port) {
+        free(pop3sess->server_port);
+    }
+    if (pop3sess->server_ip) {
+        free(pop3sess->server_ip);
+    }
+    pop3sess->server_port = pop3sess->client_port;
+    pop3sess->client_port = NULL;
+    pop3sess->server_ip = pop3sess->client_ip;
+    pop3sess->client_ip = NULL;
+
+    while (ptr) {
+        if (*ptr == '\r' || *ptr == '\n' || *ptr == '\0') {
+            break;
+        }
+        next = strchr(ptr, ' ');
+        key = ptr;
+
+        value = strchr(ptr, '=');
+        if (value == NULL) {
+            ret = -1;
+            break;
+        }
+
+        if (next != NULL && next < value) {
+            if (key == xcopy) {
+                /* this is the XCLIENT command itself */
+                ptr = next + 1;
+                continue;
+            }
+            return -1;
+        }
+
+        *value = '\0';
+        value ++;
+
+        if (next) {
+            *next = '\0';
+            next ++;
+        }
+        ptr = next;
+
+        if (strcmp(key, "ADDR") == 0) {
+            pop3sess->client_ip = strdup(value);
+        }
+
+        if (strcmp(key, "PORT") == 0) {
+            pop3sess->client_port = strdup(value);
+        }
+
+    }
+
+    return ret;
+
+}
+
 static int parse_pop3_command(pop3_session_t *pop3sess) {
 
     int comm_size = (pop3sess->contbufread - pop3sess->command_start) - 2;
@@ -166,43 +257,48 @@ static int parse_pop3_command(pop3_session_t *pop3sess) {
     memcpy(comm_copy, pop3sess->contbuffer + pop3sess->command_start, comm_size);
     comm_copy[comm_size] = '\0';
 
-    if (strcmp(comm_copy, "CAPA") == 0) {
+    printf("%s\n", comm_copy);
+
+    if (strncmp(comm_copy, "CAPA", 4) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_MULTI;
     }
-    if (strncmp(comm_copy, "USER ", 5) == 0) {
+    else if (strncmp(comm_copy, "XCLIENT ", 8) == 0) {
+        pop3sess->last_command_type = OPENLI_POP3_COMMAND_XCLIENT;
+    }
+    else if (strncmp(comm_copy, "USER ", 5) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_USER;
     }
-    if (strncmp(comm_copy, "PASS ", 5) == 0) {
+    else if (strncmp(comm_copy, "PASS ", 5) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_PASS;
     }
-    if (strncmp(comm_copy, "RETR ", 5) == 0) {
+    else if (strncmp(comm_copy, "RETR ", 5) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_RETR;
     }
-    if (strncmp(comm_copy, "TOP ", 4) == 0) {
+    else if (strncmp(comm_copy, "TOP ", 4) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_TOP;
     }
-    if (strncmp(comm_copy, "LIST", 4) == 0) {
+    else if (strncmp(comm_copy, "LIST", 4) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_MULTI;
     }
-    if (strncmp(comm_copy, "APOP ", 5) == 0) {
+    else if (strncmp(comm_copy, "APOP ", 5) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_APOP;
     }
-    if (strncmp(comm_copy, "NOOP", 4) == 0) {
+    else if (strncmp(comm_copy, "NOOP", 4) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_SINGLE;
     }
-    if (strncmp(comm_copy, "RSET", 4) == 0) {
+    else if (strncmp(comm_copy, "RSET", 4) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_SINGLE;
     }
-    if (strncmp(comm_copy, "STAT", 4) == 0) {
+    else if (strncmp(comm_copy, "STAT", 4) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_SINGLE;
     }
-    if (strncmp(comm_copy, "UIDL", 4) == 0) {
+    else if (strncmp(comm_copy, "UIDL", 4) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_MULTI;
     }
-    if (strncmp(comm_copy, "DELE ", 5) == 0) {
+    else if (strncmp(comm_copy, "DELE ", 5) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_SINGLE;
     }
-    if (strncmp(comm_copy, "QUIT", 4) == 0) {
+    else if (strncmp(comm_copy, "QUIT", 4) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_QUIT;
         pop3sess->auth_state = OPENLI_POP3_POSTQUIT;
     }
@@ -236,9 +332,11 @@ static int process_server_indicator(pop3_session_t *pop3sess) {
         return 1;
     }
 
-    printf("%d \"%s\"\n", rem, (char *) pop3sess->contbuffer + pop3sess->reply_start);
+    if (pop3sess->last_command_type != OPENLI_POP3_COMMAND_XCLIENT) {
+        printf("%d \"%s\"\n", rem, (char *) pop3sess->contbuffer + pop3sess->reply_start);
 
-    printf("?WHAT\n");
+        printf("?WHAT\n");
+    }
     return 0;
 }
 
@@ -249,6 +347,163 @@ static int is_single_line_response(pop3_session_t *pop3sess) {
         case OPENLI_POP3_COMMAND_TOP:
         case OPENLI_POP3_COMMAND_OTHER_MULTI:
             return 0;
+    }
+
+    return 1;
+}
+
+static int handle_xclient_seen_state(emailsession_t *sess,
+        pop3_session_t *pop3sess) {
+
+    int r;
+    /* We might get a server reply, or the proxy might just
+     * carry on and forward the next client command -- who knows?
+     */
+    r = process_server_indicator(pop3sess);
+    if (r < 0) {
+        return 0;
+    }
+    if (r == 1) {
+        sess->currstate = OPENLI_POP3_STATE_SERVER_REPLY;
+    } else {
+        /* Must be a command instead? */
+        sess->currstate = OPENLI_POP3_STATE_WAITING_COMMAND;
+        pop3sess->command_start = pop3sess->reply_start;
+        return 1;
+    }
+
+    return 0;
+}
+
+static int handle_multi_reply_state(emailsession_t *sess,
+        pop3_session_t *pop3sess) {
+
+    int r;
+
+    if ((r = find_multi_end(pop3sess, pop3sess->reply_start)) < 0) {
+        return r;
+    }
+
+    /* TODO command response is complete -- generate the CCs */
+    if (pop3sess->server_indicator == OPENLI_POP3_SERV_OK) {
+
+        /* if command was RETR, generate an email download IRI */
+        /* if command was TOP, generate a partial download IRI */
+        if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_RETR) {
+            printf("email download IRI\n");
+        } else if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_TOP) {
+            printf("partial download IRI\n");
+        }
+
+    }
+    printf("CCs REQUIRED for completed multi command\n");
+
+    pop3sess->command_start = pop3sess->contbufread;
+    sess->currstate = OPENLI_POP3_STATE_WAITING_COMMAND;
+
+    return 1;
+}
+
+static int handle_client_command(emailsession_t *sess,
+        pop3_session_t *pop3sess) {
+
+    int r;
+
+    if ((r = find_next_crlf(pop3sess, pop3sess->command_start)) <= 0) {
+        return r;
+    }
+
+    if (parse_pop3_command(pop3sess) < 0) {
+        return -1;
+    }
+    pop3sess->command_end = pop3sess->contbufread;
+    pop3sess->reply_start = pop3sess->contbufread;
+    if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_XCLIENT)
+    {
+        sess->currstate = OPENLI_POP3_STATE_XCLIENT_SEEN;
+        pop3sess->seen_xclient = 1;
+
+        if (parse_xclient_content(pop3sess) < 0) {
+            return -1;
+        }
+    } else {
+        sess->currstate = OPENLI_POP3_STATE_WAITING_SERVER;
+    }
+    return 1;
+}
+
+
+static int handle_server_reply_state(emailsession_t *sess,
+        pop3_session_t *pop3sess) {
+
+    int r;
+
+    if ((r = find_next_crlf(pop3sess, pop3sess->reply_start)) <= 0) {
+        return r;
+    }
+
+    /* Server reply line is complete */
+
+    if (pop3sess->auth_state == OPENLI_POP3_POSTQUIT) {
+        sess->currstate = OPENLI_POP3_STATE_OVER;
+
+        /* TODO generate email logoff IRI */
+        printf("LOGOFF\n");
+        return 0;
+    }
+
+    /* If our last command is one that will produce multi-line responses,
+     * then we need to keep parsing lines until we see a line with just
+     * a full stop
+     */
+    if (is_single_line_response(pop3sess)) {
+        if (pop3sess->seen_xclient && !pop3sess->seen_xclient_reply) {
+            /* This is the first reply since we saw XCLIENT */
+            pop3sess->seen_xclient_reply = 1;
+            if (pop3sess->last_command_type != OPENLI_POP3_COMMAND_XCLIENT) {
+                /* We saw another command before we saw this reply, so we
+                 * now need to wait for the reply to that subsequent
+                 * command
+                 */
+                sess->currstate = OPENLI_POP3_STATE_WAITING_SERVER;
+                pop3sess->reply_start = pop3sess->contbufread;
+                return 1;
+            }
+
+            /* Otherwise, the XCLIENT reply was the first thing we
+             * saw after the XCLIENT command, so we can carry on
+             * normally and expect a client command next.
+             */
+        }
+
+        sess->currstate = OPENLI_POP3_STATE_WAITING_COMMAND;
+        pop3sess->command_start = pop3sess->contbufread;
+
+    } else {
+        sess->currstate = OPENLI_POP3_STATE_MULTI_CONTENT;
+        return 1;
+    }
+
+    if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_PASS ||
+            pop3sess->last_command_type ==
+            OPENLI_POP3_COMMAND_APOP) {
+
+        /* This is the reply for a login attempt, so we'll need to
+         * publish an IRI
+         */
+        if (pop3sess->server_indicator == OPENLI_POP3_SERV_OK) {
+            pop3sess->auth_state = OPENLI_POP3_POSTAUTH;
+
+            printf("LOGIN\n");
+        } else {
+            printf("LOGIN FAIL\n");
+        }
+    }
+
+    /* TODO command response is complete -- generate the CCs */
+    if (pop3sess->last_command_type != OPENLI_POP3_COMMAND_NONE &&
+            pop3sess->last_command_type != OPENLI_POP3_COMMAND_XCLIENT) {
+        printf("CCs REQUIRED for completed command\n");
     }
 
     return 1;
@@ -278,6 +533,11 @@ static int process_next_pop3_line(openli_email_worker_t *state,
 
             break;
 
+        case OPENLI_POP3_STATE_XCLIENT_SEEN:
+            r = handle_xclient_seen_state(sess, pop3sess);
+            return r;
+
+
         case OPENLI_POP3_STATE_CONSUME_SERVER:
             /* Let's hope we never have to use this case... */
             if ((r = find_next_crlf(pop3sess, pop3sess->reply_start)) == 1) {
@@ -288,85 +548,16 @@ static int process_next_pop3_line(openli_email_worker_t *state,
             break;
 
         case OPENLI_POP3_STATE_SERVER_REPLY:
-            if ((r = find_next_crlf(pop3sess, pop3sess->reply_start)) == 1) {
-                if (pop3sess->auth_state == OPENLI_POP3_POSTQUIT) {
-                    sess->currstate = OPENLI_POP3_STATE_OVER;
-
-                    /* TODO generate email logoff IRI */
-                    printf("LOGOFF\n");
-                    return 0;
-                }
-
-                if (is_single_line_response(pop3sess)) {
-                    sess->currstate = OPENLI_POP3_STATE_WAITING_COMMAND;
-                    pop3sess->command_start = pop3sess->contbufread;
-                } else {
-                    sess->currstate = OPENLI_POP3_STATE_MULTI_CONTENT;
-                    return 1;
-                }
-
-                if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_PASS ||
-                        pop3sess->last_command_type ==
-                                OPENLI_POP3_COMMAND_APOP) {
-                    if (pop3sess->server_indicator == OPENLI_POP3_SERV_OK) {
-                        pop3sess->auth_state = OPENLI_POP3_POSTAUTH;
-
-                        printf("LOGIN\n");
-                    } else {
-                        printf("LOGIN FAIL\n");
-                    }
-                }
-
-                /* TODO command response is complete -- generate the CCs */
-                if (pop3sess->last_command_type != OPENLI_POP3_COMMAND_NONE) {
-                    printf("CCs REQUIRED for completed command\n");
-                }
-                /* if command was PASS or APOP and server said OK,
-                 * generate a login event IRI */
-                /* if command was PASS or APOP and server said ERR,
-                 * generate a login failed IRI */
-
-                return 1;
-            } else if (r < 0) {
-                return r;
-            }
-            break;
+            r = handle_server_reply_state(sess, pop3sess);
+            return r;
 
         case OPENLI_POP3_STATE_MULTI_CONTENT:
-            if ((r = find_multi_end(pop3sess, pop3sess->reply_start)) == 1) {
-                pop3sess->command_start = pop3sess->contbufread;
-                sess->currstate = OPENLI_POP3_STATE_WAITING_COMMAND;
-
-                /* TODO command response is complete -- generate the CCs */
-                if (pop3sess->server_indicator == OPENLI_POP3_SERV_OK) {
-
-                    /* if command was RETR, generate an email download IRI */
-                    /* if command was TOP, generate a partial download IRI */
-                    if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_RETR) {
-                        printf("email download IRI\n");
-                    } else if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_TOP) {
-                        printf("partial download IRI\n");
-                    }
-
-                }
-                printf("CCs REQUIRED for completed multi command\n");
-                return 1;
-            } else if (r < 0) {
-                return r;
-            }
-            break;
+            r = handle_multi_reply_state(sess, pop3sess);
+            return r;
 
         case OPENLI_POP3_STATE_WAITING_COMMAND:
-
-            if ((r = find_next_crlf(pop3sess, pop3sess->command_start)) == 1) {
-                sess->currstate = OPENLI_POP3_STATE_WAITING_SERVER;
-                if (parse_pop3_command(pop3sess) < 0) {
-                    return -1;
-                }
-                pop3sess->reply_start = pop3sess->contbufread;
-                return 1;
-            }
-            break;
+            r = handle_client_command(sess, pop3sess);
+            return r;
 
         case OPENLI_POP3_STATE_IGNORING:
         case OPENLI_POP3_STATE_OVER:
@@ -385,6 +576,24 @@ void free_pop3_session_state(emailsession_t *sess, void *pop3state) {
     }
 
     pop3sess = (pop3_session_t *)pop3state;
+    if (pop3sess->server_ip) {
+        free(pop3sess->server_ip);
+    }
+    if (pop3sess->server_port) {
+        free(pop3sess->server_port);
+    }
+    if (pop3sess->client_ip) {
+        free(pop3sess->client_ip);
+    }
+    if (pop3sess->client_port) {
+        free(pop3sess->client_port);
+    }
+    if (pop3sess->mailbox) {
+        free(pop3sess->mailbox);
+    }
+    if (pop3sess->mail_sender) {
+        free(pop3sess->mail_sender);
+    }
     free(pop3sess->contbuffer);
     free(pop3sess);
 
@@ -404,6 +613,12 @@ int update_pop3_session_by_ingestion(openli_email_worker_t *state,
         pop3sess->contbufsize = 2048;
         pop3sess->auth_state = OPENLI_POP3_INIT;
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_NONE;
+
+        pop3sess->server_port = strdup(cap->host_port);
+        pop3sess->server_ip = strdup(cap->host_ip);
+        pop3sess->client_port = strdup(cap->remote_port);
+        pop3sess->client_ip = strdup(cap->remote_ip);
+
         sess->currstate = OPENLI_POP3_STATE_START;
 
         sess->proto_state = (void *)pop3sess;
