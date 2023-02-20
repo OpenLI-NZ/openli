@@ -42,6 +42,9 @@ enum {
     OPENLI_POP3_STATE_MULTI_CONTENT,
     OPENLI_POP3_STATE_IGNORING,
     OPENLI_POP3_STATE_OVER,
+    OPENLI_POP3_STATE_AUTH,
+    OPENLI_POP3_STATE_AUTH_SERVER_CONTENT,
+    OPENLI_POP3_STATE_AUTH_CLIENT_CONTENT,
     OPENLI_POP3_STATE_CONSUME_SERVER,
     OPENLI_POP3_STATE_CONSUME_CLIENT,
 
@@ -61,6 +64,7 @@ enum {
     OPENLI_POP3_COMMAND_APOP,
     OPENLI_POP3_COMMAND_RETR,
     OPENLI_POP3_COMMAND_TOP,
+    OPENLI_POP3_COMMAND_AUTH,
     OPENLI_POP3_COMMAND_QUIT,
     OPENLI_POP3_COMMAND_XCLIENT,
     OPENLI_POP3_COMMAND_OTHER_MULTI,
@@ -71,6 +75,7 @@ enum {
 enum {
     OPENLI_POP3_SERV_OK,
     OPENLI_POP3_SERV_ERR,
+    OPENLI_POP3_SERV_AUTH,
 };
 
 typedef struct pop3session {
@@ -124,6 +129,7 @@ static int append_content_to_pop3_buffer(pop3_session_t *pop3sess,
 
     assert(pop3sess->contbufused <= pop3sess->contbufsize);
     assert(*(pop3sess->contbuffer + pop3sess->contbufread) != 0);
+
     return 0;
 }
 
@@ -257,7 +263,7 @@ static int parse_pop3_command(pop3_session_t *pop3sess) {
     memcpy(comm_copy, pop3sess->contbuffer + pop3sess->command_start, comm_size);
     comm_copy[comm_size] = '\0';
 
-    printf("%s\n", comm_copy);
+    printf("COMMAND: %s\n", comm_copy);
 
     if (strncmp(comm_copy, "CAPA", 4) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_MULTI;
@@ -292,6 +298,9 @@ static int parse_pop3_command(pop3_session_t *pop3sess) {
     else if (strncmp(comm_copy, "STAT", 4) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_SINGLE;
     }
+    else if (strncmp(comm_copy, "AUTH ", 5) == 0) {
+        pop3sess->last_command_type = OPENLI_POP3_COMMAND_AUTH;
+    }
     else if (strncmp(comm_copy, "UIDL", 4) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_MULTI;
     }
@@ -301,14 +310,30 @@ static int parse_pop3_command(pop3_session_t *pop3sess) {
     else if (strncmp(comm_copy, "QUIT", 4) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_QUIT;
         pop3sess->auth_state = OPENLI_POP3_POSTQUIT;
+    } else {
+        /* Unknown command -- let's guess a single line reply and pray */
+        pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_SINGLE;
     }
 
     return 0;
 }
 
-static int process_server_indicator(pop3_session_t *pop3sess) {
+static int process_server_indicator(pop3_session_t *pop3sess, int isauth) {
     int rem = pop3sess->contbufused - pop3sess->reply_start;
     uint8_t *found;
+
+    if (isauth) {
+        if (rem < 2) {
+            return -1;
+        }
+
+        if (memcmp(pop3sess->contbuffer + pop3sess->reply_start,
+                "+ ", 2) == 0) {
+            pop3sess->server_indicator = OPENLI_POP3_SERV_AUTH;
+            return 1;
+        }
+    }
+
 
     if (rem < 3) {
         return -1;
@@ -333,7 +358,7 @@ static int process_server_indicator(pop3_session_t *pop3sess) {
     }
 
     if (pop3sess->last_command_type != OPENLI_POP3_COMMAND_XCLIENT) {
-        printf("%d \"%s\"\n", rem, (char *) pop3sess->contbuffer + pop3sess->reply_start);
+        printf("%d %d \"%s\"\n", isauth, rem, (char *) pop3sess->contbuffer + pop3sess->reply_start);
 
         printf("?WHAT\n");
     }
@@ -359,7 +384,7 @@ static int handle_xclient_seen_state(emailsession_t *sess,
     /* We might get a server reply, or the proxy might just
      * carry on and forward the next client command -- who knows?
      */
-    r = process_server_indicator(pop3sess);
+    r = process_server_indicator(pop3sess, 0);
     if (r < 0) {
         return 0;
     }
@@ -426,6 +451,8 @@ static int handle_client_command(emailsession_t *sess,
         if (parse_xclient_content(pop3sess) < 0) {
             return -1;
         }
+    } else if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_AUTH) {
+        sess->currstate = OPENLI_POP3_STATE_AUTH;
     } else {
         sess->currstate = OPENLI_POP3_STATE_WAITING_SERVER;
     }
@@ -486,7 +513,8 @@ static int handle_server_reply_state(emailsession_t *sess,
 
     if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_PASS ||
             pop3sess->last_command_type ==
-            OPENLI_POP3_COMMAND_APOP) {
+            OPENLI_POP3_COMMAND_APOP ||
+            pop3sess->last_command_type == OPENLI_POP3_COMMAND_AUTH) {
 
         /* This is the reply for a login attempt, so we'll need to
          * publish an IRI
@@ -520,8 +548,7 @@ static int process_next_pop3_line(openli_email_worker_t *state,
 
             // fall through
         case OPENLI_POP3_STATE_WAITING_SERVER:
-
-            r = process_server_indicator(pop3sess);
+            r = process_server_indicator(pop3sess, 0);
             if (r < 0) {
                 return 0;
             }
@@ -531,12 +558,46 @@ static int process_next_pop3_line(openli_email_worker_t *state,
                 sess->currstate = OPENLI_POP3_STATE_SERVER_REPLY;
             }
 
-            break;
+            return 1;
 
         case OPENLI_POP3_STATE_XCLIENT_SEEN:
             r = handle_xclient_seen_state(sess, pop3sess);
             return r;
 
+        case OPENLI_POP3_STATE_AUTH:
+            r = process_server_indicator(pop3sess, 1);
+            if (r < 0) {
+                return 0;
+            }
+            if (r == 0) {
+                logger(LOG_INFO, "OpenLI: POP3 session '%s' has bogus authentication exchange -- ignoring for our sanity", sess->key);
+                sess->currstate = OPENLI_POP3_STATE_IGNORING;
+                return -1;
+            }
+            if (pop3sess->server_indicator == OPENLI_POP3_SERV_AUTH) {
+                sess->currstate = OPENLI_POP3_STATE_AUTH_SERVER_CONTENT;
+            } else {
+                sess->currstate = OPENLI_POP3_STATE_SERVER_REPLY;
+            }
+            return 1;
+
+        case OPENLI_POP3_STATE_AUTH_SERVER_CONTENT:
+            /* TODO figure out a way to do CCs properly in this state */
+            if ((r = find_next_crlf(pop3sess, pop3sess->reply_start)) == 1) {
+                sess->currstate = OPENLI_POP3_STATE_AUTH_CLIENT_CONTENT;
+                pop3sess->reply_start = pop3sess->contbufread;
+                return 1;
+            }
+            break;
+
+        case OPENLI_POP3_STATE_AUTH_CLIENT_CONTENT:
+            /* TODO figure out a way to do CCs properly in this state */
+            if ((r = find_next_crlf(pop3sess, pop3sess->reply_start)) == 1) {
+                sess->currstate = OPENLI_POP3_STATE_AUTH_SERVER_CONTENT;
+                pop3sess->reply_start = pop3sess->contbufread;
+                return 1;
+            }
+            break;
 
         case OPENLI_POP3_STATE_CONSUME_SERVER:
             /* Let's hope we never have to use this case... */
