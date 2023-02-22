@@ -95,6 +95,7 @@ typedef struct pop3session {
 
     char *mailbox;
     char *mail_sender;
+    char *password_content;
 
     char *client_ip;
     char *client_port;
@@ -131,6 +132,91 @@ static int append_content_to_pop3_buffer(pop3_session_t *pop3sess,
     assert(*(pop3sess->contbuffer + pop3sess->contbufread) != 0);
 
     return 0;
+}
+
+static int decode_login_username_command(emailsession_t *sess,
+        pop3_session_t *pop3sess) {
+
+    char *usermsg;
+    int msglen, r;
+    char *username;
+
+    assert(pop3sess->command_end > pop3sess->command_start + 2);
+
+    // strip \r\n from end of command
+    msglen = pop3sess->command_end - pop3sess->command_start - 2;
+    usermsg = calloc(msglen + 1, sizeof(char));
+
+    memcpy(usermsg, pop3sess->contbuffer + pop3sess->command_start,
+            msglen);
+
+    username = strchr(usermsg, ' ');
+    if (username == NULL) {
+        logger(LOG_INFO, "OpenLI: unable to parse POP3 USER command -- no space found in command (\"%s\")", usermsg);
+        free(usermsg);
+        return -1;
+    }
+
+    username += 1;
+    pop3sess->mailbox = strdup(username);
+    add_email_participant(sess, pop3sess->mailbox, 0);
+    free(usermsg);
+    return 1;
+}
+
+static int decode_login_apop_command(emailsession_t *sess,
+        pop3_session_t *pop3sess) {
+
+    char *usermsg;
+    int msglen, r;
+    char *username;
+    char *username_end;
+
+    assert(pop3sess->command_end > pop3sess->command_start + 2);
+
+    // strip \r\n from end of command
+    msglen = pop3sess->command_end - pop3sess->command_start - 2;
+    usermsg = calloc(msglen + 1, sizeof(char));
+
+    memcpy(usermsg, pop3sess->contbuffer + pop3sess->command_start,
+            msglen);
+
+    username = strchr(usermsg, ' ');
+    if (username == NULL) {
+        logger(LOG_INFO, "OpenLI: unable to parse POP3 APOP command -- no space found in command (\"%s\")", usermsg);
+        return -1;
+    }
+
+    username += 1;
+
+
+    username_end = strchr(username, ' ');
+    if (username_end == NULL) {
+        logger(LOG_INFO, "OpenLI: unable to parse POP3 APOP command -- not enough terms in command (\"%s\")", usermsg);
+        return -1;
+    }
+
+    pop3sess->mailbox = strndup(username, username_end - username);
+    add_email_participant(sess, pop3sess->mailbox, 0);
+    return 1;
+}
+
+static int save_pop3_password(emailsession_t *sess, pop3_session_t *pop3sess) {
+
+    assert(pop3sess->command_end > pop3sess->command_start + 2);
+
+    if (sess->mask_credentials) {
+        /* Replace the password with 'XXX' */
+        pop3sess->password_content = strdup("PASS XXX\r\n");
+    } else {
+        int msglen = pop3sess->command_end - pop3sess->command_start;
+        pop3sess->password_content = calloc(msglen + 1, sizeof(char));
+
+        memcpy(pop3sess->password_content,
+                pop3sess->contbuffer + pop3sess->command_start, msglen);
+    }
+
+    return 1;
 }
 
 static int find_next_crlf(pop3_session_t *pop3sess, int start_index) {
@@ -182,8 +268,6 @@ static int parse_xclient_content(pop3_session_t *pop3sess) {
 
     memcpy(xcopy, xcontent, xcontlen);
     xcopy[xcontlen] = '\0';
-
-    /* TODO replace pop3sess->server_port with pop3sess->client_port */
 
     /* XCLIENT means that the POP3 session has been proxied to mirror it
      * towards us, so what we see as the client is actually the real POP3
@@ -400,24 +484,26 @@ static int handle_xclient_seen_state(emailsession_t *sess,
     return 0;
 }
 
-static int handle_multi_reply_state(emailsession_t *sess,
-        pop3_session_t *pop3sess) {
+static int handle_multi_reply_state(openli_email_worker_t *state,
+        emailsession_t *sess, pop3_session_t *pop3sess, uint64_t timestamp) {
 
     int r;
 
-    if ((r = find_multi_end(pop3sess, pop3sess->reply_start)) < 0) {
+    if ((r = find_multi_end(pop3sess, pop3sess->reply_start)) <= 0) {
         return r;
     }
 
+    sess->server_octets += (pop3sess->contbufread - pop3sess->reply_start);
+
     /* TODO command response is complete -- generate the CCs */
     if (pop3sess->server_indicator == OPENLI_POP3_SERV_OK) {
-
+        sess->event_time = timestamp;
         /* if command was RETR, generate an email download IRI */
         /* if command was TOP, generate a partial download IRI */
         if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_RETR) {
-            printf("email download IRI\n");
+            generate_email_download_success_iri(state, sess);
         } else if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_TOP) {
-            printf("partial download IRI\n");
+            generate_email_partial_download_success_iri(state, sess);
         }
 
     }
@@ -441,6 +527,13 @@ static int handle_client_command(emailsession_t *sess,
     if (parse_pop3_command(pop3sess) < 0) {
         return -1;
     }
+
+    if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_PASS &&
+            sess->mask_credentials) {
+        sess->client_octets += 10;
+    } else {
+        sess->client_octets += (pop3sess->contbufread - pop3sess->command_start);
+    }
     pop3sess->command_end = pop3sess->contbufread;
     pop3sess->reply_start = pop3sess->contbufread;
     if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_XCLIENT)
@@ -456,12 +549,31 @@ static int handle_client_command(emailsession_t *sess,
     } else {
         sess->currstate = OPENLI_POP3_STATE_WAITING_SERVER;
     }
+
+    if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_USER) {
+        if (decode_login_username_command(sess, pop3sess) < 0) {
+            return -1;
+        }
+    }
+
+    if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_APOP) {
+        if (decode_login_apop_command(sess, pop3sess) < 0) {
+            return -1;
+        }
+    }
+
+    if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_PASS) {
+        if (save_pop3_password(sess, pop3sess) < 0) {
+            return -1;
+        }
+    }
+
     return 1;
 }
 
 
-static int handle_server_reply_state(emailsession_t *sess,
-        pop3_session_t *pop3sess) {
+static int handle_server_reply_state(openli_email_worker_t *state,
+        emailsession_t *sess, pop3_session_t *pop3sess, uint64_t timestamp) {
 
     int r;
 
@@ -471,11 +583,13 @@ static int handle_server_reply_state(emailsession_t *sess,
 
     /* Server reply line is complete */
 
+    sess->server_octets += (pop3sess->contbufread - pop3sess->reply_start);
+
     if (pop3sess->auth_state == OPENLI_POP3_POSTQUIT) {
         sess->currstate = OPENLI_POP3_STATE_OVER;
-
-        /* TODO generate email logoff IRI */
-        printf("LOGOFF\n");
+        sess->event_time = timestamp;
+        /* generate email logoff IRI */
+        generate_email_logoff_iri(state, sess);
         return 0;
     }
 
@@ -521,10 +635,10 @@ static int handle_server_reply_state(emailsession_t *sess,
          */
         if (pop3sess->server_indicator == OPENLI_POP3_SERV_OK) {
             pop3sess->auth_state = OPENLI_POP3_POSTAUTH;
-
-            printf("LOGIN\n");
+            sess->login_time = timestamp;
+            generate_email_login_success_iri(state, sess);
         } else {
-            printf("LOGIN FAIL\n");
+            generate_email_login_failure_iri(state, sess);
         }
     }
 
@@ -593,7 +707,7 @@ static int process_next_pop3_line(openli_email_worker_t *state,
         case OPENLI_POP3_STATE_AUTH_CLIENT_CONTENT:
             /* TODO figure out a way to do CCs properly in this state */
             if ((r = find_next_crlf(pop3sess, pop3sess->reply_start)) == 1) {
-                sess->currstate = OPENLI_POP3_STATE_AUTH_SERVER_CONTENT;
+                sess->currstate = OPENLI_POP3_STATE_AUTH;
                 pop3sess->reply_start = pop3sess->contbufread;
                 return 1;
             }
@@ -609,11 +723,11 @@ static int process_next_pop3_line(openli_email_worker_t *state,
             break;
 
         case OPENLI_POP3_STATE_SERVER_REPLY:
-            r = handle_server_reply_state(sess, pop3sess);
+            r = handle_server_reply_state(state, sess, pop3sess, timestamp);
             return r;
 
         case OPENLI_POP3_STATE_MULTI_CONTENT:
-            r = handle_multi_reply_state(sess, pop3sess);
+            r = handle_multi_reply_state(state, sess, pop3sess, timestamp);
             return r;
 
         case OPENLI_POP3_STATE_WAITING_COMMAND:
@@ -649,12 +763,18 @@ void free_pop3_session_state(emailsession_t *sess, void *pop3state) {
     if (pop3sess->client_port) {
         free(pop3sess->client_port);
     }
-    if (pop3sess->mailbox) {
-        free(pop3sess->mailbox);
-    }
     if (pop3sess->mail_sender) {
         free(pop3sess->mail_sender);
     }
+    if (pop3sess->password_content) {
+        free(pop3sess->password_content);
+    }
+
+    /* Don't free 'mailbox', as this is owned by the participant list for
+     * the overall email session.
+     */
+
+
     free(pop3sess->contbuffer);
     free(pop3sess);
 

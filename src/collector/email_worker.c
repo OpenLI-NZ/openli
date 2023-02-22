@@ -256,6 +256,10 @@ static void init_email_session(emailsession_t *sess,
         pthread_rwlock_rdlock(state->glob_config_mutex);
         sess->mask_credentials = *(state->mask_imap_creds);
         pthread_rwlock_unlock(state->glob_config_mutex);
+    } else if (cap->type == OPENLI_EMAIL_TYPE_POP3) {
+        pthread_rwlock_rdlock(state->glob_config_mutex);
+        sess->mask_credentials = *(state->mask_pop3_creds);
+        pthread_rwlock_unlock(state->glob_config_mutex);
     } else {
         sess->mask_credentials = 0;
     }

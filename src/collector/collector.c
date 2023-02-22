@@ -1446,6 +1446,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->email_timeouts.pop3 = 10;
     glob->email_timeouts.imap = 30;
     glob->mask_imap_creds = 1;      // defaults to "enabled"
+    glob->mask_pop3_creds = 1;      // defaults to "enabled"
 
 }
 
@@ -1498,6 +1499,10 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     if (glob->mask_imap_creds) {
         logger(LOG_INFO, "Email interception: rewriting IMAP auth credentials to avoid leaking passwords to agencies");
+    }
+
+    if (glob->mask_pop3_creds) {
+        logger(LOG_INFO, "Email interception: rewriting POP3 plain text passwords to avoid leaking passwords to agencies");
     }
 
     logger(LOG_DEBUG, "OpenLI: session idle timeout for SMTP sessions: %u minutes", glob->email_timeouts.smtp);
@@ -1634,7 +1639,16 @@ static int reload_collector_config(collector_global_t *glob,
         }
     }
 
+    if (glob->mask_pop3_creds != newstate.mask_pop3_creds) {
+        if (newstate.mask_pop3_creds) {
+            logger(LOG_INFO, "OpenLI: Email interception: rewriting POP3 plain text passwords to avoid leaking passwords to agencies");
+        } else {
+            logger(LOG_INFO, "OpenLI: Email interception: no longer rewriting POP3 plain text passwords to avoid leaking passwords to agencies");
+        }
+    }
+
     glob->mask_imap_creds = newstate.mask_imap_creds;
+    glob->mask_pop3_creds = newstate.mask_pop3_creds;
     glob->email_timeouts.smtp = newstate.email_timeouts.smtp;
     glob->email_timeouts.imap = newstate.email_timeouts.imap;
     glob->email_timeouts.pop3 = newstate.email_timeouts.pop3;
@@ -1912,6 +1926,7 @@ int main(int argc, char *argv[]) {
 
         glob->emailworkers[i].glob_config_mutex = &(glob->email_config_mutex);
         glob->emailworkers[i].mask_imap_creds = &(glob->mask_imap_creds);
+        glob->emailworkers[i].mask_pop3_creds = &(glob->mask_pop3_creds);
         glob->emailworkers[i].timeout_thresholds = &(glob->email_timeouts);
 
         pthread_create(&(glob->emailworkers[i].threadid), NULL,
