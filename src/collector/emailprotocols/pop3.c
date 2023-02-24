@@ -507,8 +507,14 @@ static int handle_multi_reply_state(openli_email_worker_t *state,
         }
 
     }
-    printf("CCs REQUIRED for completed multi command\n");
-
+    generate_email_cc_from_pop3_payload(state, sess,
+                pop3sess->contbuffer + pop3sess->command_start,
+                pop3sess->command_end - pop3sess->command_start,
+                timestamp, ETSI_DIR_FROM_TARGET);
+    generate_email_cc_from_pop3_payload(state, sess,
+            pop3sess->contbuffer + pop3sess->reply_start,
+            pop3sess->contbufread - pop3sess->reply_start,
+            timestamp, ETSI_DIR_TO_TARGET);
     pop3sess->command_start = pop3sess->contbufread;
     sess->currstate = OPENLI_POP3_STATE_WAITING_COMMAND;
 
@@ -575,7 +581,7 @@ static int handle_client_command(emailsession_t *sess,
 static int handle_server_reply_state(openli_email_worker_t *state,
         emailsession_t *sess, pop3_session_t *pop3sess, uint64_t timestamp) {
 
-    int r;
+    int r = 1;
 
     if ((r = find_next_crlf(pop3sess, pop3sess->reply_start)) <= 0) {
         return r;
@@ -590,14 +596,12 @@ static int handle_server_reply_state(openli_email_worker_t *state,
         sess->event_time = timestamp;
         /* generate email logoff IRI */
         generate_email_logoff_iri(state, sess);
-        return 0;
     }
-
     /* If our last command is one that will produce multi-line responses,
      * then we need to keep parsing lines until we see a line with just
      * a full stop
      */
-    if (is_single_line_response(pop3sess)) {
+    else if (is_single_line_response(pop3sess)) {
         if (pop3sess->seen_xclient && !pop3sess->seen_xclient_reply) {
             /* This is the first reply since we saw XCLIENT */
             pop3sess->seen_xclient_reply = 1;
@@ -618,7 +622,6 @@ static int handle_server_reply_state(openli_email_worker_t *state,
         }
 
         sess->currstate = OPENLI_POP3_STATE_WAITING_COMMAND;
-        pop3sess->command_start = pop3sess->contbufread;
 
     } else {
         sess->currstate = OPENLI_POP3_STATE_MULTI_CONTENT;
@@ -645,10 +648,29 @@ static int handle_server_reply_state(openli_email_worker_t *state,
     /* TODO command response is complete -- generate the CCs */
     if (pop3sess->last_command_type != OPENLI_POP3_COMMAND_NONE &&
             pop3sess->last_command_type != OPENLI_POP3_COMMAND_XCLIENT) {
-        printf("CCs REQUIRED for completed command\n");
+
+        if (pop3sess->last_command_type != OPENLI_POP3_COMMAND_PASS) {
+            generate_email_cc_from_pop3_payload(state, sess,
+                    pop3sess->contbuffer + pop3sess->command_start,
+                    pop3sess->command_end - pop3sess->command_start,
+                    timestamp, ETSI_DIR_FROM_TARGET);
+        } else {
+            generate_email_cc_from_pop3_payload(state, sess,
+                    pop3sess->password_content,
+                    strlen(pop3sess->password_content),
+                    timestamp, ETSI_DIR_FROM_TARGET);
+        }
+
+
+        generate_email_cc_from_pop3_payload(state, sess,
+                pop3sess->contbuffer + pop3sess->reply_start,
+                pop3sess->contbufread - pop3sess->reply_start,
+                timestamp, ETSI_DIR_TO_TARGET);
+
     }
 
-    return 1;
+    pop3sess->command_start = pop3sess->contbufread;
+    return r;
 }
 
 static int process_next_pop3_line(openli_email_worker_t *state,
