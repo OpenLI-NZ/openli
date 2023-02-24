@@ -1,5 +1,5 @@
 #!/bin/sh
-# postinst script for amplet2
+# postinst script for openli-mediator
 #
 # see: dh_installdeb(1)
 
@@ -19,12 +19,12 @@ case "$1" in
         chmod 2750 /etc/openli
 
         EXISTS=`rabbitmqctl list_vhosts | grep "^OpenLI-med$" | wc -l`
-        if [ "$EXISTS" == "0" ]; then
+        if [ "$EXISTS" -eq "0" ]; then
                 rabbitmqctl add_vhost "OpenLI-med"
         fi
 
         EXISTS=`rabbitmqctl list_users | grep "^openli.nz\b" | wc -l`
-        if [ "$EXISTS" == "0" ]; then
+        if [ "$EXISTS" -eq "0" ]; then
                 rabbitmqctl add_user "openli.nz" "mediatorinternal"
                 rabbitmqctl set_permissions -p "OpenLI-med" "openli.nz" ".*" ".*" ".*"
         fi
