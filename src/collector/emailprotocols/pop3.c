@@ -99,8 +99,6 @@ typedef struct pop3session {
 
     char *client_ip;
     char *client_port;
-    char *server_ip;
-    char *server_port;
     int seen_xclient;
     int seen_xclient_reply;
 
@@ -255,7 +253,8 @@ static int find_multi_end(pop3_session_t *pop3sess, int start_index) {
     return 0;
 }
 
-static int parse_xclient_content(pop3_session_t *pop3sess) {
+static int parse_xclient_content(emailsession_t *sess,
+        pop3_session_t *pop3sess) {
 
 
     char *xcontent = (char *)pop3sess->contbuffer + pop3sess->command_start;
@@ -269,25 +268,10 @@ static int parse_xclient_content(pop3_session_t *pop3sess) {
     memcpy(xcopy, xcontent, xcontlen);
     xcopy[xcontlen] = '\0';
 
-    /* XCLIENT means that the POP3 session has been proxied to mirror it
-     * towards us, so what we see as the client is actually the real POP3
-     * server and the "server" is just the proxy target.
-     */
-
     /* The real client IP and port will be contained in the XCLIENT
-     * message payload, and what we have currently saved as the "client"
-     * is more likely to be the real server */
-
-    if (pop3sess->server_port) {
-        free(pop3sess->server_port);
-    }
-    if (pop3sess->server_ip) {
-        free(pop3sess->server_ip);
-    }
-    pop3sess->server_port = pop3sess->client_port;
-    pop3sess->client_port = NULL;
-    pop3sess->server_ip = pop3sess->client_ip;
-    pop3sess->client_ip = NULL;
+     * message payload -- we don't know the "real" server for sure,
+     * though so let's just use the server that received the XCLIENT
+     * message instead */
 
     while (ptr) {
         if (*ptr == '\r' || *ptr == '\n' || *ptr == '\0') {
@@ -321,13 +305,20 @@ static int parse_xclient_content(pop3_session_t *pop3sess) {
         ptr = next;
 
         if (strcmp(key, "ADDR") == 0) {
+            if (pop3sess->client_ip) {
+                free(pop3sess->client_ip);
+            }
             pop3sess->client_ip = strdup(value);
         }
 
         if (strcmp(key, "PORT") == 0) {
+            if (pop3sess->client_port) {
+                free(pop3sess->client_port);
+            }
             pop3sess->client_port = strdup(value);
         }
-
+        replace_email_session_clientaddr(sess, pop3sess->client_ip,
+                pop3sess->client_port);
     }
 
     return ret;
@@ -346,8 +337,6 @@ static int parse_pop3_command(pop3_session_t *pop3sess) {
 
     memcpy(comm_copy, pop3sess->contbuffer + pop3sess->command_start, comm_size);
     comm_copy[comm_size] = '\0';
-
-    printf("COMMAND: %s\n", comm_copy);
 
     if (strncmp(comm_copy, "CAPA", 4) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_MULTI;
@@ -402,7 +391,8 @@ static int parse_pop3_command(pop3_session_t *pop3sess) {
     return 0;
 }
 
-static int process_server_indicator(pop3_session_t *pop3sess, int isauth) {
+static int process_server_indicator(emailsession_t *sess,
+        pop3_session_t *pop3sess, int isauth) {
     int rem = pop3sess->contbufused - pop3sess->reply_start;
     uint8_t *found;
 
@@ -442,9 +432,7 @@ static int process_server_indicator(pop3_session_t *pop3sess, int isauth) {
     }
 
     if (pop3sess->last_command_type != OPENLI_POP3_COMMAND_XCLIENT) {
-        printf("%d %d \"%s\"\n", isauth, rem, (char *) pop3sess->contbuffer + pop3sess->reply_start);
-
-        printf("?WHAT\n");
+        logger(LOG_INFO, "OpenLI: unexpected server reply observed for POP3 session '%s'", sess->key);
     }
     return 0;
 }
@@ -468,7 +456,7 @@ static int handle_xclient_seen_state(emailsession_t *sess,
     /* We might get a server reply, or the proxy might just
      * carry on and forward the next client command -- who knows?
      */
-    r = process_server_indicator(pop3sess, 0);
+    r = process_server_indicator(sess, pop3sess, 0);
     if (r < 0) {
         return 0;
     }
@@ -547,7 +535,7 @@ static int handle_client_command(emailsession_t *sess,
         sess->currstate = OPENLI_POP3_STATE_XCLIENT_SEEN;
         pop3sess->seen_xclient = 1;
 
-        if (parse_xclient_content(pop3sess) < 0) {
+        if (parse_xclient_content(sess, pop3sess) < 0) {
             return -1;
         }
     } else if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_AUTH) {
@@ -684,7 +672,7 @@ static int process_next_pop3_line(openli_email_worker_t *state,
 
             // fall through
         case OPENLI_POP3_STATE_WAITING_SERVER:
-            r = process_server_indicator(pop3sess, 0);
+            r = process_server_indicator(sess, pop3sess, 0);
             if (r < 0) {
                 return 0;
             }
@@ -701,7 +689,7 @@ static int process_next_pop3_line(openli_email_worker_t *state,
             return r;
 
         case OPENLI_POP3_STATE_AUTH:
-            r = process_server_indicator(pop3sess, 1);
+            r = process_server_indicator(sess, pop3sess, 1);
             if (r < 0) {
                 return 0;
             }
@@ -773,12 +761,6 @@ void free_pop3_session_state(emailsession_t *sess, void *pop3state) {
     }
 
     pop3sess = (pop3_session_t *)pop3state;
-    if (pop3sess->server_ip) {
-        free(pop3sess->server_ip);
-    }
-    if (pop3sess->server_port) {
-        free(pop3sess->server_port);
-    }
     if (pop3sess->client_ip) {
         free(pop3sess->client_ip);
     }
@@ -817,8 +799,6 @@ int update_pop3_session_by_ingestion(openli_email_worker_t *state,
         pop3sess->auth_state = OPENLI_POP3_INIT;
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_NONE;
 
-        pop3sess->server_port = strdup(cap->host_port);
-        pop3sess->server_ip = strdup(cap->host_ip);
         pop3sess->client_port = strdup(cap->remote_port);
         pop3sess->client_ip = strdup(cap->remote_ip);
 
