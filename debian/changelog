@@ -1,3 +1,9 @@
+openli (1.1.0-1~beta04) unstable; urgency=medium
+
+  * Add support for email interception for the POP3 protocol.
+
+ -- Shane Alcock <shane@alcock.co.nz>  Fri, 24 Feb 2023 15:16:08 +1300
+
 openli (1.1.0-1~beta03) unstable; urgency=medium
 
   * Fix various errors when parsing IMAP AUTHENTICATE PLAIN messages.
