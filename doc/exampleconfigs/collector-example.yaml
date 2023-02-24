@@ -39,6 +39,12 @@ sipallowfromident: no
 # IMAP traffic captured using an email intercept, not an IP intercept.
 maskipcreds: yes
 
+# Set this to yes if you want OpenLI to replace any plain text credentials
+# (i.e. passwords) in intercepted POP3 traffic with
+# the characters "XXX". Note that this masking will only be applied to
+# POP3 traffic captured using an email intercept, not an IP intercept.
+maskpop3creds: yes
+
 # Number of minutes between each dump of performance statistics to the
 # logger. Set to zero to disable this extra logging altogether.
 logstatfrequency: 5

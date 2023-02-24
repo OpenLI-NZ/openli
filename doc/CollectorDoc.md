@@ -208,7 +208,11 @@ The basic option keys are:
 * sipallowfromident -- set to 'yes' to allow the SIP "From:" field to be used
                        for target identification. Defaults to "no".
 * maskimapcreds     -- set to 'yes' to have OpenLI replace any clear-text or
-                       base64 encoded credentials in IMAP traffic that is
+                       base64 encoded credentials in IMAP traffic that has
+                       been intercepted using an email intercept with "XXX".
+                       Defaults to "yes".
+* maskpop3creds     -- set to 'yes' to have OpenLI replace any clear-text
+                       credentials in IMAP traffic that have been
                        intercepted using an email intercept with "XXX".
                        Defaults to "yes".
 
