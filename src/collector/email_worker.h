@@ -158,6 +158,9 @@ void add_email_participant(emailsession_t *sess, char *address, int issender);
 void clear_email_participant_list(emailsession_t *sess);
 void clear_email_sender(emailsession_t *sess);
 
+int extract_email_sender_from_body(openli_email_worker_t *state,
+        emailsession_t *sess, char *bodycontent, char **extracted);
+
 void replace_email_session_serveraddr(emailsession_t *sess,
         char *server_ip, char *server_port);
 void replace_email_session_clientaddr(emailsession_t *sess,

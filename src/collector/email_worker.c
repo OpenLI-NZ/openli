@@ -274,6 +274,61 @@ static void init_email_session(emailsession_t *sess,
     sess->client_octets = 0;
 }
 
+int extract_email_sender_from_body(openli_email_worker_t *state,
+        emailsession_t *sess, char *bodycontent, char **extracted) {
+
+    char fromaddr[2048];
+    int found = 0;
+    char *lt, *gt;
+    char *fromstart, *search, *next;
+
+    memset(fromaddr, 0, 2048);
+    search = bodycontent;
+
+    while (search) {
+        next = strstr(search, "\r\n");
+
+        if (strncasecmp(search, "From: ", 6) == 0) {
+            assert(next != NULL);
+            if (next - search > 2048) {
+                next = search + 2048;
+            }
+            memcpy(fromaddr, (search + 6), next - (search + 6));
+            found = 1;
+            break;
+        }
+        if (next) {
+            search = (next + 2);
+        } else {
+            search = next;
+        }
+    }
+
+    if (!found) {
+        return 0;
+    }
+    /* Account for From: fields which take the form:
+     *  John Smith <john.smith@example.org>
+     */
+
+    /* Note: addresses that contain '<' or '>' within quotes are going
+     * to cause problems for this code...
+     */
+    lt = strchr(fromaddr, '<');
+    gt = strrchr(fromaddr, '>');
+
+    if (!lt || !gt || lt > gt) {
+        fromstart = fromaddr;
+    } else {
+        fromstart = (lt + 1);
+        *gt = '\0';
+    }
+
+    *extracted = strdup(fromstart);
+    return 1;
+}
+
+
 void add_email_participant(emailsession_t *sess, char *address, int issender) {
 
     email_participant_t *part;

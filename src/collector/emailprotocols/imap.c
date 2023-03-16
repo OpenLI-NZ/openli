@@ -95,6 +95,7 @@ typedef struct imapsession {
 
     char *auth_tag;
     char *mailbox;
+    char *mail_sender;
 
     int reply_start;
     int next_comm_start;
@@ -169,6 +170,34 @@ static int complete_imap_append(openli_email_worker_t *state,
 
 }
 
+static int extract_imap_email_sender(openli_email_worker_t *state,
+        emailsession_t *sess, imap_session_t *imapsess, imap_command_t *comm) {
+
+    int r = 0;
+    char *extracted = NULL;
+    char *safecopy;
+    int copylen;
+    char *search = (char *)(comm->commbuffer + comm->reply_start);
+    char *end = (char *)(comm->commbuffer + comm->reply_end);
+
+    assert(end > search);
+    copylen = (end - search) + 1;
+    safecopy = calloc(sizeof(char), copylen);
+    memcpy(safecopy, search, (end - search));
+
+    r = extract_email_sender_from_body(state, sess, safecopy, &extracted);
+
+    if (r == 0 || extracted == NULL) {
+        return r;
+    }
+
+    imapsess->mail_sender = extracted;
+    add_email_participant(sess, imapsess->mail_sender, 1);
+    free(safecopy);
+
+    return r;
+}
+
 static int complete_imap_fetch(openli_email_worker_t *state,
         emailsession_t *sess, imap_session_t *imapsess, imap_command_t *comm) {
 
@@ -183,9 +212,16 @@ static int complete_imap_fetch(openli_email_worker_t *state,
      */
 
     if (strcmp(comm->imap_reply, "OK") == 0) {
+        extract_imap_email_sender(state, sess, imapsess, comm);
         generate_email_partial_download_success_iri(state, sess);
     } else {
         generate_email_partial_download_failure_iri(state, sess);
+    }
+
+    if (imapsess->mail_sender) {
+        clear_email_sender(sess);
+        /* the memory is freed inside clear_email_sender()... */
+        imapsess->mail_sender = NULL;
     }
 
     return 1;
@@ -853,8 +889,8 @@ void free_imap_session_state(emailsession_t *sess, void *imapstate) {
         free(imapsess->auth_tag);
     }
 
-    /* Don't free 'mailbox', as this is owned by the participant list for
-     * the overall email session.
+    /* Don't free 'mailbox' or 'mail_sender', as these are owned by the
+     * participant list for the overall email session.
      */
 
     free(imapsess->commands);

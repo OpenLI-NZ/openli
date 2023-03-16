@@ -472,6 +472,35 @@ static int handle_xclient_seen_state(emailsession_t *sess,
     return 0;
 }
 
+static int extract_pop3_email_sender(openli_email_worker_t *state,
+        emailsession_t *sess, pop3_session_t *pop3sess) {
+
+    int r;
+    char *extracted = NULL;
+    char *safecopy;
+    int copylen;
+    char *search = (char *)(pop3sess->contbuffer + pop3sess->reply_start);
+    char *end = (char *)(pop3sess->contbuffer + pop3sess->contbufread);
+
+    assert(end > search);
+    copylen = (end - search) + 1;
+    safecopy = calloc(sizeof(char), copylen);
+    memcpy(safecopy, search, (end - search));
+
+    r = extract_email_sender_from_body(state, sess, safecopy, &extracted);
+
+    if (r == 0 || extracted == NULL) {
+        free(safecopy);
+        return r;
+    }
+
+    pop3sess->mail_sender = extracted;
+    add_email_participant(sess, pop3sess->mail_sender, 1);
+    free(safecopy);
+
+    return r;
+}
+
 static int handle_multi_reply_state(openli_email_worker_t *state,
         emailsession_t *sess, pop3_session_t *pop3sess, uint64_t timestamp) {
 
@@ -489,9 +518,20 @@ static int handle_multi_reply_state(openli_email_worker_t *state,
         /* if command was RETR, generate an email download IRI */
         /* if command was TOP, generate a partial download IRI */
         if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_RETR) {
+            extract_pop3_email_sender(state, sess, pop3sess);
             generate_email_download_success_iri(state, sess);
         } else if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_TOP) {
+            extract_pop3_email_sender(state, sess, pop3sess);
             generate_email_partial_download_success_iri(state, sess);
+        }
+
+        /* free the sender so we don't include it in future IRIs where
+         * it is not relevant (e.g. logoff)
+         */
+        if (pop3sess->mail_sender) {
+            clear_email_sender(sess);
+            /* the memory is freed inside clear_email_sender()... */
+            pop3sess->mail_sender = NULL;
         }
 
     }
@@ -767,15 +807,12 @@ void free_pop3_session_state(emailsession_t *sess, void *pop3state) {
     if (pop3sess->client_port) {
         free(pop3sess->client_port);
     }
-    if (pop3sess->mail_sender) {
-        free(pop3sess->mail_sender);
-    }
     if (pop3sess->password_content) {
         free(pop3sess->password_content);
     }
 
-    /* Don't free 'mailbox', as this is owned by the participant list for
-     * the overall email session.
+    /* Don't free 'mailbox' or 'mail_sender', as these are owned by the
+     * participant list for the overall email session.
      */
 
 
