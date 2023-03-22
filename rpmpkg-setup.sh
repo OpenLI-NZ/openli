@@ -26,7 +26,8 @@ yum update -y
 if [[ "$1" =~ rocky* ]]; then
         dnf install -y dnf-plugins-core epel-release || true
         dnf config-manager --set-enabled powertools || true
-        yum module -y enable mariadb mariadb-devel
+        dnf config-manager --set-enabled devel || true
+        yum module -y enable mariadb mariadb-devel || true
 fi
 
 if [[ "$1" =~ alma* ]]; then
