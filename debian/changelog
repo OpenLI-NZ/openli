@@ -1,3 +1,10 @@
+openli (1.1.0-1~beta05) unstable; urgency=medium
+
+  * IMAP and POP3: we can now extract the email sender from the mail
+    body to include in email IRIs
+
+ -- Shane Alcock <shane@alcock.co.nz>  Mon, 03 Apr 2023 09:59:02 +1200
+
 openli (1.1.0-1~beta04) unstable; urgency=medium
 
   * Add support for email interception for the POP3 protocol.
