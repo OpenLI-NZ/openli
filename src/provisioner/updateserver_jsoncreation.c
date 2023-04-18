@@ -91,7 +91,7 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     json_object_object_add(jobj, "delivcc", delivcc);
     json_object_object_add(jobj, "agencyid", agencyid);
     json_object_object_add(jobj, "mediator", mediator);
-    json_object_object_add(jobj, "tomediate", tomediate);
+    json_object_object_add(jobj, "outputhandovers", tomediate);
     json_object_object_add(jobj, "user", user);
     json_object_object_add(jobj, "accesstype", accesstype);
     json_object_object_add(jobj, "radiusident", radiusident);
@@ -156,7 +156,7 @@ static json_object *convert_emailintercept_to_json(emailintercept_t *mailint) {
     json_object_object_add(jobj, "delivcc", delivcc);
     json_object_object_add(jobj, "agencyid", agencyid);
     json_object_object_add(jobj, "mediator", mediator);
-    json_object_object_add(jobj, "tomediate", tomediate);
+    json_object_object_add(jobj, "outputhandovers", tomediate);
 
     if (mailint->common.tostart_time != 0) {
         starttime = json_object_new_int(mailint->common.tostart_time);
@@ -203,7 +203,7 @@ static json_object *convert_voipintercept_to_json(voipintercept_t *vint) {
     json_object_object_add(jobj, "delivcc", delivcc);
     json_object_object_add(jobj, "agencyid", agencyid);
     json_object_object_add(jobj, "mediator", mediator);
-    json_object_object_add(jobj, "tomediate", tomediate);
+    json_object_object_add(jobj, "outputhandovers", tomediate);
 
     if (vint->common.tostart_time != 0) {
         starttime = json_object_new_int(vint->common.tostart_time);
