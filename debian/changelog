@@ -1,3 +1,10 @@
+openli (1.1.0-1~beta06) unstable; urgency=medium
+
+  * Fix REST API bug where intercepts returned by GET requests would
+    include a "tomediate" field instead of "outputhandovers".
+
+ -- Shane Alcock <shane@alcock.co.nz>  Wed, 19 Apr 2023 11:43:41 +1200
+
 openli (1.1.0-1~beta05) unstable; urgency=medium
 
   * IMAP and POP3: we can now extract the email sender from the mail
