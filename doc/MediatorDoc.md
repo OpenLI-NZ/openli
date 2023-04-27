@@ -81,10 +81,10 @@ rotated -- in-progress pcap traces do not contain all of the necessary
 trailers to allow them to be correctly parsed by a reader.
 
 ### RabbitMQ Configuration
-If you have using RabbitMQ to reliably persist the intercepted packets that
-have not yet been received by your mediator, you will need to also provide
-additional configuration on your mediator to allow it to read those packets
-from the RabbitMQ queue on the collector.
+If you are using RabbitMQ on the collector to reliably persist the intercepted
+packets that have not yet been received by your mediator, you will need to also
+provide additional configuration on your mediator to allow it to fetch those
+packets from the collector.
 
 OpenLI supports (and recommends!) the use of SSL / TLS to authenticate with the
 RabbitMQ server that is running on the collector, but you may also choose to
@@ -120,6 +120,8 @@ See TLSDoc.md for more details on the SSL certificate files required by
 OpenLI, as these will be the same certificates that you will/would use to
 encrypt other inter-component messages in an OpenLI deployment.
 
+### RabbitMQ for local buffering
+
 As of version 1.1.0, the OpenLI mediator will also use a local RabbitMQ server
 instance to move intercept records between threads and ensure that the records
 are safely buffered on disk whenever a handover is unavailable. No additional
@@ -129,6 +131,12 @@ starting the mediator.
 
 Installing the OpenLI mediator via one of our software packages should
 install and configure a RabbitMQ server for the mediator automatically.
+
+It is STRONGLY recommended that you ensure the RabbitMQ server that is
+running on your mediator is listening for connections on localhost only.
+Our package install process will try to configure this for you, but if you
+have installed OpenLI manually or already had RabbitMQ installed on the host
+where your mediator is running then you will need to configure this yourself.
 
 ### Configuration Syntax
 All of the mediator config options are standard YAML key-value pairs, where

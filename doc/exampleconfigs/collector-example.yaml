@@ -37,7 +37,7 @@ sipallowfromident: no
 # encoded credentials (i.e. passwords) in intercepted IMAP traffic with
 # the characters "XXX". Note that this masking will only be applied to
 # IMAP traffic captured using an email intercept, not an IP intercept.
-maskipcreds: yes
+maskimapcreds: yes
 
 # Set this to yes if you want OpenLI to replace any plain text credentials
 # (i.e. passwords) in intercepted POP3 traffic with

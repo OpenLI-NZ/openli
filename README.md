@@ -4,11 +4,11 @@ Version: 1.1.0
 
 ---------------------------------------------------------------------------
 
-Copyright (c) 2018 - 2022 The University of Waikato, Hamilton, New Zealand.
+Copyright (c) 2018 - 2023 The University of Waikato, Hamilton, New Zealand.
 All rights reserved.
 
-This code has been developed by the University of Waikato WAND research group.
-For further information please see http://www.wand.net.nz/.
+OpenLI was originally developed by the University of Waikato WAND research
+group. For further information please see https://www.wand.net.nz/.
 
 OpenLI is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by

@@ -1,7 +1,7 @@
 Source: openli
 Section: net
 Priority: optional
-Maintainer: Shane Alcock <shane.alcock@waikato.ac.nz>
+Maintainer: Shane Alcock <salcock@searchlight.nz>
 Build-Depends: debhelper-compat (= 12), dh-autoreconf, dh-systemd (>=1.5),
  libtrace4-dev (>= 4.0.19), libyaml-dev, uthash-dev, libwandder2-dev (>=2.0.4),
  libjudy-dev, libzmq3-dev, libgoogle-perftools-dev, libosip2-dev,

@@ -124,6 +124,28 @@ packets by setting the 'voip-ignorecomfort' option to 'yes' at the top level
 of your configuration. Please confirm with your LEAs that this is acceptable
 before doing so, of course!
 
+### Email Intercepts
+All email intercepts are specified using the emailintercepts option.
+Each intercept is expressed as an item in a list and each intercept must be
+configured with the following six parameters:
+
+* LIID -- the unique lawful intercept ID for this intercept. This will be
+  assigned by the agency and should be present on the warrant for the intercept.
+* Authorisation country code -- the country within which the authorisation to
+  intercept was granted.
+* Delivery country code -- the country where the intercept is taking place
+  (probably the same as above).
+* Mediator -- the ID number of the mediator which will be forwarding the
+  intercept records to the requesting agency.
+* Agency ID -- the agency that requested the intercept (this should match one
+  of the agencies specified elsewhere in this configuration file).
+* Targets -- a list of email addresses that belong to the intercept target.
+
+OpenLI supports the interception of email transported using the SMTP, POP3 and
+IMAP protocols. For each protocol that you wish to perform email interception
+for, you will need to tell OpenLI the IP addresses and ports that each mail
+service is being served from -- this is explained in more detail later on.
+
 ### IP Data Intercepts
 
 All IP intercepts are specified using the ipintercepts option. As with VOIP
@@ -224,6 +246,19 @@ configured using two parameters:
 * ip -- the IP address of the RADIUS server
 * port -- the port that the RADIUS server is communicating on.
 
+
+### Email Servers
+To be able to intercept email sessions, the OpenLI collectors must be able to
+recognise traffic that is sent to or from your email servers. There is a
+separate configuration option for each email protocol (IMAP, POP3, SMTP),
+named `imapservers`, `pop3servers` and `smtpservers` respectively.
+
+Each mail server in your network should be included as a list item under the
+relevant configuration option. Failure to configure email servers correctly
+will prevent OpenLI from performing email intercepts properly.
+A mail server is configured using two parameters:
+* ip -- the IP address of the mail server
+* port -- the port that the mail server is listening on
 
 ### GTP Servers
 For interception of mobile phone traffic, OpenLI uses GTPv2 traffic to track
@@ -398,9 +433,9 @@ key-value elements:
                    will not require a response to keep alives to maintain the
                    handover connections.
 
-VOIP and IPintercepts are also expressed as a YAML sequence, with a key of
-`voipintercepts:` and `ipintercepts:` respectively. Each sequence item
-represents a single intercept.
+VOIP, Email and IPintercepts are also expressed as a YAML sequence, with a key
+of `voipintercepts:`, `emailintercepts:`, and `ipintercepts:` respectively.
+Each sequence item represents a single intercept.
 
 An IP intercept must contain the following key-value elements:
 
@@ -479,6 +514,26 @@ A SIP target can be described using the following key-value elements:
                            username appears in the 'To:' URI or an
                            Authorization header will be associated with the
                            target.
+
+---
+
+An email intercept must contain the following key-value elements:
+
+* `liid`                  -- the LIID
+* `authcountrycode`       -- the authorisation country code
+* `deliverycountrycode`   -- the delivery country code
+* `mediator`              -- the ID of the mediator which will forward the
+                             intercept
+* `agencyid`              -- the internal identifier of the agency that
+                             requested the intercept
+* `targets`               -- a list of email identities that are being used by
+                             the target. You may specify multiple identities
+                             for a target (e.g. if they have multiple mailboxes
+                             that you need to monitor).
+
+An email target is a JSON object that contains just a single field:
+
+* `address`               -- the email address of the target
 
 
 All intercept types also support the following optional key-value elements:

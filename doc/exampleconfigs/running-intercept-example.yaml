@@ -229,3 +229,15 @@ voipintercepts:
                                 # realm, this means we can match this username
                                 # against *any* realm.
 
+
+# List of active email intercepts
+emailintercepts:
+
+ - liid: N72007RT4              # LIID, should be provided by requesting agency
+   authcountrycode: DE          # Authorisation country code
+   deliverycountrycode: DE      # Delivery country code
+   mediator: 6001               # ID of the mediator to send intercept via
+   agencyid: "Police"           # ID of agency to send intercept to
+   targets:
+     - address: abadperson@example.org          # email address for the target
+     - address: myalias@example.org             # multiple addresses are allowed
