@@ -50,6 +50,25 @@
 
 #define OPAQUE_TOKEN "a7844291bd990a17bfe389e1ccb0981ed6d187a"
 
+const char *update_success_page =
+        "<html><body>OpenLI provisioner configuration was successfully updated.</body></html>\n";
+
+const char *update_failure_page_start =
+        "<html><body><p>OpenLI provisioner configuration failed.";
+const char *update_failure_page_end = "</body></html>\n";
+
+const char *get_not_implemented =
+        "<html><body>OpenLI provisioner does not support fetching intercept config (yet).</body></html>\n";
+
+const char *auth_failed =
+        "<html><body>Authentication failed</body></html>\n";
+
+const char *unsupported_operation =
+        "<html><body>OpenLI provisioner does not support that type of request.</body></html>\n";
+
+const char *get404 =
+        "<html><body>OpenLI provisioner was unable to find the requested resource in its running intercept configuration.</body></html>\n";
+
 int init_restauth_db(provision_state_t *state) {
 #ifdef HAVE_SQLCIPHER
     int rc;

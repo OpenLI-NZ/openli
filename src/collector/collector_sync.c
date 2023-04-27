@@ -167,11 +167,12 @@ static int send_halt_message_over_zmq(void *zmqsock) {
 
     zmq_setsockopt(zmqsock, ZMQ_LINGER, &zero, sizeof(zero));
     zmq_close(zmqsock);
+    return 1;
 }
 
 void clean_sync_data(collector_sync_t *sync) {
 
-    int i = 0, zero=0, ret;
+    int i = 0, zero=0;
     int haltattempts = 0, haltfails = 0;
     ip_to_session_t *iter, *tmp;
     default_radius_user_t *raditer, *radtmp;
@@ -1195,7 +1196,6 @@ static void push_existing_user_sessions(collector_sync_t *sync,
 static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
 
     openli_export_recv_t *expmsg;
-    int i;
 
     if (cept->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
 

@@ -136,7 +136,7 @@ static int decode_login_username_command(emailsession_t *sess,
         pop3_session_t *pop3sess) {
 
     char *usermsg;
-    int msglen, r;
+    int msglen;
     char *username;
 
     assert(pop3sess->command_end > pop3sess->command_start + 2);
@@ -166,7 +166,7 @@ static int decode_login_apop_command(emailsession_t *sess,
         pop3_session_t *pop3sess) {
 
     char *usermsg;
-    int msglen, r;
+    int msglen;
     char *username;
     char *username_end;
 
@@ -684,7 +684,7 @@ static int handle_server_reply_state(openli_email_worker_t *state,
                     timestamp, ETSI_DIR_FROM_TARGET);
         } else {
             generate_email_cc_from_pop3_payload(state, sess,
-                    pop3sess->password_content,
+                    (uint8_t *)pop3sess->password_content,
                     strlen(pop3sess->password_content),
                     timestamp, ETSI_DIR_FROM_TARGET);
         }

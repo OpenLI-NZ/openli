@@ -215,7 +215,6 @@ int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
     wandder_etsipshdr_data_t hdrdata;
     char elemstring[16];
     char liidstring[24];
-    struct timeval tv;
 
     if (ho->outev == NULL) {
         return 0;

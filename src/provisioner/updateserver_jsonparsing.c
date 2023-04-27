@@ -1219,7 +1219,7 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     emailintercept_t *found = NULL;
     emailintercept_t *mailint = NULL;
     int changedtargets = 0;
-    email_target_t *tgt, *tmp;
+    email_target_t *tmp;
 
     char *liidstr = NULL;
     int parseerr = 0, changed = 0, agencychanged = 0, timechanged = 0;

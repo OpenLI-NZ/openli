@@ -80,8 +80,6 @@ void remove_liid_agency_mapping(liid_map_t *map, liid_map_entry_t *m) {
  *
  */
 void withdraw_liid_agency_mapping(liid_map_t *map, char *liidstr) {
-    int err;
-
     PWord_t jval;
     liid_map_entry_t *m;
 
@@ -187,7 +185,6 @@ int foreach_liid_agency_mapping(liid_map_t *map, void *arg,
 
     unsigned char index[1024];
     liid_map_entry_t *m;
-    Word_t bytes;
     PWord_t jval;
     int r, jrc;
     int err = 0;

@@ -78,7 +78,6 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
 
     openli_export_recv_t *msg = NULL;
     etsili_email_iri_content_t *content;
-    size_t liidlen = strlen(liid);
     int i;
     email_participant_t *recip, *tmp;
 

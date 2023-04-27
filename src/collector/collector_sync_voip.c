@@ -1229,8 +1229,6 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
 
             sipreg = create_new_voip_registration(sync, vint, callid, matched);
         } else {
-            int found;
-
             matched = check_sip_identity_fields(sync, vint, &passertid,
                     &remotepartyid);
             if (!matched) {

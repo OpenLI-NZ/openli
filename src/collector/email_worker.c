@@ -234,8 +234,6 @@ static void init_email_session(emailsession_t *sess,
         openli_email_captured_t *cap, char *sesskey,
         openli_email_worker_t *state) {
 
-    struct sockaddr_storage *saddr;
-
     sess->key = strdup(sesskey);
     sess->cin = hashlittle(cap->session_id, strlen(cap->session_id),
             1872422);
@@ -1045,6 +1043,7 @@ static int find_and_update_active_session(openli_email_worker_t *state,
     }
 
     free_captured_email(cap);
+    return r;
 }
 
 static int process_received_packet(openli_email_worker_t *state) {
@@ -1084,8 +1083,7 @@ static int process_received_packet(openli_email_worker_t *state) {
 
 static int process_ingested_capture(openli_email_worker_t *state) {
     openli_email_captured_t *cap = NULL;
-    int x, r;
-    emailsession_t *sess;
+    int x;
 
     do {
         x = zmq_recv(state->zmq_ingest_recvsock, &cap, sizeof(cap),
@@ -1235,7 +1233,7 @@ static inline void clear_zmqsocks(void **zmq_socks, int sockcount) {
 static inline int init_zmqsocks(void **zmq_socks, int sockcount,
         const char *basename, void *zmq_ctxt) {
 
-    int i, zero = 0;
+    int i;
     char sockname[256];
     int ret = 0;
 

@@ -114,7 +114,6 @@ static MHD_RESULT iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
         //con_info->thismsg->msg_length = strtoul(data, NULL, 10);
     } else if (strcmp(key, "BUFFER") == 0) {
         int datalen = 0;
-        char *revptr;
 
         ptr = (char *)data;
         while (*ptr == 0x0a || *ptr == 0x0d) {

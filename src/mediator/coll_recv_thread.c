@@ -403,7 +403,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
          * make sure we have a set of internal mediator RMQ queues for it.
          */
         found = (col_known_liid_t *)calloc(1, sizeof(col_known_liid_t));
-        found->liid = strdup(liidstr);
+        found->liid = strdup((const char *)liidstr);
         found->liidlen = strlen(found->liid);
         found->lastseen = 0;
 
@@ -508,6 +508,9 @@ static int receive_collector(coll_recv_t *col, med_epoll_ev_t *mev) {
                 if (process_received_data(col, msgbody, msglen, msgtype) < 0) {
                     return -1;
                 }
+                break;
+            default:
+                /* Unexpected message type, probably OK to just ignore... */
                 break;
         }
     } while (msgtype != OPENLI_PROTO_NO_MESSAGE && total_recvd < MAX_COLL_RECV);
@@ -645,10 +648,10 @@ static void cleanup_collector_thread(coll_recv_t *col) {
 static void *start_collector_thread(void *params) {
 
     coll_recv_t *col = (coll_recv_t *)params;
-    int is_halted = 0, fdtype, i;
+    int is_halted = 0, i;
     col_thread_msg_t msg;
     int epoll_fd = -1, timerexpired, nfds;
-    med_epoll_ev_t *timerev, *queuecheck;
+    med_epoll_ev_t *timerev, *queuecheck = NULL;
     struct epoll_event evs[64];
 
     if (col->ipaddr == NULL) {
@@ -873,9 +876,7 @@ int mediator_accept_collector_connection(mediator_collector_t *medcol,
     struct sockaddr_storage saddr;
     socklen_t socklen = sizeof(saddr);
     char strbuf[INET6_ADDRSTRLEN];
-    char stringspace[32];
     coll_recv_t *newcol = NULL;
-    int fdtype;
     mediator_collector_config_t *config = &(medcol->config);
 
     /* Standard socket connection accept code... */

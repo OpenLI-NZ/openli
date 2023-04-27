@@ -381,7 +381,8 @@ static uint32_t write_rawip_to_pcap(uint8_t *nextrec, uint64_t bufrem,
         logger(LOG_INFO, "OpenLI Mediator: raw IP packet is too large to write as a pcap packet, possibly corrupt");
         return pdulen + sizeof(uint32_t);
     }
-    HASH_FIND(hh, pstate->active, liidspace, strlen(liidspace), pcapout);
+    HASH_FIND(hh, pstate->active, liidspace,
+            strlen((const char *)liidspace), pcapout);
 
     /* Hopefully, we already know about this LIID and have a pcap output
      * handle all set up and ready for it. If not, let's just skip past it.
@@ -448,11 +449,13 @@ static uint32_t write_etsicc_to_pcap(uint8_t *nextrec, uint64_t bufrem,
         return 0;
     }
 
-    if (wandder_etsili_get_liid(pstate->decoder, liidspace, 2048) == NULL) {
+    if (wandder_etsili_get_liid(pstate->decoder, (char *)liidspace,
+            2048) == NULL) {
         logger(LOG_INFO, "OpenLI Mediator: unable to find LIID in ETSI CC received by pcap thread");
         return 0;
     }
-    HASH_FIND(hh, pstate->active, liidspace, strlen(liidspace), pcapout);
+    HASH_FIND(hh, pstate->active, liidspace, strlen((const char *)liidspace),
+            pcapout);
 
     /* Hopefully, we already know about this LIID and have a pcap output
      * handle all set up and ready for it. If not, let's just skip past it.

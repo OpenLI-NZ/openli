@@ -50,7 +50,6 @@ static int declare_RMQ_queue(amqp_connection_state_t state,
 
     amqp_bytes_t rmq_queueid;
     amqp_table_t queueargs;
-    int ret = -1;
 
     queueargs.num_entries = 0;
     queueargs.entries = NULL;
@@ -83,7 +82,6 @@ static int is_RMQ_queue_empty(amqp_connection_state_t state, char *queueid,
     amqp_bytes_t rmq_queueid;
     amqp_table_t queueargs;
     amqp_queue_declare_ok_t *r;
-    int ret = -1;
 
     queueargs.num_entries = 0;
     queueargs.entries = NULL;

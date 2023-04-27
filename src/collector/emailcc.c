@@ -46,7 +46,6 @@ static openli_export_recv_t *create_emailcc_job(char *liid,
         uint8_t *content, int content_len, uint8_t format, uint8_t dir) {
 
     openli_export_recv_t *msg = NULL;
-    size_t liidlen = strlen(liid);
 
     msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
     if (msg == NULL) {

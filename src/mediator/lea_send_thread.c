@@ -948,7 +948,7 @@ static int process_agency_messages(lea_thread_state_t *state) {
  */
 static void *run_agency_thread(void *params) {
     lea_thread_state_t *state = (lea_thread_state_t *)params;
-    int is_connected = 0, is_halted = 0, r;
+    int is_connected = 0, is_halted = 0;
     struct epoll_event evs[64];
     int i, nfds, timerexpired = 0;
 

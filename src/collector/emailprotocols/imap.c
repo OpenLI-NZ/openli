@@ -275,9 +275,9 @@ static int generate_ccs_from_imap_command(openli_email_worker_t *state,
 static int update_saved_login_command(imap_session_t *sess, int pwordindex,
         const char *sesskey) {
 
-    int i, replacelen;
+    int replacelen;
     imap_command_t *comm = NULL;
-    char *ptr;
+    uint8_t *ptr;
     const char *replacement = "XXX\r\n";
 
     if (sess->auth_command_index == -1) {
@@ -306,7 +306,7 @@ static int update_saved_login_command(imap_session_t *sess, int pwordindex,
     memcpy(ptr, replacement, replacelen);
     ptr += replacelen;
 
-    comm->commbufused = ((uint8_t *)ptr - comm->commbuffer);
+    comm->commbufused = ptr - comm->commbuffer;
     comm->reply_start = comm->commbufused;
     memset(ptr, 0, comm->commbufsize - comm->commbufused);
 
@@ -320,7 +320,7 @@ static int update_saved_login_command(imap_session_t *sess, int pwordindex,
 static int update_saved_auth_command(imap_session_t *sess, char *replace,
         const char *origtoken, const char *sesskey) {
 
-    int i, replacelen;
+    int replacelen;
     imap_command_t *comm = NULL;
     char *ptr;
 
@@ -340,7 +340,7 @@ static int update_saved_auth_command(imap_session_t *sess, char *replace,
         return -1;
     }
 
-    ptr = strstr(comm->commbuffer, origtoken);
+    ptr = strstr((const char *)comm->commbuffer, origtoken);
     if (!ptr) {
         logger(LOG_INFO, "OpenLI: cannot find original auth token for IMAP auth command %s, session %s\n", sess->auth_tag, sesskey);
         return -1;
@@ -358,7 +358,6 @@ static int update_saved_auth_command(imap_session_t *sess, char *replace,
 
     comm->ccs[comm->cc_used - 1].cc_end = comm->commbufused;
 
-    ptr = comm->commbuffer + comm->ccs[comm->cc_used - 1].cc_start;
     return 1;
 
 }
@@ -545,14 +544,13 @@ static int decode_login_command(emailsession_t *sess,
         imap_session_t *imapsess) {
 
     char *loginmsg;
-    int msglen, r;
+    int msglen;
     char *lineend = NULL;
     char *saveptr;
     char *tag = NULL;
     char *comm = NULL;
     char *username = NULL;
     char *pword = NULL;
-    char *mailbox;
 
     msglen = imapsess->contbufread - imapsess->auth_read_from;
     loginmsg = calloc(msglen + 1, sizeof(uint8_t));
@@ -627,7 +625,7 @@ static int decode_plain_auth_content(char *authmsg, imap_session_t *imapsess,
     char reencoded[2048];
     char *ptr;
     int cnt, r;
-    char *mailbox, *crlf;
+    char *crlf;
     base64_decodestate s;
 
     if (*authmsg == '\0') {
@@ -935,7 +933,7 @@ static int append_content_to_imap_buffer(imap_session_t *imapsess,
 
 static int parse_id_command(emailsession_t *sess, imap_session_t *imapsess) {
     char *ptr;
-    char *comm_str = imapsess->contbuffer + imapsess->next_comm_start;
+    char *comm_str = (char *)(imapsess->contbuffer + imapsess->next_comm_start);
 
     char *field_start, *field_end, *val_start, *val_end;
     char field_str[2048];
@@ -1444,7 +1442,7 @@ static int read_imap_while_idle_state(emailsession_t *sess,
     /* check for "+ " -- server response to the idle command*/
 
     if (imapsess->reply_start == 0) {
-        found = (uint8_t *)strstr(msgstart, "+ ");
+        found = (uint8_t *)strstr((const char *)msgstart, "+ ");
         if (!found) {
             return 0;
         }
@@ -1460,7 +1458,7 @@ static int read_imap_while_idle_state(emailsession_t *sess,
      *      of "DONE" as a separate server->client CC, then add the
      *      "DONE" as a client->server CC.
      */
-    found = (uint8_t *)strstr(msgstart, "\r\nDONE\r\n");
+    found = (uint8_t *)strstr((const char *)msgstart, "\r\nDONE\r\n");
     if (!found) {
         return 0;
     }
@@ -1495,11 +1493,11 @@ static int read_imap_while_idle_state(emailsession_t *sess,
     return 1;
 }
 
-static char *get_uid_command(char *command, char *buffer) {
+static char *get_uid_command(char *command, uint8_t *buffer) {
 
     char *new_comm = NULL;
     int old_len = strlen(command);
-    char *nextspace, *crlf;
+    uint8_t *nextspace, *crlf;
 
     /* XXX requires testing with a pcap containing UID commands! */
 
@@ -1511,8 +1509,8 @@ static char *get_uid_command(char *command, char *buffer) {
         return command;
     }
 
-    nextspace = (uint8_t *)strchr(buffer + 1, ' ');
-    crlf = (uint8_t *)strstr(buffer + 1, "\r\n");
+    nextspace = (uint8_t *)strchr((const char *)(buffer + 1), ' ');
+    crlf = (uint8_t *)strstr((const char *)(buffer + 1), "\r\n");
 
     if (!nextspace && !crlf) {
         return command;
@@ -1554,7 +1552,7 @@ static int find_next_imap_message(openli_email_worker_t *state,
         return read_imap_while_appending_state(sess, imapsess);
     }
 
-    spacefound = (uint8_t *)strchr(msgstart, ' ');
+    spacefound = (uint8_t *)strchr((const char *)msgstart, ' ');
     if (!spacefound) {
         return 0;
     }
@@ -1568,8 +1566,8 @@ static int find_next_imap_message(openli_email_worker_t *state,
      * Therefore if we see a \r\n BEFORE the next space, we want to
      * treat that as our string boundary.
      */
-    spacefound2 = (uint8_t *)strchr(spacefound + 1, ' ');
-    crlffound = (uint8_t *)strstr(spacefound + 1, "\r\n");
+    spacefound2 = (uint8_t *)strchr((const char *)(spacefound + 1), ' ');
+    crlffound = (uint8_t *)strstr((const char *)(spacefound + 1), "\r\n");
 
     if (!spacefound2 && !crlffound) {
         free(tag);

@@ -1241,8 +1241,6 @@ static void run(mediator_state_t *state) {
 	int timerexpired = 0;
 	struct epoll_event evs[64];
     int provfail = 0;
-    struct timeval tv;
-    uint32_t firstflush;
     med_epoll_ev_t *signalev;
 
     /* Register the epoll event for received signals */

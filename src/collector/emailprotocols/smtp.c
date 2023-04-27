@@ -159,14 +159,13 @@ static int find_next_crlf(smtp_session_t *sess, int start_index) {
 
 static int find_smtp_reply_code(smtp_session_t *sess, uint16_t *storage) {
 
-    uint8_t *found;
-    int rem, res;
+    int res;
     regex_t lastreply;
     regmatch_t pmatch[1];
     const char *search;
 
     assert(sess->contbufused >= sess->contbufread);
-    rem = (sess->contbufused - sess->contbufread);
+    assert((*(sess->contbuffer + sess->contbufused)) == '\0');
 
     if (regcomp(&lastreply, "[[:digit:]][[:digit:]][[:digit:]] ", 0) != 0) {
         return -1;
