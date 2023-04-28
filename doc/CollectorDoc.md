@@ -266,6 +266,55 @@ are:
 * pop3 (default is 10 minutes)
 
 
+### Email ingestion service
+Instead of intercepting email by capturing all SMTP, POP3 and/or IMAP traffic
+observed on a network interface, OpenLI can also ingest email application
+layer messages through an additional HTTP service that can be run on each/any
+OpenLI collector.
+
+You can then use custom plugins on your mail servers (e.g. dovecot plugins)
+to generate messages in the expected format for an interceptable email session
+and POST the message to the ingestion service running on a collector. The
+POSTed message is sent as `multipart/form-data`, where each field in
+a message is a separate part encoded as `text/plain`.
+
+The message format itself is documented on the OpenLI wiki at
+https://github.com/OpenLI-NZ/openli/wiki/Email-Ingestion-Message-Format
+
+By default, the email ingestion service is disabled on a collector but you
+can enable and configure it using the following options.
+
+Firstly, you will need to add the `emailingest:` key to the top level of
+your existing collector YAML configuration.
+
+Then you can specify the following mapping options as values inside the
+`emailingest:` key to configure the ingestion service:
+
+* listenaddress         -- the IP address that the service should listen on.
+* listenport            -- the port for the service to listen on.
+* enabled               -- if set to "no", the service will be disabled. Set
+                           to "yes" to enable the service.
+* requiretls            -- if set to "yes", connections to the service will
+                           only be permitted using HTTPS.
+* authpassword          -- if set, connections to the service will be rejected
+                           unless they use digest authentication and provide
+                           this value as their password.
+
+Example configuration is included in the `collector-example.yaml` config
+file -- you can find this file in `doc/exampleconfigs` in the OpenLI source
+tree or installed into `/etc/openli/` if you installed OpenLI using a
+package.
+
+To enable TLS on the ingestion service, you must also configure your collector
+(and all other OpenLI components) to use TLS for their internal communications,
+as the ingestion service will use the same certificates and keys to
+establish the encrypted channel. See `doc/TLSDoc.md` for details on how to
+set up TLS for OpenLI.
+
+When using digest authentication, the username on the POST request can be
+set to anything; the username is ignored by the ingestion service as long as
+the provided password matches what has been set as the `authpassword`.
+
 ### SIP Ignore SDP O option
 When testing OpenLI VOIP intercepts, you may discover that the IRI stream for
 a given voice intercept includes some erroneous SIP packets that belong to
