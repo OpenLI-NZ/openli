@@ -31,6 +31,7 @@
 #include <microhttpd.h>
 
 #include "email_worker.h"
+#include "openli_tls.h"
 
 #if MHD_VERSION >= 0x00097002
 #define MHD_RESULT enum MHD_Result
@@ -46,6 +47,7 @@ typedef struct openli_email_ingest_config {
 
     char *listenport;
     char *listenaddr;
+    char *authpassword;
 
 } openli_email_ingest_config_t;
 
@@ -56,6 +58,9 @@ typedef struct email_ingest_state {
 
     void *zmq_ctxt;
     void **zmq_publishers;
+
+    char *key_pem;
+    char *cert_pem;
 
 } email_ingestor_state_t;
 
@@ -70,7 +75,8 @@ typedef struct email_connection {
 
 void stop_email_mhd_daemon(email_ingestor_state_t *state);
 struct MHD_Daemon *start_email_mhd_daemon(openli_email_ingest_config_t *config,
-        int sockfd, email_ingestor_state_t *state);
+        int sockfd, email_ingestor_state_t *state,
+        openli_ssl_config_t *sslconf);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

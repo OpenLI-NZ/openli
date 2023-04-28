@@ -1288,6 +1288,9 @@ static void clear_global_config(collector_global_t *glob) {
     if (glob->emailconf.listenport) {
         free(glob->emailconf.listenport);
     }
+    if (glob->emailconf.authpassword) {
+        free(glob->emailconf.authpassword);
+    }
     if (glob->email_ingestor) {
         free(glob->email_ingestor);
     }
@@ -1422,12 +1425,13 @@ static void init_collector_global(collector_global_t *glob) {
     glob->RMQ_conf.heartbeatFreq = 0;
     glob->RMQ_conf.enabled = 0;
 
-    glob->emailconf.enabled = 1;        // TODO default to disabled?
+    glob->emailconf.enabled = 255;
     glob->emailconf.authrequired = 0;
     glob->emailconf.tlsrequired = 0;
     glob->emailconf.maxclients = 20;
     glob->emailconf.listenport = NULL;
     glob->emailconf.listenaddr = NULL;
+    glob->emailconf.authpassword = NULL;
 
     glob->etsitls = 1;
     glob->ignore_sdpo_matches = 0;
@@ -1469,6 +1473,20 @@ static collector_global_t *parse_global_config(char *configfile) {
     if (parse_collector_config(configfile, glob) == -1) {
         clear_global_config(glob);
         return NULL;
+    }
+
+    /* Disable by default, unless the user has configured EITHER:
+     *   a) set the enabled flag to true (obviously)
+     *   b) provided a listen address or port for the ingestion service
+     */
+    if (glob->emailconf.listenaddr || glob->emailconf.listenport) {
+        if (glob->emailconf.enabled == 255) {
+            glob->emailconf.enabled = 1;
+        }
+    } else {
+        if (glob->emailconf.enabled == 255) {
+            glob->emailconf.enabled = 0;
+        }
     }
 
     if (glob->emailconf.enabled) {
@@ -1982,7 +2000,8 @@ int main(int argc, char *argv[]) {
         if (glob->emailsockfd == -1) {
             logger(LOG_INFO, "OpenLI: WARNING unable to create listening socket for email ingestion service");
         } else if (start_email_mhd_daemon(&(glob->emailconf),
-                    glob->emailsockfd, glob->email_ingestor) == NULL) {
+                    glob->emailsockfd, glob->email_ingestor, &glob->sslconf)
+                == NULL) {
             logger(LOG_INFO, "OpenLI: WARNING unable to start email ingestion service");
         }
     }

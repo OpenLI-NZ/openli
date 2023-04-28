@@ -175,6 +175,55 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
     return 0;
 }
 
+static int parse_email_ingest_config(collector_global_t *glob,
+        yaml_document_t *doc, yaml_node_t *optmap) {
+
+    yaml_node_pair_t *pair;
+    yaml_node_t *key, *value;
+
+    for (pair = optmap->data.mapping.pairs.start;
+            pair < optmap->data.mapping.pairs.top; pair ++) {
+
+        key = yaml_document_get_node(doc, pair->key);
+        value = yaml_document_get_node(doc, pair->value);
+
+        if (key->type == YAML_SCALAR_NODE &&
+                value->type == YAML_SCALAR_NODE &&
+                strcmp((char *)key->data.scalar.value, "enabled") == 0) {
+            glob->emailconf.enabled =
+                    check_onoff((char *)value->data.scalar.value);
+        }
+
+        if (key->type == YAML_SCALAR_NODE &&
+                value->type == YAML_SCALAR_NODE &&
+                strcmp((char *)key->data.scalar.value, "requiretls") == 0) {
+            glob->emailconf.tlsrequired =
+                    check_onoff((char *)value->data.scalar.value);
+        }
+
+        if (key->type == YAML_SCALAR_NODE &&
+                value->type == YAML_SCALAR_NODE &&
+                strcmp((char *)key->data.scalar.value, "authpassword") == 0) {
+            glob->emailconf.authrequired = true;
+            SET_CONFIG_STRING_OPTION(glob->emailconf.authpassword, value);
+        }
+
+        if (key->type == YAML_SCALAR_NODE &&
+                value->type == YAML_SCALAR_NODE &&
+                strcmp((char *)key->data.scalar.value, "listenaddress") == 0) {
+            SET_CONFIG_STRING_OPTION(glob->emailconf.listenaddr, value);
+        }
+
+        if (key->type == YAML_SCALAR_NODE &&
+                value->type == YAML_SCALAR_NODE &&
+                strcmp((char *)key->data.scalar.value, "listenport") == 0) {
+            SET_CONFIG_STRING_OPTION(glob->emailconf.listenport, value);
+        }
+    }
+
+    return 0;
+}
+
 static int parse_email_timeouts_config(collector_global_t *glob,
         yaml_document_t *doc, yaml_node_t *inputs) {
 
@@ -1055,6 +1104,15 @@ static int global_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "sipdebugfile") == 0) {
         SET_CONFIG_STRING_OPTION(glob->sipdebugfile, value);
+    }
+
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_MAPPING_NODE &&
+            strcmp((char *)key->data.scalar.value, "emailingest") == 0) {
+        if (parse_email_ingest_config(glob, doc, value) == -1) {
+            return -1;
+        }
     }
 
     if (key->type == YAML_SCALAR_NODE &&
