@@ -702,6 +702,16 @@ static void parse_intercept_common_fields(intercept_common_t *common,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "payloadencryption") == 0) {
+        if (strcasecmp((char *)value->data.scalar.value, "none") == 0) {
+            common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
+        } else if (strcasecmp((char *)value->data.scalar.value, "aes-192-cbc")) {
+            common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "outputhandovers") == 0) {
 
         if (strcasecmp((char *)value->data.scalar.value, "irionly") == 0) {
@@ -735,6 +745,7 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
         newcept->common.tostart_time = 0;
         newcept->common.toend_time = 0;
         newcept->common.tomediate = OPENLI_INTERCEPT_OUTPUTS_ALL;
+        newcept->common.encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
         newcept->common.hi1_seqno = 0;
         newcept->awaitingconfirm = 1;
         newcept->targets = NULL;
@@ -805,6 +816,7 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         newcept->common.tostart_time = 0;
         newcept->common.toend_time = 0;
         newcept->common.tomediate = OPENLI_INTERCEPT_OUTPUTS_ALL;
+        newcept->common.encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -875,6 +887,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->common.tostart_time = 0;
         newcept->common.toend_time = 0;
         newcept->common.tomediate = OPENLI_INTERCEPT_OUTPUTS_ALL;
+        newcept->common.encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;

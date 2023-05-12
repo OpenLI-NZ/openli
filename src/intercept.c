@@ -49,6 +49,7 @@ static inline void copy_intercept_common(intercept_common_t *src,
     dest->tostart_time = src->tostart_time;
     dest->toend_time = src->toend_time;
     dest->tomediate = src->tomediate;
+    dest->encrypt = src->encrypt;
 }
 
 int are_sip_identities_same(openli_sip_identity_t *a,

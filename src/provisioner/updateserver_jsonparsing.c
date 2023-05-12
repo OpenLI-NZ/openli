@@ -59,6 +59,7 @@ struct json_intercept {
     struct json_object *siptargets;
     struct json_object *emailtargets;
     struct json_object *tomediate;
+    struct json_object *encryption;
 };
 
 #define EXTRACT_JSON_INT_PARAM(name, uptype, jsonobj, dest, errflag, force) \
@@ -184,6 +185,7 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "starttime", &(ipjson->starttime));
     json_object_object_get_ex(parsed, "endtime", &(ipjson->endtime));
     json_object_object_get_ex(parsed, "outputhandovers", &(ipjson->tomediate));
+    json_object_object_get_ex(parsed, "payloadencryption", &(ipjson->encryption));
     json_object_object_get_ex(parsed, "vendmirrorid", &(ipjson->vendmirrorid));
     json_object_object_get_ex(parsed, "staticips", &(ipjson->staticips));
     json_object_object_get_ex(parsed, "siptargets", &(ipjson->siptargets));

@@ -70,7 +70,15 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     json_object *jobj;
     json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
     json_object *vendmirrorid, *user, *accesstype, *radiusident;
-    json_object *staticips, *starttime, *endtime, *tomediate;
+    json_object *staticips, *starttime, *endtime, *tomediate, *encryption;
+
+    const char *encrypt_str;
+
+    if (ipint->common.encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
+        encrypt_str = "aes-192-cbc";
+    } else {
+        encrypt_str = "none";
+    }
 
     jobj = json_object_new_object();
 
@@ -80,6 +88,7 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     agencyid = json_object_new_string(ipint->common.targetagency);
     mediator = json_object_new_int(ipint->common.destid);
     tomediate = json_object_new_int(ipint->common.tomediate);
+    encryption = json_object_new_string(encrypt_str);
     user = json_object_new_string(ipint->username);
     accesstype = json_object_new_string(
             get_access_type_string(ipint->accesstype));
@@ -92,6 +101,7 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     json_object_object_add(jobj, "agencyid", agencyid);
     json_object_object_add(jobj, "mediator", mediator);
     json_object_object_add(jobj, "outputhandovers", tomediate);
+    json_object_object_add(jobj, "payloadencryption", encryption);
     json_object_object_add(jobj, "user", user);
     json_object_object_add(jobj, "accesstype", accesstype);
     json_object_object_add(jobj, "radiusident", radiusident);
@@ -138,8 +148,15 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
 static json_object *convert_emailintercept_to_json(emailintercept_t *mailint) {
     json_object *jobj;
     json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
-    json_object *targets, *starttime, *endtime, *tomediate;
+    json_object *targets, *starttime, *endtime, *tomediate, *encryption;
     email_target_t *tgt, *tmp;
+    const char *encrypt_str;
+
+    if (mailint->common.encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
+        encrypt_str = "aes-192-cbc";
+    } else {
+        encrypt_str = "none";
+    }
 
     jobj = json_object_new_object();
 
@@ -149,6 +166,7 @@ static json_object *convert_emailintercept_to_json(emailintercept_t *mailint) {
     agencyid = json_object_new_string(mailint->common.targetagency);
     mediator = json_object_new_int(mailint->common.destid);
     tomediate = json_object_new_int(mailint->common.tomediate);
+    encryption = json_object_new_string(encrypt_str);
     targets = json_object_new_array();
 
     json_object_object_add(jobj, "liid", liid);
@@ -157,6 +175,7 @@ static json_object *convert_emailintercept_to_json(emailintercept_t *mailint) {
     json_object_object_add(jobj, "agencyid", agencyid);
     json_object_object_add(jobj, "mediator", mediator);
     json_object_object_add(jobj, "outputhandovers", tomediate);
+    json_object_object_add(jobj, "payloadencryption", encryption);
 
     if (mailint->common.tostart_time != 0) {
         starttime = json_object_new_int(mailint->common.tostart_time);
@@ -185,8 +204,15 @@ static json_object *convert_emailintercept_to_json(emailintercept_t *mailint) {
 static json_object *convert_voipintercept_to_json(voipintercept_t *vint) {
     json_object *jobj;
     json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
-    json_object *siptargets, *starttime, *endtime, *tomediate;
+    json_object *siptargets, *starttime, *endtime, *tomediate, *encryption;
     libtrace_list_node_t *n;
+    const char *encrypt_str;
+
+    if (vint->common.encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
+        encrypt_str = "aes-192-cbc";
+    } else {
+        encrypt_str = "none";
+    }
 
     jobj = json_object_new_object();
 
@@ -196,6 +222,7 @@ static json_object *convert_voipintercept_to_json(voipintercept_t *vint) {
     agencyid = json_object_new_string(vint->common.targetagency);
     mediator = json_object_new_int(vint->common.destid);
     tomediate = json_object_new_int(vint->common.tomediate);
+    encryption = json_object_new_string(encrypt_str);
     siptargets = json_object_new_array();
 
     json_object_object_add(jobj, "liid", liid);
@@ -204,6 +231,7 @@ static json_object *convert_voipintercept_to_json(voipintercept_t *vint) {
     json_object_object_add(jobj, "agencyid", agencyid);
     json_object_object_add(jobj, "mediator", mediator);
     json_object_object_add(jobj, "outputhandovers", tomediate);
+    json_object_object_add(jobj, "payloadencryption", encryption);
 
     if (vint->common.tostart_time != 0) {
         starttime = json_object_new_int(vint->common.tostart_time);

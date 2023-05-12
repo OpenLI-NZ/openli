@@ -50,6 +50,12 @@ typedef enum {
 } internet_access_method_t;
 
 typedef enum {
+    OPENLI_PAYLOAD_ENCRYPTION_NONE = 0,
+    OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC = 1,
+    /* TODO add support for other encryption methods... */
+} payload_encryption_method_t;
+
+typedef enum {
     OPENLI_VOIPINT_OPTION_IGNORE_COMFORT = 0,
 } voipintercept_options_t;
 
@@ -93,6 +99,7 @@ typedef struct intercept_common {
     uint64_t tostart_time;
     uint64_t toend_time;
     intercept_outputs_t tomediate;
+    payload_encryption_method_t encrypt;
 } intercept_common_t;
 
 typedef struct hi1_notify_data {
@@ -218,6 +225,7 @@ typedef struct sipregister sipregister_t;
      (a->common.tostart_time == b->common.tostart_time) && \
      (a->common.toend_time == b->common.toend_time) && \
      (a->common.tomediate == b->common.tomediate) && \
+     (a->common.encrypt == b->common.encrypt) && \
      (a->options == b->options))
 
 #define email_intercept_equal(a,b) \
@@ -226,6 +234,7 @@ typedef struct sipregister sipregister_t;
      (strcmp(a->common.targetagency, b->common.targetagency) == 0) && \
      (a->common.tostart_time == b->common.tostart_time) && \
      (a->common.toend_time == b->common.toend_time) && \
+     (a->common.encrypt == b->common.encrypt) && \
      (a->common.tomediate == b->common.tomediate))
 
 
