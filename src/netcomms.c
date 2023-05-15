@@ -1329,7 +1329,8 @@ int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
 #define HI1_NOTIFY_BODY_LEN(ndata) \
     (sizeof(ndata->notify_type) + sizeof(ndata->seqno) + sizeof(ndata->ts_sec) \
     + sizeof(ndata->ts_usec) + strlen(ndata->liid) + strlen(ndata->authcc) + \
-    strlen(ndata->delivcc) + strlen(ndata->agencyid) + (8 * 4))
+    strlen(ndata->delivcc) + strlen(ndata->agencyid) + \
+    target_info_len + (field_count * 4))
 
 int push_hi1_notification_onto_net_buffer(net_buffer_t *nb,
         hi1_notify_data_t *ndata) {
@@ -1337,6 +1338,16 @@ int push_hi1_notification_onto_net_buffer(net_buffer_t *nb,
     ii_header_t hdr;
     uint16_t totallen;
     int ret;
+    int field_count;
+    int target_info_len;
+
+    if (ndata->target_info == NULL) {
+        field_count = 8;
+        target_info_len = 0;
+    } else {
+        field_count = 9;
+        target_info_len = strlen(ndata->target_info);
+    }
 
     if (HI1_NOTIFY_BODY_LEN(ndata) > 65535) {
         logger(LOG_INFO,
@@ -1388,6 +1399,13 @@ int push_hi1_notification_onto_net_buffer(net_buffer_t *nb,
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_TS_USEC,
             (uint8_t *)&(ndata->ts_usec), sizeof(ndata->ts_usec))) == -1) {
         return -1;
+    }
+
+    if (ndata->target_info) {
+        if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_USERNAME,
+                (uint8_t *)(ndata->target_info), target_info_len)) == -1) {
+            return -1;
+        }
     }
 
     return (int)totallen;
@@ -2210,6 +2228,8 @@ int decode_hi1_notification(uint8_t *msgbody, uint16_t len,
             DECODE_STRING_FIELD(ndata->authcc, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_DELIVCC) {
             DECODE_STRING_FIELD(ndata->delivcc, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_USERNAME) {
+            DECODE_STRING_FIELD(ndata->target_info, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_HI1_NOTIFY_TYPE) {
             ndata->notify_type = *((hi1_notify_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_SEQNO) {

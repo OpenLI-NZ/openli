@@ -101,8 +101,12 @@ static inline void encode_hi1_notification_body(wandder_encoder_t *encoder,
                 sizeof(tv));
         wandder_encode_endseq(encoder); // End Timestamp
 
-        /* TODO? target-Information? */
-
+        /* target-Information? */
+        if (not_data->target_info) {
+            wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                    WANDDER_CLASS_CONTEXT_PRIMITIVE, 6, not_data->target_info,
+                    strlen(not_data->target_info));
+        }
         wandder_encode_endseq(encoder); // End Notification
     }
 

@@ -222,6 +222,44 @@ static inline void free_intercept_common(intercept_common_t *cept) {
     }
 }
 
+char *list_email_targets(emailintercept_t *m, int maxchars) {
+
+    char *space = NULL;
+    int spaceused = 0;
+    int required = 0;
+
+    email_target_t *tgt, *tmp;
+
+    HASH_ITER(hh, m->targets, tgt, tmp) {
+
+        if (!space) {
+            space = calloc(1, maxchars + 1);
+        }
+
+        if (!tgt->address) {
+            continue;
+        }
+
+        required = strlen(tgt->address);
+        if (spaceused > 0) {
+            required += 1;
+        }
+
+        /* Only allowed a certain number of characters in the HI1 message, so
+         * stop here */
+        if (required > maxchars - spaceused) {
+            break;
+        }
+
+        if (spaceused > 0) {
+            *(space + spaceused) = ',';
+            spaceused ++;
+        }
+        memcpy(space + spaceused, tgt->address, strlen(tgt->address));
+        spaceused += strlen(tgt->address);
+    }
+    return space;
+}
 static void free_email_targets(emailintercept_t *m) {
 
     email_target_t *tgt, *tmp;
@@ -340,6 +378,58 @@ static void free_voip_registrations(sipregister_t *sipregs) {
         free_single_register(r);
     }
 
+}
+
+char *list_sip_targets(voipintercept_t *v, int maxchars) {
+
+    char *space = NULL;
+    int spaceused = 0;
+    int required = 0;
+
+    openli_sip_identity_t *sipid;
+    libtrace_list_node_t *n;
+    n = v->targets->head;
+
+    while (n) {
+        sipid = *((openli_sip_identity_t **)(n->data));
+
+        if (!space) {
+            space = calloc(1, maxchars + 1);
+        }
+        n = n->next;
+
+        if (!sipid->username) {
+            continue;
+        }
+
+        required = strlen(sipid->username);
+        if (sipid->realm) {
+            required += (1 + strlen(sipid->realm));
+        }
+        if (spaceused > 0) {
+            required += 1;
+        }
+
+        /* Only allowed a certain number of characters in the HI1 message, so
+         * stop here */
+        if (required > maxchars - spaceused) {
+            break;
+        }
+
+        if (spaceused > 0) {
+            *(space + spaceused) = ',';
+            spaceused ++;
+        }
+        memcpy(space + spaceused, sipid->username, strlen(sipid->username));
+        spaceused += strlen(sipid->username);
+        if (sipid->realm) {
+            *(space + spaceused) = '@';
+            spaceused ++;
+            memcpy(space + spaceused, sipid->realm, strlen(sipid->realm));
+            spaceused += strlen(sipid->realm);
+        }
+    }
+    return space;
 }
 
 static void free_sip_targets(libtrace_list_t *targets) {

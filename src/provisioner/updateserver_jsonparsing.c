@@ -223,6 +223,7 @@ int remove_voip_intercept(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr) {
 
     voipintercept_t *found;
+    char *target_info;
 
     HASH_FIND(hh_liid, state->interceptconf.voipintercepts, idstr,
             strlen(idstr), found);
@@ -233,9 +234,13 @@ int remove_voip_intercept(update_con_info_t *cinfo, provision_state_t *state,
                 OPENLI_PROTO_HALT_VOIPINTERCEPT);
         remove_liid_mapping(state, found->common.liid, found->common.liid_len,
                 0);
+        target_info = list_sip_targets(found, 256);
         announce_hi1_notification_to_mediators(state, &(found->common),
-                HI1_LI_DEACTIVATED);
+                target_info, HI1_LI_DEACTIVATED);
         free_single_voipintercept(found);
+        if (target_info) {
+            free(target_info);
+        }
         logger(LOG_INFO,
                 "OpenLI: removed VOIP intercept '%s' via update socket.",
                 idstr);
@@ -248,6 +253,7 @@ int remove_email_intercept(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr) {
 
     emailintercept_t *found;
+    char *target_info;
 
     HASH_FIND(hh_liid, state->interceptconf.emailintercepts, idstr,
             strlen(idstr), found);
@@ -258,9 +264,13 @@ int remove_email_intercept(update_con_info_t *cinfo, provision_state_t *state,
                 OPENLI_PROTO_HALT_EMAILINTERCEPT);
         remove_liid_mapping(state, found->common.liid, found->common.liid_len,
                 0);
+        target_info = list_email_targets(found, 256);
         announce_hi1_notification_to_mediators(state, &(found->common),
-                HI1_LI_DEACTIVATED);
+                target_info, HI1_LI_DEACTIVATED);
         free_single_emailintercept(found);
+        if (target_info) {
+            free(target_info);
+        }
         logger(LOG_INFO,
                 "OpenLI: removed Email intercept '%s' via update socket.",
                 idstr);
@@ -284,7 +294,7 @@ int remove_ip_intercept(update_con_info_t *cinfo, provision_state_t *state,
         remove_liid_mapping(state, found->common.liid, found->common.liid_len,
                 0);
         announce_hi1_notification_to_mediators(state, &(found->common),
-                HI1_LI_DEACTIVATED);
+                found->username, HI1_LI_DEACTIVATED);
         free_single_ipintercept(found);
         logger(LOG_INFO,
                 "OpenLI: removed IP intercept '%s' via update socket.",
@@ -832,6 +842,7 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     emailintercept_t *found = NULL;
     emailintercept_t *mailint = NULL;
     int parseerr = 0, r;
+    char *target_info;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&emailjson, parsed);
@@ -916,11 +927,15 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
                 mailint->common.liid);
     }
 
+    target_info = list_email_targets(mailint, 256);
     if (announce_hi1_notification_to_mediators(state, &(mailint->common),
-            HI1_LI_ACTIVATED) < 0) {
+            target_info, HI1_LI_ACTIVATED) < 0) {
         logger(LOG_INFO,
                 "OpenLI provisioner: unable to send HI1 notification for new Email intercept %s to mediators.",
                 mailint->common.liid);
+    }
+    if (target_info) {
+        free(target_info);
     }
 
     mailint->awaitingconfirm = 0;
@@ -952,6 +967,7 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     voipintercept_t *found = NULL;
     voipintercept_t *vint = NULL;
     int parseerr = 0, r;
+    char *target_info;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&voipjson, parsed);
@@ -1043,11 +1059,15 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                 vint->common.liid);
     }
 
+    target_info = list_sip_targets(vint, 256);
     if (announce_hi1_notification_to_mediators(state, &(vint->common),
-            HI1_LI_ACTIVATED) < 0) {
+            target_info, HI1_LI_ACTIVATED) < 0) {
         logger(LOG_INFO,
                 "OpenLI provisioner: unable to send HI1 notification for new VOIP intercept %s to mediators.",
                 vint->common.liid);
+    }
+    if (target_info) {
+        free(target_info);
     }
 
     vint->awaitingconfirm = 0;
@@ -1177,7 +1197,7 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (announce_hi1_notification_to_mediators(state, &(ipint->common),
-            HI1_LI_ACTIVATED) < 0) {
+            ipint->username, HI1_LI_ACTIVATED) < 0) {
         logger(LOG_INFO,
                 "OpenLI provisioner: unable to send HI1 notification for new VOIP intercept %s to mediators.",
                 ipint->common.liid);
@@ -1220,6 +1240,7 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     emailintercept_t *mailint = NULL;
     int changedtargets = 0;
     email_target_t *tmp;
+    char *target_info;
 
     char *liidstr = NULL;
     int parseerr = 0, changed = 0, agencychanged = 0, timechanged = 0;
@@ -1324,8 +1345,12 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (changedtargets) {
+        target_info = list_email_targets(found, 256);
         announce_hi1_notification_to_mediators(state, &(found->common),
-                HI1_LI_MODIFIED);
+                target_info, HI1_LI_MODIFIED);
+        if (target_info) {
+            free(target_info);
+        }
     }
 
     mailint->common.hi1_seqno = found->common.hi1_seqno;
@@ -1363,7 +1388,7 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     int changedtargets = 0;
     libtrace_list_t *tmp;
 
-    char *liidstr = NULL;
+    char *liidstr = NULL, *target_info;
     int parseerr = 0, changed = 0, agencychanged = 0, timechanged = 0;
 
     INIT_JSON_INTERCEPT_PARSING
@@ -1465,8 +1490,12 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (changedtargets) {
+        target_info = list_sip_targets(found, 256);
         announce_hi1_notification_to_mediators(state, &(found->common),
-                HI1_LI_MODIFIED);
+                target_info, HI1_LI_MODIFIED);
+        if (target_info) {
+            free(target_info);
+        }
     }
 
     vint->common.hi1_seqno = found->common.hi1_seqno;
@@ -1672,7 +1701,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (agencychanged) {
         announce_hi1_notification_to_mediators(state, &(found->common),
-                HI1_LI_ACTIVATED);
+                found->username, HI1_LI_ACTIVATED);
     }
 
     if (compare_intercept_times(&(ipint->common), &(found->common)) == 1) {
@@ -1684,7 +1713,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                     OPENLI_PROTO_MODIFY_IPINTERCEPT);
         if (!agencychanged) {
             announce_hi1_notification_to_mediators(state, &(found->common),
-                    HI1_LI_MODIFIED);
+                    found->username, HI1_LI_MODIFIED);
         }
     }
 
