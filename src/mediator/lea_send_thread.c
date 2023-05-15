@@ -805,6 +805,9 @@ freehi1:
     if (ndata->delivcc) {
         free(ndata->delivcc);
     }
+    if (ndata->target_info) {
+        free(ndata->target_info);
+    }
     free(ndata);
 
 }

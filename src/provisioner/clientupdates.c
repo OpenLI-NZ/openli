@@ -383,7 +383,7 @@ int disconnect_mediators_from_collectors(provision_state_t *state) {
 }
 
 int announce_hi1_notification_to_mediators(provision_state_t *state,
-        intercept_common_t *intcomm, hi1_notify_t not_type) {
+        intercept_common_t *intcomm, char *target_id, hi1_notify_t not_type) {
 
     /* For now, I'm just going to send the notification to all mediators
      * and rely on them to ignore those that are not for agencies that
@@ -408,6 +408,7 @@ int announce_hi1_notification_to_mediators(provision_state_t *state,
     ndata.seqno = intcomm->hi1_seqno;
     ndata.ts_sec = tv.tv_sec;
     ndata.ts_usec = tv.tv_usec;
+    ndata.target_info = target_id;
 
     SEND_ALL_MEDIATORS_BEGIN
         if (push_hi1_notification_onto_net_buffer(sock->outgoing, &ndata) == -1)
