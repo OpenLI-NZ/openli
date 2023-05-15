@@ -1064,7 +1064,7 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
     voipintshared_t *vshared;
     char rtpkey[256];
     rtpstreaminf_t *thisrtp;
-    etsili_iri_type_t iritype = ETSILI_IRI_REPORT;
+    etsili_iri_type_t iritype = ETSILI_IRI_CONTINUE;
     int exportcount = 0;
     int badsip = 0;
 
