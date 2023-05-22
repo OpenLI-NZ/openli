@@ -172,9 +172,34 @@ if [ -d /var/run/openli ]; then
 fi
 chmod 2750 /etc/openli
 
+if /bin/systemctl is-active --quiet "rabbitmq-server"; then
+    echo ""
+else
+    /bin/systemctl start rabbitmq-server
+fi
+
+if rpm -q "rabbitmq-server" > /dev/null 2>&1; then
+    dep_install=$(rpm -q --queryformat '%{INSTALLTIME}\n' "rabbitmq-server")
+    this_install=$(rpm -q --queryformat '%{INSTALLTIME}\n' "openli-mediator")
+    if [ "$dep_install" -ge "$this_install" ]; then
+        # dependency was installed by our own package
+        if [ ! -f /etc/rabbitmq/rabbitmq.conf ]; then
+            cat > /etc/rabbitmq/rabbitmq.conf <<EOF
+# Configuration auto-deployed by OpenLI to limit RMQ connections to localhost.
+# Feel free to override if required.
+listeners.tcp.default = 127.0.0.1:5672
+loopback_users.guest = false
+EOF
+            chown rabbitmq:rabbitmq /etc/rabbitmq/rabbitmq.conf
+        fi
+    fi
+fi
+
 rabbitmqctl add_vhost "OpenLI-med"
 rabbitmqctl add_user "openli.nz" "mediatorinternal"
 rabbitmqctl set_permissions -p "OpenLI-med" "openli.nz" ".*" ".*" ".*"
+
+/bin/systemctl restart rabbitmq-server
 
 %preun mediator
 if [ $1 -eq 0 ]; then
