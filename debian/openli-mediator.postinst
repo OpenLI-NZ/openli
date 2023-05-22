@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # postinst script for openli-mediator
 #
 # see: dh_installdeb(1)
@@ -6,6 +6,32 @@
 set -e
 
 USER="openli"
+declare -A origdeps
+
+package_installed_directly() {
+    local pname="$1"
+    local state="${origdeps[$pname]}"
+
+    if [ "$state" = "installed" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+save_original_packages() {
+    while read -r package; do
+        local pname=$(echo "$package" | awk '{print $4}')
+        local status=$(echo "$package" | awk '{print $1,$2,$3}')
+
+        if [ "$status" = "install ok installed" ]; then
+            origdeps[$pname]="installed"
+        else
+            origdeps[$pname]="not-installed"
+        fi
+    done < <(dpkg-query -W -f='${Status} ${Package}\n')
+}
+
 
 case "$1" in
     configure)
@@ -18,6 +44,14 @@ case "$1" in
         chown -R ${USER}: /var/run/openli
         chmod 2750 /etc/openli
 
+        save_original_packages
+
+        if systemctl is-active --quiet "rabbitmq-server"; then
+            echo ""
+        else
+            service rabbitmq-server start
+        fi
+
         EXISTS=`rabbitmqctl list_vhosts | grep "^OpenLI-med$" | wc -l`
         if [ "$EXISTS" -eq "0" ]; then
                 rabbitmqctl add_vhost "OpenLI-med"
@@ -29,8 +63,20 @@ case "$1" in
                 rabbitmqctl set_permissions -p "OpenLI-med" "openli.nz" ".*" ".*" ".*"
         fi
 
-;;
+        if package_installed_directly rabbitmq-server; then
+            if [ ! -f /etc/rabbitmq/rabbitmq.conf ]; then
+                cat > /etc/rabbitmq/rabbitmq.conf <<EOF
+# Configuration auto-deployed by OpenLI to limit RMQ connections to localhost.
+# Feel free to override if required.
+listeners.tcp.default = 127.0.0.1:5672
+loopback_users.guest = false
+EOF
+                chown rabbitmq:rabbitmq /etc/rabbitmq/rabbitmq.conf
+            fi
+        fi
+        service rabbitmq-server restart
 
+        ;;
     abort-upgrade|abort-remove|abort-deconfigure)
         ;;
 
