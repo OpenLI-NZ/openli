@@ -1,3 +1,14 @@
+openli (1.1.0-1~rc01) unstable; urgency=medium
+
+  * Add configuration options for the email ingestion socket.
+  * Include target-Information in HI1 operation messages.
+  * Fix incorrect IRI types for IPMM IRIs.
+  * mediator postinst: configure RMQ to listen on localhost only, if
+    installed on our behalf.
+  * Tidy up numerous compiler warnings.
+
+ -- Shane Alcock <shane@alcock.co.nz>  Tue, 23 May 2023 12:00:12 +1200
+
 openli (1.1.0-1~beta06) unstable; urgency=medium
 
   * Fix REST API bug where intercepts returned by GET requests would
