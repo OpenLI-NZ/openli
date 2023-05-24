@@ -78,7 +78,7 @@ jobs:
            curl -s https://packagecloud.io/install/repositories/rabbitmq/rabbitmq-server/script.rpm.sh | bash
            curl -s https://packagecloud.io/install/repositories/rabbitmq/erlang/script.rpm.sh | bash
            if [ "${TARGET}" == "centos:7" ]; then
-               yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+               yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm || true
            fi
            if [[ "${TARGET}" =~ rocky* ]]; then
                dnf install -y dnf-plugins-core epel-release || true

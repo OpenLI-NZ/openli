@@ -123,3 +123,4 @@ jobs:
            path: packages/
            repo: ${{ secrets.CLOUDSMITH_OWNER }}/openli
            username: salcock
+           api_key: ${{ secrets.CLOUDSMITH_API_KEY }}
