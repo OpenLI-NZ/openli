@@ -26,7 +26,7 @@ yum update -y
 if [[ "$1" =~ rocky* ]]; then
         dnf install -y dnf-plugins-core epel-release || true
         dnf config-manager --set-enabled powertools || true
-        dnf module disable mariadb || true
+        dnf module disable -y mariadb || true
         /usr/bin/crb enable || true
 fi
 
