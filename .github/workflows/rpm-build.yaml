@@ -80,12 +80,17 @@ jobs:
            if [ "${TARGET}" == "centos:7" ]; then
                yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
            fi
+           if [[ "${TARGET}" =~ rocky* ]]; then
+               dnf install -y dnf-plugins-core epel-release || true
+               dnf config-manager --set-enabled powertools || true
+               /usr/bin/crb enable || true
+           fi
        - name: Test package install
          run: |
            yum install -y findutils
            find . -name "*.rpm" | xargs yum install -y
        - name: Test package removal
-         run:
+         run: |
            rpm -e openli-provisioner
            rpm -e openli-collector
            rpm -e openli-mediator

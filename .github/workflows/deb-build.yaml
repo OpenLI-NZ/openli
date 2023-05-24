@@ -84,7 +84,7 @@ jobs:
        - name: Test package removal
          env:
            DEBIAN_FRONTEND: noninteractive
-         run:
+         run: |
            apt remove -y --purge openli-provisioner
            apt remove -y --purge openli-collector
            apt remove -y --purge openli-mediator
