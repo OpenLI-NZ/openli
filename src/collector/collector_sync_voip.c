@@ -455,6 +455,8 @@ static inline int announce_rtp_streams_if_required(
     }
     rtp->active = 1;
     rtp->changed = 0;
+    free(rtp->invitecseq);
+    rtp->invitecseq = NULL;
     return 1;
 }
 
@@ -929,8 +931,6 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
                 thisrtp->changed = 1;
             }
         }
-        free(thisrtp->invitecseq);
-        thisrtp->invitecseq = NULL;
 
         announce_rtp_streams_if_required(sync, thisrtp);
     }
@@ -972,8 +972,6 @@ static int process_sip_200ok(collector_sync_voip_t *sync, rtpstreaminf_t *thisrt
                 thisrtp->changed = 1;
             }
         }
-        free(thisrtp->invitecseq);
-        thisrtp->invitecseq = NULL;
 
         announce_rtp_streams_if_required(sync, thisrtp);
     } else if (thisrtp->byecseq && strcmp(thisrtp->byecseq,
