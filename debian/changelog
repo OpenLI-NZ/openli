@@ -1,3 +1,11 @@
+openli (1.1.0-1~rc02) unstable; urgency=medium
+
+  * Fix bug where VOIP intercepts would not produce CCs if an RTP
+    endpoint was announced in the "200 OK" message instead of a
+    "183" message.
+
+ -- Shane Alcock <shane@alcock.co.nz>  Thu, 25 May 2023 11:27:40 +1200
+
 openli (1.1.0-1~rc01) unstable; urgency=medium
 
   * Add configuration options for the email ingestion socket.
