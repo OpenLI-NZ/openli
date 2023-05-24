@@ -67,7 +67,7 @@ jobs:
            name: packages-${{ env.DIRNAME }}
        - name: Add repositories
          env:
-           TARGET=${{ matrix.target }}
+           TARGET: ${{ matrix.target }}
          run: |
            curl -1sLf 'https://dl.cloudsmith.io/public/wand/libwandio/cfg/setup/bash.rpm.sh' | bash
            curl -1sLf 'https://dl.cloudsmith.io/public/wand/libwandder/cfg/setup/bash.rpm.sh' | bash
