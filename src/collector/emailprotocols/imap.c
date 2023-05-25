@@ -160,6 +160,10 @@ static void add_cc_to_imap_command(imap_command_t *comm, int start_ind,
 static int complete_imap_append(openli_email_worker_t *state,
         emailsession_t *sess, imap_session_t *imapsess, imap_command_t *comm) {
 
+    if (imapsess->mailbox == NULL) {
+        return 1;
+    }
+
     if (strcmp(comm->imap_reply, "OK") == 0) {
         generate_email_upload_success_iri(state, sess);
     } else {
@@ -204,6 +208,10 @@ static int complete_imap_fetch(openli_email_worker_t *state,
     /* TODO Figure out what is actually being fetched so we can decide if this
      * is a full or partial download?
      */
+
+    if (imapsess->mailbox == NULL) {
+        return 1;
+    }
 
     /* For now, every example I've seen for IMAP is classed as a partial
      * download and the ETSI standards are not specific on what would
