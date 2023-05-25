@@ -1,3 +1,10 @@
+openli (1.1.0-1~rc03) unstable; urgency=medium
+
+  * Fix IMAP bug where OpenLI could generate partial download IRIs
+    without also generating corresponding CCs.
+
+ -- Shane Alcock <shane@alcock.co.nz>  Thu, 25 May 2023 19:09:19 +1200
+
 openli (1.1.0-1~rc02) unstable; urgency=medium
 
   * Fix bug where VOIP intercepts would not produce CCs if an RTP
