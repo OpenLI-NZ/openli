@@ -263,7 +263,7 @@ fi
 
 
 %changelog
-* Wed Jul 20 2022 Shane Alcock <salcock@waikato.ac.nz> - 1.1.0-1
+* Fri May 26 2023 Shane Alcock <salcock@searchlight.nz> - 1.1.0-1
 - Updated for 1.1.0 release
 
 * Wed Jun 15 2022 Shane Alcock <salcock@waikato.ac.nz> - 1.0.15-1
