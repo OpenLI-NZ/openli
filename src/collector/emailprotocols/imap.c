@@ -192,6 +192,7 @@ static int extract_imap_email_sender(openli_email_worker_t *state,
     r = extract_email_sender_from_body(state, sess, safecopy, &extracted);
 
     if (r == 0 || extracted == NULL) {
+        free(safecopy);
         return r;
     }
 
