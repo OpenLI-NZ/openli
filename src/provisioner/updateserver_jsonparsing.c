@@ -1287,7 +1287,7 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
             mailint->common.destid, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("starttime", "Email intercept", emailjson.starttime,
             mailint->common.tostart_time, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("mediator", "Email intercept", emailjson.endtime,
+    EXTRACT_JSON_INT_PARAM("endtime", "Email intercept", emailjson.endtime,
             mailint->common.toend_time, &parseerr, false);
 
     if (parseerr) {
@@ -1433,7 +1433,7 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             vint->common.destid, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("starttime", "VOIP intercept", voipjson.starttime,
             vint->common.tostart_time, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("mediator", "VOIP intercept", voipjson.endtime,
+    EXTRACT_JSON_INT_PARAM("endtime", "VOIP intercept", voipjson.endtime,
             vint->common.toend_time, &parseerr, false);
 
     if (parseerr) {
