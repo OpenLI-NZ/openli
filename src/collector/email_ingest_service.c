@@ -355,6 +355,7 @@ struct MHD_Daemon *start_email_mhd_daemon(openli_email_ingest_config_t *config,
     int fd, off, len;
     char rndseed[8];
 
+    fd = -1;
     if (sockfd <= 0) {
         return NULL;
     }
@@ -381,7 +382,9 @@ struct MHD_Daemon *start_email_mhd_daemon(openli_email_ingest_config_t *config,
     }
 
     if (init_email_ingest_state(state, config, sslconf) < 0) {
-        close(fd);
+        if (fd != -1) {
+            close(fd);
+        }
         if (state->key_pem) {
             free(state->key_pem);
         }

@@ -111,6 +111,7 @@ typedef struct hi1_notify_data {
     uint32_t seqno;
     uint64_t ts_sec;
     uint32_t ts_usec;
+    char *target_info;
 } hi1_notify_data_t;
 
 typedef struct ipintercept {
@@ -402,6 +403,16 @@ void free_single_rtpstream(rtpstreaminf_t *rtp);
 void free_single_vendmirror_intercept(vendmirror_intercept_t *mirror);
 void free_single_staticipsession(staticipsession_t *statint);
 void free_single_staticiprange(static_ipranges_t *ipr);
+
+/* Create a comma-separated string containing all of the SIP target IDs
+ * for a VoIP intercept.
+ */
+char *list_sip_targets(voipintercept_t *v, int maxchars);
+
+/* Create a comma-separated string containing all of the target addresses
+ * for an email intercept.
+ */
+char *list_email_targets(emailintercept_t *m, int maxchars);
 
 sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
         uint32_t cin);
