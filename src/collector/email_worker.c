@@ -287,7 +287,6 @@ int extract_email_sender_from_body(openli_email_worker_t *state,
         next = strstr(search, "\r\n");
 
         if (strncasecmp(search, "From: ", 6) == 0) {
-            assert(next != NULL);
             if (next - search > 2048) {
                 next = search + 2048;
             }
@@ -340,7 +339,6 @@ void add_email_participant(emailsession_t *sess, char *address, int issender) {
             HASH_ADD_KEYPTR(hh, sess->participants, part->emailaddr,
                     strlen(part->emailaddr), part);
 
-            logger(LOG_INFO, "OpenLI: DEVDEBUG adding %s as a recipient for email session %s", address, sess->key);
         }
     } else {
         if (sess->sender.emailaddr) {
@@ -348,7 +346,6 @@ void add_email_participant(emailsession_t *sess, char *address, int issender) {
         }
         sess->sender.emailaddr = address;
         sess->sender.is_sender = 1;
-        logger(LOG_INFO, "OpenLI: DEVDEBUG adding %s as the sender for email session %s", address, sess->key);
     }
 
 }
@@ -402,8 +399,6 @@ static void free_email_session(openli_email_worker_t *state,
         close(ev->fd);
         free(ev);
 
-        logger(LOG_INFO, "OpenLI: DEVDEBUG removed timeout event for %s",
-                sess->key);
     }
 
     if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
@@ -559,8 +554,6 @@ static void start_email_intercept(openli_email_worker_t *state,
 
 static void update_email_intercept(openli_email_worker_t *state,
         emailintercept_t *found, emailintercept_t *latest) {
-
-    assert(strcmp(found->common.liid, latest->common.liid) == 0);
 
     if (found->common.authcc) {
         free(found->common.authcc);
@@ -858,8 +851,6 @@ static int add_email_target(openli_email_worker_t *state,
         return -1;
     }
 
-    assert(tgt->address);
-
     HASH_FIND(hh_liid, state->allintercepts, liid, strlen(liid), found);
     if (!found) {
         logger(LOG_INFO, "OpenLI: received email target announcement for intercept %s, but this intercept is not active according to email worker thread %d",
@@ -1012,10 +1003,6 @@ static int find_and_update_active_session(openli_email_worker_t *state,
         HASH_ADD_KEYPTR(hh, state->activesessions, sess->key,
                 strlen(sess->key), sess);
 
-        if (state->emailid == 0) {
-            logger(LOG_INFO, "OpenLI: DEVDEBUG adding new session '%s'",
-                    sesskey);
-        }
     }
 
     update_email_session_timeout(state, sess);
@@ -1036,8 +1023,6 @@ static int find_and_update_active_session(openli_email_worker_t *state,
         HASH_DELETE(hh, state->activesessions, sess);
         free_email_session(state, sess);
     } else if (r == 1) {
-        logger(LOG_INFO, "OpenLI: DEVDEBUG %s session '%s' is over",
-                email_type_to_string(cap->type), sess->key);
         HASH_DELETE(hh, state->activesessions, sess);
         free_email_session(state, sess);
     }
@@ -1198,8 +1183,6 @@ static void email_worker_main(openli_email_worker_t *state) {
             emailsession_t *sessfound;
 
             if (state->topoll[x].revents & ZMQ_POLLIN) {
-                logger(LOG_INFO, "OpenLI: DEVDEBUG expiring email session '%s' due to inactivity", expired[x]->key);
-
                 HASH_FIND(hh, state->activesessions, expired[x]->key,
                         strlen(expired[x]->key), sessfound);
                 if (sessfound) {

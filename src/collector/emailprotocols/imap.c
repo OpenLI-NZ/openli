@@ -184,7 +184,6 @@ static int extract_imap_email_sender(openli_email_worker_t *state,
     char *search = (char *)(comm->commbuffer + comm->reply_start);
     char *end = (char *)(comm->commbuffer + comm->reply_end);
 
-    assert(end > search);
     copylen = (end - search) + 1;
     safecopy = calloc(sizeof(char), copylen);
     memcpy(safecopy, search, (end - search));
@@ -319,8 +318,6 @@ static int update_saved_login_command(imap_session_t *sess, int pwordindex,
     comm->reply_start = comm->commbufused;
     memset(ptr, 0, comm->commbufsize - comm->commbufused);
 
-    assert(comm->cc_used > 0);
-
     comm->ccs[comm->cc_used - 1].cc_end = comm->commbufused;
     return 1;
 
@@ -362,8 +359,6 @@ static int update_saved_auth_command(imap_session_t *sess, char *replace,
     comm->commbufused = ((uint8_t *)ptr - comm->commbuffer);
     comm->reply_start = comm->commbufused;
     memset(ptr, 0, comm->commbufsize - comm->commbufused);
-
-    assert(comm->cc_used > 0);
 
     comm->ccs[comm->cc_used - 1].cc_end = comm->commbufused;
 
@@ -421,10 +416,6 @@ static int save_imap_command(imap_session_t *sess, char *sesskey) {
     sess->next_comm_tag = NULL;
     sess->next_command_name = NULL;
 
-    assert(comm->tag != NULL && comm->imap_command != NULL);
-
-    logger(LOG_INFO, "OpenLI: DEVDEBUG %s saved IMAP command %s, %s",
-            sesskey, comm->tag, comm->imap_command);
     return index;
 }
 
@@ -809,10 +800,6 @@ static int save_imap_reply(imap_session_t *sess, char *sesskey,
         return 0;
     }
 
-    logger(LOG_INFO, "OpenLI: DEVDEBUG %s got IMAP reply for %s, %s --> %s",
-            sesskey, (*comm)->tag, (*comm)->imap_command,
-            sess->next_command_name);
-
     if (extend_command_buffer(*comm, sess->contbufread - sess->reply_start)
             < 0) {
         return -1;
@@ -924,8 +911,6 @@ static int append_content_to_imap_buffer(imap_session_t *imapsess,
     imapsess->contbufused += cap->msg_length;
     imapsess->contbuffer[imapsess->contbufused] = '\0';
 
-    assert(imapsess->contbufused <= imapsess->contbufsize);
-    assert(*(imapsess->contbuffer + imapsess->contbufread) != 0);
     return 0;
 }
 
@@ -1040,8 +1025,6 @@ static int find_next_crlf(imap_session_t *sess, int start_index) {
 
     int nests = 0;
 
-    assert(sess->contbufused >= start_index);
-
     rem = sess->contbufused - start_index;
 
     while (1) {
@@ -1065,7 +1048,6 @@ static int find_next_crlf(imap_session_t *sess, int start_index) {
         }
 
         if (openparent == NULL || closeparent < openparent) {
-            assert(nests > 0);
             nests -= 1;
             start_index = (closeparent - sess->contbuffer) + 1;
         } else {
@@ -1178,7 +1160,6 @@ static int find_reply_end(openli_email_worker_t *state,
         return 0;
     } else if (strcasecmp(comm->imap_command, "AUTHENTICATE") == 0 ||
             strcasecmp(comm->imap_command, "LOGIN") == 0) {
-        assert(imapsess->auth_command_index != -1);
         sess->login_time = timestamp;
         complete_imap_authentication(state, sess, imapsess);
     } else if (strcasecmp(comm->imap_command, "FETCH") == 0 ||
@@ -1229,7 +1210,6 @@ static int find_server_ready_end(imap_session_t *imapsess) {
 static int find_server_ready(imap_session_t *imapsess) {
 
     uint8_t *found = NULL;
-    assert(imapsess->contbufused >= imapsess->contbufread);
 
     if (imapsess->contbufused - imapsess->contbufread < 5) {
         return 0;
@@ -1443,8 +1423,6 @@ static int read_imap_while_idle_state(emailsession_t *sess,
     uint8_t *found = NULL;
     int idle_server_length = 0;
     int comm_start;
-
-    assert(imapsess->idle_command_index >= 0);
 
     comm = &(imapsess->commands[imapsess->idle_command_index]);
 
@@ -1693,8 +1671,6 @@ static int process_next_imap_state(openli_email_worker_t *state,
                     (imapsess->contbufread - imapsess->next_comm_start);
             imapsess->next_comm_start = 0;
             imapsess->next_command_type = OPENLI_IMAP_COMMAND_NONE;
-            logger(LOG_INFO, "OpenLI DEVDEBUG: IMAP Server Ready %s",
-                    sess->key);
         }
         return r;
     }

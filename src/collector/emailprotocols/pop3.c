@@ -126,9 +126,6 @@ static int append_content_to_pop3_buffer(pop3_session_t *pop3sess,
     pop3sess->contbufused += cap->msg_length;
     pop3sess->contbuffer[pop3sess->contbufused] = '\0';
 
-    assert(pop3sess->contbufused <= pop3sess->contbufsize);
-    assert(*(pop3sess->contbuffer + pop3sess->contbufread) != 0);
-
     return 0;
 }
 
@@ -138,8 +135,6 @@ static int decode_login_username_command(emailsession_t *sess,
     char *usermsg;
     int msglen;
     char *username;
-
-    assert(pop3sess->command_end > pop3sess->command_start + 2);
 
     // strip \r\n from end of command
     msglen = pop3sess->command_end - pop3sess->command_start - 2;
@@ -170,8 +165,6 @@ static int decode_login_apop_command(emailsession_t *sess,
     char *username;
     char *username_end;
 
-    assert(pop3sess->command_end > pop3sess->command_start + 2);
-
     // strip \r\n from end of command
     msglen = pop3sess->command_end - pop3sess->command_start - 2;
     usermsg = calloc(msglen + 1, sizeof(char));
@@ -201,8 +194,6 @@ static int decode_login_apop_command(emailsession_t *sess,
 
 static int save_pop3_password(emailsession_t *sess, pop3_session_t *pop3sess) {
 
-    assert(pop3sess->command_end > pop3sess->command_start + 2);
-
     if (sess->mask_credentials) {
         /* Replace the password with 'XXX' */
         pop3sess->password_content = strdup("PASS XXX\r\n");
@@ -221,8 +212,6 @@ static int find_next_crlf(pop3_session_t *pop3sess, int start_index) {
     int rem;
     uint8_t *found;
 
-    assert(pop3sess->contbufused >= start_index);
-
     rem = pop3sess->contbufused - start_index;
 
     found = (uint8_t *)memmem(pop3sess->contbuffer + start_index, rem,
@@ -238,8 +227,6 @@ static int find_next_crlf(pop3_session_t *pop3sess, int start_index) {
 static int find_multi_end(pop3_session_t *pop3sess, int start_index) {
     int rem;
     uint8_t *found;
-
-    assert(pop3sess->contbufused >= start_index);
 
     rem = pop3sess->contbufused - start_index;
 
@@ -329,7 +316,6 @@ static int parse_pop3_command(pop3_session_t *pop3sess) {
 
     int comm_size = (pop3sess->contbufread - pop3sess->command_start) - 2;
     char comm_copy[1024];
-    assert(pop3sess->contbufread > (pop3sess->command_start + 2));
 
     if (comm_size >= 1024) {
         comm_size = 1023;
@@ -482,7 +468,6 @@ static int extract_pop3_email_sender(openli_email_worker_t *state,
     char *search = (char *)(pop3sess->contbuffer + pop3sess->reply_start);
     char *end = (char *)(pop3sess->contbuffer + pop3sess->contbufread);
 
-    assert(end > search);
     copylen = (end - search) + 1;
     safecopy = calloc(sizeof(char), copylen);
     memcpy(safecopy, search, (end - search));

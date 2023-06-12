@@ -101,8 +101,6 @@ static int append_content_to_smtp_buffer(smtp_session_t *smtpsess,
     smtpsess->contbufused += cap->msg_length;
     smtpsess->contbuffer[smtpsess->contbufused] = '\0';
 
-    assert(smtpsess->contbufused <= smtpsess->contbufsize);
-
     return 0;
 }
 
@@ -144,8 +142,6 @@ static int find_next_crlf(smtp_session_t *sess, int start_index) {
     int rem;
     uint8_t *found;
 
-    assert(sess->contbufused >= start_index);
-
     rem = sess->contbufused - start_index;
 
     found = (uint8_t *)memmem(sess->contbuffer + start_index, rem, "\r\n", 2);
@@ -163,9 +159,6 @@ static int find_smtp_reply_code(smtp_session_t *sess, uint16_t *storage) {
     regex_t lastreply;
     regmatch_t pmatch[1];
     const char *search;
-
-    assert(sess->contbufused >= sess->contbufread);
-    assert((*(sess->contbuffer + sess->contbufused)) == '\0');
 
     if (regcomp(&lastreply, "[[:digit:]][[:digit:]][[:digit:]] ", 0) != 0) {
         return -1;
@@ -228,7 +221,6 @@ static int find_rcpt_to_reply_end(smtp_session_t *sess) {
 
 static int find_data_start(smtp_session_t *sess) {
     uint8_t *found = NULL;
-    assert(sess->contbufused >= sess->contbufread);
     if (sess->contbufused - sess->contbufread < 6) {
         return 0;
     }
@@ -248,7 +240,6 @@ static int find_data_start(smtp_session_t *sess) {
 
 static int find_reset_command(smtp_session_t *sess) {
     uint8_t *found = NULL;
-    assert(sess->contbufused >= sess->contbufread);
     if (sess->contbufused - sess->contbufread < 6) {
         return 0;
     }
@@ -268,7 +259,6 @@ static int find_reset_command(smtp_session_t *sess) {
 
 static int find_quit_command(smtp_session_t *sess) {
     uint8_t *found = NULL;
-    assert(sess->contbufused >= sess->contbufread);
     if (sess->contbufused - sess->contbufread < 6) {
         return 0;
     }
@@ -288,7 +278,6 @@ static int find_quit_command(smtp_session_t *sess) {
 
 static int find_mail_from(smtp_session_t *sess) {
     uint8_t *found = NULL;
-    assert(sess->contbufused >= sess->contbufread);
     if (sess->contbufused - sess->contbufread < 10) {
         return 0;
     }
@@ -306,7 +295,6 @@ static int find_mail_from(smtp_session_t *sess) {
 
 static int find_rcpt_to(smtp_session_t *sess) {
     uint8_t *found = NULL;
-    assert(sess->contbufused >= sess->contbufread);
     if (sess->contbufused - sess->contbufread < 8) {
         return 0;
     }
