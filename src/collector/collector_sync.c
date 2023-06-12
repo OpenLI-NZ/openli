@@ -1305,30 +1305,12 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
     free_single_ipintercept(ipint);
 }
 
-static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
-        uint16_t msglen) {
+static int update_modified_intercept(collector_sync_t *sync,
+        ipintercept_t *ipint, ipintercept_t *modified) {
 
-    ipintercept_t *ipint, *modified;
     openli_export_recv_t *expmsg;
     int changed = 0;
     int encodingchanged = 0;
-
-    modified = calloc(1, sizeof(ipintercept_t));
-
-    if (decode_ipintercept_modify(intmsg, msglen, modified) == -1) {
-        if (sync->instruct_log) {
-            logger(LOG_INFO,
-                    "OpenLI: received invalid IP intercept modification from provisioner.");
-        }
-        return -1;
-    }
-
-    HASH_FIND(hh_liid, sync->ipintercepts, modified->common.liid,
-            modified->common.liid_len, ipint);
-
-    if (!ipint) {
-        return insert_new_ipintercept(sync, modified);
-    }
 
     if (strcmp(ipint->username, modified->username) != 0) {
         push_ipintercept_halt_to_threads(sync, ipint);
@@ -1406,6 +1388,31 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     free_single_ipintercept(modified);
     return 0;
+}
+
+static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
+        uint16_t msglen) {
+
+    ipintercept_t *ipint, *modified;
+
+    modified = calloc(1, sizeof(ipintercept_t));
+
+    if (decode_ipintercept_modify(intmsg, msglen, modified) == -1) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid IP intercept modification from provisioner.");
+        }
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, sync->ipintercepts, modified->common.liid,
+            modified->common.liid_len, ipint);
+
+    if (!ipint) {
+        return insert_new_ipintercept(sync, modified);
+    }
+
+    return update_modified_intercept(sync, ipint, modified);
 }
 
 static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
@@ -1574,31 +1581,23 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
                 logger(LOG_INFO,
                         "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
                         x->common.liid, x->username, cept->username);
-                remove_ip_intercept(sync, x);
-                x = NULL;
             }
         }
 
-        if (x != NULL && cept->vendmirrorid != x->vendmirrorid) {
+        if (cept->vendmirrorid != x->vendmirrorid) {
             logger(LOG_INFO,
                     "OpenLI: duplicate IP ID %s seen, but Vendor Mirroring intercept IDs are different (was %u, now %u).",
                     x->common.liid, x->vendmirrorid, cept->vendmirrorid);
-            remove_ip_intercept(sync, x);
-            x = NULL;
         }
 
-        if (x != NULL) {
-            if (cept->accesstype != x->accesstype) {
-                logger(LOG_INFO,
-                    "OpenLI: duplicate IP ID %s seen, but access type has changed to %s.", x->common.liid, accesstype_to_string(cept->accesstype));
-            /* Only affects IRIs so don't need to modify collector threads */
-                x->accesstype = cept->accesstype;
-            }
-            x->awaitingconfirm = 0;
-            free_single_ipintercept(cept);
-            /* our collector threads should already know about this intercept */
-            return 1;
+        if (cept->accesstype != x->accesstype) {
+            logger(LOG_INFO,
+                "OpenLI: duplicate IP ID %s seen, but access type has changed to %s.", x->common.liid, accesstype_to_string(cept->accesstype));
+        /* Only affects IRIs so don't need to modify collector threads */
+            x->accesstype = cept->accesstype;
         }
+        x->awaitingconfirm = 0;
+        return update_modified_intercept(sync, x, cept);
     }
 
     return insert_new_ipintercept(sync, cept);

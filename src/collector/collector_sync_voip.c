@@ -1596,13 +1596,89 @@ sipgiveup:
 
 }
 
+static int update_modified_voipintercept(collector_sync_voip_t *sync,
+        voipintercept_t *vint, voipintercept_t *tomod) {
+
+    int changed = 0;
+
+    sync->log_bad_instruct = 1;
+
+    if (tomod->options != vint->options) {
+        if (tomod->options & (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
+            logger(LOG_INFO,
+                    "OpenLI: VOIP intercept %s is now ignoring RTP comfort noise",
+                    tomod->common.liid);
+        } else {
+            logger(LOG_INFO,
+                    "OpenLI: VOIP intercept %s is now intercepting RTP comfort noise",
+                    tomod->common.liid);
+        }
+    }
+
+    if (tomod->common.tostart_time != vint->common.tostart_time ||
+            tomod->common.toend_time != vint->common.toend_time) {
+        changed = 1;
+        logger(LOG_INFO,
+                "OpenLI: VOIP intercept %s has changed start / end times -- now %lu, %lu", tomod->common.liid, tomod->common.tostart_time, tomod->common.toend_time);
+    }
+
+    if (tomod->common.tomediate != vint->common.tomediate) {
+        char space[1024];
+        changed = 1;
+        intercept_mediation_mode_as_string(tomod->common.tomediate, space,
+                1024);
+        logger(LOG_INFO,
+                "OpenLI: VOIP intercept %s has changed mediation mode to: %s",
+                vint->common.liid, space);
+    }
+
+    if (tomod->common.encrypt != vint->common.encrypt) {
+        char space[1024];
+        changed = 1;
+        intercept_encryption_mode_as_string(tomod->common.encrypt, space,
+                1024);
+        logger(LOG_INFO,
+                "OpenLI: VOIP intercept %s has changed encryption mode to: %s",
+                vint->common.liid, space);
+    }
+
+    if (strcmp(tomod->common.delivcc, vint->common.delivcc) != 0 ||
+            strcmp(tomod->common.authcc, vint->common.authcc) != 0) {
+        char *tmp;
+
+        changed = 1;
+        tmp = vint->common.authcc;
+        vint->common.authcc = tomod->common.authcc;
+        vint->common.authcc_len = tomod->common.authcc_len;
+        tomod->common.authcc = tmp;
+
+        tmp = vint->common.delivcc;
+        vint->common.delivcc = tomod->common.delivcc;
+        vint->common.delivcc_len = tomod->common.delivcc_len;
+        tomod->common.delivcc = tmp;
+
+    }
+
+    vint->options = tomod->options;
+    vint->common.tostart_time = tomod->common.tostart_time;
+    vint->common.toend_time = tomod->common.toend_time;
+    vint->common.tomediate = tomod->common.tomediate;
+    vint->common.encrypt = tomod->common.encrypt;
+
+    if (changed) {
+        push_voip_intercept_update_to_threads(sync, vint);
+    }
+
+    return 0;
+}
+
 static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
-    voipintercept_t *vint, tomod;
-    int changed = 0;
+    voipintercept_t *vint, *tomod;
 
-    if (decode_voipintercept_modify(intmsg, msglen, &tomod) == -1) {
+    tomod = calloc(1, sizeof(voipintercept_t));
+    if (decode_voipintercept_modify(intmsg, msglen, tomod) == -1) {
         if (sync->log_bad_instruct) {
             logger(LOG_INFO,
                 "OpenLI: received invalid VOIP intercept modification from provisioner.");
@@ -1610,87 +1686,19 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sync->voipintercepts, tomod.common.liid,
-            tomod.common.liid_len, vint);
+    HASH_FIND(hh_liid, sync->voipintercepts, tomod->common.liid,
+            tomod->common.liid_len, vint);
     if (!vint) {
         if (sync->log_bad_instruct) {
             logger(LOG_INFO,
                 "OpenLI: received modification for VOIP intercept %s but it is not present in the sync intercept list?",
-                tomod.common.liid);
+                tomod->common.liid);
         }
         return 0;
     }
 
-    sync->log_bad_instruct = 1;
-
-    if (tomod.options != vint->options) {
-        if (tomod.options & (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
-            logger(LOG_INFO,
-                    "OpenLI: VOIP intercept %s is now ignoring RTP comfort noise",
-                    tomod.common.liid);
-        } else {
-            logger(LOG_INFO,
-                    "OpenLI: VOIP intercept %s is now intercepting RTP comfort noise",
-                    tomod.common.liid);
-        }
-    }
-
-    if (tomod.common.tostart_time != vint->common.tostart_time ||
-            tomod.common.toend_time != vint->common.toend_time) {
-        changed = 1;
-        logger(LOG_INFO,
-                "OpenLI: VOIP intercept %s has changed start / end times -- now %lu, %lu", tomod.common.liid, tomod.common.tostart_time, tomod.common.toend_time);
-    }
-
-    if (tomod.common.tomediate != vint->common.tomediate) {
-        char space[1024];
-        changed = 1;
-        intercept_mediation_mode_as_string(tomod.common.tomediate, space,
-                1024);
-        logger(LOG_INFO,
-                "OpenLI: VOIP intercept %s has changed mediation mode to: %s",
-                vint->common.liid, space);
-    }
-
-    if (tomod.common.encrypt != vint->common.encrypt) {
-        char space[1024];
-        changed = 1;
-        intercept_encryption_mode_as_string(tomod.common.encrypt, space,
-                1024);
-        logger(LOG_INFO,
-                "OpenLI: VOIP intercept %s has changed encryption mode to: %s",
-                vint->common.liid, space);
-    }
-
-    if (strcmp(tomod.common.delivcc, vint->common.delivcc) != 0 ||
-            strcmp(tomod.common.authcc, vint->common.authcc) != 0) {
-        char *tmp;
-
-        changed = 1;
-        tmp = vint->common.authcc;
-        vint->common.authcc = tomod.common.authcc;
-        vint->common.authcc_len = tomod.common.authcc_len;
-        tomod.common.authcc = tmp;
-
-        tmp = vint->common.delivcc;
-        vint->common.delivcc = tomod.common.delivcc;
-        vint->common.delivcc_len = tomod.common.delivcc_len;
-        tomod.common.delivcc = tmp;
-
-    }
-
-    vint->options = tomod.options;
-    vint->common.tostart_time = tomod.common.tostart_time;
-    vint->common.toend_time = tomod.common.toend_time;
-    vint->common.tomediate = tomod.common.tomediate;
-    vint->common.encrypt = tomod.common.encrypt;
-
-    if (changed) {
-        push_voip_intercept_update_to_threads(sync, vint);
-    }
-
-    return 0;
-
+    update_modified_voipintercept(sync, vint, tomod);
+    free_single_voipintercept(tomod);
 }
 
 static inline void remove_voipintercept(collector_sync_voip_t *sync,
@@ -2022,10 +2030,9 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     HASH_FIND(hh_liid, sync->voipintercepts, toadd->common.liid,
             toadd->common.liid_len, vint);
     if (vint) {
-        vint->internalid = toadd->internalid;
         vint->awaitingconfirm = 0;
         vint->active = 1;
-        vint->options = toadd->options;
+        update_modified_voipintercept(sync, vint, toadd);
         free_single_voipintercept(toadd);
         return 0;
     } else {
