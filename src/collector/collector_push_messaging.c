@@ -211,7 +211,12 @@ static int add_ipv4_intercept(colthread_local_t *loc, ipsession_t *sess) {
 
     HASH_FIND(hh, tgt->intercepts, sess->streamkey, strlen(sess->streamkey),
             check);
-    assert(check == NULL);
+    if (check) {
+        logger(LOG_INFO, "OpenLI: encountered duplicate stream key '%s' for address %u -- replacing...", sess->streamkey, tgt->address);
+        HASH_DELETE(hh, tgt->intercepts, check);
+        free_single_ipsession(check);
+    }
+
     HASH_ADD_KEYPTR(hh, tgt->intercepts, sess->streamkey,
             strlen(sess->streamkey), sess);
 
@@ -262,7 +267,11 @@ static int add_ipv6_intercept(colthread_local_t *loc, ipsession_t *sess) {
 
     HASH_FIND(hh, tgt->intercepts, sess->streamkey, strlen(sess->streamkey),
             check);
-    assert(check == NULL);
+    if (check) {
+        logger(LOG_INFO, "OpenLI: encountered duplicate stream key '%s' for address %s -- replacing...", sess->streamkey, prefixstr);
+        HASH_DELETE(hh, tgt->intercepts, check);
+        free_single_ipsession(check);
+    }
     HASH_ADD_KEYPTR(hh, tgt->intercepts, sess->streamkey,
             strlen(sess->streamkey), sess);
 
