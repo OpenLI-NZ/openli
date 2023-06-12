@@ -87,6 +87,17 @@ void intercept_mediation_mode_as_string(intercept_outputs_t mode,
 
 }
 
+void intercept_encryption_mode_as_string(payload_encryption_method_t method,
+        char *space, int spacelen) {
+
+    if (method == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
+        snprintf(space, spacelen, "AES-192-CBC");
+    } else {
+        snprintf(space, spacelen, "None");
+    }
+
+}
+
 sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
         uint32_t cin) {
     sipregister_t *newreg;
@@ -932,6 +943,14 @@ const char *get_access_type_string(internet_access_method_t method) {
     }
 
     return "undefined";
+}
+
+payload_encryption_method_t map_encrypt_method_string(char *encstr) {
+    if (strcasecmp(encstr, "aes-192-cbc") == 0) {
+        return OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC;
+    }
+
+    return OPENLI_PAYLOAD_ENCRYPTION_NONE;
 }
 
 internet_access_method_t map_access_type_string(char *confstr) {

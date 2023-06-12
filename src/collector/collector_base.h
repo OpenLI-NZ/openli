@@ -266,6 +266,8 @@ typedef struct encoder_job {
     openli_export_recv_t *origreq;
     char *liid;
     uint8_t cept_version;
+    payload_encryption_method_t encryptmethod;
+    char *encryptkey;
 } PACKED openli_encoding_job_t;
 
 void destroy_encoder_worker(openli_encoder_t *enc);

@@ -452,8 +452,11 @@ const char *get_access_type_string(internet_access_method_t method);
 const char *get_radius_ident_string(uint32_t radoptions);
 internet_access_method_t map_access_type_string(char *confstr);
 uint32_t map_radius_ident_string(char *confstr);
+payload_encryption_method_t map_encrypt_method_string(char *encstr);
 
 void intercept_mediation_mode_as_string(intercept_outputs_t mode,
+        char *space, int spacelen);
+void intercept_encryption_mode_as_string(payload_encryption_method_t method,
         char *space, int spacelen);
 #endif
 

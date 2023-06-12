@@ -32,6 +32,7 @@
 #include <libwandder.h>
 
 #include "etsili_core.h"
+#include "intercept.h"
 
 typedef struct exporter_intercept_msg {
     char *liid;
@@ -40,6 +41,9 @@ typedef struct exporter_intercept_msg {
     int authcc_len;
     char *delivcc;
     int delivcc_len;
+
+    payload_encryption_method_t encryptmethod;
+    char *encryptkey;
 } exporter_intercept_msg_t;
 
 typedef struct cin_seqno {

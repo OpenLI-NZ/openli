@@ -889,6 +889,14 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
 
     hdr_tplate = encode_templated_psheader(enc->encoder, t_set, job);
 
+    if (job->encryptmethod == OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        logger(LOG_INFO, "DEVDEBUG: encoding ETSI unencrypted for %s",
+                job->liid);
+    } else {
+        logger(LOG_INFO, "DEVDEBUG: encoding encrypted for %s",
+                job->liid);
+    }
+
     switch (job->origreq->type) {
         case OPENLI_EXPORT_IPCC:
             /* IPCC "header" can be templated */
@@ -959,6 +967,9 @@ static int process_job(openli_encoder_t *enc, void *socket) {
                 }
                 if (job.liid) {
                     free(job.liid);
+                }
+                if (job.encryptkey) {
+                    free(job.encryptkey);
                 }
                 if (job.origreq) {
                     free_published_message(job.origreq);

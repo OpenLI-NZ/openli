@@ -705,7 +705,7 @@ static void parse_intercept_common_fields(intercept_common_t *common,
             strcmp((char *)key->data.scalar.value, "payloadencryption") == 0) {
         if (strcasecmp((char *)value->data.scalar.value, "none") == 0) {
             common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
-        } else if (strcasecmp((char *)value->data.scalar.value, "aes-192-cbc")) {
+        } else if (strcasecmp((char *)value->data.scalar.value, "aes-192-cbc") == 0) {
             common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC;
         }
     }

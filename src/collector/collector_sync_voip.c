@@ -320,6 +320,9 @@ static void push_voip_intercept_update_to_threads(collector_sync_voip_t *sync,
     expmsg->data.cept.liid = strdup(vint->common.liid);
     expmsg->data.cept.authcc = strdup(vint->common.authcc);
     expmsg->data.cept.delivcc = strdup(vint->common.delivcc);
+    expmsg->data.cept.encryptmethod = vint->common.encrypt;
+    expmsg->data.cept.encryptkey = strdup("123456789012345678901234567890123456789012345678");
+    expmsg->data.cept.seqtrackerid = vint->common.seqtrackerid;
     publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], expmsg);
 
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
@@ -1649,6 +1652,16 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
                 vint->common.liid, space);
     }
 
+    if (tomod.common.encrypt != vint->common.encrypt) {
+        char space[1024];
+        changed = 1;
+        intercept_encryption_mode_as_string(tomod.common.encrypt, space,
+                1024);
+        logger(LOG_INFO,
+                "OpenLI: VOIP intercept %s has changed encryption mode to: %s",
+                vint->common.liid, space);
+    }
+
     if (strcmp(tomod.common.delivcc, vint->common.delivcc) != 0 ||
             strcmp(tomod.common.authcc, vint->common.authcc) != 0) {
         char *tmp;
@@ -1670,6 +1683,7 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     vint->common.tostart_time = tomod.common.tostart_time;
     vint->common.toend_time = tomod.common.toend_time;
     vint->common.tomediate = tomod.common.tomediate;
+    vint->common.encrypt = tomod.common.encrypt;
 
     if (changed) {
         push_voip_intercept_update_to_threads(sync, vint);
@@ -1692,6 +1706,7 @@ static inline void remove_voipintercept(collector_sync_voip_t *sync,
     expmsg->data.cept.liid = strdup(vint->common.liid);
     expmsg->data.cept.authcc = strdup(vint->common.authcc);
     expmsg->data.cept.delivcc = strdup(vint->common.delivcc);
+    expmsg->data.cept.seqtrackerid = vint->common.seqtrackerid;
 
     pthread_mutex_lock(sync->glob->stats_mutex);
     sync->glob->stats->voipintercepts_ended_diff ++;
@@ -2028,6 +2043,9 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     expmsg->data.cept.liid = strdup(vint->common.liid);
     expmsg->data.cept.authcc = strdup(vint->common.authcc);
     expmsg->data.cept.delivcc = strdup(vint->common.delivcc);
+    expmsg->data.cept.encryptmethod = vint->common.encrypt;
+    expmsg->data.cept.encryptkey = strdup("123456789012345678901234567890123456789012345678");
+    expmsg->data.cept.seqtrackerid = vint->common.seqtrackerid;
 
     pthread_mutex_lock(sync->glob->stats_mutex);
     sync->glob->stats->voipintercepts_added_diff ++;

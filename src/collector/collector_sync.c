@@ -974,6 +974,7 @@ static void push_ipintercept_update_to_threads(collector_sync_t *sync,
     ipint->common.tostart_time = modified->common.tostart_time;
     ipint->common.toend_time = modified->common.toend_time;
     ipint->common.tomediate = modified->common.tomediate;
+    ipint->common.encrypt = modified->common.encrypt;
 
     /* Update all static IP ranges for this intercept */
     HASH_ITER(hh, ipint->statics, ipr, tmpr) {
@@ -1141,6 +1142,8 @@ static inline openli_export_recv_t *create_intercept_details_msg(
     expmsg->data.cept.liid = strdup(common->liid);
     expmsg->data.cept.authcc = strdup(common->authcc);
     expmsg->data.cept.delivcc = strdup(common->delivcc);
+    expmsg->data.cept.encryptmethod = common->encrypt;
+    expmsg->data.cept.encryptkey = strdup("123456789012345678901234567890123456789012345678");
     expmsg->data.cept.seqtrackerid = common->seqtrackerid;
 
     return expmsg;
@@ -1308,6 +1311,7 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     ipintercept_t *ipint, *modified;
     openli_export_recv_t *expmsg;
     int changed = 0;
+    int encodingchanged = 0;
 
     modified = calloc(1, sizeof(ipintercept_t));
 
@@ -1353,8 +1357,6 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             ipint->common.toend_time != modified->common.toend_time) {
         logger(LOG_INFO,
                 "OpenLI: IP intercept %s has changed start / end times -- now %lu, %lu", ipint->common.liid, modified->common.tostart_time, modified->common.toend_time);
-        ipint->common.tostart_time = modified->common.tostart_time;
-        ipint->common.toend_time = modified->common.toend_time;
         update_intercept_time_event(&(sync->upcoming_intercept_events),
                 ipint, &(ipint->common), &(modified->common));
         changed = 1;
@@ -1367,22 +1369,38 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         logger(LOG_INFO,
                 "OpenLI: IP intercept %s has changed mediation mode to: %s",
                 ipint->common.liid, space);
-        ipint->common.tomediate = modified->common.tomediate;
         changed = 1;
-
     }
 
+    if (ipint->common.encrypt != modified->common.encrypt) {
+        char space[1024];
+        intercept_encryption_mode_as_string(modified->common.encrypt, space,
+                1024);
+        logger(LOG_INFO,
+                "OpenLI: IP intercept %s has changed encryption mode to: %s",
+                ipint->common.liid, space);
+        changed = 1;
+        encodingchanged = 1;
+    }
 
     if (strcmp(ipint->common.delivcc, modified->common.delivcc) != 0 ||
             strcmp(ipint->common.authcc, modified->common.authcc) != 0) {
         changed = 1;
-        expmsg = create_intercept_details_msg(&(ipint->common));
+        encodingchanged = 1;
+    }
+
+    if (encodingchanged) {
+        expmsg = create_intercept_details_msg(&(modified->common));
         expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
         publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid],
                 expmsg);
     }
 
     if (changed) {
+        /* Note: this will replace the values in 'ipint' with the new ones
+         * from 'modified' so don't panic that we haven't changed them
+         * earlier in this method...
+         */
         push_ipintercept_update_to_threads(sync, ipint, modified);
     }
 

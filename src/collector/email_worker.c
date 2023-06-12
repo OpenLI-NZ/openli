@@ -550,6 +550,8 @@ static void start_email_intercept(openli_email_worker_t *state,
         expmsg->data.cept.authcc = strdup(em->common.authcc);
         expmsg->data.cept.delivcc = strdup(em->common.delivcc);
         expmsg->data.cept.seqtrackerid = em->common.seqtrackerid;
+        expmsg->data.cept.encryptmethod = em->common.encrypt;
+        expmsg->data.cept.encryptkey = strdup("123456789012345678901234567890123456789012345678");
 
         publish_openli_msg(state->zmq_pubsocks[em->common.seqtrackerid],
                 expmsg);
@@ -579,6 +581,7 @@ static void update_email_intercept(openli_email_worker_t *state,
     found->common.tostart_time = latest->common.tostart_time;
     found->common.toend_time = latest->common.toend_time;
     found->common.tomediate = latest->common.tomediate;
+    found->common.encrypt = latest->common.encrypt;
 
     /* XXX targetagency and destid shouldn't matter, unless we actually
      * use them in this thread.
@@ -704,6 +707,7 @@ static int modify_email_intercept(openli_email_worker_t *state,
 
     emailintercept_t *decode, *found;
     openli_export_recv_t *expmsg;
+    int encodingchanged = 0;
 
     decode = calloc(1, sizeof(emailintercept_t));
     if (decode_emailintercept_modify(provmsg->msgbody, provmsg->msglen,
@@ -739,6 +743,17 @@ static int modify_email_intercept(openli_email_worker_t *state,
         found->common.tomediate = decode->common.tomediate;
     }
 
+    if (decode->common.encrypt != found->common.encrypt) {
+        char space[1024];
+        intercept_encryption_mode_as_string(decode->common.encrypt, space,
+                1024);
+        logger(LOG_INFO,
+                "OpenLI: Email intercept %s has changed encryption mode to: %s",
+                decode->common.liid, space);
+        found->common.encrypt = decode->common.encrypt;
+        encodingchanged = 1;
+    }
+
     if (strcmp(decode->common.delivcc, found->common.delivcc) != 0 ||
             strcmp(decode->common.authcc, found->common.authcc) != 0) {
         char *tmp;
@@ -748,13 +763,18 @@ static int modify_email_intercept(openli_email_worker_t *state,
         tmp = decode->common.delivcc;
         decode->common.delivcc = found->common.delivcc;
         found->common.delivcc = tmp;
+        encodingchanged = 1;
+    }
 
+    if (encodingchanged) {
         expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
-        expmsg->type = OPENLI_EXPORT_INTERCEPT_DETAILS;
+        expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
         expmsg->data.cept.liid = strdup(found->common.liid);
         expmsg->data.cept.authcc = strdup(found->common.authcc);
         expmsg->data.cept.delivcc = strdup(found->common.delivcc);
         expmsg->data.cept.seqtrackerid = found->common.seqtrackerid;
+        expmsg->data.cept.encryptmethod = found->common.encrypt;
+        expmsg->data.cept.encryptkey = strdup("123456789012345678901234567890123456789012345678");
 
         publish_openli_msg(state->zmq_pubsocks[found->common.seqtrackerid],
                 expmsg);
