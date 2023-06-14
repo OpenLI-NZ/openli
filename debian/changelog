@@ -19,8 +19,10 @@ openli (1.1.0-1) unstable; urgency=medium
   * Fixed bug where VoIP intercepts would not produce CCs if the corresponding
     SIP session included a 183 message without any RTP port or IP information
     in it.
+  * Fixed bug where endtimes for VOIP intercepts could not be modified using
+    the REST API.
 
- -- Shane Alcock <shane@alcock.co.nz>  Fri, 26 May 2023 12:37:51 +1200
+ -- Shane Alcock <shane@alcock.co.nz>  Wed, 14 Jun 2023 18:53:26 +1200
 
 openli (1.1.0-1~rc03) unstable; urgency=medium
 
