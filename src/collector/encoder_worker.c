@@ -492,17 +492,25 @@ static int encode_templated_ipmmcc(openli_encoder_t *enc,
         }
     }
 
-    if (create_encoded_message_body(res, hdr_tplate,
-            ipmmcc_tplate->cc_content.cc_wrap,
-            ipmmcc_tplate->cc_content.cc_wrap_len,
-            job->liid,
-            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
-        return -1;
+    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        //create_encrypted_message_body(enc, res, hdr_tplate,
+        //        ipmmcc_tplate, NULL, 0, job);
+
+    } else {
+
+        if (create_encoded_message_body(res, hdr_tplate,
+                ipmmcc_tplate->cc_content.cc_wrap,
+                ipmmcc_tplate->cc_content.cc_wrap_len,
+                job->liid,
+                job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
+            return -1;
+        }
+
+        /* No ipcontents in the result; it is encoded already in cc_content */
+        res->ipcontents = NULL;
+        res->ipclen = 0;
     }
 
-    /* No ipcontents in the result, as it is encoded already in cc_content */
-    res->ipcontents = NULL;
-    res->ipclen = 0;
     res->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
 
     /* Success */

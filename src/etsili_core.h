@@ -43,6 +43,13 @@
 #define ETSI_DIR_TO_TARGET 1
 #define ETSI_DIR_INDETERMINATE 2
 
+/* 16 byte block size for AES, and 16 bytes for the IV
+ *
+ * size = ((input_size + block_size - 1) / block_size) * block_size + iv_size
+ */
+#define AES_OUTPUT_SIZE(inpsize) \
+    ((((inpsize + 16 - 1) / 16) * 16) + 16)
+
 typedef struct etsili_generic etsili_generic_t;
 typedef struct etsili_generic_freelist etsili_generic_freelist_t;
 
@@ -186,6 +193,8 @@ typedef enum {
     OPENLI_PREENCODE_DIRFROM,
     OPENLI_PREENCODE_DIRTO,
     OPENLI_PREENCODE_DIRUNKNOWN,
+    OPENLI_PREENCODE_NO_ENCRYPTION,
+    OPENLI_PREENCODE_AES_192_CBC,
     OPENLI_PREENCODE_LAST
 
 } preencode_index_t;
@@ -237,6 +246,14 @@ typedef struct encoded_global_template {
     encoded_cc_template_t cc_content;
 } encoded_global_template_t;
 
+
+typedef struct encoded_encrypt_template {
+    uint32_t key;
+    uint32_t totallen;
+    uint8_t *start;
+    uint8_t *payload;
+    uint8_t *payload_type;
+} encoded_encrypt_template_t;
 
 wandder_encoded_result_t *encode_umtscc_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, void *ipcontent, uint32_t iplen,
@@ -304,6 +321,9 @@ int etsili_create_ipcc_template(wandder_encoder_t *encoder,
 int etsili_create_emailcc_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, uint8_t format, uint8_t dir,
         uint16_t ipclen, encoded_global_template_t *tplate);
+int etsili_create_encrypted_template(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, payload_encryption_method_t method,
+        uint16_t input_len, encoded_encrypt_template_t *tplate);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

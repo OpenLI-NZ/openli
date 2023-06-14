@@ -884,6 +884,54 @@ wandder_encoded_result_t *encode_ipiri_body(wandder_encoder_t *encoder,
     return wandder_encode_finish(encoder);
 }
 
+int encode_encrypt_container(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, payload_encryption_method_t method,
+        uint16_t inplen) {
+
+    wandder_encode_job_t *jobarray[3];
+    uint32_t encrypt_len;
+    char dummycontent[66000];
+    uint32_t payloadtype = 1;
+
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]); // Payload
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_4]); // encryptionContainer
+
+    inplen += 10;       // 10 bytes for byteCounter
+    if (inplen < 128) {
+        inplen += 2;    // 2 bytes (1 for identifier, 1 for length) for
+                        // EncryptedPayload
+    } else if (inplen < 256) {
+        inplen += 3;    // 3 bytes (1 for identifer, 2 for length)
+    } else {
+        inplen += 4;    // inplen can't exceed 65536, so we can cap this at
+                        // 3 length bytes
+    }
+
+    if (method == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
+        jobarray[2] = &(precomputed[OPENLI_PREENCODE_AES_192_CBC]);
+        encrypt_len = AES_OUTPUT_SIZE(inplen);
+    } else {
+        jobarray[2] = &(precomputed[OPENLI_PREENCODE_NO_ENCRYPTION]);
+        encrypt_len = inplen;
+    }
+
+    wandder_encode_next_preencoded(encoder, jobarray, 3);
+    memset(dummycontent, 0, 66000);
+
+    if (encrypt_len >= 60000) {
+        logger(LOG_INFO, "OpenLI: encryption length %u exceeds expected maximum!");
+        return -1;
+    }
+    wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, dummycontent, encrypt_len);
+
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, &payloadtype,
+            sizeof(uint32_t));
+    END_ENCODED_SEQUENCE(encoder, 2);
+    return 0;
+}
+
 void encode_ipmmcc_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed,
         void *ipcontent, uint32_t iplen, uint8_t dir) {
@@ -1241,6 +1289,7 @@ void etsili_preencode_static_fields(
     wandder_encode_job_t *p;
     int tvclass = 1;
     uint32_t dirin = 0, dirout = 1, dirunk = 2;
+    uint32_t noencrypt = 1, aes_192_cbc = 3;
 
     memset(pendarray, 0, sizeof(wandder_encode_job_t) * OPENLI_PREENCODE_LAST);
 
@@ -1428,6 +1477,18 @@ void etsili_preencode_static_fields(
     p->encodeas = WANDDER_TAG_ENUM;
     wandder_encode_preencoded_value(p, &dirunk, sizeof(dirunk));
 
+    p = &(pendarray[OPENLI_PREENCODE_NO_ENCRYPTION]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_preencoded_value(p, &noencrypt, sizeof(noencrypt));
+
+    p = &(pendarray[OPENLI_PREENCODE_AES_192_CBC]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_preencoded_value(p, &aes_192_cbc, sizeof(aes_192_cbc));
+
 }
 
 void etsili_clear_preencoded_fields(wandder_encode_job_t *pendarray) {
@@ -1607,6 +1668,67 @@ int etsili_update_header_template(encoded_header_template_t *tplate,
         tv->tv_usec = tv->tv_usec >> 8;
     }
 
+    return 0;
+}
+
+int etsili_create_encrypted_template(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, payload_encryption_method_t method,
+        uint16_t input_len, encoded_encrypt_template_t *tplate) {
+
+    wandder_encoded_result_t *encres;
+    wandder_decoder_t *dec;
+
+    if (tplate == NULL) {
+        logger(LOG_INFO, "OpenLI: called etsili_create_encrypted_template with NULL template?");
+        return -1;
+    }
+
+    if (encoder == NULL) {
+        logger(LOG_INFO, "OpenLI: called etsili_create_encrypted_template with NULL encoder?");
+        return -1;
+    }
+
+    reset_wandder_encoder(encoder);
+    if (encode_encrypt_container(encoder, precomputed, method, input_len) < 0){
+        return -1;
+    }
+    encres = wandder_encode_finish(encoder);
+
+    if (encres == NULL || encres->len == 0 || encres->encoded == NULL) {
+        logger(LOG_INFO, "OpenLI: failed to encode ETSI encrypted container for template");
+        if (encres) {
+            wandder_release_encoded_result(encoder, encres);
+        }
+        return -1;
+    }
+
+    /* Copy the encoded header to the template */
+    tplate->start = malloc(encres->len);
+    memcpy(tplate->start, encres->encoded, encres->len);
+    tplate->totallen = encres->len;
+
+    /* Find the encryptionPayload and save a pointer to the value location so
+     * we can overwrite it when another encrypted record wants to use this
+     * template.
+     */
+    dec = init_wandder_decoder(NULL, tplate->start, tplate->totallen, 0);
+    if (dec == NULL) {
+        logger(LOG_INFO, "OpenLI: unable to create decoder for templated ETSI encrypted payload");
+        return -1;
+    }
+
+    wandder_decode_next(dec);       // payload
+    wandder_decode_next(dec);       // encryptionContainer
+    wandder_decode_next(dec);       // encryptionType
+    wandder_decode_next(dec);       // encryptedPayload
+
+    tplate->payload = wandder_get_itemptr(dec);
+    wandder_decode_next(dec);       // encryptedPayloadType
+    tplate->payload_type = wandder_get_itemptr(dec);
+
+    /* Release the encoded result -- the caller will use the templated copy */
+    wandder_release_encoded_result(encoder, encres);
+    free_wandder_decoder(dec);
     return 0;
 }
 

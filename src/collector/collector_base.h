@@ -252,7 +252,10 @@ typedef struct encoder_state {
 
     Pvoid_t saved_intercept_templates;
     Pvoid_t saved_global_templates;
+    Pvoid_t saved_encryption_templates;
 
+    uint32_t encrypt_byte_counter;
+    uint32_t encrypt_byte_startts;
     int seqtrackers;
     int forwarders;
     uint8_t halted;
