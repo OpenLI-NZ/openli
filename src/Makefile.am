@@ -65,6 +65,8 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/emailprotocols/imap.c \
                 collector/emailprotocols/pop3.c \
                 collector/emailiri.c collector/emailiri.h collector/emailcc.c \
+                collector/etsiencoding/etsiencoding.h \
+                collector/etsiencoding/encryptcontainer.c \
                 $(PLUGIN_SRCS)
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 

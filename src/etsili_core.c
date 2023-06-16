@@ -43,9 +43,6 @@ uint8_t etsi_emailccoid[4] = {0x05, 0x02, 0x0f, 0x02};
 uint8_t etsi_umtsirioid[9] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x04, 0x01, 0x0f, 0x05};
 uint8_t etsi_hi1operationoid[8] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x00, 0x01, 0x06};
 
-#define END_ENCODED_SEQUENCE(enc, x) \
-        wandder_encode_endseq_repeat(enc, x);
-
 static inline void encode_tri_body(wandder_encoder_t *encoder) {
     ENC_CSEQUENCE(encoder, 2);          // Payload
     ENC_CSEQUENCE(encoder, 2);          // TRIPayload
@@ -884,54 +881,6 @@ wandder_encoded_result_t *encode_ipiri_body(wandder_encoder_t *encoder,
     return wandder_encode_finish(encoder);
 }
 
-int encode_encrypt_container(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, payload_encryption_method_t method,
-        uint16_t inplen) {
-
-    wandder_encode_job_t *jobarray[3];
-    uint32_t encrypt_len;
-    char dummycontent[66000];
-    uint32_t payloadtype = 1;
-
-    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]); // Payload
-    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_4]); // encryptionContainer
-
-    inplen += 10;       // 10 bytes for byteCounter
-    if (inplen < 128) {
-        inplen += 2;    // 2 bytes (1 for identifier, 1 for length) for
-                        // EncryptedPayload
-    } else if (inplen < 256) {
-        inplen += 3;    // 3 bytes (1 for identifer, 2 for length)
-    } else {
-        inplen += 4;    // inplen can't exceed 65536, so we can cap this at
-                        // 3 length bytes
-    }
-
-    if (method == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
-        jobarray[2] = &(precomputed[OPENLI_PREENCODE_AES_192_CBC]);
-        encrypt_len = AES_OUTPUT_SIZE(inplen);
-    } else {
-        jobarray[2] = &(precomputed[OPENLI_PREENCODE_NO_ENCRYPTION]);
-        encrypt_len = inplen;
-    }
-
-    wandder_encode_next_preencoded(encoder, jobarray, 3);
-    memset(dummycontent, 0, 66000);
-
-    if (encrypt_len >= 60000) {
-        logger(LOG_INFO, "OpenLI: encryption length %u exceeds expected maximum!");
-        return -1;
-    }
-    wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, dummycontent, encrypt_len);
-
-    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, &payloadtype,
-            sizeof(uint32_t));
-    END_ENCODED_SEQUENCE(encoder, 2);
-    return 0;
-}
-
 void encode_ipmmcc_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed,
         void *ipcontent, uint32_t iplen, uint8_t dir) {
@@ -1671,67 +1620,6 @@ int etsili_update_header_template(encoded_header_template_t *tplate,
     return 0;
 }
 
-int etsili_create_encrypted_template(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, payload_encryption_method_t method,
-        uint16_t input_len, encoded_encrypt_template_t *tplate) {
-
-    wandder_encoded_result_t *encres;
-    wandder_decoder_t *dec;
-
-    if (tplate == NULL) {
-        logger(LOG_INFO, "OpenLI: called etsili_create_encrypted_template with NULL template?");
-        return -1;
-    }
-
-    if (encoder == NULL) {
-        logger(LOG_INFO, "OpenLI: called etsili_create_encrypted_template with NULL encoder?");
-        return -1;
-    }
-
-    reset_wandder_encoder(encoder);
-    if (encode_encrypt_container(encoder, precomputed, method, input_len) < 0){
-        return -1;
-    }
-    encres = wandder_encode_finish(encoder);
-
-    if (encres == NULL || encres->len == 0 || encres->encoded == NULL) {
-        logger(LOG_INFO, "OpenLI: failed to encode ETSI encrypted container for template");
-        if (encres) {
-            wandder_release_encoded_result(encoder, encres);
-        }
-        return -1;
-    }
-
-    /* Copy the encoded header to the template */
-    tplate->start = malloc(encres->len);
-    memcpy(tplate->start, encres->encoded, encres->len);
-    tplate->totallen = encres->len;
-
-    /* Find the encryptionPayload and save a pointer to the value location so
-     * we can overwrite it when another encrypted record wants to use this
-     * template.
-     */
-    dec = init_wandder_decoder(NULL, tplate->start, tplate->totallen, 0);
-    if (dec == NULL) {
-        logger(LOG_INFO, "OpenLI: unable to create decoder for templated ETSI encrypted payload");
-        return -1;
-    }
-
-    wandder_decode_next(dec);       // payload
-    wandder_decode_next(dec);       // encryptionContainer
-    wandder_decode_next(dec);       // encryptionType
-    wandder_decode_next(dec);       // encryptedPayload
-
-    tplate->payload = wandder_get_itemptr(dec);
-    wandder_decode_next(dec);       // encryptedPayloadType
-    tplate->payload_type = wandder_get_itemptr(dec);
-
-    /* Release the encoded result -- the caller will use the templated copy */
-    wandder_release_encoded_result(encoder, encres);
-    free_wandder_decoder(dec);
-    return 0;
-}
-
 int etsili_update_ipmmcc_template(encoded_global_template_t *tplate,
         uint8_t *ipcontent, uint16_t ipclen) {
 
@@ -1936,6 +1824,23 @@ int etsili_create_ipcc_template(wandder_encoder_t *encoder,
     return etsili_create_generic_cc_template(encoder, precomputed, dir,
             ipclen, tplate, CC_TEMPLATE_TYPE_IPCC);
 
+}
+
+inline uint8_t DERIVE_INTEGER_LENGTH(uint64_t x) {
+    if (x < 128) return 1;
+    if (x < 32768) return 2;
+    if (x < 8388608) return 3;
+    if (x < 2147483648) return 4;
+    return 5;
+}
+
+int calculate_pspdu_length(uint32_t contentsize) {
+    uint8_t len_space_req = DERIVE_INTEGER_LENGTH(contentsize);
+
+    if (len_space_req == 1) {
+        return contentsize + 2;
+    }
+    return len_space_req + 2 + contentsize;
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

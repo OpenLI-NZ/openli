@@ -293,14 +293,6 @@ static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
     return 0;
 }
 
-static inline uint8_t DERIVE_INTEGER_LENGTH(uint64_t x) {
-    if (x < 128) return 1;
-    if (x < 32768) return 2;
-    if (x < 8388608) return 3;
-    if (x < 2147483648) return 4;
-    return 5;
-}
-
 static inline uint8_t encode_pspdu_sequence(uint8_t *space, uint8_t space_len,
         uint32_t contentsize, char *liid, uint16_t liidlen) {
 
@@ -493,8 +485,10 @@ static int encode_templated_ipmmcc(openli_encoder_t *enc,
     }
 
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        //create_encrypted_message_body(enc, res, hdr_tplate,
-        //        ipmmcc_tplate, NULL, 0, job);
+        create_encrypted_message_body(enc, res, hdr_tplate,
+                ipmmcc_tplate->cc_content.cc_wrap,
+                ipmmcc_tplate->cc_content.cc_wrap_len,
+                NULL, 0, job);
 
     } else {
 
