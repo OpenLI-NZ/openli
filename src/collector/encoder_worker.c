@@ -242,6 +242,10 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
         zmq_close(enc->zmq_recvjobs[i]);
     }
 
+    if (enc->evp_ctx) {
+        EVP_CIPHER_CTX_free(enc->evp_ctx);
+    }
+
     if (enc->zmq_control) {
         zmq_close(enc->zmq_control);
     }

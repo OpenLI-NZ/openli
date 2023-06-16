@@ -36,6 +36,7 @@
 #include <amqp.h>
 #include <uthash.h>
 #include <libtrace.h>
+#include <openssl/evp.h>
 
 #include "export_shared.h"
 #include "etsili_core.h"
@@ -256,6 +257,8 @@ typedef struct encoder_state {
 
     uint32_t encrypt_byte_counter;
     uint32_t encrypt_byte_startts;
+    EVP_CIPHER_CTX *evp_ctx;
+
     int seqtrackers;
     int forwarders;
     uint8_t halted;

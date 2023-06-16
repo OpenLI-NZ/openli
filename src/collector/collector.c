@@ -1988,6 +1988,7 @@ int main(int argc, char *argv[]) {
 
         glob->encoders[i].encrypt_byte_counter = 0;
         glob->encoders[i].encrypt_byte_startts = 0;
+        glob->encoders[i].evp_ctx = NULL;
         glob->encoders[i].seqtrackers = glob->seqtracker_threads;
         glob->encoders[i].forwarders = glob->forwarding_threads;
 

@@ -24,6 +24,9 @@
  *
  */
 
+#include <openssl/conf.h>
+#include <openssl/evp.h>
+#include <openssl/err.h>
 #include <libwandder_etsili.h>
 #include <assert.h>
 #include "etsili_core.h"
@@ -123,9 +126,59 @@ static int etsili_create_encrypted_template(wandder_encoder_t *encoder,
     return 0;
 }
 
+static int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx,
+        uint8_t *buf, uint16_t buflen, uint8_t *dest,
+        uint16_t destlen, uint32_t seqno, char *encryptkey) {
+
+    uint8_t IV_128[16];
+    uint8_t key[24];
+    uint32_t swapseqno;
+    size_t keylen = strlen(encryptkey);
+    int len, i;
+
+    assert(buflen <= destlen);
+
+    /* Generate the IV */
+    swapseqno = htonl(seqno);
+
+    for (i = 0; i < 16; i+=sizeof(uint32_t)) {
+        memcpy(IV_128 + i, &swapseqno, sizeof(uint32_t));
+    }
+
+    for (i = 0; i < 16; i++) {
+        printf("%02x", *IV_128);
+    }
+    printf("\n");
+
+    if (keylen > 24) {
+        keylen = 24;
+    }
+    memcpy(key, encryptkey, keylen);
+
+    /* Do the encryption */
+    if (EVP_EncryptInit_ex(ctx, EVP_aes_192_cbc(), NULL, key, IV_128) != 1) {
+            logger(LOG_INFO, "OpenLI: unable to initialise EVP encryption operation -- openssl error %s", ERR_error_string(ERR_get_error(), NULL));
+            return -1;
+    }
+
+    if (EVP_EncryptUpdate(ctx, dest, &len, buf, (int)buflen) != 1) {
+            logger(LOG_INFO, "OpenLI: unable to perform EVP encryption operation -- openssl error %s", ERR_error_string(ERR_get_error(), NULL));
+            return -1;
+    }
+
+    if (EVP_EncryptFinal_ex(ctx, dest + len, &len) != 1) {
+            logger(LOG_INFO, "OpenLI: unable to finish EVP encryption operation -- openssl error %s", ERR_error_string(ERR_get_error(), NULL));
+            return -1;
+    }
+
+    return 0;
+
+}
+
 static void DEVDEBUG_dump_contents(uint8_t *buf, uint16_t len) {
 
     int i = 0;
+    FILE *f;
 
     for (i = 0; i < len; i++) {
         printf("%02x ", *(buf + i));
@@ -134,6 +187,10 @@ static void DEVDEBUG_dump_contents(uint8_t *buf, uint16_t len) {
         }
     }
     printf("\n");
+
+    f = fopen("/tmp/encrypt.debug", "w");
+    fwrite(buf, len, 1, f);
+    fclose(f);
 
 }
 
@@ -151,11 +208,7 @@ int create_encrypted_message_body(openli_encoder_t *enc,
     uint8_t *encrypted;
     uint32_t bytecounter;
     uint32_t bc_increase;
-    uint8_t IV_128[16];
 
-    /* "strip" the first field from the payloadbody, as this is a
-     * "Payload" field that is not included in the encryption container.
-     */
     if (payloadbody == NULL) {
         logger(LOG_INFO, "OpenLI: cannot encrypt an ETSI PDU that does not have valid encoded payload");
         return -1;
@@ -174,7 +227,7 @@ int create_encrypted_message_body(openli_encoder_t *enc,
         containerlen = 3;
     } else {
         inplen += 5;    // inplen can't exceed 65536, so we can cap this at
-                        // 3 length bytes
+                        // 4 length bytes
         containerlen = 4;
     }
 
@@ -265,20 +318,29 @@ int create_encrypted_message_body(openli_encoder_t *enc,
         ptr += ipclen;
     }
 
-    DEVDEBUG_dump_contents(buf, enclen);
-    assert(0);
+    /* If this is our first time through, we'll need an encryption context */
+    if (enc->evp_ctx == NULL) {
+        enc->evp_ctx = EVP_CIPHER_CTX_new();
+        if (enc->evp_ctx == NULL) {
+            logger(LOG_INFO, "OpenLI: unable to create EVP encryption context -- openssl error %s", ERR_error_string(ERR_get_error(), NULL));
+            return -1;
+        }
+    }
 
+    /* Do the encryption */
     if (job->encryptmethod == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
-
-        /* Generate the IV */
-
-        /* Do the encryption */
-
+        if (encrypt_aes_192_cbc(enc->evp_ctx, buf, enclen, encrypted, enclen,
+                job->seqno, job->encryptkey) < 0) {
+            return -1;
+        }
     } else {
         memcpy(encrypted, buf, enclen);
 
 
     }
+
+    DEVDEBUG_dump_contents(encrypted, enclen);
+    assert(0);
 
     /* Lookup the template for a message of this length and encryption method */
 
