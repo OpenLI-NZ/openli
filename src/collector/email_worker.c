@@ -106,24 +106,48 @@ static struct sockaddr_storage *construct_sockaddr(char *ip, char *port,
 void replace_email_session_serveraddr(emailsession_t *sess,
         char *server_ip, char *server_port) {
 
+    struct sockaddr_storage *repl = NULL;
+
+    if (strcmp(server_port, "0") == 0) {
+        return;
+    }
+
+    if (strcmp(server_ip, "") == 0) {
+        return;
+    }
+
+    repl = construct_sockaddr(server_ip, server_port, &(sess->ai_family));
+    if (repl == NULL) {
+        return;
+    }
     if (sess->serveraddr) {
         free(sess->serveraddr);
     }
-
-    sess->serveraddr = construct_sockaddr(server_ip, server_port,
-            &(sess->ai_family));
+    sess->serveraddr = repl;
 
 }
 
 void replace_email_session_clientaddr(emailsession_t *sess,
         char *client_ip, char *client_port) {
 
+    struct sockaddr_storage *repl = NULL;
+
+    if (strcmp(client_port, "0") == 0) {
+        return;
+    }
+
+    if (strcmp(client_ip, "") == 0) {
+        return;
+    }
+
+    repl = construct_sockaddr(client_ip, client_port, &(sess->ai_family));
+    if (repl == NULL) {
+        return;
+    }
     if (sess->clientaddr) {
         free(sess->clientaddr);
     }
-
-    sess->clientaddr = construct_sockaddr(client_ip, client_port, NULL);
-
+    sess->clientaddr = repl;
 }
 
 static openli_email_captured_t *convert_packet_to_email_captured(
