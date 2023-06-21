@@ -98,12 +98,21 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
     msg->data.emailiri.cin = sess->cin;
     msg->data.emailiri.iritype = iritype;
     content->eventtype = emailev;
-    content->serveraddr = calloc(1, sizeof(struct sockaddr_storage));
-    memcpy(content->serveraddr, sess->serveraddr,
-            sizeof(struct sockaddr_storage));
-    content->clientaddr = calloc(1, sizeof(struct sockaddr_storage));
-    memcpy(content->clientaddr, sess->clientaddr,
-            sizeof(struct sockaddr_storage));
+    if (sess->serveraddr) {
+        content->serveraddr = calloc(1, sizeof(struct sockaddr_storage));
+        memcpy(content->serveraddr, sess->serveraddr,
+                sizeof(struct sockaddr_storage));
+    } else {
+        content->serveraddr = NULL;
+    }
+
+    if (sess->clientaddr) {
+        content->clientaddr = calloc(1, sizeof(struct sockaddr_storage));
+        memcpy(content->clientaddr, sess->clientaddr,
+                sizeof(struct sockaddr_storage));
+    } else {
+        content->clientaddr = NULL;
+    }
     content->server_octets = sess->server_octets;
     content->client_octets = sess->client_octets;
     content->protocol = sess->protocol;
