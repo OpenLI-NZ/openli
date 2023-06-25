@@ -35,7 +35,7 @@ voip-ignorecomfort: no
 # Location of the SQLite3 database where credentials and API keys are stored
 # for authorised access to the REST API. If this option is not present,
 # then the REST API can be used without authentication.
-# See https://github.com/wanduow/openli/wiki/Authenticated-REST-API for more
+# See https://github.com/OpenLI-NZ/openli/wiki/Authenticated-REST-API for more
 # information about authentication and the REST API.
 
 # restauthdb: /var/lib/openli/provauth.db

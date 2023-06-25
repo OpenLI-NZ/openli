@@ -4,8 +4,8 @@ Release:        1%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
 License:        GPLv3
-URL:            https://github.com/wanduow/OpenLI
-Source0:        https://github.com/wanduow/OpenLI/archive/%{version}.tar.gz
+URL:            https://github.com/OpenLI-NZ/OpenLI
+Source0:        https://github.com/OpenLI-NZ/OpenLI/archive/%{version}.tar.gz
 
 BuildRequires: gcc
 BuildRequires: gcc-c++

@@ -6,7 +6,7 @@
 #
 # You should use the OpenLI REST API to create and modify your intercept
 # configuration files, rather than editing by hand.
-# See https://github.com/wanduow/openli/wiki/Intercept-Configuration-REST-API
+# See https://github.com/OpenLI-NZ/openli/wiki/Intercept-Configuration-REST-API
 # for instructions on how to do this.
 #
 #

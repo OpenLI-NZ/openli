@@ -30,7 +30,7 @@ delete or query intercepts within the OpenLI system. A simple HTTP server
 is run on the socket and there is a RESTful API that can be used to interact
 with the update socket. Full documentation of the REST API for intercept
 management is available at
-https://github.com/wanduow/openli/wiki/Intercept-Configuration-REST-API
+https://github.com/OpenLI-NZ/openli/wiki/Intercept-Configuration-REST-API
 
 In addition to intercepts, the update socket can be used to manage the agencies
 that the OpenLI system will export intercepts to, as well as the set of
@@ -69,7 +69,7 @@ is running on.
 
 Full documentation on the authentication system, how to enable it and how
 to add users to it can be found at:
-https://github.com/wanduow/openli/wiki/Authenticated-REST-API
+https://github.com/OpenLI-NZ/openli/wiki/Authenticated-REST-API
 
 Users can authenticate by either including their API key in their HTTP
 requests (using the `X-API-KEY` header) or by performing standard Digest

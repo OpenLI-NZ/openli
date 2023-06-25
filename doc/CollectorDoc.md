@@ -150,7 +150,7 @@ for the best reliability, we recommend configuring your collectors and mediators
 to use RabbitMQ as an intermediary.
 
 More details on how to configure RabbitMQ for a collector can be found at
-https://github.com/wanduow/openli/wiki/Using-RabbitMQ-for-disk-backed-buffers-in-OpenLI.
+https://github.com/OpenLI-NZ/openli/wiki/Using-RabbitMQ-for-disk-backed-buffers-in-OpenLI.
 A collector only requires a small amount of configuration: a username and
 password that can be used to authenticate against a local RabbitMQ instance,
 and a flag to inform the collector that RabbitMQ output is enabled.

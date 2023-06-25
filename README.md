@@ -32,7 +32,7 @@ of the software is an initial release and we anticipate that there will
 still be many bugs and incompatibilities that we have not yet encountered
 in our testing so far. If you do encounter issues with the OpenLI software,
 please report them to us via our Github page
-(https://github.com/wanduow/openli) so that we can continue to improve the
+(https://github.com/OpenLI-NZ/openli) so that we can continue to improve the
 quality of OpenLI for all of our users.
 
 ## ALSO IMPORTANT
@@ -60,14 +60,14 @@ recommend that you install OpenLI using a package if you can, rather than
 building from source.
 
 Instructions on packaged installs can be found at:
-  https://github.com/wanduow/openli/wiki/Installing-Debian-Packaged-Version
-  https://github.com/wanduow/openli/wiki/Installing-via-RPM
+  https://github.com/OpenLI-NZ/openli/wiki/Installing-Debian-Packaged-Version
+  https://github.com/OpenLI-NZ/openli/wiki/Installing-via-RPM
 
 
 ## The OpenLI Wiki
 
 The best source of documentation for OpenLI is the OpenLI wiki at
-https://github.com/wanduow/openli/wiki -- we have specific pages on a number
+https://github.com/OpenLI-NZ/openli/wiki -- we have specific pages on a number
 of topics that may be relevant to OpenLI users (e.g. encryption, the REST
 API, DPDK with OpenLI, etc.). The wiki tends to be updated more often than
 the in-code documentation (e.g. the `doc/` directory) as well.
@@ -78,11 +78,11 @@ will be more than happy to accept your contribution.
 
 ## Dependencies for building from source
 
-* [libtrace 4.0.18 or later](http://research.wand.net.nz/software/libtrace.php)
+* [libtrace 4.0.18 or later](https://github.com/LibtraceTeam/libtrace/)
   (packages for Debian / Ubuntu are available
   [from WAND](https://cloudsmith.io/~wand/repos/libtrace/packages/) as well).
 
-* [libwandder 2.0.4 or later](https://github.com/wanduow/libwandder/)
+* [libwandder 2.0.4 or later](https://github.com/LibtraceTeam/libwandder/)
   (packages for Debian / Ubuntu are available
   [from WAND](https://cloudsmith.io/~wand/repos/libwandder/packages/) as well).
 
@@ -188,7 +188,7 @@ input sources (i.e. capture interfaces) and use multiple threads to spread
 the collection workload across multiple CPU cores.
 
 The recommended way to learn about OpenLI is by taking our tutorial, which can
-be found at https://github.com/wanduow/openli/wiki/OpenLI-Tutorial -- the
+be found at https://github.com/OpenLI-NZ/openli/wiki/OpenLI-Tutorial -- the
 tutorial includes practical exercises using containers that will help
 you become familiar with the OpenLI components and how to configure them.
 
@@ -208,7 +208,7 @@ added, removed or modified and update their behaviour accordingly.
 Starting from version 1.0.4, the provisioner will also listen on a socket
 for RESTful HTTP requests that either add or modify the running intercept
 configuration. The API for interacting with this update socket is documented
-at https://github.com/wanduow/openli/wiki/Intercept-Configuration-REST-API
+at https://github.com/OpenLI-NZ/openli/wiki/Intercept-Configuration-REST-API
 
 
 ## Common problems with OpenLI
@@ -227,10 +227,10 @@ A. Unfortunately there are plenty of reasons why this might happen. Here are
   https://github.com/LibtraceTeam/libtrace
 
 * Try installing the latest 'develop' branch of libwandder from
-  https://github.com/wanduow/libwandder
+  https://github.com/LibtraceTeam/libwandder
 
 * Try installing the latest 'develop' branch of openli itself from
-  https://github.com/wanduow/openli
+  https://github.com/OpenLI-NZ/openli
 
   If all else fails, send us an email at openli-support@waikato.ac.nz and
   someone will try to help you.
