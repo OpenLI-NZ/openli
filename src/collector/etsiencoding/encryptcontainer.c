@@ -34,12 +34,74 @@
 #include "intercept.h"
 #include "etsiencoding.h"
 
+static void DEVDEBUG_dump_contents(uint8_t *buf, uint16_t len) {
+
+    int i = 0;
+    FILE *f;
+
+    for (i = 0; i < len; i++) {
+        printf("%02x ", *(buf + i));
+        if ((i % 16) == 15) {
+            printf("\n");
+        }
+    }
+    printf("\n");
+
+    f = fopen("/tmp/encrypt.debug", "w");
+    fwrite(buf, len, 1, f);
+    fclose(f);
+
+}
+
+static inline uint32_t job_origreq_to_encrypted_payload_type(
+        openli_encoding_job_t *job) {
+
+    switch(job->origreq->type) {
+        case OPENLI_EXPORT_EMAILIRI:
+        case OPENLI_EXPORT_EMAILCC:
+            return OPENLI_ENCRYPTED_PAYLOAD_TYPE_PART2;
+        case OPENLI_EXPORT_IPCC:
+        case OPENLI_EXPORT_IPIRI:
+            return OPENLI_ENCRYPTED_PAYLOAD_TYPE_PART3;
+        case OPENLI_EXPORT_UMTSCC:
+        case OPENLI_EXPORT_UMTSIRI:
+            return OPENLI_ENCRYPTED_PAYLOAD_TYPE_PART7;
+        case OPENLI_EXPORT_IPMMCC:
+        case OPENLI_EXPORT_IPMMIRI:
+            return OPENLI_ENCRYPTED_PAYLOAD_TYPE_PART5;
+    }
+
+    return OPENLI_ENCRYPTED_PAYLOAD_TYPE_UNKNOWN;
+}
+
+void etsili_destroy_encrypted_templates(openli_encoder_t *enc) {
+    Word_t indexint;
+    PWord_t pval;
+    int rcint;
+
+    indexint = 0;
+    JLF(pval, enc->saved_encryption_templates, indexint);
+    while (pval) {
+        encoded_encrypt_template_t *t;
+
+        t = (encoded_encrypt_template_t *)(*pval);
+        if (t->start) {
+            free(t->start);
+        }
+        free(t);
+        JLN(pval, enc->saved_encryption_templates, indexint);
+    }
+    JLFA(rcint, enc->saved_encryption_templates);
+
+
+}
+
 static int encode_encrypt_container(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, payload_encryption_method_t method,
-        uint8_t *enccontent, uint16_t enclen) {
+        uint8_t *enccontent, uint16_t enclen, openli_encoding_job_t *job) {
 
     wandder_encode_job_t *jobarray[3];
-    uint32_t payloadtype = 1;
+    uint32_t payloadtype = job_origreq_to_encrypted_payload_type(job);
 
     jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]); // Payload
     jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_4]); // encryptionContainer
@@ -63,10 +125,26 @@ static int encode_encrypt_container(wandder_encoder_t *encoder,
     return 0;
 }
 
+static int etsili_update_encrypted_template(
+        encoded_encrypt_template_t *tplate, uint8_t *enccontent,
+        uint16_t enclen, openli_encoding_job_t *job) {
+
+    uint32_t payloadtype = job_origreq_to_encrypted_payload_type(job);
+    uint8_t ptype;
+    assert(enclen == tplate->payloadlen);
+    assert(payloadtype < 255);
+
+    memcpy(tplate->payload, enccontent, enclen);
+
+    ptype = (payloadtype & 0xff);
+    memcpy(tplate->payload_type, &ptype, sizeof(uint8_t));
+    return 0;
+}
+
 static int etsili_create_encrypted_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, payload_encryption_method_t method,
         uint8_t *enccontent, uint16_t enclen,
-        encoded_encrypt_template_t *tplate) {
+        encoded_encrypt_template_t *tplate, openli_encoding_job_t *job) {
 
     wandder_encoded_result_t *encres;
     wandder_decoder_t *dec;
@@ -83,7 +161,7 @@ static int etsili_create_encrypted_template(wandder_encoder_t *encoder,
 
     reset_wandder_encoder(encoder);
     if (encode_encrypt_container(encoder, precomputed, method, enccontent,
-                enclen) < 0){
+                enclen, job) < 0){
         return -1;
     }
     encres = wandder_encode_finish(encoder);
@@ -101,6 +179,7 @@ static int etsili_create_encrypted_template(wandder_encoder_t *encoder,
     memcpy(tplate->start, encres->encoded, encres->len);
     tplate->totallen = encres->len;
 
+
     /* Find the encryptionPayload and save a pointer to the value location so
      * we can overwrite it when another encrypted record wants to use this
      * template.
@@ -117,6 +196,7 @@ static int etsili_create_encrypted_template(wandder_encoder_t *encoder,
     wandder_decode_next(dec);       // encryptedPayload
 
     tplate->payload = wandder_get_itemptr(dec);
+    tplate->payloadlen = enclen;
     wandder_decode_next(dec);       // encryptedPayloadType
     tplate->payload_type = wandder_get_itemptr(dec);
 
@@ -124,6 +204,31 @@ static int etsili_create_encrypted_template(wandder_encoder_t *encoder,
     wandder_release_encoded_result(encoder, encres);
     free_wandder_decoder(dec);
     return 0;
+}
+
+static encoded_encrypt_template_t *lookup_encrypted_template(
+        openli_encoder_t *enc, uint16_t length,
+        payload_encryption_method_t method, uint8_t *is_new) {
+
+    PWord_t pval;
+    uint32_t key;
+    encoded_encrypt_template_t *tplate = NULL;
+
+    key = (method << 16) + length;
+    JLG(pval, enc->saved_encryption_templates, key);
+
+    if (pval == NULL) {
+        tplate = calloc(1, sizeof(encoded_encrypt_template_t));
+        tplate->key = key;
+        JLI(pval, enc->saved_encryption_templates, key);
+        *pval = (Word_t)tplate;
+        *is_new = 1;
+    } else {
+        tplate = (encoded_encrypt_template_t *)(*pval);
+        *is_new = 0;
+    }
+
+    return tplate;
 }
 
 static int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx,
@@ -142,13 +247,8 @@ static int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx,
     swapseqno = htonl(seqno);
 
     for (i = 0; i < 16; i+=sizeof(uint32_t)) {
-        memcpy(IV_128 + i, &swapseqno, sizeof(uint32_t));
+        memcpy(&(IV_128[i]), &swapseqno, sizeof(uint32_t));
     }
-
-    for (i = 0; i < 16; i++) {
-        printf("%02x", *IV_128);
-    }
-    printf("\n");
 
     if (keylen > 24) {
         keylen = 24;
@@ -175,25 +275,6 @@ static int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx,
 
 }
 
-static void DEVDEBUG_dump_contents(uint8_t *buf, uint16_t len) {
-
-    int i = 0;
-    FILE *f;
-
-    for (i = 0; i < len; i++) {
-        printf("%02x ", *(buf + i));
-        if ((i % 16) == 15) {
-            printf("\n");
-        }
-    }
-    printf("\n");
-
-    f = fopen("/tmp/encrypt.debug", "w");
-    fwrite(buf, len, 1, f);
-    fclose(f);
-
-}
-
 int create_encrypted_message_body(openli_encoder_t *enc,
                 openli_encoded_result_t *res,
                 encoded_header_template_t *hdr_tplate,
@@ -203,11 +284,12 @@ int create_encrypted_message_body(openli_encoder_t *enc,
 
     uint32_t inplen;
     uint32_t enclen = 0, newbodylen = 0;
-    uint8_t containerlen = 0;
+    uint8_t containerlen = 0, is_new = 0;
     uint8_t *buf, *ptr;
     uint8_t *encrypted;
     uint32_t bytecounter;
     uint32_t bc_increase;
+    encoded_encrypt_template_t *tplate = NULL;
 
     if (payloadbody == NULL) {
         logger(LOG_INFO, "OpenLI: cannot encrypt an ETSI PDU that does not have valid encoded payload");
@@ -335,22 +417,40 @@ int create_encrypted_message_body(openli_encoder_t *enc,
         }
     } else {
         memcpy(encrypted, buf, enclen);
-
-
     }
 
-    DEVDEBUG_dump_contents(encrypted, enclen);
-    assert(0);
+    free(buf);
 
     /* Lookup the template for a message of this length and encryption method */
+    tplate = lookup_encrypted_template(enc, enclen, job->encryptmethod,
+            &is_new);
 
     /* If we need to create a template, then do so -- otherwise, update
      * the one that we already have.
      */
+    if (is_new) {
+        if (etsili_create_encrypted_template(enc->encoder, job->preencoded,
+                job->encryptmethod, encrypted, enclen, tplate, job) < 0) {
+            free(encrypted);
+            return -1;
+        }
+    } else {
+        if (etsili_update_encrypted_template(tplate, encrypted, enclen,
+                job) < 0) {
+            free(encrypted);
+            return -1;
+        }
+    }
 
     /* We should now have a suitable header template and body template to
      * create a complete ETSI PSPDU record */
+    if (create_etsi_encoded_result(res, hdr_tplate, tplate->start,
+            tplate->totallen, NULL, 0, job) < 0) {
+        free(encrypted);
+        return -1;
+    }
 
+    free(encrypted);
     return 0;
 }
 

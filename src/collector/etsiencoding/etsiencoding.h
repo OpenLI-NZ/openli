@@ -47,10 +47,22 @@
 typedef struct encoded_encrypt_template {
     uint32_t key;
     uint32_t totallen;
+    uint32_t payloadlen;
     uint8_t *start;
     uint8_t *payload;
     uint8_t *payload_type;
 } encoded_encrypt_template_t;
+
+enum {
+    OPENLI_ENCRYPTED_PAYLOAD_TYPE_UNKNOWN = 1,
+    OPENLI_ENCRYPTED_PAYLOAD_TYPE_PART2 = 2,
+    OPENLI_ENCRYPTED_PAYLOAD_TYPE_PART3 = 3,
+    OPENLI_ENCRYPTED_PAYLOAD_TYPE_PART4 = 4,
+    OPENLI_ENCRYPTED_PAYLOAD_TYPE_PART5 = 5,
+    OPENLI_ENCRYPTED_PAYLOAD_TYPE_PART6 = 6,
+    OPENLI_ENCRYPTED_PAYLOAD_TYPE_PART7 = 7,
+    OPENLI_ENCRYPTED_PAYLOAD_TYPE_PART1 = 8
+};
 
 int create_encrypted_message_body(openli_encoder_t *enc,
                 openli_encoded_result_t *res,
@@ -59,6 +71,13 @@ int create_encrypted_message_body(openli_encoder_t *enc,
                 uint8_t *ipcontents, uint16_t ipclen,
                 openli_encoding_job_t *job);
 
+int create_etsi_encoded_result(openli_encoded_result_t *res,
+        encoded_header_template_t *hdr_tplate,
+        uint8_t *body_content, uint16_t bodylen,
+        uint8_t *trailing, uint16_t traillen,
+        openli_encoding_job_t *job);
+
+void etsili_destroy_encrypted_templates(openli_encoder_t *enc);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

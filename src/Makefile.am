@@ -66,6 +66,7 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/emailprotocols/pop3.c \
                 collector/emailiri.c collector/emailiri.h collector/emailcc.c \
                 collector/etsiencoding/etsiencoding.h \
+                collector/etsiencoding/etsiencoding.c \
                 collector/etsiencoding/encryptcontainer.c \
                 $(PLUGIN_SRCS)
 
