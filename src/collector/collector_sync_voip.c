@@ -138,6 +138,9 @@ void clean_sync_voip_data(collector_sync_voip_t *sync) {
     sync_epoll_t *syncev, *tmp;
 
     free_voip_cinmap(sync->knowncallids);
+    HASH_ITER(hh, sync->timeouts, syncev, tmp) {
+        HASH_DELETE(hh, sync->timeouts, syncev);
+    }
     if (sync->voipintercepts) {
         free_all_voipintercepts(&(sync->voipintercepts));
     }
@@ -153,9 +156,6 @@ void clean_sync_voip_data(collector_sync_voip_t *sync) {
         free(sync->expiring_streams);
     }
 
-    HASH_ITER(hh, sync->timeouts, syncev, tmp) {
-        HASH_DELETE(hh, sync->timeouts, syncev);
-    }
 
     sync->voipintercepts = NULL;
     sync->knowncallids = NULL;
