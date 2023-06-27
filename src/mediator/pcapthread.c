@@ -823,7 +823,11 @@ int handle_pcap_thread_messages(lea_thread_state_t *state,
 
         if (msg.type == MED_LEA_MESSAGE_RELOAD_CONFIG) {
             /* Config has potentially changed, so re-read it */
-            read_parent_config(state);
+            if (read_parent_config(state) == 1) {
+                reset_handover_rmq(state->agency.hi3);
+                reset_handover_rmq(state->agency.hi2);
+                reset_handover_rmq(pstate->rawip_handover);
+            }
         }
 
         if (msg.type == MED_LEA_MESSAGE_UPDATE_AGENCY) {
@@ -956,7 +960,8 @@ static void *run_pcap_thread(void *params) {
     pstate.rawip_handover = create_new_handover(state->epoll_fd, NULL, NULL,
             HANDOVER_RAWIP, 0, 0);
 
-    register_handover_RMQ_all(pstate.rawip_handover, NULL, "pcapdisk");
+    register_handover_RMQ_all(pstate.rawip_handover, NULL, "pcapdisk",
+            state->internalrmqpass);
     logger(LOG_INFO, "OpenLI Mediator: starting pcap output thread");
 
     if (create_agency_thread_timers(state) < 0) {
@@ -998,7 +1003,8 @@ static void *run_pcap_thread(void *params) {
 
         if (!state->agency.hi3->rmq_registered) {
             register_handover_RMQ_all(state->agency.hi3,
-                    &(state->active_liids), state->agencyid);
+                    &(state->active_liids), state->agencyid,
+                    state->internalrmqpass);
         }
 
         /* epoll */

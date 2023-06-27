@@ -151,6 +151,11 @@ typedef struct single_coll_receiver {
      */
     int rmqenabled;
 
+    /** Password to access the local RMQ instance where received records
+     *  are published to so that LEA threads can read them when ready/
+     */
+    char *internalpass;
+
     /** Flag indicating whether the TCP socket to the collector should be
      *  encrypted with TLS or not
      */

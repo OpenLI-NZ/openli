@@ -178,6 +178,8 @@ typedef struct lea_thread_state {
     /** The shared configuration for all LEA threads */
     mediator_lea_config_t *parentconfig;
 
+    /** The password to use to authenticate against the internal RMQ vhost */
+    char *internalrmqpass;
     /** The frequency at which this thread should perform RMQ maintenance
      *  tasks (in seconds)
      */
@@ -323,8 +325,11 @@ int agency_thread_action_cease_liid_timer(lea_thread_state_t *state);
  *  version of the configuration managed by the main mediator thread.
  *
  *  @param state        The state object for the LEA send thread
+ *  @return 1 if the RMQ internal password has changed (so all RMQ
+ *          local connections should be restarted, 0 otherwise.
+
  */
-void read_parent_config(lea_thread_state_t *state);
+int read_parent_config(lea_thread_state_t *state);
 
 /** Declares and initialises the mediator epoll timer events that are
  *  used by an LEA send thread (or a pcap writer thread).

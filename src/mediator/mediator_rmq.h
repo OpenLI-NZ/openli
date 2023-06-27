@@ -68,12 +68,13 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col);
  *  @param logfailure       Flag indicating whether to write a log message if
  *                          an error occurs. Set to zero to avoid log spam
  *                          if the connection attempt repeatedly fails.
+ *  @param password         The password to use to authenticate with RMQ.
  *
  *  @return NULL if the connection fails, otherwise the newly created
  *          connection object.
  */
 amqp_connection_state_t join_mediator_RMQ_as_consumer(char *agencyid,
-        int logfailure);
+        int logfailure, char *password);
 
 /** Declares the IRI queue for a given LIID and registers it with an
  *  RMQ connection for consumption.

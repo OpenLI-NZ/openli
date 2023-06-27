@@ -132,6 +132,9 @@ static void clear_med_config(mediator_state_t *state) {
     if (state->RMQ_conf.pass) {
         free(state->RMQ_conf.pass);
     }
+    if (state->RMQ_conf.internalpass) {
+        free(state->RMQ_conf.internalpass);
+    }
 
     free_ssl_config(&(state->sslconf));
 }
@@ -202,6 +205,7 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
 
     state->RMQ_conf.name = NULL;
     state->RMQ_conf.pass = NULL;
+    state->RMQ_conf.internalpass = NULL;
     state->RMQ_conf.hostname = NULL;
     state->RMQ_conf.port = 0;
     state->RMQ_conf.heartbeatFreq = 0;
@@ -222,6 +226,25 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
     /* Parse the provided config file */
     if (parse_mediator_config(configfile, state) == -1) {
         return -1;
+    }
+
+    if (state->RMQ_conf.internalpass == NULL) {
+        /* First, try to read a password from /etc/openli/rmqinternalpass */
+        FILE *f = fopen("/etc/openli/rmqinternalpass", "r");
+        char line[2048];
+        if (f != NULL) {
+            if (fgets(line, 2048, f) != NULL) {
+                if (line[strlen(line) - 1] == '\n') {
+                    line[strlen(line) - 1] = '\0';
+                }
+                state->RMQ_conf.internalpass = strdup(line);
+            }
+        }
+        /* If we can't do that, throw an error */
+        if (state->RMQ_conf.internalpass == NULL) {
+            logger(LOG_ERR, "OpenLI mediator: unable to determine password for internal RMQ vhost -- mediator must exit");
+            return -1;
+        }
     }
 
     if (create_ssl_context(&(state->sslconf)) < 0) {
@@ -338,6 +361,23 @@ static void update_lea_thread_config(mediator_state_t *state) {
     }
 
 }
+
+static void update_coll_recv_thread_config(mediator_state_t *state) {
+    coll_recv_t *col_t, *tmp;
+    col_thread_msg_t msg;
+
+    update_med_collector_config(&(state->collector_threads.config),
+                state->etsitls, state->mediatorid);
+
+    /* Send the "reload your config" message to every collector thread */
+    memset(&msg, 0, sizeof(msg));
+
+    HASH_ITER(hh, state->collector_threads.threads, col_t, tmp) {
+        msg.type = MED_COLL_MESSAGE_RELOAD;
+        libtrace_message_queue_put(&(col_t->in_main), &msg);
+    }
+}
+
 
 /** Tells every LEA send thread to start a shutdown timer.
  *
@@ -1093,6 +1133,8 @@ static int reload_mediator_config(mediator_state_t *currstate) {
     int medidchanged = 0;
     int opidchanged = 0;
 
+    /* TODO the logic in here is horrible to try and follow! */
+
     /* Load the updated config into a spare "global state" instance */
     if (init_med_state(&newstate, currstate->conffile) == -1) {
         logger(LOG_INFO,
@@ -1136,6 +1178,20 @@ static int reload_mediator_config(mediator_state_t *currstate) {
         currstate->shortoperatorid = newstate.shortoperatorid;
         newstate.shortoperatorid = tmp;
     }
+
+    /* Has the RMQ internal password changed? */
+    lock_med_collector_config(&(currstate->collector_threads.config));
+    if (strcmp(currstate->RMQ_conf.internalpass,
+            newstate.RMQ_conf.internalpass) != 0) {
+
+        char *tmp = currstate->RMQ_conf.internalpass;
+        logger(LOG_INFO,
+                "OpenLI Mediator: RMQ internal password has changed.");
+        rmqchanged = 1;
+        currstate->RMQ_conf.internalpass = newstate.RMQ_conf.internalpass;
+        newstate.RMQ_conf.internalpass = tmp;
+    }
+    unlock_med_collector_config(&(currstate->collector_threads.config));
 
     /* Has the RMQ heartbeat frequency changed? */
     if (currstate->RMQ_conf.heartbeatFreq != newstate.RMQ_conf.heartbeatFreq)
@@ -1189,21 +1245,36 @@ static int reload_mediator_config(mediator_state_t *currstate) {
     }
 
     if (tlschanged != 0 || newstate.etsitls != currstate->etsitls ||
-            medidchanged) {
+            medidchanged || rmqchanged) {
         /* Something has changed that will affect our collector receive
          * threads and therefore we may need to drop them and force them
          * to reconnect.
          */
-        currstate->etsitls = newstate.etsitls;
 
-        update_med_collector_config(&(currstate->collector_threads.config),
-                currstate->etsitls, currstate->mediatorid);
+        if (newstate.etsitls != currstate->etsitls) {
+            currstate->etsitls = newstate.etsitls;
+            tlschanged = 1;
+        }
+        update_coll_recv_thread_config(currstate);
 
+    }
+
+    if (tlschanged || medidchanged) {
+        /* If TLS changed, then our existing connections are no longer
+         * valid.
+         *
+         * If the mediator ID changed, then we also need to rejoin the
+         * collectors -- if we are using RMQ, the queue ID that we are
+         * supposed to read from is based on our mediator ID number so
+         * it's just easiest to reset our connections.
+         */
         if (!listenchanged) {
             /* Disconnect all collectors */
             mediator_disconnect_all_collectors(&(currstate->collector_threads));
             listenchanged = 1;
         }
+    }
+    if (tlschanged) {
         if (!provchanged) {
             drop_provisioner(currstate);
             provchanged = 1;

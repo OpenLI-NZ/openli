@@ -351,12 +351,13 @@ void remove_mediator_rawip_RMQ_queue(amqp_connection_state_t state,
  *  @param logfailure       Flag indicating whether to write a log message if
  *                          an error occurs. Set to zero to avoid log spam
  *                          if the connection attempt repeatedly fails.
+ *  @param password         The password to use to authenticate with RMQ.
  *
  *  @return NULL if the connection fails, otherwise the newly created
  *          connection object.
  */
 amqp_connection_state_t join_mediator_RMQ_as_consumer(char *agencyid,
-        int logfailure) {
+        int logfailure, char *password) {
 
     amqp_connection_state_t state;
     amqp_socket_t *amqp_sock;
@@ -371,11 +372,9 @@ amqp_connection_state_t join_mediator_RMQ_as_consumer(char *agencyid,
         goto consfailed;
     }
 
-    /* Hard-coded username and password -- not ideal, but the RMQ instance
-     * should only be accessible via localhost.
-     */
+    /* Hard-coded username and vhost */
     if ((amqp_login(state, "OpenLI-med", 0, 131072, 0,
-                AMQP_SASL_METHOD_PLAIN, "openli.nz", "mediatorinternal"))
+                AMQP_SASL_METHOD_PLAIN, "openli.nz", password))
             .reply_type != AMQP_RESPONSE_NORMAL) {
         if (logfailure) {
             logger(LOG_ERR, "OpenLI Mediator: failed to log into RMQ broker using plain auth in agency thread %s", agencyid);
@@ -435,6 +434,11 @@ amqp_connection_state_t join_mediator_RMQ_as_producer(coll_recv_t *col) {
         return col->amqp_producer_state;
     }
 
+    if (col->internalpass == NULL) {
+        logger(LOG_INFO, "OpenLI Mediator: collector thread for %s cannot log into RMQ broker because no suitable password has been configured.", col->ipaddr);
+        goto prodfailed;
+    }
+
     col->amqp_producer_state = amqp_new_connection();
     col->amqp_producer_sock = amqp_tcp_socket_new(col->amqp_producer_state);
 
@@ -449,7 +453,7 @@ amqp_connection_state_t join_mediator_RMQ_as_producer(coll_recv_t *col) {
      * should only be accessible via localhost.
      */
     if ((amqp_login(col->amqp_producer_state, "OpenLI-med", 0, 131072, 0,
-                AMQP_SASL_METHOD_PLAIN, "openli.nz", "mediatorinternal"))
+                AMQP_SASL_METHOD_PLAIN, "openli.nz", col->internalpass))
             .reply_type != AMQP_RESPONSE_NORMAL) {
         if (col->disabled_log == 0) {
             logger(LOG_ERR, "OpenLI Mediator: failed to log into RMQ broker using plain auth in collector thread %s", col->ipaddr);

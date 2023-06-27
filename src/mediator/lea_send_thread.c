@@ -642,8 +642,13 @@ int insert_lea_liid_mapping(lea_thread_state_t *state, char *liid) {
  *  version of the configuration managed by the main mediator thread.
  *
  *  @param state        The state object for the LEA send thread
+ *
+ *  @return 1 if the RMQ internal password has changed (so all RMQ
+ *          local connections should be restarted, 0 otherwise.
  */
-void read_parent_config(lea_thread_state_t *state) {
+int read_parent_config(lea_thread_state_t *state) {
+
+    int register_required = 0;
 
     /* To avoid excessive locking, we maintain a local per-thread copy
      * of all relevant config options. If the config is re-loaded (e.g.
@@ -652,6 +657,21 @@ void read_parent_config(lea_thread_state_t *state) {
      * reload.
      */
     pthread_mutex_lock(&(state->parentconfig->mutex));
+    if (state->internalrmqpass) {
+        if (state->parentconfig->rmqconf->internalpass == NULL ||
+            strcmp(state->parentconfig->rmqconf->internalpass,
+                    state->internalrmqpass) != 0) {
+
+            register_required = 1;
+        }
+        free(state->internalrmqpass);
+    }
+    if (state->parentconfig->rmqconf->internalpass) {
+        state->internalrmqpass =
+                strdup(state->parentconfig->rmqconf->internalpass);
+    } else {
+        state->internalrmqpass = NULL;
+    }
     state->rmq_hb_freq = state->parentconfig->rmqconf->heartbeatFreq;
     state->mediator_id = state->parentconfig->mediatorid;
     state->pcap_compress_level = state->parentconfig->pcap_compress_level;
@@ -695,6 +715,7 @@ void read_parent_config(lea_thread_state_t *state) {
         state->short_operator_id = NULL;
     }
     pthread_mutex_unlock(&(state->parentconfig->mutex));
+    return register_required;
 }
 
 /** Declares and initialises the mediator epoll timer events that are
@@ -862,7 +883,11 @@ static int process_agency_messages(lea_thread_state_t *state) {
             /* the main thread has modified the shared config, so we need to
              * check if there are any changes that affect this thread
              */
-            read_parent_config(state);
+            if (read_parent_config(state) == 1) {
+                reset_handover_rmq(state->agency.hi2);
+                reset_handover_rmq(state->agency.hi3);
+            }
+
         }
 
         if (msg.type == MED_LEA_MESSAGE_UPDATE_AGENCY) {
@@ -988,27 +1013,29 @@ static void *run_agency_thread(void *params) {
             }
         }
 
+        /* Check for messages from the main thread */
+        if (process_agency_messages(state)) {
+            is_halted = 1;
+            continue;
+        }
+
         /* Register all known LIIDs with the handover RMQ consumers -- again,
          * only if the RMQ consumers have not been set up already. */
         if (state->agency.disabled == 0) {
             if (!state->agency.hi2->rmq_registered &&
                     state->agency.hi2->outev) {
                 register_handover_RMQ_all(state->agency.hi2,
-                        &(state->active_liids), state->agencyid);
+                        &(state->active_liids), state->agencyid,
+                        state->internalrmqpass);
             }
             if (!state->agency.hi3->rmq_registered &&
                     state->agency.hi3->outev) {
                 register_handover_RMQ_all(state->agency.hi3,
-                        &(state->active_liids), state->agencyid);
+                        &(state->active_liids), state->agencyid,
+                        state->internalrmqpass);
             }
         }
 
-
-        /* Check for messages from the main thread */
-        if (process_agency_messages(state)) {
-            is_halted = 1;
-            continue;
-        }
 
         /* Start the once-per-second timer, so we can check for messages
          * regularly regardless of how busy our epoll socket is
@@ -1075,6 +1102,9 @@ void destroy_agency_thread_state(lea_thread_state_t *state) {
     }
     if (state->pcap_outtemplate) {
         free(state->pcap_outtemplate);
+    }
+    if (state->internalrmqpass) {
+        free(state->internalrmqpass);
     }
     if (state->pcap_dir) {
         free(state->pcap_dir);

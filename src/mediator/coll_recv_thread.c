@@ -622,6 +622,9 @@ static void cleanup_collector_thread(coll_recv_t *col) {
         SSL_free(col->ssl);
     }
 
+    if (col->internalpass) {
+        free(col->internalpass);
+    }
     HASH_ITER(hh, col->known_liids, known, tmp) {
         if (known->liid) {
             free(known->liid);
@@ -667,6 +670,7 @@ static void *start_collector_thread(void *params) {
     if (col->parentconfig->rmqconf) {
         col->rmq_hb_freq = col->parentconfig->rmqconf->heartbeatFreq;
         col->rmqenabled = col->parentconfig->rmqconf->enabled;
+        col->internalpass = strdup(col->parentconfig->rmqconf->internalpass);
     }
     unlock_med_collector_config(col->parentconfig);
 
@@ -715,6 +719,23 @@ static void *start_collector_thread(void *params) {
                         remove_mediator_fdevent(col->rmq_colev);
                         col->rmq_colev = NULL;
                     }
+                }
+
+                /* TODO handle change in mediator ID ? */
+
+                if (strcmp(col->internalpass,
+                        col->parentconfig->rmqconf->internalpass) != 0) {
+
+                    if (col->internalpass) {
+                        free(col->internalpass);
+                    }
+                    if (col->parentconfig->rmqconf->internalpass) {
+                        col->internalpass =
+                            strdup(col->parentconfig->rmqconf->internalpass);
+                    }
+                    /* Need to reconnect to RMQ */
+                    remove_mediator_fdevent(col->rmq_colev);
+                    col->rmq_colev = NULL;
                 }
 
                 /* If our FD socket has changed TLS status, we should

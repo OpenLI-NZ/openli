@@ -1269,6 +1269,9 @@ static void clear_global_config(collector_global_t *glob) {
     if (glob->RMQ_conf.pass) {
         free(glob->RMQ_conf.pass);
     }
+    if (glob->RMQ_conf.internalpass) {
+        free(glob->RMQ_conf.internalpass);
+    }
     if (glob->RMQ_conf.hostname) {
         free(glob->RMQ_conf.hostname);
     }
@@ -1420,6 +1423,7 @@ static void init_collector_global(collector_global_t *glob) {
 
     glob->RMQ_conf.name = NULL;
     glob->RMQ_conf.pass = NULL;
+    glob->RMQ_conf.internalpass = NULL;
     glob->RMQ_conf.hostname = NULL;
     glob->RMQ_conf.port = 0;
     glob->RMQ_conf.heartbeatFreq = 0;

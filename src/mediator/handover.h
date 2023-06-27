@@ -203,12 +203,13 @@ void free_handover(handover_t *ho);
  *  @param ho       The handover to be registered with RMQ
  *  @param liidmap  The set of known LIIDs associated with this handover
  *  @param agencyid The name of the agency that this handover belongs to
+ *  @param password The password to use to authenticate with RMQ
  *
  *  @return -1 if an error occurs during registration, 1 if all LIIDs
  *          are successfully registered.
  */
 int register_handover_RMQ_all(handover_t *ho, liid_map_t *liidmap,
-        char *agencyid);
+        char *agencyid, char *password);
 
 /** Resets the RMQ state for a given handover.
  *

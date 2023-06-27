@@ -1420,6 +1420,12 @@ static int mediator_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "RMQlocalpass") == 0) {
+        SET_CONFIG_STRING_OPTION(state->RMQ_conf.internalpass, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "RMQhostname") == 0) {
         SET_CONFIG_STRING_OPTION(state->RMQ_conf.hostname, value);
     }

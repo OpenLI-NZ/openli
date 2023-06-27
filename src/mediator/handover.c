@@ -459,17 +459,18 @@ static int register_known_liid_consumers(liid_map_entry_t *m, void *arg) {
  *  @param ho       The handover to be registered with RMQ
  *  @param liidmap  The set of known LIIDs associated with this handover
  *  @param agencyid The name of the agency that this handover belongs to
+ *  @param password The password to use to authenticate with RMQ
  *
  *  @return -1 if an error occurs during registration, 1 if all LIIDs
  *          are successfully registered.
  */
 int register_handover_RMQ_all(handover_t *ho, liid_map_t *liidmap,
-        char *agencyid) {
+        char *agencyid, char *password) {
 
     /* Attach to RMQ if required */
     if (ho->rmq_consumer == NULL) {
         ho->rmq_consumer = join_mediator_RMQ_as_consumer(agencyid,
-                ho->amqp_log_failure);
+                ho->amqp_log_failure, password);
 
         if (ho->rmq_consumer == NULL) {
             ho->amqp_log_failure = 0;
