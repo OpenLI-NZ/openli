@@ -118,6 +118,7 @@ static int populate_pcap_uri(lea_thread_state_t *state,
     w = stradd("pcapfile:", w, end);
 
     w = stradd(state->pcap_dir, w, end);
+    w = stradd("/", w, end);
 
     for (; *ptr; ++ptr) {
         if (*ptr == '%') {
@@ -940,7 +941,7 @@ static int pcap_thread_epoll_event(lea_thread_state_t *state,
  */
 static void *run_pcap_thread(void *params) {
     lea_thread_state_t *state = (lea_thread_state_t *)params;
-    med_epoll_ev_t *flushtimer;
+    med_epoll_ev_t *flushtimer = NULL;
     struct epoll_event evs[64];
     int i, nfds, timerexpired = 0;
     int is_halted = 0;
@@ -1058,6 +1059,10 @@ threadexit:
     }
     if (pstate.rawip_handover) {
         free_handover(pstate.rawip_handover);
+    }
+
+    if (flushtimer) {
+        destroy_mediator_timer(flushtimer);
     }
 
     logger(LOG_INFO, "OpenLI Mediator: ending pcap output thread");

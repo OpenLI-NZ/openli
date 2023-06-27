@@ -176,24 +176,19 @@ static void destroy_med_state(mediator_state_t *state) {
 
 }
 
-/** Initialises the global state for a mediator instance.
+/** Reads the configuration for a mediator instance and sets the relevant
+ *  members of the global state structure accordingly.
  *
- *  This includes parsing the provided configuration file and setting
- *  the corresponding fields in the global state structure.
- *
- *  This method is also run whenver a config reload is triggered by the
- *  user, so some state members are initialised later on to avoid
- *  unnecessary duplicate allocations -- see prepare_mediator_state() for
- *  more details.
- *
- *  @param state        The global state to be initialised
+ *  @param state        The global state to be initialised with configuration
  *  @param configfile   The path to the configuration file
  *
  *  @return -1 if an error occurs, 0 otherwise
  */
-static int init_med_state(mediator_state_t *state, char *configfile) {
-    state->mediatorid = 0;
+static int init_mediator_config(mediator_state_t *state,
+        char *configfile) {
+
     state->conffile = configfile;
+    state->mediatorid = 0;
     state->listenaddr = NULL;
     state->listenport = NULL;
     state->etsitls = 1;
@@ -218,11 +213,7 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
     state->pcaptemplate = NULL;
     state->pcapcompress = 1;
     state->pcaprotatefreq = 30;
-    state->listenerev = NULL;
-    state->timerev = NULL;
-    state->epoll_fd = -1;
 
-    init_provisioner_instance(&(state->provisioner), &(state->sslconf.ctx));
     /* Parse the provided config file */
     if (parse_mediator_config(configfile, state) == -1) {
         return -1;
@@ -247,10 +238,6 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
         }
     }
 
-    if (create_ssl_context(&(state->sslconf)) < 0) {
-        return -1;
-    }
-
     if (state->shortoperatorid == NULL) {
         if (state->operatorid != NULL) {
             state->shortoperatorid = strndup(state->operatorid, 5);
@@ -262,7 +249,32 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
     if (state->operatorid == NULL) {
         state->operatorid = strdup("unspecified");
     }
+    return 0;
+}
 
+/** Initialises the global state for a mediator instance.
+ *
+ *  This includes parsing the provided configuration file and setting
+ *  the corresponding fields in the global state structure.
+ *
+ *  @param state        The global state to be initialised
+ *  @param configfile   The path to the configuration file
+ *
+ *  @return -1 if an error occurs, 0 otherwise
+ */
+static int init_med_state(mediator_state_t *state, char *configfile) {
+    state->listenerev = NULL;
+    state->timerev = NULL;
+    state->epoll_fd = -1;
+
+    init_provisioner_instance(&(state->provisioner), &(state->sslconf.ctx));
+    if (init_mediator_config(state, configfile) < 0) {
+        return -1;
+    }
+
+    if (create_ssl_context(&(state->sslconf)) < 0) {
+        return -1;
+    }
     /* Initialise state and config for the LEA send threads */
     state->agency_threads.threads = NULL;
     state->agency_threads.next_handover_id = 0;
@@ -1015,6 +1027,7 @@ static int reload_pcap_config(mediator_state_t *currstate,
         mediator_state_t *newstate) {
 
     int changed = 0;
+    char *tmp;
 
     if (newstate->pcapdirectory == NULL && currstate->pcapdirectory != NULL) {
         free(currstate->pcapdirectory);
@@ -1054,10 +1067,18 @@ static int reload_pcap_config(mediator_state_t *currstate,
         changed = 1;
     }
 
+    tmp = currstate->pcapdirectory;
     currstate->pcapdirectory = newstate->pcapdirectory;
+    newstate->pcapdirectory = tmp;
+
+    tmp = currstate->pcaptemplate;
     currstate->pcaptemplate = newstate->pcaptemplate;
+    newstate->pcaptemplate = tmp;
+
     currstate->pcapcompress = newstate->pcapcompress;
     currstate->pcaprotatefreq = newstate->pcaprotatefreq;
+
+    
 
     return changed;
 }
@@ -1135,8 +1156,9 @@ static int reload_mediator_config(mediator_state_t *currstate) {
 
     /* TODO the logic in here is horrible to try and follow! */
 
+    init_provisioner_instance(&(newstate.provisioner), NULL);
     /* Load the updated config into a spare "global state" instance */
-    if (init_med_state(&newstate, currstate->conffile) == -1) {
+    if (init_mediator_config(&newstate, currstate->conffile) == -1) {
         logger(LOG_INFO,
                 "OpenLI Mediator: error reloading config file for mediator.");
         return -1;
@@ -1221,7 +1243,6 @@ static int reload_mediator_config(mediator_state_t *currstate) {
          * port to before, so we should definitely not be talking to
          * whoever is on the old IP+port.
          */
-
         drop_provisioner(currstate);
     }
 
@@ -1289,7 +1310,8 @@ static int reload_mediator_config(mediator_state_t *currstate) {
 
     }
 
-    /* newstate was just temporary, so we can tidy it up now */
+    /* newstate was just temporary and should only contain config,
+     * so we can tidy it up now using clear_med_config() */
     clear_med_config(&newstate);
     return 0;
 
