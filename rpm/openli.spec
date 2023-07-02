@@ -195,9 +195,24 @@ EOF
     fi
 fi
 
-rabbitmqctl add_vhost "OpenLI-med"
-rabbitmqctl add_user "openli.nz" "mediatorinternal"
-rabbitmqctl set_permissions -p "OpenLI-med" "openli.nz" ".*" ".*" ".*"
+EXISTS=`rabbitmqctl list_vhosts | grep "^OpenLI-med$" | wc -l`
+if [ "$EXISTS" -eq "0" ]; then
+    rabbitmqctl add_vhost "OpenLI-med"
+fi
+
+EXISTS=`rabbitmqctl list_users | grep "^openli.nz\b" | wc -l`
+if [ "$EXISTS" -eq "0" ]; then
+    s=""
+    until s="$s$(dd bs=24 count=1 if=/dev/urandom 2>/dev/null | LC_ALL=C tr -cd 'a-zA-Z0-9')"
+        [ ${#s} -ge 16 ]; do :; done
+    CRED=$(printf %.16s $s)
+
+    rabbitmqctl add_user "openli.nz" "${CRED}"
+    rabbitmqctl set_permissions -p "OpenLI-med" "openli.nz" ".*" ".*" ".*"
+    echo ${CRED} > /etc/openli/rmqinternalpass
+    chmod 0640 /etc/openli/rmqinternalpass
+    chown openli:openli /etc/openli/rmqinternalpass
+fi
 
 /bin/systemctl restart rabbitmq-server
 
@@ -214,6 +229,10 @@ if [ $1 -ge 1 ]; then
         /bin/systemctl daemon-reload >/dev/null 2>&1 || :
         # On upgrade, restart the daemon
         /bin/systemctl try-restart openli-mediator.service >/dev/null 2>&1 || :
+else
+        rabbitmqctl delete_user "openli.nz"
+        rabbitmqctl delete_vhost "OpenLI-med"
+        rm -f /etc/openli/rmqinternalpass
 fi
 
 %post collector
