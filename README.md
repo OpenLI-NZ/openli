@@ -119,6 +119,9 @@ will be more than happy to accept your contribution.
 * libtcmalloc -- Debian / Ubuntu users can install the libgoogle-perftools-dev
   package. Optional, but highly recommended for performance reasons.
 
+* RabbitMQ Server -- Debian/Ubuntu users can install the rabbitmq-server
+  package. Optional for the collector, required for the mediator.
+
 ## Building OpenLI
 
 To build OpenLI from source, just follow the series of steps given below.
@@ -154,6 +157,68 @@ To build OpenLI from source, just follow the series of steps given below.
    superuser (e.g. `sudo make install`).
 
    **This last step is optional -- the OpenLI software components should run without needing to be installed.**
+
+
+## Mediator RabbitMQ Setup
+If you have built OpenLI from source, you will also need to perform some
+additional manual configuration steps to allow your mediator to be able
+to use RabbitMQ server for its internal message passing.
+
+**Note, you only need to do this for the mediator component and only if
+you built the mediator from source rather than using a packaged install.**
+
+More details can be found at https://github.com/OpenLI-NZ/openli/wiki/RabbitMQ-for-internal-buffering-on-Mediators but a brief set of instructions is
+included below:
+
+First, if you haven't already done so, install RabbitMQ server.
+Instructions can be found at https://www.rabbitmq.com/download.html
+
+Configure RabbitMQ on your mediator to only accept connections from localhost
+by adding the following lines to a config file called 
+`/etc/rabbitmq/rabbitmq.conf` (note, if this file does not exist then just
+create it -- if it does exist, just add the config to it):
+
+```
+    listeners.tcp.default = 127.0.0.1:5672
+    loopback_users.guest = false
+```
+
+Start the RabbitMQ service:
+```
+    service rabbitmq-server restart
+```
+
+Next, create the OpenLI-med vhost on your RabbitMQ server:
+```
+    rabbitmqctl add_vhost "OpenLI-med"
+```
+
+Create the openli.nz user and assign them a password:
+```
+    rabbitmqctl add_user "openli.nz" "<secretpassword>"
+```
+
+Give the new user permissions to interact with the OpenLI-med vhost:
+```
+    rabbitmqctl set_permissions -p "OpenLI-med" "openli.nz" ".*" ".*" ".*"
+```
+
+The last thing you need to do is to provide your OpenLI mediator with the
+password for the `openli.nz` user. There are two ways you can do this.
+The first is by adding a configuration option to your mediator config file
+(e.g. `/etc/openli/mediator-config.yaml`) as shown below:
+```
+    RMQinternalpass: <secretpassword>
+```
+
+The second is to create a file at `/etc/openli/rmqinternalpass` that contains
+ONLY the password that the mediator should use for internal RabbitMQ
+interactions. Make sure that the file is only readable by the user that is
+going to be running the OpenLI mediator process.
+
+Note that if you provide the password using both methods, the password in the
+mediator config file has precedence over the one provided in
+`/etc/openli/rmqinternalpass`.
 
 
 ## Running OpenLI
@@ -264,5 +329,32 @@ A. This means that your collector is not keeping up with the number of
   open-source project and ask a commercial LI vendor if they can supply you
   with a solution that can scale to your network size (be prepared to pay
   a significant sum for this, of course).
+
+---
+
+Q. My mediator is not passing intercept records to the connected agencies and
+   I see that there are log messages complaining about "OpenLI Mediator: failed
+   to log into RMQ broker using plain auth".
+
+A. This means that your RabbitMQ internal password for the mediator is
+   incorrect.
+
+   If you installed your OpenLI mediator using a package, you may need to
+   remove the package (using `--purge` if removing a `.deb`) and reinstall.
+   I would suggest backing up `/etc/openli/mediator-config.yaml` first.
+   If the issue still persists, remove any `RMQinternalpass`
+   configuration option that is present in your mediator config file and
+   try again.
+
+   If you installed your OpenLI mediator manually, check the value of the
+   `RMQinternalpass` configuration option in your mediator config file. Ensure
+   that the value for this option matches the password that you provided when
+   you created the `openli.nz` user in RabbitMQ. If the option does not exist,
+   add it (and the correct value) to the mediator config file.
+
+   If all else fails, you can reset the `openli.nz` user password by running:
+   ```
+       rabbitmqctl change_password "openli.nz" "<anewpassword>"
+   ```
 
 

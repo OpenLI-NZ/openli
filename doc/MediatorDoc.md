@@ -124,13 +124,23 @@ encrypt other inter-component messages in an OpenLI deployment.
 
 As of version 1.1.0, the OpenLI mediator will also use a local RabbitMQ server
 instance to move intercept records between threads and ensure that the records
-are safely buffered on disk whenever a handover is unavailable. No additional
-configuration is required for RabbitMQ to be used in this way, but you will
-need to ensure that a RabbitMQ service is running on your mediator host before
-starting the mediator.
+are safely buffered on disk whenever a handover is unavailable. You will
+therefore need to ensure that a RabbitMQ service is running on your mediator
+host before starting the mediator.
 
 Installing the OpenLI mediator via one of our software packages should
 install and configure a RabbitMQ server for the mediator automatically.
+
+If you install the OpenLI mediator from source instead, you will need to
+also configure RabbitMQ server manually to support local buffering.
+Full instructions for this are available at
+https://github.com/OpenLI-NZ/openli/wiki/RabbitMQ-for-internal-buffering-on-Mediators
+and an abbreviated version is also provided in the README.md file included
+with the OpenLI source code.
+
+If you have configured RabbitMQ server manually, you can use the
+`RMQinternalpass` configuration option to tell your OpenLI mediator the
+password that it will need to access the local RabbitMQ message queues.
 
 It is STRONGLY recommended that you ensure the RabbitMQ server that is
 running on your mediator is listening for connections on localhost only.
@@ -159,12 +169,15 @@ The supported option keys are:
 * RMQenabled       -- set to `true` if your collectors are using RabbitMQ
                       to buffer ETSI records destined for this mediator
 * RMQname          -- the username to use when authenticating with RabbitMQ
+                      on the collectors.
 * RMQpass          -- the password to use when authenticating with RabbitMQ
-                      (required for plain auth only).
+                      on the collectors (required for plain auth only).
 * RMQSSL           -- set to `true` to use SSL authentication instead of plain
 * RMQheartbeatfreq -- time between RMQ heartbeat packets that are used to
                       detect a connection breakdown (default is 0, which
-                      disables heartbeats)
+                      disables heartbeats).
+* RMQinternalpass  -- the password for the `openli.nz` RMQ user that is used
+                      for internal message buffering.
 * tlscert          -- the file containing an SSL certificate for the mediator
 * tlskey           -- the file containing an SSL key for the mediator
 * tlsca            -- the file containing the SSL certificate for the CA that
