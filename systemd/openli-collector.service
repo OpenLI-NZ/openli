@@ -1,6 +1,6 @@
 [Unit]
 Description=OpenLI collector daemon
-Documentation=http://github.com/wanduow/openli/wiki
+Documentation=http://github.com/OpenLI-NZ/openli/wiki
 
 [Service]
 Type=simple

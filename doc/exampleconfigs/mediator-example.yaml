@@ -72,6 +72,14 @@ RMQpass: "rmqpassword"          # not required if using SSL auth
 RMQSSL: true                    # set to false to use plain auth instead
 RMQheartbeatfreq: 30            # time between heartbeats in seconds
 
+# The password to use for authenticating against the RabbitMQ virtual
+# host that is handling internal message buffering for the mediator.
+# Note that you should only set this if you have manually created the
+# virtual host and `openli.nz` user -- packaged installs should NOT need
+# to set this config option.
+#
+#RMQinternalpass: "theinternalpassword"
+
 # If set to 'no', intercepted packets streamed to this mediator by the
 # collectors will be treated as unencrypted -- this may be desirable for
 # performance reasons. Make sure you set the corresponding option on the

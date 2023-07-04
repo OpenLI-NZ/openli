@@ -2,8 +2,8 @@
 
 set -x -e -o pipefail
 
-export DEBEMAIL='packaging@wand.net.nz'
-export DEBFULLNAME='WAND Packaging'
+export DEBEMAIL='salcock@searchlight.nz'
+export DEBFULLNAME='Shane Alcock'
 export DEBIAN_FRONTEND=noninteractive
 
 export SOURCENAME=`echo ${GITHUB_REF##*/} | cut -d '-' -f 1`
@@ -36,7 +36,7 @@ case ${DISTRO} in
                 echo "10" > debian/compat
         ;;
 
-        bullseye )
+        bullseye | bookworm )
                 sed -i 's/ dh-systemd (>=1.5),//' debian/control
         ;;
 

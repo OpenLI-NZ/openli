@@ -34,6 +34,7 @@
 #include "logger.h"
 #include "util.h"
 #include "collector_publish.h"
+#include "emailiri.h"
 
 int publish_openli_msg(void *pubsock, openli_export_recv_t *msg) {
 
@@ -62,6 +63,19 @@ void free_published_message(openli_export_recv_t *msg) {
         if (msg->data.ipcc.ipcontent) {
             free(msg->data.ipcc.ipcontent);
         }
+    } else if (msg->type == OPENLI_EXPORT_EMAILCC) {
+        if (msg->data.emailcc.liid) {
+            free(msg->data.emailcc.liid);
+        }
+        if (msg->data.emailcc.cc_content) {
+            free(msg->data.emailcc.cc_content);
+        }
+    } else if (msg->type == OPENLI_EXPORT_EMAILIRI) {
+        if (msg->data.emailiri.liid) {
+            free(msg->data.emailiri.liid);
+        }
+        free_email_iri_content(&(msg->data.emailiri.content));
+
     } else if (msg->type == OPENLI_EXPORT_IPMMIRI) {
         if (msg->data.ipmmiri.liid) {
             free(msg->data.ipmmiri.liid);

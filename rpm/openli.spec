@@ -1,11 +1,11 @@
 Name:           openli
-Version:        1.0.15
+Version:        1.1.0
 Release:        1%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
 License:        GPLv3
-URL:            https://github.com/wanduow/OpenLI
-Source0:        https://github.com/wanduow/OpenLI/archive/%{version}.tar.gz
+URL:            https://github.com/OpenLI-NZ/OpenLI
+Source0:        https://github.com/OpenLI-NZ/OpenLI/archive/%{version}.tar.gz
 
 BuildRequires: gcc
 BuildRequires: gcc-c++
@@ -27,6 +27,7 @@ BuildRequires: libmicrohttpd-devel
 BuildRequires: systemd
 BuildRequires: sqlcipher-devel
 BuildRequires: librabbitmq-devel
+BuildRequires: libb64-devel
 
 %description
 Software for performing ETSI-compliant lawful intercept
@@ -51,6 +52,7 @@ and mediators.
 %package        mediator
 Summary:        Mediation daemon for an OpenLI system
 Requires(pre):  shadow-utils
+Requires:       rabbitmq-server
 
 %description mediator
 OpenLI is a software suite that allows network operators to conduct
@@ -170,6 +172,50 @@ if [ -d /var/run/openli ]; then
 fi
 chmod 2750 /etc/openli
 
+if /bin/systemctl is-active --quiet "rabbitmq-server"; then
+    echo ""
+else
+    /bin/systemctl start rabbitmq-server
+fi
+
+if rpm -q "rabbitmq-server" > /dev/null 2>&1; then
+    dep_install=$(rpm -q --queryformat '%{INSTALLTIME}\n' "rabbitmq-server")
+    this_install=$(rpm -q --queryformat '%{INSTALLTIME}\n' "openli-mediator")
+    if [ "$dep_install" -ge "$this_install" ]; then
+        # dependency was installed by our own package
+        if [ ! -f /etc/rabbitmq/rabbitmq.conf ]; then
+            cat > /etc/rabbitmq/rabbitmq.conf <<EOF
+# Configuration auto-deployed by OpenLI to limit RMQ connections to localhost.
+# Feel free to override if required.
+listeners.tcp.default = 127.0.0.1:5672
+loopback_users.guest = false
+EOF
+            chown rabbitmq:rabbitmq /etc/rabbitmq/rabbitmq.conf
+        fi
+    fi
+fi
+
+EXISTS=`rabbitmqctl list_vhosts | grep "^OpenLI-med$" | wc -l`
+if [ "$EXISTS" -eq "0" ]; then
+    rabbitmqctl add_vhost "OpenLI-med"
+fi
+
+EXISTS=`rabbitmqctl list_users | grep "^openli.nz\b" | wc -l`
+if [ "$EXISTS" -eq "0" ]; then
+    s=""
+    until s="$s$(dd bs=24 count=1 if=/dev/urandom 2>/dev/null | LC_ALL=C tr -cd 'a-zA-Z0-9')"
+        [ ${#s} -ge 16 ]; do :; done
+    CRED=$(printf %.16s $s)
+
+    rabbitmqctl add_user "openli.nz" "${CRED}"
+    rabbitmqctl set_permissions -p "OpenLI-med" "openli.nz" ".*" ".*" ".*"
+    echo ${CRED} > /etc/openli/rmqinternalpass
+    chmod 0640 /etc/openli/rmqinternalpass
+    chown openli:openli /etc/openli/rmqinternalpass
+fi
+
+/bin/systemctl restart rabbitmq-server
+
 %preun mediator
 if [ $1 -eq 0 ]; then
         # Disable and stop the units
@@ -183,6 +229,10 @@ if [ $1 -ge 1 ]; then
         /bin/systemctl daemon-reload >/dev/null 2>&1 || :
         # On upgrade, restart the daemon
         /bin/systemctl try-restart openli-mediator.service >/dev/null 2>&1 || :
+else
+        rabbitmqctl delete_user "openli.nz"
+        rabbitmqctl delete_vhost "OpenLI-med"
+        rm -f /etc/openli/rmqinternalpass
 fi
 
 %post collector
@@ -232,6 +282,9 @@ fi
 
 
 %changelog
+* Fri May 26 2023 Shane Alcock <salcock@searchlight.nz> - 1.1.0-1
+- Updated for 1.1.0 release
+
 * Wed Jun 15 2022 Shane Alcock <salcock@waikato.ac.nz> - 1.0.15-1
 - Updated for 1.0.15 release
 

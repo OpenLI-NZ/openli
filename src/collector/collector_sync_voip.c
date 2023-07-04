@@ -65,6 +65,9 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
     sync->pubsockcount = glob->seqtracker_threads;
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
 
+    sync->forwardcount = glob->forwarding_threads;
+    sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
+
     sync->topoll = calloc(128, sizeof(zmq_pollitem_t));
     sync->topoll_size = 128;
     sync->expiring_streams = calloc(128, sizeof(struct rtpstreaminf *));
@@ -86,6 +89,17 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
         }
 
         /* Do we need to set a HWM? */
+    }
+
+    for (i = 0; i < sync->forwardcount; i++) {
+        sync->zmq_fwdctrlsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+        snprintf(sockname, 128, "inproc://openliforwardercontrol_sync-%d", i);
+        if (zmq_connect(sync->zmq_fwdctrlsocks[i], sockname) != 0) {
+            logger(LOG_INFO, "OpenLI: colsyncvoip thread unable to connect to zmq control socket for forwarding threads: %s",
+                    strerror(errno));
+            zmq_close(sync->zmq_fwdctrlsocks[i]);
+            sync->zmq_fwdctrlsocks[i] = NULL;
+        }
     }
 
     sync->zmq_colsock = zmq_socket(glob->zmq_ctxt, ZMQ_PULL);
@@ -168,13 +182,23 @@ void clean_sync_voip_data(collector_sync_voip_t *sync) {
         zmq_close(sync->zmq_pubsocks[i]);
     }
 
+    for (i = 0; i < sync->forwardcount; i++) {
+        if (sync->zmq_fwdctrlsocks[i] == NULL) {
+            continue;
+        }
+        zmq_setsockopt(sync->zmq_fwdctrlsocks[i], ZMQ_LINGER, &zero,
+                    sizeof(zero));
+        zmq_close(sync->zmq_fwdctrlsocks[i]);
+        sync->zmq_fwdctrlsocks[i] = NULL;
+    }
+
     if (sync->zmq_colsock) {
         zmq_setsockopt(sync->zmq_colsock, ZMQ_LINGER, &zero, sizeof(zero));
         zmq_close(sync->zmq_colsock);
     }
 
     free(sync->zmq_pubsocks);
-
+    free(sync->zmq_fwdctrlsocks);
 
 }
 
@@ -431,6 +455,8 @@ static inline int announce_rtp_streams_if_required(
     }
     rtp->active = 1;
     rtp->changed = 0;
+    free(rtp->invitecseq);
+    rtp->invitecseq = NULL;
     return 1;
 }
 
@@ -905,8 +931,6 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
                 thisrtp->changed = 1;
             }
         }
-        free(thisrtp->invitecseq);
-        thisrtp->invitecseq = NULL;
 
         announce_rtp_streams_if_required(sync, thisrtp);
     }
@@ -948,8 +972,6 @@ static int process_sip_200ok(collector_sync_voip_t *sync, rtpstreaminf_t *thisrt
                 thisrtp->changed = 1;
             }
         }
-        free(thisrtp->invitecseq);
-        thisrtp->invitecseq = NULL;
 
         announce_rtp_streams_if_required(sync, thisrtp);
     } else if (thisrtp->byecseq && strcmp(thisrtp->byecseq,
@@ -986,6 +1008,10 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
         etsili_iri_type_t iritype, int64_t cin) {
 
     openli_export_recv_t *copy;
+
+    if (vint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
+        return;
+    }
 
     if (vint->common.tostart_time > irimsg->ts.tv_sec) {
         return;
@@ -1036,7 +1062,7 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
     voipintshared_t *vshared;
     char rtpkey[256];
     rtpstreaminf_t *thisrtp;
-    etsili_iri_type_t iritype = ETSILI_IRI_REPORT;
+    etsili_iri_type_t iritype = ETSILI_IRI_CONTINUE;
     int exportcount = 0;
     int badsip = 0;
 
@@ -1201,8 +1227,6 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
 
             sipreg = create_new_voip_registration(sync, vint, callid, matched);
         } else {
-            int found;
-
             matched = check_sip_identity_fields(sync, vint, &passertid,
                     &remotepartyid);
             if (!matched) {
@@ -1615,6 +1639,16 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
                 "OpenLI: VOIP intercept %s has changed start / end times -- now %lu, %lu", tomod.common.liid, tomod.common.tostart_time, tomod.common.toend_time);
     }
 
+    if (tomod.common.tomediate != vint->common.tomediate) {
+        char space[1024];
+        changed = 1;
+        intercept_mediation_mode_as_string(tomod.common.tomediate, space,
+                1024);
+        logger(LOG_INFO,
+                "OpenLI: VOIP intercept %s has changed mediation mode to: %s",
+                vint->common.liid, space);
+    }
+
     if (strcmp(tomod.common.delivcc, vint->common.delivcc) != 0 ||
             strcmp(tomod.common.authcc, vint->common.authcc) != 0) {
         char *tmp;
@@ -1635,6 +1669,7 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     vint->options = tomod.options;
     vint->common.tostart_time = tomod.common.tostart_time;
     vint->common.toend_time = tomod.common.toend_time;
+    vint->common.tomediate = tomod.common.tomediate;
 
     if (changed) {
         push_voip_intercept_update_to_threads(sync, vint);
@@ -1647,7 +1682,8 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
 static inline void remove_voipintercept(collector_sync_voip_t *sync,
         voipintercept_t *vint) {
 
-    openli_export_recv_t *expmsg;
+    openli_export_recv_t *expmsg, *fwdmsg;
+    int i;
 
     push_voipintercept_halt_to_threads(sync, vint);
 
@@ -1662,6 +1698,17 @@ static inline void remove_voipintercept(collector_sync_voip_t *sync,
     sync->glob->stats->voipintercepts_ended_total ++;
     pthread_mutex_unlock(sync->glob->stats_mutex);
     publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], expmsg);
+
+    for (i = 0; i < sync->forwardcount; i++) {
+        fwdmsg = (openli_export_recv_t *)calloc(1,
+                sizeof(openli_export_recv_t));
+        fwdmsg->type = OPENLI_EXPORT_INTERCEPT_OVER;
+        fwdmsg->data.cept.liid = strdup(vint->common.liid);
+        fwdmsg->data.cept.authcc = strdup(vint->common.authcc);
+        fwdmsg->data.cept.delivcc = strdup(vint->common.delivcc);
+        publish_openli_msg(sync->zmq_fwdctrlsocks[i], fwdmsg);
+    }
+
 
     HASH_DELETE(hh_liid, sync->voipintercepts, vint);
     free_single_voipintercept(vint);

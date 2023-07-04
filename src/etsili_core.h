@@ -31,7 +31,7 @@
 #include <libwandder.h>
 #include <uthash.h>
 
-#include "src/intercept.h"
+#include "intercept.h"
 
 #define ENC_USEQUENCE(enc) wandder_encode_next(enc, WANDDER_TAG_SEQUENCE, \
         WANDDER_CLASS_UNIVERSAL_CONSTRUCT, WANDDER_TAG_SEQUENCE, NULL, 0)
@@ -82,12 +82,31 @@ typedef struct etsili_ipaddress {
     uint8_t *ipvalue;
 } etsili_ipaddress_t;
 
+typedef struct etsili_email_iri {
+    uint32_t eventtype;
+    struct sockaddr_storage *serveraddr;
+    struct sockaddr_storage *clientaddr;
+    uint32_t server_octets;
+    uint32_t client_octets;
+    uint32_t protocol;
+    uint32_t recipient_count;
+    char *sender;
+    char **recipients;
+    uint32_t status;
+    char *messageid;
+} etsili_email_iri_content_t;
+
 typedef struct etsili_other_targets {
 
     uint8_t count;
     uint8_t alloced;
     etsili_ipaddress_t *targets;
 } etsili_other_targets_t;
+
+typedef struct etsili_email_recipients {
+    uint32_t count;
+    char **addresses;
+} etsili_email_recipients_t;
 
 typedef enum {
     ETSILI_IRI_NONE = 0,
@@ -105,6 +124,29 @@ enum {
 enum {
     ETSILI_IPADDRESS_REP_BINARY = 1,
     ETSILI_IPADDRESS_REP_TEXT = 2,
+};
+
+enum {
+    ETSILI_EMAIL_STATUS_UNKNOWN = 1,
+    ETSILI_EMAIL_STATUS_FAILED = 2,
+    ETSILI_EMAIL_STATUS_SUCCESS = 3
+};
+
+enum {
+    ETSILI_EMAIL_CC_FORMAT_IP = 1,
+    ETSILI_EMAIL_CC_FORMAT_APP = 2,
+};
+
+enum {
+    ETSILI_EMAIL_EVENT_SEND = 1,
+    ETSILI_EMAIL_EVENT_RECEIVE = 2,
+    ETSILI_EMAIL_EVENT_DOWNLOAD = 3,
+    ETSILI_EMAIL_EVENT_LOGON_ATTEMPT = 4,
+    ETSILI_EMAIL_EVENT_LOGON = 5,
+    ETSILI_EMAIL_EVENT_LOGON_FAILURE = 6,
+    ETSILI_EMAIL_EVENT_LOGOFF = 7,
+    ETSILI_EMAIL_EVENT_PARTIAL_DOWNLOAD = 8,
+    ETSILI_EMAIL_EVENT_UPLOAD = 9,
 };
 
 enum {
@@ -138,6 +180,8 @@ typedef enum {
     OPENLI_PREENCODE_IPCCOID,
     OPENLI_PREENCODE_IPIRIOID,
     OPENLI_PREENCODE_UMTSIRIOID,
+    OPENLI_PREENCODE_EMAILIRIOID,
+    OPENLI_PREENCODE_EMAILCCOID,
     OPENLI_PREENCODE_IPMMCCOID,
     OPENLI_PREENCODE_DIRFROM,
     OPENLI_PREENCODE_DIRTO,
@@ -211,6 +255,10 @@ wandder_encoded_result_t *encode_umtsiri_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed,
         etsili_iri_type_t iritype, etsili_generic_t *params);
 
+wandder_encoded_result_t *encode_emailiri_body(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed,
+        etsili_iri_type_t iritype, etsili_generic_t **params);
+
 wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t seqno);
 
@@ -253,6 +301,9 @@ int etsili_update_header_template(encoded_header_template_t *tplate,
 int etsili_create_ipcc_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
         encoded_global_template_t *tplate);
+int etsili_create_emailcc_template(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, uint8_t format, uint8_t dir,
+        uint16_t ipclen, encoded_global_template_t *tplate);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

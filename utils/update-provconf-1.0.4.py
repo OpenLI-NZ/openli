@@ -15,7 +15,7 @@
 #
 # NOTE: any comments in your original config file will NOT be preserved. If
 # these are important to you, please update your config according to the
-# manual process ( https://github.com/wanduow/openli/wiki/Upgrading-to-1.0.4 ).
+# manual process ( https://github.com/OpenLI-NZ/openli/wiki/Upgrading-to-1.0.4 ).
 
 import yaml, sys, string
 

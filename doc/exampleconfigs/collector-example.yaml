@@ -33,6 +33,18 @@ forwardingthreads: 1
 # validated and can be easily spoofed).
 sipallowfromident: no
 
+# Set this to yes if you want OpenLI to replace any plain text or base64
+# encoded credentials (i.e. passwords) in intercepted IMAP traffic with
+# the characters "XXX". Note that this masking will only be applied to
+# IMAP traffic captured using an email intercept, not an IP intercept.
+maskimapcreds: yes
+
+# Set this to yes if you want OpenLI to replace any plain text credentials
+# (i.e. passwords) in intercepted POP3 traffic with
+# the characters "XXX". Note that this masking will only be applied to
+# POP3 traffic captured using an email intercept, not an IP intercept.
+maskpop3creds: yes
+
 # Number of minutes between each dump of performance statistics to the
 # logger. Set to zero to disable this extra logging altogether.
 logstatfrequency: 5
@@ -83,6 +95,36 @@ jmirrors:
  - ip: 192.168.200.77
    port: 30030
 
+# Times (in minutes) to wait before expiring an idle email session for
+# each supported email protocol.
+emailsessiontimeouts:
+  - smtp: 5
+  - imap: 30
+  - pop3: 10
+
+# Email ingestion service configuration -- instead of intercepting email
+# by capturing traffic from an interface, OpenLI can also receive email
+# application messages that are POSTed to this HTTP service. This is
+# useful for mail service operators who would prefer to use custom plugins
+# on their mail servers to push relevant mail content to OpenLI, rather
+# than having to mirror traffic at the TCP/IP layers.
+#
+# More detail on the ingestion service and the expected formatting of
+# the messages that this service can receive is available on the OpenLI
+# wiki (https://github.com/OpenLI-NZ/openli/wiki).
+#
+emailingest:
+  listenaddress: 10.230.1.1     # the IP address for the service to listen on
+  listenport: 19999             # the port for the service to listen on
+  requiretls: yes               # only allow connections via HTTPS (note
+                                # that you will need to provide the 'tlscert'
+                                # and 'tlskey' options elsewhere in this
+                                # file for this to work)
+  authpassword: apassword       # if set, POSTed messages will be rejected
+                                # unless they are sent with digest auth and
+                                # the provided password does not match the
+                                # value for this option.
+  enabled: yes                  # set to "no" to disable this service
 
 # If set to true, then the collector will use RabbitMQ to buffer encoded
 # ETSI records to be forwarded to the mediators. The buffered packets will

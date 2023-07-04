@@ -6,7 +6,7 @@
 #
 # You should use the OpenLI REST API to create and modify your intercept
 # configuration files, rather than editing by hand.
-# See https://github.com/wanduow/openli/wiki/Intercept-Configuration-REST-API
+# See https://github.com/OpenLI-NZ/openli/wiki/Intercept-Configuration-REST-API
 # for instructions on how to do this.
 #
 #
@@ -31,6 +31,21 @@ radiusservers:
 gtpservers:
   - ip: 10.100.0.200
     port: 2123
+
+# List of SMTP servers on our network (for performing email intercepts)
+smtpservers:
+  - ip: 10.200.0.45
+    port: 25
+
+# List of IMAP servers on our network (for performing email intercepts)
+imapservers:
+  - ip: 10.200.1.14
+    port: 143
+
+# List of POP3 servers on our network (for performing email intercepts)
+pop3servers:
+  - ip: 10.200.2.100
+    port: 110
 
 # List of default RADIUS usernames that OpenLI should ignore when tracking
 # user sessions from RADIUS traffic
@@ -214,3 +229,15 @@ voipintercepts:
                                 # realm, this means we can match this username
                                 # against *any* realm.
 
+
+# List of active email intercepts
+emailintercepts:
+
+ - liid: N72007RT4              # LIID, should be provided by requesting agency
+   authcountrycode: DE          # Authorisation country code
+   deliverycountrycode: DE      # Delivery country code
+   mediator: 6001               # ID of the mediator to send intercept via
+   agencyid: "Police"           # ID of agency to send intercept to
+   targets:
+     - address: abadperson@example.org          # email address for the target
+     - address: myalias@example.org             # multiple addresses are allowed

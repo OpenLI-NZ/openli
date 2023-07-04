@@ -1,3 +1,109 @@
+openli (1.1.0-1) unstable; urgency=medium
+
+  Changes since 1.0.15 release:
+  * Mediator now uses rabbitmq for buffering intercept records before sending
+    them on to their respective agency.
+  * Mediator now dedicates separate threads to receiving data from each
+    collector, and separate threads to forwarding intercepts on to each agency.
+    This will make better use of multiple cores on a mediator device.
+  * Added support for email interception (as per ETSI TS 102 232-2 standard).
+  * Added ability to configure intercepts (of any type) to export only IRIs, or
+    only CCs.
+  * Include target-Information field in HI1 Operation messages.
+  * Fixed bug where encoded raw IP data (e.g. intercepted GTP) was missing a
+    preceding LIID when sent to the mediator.
+  * Fixed REST API bug that prevented DELETE requests from working for the
+    coreserver endpoint.
+  * Fixed bug where IPMM IRIs were using the IRI type "IRI-Report" instead of
+    the expected "IRI-Continue".
+  * Fixed bug where VoIP intercepts would not produce CCs if the corresponding
+    SIP session included a 183 message without any RTP port or IP information
+    in it.
+  * Fixed bug where endtimes for VOIP intercepts could not be modified using
+    the REST API.
+
+ -- Shane Alcock <shane@alcock.co.nz>  Wed, 14 Jun 2023 18:53:26 +1200
+
+openli (1.1.0-1~rc03) unstable; urgency=medium
+
+  * Fix IMAP bug where OpenLI could generate partial download IRIs
+    without also generating corresponding CCs.
+
+ -- Shane Alcock <shane@alcock.co.nz>  Thu, 25 May 2023 19:09:19 +1200
+
+openli (1.1.0-1~rc02) unstable; urgency=medium
+
+  * Fix bug where VOIP intercepts would not produce CCs if an RTP
+    endpoint was announced in the "200 OK" message instead of a
+    "183" message.
+
+ -- Shane Alcock <shane@alcock.co.nz>  Thu, 25 May 2023 11:27:40 +1200
+
+openli (1.1.0-1~rc01) unstable; urgency=medium
+
+  * Add configuration options for the email ingestion socket.
+  * Include target-Information in HI1 operation messages.
+  * Fix incorrect IRI types for IPMM IRIs.
+  * mediator postinst: configure RMQ to listen on localhost only, if
+    installed on our behalf.
+  * Tidy up numerous compiler warnings.
+
+ -- Shane Alcock <shane@alcock.co.nz>  Tue, 23 May 2023 12:00:12 +1200
+
+openli (1.1.0-1~beta06) unstable; urgency=medium
+
+  * Fix REST API bug where intercepts returned by GET requests would
+    include a "tomediate" field instead of "outputhandovers".
+
+ -- Shane Alcock <shane@alcock.co.nz>  Wed, 19 Apr 2023 11:43:41 +1200
+
+openli (1.1.0-1~beta05) unstable; urgency=medium
+
+  * IMAP and POP3: we can now extract the email sender from the mail
+    body to include in email IRIs
+
+ -- Shane Alcock <shane@alcock.co.nz>  Mon, 03 Apr 2023 09:59:02 +1200
+
+openli (1.1.0-1~beta04) unstable; urgency=medium
+
+  * Add support for email interception for the POP3 protocol.
+
+ -- Shane Alcock <shane@alcock.co.nz>  Fri, 24 Feb 2023 15:16:08 +1300
+
+openli (1.1.0-1~beta03) unstable; urgency=medium
+
+  * Fix various errors when parsing IMAP AUTHENTICATE PLAIN messages.
+  * Fix bug where not all IMAP APPEND content was being included in
+    exported CC records.
+  * Fix install error when upgrading mediator from a previous 1.1.0
+    beta version.
+
+ -- Shane Alcock <shane@alcock.co.nz>  Fri, 03 Feb 2023 15:24:51 +1300
+
+openli (1.1.0-1~beta02) unstable; urgency=medium
+
+  * Fix bug where DELETE was not being properly applied to coreservers
+    via the REST API
+  * Fix IMAP parsing error when "\r\n" appears inside parentheses
+  * Add ability to configure intercepts as IRI or CC only intercepts
+  * Fix IMAP parsing error when parsing LOGIN commands
+  * Add credential masking for IMAP LOGIN commands
+  * Add config option for disabling IMAP credential masking
+  * Add config options to change email session timeouts
+
+ -- Shane Alcock <shane@alcock.co.nz>  Tue, 24 Jan 2023 09:22:18 +1300
+
+openli (1.1.0-1~beta01) unstable; urgency=medium
+
+  * Mediator now uses RabbitMQ to buffer any intercept records that
+    have been received from collectors but not yet pushed onto a handover.
+  * Each connected collector is now handled in a separate thread.
+  * Each agency is now handled in a separate thread.
+  * Email interception (ETSI TS 102 232-2) is now supported for SMTP and IMAP
+    protocols.
+
+ -- Shane Alcock <shane.alcock@waikato.ac.nz>  Sat, 12 Nov 2022 15:13:10 +1300
+
 openli (1.0.15-1) unstable; urgency=medium
 
   * Fix crash when SDP identities are shared amongst multiple Call-IDs.

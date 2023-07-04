@@ -315,7 +315,7 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         return 0;
     }
 
-    if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
+    if (msg->type == OPENLI_EXPORT_INTERCEPT_OVER) {
         remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_cc));
         remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_iri));
 
@@ -363,7 +363,8 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
     if (res->origreq->type == OPENLI_EXPORT_IPCC ||
             res->origreq->type == OPENLI_EXPORT_IPMMCC ||
-            res->origreq->type == OPENLI_EXPORT_UMTSCC) {
+            res->origreq->type == OPENLI_EXPORT_UMTSCC ||
+            res->origreq->type == OPENLI_EXPORT_EMAILCC ) {
 
         reorderer = &(fwd->intreorderer_cc);
     } else {
@@ -1142,18 +1143,8 @@ void *start_forwarding_thread(void *data) {
             break;
         }
 
-        if (res.msgbody) {
-            free(res.msgbody->encoded);
-            free(res.msgbody);
-        }
+        free_encoded_result(&res);
 
-        if (res.liid) {
-            free(res.liid);
-        }
-
-        if (res.ipcontents) {
-            free(res.ipcontents);
-        }
     } while (x > 0);
 
 haltforwarder:

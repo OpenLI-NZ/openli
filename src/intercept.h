@@ -59,6 +59,12 @@ typedef enum {
 } ipintercept_options_t;
 
 typedef enum {
+    OPENLI_INTERCEPT_OUTPUTS_ALL = 0,
+    OPENLI_INTERCEPT_OUTPUTS_IRIONLY = 1,
+    OPENLI_INTERCEPT_OUTPUTS_CCONLY = 2,
+} intercept_outputs_t;
+
+typedef enum {
     HI1_LI_ACTIVATED = 1,
     HI1_LI_DEACTIVATED = 2,
     HI1_LI_MODIFIED = 3,
@@ -86,6 +92,7 @@ typedef struct intercept_common {
     uint32_t hi1_seqno;
     uint64_t tostart_time;
     uint64_t toend_time;
+    intercept_outputs_t tomediate;
 } intercept_common_t;
 
 typedef struct hi1_notify_data {
@@ -97,6 +104,7 @@ typedef struct hi1_notify_data {
     uint32_t seqno;
     uint64_t ts_sec;
     uint32_t ts_usec;
+    char *target_info;
 } hi1_notify_data_t;
 
 typedef struct ipintercept {
@@ -119,11 +127,38 @@ typedef struct ipintercept {
     UT_hash_handle hh_user;
 } ipintercept_t;
 
+typedef struct email_target {
+    char *address;
+    uint8_t awaitingconfirm;
+    UT_hash_handle hh;
+} email_target_t;
+
 typedef struct userinterceptlist {
     char *username;
     ipintercept_t *intlist;
     UT_hash_handle hh;
 } user_intercept_list_t;
+
+typedef struct emailintercept {
+    intercept_common_t common;
+    email_target_t *targets;
+
+    uint8_t awaitingconfirm;
+    UT_hash_handle hh_liid;
+
+} emailintercept_t;
+
+typedef struct email_intercept_ref {
+    emailintercept_t *em;
+    UT_hash_handle hh;
+} email_intercept_ref_t;
+
+typedef struct emailinterceptlist {
+    char *emailaddr;
+    email_intercept_ref_t *intlist;
+    UT_hash_handle hh;
+} email_user_intercept_list_t;
+
 
 typedef struct sip_identity {
     char *username;
@@ -172,6 +207,7 @@ typedef struct voipsdpmap {
 
 typedef struct rtpstreaminf rtpstreaminf_t;
 typedef struct ipsession ipsession_t;
+typedef struct emailsession emailsession_t;
 typedef struct vendmirror_intercept vendmirror_intercept_t;
 typedef struct staticipsession staticipsession_t;
 typedef struct sipregister sipregister_t;
@@ -182,7 +218,16 @@ typedef struct sipregister sipregister_t;
      (strcmp(a->common.targetagency, b->common.targetagency) == 0) && \
      (a->common.tostart_time == b->common.tostart_time) && \
      (a->common.toend_time == b->common.toend_time) && \
+     (a->common.tomediate == b->common.tomediate) && \
      (a->options == b->options))
+
+#define email_intercept_equal(a,b) \
+    ((strcmp(a->common.authcc, b->common.authcc) == 0) && \
+     (strcmp(a->common.delivcc, b->common.delivcc) == 0) && \
+     (strcmp(a->common.targetagency, b->common.targetagency) == 0) && \
+     (a->common.tostart_time == b->common.tostart_time) && \
+     (a->common.toend_time == b->common.toend_time) && \
+     (a->common.tomediate == b->common.tomediate))
 
 
 typedef struct voipintercept {
@@ -218,6 +263,40 @@ struct sipmediastream {
     uint16_t targetport;
     uint16_t otherport;
     char *mediatype;
+};
+
+typedef struct email_participant {
+    char *emailaddr;
+    uint8_t is_sender;
+
+    UT_hash_handle hh;
+} email_participant_t;
+
+struct emailsession {
+    char *key;
+    uint32_t cin;
+
+    char *session_id;
+    int ai_family;
+    struct sockaddr_storage *serveraddr;
+    struct sockaddr_storage *clientaddr;
+    uint32_t server_octets;
+    uint32_t client_octets;
+    uint64_t login_time;
+    uint8_t login_sent;
+    uint64_t event_time;
+
+    email_participant_t sender;
+    email_participant_t *participants;
+
+    uint8_t protocol;
+    uint8_t currstate;
+    uint8_t mask_credentials;
+    void *timeout_ev;
+
+    void *proto_state;
+
+    UT_hash_handle hh;
 };
 
 struct rtpstreaminf {
@@ -298,21 +377,38 @@ typedef struct default_radius_user {
 
 void free_all_ipintercepts(ipintercept_t **interceptlist);
 void free_all_voipintercepts(voipintercept_t **vintercepts);
+void free_all_emailintercepts(emailintercept_t **mailintercepts);
 void free_all_rtpstreams(rtpstreaminf_t **streams);
 void free_all_ipsessions(ipsession_t **sessions);
+void free_all_emailsessions(emailsession_t **sessions);
 void free_all_vendmirror_intercepts(vendmirror_intercept_list_t **mirror_intercepts);
 void free_all_staticipsessions(staticipsession_t **statintercepts);
 
 void free_voip_cinmap(voipcinmap_t *cins);
 void free_single_ipintercept(ipintercept_t *cept);
 void free_single_voipintercept(voipintercept_t *v);
+void free_single_emailintercept(emailintercept_t *m);
 void free_single_ipsession(ipsession_t *sess);
+void free_single_emailsession(emailsession_t *sess);
 void free_single_rtpstream(rtpstreaminf_t *rtp);
 void free_single_vendmirror_intercept(vendmirror_intercept_t *mirror);
 void free_single_staticipsession(staticipsession_t *statint);
 void free_single_staticiprange(static_ipranges_t *ipr);
 
+/* Create a comma-separated string containing all of the SIP target IDs
+ * for a VoIP intercept.
+ */
+char *list_sip_targets(voipintercept_t *v, int maxchars);
+
+/* Create a comma-separated string containing all of the target addresses
+ * for an email intercept.
+ */
+char *list_email_targets(emailintercept_t *m, int maxchars);
+
 sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
+        uint32_t cin);
+
+emailsession_t *create_emailsession(emailintercept_t *mailint, char *sessionid,
         uint32_t cin);
 
 rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin);
@@ -335,10 +431,21 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
 int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
         ipintercept_t *ipint);
 
+void clear_email_user_intercept_list(email_user_intercept_list_t *ulist);
+int remove_intercept_from_email_user_intercept_list(
+        email_user_intercept_list_t **ulist, emailintercept_t *em,
+        email_target_t *tgt);
+int add_intercept_to_email_user_intercept_list(
+        email_user_intercept_list_t **ulist, emailintercept_t *em,
+        email_target_t *tgt);
+
 const char *get_access_type_string(internet_access_method_t method);
 const char *get_radius_ident_string(uint32_t radoptions);
 internet_access_method_t map_access_type_string(char *confstr);
 uint32_t map_radius_ident_string(char *confstr);
+
+void intercept_mediation_mode_as_string(intercept_outputs_t mode,
+        char *space, int spacelen);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

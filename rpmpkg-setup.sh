@@ -26,14 +26,14 @@ yum update -y
 if [[ "$1" =~ rocky* ]]; then
         dnf install -y dnf-plugins-core epel-release || true
         dnf config-manager --set-enabled powertools || true
-        dnf config-manager --set-enabled devel || true
-        yum module -y enable mariadb mariadb-devel || true
+        dnf module disable -y mariadb || true
+        /usr/bin/crb enable || true
 fi
 
 if [[ "$1" =~ alma* ]]; then
         dnf install -y dnf-plugins-core epel-release || true
         dnf config-manager --set-enabled powertools || true
-        yum module -y enable mariadb mariadb-devel
+        /usr/bin/crb enable || true
 fi
 
 if [ "$1" = "centos:8" ]; then

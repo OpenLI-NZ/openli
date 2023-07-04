@@ -73,6 +73,10 @@ static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
             return recvd->data.mobiri.liid;
         case OPENLI_EXPORT_RAW_SYNC:
             return recvd->data.rawip.liid;
+        case OPENLI_EXPORT_EMAILIRI:
+            return recvd->data.emailiri.liid;
+        case OPENLI_EXPORT_EMAILCC:
+            return recvd->data.emailcc.liid;
     }
     return NULL;
 }
@@ -92,6 +96,10 @@ static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
             return recvd->data.mobiri.cin;
         case OPENLI_EXPORT_RAW_SYNC:
             return recvd->data.rawip.cin;
+        case OPENLI_EXPORT_EMAILIRI:
+            return recvd->data.emailiri.cin;
+        case OPENLI_EXPORT_EMAILCC:
+            return recvd->data.emailcc.cin;
     }
     logger(LOG_INFO,
             "OpenLI: invalid message type in extract_cin_from_job: %u",
@@ -352,9 +360,11 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 
 	if (recvd->type == OPENLI_EXPORT_IPMMCC ||
 			recvd->type == OPENLI_EXPORT_IPCC ||
-            recvd->type == OPENLI_EXPORT_UMTSCC) {
+            recvd->type == OPENLI_EXPORT_UMTSCC ||
+            recvd->type == OPENLI_EXPORT_EMAILCC) {
 	    job.seqno = cinseq->cc_seqno;
         cinseq->cc_seqno ++;
+
 	} else {
 		job.seqno = cinseq->iri_seqno;
         cinseq->iri_seqno ++;
@@ -430,6 +440,8 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
                 case OPENLI_EXPORT_IPIRI:
                 case OPENLI_EXPORT_UMTSCC:
                 case OPENLI_EXPORT_UMTSIRI:
+                case OPENLI_EXPORT_EMAILIRI:
+                case OPENLI_EXPORT_EMAILCC:
                 case OPENLI_EXPORT_RAW_SYNC:
 					run_encoding_job(seqdata, job);
                     sincepurge ++;

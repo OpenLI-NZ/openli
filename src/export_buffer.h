@@ -79,6 +79,8 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
         amqp_bytes_t exchange, amqp_bytes_t routing_key,
         uint64_t bytelimit);
 int transmit_heartbeat(int fd, SSL *ssl);
+int advance_export_buffer_head(export_buffer_t *buf, uint64_t amount);
+uint8_t *get_buffered_head(export_buffer_t *buf, uint64_t *rem);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

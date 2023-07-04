@@ -55,6 +55,9 @@ enum {
     OPENLI_EXPORT_UMTSIRI = 17,
     OPENLI_EXPORT_RAW_SYNC = 18,
     OPENLI_EXPORT_INTERCEPT_CHANGED = 19,
+    OPENLI_EXPORT_PROVISIONER_MESSAGE = 20,
+    OPENLI_EXPORT_EMAILCC = 21,
+    OPENLI_EXPORT_EMAILIRI = 22,
 };
 
 /* This structure is also used for IPMMCCs since they require the same
@@ -69,6 +72,23 @@ typedef struct openli_ipcc_job {
     uint32_t cin;
     uint8_t dir;
 } PACKED openli_ipcc_job_t;
+
+typedef struct openli_emailiri_job {
+    char *liid;
+    uint32_t cin;
+    etsili_iri_type_t iritype;
+    etsili_email_iri_content_t content;
+    etsili_generic_t *customparams;
+} openli_emailiri_job_t;
+
+typedef struct openli_emailcc_job {
+    char *liid;
+    uint32_t cin;
+    uint8_t format;
+    uint8_t dir;
+    uint8_t *cc_content;
+    int cc_content_len;
+} openli_emailcc_job_t;
 
 typedef struct openli_ipmmiri_job {
     char *liid;
@@ -135,6 +155,12 @@ typedef struct published_intercept_msg {
     int seqtrackerid;
 } published_intercept_msg_t;
 
+typedef struct provisioner_msg {
+    uint8_t msgtype;
+    uint8_t *msgbody;
+    uint16_t msglen;
+} provisioner_msg_t;
+
 typedef struct openli_export_recv openli_export_recv_t;
 
 struct openli_export_recv {
@@ -145,11 +171,14 @@ struct openli_export_recv {
         openli_mediator_t med;
         libtrace_packet_t *packet;
         published_intercept_msg_t cept;
+        provisioner_msg_t provmsg;
         openli_ipcc_job_t ipcc;
         openli_ipmmiri_job_t ipmmiri;
         openli_ipiri_job_t ipiri;
         openli_mobiri_job_t mobiri;
         openli_rawip_job_t rawip;
+        openli_emailiri_job_t emailiri;
+        openli_emailcc_job_t emailcc;
     } data;
 };
 

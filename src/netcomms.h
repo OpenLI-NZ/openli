@@ -109,6 +109,11 @@ typedef enum {
     OPENLI_PROTO_HEARTBEAT,
     OPENLI_PROTO_SSL_REQUIRED,
     OPENLI_PROTO_HI1_NOTIFICATION,
+    OPENLI_PROTO_START_EMAILINTERCEPT,
+    OPENLI_PROTO_HALT_EMAILINTERCEPT,
+    OPENLI_PROTO_MODIFY_EMAILINTERCEPT,
+    OPENLI_PROTO_ANNOUNCE_EMAIL_TARGET,
+    OPENLI_PROTO_WITHDRAW_EMAIL_TARGET,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -154,6 +159,8 @@ typedef enum {
     OPENLI_PROTO_FIELD_TS_USEC,
     OPENLI_PROTO_FIELD_INTERCEPT_START_TIME,
     OPENLI_PROTO_FIELD_INTERCEPT_END_TIME,
+    OPENLI_PROTO_FIELD_EMAIL_TARGET,
+    OPENLI_PROTO_FIELD_TOMEDIATE,
 } openli_proto_fieldtype_t;
 
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl);
@@ -174,6 +181,8 @@ int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *ipint);
 int push_voipintercept_onto_net_buffer(net_buffer_t *nb,
         void *vint);
+int push_emailintercept_onto_net_buffer(net_buffer_t *nb,
+        void *mailint);
 int push_intercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
         void *cept, openli_proto_msgtype_t wdtype);
 int push_intercept_modify_onto_net_buffer(net_buffer_t *nb,
@@ -208,6 +217,10 @@ int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
         ipintercept_t *ipint, static_ipranges_t *ipr);
 int push_hi1_notification_onto_net_buffer(net_buffer_t *nb,
         hi1_notify_data_t *ndata);
+int push_email_target_onto_net_buffer(net_buffer_t *nb,
+        email_target_t *tgt, emailintercept_t *mailint);
+int push_email_target_withdrawal_onto_net_buffer(net_buffer_t *nb,
+        email_target_t *tgt, emailintercept_t *mailint);
 
 openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
         amqp_connection_state_t amqp_state, uint8_t **msgbody,
@@ -234,6 +247,12 @@ int decode_voipintercept_halt(uint8_t *msgbody, uint16_t len,
         voipintercept_t *vint);
 int decode_voipintercept_modify(uint8_t *msgbody, uint16_t len,
         voipintercept_t *vint);
+int decode_emailintercept_start(uint8_t *msgbody, uint16_t len,
+        emailintercept_t *mailint);
+int decode_emailintercept_halt(uint8_t *msgbody, uint16_t len,
+        emailintercept_t *mailint);
+int decode_emailintercept_modify(uint8_t *msgbody, uint16_t len,
+        emailintercept_t *mailint);
 int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_lea_withdrawal(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
@@ -247,6 +266,10 @@ int decode_sip_target_announcement(uint8_t *msgbody, uint16_t len,
         openli_sip_identity_t *sipid, char *liidspace, int spacelen);
 int decode_sip_target_withdraw(uint8_t *msgbody, uint16_t len,
         openli_sip_identity_t *sipid, char *liidspace, int spacelen);
+int decode_email_target_announcement(uint8_t *msgbody, uint16_t len,
+        email_target_t *tgt, char *liidspace, int spacelen);
+int decode_email_target_withdraw(uint8_t *msgbody, uint16_t len,
+        email_target_t *tgt, char *liidspace, int spacelen);
 int decode_staticip_announcement(uint8_t *msgbody, uint16_t len,
         static_ipranges_t *ipr);
 int decode_staticip_removal(uint8_t *msgbody, uint16_t len,

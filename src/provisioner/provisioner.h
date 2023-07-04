@@ -193,10 +193,18 @@ typedef struct prov_intercept_conf {
     coreserver_t *gtpservers;
     /** The set of known SIP servers that will be provided to collectors */
     coreserver_t *sipservers;
+    /** The set of known SMTP servers that will be provided to collectors */
+    coreserver_t *smtpservers;
+    /** The set of known IMAP servers that will be provided to collectors */
+    coreserver_t *imapservers;
+    /** The set of known POP3 servers that will be provided to collectors */
+    coreserver_t *pop3servers;
     /** The set of VOIP intercepts that we are currently running */
     voipintercept_t *voipintercepts;
     /** The set of IP intercepts that we are currently running */
     ipintercept_t *ipintercepts;
+    /** The set of IP intercepts that we are currently running */
+    emailintercept_t *emailintercepts;
     /** The set of LEAs that are potential intercept recipients */
     prov_agency_t *leas;
     /** A map of LIIDs to their destination LEAs */
@@ -330,6 +338,8 @@ int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf);
 /* Implemented in clientupdates.c */
 int compare_sip_targets(provision_state_t *currstate,
         voipintercept_t *existing, voipintercept_t *reload);
+int compare_email_targets(provision_state_t *currstate,
+        emailintercept_t *existing, emailintercept_t *reload);
 int announce_default_radius_username(provision_state_t *state,
         default_radius_user_t *raduser);
 int withdraw_default_radius_username(provision_state_t *state,
@@ -355,6 +365,12 @@ int announce_liidmapping_to_mediators(provision_state_t *state,
         liid_hash_t *liidmap);
 int announce_coreserver_change(provision_state_t *state,
         coreserver_t *cs, uint8_t isnew);
+int announce_email_target_change(provision_state_t *state,
+        email_target_t *tgt, emailintercept_t *mailint, uint8_t isnew);
+int announce_all_email_targets(provision_state_t *state,
+        emailintercept_t *mailint);
+int remove_all_email_targets(provision_state_t *state,
+        emailintercept_t *mailint);
 int announce_sip_target_change(provision_state_t *state,
         openli_sip_identity_t *sipid, voipintercept_t *vint, uint8_t isnew);
 int announce_all_sip_targets(provision_state_t *state, voipintercept_t *vint);
@@ -364,7 +380,7 @@ int announce_single_intercept(provision_state_t *state,
 liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
         char *liid, char *agency);
 int announce_hi1_notification_to_mediators(provision_state_t *state,
-        intercept_common_t *intcomm, hi1_notify_t not_type);
+        intercept_common_t *intcomm, char *target_id, hi1_notify_t not_type);
 
 /* Implemented in hup_reload.c */
 int reload_provisioner_config(provision_state_t *state);

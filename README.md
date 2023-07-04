@@ -1,14 +1,14 @@
 OpenLI -- open source ETSI-compliant Lawful Intercept software
 
-Version: 1.0.15
+Version: 1.1.0
 
 ---------------------------------------------------------------------------
 
-Copyright (c) 2018 - 2022 The University of Waikato, Hamilton, New Zealand.
+Copyright (c) 2018 - 2023 The University of Waikato, Hamilton, New Zealand.
 All rights reserved.
 
-This code has been developed by the University of Waikato WAND research group.
-For further information please see http://www.wand.net.nz/.
+OpenLI was originally developed by the University of Waikato WAND research
+group. For further information please see https://www.wand.net.nz/.
 
 OpenLI is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -32,7 +32,7 @@ of the software is an initial release and we anticipate that there will
 still be many bugs and incompatibilities that we have not yet encountered
 in our testing so far. If you do encounter issues with the OpenLI software,
 please report them to us via our Github page
-(https://github.com/wanduow/openli) so that we can continue to improve the
+(https://github.com/OpenLI-NZ/openli) so that we can continue to improve the
 quality of OpenLI for all of our users.
 
 ## ALSO IMPORTANT
@@ -60,14 +60,14 @@ recommend that you install OpenLI using a package if you can, rather than
 building from source.
 
 Instructions on packaged installs can be found at:
-  https://github.com/wanduow/openli/wiki/Installing-Debian-Packaged-Version
-  https://github.com/wanduow/openli/wiki/Installing-via-RPM
+  https://github.com/OpenLI-NZ/openli/wiki/Installing-Debian-Packaged-Version
+  https://github.com/OpenLI-NZ/openli/wiki/Installing-via-RPM
 
 
 ## The OpenLI Wiki
 
 The best source of documentation for OpenLI is the OpenLI wiki at
-https://github.com/wanduow/openli/wiki -- we have specific pages on a number
+https://github.com/OpenLI-NZ/openli/wiki -- we have specific pages on a number
 of topics that may be relevant to OpenLI users (e.g. encryption, the REST
 API, DPDK with OpenLI, etc.). The wiki tends to be updated more often than
 the in-code documentation (e.g. the `doc/` directory) as well.
@@ -78,11 +78,11 @@ will be more than happy to accept your contribution.
 
 ## Dependencies for building from source
 
-* [libtrace 4.0.18 or later](http://research.wand.net.nz/software/libtrace.php)
+* [libtrace 4.0.18 or later](https://github.com/LibtraceTeam/libtrace/)
   (packages for Debian / Ubuntu are available
   [from WAND](https://cloudsmith.io/~wand/repos/libtrace/packages/) as well).
 
-* [libwandder 2.0.4 or later](https://github.com/wanduow/libwandder/)
+* [libwandder 2.0.4 or later](https://github.com/LibtraceTeam/libwandder/)
   (packages for Debian / Ubuntu are available
   [from WAND](https://cloudsmith.io/~wand/repos/libwandder/packages/) as well).
 
@@ -118,6 +118,9 @@ will be more than happy to accept your contribution.
 
 * libtcmalloc -- Debian / Ubuntu users can install the libgoogle-perftools-dev
   package. Optional, but highly recommended for performance reasons.
+
+* RabbitMQ Server -- Debian/Ubuntu users can install the rabbitmq-server
+  package. Optional for the collector, required for the mediator.
 
 ## Building OpenLI
 
@@ -156,6 +159,68 @@ To build OpenLI from source, just follow the series of steps given below.
    **This last step is optional -- the OpenLI software components should run without needing to be installed.**
 
 
+## Mediator RabbitMQ Setup
+If you have built OpenLI from source, you will also need to perform some
+additional manual configuration steps to allow your mediator to be able
+to use RabbitMQ server for its internal message passing.
+
+**Note, you only need to do this for the mediator component and only if
+you built the mediator from source rather than using a packaged install.**
+
+More details can be found at https://github.com/OpenLI-NZ/openli/wiki/RabbitMQ-for-internal-buffering-on-Mediators but a brief set of instructions is
+included below:
+
+First, if you haven't already done so, install RabbitMQ server.
+Instructions can be found at https://www.rabbitmq.com/download.html
+
+Configure RabbitMQ on your mediator to only accept connections from localhost
+by adding the following lines to a config file called 
+`/etc/rabbitmq/rabbitmq.conf` (note, if this file does not exist then just
+create it -- if it does exist, just add the config to it):
+
+```
+    listeners.tcp.default = 127.0.0.1:5672
+    loopback_users.guest = false
+```
+
+Start the RabbitMQ service:
+```
+    service rabbitmq-server restart
+```
+
+Next, create the OpenLI-med vhost on your RabbitMQ server:
+```
+    rabbitmqctl add_vhost "OpenLI-med"
+```
+
+Create the openli.nz user and assign them a password:
+```
+    rabbitmqctl add_user "openli.nz" "<secretpassword>"
+```
+
+Give the new user permissions to interact with the OpenLI-med vhost:
+```
+    rabbitmqctl set_permissions -p "OpenLI-med" "openli.nz" ".*" ".*" ".*"
+```
+
+The last thing you need to do is to provide your OpenLI mediator with the
+password for the `openli.nz` user. There are two ways you can do this.
+The first is by adding a configuration option to your mediator config file
+(e.g. `/etc/openli/mediator-config.yaml`) as shown below:
+```
+    RMQinternalpass: <secretpassword>
+```
+
+The second is to create a file at `/etc/openli/rmqinternalpass` that contains
+ONLY the password that the mediator should use for internal RabbitMQ
+interactions. Make sure that the file is only readable by the user that is
+going to be running the OpenLI mediator process.
+
+Note that if you provide the password using both methods, the password in the
+mediator config file has precedence over the one provided in
+`/etc/openli/rmqinternalpass`.
+
+
 ## Running OpenLI
 
 OpenLI consists of three software components: the provisioner, the collector
@@ -188,7 +253,7 @@ input sources (i.e. capture interfaces) and use multiple threads to spread
 the collection workload across multiple CPU cores.
 
 The recommended way to learn about OpenLI is by taking our tutorial, which can
-be found at https://github.com/wanduow/openli/wiki/OpenLI-Tutorial -- the
+be found at https://github.com/OpenLI-NZ/openli/wiki/OpenLI-Tutorial -- the
 tutorial includes practical exercises using containers that will help
 you become familiar with the OpenLI components and how to configure them.
 
@@ -208,7 +273,7 @@ added, removed or modified and update their behaviour accordingly.
 Starting from version 1.0.4, the provisioner will also listen on a socket
 for RESTful HTTP requests that either add or modify the running intercept
 configuration. The API for interacting with this update socket is documented
-at https://github.com/wanduow/openli/wiki/Intercept-Configuration-REST-API
+at https://github.com/OpenLI-NZ/openli/wiki/Intercept-Configuration-REST-API
 
 
 ## Common problems with OpenLI
@@ -227,10 +292,10 @@ A. Unfortunately there are plenty of reasons why this might happen. Here are
   https://github.com/LibtraceTeam/libtrace
 
 * Try installing the latest 'develop' branch of libwandder from
-  https://github.com/wanduow/libwandder
+  https://github.com/LibtraceTeam/libwandder
 
 * Try installing the latest 'develop' branch of openli itself from
-  https://github.com/wanduow/openli
+  https://github.com/OpenLI-NZ/openli
 
   If all else fails, send us an email at openli-support@waikato.ac.nz and
   someone will try to help you.
@@ -264,5 +329,32 @@ A. This means that your collector is not keeping up with the number of
   open-source project and ask a commercial LI vendor if they can supply you
   with a solution that can scale to your network size (be prepared to pay
   a significant sum for this, of course).
+
+---
+
+Q. My mediator is not passing intercept records to the connected agencies and
+   I see that there are log messages complaining about "OpenLI Mediator: failed
+   to log into RMQ broker using plain auth".
+
+A. This means that your RabbitMQ internal password for the mediator is
+   incorrect.
+
+   If you installed your OpenLI mediator using a package, you may need to
+   remove the package (using `--purge` if removing a `.deb`) and reinstall.
+   I would suggest backing up `/etc/openli/mediator-config.yaml` first.
+   If the issue still persists, remove any `RMQinternalpass`
+   configuration option that is present in your mediator config file and
+   try again.
+
+   If you installed your OpenLI mediator manually, check the value of the
+   `RMQinternalpass` configuration option in your mediator config file. Ensure
+   that the value for this option matches the password that you provided when
+   you created the `openli.nz` user in RabbitMQ. If the option does not exist,
+   add it (and the correct value) to the mediator config file.
+
+   If all else fails, you can reset the `openli.nz` user password by running:
+   ```
+       rabbitmqctl change_password "openli.nz" "<anewpassword>"
+   ```
 
 

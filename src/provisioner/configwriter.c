@@ -429,6 +429,56 @@ static int emit_intercept_common(intercept_common_t *intcom,
             (yaml_char_t *)buffer, strlen(buffer), 1, 0,
             YAML_PLAIN_SCALAR_STYLE);
     if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)"outputhandovers", strlen("outputhandovers"), 1, 0,
+            YAML_PLAIN_SCALAR_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    if (intcom->tomediate == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"irionly", strlen("irionly"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+    } else if (intcom->tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"cconly", strlen("cconly"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+    } else {
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"all", strlen("all"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+    }
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+
+    return 0;
+}
+
+static int emit_email_targets(emailintercept_t *mailint,
+        yaml_emitter_t *emitter) {
+
+    email_target_t *tgt, *tmp;
+    yaml_event_t event;
+
+    HASH_ITER(hh, mailint->targets, tgt, tmp) {
+
+        yaml_mapping_start_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_MAP_TAG, 1, YAML_ANY_MAPPING_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"address", strlen("address"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)tgt->address, strlen(tgt->address), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        yaml_mapping_end_event_initialize(&event);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+    }
     return 0;
 }
 
@@ -619,6 +669,58 @@ static int emit_ipintercepts(ipintercept_t *ipints, yaml_emitter_t *emitter) {
     return 0;
 }
 
+static int emit_emailintercepts(emailintercept_t *mailints,
+        yaml_emitter_t *emitter) {
+    yaml_event_t event;
+    emailintercept_t *mail, *tmp;
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)"emailintercepts", strlen("emailintercepts"), 1, 0,
+            YAML_PLAIN_SCALAR_STYLE);
+
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    yaml_sequence_start_event_initialize(&event, NULL,
+            (yaml_char_t *)YAML_SEQ_TAG, 1, YAML_ANY_SEQUENCE_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    HASH_ITER(hh_liid, mailints, mail, tmp) {
+
+        yaml_mapping_start_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_MAP_TAG, 1, YAML_ANY_MAPPING_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        if (emit_intercept_common(&(mail->common), emitter) < 0) {
+            return -1;
+        }
+
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"targets", strlen("targets"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        yaml_sequence_start_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_SEQ_TAG, 1, YAML_ANY_SEQUENCE_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        if (emit_email_targets(mail, emitter) < 0) {
+            return -1;
+        }
+
+        yaml_sequence_end_event_initialize(&event);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        yaml_mapping_end_event_initialize(&event);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    }
+
+    yaml_sequence_end_event_initialize(&event);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    return 0;
+}
+
 
 
 int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf) {
@@ -671,6 +773,21 @@ int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf) {
         goto error;
     }
 
+    if (emit_core_server_list(conf->smtpservers, "smtpservers",
+            &emitter) < 0) {
+        goto error;
+    }
+
+    if (emit_core_server_list(conf->imapservers, "imapservers",
+            &emitter) < 0) {
+        goto error;
+    }
+
+    if (emit_core_server_list(conf->pop3servers, "pop3servers",
+            &emitter) < 0) {
+        goto error;
+    }
+
     if (emit_default_radius_usernames(conf->defradusers, &emitter) < 0) {
         goto error;
     }
@@ -684,6 +801,10 @@ int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf) {
     }
 
     if (emit_ipintercepts(conf->ipintercepts, &emitter) < 0) {
+        goto error;
+    }
+
+    if (emit_emailintercepts(conf->emailintercepts, &emitter) < 0) {
         goto error;
     }
 

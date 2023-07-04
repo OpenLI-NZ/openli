@@ -32,6 +32,7 @@
 #include "ipcc.h"
 #include "ipmmiri.h"
 #include "umtsiri.h"
+#include "emailiri.h"
 #include "collector_base.h"
 #include "logger.h"
 #include "etsili_core.h"
@@ -263,13 +264,23 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
 static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
         openli_encoded_result_t *res) {
 
+    uint16_t liidlen, l;
+
+    liidlen = strlen(job->liid);
+    l = htons(liidlen);
+
     memset(res, 0, sizeof(openli_encoded_result_t));
 
     res->msgbody = calloc(1, sizeof(wandder_encoded_result_t));
     res->msgbody->encoder = NULL;
-    res->msgbody->encoded = NULL;
-    res->msgbody->len = job->origreq->data.rawip.ipclen;
-    res->msgbody->alloced = 0;
+    res->msgbody->encoded = malloc(liidlen + sizeof(uint16_t));
+
+    memcpy(res->msgbody->encoded, &l, sizeof(uint16_t));
+    memcpy(res->msgbody->encoded + sizeof(uint16_t), job->liid, liidlen);
+
+    res->msgbody->len = job->origreq->data.rawip.ipclen +
+            (liidlen + sizeof(uint16_t));
+    res->msgbody->alloced = liidlen + sizeof(uint16_t);
     res->msgbody->next = NULL;
 
     res->ipcontents = job->origreq->data.rawip.ipcontent;
@@ -498,6 +509,47 @@ static int encode_templated_ipmmcc(openli_encoder_t *enc,
     return 1;
 }
 
+static int encode_templated_emailiri(openli_encoder_t *enc,
+        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res) {
+
+    wandder_encoded_result_t *body = NULL;
+    openli_emailiri_job_t *irijob =
+            (openli_emailiri_job_t *)&(job->origreq->data.emailiri);
+
+    /* create custom params from job "contents" */
+    prepare_emailiri_parameters(enc->freegenerics, irijob,
+            &(irijob->customparams));
+
+    reset_wandder_encoder(enc->encoder);
+    body = encode_emailiri_body(enc->encoder, job->preencoded, irijob->iritype,
+            &(irijob->customparams));
+    if (body == NULL || body->len == 0 || body->encoded == NULL) {
+        logger(LOG_INFO, "OpenLI: failed to encode ETSI Email IRI body");
+        if (body) {
+            wandder_release_encoded_result(enc->encoder, body);
+        }
+        return -1;
+    }
+
+    if (create_encoded_message_body(res, hdr_tplate, body->encoded, body->len,
+            job->liid,
+            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
+        wandder_release_encoded_result(enc->encoder, body);
+        return -1;
+    }
+
+    res->ipcontents = NULL;
+    res->ipclen = 0;
+    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
+
+    wandder_release_encoded_result(enc->encoder, body);
+    free_emailiri_parameters(irijob->customparams);
+
+    /* Success */
+    return 1;
+}
+
 static int encode_templated_umtsiri(openli_encoder_t *enc,
         openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
@@ -659,6 +711,69 @@ static int encode_templated_umtscc(openli_encoder_t *enc,
 
 }
 
+static int encode_templated_emailcc(openli_encoder_t *enc,
+        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res) {
+
+    uint32_t key = 0;
+    encoded_global_template_t *emailcc_tplate = NULL;
+    openli_emailcc_job_t *emailccjob;
+    uint8_t is_new = 0;
+
+    emailccjob = (openli_emailcc_job_t *)&(job->origreq->data.emailcc);
+
+    if (emailccjob->format == ETSILI_EMAIL_CC_FORMAT_IP &&
+            emailccjob->dir == ETSI_DIR_FROM_TARGET) {
+        key = (TEMPLATE_TYPE_EMAILCC_IP_DIRFROM << 16) +
+                emailccjob->cc_content_len;
+    } else if (emailccjob->format == ETSILI_EMAIL_CC_FORMAT_APP &&
+            emailccjob->dir == ETSI_DIR_FROM_TARGET) {
+        key = (TEMPLATE_TYPE_EMAILCC_APP_DIRFROM << 16) +
+                emailccjob->cc_content_len;
+    } else if (emailccjob->format == ETSILI_EMAIL_CC_FORMAT_IP &&
+            emailccjob->dir == ETSI_DIR_TO_TARGET) {
+        key = (TEMPLATE_TYPE_EMAILCC_IP_DIRTO << 16) +
+                emailccjob->cc_content_len;
+    } else if (emailccjob->format == ETSILI_EMAIL_CC_FORMAT_APP &&
+            emailccjob->dir == ETSI_DIR_TO_TARGET) {
+        key = (TEMPLATE_TYPE_EMAILCC_APP_DIRTO << 16) +
+                emailccjob->cc_content_len;
+    } else {
+        logger(LOG_INFO, "Unexpected format + direction for EmailCC: %u %u",
+                emailccjob->format, emailccjob->dir);
+        return -1;
+    }
+
+    emailcc_tplate = lookup_global_template(enc, key, &is_new);
+
+    if (is_new) {
+        if (etsili_create_emailcc_template(enc->encoder, job->preencoded,
+                emailccjob->format, emailccjob->dir,
+                emailccjob->cc_content_len, emailcc_tplate) < 0) {
+            logger(LOG_INFO, "OpenLI: Failed to create EmailCC template?");
+            return -1;
+        }
+    }
+    /* We have very specific templates for each observed packet size, so
+     * this will not require updating */
+
+    if (create_encoded_message_body(res, hdr_tplate,
+            emailcc_tplate->cc_content.cc_wrap,
+            emailcc_tplate->cc_content.cc_wrap_len,
+            job->liid,
+            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
+        return -1;
+    }
+
+    /* Set ipcontents in the result */
+    res->ipcontents = (uint8_t *)emailccjob->cc_content;
+    res->ipclen = emailccjob->cc_content_len;
+    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
+
+    /* Success */
+    return 1;
+}
+
 static int encode_templated_ipcc(openli_encoder_t *enc,
         openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
@@ -793,6 +908,12 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             break;
         case OPENLI_EXPORT_UMTSIRI:
             ret = encode_templated_umtsiri(enc, job, hdr_tplate, res);
+            break;
+        case OPENLI_EXPORT_EMAILIRI:
+            ret = encode_templated_emailiri(enc, job, hdr_tplate, res);
+            break;
+        case OPENLI_EXPORT_EMAILCC:
+            ret = encode_templated_emailcc(enc, job, hdr_tplate, res);
             break;
         default:
             ret = 0;

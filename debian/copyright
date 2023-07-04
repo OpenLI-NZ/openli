@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: OpenLI
-Upstream-Contact: WAND Network Research Group <contact@wand.net.nz>
-Source: https://github.com/wanduow/openli
+Upstream-Contact: Shane Alcock <salcock@searchlight.nz>
+Source: https://github.com/OpenLI-NZ/openli
 
 Files: *
 Copyright: 2018 The University of Waikato, Hamilton, New Zealand.

@@ -129,6 +129,11 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
                         "OpenLI: matched an IP range for intercept %s but this is not present in activestaticintercepts",
                         sliid->key);
             } else {
+                if (matchsess->common.tomediate ==
+                        OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
+                    continue;
+                }
+
                 if (tv->tv_sec < matchsess->common.tostart_time) {
                     continue;
                 }
@@ -180,6 +185,11 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
                         sliid->key);
             } else {
                 HASH_ITER(hh, tgt->intercepts, sess, tmp) {
+                    if (sess->common.tomediate ==
+                            OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
+                        continue;
+                    }
+
                     if (tv->tv_sec < sess->common.tostart_time) {
                         continue;
                     }
@@ -261,6 +271,9 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
 
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
+            if (sess->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
+                continue;
+            }
             if (pinfo->tv.tv_sec < sess->common.tostart_time) {
                 continue;
             }
@@ -288,6 +301,9 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
 
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
+            if (sess->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
+                continue;
+            }
             if (pinfo->tv.tv_sec < sess->common.tostart_time) {
                 continue;
             }

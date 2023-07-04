@@ -57,6 +57,8 @@ struct json_intercept {
     struct json_object *endtime;
     struct json_object *staticips;
     struct json_object *siptargets;
+    struct json_object *emailtargets;
+    struct json_object *tomediate;
 };
 
 #define EXTRACT_JSON_INT_PARAM(name, uptype, jsonobj, dest, errflag, force) \
@@ -181,9 +183,11 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "radiusident", &(ipjson->radiusident));
     json_object_object_get_ex(parsed, "starttime", &(ipjson->starttime));
     json_object_object_get_ex(parsed, "endtime", &(ipjson->endtime));
+    json_object_object_get_ex(parsed, "outputhandovers", &(ipjson->tomediate));
     json_object_object_get_ex(parsed, "vendmirrorid", &(ipjson->vendmirrorid));
     json_object_object_get_ex(parsed, "staticips", &(ipjson->staticips));
     json_object_object_get_ex(parsed, "siptargets", &(ipjson->siptargets));
+    json_object_object_get_ex(parsed, "targets", &(ipjson->emailtargets));
 }
 
 static inline int compare_intercept_times(intercept_common_t *latest,
@@ -219,6 +223,7 @@ int remove_voip_intercept(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr) {
 
     voipintercept_t *found;
+    char *target_info;
 
     HASH_FIND(hh_liid, state->interceptconf.voipintercepts, idstr,
             strlen(idstr), found);
@@ -229,11 +234,45 @@ int remove_voip_intercept(update_con_info_t *cinfo, provision_state_t *state,
                 OPENLI_PROTO_HALT_VOIPINTERCEPT);
         remove_liid_mapping(state, found->common.liid, found->common.liid_len,
                 0);
+        target_info = list_sip_targets(found, 256);
         announce_hi1_notification_to_mediators(state, &(found->common),
-                HI1_LI_DEACTIVATED);
+                target_info, HI1_LI_DEACTIVATED);
         free_single_voipintercept(found);
+        if (target_info) {
+            free(target_info);
+        }
         logger(LOG_INFO,
                 "OpenLI: removed VOIP intercept '%s' via update socket.",
+                idstr);
+        return 1;
+    }
+    return 0;
+}
+
+int remove_email_intercept(update_con_info_t *cinfo, provision_state_t *state,
+        const char *idstr) {
+
+    emailintercept_t *found;
+    char *target_info;
+
+    HASH_FIND(hh_liid, state->interceptconf.emailintercepts, idstr,
+            strlen(idstr), found);
+
+    if (found) {
+        HASH_DELETE(hh_liid, state->interceptconf.emailintercepts, found);
+        halt_existing_intercept(state, (void *)found,
+                OPENLI_PROTO_HALT_EMAILINTERCEPT);
+        remove_liid_mapping(state, found->common.liid, found->common.liid_len,
+                0);
+        target_info = list_email_targets(found, 256);
+        announce_hi1_notification_to_mediators(state, &(found->common),
+                target_info, HI1_LI_DEACTIVATED);
+        free_single_emailintercept(found);
+        if (target_info) {
+            free(target_info);
+        }
+        logger(LOG_INFO,
+                "OpenLI: removed Email intercept '%s' via update socket.",
                 idstr);
         return 1;
     }
@@ -255,7 +294,7 @@ int remove_ip_intercept(update_con_info_t *cinfo, provision_state_t *state,
         remove_liid_mapping(state, found->common.liid, found->common.liid_len,
                 0);
         announce_hi1_notification_to_mediators(state, &(found->common),
-                HI1_LI_DEACTIVATED);
+                found->username, HI1_LI_DEACTIVATED);
         free_single_ipintercept(found);
         logger(LOG_INFO,
                 "OpenLI: removed IP intercept '%s' via update socket.",
@@ -308,19 +347,34 @@ int remove_defaultradius(update_con_info_t *cinfo, provision_state_t *state,
 int remove_coreserver(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr, uint8_t srvtype) {
 
+    char search[1024];
     coreserver_t *found = NULL;
     coreserver_t **src;
 
+    snprintf(search, 1024, "%s-%s", idstr, coreserver_type_to_string(srvtype));
+
     if (srvtype == OPENLI_CORE_SERVER_SIP) {
-        HASH_FIND(hh, state->interceptconf.sipservers, idstr, strlen(idstr),
+        HASH_FIND(hh, state->interceptconf.sipservers, search, strlen(search),
                 found);
         src = &(state->interceptconf.sipservers);
     } else if (srvtype == OPENLI_CORE_SERVER_RADIUS) {
-        HASH_FIND(hh, state->interceptconf.radiusservers, idstr, strlen(idstr),
-                found);
+        HASH_FIND(hh, state->interceptconf.radiusservers, search,
+                strlen(search), found);
         src = &(state->interceptconf.radiusservers);
+    } else if (srvtype == OPENLI_CORE_SERVER_SMTP) {
+        HASH_FIND(hh, state->interceptconf.smtpservers, search, strlen(search),
+                found);
+        src = &(state->interceptconf.smtpservers);
+    } else if (srvtype == OPENLI_CORE_SERVER_IMAP) {
+        HASH_FIND(hh, state->interceptconf.imapservers, search, strlen(search),
+                found);
+        src = &(state->interceptconf.imapservers);
+    } else if (srvtype == OPENLI_CORE_SERVER_POP3) {
+        HASH_FIND(hh, state->interceptconf.pop3servers, search, strlen(search),
+                found);
+        src = &(state->interceptconf.pop3servers);
     } else if (srvtype == OPENLI_CORE_SERVER_GTP) {
-        HASH_FIND(hh, state->interceptconf.gtpservers, idstr, strlen(idstr),
+        HASH_FIND(hh, state->interceptconf.gtpservers, search, strlen(search),
                 found);
         src = &(state->interceptconf.gtpservers);
     }
@@ -329,9 +383,12 @@ int remove_coreserver(update_con_info_t *cinfo, provision_state_t *state,
         HASH_DEL(*src, found);
         announce_coreserver_change(state, found, false);
         free_single_coreserver(found);
-        logger(LOG_INFO, "OpenLI: removed %s server via update socket.",
-                coreserver_type_to_string(srvtype));
+        logger(LOG_INFO, "OpenLI: removed %s server %s via update socket.",
+                coreserver_type_to_string(srvtype), idstr);
         return 1;
+    } else {
+        logger(LOG_INFO, "OpenLI: unable to remove %s server %s via update socket.",
+                coreserver_type_to_string(srvtype), idstr);
     }
 
     return 0;
@@ -471,6 +528,15 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
     } else if (srvtype == OPENLI_CORE_SERVER_RADIUS) {
         HASH_FIND(hh, state->interceptconf.radiusservers, new_cs->serverkey,
                 strlen(new_cs->serverkey), found);
+    } else if (srvtype == OPENLI_CORE_SERVER_SMTP) {
+        HASH_FIND(hh, state->interceptconf.smtpservers, new_cs->serverkey,
+                strlen(new_cs->serverkey), found);
+    } else if (srvtype == OPENLI_CORE_SERVER_IMAP) {
+        HASH_FIND(hh, state->interceptconf.imapservers, new_cs->serverkey,
+                strlen(new_cs->serverkey), found);
+    } else if (srvtype == OPENLI_CORE_SERVER_POP3) {
+        HASH_FIND(hh, state->interceptconf.pop3servers, new_cs->serverkey,
+                strlen(new_cs->serverkey), found);
     } else if (srvtype == OPENLI_CORE_SERVER_GTP) {
         HASH_FIND(hh, state->interceptconf.gtpservers, new_cs->serverkey,
                 strlen(new_cs->serverkey), found);
@@ -484,6 +550,15 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
                     new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
         } else if (srvtype == OPENLI_CORE_SERVER_RADIUS) {
             HASH_ADD_KEYPTR(hh, state->interceptconf.radiusservers,
+                    new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
+        } else if (srvtype == OPENLI_CORE_SERVER_SMTP) {
+            HASH_ADD_KEYPTR(hh, state->interceptconf.smtpservers,
+                    new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
+        } else if (srvtype == OPENLI_CORE_SERVER_IMAP) {
+            HASH_ADD_KEYPTR(hh, state->interceptconf.imapservers,
+                    new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
+        } else if (srvtype == OPENLI_CORE_SERVER_POP3) {
+            HASH_ADD_KEYPTR(hh, state->interceptconf.pop3servers,
                     new_cs->serverkey, strlen(new_cs->serverkey), new_cs);
         } else if (srvtype == OPENLI_CORE_SERVER_GTP) {
             HASH_ADD_KEYPTR(hh, state->interceptconf.gtpservers,
@@ -512,6 +587,67 @@ cserr:
         json_object_put(parsed);
     }
     json_tokener_free(tknr);
+    return -1;
+
+}
+
+int parse_emailintercept_targets(provision_state_t *state,
+        emailintercept_t *mailint, struct json_object *jsontargets,
+        update_con_info_t *cinfo) {
+
+    email_target_t *newtgt, *found;
+    struct json_object *jobj;
+    struct json_object *address;
+    int parseerr = 0, i, tgtcnt;
+
+    newtgt = NULL;
+    tgtcnt = 0;
+
+    if (json_object_get_type(jsontargets) != json_type_array) {
+        logger(LOG_INFO, "OpenLI update socket: 'targets' for an Email intercept must be expressed as a JSON array");
+        snprintf(cinfo->answerstring, 4096, "%s <p>The 'targets' members for a Email intercept must be expressed as a JSON array. %s",
+                update_failure_page_start, update_failure_page_end);
+        goto targeterr;
+    }
+
+    for (i = 0; i < json_object_array_length(jsontargets); i++) {
+        jobj = json_object_array_get_idx(jsontargets, i);
+
+        json_object_object_get_ex(jobj, "address", &(address));
+
+        newtgt = (email_target_t *)calloc(1, sizeof(email_target_t));
+        newtgt->awaitingconfirm = 1;
+
+        EXTRACT_JSON_STRING_PARAM("address", "Email intercept target",
+                address, newtgt->address, &parseerr, true);
+
+        if (parseerr) {
+            goto targeterr;
+        }
+
+        HASH_FIND(hh, mailint->targets, newtgt->address,
+                strlen(newtgt->address), found);
+
+        if (found) {
+            free(newtgt->address);
+            free(newtgt);
+            continue;
+        }
+
+        tgtcnt ++;
+        HASH_ADD_KEYPTR(hh, mailint->targets, newtgt->address,
+                strlen(newtgt->address), newtgt);
+    }
+
+    return tgtcnt;
+
+targeterr:
+    if (newtgt) {
+        if (newtgt->address) {
+            free(newtgt->address);
+        }
+        free(newtgt);
+    }
     return -1;
 
 }
@@ -699,6 +835,131 @@ static inline void new_intercept_liidmapping(provision_state_t *state,
     }
 }
 
+int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
+    struct json_intercept emailjson;
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL;
+    emailintercept_t *found = NULL;
+    emailintercept_t *mailint = NULL;
+    int parseerr = 0, r;
+    char *target_info;
+
+    INIT_JSON_INTERCEPT_PARSING
+    extract_intercept_json_objects(&emailjson, parsed);
+
+    mailint = calloc(1, sizeof(emailintercept_t));
+    /* XXX does internalid still matter? if not, let's remove it */
+    mailint->awaitingconfirm = 1;
+    mailint->targets = NULL;
+    mailint->common.tostart_time = 0;
+    mailint->common.toend_time = 0;
+
+    EXTRACT_JSON_STRING_PARAM("liid", "Email intercept", emailjson.liid,
+            mailint->common.liid, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("authcc", "Email intercept", emailjson.authcc,
+            mailint->common.authcc, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("delivcc", "Email intercept", emailjson.delivcc,
+            mailint->common.delivcc, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("agencyid", "Email intercept", emailjson.agencyid,
+            mailint->common.targetagency, &parseerr, true);
+    EXTRACT_JSON_INT_PARAM("outputhandovers", "Email intercept",
+            emailjson.tomediate,
+            mailint->common.tomediate, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("mediator", "Email intercept", emailjson.mediator,
+            mailint->common.destid, &parseerr, true);
+    EXTRACT_JSON_INT_PARAM("starttime", "Email intercept", emailjson.starttime,
+            mailint->common.tostart_time, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("endtime", "Email intercept", emailjson.endtime,
+            mailint->common.toend_time, &parseerr, false);
+
+    if (parseerr) {
+        goto cepterr;
+    }
+
+    r = 0;
+    if (emailjson.emailtargets != NULL) {
+        if ((r = parse_emailintercept_targets(state, mailint,
+                emailjson.emailtargets, cinfo)) < 0) {
+            goto cepterr;
+        }
+    }
+
+    if (r == 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Email intercept %s has been specified without valid target addresses. %s",
+                update_failure_page_start, mailint->common.liid,
+                update_failure_page_end);
+        goto cepterr;
+    }
+
+    mailint->common.liid_len = strlen(mailint->common.liid);
+    mailint->common.authcc_len = strlen(mailint->common.authcc);
+    mailint->common.delivcc_len = strlen(mailint->common.delivcc);
+
+    HASH_FIND(hh_liid, state->interceptconf.emailintercepts,
+            mailint->common.liid, mailint->common.liid_len, found);
+
+    if (found) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>LIID %s already exists as an Email intercept, please use PUT method if you wish to modify it. %s",
+                update_failure_page_start,
+                mailint->common.liid,
+                update_failure_page_end);
+        goto cepterr;
+    }
+
+    HASH_ADD_KEYPTR(hh_liid, state->interceptconf.emailintercepts,
+            mailint->common.liid, mailint->common.liid_len, mailint);
+
+    new_intercept_liidmapping(state, mailint->common.targetagency,
+            mailint->common.liid);
+
+    if (announce_single_intercept(state, (void *)mailint,
+            push_emailintercept_onto_net_buffer) < 0) {
+        logger(LOG_INFO,
+                "OpenLI provisioner: unable to announce new Email intercept %s to collectors.",
+                mailint->common.liid);
+    }
+
+    if (announce_all_email_targets(state, mailint) < 0) {
+        logger(LOG_INFO,
+                "OpenLI provisioner: unable to announce targets for new Email intercept %s to collectors.",
+                mailint->common.liid);
+    }
+
+    target_info = list_email_targets(mailint, 256);
+    if (announce_hi1_notification_to_mediators(state, &(mailint->common),
+            target_info, HI1_LI_ACTIVATED) < 0) {
+        logger(LOG_INFO,
+                "OpenLI provisioner: unable to send HI1 notification for new Email intercept %s to mediators.",
+                mailint->common.liid);
+    }
+    if (target_info) {
+        free(target_info);
+    }
+
+    mailint->awaitingconfirm = 0;
+    logger(LOG_INFO,
+            "OpenLI provisioner: added new Email intercept %s via update socket.",
+            mailint->common.liid);
+
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return 0;
+
+cepterr:
+    if (mailint) {
+        free_single_emailintercept(mailint);
+    }
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return -1;
+}
+
 int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     struct json_intercept voipjson;
     struct json_tokener *tknr;
@@ -706,6 +967,7 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     voipintercept_t *found = NULL;
     voipintercept_t *vint = NULL;
     int parseerr = 0, r;
+    char *target_info;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&voipjson, parsed);
@@ -732,6 +994,9 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             vint->common.delivcc, &parseerr, true);
     EXTRACT_JSON_STRING_PARAM("agencyid", "VOIP intercept", voipjson.agencyid,
             vint->common.targetagency, &parseerr, true);
+    EXTRACT_JSON_INT_PARAM("outputhandovers", "VOIP intercept",
+            voipjson.tomediate,
+            vint->common.tomediate, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("mediator", "VOIP intercept", voipjson.mediator,
             vint->common.destid, &parseerr, true);
     EXTRACT_JSON_INT_PARAM("starttime", "VOIP intercept", voipjson.starttime,
@@ -794,11 +1059,15 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                 vint->common.liid);
     }
 
+    target_info = list_sip_targets(vint, 256);
     if (announce_hi1_notification_to_mediators(state, &(vint->common),
-            HI1_LI_ACTIVATED) < 0) {
+            target_info, HI1_LI_ACTIVATED) < 0) {
         logger(LOG_INFO,
                 "OpenLI provisioner: unable to send HI1 notification for new VOIP intercept %s to mediators.",
                 vint->common.liid);
+    }
+    if (target_info) {
+        free(target_info);
     }
 
     vint->awaitingconfirm = 0;
@@ -853,6 +1122,9 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             ipint->common.delivcc, &parseerr, true);
     EXTRACT_JSON_STRING_PARAM("agencyid", "IP intercept", ipjson.agencyid,
             ipint->common.targetagency, &parseerr, true);
+    EXTRACT_JSON_INT_PARAM("outputhandovers", "IP intercept",
+            ipjson.tomediate,
+            ipint->common.tomediate, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("mediator", "IP intercept", ipjson.mediator,
             ipint->common.destid, &parseerr, true);
     EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
@@ -925,7 +1197,7 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (announce_hi1_notification_to_mediators(state, &(ipint->common),
-            HI1_LI_ACTIVATED) < 0) {
+            ipint->username, HI1_LI_ACTIVATED) < 0) {
         logger(LOG_INFO,
                 "OpenLI provisioner: unable to send HI1 notification for new VOIP intercept %s to mediators.",
                 ipint->common.liid);
@@ -959,6 +1231,153 @@ cepterr:
     return -1;
 }
 
+int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
+
+    struct json_intercept emailjson;
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL;
+    emailintercept_t *found = NULL;
+    emailintercept_t *mailint = NULL;
+    int changedtargets = 0;
+    email_target_t *tmp;
+    char *target_info;
+
+    char *liidstr = NULL;
+    int parseerr = 0, changed = 0, agencychanged = 0, timechanged = 0;
+
+    INIT_JSON_INTERCEPT_PARSING
+    extract_intercept_json_objects(&emailjson, parsed);
+
+    EXTRACT_JSON_STRING_PARAM("liid", "Email intercept", emailjson.liid,
+            liidstr, &parseerr, true);
+
+    if (parseerr) {
+        goto cepterr;
+    }
+
+    HASH_FIND(hh_liid, state->interceptconf.emailintercepts, liidstr,
+            strlen(liidstr), found);
+
+    if (!found) {
+        json_object_put(parsed);
+        json_tokener_free(tknr);
+		if (liidstr) {
+			free(liidstr);
+		}
+        return add_new_emailintercept(cinfo, state);
+    }
+
+    mailint = calloc(1, sizeof(emailintercept_t));
+    mailint->awaitingconfirm = 1;
+    mailint->common.liid = liidstr;
+    mailint->targets = NULL;
+    mailint->common.tostart_time = (uint64_t)-1;
+    mailint->common.toend_time = (uint64_t)-1;
+
+    EXTRACT_JSON_STRING_PARAM("authcc", "Email intercept", emailjson.authcc,
+            mailint->common.authcc, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("delivcc", "Email intercept", emailjson.delivcc,
+            mailint->common.delivcc, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("agencyid", "Email intercept", emailjson.agencyid,
+            mailint->common.targetagency, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("outputhandovers", "Email intercept",
+            emailjson.tomediate,
+            mailint->common.tomediate, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("mediator", "Email intercept", emailjson.mediator,
+            mailint->common.destid, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("starttime", "Email intercept", emailjson.starttime,
+            mailint->common.tostart_time, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("endtime", "Email intercept", emailjson.endtime,
+            mailint->common.toend_time, &parseerr, false);
+
+    if (parseerr) {
+        goto cepterr;
+    }
+
+    if (emailjson.emailtargets != NULL) {
+
+        if (parse_emailintercept_targets(state, mailint, emailjson.emailtargets,
+                cinfo) < 0) {
+            goto cepterr;
+        }
+
+        if ((changedtargets = compare_email_targets(state, found,
+                mailint)) < 0) {
+            goto cepterr;
+        }
+    }
+
+    if (changedtargets) {
+        tmp = found->targets;
+        found->targets = mailint->targets;
+        mailint->targets = tmp;
+    }
+
+    /* TODO: warn if user tries to change fields that we don't support
+     * changing (e.g. mediator) ?
+     *
+     */
+
+    MODIFY_STRING_MEMBER(mailint->common.authcc, found->common.authcc, &changed);
+    found->common.authcc_len  = strlen(found->common.authcc);
+
+    MODIFY_STRING_MEMBER(mailint->common.delivcc, found->common.delivcc, &changed);
+    found->common.delivcc_len  = strlen(found->common.delivcc);
+
+    MODIFY_STRING_MEMBER(mailint->common.targetagency, found->common.targetagency,
+            &agencychanged);
+
+    timechanged = compare_intercept_times(&(mailint->common), &(found->common));
+
+    if (mailint->common.tomediate != found->common.tomediate) {
+        changed = 1;
+        found->common.tomediate = mailint->common.tomediate;
+    }
+
+    if (agencychanged) {
+        new_intercept_liidmapping(state, found->common.targetagency,
+                found->common.liid);
+    }
+
+    if (changed || timechanged) {
+        modify_existing_intercept_options(state, (void *)found,
+                    OPENLI_PROTO_MODIFY_EMAILINTERCEPT);
+    }
+
+    if (changedtargets) {
+        target_info = list_email_targets(found, 256);
+        announce_hi1_notification_to_mediators(state, &(found->common),
+                target_info, HI1_LI_MODIFIED);
+        if (target_info) {
+            free(target_info);
+        }
+    }
+
+    mailint->common.hi1_seqno = found->common.hi1_seqno;
+    logger(LOG_INFO,
+            "OpenLI provisioner: updated Email intercept %s via update socket.",
+            found->common.liid);
+
+    if (mailint) {
+        free_single_emailintercept(mailint);
+    }
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return 0;
+
+cepterr:
+    if (mailint) {
+        free_single_emailintercept(mailint);
+    }
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return -1;
+}
+
 int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     struct json_intercept voipjson;
@@ -969,7 +1388,7 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     int changedtargets = 0;
     libtrace_list_t *tmp;
 
-    char *liidstr = NULL;
+    char *liidstr = NULL, *target_info;
     int parseerr = 0, changed = 0, agencychanged = 0, timechanged = 0;
 
     INIT_JSON_INTERCEPT_PARSING
@@ -1007,11 +1426,14 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             vint->common.delivcc, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("agencyid", "VOIP intercept", voipjson.agencyid,
             vint->common.targetagency, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("outputhandovers", "VOIP intercept",
+            voipjson.tomediate,
+            vint->common.tomediate, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("mediator", "VOIP intercept", voipjson.mediator,
             vint->common.destid, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("starttime", "VOIP intercept", voipjson.starttime,
             vint->common.tostart_time, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("mediator", "VOIP intercept", voipjson.endtime,
+    EXTRACT_JSON_INT_PARAM("endtime", "VOIP intercept", voipjson.endtime,
             vint->common.toend_time, &parseerr, false);
 
     if (parseerr) {
@@ -1050,6 +1472,11 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     MODIFY_STRING_MEMBER(vint->common.targetagency, found->common.targetagency,
             &agencychanged);
 
+    if (vint->common.tomediate != found->common.tomediate) {
+        changed = 1;
+        found->common.tomediate = vint->common.tomediate;
+    }
+
     timechanged = compare_intercept_times(&(vint->common), &(found->common));
 
     if (agencychanged) {
@@ -1063,8 +1490,12 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (changedtargets) {
+        target_info = list_sip_targets(found, 256);
         announce_hi1_notification_to_mediators(state, &(found->common),
-                HI1_LI_MODIFIED);
+                target_info, HI1_LI_MODIFIED);
+        if (target_info) {
+            free(target_info);
+        }
     }
 
     vint->common.hi1_seqno = found->common.hi1_seqno;
@@ -1141,6 +1572,9 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             ipint->common.delivcc, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("agencyid", "IP intercept", ipjson.agencyid,
             ipint->common.targetagency, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("outputhandovers", "IP intercept",
+            ipjson.tomediate,
+            ipint->common.tomediate, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("mediator", "IP intercept", ipjson.mediator,
             ipint->common.destid, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
@@ -1225,6 +1659,11 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             &changed);
     found->common.delivcc_len  = strlen(found->common.delivcc);
 
+    if (ipint->common.tomediate != found->common.tomediate) {
+        found->common.tomediate = ipint->common.tomediate;
+        changed = 1;
+    }
+
     MODIFY_STRING_MEMBER(ipint->username, found->username, &changed);
     found->username_len = strlen(found->username);
 
@@ -1262,7 +1701,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (agencychanged) {
         announce_hi1_notification_to_mediators(state, &(found->common),
-                HI1_LI_ACTIVATED);
+                found->username, HI1_LI_ACTIVATED);
     }
 
     if (compare_intercept_times(&(ipint->common), &(found->common)) == 1) {
@@ -1274,7 +1713,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                     OPENLI_PROTO_MODIFY_IPINTERCEPT);
         if (!agencychanged) {
             announce_hi1_notification_to_mediators(state, &(found->common),
-                    HI1_LI_MODIFIED);
+                    found->username, HI1_LI_MODIFIED);
         }
     }
 
@@ -1315,6 +1754,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     struct json_agency agjson;
 
     const char *idstr;
+    const char *verb;
     struct json_object *parsed = NULL;
     struct json_tokener *tknr;
     liagency_t *nag = NULL;
@@ -1355,17 +1795,18 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
             strlen(nag->agencyid), found);
     if (found) {
         HASH_DEL(state->interceptconf.leas, found);
-        withdraw_agency_from_mediators(state, found);
         free_liagency(found->ag);
         free(found);
+        verb = "modified";
+    } else {
+        verb = "added new";
     }
-
     HASH_ADD_KEYPTR(hh, state->interceptconf.leas, nag->agencyid,
             strlen(nag->agencyid), lea);
     announce_lea_to_mediators(state, lea);
 
-    logger(LOG_INFO, "OpenLI: added new agency '%s' via update socket.",
-            nag->agencyid);
+    logger(LOG_INFO, "OpenLI: %s agency '%s' via update socket.",
+            verb, nag->agencyid);
 
     if (parsed) {
         json_object_put(parsed);
@@ -1466,7 +1907,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (changed) {
-        withdraw_agency_from_mediators(state, found);
         announce_lea_to_mediators(state, found);
         logger(LOG_INFO,
                 "OpenLI: modified existing agency '%s' via update socket.",

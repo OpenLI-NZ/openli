@@ -121,6 +121,10 @@ static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
             continue;
         }
 
+        if (rtp->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
+            continue;
+        }
+
         if (rtp->targetaddr == NULL || rtp->otheraddr == NULL) {
             continue;
         }

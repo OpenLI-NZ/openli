@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018-2020 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2018-2022 The University of Waikato, Hamilton, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -28,6 +28,7 @@
 #define OPENLI_MEDIATOR_EPOLL_H_
 
 #include <inttypes.h>
+#include <sys/epoll.h>
 
 /** Structure that stores state for a single epoll event */
 typedef struct med_epoll_ev {
@@ -91,6 +92,16 @@ enum {
 
     /** The mediator needs to send heartbeats to the RabbitMQ connections */
     MED_EPOLL_RMQCHECK_TIMER,
+
+    /** A timer for regularly cleaning up unused LIIDs in the collector
+     *  receiver threads
+     */
+    MED_EPOLL_QUEUE_EXPIRE_TIMER,
+
+    /** A timer for shutting down unused LEA threads if the provisioner
+     *  has disconnected, or failed to re-announce them after reconnecting
+     */
+    MED_EPOLL_SHUTDOWN_LEA_THREAD,
 };
 
 /** Starts an existing timer and adds it to the global epoll event set.
@@ -111,6 +122,27 @@ enum {
  *          a timer because the timer is disabled).
  */
 int start_mediator_timer(med_epoll_ev_t *timerev, int timeoutval);
+
+/** Starts an existing timer and adds it to the global epoll event set.
+ *
+ *  Examples of timers that would use this function:
+ *      - sending the next keep alive to a handover
+ *      - attempting to reconnect to a lost provisioner
+ *      - deciding that a handover has failed to respond to a keep alive
+ *
+ *  Only call this on timers that have had their state and epoll_fd
+ *  members already set via a call to create_mediator_timer().
+ *
+ *  Use this method for timers where you require millisecond precision.
+ *
+ *  @param timerev      The mediator epoll event for the timer.
+ *  @param timeoutval   The number of milliseconds to wait before triggering the
+ *                      timer event.
+ *
+ *  @return -1 if an error occured, 0 otherwise (including not setting
+ *          a timer because the timer is disabled).
+ */
+int start_mediator_ms_timer(med_epoll_ev_t *timerev, int timeoutval);
 
 /** Halts a timer and removes it from the global epoll event set.
  *

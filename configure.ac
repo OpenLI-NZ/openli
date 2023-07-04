@@ -1,10 +1,10 @@
 # Super primitive configure script
 
-AC_INIT(openli, 1.0.15, salcock@waikato.ac.nz)
+AC_INIT([openli],[1.1.0],[shane@alcock.co.nz])
 
 AM_INIT_AUTOMAKE([subdir-objects])
 AC_CONFIG_SRCDIR(src/collector/collector.c)
-AM_CONFIG_HEADER(config.h)
+AC_CONFIG_HEADERS(config.h)
 AC_CONFIG_MACRO_DIR([m4])
 
 m4_ifdef([AM_SILENT_RULES],[AM_SILENT_RULES([yes])])
@@ -14,7 +14,7 @@ AC_PREFIX_DEFAULT(/usr/local/)
 AC_PROG_CC
 AC_PROG_INSTALL
 
-AC_PROG_LIBTOOL
+LT_INIT
 
 EXTRA_LIBS=""
 
@@ -74,7 +74,11 @@ if test "x$enable_collector" != "xno"; then
         if test "$libosip2_found" = 0; then
                 AC_MSG_ERROR(Required library libosipparser2 not found; use LDFLAGS to specify library location)
         fi
-        COLLECTOR_LIBS="$COLLECTOR_LIBS -losipparser2"
+        AC_CHECK_LIB([b64], [base64_decode_block],libb64_found=1,libb64_found=0)
+        if test "$libb64_found" = 0; then
+                AC_MSG_ERROR(Required library libb64 not found; use LDFLAGS to specify library location)
+        fi
+        COLLECTOR_LIBS="$COLLECTOR_LIBS -losipparser2 -lb64"
 fi
 
 if test "x$enable_provisioner" != "xno"; then
@@ -89,6 +93,7 @@ if test "x$enable_provisioner" != "xno"; then
         fi
 
         PROVISIONER_LIBS="$PROVISIONER_LIBS -lmicrohttpd -ljson-c"
+        COLLECTOR_LIBS="$COLLECTOR_LIBS -lmicrohttpd -ljson-c"
 
         if test "x$libssl11_found" = "x1"; then
                 AC_CHECK_LIB([sqlcipher], [sqlite3_key], sqlcipher_found=1, sqlcipher_found=0)
@@ -104,15 +109,10 @@ if test "x$enable_provisioner" != "xno"; then
 fi
 
 if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then
-        AC_CHECK_LIB([wandder], [wandder_encode_init_top_ber],libwandder_ber_found=1,libwandder__ber_found=0)
+        AC_CHECK_LIB([wandder], [wandder_decode_integer_value],libwandder_found=1,libwandder_found=0)
 
-        if test "$libwandder_ber_found" = 1; then
-                AC_DEFINE(HAVE_BER_ENCODING, 1, [defined to 1 if libwandder supports BER encoding])
-        else
-                AC_CHECK_LIB([wandder], [init_wandder_encoder],libwandder_found=1,libwandder_found=0)
-                if test "$libwandder_found" = 0; then
-                        AC_MSG_ERROR(Required library libwandder not found; use LDFLAGS to specify library location)
-                fi
+        if test "$libwandder_found" = 0; then
+                AC_MSG_ERROR(Required library libwandder 2.0.6 or later not found; use LDFLAGS to specify library location)
         fi
 
         AC_CHECK_LIB([Judy], [JudySLGet],libjudy_found=1,libjudy_found=0)

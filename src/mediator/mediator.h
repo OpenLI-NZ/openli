@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018-2020 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2018-2022 The University of Waikato, Hamilton, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -40,7 +40,8 @@
 #include "pcapthread.h"
 #include "liidmapping.h"
 #include "mediator_prov.h"
-#include "mediator_coll.h"
+#include "coll_recv_thread.h"
+#include "lea_send_thread.h"
 
 /** Global state variables for a mediator instance */
 typedef struct med_state {
@@ -79,12 +80,6 @@ typedef struct med_state {
     /** Compression level to use when writing pcap files */
     uint8_t pcapcompress;
 
-    /** State for managing all connected handovers */
-    handover_state_t handover_state;
-
-    /** A map of LIIDs to their corresponding agencies */
-    liid_map_t liidmap;
-
     /** The global epoll file descriptor for this mediator */
     int epoll_fd;
 
@@ -97,29 +92,22 @@ typedef struct med_state {
     /** The epoll event for the epoll loop timer */
     med_epoll_ev_t *timerev;
 
-    /** The epoll event for the pcap file rotation timer */
-    med_epoll_ev_t *pcaptimerev;
-
-    /** The epoll event for the RabbitMQ heartbeat check timer */
-    med_epoll_ev_t *RMQtimerev;
-
     /** State for managing the connection back to the provisioner */
     mediator_prov_t provisioner;
 
-    /** State for managing the connections from collectors */
-    mediator_collector_t collectors;
+    /** The collector receive threads that have been spawned */
+    mediator_collector_t collector_threads;
+
+    /** The LEA send threads that have been spawned */
+    mediator_lea_t agency_threads;
 
     /** The frequency to rotate the pcap files (in minutes) */
     uint32_t pcaprotatefreq;
 
-    /** The pthread ID for the pcap file writing thread */
-    pthread_t pcapthread;
-
-    /** The queue for pushing packets to the pcap file writing thread */
-    libtrace_message_queue_t pcapqueue;
-
     /** The SSL configuration for the mediator */
     openli_ssl_config_t sslconf;
+
+    /** The RabbitMQ configuration for the mediator */
     openli_RMQ_config_t RMQ_conf;
 
 } mediator_state_t;

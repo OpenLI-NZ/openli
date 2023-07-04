@@ -150,7 +150,7 @@ for the best reliability, we recommend configuring your collectors and mediators
 to use RabbitMQ as an intermediary.
 
 More details on how to configure RabbitMQ for a collector can be found at
-https://github.com/wanduow/openli/wiki/Using-RabbitMQ-for-disk-backed-buffers-in-OpenLI.
+https://github.com/OpenLI-NZ/openli/wiki/Using-RabbitMQ-for-disk-backed-buffers-in-OpenLI.
 A collector only requires a small amount of configuration: a username and
 password that can be used to authenticate against a local RabbitMQ instance,
 and a flag to inform the collector that RabbitMQ output is enabled.
@@ -207,6 +207,23 @@ The basic option keys are:
                        RabbitMQ instance.
 * sipallowfromident -- set to 'yes' to allow the SIP "From:" field to be used
                        for target identification. Defaults to "no".
+* maskimapcreds     -- set to 'yes' to have OpenLI replace any clear-text or
+                       base64 encoded credentials in IMAP traffic that has
+                       been intercepted using an email intercept with "XXX".
+                       Defaults to "yes".
+* maskpop3creds     -- set to 'yes' to have OpenLI replace any clear-text
+                       credentials in IMAP traffic that have been
+                       intercepted using an email intercept with "XXX".
+                       Defaults to "yes".
+
+Be aware that increasing the number of threads used for sequence number
+tracking, encoding or forwarding can actually decrease OpenLI's performance,
+especially if there are more threads active than CPU cores available on
+the collector host machine. Also, OpenLI uses a number of internal threads
+for message-passing and connection maintenance, which will also be
+contending for CPU time. A good rule of thumb is that the total number
+of input threads, sequence tracker threads, encoding threads and forwarding
+threads should NOT exceed the number of CPU cores on your machine.
 
 Inputs are specified as a YAML sequence with a key of `inputs:`. Each
 sequence item represents a single traffic source to intercept traffic from
@@ -232,15 +249,71 @@ two key-value elements:
 * port -- the port that the sink is listening on for mirrored traffic
 
 
-Be aware that increasing the number of threads used for sequence number
-tracking, encoding or forwarding can actually decrease OpenLI's performance,
-especially if there are more threads active than CPU cores available on
-the collector host machine. Also, OpenLI uses a number of internal threads
-for message-passing and connection maintenance, which will also be
-contending for CPU time. A good rule of thumb is that the total number
-of input threads, sequence tracker threads, encoding threads and forwarding
-threads should NOT exceed the number of CPU cores on your machine.
+When performing email interception, mail protocol sessions will be ended as
+soon as the protocol "closing" command (i.e. "QUIT" for SMTP, "BYE" for IMAP)
+are observed. However, OpenLI will also expire any incomplete mail protocol
+sessions that have been idle for a certain number of minutes. You can
+configure the idle thresholds for each mail protocol by defining a YAML sequence
+with the key `emailsessiontimeouts` and then adding a sequence item for each
+protocol that you wish to define a timeout for. Each sequence item should
+be expressed as a key-value pair, where the key is the protocol name and the
+value is the desired timeout in minutes.
 
+The three mail protocols supported by OpenLI and their default timeout values
+are:
+* smtp (default is 5 minutes)
+* imap (default is 30 minutes)
+* pop3 (default is 10 minutes)
+
+
+### Email ingestion service
+Instead of intercepting email by capturing all SMTP, POP3 and/or IMAP traffic
+observed on a network interface, OpenLI can also ingest email application
+layer messages through an additional HTTP service that can be run on each/any
+OpenLI collector.
+
+You can then use custom plugins on your mail servers (e.g. dovecot plugins)
+to generate messages in the expected format for an interceptable email session
+and POST the message to the ingestion service running on a collector. The
+POSTed message is sent as `multipart/form-data`, where each field in
+a message is a separate part encoded as `text/plain`.
+
+The message format itself is documented on the OpenLI wiki at
+https://github.com/OpenLI-NZ/openli/wiki/Email-Ingestion-Message-Format
+
+By default, the email ingestion service is disabled on a collector but you
+can enable and configure it using the following options.
+
+Firstly, you will need to add the `emailingest:` key to the top level of
+your existing collector YAML configuration.
+
+Then you can specify the following mapping options as values inside the
+`emailingest:` key to configure the ingestion service:
+
+* listenaddress         -- the IP address that the service should listen on.
+* listenport            -- the port for the service to listen on.
+* enabled               -- if set to "no", the service will be disabled. Set
+                           to "yes" to enable the service.
+* requiretls            -- if set to "yes", connections to the service will
+                           only be permitted using HTTPS.
+* authpassword          -- if set, connections to the service will be rejected
+                           unless they use digest authentication and provide
+                           this value as their password.
+
+Example configuration is included in the `collector-example.yaml` config
+file -- you can find this file in `doc/exampleconfigs` in the OpenLI source
+tree or installed into `/etc/openli/` if you installed OpenLI using a
+package.
+
+To enable TLS on the ingestion service, you must also configure your collector
+(and all other OpenLI components) to use TLS for their internal communications,
+as the ingestion service will use the same certificates and keys to
+establish the encrypted channel. See `doc/TLSDoc.md` for details on how to
+set up TLS for OpenLI.
+
+When using digest authentication, the username on the POST request can be
+set to anything; the username is ignored by the ingestion service as long as
+the provided password matches what has been set as the `authpassword`.
 
 ### SIP Ignore SDP O option
 When testing OpenLI VOIP intercepts, you may discover that the IRI stream for

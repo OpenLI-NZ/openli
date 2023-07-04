@@ -16,7 +16,7 @@ fairly decent packages for DPDK are now available for major Linux
 distributions and the libtrace packages automatically include DPDK as a
 dependency. If you want to make your life easier and just use the
 packaged version of DPDK, stop reading this file and try the wiki page at
-https://github.com/wanduow/openli/wiki/DPDK-and-OpenLI instead!
+https://github.com/OpenLI-NZ/openli/wiki/DPDK-and-OpenLI instead!
 
 
 ========================

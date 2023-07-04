@@ -49,6 +49,7 @@ enum {
 typedef struct openli_RMQ_config {
     char *name;
     char *pass;
+    char *internalpass;
     char *hostname;
     int port;
     int heartbeatFreq;

@@ -89,9 +89,11 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
     sync->pubsockcount = glob->seqtracker_threads;
     sync->forwardcount = glob->forwarding_threads;
+    sync->emailcount = glob->email_threads;
 
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
     sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
+    sync->zmq_emailsocks = calloc(sync->emailcount, sizeof(void *));
 
     sync->ctx = glob->sslconf.ctx;
     sync->ssl = NULL;
@@ -115,6 +117,17 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
         }
     }
 
+    for (i = 0; i < sync->emailcount; i++) {
+        sync->zmq_emailsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+        snprintf(sockname, 128, "inproc://openliemailcontrol_sync-%d", i);
+        if (zmq_connect(sync->zmq_emailsocks[i], sockname) != 0) {
+            logger(LOG_INFO, "OpenLI: colsync thread unable to connect to zmq control socket for email threads: %s",
+                    strerror(errno));
+            zmq_close(sync->zmq_emailsocks[i]);
+            sync->zmq_emailsocks[i] = NULL;
+        }
+    }
+
     for (i = 0; i < sync->pubsockcount; i++) {
         sync->zmq_pubsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
         snprintf(sockname, 128, "inproc://openlipub-%d", i);
@@ -133,12 +146,35 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
 }
 
+static int send_halt_message_over_zmq(void *zmqsock) {
+    openli_export_recv_t *haltmsg;
+    int zero = 0, ret;
+
+    if (zmqsock == NULL) {
+        return 1;
+    }
+
+    /* Send a halt message to get the tracker thread to stop */
+    haltmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    haltmsg->type = OPENLI_EXPORT_HALT;
+    ret = zmq_send(zmqsock, &haltmsg, sizeof(haltmsg), ZMQ_NOBLOCK);
+    if (ret < 0 && errno == EAGAIN) {
+        free(haltmsg);
+        return 0;
+    } else if (ret <= 0) {
+        free(haltmsg);
+    }
+
+    zmq_setsockopt(zmqsock, ZMQ_LINGER, &zero, sizeof(zero));
+    zmq_close(zmqsock);
+    return 1;
+}
+
 void clean_sync_data(collector_sync_t *sync) {
 
-    int i = 0, zero=0, ret;
+    int i = 0, zero=0;
     int haltattempts = 0, haltfails = 0;
     ip_to_session_t *iter, *tmp;
-    openli_export_recv_t *haltmsg;
     default_radius_user_t *raditer, *radtmp;
 
 	if (sync->instruct_fd != -1) {
@@ -231,56 +267,44 @@ void clean_sync_data(collector_sync_t *sync) {
         }
 
         for (i = 0; i < sync->pubsockcount; i++) {
-            if (sync->zmq_pubsocks[i] == NULL) {
-                continue;
-            }
+            int r;
 
-            /* Send a halt message to get the tracker thread to stop */
-            haltmsg = (openli_export_recv_t *)calloc(1,
-                    sizeof(openli_export_recv_t));
-            haltmsg->type = OPENLI_EXPORT_HALT;
-            ret = zmq_send(sync->zmq_pubsocks[i], &haltmsg, sizeof(haltmsg),
-                    ZMQ_NOBLOCK);
-            if (ret < 0 && errno == EAGAIN) {
+            r = send_halt_message_over_zmq(sync->zmq_pubsocks[i]);
+            if (r == 0) {
                 haltfails ++;
-                free(haltmsg);
                 if (haltattempts < 9) {
                     continue;
                 }
-            } else if (ret <= 0) {
-                free(haltmsg);
             }
-
-            zmq_setsockopt(sync->zmq_pubsocks[i], ZMQ_LINGER, &zero,
-                    sizeof(zero));
-            zmq_close(sync->zmq_pubsocks[i]);
             sync->zmq_pubsocks[i] = NULL;
         }
 
         for (i = 0; i < sync->forwardcount; i++) {
-            if (sync->zmq_fwdctrlsocks[i] == NULL) {
-                continue;
-            }
+            int r;
 
-            /* Send a halt message to get the forwarder thread to stop */
-            haltmsg = (openli_export_recv_t *)calloc(1,
-                    sizeof(openli_export_recv_t));
-            haltmsg->type = OPENLI_EXPORT_HALT;
-            ret = zmq_send(sync->zmq_fwdctrlsocks[i], &haltmsg, sizeof(haltmsg),
-                    ZMQ_NOBLOCK);
-            if (ret < 0 && errno == EAGAIN) {
+            r = send_halt_message_over_zmq(sync->zmq_fwdctrlsocks[i]);
+            if (r == 0) {
                 haltfails ++;
-                free(haltmsg);
                 if (haltattempts < 9) {
+                    i--;
                     continue;
                 }
-            } else if (ret <= 0) {
-                free(haltmsg);
             }
-            zmq_setsockopt(sync->zmq_fwdctrlsocks[i], ZMQ_LINGER, &zero,
-                    sizeof(zero));
-            zmq_close(sync->zmq_fwdctrlsocks[i]);
             sync->zmq_fwdctrlsocks[i] = NULL;
+        }
+
+        for (i = 0; i < sync->emailcount; i++) {
+            int r;
+
+            r = send_halt_message_over_zmq(sync->zmq_emailsocks[i]);
+            if (r == 0) {
+                haltfails ++;
+                if (haltattempts < 9) {
+                    i--;
+                    continue;
+                }
+            }
+            sync->zmq_emailsocks[i] = NULL;
         }
 
         if (haltfails == 0) {
@@ -290,8 +314,41 @@ void clean_sync_data(collector_sync_t *sync) {
         usleep(250000);
     }
 
+    free(sync->zmq_emailsocks);
     free(sync->zmq_pubsocks);
     free(sync->zmq_fwdctrlsocks);
+
+}
+
+static int forward_provmsg_to_email_workers(collector_sync_t *sync,
+        uint8_t *provmsg, uint16_t msglen, openli_proto_msgtype_t msgtype) {
+
+    openli_export_recv_t *topush;
+    int i, ret, errcount = 0;
+
+    for (i = 0; i < sync->emailcount; i++) {
+        topush = (openli_export_recv_t *)calloc(1,
+                sizeof(openli_export_recv_t));
+
+        topush->type = OPENLI_EXPORT_PROVISIONER_MESSAGE;
+        topush->data.provmsg.msgtype = msgtype;
+        topush->data.provmsg.msgbody = (uint8_t *)malloc(msglen);
+        memcpy(topush->data.provmsg.msgbody, provmsg, msglen);
+        topush->data.provmsg.msglen = msglen;
+
+        ret = zmq_send(sync->zmq_emailsocks[i], &topush, sizeof(topush), 0);
+        if (ret < 0) {
+            logger(LOG_INFO, "Unable to forward provisioner message to email worker %d: %s", i, strerror(errno));
+
+            free(topush->data.provmsg.msgbody);
+            free(topush);
+
+            errcount ++;
+            continue;
+        }
+    }
+
+    return 1;
 
 }
 
@@ -381,6 +438,10 @@ static int create_iri_from_packet_event(collector_sync_t *sync,
         void *parseddata) {
 	struct timeval now;
 
+    if (ipint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
+        return 0;
+    }
+
 	gettimeofday(&now, NULL);
 	if (!INTERCEPT_IS_ACTIVE(ipint, now)) {
 		return 0;
@@ -397,6 +458,10 @@ static int create_iri_from_session(collector_sync_t *sync,
         access_session_t *sess, ipintercept_t *ipint, uint8_t special) {
 
 	struct timeval now;
+
+    if (ipint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
+        return 0;
+    }
 
 	gettimeofday(&now, NULL);
 	if (!INTERCEPT_IS_ACTIVE(ipint, now)) {
@@ -648,10 +713,12 @@ static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
     HASH_ADD_KEYPTR(hh, ipint->statics, ipr->rangestr,
             strlen(ipr->rangestr), ipr);
 
-	gettimeofday(&now, NULL);
-	if (INTERCEPT_IS_ACTIVE(ipint, now)) {
-	    create_ipiri_job_from_iprange(sync, ipr, ipint, OPENLI_IPIRI_STARTWHILEACTIVE);
-	}
+    if (ipint->common.tomediate != OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
+    	gettimeofday(&now, NULL);
+	    if (INTERCEPT_IS_ACTIVE(ipint, now)) {
+	        create_ipiri_job_from_iprange(sync, ipr, ipint, OPENLI_IPIRI_STARTWHILEACTIVE);
+	    }
+    }
 
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
             sendq, tmp) {
@@ -906,6 +973,7 @@ static void push_ipintercept_update_to_threads(collector_sync_t *sync,
 
     ipint->common.tostart_time = modified->common.tostart_time;
     ipint->common.toend_time = modified->common.toend_time;
+    ipint->common.tomediate = modified->common.tomediate;
 
     /* Update all static IP ranges for this intercept */
     HASH_ITER(hh, ipint->statics, ipr, tmpr) {
@@ -1128,7 +1196,6 @@ static void push_existing_user_sessions(collector_sync_t *sync,
 static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
 
     openli_export_recv_t *expmsg;
-    int i;
 
     if (cept->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
 
@@ -1168,11 +1235,6 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
 
     expmsg = create_intercept_details_msg(&(cept->common));
     publish_openli_msg(sync->zmq_pubsocks[cept->common.seqtrackerid], expmsg);
-
-    for (i = 0; i < sync->forwardcount; i++) {
-        expmsg = create_intercept_details_msg(&(cept->common));
-        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
-    }
 
     if (cept->username) {
         push_existing_user_sessions(sync, cept);
@@ -1245,6 +1307,7 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
     ipintercept_t *ipint, *modified;
     openli_export_recv_t *expmsg;
+    int changed = 0;
 
     modified = calloc(1, sizeof(ipintercept_t));
 
@@ -1262,8 +1325,6 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     if (!ipint) {
         return insert_new_ipintercept(sync, modified);
     }
-
-    /* TODO apply any changes to authcc or delivcc */
 
     if (strcmp(ipint->username, modified->username) != 0) {
         push_ipintercept_halt_to_threads(sync, ipint);
@@ -1292,16 +1353,37 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             ipint->common.toend_time != modified->common.toend_time) {
         logger(LOG_INFO,
                 "OpenLI: IP intercept %s has changed start / end times -- now %lu, %lu", ipint->common.liid, modified->common.tostart_time, modified->common.toend_time);
+        ipint->common.tostart_time = modified->common.tostart_time;
+        ipint->common.toend_time = modified->common.toend_time;
         update_intercept_time_event(&(sync->upcoming_intercept_events),
                 ipint, &(ipint->common), &(modified->common));
-        push_ipintercept_update_to_threads(sync, ipint, modified);
-    } else if (strcmp(ipint->common.delivcc, modified->common.delivcc) != 0 ||
+        changed = 1;
+    }
+
+    if (ipint->common.tomediate != modified->common.tomediate) {
+        char space[1024];
+        intercept_mediation_mode_as_string(modified->common.tomediate, space,
+                1024);
+        logger(LOG_INFO,
+                "OpenLI: IP intercept %s has changed mediation mode to: %s",
+                ipint->common.liid, space);
+        ipint->common.tomediate = modified->common.tomediate;
+        changed = 1;
+
+    }
+
+
+    if (strcmp(ipint->common.delivcc, modified->common.delivcc) != 0 ||
             strcmp(ipint->common.authcc, modified->common.authcc) != 0) {
-        push_ipintercept_update_to_threads(sync, ipint, modified);
+        changed = 1;
         expmsg = create_intercept_details_msg(&(ipint->common));
         expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
         publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid],
                 expmsg);
+    }
+
+    if (changed) {
+        push_ipintercept_update_to_threads(sync, ipint, modified);
     }
 
     free_single_ipintercept(modified);
@@ -1320,6 +1402,7 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             logger(LOG_INFO,
                     "OpenLI: received invalid IP intercept withdrawal from provisioner.");
         }
+        free_single_ipintercept(torem);
         return -1;
     }
 
@@ -1329,6 +1412,7 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     if (!ipint) {
         logger(LOG_INFO,
                 "OpenLI: tried to halt IP intercept %s but this was not present in the intercept map?", torem->common.liid);
+        free_single_ipintercept(torem);
         return -1;
     }
 
@@ -1502,51 +1586,6 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
     return insert_new_ipintercept(sync, cept);
 }
 
-
-static int new_voipintercept(collector_sync_t *sync, uint8_t *intmsg,
-        uint16_t msglen) {
-
-    voipintercept_t *vint, *found;
-    openli_export_recv_t *expmsg;
-    int i;
-
-    /* Most of the new VOIP intercept stuff is handled by the VOIP sync
-     * thread, but we also need to let the forwarder threads know that
-     * a new intercept is starting and only the IP sync thread has
-     * sockets for sending messages to the forwarders.
-     *
-     * Technically, this is only to handle an edge case that should
-     * never happen (i.e. an intercept ID being re-used after it had
-     * previously been used and withdrawn) but we should try to do the
-     * right thing if it ever happens (most likely to be when users
-     * are testing deployments, of course).
-     */
-
-    vint = (voipintercept_t *)calloc(1, sizeof(voipintercept_t));
-
-    if (decode_voipintercept_start(intmsg, msglen, vint) == -1) {
-        /* Don't bother logging, the VOIP sync thread should handle that */
-        return -1;
-    }
-
-    HASH_FIND(hh_liid, sync->knownvoips, vint->common.liid,
-            vint->common.liid_len, found);
-
-    if (found == NULL) {
-        HASH_ADD_KEYPTR(hh_liid, sync->knownvoips, vint->common.liid,
-                vint->common.liid_len, vint);
-
-        for (i = 0; i < sync->forwardcount; i++) {
-            expmsg = create_intercept_details_msg(&(vint->common));
-            publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
-        }
-    } else {
-        free_single_voipintercept(vint);
-    }
-
-    return 1;
-}
-
 static void disable_unconfirmed_intercepts(collector_sync_t *sync) {
     coreserver_t *cs, *tmp3;
     ipintercept_t *ipint, *tmp;
@@ -1707,17 +1746,6 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                     return -1;
                 }
                 break;
-            case OPENLI_PROTO_START_VOIPINTERCEPT:
-                ret = new_voipintercept(sync, provmsg, msglen);
-                if (ret == -1) {
-                    return -1;
-                }
-                ret = forward_provmsg_to_voipsync(sync, provmsg, msglen,
-                        msgtype);
-                if (ret == -1) {
-                    return -1;
-                }
-                break;
 
             case OPENLI_PROTO_MODIFY_IPINTERCEPT:
                 ret = modify_ipintercept(sync, provmsg, msglen);
@@ -1726,6 +1754,7 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 }
                 break;
 
+            case OPENLI_PROTO_START_VOIPINTERCEPT:
             case OPENLI_PROTO_HALT_VOIPINTERCEPT:
             case OPENLI_PROTO_MODIFY_VOIPINTERCEPT:
             case OPENLI_PROTO_ANNOUNCE_SIP_TARGET:
@@ -1740,7 +1769,28 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 disable_unconfirmed_intercepts(sync);
                 ret = forward_provmsg_to_voipsync(sync, provmsg, msglen,
                         msgtype);
+                if (ret == -1) {
+                    return -1;
+                }
+                ret = forward_provmsg_to_email_workers(sync, provmsg, msglen,
+                        msgtype);
+                if (ret == -1) {
+                    return -1;
+                }
                 break;
+
+            case OPENLI_PROTO_START_EMAILINTERCEPT:
+            case OPENLI_PROTO_HALT_EMAILINTERCEPT:
+            case OPENLI_PROTO_MODIFY_EMAILINTERCEPT:
+            case OPENLI_PROTO_ANNOUNCE_EMAIL_TARGET:
+            case OPENLI_PROTO_WITHDRAW_EMAIL_TARGET:
+                ret = forward_provmsg_to_email_workers(sync, provmsg, msglen,
+                        msgtype);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+
             default:
                 if (sync->instruct_log) {
                     logger(LOG_INFO, "Received unexpected message of type %d from provisioner.", msgtype);
@@ -1892,6 +1942,7 @@ void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
 
     /* Tell other sync thread to flag its intercepts too */
     forward_provmsg_to_voipsync(sync, NULL, 0, OPENLI_PROTO_DISCONNECT);
+    forward_provmsg_to_email_workers(sync, NULL, 0, OPENLI_PROTO_DISCONNECT);
 
     /* Same with mediators -- keep exporting to them, but flag them to be
      * disconnected if they are not announced after we reconnect. */
