@@ -2177,9 +2177,30 @@ static inline internet_user_t *lookup_userid(collector_sync_t *sync,
     return iuser;
 }
 
+static inline int identity_match_intercept(ipintercept_t *ipint,
+        user_identity_t *uid) {
+
+    /* If the user has specifically said that the intercept target can
+     * not be identified using the username, then matching against the
+     * username is not allowed */
+
+    if (uid->method == USER_IDENT_RADIUS_USERNAME &&
+            ((ipint->options & (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER))\
+            == 0)) {
+        return 0;
+    }
+
+    if (uid->method == USER_IDENT_RADIUS_CSID &&
+            ((ipint->options & (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID)) == 0)) {
+        return 0;
+    }
+
+    return 1;
+}
+
 static int newly_active_session(collector_sync_t *sync,
         user_intercept_list_t *userint, internet_user_t *iuser,
-        access_session_t *sess) {
+        access_session_t *sess, user_identity_t *uid) {
 
     int mapret = 0;
     sync_sendq_t *sendq, *tmpq;
@@ -2202,6 +2223,9 @@ static int newly_active_session(collector_sync_t *sync,
      * packets involving the session IP.
      */
     HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
+        if (!identity_match_intercept(ipint, uid)) {
+            continue;
+        }
         HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                 sendq, tmpq) {
             push_single_ipintercept(sync, sendq->q, ipint, sess);
@@ -2214,27 +2238,6 @@ static int newly_active_session(collector_sync_t *sync,
     return 0;
 
 
-}
-
-static inline int identity_match_intercept(ipintercept_t *ipint,
-        user_identity_t *uid) {
-
-    /* If the user has specifically said that the intercept target can
-     * not be identified using the username, then matching against the
-     * username is not allowed */
-
-    if (uid->method == USER_IDENT_RADIUS_USERNAME &&
-            ((ipint->options & (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER))\
-            == 0)) {
-        return 0;
-    }
-
-    if (uid->method == USER_IDENT_RADIUS_CSID &&
-            ((ipint->options & (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID)) == 0)) {
-        return 0;
-    }
-
-    return 1;
 }
 
 static inline int is_default_radius_username(collector_sync_t *sync,
@@ -2325,7 +2328,8 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
 
         if (oldstate != newstate) {
             if (newstate == SESSION_STATE_ACTIVE) {
-                ret = newly_active_session(sync, userint, iuser, sess);
+                ret = newly_active_session(sync, userint, iuser, sess,
+                        &(identities[i]));
                 if (ret < 0) {
                     logger(LOG_INFO, "OpenLI: error while processing new active IP session in sync thread.");
                     break;
