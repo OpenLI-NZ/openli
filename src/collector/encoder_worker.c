@@ -525,10 +525,19 @@ static int encode_templated_umtsiri(openli_encoder_t *enc,
         return -1;
     }
 
-    if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-            body->len, NULL, 0, job) < 0) {
-        wandder_release_encoded_result(enc->encoder, body);
-        return -1;
+    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (create_encrypted_message_body(enc, res, hdr_tplate,
+                body->encoded, body->len, NULL, 0, job) < 0) {
+
+            wandder_release_encoded_result(enc->encoder, body);
+            return -1;
+        }
+    } else {
+        if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
+                body->len, NULL, 0, job) < 0) {
+            wandder_release_encoded_result(enc->encoder, body);
+            return -1;
+        }
     }
 
     wandder_release_encoded_result(enc->encoder, body);
@@ -622,11 +631,20 @@ static int encode_templated_umtscc(openli_encoder_t *enc,
     /* We have very specific templates for each observed packet size, so
      * this will not require updating */
 
-    if (create_etsi_encoded_result(res, hdr_tplate,
-            umtscc_tplate->cc_content.cc_wrap,
-            umtscc_tplate->cc_content.cc_wrap_len,
-            (uint8_t *)ccjob->ipcontent, ccjob->ipclen, job) < 0) {
-        return -1;
+    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (create_encrypted_message_body(enc, res, hdr_tplate,
+                umtscc_tplate->cc_content.cc_wrap,
+                umtscc_tplate->cc_content.cc_wrap_len,
+                (uint8_t *)ccjob->ipcontent, ccjob->ipclen, job) < 0) {
+            return -1;
+        }
+    } else {
+        if (create_etsi_encoded_result(res, hdr_tplate,
+                umtscc_tplate->cc_content.cc_wrap,
+                umtscc_tplate->cc_content.cc_wrap_len,
+                (uint8_t *)ccjob->ipcontent, ccjob->ipclen, job) < 0) {
+            return -1;
+        }
     }
 
     /* Success */
