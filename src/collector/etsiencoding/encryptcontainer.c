@@ -297,7 +297,7 @@ int create_encrypted_message_body(openli_encoder_t *enc,
     }
 
     /* Calculate length of encryptable data, including padding. */
-    inplen = bodylen + ipclen;
+    inplen = bodylen;
     inplen += 10;       // 10 bytes for byteCounter
     newbodylen = inplen;
     if (inplen < 128) {
@@ -387,12 +387,12 @@ int create_encrypted_message_body(openli_encoder_t *enc,
      * the buffer to be encrypted
      */
     if (payloadbody != NULL) {
-        memcpy(ptr, payloadbody, bodylen);
+        memcpy(ptr, payloadbody, bodylen - ipclen);
         /* "payload" is item 2 in a PS-PDU, but is item 1 in an encrypted
          * container :shrug:
          */
         *ptr = 0xA1;
-        ptr += bodylen;
+        ptr += (bodylen - ipclen);
     }
 
     if (ipcontents != NULL) {
