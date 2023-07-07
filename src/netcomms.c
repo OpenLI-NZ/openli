@@ -357,7 +357,8 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
         (common.liid_len + common.authcc_len + sizeof(common.tostart_time) + \
          sizeof(common.toend_time) + sizeof(common.tomediate) + \
          strlen(common.targetagency) + sizeof(common.destid) + \
-         sizeof(common.encrypt) + common.delivcc_len + (9 * 4))
+         sizeof(common.encrypt) + common.delivcc_len + \
+         (common.encryptkey ? (strlen(common.encryptkey) + 4) : 0) + (9 * 4))
 
 #define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
         (INTERCEPT_COMMON_LEN(ipint->common) + \
@@ -420,6 +421,14 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
             (uint8_t *)&(common->encrypt),
             sizeof(common->encrypt)) == -1) {
         return -1;
+    }
+
+    if (common->encryptkey) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_ENCRYPTION_KEY,
+                (uint8_t *)(common->encryptkey),
+                strlen(common->encryptkey)) == -1) {
+            return -1;
+        }
     }
 
 }
@@ -1500,6 +1509,7 @@ int decode_emailintercept_start(uint8_t *msgbody, uint16_t len,
     mailint->common.toend_time = 0;
     mailint->common.tomediate = 0;
     mailint->common.encrypt = 0;
+    mailint->common.encryptkey = NULL;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -1531,6 +1541,8 @@ int decode_emailintercept_start(uint8_t *msgbody, uint16_t len,
             mailint->common.tomediate = *((intercept_outputs_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION) {
             mailint->common.encrypt = *((payload_encryption_method_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_ENCRYPTION_KEY) {
+            DECODE_STRING_FIELD(mailint->common.encryptkey, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
@@ -1580,6 +1592,7 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
     vint->common.toend_time = 0;
     vint->common.tomediate = 0;
     vint->common.encrypt = 0;
+    vint->common.encryptkey = NULL;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -1615,6 +1628,8 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
             vint->common.tomediate = *((intercept_outputs_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION) {
             vint->common.encrypt = *((payload_encryption_method_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_ENCRYPTION_KEY) {
+            DECODE_STRING_FIELD(vint->common.encryptkey, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
@@ -1671,6 +1686,7 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->common.toend_time = 0;
     ipint->common.tomediate = 0;
     ipint->common.encrypt = 0;
+    ipint->common.encryptkey = NULL;
     ipint->username_len = 0;
 
     while (msgbody < msgend) {
@@ -1710,6 +1726,8 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
             ipint->common.tomediate = *((intercept_outputs_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION) {
             ipint->common.encrypt = *((payload_encryption_method_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_ENCRYPTION_KEY) {
+            DECODE_STRING_FIELD(ipint->common.encryptkey, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_USERNAME) {
             DECODE_STRING_FIELD(ipint->username, valptr, vallen);
             if (vallen == 0) {

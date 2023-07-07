@@ -162,6 +162,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_EMAIL_TARGET,
     OPENLI_PROTO_FIELD_TOMEDIATE,
     OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION,
+    OPENLI_PROTO_FIELD_ENCRYPTION_KEY,
 } openli_proto_fieldtype_t;
 
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl);

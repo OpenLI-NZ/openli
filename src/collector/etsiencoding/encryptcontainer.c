@@ -253,6 +253,7 @@ static int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx,
     if (keylen > 24) {
         keylen = 24;
     }
+    memset(key, 0, 24);
     memcpy(key, encryptkey, keylen);
 
     /* Do the encryption */

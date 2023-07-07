@@ -66,34 +66,34 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     return jobj;
 }
 
-static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
-    json_object *jobj;
-    json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
-    json_object *vendmirrorid, *user, *accesstype, *radiusident;
-    json_object *staticips, *starttime, *endtime, *tomediate, *encryption;
+static void convert_commonintercept_to_json(json_object *jobj,
+        intercept_common_t *common) {
 
     const char *encrypt_str;
+    json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
+    json_object *encryptkey;
+    json_object *starttime, *endtime, *tomediate, *encryption;
 
-    if (ipint->common.encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
+    if (common->encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
         encrypt_str = "aes-192-cbc";
     } else {
         encrypt_str = "none";
     }
 
-    jobj = json_object_new_object();
 
-    liid = json_object_new_string(ipint->common.liid);
-    authcc = json_object_new_string(ipint->common.authcc);
-    delivcc = json_object_new_string(ipint->common.delivcc);
-    agencyid = json_object_new_string(ipint->common.targetagency);
-    mediator = json_object_new_int(ipint->common.destid);
-    tomediate = json_object_new_int(ipint->common.tomediate);
+    liid = json_object_new_string(common->liid);
+    authcc = json_object_new_string(common->authcc);
+    delivcc = json_object_new_string(common->delivcc);
+    agencyid = json_object_new_string(common->targetagency);
+    mediator = json_object_new_int(common->destid);
+    tomediate = json_object_new_int(common->tomediate);
     encryption = json_object_new_string(encrypt_str);
-    user = json_object_new_string(ipint->username);
-    accesstype = json_object_new_string(
-            get_access_type_string(ipint->accesstype));
-    radiusident = json_object_new_string(
-            get_radius_ident_string(ipint->options));
+
+    if (common->encryptkey) {
+        encryptkey = json_object_new_string(common->encryptkey);
+    } else {
+        encryptkey = NULL;
+    }
 
     json_object_object_add(jobj, "liid", liid);
     json_object_object_add(jobj, "authcc", authcc);
@@ -102,19 +102,39 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     json_object_object_add(jobj, "mediator", mediator);
     json_object_object_add(jobj, "outputhandovers", tomediate);
     json_object_object_add(jobj, "payloadencryption", encryption);
-    json_object_object_add(jobj, "user", user);
-    json_object_object_add(jobj, "accesstype", accesstype);
-    json_object_object_add(jobj, "radiusident", radiusident);
+    if (encryptkey) {
+        json_object_object_add(jobj, "encryptionkey", encryptkey);
+    }
 
-    if (ipint->common.tostart_time != 0) {
-        starttime = json_object_new_int(ipint->common.tostart_time);
+    if (common->tostart_time != 0) {
+        starttime = json_object_new_int(common->tostart_time);
         json_object_object_add(jobj, "starttime", starttime);
     }
 
-    if (ipint->common.toend_time != 0) {
-        endtime = json_object_new_int(ipint->common.toend_time);
+    if (common->toend_time != 0) {
+        endtime = json_object_new_int(common->toend_time);
         json_object_object_add(jobj, "endtime", endtime);
     }
+
+}
+
+static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
+    json_object *jobj;
+    json_object *vendmirrorid, *user, *accesstype, *radiusident;
+    json_object *staticips;
+
+    jobj = json_object_new_object();
+    convert_commonintercept_to_json(jobj, &(ipint->common));
+
+    user = json_object_new_string(ipint->username);
+    accesstype = json_object_new_string(
+            get_access_type_string(ipint->accesstype));
+    radiusident = json_object_new_string(
+            get_radius_ident_string(ipint->options));
+
+    json_object_object_add(jobj, "user", user);
+    json_object_object_add(jobj, "accesstype", accesstype);
+    json_object_object_add(jobj, "radiusident", radiusident);
 
     if (ipint->vendmirrorid != 0xFFFFFFFF) {
         vendmirrorid = json_object_new_int(ipint->vendmirrorid);
@@ -147,45 +167,13 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
 
 static json_object *convert_emailintercept_to_json(emailintercept_t *mailint) {
     json_object *jobj;
-    json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
-    json_object *targets, *starttime, *endtime, *tomediate, *encryption;
+    json_object *targets;
     email_target_t *tgt, *tmp;
-    const char *encrypt_str;
-
-    if (mailint->common.encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
-        encrypt_str = "aes-192-cbc";
-    } else {
-        encrypt_str = "none";
-    }
 
     jobj = json_object_new_object();
+    convert_commonintercept_to_json(jobj, &(mailint->common));
 
-    liid = json_object_new_string(mailint->common.liid);
-    authcc = json_object_new_string(mailint->common.authcc);
-    delivcc = json_object_new_string(mailint->common.delivcc);
-    agencyid = json_object_new_string(mailint->common.targetagency);
-    mediator = json_object_new_int(mailint->common.destid);
-    tomediate = json_object_new_int(mailint->common.tomediate);
-    encryption = json_object_new_string(encrypt_str);
     targets = json_object_new_array();
-
-    json_object_object_add(jobj, "liid", liid);
-    json_object_object_add(jobj, "authcc", authcc);
-    json_object_object_add(jobj, "delivcc", delivcc);
-    json_object_object_add(jobj, "agencyid", agencyid);
-    json_object_object_add(jobj, "mediator", mediator);
-    json_object_object_add(jobj, "outputhandovers", tomediate);
-    json_object_object_add(jobj, "payloadencryption", encryption);
-
-    if (mailint->common.tostart_time != 0) {
-        starttime = json_object_new_int(mailint->common.tostart_time);
-        json_object_object_add(jobj, "starttime", starttime);
-    }
-
-    if (mailint->common.toend_time != 0) {
-        endtime = json_object_new_int(mailint->common.toend_time);
-        json_object_object_add(jobj, "endtime", endtime);
-    }
 
     HASH_ITER(hh, mailint->targets, tgt, tmp) {
         json_object *jsontgt, *address;
@@ -203,45 +191,14 @@ static json_object *convert_emailintercept_to_json(emailintercept_t *mailint) {
 
 static json_object *convert_voipintercept_to_json(voipintercept_t *vint) {
     json_object *jobj;
-    json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
-    json_object *siptargets, *starttime, *endtime, *tomediate, *encryption;
+    json_object *siptargets;
+
     libtrace_list_node_t *n;
-    const char *encrypt_str;
 
-    if (vint->common.encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
-        encrypt_str = "aes-192-cbc";
-    } else {
-        encrypt_str = "none";
-    }
-
+    siptargets = json_object_new_array();
     jobj = json_object_new_object();
 
-    liid = json_object_new_string(vint->common.liid);
-    authcc = json_object_new_string(vint->common.authcc);
-    delivcc = json_object_new_string(vint->common.delivcc);
-    agencyid = json_object_new_string(vint->common.targetagency);
-    mediator = json_object_new_int(vint->common.destid);
-    tomediate = json_object_new_int(vint->common.tomediate);
-    encryption = json_object_new_string(encrypt_str);
-    siptargets = json_object_new_array();
-
-    json_object_object_add(jobj, "liid", liid);
-    json_object_object_add(jobj, "authcc", authcc);
-    json_object_object_add(jobj, "delivcc", delivcc);
-    json_object_object_add(jobj, "agencyid", agencyid);
-    json_object_object_add(jobj, "mediator", mediator);
-    json_object_object_add(jobj, "outputhandovers", tomediate);
-    json_object_object_add(jobj, "payloadencryption", encryption);
-
-    if (vint->common.tostart_time != 0) {
-        starttime = json_object_new_int(vint->common.tostart_time);
-        json_object_object_add(jobj, "starttime", starttime);
-    }
-
-    if (vint->common.toend_time != 0) {
-        endtime = json_object_new_int(vint->common.toend_time);
-        json_object_object_add(jobj, "endtime", endtime);
-    }
+    convert_commonintercept_to_json(jobj, &(vint->common));
 
     n = vint->targets->head;
     while (n) {

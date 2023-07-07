@@ -321,7 +321,11 @@ static void push_voip_intercept_update_to_threads(collector_sync_voip_t *sync,
     expmsg->data.cept.authcc = strdup(vint->common.authcc);
     expmsg->data.cept.delivcc = strdup(vint->common.delivcc);
     expmsg->data.cept.encryptmethod = vint->common.encrypt;
-    expmsg->data.cept.encryptkey = strdup("123456789012345678901234567890123456789012345678");
+    if (vint->common.encryptkey) {
+        expmsg->data.cept.encryptkey = strdup(vint->common.encryptkey);
+    } else {
+        expmsg->data.cept.encryptkey = NULL;
+    }
     expmsg->data.cept.seqtrackerid = vint->common.seqtrackerid;
     publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], expmsg);
 
@@ -1599,7 +1603,8 @@ sipgiveup:
 static int update_modified_voipintercept(collector_sync_voip_t *sync,
         voipintercept_t *vint, voipintercept_t *tomod) {
 
-    int changed = 0;
+    int changed = 0, keychanged = 0;
+    char *tmp;
 
     sync->log_bad_instruct = 1;
 
@@ -1642,9 +1647,26 @@ static int update_modified_voipintercept(collector_sync_voip_t *sync,
                 vint->common.liid, space);
     }
 
+   if (vint->common.encryptkey && tomod->common.encryptkey) {
+        if (strcmp(vint->common.encryptkey, tomod->common.encryptkey) != 0)
+        {
+            keychanged = 1;
+        }
+    } else if (vint->common.encryptkey == NULL && tomod->common.encryptkey) {
+        keychanged = 1;
+    } else if (vint->common.encryptkey && tomod->common.encryptkey == NULL) {
+        keychanged = 1;
+    }
+
+    if (keychanged) {
+        changed = 1;
+        tmp = vint->common.encryptkey;
+        vint->common.encryptkey = tomod->common.encryptkey;
+        tomod->common.encryptkey = tmp;
+    }
+
     if (strcmp(tomod->common.delivcc, vint->common.delivcc) != 0 ||
             strcmp(tomod->common.authcc, vint->common.authcc) != 0) {
-        char *tmp;
 
         changed = 1;
         tmp = vint->common.authcc;
@@ -2051,7 +2073,11 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     expmsg->data.cept.authcc = strdup(vint->common.authcc);
     expmsg->data.cept.delivcc = strdup(vint->common.delivcc);
     expmsg->data.cept.encryptmethod = vint->common.encrypt;
-    expmsg->data.cept.encryptkey = strdup("123456789012345678901234567890123456789012345678");
+    if (vint->common.encryptkey) {
+        expmsg->data.cept.encryptkey = strdup(vint->common.encryptkey);
+    } else {
+        expmsg->data.cept.encryptkey = NULL;
+    }
     expmsg->data.cept.seqtrackerid = vint->common.seqtrackerid;
 
     pthread_mutex_lock(sync->glob->stats_mutex);

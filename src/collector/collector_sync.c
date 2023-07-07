@@ -971,6 +971,10 @@ static void push_ipintercept_update_to_threads(collector_sync_t *sync,
     ipint->common.delivcc_len = modified->common.delivcc_len;
     modified->common.delivcc = tmp;
 
+    tmp = ipint->common.encryptkey;
+    ipint->common.encryptkey = modified->common.encryptkey;
+    modified->common.encryptkey = tmp;
+
     ipint->common.tostart_time = modified->common.tostart_time;
     ipint->common.toend_time = modified->common.toend_time;
     ipint->common.tomediate = modified->common.tomediate;
@@ -1143,7 +1147,11 @@ static inline openli_export_recv_t *create_intercept_details_msg(
     expmsg->data.cept.authcc = strdup(common->authcc);
     expmsg->data.cept.delivcc = strdup(common->delivcc);
     expmsg->data.cept.encryptmethod = common->encrypt;
-    expmsg->data.cept.encryptkey = strdup("123456789012345678901234567890123456789012345678");
+    if (common->encryptkey) {
+        expmsg->data.cept.encryptkey = strdup(common->encryptkey);
+    } else {
+        expmsg->data.cept.encryptkey = NULL;
+    }
     expmsg->data.cept.seqtrackerid = common->seqtrackerid;
 
     return expmsg;
@@ -1363,14 +1371,37 @@ static int update_modified_intercept(collector_sync_t *sync,
                 ipint->common.liid, space);
         changed = 1;
         encodingchanged = 1;
+        goto actonchange;
     }
+
+    if (ipint->common.encryptkey && modified->common.encryptkey) {
+        if (strcmp(ipint->common.encryptkey, modified->common.encryptkey) != 0)
+        {
+            changed = 1;
+            encodingchanged = 1;
+            goto actonchange;
+        }
+    } else if (ipint->common.encryptkey == NULL && modified->common.encryptkey)
+    {
+        changed = 1;
+        encodingchanged = 1;
+        goto actonchange;
+    } else if (ipint->common.encryptkey && modified->common.encryptkey == NULL)
+    {
+        changed = 1;
+        encodingchanged = 1;
+        goto actonchange;
+    }
+
 
     if (strcmp(ipint->common.delivcc, modified->common.delivcc) != 0 ||
             strcmp(ipint->common.authcc, modified->common.authcc) != 0) {
         changed = 1;
         encodingchanged = 1;
+        goto actonchange;
     }
 
+actonchange:
     if (encodingchanged) {
         expmsg = create_intercept_details_msg(&(modified->common));
         expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;

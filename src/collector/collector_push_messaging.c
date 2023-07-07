@@ -53,6 +53,10 @@ static inline void update_intercept_common(intercept_common_t *found,
     found->toend_time = replace->toend_time;
     found->tomediate = replace->tomediate;
     found->encrypt = replace->encrypt;
+
+    tmp = found->encryptkey;
+    found->encryptkey = replace->encryptkey;
+    replace->encryptkey = tmp;
 }
 
 static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {

@@ -712,6 +712,12 @@ static void parse_intercept_common_fields(intercept_common_t *common,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "encryptionkey") == 0) {
+        SET_CONFIG_STRING_OPTION(common->encryptkey, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "outputhandovers") == 0) {
 
         if (strcasecmp((char *)value->data.scalar.value, "irionly") == 0) {
@@ -742,6 +748,7 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
         newcept->common.delivcc = NULL;
         newcept->common.destid = 0;
         newcept->common.targetagency = NULL;
+        newcept->common.encryptkey = NULL;
         newcept->common.tostart_time = 0;
         newcept->common.toend_time = 0;
         newcept->common.tomediate = OPENLI_INTERCEPT_OUTPUTS_ALL;
@@ -768,6 +775,16 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
         }
 
         tgtcount = HASH_CNT(hh, newcept->targets);
+        if (newcept->common.encryptkey == NULL &&
+                newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+            if (newcept->common.liid == NULL) {
+                newcept->common.liid = strdup("unidentified intercept");
+            }
+            logger(LOG_INFO, "OpenLI: Email intercept configuration for '%s' asks for encryption but has not provided an encryption key -- skipping",
+                    newcept->common.liid);
+            free_single_emailintercept(newcept);
+            continue;
+        }
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
                 newcept->common.delivcc != NULL &&
                 tgtcount > 0 &&
@@ -777,7 +794,9 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
                     newcept->common.liid_len, newcept);
         } else {
             logger(LOG_INFO, "OpenLI: Email Intercept configuration was incomplete -- skipping.");
+            free_single_emailintercept(newcept);
         }
+
     }
 
     return 0;
@@ -810,6 +829,7 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         newcept->active = 1;
         newcept->common.destid = 0;
         newcept->common.targetagency = NULL;
+        newcept->common.encryptkey = NULL;
         newcept->common.hi1_seqno = 0;
         newcept->awaitingconfirm = 1;
         newcept->options = 0;
@@ -836,6 +856,16 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
 
         }
 
+        if (newcept->common.encryptkey == NULL &&
+                newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+            if (newcept->common.liid == NULL) {
+                newcept->common.liid = strdup("unidentified intercept");
+            }
+            logger(LOG_INFO, "OpenLI: VoIP intercept configuration for '%s' asks for encryption but has not provided an encryption key -- skipping",
+                    newcept->common.liid);
+            free_single_voipintercept(newcept);
+            continue;
+        }
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
                 newcept->common.delivcc != NULL &&
                 libtrace_list_get_size(newcept->targets) > 0 &&
@@ -845,6 +875,7 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
                     newcept->common.liid_len, newcept);
         } else {
             logger(LOG_INFO, "OpenLI: VOIP Intercept configuration was incomplete -- skipping.");
+            free_single_voipintercept(newcept);
         }
     }
 
@@ -874,6 +905,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->username = NULL;
         newcept->common.destid = 0;
         newcept->common.targetagency = NULL;
+        newcept->common.encryptkey = NULL;
         newcept->common.hi1_seqno = 0;
         newcept->awaitingconfirm = 1;
         newcept->common.liid_len = 0;
@@ -960,6 +992,17 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
             }
         }
 
+        if (newcept->common.encryptkey == NULL &&
+                newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+            if (newcept->common.liid == NULL) {
+                newcept->common.liid = strdup("unidentified intercept");
+            }
+            logger(LOG_INFO, "OpenLI: IP intercept configuration for '%s' asks for encryption but has not provided an encryption key -- skipping",
+                    newcept->common.liid);
+            free_single_ipintercept(newcept);
+            continue;
+        }
+
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
                 newcept->common.delivcc != NULL &&
                 newcept->username != NULL &&
@@ -979,6 +1022,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                 logger(LOG_INFO, "OpenLI: provisioner configuration error: 'user' must be specified for an IP intercept");
             }
             logger(LOG_INFO, "OpenLI: IP Intercept configuration was incomplete -- skipping.");
+            free_single_ipintercept(newcept);
         }
     }
 

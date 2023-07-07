@@ -50,6 +50,12 @@ static inline void copy_intercept_common(intercept_common_t *src,
     dest->toend_time = src->toend_time;
     dest->tomediate = src->tomediate;
     dest->encrypt = src->encrypt;
+
+    if (src->encryptkey) {
+        dest->encryptkey = strdup(src->encryptkey);
+    } else {
+        dest->encryptkey = NULL;
+    }
 }
 
 int are_sip_identities_same(openli_sip_identity_t *a,
@@ -231,6 +237,10 @@ static inline void free_intercept_common(intercept_common_t *cept) {
 
     if (cept->targetagency) {
         free(cept->targetagency);
+    }
+
+    if (cept->encryptkey) {
+        free(cept->encryptkey);
     }
 }
 

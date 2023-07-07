@@ -104,6 +104,7 @@ typedef struct intercept_common {
     uint64_t toend_time;
     intercept_outputs_t tomediate;
     payload_encryption_method_t encrypt;
+    char *encryptkey;
 } intercept_common_t;
 
 typedef struct hi1_notify_data {
@@ -222,26 +223,6 @@ typedef struct emailsession emailsession_t;
 typedef struct vendmirror_intercept vendmirror_intercept_t;
 typedef struct staticipsession staticipsession_t;
 typedef struct sipregister sipregister_t;
-
-#define voip_intercept_equal(a,b) \
-    ((strcmp(a->common.authcc, b->common.authcc) == 0) && \
-     (strcmp(a->common.delivcc, b->common.delivcc) == 0) && \
-     (strcmp(a->common.targetagency, b->common.targetagency) == 0) && \
-     (a->common.tostart_time == b->common.tostart_time) && \
-     (a->common.toend_time == b->common.toend_time) && \
-     (a->common.tomediate == b->common.tomediate) && \
-     (a->common.encrypt == b->common.encrypt) && \
-     (a->options == b->options))
-
-#define email_intercept_equal(a,b) \
-    ((strcmp(a->common.authcc, b->common.authcc) == 0) && \
-     (strcmp(a->common.delivcc, b->common.delivcc) == 0) && \
-     (strcmp(a->common.targetagency, b->common.targetagency) == 0) && \
-     (a->common.tostart_time == b->common.tostart_time) && \
-     (a->common.toend_time == b->common.toend_time) && \
-     (a->common.encrypt == b->common.encrypt) && \
-     (a->common.tomediate == b->common.tomediate))
-
 
 typedef struct voipintercept {
 

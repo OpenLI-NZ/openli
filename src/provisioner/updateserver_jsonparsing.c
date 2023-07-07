@@ -60,6 +60,7 @@ struct json_intercept {
     struct json_object *emailtargets;
     struct json_object *tomediate;
     struct json_object *encryption;
+    struct json_object *encryptkey;
 };
 
 #define EXTRACT_JSON_INT_PARAM(name, uptype, jsonobj, dest, errflag, force) \
@@ -186,6 +187,7 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "endtime", &(ipjson->endtime));
     json_object_object_get_ex(parsed, "outputhandovers", &(ipjson->tomediate));
     json_object_object_get_ex(parsed, "payloadencryption", &(ipjson->encryption));
+    json_object_object_get_ex(parsed, "encryptionkey", &(ipjson->encryptkey));
     json_object_object_get_ex(parsed, "vendmirrorid", &(ipjson->vendmirrorid));
     json_object_object_get_ex(parsed, "staticips", &(ipjson->staticips));
     json_object_object_get_ex(parsed, "siptargets", &(ipjson->siptargets));
@@ -288,6 +290,8 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
             common->toend_time, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("payloadencryption", cepttype,
             jsonp->encryption, encryptmethodstring, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("encryptionkey", cepttype,
+            jsonp->encryptkey, common->encryptkey, &parseerr, false);
 
     if (encryptmethodstring) {
         common->encrypt = map_encrypt_method_string(encryptmethodstring);
@@ -331,6 +335,8 @@ static int update_intercept_common(intercept_common_t *parsed,
         new_intercept_liidmapping(state, existing->targetagency,
                 existing->liid);
     }
+
+    MODIFY_STRING_MEMBER(parsed->encryptkey, existing->encryptkey, changed);
 
     if (parsed->encrypt != existing->encrypt) {
         *changed = 1;

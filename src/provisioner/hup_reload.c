@@ -59,24 +59,57 @@ static inline int reload_staticips(provision_state_t *currstate,
     return changed;
 }
 
+static inline int common_intercept_equal(intercept_common_t *a,
+        intercept_common_t *b) {
+
+    if (strcmp(a->liid, b->liid) != 0) {
+        return 0;
+    }
+
+    if (a->tostart_time != b->tostart_time) {
+        return 0;
+    }
+
+    if (a->toend_time != b->toend_time) {
+        return 0;
+    }
+
+    if (strcmp(a->authcc, b->authcc) != 0) {
+        return 0;
+    }
+
+    if (strcmp(a->delivcc, b->delivcc) != 0) {
+        return 0;
+    }
+
+    if (a->encrypt != b->encrypt) {
+        return 0;
+    }
+
+    if (a->tomediate != b->tomediate) {
+        return 0;
+    }
+
+    if (strcmp(a->targetagency, b->targetagency) != 0) {
+        return 0;
+    }
+
+    if (a->encryptkey == NULL) {
+        if (b->encryptkey != NULL) {
+            return 0;
+        }
+    } else if (b->encryptkey == NULL) {
+        return 0;
+    } else if (strcmp(a->encryptkey, b->encryptkey) != 0) {
+        return 0;
+    }
+
+    return 1;
+}
+
 static inline int ip_intercept_equal(ipintercept_t *a, ipintercept_t *b) {
-    if (strcmp(a->common.liid, b->common.liid) != 0) {
-        return 0;
-    }
 
-    if (a->common.tostart_time != b->common.tostart_time) {
-        return 0;
-    }
-
-    if (a->common.toend_time != b->common.toend_time) {
-        return 0;
-    }
-
-    if (strcmp(a->common.authcc, b->common.authcc) != 0) {
-        return 0;
-    }
-
-    if (strcmp(a->common.delivcc, b->common.delivcc) != 0) {
+    if (common_intercept_equal(&(a->common), &(b->common)) == 0) {
         return 0;
     }
 
@@ -88,18 +121,6 @@ static inline int ip_intercept_equal(ipintercept_t *a, ipintercept_t *b) {
         return 0;
     }
 
-    if (a->common.encrypt != b->common.encrypt) {
-        return 0;
-    }
-
-    if (a->common.tomediate != b->common.tomediate) {
-        return 0;
-    }
-
-    if (strcmp(a->common.targetagency, b->common.targetagency) != 0) {
-        return 0;
-    }
-
     if (a->accesstype != b->accesstype) {
         return 0;
     }
@@ -107,6 +128,21 @@ static inline int ip_intercept_equal(ipintercept_t *a, ipintercept_t *b) {
     return 1;
 }
 
+static inline int voip_intercept_equal(voipintercept_t *a, voipintercept_t *b) {
+    if (common_intercept_equal(&(a->common), &(b->common)) == 0) {
+        return 0;
+    }
+    if (a->options != b->options) {
+        return 0;
+    }
+    return 1;
+}
+
+static inline int email_intercept_equal(emailintercept_t *a,
+        emailintercept_t *b) {
+
+    return common_intercept_equal(&(a->common), &(b->common));
+}
 
 static int reload_intercept_config_filename(provision_state_t *currstate,
         provision_state_t *newstate) {

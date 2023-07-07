@@ -378,7 +378,11 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     job.cin = (int64_t)cin;
     job.cept_version = intstate->version;
     job.encryptmethod = intstate->details.encryptmethod;
-    job.encryptkey = strdup(intstate->details.encryptkey);
+    if (intstate->details.encryptkey) {
+        job.encryptkey = strdup(intstate->details.encryptkey);
+    } else {
+        job.encryptkey = NULL;
+    }
 
 	if (recvd->type == OPENLI_EXPORT_IPMMCC ||
 			recvd->type == OPENLI_EXPORT_IPCC ||

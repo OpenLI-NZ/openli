@@ -551,7 +551,11 @@ static void start_email_intercept(openli_email_worker_t *state,
         expmsg->data.cept.delivcc = strdup(em->common.delivcc);
         expmsg->data.cept.seqtrackerid = em->common.seqtrackerid;
         expmsg->data.cept.encryptmethod = em->common.encrypt;
-        expmsg->data.cept.encryptkey = strdup("123456789012345678901234567890123456789012345678");
+        if (em->common.encryptkey) {
+            expmsg->data.cept.encryptkey = strdup(em->common.encryptkey);
+        } else {
+            expmsg->data.cept.encryptkey = NULL;
+        }
 
         publish_openli_msg(state->zmq_pubsocks[em->common.seqtrackerid],
                 expmsg);
@@ -562,7 +566,7 @@ static void start_email_intercept(openli_email_worker_t *state,
 static int update_modified_email_intercept(openli_email_worker_t *state,
         emailintercept_t *found, emailintercept_t *decode) {
     openli_export_recv_t *expmsg;
-    int encodingchanged = 0;
+    int encodingchanged = 0, keychanged = 0;
 
     if (decode->common.tostart_time != found->common.tostart_time ||
             decode->common.toend_time != found->common.toend_time) {
@@ -595,6 +599,24 @@ static int update_modified_email_intercept(openli_email_worker_t *state,
         encodingchanged = 1;
     }
 
+    if (found->common.encryptkey && decode->common.encryptkey) {
+        if (strcmp(found->common.encryptkey, decode->common.encryptkey) != 0) {
+            keychanged = 1;
+        }
+    } else if (found->common.encryptkey == NULL && decode->common.encryptkey) {
+        keychanged = 1;
+    } else if (found->common.encryptkey && decode->common.encryptkey == NULL) {
+        keychanged = 1;
+    }
+
+    if (keychanged) {
+        char *tmp;
+        encodingchanged = 1;
+        tmp = found->common.encryptkey;
+        found->common.encryptkey = decode->common.encryptkey;
+        decode->common.encryptkey = tmp;
+    }
+
     if (strcmp(decode->common.delivcc, found->common.delivcc) != 0 ||
             strcmp(decode->common.authcc, found->common.authcc) != 0) {
         char *tmp;
@@ -615,7 +637,11 @@ static int update_modified_email_intercept(openli_email_worker_t *state,
         expmsg->data.cept.delivcc = strdup(found->common.delivcc);
         expmsg->data.cept.seqtrackerid = found->common.seqtrackerid;
         expmsg->data.cept.encryptmethod = found->common.encrypt;
-        expmsg->data.cept.encryptkey = strdup("123456789012345678901234567890123456789012345678");
+        if (found->common.encryptkey) {
+            expmsg->data.cept.encryptkey = strdup(found->common.encryptkey);
+        } else {
+            expmsg->data.cept.encryptkey = NULL;
+        }
 
         publish_openli_msg(state->zmq_pubsocks[found->common.seqtrackerid],
                 expmsg);
