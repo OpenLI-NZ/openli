@@ -568,7 +568,6 @@ static int _push_voipintercept_modify(net_buffer_t *nb, voipintercept_t *vint)
     }
 
     /* Push on each intercept field */
-
     if (_push_intercept_common_fields(nb, &(vint->common)) == -1) {
         goto pushmodfail;
     }

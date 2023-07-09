@@ -260,13 +260,14 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
     int parseerr = 0;
     char *encryptmethodstring = NULL;
 
-    common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
     if (is_new) {
         common->tostart_time = 0;
         common->toend_time = 0;
+        common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
     } else {
         common->tostart_time = (uint64_t)-1;
         common->toend_time = (uint64_t)-1;
+        common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
     }
 
     if (common->liid == NULL) {
@@ -319,9 +320,9 @@ static int update_intercept_common(intercept_common_t *parsed,
         provision_state_t *state) {
 
     MODIFY_STRING_MEMBER(parsed->authcc, existing->authcc, changed);
-    existing->authcc_len  = parsed->authcc_len;
+    existing->authcc_len  = strlen(existing->authcc);
     MODIFY_STRING_MEMBER(parsed->delivcc, existing->delivcc, changed);
-    existing->delivcc_len  = parsed->delivcc_len;
+    existing->delivcc_len  = strlen(existing->delivcc);
 
     if (parsed->tomediate != existing->tomediate) {
         existing->tomediate = parsed->tomediate;
@@ -338,7 +339,8 @@ static int update_intercept_common(intercept_common_t *parsed,
 
     MODIFY_STRING_MEMBER(parsed->encryptkey, existing->encryptkey, changed);
 
-    if (parsed->encrypt != existing->encrypt) {
+    if (parsed->encrypt != existing->encrypt &&
+            parsed->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
         *changed = 1;
         existing->encrypt = parsed->encrypt;
     }
