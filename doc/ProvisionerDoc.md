@@ -536,12 +536,18 @@ An email target is a JSON object that contains just a single field:
 * `address`               -- the email address of the target
 
 
+---
+
 All intercept types also support the following optional key-value elements:
 
 * `starttime`             -- do not intercept any traffic observed before this
-                             unix timestamp
+                             unix timestamp. Default is 0, which will
+                             intercept all traffic from the moment the
+                             intercept is provisioned.
 * `endtime`               -- do not intercept any traffic observed after this
-                             unix timestamp
+                             unix timestamp. Default is 0, which will
+                             continue to intercept traffic until the intercept
+                             is explicitly halted.
 * `outputhandovers`       -- If set to "all", then both IRI and CCs will be
                              produced by OpenLI for this intercept.
                              If set to "irionly", then only IRIs will be
@@ -549,6 +555,18 @@ All intercept types also support the following optional key-value elements:
                              If set to "cconly", then only CCs will be produced
                              by OpenLI for this intercept.
                              The default setting is "all".
+* `payloadencryption`     -- Specifies if the CC and IRI contents should be
+                             encrypted and, if so, which encryption method to
+                             use. If set to "none", no encryption is performed.
+                             The encryption method supported right now is
+                             "aes-192-cbc".
+                             The default setting is "none".
+* `encryptionkey`         -- The encryption key to use when encrypting CC and
+                             IRI contents. This option is mandatory if
+                             `payloadencryption` is NOT set to "none". The
+                             ideal key length is 24 characters. Shorter keys
+                             will be padded with null bytes, longer keys will be
+                             truncated to 24 characters.
 
 
 ### SIP Target Specifics

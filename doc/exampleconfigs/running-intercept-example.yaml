@@ -132,6 +132,10 @@ ipintercepts:
 # phone user, using GTPv2 packets to detect the start and end of the target's
 # sessions. Note that the accesstype must be set to "mobile". The user field
 # is set to the target's MSISDN (i.e. phone number).
+#
+# This intercept also wraps the intercepted traffic in an Encryption Container,
+# which may be required in some jurisdictions. Any intercept type can use
+# payload encryption.
  - liid: TH473NNOQ              # LIID, should be provided by requesting agency
    authcountrycode: NZ          # Authorisation country code
    deliverycountrycode: NZ      # Delivery country code
@@ -139,6 +143,9 @@ ipintercepts:
    mediator: 6001               # ID of the mediator to send intercept via
    agencyid: "Police"           # ID of agency to send intercept to
    accesstype: "mobile"         # Must be "mobile" for UMTS intercepts
+   payloadencryption: "aes-192-cbc"     # Encrypt IP content using AES-192-CBC
+   encryptionkey: "alongencryptionkeyisgood"  # Key to use for encryption,
+                                              # should be provided by the agency
 
 # This intercept demonstrates how to configure an intercept for a target that
 # has static IP allocations. The target has both an IPv4 and IPv6 allocation
