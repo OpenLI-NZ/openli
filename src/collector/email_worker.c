@@ -1017,6 +1017,13 @@ static int find_and_update_active_session(openli_email_worker_t *state,
     emailsession_t *sess;
     int r = 0;
 
+    if (cap->session_id == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: error creating email session -- session_id is NULL");
+        free_captured_email(cap);
+        return -1;
+    }
+
     snprintf(sesskey, 256, "%s-%s", email_type_to_string(cap->type),
             cap->session_id);
 
@@ -1074,8 +1081,9 @@ static int process_received_packet(openli_email_worker_t *state) {
 
         cap = convert_packet_to_email_captured(recvd.data.pkt, recvd.type);
 
-        if (cap == NULL) {
+        if (cap == NULL || cap->session_id == NULL) {
             logger(LOG_INFO, "OpenLI: unable to derive email session ID from received packet in email thread %d", state->emailid);
+            free_captured_email(cap);
             return -1;
         }
         if (cap->content != NULL) {
@@ -1109,7 +1117,8 @@ static int process_ingested_capture(openli_email_worker_t *state) {
             break;
         }
 
-        if (cap == NULL) {
+        if (cap == NULL || cap->session_id == NULL) {
+            free_captured_email(cap);
             break;
         }
         find_and_update_active_session(state, cap);
