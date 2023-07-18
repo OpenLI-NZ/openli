@@ -1018,47 +1018,121 @@ static int parse_id_command(emailsession_t *sess, imap_session_t *imapsess) {
 }
 
 static int find_next_crlf(imap_session_t *sess, int start_index) {
-    int rem;
-    uint8_t *found;
+    int rem, regres;
+    uint8_t *found = NULL;
     uint8_t *openparent = NULL;
     uint8_t *closeparent = NULL;
-
+    uint8_t *curly = NULL;
+    regmatch_t matches[1];
+    regex_t regex;
     int nests = 0;
+
+    if (regcomp(&regex, "\\{\\d+\\}", REG_EXTENDED) != 0) {
+        logger(LOG_INFO, "OpenLI: failed to compile regex pattern for matching curly braces in IMAP content?");
+        return -1;
+    }
 
     rem = sess->contbufused - start_index;
 
+    sess->contbuffer[sess->contbufused] = '\0';
     while (1) {
-        openparent = (uint8_t *)memmem(sess->contbuffer + start_index, rem,
-                "(", 1);
-        found = (uint8_t *)memmem(sess->contbuffer + start_index, rem, "\r\n",
-                2);
-        closeparent = (uint8_t *)memmem(sess->contbuffer + start_index, rem,
-                ")", 1);
+        assert(nests >= 0);
+        if (nests == 0) {
+            openparent = (uint8_t *)memmem(sess->contbuffer + start_index, rem,
+                    "(", 1);
+            found = (uint8_t *)memmem(sess->contbuffer + start_index, rem,
+                "\r\n", 2);
 
-        if (openparent == NULL && closeparent == NULL && nests == 0) {
-            break;
-        }
+            /* No open parenthesis, just need to check if we have \r\n */
+            if (openparent == NULL) {
+                break;
+            }
 
-        if (closeparent == NULL && nests > 0) {
-            return 0;
-        }
+            if (found && found < openparent) {
+                /* There is an open parenthesis, but it is after the next
+                 * \r\n so process the line break first.
+                 */
+                break;
+            }
 
-        if ((openparent == NULL || found < openparent) && nests == 0) {
-            break;
-        }
-
-        if (openparent == NULL || closeparent < openparent) {
-            nests -= 1;
-            start_index = (closeparent - sess->contbuffer) + 1;
-        } else {
-            nests += 1;
+            /* Open parenthesis: we cannot look for \r\n until we've seen
+             * the matching close parenthesis.
+             */
+            nests ++;
             start_index = (openparent - sess->contbuffer) + 1;
+
+        } else {
+            openparent = (uint8_t *)memmem(sess->contbuffer + start_index, rem,
+                    "(", 1);
+            closeparent = (uint8_t *)memmem(sess->contbuffer + start_index, rem,
+                    ")", 1);
+
+            regres = regexec(&regex, sess->contbuffer + start_index, 1,
+                    matches, 0);
+            if (regres == 0) {
+                curly = sess->contbuffer + start_index + matches[0].rm_so;
+            } else {
+                curly = NULL;
+            }
+
+            found = NULL;
+            if (openparent != NULL &&
+                    (closeparent == NULL || openparent < closeparent) &&
+                    (curly == NULL || openparent < curly)) {
+                /* Next interesting token is another nested open parenthesis,
+                 * so add another layer of nesting */
+
+                nests ++;
+                start_index = (openparent - sess->contbuffer) + 1;
+            } else if (curly != NULL &&
+                    (closeparent == NULL || curly < closeparent)
+                    && (openparent == NULL || curly < openparent)) {
+                /* curly braces indicate a section containing some sort
+                 * of body content, and contain the length of the body
+                 * inside the braces. We want to skip over the entire
+                 * body and not try to parse it, because there could be
+                 * parentheses and curly braces in there that will mess
+                 * us up (especially if they're not balanced!).
+                 */
+                char *endptr = NULL;
+                unsigned long toskip = strtoul(curly + 1, &endptr, 10);
+
+                if (toskip >= rem) {
+                    /* The whole section is not here yet, so we can't
+                     * skip it until it arrives */
+                    found = NULL;
+                    break;
+                }
+
+                start_index = (((uint8_t *)endptr + toskip)
+                        - sess->contbuffer) + 1;
+
+            } else if (closeparent != NULL &&
+                    (openparent == NULL || closeparent < openparent) &&
+                    (curly == NULL || closeparent < curly)) {
+                /* A close parenthesis means that our innermost nested
+                 * parentheses are now balanced.
+                 */
+                nests --;
+                start_index = (closeparent - sess->contbuffer) + 1;
+            } else {
+                /* None of the above tokens are present, so we must need
+                 * more data to finish parsing...
+                 */
+
+                /* Nothing to do, just make sure found remains NULL */
+                found = NULL;
+                break;
+            }
         }
 
+        /* Always update remaining before looping again! */
         rem = sess->contbufused - start_index;
     }
 
+    regfree(&regex);
     if (found) {
+        /* +2 because we have to move past the \r\n, naturally */
         sess->contbufread = (found - sess->contbuffer) + 2;
         return 1;
     }
