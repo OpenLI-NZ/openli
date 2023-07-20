@@ -353,20 +353,85 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
     return (int)totallen;
 }
 
+#define INTERCEPT_COMMON_LEN(common) \
+        (common.liid_len + common.authcc_len + sizeof(common.tostart_time) + \
+         sizeof(common.toend_time) + sizeof(common.tomediate) + \
+         strlen(common.targetagency) + sizeof(common.destid) + \
+         sizeof(common.encrypt) + common.delivcc_len + \
+         (common.encryptkey ? (strlen(common.encryptkey) + 4) : 0) + (9 * 4))
+
 #define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
-        (ipint->common.liid_len + ipint->common.authcc_len + \
+        (INTERCEPT_COMMON_LEN(ipint->common) + \
          ipint->username_len + sizeof(ipint->accesstype) + \
-         sizeof(ipint->options) + sizeof(ipint->common.tomediate) + \
-         sizeof(ipint->common.tostart_time) + sizeof(ipint->common.toend_time) \
-         + sizeof(ipint->vendmirrorid) + (9 * 4))
+         sizeof(ipint->options) + sizeof(ipint->vendmirrorid) + (4 * 4))
 
 #define IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
-        (ipint->common.liid_len + ipint->common.authcc_len + \
-        ipint->common.delivcc_len + \
+         (INTERCEPT_COMMON_LEN(ipint->common) + \
          ipint->username_len + sizeof(ipint->accesstype) + \
-         sizeof(ipint->common.tomediate) + \
-         sizeof(ipint->common.tostart_time) + sizeof(ipint->common.toend_time) \
-         + sizeof(ipint->options) + (9 * 4))
+         sizeof(ipint->options) + (3 * 4))
+
+static int _push_intercept_common_fields(net_buffer_t *nb,
+        intercept_common_t *common) {
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID, (uint8_t *)common->liid,
+                strlen(common->liid)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, (uint8_t *)common->authcc,
+            strlen(common->authcc)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC, (uint8_t *)common->delivcc,
+            strlen(common->delivcc)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LEAID, (uint8_t *)common->targetagency,
+            strlen(common->targetagency)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_START_TIME,
+            (uint8_t *)&(common->tostart_time),
+            sizeof(common->tostart_time)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_END_TIME,
+            (uint8_t *)&(common->toend_time),
+            sizeof(common->toend_time)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_MEDIATORID,
+            (uint8_t *)&(common->destid),
+            sizeof(common->destid)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_TOMEDIATE,
+            (uint8_t *)&(common->tomediate),
+            sizeof(common->tomediate)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION,
+            (uint8_t *)&(common->encrypt),
+            sizeof(common->encrypt)) == -1) {
+        return -1;
+    }
+
+    if (common->encryptkey) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_ENCRYPTION_KEY,
+                (uint8_t *)(common->encryptkey),
+                strlen(common->encryptkey)) == -1) {
+            return -1;
+        }
+    }
+
+}
 
 static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
 
@@ -395,20 +460,7 @@ static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
     }
 
     /* Push on each intercept field */
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID, (uint8_t *)ipint->common.liid,
-                strlen(ipint->common.liid)) == -1) {
-        goto pushmodfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, (uint8_t *)ipint->common.authcc,
-            strlen(ipint->common.authcc)) == -1) {
-        goto pushmodfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC,
-            (uint8_t *)ipint->common.delivcc,
-            strlen(ipint->common.delivcc)) == -1) {
+    if (_push_intercept_common_fields(nb, &(ipint->common)) == -1) {
         goto pushmodfail;
     }
 
@@ -437,24 +489,6 @@ static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
         }
     }
 
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_START_TIME,
-            (uint8_t *)&(ipint->common.tostart_time),
-            sizeof(ipint->common.tostart_time)) == -1) {
-        goto pushmodfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_END_TIME,
-            (uint8_t *)&(ipint->common.toend_time),
-            sizeof(ipint->common.toend_time)) == -1) {
-        goto pushmodfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_TOMEDIATE,
-            (uint8_t *)&(ipint->common.tomediate),
-            sizeof(ipint->common.tomediate)) == -1) {
-        goto pushmodfail;
-    }
-
 
     return (int)totallen;
 
@@ -467,10 +501,7 @@ pushmodfail:
 }
 
 #define EMAILINTERCEPT_MODIFY_BODY_LEN(em) \
-        (em->common.liid_len + em->common.authcc_len + \
-         em->common.delivcc_len + sizeof(em->common.toend_time) + \
-         sizeof(em->common.tomediate) + \
-         sizeof(em->common.tostart_time) + (6 * 4))
+        (INTERCEPT_COMMON_LEN(em->common))
 
 static int _push_emailintercept_modify(net_buffer_t *nb, emailintercept_t *em) {
     ii_header_t hdr;
@@ -495,40 +526,9 @@ static int _push_emailintercept_modify(net_buffer_t *nb, emailintercept_t *em) {
     }
 
     /* Push on each intercept field */
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID, (uint8_t *)em->common.liid,
-                strlen(em->common.liid)) == -1) {
+    if (_push_intercept_common_fields(nb, &(em->common)) == -1) {
         goto pushmodfail;
     }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, (uint8_t *)em->common.authcc,
-            strlen(em->common.authcc)) == -1) {
-        goto pushmodfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC, (uint8_t *)em->common.delivcc,
-            strlen(em->common.delivcc)) == -1) {
-        goto pushmodfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_START_TIME,
-            (uint8_t *)&(em->common.tostart_time),
-            sizeof(em->common.tostart_time)) == -1) {
-        goto pushmodfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_END_TIME,
-            (uint8_t *)&(em->common.toend_time),
-            sizeof(em->common.toend_time)) == -1) {
-        goto pushmodfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_TOMEDIATE,
-            (uint8_t *)&(em->common.tomediate),
-            sizeof(em->common.tomediate)) == -1) {
-        goto pushmodfail;
-    }
-
 
     return (int)totallen;
 
@@ -541,11 +541,8 @@ pushmodfail:
 
 
 #define VOIPINTERCEPT_MODIFY_BODY_LEN(vint) \
-        (vint->common.liid_len + vint->common.authcc_len + \
-         vint->common.delivcc_len + \
-         sizeof(vint->options) + sizeof(vint->common.toend_time) + \
-         sizeof(vint->common.tomediate) + \
-         sizeof(vint->common.tostart_time) + (7 * 4))
+        (INTERCEPT_COMMON_LEN(vint->common) + \
+         sizeof(vint->options) + (1 * 4))
 
 static int _push_voipintercept_modify(net_buffer_t *nb, voipintercept_t *vint)
 {
@@ -571,45 +568,14 @@ static int _push_voipintercept_modify(net_buffer_t *nb, voipintercept_t *vint)
     }
 
     /* Push on each intercept field */
+    if (_push_intercept_common_fields(nb, &(vint->common)) == -1) {
+        goto pushmodfail;
+    }
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_INTOPTIONS,
             (uint8_t *)(&vint->options), sizeof(vint->options)) == -1) {
         goto pushmodfail;
     }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID, (uint8_t *)vint->common.liid,
-                strlen(vint->common.liid)) == -1) {
-        goto pushmodfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, (uint8_t *)vint->common.authcc,
-            strlen(vint->common.authcc)) == -1) {
-        goto pushmodfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC, (uint8_t *)vint->common.delivcc,
-            strlen(vint->common.delivcc)) == -1) {
-        goto pushmodfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_START_TIME,
-            (uint8_t *)&(vint->common.tostart_time),
-            sizeof(vint->common.tostart_time)) == -1) {
-        goto pushmodfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_END_TIME,
-            (uint8_t *)&(vint->common.toend_time),
-            sizeof(vint->common.toend_time)) == -1) {
-        goto pushmodfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_TOMEDIATE,
-            (uint8_t *)&(vint->common.tomediate),
-            sizeof(vint->common.tomediate)) == -1) {
-        goto pushmodfail;
-    }
-
 
     return (int)totallen;
 
@@ -636,11 +602,7 @@ int push_intercept_modify_onto_net_buffer(net_buffer_t *nb, void *data,
 }
 
 #define EMAILINTERCEPT_BODY_LEN(em) \
-        (em->common.liid_len + em->common.authcc_len + \
-         em->common.delivcc_len + strlen(em->common.targetagency) + \
-         sizeof(em->common.destid) + sizeof(em->common.tostart_time) + \
-         sizeof(em->common.tomediate) + \
-         sizeof(em->common.toend_time) + (8 * 4))
+        (INTERCEPT_COMMON_LEN(em->common))
 
 int push_emailintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
@@ -666,52 +628,7 @@ int push_emailintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
         goto pushemailintfail;
     }
 
-    /* Push on each intercept field */
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID,
-            (uint8_t *)em->common.liid,
-            em->common.liid_len)) == -1) {
-        goto pushemailintfail;
-    }
-
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC,
-            (uint8_t *)em->common.authcc,
-            em->common.authcc_len)) == -1) {
-        goto pushemailintfail;
-    }
-
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC,
-            (uint8_t *)em->common.delivcc,
-            em->common.delivcc_len)) == -1) {
-        goto pushemailintfail;
-    }
-
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LEAID,
-            (uint8_t *)em->common.targetagency,
-            strlen(em->common.targetagency))) == -1) {
-        goto pushemailintfail;
-    }
-
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_MEDIATORID,
-            (uint8_t *)&(em->common.destid),
-            sizeof(em->common.destid))) == -1) {
-        goto pushemailintfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_START_TIME,
-            (uint8_t *)&(em->common.tostart_time),
-            sizeof(em->common.tostart_time)) == -1) {
-        goto pushemailintfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_END_TIME,
-            (uint8_t *)&(em->common.toend_time),
-            sizeof(em->common.toend_time)) == -1) {
-        goto pushemailintfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_TOMEDIATE,
-            (uint8_t *)&(em->common.tomediate),
-            sizeof(em->common.tomediate)) == -1) {
+    if (_push_intercept_common_fields(nb, &(em->common)) == -1) {
         goto pushemailintfail;
     }
 
@@ -725,12 +642,8 @@ pushemailintfail:
 }
 
 #define VOIPINTERCEPT_BODY_LEN(vint) \
-        (vint->common.liid_len + vint->common.authcc_len + \
-         vint->common.delivcc_len + strlen(vint->common.targetagency) + \
-         sizeof(vint->common.destid) + sizeof(vint->options) \
-         + sizeof(vint->common.tomediate) \
-         + sizeof(vint->common.tostart_time) + sizeof(vint->common.toend_time) \
-         + (9 * 4))
+        (INTERCEPT_COMMON_LEN(vint->common) + sizeof(vint->options) + \
+         (1 * 4))
 
 #define INTERCEPT_WITHDRAW_BODY_LEN(liid, authcc) \
         (strlen(liid) + strlen(authcc) + (2 * 4))
@@ -827,56 +740,12 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     }
 
     /* Push on each intercept field */
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID,
-            (uint8_t *)vint->common.liid,
-            vint->common.liid_len)) == -1) {
-        goto pushvoipintfail;
-    }
-
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC,
-            (uint8_t *)vint->common.authcc,
-            vint->common.authcc_len)) == -1) {
-        goto pushvoipintfail;
-    }
-
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC,
-            (uint8_t *)vint->common.delivcc,
-            vint->common.delivcc_len)) == -1) {
-        goto pushvoipintfail;
-    }
-
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LEAID,
-            (uint8_t *)vint->common.targetagency,
-            strlen(vint->common.targetagency))) == -1) {
-        goto pushvoipintfail;
-    }
-
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_MEDIATORID,
-            (uint8_t *)&(vint->common.destid),
-            sizeof(vint->common.destid))) == -1) {
+    if (_push_intercept_common_fields(nb, &(vint->common)) == -1) {
         goto pushvoipintfail;
     }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_INTOPTIONS,
             (uint8_t *)&(vint->options), sizeof(vint->options))) == -1) {
-        goto pushvoipintfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_START_TIME,
-            (uint8_t *)&(vint->common.tostart_time),
-            sizeof(vint->common.tostart_time)) == -1) {
-        goto pushvoipintfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_END_TIME,
-            (uint8_t *)&(vint->common.toend_time),
-            sizeof(vint->common.toend_time)) == -1) {
-        goto pushvoipintfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_TOMEDIATE,
-            (uint8_t *)&(vint->common.tomediate),
-            sizeof(vint->common.tomediate)) == -1) {
         goto pushvoipintfail;
     }
 
@@ -1131,22 +1000,14 @@ int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
 }
 
 #define IPINTERCEPT_BODY_LEN(ipint) \
-        (ipint->common.liid_len + ipint->common.authcc_len + \
-         ipint->common.delivcc_len + \
-         ipint->username_len + sizeof(ipint->common.destid) + \
-         strlen(ipint->common.targetagency) + \
-         sizeof(ipint->options) + sizeof(ipint->common.tomediate) + \
-         sizeof(ipint->common.tostart_time) + sizeof(ipint->common.toend_time) \
-         + sizeof(ipint->accesstype) + (11 * 4))
+        (INTERCEPT_COMMON_LEN(ipint->common) + \
+         ipint->username_len + sizeof(ipint->options) + \
+         sizeof(ipint->accesstype) + (3 * 4))
 
 #define VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint) \
-        (ipint->common.liid_len + ipint->common.authcc_len + \
-         ipint->common.delivcc_len + ipint->username_len + \
-         strlen(ipint->common.targetagency) + \
-         sizeof(ipint->vendmirrorid) + sizeof(ipint->common.destid) + \
-         sizeof(ipint->options) + sizeof(ipint->common.tomediate) + \
-         sizeof(ipint->common.tostart_time) + sizeof(ipint->common.toend_time) \
-         + sizeof(ipint->accesstype) + (12 * 4))
+        (INTERCEPT_COMMON_LEN(ipint->common) + \
+         ipint->username_len + sizeof(ipint->vendmirrorid) + \
+         sizeof(ipint->options) + sizeof(ipint->accesstype) + (4 * 4))
 
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
@@ -1179,32 +1040,12 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     }
 
     /* Push on each intercept field */
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID,
-            (uint8_t *)ipint->common.liid,
-            ipint->common.liid_len)) == -1) {
-        goto pushipintfail;
-    }
-
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC,
-            (uint8_t *)ipint->common.authcc,
-            ipint->common.authcc_len)) == -1) {
-        goto pushipintfail;
-    }
-
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DELIVCC,
-            (uint8_t *)ipint->common.delivcc,
-            ipint->common.delivcc_len)) == -1) {
+    if (_push_intercept_common_fields(nb, &(ipint->common)) == -1) {
         goto pushipintfail;
     }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_USERNAME,
             (uint8_t *)ipint->username, ipint->username_len)) == -1) {
-        goto pushipintfail;
-    }
-
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LEAID,
-            (uint8_t *)ipint->common.targetagency,
-            strlen(ipint->common.targetagency))) == -1) {
         goto pushipintfail;
     }
 
@@ -1228,29 +1069,6 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
         }
     }
 
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_MEDIATORID,
-            (uint8_t *)&(ipint->common.destid),
-            sizeof(ipint->common.destid))) == -1) {
-        goto pushipintfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_START_TIME,
-            (uint8_t *)&(ipint->common.tostart_time),
-            sizeof(ipint->common.tostart_time)) == -1) {
-        goto pushipintfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_INTERCEPT_END_TIME,
-            (uint8_t *)&(ipint->common.toend_time),
-            sizeof(ipint->common.toend_time)) == -1) {
-        goto pushipintfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_TOMEDIATE,
-            (uint8_t *)&(ipint->common.tomediate),
-            sizeof(ipint->common.tomediate)) == -1) {
-        goto pushipintfail;
-    }
     HASH_ITER(hh, ipint->statics, ipr, tmpr) {
         if (push_static_ipranges_onto_net_buffer(nb, ipint, ipr) < 0) {
             return -1;
@@ -1689,6 +1507,8 @@ int decode_emailintercept_start(uint8_t *msgbody, uint16_t len,
     mailint->common.tostart_time = 0;
     mailint->common.toend_time = 0;
     mailint->common.tomediate = 0;
+    mailint->common.encrypt = 0;
+    mailint->common.encryptkey = NULL;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -1718,6 +1538,10 @@ int decode_emailintercept_start(uint8_t *msgbody, uint16_t len,
             mailint->common.toend_time = *((uint64_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_TOMEDIATE) {
             mailint->common.tomediate = *((intercept_outputs_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION) {
+            mailint->common.encrypt = *((payload_encryption_method_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_ENCRYPTION_KEY) {
+            DECODE_STRING_FIELD(mailint->common.encryptkey, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
@@ -1766,6 +1590,8 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
     vint->common.tostart_time = 0;
     vint->common.toend_time = 0;
     vint->common.tomediate = 0;
+    vint->common.encrypt = 0;
+    vint->common.encryptkey = NULL;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -1799,6 +1625,10 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
             vint->common.toend_time = *((uint64_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_TOMEDIATE) {
             vint->common.tomediate = *((intercept_outputs_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION) {
+            vint->common.encrypt = *((payload_encryption_method_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_ENCRYPTION_KEY) {
+            DECODE_STRING_FIELD(vint->common.encryptkey, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
@@ -1854,6 +1684,8 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->common.tostart_time = 0;
     ipint->common.toend_time = 0;
     ipint->common.tomediate = 0;
+    ipint->common.encrypt = 0;
+    ipint->common.encryptkey = NULL;
     ipint->username_len = 0;
 
     while (msgbody < msgend) {
@@ -1891,6 +1723,10 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
             ipint->common.toend_time = *((uint64_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_TOMEDIATE) {
             ipint->common.tomediate = *((intercept_outputs_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION) {
+            ipint->common.encrypt = *((payload_encryption_method_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_ENCRYPTION_KEY) {
+            DECODE_STRING_FIELD(ipint->common.encryptkey, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_USERNAME) {
             DECODE_STRING_FIELD(ipint->username, valptr, vallen);
             if (vallen == 0) {

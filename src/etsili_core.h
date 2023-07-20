@@ -39,6 +39,9 @@
 #define ENC_CSEQUENCE(enc, x) wandder_encode_next(enc, WANDDER_TAG_SEQUENCE, \
         WANDDER_CLASS_CONTEXT_CONSTRUCT, x, NULL, 0)
 
+#define END_ENCODED_SEQUENCE(enc, x) \
+        wandder_encode_endseq_repeat(enc, x);
+
 #define ETSI_DIR_FROM_TARGET 0
 #define ETSI_DIR_TO_TARGET 1
 #define ETSI_DIR_INDETERMINATE 2
@@ -186,6 +189,8 @@ typedef enum {
     OPENLI_PREENCODE_DIRFROM,
     OPENLI_PREENCODE_DIRTO,
     OPENLI_PREENCODE_DIRUNKNOWN,
+    OPENLI_PREENCODE_NO_ENCRYPTION,
+    OPENLI_PREENCODE_AES_192_CBC,
     OPENLI_PREENCODE_LAST
 
 } preencode_index_t;
@@ -237,6 +242,9 @@ typedef struct encoded_global_template {
     encoded_cc_template_t cc_content;
 } encoded_global_template_t;
 
+uint8_t DERIVE_INTEGER_LENGTH(uint64_t x);
+
+int calculate_pspdu_length(uint32_t contentsize);
 
 wandder_encoded_result_t *encode_umtscc_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, void *ipcontent, uint32_t iplen,

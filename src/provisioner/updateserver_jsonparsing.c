@@ -59,6 +59,8 @@ struct json_intercept {
     struct json_object *siptargets;
     struct json_object *emailtargets;
     struct json_object *tomediate;
+    struct json_object *encryption;
+    struct json_object *encryptkey;
 };
 
 #define EXTRACT_JSON_INT_PARAM(name, uptype, jsonobj, dest, errflag, force) \
@@ -184,6 +186,8 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "starttime", &(ipjson->starttime));
     json_object_object_get_ex(parsed, "endtime", &(ipjson->endtime));
     json_object_object_get_ex(parsed, "outputhandovers", &(ipjson->tomediate));
+    json_object_object_get_ex(parsed, "payloadencryption", &(ipjson->encryption));
+    json_object_object_get_ex(parsed, "encryptionkey", &(ipjson->encryptkey));
     json_object_object_get_ex(parsed, "vendmirrorid", &(ipjson->vendmirrorid));
     json_object_object_get_ex(parsed, "staticips", &(ipjson->staticips));
     json_object_object_get_ex(parsed, "siptargets", &(ipjson->siptargets));
@@ -217,6 +221,135 @@ static inline int compare_intercept_times(intercept_common_t *latest,
     }
 
     return changed;
+}
+
+static inline void new_intercept_liidmapping(provision_state_t *state,
+        char *targetagency, char *liid) {
+
+    int liidmapped = 0;
+    prov_agency_t *lea = NULL;
+
+    if (targetagency == NULL) {
+        return;
+    }
+
+    if (strcmp(targetagency, "pcapdisk") != 0) {
+        HASH_FIND_STR(state->interceptconf.leas, targetagency, lea);
+        if (lea) {
+            liidmapped = 1;
+        }
+    } else {
+        liidmapped = 1;
+    }
+
+    if (liidmapped) {
+        liid_hash_t *h = add_liid_mapping(&(state->interceptconf),
+                liid, targetagency);
+        if (announce_liidmapping_to_mediators(state, h) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to announce new IP intercept %s to mediators.",
+                    liid);
+        }
+    }
+}
+
+static int parse_intercept_common_json(struct json_intercept *jsonp,
+        intercept_common_t *common, const char *cepttype,
+        update_con_info_t *cinfo, bool is_new) {
+
+    int parseerr = 0;
+    char *encryptmethodstring = NULL;
+
+    if (is_new) {
+        common->tostart_time = 0;
+        common->toend_time = 0;
+        common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
+    } else {
+        common->tostart_time = (uint64_t)-1;
+        common->toend_time = (uint64_t)-1;
+        common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
+    }
+
+    if (common->liid == NULL) {
+        EXTRACT_JSON_STRING_PARAM("liid", cepttype, jsonp->liid,
+                common->liid, &parseerr, true);
+    }
+
+    EXTRACT_JSON_STRING_PARAM("authcc", cepttype, jsonp->authcc,
+            common->authcc, &parseerr, is_new);
+    EXTRACT_JSON_STRING_PARAM("delivcc", cepttype, jsonp->delivcc,
+            common->delivcc, &parseerr, is_new);
+    EXTRACT_JSON_STRING_PARAM("agencyid", cepttype, jsonp->agencyid,
+            common->targetagency, &parseerr, is_new);
+    EXTRACT_JSON_INT_PARAM("outputhandovers", cepttype,
+            jsonp->tomediate, common->tomediate, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("mediator", cepttype, jsonp->mediator,
+            common->destid, &parseerr, is_new);
+    EXTRACT_JSON_INT_PARAM("starttime", cepttype, jsonp->starttime,
+            common->tostart_time, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("endtime", cepttype, jsonp->endtime,
+            common->toend_time, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("payloadencryption", cepttype,
+            jsonp->encryption, encryptmethodstring, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("encryptionkey", cepttype,
+            jsonp->encryptkey, common->encryptkey, &parseerr, false);
+
+    if (encryptmethodstring) {
+        common->encrypt = map_encrypt_method_string(encryptmethodstring);
+        free(encryptmethodstring);
+    }
+
+    if (common->authcc) {
+        common->authcc_len = strlen(common->authcc);
+    }
+    if (common->delivcc) {
+        common->delivcc_len = strlen(common->delivcc);
+    }
+    if (common->liid) {
+        common->liid_len = strlen(common->liid);
+    }
+
+    if (parseerr) {
+        return -1;
+    }
+    return 0;
+}
+
+static int update_intercept_common(intercept_common_t *parsed,
+        intercept_common_t *existing, int *changed, int *agencychanged,
+        provision_state_t *state) {
+
+    MODIFY_STRING_MEMBER(parsed->authcc, existing->authcc, changed);
+    existing->authcc_len  = strlen(existing->authcc);
+    MODIFY_STRING_MEMBER(parsed->delivcc, existing->delivcc, changed);
+    existing->delivcc_len  = strlen(existing->delivcc);
+
+    if (parsed->tomediate != existing->tomediate) {
+        existing->tomediate = parsed->tomediate;
+        *changed = 1;
+    }
+
+    MODIFY_STRING_MEMBER(parsed->targetagency, existing->targetagency,
+            agencychanged);
+
+    if (*agencychanged) {
+        new_intercept_liidmapping(state, existing->targetagency,
+                existing->liid);
+    }
+
+    MODIFY_STRING_MEMBER(parsed->encryptkey, existing->encryptkey, changed);
+
+    if (parsed->encrypt != existing->encrypt &&
+            parsed->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
+        *changed = 1;
+        existing->encrypt = parsed->encrypt;
+    }
+
+    if (compare_intercept_times(parsed, existing) == 1) {
+        *changed = 1;
+    }
+
+    return 0;
 }
 
 int remove_voip_intercept(update_con_info_t *cinfo, provision_state_t *state,
@@ -805,43 +938,13 @@ staticerr:
 
 }
 
-static inline void new_intercept_liidmapping(provision_state_t *state,
-        char *targetagency, char *liid) {
-
-    int liidmapped = 0;
-    prov_agency_t *lea = NULL;
-
-    if (targetagency == NULL) {
-        return;
-    }
-
-    if (strcmp(targetagency, "pcapdisk") != 0) {
-        HASH_FIND_STR(state->interceptconf.leas, targetagency, lea);
-        if (lea) {
-            liidmapped = 1;
-        }
-    } else {
-        liidmapped = 1;
-    }
-
-    if (liidmapped) {
-        liid_hash_t *h = add_liid_mapping(&(state->interceptconf),
-                liid, targetagency);
-        if (announce_liidmapping_to_mediators(state, h) < 0) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: unable to announce new IP intercept %s to mediators.",
-                    liid);
-        }
-    }
-}
-
 int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     struct json_intercept emailjson;
     struct json_tokener *tknr;
     struct json_object *parsed = NULL;
     emailintercept_t *found = NULL;
     emailintercept_t *mailint = NULL;
-    int parseerr = 0, r;
+    int r;
     char *target_info;
 
     INIT_JSON_INTERCEPT_PARSING
@@ -851,28 +954,9 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     /* XXX does internalid still matter? if not, let's remove it */
     mailint->awaitingconfirm = 1;
     mailint->targets = NULL;
-    mailint->common.tostart_time = 0;
-    mailint->common.toend_time = 0;
 
-    EXTRACT_JSON_STRING_PARAM("liid", "Email intercept", emailjson.liid,
-            mailint->common.liid, &parseerr, true);
-    EXTRACT_JSON_STRING_PARAM("authcc", "Email intercept", emailjson.authcc,
-            mailint->common.authcc, &parseerr, true);
-    EXTRACT_JSON_STRING_PARAM("delivcc", "Email intercept", emailjson.delivcc,
-            mailint->common.delivcc, &parseerr, true);
-    EXTRACT_JSON_STRING_PARAM("agencyid", "Email intercept", emailjson.agencyid,
-            mailint->common.targetagency, &parseerr, true);
-    EXTRACT_JSON_INT_PARAM("outputhandovers", "Email intercept",
-            emailjson.tomediate,
-            mailint->common.tomediate, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("mediator", "Email intercept", emailjson.mediator,
-            mailint->common.destid, &parseerr, true);
-    EXTRACT_JSON_INT_PARAM("starttime", "Email intercept", emailjson.starttime,
-            mailint->common.tostart_time, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("endtime", "Email intercept", emailjson.endtime,
-            mailint->common.toend_time, &parseerr, false);
-
-    if (parseerr) {
+    if (parse_intercept_common_json(&emailjson, &(mailint->common),
+            "Email intercept", cinfo, true) < 0) {
         goto cepterr;
     }
 
@@ -891,10 +975,6 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
                 update_failure_page_end);
         goto cepterr;
     }
-
-    mailint->common.liid_len = strlen(mailint->common.liid);
-    mailint->common.authcc_len = strlen(mailint->common.authcc);
-    mailint->common.delivcc_len = strlen(mailint->common.delivcc);
 
     HASH_FIND(hh_liid, state->interceptconf.emailintercepts,
             mailint->common.liid, mailint->common.liid_len, found);
@@ -966,7 +1046,7 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     struct json_object *parsed = NULL;
     voipintercept_t *found = NULL;
     voipintercept_t *vint = NULL;
-    int parseerr = 0, r;
+    int r;
     char *target_info;
 
     INIT_JSON_INTERCEPT_PARSING
@@ -977,8 +1057,6 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     vint->awaitingconfirm = 1;
     vint->active = 1;
     vint->targets = libtrace_list_init(sizeof(openli_sip_identity_t *));
-    vint->common.tostart_time = 0;
-    vint->common.toend_time = 0;
 
     /* XXX potential data race here if we're reloading core provisioner
      * config at the same time, consider adding a mutex */
@@ -986,25 +1064,8 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         vint->options |= (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
     }
 
-    EXTRACT_JSON_STRING_PARAM("liid", "VOIP intercept", voipjson.liid,
-            vint->common.liid, &parseerr, true);
-    EXTRACT_JSON_STRING_PARAM("authcc", "VOIP intercept", voipjson.authcc,
-            vint->common.authcc, &parseerr, true);
-    EXTRACT_JSON_STRING_PARAM("delivcc", "VOIP intercept", voipjson.delivcc,
-            vint->common.delivcc, &parseerr, true);
-    EXTRACT_JSON_STRING_PARAM("agencyid", "VOIP intercept", voipjson.agencyid,
-            vint->common.targetagency, &parseerr, true);
-    EXTRACT_JSON_INT_PARAM("outputhandovers", "VOIP intercept",
-            voipjson.tomediate,
-            vint->common.tomediate, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("mediator", "VOIP intercept", voipjson.mediator,
-            vint->common.destid, &parseerr, true);
-    EXTRACT_JSON_INT_PARAM("starttime", "VOIP intercept", voipjson.starttime,
-            vint->common.tostart_time, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("endtime", "VOIP intercept", voipjson.endtime,
-            vint->common.toend_time, &parseerr, false);
-
-    if (parseerr) {
+    if (parse_intercept_common_json(&voipjson, &(vint->common),
+            "VOIP intercept", cinfo, true) < 0) {
         goto cepterr;
     }
 
@@ -1023,10 +1084,6 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                 update_failure_page_end);
         goto cepterr;
     }
-
-    vint->common.liid_len = strlen(vint->common.liid);
-    vint->common.authcc_len = strlen(vint->common.authcc);
-    vint->common.delivcc_len = strlen(vint->common.delivcc);
 
     HASH_FIND(hh_liid, state->interceptconf.voipintercepts,
             vint->common.liid, vint->common.liid_len, found);
@@ -1097,11 +1154,10 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     struct json_tokener *tknr;
     struct json_object *parsed = NULL;
     ipintercept_t *found = NULL;
-
+    int parseerr = 0;
     char *accessstring = NULL;
     char *radiusidentstring = NULL;
     ipintercept_t *ipint = NULL;
-    int parseerr = 0;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&ipjson, parsed);
@@ -1110,23 +1166,12 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipint->awaitingconfirm = 1;
     ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
-    ipint->common.tostart_time = 0;
-    ipint->common.toend_time = 0;
     ipint->options = 0;
 
-    EXTRACT_JSON_STRING_PARAM("liid", "IP intercept", ipjson.liid,
-            ipint->common.liid, &parseerr, true);
-    EXTRACT_JSON_STRING_PARAM("authcc", "IP intercept", ipjson.authcc,
-            ipint->common.authcc, &parseerr, true);
-    EXTRACT_JSON_STRING_PARAM("delivcc", "IP intercept", ipjson.delivcc,
-            ipint->common.delivcc, &parseerr, true);
-    EXTRACT_JSON_STRING_PARAM("agencyid", "IP intercept", ipjson.agencyid,
-            ipint->common.targetagency, &parseerr, true);
-    EXTRACT_JSON_INT_PARAM("outputhandovers", "IP intercept",
-            ipjson.tomediate,
-            ipint->common.tomediate, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("mediator", "IP intercept", ipjson.mediator,
-            ipint->common.destid, &parseerr, true);
+    if (parse_intercept_common_json(&ipjson, &(ipint->common),
+            "IP intercept", cinfo, true) < 0) {
+        goto cepterr;
+    }
     EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
             ipint->vendmirrorid, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("user", "IP intercept", ipjson.user,
@@ -1135,10 +1180,6 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             accessstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("radiusident", "IP intercept", ipjson.radiusident,
             radiusidentstring, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("starttime", "IP intercept", ipjson.starttime,
-            ipint->common.tostart_time, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("endtime", "IP intercept", ipjson.endtime,
-            ipint->common.toend_time, &parseerr, false);
 
     if (parseerr) {
         goto cepterr;
@@ -1243,7 +1284,7 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *target_info;
 
     char *liidstr = NULL;
-    int parseerr = 0, changed = 0, agencychanged = 0, timechanged = 0;
+    int parseerr = 0, changed = 0, agencychanged = 0;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&emailjson, parsed);
@@ -1271,26 +1312,9 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     mailint->awaitingconfirm = 1;
     mailint->common.liid = liidstr;
     mailint->targets = NULL;
-    mailint->common.tostart_time = (uint64_t)-1;
-    mailint->common.toend_time = (uint64_t)-1;
 
-    EXTRACT_JSON_STRING_PARAM("authcc", "Email intercept", emailjson.authcc,
-            mailint->common.authcc, &parseerr, false);
-    EXTRACT_JSON_STRING_PARAM("delivcc", "Email intercept", emailjson.delivcc,
-            mailint->common.delivcc, &parseerr, false);
-    EXTRACT_JSON_STRING_PARAM("agencyid", "Email intercept", emailjson.agencyid,
-            mailint->common.targetagency, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("outputhandovers", "Email intercept",
-            emailjson.tomediate,
-            mailint->common.tomediate, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("mediator", "Email intercept", emailjson.mediator,
-            mailint->common.destid, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("starttime", "Email intercept", emailjson.starttime,
-            mailint->common.tostart_time, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("endtime", "Email intercept", emailjson.endtime,
-            mailint->common.toend_time, &parseerr, false);
-
-    if (parseerr) {
+    if (parse_intercept_common_json(&emailjson, &(mailint->common),
+            "Email intercept", cinfo, false) < 0) {
         goto cepterr;
     }
 
@@ -1318,28 +1342,12 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
      *
      */
 
-    MODIFY_STRING_MEMBER(mailint->common.authcc, found->common.authcc, &changed);
-    found->common.authcc_len  = strlen(found->common.authcc);
-
-    MODIFY_STRING_MEMBER(mailint->common.delivcc, found->common.delivcc, &changed);
-    found->common.delivcc_len  = strlen(found->common.delivcc);
-
-    MODIFY_STRING_MEMBER(mailint->common.targetagency, found->common.targetagency,
-            &agencychanged);
-
-    timechanged = compare_intercept_times(&(mailint->common), &(found->common));
-
-    if (mailint->common.tomediate != found->common.tomediate) {
-        changed = 1;
-        found->common.tomediate = mailint->common.tomediate;
+    if (update_intercept_common(&(mailint->common), &(found->common),
+            &changed, &agencychanged, state) < 0) {
+        goto cepterr;
     }
 
-    if (agencychanged) {
-        new_intercept_liidmapping(state, found->common.targetagency,
-                found->common.liid);
-    }
-
-    if (changed || timechanged) {
+    if (changed) {
         modify_existing_intercept_options(state, (void *)found,
                     OPENLI_PROTO_MODIFY_EMAILINTERCEPT);
     }
@@ -1353,7 +1361,6 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
         }
     }
 
-    mailint->common.hi1_seqno = found->common.hi1_seqno;
     logger(LOG_INFO,
             "OpenLI provisioner: updated Email intercept %s via update socket.",
             found->common.liid);
@@ -1389,7 +1396,7 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     libtrace_list_t *tmp;
 
     char *liidstr = NULL, *target_info;
-    int parseerr = 0, changed = 0, agencychanged = 0, timechanged = 0;
+    int changed = 0, agencychanged = 0, parseerr = 0;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&voipjson, parsed);
@@ -1417,26 +1424,9 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     vint->awaitingconfirm = 1;
     vint->common.liid = liidstr;
 	vint->targets = libtrace_list_init(sizeof(openli_sip_identity_t *));
-    vint->common.tostart_time = (uint64_t)-1;
-    vint->common.toend_time = (uint64_t)-1;
 
-    EXTRACT_JSON_STRING_PARAM("authcc", "VOIP intercept", voipjson.authcc,
-            vint->common.authcc, &parseerr, false);
-    EXTRACT_JSON_STRING_PARAM("delivcc", "VOIP intercept", voipjson.delivcc,
-            vint->common.delivcc, &parseerr, false);
-    EXTRACT_JSON_STRING_PARAM("agencyid", "VOIP intercept", voipjson.agencyid,
-            vint->common.targetagency, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("outputhandovers", "VOIP intercept",
-            voipjson.tomediate,
-            vint->common.tomediate, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("mediator", "VOIP intercept", voipjson.mediator,
-            vint->common.destid, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("starttime", "VOIP intercept", voipjson.starttime,
-            vint->common.tostart_time, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("endtime", "VOIP intercept", voipjson.endtime,
-            vint->common.toend_time, &parseerr, false);
-
-    if (parseerr) {
+    if (parse_intercept_common_json(&voipjson, &(vint->common),
+            "VOIP intercept", cinfo, false) < 0) {
         goto cepterr;
     }
 
@@ -1463,28 +1453,12 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
      *
      */
 
-    MODIFY_STRING_MEMBER(vint->common.authcc, found->common.authcc, &changed);
-    found->common.authcc_len  = strlen(found->common.authcc);
-
-    MODIFY_STRING_MEMBER(vint->common.delivcc, found->common.delivcc, &changed);
-    found->common.delivcc_len  = strlen(found->common.delivcc);
-
-    MODIFY_STRING_MEMBER(vint->common.targetagency, found->common.targetagency,
-            &agencychanged);
-
-    if (vint->common.tomediate != found->common.tomediate) {
-        changed = 1;
-        found->common.tomediate = vint->common.tomediate;
+    if (update_intercept_common(&(vint->common), &(found->common),
+            &changed, &agencychanged, state) < 0) {
+        goto cepterr;
     }
 
-    timechanged = compare_intercept_times(&(vint->common), &(found->common));
-
-    if (agencychanged) {
-        new_intercept_liidmapping(state, found->common.targetagency,
-                found->common.liid);
-    }
-
-    if (changed || timechanged) {
+    if (changed) {
         modify_existing_intercept_options(state, (void *)found,
                     OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
     }
@@ -1498,7 +1472,6 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         }
     }
 
-    vint->common.hi1_seqno = found->common.hi1_seqno;
     logger(LOG_INFO,
             "OpenLI provisioner: updated VOIP intercept %s via update socket.",
             found->common.liid);
@@ -1563,32 +1536,20 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
     ipint->common.liid = liidstr;
-    ipint->common.tostart_time = (uint64_t)-1;
-    ipint->common.toend_time = (uint64_t)-1;
 
-    EXTRACT_JSON_STRING_PARAM("authcc", "IP intercept", ipjson.authcc,
-            ipint->common.authcc, &parseerr, false);
-    EXTRACT_JSON_STRING_PARAM("delivcc", "IP intercept", ipjson.delivcc,
-            ipint->common.delivcc, &parseerr, false);
-    EXTRACT_JSON_STRING_PARAM("agencyid", "IP intercept", ipjson.agencyid,
-            ipint->common.targetagency, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("outputhandovers", "IP intercept",
-            ipjson.tomediate,
-            ipint->common.tomediate, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("mediator", "IP intercept", ipjson.mediator,
-            ipint->common.destid, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
-            ipint->vendmirrorid, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("starttime", "IP intercept", ipjson.starttime,
-            ipint->common.tostart_time, &parseerr, false);
-    EXTRACT_JSON_INT_PARAM("endtime", "IP intercept", ipjson.endtime,
-            ipint->common.toend_time, &parseerr, false);
+    if (parse_intercept_common_json(&ipjson, &(ipint->common),
+            "IP intercept", cinfo, false) < 0) {
+        goto cepterr;
+    }
+
     EXTRACT_JSON_STRING_PARAM("user", "IP intercept", ipjson.user,
             ipint->username, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("accesstype", "IP intercept", ipjson.accesstype,
             accessstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("radiusident", "IP intercept", ipjson.radiusident,
             radiusidentstring, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
+            ipint->vendmirrorid, &parseerr, false);
 
     if (parseerr) {
         goto cepterr;
@@ -1652,28 +1613,13 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
      * changing (e.g. mediator) ?
      *
      */
-
-    MODIFY_STRING_MEMBER(ipint->common.authcc, found->common.authcc, &changed);
-    found->common.authcc_len  = strlen(found->common.authcc);
-    MODIFY_STRING_MEMBER(ipint->common.delivcc, found->common.delivcc,
-            &changed);
-    found->common.delivcc_len  = strlen(found->common.delivcc);
-
-    if (ipint->common.tomediate != found->common.tomediate) {
-        found->common.tomediate = ipint->common.tomediate;
-        changed = 1;
+    if (update_intercept_common(&(ipint->common), &(found->common),
+            &changed, &agencychanged, state) < 0) {
+        goto cepterr;
     }
 
     MODIFY_STRING_MEMBER(ipint->username, found->username, &changed);
     found->username_len = strlen(found->username);
-
-    MODIFY_STRING_MEMBER(ipint->common.targetagency, found->common.targetagency,
-            &agencychanged);
-
-    if (agencychanged) {
-        new_intercept_liidmapping(state, found->common.targetagency,
-                found->common.liid);
-    }
 
     if (accessstring && ipint->accesstype != found->accesstype) {
         changed = 1;
@@ -1685,15 +1631,6 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         found->options = ipint->options;
     }
 
-    if (accessstring) {
-    	free(accessstring);
-    }
-    if (radiusidentstring) {
-        free(radiusidentstring);
-    }
-    radiusidentstring = NULL;
-	accessstring = NULL;
-
     if (ipint->vendmirrorid != found->vendmirrorid) {
         changed = 1;
         found->vendmirrorid = ipint->vendmirrorid;
@@ -1702,10 +1639,6 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     if (agencychanged) {
         announce_hi1_notification_to_mediators(state, &(found->common),
                 found->username, HI1_LI_ACTIVATED);
-    }
-
-    if (compare_intercept_times(&(ipint->common), &(found->common)) == 1) {
-        changed = 1;
     }
 
     if (changed) {
@@ -1717,10 +1650,16 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         }
     }
 
-    ipint->common.hi1_seqno = found->common.hi1_seqno;
     logger(LOG_INFO,
             "OpenLI provisioner: updated IP intercept %s via update socket.",
             found->common.liid);
+
+    if (accessstring) {
+    	free(accessstring);
+    }
+    if (radiusidentstring) {
+        free(radiusidentstring);
+    }
 
     if (ipint) {
         free_single_ipintercept(ipint);

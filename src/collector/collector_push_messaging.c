@@ -35,6 +35,30 @@
 #include "intercept.h"
 #include "internetaccess.h"
 
+static inline void update_intercept_common(intercept_common_t *found,
+        intercept_common_t *replace) {
+
+    char *tmp;
+    tmp = found->authcc;
+    found->authcc = replace->authcc;
+    found->authcc_len = replace->authcc_len;
+    replace->authcc = tmp;
+
+    tmp = found->delivcc;
+    found->delivcc = replace->delivcc;
+    found->delivcc_len = replace->delivcc_len;
+    replace->delivcc = tmp;
+
+    found->tostart_time = replace->tostart_time;
+    found->toend_time = replace->toend_time;
+    found->tomediate = replace->tomediate;
+    found->encrypt = replace->encrypt;
+
+    tmp = found->encryptkey;
+    found->encryptkey = replace->encryptkey;
+    replace->encryptkey = tmp;
+}
+
 static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
     rtpstreaminf_t *rtp;
 
@@ -191,7 +215,12 @@ static int add_ipv4_intercept(colthread_local_t *loc, ipsession_t *sess) {
 
     HASH_FIND(hh, tgt->intercepts, sess->streamkey, strlen(sess->streamkey),
             check);
-    assert(check == NULL);
+    if (check) {
+        logger(LOG_INFO, "OpenLI: encountered duplicate stream key '%s' for address %u -- replacing...", sess->streamkey, tgt->address);
+        HASH_DELETE(hh, tgt->intercepts, check);
+        free_single_ipsession(check);
+    }
+
     HASH_ADD_KEYPTR(hh, tgt->intercepts, sess->streamkey,
             strlen(sess->streamkey), sess);
 
@@ -242,7 +271,11 @@ static int add_ipv6_intercept(colthread_local_t *loc, ipsession_t *sess) {
 
     HASH_FIND(hh, tgt->intercepts, sess->streamkey, strlen(sess->streamkey),
             check);
-    assert(check == NULL);
+    if (check) {
+        logger(LOG_INFO, "OpenLI: encountered duplicate stream key '%s' for address %s -- replacing...", sess->streamkey, prefixstr);
+        HASH_DELETE(hh, tgt->intercepts, check);
+        free_single_ipsession(check);
+    }
     HASH_ADD_KEYPTR(hh, tgt->intercepts, sess->streamkey,
             strlen(sess->streamkey), sess);
 
@@ -278,26 +311,13 @@ static int update_ipv4_intercept(colthread_local_t *loc, ipsession_t *toup) {
 
     ipsession_t *found;
     ipv4_target_t *v4;
-    char *tmp;
 
     found = find_ipv4_intercept(loc, toup, &v4);
     if (!found) {
         return 0;
     }
 
-    tmp = found->common.authcc;
-    found->common.authcc = toup->common.authcc;
-    found->common.authcc_len = toup->common.authcc_len;
-    toup->common.authcc = tmp;
-
-    tmp = found->common.delivcc;
-    found->common.delivcc = toup->common.delivcc;
-    found->common.delivcc_len = toup->common.delivcc_len;
-    toup->common.delivcc = tmp;
-
-    found->common.tostart_time = toup->common.tostart_time;
-    found->common.toend_time = toup->common.toend_time;
-    found->common.tomediate = toup->common.tomediate;
+    update_intercept_common(&(found->common), &(toup->common));
     return 1;
 }
 
@@ -360,27 +380,13 @@ static int update_ipv6_intercept(colthread_local_t *loc, ipsession_t *toup) {
     ipsession_t *found;
     ipv6_target_t *v6;
     char prefixstr[100];
-    char *tmp;
 
     found = find_ipv6_intercept(loc, toup, &v6, prefixstr, 100);
     if (!found) {
         return 0;
     }
 
-    tmp = found->common.authcc;
-    found->common.authcc = toup->common.authcc;
-    found->common.authcc_len = toup->common.authcc_len;
-    toup->common.authcc = tmp;
-
-    tmp = found->common.delivcc;
-    found->common.delivcc = toup->common.delivcc;
-    found->common.delivcc_len = toup->common.delivcc_len;
-    toup->common.delivcc = tmp;
-
-    found->common.tostart_time = toup->common.tostart_time;
-    found->common.toend_time = toup->common.toend_time;
-    found->common.tomediate = toup->common.tomediate;
-
+    update_intercept_common(&(found->common), &(toup->common));
     return 1;
 }
 
@@ -792,7 +798,6 @@ void handle_change_voip_intercept(libtrace_thread_t *t, colthread_local_t *loc,
         rtpstreaminf_t *tochange) {
 
     rtpstreaminf_t *rtp;
-    char *tmp;
 
     if (tochange->streamkey == NULL) {
         return;
@@ -807,20 +812,7 @@ void handle_change_voip_intercept(libtrace_thread_t *t, colthread_local_t *loc,
         return;
     }
 
-    tmp = rtp->common.authcc;
-    rtp->common.authcc = tochange->common.authcc;
-    rtp->common.authcc_len = tochange->common.authcc_len;
-    tochange->common.authcc = tmp;
-
-    tmp = rtp->common.delivcc;
-    rtp->common.delivcc = tochange->common.delivcc;
-    rtp->common.delivcc_len = tochange->common.delivcc_len;
-    tochange->common.delivcc = tmp;
-
-    rtp->common.tostart_time = tochange->common.tostart_time;
-    rtp->common.toend_time = tochange->common.toend_time;
-    rtp->common.tomediate = tochange->common.tomediate;
-
+    update_intercept_common(&(rtp->common), &(tochange->common));
     free_single_rtpstream(tochange);
 }
 
@@ -829,7 +821,6 @@ void handle_change_vendmirror_intercept(libtrace_thread_t *t,
 
     vendmirror_intercept_t *found;
     vendmirror_intercept_list_t *parent;
-    char *tmp;
 
     HASH_FIND(hh, loc->activemirrorintercepts, &(vend->sessionid),
             sizeof(vend->sessionid), parent);
@@ -848,19 +839,7 @@ void handle_change_vendmirror_intercept(libtrace_thread_t *t,
         return;
     }
 
-    tmp = found->common.authcc;
-    found->common.authcc = vend->common.authcc;
-    found->common.authcc_len = vend->common.authcc_len;
-    vend->common.authcc = tmp;
-
-    tmp = found->common.delivcc;
-    found->common.delivcc = vend->common.delivcc;
-    found->common.delivcc_len = vend->common.delivcc_len;
-    vend->common.delivcc = tmp;
-
-    found->common.tostart_time = vend->common.tostart_time;
-    found->common.toend_time = vend->common.toend_time;
-    found->common.tomediate = vend->common.tomediate;
+    update_intercept_common(&(found->common), &(vend->common));
     free_single_vendmirror_intercept(vend);
 }
 
@@ -868,25 +847,11 @@ void handle_change_iprange_intercept(libtrace_thread_t *t,
         colthread_local_t *loc, staticipsession_t *ipr) {
 
     staticipsession_t *sessrec;
-    char *tmp;
 
     HASH_FIND(hh, loc->activestaticintercepts, ipr->key, strlen(ipr->key),
             sessrec);
     if (sessrec) {
-        sessrec->common.tostart_time = ipr->common.tostart_time;
-        sessrec->common.toend_time = ipr->common.toend_time;
-        sessrec->common.tomediate = ipr->common.tomediate;
-
-        tmp = sessrec->common.authcc;
-        sessrec->common.authcc = ipr->common.authcc;
-        sessrec->common.authcc_len = ipr->common.authcc_len;
-        ipr->common.authcc = tmp;
-
-        tmp = sessrec->common.delivcc;
-        sessrec->common.delivcc = ipr->common.delivcc;
-        sessrec->common.delivcc_len = ipr->common.delivcc_len;
-        ipr->common.delivcc = tmp;
-
+        update_intercept_common(&(sessrec->common), &(ipr->common));
     }
 
     free_single_staticipsession(ipr);

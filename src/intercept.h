@@ -50,6 +50,17 @@ typedef enum {
 } internet_access_method_t;
 
 typedef enum {
+    OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED = 0,
+    OPENLI_PAYLOAD_ENCRYPTION_NONE = 1,
+    OPENLI_PAYLOAD_ENCRYPTION_NATIONAL = 2,
+    OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC = 3,
+    OPENLI_PAYLOAD_ENCRYPTION_AES_256_CBC = 4,
+    OPENLI_PAYLOAD_ENCRYPTION_BLOWFISH_192_CBC = 5,
+    OPENLI_PAYLOAD_ENCRYPTION_BLOWFISH_256_CBC = 6,
+    OPENLI_PAYLOAD_ENCRYPTION_THREEDES_CBC = 7,
+} payload_encryption_method_t;
+
+typedef enum {
     OPENLI_VOIPINT_OPTION_IGNORE_COMFORT = 0,
 } voipintercept_options_t;
 
@@ -93,6 +104,8 @@ typedef struct intercept_common {
     uint64_t tostart_time;
     uint64_t toend_time;
     intercept_outputs_t tomediate;
+    payload_encryption_method_t encrypt;
+    char *encryptkey;
 } intercept_common_t;
 
 typedef struct hi1_notify_data {
@@ -211,24 +224,6 @@ typedef struct emailsession emailsession_t;
 typedef struct vendmirror_intercept vendmirror_intercept_t;
 typedef struct staticipsession staticipsession_t;
 typedef struct sipregister sipregister_t;
-
-#define voip_intercept_equal(a,b) \
-    ((strcmp(a->common.authcc, b->common.authcc) == 0) && \
-     (strcmp(a->common.delivcc, b->common.delivcc) == 0) && \
-     (strcmp(a->common.targetagency, b->common.targetagency) == 0) && \
-     (a->common.tostart_time == b->common.tostart_time) && \
-     (a->common.toend_time == b->common.toend_time) && \
-     (a->common.tomediate == b->common.tomediate) && \
-     (a->options == b->options))
-
-#define email_intercept_equal(a,b) \
-    ((strcmp(a->common.authcc, b->common.authcc) == 0) && \
-     (strcmp(a->common.delivcc, b->common.delivcc) == 0) && \
-     (strcmp(a->common.targetagency, b->common.targetagency) == 0) && \
-     (a->common.tostart_time == b->common.tostart_time) && \
-     (a->common.toend_time == b->common.toend_time) && \
-     (a->common.tomediate == b->common.tomediate))
-
 
 typedef struct voipintercept {
 
@@ -443,8 +438,11 @@ const char *get_access_type_string(internet_access_method_t method);
 const char *get_radius_ident_string(uint32_t radoptions);
 internet_access_method_t map_access_type_string(char *confstr);
 uint32_t map_radius_ident_string(char *confstr);
+payload_encryption_method_t map_encrypt_method_string(char *encstr);
 
 void intercept_mediation_mode_as_string(intercept_outputs_t mode,
+        char *space, int spacelen);
+void intercept_encryption_mode_as_string(payload_encryption_method_t method,
         char *space, int spacelen);
 #endif
 

@@ -206,6 +206,8 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
     }
     JLFA(rcint, enc->saved_global_templates);
 
+    etsili_destroy_encrypted_templates(enc);
+
     if (enc->encoder) {
         free_wandder_encoder(enc->encoder);
     }
@@ -236,10 +238,17 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
             if (job.cinstr) {
                 free(job.cinstr);
             }
+            if (job.encryptkey) {
+                free(job.encryptkey);
+            }
             drained ++;
 
         } while (x > 0);
         zmq_close(enc->zmq_recvjobs[i]);
+    }
+
+    if (enc->evp_ctx) {
+        EVP_CIPHER_CTX_free(enc->evp_ctx);
     }
 
     if (enc->zmq_control) {
@@ -293,96 +302,6 @@ static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
     return 0;
 }
 
-static inline uint8_t DERIVE_INTEGER_LENGTH(uint64_t x) {
-    if (x < 128) return 1;
-    if (x < 32768) return 2;
-    if (x < 8388608) return 3;
-    if (x < 2147483648) return 4;
-    return 5;
-}
-
-static inline uint8_t encode_pspdu_sequence(uint8_t *space, uint8_t space_len,
-        uint32_t contentsize, char *liid, uint16_t liidlen) {
-
-    uint8_t len_space_req = DERIVE_INTEGER_LENGTH(contentsize);
-    int i;
-    uint16_t l;
-
-    if (liidlen > space_len - 8) {
-        logger(LOG_INFO,
-                "OpenLI: invalid LIID for PSPDU: %s (%u %u)", liid, liidlen, space_len);
-        return 0;
-    }
-
-    l = htons(liidlen);
-    memcpy(space, &l, sizeof(uint16_t));
-    memcpy(space + 2, liid, liidlen);
-    space += (2 + liidlen);
-
-    *space = (uint8_t)((WANDDER_CLASS_UNIVERSAL_CONSTRUCT << 5) |
-            WANDDER_TAG_SEQUENCE);
-    space ++;
-
-    if (len_space_req == 1) {
-        *space = (uint8_t)contentsize;
-        return 2 + (2 + liidlen);
-    }
-
-    if (len_space_req > (space_len - 2)) {
-        logger(LOG_INFO,
-                "OpenLI: invalid PSPDU sequence length %u", contentsize);
-        return 0;
-    }
-
-    *space = len_space_req | 0x80;
-    space ++;
-
-    for (i = len_space_req - 1; i >= 0; i--) {
-        *(space + i) = (contentsize & 0xff);
-        contentsize = contentsize >> 8;
-    }
-
-    return len_space_req + 2 + (2 + liidlen);
-}
-
-static int create_encoded_message_body(openli_encoded_result_t *res,
-        encoded_header_template_t *hdr_tplate, uint8_t *bodycontent,
-        uint16_t bodylen, char *liid, uint16_t liidlen) {
-
-    uint8_t pspdu[108];
-    uint8_t pspdu_len;
-    /* Create a msgbody by concatenating hdr_tplate and ipcc_tplate, plus
-     * a preceding pS-PDU sequence with the appropriate length...
-     */
-    pspdu_len = encode_pspdu_sequence(pspdu, sizeof(pspdu),
-            hdr_tplate->header_len + bodylen, liid, liidlen);
-
-    if (pspdu_len == 0) {
-        return -1;
-    }
-
-    res->msgbody = calloc(1, sizeof(wandder_encoded_result_t));
-    res->msgbody->encoder = NULL;
-    res->msgbody->len = pspdu_len + hdr_tplate->header_len + bodylen;
-
-    res->msgbody->encoded = malloc(res->msgbody->len);
-    res->msgbody->alloced = res->msgbody->len;
-    res->msgbody->next = NULL;
-
-    memcpy(res->msgbody->encoded, pspdu, pspdu_len);
-    memcpy(res->msgbody->encoded + pspdu_len, hdr_tplate->header,
-            hdr_tplate->header_len);
-    memcpy(res->msgbody->encoded + pspdu_len + hdr_tplate->header_len,
-            bodycontent, bodylen);
-
-    /* Set the remaining msg->header properties */
-    res->header.magic = htonl(OPENLI_PROTO_MAGIC);
-    res->header.bodylen = htons(res->msgbody->len);
-    res->header.internalid = 0;
-
-    return 0;
-}
-
 static int encode_templated_ipiri(openli_encoder_t *enc,
         openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
@@ -414,17 +333,21 @@ static int encode_templated_ipiri(openli_encoder_t *enc,
         return -1;
     }
 
-    if (create_encoded_message_body(res, hdr_tplate, body->encoded, body->len,
-            job->liid,
-            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
-        wandder_release_encoded_result(enc->encoder, body);
-        free_ipiri_parameters(params);
-        return -1;
+    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (create_encrypted_message_body(enc, res, hdr_tplate,
+                body->encoded, body->len, NULL, 0, job) < 0) {
+            wandder_release_encoded_result(enc->encoder, body);
+            free_ipiri_parameters(params);
+            return -1;
+        }
+    } else {
+        if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
+                body->len, NULL, 0, job) < 0) {
+            wandder_release_encoded_result(enc->encoder, body);
+            free_ipiri_parameters(params);
+            return -1;
+        }
     }
-
-    res->ipcontents = NULL;
-    res->ipclen = 0;
-    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
 
     wandder_release_encoded_result(enc->encoder, body);
     free_ipiri_parameters(params);
@@ -492,18 +415,21 @@ static int encode_templated_ipmmcc(openli_encoder_t *enc,
         }
     }
 
-    if (create_encoded_message_body(res, hdr_tplate,
-            ipmmcc_tplate->cc_content.cc_wrap,
-            ipmmcc_tplate->cc_content.cc_wrap_len,
-            job->liid,
-            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
-        return -1;
-    }
+    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (create_encrypted_message_body(enc, res, hdr_tplate,
+                ipmmcc_tplate->cc_content.cc_wrap,
+                ipmmcc_tplate->cc_content.cc_wrap_len,
+                NULL, 0, job) < 0) {
+            return -1;
+        }
 
-    /* No ipcontents in the result, as it is encoded already in cc_content */
-    res->ipcontents = NULL;
-    res->ipclen = 0;
-    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
+    } else {
+        if (create_etsi_encoded_result(res, hdr_tplate,
+                ipmmcc_tplate->cc_content.cc_wrap,
+                ipmmcc_tplate->cc_content.cc_wrap_len, NULL, 0, job) < 0) {
+            return -1;
+        }
+    }
 
     /* Success */
     return 1;
@@ -532,16 +458,19 @@ static int encode_templated_emailiri(openli_encoder_t *enc,
         return -1;
     }
 
-    if (create_encoded_message_body(res, hdr_tplate, body->encoded, body->len,
-            job->liid,
-            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
-        wandder_release_encoded_result(enc->encoder, body);
-        return -1;
+    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (create_encrypted_message_body(enc, res, hdr_tplate,
+                body->encoded, body->len, NULL, 0, job) < 0) {
+            wandder_release_encoded_result(enc->encoder, body);
+            return -1;
+        }
+    } else {
+        if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
+                body->len, NULL, 0, job) < 0) {
+            wandder_release_encoded_result(enc->encoder, body);
+            return -1;
+        }
     }
-
-    res->ipcontents = NULL;
-    res->ipclen = 0;
-    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
 
     wandder_release_encoded_result(enc->encoder, body);
     free_emailiri_parameters(irijob->customparams);
@@ -596,16 +525,20 @@ static int encode_templated_umtsiri(openli_encoder_t *enc,
         return -1;
     }
 
-    if (create_encoded_message_body(res, hdr_tplate, body->encoded, body->len,
-            job->liid,
-            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
-        wandder_release_encoded_result(enc->encoder, body);
-        return -1;
-    }
+    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (create_encrypted_message_body(enc, res, hdr_tplate,
+                body->encoded, body->len, NULL, 0, job) < 0) {
 
-    res->ipcontents = NULL;
-    res->ipclen = 0;
-    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
+            wandder_release_encoded_result(enc->encoder, body);
+            return -1;
+        }
+    } else {
+        if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
+                body->len, NULL, 0, job) < 0) {
+            wandder_release_encoded_result(enc->encoder, body);
+            return -1;
+        }
+    }
 
     wandder_release_encoded_result(enc->encoder, body);
     free_umtsiri_parameters(irijob->customparams);
@@ -645,16 +578,21 @@ static int encode_templated_ipmmiri(openli_encoder_t *enc,
         return -1;
     }
 
-    if (create_encoded_message_body(res, hdr_tplate, body->encoded, body->len,
-            job->liid,
-            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
-        wandder_release_encoded_result(enc->encoder, body);
-        return -1;
+    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (create_encrypted_message_body(enc, res, hdr_tplate,
+                body->encoded, body->len,
+                (uint8_t *)(irijob->content), irijob->contentlen, job) < 0) {
+            wandder_release_encoded_result(enc->encoder, body);
+            return -1;
+        }
+    } else {
+        if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
+                body->len, (uint8_t *)(irijob->content), irijob->contentlen,
+                job) < 0) {
+            wandder_release_encoded_result(enc->encoder, body);
+            return -1;
+        }
     }
-
-    res->ipcontents = (uint8_t *)(irijob->content);
-    res->ipclen = irijob->contentlen;
-    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
 
     wandder_release_encoded_result(enc->encoder, body);
 
@@ -693,18 +631,21 @@ static int encode_templated_umtscc(openli_encoder_t *enc,
     /* We have very specific templates for each observed packet size, so
      * this will not require updating */
 
-    if (create_encoded_message_body(res, hdr_tplate,
-            umtscc_tplate->cc_content.cc_wrap,
-            umtscc_tplate->cc_content.cc_wrap_len,
-            job->liid,
-            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
-        return -1;
+    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (create_encrypted_message_body(enc, res, hdr_tplate,
+                umtscc_tplate->cc_content.cc_wrap,
+                umtscc_tplate->cc_content.cc_wrap_len,
+                (uint8_t *)ccjob->ipcontent, ccjob->ipclen, job) < 0) {
+            return -1;
+        }
+    } else {
+        if (create_etsi_encoded_result(res, hdr_tplate,
+                umtscc_tplate->cc_content.cc_wrap,
+                umtscc_tplate->cc_content.cc_wrap_len,
+                (uint8_t *)ccjob->ipcontent, ccjob->ipclen, job) < 0) {
+            return -1;
+        }
     }
-
-    /* Set ipcontents in the result */
-    res->ipcontents = (uint8_t *)ccjob->ipcontent;
-    res->ipclen = ccjob->ipclen;
-    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
 
     /* Success */
     return 1;
@@ -756,19 +697,23 @@ static int encode_templated_emailcc(openli_encoder_t *enc,
     }
     /* We have very specific templates for each observed packet size, so
      * this will not require updating */
-
-    if (create_encoded_message_body(res, hdr_tplate,
-            emailcc_tplate->cc_content.cc_wrap,
-            emailcc_tplate->cc_content.cc_wrap_len,
-            job->liid,
-            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
-        return -1;
+    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (create_encrypted_message_body(enc, res, hdr_tplate,
+                emailcc_tplate->cc_content.cc_wrap,
+                emailcc_tplate->cc_content.cc_wrap_len,
+                (uint8_t *)emailccjob->cc_content,
+                emailccjob->cc_content_len, job) < 0) {
+            return -1;
+        }
+    } else {
+        if (create_etsi_encoded_result(res, hdr_tplate,
+                emailcc_tplate->cc_content.cc_wrap,
+                emailcc_tplate->cc_content.cc_wrap_len,
+                (uint8_t *)emailccjob->cc_content,
+                emailccjob->cc_content_len, job) < 0) {
+            return -1;
+        }
     }
-
-    /* Set ipcontents in the result */
-    res->ipcontents = (uint8_t *)emailccjob->cc_content;
-    res->ipclen = emailccjob->cc_content_len;
-    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
 
     /* Success */
     return 1;
@@ -804,19 +749,23 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
     }
     /* We have very specific templates for each observed packet size, so
      * this will not require updating */
-
-    if (create_encoded_message_body(res, hdr_tplate,
-            ipcc_tplate->cc_content.cc_wrap,
-            ipcc_tplate->cc_content.cc_wrap_len,
-            job->liid,
-            job->preencoded[OPENLI_PREENCODE_LIID].vallen) < 0) {
-        return -1;
+    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (create_encrypted_message_body(enc, res, hdr_tplate,
+                ipcc_tplate->cc_content.cc_wrap,
+                ipcc_tplate->cc_content.cc_wrap_len,
+                (uint8_t *)ipccjob->ipcontent,
+                ipccjob->ipclen, job) < 0) {
+            return -1;
+        }
+    } else {
+        if (create_etsi_encoded_result(res, hdr_tplate,
+                ipcc_tplate->cc_content.cc_wrap,
+                ipcc_tplate->cc_content.cc_wrap_len,
+                (uint8_t *)ipccjob->ipcontent,
+                ipccjob->ipclen, job) < 0) {
+            return -1;
+        }
     }
-
-    /* Set ipcontents in the result */
-    res->ipcontents = (uint8_t *)ipccjob->ipcontent;
-    res->ipclen = ipccjob->ipclen;
-    res->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
 
     /* Success */
     return 1;
@@ -960,6 +909,9 @@ static int process_job(openli_encoder_t *enc, void *socket) {
                 if (job.liid) {
                     free(job.liid);
                 }
+                if (job.encryptkey) {
+                    free(job.encryptkey);
+                }
                 if (job.origreq) {
                     free_published_message(job.origreq);
                 }
@@ -974,6 +926,9 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         result[batch].origreq = job.origreq;
         result[batch].encodedby = enc->workerid;
 
+        if (job.encryptkey) {
+            free(job.encryptkey);
+        }
         batch++;
     }
 
