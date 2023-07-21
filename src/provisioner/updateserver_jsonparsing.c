@@ -95,16 +95,26 @@ struct json_intercept {
                 *errflag = 1; \
             } \
         } else { \
-            dest = strdup(objstr); \
+            if (strlen(objstr) == 0) { \
+                dest = NULL; \
+            } else { \
+                dest = strdup(objstr); \
+            } \
         } \
     }
 
 #define MODIFY_STRING_MEMBER(newmem, oldmem, changeflag) \
-    if (newmem != NULL && strcmp(newmem, oldmem) != 0) { \
+    if (newmem != NULL && oldmem != NULL && strcmp(newmem, oldmem) != 0) { \
         free(oldmem); oldmem = newmem; *changeflag = 1; \
         newmem = NULL; \
     } else if (newmem) { \
-        free(newmem); newmem = NULL; \
+        if (oldmem == NULL) { \
+            oldmem = newmem; newmem = NULL; *changeflag = 1; \
+        } else { \
+            free(newmem); newmem = NULL; \
+        } \
+    } else if (oldmem && newmem == NULL) { \
+        free(oldmem); oldmem = NULL; *changeflag = 1; \
     }
 
 #define INIT_JSON_INTERCEPT_PARSING \
