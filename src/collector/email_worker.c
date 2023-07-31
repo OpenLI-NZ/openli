@@ -229,7 +229,7 @@ static openli_email_captured_t *convert_packet_to_email_captured(
     cap->datasource = NULL;
     cap->remote_ip = strdup(ip_b);
     cap->host_ip = strdup(ip_a);
-
+    cap->part_id = 0;
 
     snprintf(portstr, 16, "%u", rem_port);
     cap->remote_port = strdup(portstr);
@@ -294,6 +294,9 @@ static void init_email_session(emailsession_t *sess,
     sess->proto_state = NULL;
     sess->server_octets = 0;
     sess->client_octets = 0;
+    sess->held_captured = calloc(16, sizeof(void **));
+    sess->held_captured_size = 16;
+    sess->next_expected_captured = 1;
 }
 
 int extract_email_sender_from_body(openli_email_worker_t *state,
@@ -404,7 +407,7 @@ void clear_email_sender(emailsession_t *sess) {
 
 static void free_email_session(openli_email_worker_t *state,
         emailsession_t *sess) {
-
+    int i;
 
     if (!sess) {
         return;
@@ -423,6 +426,16 @@ static void free_email_session(openli_email_worker_t *state,
         close(ev->fd);
         free(ev);
 
+    }
+
+    if (sess->held_captured) {
+        for (i = 0; i < sess->held_captured_size; i++) {
+            if (sess->held_captured[i]) {
+                free_captured_email(sess->held_captured[i]);
+            }
+        }
+
+        free(sess->held_captured);
     }
 
     if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
@@ -696,7 +709,6 @@ static void remove_email_intercept(openli_email_worker_t *state,
     }
 
     HASH_DELETE(hh_liid, state->allintercepts, em);
-    logger(LOG_INFO, "DEVDEBUG: removing email intercept %s", em->common.liid);
 
     if (state->emailid == 0 && removetargets != 0) {
         expmsg = (openli_export_recv_t *)calloc(1,
@@ -1039,7 +1051,7 @@ static int find_and_update_active_session(openli_email_worker_t *state,
 
     char sesskey[256];
     emailsession_t *sess;
-    int r = 0;
+    int r = 0, i;
 
     if (cap->session_id == NULL) {
         logger(LOG_INFO,
@@ -1062,28 +1074,76 @@ static int find_and_update_active_session(openli_email_worker_t *state,
 
     update_email_session_timeout(state, sess);
 
-    if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
-        r = update_smtp_session_by_ingestion(state, sess, cap);
-    } else if (sess->protocol == OPENLI_EMAIL_TYPE_IMAP) {
-        r = update_imap_session_by_ingestion(state, sess, cap);
-    } else if (sess->protocol == OPENLI_EMAIL_TYPE_POP3) {
-        r = update_pop3_session_by_ingestion(state, sess, cap);
+    if (cap->part_id == 0) {
+        cap->part_id = sess->next_expected_captured;
     }
 
-    if (r < 0) {
+    if (cap->part_id < sess->next_expected_captured) {
         logger(LOG_INFO,
-                "OpenLI: error updating %s session '%s' -- removing session...",
-                email_type_to_string(cap->type), sess->key);
-
-        HASH_DELETE(hh, state->activesessions, sess);
-        free_email_session(state, sess);
-    } else if (r == 1) {
-        HASH_DELETE(hh, state->activesessions, sess);
-        free_email_session(state, sess);
+                "OpenLI: warning -- ingested email message for session '%s' has an unexpected PART_ID (%u vs %u), ignoring",
+                sesskey, cap->part_id, sess->next_expected_captured);
+        free_captured_email(cap);
+        return 0;
     }
 
-    free_captured_email(cap);
-    return r;
+    if (cap->part_id > sess->held_captured_size + 16) {
+        logger(LOG_INFO,
+                "OpenLI: warning -- unexpectedly large PART_ID for ingested email session '%s': %u, ignoring",
+                sesskey, cap->part_id);
+        free_captured_email(cap);
+        return 0;
+    }
+
+    while (cap->part_id >= sess->held_captured_size) {
+        sess->held_captured = realloc(sess->held_captured, (sess->held_captured_size + 16) * sizeof(void *));
+        for (i = sess->held_captured_size; i < sess->held_captured_size + 16;
+                i++) {
+            sess->held_captured[i] = NULL;
+        }
+        sess->held_captured_size += 16;
+    }
+
+    if (sess->held_captured[cap->part_id] != NULL) {
+        logger(LOG_INFO,
+                "OpenLI: warning -- ingested email message for session '%s' has a duplicated PART_ID of %u, ignoring", sesskey, cap->part_id);
+        free_captured_email(cap);
+        return 0;
+    }
+
+    sess->held_captured[cap->part_id] = cap;
+
+    while (sess->next_expected_captured <= sess->held_captured_size &&
+            sess->held_captured[sess->next_expected_captured] != NULL) {
+
+        cap = sess->held_captured[sess->next_expected_captured];
+
+        if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
+            r = update_smtp_session_by_ingestion(state, sess, cap);
+        } else if (sess->protocol == OPENLI_EMAIL_TYPE_IMAP) {
+            r = update_imap_session_by_ingestion(state, sess, cap);
+        } else if (sess->protocol == OPENLI_EMAIL_TYPE_POP3) {
+            r = update_pop3_session_by_ingestion(state, sess, cap);
+        }
+
+        if (r < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: error updating %s session '%s' -- removing session...",
+                    email_type_to_string(cap->type), sess->key);
+
+            HASH_DELETE(hh, state->activesessions, sess);
+            free_email_session(state, sess);
+            return r;
+        } else if (r == 1) {
+            HASH_DELETE(hh, state->activesessions, sess);
+            free_email_session(state, sess);
+            return r;
+        }
+        free_captured_email(cap);
+        sess->held_captured[sess->next_expected_captured] = NULL;
+        sess->next_expected_captured ++;
+    }
+
+    return 0;
 }
 
 static int process_received_packet(openli_email_worker_t *state) {

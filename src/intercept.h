@@ -290,6 +290,9 @@ struct emailsession {
     void *timeout_ev;
 
     void *proto_state;
+    void **held_captured;
+    int held_captured_size;
+    int next_expected_captured;
 
     UT_hash_handle hh;
 };
