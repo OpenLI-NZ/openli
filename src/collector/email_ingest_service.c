@@ -87,6 +87,11 @@ static int init_email_ingest_state(email_ingestor_state_t *state,
     return 0;
 }
 
+#define CALLOC_THISMSG \
+    if (con_info->thismsg == NULL) { \
+        con_info->thismsg = calloc(1, sizeof(openli_email_captured_t)); \
+    }
+
 static MHD_RESULT iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
             const char *key, const char *filename, const char *content_type,
             const char *transfer_encoding, const char *data, uint64_t off,
@@ -95,25 +100,34 @@ static MHD_RESULT iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
     email_connection_t *con_info = (email_connection_t *)(coninfo_cls);
     char *ptr;
 
-    if (con_info->thismsg == NULL) {
-        con_info->thismsg = calloc(1, sizeof(openli_email_captured_t));
+    if (memchr(data, '\0', size + 1) == NULL) {
+        logger(LOG_INFO, "OpenLI: WARNING -- ingested email content does not end in a null character, it may have been truncated. Ignoring it...");
+        return MHD_YES;
     }
 
     if (strcmp(key, "TARGET_ID") == 0) {
+        CALLOC_THISMSG
         con_info->thismsg->target_id = strdup(data);
     } else if (strcmp(key, "REMOTE_IP") == 0) {
+        CALLOC_THISMSG
         con_info->thismsg->remote_ip = strdup(data);
     } else if (strcmp(key, "REMOTE_PORT") == 0) {
+        CALLOC_THISMSG
         con_info->thismsg->remote_port = strdup(data);
     } else if (strcmp(key, "HOST_IP") == 0) {
+        CALLOC_THISMSG
         con_info->thismsg->host_ip = strdup(data);
     } else if (strcmp(key, "HOST_PORT") == 0) {
+        CALLOC_THISMSG
         con_info->thismsg->host_port = strdup(data);
     } else if (strcmp(key, "DATA_SOURCE") == 0) {
+        CALLOC_THISMSG
         con_info->thismsg->datasource = strdup(data);
     } else if (strcmp(key, "SESSION_ID") == 0) {
+        CALLOC_THISMSG
         con_info->thismsg->session_id = strdup(data);
     } else if (strcmp(key, "DIRECTION") == 0) {
+        CALLOC_THISMSG
         if (strcasecmp(data, "out") == 0) {
             con_info->thismsg->direction = OPENLI_EMAIL_DIRECTION_OUTBOUND;
         } else if (strcasecmp(data, "in") == 0) {
@@ -123,11 +137,14 @@ static MHD_RESULT iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
         }
 
     } else if (strcmp(key, "TIMESTAMP") == 0) {
+        CALLOC_THISMSG
         con_info->thismsg->timestamp = strtoul(data, NULL, 10);
 
     } else if (strcmp(key, "MAIL_ID") == 0) {
+        CALLOC_THISMSG
         con_info->thismsg->mail_id = strtoul(data, NULL, 10);
     } else if (strcmp(key, "SERVICE") == 0) {
+        CALLOC_THISMSG
 
         if (strcasecmp(data, "smtp") == 0) {
             con_info->thismsg->type = OPENLI_EMAIL_TYPE_SMTP;
@@ -145,6 +162,7 @@ static MHD_RESULT iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
     } else if (strcmp(key, "BUFFER") == 0) {
         int datalen = 0;
 
+        CALLOC_THISMSG
         ptr = (char *)data;
         while (*ptr == 0x0a || *ptr == 0x0d) {
             ptr ++;
@@ -159,6 +177,8 @@ static MHD_RESULT iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
         con_info->thismsg->own_content = 1;
         con_info->thismsg->content = strdup(ptr);
         con_info->thismsg->msg_length = datalen;
+    } else {
+        return MHD_YES;
     }
 
     //logger(LOG_INFO, "KEY %s", key);
@@ -298,7 +318,7 @@ static MHD_RESULT answer_email_connection(void *cls,
         con_info->parentstate = state;
         if (strcmp(method, "POST") == 0) {
             con_info->postproc = MHD_create_post_processor(connection,
-                    16 * 1024, iterate_post, (void *)con_info);
+                    128 * 1024, iterate_post, (void *)con_info);
             if (con_info->postproc == NULL) {
                 free(con_info);
                 return MHD_NO;

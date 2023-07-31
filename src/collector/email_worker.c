@@ -569,6 +569,12 @@ static void start_email_intercept(openli_email_worker_t *state,
         expmsg->data.cept.authcc = strdup(em->common.authcc);
         expmsg->data.cept.delivcc = strdup(em->common.delivcc);
         expmsg->data.cept.seqtrackerid = em->common.seqtrackerid;
+        expmsg->data.cept.encryptmethod = em->common.encrypt;
+        if (em->common.encryptkey) {
+            expmsg->data.cept.encryptkey = strdup(em->common.encryptkey);
+        } else {
+            expmsg->data.cept.encryptkey = NULL;
+        }
 
         publish_openli_msg(state->zmq_pubsocks[em->common.seqtrackerid],
                 expmsg);
@@ -576,32 +582,91 @@ static void start_email_intercept(openli_email_worker_t *state,
     em->awaitingconfirm = 0;
 }
 
-static void update_email_intercept(openli_email_worker_t *state,
-        emailintercept_t *found, emailintercept_t *latest) {
+static int update_modified_email_intercept(openli_email_worker_t *state,
+        emailintercept_t *found, emailintercept_t *decode) {
+    openli_export_recv_t *expmsg;
+    int encodingchanged = 0, keychanged = 0;
 
-    if (found->common.authcc) {
-        free(found->common.authcc);
+    if (decode->common.tostart_time != found->common.tostart_time ||
+            decode->common.toend_time != found->common.toend_time) {
+        logger(LOG_INFO,
+                "OpenLI: Email intercept %s has changed start / end times -- now %lu, %lu",
+                found->common.liid, decode->common.tostart_time,
+                decode->common.toend_time);
+        found->common.tostart_time = decode->common.tostart_time;
+        found->common.toend_time = decode->common.toend_time;
     }
-    found->common.authcc = latest->common.authcc;
-    found->common.authcc_len = latest->common.authcc_len;
-    latest->common.authcc = NULL;
 
-    if (found->common.delivcc) {
-        free(found->common.delivcc);
+    if (decode->common.tomediate != found->common.tomediate) {
+        char space[1024];
+        intercept_mediation_mode_as_string(decode->common.tomediate, space,
+                1024);
+        logger(LOG_INFO,
+                "OpenLI: Email intercept %s has changed mediation mode to: %s",
+                decode->common.liid, space);
+        found->common.tomediate = decode->common.tomediate;
     }
-    found->common.delivcc = latest->common.delivcc;
-    found->common.delivcc_len = latest->common.delivcc_len;
-    latest->common.delivcc = NULL;
 
-    found->common.tostart_time = latest->common.tostart_time;
-    found->common.toend_time = latest->common.toend_time;
-    found->common.tomediate = latest->common.tomediate;
+    if (decode->common.encrypt != found->common.encrypt) {
+        char space[1024];
+        intercept_encryption_mode_as_string(decode->common.encrypt, space,
+                1024);
+        logger(LOG_INFO,
+                "OpenLI: Email intercept %s has changed encryption mode to: %s",
+                decode->common.liid, space);
+        found->common.encrypt = decode->common.encrypt;
+        encodingchanged = 1;
+    }
 
-    /* XXX targetagency and destid shouldn't matter, unless we actually
-     * use them in this thread.
-     *
-     * I think they're only relevant in the forwarding thread though */
+    if (found->common.encryptkey && decode->common.encryptkey) {
+        if (strcmp(found->common.encryptkey, decode->common.encryptkey) != 0) {
+            keychanged = 1;
+        }
+    } else if (found->common.encryptkey == NULL && decode->common.encryptkey) {
+        keychanged = 1;
+    } else if (found->common.encryptkey && decode->common.encryptkey == NULL) {
+        keychanged = 1;
+    }
 
+    if (keychanged) {
+        char *tmp;
+        encodingchanged = 1;
+        tmp = found->common.encryptkey;
+        found->common.encryptkey = decode->common.encryptkey;
+        decode->common.encryptkey = tmp;
+    }
+
+    if (strcmp(decode->common.delivcc, found->common.delivcc) != 0 ||
+            strcmp(decode->common.authcc, found->common.authcc) != 0) {
+        char *tmp;
+        tmp = decode->common.authcc;
+        decode->common.authcc = found->common.authcc;
+        found->common.authcc = tmp;
+        tmp = decode->common.delivcc;
+        decode->common.delivcc = found->common.delivcc;
+        found->common.delivcc = tmp;
+        encodingchanged = 1;
+    }
+
+    if (encodingchanged) {
+        expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+        expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
+        expmsg->data.cept.liid = strdup(found->common.liid);
+        expmsg->data.cept.authcc = strdup(found->common.authcc);
+        expmsg->data.cept.delivcc = strdup(found->common.delivcc);
+        expmsg->data.cept.seqtrackerid = found->common.seqtrackerid;
+        expmsg->data.cept.encryptmethod = found->common.encrypt;
+        if (found->common.encryptkey) {
+            expmsg->data.cept.encryptkey = strdup(found->common.encryptkey);
+        } else {
+            expmsg->data.cept.encryptkey = NULL;
+        }
+
+        publish_openli_msg(state->zmq_pubsocks[found->common.seqtrackerid],
+                expmsg);
+    }
+    free_single_emailintercept(decode);
+    return 0;
 }
 
 static void remove_email_intercept(openli_email_worker_t *state,
@@ -631,6 +696,7 @@ static void remove_email_intercept(openli_email_worker_t *state,
     }
 
     HASH_DELETE(hh_liid, state->allintercepts, em);
+    logger(LOG_INFO, "DEVDEBUG: removing email intercept %s", em->common.liid);
 
     if (state->emailid == 0 && removetargets != 0) {
         expmsg = (openli_export_recv_t *)calloc(1,
@@ -696,10 +762,10 @@ static int add_new_email_intercept(openli_email_worker_t *state,
             tgt->awaitingconfirm = 1;
         }
 
-        update_email_intercept(state, found, em);
+        update_modified_email_intercept(state, found, em);
         found->awaitingconfirm = 0;
-        free_single_emailintercept(em);
         ret = 1;
+        logger(LOG_INFO, "OpenLI: updated email intercept for %s after re-announcement by provisioner", found->common.liid);
     } else {
         start_email_intercept(state, em, 0);
         if (state->emailid == 0) {
@@ -720,7 +786,6 @@ static int modify_email_intercept(openli_email_worker_t *state,
         provisioner_msg_t *provmsg) {
 
     emailintercept_t *decode, *found;
-    openli_export_recv_t *expmsg;
 
     decode = calloc(1, sizeof(emailintercept_t));
     if (decode_emailintercept_modify(provmsg->msgbody, provmsg->msglen,
@@ -736,48 +801,7 @@ static int modify_email_intercept(openli_email_worker_t *state,
         return 0;
     }
 
-    if (decode->common.tostart_time != found->common.tostart_time ||
-            decode->common.toend_time != found->common.toend_time) {
-        logger(LOG_INFO,
-                "OpenLI: Email intercept %s has changed start / end times -- now %lu, %lu",
-                found->common.liid, decode->common.tostart_time,
-                decode->common.toend_time);
-        found->common.tostart_time = decode->common.tostart_time;
-        found->common.toend_time = decode->common.toend_time;
-    }
-
-    if (decode->common.tomediate != found->common.tomediate) {
-        char space[1024];
-        intercept_mediation_mode_as_string(decode->common.tomediate, space,
-                1024);
-        logger(LOG_INFO,
-                "OpenLI: Email intercept %s has changed mediation mode to: %s",
-                decode->common.liid, space);
-        found->common.tomediate = decode->common.tomediate;
-    }
-
-    if (strcmp(decode->common.delivcc, found->common.delivcc) != 0 ||
-            strcmp(decode->common.authcc, found->common.authcc) != 0) {
-        char *tmp;
-        tmp = decode->common.authcc;
-        decode->common.authcc = found->common.authcc;
-        found->common.authcc = tmp;
-        tmp = decode->common.delivcc;
-        decode->common.delivcc = found->common.delivcc;
-        found->common.delivcc = tmp;
-
-        expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
-        expmsg->type = OPENLI_EXPORT_INTERCEPT_DETAILS;
-        expmsg->data.cept.liid = strdup(found->common.liid);
-        expmsg->data.cept.authcc = strdup(found->common.authcc);
-        expmsg->data.cept.delivcc = strdup(found->common.delivcc);
-        expmsg->data.cept.seqtrackerid = found->common.seqtrackerid;
-
-        publish_openli_msg(state->zmq_pubsocks[found->common.seqtrackerid],
-                expmsg);
-    }
-
-    free_single_emailintercept(decode);
+    update_modified_email_intercept(state, found, decode);
     return 0;
 }
 
@@ -1017,6 +1041,13 @@ static int find_and_update_active_session(openli_email_worker_t *state,
     emailsession_t *sess;
     int r = 0;
 
+    if (cap->session_id == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: error creating email session -- session_id is NULL");
+        free_captured_email(cap);
+        return -1;
+    }
+
     snprintf(sesskey, 256, "%s-%s", email_type_to_string(cap->type),
             cap->session_id);
 
@@ -1074,8 +1105,9 @@ static int process_received_packet(openli_email_worker_t *state) {
 
         cap = convert_packet_to_email_captured(recvd.data.pkt, recvd.type);
 
-        if (cap == NULL) {
+        if (cap == NULL || cap->session_id == NULL) {
             logger(LOG_INFO, "OpenLI: unable to derive email session ID from received packet in email thread %d", state->emailid);
+            free_captured_email(cap);
             return -1;
         }
         if (cap->content != NULL) {
@@ -1109,7 +1141,8 @@ static int process_ingested_capture(openli_email_worker_t *state) {
             break;
         }
 
-        if (cap == NULL) {
+        if (cap == NULL || cap->session_id == NULL) {
+            free_captured_email(cap);
             break;
         }
         find_and_update_active_session(state, cap);

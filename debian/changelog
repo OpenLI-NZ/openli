@@ -1,3 +1,23 @@
+openli (1.1.1-1) unstable; urgency=medium
+
+  * Add ability to encrypt CC and IRI payload, as per Annex G of
+    ETSI TS 102 232-1 (AES-192-CBC encryption only thus far).
+  * Fix bug where certain intercept config changes were not always
+    passed on to collectors if the changes occurred while the
+    provisioner was down.
+  * Fix double free bug when halting the VOIP sync thread for a
+    collector.
+  * Fix bug where a RADIUS session could produce CCs but not IRIs,
+    if the Username AVP happened to match a target CSID.
+  * Fix linking failure if the collector is built on its own.
+  * Correct various problems with the IMAP parsing for FETCH replies.
+  * Fix segmentation faults when the email ingestion socket receives
+    an incomplete message.
+  * Fix memory errors in the REST API when a field is assigned an
+    empty string value.
+
+ -- Shane Alcock <shane@alcock.co.nz>  Mon, 31 Jul 2023 11:26:50 +1200
+
 openli (1.1.0-1) unstable; urgency=medium
 
   Changes since 1.0.15 release:

@@ -430,11 +430,43 @@ static int emit_intercept_common(intercept_common_t *intcom,
             YAML_PLAIN_SCALAR_STYLE);
     if (!yaml_emitter_emit(emitter, &event)) return -1;
 
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)"payloadencryption", strlen("payloadencryption"),
+            1, 0, YAML_PLAIN_SCALAR_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    if (intcom->encrypt == OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"none", strlen("none"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+    } else if (intcom->encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"aes-192-cbc", strlen("aes-192-cbc"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+    } else {
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"none", strlen("none"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+    }
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    if (intcom->encryptkey) {
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"encryptionkey", strlen("encryptionkey"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)intcom->encryptkey,
+                strlen(intcom->encryptkey), 1, 0, YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+    }
+
     yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
             (yaml_char_t *)"outputhandovers", strlen("outputhandovers"), 1, 0,
             YAML_PLAIN_SCALAR_STYLE);
     if (!yaml_emitter_emit(emitter, &event)) return -1;
-
     if (intcom->tomediate == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
         yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
                 (yaml_char_t *)"irionly", strlen("irionly"), 1, 0,

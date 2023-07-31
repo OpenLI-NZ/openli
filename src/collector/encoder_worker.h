@@ -37,6 +37,7 @@
 #include "netcomms.h"
 #include "etsili_core.h"
 #include "export_shared.h"
+#include "etsiencoding/etsiencoding.h"
 
 enum {
     TEMPLATE_TYPE_IPCC_DIRFROM,

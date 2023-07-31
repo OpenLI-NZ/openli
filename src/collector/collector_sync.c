@@ -971,9 +971,14 @@ static void push_ipintercept_update_to_threads(collector_sync_t *sync,
     ipint->common.delivcc_len = modified->common.delivcc_len;
     modified->common.delivcc = tmp;
 
+    tmp = ipint->common.encryptkey;
+    ipint->common.encryptkey = modified->common.encryptkey;
+    modified->common.encryptkey = tmp;
+
     ipint->common.tostart_time = modified->common.tostart_time;
     ipint->common.toend_time = modified->common.toend_time;
     ipint->common.tomediate = modified->common.tomediate;
+    ipint->common.encrypt = modified->common.encrypt;
 
     /* Update all static IP ranges for this intercept */
     HASH_ITER(hh, ipint->statics, ipr, tmpr) {
@@ -1141,6 +1146,12 @@ static inline openli_export_recv_t *create_intercept_details_msg(
     expmsg->data.cept.liid = strdup(common->liid);
     expmsg->data.cept.authcc = strdup(common->authcc);
     expmsg->data.cept.delivcc = strdup(common->delivcc);
+    expmsg->data.cept.encryptmethod = common->encrypt;
+    if (common->encryptkey) {
+        expmsg->data.cept.encryptkey = strdup(common->encryptkey);
+    } else {
+        expmsg->data.cept.encryptkey = NULL;
+    }
     expmsg->data.cept.seqtrackerid = common->seqtrackerid;
 
     return expmsg;
@@ -1302,29 +1313,12 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
     free_single_ipintercept(ipint);
 }
 
-static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
-        uint16_t msglen) {
+static int update_modified_intercept(collector_sync_t *sync,
+        ipintercept_t *ipint, ipintercept_t *modified) {
 
-    ipintercept_t *ipint, *modified;
     openli_export_recv_t *expmsg;
     int changed = 0;
-
-    modified = calloc(1, sizeof(ipintercept_t));
-
-    if (decode_ipintercept_modify(intmsg, msglen, modified) == -1) {
-        if (sync->instruct_log) {
-            logger(LOG_INFO,
-                    "OpenLI: received invalid IP intercept modification from provisioner.");
-        }
-        return -1;
-    }
-
-    HASH_FIND(hh_liid, sync->ipintercepts, modified->common.liid,
-            modified->common.liid_len, ipint);
-
-    if (!ipint) {
-        return insert_new_ipintercept(sync, modified);
-    }
+    int encodingchanged = 0;
 
     if (strcmp(ipint->username, modified->username) != 0) {
         push_ipintercept_halt_to_threads(sync, ipint);
@@ -1353,8 +1347,6 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             ipint->common.toend_time != modified->common.toend_time) {
         logger(LOG_INFO,
                 "OpenLI: IP intercept %s has changed start / end times -- now %lu, %lu", ipint->common.liid, modified->common.tostart_time, modified->common.toend_time);
-        ipint->common.tostart_time = modified->common.tostart_time;
-        ipint->common.toend_time = modified->common.toend_time;
         update_intercept_time_event(&(sync->upcoming_intercept_events),
                 ipint, &(ipint->common), &(modified->common));
         changed = 1;
@@ -1367,27 +1359,91 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         logger(LOG_INFO,
                 "OpenLI: IP intercept %s has changed mediation mode to: %s",
                 ipint->common.liid, space);
-        ipint->common.tomediate = modified->common.tomediate;
         changed = 1;
+    }
 
+    if (ipint->common.encrypt != modified->common.encrypt) {
+        char space[1024];
+        intercept_encryption_mode_as_string(modified->common.encrypt, space,
+                1024);
+        logger(LOG_INFO,
+                "OpenLI: IP intercept %s has changed encryption mode to: %s",
+                ipint->common.liid, space);
+        changed = 1;
+        encodingchanged = 1;
+        goto actonchange;
+    }
+
+    if (ipint->common.encryptkey && modified->common.encryptkey) {
+        if (strcmp(ipint->common.encryptkey, modified->common.encryptkey) != 0)
+        {
+            changed = 1;
+            encodingchanged = 1;
+            goto actonchange;
+        }
+    } else if (ipint->common.encryptkey == NULL && modified->common.encryptkey)
+    {
+        changed = 1;
+        encodingchanged = 1;
+        goto actonchange;
+    } else if (ipint->common.encryptkey && modified->common.encryptkey == NULL)
+    {
+        changed = 1;
+        encodingchanged = 1;
+        goto actonchange;
     }
 
 
     if (strcmp(ipint->common.delivcc, modified->common.delivcc) != 0 ||
             strcmp(ipint->common.authcc, modified->common.authcc) != 0) {
         changed = 1;
-        expmsg = create_intercept_details_msg(&(ipint->common));
+        encodingchanged = 1;
+        goto actonchange;
+    }
+
+actonchange:
+    if (encodingchanged) {
+        expmsg = create_intercept_details_msg(&(modified->common));
         expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
         publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid],
                 expmsg);
     }
 
     if (changed) {
+        /* Note: this will replace the values in 'ipint' with the new ones
+         * from 'modified' so don't panic that we haven't changed them
+         * earlier in this method...
+         */
         push_ipintercept_update_to_threads(sync, ipint, modified);
     }
 
     free_single_ipintercept(modified);
     return 0;
+}
+
+static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
+        uint16_t msglen) {
+
+    ipintercept_t *ipint, *modified;
+
+    modified = calloc(1, sizeof(ipintercept_t));
+
+    if (decode_ipintercept_modify(intmsg, msglen, modified) == -1) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid IP intercept modification from provisioner.");
+        }
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, sync->ipintercepts, modified->common.liid,
+            modified->common.liid_len, ipint);
+
+    if (!ipint) {
+        return insert_new_ipintercept(sync, modified);
+    }
+
+    return update_modified_intercept(sync, ipint, modified);
 }
 
 static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
@@ -1556,31 +1612,23 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
                 logger(LOG_INFO,
                         "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
                         x->common.liid, x->username, cept->username);
-                remove_ip_intercept(sync, x);
-                x = NULL;
             }
         }
 
-        if (x != NULL && cept->vendmirrorid != x->vendmirrorid) {
+        if (cept->vendmirrorid != x->vendmirrorid) {
             logger(LOG_INFO,
                     "OpenLI: duplicate IP ID %s seen, but Vendor Mirroring intercept IDs are different (was %u, now %u).",
                     x->common.liid, x->vendmirrorid, cept->vendmirrorid);
-            remove_ip_intercept(sync, x);
-            x = NULL;
         }
 
-        if (x != NULL) {
-            if (cept->accesstype != x->accesstype) {
-                logger(LOG_INFO,
-                    "OpenLI: duplicate IP ID %s seen, but access type has changed to %s.", x->common.liid, accesstype_to_string(cept->accesstype));
-            /* Only affects IRIs so don't need to modify collector threads */
-                x->accesstype = cept->accesstype;
-            }
-            x->awaitingconfirm = 0;
-            free_single_ipintercept(cept);
-            /* our collector threads should already know about this intercept */
-            return 1;
+        if (cept->accesstype != x->accesstype) {
+            logger(LOG_INFO,
+                "OpenLI: duplicate IP ID %s seen, but access type has changed to %s.", x->common.liid, accesstype_to_string(cept->accesstype));
+        /* Only affects IRIs so don't need to modify collector threads */
+            x->accesstype = cept->accesstype;
         }
+        x->awaitingconfirm = 0;
+        return update_modified_intercept(sync, x, cept);
     }
 
     return insert_new_ipintercept(sync, cept);
@@ -2160,9 +2208,30 @@ static inline internet_user_t *lookup_userid(collector_sync_t *sync,
     return iuser;
 }
 
+static inline int identity_match_intercept(ipintercept_t *ipint,
+        user_identity_t *uid) {
+
+    /* If the user has specifically said that the intercept target can
+     * not be identified using the username, then matching against the
+     * username is not allowed */
+
+    if (uid->method == USER_IDENT_RADIUS_USERNAME &&
+            ((ipint->options & (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER))\
+            == 0)) {
+        return 0;
+    }
+
+    if (uid->method == USER_IDENT_RADIUS_CSID &&
+            ((ipint->options & (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID)) == 0)) {
+        return 0;
+    }
+
+    return 1;
+}
+
 static int newly_active_session(collector_sync_t *sync,
         user_intercept_list_t *userint, internet_user_t *iuser,
-        access_session_t *sess) {
+        access_session_t *sess, user_identity_t *uid) {
 
     int mapret = 0;
     sync_sendq_t *sendq, *tmpq;
@@ -2185,6 +2254,9 @@ static int newly_active_session(collector_sync_t *sync,
      * packets involving the session IP.
      */
     HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
+        if (!identity_match_intercept(ipint, uid)) {
+            continue;
+        }
         HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                 sendq, tmpq) {
             push_single_ipintercept(sync, sendq->q, ipint, sess);
@@ -2197,27 +2269,6 @@ static int newly_active_session(collector_sync_t *sync,
     return 0;
 
 
-}
-
-static inline int identity_match_intercept(ipintercept_t *ipint,
-        user_identity_t *uid) {
-
-    /* If the user has specifically said that the intercept target can
-     * not be identified using the username, then matching against the
-     * username is not allowed */
-
-    if (uid->method == USER_IDENT_RADIUS_USERNAME &&
-            ((ipint->options & (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER))\
-            == 0)) {
-        return 0;
-    }
-
-    if (uid->method == USER_IDENT_RADIUS_CSID &&
-            ((ipint->options & (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID)) == 0)) {
-        return 0;
-    }
-
-    return 1;
 }
 
 static inline int is_default_radius_username(collector_sync_t *sync,
@@ -2308,7 +2359,8 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
 
         if (oldstate != newstate) {
             if (newstate == SESSION_STATE_ACTIVE) {
-                ret = newly_active_session(sync, userint, iuser, sess);
+                ret = newly_active_session(sync, userint, iuser, sess,
+                        &(identities[i]));
                 if (ret < 0) {
                     logger(LOG_INFO, "OpenLI: error while processing new active IP session in sync thread.");
                     break;

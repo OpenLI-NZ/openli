@@ -43,9 +43,6 @@ uint8_t etsi_emailccoid[4] = {0x05, 0x02, 0x0f, 0x02};
 uint8_t etsi_umtsirioid[9] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x04, 0x01, 0x0f, 0x05};
 uint8_t etsi_hi1operationoid[8] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x00, 0x01, 0x06};
 
-#define END_ENCODED_SEQUENCE(enc, x) \
-        wandder_encode_endseq_repeat(enc, x);
-
 static inline void encode_tri_body(wandder_encoder_t *encoder) {
     ENC_CSEQUENCE(encoder, 2);          // Payload
     ENC_CSEQUENCE(encoder, 2);          // TRIPayload
@@ -1241,6 +1238,7 @@ void etsili_preencode_static_fields(
     wandder_encode_job_t *p;
     int tvclass = 1;
     uint32_t dirin = 0, dirout = 1, dirunk = 2;
+    uint32_t noencrypt = 1, aes_192_cbc = 3;
 
     memset(pendarray, 0, sizeof(wandder_encode_job_t) * OPENLI_PREENCODE_LAST);
 
@@ -1427,6 +1425,18 @@ void etsili_preencode_static_fields(
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_ENUM;
     wandder_encode_preencoded_value(p, &dirunk, sizeof(dirunk));
+
+    p = &(pendarray[OPENLI_PREENCODE_NO_ENCRYPTION]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_preencoded_value(p, &noencrypt, sizeof(noencrypt));
+
+    p = &(pendarray[OPENLI_PREENCODE_AES_192_CBC]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_preencoded_value(p, &aes_192_cbc, sizeof(aes_192_cbc));
 
 }
 
@@ -1814,6 +1824,23 @@ int etsili_create_ipcc_template(wandder_encoder_t *encoder,
     return etsili_create_generic_cc_template(encoder, precomputed, dir,
             ipclen, tplate, CC_TEMPLATE_TYPE_IPCC);
 
+}
+
+inline uint8_t DERIVE_INTEGER_LENGTH(uint64_t x) {
+    if (x < 128) return 1;
+    if (x < 32768) return 2;
+    if (x < 8388608) return 3;
+    if (x < 2147483648) return 4;
+    return 5;
+}
+
+int calculate_pspdu_length(uint32_t contentsize) {
+    uint8_t len_space_req = DERIVE_INTEGER_LENGTH(contentsize);
+
+    if (len_space_req == 1) {
+        return contentsize + 2;
+    }
+    return len_space_req + 2 + contentsize;
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

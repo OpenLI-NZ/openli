@@ -49,6 +49,13 @@ static inline void copy_intercept_common(intercept_common_t *src,
     dest->tostart_time = src->tostart_time;
     dest->toend_time = src->toend_time;
     dest->tomediate = src->tomediate;
+    dest->encrypt = src->encrypt;
+
+    if (src->encryptkey) {
+        dest->encryptkey = strdup(src->encryptkey);
+    } else {
+        dest->encryptkey = NULL;
+    }
 }
 
 int are_sip_identities_same(openli_sip_identity_t *a,
@@ -82,6 +89,17 @@ void intercept_mediation_mode_as_string(intercept_outputs_t mode,
         snprintf(space, spacelen, "CC-Only");
     } else {
         snprintf(space, spacelen, "Both");
+    }
+
+}
+
+void intercept_encryption_mode_as_string(payload_encryption_method_t method,
+        char *space, int spacelen) {
+
+    if (method == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
+        snprintf(space, spacelen, "AES-192-CBC");
+    } else {
+        snprintf(space, spacelen, "None");
     }
 
 }
@@ -219,6 +237,10 @@ static inline void free_intercept_common(intercept_common_t *cept) {
 
     if (cept->targetagency) {
         free(cept->targetagency);
+    }
+
+    if (cept->encryptkey) {
+        free(cept->encryptkey);
     }
 }
 
@@ -931,6 +953,14 @@ const char *get_access_type_string(internet_access_method_t method) {
     }
 
     return "undefined";
+}
+
+payload_encryption_method_t map_encrypt_method_string(char *encstr) {
+    if (strcasecmp(encstr, "aes-192-cbc") == 0) {
+        return OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC;
+    }
+
+    return OPENLI_PAYLOAD_ENCRYPTION_NONE;
 }
 
 internet_access_method_t map_access_type_string(char *confstr) {

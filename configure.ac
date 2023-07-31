@@ -1,6 +1,6 @@
 # Super primitive configure script
 
-AC_INIT([openli],[1.1.0],[shane@alcock.co.nz])
+AC_INIT([openli],[1.1.1],[shane@alcock.co.nz])
 
 AM_INIT_AUTOMAKE([subdir-objects])
 AC_CONFIG_SRCDIR(src/collector/collector.c)
@@ -81,19 +81,24 @@ if test "x$enable_collector" != "xno"; then
         COLLECTOR_LIBS="$COLLECTOR_LIBS -losipparser2 -lb64"
 fi
 
-if test "x$enable_provisioner" != "xno"; then
+if test "x$enable_provisioner" != "xno" -o "x$enable_collector" != "xno"; then
         AC_CHECK_LIB([microhttpd], [MHD_destroy_post_processor],libmicrohttpd_found=1,libmicrohttpd_found=0)
         if test "$libmicrohttpd_found" = 0; then
                 AC_MSG_ERROR(Required library libmicrohttpd not found; use LDFLAGS to specify library location)
         fi
+
+        COLLECTOR_LIBS="$COLLECTOR_LIBS -lmicrohttpd"
+        PROVISIONER_LIBS="$PROVISIONER_LIBS -lmicrohttpd"
+fi
+
+if test "x$enable_provisioner" != "xno"; then
         AC_CHECK_LIB([json-c], [json_tokener_new],libjsonc_found=1,libjsonc_found=0)
 
         if test "$libjsonc_found" = 0; then
                 AC_MSG_ERROR(Required library libjson-c not found; use LDFLAGS to specify library location)
         fi
 
-        PROVISIONER_LIBS="$PROVISIONER_LIBS -lmicrohttpd -ljson-c"
-        COLLECTOR_LIBS="$COLLECTOR_LIBS -lmicrohttpd -ljson-c"
+        PROVISIONER_LIBS="$PROVISIONER_LIBS -ljson-c"
 
         if test "x$libssl11_found" = "x1"; then
                 AC_CHECK_LIB([sqlcipher], [sqlite3_key], sqlcipher_found=1, sqlcipher_found=0)

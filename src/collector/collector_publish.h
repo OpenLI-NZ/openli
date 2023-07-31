@@ -153,6 +153,8 @@ typedef struct published_intercept_msg {
     char *authcc;
     char *delivcc;
     int seqtrackerid;
+    payload_encryption_method_t encryptmethod;
+    char *encryptkey;
 } published_intercept_msg_t;
 
 typedef struct provisioner_msg {
