@@ -1112,7 +1112,7 @@ static int find_and_update_active_session(openli_email_worker_t *state,
 
     sess->held_captured[cap->part_id] = cap;
 
-    while (sess->next_expected_captured <= sess->held_captured_size &&
+    while (sess->next_expected_captured < sess->held_captured_size &&
             sess->held_captured[sess->next_expected_captured] != NULL) {
 
         cap = sess->held_captured[sess->next_expected_captured];
