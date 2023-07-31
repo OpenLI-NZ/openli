@@ -698,15 +698,18 @@ int update_smtp_session_by_ingestion(openli_email_worker_t *state,
         smtpsess = (smtp_session_t *)sess->proto_state;
     }
 
-    if (append_content_to_smtp_buffer(smtpsess, cap) < 0) {
-        logger(LOG_INFO, "OpenLI: Failed to append SMTP message content to session buffer for %s", sess->key);
-        return -1;
-    }
+    if (cap->content != NULL) {
 
-    while (1) {
-        if ((r = process_next_smtp_state(state, sess, smtpsess,
-                cap->timestamp)) <= 0) {
-            break;
+        if (append_content_to_smtp_buffer(smtpsess, cap) < 0) {
+            logger(LOG_INFO, "OpenLI: Failed to append SMTP message content to session buffer for %s", sess->key);
+            return -1;
+        }
+
+        while (1) {
+            if ((r = process_next_smtp_state(state, sess, smtpsess,
+                    cap->timestamp)) <= 0) {
+                break;
+            }
         }
     }
 

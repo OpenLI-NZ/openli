@@ -143,6 +143,9 @@ static MHD_RESULT iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
     } else if (strcmp(key, "MAIL_ID") == 0) {
         CALLOC_THISMSG
         con_info->thismsg->mail_id = strtoul(data, NULL, 10);
+    } else if (strcmp(key, "PART_ID") == 0) {
+        CALLOC_THISMSG
+        con_info->thismsg->part_id = strtoul(data, NULL, 10);
     } else if (strcmp(key, "SERVICE") == 0) {
         CALLOC_THISMSG
 

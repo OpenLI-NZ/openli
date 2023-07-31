@@ -102,6 +102,7 @@ typedef struct openli_email_captured {
 
     uint64_t timestamp;
     uint32_t mail_id;
+    uint32_t part_id;
     uint32_t msg_length;
     char *content;
     uint8_t own_content;
