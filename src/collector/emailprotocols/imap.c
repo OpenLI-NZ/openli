@@ -951,14 +951,13 @@ static int append_compressed_content_to_imap_buffer(imap_session_t *imapsess,
     int status;
     struct compress_state *cs = NULL;
 
-    /* TODO this doesn't work, need to add the "sender" to cap so we
-     * can distinguish between server->client and client->server streams
-     */
-    if (imapsess->next_command_type == OPENLI_IMAP_COMMAND_REPLY ||
-            imapsess->next_command_type == OPENLI_IMAP_COMMAND_REPLY_ONGOING) {
+    if (cap->pkt_sender == OPENLI_EMAIL_PACKET_SENDER_CLIENT) {
         cs = &(imapsess->decompress_client);
-    } else {
+    } else if (cap->pkt_sender == OPENLI_EMAIL_PACKET_SENDER_SERVER) {
         cs = &(imapsess->decompress_server);
+    } else {
+        logger(LOG_INFO, "OpenLI: cannot decompress IMAP content without knowing which endpoint sent it -- ignoring");
+        return -1;
     }
 
     if (cs->inbuffer == NULL) {
@@ -1025,8 +1024,6 @@ static int append_compressed_content_to_imap_buffer(imap_session_t *imapsess,
                 logger(LOG_INFO, "OpenLI: Z_MEM_ERROR returned by inflate() within append_compressed_content_to_imap_buffer");
                 return -1;
         }
-
-        printf("%s\n", cs->outbuffer + cs->outreadoffset);
 
         if (_append_content_to_imap_buffer(imapsess,
             cs->outbuffer + cs->outreadoffset,

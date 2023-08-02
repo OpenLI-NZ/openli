@@ -47,6 +47,12 @@ enum {
     OPENLI_EMAIL_DIRECTION_INBOUND
 };
 
+enum {
+    OPENLI_EMAIL_PACKET_SENDER_UNKNOWN,
+    OPENLI_EMAIL_PACKET_SENDER_SERVER,
+    OPENLI_EMAIL_PACKET_SENDER_CLIENT,
+};
+
 typedef enum {
     OPENLI_IMAP_STATE_INIT = 0,
     OPENLI_IMAP_STATE_SESSION_OVER,
@@ -106,6 +112,7 @@ typedef struct openli_email_captured {
     uint32_t msg_length;
     char *content;
     uint8_t own_content;
+    uint8_t pkt_sender;
 
 } openli_email_captured_t;
 

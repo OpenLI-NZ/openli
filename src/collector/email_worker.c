@@ -162,6 +162,7 @@ static openli_email_captured_t *convert_packet_to_email_captured(
     uint32_t rem;
     uint8_t proto;
     void *posttcp;
+    uint8_t pktsender = 0;
 
     uint16_t src_port, dest_port, rem_port, host_port;
     openli_email_captured_t *cap = NULL;
@@ -197,6 +198,7 @@ static openli_email_captured_t *convert_packet_to_email_captured(
 
         rem_port = dest_port;
         host_port = src_port;
+        pktsender = OPENLI_EMAIL_PACKET_SENDER_SERVER;
     } else {
         if (trace_get_source_address_string(pkt, ip_b, INET6_ADDRSTRLEN)
                 == NULL) {
@@ -208,6 +210,7 @@ static openli_email_captured_t *convert_packet_to_email_captured(
         }
         host_port = dest_port;
         rem_port = src_port;
+        pktsender = OPENLI_EMAIL_PACKET_SENDER_CLIENT;
     }
 
     snprintf(space, spacelen, "%s-%s-%u-%u", ip_a, ip_b, host_port,
@@ -230,6 +233,7 @@ static openli_email_captured_t *convert_packet_to_email_captured(
     cap->remote_ip = strdup(ip_b);
     cap->host_ip = strdup(ip_a);
     cap->part_id = 0;
+    cap->pkt_sender = pktsender;
 
     snprintf(portstr, 16, "%u", rem_port);
     cap->remote_port = strdup(portstr);
