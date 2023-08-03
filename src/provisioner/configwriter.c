@@ -726,6 +726,39 @@ static int emit_emailintercepts(emailintercept_t *mailints,
             return -1;
         }
 
+        if (mail->delivercompressed !=
+                OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"delivercompressed",
+                    strlen("delivercompressed"),
+                    1, 0, YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            if (mail->delivercompressed ==
+                    OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS) {
+
+                yaml_scalar_event_initialize(&event, NULL,
+                        (yaml_char_t *)YAML_STR_TAG,
+                        (yaml_char_t *)"as-is", strlen("as-is"), 1, 0,
+                        YAML_PLAIN_SCALAR_STYLE);
+            } else if (mail->delivercompressed ==
+                    OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED) {
+
+                yaml_scalar_event_initialize(&event, NULL,
+                        (yaml_char_t *)YAML_STR_TAG,
+                        (yaml_char_t *)"decompressed",
+                        strlen("decompressed"), 1, 0, YAML_PLAIN_SCALAR_STYLE);
+            } else {
+                yaml_scalar_event_initialize(&event, NULL,
+                        (yaml_char_t *)YAML_STR_TAG,
+                        (yaml_char_t *)"default", strlen("default"), 1, 0,
+                        YAML_PLAIN_SCALAR_STYLE);
+            }
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
+
+
         yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
                 (yaml_char_t *)"targets", strlen("targets"), 1, 0,
                 YAML_PLAIN_SCALAR_STYLE);

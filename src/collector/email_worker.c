@@ -294,6 +294,7 @@ static void init_email_session(emailsession_t *sess,
     sess->participants = NULL;
     sess->protocol = cap->type;
     sess->currstate = 0;
+    sess->compressed = 0;
     sess->timeout_ev = NULL;
     sess->proto_state = NULL;
     sess->server_octets = 0;
@@ -603,6 +604,8 @@ static int update_modified_email_intercept(openli_email_worker_t *state,
         emailintercept_t *found, emailintercept_t *decode) {
     openli_export_recv_t *expmsg;
     int encodingchanged = 0, keychanged = 0;
+
+    found->delivercompressed = decode->delivercompressed;
 
     if (decode->common.tostart_time != found->common.tostart_time ||
             decode->common.toend_time != found->common.toend_time) {

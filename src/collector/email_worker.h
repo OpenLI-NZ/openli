@@ -125,6 +125,7 @@ typedef struct openli_email_worker {
     int emailid;
     int tracker_threads;
     int fwd_threads;
+    uint8_t default_compress_delivery;
 
     void *zmq_ii_sock;          /* ZMQ for receiving instructions from sync thread */
     void **zmq_pubsocks;        /* ZMQs for publishing to seqtracker threads */
@@ -202,7 +203,7 @@ int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
         uint64_t timestamp);
 int generate_email_cc_from_imap_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
-        uint64_t timestamp, uint8_t dir);
+        uint64_t timestamp, uint8_t dir, uint8_t deflated);
 int generate_email_cc_from_pop3_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
         uint64_t timestamp, uint8_t dir);

@@ -1025,6 +1025,8 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
         return -1;
     }
 
+    logger(LOG_INFO, "OpenLI: new mediator announcement for %s:%s",
+            med.ipstr, med.portstr);
     for (i = 0; i < sync->forwardcount; i++) {
         expmsg = (openli_export_recv_t *)calloc(1,
                 sizeof(openli_export_recv_t));
@@ -1036,8 +1038,6 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
         publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
     }
 
-    logger(LOG_INFO, "OpenLI: new mediator announcement for %s:%s",
-            med.ipstr, med.portstr);
     return 1;
 }
 

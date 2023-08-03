@@ -756,6 +756,7 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
         newcept->common.hi1_seqno = 0;
         newcept->awaitingconfirm = 1;
         newcept->targets = NULL;
+        newcept->delivercompressed = OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT;
 
         for (pair = node->data.mapping.pairs.start;
                 pair < node->data.mapping.pairs.top; pair ++) {
@@ -771,6 +772,20 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
                     strcmp((char *)key->data.scalar.value, "targets") == 0) {
 
                 parse_email_targets(&(newcept->targets), doc, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SEQUENCE_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                    "delivercompressed") == 0) {
+                if (strcmp((char *)value->data.scalar.value, "as-is") == 0) {
+                    newcept->delivercompressed =
+                            OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
+                } else if (strcmp((char *)value->data.scalar.value,
+                        "decompressed") == 0) {
+                    newcept->delivercompressed =
+                            OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED;
+                }
             }
         }
 

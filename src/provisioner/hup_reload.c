@@ -141,6 +141,9 @@ static inline int voip_intercept_equal(voipintercept_t *a, voipintercept_t *b) {
 static inline int email_intercept_equal(emailintercept_t *a,
         emailintercept_t *b) {
 
+    if (a->delivercompressed != b->delivercompressed) {
+        return 0;
+    }
     return common_intercept_equal(&(a->common), &(b->common));
 }
 
