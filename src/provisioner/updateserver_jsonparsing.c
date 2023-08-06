@@ -95,11 +95,7 @@ struct json_intercept {
                 *errflag = 1; \
             } \
         } else { \
-            if (strlen(objstr) == 0) { \
-                dest = NULL; \
-            } else { \
-                dest = strdup(objstr); \
-            } \
+            dest = strdup(objstr); \
         } \
     }
 
@@ -113,8 +109,6 @@ struct json_intercept {
         } else { \
             free(newmem); newmem = NULL; \
         } \
-    } else if (oldmem && newmem == NULL) { \
-        free(oldmem); oldmem = NULL; *changeflag = 1; \
     }
 
 #define INIT_JSON_INTERCEPT_PARSING \
