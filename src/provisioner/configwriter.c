@@ -451,7 +451,7 @@ static int emit_intercept_common(intercept_common_t *intcom,
     }
     if (!yaml_emitter_emit(emitter, &event)) return -1;
 
-    if (intcom->encryptkey) {
+    if (intcom->encryptkey && strlen(intcom->encryptkey) > 0) {
         yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
                 (yaml_char_t *)"encryptionkey", strlen("encryptionkey"), 1, 0,
                 YAML_PLAIN_SCALAR_STYLE);

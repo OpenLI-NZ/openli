@@ -775,7 +775,7 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
             }
 
             if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SEQUENCE_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value,
                     "delivercompressed") == 0) {
                 if (strcmp((char *)value->data.scalar.value, "as-is") == 0) {
@@ -783,6 +783,10 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
                             OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
                 } else if (strcmp((char *)value->data.scalar.value,
                         "decompressed") == 0) {
+                    newcept->delivercompressed =
+                            OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED;
+                } else if (strcmp((char *)value->data.scalar.value,
+                        "inflated") == 0) {
                     newcept->delivercompressed =
                             OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED;
                 }

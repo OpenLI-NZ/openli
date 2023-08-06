@@ -1023,6 +1023,42 @@ static int _append_content_to_imap_buffer(imap_session_t *imapsess,
     return 0;
 }
 
+static void reset_decompress_state(imap_session_t *imapsess) {
+
+    if (imapsess->deflatebuffer) {
+        free(imapsess->deflatebuffer);
+    }
+    imapsess->deflatebufsize = 0;
+    imapsess->deflatebufused = 0;
+
+    if (imapsess->deflate_ccs) {
+        free(imapsess->deflate_ccs);
+    }
+    imapsess->deflate_ccs = NULL;
+    imapsess->deflate_ccs_size = 0;
+    imapsess->deflate_ccs_current = 0;
+    imapsess->latest_deflate_sender = OPENLI_EMAIL_PACKET_SENDER_UNKNOWN;
+
+    if (imapsess->decompress_server.outbuffer) {
+        free(imapsess->decompress_server.outbuffer);
+        imapsess->decompress_server.outbuffer = NULL;
+        inflateEnd(&(imapsess->decompress_server.stream));
+    }
+    if (imapsess->decompress_client.outbuffer) {
+        free(imapsess->decompress_client.outbuffer);
+        imapsess->decompress_client.outbuffer = NULL;
+        inflateEnd(&(imapsess->decompress_client.stream));
+    }
+    if (imapsess->decompress_server.inbuffer) {
+        free(imapsess->decompress_server.inbuffer);
+        imapsess->decompress_server.inbuffer = NULL;
+    }
+    if (imapsess->decompress_client.inbuffer) {
+        free(imapsess->decompress_client.inbuffer);
+        imapsess->decompress_client.inbuffer = NULL;
+    }
+}
+
 static int _append_content_to_deflate_buffer(imap_session_t *imapsess,
         uint8_t *content, uint32_t length, uint8_t sender) {
     /* +1 to account for a null terminator */
@@ -1506,6 +1542,7 @@ static int find_reply_end(openli_email_worker_t *state,
         sess->event_time = timestamp;
         complete_imap_append(state, sess, imapsess, comm);
     } else if (strcasecmp(comm->imap_command, "COMPRESS") == 0) {
+        reset_decompress_state(imapsess);
         sess->compressed = 1;
     }
 

@@ -61,6 +61,7 @@ struct json_intercept {
     struct json_object *tomediate;
     struct json_object *encryption;
     struct json_object *encryptkey;
+    struct json_object *delivercompressed;
 };
 
 #define EXTRACT_JSON_INT_PARAM(name, uptype, jsonobj, dest, errflag, force) \
@@ -196,6 +197,7 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "staticips", &(ipjson->staticips));
     json_object_object_get_ex(parsed, "siptargets", &(ipjson->siptargets));
     json_object_object_get_ex(parsed, "targets", &(ipjson->emailtargets));
+    json_object_object_get_ex(parsed, "delivercompressed", &(ipjson->delivercompressed));
 }
 
 static inline int compare_intercept_times(intercept_common_t *latest,
@@ -949,7 +951,9 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     emailintercept_t *found = NULL;
     emailintercept_t *mailint = NULL;
     int r;
+    int parseerr = 0;
     char *target_info;
+    char *delivcompressstring = NULL;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&emailjson, parsed);
@@ -962,6 +966,17 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     if (parse_intercept_common_json(&emailjson, &(mailint->common),
             "Email intercept", cinfo, true) < 0) {
         goto cepterr;
+    }
+
+    EXTRACT_JSON_STRING_PARAM("delivercompressed", "email intercept",
+            emailjson.delivercompressed, delivcompressstring, &parseerr, false);
+
+    if (delivcompressstring) {
+        mailint->delivercompressed = map_email_decompress_option_string(
+                delivcompressstring);
+        free(delivcompressstring);
+    } else {
+        mailint->delivercompressed = OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT;
     }
 
     r = 0;
@@ -1286,6 +1301,7 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     int changedtargets = 0;
     email_target_t *tmp;
     char *target_info;
+    char *delivcompressstring = NULL;
 
     char *liidstr = NULL;
     int parseerr = 0, changed = 0, agencychanged = 0;
@@ -1322,6 +1338,17 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
+    EXTRACT_JSON_STRING_PARAM("delivercompressed", "email intercept",
+            emailjson.delivercompressed, delivcompressstring, &parseerr, false);
+
+    if (delivcompressstring) {
+        mailint->delivercompressed = map_email_decompress_option_string(
+                delivcompressstring);
+        free(delivcompressstring);
+    } else {
+        mailint->delivercompressed = OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET;
+    }
+
     if (emailjson.emailtargets != NULL) {
 
         if (parse_emailintercept_targets(state, mailint, emailjson.emailtargets,
@@ -1345,6 +1372,13 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
      * changing (e.g. mediator) ?
      *
      */
+
+    if (mailint->delivercompressed != found->delivercompressed &&
+            mailint->delivercompressed !=
+                    OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET) {
+        found->delivercompressed = mailint->delivercompressed;
+        changed = 1;
+    }
 
     if (update_intercept_common(&(mailint->common), &(found->common),
             &changed, &agencychanged, state) < 0) {
