@@ -302,6 +302,7 @@ static void init_email_session(emailsession_t *sess,
     sess->held_captured = calloc(16, sizeof(void **));
     sess->held_captured_size = 16;
     sess->next_expected_captured = 1;
+    sess->handle_compress = OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET;
 }
 
 int extract_email_sender_from_body(openli_email_worker_t *state,
@@ -756,6 +757,32 @@ static void remove_email_intercept(openli_email_worker_t *state,
 
 }
 
+static int update_default_email_compression(openli_email_worker_t *state,
+        provisioner_msg_t *provmsg) {
+
+    uint8_t newval;
+
+    if (decode_default_email_compression_announcement(provmsg->msgbody,
+            provmsg->msglen, &newval) < 0) {
+        logger(LOG_INFO, "OpenLI: email worker failed to decode default email compression update message from provisioner");
+        return -1;
+    }
+
+    if (newval != OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT &&
+            newval != OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET) {
+        if (state->emailid == 0 && newval != state->default_compress_delivery) {
+            char newval_str[256];
+
+            email_decompress_option_as_string(newval, newval_str, 256);
+            logger(LOG_INFO, "OpenLI: email workers have changed the default email compression delivery behaviour to '%s'", newval_str);
+        }
+
+        state->default_compress_delivery = newval;
+    }
+
+    return 0;
+}
+
 static int add_new_email_intercept(openli_email_worker_t *state,
         provisioner_msg_t *msg) {
 
@@ -1002,6 +1029,9 @@ static int handle_provisioner_message(openli_email_worker_t *state,
             break;
         case OPENLI_PROTO_DISCONNECT:
             flag_all_email_intercepts(state);
+            break;
+        case OPENLI_PROTO_ANNOUNCE_DEFAULT_EMAIL_COMPRESSION:
+            ret = update_default_email_compression(state, &(msg->data.provmsg));
             break;
         default:
             logger(LOG_INFO, "OpenLI: email worker thread %d received unexpected message type from provisioner: %u",

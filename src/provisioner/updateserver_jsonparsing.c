@@ -64,6 +64,10 @@ struct json_intercept {
     struct json_object *delivercompressed;
 };
 
+struct json_prov_options {
+    struct json_object *defaultemailcompress;
+};
+
 #define EXTRACT_JSON_INT_PARAM(name, uptype, jsonobj, dest, errflag, force) \
     if ((*errflag) == 0) { \
         int64_t ival; \
@@ -173,6 +177,13 @@ static inline void extract_agency_json_objects(struct json_agency *agjson,
     json_object_object_get_ex(parsed, "keepalivefreq", &(agjson->ka_freq));
     json_object_object_get_ex(parsed, "keepalivewait", &(agjson->ka_wait));
 
+}
+
+static inline void extract_provisioner_options_json_objects(
+        struct json_prov_options *opts, struct json_object *parsed) {
+
+    json_object_object_get_ex(parsed, "email-defaultdelivercompressed",
+            &(opts->defaultemailcompress));
 }
 
 static inline void extract_intercept_json_objects(
@@ -1319,6 +1330,66 @@ cepterr:
     }
     json_tokener_free(tknr);
     return -1;
+}
+
+int modify_provisioner_options(update_con_info_t *cinfo,
+        provision_state_t *state) {
+
+    struct json_prov_options optsjson;
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL;
+    char *delivcompressstring = NULL;
+    int ret = 0;
+    int parseerr = 0;
+
+    tknr = json_tokener_new();
+    parsed = json_tokener_parse_ex(tknr, cinfo->jsonbuffer, cinfo->jsonlen);
+    if (parsed == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: unable to parse JSON received over update socket: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>OpenLI provisioner was unable to parse JSON received over update socket: %s. %s",
+                update_failure_page_start,
+                json_tokener_error_desc(json_tokener_get_error(tknr)),
+                update_failure_page_end);
+        ret = -1;
+    } else {
+        extract_provisioner_options_json_objects(&optsjson, parsed);
+        EXTRACT_JSON_STRING_PARAM("email-defaultdelivercompressed",
+                "provisioner options",
+                optsjson.defaultemailcompress, delivcompressstring,
+                &parseerr, false);
+
+        if (delivcompressstring) {
+            uint8_t newdefault = map_email_decompress_option_string(
+                    delivcompressstring);
+            if (newdefault == OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET ||
+                    newdefault == OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT) {
+                snprintf(cinfo->answerstring, 4096,
+                        "%s <p>Invalid value provided for 'email-defaultemailcompressed' option: %s. %s",
+                        update_failure_page_start,
+                        delivcompressstring,
+                        update_failure_page_end);
+                ret = -1;
+            } else {
+                state->interceptconf.default_email_deliver_compress =
+                        newdefault;
+                if (announce_latest_default_email_decompress(state) < 0) {
+                    logger(LOG_INFO,
+                            "OpenLI provisioner: unable to announce default email compression handling after REST API update");
+                }
+
+            }
+            free(delivcompressstring);
+        }
+    }
+
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return ret;
 }
 
 int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {

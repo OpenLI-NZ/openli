@@ -238,6 +238,29 @@ static json_object *convert_coreserver_to_json(coreserver_t *cs,
     return jobj;
 }
 
+json_object *get_provisioner_options(update_con_info_t *cinfo,
+        provision_state_t *state) {
+
+    json_object *jobj;
+    json_object *defaultemaildecompressed = NULL;
+
+    jobj = json_object_new_object();
+
+    if (state->interceptconf.default_email_deliver_compress ==
+            OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS) {
+        defaultemaildecompressed = json_object_new_string("as-is");
+    } else if (state->interceptconf.default_email_deliver_compress ==
+            OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED) {
+        defaultemaildecompressed = json_object_new_string("decompressed");
+    }
+
+    if (defaultemaildecompressed) {
+        json_object_object_add(jobj, "email-defaultdelivercompressed",
+                defaultemaildecompressed);
+    }
+    return jobj;
+}
+
 json_object *get_default_radius(update_con_info_t *cinfo,
         provision_state_t *state) {
 

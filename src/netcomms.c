@@ -1294,6 +1294,29 @@ int push_default_radius_withdraw_onto_net_buffer(net_buffer_t *nb,
 
 }
 
+int push_default_email_compression_onto_net_buffer(net_buffer_t *nb,
+        uint8_t defaultcompress) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+    int ret;
+
+    totallen = sizeof(uint8_t) + (1 * 4);
+    populate_header(&hdr, OPENLI_PROTO_ANNOUNCE_DEFAULT_EMAIL_COMPRESSION,
+            totallen, 0);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DELIVER_COMPRESSED,
+            (uint8_t *)&(defaultcompress), sizeof(defaultcompress))) == -1) {
+        return -1;
+    }
+
+    return totallen;
+}
+
 #define CORESERVER_BODY_LEN(cs) \
     (sizeof(uint8_t) + strlen(cs->ipstr) + \
     (cs->portstr ? (strlen(cs->portstr) + (3 * 4)) : (2 * 4)))
@@ -2152,6 +2175,28 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
 
 int decode_lea_withdrawal(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
     return decode_lea_announcement(msgbody, len, lea);
+}
+
+int decode_default_email_compression_announcement(uint8_t *msgbody,
+        uint16_t len, uint8_t *result) {
+
+    uint8_t *msgend = msgbody + len;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_DELIVER_COMPRESSED) {
+            *result = *((uint8_t *)valptr);
+        }
+        msgbody += (vallen + 4);
+    }
+    return 0;
 }
 
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,

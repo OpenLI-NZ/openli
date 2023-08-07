@@ -297,6 +297,7 @@ struct emailsession {
     uint8_t mask_credentials;
     uint8_t compressed;
     void *timeout_ev;
+    uint8_t handle_compress;
 
     void *proto_state;
     void **held_captured;

@@ -77,7 +77,6 @@ static void create_emailccs_for_intercept_list(openli_email_worker_t *state,
     email_intercept_ref_t *ref, *tmp;
 
     HASH_ITER(hh, active->intlist, ref, tmp) {
-        uint8_t handle_compress;
 
         if (ref->em->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
             continue;
@@ -91,19 +90,28 @@ static void create_emailccs_for_intercept_list(openli_email_worker_t *state,
             continue;
         }
 
-        if (ref->em->delivercompressed ==
-                OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT) {
-            handle_compress = state->default_compress_delivery;
-        } else {
-            handle_compress = ref->em->delivercompressed;
+        /* Once the compressed data handler is set for a session, let's not
+         * change it. If the user changes either the default setting or the
+         * setting specific to this intercept, we'll apply the changes on
+         * any NEW sessions but I don't think it is a good idea to mix and
+         * match behaviour within the same session.
+         */
+        if (sess->handle_compress == OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET)
+        {
+            if (ref->em->delivercompressed ==
+                    OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT) {
+                sess->handle_compress = state->default_compress_delivery;
+            } else {
+                sess->handle_compress = ref->em->delivercompressed;
+            }
         }
 
-        if (handle_compress == OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS) {
+        if (sess->handle_compress == OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS) {
 
             if (sess->compressed && deflated == 0) {
                 continue;
             }
-        } else if (handle_compress ==
+        } else if (sess->handle_compress ==
                 OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED) {
             if (sess->compressed && deflated == 1) {
                 continue;

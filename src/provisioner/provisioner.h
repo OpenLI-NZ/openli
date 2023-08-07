@@ -212,6 +212,11 @@ typedef struct prov_intercept_conf {
     /** A set of default RADIUS user names */
     default_radius_user_t *defradusers;
 
+    /** The default approach for delivering compressed email CCs to the
+     *  agencies (i.e. in their original compressed form, or decompressed).
+     */
+    uint8_t default_email_deliver_compress;
+
     int destroy_pending;
     /** A mutex to protect the intercept config from race conditions */
     pthread_mutex_t safelock;
@@ -381,6 +386,7 @@ liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
         char *liid, char *agency);
 int announce_hi1_notification_to_mediators(provision_state_t *state,
         intercept_common_t *intcomm, char *target_id, hi1_notify_t not_type);
+int announce_latest_default_email_decompress(provision_state_t *state);
 
 /* Implemented in hup_reload.c */
 int reload_provisioner_config(provision_state_t *state);

@@ -786,7 +786,34 @@ static int emit_emailintercepts(emailintercept_t *mailints,
     return 0;
 }
 
+static int emit_basic_options(prov_intercept_conf_t *conf,
+        yaml_emitter_t *emitter) {
 
+    yaml_event_t event;
+    yaml_scalar_event_initialize(&event, NULL,
+            (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)"email-defaultdelivercompressed",
+            strlen("email-defaultdelivercompressed"),
+            1, 0, YAML_PLAIN_SCALAR_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    if (conf->default_email_deliver_compress ==
+                    OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS) {
+        yaml_scalar_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"as-is", strlen("as-is"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+    } else if (conf->default_email_deliver_compress ==
+            OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED) {
+
+        yaml_scalar_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"decompressed",
+                strlen("decompressed"), 1, 0, YAML_PLAIN_SCALAR_STYLE);
+    }
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+    return 0;
+}
 
 int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf) {
 
@@ -823,6 +850,10 @@ int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf) {
             (unsigned char *)YAML_DEFAULT_MAPPING_TAG, 1,
             YAML_ANY_MAPPING_STYLE);
     if (!yaml_emitter_emit(&emitter, &event)) goto error;
+
+    if (emit_basic_options(conf, &emitter) < 0) {
+        goto error;
+    }
 
     if (emit_core_server_list(conf->sipservers, "sipservers", &emitter) < 0) {
         goto error;

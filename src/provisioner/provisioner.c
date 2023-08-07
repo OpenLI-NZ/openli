@@ -169,6 +169,8 @@ void init_intercept_config(prov_intercept_conf_t *state) {
     state->leas = NULL;
     state->defradusers = NULL;
     state->destroy_pending = 0;
+    state->default_email_deliver_compress =
+            OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
     pthread_mutex_init(&(state->safelock), NULL);
 }
 
@@ -283,7 +285,6 @@ int init_prov_state(provision_state_t *state, char *configfile) {
     state->cert_pem = NULL;
 
     state->ignorertpcomfort = 0;
-
     state->restauthenabled = 0;
     state->restauthdbfile = NULL;
     state->restauthkey = NULL;
@@ -745,6 +746,16 @@ static int push_coreservers(coreserver_t *servers, uint8_t cstype,
     return 0;
 }
 
+static int push_default_email_compression(uint8_t defaultcompress,
+        net_buffer_t *nb) {
+
+    if (push_default_email_compression_onto_net_buffer(nb,
+            defaultcompress) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
 static int push_all_default_radius(default_radius_user_t *users,
         net_buffer_t *nb) {
     default_radius_user_t *defuser, *tmp;
@@ -969,6 +980,14 @@ static int respond_collector_auth(provision_state_t *state,
         return -1;
     }
 
+    if (push_default_email_compression(
+            state->interceptconf.default_email_deliver_compress,
+            outgoing) == -1) {
+        logger(LOG_INFO,
+                "OpenLI: unable to queue default email compression handling to be sent to new collector on fd %d", pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
+        return -1;
+    }
 
     if (push_coreservers(state->interceptconf.radiusservers,
             OPENLI_CORE_SERVER_RADIUS, outgoing) == -1) {

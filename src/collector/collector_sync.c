@@ -1832,6 +1832,7 @@ static int recv_from_provisioner(collector_sync_t *sync) {
             case OPENLI_PROTO_MODIFY_EMAILINTERCEPT:
             case OPENLI_PROTO_ANNOUNCE_EMAIL_TARGET:
             case OPENLI_PROTO_WITHDRAW_EMAIL_TARGET:
+            case OPENLI_PROTO_ANNOUNCE_DEFAULT_EMAIL_COMPRESSION:
                 ret = forward_provmsg_to_email_workers(sync, provmsg, msglen,
                         msgtype);
                 if (ret == -1) {
