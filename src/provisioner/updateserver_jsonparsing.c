@@ -315,6 +315,17 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
         common->liid_len = strlen(common->liid);
     }
 
+    if (is_new) {
+        if (common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+            if (common->encryptkey == NULL || strlen(common->encryptkey) == 0) {
+                snprintf(cinfo->answerstring, 4096,
+                        "'encryptionkey' parameter must be set if 'payloadencryption' is set to anything other than 'none'");
+                return -1;
+            }
+        }
+    }
+
+
     if (parseerr) {
         return -1;
     }
@@ -323,7 +334,26 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
 
 static int update_intercept_common(intercept_common_t *parsed,
         intercept_common_t *existing, int *changed, int *agencychanged,
-        provision_state_t *state) {
+        provision_state_t *state, update_con_info_t *cinfo) {
+
+    payload_encryption_method_t enc;
+
+    /* Check if encryption options are valid -- if not, roll back without
+     * changing anything.
+     */
+    if (parsed->encrypt == OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
+        enc = existing->encrypt;
+    } else {
+        enc = parsed->encrypt;
+    }
+
+    if (enc != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (parsed->encryptkey == NULL || strlen(parsed->encryptkey) == 0) {
+            snprintf(cinfo->answerstring, 4096,
+                    "'encryptionkey' parameter must be set if 'payloadencryption' is set to anything other than 'none'");
+            return -1;
+        }
+    }
 
     MODIFY_STRING_MEMBER(parsed->authcc, existing->authcc, changed);
     existing->authcc_len  = strlen(existing->authcc);
@@ -343,7 +373,6 @@ static int update_intercept_common(intercept_common_t *parsed,
                 existing->liid);
     }
 
-    MODIFY_STRING_MEMBER(parsed->encryptkey, existing->encryptkey, changed);
 
     if (parsed->encrypt != existing->encrypt &&
             parsed->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
@@ -351,6 +380,7 @@ static int update_intercept_common(intercept_common_t *parsed,
         existing->encrypt = parsed->encrypt;
     }
 
+    MODIFY_STRING_MEMBER(parsed->encryptkey, existing->encryptkey, changed);
     if (compare_intercept_times(parsed, existing) == 1) {
         *changed = 1;
     }
@@ -1338,6 +1368,11 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
+    if (update_intercept_common(&(mailint->common), &(found->common),
+            &changed, &agencychanged, state, cinfo) < 0) {
+        goto cepterr;
+    }
+
     EXTRACT_JSON_STRING_PARAM("delivercompressed", "email intercept",
             emailjson.delivercompressed, delivcompressstring, &parseerr, false);
 
@@ -1378,11 +1413,6 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
                     OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET) {
         found->delivercompressed = mailint->delivercompressed;
         changed = 1;
-    }
-
-    if (update_intercept_common(&(mailint->common), &(found->common),
-            &changed, &agencychanged, state) < 0) {
-        goto cepterr;
     }
 
     if (changed) {
@@ -1468,6 +1498,11 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
+    if (update_intercept_common(&(vint->common), &(found->common),
+            &changed, &agencychanged, state, cinfo) < 0) {
+        goto cepterr;
+    }
+
     if (voipjson.siptargets != NULL) {
 
         if (parse_voipintercept_siptargets(state, vint, voipjson.siptargets,
@@ -1490,11 +1525,6 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
      * changing (e.g. mediator) ?
      *
      */
-
-    if (update_intercept_common(&(vint->common), &(found->common),
-            &changed, &agencychanged, state) < 0) {
-        goto cepterr;
-    }
 
     if (changed) {
         modify_existing_intercept_options(state, (void *)found,
@@ -1580,6 +1610,11 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
+    if (update_intercept_common(&(ipint->common), &(found->common),
+            &changed, &agencychanged, state, cinfo) < 0) {
+        goto cepterr;
+    }
+
     EXTRACT_JSON_STRING_PARAM("user", "IP intercept", ipjson.user,
             ipint->username, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("accesstype", "IP intercept", ipjson.accesstype,
@@ -1651,11 +1686,6 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
      * changing (e.g. mediator) ?
      *
      */
-    if (update_intercept_common(&(ipint->common), &(found->common),
-            &changed, &agencychanged, state) < 0) {
-        goto cepterr;
-    }
-
     MODIFY_STRING_MEMBER(ipint->username, found->username, &changed);
     found->username_len = strlen(found->username);
 
