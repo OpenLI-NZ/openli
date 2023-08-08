@@ -1323,7 +1323,7 @@ static int find_next_crlf(imap_session_t *sess, int start_index) {
     regex_t regex;
     int nests = 0;
 
-    if (regcomp(&regex, "\\{\\d+\\}", REG_EXTENDED) != 0) {
+    if (regcomp(&regex, "\\{[0-9]+\\}", REG_EXTENDED) != 0) {
         logger(LOG_INFO, "OpenLI: failed to compile regex pattern for matching curly braces in IMAP content?");
         return -1;
     }
@@ -2020,6 +2020,7 @@ static int find_next_imap_message(openli_email_worker_t *state,
     if (imapsess->next_command_name) {
         free(imapsess->next_command_name);
     }
+
     imapsess->next_command_name = comm_resp;
     imapsess->next_comm_start = msgstart - imapsess->contbuffer;
 
