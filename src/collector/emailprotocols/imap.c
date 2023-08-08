@@ -114,7 +114,6 @@ typedef struct imapsession {
     imap_cc_index_t *deflate_ccs;
     int deflate_ccs_size;
     int deflate_ccs_current;
-    uint8_t latest_deflate_sender;
 
     imap_command_t *commands;
     int commands_size;
@@ -196,19 +195,6 @@ static int update_deflate_ccs(imap_session_t *imapsess, int start, int end,
         return -1;
     }
 
-    if (sender == imapsess->latest_deflate_sender) {
-        assert(imapsess->deflate_ccs_current < imapsess->deflate_ccs_size);
-
-        ind = &(imapsess->deflate_ccs[imapsess->deflate_ccs_current]);
-        assert(ind->cc_end == start);
-        ind->cc_end = end;
-        return 0;
-    }
-
-    if (imapsess->deflate_ccs_size != 0) {
-        imapsess->deflate_ccs_current ++;
-    }
-
     while (imapsess->deflate_ccs_size <= imapsess->deflate_ccs_current) {
         imapsess->deflate_ccs = realloc(imapsess->deflate_ccs,
                 (imapsess->deflate_ccs_size + 5) * sizeof(imap_cc_index_t));
@@ -224,7 +210,7 @@ static int update_deflate_ccs(imap_session_t *imapsess, int start, int end,
         ind->dir = 1;
     }
 
-    imapsess->latest_deflate_sender = sender;
+    imapsess->deflate_ccs_current ++;
     return 0;
 }
 
@@ -364,6 +350,7 @@ static int generate_ccs_from_imap_command(openli_email_worker_t *state,
                     imapsess->deflatebuffer + imapsess->deflate_ccs[i].cc_start,
                     len, timestamp, dir, 1);
         }
+        imapsess->deflate_ccs_current = 0;
     }
 
     return 1;
@@ -1037,7 +1024,6 @@ static void reset_decompress_state(imap_session_t *imapsess) {
     imapsess->deflate_ccs = NULL;
     imapsess->deflate_ccs_size = 0;
     imapsess->deflate_ccs_current = 0;
-    imapsess->latest_deflate_sender = OPENLI_EMAIL_PACKET_SENDER_UNKNOWN;
 
     if (imapsess->decompress_server.outbuffer) {
         free(imapsess->decompress_server.outbuffer);
@@ -1542,8 +1528,15 @@ static int find_reply_end(openli_email_worker_t *state,
         sess->event_time = timestamp;
         complete_imap_append(state, sess, imapsess, comm);
     } else if (strcasecmp(comm->imap_command, "COMPRESS") == 0) {
+        /* force CCs to be generated before setting compressed state,
+         * otherwise we will fail to emit the CCs for the COMPRESS
+         * command itself.
+         */
+        generate_ccs_from_imap_command(state, sess, imapsess, comm, timestamp);
+        reset_imap_saved_command(comm);
         reset_decompress_state(imapsess);
         sess->compressed = 1;
+        return r;
     }
 
     generate_ccs_from_imap_command(state, sess, imapsess, comm, timestamp);
@@ -2103,7 +2096,6 @@ int update_imap_session_by_ingestion(openli_email_worker_t *state,
         imapsess->deflate_ccs = NULL;
         imapsess->deflate_ccs_size = 0;
         imapsess->deflate_ccs_current = 0;
-        imapsess->latest_deflate_sender = OPENLI_EMAIL_PACKET_SENDER_UNKNOWN;
 
         for (i = 0; i < imapsess->commands_size; i++) {
             init_imap_command(&(imapsess->commands[i]));
