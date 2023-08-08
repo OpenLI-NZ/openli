@@ -75,6 +75,13 @@ typedef enum {
     OPENLI_INTERCEPT_OUTPUTS_CCONLY = 2,
 } intercept_outputs_t;
 
+enum {
+    OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS = 0,
+    OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED = 1,
+    OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET = 254,
+    OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT = 255,
+};
+
 typedef enum {
     HI1_LI_ACTIVATED = 1,
     HI1_LI_DEACTIVATED = 2,
@@ -157,6 +164,7 @@ typedef struct emailintercept {
     email_target_t *targets;
 
     uint8_t awaitingconfirm;
+    uint8_t delivercompressed;
     UT_hash_handle hh_liid;
 
 } emailintercept_t;
@@ -287,7 +295,9 @@ struct emailsession {
     uint8_t protocol;
     uint8_t currstate;
     uint8_t mask_credentials;
+    uint8_t compressed;
     void *timeout_ev;
+    uint8_t handle_compress;
 
     void *proto_state;
     void **held_captured;
@@ -442,11 +452,13 @@ const char *get_radius_ident_string(uint32_t radoptions);
 internet_access_method_t map_access_type_string(char *confstr);
 uint32_t map_radius_ident_string(char *confstr);
 payload_encryption_method_t map_encrypt_method_string(char *encstr);
+uint8_t map_email_decompress_option_string(char *decstr);
 
 void intercept_mediation_mode_as_string(intercept_outputs_t mode,
         char *space, int spacelen);
 void intercept_encryption_mode_as_string(payload_encryption_method_t method,
         char *space, int spacelen);
+void email_decompress_option_as_string(uint8_t opt, char *space, int spacelen);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

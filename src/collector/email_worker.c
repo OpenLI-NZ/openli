@@ -162,6 +162,7 @@ static openli_email_captured_t *convert_packet_to_email_captured(
     uint32_t rem;
     uint8_t proto;
     void *posttcp;
+    uint8_t pktsender = 0;
 
     uint16_t src_port, dest_port, rem_port, host_port;
     openli_email_captured_t *cap = NULL;
@@ -197,6 +198,7 @@ static openli_email_captured_t *convert_packet_to_email_captured(
 
         rem_port = dest_port;
         host_port = src_port;
+        pktsender = OPENLI_EMAIL_PACKET_SENDER_SERVER;
     } else {
         if (trace_get_source_address_string(pkt, ip_b, INET6_ADDRSTRLEN)
                 == NULL) {
@@ -208,6 +210,7 @@ static openli_email_captured_t *convert_packet_to_email_captured(
         }
         host_port = dest_port;
         rem_port = src_port;
+        pktsender = OPENLI_EMAIL_PACKET_SENDER_CLIENT;
     }
 
     snprintf(space, spacelen, "%s-%s-%u-%u", ip_a, ip_b, host_port,
@@ -230,6 +233,7 @@ static openli_email_captured_t *convert_packet_to_email_captured(
     cap->remote_ip = strdup(ip_b);
     cap->host_ip = strdup(ip_a);
     cap->part_id = 0;
+    cap->pkt_sender = pktsender;
 
     snprintf(portstr, 16, "%u", rem_port);
     cap->remote_port = strdup(portstr);
@@ -290,6 +294,7 @@ static void init_email_session(emailsession_t *sess,
     sess->participants = NULL;
     sess->protocol = cap->type;
     sess->currstate = 0;
+    sess->compressed = 0;
     sess->timeout_ev = NULL;
     sess->proto_state = NULL;
     sess->server_octets = 0;
@@ -297,6 +302,7 @@ static void init_email_session(emailsession_t *sess,
     sess->held_captured = calloc(16, sizeof(void **));
     sess->held_captured_size = 16;
     sess->next_expected_captured = 1;
+    sess->handle_compress = OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET;
 }
 
 int extract_email_sender_from_body(openli_email_worker_t *state,
@@ -600,6 +606,8 @@ static int update_modified_email_intercept(openli_email_worker_t *state,
     openli_export_recv_t *expmsg;
     int encodingchanged = 0, keychanged = 0;
 
+    found->delivercompressed = decode->delivercompressed;
+
     if (decode->common.tostart_time != found->common.tostart_time ||
             decode->common.toend_time != found->common.toend_time) {
         logger(LOG_INFO,
@@ -747,6 +755,32 @@ static void remove_email_intercept(openli_email_worker_t *state,
 
     free_single_emailintercept(em);
 
+}
+
+static int update_default_email_compression(openli_email_worker_t *state,
+        provisioner_msg_t *provmsg) {
+
+    uint8_t newval;
+
+    if (decode_default_email_compression_announcement(provmsg->msgbody,
+            provmsg->msglen, &newval) < 0) {
+        logger(LOG_INFO, "OpenLI: email worker failed to decode default email compression update message from provisioner");
+        return -1;
+    }
+
+    if (newval != OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT &&
+            newval != OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET) {
+        if (state->emailid == 0 && newval != state->default_compress_delivery) {
+            char newval_str[256];
+
+            email_decompress_option_as_string(newval, newval_str, 256);
+            logger(LOG_INFO, "OpenLI: email workers have changed the default email compression delivery behaviour to '%s'", newval_str);
+        }
+
+        state->default_compress_delivery = newval;
+    }
+
+    return 0;
 }
 
 static int add_new_email_intercept(openli_email_worker_t *state,
@@ -995,6 +1029,9 @@ static int handle_provisioner_message(openli_email_worker_t *state,
             break;
         case OPENLI_PROTO_DISCONNECT:
             flag_all_email_intercepts(state);
+            break;
+        case OPENLI_PROTO_ANNOUNCE_DEFAULT_EMAIL_COMPRESSION:
+            ret = update_default_email_compression(state, &(msg->data.provmsg));
             break;
         default:
             logger(LOG_INFO, "OpenLI: email worker thread %d received unexpected message type from provisioner: %u",

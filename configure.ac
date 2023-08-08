@@ -70,6 +70,10 @@ AS_IF([test "x$uthash_avail" != "xyes"],
 
 if test "x$enable_collector" != "xno"; then
         AC_CHECK_LIB([tcmalloc], [tc_version],,libtcmalloc_found=0)
+        AC_CHECK_LIB([z], [inflateEnd],,libz_found=0)
+        if test "$libz_found" = 0; then
+                AC_MSG_ERROR(Required library libz not found; use LDFLAGS to specify library location)
+        fi
         AC_CHECK_LIB([osipparser2], [osip_message_init],libosip2_found=1,libosip2_found=0)
         if test "$libosip2_found" = 0; then
                 AC_MSG_ERROR(Required library libosipparser2 not found; use LDFLAGS to specify library location)
@@ -78,7 +82,7 @@ if test "x$enable_collector" != "xno"; then
         if test "$libb64_found" = 0; then
                 AC_MSG_ERROR(Required library libb64 not found; use LDFLAGS to specify library location)
         fi
-        COLLECTOR_LIBS="$COLLECTOR_LIBS -losipparser2 -lb64"
+        COLLECTOR_LIBS="$COLLECTOR_LIBS -losipparser2 -lb64 -lz"
 fi
 
 if test "x$enable_provisioner" != "xno" -o "x$enable_collector" != "xno"; then

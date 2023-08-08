@@ -756,6 +756,7 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
         newcept->common.hi1_seqno = 0;
         newcept->awaitingconfirm = 1;
         newcept->targets = NULL;
+        newcept->delivercompressed = OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT;
 
         for (pair = node->data.mapping.pairs.start;
                 pair < node->data.mapping.pairs.top; pair ++) {
@@ -771,6 +772,24 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
                     strcmp((char *)key->data.scalar.value, "targets") == 0) {
 
                 parse_email_targets(&(newcept->targets), doc, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                    "delivercompressed") == 0) {
+                if (strcmp((char *)value->data.scalar.value, "as-is") == 0) {
+                    newcept->delivercompressed =
+                            OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
+                } else if (strcmp((char *)value->data.scalar.value,
+                        "decompressed") == 0) {
+                    newcept->delivercompressed =
+                            OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED;
+                } else if (strcmp((char *)value->data.scalar.value,
+                        "inflated") == 0) {
+                    newcept->delivercompressed =
+                            OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED;
+                }
             }
         }
 
@@ -1617,6 +1636,31 @@ static int intercept_parser(void *arg, yaml_document_t *doc,
             return -1;
         }
     }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value,
+                    "email-defaultdelivercompressed") == 0) {
+        if (strcasecmp((char *)value->data.scalar.value, "as-is") == 0) {
+            state->default_email_deliver_compress =
+                    OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
+        } else if (strcasecmp((char *)value->data.scalar.value,
+                "decompressed") == 0) {
+            state->default_email_deliver_compress =
+                    OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED;
+        } else if (strcasecmp((char *)value->data.scalar.value,
+                "inflated") == 0) {
+            state->default_email_deliver_compress =
+                    OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED;
+        } else {
+            logger(LOG_INFO, "OpenLI provisioner: invalid value for 'email-defaultdelivercompressed' option: %s", (char *)value->data.scalar.value);
+            state->default_email_deliver_compress =
+                    OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
+            logger(LOG_INFO, "OpenLI provisioner: using 'as-is' instead.");
+        }
+
+    }
+
     return 0;
 }
 
@@ -1632,7 +1676,6 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
         state->ignorertpcomfort =
                 check_onoff((char *)(value->data.scalar.value));
     }
-
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&

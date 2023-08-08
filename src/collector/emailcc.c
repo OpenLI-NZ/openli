@@ -71,7 +71,7 @@ static openli_export_recv_t *create_emailcc_job(char *liid,
 static void create_emailccs_for_intercept_list(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
         uint8_t format, email_user_intercept_list_t *active,
-        uint64_t timestamp, uint8_t dir) {
+        uint64_t timestamp, uint8_t dir, uint8_t deflated) {
 
     openli_export_recv_t *ccjob = NULL;
     email_intercept_ref_t *ref, *tmp;
@@ -89,6 +89,38 @@ static void create_emailccs_for_intercept_list(openli_email_worker_t *state,
                 timestamp > ref->em->common.toend_time * 1000) {
             continue;
         }
+
+        /* Once the compressed data handler is set for a session, let's not
+         * change it. If the user changes either the default setting or the
+         * setting specific to this intercept, we'll apply the changes on
+         * any NEW sessions but I don't think it is a good idea to mix and
+         * match behaviour within the same session.
+         */
+        if (sess->handle_compress == OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET)
+        {
+            if (ref->em->delivercompressed ==
+                    OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT) {
+                sess->handle_compress = state->default_compress_delivery;
+            } else {
+                sess->handle_compress = ref->em->delivercompressed;
+            }
+        }
+
+        if (sess->handle_compress == OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS) {
+
+            if (sess->compressed && deflated == 0) {
+                continue;
+            }
+        } else if (sess->handle_compress ==
+                OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED) {
+            if (sess->compressed && deflated == 1) {
+                continue;
+            }
+        } else {
+            continue;
+        }
+
+
         ccjob = create_emailcc_job(ref->em->common.liid, sess,
                 ref->em->common.destid, timestamp, content, content_len,
                 format, dir);
@@ -118,7 +150,7 @@ int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
     if (active) {
         create_emailccs_for_intercept_list(state, sess, content, content_len,
                 ETSILI_EMAIL_CC_FORMAT_APP, active, timestamp,
-                ETSI_DIR_FROM_TARGET);
+                ETSI_DIR_FROM_TARGET, 0);
     }
 
     HASH_ITER(hh, sess->participants, recip, tmp) {
@@ -134,7 +166,7 @@ int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
 
         create_emailccs_for_intercept_list(state, sess, content, content_len,
                 ETSILI_EMAIL_CC_FORMAT_APP, active, timestamp,
-                ETSI_DIR_TO_TARGET);
+                ETSI_DIR_TO_TARGET, 0);
     }
 
     return 0;
@@ -159,7 +191,7 @@ int generate_email_cc_from_pop3_payload(openli_email_worker_t *state,
 
         create_emailccs_for_intercept_list(state, sess, content, content_len,
                 ETSILI_EMAIL_CC_FORMAT_APP, active, timestamp,
-                etsidir);
+                etsidir, 0);
     }
 
     return 0;
@@ -168,7 +200,7 @@ int generate_email_cc_from_pop3_payload(openli_email_worker_t *state,
 
 int generate_email_cc_from_imap_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
-        uint64_t timestamp, uint8_t etsidir) {
+        uint64_t timestamp, uint8_t etsidir, uint8_t deflated) {
 
     email_user_intercept_list_t *active = NULL;
     email_participant_t *recip, *tmp;
@@ -185,7 +217,7 @@ int generate_email_cc_from_imap_payload(openli_email_worker_t *state,
 
         create_emailccs_for_intercept_list(state, sess, content, content_len,
                 ETSILI_EMAIL_CC_FORMAT_APP, active, timestamp,
-                etsidir);
+                etsidir, deflated);
     }
 
     return 0;

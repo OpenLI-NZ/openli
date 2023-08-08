@@ -141,6 +141,9 @@ static inline int voip_intercept_equal(voipintercept_t *a, voipintercept_t *b) {
 static inline int email_intercept_equal(emailintercept_t *a,
         emailintercept_t *b) {
 
+    if (a->delivercompressed != b->delivercompressed) {
+        return 0;
+    }
     return common_intercept_equal(&(a->common), &(b->common));
 }
 
@@ -791,6 +794,7 @@ static int reload_intercept_config(provision_state_t *currstate,
 
     clear_intercept_state(&(currstate->interceptconf));
     currstate->interceptconf = newconf;
+    announce_latest_default_email_decompress(currstate);
     return 0;
 }
 
@@ -1110,6 +1114,13 @@ int reload_provisioner_config(provision_state_t *currstate) {
         /* Tell all collectors to drop their mediators until further notice */
         disconnect_mediators_from_collectors(currstate);
 
+    }
+
+    if (!clientchanged) {
+        if (announce_latest_default_email_decompress(currstate) < 0) {
+            clear_prov_state(&newstate);
+            return -1;
+        }
     }
 
     if (reload_intercept_config(currstate, mediatorchanged, clientchanged) < 0)

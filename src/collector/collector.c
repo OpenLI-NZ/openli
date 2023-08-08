@@ -1950,6 +1950,8 @@ int main(int argc, char *argv[]) {
         glob->emailworkers[i].mask_imap_creds = &(glob->mask_imap_creds);
         glob->emailworkers[i].mask_pop3_creds = &(glob->mask_pop3_creds);
         glob->emailworkers[i].timeout_thresholds = &(glob->email_timeouts);
+        glob->emailworkers[i].default_compress_delivery =
+                OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
 
         pthread_create(&(glob->emailworkers[i].threadid), NULL,
                 start_email_worker_thread, (void *)&(glob->emailworkers[i]));

@@ -655,6 +655,18 @@ int announce_single_intercept(provision_state_t *state,
     return 0;
 }
 
+int announce_latest_default_email_decompress(provision_state_t *state) {
+    SEND_ALL_COLLECTORS_BEGIN
+        if (push_default_email_compression_onto_net_buffer(sock->outgoing,
+                state->interceptconf.default_email_deliver_compress) == -1) {
+            disconnect_provisioner_client(state->epoll_fd, col->client,
+                    col->identifier);
+            continue;
+        }
+    SEND_ALL_COLLECTORS_END
+    return 0;
+}
+
 liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
         char *liid, char *agency) {
 

@@ -47,6 +47,12 @@ enum {
     OPENLI_EMAIL_DIRECTION_INBOUND
 };
 
+enum {
+    OPENLI_EMAIL_PACKET_SENDER_UNKNOWN,
+    OPENLI_EMAIL_PACKET_SENDER_SERVER,
+    OPENLI_EMAIL_PACKET_SENDER_CLIENT,
+};
+
 typedef enum {
     OPENLI_IMAP_STATE_INIT = 0,
     OPENLI_IMAP_STATE_SESSION_OVER,
@@ -106,6 +112,7 @@ typedef struct openli_email_captured {
     uint32_t msg_length;
     char *content;
     uint8_t own_content;
+    uint8_t pkt_sender;
 
 } openli_email_captured_t;
 
@@ -118,6 +125,7 @@ typedef struct openli_email_worker {
     int emailid;
     int tracker_threads;
     int fwd_threads;
+    uint8_t default_compress_delivery;
 
     void *zmq_ii_sock;          /* ZMQ for receiving instructions from sync thread */
     void **zmq_pubsocks;        /* ZMQs for publishing to seqtracker threads */
@@ -195,7 +203,7 @@ int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
         uint64_t timestamp);
 int generate_email_cc_from_imap_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
-        uint64_t timestamp, uint8_t dir);
+        uint64_t timestamp, uint8_t dir, uint8_t deflated);
 int generate_email_cc_from_pop3_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
         uint64_t timestamp, uint8_t dir);
