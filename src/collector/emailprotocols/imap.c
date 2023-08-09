@@ -337,9 +337,12 @@ static int generate_ccs_from_imap_command(openli_email_worker_t *state,
     }
 
     if (imapsess->deflate_ccs) {
-        for (i = 0; i <= imapsess->deflate_ccs_current; i++) {
+        for (i = 0; i < imapsess->deflate_ccs_current; i++) {
             len = imapsess->deflate_ccs[i].cc_end -
                     imapsess->deflate_ccs[i].cc_start;
+            if (len == 0) {
+                continue;
+            }
             if (imapsess->deflate_ccs[i].dir == 1) {
                 dir = ETSI_DIR_FROM_TARGET;
             } else {
