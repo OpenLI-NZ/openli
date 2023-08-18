@@ -1,3 +1,20 @@
+openli (1.1.2-1) unstable; urgency=medium
+
+  * Email ingestion: add support for PART_ID field and attempt
+    to reorder received messages based on PART_ID value.
+  * Email ingestion: fix segfault that can occur if an incomplete
+    multi-part message is received by the ingestion socket.
+  * IMAP: fix interception failures when the COMPRESS extension
+    is used by a session.
+  * REST API: fix segfaults when using PUT to modify existing
+    intercepts / agencies.
+  * IMAP: fix bad regex that was causing problems when intercepting
+    mail content containing unbalanced parentheses.
+  * REST API: added new openliversion/ endpoint which returns the
+    version of the provisioner software.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Fri, 18 Aug 2023 13:26:12 +1200
+
 openli (1.1.1-1) unstable; urgency=medium
 
   * Add ability to encrypt CC and IRI payload, as per Annex G of
