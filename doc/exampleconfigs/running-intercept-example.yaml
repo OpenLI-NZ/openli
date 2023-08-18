@@ -248,3 +248,21 @@ emailintercepts:
    targets:
      - address: abadperson@example.org          # email address for the target
      - address: myalias@example.org             # multiple addresses are allowed
+   delivercompressed: decompressed      # If content is compressed, send the
+                                        # decompressed version to the agency.
+                                        # Other valid options are `as-is` (i.e.
+                                        # send the compressed version) or
+                                        # `default` (i.e. do whatever the
+                                        # `email-defaultdelivercompressed` below
+                                        # says). If this option is not set,
+                                        # the default is `default`.
+
+
+# Setting this option to `as-is` will cause any intercepted email content
+# that is compressed to be sent to the agencies in its original compressed
+# form. Setting this option to `decompressed` will instead have
+# OpenLI decompress the message contents before encoding it into CC records.
+# Individual intercepts can override this default by including a corresponding
+# `delivercompressed` option in the intercept configuration (see above).
+# Defaults to `as-is` if not set.
+email-defaultdelivercompressed: as-is
