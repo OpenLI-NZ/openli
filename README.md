@@ -50,7 +50,7 @@ obligations to assist law enforcement to prevent criminal or terrorist activity.
 Any use of this software to assist with the violation of human rights or the
 oppression of a populace is forbidden. If you are unsure as to whether your use
 of this software may violate these conditions, please contact us as
-<openli-support@waikato.ac.nz> and explain your situation to receive our advice
+<hello@openli.nz> and explain your situation to receive our advice
 on whether you may use OpenLI or not.
 
 ## Software Packages
@@ -73,7 +73,7 @@ API, DPDK with OpenLI, etc.). The wiki tends to be updated more often than
 the in-code documentation (e.g. the `doc/` directory) as well.
 
 If there is content that you would like to contribute to the OpenLI wiki,
-please feel free to reach out to us at <openli-support@waikato.ac.nz> and we
+please feel free to reach out to us at <hello@openli.nz> and we
 will be more than happy to accept your contribution.
 
 ## Dependencies for building from source
@@ -297,7 +297,7 @@ A. Unfortunately there are plenty of reasons why this might happen. Here are
 * Try installing the latest 'develop' branch of openli itself from
   https://github.com/OpenLI-NZ/openli
 
-  If all else fails, send us an email at openli-support@waikato.ac.nz and
+  If all else fails, send us an email at support@openli.nz and
   someone will try to help you.
 
 ---
