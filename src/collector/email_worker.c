@@ -232,7 +232,7 @@ static openli_email_captured_t *convert_packet_to_email_captured(
     cap->datasource = NULL;
     cap->remote_ip = strdup(ip_b);
     cap->host_ip = strdup(ip_a);
-    cap->part_id = 0;
+    cap->part_id = 0xFFFFFFFF;
     cap->pkt_sender = pktsender;
 
     snprintf(portstr, 16, "%u", rem_port);
@@ -301,7 +301,7 @@ static void init_email_session(emailsession_t *sess,
     sess->client_octets = 0;
     sess->held_captured = calloc(16, sizeof(void **));
     sess->held_captured_size = 16;
-    sess->next_expected_captured = 1;
+    sess->next_expected_captured = 0;
     sess->handle_compress = OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET;
 }
 
@@ -1111,7 +1111,7 @@ static int find_and_update_active_session(openli_email_worker_t *state,
 
     update_email_session_timeout(state, sess);
 
-    if (cap->part_id == 0) {
+    if (cap->part_id == 0xFFFFFFFF) {
         cap->part_id = sess->next_expected_captured;
     }
 
