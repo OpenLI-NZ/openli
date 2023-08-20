@@ -200,7 +200,8 @@ int generate_email_logoff_iri(openli_email_worker_t *state,
 /* Defined in emailcc.c */
 int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
-        uint64_t timestamp, uint8_t dir, uint8_t only_recipients);
+        uint64_t timestamp, uint8_t senderdir, uint8_t recipdir,
+        uint8_t only_recipients);
 int generate_email_cc_from_imap_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
         uint64_t timestamp, uint8_t dir, uint8_t deflated);
