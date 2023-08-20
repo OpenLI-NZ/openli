@@ -1,4 +1,4 @@
-openli (1.1.2-1) unstable; urgency=medium
+openli (1.1.2-1~rc01) unstable; urgency=medium
 
   * Email ingestion: add support for PART_ID field and attempt
     to reorder received messages based on PART_ID value.
@@ -12,8 +12,13 @@ openli (1.1.2-1) unstable; urgency=medium
     mail content containing unbalanced parentheses.
   * REST API: added new openliversion/ endpoint which returns the
     version of the provisioner software.
+  * SMTP: emit all SMTP messages and replies as CCs, not just the
+    DATA message.
+  * SMTP: do not intercept SMTP sessions where the recipient of an
+    email is an intercept target -- only intercept if the sender is
+    a target.
 
- -- Shane Alcock <salcock@searchlight.nz>  Fri, 18 Aug 2023 13:26:12 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Mon, 21 Aug 2023 11:56:19 +1200
 
 openli (1.1.1-1) unstable; urgency=medium
 
