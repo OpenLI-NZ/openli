@@ -443,7 +443,7 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             generate_email_cc_from_smtp_payload(state, sess,
                     smtpsess->contbuffer + smtpsess->reply_start,
                     smtpsess->contbufread - smtpsess->reply_start,
-                    timestamp, ETSI_DIR_FROM_TARGET, ETSI_DIR_INDETERMINATE, 0);
+                    timestamp, ETSI_DIR_FROM_TARGET);
             return 1;
         } else if (r < 0) {
             return r;
@@ -529,27 +529,23 @@ static int process_next_smtp_state(openli_email_worker_t *state,
                     generate_email_cc_from_smtp_payload(state, sess,
                             smtpsess->contbuffer + smtpsess->ehlo_start,
                             smtpsess->ehlo_reply_start - smtpsess->ehlo_start,
-                            smtpsess->ehlo_timestamp, ETSI_DIR_FROM_TARGET,
-                            ETSI_DIR_INDETERMINATE, 0);
+                            smtpsess->ehlo_timestamp, ETSI_DIR_FROM_TARGET);
                     generate_email_cc_from_smtp_payload(state, sess,
                             smtpsess->contbuffer + smtpsess->ehlo_reply_start,
                             smtpsess->ehlo_reply_end -
                                     smtpsess->ehlo_reply_start,
-                            smtpsess->ehlo_timestamp, ETSI_DIR_TO_TARGET,
-                            ETSI_DIR_INDETERMINATE, 0);
+                            smtpsess->ehlo_timestamp, ETSI_DIR_TO_TARGET);
                     generate_email_cc_from_smtp_payload(state, sess,
                             smtpsess->contbuffer + smtpsess->mailfrom_start,
                             smtpsess->mailfrom_reply_start -
                                     smtpsess->mailfrom_start,
-                            timestamp, ETSI_DIR_FROM_TARGET,
-                            ETSI_DIR_INDETERMINATE, 0);
+                            timestamp, ETSI_DIR_FROM_TARGET);
                     generate_email_cc_from_smtp_payload(state, sess,
                             smtpsess->contbuffer +
                                     smtpsess->mailfrom_reply_start,
                             smtpsess->contbufread -
                                     smtpsess->mailfrom_reply_start,
-                            timestamp, ETSI_DIR_TO_TARGET,
-                            ETSI_DIR_INDETERMINATE, 0);
+                            timestamp, ETSI_DIR_TO_TARGET);
                 } else {
                     /* This should never happen? How are we going to get
                      * a MAIL FROM if the EHLO caused an error?
@@ -598,40 +594,17 @@ static int process_next_smtp_state(openli_email_worker_t *state,
                         smtpsess->rcptto_start, smtpsess->contbufread) < 0) {
                     return -1;
                 }
-                generate_email_cc_from_smtp_payload(state, sess,
-                        smtpsess->contbuffer + smtpsess->ehlo_start,
-                        smtpsess->ehlo_reply_start - smtpsess->ehlo_start,
-                        smtpsess->ehlo_timestamp, ETSI_DIR_FROM_TARGET,
-                        ETSI_DIR_INDETERMINATE, 1);
-                generate_email_cc_from_smtp_payload(state, sess,
-                        smtpsess->contbuffer + smtpsess->ehlo_reply_start,
-                        smtpsess->ehlo_reply_end - smtpsess->ehlo_reply_start,
-                        smtpsess->ehlo_timestamp, ETSI_DIR_TO_TARGET,
-                        ETSI_DIR_INDETERMINATE, 1);
-                generate_email_cc_from_smtp_payload(state, sess,
-                        smtpsess->contbuffer + smtpsess->mailfrom_start,
-                        smtpsess->mailfrom_reply_start -
-                                smtpsess->mailfrom_start,
-                        timestamp, ETSI_DIR_FROM_TARGET,
-                        ETSI_DIR_INDETERMINATE, 1);
-                generate_email_cc_from_smtp_payload(state, sess,
-                        smtpsess->contbuffer +
-                                smtpsess->mailfrom_reply_start,
-                        smtpsess->rcptto_start -
-                                smtpsess->mailfrom_reply_start,
-                        timestamp, ETSI_DIR_TO_TARGET,
-                        ETSI_DIR_INDETERMINATE, 1);
             } else {
                 sess->currstate = OPENLI_SMTP_STATE_MAIL_FROM_OVER;
             }
             generate_email_cc_from_smtp_payload(state, sess,
                     smtpsess->contbuffer + smtpsess->rcptto_start,
                     smtpsess->reply_start - smtpsess->rcptto_start,
-                    timestamp, ETSI_DIR_FROM_TARGET, ETSI_DIR_INDETERMINATE, 0);
+                    timestamp, ETSI_DIR_FROM_TARGET);
             generate_email_cc_from_smtp_payload(state, sess,
                     smtpsess->contbuffer + smtpsess->reply_start,
                     smtpsess->contbufread - smtpsess->reply_start,
-                    timestamp, ETSI_DIR_TO_TARGET, ETSI_DIR_INDETERMINATE, 0);
+                    timestamp, ETSI_DIR_TO_TARGET);
             return 1;
         } else if (r < 0) {
             return r;
@@ -669,13 +642,11 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             generate_email_cc_from_smtp_payload(state, sess,
                     smtpsess->contbuffer + smtpsess->data_start,
                     smtpsess->reply_start - smtpsess->data_start,
-                    timestamp, ETSI_DIR_FROM_TARGET,
-                    ETSI_DIR_INDETERMINATE, 0);
+                    timestamp, ETSI_DIR_FROM_TARGET);
             generate_email_cc_from_smtp_payload(state, sess,
                     smtpsess->contbuffer + smtpsess->reply_start,
                     smtpsess->contbufread - smtpsess->reply_start,
-                    timestamp, ETSI_DIR_TO_TARGET,
-                    ETSI_DIR_INDETERMINATE, 0);
+                    timestamp, ETSI_DIR_TO_TARGET);
             smtpsess->data_content_start = smtpsess->contbufread;
             return 1;
         } else if (r < 0) {
@@ -710,11 +681,11 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             generate_email_cc_from_smtp_payload(state, sess,
                     smtpsess->contbuffer + smtpsess->data_content_start,
                     smtpsess->reply_start - smtpsess->data_content_start,
-                    timestamp, ETSI_DIR_FROM_TARGET, ETSI_DIR_TO_TARGET, 0);
+                    timestamp, ETSI_DIR_FROM_TARGET);
             generate_email_cc_from_smtp_payload(state, sess,
                     smtpsess->contbuffer + smtpsess->reply_start,
                     smtpsess->contbufread - smtpsess->reply_start,
-                    timestamp, ETSI_DIR_TO_TARGET, ETSI_DIR_INDETERMINATE, 0);
+                    timestamp, ETSI_DIR_TO_TARGET);
             return 1;
         } else if (r < 0) {
             return r;
@@ -751,11 +722,11 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             generate_email_cc_from_smtp_payload(state, sess,
                     smtpsess->contbuffer + smtpsess->reset_start,
                     smtpsess->reply_start - smtpsess->reset_start,
-                    timestamp, ETSI_DIR_FROM_TARGET, ETSI_DIR_INDETERMINATE, 0);
+                    timestamp, ETSI_DIR_FROM_TARGET);
             generate_email_cc_from_smtp_payload(state, sess,
                     smtpsess->contbuffer + smtpsess->reply_start,
                     smtpsess->contbufread - smtpsess->reply_start,
-                    timestamp, ETSI_DIR_TO_TARGET, ETSI_DIR_INDETERMINATE, 0);
+                    timestamp, ETSI_DIR_TO_TARGET);
             return 1;
         } else if (r < 0) {
             return r;
@@ -772,12 +743,11 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             generate_email_cc_from_smtp_payload(state, sess,
                     smtpsess->contbuffer + smtpsess->quit_start,
                     smtpsess->reply_start - smtpsess->quit_start,
-                    timestamp, ETSI_DIR_FROM_TARGET,
-                    ETSI_DIR_INDETERMINATE, 0);
+                    timestamp, ETSI_DIR_FROM_TARGET);
             generate_email_cc_from_smtp_payload(state, sess,
                     smtpsess->contbuffer + smtpsess->reply_start,
                     smtpsess->contbufread - smtpsess->reply_start,
-                    timestamp, ETSI_DIR_TO_TARGET, ETSI_DIR_INDETERMINATE, 0);
+                    timestamp, ETSI_DIR_TO_TARGET);
             return 0;
         } else if (r < 0) {
             return r;

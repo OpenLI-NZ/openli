@@ -191,27 +191,33 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
     email_user_intercept_list_t *active = NULL;
     email_participant_t *recip, *tmp;
 
-    if (sess->sender.emailaddr) {
-        active = is_address_interceptable(state, sess->sender.emailaddr);
-    }
-    if (active) {
-        create_emailiris_for_intercept_list(state, sess, iri_type,
-                email_ev, status, active, timestamp, NULL);
-    }
-
-    HASH_ITER(hh, sess->participants, recip, tmp) {
-        if (sess->sender.emailaddr && strcmp(recip->emailaddr,
-                sess->sender.emailaddr) == 0) {
-            continue;
+    if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
+        if (sess->sender.emailaddr) {
+            active = is_address_interceptable(state, sess->sender.emailaddr);
         }
-
-        active = is_address_interceptable(state, recip->emailaddr);
-        if (!active) {
-            continue;
+        if (active) {
+            create_emailiris_for_intercept_list(state, sess, iri_type,
+                    email_ev, status, active, timestamp, NULL);
         }
+    }
 
-        create_emailiris_for_intercept_list(state, sess, iri_type,
-                email_ev, status, active, timestamp, recip->emailaddr);
+    if (sess->protocol == OPENLI_EMAIL_TYPE_IMAP ||
+            sess->protocol == OPENLI_EMAIL_TYPE_POP3) {
+
+        HASH_ITER(hh, sess->participants, recip, tmp) {
+            if (sess->sender.emailaddr && strcmp(recip->emailaddr,
+                    sess->sender.emailaddr) == 0) {
+                continue;
+            }
+
+            active = is_address_interceptable(state, recip->emailaddr);
+            if (!active) {
+                continue;
+            }
+
+            create_emailiris_for_intercept_list(state, sess, iri_type,
+                    email_ev, status, active, timestamp, recip->emailaddr);
+        }
     }
 
     return 0;

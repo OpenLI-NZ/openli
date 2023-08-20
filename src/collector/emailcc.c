@@ -138,24 +138,21 @@ static void create_emailccs_for_intercept_list(openli_email_worker_t *state,
 
 int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
-        uint64_t timestamp, uint8_t senderdir, uint8_t recipdir,
-        uint8_t only_recipients) {
+        uint64_t timestamp, uint8_t senderdir) {
 
     email_user_intercept_list_t *active = NULL;
     email_participant_t *recip, *tmp;
 
-    if (!only_recipients) {
-        if (sess->sender.emailaddr) {
-            active = is_address_interceptable(state, sess->sender.emailaddr);
-        }
-
-        if (active) {
-            create_emailccs_for_intercept_list(state, sess, content,
-                    content_len, ETSILI_EMAIL_CC_FORMAT_APP, active, timestamp,
-                    senderdir, 0);
-        }
+    if (sess->sender.emailaddr) {
+        active = is_address_interceptable(state, sess->sender.emailaddr);
     }
 
+    if (active) {
+        create_emailccs_for_intercept_list(state, sess, content,
+                content_len, ETSILI_EMAIL_CC_FORMAT_APP, active, timestamp,
+                senderdir, 0);
+    }
+/*
     HASH_ITER(hh, sess->participants, recip, tmp) {
         if (sess->sender.emailaddr != NULL &&
                 strcmp(recip->emailaddr, sess->sender.emailaddr) == 0) {
@@ -171,6 +168,7 @@ int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
                 ETSILI_EMAIL_CC_FORMAT_APP, active, timestamp,
                 recipdir, 0);
     }
+*/
 
     return 0;
 }
