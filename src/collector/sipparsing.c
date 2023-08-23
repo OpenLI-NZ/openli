@@ -855,7 +855,6 @@ int get_sip_passerted_identity(openli_sip_parser_t *parser,
 
 static inline int parse_sdp_body(openli_sip_parser_t *parser) {
     osip_body_t *body;
-
     sdp_message_init(&(parser->sdp));
     if (osip_message_get_body(parser->osip, 0, &body) != 0) {
         return -1;
@@ -925,6 +924,41 @@ char *get_sip_media_ipaddr(openli_sip_parser_t *parser) {
         }
     }
     ipaddr = sdp_message_c_addr_get(parser->sdp, -1, 0);
+    if (ipaddr == NULL) {
+        /* sdp_message_c_addr_get() only returns an IP address if
+         * osip thinks the c field is the "global" connection, i.e.
+         * "c=" appears before any "m=" lines. If "c=" comes after
+         * an "m=", then osip decides the connection info is applied
+         * only to that media and so we have to go walk the list of
+         * known media to find the address we want...
+         *
+         */
+        int pos = 0;
+        while (!osip_list_eol(&(parser->sdp->m_medias), pos)) {
+            sdp_media_t *hdr = (sdp_media_t *) osip_list_get(
+                    &(parser->sdp->m_medias), pos);
+
+            /* If there are multiple media, try to get the address
+             * from the audio media if possible.
+             *
+             * Of course, if the 'c=' and 'm=' ordering is just
+             * due to dodgy SIP implementation, there is a chance
+             * that the address we need could be associated with
+             * another media but I'll worry about that if it ever
+             * comes up.
+             */
+            if (osip_list_size(&(hdr->c_connections)) &&
+                    strcmp(hdr->m_media, "audio") == 0) {
+                sdp_connection_t *c = (sdp_connection_t *)osip_list_get(
+                        &(hdr->c_connections), 0);
+
+                ipaddr = c->c_addr;
+                break;
+            }
+            pos ++;
+        }
+    }
+
     return ipaddr;
 }
 
