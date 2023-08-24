@@ -636,7 +636,7 @@ static inline void strip_quotes(openli_sip_identity_t *sipid) {
      * e.g. "username
      */
 
-    if (sipid->username[0] == '"') {
+    if (sipid->username && sipid->username[0] == '"') {
         if (sipid->username[sipid->username_len - 1] == '"') {
             sipid->username[sipid->username_len - 1] = '\0';
             sipid->username_len --;
@@ -645,7 +645,7 @@ static inline void strip_quotes(openli_sip_identity_t *sipid) {
         sipid->username_len --;
     }
 
-    if (sipid->realm[0] == '"') {
+    if (sipid->realm && sipid->realm[0] == '"') {
         if (sipid->realm[sipid->realm_len - 1] == '"') {
             sipid->realm[sipid->realm_len - 1] = '\0';
             sipid->realm_len --;
@@ -686,9 +686,17 @@ int get_sip_auth_identity(openli_sip_parser_t *parser, int index,
     }
 
     sipid->username = osip_authorization_get_username(auth);
-    sipid->username_len = strlen(sipid->username);
+    if (sipid->username) {
+        sipid->username_len = strlen(sipid->username);
+    } else {
+        sipid->username_len = 0;
+    }
     sipid->realm = osip_authorization_get_realm(auth);
-    sipid->realm_len = strlen(sipid->realm);
+    if (sipid->realm) {
+        sipid->realm_len = strlen(sipid->realm);
+    } else {
+        sipid->realm_len = 0;
+    }
 
     strip_quotes(sipid);
 

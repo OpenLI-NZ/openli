@@ -660,6 +660,10 @@ static openli_sip_identity_t *sipid_matches_target(libtrace_list_t *targets,
 
     libtrace_list_node_t *n;
 
+    if (sipid->username == NULL) {
+        return NULL;
+    }
+
     n = targets->head;
     while (n) {
         openli_sip_identity_t *x = *((openli_sip_identity_t **) (n->data));
