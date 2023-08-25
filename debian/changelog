@@ -17,8 +17,11 @@ openli (1.1.2-1~rc01) unstable; urgency=medium
   * SMTP: do not intercept SMTP sessions where the recipient of an
     email is an intercept target -- only intercept if the sender is
     a target.
+  * SIP: don't crash if an authorization field has an empty username.
+  * SIP: fix issue where RTP would not be intercepted if the "c="
+    field in the SDP announcement is after the first "m=" field.
 
- -- Shane Alcock <salcock@searchlight.nz>  Mon, 21 Aug 2023 11:56:19 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Fri, 25 Aug 2023 17:03:41 +1200
 
 openli (1.1.1-1) unstable; urgency=medium
 
