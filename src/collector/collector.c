@@ -1228,6 +1228,10 @@ static void destroy_collector_state(collector_global_t *glob) {
         free(glob->collocals);
     }
 
+    if (glob->default_email_domain) {
+        free(glob->default_email_domain);
+    }
+
     pthread_mutex_destroy(&(glob->stats_mutex));
     pthread_rwlock_destroy(&(glob->email_config_mutex));
     pthread_rwlock_destroy(&glob->config_mutex);
