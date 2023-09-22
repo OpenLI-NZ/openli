@@ -85,7 +85,13 @@ typedef enum {
     OPENLI_SMTP_STATE_DATA_OVER,
     OPENLI_SMTP_STATE_RESET,
     OPENLI_SMTP_STATE_QUIT,
-    OPENLI_SMTP_STATE_QUIT_REPLY
+    OPENLI_SMTP_STATE_QUIT_REPLY,
+    OPENLI_SMTP_STATE_AUTH,
+    OPENLI_SMTP_STATE_AUTH_REPLY,
+    OPENLI_SMTP_STATE_AUTH_CREDS,
+    OPENLI_SMTP_STATE_OTHER_COMMAND,
+    OPENLI_SMTP_STATE_OTHER_COMMAND_REPLY,
+    OPENLI_SMTP_STATE_STARTTLS,
 } openli_smtp_status_t;
 
 typedef struct openli_email_timeouts {
@@ -185,22 +191,27 @@ int generate_email_download_success_iri(openli_email_worker_t *state,
 int generate_email_download_failure_iri(openli_email_worker_t *state,
         emailsession_t *sess);
 int generate_email_login_success_iri(openli_email_worker_t *state,
-        emailsession_t *sess);
+        emailsession_t *sess, const char *participant);
 int generate_email_login_failure_iri(openli_email_worker_t *state,
-        emailsession_t *sess);
+        emailsession_t *sess, const char *participant);
 int generate_email_upload_success_iri(openli_email_worker_t *state,
         emailsession_t *sess);
 int generate_email_upload_failure_iri(openli_email_worker_t *state,
         emailsession_t *sess);
 int generate_email_send_iri(openli_email_worker_t *state,
         emailsession_t *sess);
+int generate_email_receive_iri(openli_email_worker_t *state,
+        emailsession_t *sess);
 int generate_email_logoff_iri(openli_email_worker_t *state,
         emailsession_t *sess);
+int generate_email_logoff_iri_for_user(openli_email_worker_t *state,
+        emailsession_t *sess, const char *address);
 
 /* Defined in emailcc.c */
 int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
-        uint64_t timestamp, uint8_t senderdir);
+        uint64_t timestamp, const char *participant, uint8_t dir,
+        int command_index);
 int generate_email_cc_from_imap_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
         uint64_t timestamp, uint8_t dir, uint8_t deflated);

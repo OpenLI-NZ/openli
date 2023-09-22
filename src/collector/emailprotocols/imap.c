@@ -304,12 +304,12 @@ static int complete_imap_authentication(openli_email_worker_t *state,
         sess->currstate = OPENLI_IMAP_STATE_AUTHENTICATED;
         /* generate login success iri */
 
-        generate_email_login_success_iri(state, sess);
+        generate_email_login_success_iri(state, sess, imapsess->mailbox);
     } else {
         sess->currstate = OPENLI_IMAP_STATE_PRE_AUTH;
 
         /* generate login failure iri */
-        generate_email_login_failure_iri(state, sess);
+        generate_email_login_failure_iri(state, sess, imapsess->mailbox);
     }
 
     return 1;

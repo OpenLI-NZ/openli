@@ -37,7 +37,7 @@
 #include "emailiri.h"
 
 static inline email_user_intercept_list_t *is_address_interceptable(
-        openli_email_worker_t *state, char *emailaddr) {
+        openli_email_worker_t *state, const char *emailaddr) {
 
     email_user_intercept_list_t *active = NULL;
 
@@ -191,7 +191,7 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
     email_user_intercept_list_t *active = NULL;
     email_participant_t *recip, *tmp;
 
-    if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
+    if (email_ev != ETSILI_EMAIL_EVENT_RECEIVE) {
         if (sess->sender.emailaddr) {
             active = is_address_interceptable(state, sess->sender.emailaddr);
         }
@@ -201,9 +201,15 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
         }
     }
 
-    if (sess->protocol == OPENLI_EMAIL_TYPE_IMAP ||
-            sess->protocol == OPENLI_EMAIL_TYPE_POP3) {
+    /* Don't generate login / logoff IRIs for SMTP recipients */
+    if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP && (
+            email_ev == ETSILI_EMAIL_EVENT_LOGON ||
+            email_ev == ETSILI_EMAIL_EVENT_LOGON_FAILURE ||
+            email_ev == ETSILI_EMAIL_EVENT_LOGOFF)) {
+        return 0;
+    }
 
+    if (email_ev != ETSILI_EMAIL_EVENT_SEND) {
         HASH_ITER(hh, sess->participants, recip, tmp) {
             if (sess->sender.emailaddr && strcmp(recip->emailaddr,
                     sess->sender.emailaddr) == 0) {
@@ -224,11 +230,19 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
 }
 
 static int generate_email_login_iri(openli_email_worker_t *state,
-        emailsession_t *sess, uint8_t success) {
+        emailsession_t *sess, const char *participant, uint8_t success) {
 
     uint8_t email_ev;
     uint8_t iri_type;
     uint8_t status;
+
+    email_user_intercept_list_t *active = NULL;
+    email_participant_t *recip, *tmp;
+
+    active = is_address_interceptable(state, participant);
+    if (!active) {
+        return 0;
+    }
 
     if (success) {
         email_ev = ETSILI_EMAIL_EVENT_LOGON;
@@ -240,14 +254,40 @@ static int generate_email_login_iri(openli_email_worker_t *state,
         status = ETSILI_EMAIL_STATUS_FAILED;
     }
 
-    return generate_iris_for_participants(state, sess, email_ev, iri_type,
-            status, sess->login_time);
+    create_emailiris_for_intercept_list(state, sess, iri_type, email_ev,
+            status, active, sess->login_time, participant);
+    return 0;
+}
+
+int generate_email_logoff_iri_for_user(openli_email_worker_t *state,
+        emailsession_t *sess, const char *address) {
+
+    email_user_intercept_list_t *active = NULL;
+    active = is_address_interceptable(state, address);
+
+    if (active) {
+        create_emailiris_for_intercept_list(state, sess,
+                ETSILI_IRI_END, ETSILI_EMAIL_EVENT_LOGOFF,
+                ETSILI_EMAIL_STATUS_SUCCESS, active, sess->event_time,
+                NULL);
+    }
+
+    return 0;
 }
 
 int generate_email_send_iri(openli_email_worker_t *state,
         emailsession_t *sess) {
 
     return generate_iris_for_participants(state, sess, ETSILI_EMAIL_EVENT_SEND,
+            ETSILI_IRI_CONTINUE, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
+
+}
+
+int generate_email_receive_iri(openli_email_worker_t *state,
+        emailsession_t *sess) {
+
+    return generate_iris_for_participants(state, sess,
+            ETSILI_EMAIL_EVENT_RECEIVE,
             ETSILI_IRI_CONTINUE, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
 
 }
@@ -313,13 +353,13 @@ int generate_email_logoff_iri(openli_email_worker_t *state,
 }
 
 int generate_email_login_success_iri(openli_email_worker_t *state,
-        emailsession_t *sess) {
-    return generate_email_login_iri(state, sess, 1);
+        emailsession_t *sess, const char *participant) {
+    return generate_email_login_iri(state, sess, participant, 1);
 }
 
 int generate_email_login_failure_iri(openli_email_worker_t *state,
-        emailsession_t *sess) {
-    return generate_email_login_iri(state, sess, 0);
+        emailsession_t *sess, const char *participant) {
+    return generate_email_login_iri(state, sess, participant, 0);
 }
 
 static inline void emailiri_free_recipients(

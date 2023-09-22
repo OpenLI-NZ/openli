@@ -32,6 +32,7 @@
 #include <netinet/in.h>
 #include <libtrace/linked_list.h>
 #include <uthash.h>
+#include <Judy.h>
 
 #define OPENLI_VENDOR_MIRROR_NONE (0xffffffff)
 
@@ -304,6 +305,7 @@ struct emailsession {
     int held_captured_size;
     int next_expected_captured;
 
+    Pvoid_t ccs_sent;
     UT_hash_handle hh;
 };
 

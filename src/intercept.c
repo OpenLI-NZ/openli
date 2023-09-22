@@ -895,6 +895,7 @@ void clear_email_user_intercept_list(email_user_intercept_list_t *ulist) {
             HASH_DELETE(hh, u->intlist, em);
             free(em);
         }
+
         HASH_DELETE(hh, ulist, u);
         free(u->emailaddr);
         free(u);

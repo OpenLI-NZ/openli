@@ -90,6 +90,7 @@ static int init_email_ingest_state(email_ingestor_state_t *state,
 #define CALLOC_THISMSG \
     if (con_info->thismsg == NULL) { \
         con_info->thismsg = calloc(1, sizeof(openli_email_captured_t)); \
+        con_info->thismsg->part_id = 0xFFFFFFFF; \
     }
 
 static MHD_RESULT iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,

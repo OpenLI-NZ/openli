@@ -38,6 +38,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <Judy.h>
 
 #include "util.h"
 #include "logger.h"
@@ -303,6 +304,7 @@ static void init_email_session(emailsession_t *sess,
     sess->held_captured_size = 16;
     sess->next_expected_captured = 0;
     sess->handle_compress = OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET;
+    sess->ccs_sent = NULL;
 }
 
 int extract_email_sender_from_body(openli_email_worker_t *state,
@@ -414,10 +416,13 @@ void clear_email_sender(emailsession_t *sess) {
 static void free_email_session(openli_email_worker_t *state,
         emailsession_t *sess) {
     int i;
+    Word_t rc;
 
     if (!sess) {
         return;
     }
+
+    JSLFA(rc, sess->ccs_sent);
 
     clear_email_sender(sess);
     clear_email_participant_list(sess);
