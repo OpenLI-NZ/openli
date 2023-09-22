@@ -1037,4 +1037,11 @@ int sip_is_bye(openli_sip_parser_t *parser) {
     return 0;
 }
 
+int sip_is_cancel(openli_sip_parser_t *parser) {
+    if (MSG_IS_CANCEL(parser->osip)) {
+        return 1;
+    }
+    return 0;
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -1159,8 +1159,9 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
             }
         }
 
-        /* Check for a BYE */
-        if (sip_is_bye(sync->sipparser) && !thisrtp->byematched) {
+        /* Check for a BYE or CANCEL*/
+        if ((sip_is_bye(sync->sipparser) || sip_is_cancel(sync->sipparser))
+                && !thisrtp->byematched) {
             if (thisrtp->byecseq) {
                 free(thisrtp->byecseq);
             }
