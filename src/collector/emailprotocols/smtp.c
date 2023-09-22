@@ -394,7 +394,6 @@ static int find_smtp_reply_code(smtp_session_t *sess, uint16_t *storage) {
     if (storage) {
         (*storage) = strtoul(search + pmatch[0].rm_so, NULL, 10);
     }
-    sess->reply_start = sess->contbufread + pmatch[0].rm_so;
     regfree(&lastreply);
     return find_next_crlf(sess, sess->contbufread + pmatch[0].rm_so);
 }
