@@ -1320,6 +1320,12 @@ static int global_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "defaultemaildomain") == 0) {
+        SET_CONFIG_STRING_OPTION(glob->default_email_domain, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "RMQname") == 0) {
         SET_CONFIG_STRING_OPTION(glob->RMQ_conf.name, value);
     }

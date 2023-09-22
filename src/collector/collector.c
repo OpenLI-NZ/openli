@@ -1455,7 +1455,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->email_timeouts.imap = 30;
     glob->mask_imap_creds = 1;      // defaults to "enabled"
     glob->mask_pop3_creds = 1;      // defaults to "enabled"
-
+    glob->default_email_domain = NULL;
 }
 
 static collector_global_t *parse_global_config(char *configfile) {
@@ -1525,6 +1525,11 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     if (glob->mask_pop3_creds) {
         logger(LOG_INFO, "Email interception: rewriting POP3 plain text passwords to avoid leaking passwords to agencies");
+    }
+
+    if (glob->default_email_domain) {
+        logger(LOG_INFO, "Using '%s' as the default email domain",
+                glob->default_email_domain);
     }
 
     logger(LOG_DEBUG, "OpenLI: session idle timeout for SMTP sessions: %u minutes", glob->email_timeouts.smtp);
@@ -1667,6 +1672,28 @@ static int reload_collector_config(collector_global_t *glob,
         } else {
             logger(LOG_INFO, "OpenLI: Email interception: no longer rewriting POP3 plain text passwords to avoid leaking passwords to agencies");
         }
+    }
+
+    if (glob->default_email_domain) {
+        if (!newstate.default_email_domain) {
+            logger(LOG_INFO, "OpenLI: default email domain has been unset.");
+            free(glob->default_email_domain);
+            glob->default_email_domain = NULL;
+        } else if (strcmp(glob->default_email_domain,
+                newstate.default_email_domain) != 0) {
+            logger(LOG_INFO,
+                    "OpenLI: changing default email domain from '%s' to '%s'",
+                    glob->default_email_domain, newstate.default_email_domain);
+            free(glob->default_email_domain);
+            glob->default_email_domain = newstate.default_email_domain;
+            newstate.default_email_domain = NULL;
+        }
+    } else if (newstate.default_email_domain) {
+        logger(LOG_INFO,
+                "OpenLI: setting default email domain to be '%s'",
+                newstate.default_email_domain);
+        glob->default_email_domain = newstate.default_email_domain;
+        newstate.default_email_domain = NULL;
     }
 
     glob->mask_imap_creds = newstate.mask_imap_creds;
@@ -1949,6 +1976,7 @@ int main(int argc, char *argv[]) {
         glob->emailworkers[i].glob_config_mutex = &(glob->email_config_mutex);
         glob->emailworkers[i].mask_imap_creds = &(glob->mask_imap_creds);
         glob->emailworkers[i].mask_pop3_creds = &(glob->mask_pop3_creds);
+        glob->emailworkers[i].defaultdomain = &(glob->default_email_domain);
         glob->emailworkers[i].timeout_thresholds = &(glob->email_timeouts);
         glob->emailworkers[i].default_compress_delivery =
                 OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;

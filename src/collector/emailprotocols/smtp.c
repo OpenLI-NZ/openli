@@ -1076,7 +1076,7 @@ static int process_auth_credentials(smtp_session_t *smtpsess) {
 }
 
 static int extract_sender_from_auth_creds(emailsession_t *sess,
-        smtp_session_t *smtpsess, char *defaultdomain, char **sendername,
+        smtp_session_t *smtpsess, const char *defaultdomain, char **sendername,
         uint8_t authed) {
 
     base64_decodestate s;
@@ -1161,10 +1161,20 @@ static int authenticate_success(openli_email_worker_t *state,
     int r, i;
     smtp_participant_t *sender = NULL;
     char *sendername = NULL;
+    const char *defaultdomain;
+
+    pthread_rwlock_rdlock(state->glob_config_mutex);
+    if (state->defaultdomain) {
+        defaultdomain = (const char *)(*(state->defaultdomain));
+    } else {
+        defaultdomain = "example.org";
+    }
 
     /* TODO add option to set default domain */
-    r = extract_sender_from_auth_creds(sess, smtpsess, "example.org",
+    r = extract_sender_from_auth_creds(sess, smtpsess, defaultdomain,
             &sendername, 1);
+    pthread_rwlock_unlock(state->glob_config_mutex);
+
     if (r <= 0) {
         return r;
     }

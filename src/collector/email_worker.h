@@ -152,6 +152,11 @@ typedef struct openli_email_worker {
     openli_email_timeouts_t *timeout_thresholds;
     uint8_t *mask_imap_creds;
     uint8_t *mask_pop3_creds;
+
+    /* The default domain to apply to authenticated usernames that do not
+     * include a domain.
+     */
+    char **defaultdomain;
     pthread_rwlock_t *glob_config_mutex;
 
 } openli_email_worker_t;
