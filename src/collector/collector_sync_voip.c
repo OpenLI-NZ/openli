@@ -455,6 +455,7 @@ static inline int announce_rtp_streams_if_required(
         return 0;
     }
 
+    printf("%s\n", rtp->streamkey);
     /* If we get here, we need to push the RTP stream details to the
      * processing threads. */
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
@@ -923,6 +924,7 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
         portstr = get_sip_media_port(sync->sipparser, 0);
         mediatype = get_sip_media_type(sync->sipparser, 0);
 
+        printf("183: %s %s %s\n", ipstr, portstr, mediatype);
         while (ipstr && portstr && mediatype) {
 
             if ((changed = update_rtp_stream(sync, thisrtp, vint, ipstr,
@@ -958,12 +960,15 @@ static int process_sip_200ok(collector_sync_voip_t *sync, rtpstreaminf_t *thisrt
 
     cseqstr = get_sip_cseq(sync->sipparser);
 
+    printf("200 OK: %s\n", cseqstr);
     if (thisrtp->invitecseq && strcmp(thisrtp->invitecseq,
                 cseqstr) == 0) {
 
         ipstr = get_sip_media_ipaddr(sync->sipparser);
         portstr = get_sip_media_port(sync->sipparser, 0);
         mediatype = get_sip_media_type(sync->sipparser, 0);
+
+        printf("200: %s %s %s\n", ipstr, portstr, mediatype);
 
         while (ipstr && portstr && mediatype) {
             if ((changed = update_rtp_stream(sync, thisrtp, vint, ipstr,
@@ -1152,7 +1157,11 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
         }
 
         /* Check for 183 Session Progress, as this can contain RTP info */
-        if (sip_is_183sessprog(sync->sipparser)) {
+        /* Also check for 180, which can be handled in more or less the
+         * same way from our perspective...
+         */
+        if (sip_is_183sessprog(sync->sipparser) ||
+                    sip_is_180ringing(sync->sipparser)) {
             if (process_sip_183sessprog(sync, thisrtp, vint, &iritype) < 0) {
                 badsip = 1;
                 continue;
@@ -1432,12 +1441,15 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
             continue;
         }
 
+        thisrtp->changed = 0;
+
         ipstr = get_sip_media_ipaddr(sync->sipparser);
         portstr = get_sip_media_port(sync->sipparser, 0);
         mediatype = get_sip_media_type(sync->sipparser, 0);
 
         while (ipstr && portstr && !badsip && mediatype) {
             int changed;
+            printf("INVITE: %s %s %s\n", ipstr, portstr, mediatype);
             if ((changed = update_rtp_stream(sync, thisrtp, vint, ipstr,
                     portstr, mediatype, 0)) == -1) {
                 if (sync->log_bad_sip) {
@@ -1460,11 +1472,21 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
 
         if (thisrtp->invitecseq != NULL) {
             free(thisrtp->invitecseq);
+            thisrtp->invitecseq = NULL;
         }
         if (badsip) {
             continue;
         }
+
+        /* TODO Catch case where there might be a subsequent INVITE in the
+         * reverse direction -- in this case, we want to be careful to only
+         * update the RTP addresses and ports if they have genuinely changed.
+         * The tricky part is: if the INVITE is in the reverse direction,
+         * then we need to flip our comparisons accordingly.
+         */
+
         thisrtp->invitecseq = get_sip_cseq(sync->sipparser);
+
         create_sip_ipiri(sync, vint, irimsg, iritype, vshared->cin);
         exportcount += 1;
     }
