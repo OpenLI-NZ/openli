@@ -1,4 +1,4 @@
-openli (1.1.2-1~rc01) unstable; urgency=medium
+openli (1.1.2-1) unstable; urgency=medium
 
   * Email ingestion: add support for PART_ID field and attempt
     to reorder received messages based on PART_ID value.
@@ -17,7 +17,8 @@ openli (1.1.2-1~rc01) unstable; urgency=medium
     DATA message.
   * SMTP: produce "email-receive" IRI if a recipient is an intercept
     target, i.e. if the email comes from an external mail provider.
-  * SMTP: if present, use AUTH to derive the sender identity.
+  * SMTP: if present, use AUTH to derive the sender identity. Include
+    sender validity info in IRIs.
   * SMTP: improve handling of unexpected or bogus commands, so
     now interception won't cease if we see a command we don't understand.
   * SIP: don't crash if an authorization field has an empty username.
@@ -26,7 +27,7 @@ openli (1.1.2-1~rc01) unstable; urgency=medium
   * SIP: CANCEL will now correctly move an intercepted call into the
     end state.
 
- -- Shane Alcock <salcock@searchlight.nz>  Fri, 22 Sep 2023 13:25:16 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Fri, 29 Sep 2023 17:14:09 +1300
 
 openli (1.1.1-1) unstable; urgency=medium
 
