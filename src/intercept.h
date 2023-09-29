@@ -304,6 +304,7 @@ struct emailsession {
     void **held_captured;
     int held_captured_size;
     int next_expected_captured;
+    uint8_t sender_validated_etsivalue;
 
     Pvoid_t ccs_sent;
     UT_hash_handle hh;

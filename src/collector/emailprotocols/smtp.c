@@ -1185,6 +1185,10 @@ static int authenticate_success(openli_email_worker_t *state,
 
     /* send login IRI and any pending CCs */
 
+    /* Note: 0 is the value defined in the ETSI spec for "validated", so
+     * this is CORRECT
+     */
+    sess->sender_validated_etsivalue = 0;
     generate_email_login_success_iri(state, sess, sess->sender.emailaddr);
     sess->login_sent = 1;
     sender->active = 1;
@@ -1652,6 +1656,10 @@ int update_smtp_session_by_ingestion(openli_email_worker_t *state,
         smtpsess->next_command_index = 0;
 
         sess->proto_state = (void *)smtpsess;
+        /* Note: 1 is the value defined in the ETSI spec for "not validated", so
+         * this is CORRECT
+         */
+        sess->sender_validated_etsivalue = 1;
     } else {
         smtpsess = (smtp_session_t *)sess->proto_state;
     }

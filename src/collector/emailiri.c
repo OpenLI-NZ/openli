@@ -116,6 +116,8 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
     content->server_octets = sess->server_octets;
     content->client_octets = sess->client_octets;
     content->protocol = sess->protocol;
+    content->sender_validity = sess->sender_validated_etsivalue;
+
     if (sess->sender.emailaddr) {
         content->sender = strdup(sess->sender.emailaddr);
     } else {
@@ -440,6 +442,14 @@ void prepare_emailiri_parameters(etsili_generic_freelist_t *freegenerics,
             sizeof(job->content.status),
             (uint8_t *)&(job->content.status));
     HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+
+    if (job->content.protocol == OPENLI_EMAIL_TYPE_SMTP) {
+        np = create_etsili_generic(freegenerics,
+                EMAILIRI_CONTENTS_SENDER_VALIDITY,
+                sizeof(job->content.sender_validity),
+                (uint8_t *)&(job->content.sender_validity));
+        HASH_ADD_KEYPTR(hh, params, &(np->itemnum), sizeof(np->itemnum), np);
+    }
 
     if (job->content.sender) {
         np = create_etsili_generic(freegenerics, EMAILIRI_CONTENTS_SENDER,
