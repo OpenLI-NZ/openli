@@ -51,6 +51,7 @@
 #include "sipparsing.h"
 #include "alushim_parser.h"
 #include "jmirror_parser.h"
+#include "cisco_parser.h"
 #include "util.h"
 
 volatile int collector_halt = 0;
@@ -810,6 +811,36 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             goto processdone;
         }
 
+        if (glob->ciscomirrors) {
+            coreserver_t *cs;
+            if ((cs = match_packet_to_coreserver(glob->ciscomirrors,
+                    &pinfo)) != NULL) {
+                if (glob->cisco_noradius && generate_cc_from_cisco(
+                        &(glob->sharedinfo), loc, pkt, &pinfo,
+                        loc->activemirrorintercepts)) {
+
+                    forwarded = 1;
+                    pthread_mutex_lock(&(glob->stats_mutex));
+                    glob->stats.ipcc_created += 1;
+                    pthread_mutex_unlock(&(glob->stats_mutex));
+                    goto processdone;
+                } else {
+                    /* strip the cisco shim and just treat it like an
+                     * ordinary packet -- we'll instead rely on RADIUS
+                     * or some other session management protocol to tell
+                     * us whether we need to intercept this packet or not.
+                     */
+                    libtrace_packet_t *stripped;
+                    stripped = strip_cisco_mirror_header(pkt);
+                    if (stripped && process_packet(trace, t, global, tls,
+                            stripped)) {
+                        trace_destroy_packet(stripped);
+                    }
+                    goto processdone;
+                }
+            }
+        }
+
         /* Is this a RADIUS packet? -- if yes, create a state update */
         if (loc->radiusservers && is_core_server_packet(pkt, &pinfo,
                     loc->radiusservers)) {
@@ -1288,6 +1319,9 @@ static void clear_global_config(collector_global_t *glob) {
     if (glob->jmirrors) {
         free_coreserver_list(glob->jmirrors);
     }
+    if (glob->ciscomirrors) {
+        free_coreserver_list(glob->ciscomirrors);
+    }
 
     if (glob->emailconf.listenaddr) {
         free(glob->emailconf.listenaddr);
@@ -1415,6 +1449,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->sharedinfo.provisionerport = NULL;
     glob->alumirrors = NULL;
     glob->jmirrors = NULL;
+    glob->ciscomirrors = NULL;
     glob->sipdebugfile = NULL;
     glob->nextloc = 0;
     glob->syncgenericfreelist = NULL;
@@ -1459,6 +1494,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->email_timeouts.imap = 30;
     glob->mask_imap_creds = 1;      // defaults to "enabled"
     glob->mask_pop3_creds = 1;      // defaults to "enabled"
+    glob->cisco_noradius = 0;            // defaults to "expect RADIUS"
     glob->default_email_domain = NULL;
 }
 

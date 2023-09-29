@@ -292,6 +292,7 @@ typedef struct collector_global {
 
     coreserver_t *alumirrors;
     coreserver_t *jmirrors;
+    coreserver_t *ciscomirrors;
 
     char *sipdebugfile;
     uint8_t ignore_sdpo_matches;
@@ -313,6 +314,7 @@ typedef struct collector_global {
 
     pthread_rwlock_t email_config_mutex;
     openli_email_timeouts_t email_timeouts;
+    uint8_t cisco_noradius;
     uint8_t mask_imap_creds;
     uint8_t mask_pop3_creds;
     char *default_email_domain;

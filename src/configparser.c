@@ -1210,6 +1210,15 @@ static int global_parser(void *arg, yaml_document_t *doc,
     }
 
     if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value, "ciscomirrors") == 0) {
+        if (parse_core_server_list(&glob->ciscomirrors,
+                OPENLI_CORE_SERVER_ALUMIRROR, doc, value) == -1) {
+            return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "seqtrackerthreads") == 0) {
         glob->seqtracker_threads = strtoul((char *) value->data.scalar.value,
@@ -1307,6 +1316,14 @@ static int global_parser(void *arg, yaml_document_t *doc,
                     "maskimapcreds") == 0) {
 
        glob->mask_imap_creds = check_onoff((char *)value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
+                    "cisconoradius") == 0) {
+
+       glob->cisco_noradius = check_onoff((char *)value->data.scalar.value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
