@@ -49,6 +49,7 @@ typedef int MHD_socket;
 #endif
 
 typedef struct prov_client prov_client_t;
+typedef struct prov_intercept_data prov_intercept_data_t;
 
 /** Represents an event that has been added to the epoll event set */
 typedef struct prov_epoll_ev {
@@ -62,6 +63,11 @@ typedef struct prov_epoll_ev {
      *  for some event types).
      */
     prov_client_t *client;
+
+    /** A reference to the intercept that this fd belongs to (only used for
+     *  some event types)
+     */
+    prov_intercept_data_t *cept;
 } prov_epoll_ev_t;
 
 
@@ -98,6 +104,12 @@ enum {
 
     /** Idle timeout for a client has expired */
     PROV_EPOLL_FD_IDLETIMER,
+
+    /** Timer to fire when a delayed intercept begins */
+    PROV_EPOLL_INTERCEPT_START,
+
+    /** Timer to fire when an intercept is scheduled to cease */
+    PROV_EPOLL_INTERCEPT_HALT,
 };
 
 /** A LIID->agency mapping, used to ensure mediators route the intercept
@@ -228,6 +240,17 @@ typedef struct mediator_address {
 
     UT_hash_handle hh;
 } mediator_address_t;
+
+struct prov_intercept_data {
+    prov_epoll_ev_t *start_timer;
+    prov_epoll_ev_t *end_timer;
+
+    openli_intercept_types_t intercept_type;
+    void *intercept_ref;
+
+    uint8_t start_hi1_sent;
+    uint8_t end_hi1_sent;
+};
 
 /** Global state for the provisioner instance */
 typedef struct prov_state {

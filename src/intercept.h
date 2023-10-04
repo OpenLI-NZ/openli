@@ -37,6 +37,13 @@
 #define OPENLI_VENDOR_MIRROR_NONE (0xffffffff)
 
 typedef enum {
+    OPENLI_INTERCEPT_TYPE_UNKNOWN = 0,
+    OPENLI_INTERCEPT_TYPE_IP = 1,
+    OPENLI_INTERCEPT_TYPE_VOIP = 2,
+    OPENLI_INTERCEPT_TYPE_EMAIL = 3,
+} openli_intercept_types_t;
+
+typedef enum {
     INTERNET_ACCESS_TYPE_UNDEFINED = 0,
     INTERNET_ACCESS_TYPE_DIALUP = 1,
     INTERNET_ACCESS_TYPE_XDSL = 2,
@@ -114,6 +121,13 @@ typedef struct intercept_common {
     intercept_outputs_t tomediate;
     payload_encryption_method_t encrypt;
     char *encryptkey;
+
+    /** A pointer to use for storing "local" data against an instance of
+     *  an intercept, i.e. the provisioner might want to associate
+     *  certain data against each intercept that is not required by the
+     *  collector or mediator.
+     */
+    void *local;
 } intercept_common_t;
 
 typedef struct hi1_notify_data {
