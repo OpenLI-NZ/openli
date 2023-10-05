@@ -1529,6 +1529,7 @@ static int send_intercept_hi1(provision_state_t *state, prov_epoll_ev_t *pev,
     emailintercept_t *mailint = NULL;
     voipintercept_t *vint = NULL;
     intercept_common_t *common;
+    struct epoll_event ev;
 
     char *target_info = NULL;
 
@@ -1556,6 +1557,10 @@ static int send_intercept_hi1(provision_state_t *state, prov_epoll_ev_t *pev,
 
     printf("DEVDEBUG: timer triggered for %s -- %s\n", common->liid,
                 hi1type == HI1_LI_ACTIVATED ? "started" : "ended");
+
+    epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, pev->fd, &ev);
+    close(pev->fd);
+    pev->fd = -1;
 
     if (announce_hi1_notification_to_mediators(state, common, target_info,
             hi1type) < 0) {
