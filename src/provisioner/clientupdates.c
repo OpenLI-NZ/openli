@@ -413,7 +413,7 @@ int announce_hi1_notification_to_mediators(provision_state_t *state,
         if (ceptdata->end_hi1_sent) {
             return 0;
         }
-        if (intcomm->toend_time > 0 & intcomm->toend_time < tv.tv_sec) {
+        if (!ceptdata->start_hi1_sent) {
             return 0;
         }
         ceptdata->end_hi1_sent = 1;
@@ -421,8 +421,16 @@ int announce_hi1_notification_to_mediators(provision_state_t *state,
         if (ceptdata->end_hi1_sent) {
             return 0;
         }
-        if (!ceptdata->start_hi1_sent && intcomm->tostart_time > tv.tv_sec) {
-            return 0;
+        if (!ceptdata->start_hi1_sent) {
+            if (intcomm->tostart_time > tv.tv_sec) {
+                return 0;
+            } else {
+                /* shouldn't get here ideally, but just in case we do then
+                 * let's send an activated message instead.
+                 */
+                not_type = HI1_LI_ACTIVATED;
+                ceptdata->start_hi1_sent = 1;
+            }
         }
     }
 

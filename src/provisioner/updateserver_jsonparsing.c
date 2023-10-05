@@ -276,12 +276,17 @@ static int add_intercept_timer(int epoll_fd, uint64_t tssec, uint64_t now,
 
     int fd;
     prov_epoll_ev_t **timerptr;
+    struct epoll_event ev;
 
     assert(now < tssec);
 
     if (timertype == PROV_EPOLL_INTERCEPT_START) {
+        printf("adding start timer for intercept in %lu seconds\n",
+                tssec - now);
         timerptr = &(ceptdata->start_timer);
     } else if (timertype == PROV_EPOLL_INTERCEPT_HALT) {
+        printf("adding halt timer for intercept in %lu seconds\n",
+                tssec - now);
         timerptr = &(ceptdata->end_timer);
     } else {
         return -1;
@@ -289,6 +294,10 @@ static int add_intercept_timer(int epoll_fd, uint64_t tssec, uint64_t now,
 
     if (*timerptr == NULL) {
         *timerptr = calloc(1, sizeof(prov_epoll_ev_t));
+        (*timerptr)->fd = -1;
+    }
+    if ((*timerptr)->fd != -1) {
+        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, (*timerptr)->fd, &ev);
     }
     fd = epoll_add_timer(epoll_fd, tssec - now, *timerptr);
     if (fd == -1) {
@@ -531,13 +540,23 @@ static int reset_intercept_timers(provision_state_t *state,
 
     if (existing->tostart_time > 0 && existing->tostart_time >
             tv.tv_sec) {
+        if (timers->start_hi1_sent) {
+            /* start time has been shifted to a later time, but we had
+             * already started intercepting so we need to announce the
+             * deactivation.
+             */
+            announce_hi1_notification_to_mediators(state,
+                    existing, target_info, HI1_LI_DEACTIVATED);
+            timers->start_hi1_sent = 0;
+        }
+
         if (add_intercept_timer(state->epoll_fd, existing->tostart_time,
                     tv.tv_sec, timers, PROV_EPOLL_INTERCEPT_START) < 0) {
             snprintf(cinfo->answerstring, 4096, "unable to create a 'intercept start' timer for intercept %s", existing->liid);
             return -1;
         }
 
-    } else if (existing->tostart_time > 0 && !timers->start_hi1_sent) {
+    } else if (existing->tostart_time >= 0 && !timers->start_hi1_sent) {
         /* our start time has changed to a time BEFORE now, so we
          * are going to start intercepting...
          */
@@ -557,6 +576,19 @@ static int reset_intercept_timers(provision_state_t *state,
             snprintf(cinfo->answerstring, 4096, "unable to create a 'intercept end' timer for intercept %s", existing->liid);
             return -1;
         }
+        if (timers->end_hi1_sent) {
+            if (existing->tostart_time < tv.tv_sec) {
+                /* the old end time had been reached, so we have already
+                 * sent a deactivated message. But now the end time has
+                 * been changed to further in the future so we need to
+                 * announce that the intercept is restarting as of now.
+                 */
+                announce_hi1_notification_to_mediators(state, existing,
+                        target_info, HI1_LI_ACTIVATED);
+            }
+        }
+
+        timers->end_hi1_sent = 0;
     } else if (existing->toend_time > 0 && !timers->end_hi1_sent
             && timers->start_hi1_sent) {
         /* end time has moved to a time BEFORE now, and we've had
@@ -566,6 +598,11 @@ static int reset_intercept_timers(provision_state_t *state,
         announce_hi1_notification_to_mediators(state,
                 existing, target_info, HI1_LI_DEACTIVATED);
 
+    } else if (existing->toend_time == 0) {
+        /* Reset this, so we can correctly send a DEACTIVATED if the
+         * intercept is removed later on.
+         */
+        timers->end_hi1_sent = 0;
     }
     return 1;
 }
@@ -1684,16 +1721,14 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
         if (agencychanged) {
             announce_hi1_notification_to_mediators(state, &(found->common),
                     target_info, HI1_LI_ACTIVATED);
+        } else {
+            announce_hi1_notification_to_mediators(state, &(found->common),
+                    target_info, HI1_LI_MODIFIED);
         }
-
         if (timeschanged) {
             reset_intercept_timers(state, &(found->common), cinfo, target_info);
         }
 
-        if (!agencychanged && changedtargets) {
-            announce_hi1_notification_to_mediators(state, &(found->common),
-                    target_info, HI1_LI_MODIFIED);
-        }
         if (target_info) {
             free(target_info);
         }
@@ -1807,16 +1842,15 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         if (agencychanged) {
             announce_hi1_notification_to_mediators(state, &(found->common),
                     target_info, HI1_LI_ACTIVATED);
+        } else {
+            announce_hi1_notification_to_mediators(state, &(found->common),
+                    target_info, HI1_LI_MODIFIED);
         }
 
         if (timeschanged) {
             reset_intercept_timers(state, &(found->common), cinfo, target_info);
         }
 
-        if (!agencychanged && changedtargets) {
-            announce_hi1_notification_to_mediators(state, &(found->common),
-                    target_info, HI1_LI_MODIFIED);
-        }
         if (target_info) {
             free(target_info);
         }
@@ -1995,13 +2029,13 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     if (changed || timeschanged) {
         modify_existing_intercept_options(state, (void *)found,
                     OPENLI_PROTO_MODIFY_IPINTERCEPT);
+        if (!agencychanged) {
+            announce_hi1_notification_to_mediators(state, &(found->common),
+                    found->username, HI1_LI_MODIFIED);
+        }
         if (timeschanged) {
             reset_intercept_timers(state, &(found->common), cinfo,
                     found->username);
-        }
-        if (changed && !agencychanged) {
-            announce_hi1_notification_to_mediators(state, &(found->common),
-                    found->username, HI1_LI_MODIFIED);
         }
     }
 
