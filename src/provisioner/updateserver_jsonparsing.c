@@ -440,97 +440,6 @@ static int update_intercept_common(intercept_common_t *parsed,
     return 0;
 }
 
-static int reset_intercept_timers(provision_state_t *state,
-        intercept_common_t *existing, update_con_info_t *cinfo,
-        char *target_info) {
-
-    prov_intercept_data_t *timers = (prov_intercept_data_t *)(existing->local);
-    struct timeval tv;
-
-    if (timers == NULL) {
-        return 0;
-    }
-
-    halt_intercept_timer(timers->start_timer, state->epoll_fd);
-    halt_intercept_timer(timers->end_timer, state->epoll_fd);
-
-    gettimeofday(&tv, NULL);
-
-    if (existing->tostart_time > 0 && existing->toend_time > 0 &&
-            existing->tostart_time >= existing->toend_time) {
-        snprintf(cinfo->answerstring, 4096, "'starttime' parameter must be a timestamp BEFORE the 'endtime' timestamp");
-        return -1;
-    }
-
-    if (existing->tostart_time > 0 && existing->tostart_time >
-            tv.tv_sec) {
-        if (timers->start_hi1_sent) {
-            /* start time has been shifted to a later time, but we had
-             * already started intercepting so we need to announce the
-             * deactivation.
-             */
-            announce_hi1_notification_to_mediators(state,
-                    existing, target_info, HI1_LI_DEACTIVATED);
-            timers->start_hi1_sent = 0;
-        }
-
-        if (add_intercept_timer(state->epoll_fd, existing->tostart_time,
-                    tv.tv_sec, timers, PROV_EPOLL_INTERCEPT_START) < 0) {
-            snprintf(cinfo->answerstring, 4096, "unable to create a 'intercept start' timer for intercept %s", existing->liid);
-            return -1;
-        }
-
-    } else if (existing->tostart_time >= 0 && !timers->start_hi1_sent) {
-        /* our start time has changed to a time BEFORE now, so we
-         * are going to start intercepting...
-         */
-        if (existing->toend_time == 0 || existing->toend_time > tv.tv_sec) {
-            /* but only if the end time is still in the future (or
-             * indefinite...
-             */
-            announce_hi1_notification_to_mediators(state,
-                    existing, target_info, HI1_LI_ACTIVATED);
-
-        }
-    }
-
-    if (existing->toend_time > 0 && existing->toend_time > tv.tv_sec) {
-        if (add_intercept_timer(state->epoll_fd, existing->toend_time,
-                    tv.tv_sec, timers, PROV_EPOLL_INTERCEPT_HALT) < 0) {
-            snprintf(cinfo->answerstring, 4096, "unable to create a 'intercept end' timer for intercept %s", existing->liid);
-            return -1;
-        }
-        if (timers->end_hi1_sent) {
-            if (existing->tostart_time < tv.tv_sec) {
-                /* the old end time had been reached, so we have already
-                 * sent a deactivated message. But now the end time has
-                 * been changed to further in the future so we need to
-                 * announce that the intercept is restarting as of now.
-                 */
-                announce_hi1_notification_to_mediators(state, existing,
-                        target_info, HI1_LI_ACTIVATED);
-            }
-        }
-
-        timers->end_hi1_sent = 0;
-    } else if (existing->toend_time > 0 && !timers->end_hi1_sent
-            && timers->start_hi1_sent) {
-        /* end time has moved to a time BEFORE now, and we've had
-         * previously been intercepting so we need to announce that
-         * we've stopped.
-         */
-        announce_hi1_notification_to_mediators(state,
-                existing, target_info, HI1_LI_DEACTIVATED);
-
-    } else if (existing->toend_time == 0) {
-        /* Reset this, so we can correctly send a DEACTIVATED if the
-         * intercept is removed later on.
-         */
-        timers->end_hi1_sent = 0;
-    }
-    return 1;
-}
-
 int remove_voip_intercept(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr) {
 
@@ -1650,7 +1559,8 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
                     target_info, HI1_LI_MODIFIED);
         }
         if (timeschanged) {
-            reset_intercept_timers(state, &(found->common), cinfo, target_info);
+            reset_intercept_timers(state, &(found->common),
+                    target_info, cinfo->answerstring, 4096);
         }
 
         if (target_info) {
@@ -1772,7 +1682,8 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         }
 
         if (timeschanged) {
-            reset_intercept_timers(state, &(found->common), cinfo, target_info);
+            reset_intercept_timers(state, &(found->common), target_info,
+                    cinfo->answerstring, 4096);
         }
 
         if (target_info) {
@@ -1958,8 +1869,8 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                     found->username, HI1_LI_MODIFIED);
         }
         if (timeschanged) {
-            reset_intercept_timers(state, &(found->common), cinfo,
-                    found->username);
+            reset_intercept_timers(state, &(found->common), found->username,
+                    cinfo->answerstring, 4096);
         }
     }
 

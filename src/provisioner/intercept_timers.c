@@ -124,9 +124,20 @@ int add_all_intercept_timers(int epoll_fd, prov_intercept_conf_t *conf) {
     for (ipint = conf->ipintercepts; ipint != NULL; ipint = ipint->hh_liid.next)
     {
         local = (prov_intercept_data_t *)(ipint->common.local);
+        /* If the start time is before now, set the started flag to true
+         * so we don't end up sending an erroneous "started" message later
+         * on (i.e. after a config reload)
+         */
+        if (tv.tv_sec > ipint->common.tostart_time) {
+            local->start_hi1_sent = 1;
+        }
         if (add_intercept_timer(epoll_fd, ipint->common.tostart_time,
                 tv.tv_sec, local, PROV_EPOLL_INTERCEPT_START) < 0) {
             failed = 1;
+        }
+        /* Same as above, but for the "deactivated" message. */
+        if (tv.tv_sec > ipint->common.toend_time) {
+            local->end_hi1_sent = 1;
         }
         if (add_intercept_timer(epoll_fd, ipint->common.toend_time,
                 tv.tv_sec, local, PROV_EPOLL_INTERCEPT_HALT) < 0) {
@@ -139,9 +150,15 @@ int add_all_intercept_timers(int epoll_fd, prov_intercept_conf_t *conf) {
     for (vint = conf->voipintercepts; vint != NULL; vint = vint->hh_liid.next)
     {
         local = (prov_intercept_data_t *)(vint->common.local);
+        if (tv.tv_sec > vint->common.tostart_time) {
+            local->start_hi1_sent = 1;
+        }
         if (add_intercept_timer(epoll_fd, vint->common.tostart_time,
                 tv.tv_sec, local, PROV_EPOLL_INTERCEPT_START) < 0) {
             failed = 1;
+        }
+        if (tv.tv_sec > vint->common.toend_time) {
+            local->end_hi1_sent = 1;
         }
         if (add_intercept_timer(epoll_fd, vint->common.toend_time,
                 tv.tv_sec, local, PROV_EPOLL_INTERCEPT_HALT) < 0) {
@@ -152,16 +169,20 @@ int add_all_intercept_timers(int epoll_fd, prov_intercept_conf_t *conf) {
     for (mailint = conf->emailintercepts; mailint != NULL;
             mailint = mailint->hh_liid.next) {
         local = (prov_intercept_data_t *)(mailint->common.local);
+        if (tv.tv_sec > mailint->common.tostart_time) {
+            local->start_hi1_sent = 1;
+        }
         if (add_intercept_timer(epoll_fd, mailint->common.tostart_time,
                 tv.tv_sec, local, PROV_EPOLL_INTERCEPT_START) < 0) {
             failed = 1;
+        }
+        if (tv.tv_sec > mailint->common.toend_time) {
+            local->end_hi1_sent = 1;
         }
         if (add_intercept_timer(epoll_fd, mailint->common.toend_time,
                 tv.tv_sec, local, PROV_EPOLL_INTERCEPT_HALT) < 0) {
             failed = 1;
         }
-        add_liid_mapping(conf, mailint->common.liid,
-                mailint->common.targetagency);
     }
     return failed;
 }
@@ -171,51 +192,124 @@ int remove_all_intercept_timers(int epoll_fd, prov_intercept_conf_t *conf) {
     voipintercept_t *vint;
     emailintercept_t *mailint;
 
-    prov_intercept_data_t *local;
-
     /* Do IP Intercepts */
     for (ipint = conf->ipintercepts; ipint != NULL; ipint = ipint->hh_liid.next)
     {
-        local = (prov_intercept_data_t *)(ipint->common.local);
-        if (local == NULL) {
-            continue;
-        }
-        halt_intercept_timer(local->start_timer, epoll_fd);
-        halt_intercept_timer(local->end_timer, epoll_fd);
-        free(local->start_timer);
-        free(local->end_timer);
-        free(local);
-        ipint->common.local = NULL;
+        free_prov_intercept_data(&(ipint->common), epoll_fd);
     }
 
     /* Now do the VOIP intercepts */
     for (vint = conf->voipintercepts; vint != NULL; vint = vint->hh_liid.next)
     {
-        local = (prov_intercept_data_t *)(vint->common.local);
-        if (local == NULL) {
-            continue;
-        }
-        halt_intercept_timer(local->start_timer, epoll_fd);
-        halt_intercept_timer(local->end_timer, epoll_fd);
-        free(local->start_timer);
-        free(local->end_timer);
-        free(local);
-        vint->common.local = NULL;
+        free_prov_intercept_data(&(vint->common), epoll_fd);
     }
 
     for (mailint = conf->emailintercepts; mailint != NULL;
             mailint = mailint->hh_liid.next) {
-        local = (prov_intercept_data_t *)(mailint->common.local);
-        if (local == NULL) {
-            continue;
-        }
-        halt_intercept_timer(local->start_timer, epoll_fd);
-        halt_intercept_timer(local->end_timer, epoll_fd);
-        free(local->start_timer);
-        free(local->end_timer);
-        free(local);
-        mailint->common.local = NULL;
+        free_prov_intercept_data(&(mailint->common), epoll_fd);
     }
 
     return 0;
 }
+
+int reset_intercept_timers(provision_state_t *state,
+        intercept_common_t *existing, char *target_info,
+        char *errorstring, int errorstrlen) {
+
+    prov_intercept_data_t *timers = (prov_intercept_data_t *)(existing->local);
+    struct timeval tv;
+
+    if (timers == NULL) {
+        return 0;
+    }
+
+    halt_intercept_timer(timers->start_timer, state->epoll_fd);
+    halt_intercept_timer(timers->end_timer, state->epoll_fd);
+
+    gettimeofday(&tv, NULL);
+
+    if (existing->tostart_time > 0 && existing->toend_time > 0 &&
+            existing->tostart_time >= existing->toend_time) {
+        snprintf(errorstring, errorstrlen, "'starttime' parameter must be a timestamp BEFORE the 'endtime' timestamp");
+        return -1;
+    }
+
+    if (existing->tostart_time > 0 && existing->tostart_time >
+            tv.tv_sec) {
+        if (timers->start_hi1_sent) {
+            /* start time has been shifted to a later time, but we had
+             * already started intercepting so we need to announce the
+             * deactivation.
+             */
+            announce_hi1_notification_to_mediators(state,
+                    existing, target_info, HI1_LI_DEACTIVATED);
+        }
+
+        if (add_intercept_timer(state->epoll_fd, existing->tostart_time,
+                    tv.tv_sec, timers, PROV_EPOLL_INTERCEPT_START) < 0) {
+            snprintf(errorstring, errorstrlen,
+                    "unable to create 'intercept start' timer for intercept %s",
+                    existing->liid);
+            return -1;
+        }
+
+    } else if (existing->tostart_time >= 0 && !timers->start_hi1_sent) {
+        /* our start time has changed to a time BEFORE now, so we
+         * are going to start intercepting...
+         */
+        if (existing->toend_time == 0 || existing->toend_time > tv.tv_sec) {
+            /* but only if the end time is still in the future (or
+             * indefinite...
+             */
+            announce_hi1_notification_to_mediators(state,
+                    existing, target_info, HI1_LI_ACTIVATED);
+        }
+    }
+
+    if (existing->toend_time > 0 && existing->toend_time > tv.tv_sec) {
+        if (add_intercept_timer(state->epoll_fd, existing->toend_time,
+                    tv.tv_sec, timers, PROV_EPOLL_INTERCEPT_HALT) < 0) {
+            snprintf(errorstring, errorstrlen,
+                    "unable to create 'intercept end' timer for intercept %s",
+                    existing->liid);
+            return -1;
+        }
+        if (timers->end_hi1_sent) {
+            if (existing->tostart_time < tv.tv_sec) {
+                /* the old end time had been reached, so we have already
+                 * sent a deactivated message. But now the end time has
+                 * been changed to further in the future so we need to
+                 * announce that the intercept is restarting as of now.
+                 */
+                announce_hi1_notification_to_mediators(state, existing,
+                        target_info, HI1_LI_ACTIVATED);
+            }
+        }
+
+        timers->end_hi1_sent = 0;
+    } else if (existing->toend_time > 0 && !timers->end_hi1_sent
+            && timers->start_hi1_sent) {
+        /* end time has moved to a time BEFORE now, and we've had
+         * previously been intercepting so we need to announce that
+         * we've stopped.
+         */
+        announce_hi1_notification_to_mediators(state,
+                existing, target_info, HI1_LI_DEACTIVATED);
+
+    } else if (existing->toend_time == 0) {
+        if (timers->end_hi1_sent && existing->tostart_time < tv.tv_sec) {
+            announce_hi1_notification_to_mediators(state, existing,
+                    target_info, HI1_LI_ACTIVATED);
+        }
+        /* Reset this, so we can correctly send a DEACTIVATED if the
+         * intercept is removed later on.
+         */
+        timers->end_hi1_sent = 0;
+
+    }
+    return 1;
+
+}
+
+
+// vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

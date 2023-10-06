@@ -40,4 +40,9 @@ void free_prov_intercept_data(intercept_common_t *common, int epoll_fd);
 int add_all_intercept_timers(int epoll_fd, prov_intercept_conf_t *conf);
 
 int remove_all_intercept_timers(int epoll_fd, prov_intercept_conf_t *conf);
+
+int reset_intercept_timers(provision_state_t *state,
+        intercept_common_t *existing, char *target_info,
+        char *errorstring, int errorstrlen);
+
 #endif
