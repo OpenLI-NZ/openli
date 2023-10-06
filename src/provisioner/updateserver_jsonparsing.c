@@ -34,6 +34,7 @@
 #include "updateserver.h"
 #include "logger.h"
 #include "util.h"
+#include "intercept_timers.h"
 
 struct json_agency {
     struct json_object *hi3addr;
@@ -269,83 +270,6 @@ static inline void new_intercept_liidmapping(provision_state_t *state,
                     liid);
         }
     }
-}
-
-static int add_intercept_timer(int epoll_fd, uint64_t tssec, uint64_t now,
-        prov_intercept_data_t *ceptdata, int timertype) {
-
-    int fd;
-    prov_epoll_ev_t **timerptr;
-    struct epoll_event ev;
-
-    assert(now < tssec);
-
-    if (timertype == PROV_EPOLL_INTERCEPT_START) {
-        printf("adding start timer for intercept in %lu seconds\n",
-                tssec - now);
-        timerptr = &(ceptdata->start_timer);
-    } else if (timertype == PROV_EPOLL_INTERCEPT_HALT) {
-        printf("adding halt timer for intercept in %lu seconds\n",
-                tssec - now);
-        timerptr = &(ceptdata->end_timer);
-    } else {
-        return -1;
-    }
-
-    if (*timerptr == NULL) {
-        *timerptr = calloc(1, sizeof(prov_epoll_ev_t));
-        (*timerptr)->fd = -1;
-    }
-    if ((*timerptr)->fd != -1) {
-        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, (*timerptr)->fd, &ev);
-    }
-    fd = epoll_add_timer(epoll_fd, tssec - now, *timerptr);
-    if (fd == -1) {
-        return -1;
-    }
-    (*timerptr)->fd = fd;
-    (*timerptr)->fdtype = timertype;
-    (*timerptr)->client = NULL;
-    (*timerptr)->cept = ceptdata;
-
-    return 0;
-}
-
-static int halt_intercept_timer(prov_epoll_ev_t *timer, int epoll_fd) {
-    struct epoll_event ev;
-
-    if (timer == NULL) {
-        return 0;
-    }
-
-    if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, timer->fd, &ev) < 0) {
-        /* what error handling makes sense here? */
-        return -1;
-    }
-
-    close(timer->fd);
-    timer->fd = -1;
-    return 0;
-}
-
-static void free_prov_intercept_data(intercept_common_t *common, int epoll_fd) {
-    prov_intercept_data_t *timers = NULL;
-
-    timers = (prov_intercept_data_t *)(common->local);
-    if (timers == NULL) {
-        return;
-    }
-    if (timers->start_timer) {
-        halt_intercept_timer(timers->start_timer, epoll_fd);
-        free(timers->start_timer);
-    }
-    if (timers->end_timer) {
-        halt_intercept_timer(timers->end_timer, epoll_fd);
-        free(timers->end_timer);
-    }
-
-    free(timers);
-    common->local = NULL;
 }
 
 static int parse_intercept_common_json(struct json_intercept *jsonp,
