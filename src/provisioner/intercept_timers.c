@@ -136,7 +136,8 @@ int add_all_intercept_timers(int epoll_fd, prov_intercept_conf_t *conf) {
             failed = 1;
         }
         /* Same as above, but for the "deactivated" message. */
-        if (tv.tv_sec > ipint->common.toend_time) {
+        if (tv.tv_sec > ipint->common.toend_time &&
+                ipint->common.toend_time != 0) {
             local->end_hi1_sent = 1;
         }
         if (add_intercept_timer(epoll_fd, ipint->common.toend_time,
@@ -157,7 +158,8 @@ int add_all_intercept_timers(int epoll_fd, prov_intercept_conf_t *conf) {
                 tv.tv_sec, local, PROV_EPOLL_INTERCEPT_START) < 0) {
             failed = 1;
         }
-        if (tv.tv_sec > vint->common.toend_time) {
+        if (tv.tv_sec > vint->common.toend_time &&
+                vint->common.toend_time != 0) {
             local->end_hi1_sent = 1;
         }
         if (add_intercept_timer(epoll_fd, vint->common.toend_time,
@@ -176,7 +178,8 @@ int add_all_intercept_timers(int epoll_fd, prov_intercept_conf_t *conf) {
                 tv.tv_sec, local, PROV_EPOLL_INTERCEPT_START) < 0) {
             failed = 1;
         }
-        if (tv.tv_sec > mailint->common.toend_time) {
+        if (tv.tv_sec > mailint->common.toend_time &&
+                mailint->common.toend_time != 0) {
             local->end_hi1_sent = 1;
         }
         if (add_intercept_timer(epoll_fd, mailint->common.toend_time,
@@ -236,7 +239,7 @@ int reset_intercept_timers(provision_state_t *state,
 
     if (existing->tostart_time > 0 && existing->tostart_time >
             tv.tv_sec) {
-        if (timers->start_hi1_sent) {
+        if (timers->start_hi1_sent && !timers->end_hi1_sent) {
             /* start time has been shifted to a later time, but we had
              * already started intercepting so we need to announce the
              * deactivation.
