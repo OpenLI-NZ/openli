@@ -243,16 +243,154 @@ static int reload_coreservers(provision_state_t *state, coreserver_t *currserv,
     return 0;
 }
 
+static void remove_withdrawn_intercept(provision_state_t *currstate,
+        intercept_common_t *common, char *target_info, int droppedmeds) {
+
+    remove_liid_mapping(currstate, common->liid, common->liid_len, droppedmeds);
+    if (!droppedmeds) {
+        announce_hi1_notification_to_mediators(currstate,
+                common, target_info, HI1_LI_DEACTIVATED);
+        if (target_info) {
+            free(target_info);
+        }
+    }
+
+}
+
+static int enable_new_intercept(provision_state_t *currstate,
+        intercept_common_t *common, prov_intercept_conf_t *intconf,
+        char *target_info, int droppedmeds) {
+
+    liid_hash_t *h = NULL;
+    struct timeval tv;
+    prov_agency_t *lea = NULL;
+    prov_intercept_data_t *local;
+
+
+    if (strcmp(common->targetagency, "pcapdisk") != 0) {
+        HASH_FIND_STR(intconf->leas, common->targetagency, lea);
+        if (lea == NULL) {
+            return 0;
+        }
+    }
+
+    gettimeofday(&tv, NULL);
+    local = (prov_intercept_data_t *)(common->local);
+    if (local && (common->tostart_time > 0 || common->toend_time > 0)) {
+
+        if (add_intercept_timer(currstate->epoll_fd,
+                    common->tostart_time, tv.tv_sec,
+                    local, PROV_EPOLL_INTERCEPT_START) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to schedule HI1 notification for starting email intercept %s", common->liid);
+
+            return -1;
+        }
+
+        if (add_intercept_timer(currstate->epoll_fd,
+                    common->toend_time, tv.tv_sec,
+                    local, PROV_EPOLL_INTERCEPT_HALT) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to schedule HI1 notification for halting email intercept %s", common->liid);
+
+            return -1;
+        }
+    }
+
+    /* Add the LIID mapping */
+    h = add_liid_mapping(intconf, common->liid, common->targetagency);
+
+    if (!droppedmeds && announce_hi1_notification_to_mediators(currstate,
+                common, target_info, HI1_LI_ACTIVATED) == -1) {
+        logger(LOG_INFO,
+                "OpenLI provisioner: unable to send HI1 notification for new Email intercept to mediators.");
+        return -1;
+    }
+
+    if (!droppedmeds && announce_liidmapping_to_mediators(currstate, h) == -1) {
+        logger(LOG_INFO,
+                "OpenLI provisioner: unable to announce new Email intercept to mediators.");
+        return -1;
+    }
+    return 1;
+}
+
+static int update_reconfigured_intercept(provision_state_t *currstate,
+        intercept_common_t *old_common, intercept_common_t *new_common,
+        prov_intercept_conf_t *intconf, int cept_changed, int agencychanged,
+        int droppedmeds, char *old_targets, char *new_targets) {
+
+    char errorstring[1024];
+    liid_hash_t *h = NULL;
+
+    prov_intercept_data_t *local, *oldlocal;
+    /* save the "hi1 sent" status from the original intercept
+     * instance.
+     */
+    oldlocal = (prov_intercept_data_t *)(old_common->local);
+    local = (prov_intercept_data_t *)(new_common->local);
+
+    local->start_hi1_sent = oldlocal->start_hi1_sent;
+    local->end_hi1_sent = oldlocal->end_hi1_sent;
+    new_common->hi1_seqno = old_common->hi1_seqno;
+
+    if (agencychanged || cept_changed) {
+        logger(LOG_INFO,
+                "OpenLI provisioner: Details for Email intercept %s have changed -- updating collectors",
+                new_common->liid);
+    }
+
+    if (!droppedmeds && agencychanged) {
+        announce_hi1_notification_to_mediators(currstate,
+                old_common, old_targets, HI1_LI_DEACTIVATED);
+        new_common->hi1_seqno = 0;
+        announce_hi1_notification_to_mediators(currstate,
+                new_common, new_targets, HI1_LI_ACTIVATED);
+    } else if (!droppedmeds && cept_changed) {
+        announce_hi1_notification_to_mediators(currstate,
+                new_common, new_targets, HI1_LI_MODIFIED);
+    }
+
+
+    /* clear the old HI1 timers, since they will be pointing
+     * at an intercept instance that is going to be removed
+     * when we complete the config reload.
+     */
+    free_prov_intercept_data(old_common, currstate->epoll_fd);
+
+    /* add new intercept timers, and also send any required
+     * HI1 messages
+     */
+    if (reset_intercept_timers(currstate, new_common,
+                new_targets, errorstring, 1024) < 0) {
+        logger(LOG_INFO, "OpenLI provisioner: unable to reset intercept timers: %s", errorstring);
+    }
+
+    if (agencychanged) {
+        remove_liid_mapping(currstate, old_common->liid,
+                old_common->liid_len, droppedmeds);
+
+        h = add_liid_mapping(intconf, new_common->liid,
+                new_common->targetagency);
+        if (!droppedmeds && announce_liidmapping_to_mediators(
+                    currstate, h) == -1) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to announce new agency for Email intercept to mediators.");
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 static int reload_emailintercepts(provision_state_t *currstate,
         emailintercept_t *curremail, emailintercept_t *newemail,
 		prov_intercept_conf_t *intconf, int droppedcols, int droppedmeds) {
 
     emailintercept_t *mailint, *tmp, *newequiv;
-    liid_hash_t *h = NULL;
     char *target_info;
     prov_intercept_data_t *local, *oldlocal;
     struct timeval tv;
-    char errorstring[1024];
 
     /* TODO error handling in the "inform other components about changes"
      * functions?
@@ -269,17 +407,13 @@ static int reload_emailintercepts(provision_state_t *currstate,
                 halt_existing_intercept(currstate, (void *)mailint,
                         OPENLI_PROTO_HALT_EMAILINTERCEPT);
             }
-            remove_liid_mapping(currstate, mailint->common.liid,
-                    mailint->common.liid_len, droppedmeds);
-            if (!droppedmeds) {
-                target_info = list_email_targets(mailint, 256);
-                announce_hi1_notification_to_mediators(currstate,
-                        &(mailint->common), target_info,
-                        HI1_LI_DEACTIVATED);
-                if (target_info) {
-                    free(target_info);
-                }
+            target_info = list_email_targets(mailint, 256);
+            remove_withdrawn_intercept(currstate, &(mailint->common),
+                    target_info, droppedmeds);
+            if (target_info) {
+                free(target_info);
             }
+
             continue;
         } else {
             int intsame = email_intercept_equal(mailint, newequiv);
@@ -288,61 +422,15 @@ static int reload_emailintercepts(provision_state_t *currstate,
             int changedtargets = compare_email_targets(currstate, mailint,
                     newequiv);
 
+            char *old_target_info = list_email_targets(mailint, 256);
+            char *new_target_info = list_email_targets(newequiv, 256);
 
-            /* save the "hi1 sent" status from the original intercept
-             * instance.
-             */
-            oldlocal = (prov_intercept_data_t *)(mailint->common.local);
-            local = (prov_intercept_data_t *)(newequiv->common.local);
-
-            local->start_hi1_sent = oldlocal->start_hi1_sent;
-            local->end_hi1_sent = oldlocal->end_hi1_sent;
-            newequiv->common.hi1_seqno = mailint->common.hi1_seqno;
             newequiv->awaitingconfirm = 0;
-
-            if (!intsame || agencychanged || changedtargets) {
-                logger(LOG_INFO,
-                        "OpenLI provisioner: Details for Email intercept %s have changed -- updating collectors",
-                        mailint->common.liid);
-            }
-
-            target_info = list_email_targets(newequiv, 256);
-            if (!droppedmeds && agencychanged) {
-                char *old_target_info = list_email_targets(mailint, 256);
-                announce_hi1_notification_to_mediators(currstate,
-                        &(mailint->common), old_target_info,
-                        HI1_LI_DEACTIVATED);
-                if (old_target_info) {
-                    free(old_target_info);
-                }
-                newequiv->common.hi1_seqno = 0;
-                announce_hi1_notification_to_mediators(currstate,
-                        &(newequiv->common), target_info,
-                        HI1_LI_ACTIVATED);
-            } else if (!droppedmeds && (!intsame || changedtargets)) {
-                target_info = list_email_targets(newequiv, 256);
-                announce_hi1_notification_to_mediators(currstate,
-                        &(newequiv->common), target_info,
-                        HI1_LI_MODIFIED);
-            }
-
-
-            /* clear the old HI1 timers, since they will be pointing
-             * at an intercept instance that is going to be removed
-             * when we complete the config reload.
-             */
-            free_prov_intercept_data(&(mailint->common), currstate->epoll_fd);
-
-            /* add new intercept timers, and also send any required
-             * HI1 messages
-             */
-            if (reset_intercept_timers(currstate, &(newequiv->common),
-                    target_info, errorstring, 1024) < 0) {
-                logger(LOG_INFO, "OpenLI provisioner: unable to reset intercept timers: %s", errorstring);
-            }
-
-            if (target_info) {
-                free(target_info);
+            if (update_reconfigured_intercept(currstate, &(mailint->common),
+                    &(newequiv->common), intconf, (!intsame || changedtargets),
+                    agencychanged, droppedmeds, old_target_info,
+                    new_target_info) < 0) {
+                return -1;
             }
 
             if (!intsame && !droppedcols) {
@@ -350,18 +438,11 @@ static int reload_emailintercepts(provision_state_t *currstate,
                         OPENLI_PROTO_MODIFY_EMAILINTERCEPT);
             }
 
-            if (agencychanged) {
-                remove_liid_mapping(currstate, mailint->common.liid,
-                        mailint->common.liid_len, droppedmeds);
-
-                h = add_liid_mapping(intconf, newequiv->common.liid,
-                        newequiv->common.targetagency);
-                if (!droppedmeds && announce_liidmapping_to_mediators(
-                        currstate, h) == -1) {
-                    logger(LOG_INFO,
-                            "OpenLI provisioner: unable to announce new agency for Email intercept to mediators.");
-                    return -1;
-                }
+            if (old_target_info) {
+                free(old_target_info);
+            }
+            if (new_target_info) {
+                free(new_target_info);
             }
         }
     }
@@ -369,72 +450,22 @@ static int reload_emailintercepts(provision_state_t *currstate,
     gettimeofday(&tv, NULL);
 
     HASH_ITER(hh_liid, newemail, mailint, tmp) {
-        int skip = 0;
-        prov_agency_t *lea = NULL;
-
+        int r = 0;
 
         if (!mailint->awaitingconfirm) {
             continue;
         }
-
-        if (strcmp(mailint->common.targetagency, "pcapdisk") != 0) {
-            HASH_FIND_STR(intconf->leas, mailint->common.targetagency, lea);
-            if (lea == NULL) {
-                skip = 1;
-            }
-        }
-
-        if (skip) {
-            continue;
-        }
-
-        local = (prov_intercept_data_t *)(newequiv->common.local);
-        if (local && (newequiv->common.tostart_time > 0 ||
-                    newequiv->common.toend_time > 0)) {
-
-            if (add_intercept_timer(currstate->epoll_fd,
-                        newequiv->common.tostart_time, tv.tv_sec,
-                        local, PROV_EPOLL_INTERCEPT_START) < 0) {
-                logger(LOG_INFO,
-                        "OpenLI provisioner: unable to schedule HI1 notification for email intercept %s", newequiv->common.liid);
-
-                return -1;
-            }
-
-            if (add_intercept_timer(currstate->epoll_fd,
-                        newequiv->common.toend_time, tv.tv_sec,
-                        local, PROV_EPOLL_INTERCEPT_HALT) < 0) {
-                logger(LOG_INFO,
-                        "OpenLI provisioner: unable to schedule HI1 notification for email intercept %s", newequiv->common.liid);
-
-                return -1;
-            }
-        }
-
-        /* Add the LIID mapping */
-        h = add_liid_mapping(intconf, mailint->common.liid,
-                mailint->common.targetagency);
-
         target_info = list_email_targets(mailint, 256);
-        if (!droppedmeds && announce_hi1_notification_to_mediators(currstate,
-                &(mailint->common), target_info,
-                HI1_LI_ACTIVATED) == -1) {
-            if (target_info) {
-                free(target_info);
-            }
-            logger(LOG_INFO,
-                    "OpenLI provisioner: unable to send HI1 notification for new Email intercept to mediators.");
-            return -1;
-        }
+        r = enable_new_intercept(currstate, &(mailint->common), intconf,
+                target_info, droppedmeds);
         if (target_info) {
             free(target_info);
         }
-
-        if (!droppedmeds && announce_liidmapping_to_mediators(currstate,
-                h) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: unable to announce new Email intercept to mediators.");
-            return -1;
+        if (r < 0) {
+            return r;
+        }
+        if (r == 0) {
+            continue;
         }
 
         if (!droppedcols && announce_single_intercept(currstate,
