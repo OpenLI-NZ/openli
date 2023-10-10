@@ -636,7 +636,7 @@ static inline void strip_quotes(openli_sip_identity_t *sipid) {
      * e.g. "username
      */
 
-    if (sipid->username[0] == '"') {
+    if (sipid->username && sipid->username[0] == '"') {
         if (sipid->username[sipid->username_len - 1] == '"') {
             sipid->username[sipid->username_len - 1] = '\0';
             sipid->username_len --;
@@ -645,7 +645,7 @@ static inline void strip_quotes(openli_sip_identity_t *sipid) {
         sipid->username_len --;
     }
 
-    if (sipid->realm[0] == '"') {
+    if (sipid->realm && sipid->realm[0] == '"') {
         if (sipid->realm[sipid->realm_len - 1] == '"') {
             sipid->realm[sipid->realm_len - 1] = '\0';
             sipid->realm_len --;
@@ -686,9 +686,17 @@ int get_sip_auth_identity(openli_sip_parser_t *parser, int index,
     }
 
     sipid->username = osip_authorization_get_username(auth);
-    sipid->username_len = strlen(sipid->username);
+    if (sipid->username) {
+        sipid->username_len = strlen(sipid->username);
+    } else {
+        sipid->username_len = 0;
+    }
     sipid->realm = osip_authorization_get_realm(auth);
-    sipid->realm_len = strlen(sipid->realm);
+    if (sipid->realm) {
+        sipid->realm_len = strlen(sipid->realm);
+    } else {
+        sipid->realm_len = 0;
+    }
 
     strip_quotes(sipid);
 
@@ -855,7 +863,6 @@ int get_sip_passerted_identity(openli_sip_parser_t *parser,
 
 static inline int parse_sdp_body(openli_sip_parser_t *parser) {
     osip_body_t *body;
-
     sdp_message_init(&(parser->sdp));
     if (osip_message_get_body(parser->osip, 0, &body) != 0) {
         return -1;
@@ -925,6 +932,41 @@ char *get_sip_media_ipaddr(openli_sip_parser_t *parser) {
         }
     }
     ipaddr = sdp_message_c_addr_get(parser->sdp, -1, 0);
+    if (ipaddr == NULL) {
+        /* sdp_message_c_addr_get() only returns an IP address if
+         * osip thinks the c field is the "global" connection, i.e.
+         * "c=" appears before any "m=" lines. If "c=" comes after
+         * an "m=", then osip decides the connection info is applied
+         * only to that media and so we have to go walk the list of
+         * known media to find the address we want...
+         *
+         */
+        int pos = 0;
+        while (!osip_list_eol(&(parser->sdp->m_medias), pos)) {
+            sdp_media_t *hdr = (sdp_media_t *) osip_list_get(
+                    &(parser->sdp->m_medias), pos);
+
+            /* If there are multiple media, try to get the address
+             * from the audio media if possible.
+             *
+             * Of course, if the 'c=' and 'm=' ordering is just
+             * due to dodgy SIP implementation, there is a chance
+             * that the address we need could be associated with
+             * another media but I'll worry about that if it ever
+             * comes up.
+             */
+            if (osip_list_size(&(hdr->c_connections)) &&
+                    strcmp(hdr->m_media, "audio") == 0) {
+                sdp_connection_t *c = (sdp_connection_t *)osip_list_get(
+                        &(hdr->c_connections), 0);
+
+                ipaddr = c->c_addr;
+                break;
+            }
+            pos ++;
+        }
+    }
+
     return ipaddr;
 }
 
@@ -990,6 +1032,13 @@ int sip_is_183sessprog(openli_sip_parser_t *parser) {
 
 int sip_is_bye(openli_sip_parser_t *parser) {
     if (MSG_IS_BYE(parser->osip)) {
+        return 1;
+    }
+    return 0;
+}
+
+int sip_is_cancel(openli_sip_parser_t *parser) {
+    if (MSG_IS_CANCEL(parser->osip)) {
         return 1;
     }
     return 0;

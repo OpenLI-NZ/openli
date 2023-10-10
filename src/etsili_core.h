@@ -97,6 +97,7 @@ typedef struct etsili_email_iri {
     char **recipients;
     uint32_t status;
     char *messageid;
+    uint32_t sender_validity;
 } etsili_email_iri_content_t;
 
 typedef struct etsili_other_targets {

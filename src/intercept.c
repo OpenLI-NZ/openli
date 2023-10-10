@@ -895,6 +895,7 @@ void clear_email_user_intercept_list(email_user_intercept_list_t *ulist) {
             HASH_DELETE(hh, u->intlist, em);
             free(em);
         }
+
         HASH_DELETE(hh, ulist, u);
         free(u->emailaddr);
         free(u);
@@ -962,6 +963,30 @@ payload_encryption_method_t map_encrypt_method_string(char *encstr) {
 
     return OPENLI_PAYLOAD_ENCRYPTION_NONE;
 }
+
+uint8_t map_email_decompress_option_string(char *decstr) {
+    if (strcasecmp(decstr, "as-is") == 0) {
+        return OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
+    } else if (strcasecmp(decstr, "decompressed") == 0) {
+        return OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED;
+    } else if (strcasecmp(decstr, "inflated") == 0) {
+        return OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED;
+    } else if (strcasecmp(decstr, "default") == 0) {
+        return OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT;
+    }
+    return OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET;
+}
+
+void email_decompress_option_as_string(uint8_t opt, char *space, int spacelen) {
+    if (opt == OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS) {
+        snprintf(space, spacelen, "as-is");
+    } else if (opt == OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED) {
+        snprintf(space, spacelen, "decompressed");
+    } else {
+        snprintf(space, spacelen, "default");
+    }
+}
+
 
 internet_access_method_t map_access_type_string(char *confstr) {
 

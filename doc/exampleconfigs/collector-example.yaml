@@ -45,6 +45,12 @@ maskimapcreds: yes
 # POP3 traffic captured using an email intercept, not an IP intercept.
 maskpop3creds: yes
 
+# Email users who supply a domain-less username during authentication will
+# be assumed to have an email address of '<username>@<defaultemaildomain>'.
+# Obviously, you would want to replace this config option with the domain
+# that your email addresses are assigned to.
+defaultemaildomain: example.org
+
 # Number of minutes between each dump of performance statistics to the
 # logger. Set to zero to disable this extra logging altogether.
 logstatfrequency: 5

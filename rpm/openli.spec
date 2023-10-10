@@ -1,5 +1,5 @@
 Name:           openli
-Version:        1.1.1
+Version:        1.1.2
 Release:        1%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
@@ -28,6 +28,7 @@ BuildRequires: systemd
 BuildRequires: sqlcipher-devel
 BuildRequires: librabbitmq-devel
 BuildRequires: libb64-devel
+BuildRequires: zlib-devel
 
 %description
 Software for performing ETSI-compliant lawful intercept
@@ -282,6 +283,9 @@ fi
 
 
 %changelog
+* Tue Oct 10 2023 Shane Alcock <salcock@searchlight.nz> - 1.1.2-1
+- Updated for 1.1.2 release
+
 * Mon Jul 31 2023 Shane Alcock <salcock@searchlight.nz> - 1.1.1-1
 - Updated for 1.1.1 release
 

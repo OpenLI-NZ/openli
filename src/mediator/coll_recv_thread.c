@@ -409,7 +409,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
         HASH_ADD_KEYPTR(hh, col->known_liids, found->liid, found->liidlen,
                 found);
-        logger(LOG_INFO, "OpenLI Mediator: LIID %s %u has been seen coming from collector %s", found->liid, liidlen, col->ipaddr);
+        logger(LOG_INFO, "OpenLI Mediator: LIID %s has been seen coming from collector %s", found->liid, col->ipaddr);
 
         /* declare amqp queue for this LIID */
         if (declare_mediator_liid_RMQ_queue(col->amqp_producer_state,

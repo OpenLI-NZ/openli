@@ -1,6 +1,6 @@
 # Super primitive configure script
 
-AC_INIT([openli],[1.1.1],[shane@alcock.co.nz])
+AC_INIT([openli],[1.1.2],[shane@alcock.co.nz])
 
 AM_INIT_AUTOMAKE([subdir-objects])
 AC_CONFIG_SRCDIR(src/collector/collector.c)
@@ -47,6 +47,7 @@ AC_CHECK_LIB([ssl], [OPENSSL_init_ssl],libssl11_found=1,)
 AC_CHECK_LIB([crypto], [ERR_load_crypto_strings],libcrypto_found=1,)
 AC_CHECK_LIB([crypto], [EVP_CIPHER_CTX_new],libcrypto_found=1,)
 AC_CHECK_LIB([rabbitmq], [amqp_new_connection],rabbit_found=1,rabbit_found=0)
+AC_CHECK_LIB([Judy], [JudySLGet],,libjudy_found=0)
 
 if test "x$libzmq_found" = "x1"; then
         COLLECTOR_LIBS="$COLLECTOR_LIBS -lzmq"
@@ -70,6 +71,10 @@ AS_IF([test "x$uthash_avail" != "xyes"],
 
 if test "x$enable_collector" != "xno"; then
         AC_CHECK_LIB([tcmalloc], [tc_version],,libtcmalloc_found=0)
+        AC_CHECK_LIB([z], [inflateEnd],,libz_found=0)
+        if test "$libz_found" = 0; then
+                AC_MSG_ERROR(Required library libz not found; use LDFLAGS to specify library location)
+        fi
         AC_CHECK_LIB([osipparser2], [osip_message_init],libosip2_found=1,libosip2_found=0)
         if test "$libosip2_found" = 0; then
                 AC_MSG_ERROR(Required library libosipparser2 not found; use LDFLAGS to specify library location)
@@ -78,7 +83,7 @@ if test "x$enable_collector" != "xno"; then
         if test "$libb64_found" = 0; then
                 AC_MSG_ERROR(Required library libb64 not found; use LDFLAGS to specify library location)
         fi
-        COLLECTOR_LIBS="$COLLECTOR_LIBS -losipparser2 -lb64"
+        COLLECTOR_LIBS="$COLLECTOR_LIBS -losipparser2 -lb64 -lz"
 fi
 
 if test "x$enable_provisioner" != "xno" -o "x$enable_collector" != "xno"; then
@@ -120,13 +125,9 @@ if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then
                 AC_MSG_ERROR(Required library libwandder 2.0.6 or later not found; use LDFLAGS to specify library location)
         fi
 
-        AC_CHECK_LIB([Judy], [JudySLGet],libjudy_found=1,libjudy_found=0)
-        if test "$libjudy_found" = 0; then
-                AC_MSG_ERROR(Required library libjudy not found; use LDFLAGS to specify library location)
-        fi
 
-        COLLECTOR_LIBS="$COLLECTOR_LIBS -lJudy -lwandder"
-        MEDIATOR_LIBS="$MEDIATOR_LIBS -lJudy -lwandder"
+        COLLECTOR_LIBS="$COLLECTOR_LIBS -lwandder"
+        MEDIATOR_LIBS="$MEDIATOR_LIBS -lwandder"
 fi
 
 if test "$libtrace_found" = 0; then
@@ -149,6 +150,9 @@ else
         PROVISIONER_LIBS="$PROVISIONER_LIBS -lcrypto"
 fi
 
+if test "$libjudy_found" = 0; then
+        AC_MSG_ERROR(Required library libjudy not found; use LDFLAGS to specify library location)
+fi
 
 if test "$rabbit_found" != 1; then
     AC_MSG_ERROR(Required library librabbitmq not found; use LDFLAGS to specify library location)

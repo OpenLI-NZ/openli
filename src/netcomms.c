@@ -501,7 +501,8 @@ pushmodfail:
 }
 
 #define EMAILINTERCEPT_MODIFY_BODY_LEN(em) \
-        (INTERCEPT_COMMON_LEN(em->common))
+        (INTERCEPT_COMMON_LEN(em->common) + sizeof(em->delivercompressed) + \
+         (1 * 4))
 
 static int _push_emailintercept_modify(net_buffer_t *nb, emailintercept_t *em) {
     ii_header_t hdr;
@@ -530,6 +531,11 @@ static int _push_emailintercept_modify(net_buffer_t *nb, emailintercept_t *em) {
         goto pushmodfail;
     }
 
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_DELIVER_COMPRESSED,
+            (uint8_t *)(&(em->delivercompressed)),
+            sizeof(em->delivercompressed)) == -1) {
+        goto pushmodfail;
+    }
     return (int)totallen;
 
 pushmodfail:
@@ -602,7 +608,8 @@ int push_intercept_modify_onto_net_buffer(net_buffer_t *nb, void *data,
 }
 
 #define EMAILINTERCEPT_BODY_LEN(em) \
-        (INTERCEPT_COMMON_LEN(em->common))
+        (INTERCEPT_COMMON_LEN(em->common) + sizeof(em->delivercompressed) + \
+         (1 * 4))
 
 int push_emailintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
@@ -632,6 +639,11 @@ int push_emailintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
         goto pushemailintfail;
     }
 
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_DELIVER_COMPRESSED,
+            (uint8_t *)(&(em->delivercompressed)),
+            sizeof(em->delivercompressed)) == -1) {
+        goto pushemailintfail;
+    }
     return (int)totallen;
 
 pushemailintfail:
@@ -1282,6 +1294,29 @@ int push_default_radius_withdraw_onto_net_buffer(net_buffer_t *nb,
 
 }
 
+int push_default_email_compression_onto_net_buffer(net_buffer_t *nb,
+        uint8_t defaultcompress) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+    int ret;
+
+    totallen = sizeof(uint8_t) + (1 * 4);
+    populate_header(&hdr, OPENLI_PROTO_ANNOUNCE_DEFAULT_EMAIL_COMPRESSION,
+            totallen, 0);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DELIVER_COMPRESSED,
+            (uint8_t *)&(defaultcompress), sizeof(defaultcompress))) == -1) {
+        return -1;
+    }
+
+    return totallen;
+}
+
 #define CORESERVER_BODY_LEN(cs) \
     (sizeof(uint8_t) + strlen(cs->ipstr) + \
     (cs->portstr ? (strlen(cs->portstr) + (3 * 4)) : (2 * 4)))
@@ -1509,6 +1544,7 @@ int decode_emailintercept_start(uint8_t *msgbody, uint16_t len,
     mailint->common.tomediate = 0;
     mailint->common.encrypt = 0;
     mailint->common.encryptkey = NULL;
+    mailint->delivercompressed = OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -1538,6 +1574,8 @@ int decode_emailintercept_start(uint8_t *msgbody, uint16_t len,
             mailint->common.toend_time = *((uint64_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_TOMEDIATE) {
             mailint->common.tomediate = *((intercept_outputs_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_DELIVER_COMPRESSED) {
+            mailint->delivercompressed = *((uint8_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION) {
             mailint->common.encrypt = *((payload_encryption_method_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_ENCRYPTION_KEY) {
@@ -2137,6 +2175,28 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
 
 int decode_lea_withdrawal(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
     return decode_lea_announcement(msgbody, len, lea);
+}
+
+int decode_default_email_compression_announcement(uint8_t *msgbody,
+        uint16_t len, uint8_t *result) {
+
+    uint8_t *msgend = msgbody + len;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_DELIVER_COMPRESSED) {
+            *result = *((uint8_t *)valptr);
+        }
+        msgbody += (vallen + 4);
+    }
+    return 0;
 }
 
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,

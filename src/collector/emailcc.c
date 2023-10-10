@@ -33,7 +33,7 @@
 #include "etsili_core.h"
 
 static inline email_user_intercept_list_t *is_address_interceptable(
-        openli_email_worker_t *state, char *emailaddr) {
+        openli_email_worker_t *state, const char *emailaddr) {
 
     email_user_intercept_list_t *active = NULL;
 
@@ -71,10 +71,13 @@ static openli_export_recv_t *create_emailcc_job(char *liid,
 static void create_emailccs_for_intercept_list(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
         uint8_t format, email_user_intercept_list_t *active,
-        uint64_t timestamp, uint8_t dir) {
+        uint64_t timestamp, uint8_t dir, const char *key, uint8_t deflated) {
 
     openli_export_recv_t *ccjob = NULL;
     email_intercept_ref_t *ref, *tmp;
+    char fullkey[4096];
+
+    PWord_t pval;
 
     HASH_ITER(hh, active->intlist, ref, tmp) {
 
@@ -89,6 +92,56 @@ static void create_emailccs_for_intercept_list(openli_email_worker_t *state,
                 timestamp > ref->em->common.toend_time * 1000) {
             continue;
         }
+
+        if (key != NULL) {
+            snprintf(fullkey, 4096, "%s-%s", ref->em->common.liid, key);
+            JSLG(pval, sess->ccs_sent, fullkey);
+            if (pval != NULL) {
+                /* We've already sent this particular CC for this intercept, but
+                 * it has reached us again (probably because the target has
+                 * multiple addresses and more than one has turned up as a
+                 * recipient for this session.
+                 *
+                 * Don't send a duplicate CC in that case
+                 */
+                continue;
+            }
+            JSLI(pval, sess->ccs_sent, fullkey);
+            *pval = 1;
+        }
+
+
+        /* Once the compressed data handler is set for a session, let's not
+         * change it. If the user changes either the default setting or the
+         * setting specific to this intercept, we'll apply the changes on
+         * any NEW sessions but I don't think it is a good idea to mix and
+         * match behaviour within the same session.
+         */
+        if (sess->handle_compress == OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET)
+        {
+            if (ref->em->delivercompressed ==
+                    OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT) {
+                sess->handle_compress = state->default_compress_delivery;
+            } else {
+                sess->handle_compress = ref->em->delivercompressed;
+            }
+        }
+
+        if (sess->handle_compress == OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS) {
+
+            if (sess->compressed && deflated == 0) {
+                continue;
+            }
+        } else if (sess->handle_compress ==
+                OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED) {
+            if (sess->compressed && deflated == 1) {
+                continue;
+            }
+        } else {
+            continue;
+        }
+
+
         ccjob = create_emailcc_job(ref->em->common.liid, sess,
                 ref->em->common.destid, timestamp, content, content_len,
                 format, dir);
@@ -106,35 +159,25 @@ static void create_emailccs_for_intercept_list(openli_email_worker_t *state,
 
 int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
-        uint64_t timestamp) {
+        uint64_t timestamp, const char *address, uint8_t dir,
+        int command_index) {
 
     email_user_intercept_list_t *active = NULL;
     email_participant_t *recip, *tmp;
+    char key[1024];
 
-    if (sess->sender.emailaddr) {
-        active = is_address_interceptable(state, sess->sender.emailaddr);
+    if (address == NULL || sess->sender.emailaddr == NULL) {
+        return 0;
     }
+    active = is_address_interceptable(state, address);
 
     if (active) {
-        create_emailccs_for_intercept_list(state, sess, content, content_len,
-                ETSILI_EMAIL_CC_FORMAT_APP, active, timestamp,
-                ETSI_DIR_FROM_TARGET);
-    }
-
-    HASH_ITER(hh, sess->participants, recip, tmp) {
-        if (sess->sender.emailaddr != NULL &&
-                strcmp(recip->emailaddr, sess->sender.emailaddr) == 0) {
-            continue;
-        }
-
-        active = is_address_interceptable(state, recip->emailaddr);
-        if (!active) {
-            continue;
-        }
-
-        create_emailccs_for_intercept_list(state, sess, content, content_len,
-                ETSILI_EMAIL_CC_FORMAT_APP, active, timestamp,
-                ETSI_DIR_TO_TARGET);
+        snprintf(key, 1024, "%d-%u-%s", command_index, dir,
+                strcmp(address, sess->sender.emailaddr) == 0 ? "sender" :
+                        "recipient");
+        create_emailccs_for_intercept_list(state, sess, content,
+                content_len, ETSILI_EMAIL_CC_FORMAT_APP, active, timestamp,
+                dir, key, 0);
     }
 
     return 0;
@@ -159,7 +202,7 @@ int generate_email_cc_from_pop3_payload(openli_email_worker_t *state,
 
         create_emailccs_for_intercept_list(state, sess, content, content_len,
                 ETSILI_EMAIL_CC_FORMAT_APP, active, timestamp,
-                etsidir);
+                etsidir, NULL, 0);
     }
 
     return 0;
@@ -168,7 +211,7 @@ int generate_email_cc_from_pop3_payload(openli_email_worker_t *state,
 
 int generate_email_cc_from_imap_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
-        uint64_t timestamp, uint8_t etsidir) {
+        uint64_t timestamp, uint8_t etsidir, uint8_t deflated) {
 
     email_user_intercept_list_t *active = NULL;
     email_participant_t *recip, *tmp;
@@ -185,7 +228,7 @@ int generate_email_cc_from_imap_payload(openli_email_worker_t *state,
 
         create_emailccs_for_intercept_list(state, sess, content, content_len,
                 ETSILI_EMAIL_CC_FORMAT_APP, active, timestamp,
-                etsidir);
+                etsidir, NULL, deflated);
     }
 
     return 0;

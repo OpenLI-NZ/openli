@@ -652,9 +652,9 @@ static int handle_server_reply_state(openli_email_worker_t *state,
         if (pop3sess->server_indicator == OPENLI_POP3_SERV_OK) {
             pop3sess->auth_state = OPENLI_POP3_POSTAUTH;
             sess->login_time = timestamp;
-            generate_email_login_success_iri(state, sess);
+            generate_email_login_success_iri(state, sess, pop3sess->mailbox);
         } else {
-            generate_email_login_failure_iri(state, sess);
+            generate_email_login_failure_iri(state, sess, pop3sess->mailbox);
         }
     }
 

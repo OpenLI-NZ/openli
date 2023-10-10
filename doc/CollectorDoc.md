@@ -215,6 +215,10 @@ The basic option keys are:
                        credentials in IMAP traffic that have been
                        intercepted using an email intercept with "XXX".
                        Defaults to "yes".
+* defaultemaildomain -- during email interception, any authenticated email
+                        users that do not explicitly include their domain
+                        in their username will be assumed to be using the
+                        address'<username>@<this domain>'.
 
 Be aware that increasing the number of threads used for sequence number
 tracking, encoding or forwarding can actually decrease OpenLI's performance,

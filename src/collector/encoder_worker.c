@@ -679,6 +679,14 @@ static int encode_templated_emailcc(openli_encoder_t *enc,
             emailccjob->dir == ETSI_DIR_TO_TARGET) {
         key = (TEMPLATE_TYPE_EMAILCC_APP_DIRTO << 16) +
                 emailccjob->cc_content_len;
+    } else if (emailccjob->format == ETSILI_EMAIL_CC_FORMAT_IP &&
+            emailccjob->dir == ETSI_DIR_INDETERMINATE) {
+        key = (TEMPLATE_TYPE_EMAILCC_IP_DIROTHER << 16) +
+                emailccjob->cc_content_len;
+    } else if (emailccjob->format == ETSILI_EMAIL_CC_FORMAT_APP &&
+            emailccjob->dir == ETSI_DIR_INDETERMINATE) {
+        key = (TEMPLATE_TYPE_EMAILCC_APP_DIROTHER << 16) +
+                emailccjob->cc_content_len;
     } else {
         logger(LOG_INFO, "Unexpected format + direction for EmailCC: %u %u",
                 emailccjob->format, emailccjob->dir);

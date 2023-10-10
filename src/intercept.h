@@ -32,8 +32,16 @@
 #include <netinet/in.h>
 #include <libtrace/linked_list.h>
 #include <uthash.h>
+#include <Judy.h>
 
 #define OPENLI_VENDOR_MIRROR_NONE (0xffffffff)
+
+typedef enum {
+    OPENLI_INTERCEPT_TYPE_UNKNOWN = 0,
+    OPENLI_INTERCEPT_TYPE_IP = 1,
+    OPENLI_INTERCEPT_TYPE_VOIP = 2,
+    OPENLI_INTERCEPT_TYPE_EMAIL = 3,
+} openli_intercept_types_t;
 
 typedef enum {
     INTERNET_ACCESS_TYPE_UNDEFINED = 0,
@@ -75,6 +83,13 @@ typedef enum {
     OPENLI_INTERCEPT_OUTPUTS_CCONLY = 2,
 } intercept_outputs_t;
 
+enum {
+    OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS = 0,
+    OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED = 1,
+    OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET = 254,
+    OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT = 255,
+};
+
 typedef enum {
     HI1_LI_ACTIVATED = 1,
     HI1_LI_DEACTIVATED = 2,
@@ -106,6 +121,13 @@ typedef struct intercept_common {
     intercept_outputs_t tomediate;
     payload_encryption_method_t encrypt;
     char *encryptkey;
+
+    /** A pointer to use for storing "local" data against an instance of
+     *  an intercept, i.e. the provisioner might want to associate
+     *  certain data against each intercept that is not required by the
+     *  collector or mediator.
+     */
+    void *local;
 } intercept_common_t;
 
 typedef struct hi1_notify_data {
@@ -157,6 +179,7 @@ typedef struct emailintercept {
     email_target_t *targets;
 
     uint8_t awaitingconfirm;
+    uint8_t delivercompressed;
     UT_hash_handle hh_liid;
 
 } emailintercept_t;
@@ -287,10 +310,17 @@ struct emailsession {
     uint8_t protocol;
     uint8_t currstate;
     uint8_t mask_credentials;
+    uint8_t compressed;
     void *timeout_ev;
+    uint8_t handle_compress;
 
     void *proto_state;
+    void **held_captured;
+    int held_captured_size;
+    int next_expected_captured;
+    uint8_t sender_validated_etsivalue;
 
+    Pvoid_t ccs_sent;
     UT_hash_handle hh;
 };
 
@@ -439,11 +469,13 @@ const char *get_radius_ident_string(uint32_t radoptions);
 internet_access_method_t map_access_type_string(char *confstr);
 uint32_t map_radius_ident_string(char *confstr);
 payload_encryption_method_t map_encrypt_method_string(char *encstr);
+uint8_t map_email_decompress_option_string(char *decstr);
 
 void intercept_mediation_mode_as_string(intercept_outputs_t mode,
         char *space, int spacelen);
 void intercept_encryption_mode_as_string(payload_encryption_method_t method,
         char *space, int spacelen);
+void email_decompress_option_as_string(uint8_t opt, char *space, int spacelen);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

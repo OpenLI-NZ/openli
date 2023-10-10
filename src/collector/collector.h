@@ -315,7 +315,7 @@ typedef struct collector_global {
     openli_email_timeouts_t email_timeouts;
     uint8_t mask_imap_creds;
     uint8_t mask_pop3_creds;
-
+    char *default_email_domain;
     int emailsockfd;
     email_ingestor_state_t *email_ingestor;
 

@@ -535,6 +535,18 @@ An email target is a JSON object that contains just a single field:
 
 * `address`               -- the email address of the target
 
+Optional key-value elements for an email intercept are:
+
+* `delivercompressed`     -- if email content is compressed (e.g. via the
+                             IMAP COMPRESS extension), should OpenLI create
+                             CC records using the compressed or decompressed
+                             version of the content? Set to `as-is` to emit
+                             CC records with compressed content, or
+                             `decompressed` to emit CC records using
+                             decompressed content. If not set, the approach
+                             described by the `email-defaultdelivercompressed`
+                             option will be used.
+
 
 ---
 
@@ -567,6 +579,22 @@ All intercept types also support the following optional key-value elements:
                              ideal key length is 24 characters. Shorter keys
                              will be padded with null bytes, longer keys will be
                              truncated to 24 characters.
+---
+
+The default approach for delivering compressed email content to the agencies
+can be set by adding a key-value pair to the top level of the intercept
+configuration. The key should be `email-defaultdelivercompressed` and the value
+should be either `as-is` (to deliver compressed content in its original
+compressed form) or `decompressed` (to deliver the decompressed version of the
+content instead).
+
+The approach described in the `email-defaultdelivercompressed` option will be
+applied to all email intercepts, but can be overridden for specific
+email intercepts by including the `delivercompressed` config option in the
+individual intercept configuration.
+
+If `email-defaultdelivercompressed` is not set, `as-is` will be used as the
+default approach for handling compressed email content.
 
 
 ### SIP Target Specifics

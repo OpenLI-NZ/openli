@@ -294,6 +294,12 @@ static int update_configuration_delete(update_con_info_t *cinfo,
         case TARGET_DEFAULTRADIUS:
             ret = remove_defaultradius(cinfo, state, target);
             break;
+        case TARGET_OPTIONS:
+            /* deleting options doesn't make sense? */
+            break;
+        case TARGET_OPENLIVERSION:
+            /* deleting this is not sensible either */
+            break;
     }
 
     /* Safe to unlock before emitting, since all accesses should be reads
@@ -337,6 +343,12 @@ static json_object *create_get_response(update_con_info_t *cinfo,
             break;
         case TARGET_DEFAULTRADIUS:
             jobj = get_default_radius(cinfo, state);
+            break;
+        case TARGET_OPTIONS:
+            jobj = get_provisioner_options(cinfo, state);
+            break;
+        case TARGET_OPENLIVERSION:
+            jobj = get_openli_version();
             break;
         case TARGET_GTPSERVER:
             jobj = get_coreservers(cinfo, state, OPENLI_CORE_SERVER_GTP);
@@ -403,6 +415,9 @@ static int update_configuration_post(update_con_info_t *cinfo,
         case TARGET_DEFAULTRADIUS:
             ret = add_new_defaultradius(cinfo, state);
             break;
+        case TARGET_OPTIONS:
+            ret = modify_provisioner_options(cinfo, state);
+            break;
         case TARGET_GTPSERVER:
             ret = add_new_coreserver(cinfo, state, OPENLI_CORE_SERVER_GTP);
             break;
@@ -435,6 +450,8 @@ static int update_configuration_post(update_con_info_t *cinfo,
             } else {
                 ret = modify_emailintercept(cinfo, state);
             }
+            break;
+        case TARGET_OPENLIVERSION:
             break;
     }
 
@@ -662,6 +679,11 @@ MHD_RESULT handle_update_request(void *cls, struct MHD_Connection *conn,
             cinfo->target = TARGET_EMAILINTERCEPT;
         } else if (strncmp(url, "/defaultradius", 14) == 0) {
             cinfo->target = TARGET_DEFAULTRADIUS;
+        } else if (strncmp(url, "/openliversion",
+                strlen("/openliversion")) == 0) {
+            cinfo->target = TARGET_OPENLIVERSION;
+        } else if (strncmp(url, "/options", strlen("/options")) == 0) {
+            cinfo->target = TARGET_OPTIONS;
         } else {
             free(cinfo);
             return MHD_NO;

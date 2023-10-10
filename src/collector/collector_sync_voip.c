@@ -660,6 +660,10 @@ static openli_sip_identity_t *sipid_matches_target(libtrace_list_t *targets,
 
     libtrace_list_node_t *n;
 
+    if (sipid->username == NULL) {
+        return NULL;
+    }
+
     n = targets->head;
     while (n) {
         openli_sip_identity_t *x = *((openli_sip_identity_t **) (n->data));
@@ -1155,8 +1159,9 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
             }
         }
 
-        /* Check for a BYE */
-        if (sip_is_bye(sync->sipparser) && !thisrtp->byematched) {
+        /* Check for a BYE or CANCEL*/
+        if ((sip_is_bye(sync->sipparser) || sip_is_cancel(sync->sipparser))
+                && !thisrtp->byematched) {
             if (thisrtp->byecseq) {
                 free(thisrtp->byecseq);
             }

@@ -114,6 +114,7 @@ typedef enum {
     OPENLI_PROTO_MODIFY_EMAILINTERCEPT,
     OPENLI_PROTO_ANNOUNCE_EMAIL_TARGET,
     OPENLI_PROTO_WITHDRAW_EMAIL_TARGET,
+    OPENLI_PROTO_ANNOUNCE_DEFAULT_EMAIL_COMPRESSION,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -163,6 +164,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_TOMEDIATE,
     OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION,
     OPENLI_PROTO_FIELD_ENCRYPTION_KEY,
+    OPENLI_PROTO_FIELD_DELIVER_COMPRESSED,
 } openli_proto_fieldtype_t;
 
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl);
@@ -173,6 +175,8 @@ void destroy_net_buffer(net_buffer_t *nb);
 int construct_netcomm_protocol_header(ii_header_t *hdr, uint32_t contentlen,
         uint16_t msgtype, uint64_t internalid, uint32_t *hdrlen);
 
+int push_default_email_compression_onto_net_buffer(net_buffer_t *nb,
+        uint8_t defaultcompress);
 int push_default_radius_onto_net_buffer(net_buffer_t *nb,
         default_radius_user_t *defuser);
 int push_default_radius_withdraw_onto_net_buffer(net_buffer_t *nb,
@@ -229,6 +233,8 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
         uint16_t *msglen, uint64_t *intid);
 openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
         uint16_t *msglen, uint64_t *intid);
+int decode_default_email_compression_announcement(uint8_t *msgbody,
+        uint16_t len, uint8_t *result);
 int decode_default_radius_announcement(uint8_t *msgbody, uint16_t len,
         default_radius_user_t *defuser);
 int decode_default_radius_withdraw(uint8_t *msgbody, uint16_t len,

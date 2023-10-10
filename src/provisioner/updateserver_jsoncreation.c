@@ -34,6 +34,7 @@
 #include "logger.h"
 #include "util.h"
 
+#include "config.h"
 static json_object *convert_lea_to_json(prov_agency_t *lea) {
 
     json_object *jobj;
@@ -167,7 +168,8 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
 
 static json_object *convert_emailintercept_to_json(emailintercept_t *mailint) {
     json_object *jobj;
-    json_object *targets;
+    json_object *targets, *decompress;
+    const char *decompress_str;
     email_target_t *tgt, *tmp;
 
     jobj = json_object_new_object();
@@ -186,6 +188,20 @@ static json_object *convert_emailintercept_to_json(emailintercept_t *mailint) {
     }
 
     json_object_object_add(jobj, "targets", targets);
+
+    if (mailint->delivercompressed == OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS) {
+        decompress_str = "as-is";
+    } else if (mailint->delivercompressed == OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED) {
+        decompress_str = "decompressed";
+    } else {
+        decompress_str = NULL;
+    }
+
+    if (decompress_str) {
+        decompress = json_object_new_string(decompress_str);
+        json_object_object_add(jobj, "delivercompressed", decompress);
+    }
+
     return jobj;
 }
 
@@ -235,6 +251,51 @@ static json_object *convert_coreserver_to_json(coreserver_t *cs,
     json_object_object_add(jobj, "ipaddress", ipaddr);
     json_object_object_add(jobj, "port", port);
 
+    return jobj;
+}
+
+struct json_object *get_openli_version() {
+    json_object *jobj, *major, *minor, *revision, *full;
+    int a,b,c;
+
+    if (sscanf(PACKAGE_VERSION, "%d.%d.%d", &a, &b, &c) != 3) {
+        return NULL;
+    }
+
+    jobj = json_object_new_object();
+    major = json_object_new_int(a);
+    minor = json_object_new_int(b);
+    revision = json_object_new_int(c);
+    full = json_object_new_string(PACKAGE_VERSION);
+
+    json_object_object_add(jobj, "fullversion", full);
+    json_object_object_add(jobj, "major", major);
+    json_object_object_add(jobj, "minor", minor);
+    json_object_object_add(jobj, "revision", revision);
+
+    return jobj;
+}
+
+json_object *get_provisioner_options(update_con_info_t *cinfo,
+        provision_state_t *state) {
+
+    json_object *jobj;
+    json_object *defaultemaildecompressed = NULL;
+
+    jobj = json_object_new_object();
+
+    if (state->interceptconf.default_email_deliver_compress ==
+            OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS) {
+        defaultemaildecompressed = json_object_new_string("as-is");
+    } else if (state->interceptconf.default_email_deliver_compress ==
+            OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED) {
+        defaultemaildecompressed = json_object_new_string("decompressed");
+    }
+
+    if (defaultemaildecompressed) {
+        json_object_object_add(jobj, "email-defaultdelivercompressed",
+                defaultemaildecompressed);
+    }
     return jobj;
 }
 

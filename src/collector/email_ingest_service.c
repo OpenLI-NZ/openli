@@ -90,6 +90,7 @@ static int init_email_ingest_state(email_ingestor_state_t *state,
 #define CALLOC_THISMSG \
     if (con_info->thismsg == NULL) { \
         con_info->thismsg = calloc(1, sizeof(openli_email_captured_t)); \
+        con_info->thismsg->part_id = 0xFFFFFFFF; \
     }
 
 static MHD_RESULT iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
@@ -98,12 +99,7 @@ static MHD_RESULT iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
             size_t size) {
 
     email_connection_t *con_info = (email_connection_t *)(coninfo_cls);
-    char *ptr;
-
-    if (memchr(data, '\0', size + 1) == NULL) {
-        logger(LOG_INFO, "OpenLI: WARNING -- ingested email content does not end in a null character, it may have been truncated. Ignoring it...");
-        return MHD_YES;
-    }
+    char *ptr, *writeptr;
 
     if (strcmp(key, "TARGET_ID") == 0) {
         CALLOC_THISMSG
@@ -143,6 +139,9 @@ static MHD_RESULT iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
     } else if (strcmp(key, "MAIL_ID") == 0) {
         CALLOC_THISMSG
         con_info->thismsg->mail_id = strtoul(data, NULL, 10);
+    } else if (strcmp(key, "PART_ID") == 0) {
+        CALLOC_THISMSG
+        con_info->thismsg->part_id = strtoul(data, NULL, 10);
     } else if (strcmp(key, "SERVICE") == 0) {
         CALLOC_THISMSG
 
@@ -164,19 +163,34 @@ static MHD_RESULT iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
 
         CALLOC_THISMSG
         ptr = (char *)data;
-        while (*ptr == 0x0a || *ptr == 0x0d) {
-            ptr ++;
+        if (con_info->thismsg->content == NULL) {
+            while (*ptr == 0x0a || *ptr == 0x0d) {
+                ptr ++;
+            }
+
+            if (*ptr == '\0' || ptr - data >= size) {
+                free(con_info->thismsg->content);
+                con_info->thismsg->content = NULL;
+            }
+
+            size -= (ptr - data);
         }
 
-        if (*ptr == '\0' || ptr - data >= size) {
-            free(con_info->thismsg->content);
-            con_info->thismsg->content = NULL;
+        if (con_info->thismsg->content) {
+            con_info->thismsg->content = realloc(con_info->thismsg->content,
+                    con_info->thismsg->msg_length + size + 1);
+            writeptr = con_info->thismsg->content +
+                    con_info->thismsg->msg_length;
+        } else {
+            con_info->thismsg->content = malloc(size + 1);
+            writeptr = con_info->thismsg->content;
+            con_info->thismsg->msg_length = 0;
+            con_info->thismsg->own_content = 1;
         }
 
-        datalen = strlen(ptr);
-        con_info->thismsg->own_content = 1;
-        con_info->thismsg->content = strdup(ptr);
-        con_info->thismsg->msg_length = datalen;
+        memcpy(writeptr, ptr, size);
+        con_info->thismsg->msg_length += size;
+        con_info->thismsg->content[con_info->thismsg->msg_length] = '\0';
     } else {
         return MHD_YES;
     }

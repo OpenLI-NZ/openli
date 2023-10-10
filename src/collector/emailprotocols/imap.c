@@ -30,6 +30,7 @@
 #include <regex.h>
 #include <b64/cdecode.h>
 #include <b64/cencode.h>
+#include <zlib.h>
 
 #include "email_worker.h"
 #include "logger.h"
@@ -48,6 +49,7 @@ enum {
     OPENLI_IMAP_COMMAND_IDLE,
     OPENLI_IMAP_COMMAND_APPEND,
     OPENLI_IMAP_COMMAND_ID,
+    OPENLI_IMAP_COMMAND_COMPRESS,
 };
 
 enum {
@@ -83,12 +85,35 @@ typedef struct imap_comm {
     int reply_end;
 } imap_command_t;
 
+struct compress_state {
+    uint8_t *inbuffer;
+    uint32_t inbufsize;
+    uint32_t inwriteoffset;
+    uint32_t inreadoffset;
+
+    uint8_t *outbuffer;
+    uint32_t outbufsize;
+    uint32_t outreadoffset;
+
+    z_stream stream;
+};
+
+
 typedef struct imapsession {
 
     uint8_t *contbuffer;
     int contbufsize;
     int contbufused;
     int contbufread;
+
+    uint8_t *deflatebuffer;
+    int deflatebufsize;
+    int deflatebufused;
+    int deflatebufread;
+
+    imap_cc_index_t *deflate_ccs;
+    int deflate_ccs_size;
+    int deflate_ccs_current;
 
     imap_command_t *commands;
     int commands_size;
@@ -109,6 +134,9 @@ typedef struct imapsession {
     int auth_token_index;
     int auth_read_from;
     int auth_type;
+
+    struct compress_state decompress_server;
+    struct compress_state decompress_client;
 
 } imap_session_t;
 
@@ -155,6 +183,35 @@ static void add_cc_to_imap_command(imap_command_t *comm, int start_ind,
 
     comm->cc_used ++;
 
+}
+
+static int update_deflate_ccs(imap_session_t *imapsess, int start, int end,
+        uint8_t sender) {
+
+    imap_cc_index_t *ind;
+
+    if (sender == OPENLI_EMAIL_PACKET_SENDER_UNKNOWN) {
+        logger(LOG_INFO, "OpenLI: error -- deflated IMAP content has not been tagged with a usable direction.");
+        return -1;
+    }
+
+    while (imapsess->deflate_ccs_size <= imapsess->deflate_ccs_current) {
+        imapsess->deflate_ccs = realloc(imapsess->deflate_ccs,
+                (imapsess->deflate_ccs_size + 5) * sizeof(imap_cc_index_t));
+        imapsess->deflate_ccs_size += 5;
+    }
+
+    ind = &(imapsess->deflate_ccs[imapsess->deflate_ccs_current]);
+    ind->cc_start = start;
+    ind->cc_end = end;
+    if (sender == OPENLI_EMAIL_PACKET_SENDER_SERVER) {
+        ind->dir = 0;
+    } else {
+        ind->dir = 1;
+    }
+
+    imapsess->deflate_ccs_current ++;
+    return 0;
 }
 
 static int complete_imap_append(openli_email_worker_t *state,
@@ -247,19 +304,20 @@ static int complete_imap_authentication(openli_email_worker_t *state,
         sess->currstate = OPENLI_IMAP_STATE_AUTHENTICATED;
         /* generate login success iri */
 
-        generate_email_login_success_iri(state, sess);
+        generate_email_login_success_iri(state, sess, imapsess->mailbox);
     } else {
         sess->currstate = OPENLI_IMAP_STATE_PRE_AUTH;
 
         /* generate login failure iri */
-        generate_email_login_failure_iri(state, sess);
+        generate_email_login_failure_iri(state, sess, imapsess->mailbox);
     }
 
     return 1;
 }
 
 static int generate_ccs_from_imap_command(openli_email_worker_t *state,
-        emailsession_t *sess, imap_command_t *comm, uint64_t timestamp) {
+        emailsession_t *sess, imap_session_t *imapsess,
+        imap_command_t *comm, uint64_t timestamp) {
 
     int i, len;
     uint8_t dir;
@@ -274,7 +332,28 @@ static int generate_ccs_from_imap_command(openli_email_worker_t *state,
         }
 
         generate_email_cc_from_imap_payload(state, sess,
-                comm->commbuffer + comm->ccs[i].cc_start, len, timestamp, dir);
+                comm->commbuffer + comm->ccs[i].cc_start, len, timestamp, dir,
+                0);
+    }
+
+    if (imapsess->deflate_ccs) {
+        for (i = 0; i < imapsess->deflate_ccs_current; i++) {
+            len = imapsess->deflate_ccs[i].cc_end -
+                    imapsess->deflate_ccs[i].cc_start;
+            if (len == 0) {
+                continue;
+            }
+            if (imapsess->deflate_ccs[i].dir == 1) {
+                dir = ETSI_DIR_FROM_TARGET;
+            } else {
+                dir = ETSI_DIR_TO_TARGET;
+            }
+
+            generate_email_cc_from_imap_payload(state, sess,
+                    imapsess->deflatebuffer + imapsess->deflate_ccs[i].cc_start,
+                    len, timestamp, dir, 1);
+        }
+        imapsess->deflate_ccs_current = 0;
     }
 
     return 1;
@@ -887,17 +966,38 @@ void free_imap_session_state(emailsession_t *sess, void *imapstate) {
      * participant list for the overall email session.
      */
 
+    if (imapsess->decompress_server.outbuffer) {
+        free(imapsess->decompress_server.outbuffer);
+        inflateEnd(&(imapsess->decompress_server.stream));
+    }
+    if (imapsess->decompress_client.outbuffer) {
+        free(imapsess->decompress_client.outbuffer);
+        inflateEnd(&(imapsess->decompress_client.stream));
+    }
+    if (imapsess->decompress_server.inbuffer) {
+        free(imapsess->decompress_server.inbuffer);
+    }
+    if (imapsess->decompress_client.inbuffer) {
+        free(imapsess->decompress_client.inbuffer);
+    }
+
+    if (imapsess->deflate_ccs) {
+        free(imapsess->deflate_ccs);
+    }
+
+    if (imapsess->deflatebuffer) {
+        free(imapsess->deflatebuffer);
+    }
+
     free(imapsess->commands);
     free(imapsess->contbuffer);
     free(imapsess);
 }
 
-static int append_content_to_imap_buffer(imap_session_t *imapsess,
-        openli_email_captured_t *cap) {
-
+static int _append_content_to_imap_buffer(imap_session_t *imapsess,
+        uint8_t *content, uint32_t length) {
     /* +1 to account for a null terminator */
-    while (imapsess->contbufsize - imapsess->contbufused <=
-                cap->msg_length + 1) {
+    while (imapsess->contbufsize - imapsess->contbufused <= length + 1) {
         imapsess->contbuffer = realloc(imapsess->contbuffer,
                 imapsess->contbufsize + 4096);
         if (imapsess->contbuffer == NULL) {
@@ -906,13 +1006,198 @@ static int append_content_to_imap_buffer(imap_session_t *imapsess,
         imapsess->contbufsize += 4096;
     }
 
-    memcpy(imapsess->contbuffer + imapsess->contbufused,
-            cap->content, cap->msg_length);
-    imapsess->contbufused += cap->msg_length;
+    memcpy(imapsess->contbuffer + imapsess->contbufused, content, length);
+    imapsess->contbufused += length;
     imapsess->contbuffer[imapsess->contbufused] = '\0';
 
     return 0;
 }
+
+static void reset_decompress_state(imap_session_t *imapsess) {
+
+    if (imapsess->deflatebuffer) {
+        free(imapsess->deflatebuffer);
+    }
+    imapsess->deflatebufsize = 0;
+    imapsess->deflatebufused = 0;
+
+    if (imapsess->deflate_ccs) {
+        free(imapsess->deflate_ccs);
+    }
+    imapsess->deflate_ccs = NULL;
+    imapsess->deflate_ccs_size = 0;
+    imapsess->deflate_ccs_current = 0;
+
+    if (imapsess->decompress_server.outbuffer) {
+        free(imapsess->decompress_server.outbuffer);
+        imapsess->decompress_server.outbuffer = NULL;
+        inflateEnd(&(imapsess->decompress_server.stream));
+    }
+    if (imapsess->decompress_client.outbuffer) {
+        free(imapsess->decompress_client.outbuffer);
+        imapsess->decompress_client.outbuffer = NULL;
+        inflateEnd(&(imapsess->decompress_client.stream));
+    }
+    if (imapsess->decompress_server.inbuffer) {
+        free(imapsess->decompress_server.inbuffer);
+        imapsess->decompress_server.inbuffer = NULL;
+    }
+    if (imapsess->decompress_client.inbuffer) {
+        free(imapsess->decompress_client.inbuffer);
+        imapsess->decompress_client.inbuffer = NULL;
+    }
+}
+
+static int _append_content_to_deflate_buffer(imap_session_t *imapsess,
+        uint8_t *content, uint32_t length, uint8_t sender) {
+    /* +1 to account for a null terminator */
+    int start = imapsess->deflatebufused;
+    int end = 0;
+
+    while (imapsess->deflatebuffer == NULL ||
+            imapsess->deflatebufsize - imapsess->deflatebufused <= length + 1) {
+        imapsess->deflatebuffer = realloc(imapsess->deflatebuffer,
+                imapsess->deflatebufsize + 4096);
+        if (imapsess->deflatebuffer == NULL) {
+            return -1;
+        }
+        imapsess->deflatebufsize += 4096;
+    }
+
+    memcpy(imapsess->deflatebuffer + imapsess->deflatebufused, content, length);
+    imapsess->deflatebufused += length;
+    imapsess->deflatebuffer[imapsess->deflatebufused] = '\0';
+
+    end = imapsess->deflatebufused;
+
+    if (update_deflate_ccs(imapsess, start, end, sender) < 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+static int append_compressed_content_to_imap_buffer(imap_session_t *imapsess,
+        openli_email_captured_t *cap) {
+
+    int status;
+    struct compress_state *cs = NULL;
+
+    if (cap->pkt_sender == OPENLI_EMAIL_PACKET_SENDER_CLIENT) {
+        cs = &(imapsess->decompress_client);
+    } else if (cap->pkt_sender == OPENLI_EMAIL_PACKET_SENDER_SERVER) {
+        cs = &(imapsess->decompress_server);
+    } else {
+        logger(LOG_INFO, "OpenLI: cannot decompress IMAP content without knowing which endpoint sent it -- ignoring");
+        return -1;
+    }
+
+    if (cs->inbuffer == NULL) {
+        cs->inbuffer = calloc(65336, sizeof(uint8_t));
+        cs->inbufsize = 65536;
+        if (cs->inbuffer == NULL) {
+            logger(LOG_INFO, "OpenLI: no memory available for append_compressed_content_to_imap_buffer");
+            return -1;
+        }
+    }
+
+    if (cs->outbuffer == NULL) {
+        cs->outbuffer = calloc(65336, sizeof(uint8_t));
+        cs->outbufsize = 65536;
+
+        if (cs->outbuffer == NULL) {
+            logger(LOG_INFO, "OpenLI: no memory available for append_compressed_content_to_imap_buffer");
+            return -1;
+        }
+
+        cs->stream.zalloc = Z_NULL;
+        cs->stream.zfree = Z_NULL;
+        cs->stream.opaque = Z_NULL;
+        cs->stream.avail_in = 0;
+        cs->stream.next_in = Z_NULL;
+
+        if (inflateInit2(&cs->stream, -MAX_WBITS) != Z_OK) {
+            logger(LOG_INFO, "OpenLI: inflateInit() failed inside append_compressed_content_to_imap_buffer");
+            return -1;
+        }
+    }
+
+    while (cap->msg_length >= cs->inbufsize - cs->inwriteoffset) {
+        cs->inbuffer = realloc(cs->inbuffer, cs->inbufsize + 65536);
+        cs->inbufsize += 65536;
+    }
+
+    memcpy(cs->inbuffer + cs->inwriteoffset, cap->content, cap->msg_length);
+    cs->inwriteoffset += cap->msg_length;
+
+    cs->stream.next_in = cs->inbuffer + cs->inreadoffset;
+    cs->stream.avail_in = cs->inwriteoffset - cs->inreadoffset;
+
+    do {
+        if (cs->stream.avail_in == 0) {
+            break;
+        }
+
+        cs->stream.next_out = cs->outbuffer + cs->outreadoffset;
+        cs->stream.avail_out = cs->outbufsize - cs->outreadoffset;
+
+        status = inflate(&cs->stream, Z_NO_FLUSH);
+        switch(status) {
+            case Z_NEED_DICT:
+                logger(LOG_INFO, "OpenLI: Z_NEED_DICT returned by inflate() within append_compressed_content_to_imap_buffer");
+                return -1;
+            case Z_STREAM_ERROR:
+                logger(LOG_INFO, "OpenLI: Z_STREAM_ERROR returned by inflate() within append_compressed_content_to_imap_buffer");
+                return -1;
+            case Z_DATA_ERROR:
+                logger(LOG_INFO, "OpenLI: Z_DATA_ERROR returned by inflate() within append_compressed_content_to_imap_buffer");
+                return -1;
+            case Z_MEM_ERROR:
+                logger(LOG_INFO, "OpenLI: Z_MEM_ERROR returned by inflate() within append_compressed_content_to_imap_buffer");
+                return -1;
+        }
+
+        if (_append_content_to_imap_buffer(imapsess,
+            cs->outbuffer + cs->outreadoffset,
+            (cs->outbufsize - cs->outreadoffset) - cs->stream.avail_out) < 0) {
+            return -1;
+        }
+
+        cs->outreadoffset +=
+                ((cs->outbufsize - cs->outreadoffset) - cs->stream.avail_out);
+
+        /* maximum distance back is 32K, so only shuffle off previous
+         * decompressed output once it is more than 32KB away from
+         * where we are decompressing right now.
+         */
+        if (cs->outreadoffset > cs->outbufsize / 2) {
+            memmove(cs->outbuffer, cs->outbuffer + cs->outreadoffset,
+                    cs->outbufsize - cs->outreadoffset);
+            cs->outreadoffset = 0;
+        }
+
+
+    } while (status == Z_OK);
+
+    cs->inreadoffset +=
+            ((cs->inwriteoffset - cs->inreadoffset) - cs->stream.avail_in);
+    if (cs->inwriteoffset > cs->inbufsize / 2) {
+        memmove(cs->inbuffer, cs->inbuffer + cs->inreadoffset,
+                cs->inwriteoffset - cs->inreadoffset);
+        cs->inwriteoffset -= cs->inreadoffset;
+        cs->inreadoffset = 0;
+    }
+
+    return 0;
+}
+
+static int append_content_to_imap_buffer(imap_session_t *imapsess,
+        openli_email_captured_t *cap) {
+
+    return _append_content_to_imap_buffer(imapsess, cap->content,
+            cap->msg_length);
+}
+
 
 #define ADVANCE_ID_PTR \
         ptr = strchr(ptr, '"'); \
@@ -1027,7 +1312,7 @@ static int find_next_crlf(imap_session_t *sess, int start_index) {
     regex_t regex;
     int nests = 0;
 
-    if (regcomp(&regex, "\\{\\d+\\}", REG_EXTENDED) != 0) {
+    if (regcomp(&regex, "\\{[0-9]+\\}", REG_EXTENDED) != 0) {
         logger(LOG_INFO, "OpenLI: failed to compile regex pattern for matching curly braces in IMAP content?");
         return -1;
     }
@@ -1230,7 +1515,7 @@ static int find_reply_end(openli_email_worker_t *state,
         sess->currstate = OPENLI_IMAP_STATE_SESSION_OVER;
         sess->event_time = timestamp;
         generate_email_logoff_iri(state, sess);
-        generate_ccs_from_imap_command(state, sess, comm, timestamp);
+        generate_ccs_from_imap_command(state, sess, imapsess, comm, timestamp);
         return 0;
     } else if (strcasecmp(comm->imap_command, "AUTHENTICATE") == 0 ||
             strcasecmp(comm->imap_command, "LOGIN") == 0) {
@@ -1245,9 +1530,19 @@ static int find_reply_end(openli_email_worker_t *state,
     } else if (strcasecmp(comm->imap_command, "APPEND") == 0) {
         sess->event_time = timestamp;
         complete_imap_append(state, sess, imapsess, comm);
+    } else if (strcasecmp(comm->imap_command, "COMPRESS") == 0) {
+        /* force CCs to be generated before setting compressed state,
+         * otherwise we will fail to emit the CCs for the COMPRESS
+         * command itself.
+         */
+        generate_ccs_from_imap_command(state, sess, imapsess, comm, timestamp);
+        reset_imap_saved_command(comm);
+        reset_decompress_state(imapsess);
+        sess->compressed = 1;
+        return r;
     }
 
-    generate_ccs_from_imap_command(state, sess, comm, timestamp);
+    generate_ccs_from_imap_command(state, sess, imapsess, comm, timestamp);
     reset_imap_saved_command(comm);
     return r;
 }
@@ -1681,6 +1976,8 @@ static int find_next_imap_message(openli_email_worker_t *state,
         }
     } else if (strcasecmp(comm_resp, "ID") == 0) {
         imapsess->next_command_type = OPENLI_IMAP_COMMAND_ID;
+    } else if (strcasecmp(comm_resp, "COMPRESS") == 0) {
+        imapsess->next_command_type = OPENLI_IMAP_COMMAND_COMPRESS;
     } else if (strcasecmp(comm_resp, "UID") == 0) {
         comm_resp = get_uid_command(comm_resp, spacefound2);
         imapsess->next_command_type = OPENLI_IMAP_COMMAND_GENERIC;
@@ -1719,6 +2016,7 @@ static int find_next_imap_message(openli_email_worker_t *state,
     if (imapsess->next_command_name) {
         free(imapsess->next_command_name);
     }
+
     imapsess->next_command_name = comm_resp;
     imapsess->next_comm_start = msgstart - imapsess->contbuffer;
 
@@ -1777,14 +2075,30 @@ int update_imap_session_by_ingestion(openli_email_worker_t *state,
     if (sess->proto_state == NULL) {
         imapsess = calloc(1, sizeof(imap_session_t));
         imapsess->contbuffer = calloc(1024, sizeof(uint8_t));
+        imapsess->deflatebuffer = NULL;
         imapsess->contbufused = 0;
+        imapsess->deflatebufused = 0;
         imapsess->contbufread = 0;
+        imapsess->deflatebufread = 0;
         imapsess->contbufsize = 1024;
+        imapsess->deflatebufsize = 0;
         imapsess->commands = calloc(5, sizeof(imap_command_t));
         imapsess->commands_size = 5;
         imapsess->next_command_type = OPENLI_IMAP_COMMAND_NONE;
         imapsess->idle_command_index = -1;
         imapsess->auth_command_index = -1;
+
+        imapsess->decompress_server.inbuffer = NULL;
+        imapsess->decompress_server.inbufsize = 0;
+        imapsess->decompress_server.inwriteoffset = 0;
+        imapsess->decompress_server.inreadoffset = 0;
+        imapsess->decompress_server.outbuffer = NULL;
+        imapsess->decompress_server.outbufsize = 0;
+        imapsess->decompress_server.outreadoffset = 0;
+
+        imapsess->deflate_ccs = NULL;
+        imapsess->deflate_ccs_size = 0;
+        imapsess->deflate_ccs_current = 0;
 
         for (i = 0; i < imapsess->commands_size; i++) {
             init_imap_command(&(imapsess->commands[i]));
@@ -1799,7 +2113,19 @@ int update_imap_session_by_ingestion(openli_email_worker_t *state,
         return 0;
     }
 
-    if (append_content_to_imap_buffer(imapsess, cap) < 0) {
+    if (sess->compressed) {
+        if (append_compressed_content_to_imap_buffer(imapsess, cap) < 0) {
+            logger(LOG_INFO, "OpenLI: Failed to append compressed IMAP message content to session buffer for %s", sess->key);
+            return -1;
+        }
+
+        if (_append_content_to_deflate_buffer(imapsess, cap->content,
+                cap->msg_length, cap->pkt_sender) < 0) {
+            logger(LOG_INFO, "OpenLI: Failed to save compressed IMAP message content for session %s", sess->key);
+            return -1;
+        }
+
+    } else if (append_content_to_imap_buffer(imapsess, cap) < 0) {
         logger(LOG_INFO, "OpenLI: Failed to append IMAP message content to session buffer for %s", sess->key);
         return -1;
     }

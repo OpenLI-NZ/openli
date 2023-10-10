@@ -730,6 +730,31 @@ static void parse_intercept_common_fields(intercept_common_t *common,
     }
 }
 
+static inline void init_intercept_common(intercept_common_t *common,
+        void *parent, openli_intercept_types_t intercept_type) {
+    prov_intercept_data_t *local;
+
+    common->liid = NULL;
+    common->liid_len = 0;
+    common->authcc = NULL;
+    common->authcc_len = 0;
+    common->delivcc = NULL;
+    common->delivcc_len = 0;
+    common->destid = 0;
+    common->targetagency = NULL;
+    common->encryptkey = NULL;
+    common->tostart_time = 0;
+    common->toend_time = 0;
+    common->tomediate = OPENLI_INTERCEPT_OUTPUTS_ALL;
+    common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
+    common->hi1_seqno = 0;
+    common->local = calloc(1, sizeof(prov_intercept_data_t));
+
+    local = (prov_intercept_data_t *)(common->local);
+    local->intercept_type = intercept_type;
+    local->intercept_ref = (void *)parent;
+}
+
 static int parse_emailintercept_list(emailintercept_t **mailints,
         yaml_document_t *doc, yaml_node_t *inputs) {
 
@@ -743,19 +768,11 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
         unsigned int tgtcount = 0;
 
         newcept = (emailintercept_t *)calloc(1, sizeof(emailintercept_t));
-        newcept->common.liid = NULL;
-        newcept->common.authcc = NULL;
-        newcept->common.delivcc = NULL;
-        newcept->common.destid = 0;
-        newcept->common.targetagency = NULL;
-        newcept->common.encryptkey = NULL;
-        newcept->common.tostart_time = 0;
-        newcept->common.toend_time = 0;
-        newcept->common.tomediate = OPENLI_INTERCEPT_OUTPUTS_ALL;
-        newcept->common.encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
-        newcept->common.hi1_seqno = 0;
+        init_intercept_common(&(newcept->common), newcept,
+                OPENLI_INTERCEPT_TYPE_EMAIL);
         newcept->awaitingconfirm = 1;
         newcept->targets = NULL;
+        newcept->delivercompressed = OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT;
 
         for (pair = node->data.mapping.pairs.start;
                 pair < node->data.mapping.pairs.top; pair ++) {
@@ -771,6 +788,24 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
                     strcmp((char *)key->data.scalar.value, "targets") == 0) {
 
                 parse_email_targets(&(newcept->targets), doc, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value,
+                    "delivercompressed") == 0) {
+                if (strcmp((char *)value->data.scalar.value, "as-is") == 0) {
+                    newcept->delivercompressed =
+                            OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
+                } else if (strcmp((char *)value->data.scalar.value,
+                        "decompressed") == 0) {
+                    newcept->delivercompressed =
+                            OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED;
+                } else if (strcmp((char *)value->data.scalar.value,
+                        "inflated") == 0) {
+                    newcept->delivercompressed =
+                            OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED;
+                }
             }
         }
 
@@ -818,25 +853,16 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         newcept->internalid = nextid;
         nextid ++;
 
-        newcept->common.liid = NULL;
-        newcept->common.authcc = NULL;
-        newcept->common.delivcc = NULL;
+        init_intercept_common(&(newcept->common), newcept,
+                OPENLI_INTERCEPT_TYPE_VOIP);
         newcept->active_cins = NULL;
         newcept->active_registrations = NULL;
         newcept->cin_callid_map = NULL;
         newcept->cin_sdp_map = NULL;
         newcept->targets = libtrace_list_init(sizeof(openli_sip_identity_t *));
         newcept->active = 1;
-        newcept->common.destid = 0;
-        newcept->common.targetagency = NULL;
-        newcept->common.encryptkey = NULL;
-        newcept->common.hi1_seqno = 0;
         newcept->awaitingconfirm = 1;
         newcept->options = 0;
-        newcept->common.tostart_time = 0;
-        newcept->common.toend_time = 0;
-        newcept->common.tomediate = OPENLI_INTERCEPT_OUTPUTS_ALL;
-        newcept->common.encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -898,28 +924,16 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
 
         /* Each sequence item is a new intercept */
         newcept = (ipintercept_t *)malloc(sizeof(ipintercept_t));
+        init_intercept_common(&(newcept->common), newcept,
+                OPENLI_INTERCEPT_TYPE_IP);
 
-        newcept->common.liid = NULL;
-        newcept->common.authcc = NULL;
-        newcept->common.delivcc = NULL;
         newcept->username = NULL;
-        newcept->common.destid = 0;
-        newcept->common.targetagency = NULL;
-        newcept->common.encryptkey = NULL;
-        newcept->common.hi1_seqno = 0;
         newcept->awaitingconfirm = 1;
-        newcept->common.liid_len = 0;
         newcept->username_len = 0;
-        newcept->common.authcc_len = 0;
-        newcept->common.delivcc_len = 0;
         newcept->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
         newcept->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
         newcept->statics = NULL;
         newcept->options = 0;
-        newcept->common.tostart_time = 0;
-        newcept->common.toend_time = 0;
-        newcept->common.tomediate = OPENLI_INTERCEPT_OUTPUTS_ALL;
-        newcept->common.encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;
@@ -1301,6 +1315,12 @@ static int global_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value, "defaultemaildomain") == 0) {
+        SET_CONFIG_STRING_OPTION(glob->default_email_domain, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "RMQname") == 0) {
         SET_CONFIG_STRING_OPTION(glob->RMQ_conf.name, value);
     }
@@ -1617,6 +1637,31 @@ static int intercept_parser(void *arg, yaml_document_t *doc,
             return -1;
         }
     }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcmp((char *)key->data.scalar.value,
+                    "email-defaultdelivercompressed") == 0) {
+        if (strcasecmp((char *)value->data.scalar.value, "as-is") == 0) {
+            state->default_email_deliver_compress =
+                    OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
+        } else if (strcasecmp((char *)value->data.scalar.value,
+                "decompressed") == 0) {
+            state->default_email_deliver_compress =
+                    OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED;
+        } else if (strcasecmp((char *)value->data.scalar.value,
+                "inflated") == 0) {
+            state->default_email_deliver_compress =
+                    OPENLI_EMAILINT_DELIVER_COMPRESSED_INFLATED;
+        } else {
+            logger(LOG_INFO, "OpenLI provisioner: invalid value for 'email-defaultdelivercompressed' option: %s", (char *)value->data.scalar.value);
+            state->default_email_deliver_compress =
+                    OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
+            logger(LOG_INFO, "OpenLI provisioner: using 'as-is' instead.");
+        }
+
+    }
+
     return 0;
 }
 
@@ -1632,7 +1677,6 @@ static int provisioning_parser(void *arg, yaml_document_t *doc,
         state->ignorertpcomfort =
                 check_onoff((char *)(value->data.scalar.value));
     }
-
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&

@@ -61,6 +61,8 @@ enum {
     TARGET_SMTPSERVER,
     TARGET_IMAPSERVER,
     TARGET_POP3SERVER,
+    TARGET_OPTIONS,
+    TARGET_OPENLIVERSION,
 };
 
 extern const char *update_success_page;
@@ -109,6 +111,8 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state);
 int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state);
 int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state);
 int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state);
+int modify_provisioner_options(update_con_info_t *cinfo,
+        provision_state_t *state);
 
 struct json_object *get_agency(update_con_info_t *cinfo,
         provision_state_t *state, char *target);
@@ -122,5 +126,8 @@ struct json_object *get_ip_intercept(update_con_info_t *cinfo,
         provision_state_t *state, char *target);
 struct json_object *get_email_intercept(update_con_info_t *cinfo,
         provision_state_t *state, char *target);
+struct json_object *get_provisioner_options(update_con_info_t *cinfo,
+        provision_state_t *state);
+struct json_object *get_openli_version();
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -47,6 +47,12 @@ enum {
     OPENLI_EMAIL_DIRECTION_INBOUND
 };
 
+enum {
+    OPENLI_EMAIL_PACKET_SENDER_UNKNOWN,
+    OPENLI_EMAIL_PACKET_SENDER_SERVER,
+    OPENLI_EMAIL_PACKET_SENDER_CLIENT,
+};
+
 typedef enum {
     OPENLI_IMAP_STATE_INIT = 0,
     OPENLI_IMAP_STATE_SESSION_OVER,
@@ -79,7 +85,13 @@ typedef enum {
     OPENLI_SMTP_STATE_DATA_OVER,
     OPENLI_SMTP_STATE_RESET,
     OPENLI_SMTP_STATE_QUIT,
-    OPENLI_SMTP_STATE_QUIT_REPLY
+    OPENLI_SMTP_STATE_QUIT_REPLY,
+    OPENLI_SMTP_STATE_AUTH,
+    OPENLI_SMTP_STATE_AUTH_REPLY,
+    OPENLI_SMTP_STATE_AUTH_CREDS,
+    OPENLI_SMTP_STATE_OTHER_COMMAND,
+    OPENLI_SMTP_STATE_OTHER_COMMAND_REPLY,
+    OPENLI_SMTP_STATE_STARTTLS,
 } openli_smtp_status_t;
 
 typedef struct openli_email_timeouts {
@@ -102,9 +114,11 @@ typedef struct openli_email_captured {
 
     uint64_t timestamp;
     uint32_t mail_id;
+    uint32_t part_id;
     uint32_t msg_length;
     char *content;
     uint8_t own_content;
+    uint8_t pkt_sender;
 
 } openli_email_captured_t;
 
@@ -117,6 +131,7 @@ typedef struct openli_email_worker {
     int emailid;
     int tracker_threads;
     int fwd_threads;
+    uint8_t default_compress_delivery;
 
     void *zmq_ii_sock;          /* ZMQ for receiving instructions from sync thread */
     void **zmq_pubsocks;        /* ZMQs for publishing to seqtracker threads */
@@ -137,6 +152,11 @@ typedef struct openli_email_worker {
     openli_email_timeouts_t *timeout_thresholds;
     uint8_t *mask_imap_creds;
     uint8_t *mask_pop3_creds;
+
+    /* The default domain to apply to authenticated usernames that do not
+     * include a domain.
+     */
+    char **defaultdomain;
     pthread_rwlock_t *glob_config_mutex;
 
 } openli_email_worker_t;
@@ -176,25 +196,30 @@ int generate_email_download_success_iri(openli_email_worker_t *state,
 int generate_email_download_failure_iri(openli_email_worker_t *state,
         emailsession_t *sess);
 int generate_email_login_success_iri(openli_email_worker_t *state,
-        emailsession_t *sess);
+        emailsession_t *sess, const char *participant);
 int generate_email_login_failure_iri(openli_email_worker_t *state,
-        emailsession_t *sess);
+        emailsession_t *sess, const char *participant);
 int generate_email_upload_success_iri(openli_email_worker_t *state,
         emailsession_t *sess);
 int generate_email_upload_failure_iri(openli_email_worker_t *state,
         emailsession_t *sess);
 int generate_email_send_iri(openli_email_worker_t *state,
         emailsession_t *sess);
+int generate_email_receive_iri(openli_email_worker_t *state,
+        emailsession_t *sess);
 int generate_email_logoff_iri(openli_email_worker_t *state,
         emailsession_t *sess);
+int generate_email_logoff_iri_for_user(openli_email_worker_t *state,
+        emailsession_t *sess, const char *address);
 
 /* Defined in emailcc.c */
 int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
-        uint64_t timestamp);
+        uint64_t timestamp, const char *participant, uint8_t dir,
+        int command_index);
 int generate_email_cc_from_imap_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
-        uint64_t timestamp, uint8_t dir);
+        uint64_t timestamp, uint8_t dir, uint8_t deflated);
 int generate_email_cc_from_pop3_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
         uint64_t timestamp, uint8_t dir);
