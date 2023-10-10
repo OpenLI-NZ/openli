@@ -51,6 +51,7 @@
 #include "openli_tls.h"
 #include "provisioner_client.h"
 #include "updateserver.h"
+#include "intercept_timers.h"
 
 volatile int provisioner_halt = 0;
 volatile int reload_config = 0;
@@ -71,6 +72,9 @@ static inline char *get_event_description(prov_epoll_ev_t *pev) {
     if (pev->fdtype == PROV_EPOLL_UPDATE) return "updater";
     if (pev->fdtype == PROV_EPOLL_MAIN_TIMER) return "main timer";
     if (pev->fdtype == PROV_EPOLL_FD_IDLETIMER) return "client idle timer";
+    if (pev->fdtype == PROV_EPOLL_INTERCEPT_START)
+        return "intercept start timer";
+    if (pev->fdtype == PROV_EPOLL_INTERCEPT_HALT) return "intercept halt timer";
     return "unknown";
 }
 
@@ -1520,6 +1524,58 @@ static int process_signal(provision_state_t *state, int sigfd) {
     return 0;
 }
 
+static int send_intercept_hi1(provision_state_t *state, prov_epoll_ev_t *pev,
+        hi1_notify_t hi1type) {
+    ipintercept_t *ipint = NULL;
+    emailintercept_t *mailint = NULL;
+    voipintercept_t *vint = NULL;
+    intercept_common_t *common;
+    struct epoll_event ev;
+
+    char *target_info = NULL;
+
+    if (pev == NULL) {
+        return -1;
+    }
+
+    epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, pev->fd, &ev);
+    close(pev->fd);
+    pev->fd = -1;
+    if (pev->cept == NULL) {
+        return 0;
+    }
+
+    if (pev->cept->intercept_type == OPENLI_INTERCEPT_TYPE_EMAIL) {
+        mailint = (emailintercept_t *)(pev->cept->intercept_ref);
+        target_info = list_email_targets(mailint, 256);
+        common = &(mailint->common);
+    } else if (pev->cept->intercept_type == OPENLI_INTERCEPT_TYPE_VOIP) {
+        vint = (voipintercept_t *)(pev->cept->intercept_ref);
+        target_info = list_sip_targets(vint, 256);
+        common = &(vint->common);
+    } else if (pev->cept->intercept_type == OPENLI_INTERCEPT_TYPE_IP) {
+        ipint = (ipintercept_t *)(pev->cept->intercept_ref);
+        if (ipint->username) {
+            target_info = strdup(ipint->username);
+        }
+        common = &(ipint->common);
+    } else {
+        return -1;
+    }
+
+    if (announce_hi1_notification_to_mediators(state, common, target_info,
+            hi1type) < 0) {
+        logger(LOG_INFO, "OpenLI provisioner: unable to send HI1 notification for intercept %s (which has just %s).",
+                common->liid,
+                hi1type == HI1_LI_ACTIVATED ? "started" : "ended");
+        free(target_info);
+        return -1;
+    }
+
+    free(target_info);
+    return 1;
+}
+
 static void remove_idle_client(provision_state_t *state, prov_epoll_ev_t *pev) {
 
     prov_sock_state_t *cs = (prov_sock_state_t *)(pev->client->state);
@@ -1611,6 +1667,12 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
             break;
         case PROV_EPOLL_MEDIATE_CONN:
             ret = accept_mediator(state);
+            break;
+        case PROV_EPOLL_INTERCEPT_START:
+            ret = send_intercept_hi1(state, pev, HI1_LI_ACTIVATED);
+            break;
+        case PROV_EPOLL_INTERCEPT_HALT:
+            ret = send_intercept_hi1(state, pev, HI1_LI_DEACTIVATED);
             break;
         case PROV_EPOLL_MAIN_TIMER:
             if (ev->events & EPOLLIN) {
@@ -1906,6 +1968,12 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    if ((ret = add_all_intercept_timers(provstate.epoll_fd,
+            &(provstate.interceptconf))) != 0) {
+        logger(LOG_INFO, "OpenLI: failed to create all start and end timers for configured intercepts. Exiting.");
+        return -1;
+    }
+
     /*
      * XXX could also sanity check intercept->mediator mappings too...
      */
@@ -1944,6 +2012,7 @@ int main(int argc, char *argv[]) {
 
     run(&provstate);
 
+    remove_all_intercept_timers(provstate.epoll_fd, &(provstate.interceptconf));
     clear_prov_state(&provstate);
 
     if (daemonmode && pidfile) {

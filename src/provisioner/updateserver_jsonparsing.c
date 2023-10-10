@@ -28,11 +28,13 @@
 
 #include <string.h>
 #include <json-c/json.h>
+#include <assert.h>
 
 #include "provisioner.h"
 #include "updateserver.h"
 #include "logger.h"
 #include "util.h"
+#include "intercept_timers.h"
 
 struct json_agency {
     struct json_object *hi3addr;
@@ -272,19 +274,28 @@ static inline void new_intercept_liidmapping(provision_state_t *state,
 
 static int parse_intercept_common_json(struct json_intercept *jsonp,
         intercept_common_t *common, const char *cepttype,
-        update_con_info_t *cinfo, bool is_new) {
+        update_con_info_t *cinfo, bool is_new, int epoll_fd) {
 
     int parseerr = 0;
     char *encryptmethodstring = NULL;
+    struct timeval tv;
+    prov_intercept_data_t *timers = NULL;
 
     if (is_new) {
         common->tostart_time = 0;
         common->toend_time = 0;
         common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
+        timers = calloc(1, sizeof(prov_intercept_data_t));
+        timers->start_timer = NULL;
+        timers->end_timer = NULL;
+        timers->start_hi1_sent = 0;
+        timers->end_hi1_sent = 0;
+        common->local = timers;
     } else {
         common->tostart_time = (uint64_t)-1;
         common->toend_time = (uint64_t)-1;
         common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
+        common->local = NULL;
     }
 
     if (common->liid == NULL) {
@@ -334,6 +345,35 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
                 return -1;
             }
         }
+
+        /* If we are new, we can just go ahead and add any timers that
+         * we need for this intercept.
+         */
+        if (timers && (common->tostart_time > 0 || common->toend_time > 0)) {
+            gettimeofday(&tv, NULL);
+
+            if (common->tostart_time > 0 && common->toend_time > 0 &&
+                    common->tostart_time >= common->toend_time) {
+                snprintf(cinfo->answerstring, 4096, "'starttime' parameter must be a timestamp BEFORE the 'endtime' timestamp");
+                return -1;
+            }
+
+            if (common->tostart_time > 0 && common->tostart_time > tv.tv_sec) {
+                if (add_intercept_timer(epoll_fd, common->tostart_time,
+                        tv.tv_sec, timers, PROV_EPOLL_INTERCEPT_START) < 0) {
+                    snprintf(cinfo->answerstring, 4096, "unable to create a 'intercept start' timer for intercept %s", common->liid);
+                    return -1;
+                }
+
+            }
+            if (common->toend_time > 0 && common->toend_time > tv.tv_sec) {
+                if (add_intercept_timer(epoll_fd, common->toend_time,
+                        tv.tv_sec, timers, PROV_EPOLL_INTERCEPT_HALT) < 0) {
+                    snprintf(cinfo->answerstring, 4096, "unable to create a 'intercept end' timer for intercept %s", common->liid);
+                    return -1;
+                }
+            }
+        }
     }
 
 
@@ -345,9 +385,10 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
 
 static int update_intercept_common(intercept_common_t *parsed,
         intercept_common_t *existing, int *changed, int *agencychanged,
-        provision_state_t *state, update_con_info_t *cinfo) {
+        int *timeschanged, provision_state_t *state, update_con_info_t *cinfo) {
 
     payload_encryption_method_t enc;
+    prov_intercept_data_t *timers = (prov_intercept_data_t *)(existing->local);
 
     /* Check if encryption options are valid -- if not, roll back without
      * changing anything.
@@ -382,8 +423,8 @@ static int update_intercept_common(intercept_common_t *parsed,
     if (*agencychanged) {
         new_intercept_liidmapping(state, existing->targetagency,
                 existing->liid);
+        timers->start_hi1_sent = 0;
     }
-
 
     if (parsed->encrypt != existing->encrypt &&
             parsed->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
@@ -393,7 +434,7 @@ static int update_intercept_common(intercept_common_t *parsed,
 
     MODIFY_STRING_MEMBER(parsed->encryptkey, existing->encryptkey, changed);
     if (compare_intercept_times(parsed, existing) == 1) {
-        *changed = 1;
+        *timeschanged = 1;
     }
 
     return 0;
@@ -417,6 +458,7 @@ int remove_voip_intercept(update_con_info_t *cinfo, provision_state_t *state,
         target_info = list_sip_targets(found, 256);
         announce_hi1_notification_to_mediators(state, &(found->common),
                 target_info, HI1_LI_DEACTIVATED);
+        free_prov_intercept_data(&(found->common), state->epoll_fd);
         free_single_voipintercept(found);
         if (target_info) {
             free(target_info);
@@ -447,6 +489,7 @@ int remove_email_intercept(update_con_info_t *cinfo, provision_state_t *state,
         target_info = list_email_targets(found, 256);
         announce_hi1_notification_to_mediators(state, &(found->common),
                 target_info, HI1_LI_DEACTIVATED);
+        free_prov_intercept_data(&(found->common), state->epoll_fd);
         free_single_emailintercept(found);
         if (target_info) {
             free(target_info);
@@ -475,6 +518,7 @@ int remove_ip_intercept(update_con_info_t *cinfo, provision_state_t *state,
                 0);
         announce_hi1_notification_to_mediators(state, &(found->common),
                 found->username, HI1_LI_DEACTIVATED);
+        free_prov_intercept_data(&(found->common), state->epoll_fd);
         free_single_ipintercept(found);
         logger(LOG_INFO,
                 "OpenLI: removed IP intercept '%s' via update socket.",
@@ -995,6 +1039,7 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     int parseerr = 0;
     char *target_info;
     char *delivcompressstring = NULL;
+    prov_intercept_data_t *timers = NULL;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&emailjson, parsed);
@@ -1005,9 +1050,13 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     mailint->targets = NULL;
 
     if (parse_intercept_common_json(&emailjson, &(mailint->common),
-            "Email intercept", cinfo, true) < 0) {
+            "Email intercept", cinfo, true, state->epoll_fd) < 0) {
         goto cepterr;
     }
+
+    timers = (prov_intercept_data_t *)(mailint->common.local);
+    timers->intercept_type = OPENLI_INTERCEPT_TYPE_EMAIL;
+    timers->intercept_ref = (void *)mailint;
 
     EXTRACT_JSON_STRING_PARAM("delivercompressed", "email intercept",
             emailjson.delivercompressed, delivcompressstring, &parseerr, false);
@@ -1108,6 +1157,7 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     voipintercept_t *vint = NULL;
     int r;
     char *target_info;
+    prov_intercept_data_t *timers = NULL;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&voipjson, parsed);
@@ -1125,9 +1175,12 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (parse_intercept_common_json(&voipjson, &(vint->common),
-            "VOIP intercept", cinfo, true) < 0) {
+            "VOIP intercept", cinfo, true, state->epoll_fd) < 0) {
         goto cepterr;
     }
+    timers = (prov_intercept_data_t *)(vint->common.local);
+    timers->intercept_type = OPENLI_INTERCEPT_TYPE_VOIP;
+    timers->intercept_ref = (void *)vint;
 
     r = 0;
     if (voipjson.siptargets != NULL) {
@@ -1218,6 +1271,7 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *accessstring = NULL;
     char *radiusidentstring = NULL;
     ipintercept_t *ipint = NULL;
+    prov_intercept_data_t *timers = NULL;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&ipjson, parsed);
@@ -1229,9 +1283,13 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipint->options = 0;
 
     if (parse_intercept_common_json(&ipjson, &(ipint->common),
-            "IP intercept", cinfo, true) < 0) {
+            "IP intercept", cinfo, true, state->epoll_fd) < 0) {
         goto cepterr;
     }
+    timers = (prov_intercept_data_t *)(ipint->common.local);
+    timers->intercept_type = OPENLI_INTERCEPT_TYPE_IP;
+    timers->intercept_ref = (void *)ipint;
+
     EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
             ipint->vendmirrorid, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("user", "IP intercept", ipjson.user,
@@ -1405,7 +1463,7 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *delivcompressstring = NULL;
 
     char *liidstr = NULL;
-    int parseerr = 0, changed = 0, agencychanged = 0;
+    int parseerr = 0, changed = 0, agencychanged = 0, timeschanged = 0;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&emailjson, parsed);
@@ -1435,12 +1493,12 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     mailint->targets = NULL;
 
     if (parse_intercept_common_json(&emailjson, &(mailint->common),
-            "Email intercept", cinfo, false) < 0) {
+            "Email intercept", cinfo, false, state->epoll_fd) < 0) {
         goto cepterr;
     }
 
     if (update_intercept_common(&(mailint->common), &(found->common),
-            &changed, &agencychanged, state, cinfo) < 0) {
+            &changed, &agencychanged, &timeschanged, state, cinfo) < 0) {
         goto cepterr;
     }
 
@@ -1486,15 +1544,25 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
         changed = 1;
     }
 
-    if (changed) {
+    if ((changed || timeschanged) && !agencychanged) {
         modify_existing_intercept_options(state, (void *)found,
                     OPENLI_PROTO_MODIFY_EMAILINTERCEPT);
     }
 
-    if (changedtargets) {
+    if (changedtargets || timeschanged || agencychanged) {
         target_info = list_email_targets(found, 256);
-        announce_hi1_notification_to_mediators(state, &(found->common),
-                target_info, HI1_LI_MODIFIED);
+        if (agencychanged) {
+            announce_hi1_notification_to_mediators(state, &(found->common),
+                    target_info, HI1_LI_ACTIVATED);
+        } else {
+            announce_hi1_notification_to_mediators(state, &(found->common),
+                    target_info, HI1_LI_MODIFIED);
+        }
+        if (timeschanged) {
+            reset_intercept_timers(state, &(found->common),
+                    target_info, cinfo->answerstring, 4096);
+        }
+
         if (target_info) {
             free(target_info);
         }
@@ -1536,6 +1604,7 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     char *liidstr = NULL, *target_info;
     int changed = 0, agencychanged = 0, parseerr = 0;
+    int timeschanged = 0;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&voipjson, parsed);
@@ -1565,12 +1634,12 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 	vint->targets = libtrace_list_init(sizeof(openli_sip_identity_t *));
 
     if (parse_intercept_common_json(&voipjson, &(vint->common),
-            "VOIP intercept", cinfo, false) < 0) {
+            "VOIP intercept", cinfo, false, state->epoll_fd) < 0) {
         goto cepterr;
     }
 
     if (update_intercept_common(&(vint->common), &(found->common),
-            &changed, &agencychanged, state, cinfo) < 0) {
+            &changed, &agencychanged, &timeschanged, state, cinfo) < 0) {
         goto cepterr;
     }
 
@@ -1597,15 +1666,26 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
      *
      */
 
-    if (changed) {
+    if ((changed || timeschanged) && !agencychanged) {
         modify_existing_intercept_options(state, (void *)found,
                     OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
     }
 
-    if (changedtargets) {
+    if (changedtargets || timeschanged || agencychanged) {
         target_info = list_sip_targets(found, 256);
-        announce_hi1_notification_to_mediators(state, &(found->common),
-                target_info, HI1_LI_MODIFIED);
+        if (agencychanged) {
+            announce_hi1_notification_to_mediators(state, &(found->common),
+                    target_info, HI1_LI_ACTIVATED);
+        } else {
+            announce_hi1_notification_to_mediators(state, &(found->common),
+                    target_info, HI1_LI_MODIFIED);
+        }
+
+        if (timeschanged) {
+            reset_intercept_timers(state, &(found->common), target_info,
+                    cinfo->answerstring, 4096);
+        }
+
         if (target_info) {
             free(target_info);
         }
@@ -1647,6 +1727,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *accessstring = NULL;
     char *radiusidentstring = NULL;
     int parseerr = 0, changed = 0, agencychanged = 0;
+    int timeschanged = 0;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&ipjson, parsed);
@@ -1677,12 +1758,12 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipint->common.liid = liidstr;
 
     if (parse_intercept_common_json(&ipjson, &(ipint->common),
-            "IP intercept", cinfo, false) < 0) {
+            "IP intercept", cinfo, false, state->epoll_fd) < 0) {
         goto cepterr;
     }
 
     if (update_intercept_common(&(ipint->common), &(found->common),
-            &changed, &agencychanged, state, cinfo) < 0) {
+            &changed, &agencychanged, &timeschanged, state, cinfo) < 0) {
         goto cepterr;
     }
 
@@ -1780,12 +1861,16 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                 found->username, HI1_LI_ACTIVATED);
     }
 
-    if (changed) {
+    if (changed || timeschanged) {
         modify_existing_intercept_options(state, (void *)found,
                     OPENLI_PROTO_MODIFY_IPINTERCEPT);
         if (!agencychanged) {
             announce_hi1_notification_to_mediators(state, &(found->common),
                     found->username, HI1_LI_MODIFIED);
+        }
+        if (timeschanged) {
+            reset_intercept_timers(state, &(found->common), found->username,
+                    cinfo->answerstring, 4096);
         }
     }
 

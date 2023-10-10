@@ -393,12 +393,48 @@ int announce_hi1_notification_to_mediators(provision_state_t *state,
 
     hi1_notify_data_t ndata;
     struct timeval tv;
+    prov_intercept_data_t *ceptdata = (prov_intercept_data_t *)(intcomm->local);
 
     if (intcomm == NULL) {
         return -1;
     }
 
     gettimeofday(&tv, NULL);
+
+    if (ceptdata && not_type == HI1_LI_ACTIVATED) {
+        if (ceptdata->start_hi1_sent) {
+            return 0;
+        }
+        if (intcomm->tostart_time > tv.tv_sec) {
+            return 0;
+        }
+        ceptdata->start_hi1_sent = 1;
+        ceptdata->end_hi1_sent = 0;
+    } else if (ceptdata && not_type == HI1_LI_DEACTIVATED) {
+        if (ceptdata->end_hi1_sent) {
+            return 0;
+        }
+        if (!ceptdata->start_hi1_sent) {
+            return 0;
+        }
+        ceptdata->end_hi1_sent = 1;
+        ceptdata->start_hi1_sent = 0;
+    } else if (ceptdata && not_type == HI1_LI_MODIFIED) {
+        if (ceptdata->end_hi1_sent) {
+            return 0;
+        }
+        if (!ceptdata->start_hi1_sent) {
+            if (intcomm->tostart_time > tv.tv_sec) {
+                return 0;
+            } else {
+                /* shouldn't get here ideally, but just in case we do then
+                 * let's send an activated message instead.
+                 */
+                not_type = HI1_LI_ACTIVATED;
+                ceptdata->start_hi1_sent = 1;
+            }
+        }
+    }
 
     ndata.notify_type = not_type;
     ndata.liid = intcomm->liid;
@@ -423,7 +459,7 @@ int announce_hi1_notification_to_mediators(provision_state_t *state,
         }
     SEND_ALL_MEDIATORS_END
     intcomm->hi1_seqno ++;
-    return 0;
+    return 1;
 }
 
 int remove_liid_mapping(provision_state_t *state,
