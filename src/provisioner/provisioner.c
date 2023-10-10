@@ -1563,9 +1563,6 @@ static int send_intercept_hi1(provision_state_t *state, prov_epoll_ev_t *pev,
         return -1;
     }
 
-    printf("DEVDEBUG: timer triggered for %s -- %s\n", common->liid,
-                hi1type == HI1_LI_ACTIVATED ? "started" : "ended");
-
     if (announce_hi1_notification_to_mediators(state, common, target_info,
             hi1type) < 0) {
         logger(LOG_INFO, "OpenLI provisioner: unable to send HI1 notification for intercept %s (which has just %s).",

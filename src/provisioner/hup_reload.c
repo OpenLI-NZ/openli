@@ -255,6 +255,8 @@ static void remove_withdrawn_intercept(provision_state_t *currstate,
         }
     }
 
+    logger(LOG_INFO, "OpenLI provisioner: LIID %s has been withdrawn following a config reload.",
+            common->liid);
 }
 
 static int enable_new_intercept(provision_state_t *currstate,
@@ -336,7 +338,7 @@ static int update_reconfigured_intercept(provision_state_t *currstate,
 
     if (agencychanged || cept_changed) {
         logger(LOG_INFO,
-                "OpenLI provisioner: Details for Email intercept %s have changed -- updating collectors",
+                "OpenLI provisioner: Details for intercept %s have changed -- updating collectors",
                 new_common->liid);
     }
 
@@ -375,7 +377,7 @@ static int update_reconfigured_intercept(provision_state_t *currstate,
         if (!droppedmeds && announce_liidmapping_to_mediators(
                     currstate, h) == -1) {
             logger(LOG_INFO,
-                    "OpenLI provisioner: unable to announce new agency for Email intercept to mediators.");
+                    "OpenLI provisioner: unable to announce new agency for intercept %s to mediators.", new_common->liid);
             return -1;
         }
     }
@@ -490,8 +492,9 @@ static int reload_voipintercepts(provision_state_t *currstate,
 		prov_intercept_conf_t *intconf, int droppedcols, int droppedmeds) {
 
     voipintercept_t *voipint, *tmp, *newequiv;
-    liid_hash_t *h = NULL;
     char *target_info;
+    prov_intercept_data_t *local, *oldlocal;
+    struct timeval tv;
 
     /* TODO error handling in the "inform other components about changes"
      * functions?
@@ -499,6 +502,8 @@ static int reload_voipintercepts(provision_state_t *currstate,
     HASH_ITER(hh_liid, currvoip, voipint, tmp) {
         HASH_FIND(hh_liid, newvoip, voipint->common.liid,
                 voipint->common.liid_len, newequiv);
+
+        local = (prov_intercept_data_t *)(voipint->common.local);
 
         if (newequiv && currstate->ignorertpcomfort) {
             newequiv->options |= (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
@@ -510,16 +515,11 @@ static int reload_voipintercepts(provision_state_t *currstate,
                 halt_existing_intercept(currstate, (void *)voipint,
                         OPENLI_PROTO_HALT_VOIPINTERCEPT);
             }
-            remove_liid_mapping(currstate, voipint->common.liid,
-                    voipint->common.liid_len, droppedmeds);
-            if (!droppedmeds) {
-                target_info = list_sip_targets(voipint, 256);
-                announce_hi1_notification_to_mediators(currstate,
-                        &(voipint->common), target_info,
-                        HI1_LI_DEACTIVATED);
-                if (target_info) {
-                    free(target_info);
-                }
+            target_info = list_sip_targets(voipint, 256);
+            remove_withdrawn_intercept(currstate, &(voipint->common),
+                    target_info, droppedmeds);
+            if (target_info) {
+                free(target_info);
             }
             continue;
         } else {
@@ -528,43 +528,15 @@ static int reload_voipintercepts(provision_state_t *currstate,
                     newequiv->common.targetagency);
             int changedtargets = compare_sip_targets(currstate, voipint,
                     newequiv);
+            char *old_target_info = list_sip_targets(voipint, 256);
+            char *new_target_info = list_sip_targets(newequiv, 256);
 
-            newequiv->common.hi1_seqno = voipint->common.hi1_seqno;
             newequiv->awaitingconfirm = 0;
-
-            if (intsame && !agencychanged && changedtargets == 0) {
-                continue;
-            }
-
-            logger(LOG_INFO, "OpenLI provisioner: Details for VOIP intercept %s have changed -- updating collectors",
-                    voipint->common.liid);
-
-            if (!droppedmeds) {
-                if (agencychanged) {
-                    target_info = list_sip_targets(voipint, 256);
-                    announce_hi1_notification_to_mediators(currstate,
-                            &(voipint->common), target_info,
-                            HI1_LI_DEACTIVATED);
-                    if (target_info) {
-                        free(target_info);
-                    }
-                    newequiv->common.hi1_seqno = 0;
-                    target_info = list_sip_targets(newequiv, 256);
-                    announce_hi1_notification_to_mediators(currstate,
-                            &(newequiv->common), target_info,
-                            HI1_LI_ACTIVATED);
-                    if (target_info) {
-                        free(target_info);
-                    }
-                } else {
-                    target_info = list_sip_targets(newequiv, 256);
-                    announce_hi1_notification_to_mediators(currstate,
-                            &(newequiv->common), target_info,
-                            HI1_LI_MODIFIED);
-                    if (target_info) {
-                        free(target_info);
-                    }
-                }
+            if (update_reconfigured_intercept(currstate, &(voipint->common),
+                    &(newequiv->common), intconf, (!intsame || changedtargets),
+                    agencychanged, droppedmeds, old_target_info,
+                    new_target_info) < 0) {
+                return -1;
             }
 
             if (!intsame && !droppedcols) {
@@ -572,69 +544,37 @@ static int reload_voipintercepts(provision_state_t *currstate,
                         OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
             }
 
-            if (agencychanged) {
-                remove_liid_mapping(currstate, voipint->common.liid,
-                        voipint->common.liid_len, droppedmeds);
-
-                h = add_liid_mapping(intconf, newequiv->common.liid,
-                        newequiv->common.targetagency);
-                if (!droppedmeds && announce_liidmapping_to_mediators(
-                        currstate, h) == -1) {
-                    logger(LOG_INFO,
-                            "OpenLI provisioner: unable to announce new agency for VOIP intercept to mediators.");
-                    return -1;
-                }
+            if (old_target_info) {
+                free(old_target_info);
             }
+            if (new_target_info) {
+                free(new_target_info);
+            }
+
         }
     }
+    gettimeofday(&tv, NULL);
 
     HASH_ITER(hh_liid, newvoip, voipint, tmp) {
-        int skip = 0;
-        prov_agency_t *lea = NULL;
+        int r = 0;
 
         if (!voipint->awaitingconfirm) {
             continue;
         }
-
-        if (strcmp(voipint->common.targetagency, "pcapdisk") != 0) {
-            HASH_FIND_STR(intconf->leas, voipint->common.targetagency, lea);
-            if (lea == NULL) {
-                skip = 1;
-            }
-        }
-
-        if (skip) {
-            continue;
-        }
-
+        target_info = list_sip_targets(voipint, 256);
         if (currstate->ignorertpcomfort) {
             voipint->options |= (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
         }
-
-        /* Add the LIID mapping */
-        h = add_liid_mapping(intconf, voipint->common.liid,
-                voipint->common.targetagency);
-
-        target_info = list_sip_targets(voipint, 256);
-        if (!droppedmeds && announce_hi1_notification_to_mediators(currstate,
-                &(voipint->common), target_info,
-                HI1_LI_ACTIVATED) == -1) {
-            if (target_info) {
-                free(target_info);
-            }
-            logger(LOG_INFO,
-                    "OpenLI provisioner: unable to send HI1 notification for new VOIP intercept to mediators.");
-            return -1;
-        }
+        r = enable_new_intercept(currstate, &(voipint->common), intconf,
+                target_info, droppedmeds);
         if (target_info) {
             free(target_info);
         }
-
-        if (!droppedmeds && announce_liidmapping_to_mediators(currstate,
-                h) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: unable to announce new VOIP intercept to mediators.");
-            return -1;
+        if (r < 0) {
+            return r;
+        }
+        if (r == 0) {
+            continue;
         }
 
         if (!droppedcols && announce_single_intercept(currstate,
@@ -659,28 +599,24 @@ static int reload_ipintercepts(provision_state_t *currstate,
 		prov_intercept_conf_t *intconf, int droppedcols, int droppedmeds) {
 
     ipintercept_t *ipint, *tmp, *newequiv;
-    liid_hash_t *h = NULL;
+    prov_intercept_data_t *local, *oldlocal;
+    struct timeval tv;
 
-    /* TODO error handling in the "inform other components about changes"
-     * functions?
-     */
     HASH_ITER(hh_liid, currints, ipint, tmp) {
         HASH_FIND(hh_liid, newints, ipint->common.liid,
                 ipint->common.liid_len, newequiv);
+
+        local = (prov_intercept_data_t *)(ipint->common.local);
+
         if (!newequiv) {
             /* Intercept has been withdrawn entirely */
             if (!droppedcols) {
                 halt_existing_intercept(currstate, (void *)ipint,
                         OPENLI_PROTO_HALT_IPINTERCEPT);
             }
-            remove_liid_mapping(currstate, ipint->common.liid,
-                    ipint->common.liid_len, droppedmeds);
-            if (!droppedmeds) {
-                announce_hi1_notification_to_mediators(currstate,
-                        &(ipint->common), ipint->username, HI1_LI_DEACTIVATED);
-            }
-            logger(LOG_INFO, "OpenLI provisioner: LIID %s has been withdrawn",
-                    ipint->common.liid);
+            remove_withdrawn_intercept(currstate, &(ipint->common),
+                    ipint->username, droppedmeds);
+
             continue;
         } else {
             int staticchanged = reload_staticips(currstate, ipint, newequiv);
@@ -688,88 +624,36 @@ static int reload_ipintercepts(provision_state_t *currstate,
             int agencychanged = strcmp(ipint->common.targetagency,
                     newequiv->common.targetagency);
 
-            newequiv->common.hi1_seqno = ipint->common.hi1_seqno;
             newequiv->awaitingconfirm = 0;
 
-            if (staticchanged == 0 && intsame && agencychanged == 0) {
-                continue;
-            }
-
-            logger(LOG_INFO, "OpenLI provisioner: Details for IP intercept %s have changed -- updating collectors",
-                    ipint->common.liid);
-
-            if (!droppedmeds) {
-                if (agencychanged) {
-                    announce_hi1_notification_to_mediators(currstate,
-                            &(ipint->common), ipint->username,
-                            HI1_LI_DEACTIVATED);
-                    newequiv->common.hi1_seqno = 0;
-                    announce_hi1_notification_to_mediators(currstate,
-                            &(newequiv->common), newequiv->username,
-                            HI1_LI_ACTIVATED);
-                } else {
-                    announce_hi1_notification_to_mediators(currstate,
-                            &(newequiv->common), newequiv->username,
-                            HI1_LI_MODIFIED);
-                }
+            if (update_reconfigured_intercept(currstate, &(ipint->common),
+                    &(newequiv->common), intconf, (!intsame || staticchanged),
+                    agencychanged, droppedmeds, ipint->username,
+                    newequiv->username) < 0) {
+                return -1;
             }
 
             if (!intsame && !droppedcols) {
                 modify_existing_intercept_options(currstate, (void *)newequiv,
                         OPENLI_PROTO_MODIFY_IPINTERCEPT);
             }
-
-            if (agencychanged) {
-                remove_liid_mapping(currstate, ipint->common.liid,
-                        ipint->common.liid_len, droppedmeds);
-
-                h = add_liid_mapping(intconf, newequiv->common.liid,
-                        newequiv->common.targetagency);
-                if (!droppedmeds && announce_liidmapping_to_mediators(
-                        currstate, h) == -1) {
-                    logger(LOG_INFO,
-                            "OpenLI provisioner: unable to announce new agency for IP intercept to mediators.");
-                    return -1;
-                }
-            }
         }
     }
 
     HASH_ITER(hh_liid, newints, ipint, tmp) {
-        int skip = 0;
-        prov_agency_t *lea = NULL;
+        int r = 0;
 
         if (!ipint->awaitingconfirm) {
             continue;
         }
 
-        if (strcmp(ipint->common.targetagency, "pcapdisk") != 0) {
-            HASH_FIND_STR(intconf->leas, ipint->common.targetagency, lea);
-            if (lea == NULL) {
-                skip = 1;
-            }
+        r = enable_new_intercept(currstate, &(ipint->common), intconf,
+                ipint->username, droppedmeds);
+        if (r < 0) {
+            return r;
         }
-
-        if (skip) {
+        if (r == 0) {
             continue;
-        }
-
-        /* Add the LIID mapping */
-        h = add_liid_mapping(intconf, ipint->common.liid,
-                ipint->common.targetagency);
-
-        if (!droppedmeds && announce_hi1_notification_to_mediators(currstate,
-                &(ipint->common), ipint->username, HI1_LI_ACTIVATED) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: unable to send HI1 notification for new IP intercept to mediators.");
-            return -1;
-        }
-
-        if (!droppedmeds && announce_liidmapping_to_mediators(currstate,
-                h) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: unable to announce new IP intercept to mediators.");
-            return -1;
         }
 
         if (!droppedcols && announce_single_intercept(currstate,
