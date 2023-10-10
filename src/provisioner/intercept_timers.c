@@ -42,12 +42,8 @@ int add_intercept_timer(int epoll_fd, uint64_t tssec, uint64_t now,
     }
 
     if (timertype == PROV_EPOLL_INTERCEPT_START) {
-        printf("adding start timer for intercept in %lu seconds\n",
-                tssec - now);
         timerptr = &(ceptdata->start_timer);
     } else if (timertype == PROV_EPOLL_INTERCEPT_HALT) {
-        printf("adding halt timer for intercept in %lu seconds\n",
-                tssec - now);
         timerptr = &(ceptdata->end_timer);
     } else {
         return -1;
@@ -139,6 +135,7 @@ int add_all_intercept_timers(int epoll_fd, prov_intercept_conf_t *conf) {
         if (tv.tv_sec > ipint->common.toend_time &&
                 ipint->common.toend_time != 0) {
             local->end_hi1_sent = 1;
+            local->start_hi1_sent = 0;
         }
         if (add_intercept_timer(epoll_fd, ipint->common.toend_time,
                 tv.tv_sec, local, PROV_EPOLL_INTERCEPT_HALT) < 0) {
@@ -161,6 +158,7 @@ int add_all_intercept_timers(int epoll_fd, prov_intercept_conf_t *conf) {
         if (tv.tv_sec > vint->common.toend_time &&
                 vint->common.toend_time != 0) {
             local->end_hi1_sent = 1;
+            local->start_hi1_sent = 0;
         }
         if (add_intercept_timer(epoll_fd, vint->common.toend_time,
                 tv.tv_sec, local, PROV_EPOLL_INTERCEPT_HALT) < 0) {
@@ -181,6 +179,7 @@ int add_all_intercept_timers(int epoll_fd, prov_intercept_conf_t *conf) {
         if (tv.tv_sec > mailint->common.toend_time &&
                 mailint->common.toend_time != 0) {
             local->end_hi1_sent = 1;
+            local->start_hi1_sent = 0;
         }
         if (add_intercept_timer(epoll_fd, mailint->common.toend_time,
                 tv.tv_sec, local, PROV_EPOLL_INTERCEPT_HALT) < 0) {
