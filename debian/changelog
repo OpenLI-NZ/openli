@@ -26,8 +26,11 @@ openli (1.1.2-1) unstable; urgency=medium
     field in the SDP announcement is after the first "m=" field.
   * SIP: CANCEL will now correctly move an intercepted call into the
     end state.
+  * HI1 Operations: send HI1 operations messages for intercepts with
+    specific start and end times at the expected time, not when the
+    intercept is configured.
 
- -- Shane Alcock <salcock@searchlight.nz>  Fri, 29 Sep 2023 17:14:09 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Tue, 10 Oct 2023 16:19:41 +1300
 
 openli (1.1.1-1) unstable; urgency=medium
 
