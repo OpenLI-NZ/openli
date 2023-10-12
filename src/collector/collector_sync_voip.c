@@ -58,6 +58,7 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
 
     sync->glob = &(glob->syncvoip);
     sync->info = &(glob->sharedinfo);
+    sync->info_mutex = &(glob->config_mutex);
 
     sync->trust_sip_from = glob->trust_sip_from;
     sync->log_bad_instruct = 1;

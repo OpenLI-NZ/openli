@@ -78,6 +78,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->outgoing = NULL;
     sync->incoming = NULL;
     sync->info = &(glob->sharedinfo);
+    sync->info_mutex = &(glob->config_mutex);
 
     sync->upcoming_intercept_events = NULL;
     sync->upcomingtimerfd = -1;
@@ -1864,8 +1865,10 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
 
     int sockfd;
 
+    pthread_rwlock_rdlock(sync->info_mutex);
     sockfd = connect_socket(sync->info->provisionerip,
             sync->info->provisionerport, sync->instruct_fail, 0);
+    pthread_rwlock_unlock(sync->info_mutex);
 
     if (sockfd == -1) {
         sync->instruct_log = 0;

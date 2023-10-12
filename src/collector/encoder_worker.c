@@ -488,7 +488,10 @@ static int encode_templated_umtsiri(openli_encoder_t *enc,
             (openli_mobiri_job_t *)&(job->origreq->data.mobiri);
     etsili_generic_t *np = NULL;
     char opid[6];
-    int opidlen = enc->shared->operatorid_len;
+    int opidlen;
+
+    pthread_rwlock_rdlock(enc->shared_mutex);
+    opidlen = enc->shared->operatorid_len;
 
     /* TODO maybe we could find a way to reuse this instead of creating
      * every time?
@@ -499,6 +502,7 @@ static int encode_templated_umtsiri(openli_encoder_t *enc,
 
     memcpy(opid, enc->shared->operatorid, opidlen);
     opid[opidlen] = '\0';
+    pthread_rwlock_unlock(enc->shared_mutex);
 
     np = create_etsili_generic(enc->freegenerics,
             UMTSIRI_CONTENTS_OPERATOR_IDENTIFIER, opidlen,

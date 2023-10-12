@@ -163,6 +163,8 @@ typedef struct collector_identity {
     int networkelemid_len;
     int intpointid_len;
 
+    uint8_t cisco_noradius;
+
 } collector_identity_t;
 
 typedef struct old_intercept removed_intercept_t;
@@ -184,6 +186,7 @@ typedef struct seqtracker_thread_data {
     pthread_t threadid;
     int trackerid;
     collector_identity_t *colident;
+    pthread_rwlock_t *colident_mutex;
 
     void *zmq_pushjobsock;
     void *zmq_recvpublished;
@@ -191,6 +194,7 @@ typedef struct seqtracker_thread_data {
     exporter_intercept_state_t *intercepts;
     removed_intercept_t *removedints;
     uint8_t encoding_method;
+
 
 } seqtracker_thread_data_t;
 
@@ -248,6 +252,7 @@ typedef struct encoder_state {
     pthread_t threadid;
     int workerid;
     collector_identity_t *shared;
+    pthread_rwlock_t *shared_mutex;
     wandder_encoder_t *encoder;
     etsili_generic_freelist_t *freegenerics;
 
