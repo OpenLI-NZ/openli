@@ -100,6 +100,7 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         /* Each sequence item is a new input */
         inp = (colinput_t *)malloc(sizeof(colinput_t));
         inp->uri = NULL;
+        inp->hashconfigured = 0;
         inp->threadcount = 1;
         inp->trace = NULL;
         inp->pktcbs = NULL;

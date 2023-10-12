@@ -171,6 +171,7 @@ static inline void preencode_etsi_fields(seqtracker_thread_data_t *seqdata,
     intdetails.authcc = intstate->details.authcc;
     intdetails.delivcc = intstate->details.delivcc;
 
+    pthread_rwlock_rdlock(seqdata->colident_mutex);
     intdetails.operatorid = seqdata->colident->operatorid;
     intdetails.networkelemid = seqdata->colident->networkelemid;
     intdetails.intpointid = seqdata->colident->intpointid;
@@ -178,6 +179,7 @@ static inline void preencode_etsi_fields(seqtracker_thread_data_t *seqdata,
     intstate->preencoded = calloc(OPENLI_PREENCODE_LAST,
             sizeof(wandder_encode_job_t));
     etsili_preencode_static_fields(intstate->preencoded, &intdetails);
+    pthread_rwlock_unlock(seqdata->colident_mutex);
 }
 
 

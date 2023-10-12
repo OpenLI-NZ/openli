@@ -128,6 +128,7 @@ typedef struct colinput {
 
     uint8_t hasher_apply;
     hash_radius_conf_t hashradconf;
+    uint8_t hashconfigured;
     uint8_t report_drops;
     uint8_t running;
     UT_hash_handle hh;
