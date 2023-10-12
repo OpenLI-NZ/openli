@@ -163,6 +163,8 @@ typedef struct collector_identity {
     int networkelemid_len;
     int intpointid_len;
 
+    uint8_t cisco_noradius;
+
 } collector_identity_t;
 
 typedef struct old_intercept removed_intercept_t;

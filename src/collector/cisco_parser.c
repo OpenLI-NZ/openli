@@ -34,6 +34,36 @@
 #include "util.h"
 #include "coreserver.h"
 
+typedef struct ciscomirror_hdr {
+    uint32_t interceptid;
+} PACKED ciscomirror_hdr_t;
+
+static inline uint32_t ciscomirror_get_intercept_id(ciscomirror_hdr_t *hdr) {
+
+    return ntohl(hdr->interceptid);
+}
+
+static void push_ciscomirror_ipcc_job(colthread_local_t *loc,
+        libtrace_packet_t *packet, vendmirror_intercept_t *cept,
+        uint32_t cin, collector_identity_t *info, void *l3, uint32_t rem) {
+
+    openli_export_recv_t *msg;
+    msg = calloc(1, sizeof(openli_export_recv_t));
+
+    msg->type = OPENLI_EXPORT_IPCC;
+    msg->ts = trace_get_timeval(packet);
+    msg->destid = cept->common.destid;
+    msg->data.ipcc.liid = strdup(cept->common.liid);
+    msg->data.ipcc.cin = cin;
+    msg->data.ipcc.dir = ETSI_DIR_INDETERMINATE;
+    msg->data.ipcc.ipcontent = (uint8_t *)calloc(1, rem);
+    msg->data.ipcc.ipclen = rem;
+
+    memcpy(msg->data.ipcc.ipcontent, l3, rem);
+
+    publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
+}
+
 /** Converts a Cisco LI-mirrored packet directly into a CC encoding job for
  *  any intercepts that have requested its vendor mirror ID.
  *
@@ -57,7 +87,41 @@ int generate_cc_from_cisco(collector_identity_t *info, colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
         vendmirror_intercept_list_t *ciscomirrors) {
 
+    ciscomirror_hdr_t *hdr = NULL;
+    void *payload;
+    uint8_t *l3;
+    uint32_t rem, cept_id;
+    vendmirror_intercept_t *cept, *tmp;
+    vendmirror_intercept_list_t *vmilist;
 
+    payload = get_udp_payload(packet, &rem, NULL, NULL);
+    if (rem < sizeof(ciscomirror_hdr_t) || payload == NULL) {
+        return 0;
+    }
+    hdr = (ciscomirror_hdr_t *)payload;
+
+    cept_id = ciscomirror_get_intercept_id(hdr);
+
+    HASH_FIND(hh, ciscomirrors, &cept_id, sizeof(cept_id), vmilist);
+    if (vmilist == NULL) {
+        return 0;
+    }
+    rem -= sizeof(ciscomirror_hdr_t);
+    l3 = ((uint8_t *)payload) + sizeof(ciscomirror_hdr_t);
+
+    if (rem == 0) {
+        return 0;
+    }
+    HASH_ITER(hh, vmilist->intercepts, cept, tmp) {
+        if (pinfo->tv.tv_sec < cept->common.tostart_time) {
+            continue;
+        }
+        if (cept->common.toend_time > 0 &&
+                cept->common.toend_time < pinfo->tv.tv_sec) {
+            continue;
+        }
+        push_ciscomirror_ipcc_job(loc, packet, cept, cept_id, info, l3, rem);
+    }
     return 1;
 }
 
@@ -77,7 +141,20 @@ int generate_cc_from_cisco(collector_identity_t *info, colthread_local_t *loc,
  */
 libtrace_packet_t *strip_cisco_mirror_header(libtrace_packet_t *pkt) {
 
-    return NULL;
+    libtrace_packet_t *stripped;
+    void *payload;
+    uint32_t rem;
+
+    payload = get_udp_payload(pkt, &rem, NULL, NULL);
+
+    if (payload == NULL || rem <= 4) {
+        return NULL;
+    }
+
+    stripped = trace_create_packet();
+    trace_construct_packet(stripped, TRACE_TYPE_NONE, payload + 4, rem - 4);
+
+    return stripped;
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

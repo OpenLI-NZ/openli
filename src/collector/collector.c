@@ -1440,6 +1440,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->sharedinfo.operatorid_len = 0;
     glob->sharedinfo.networkelemid = NULL;
     glob->sharedinfo.networkelemid_len = 0;
+    glob->sharedinfo.cisco_noradius = 0;       // defaults to "expect RADIUS"
     glob->total_col_threads = 0;
     glob->collocals = NULL;
     glob->expired_inputs = NULL;
@@ -1494,7 +1495,6 @@ static void init_collector_global(collector_global_t *glob) {
     glob->email_timeouts.imap = 30;
     glob->mask_imap_creds = 1;      // defaults to "enabled"
     glob->mask_pop3_creds = 1;      // defaults to "enabled"
-    glob->cisco_noradius = 0;            // defaults to "expect RADIUS"
     glob->default_email_domain = NULL;
 }
 
@@ -1694,6 +1694,8 @@ static int reload_collector_config(collector_global_t *glob,
     glob->sharedinfo.intpointid = newstate.sharedinfo.intpointid;
     glob->sharedinfo.intpointid_len = newstate.sharedinfo.intpointid_len;
     newstate.sharedinfo.intpointid = NULL;
+
+    glob->sharedinfo.cisco_noradius = newstate.sharedinfo.cisco_noradius;
 
     pthread_rwlock_unlock(&(glob->config_mutex));
 

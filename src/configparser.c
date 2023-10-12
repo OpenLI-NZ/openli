@@ -1323,7 +1323,8 @@ static int global_parser(void *arg, yaml_document_t *doc,
             strcasecmp((char *)key->data.scalar.value,
                     "cisconoradius") == 0) {
 
-       glob->cisco_noradius = check_onoff((char *)value->data.scalar.value);
+       glob->sharedinfo.cisco_noradius =
+                check_onoff((char *)value->data.scalar.value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
