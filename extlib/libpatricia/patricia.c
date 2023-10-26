@@ -50,7 +50,7 @@ comp_with_mask (void *addr, void *dest, u_int mask)
 
     if ( /* mask/8 == 0 || */ memcmp (addr, dest, mask / 8) == 0) {
 	int n = mask / 8;
-	int m = ((-1) << (8 - (mask % 8)));
+	int m = ((0xFFFFFFFF) << (8 - (mask % 8)));
 
 	if (mask % 8 == 0 || (((u_char *)addr)[n] & m) == (((u_char *)dest)[n] & m))
 	    return (1);
@@ -105,7 +105,7 @@ inet_pton (int af, const char *src, void *dst)
 #endif
 
 /* this allows imcomplete prefix */
-int
+static int
 my_inet_pton (int af, const char *src, void *dst)
 {
     if (af == AF_INET) {
@@ -145,15 +145,16 @@ my_inet_pton (int af, const char *src, void *dst)
     }
 }
 
+#if 0
 /*
  * convert prefix information to ascii string with length
  * thread safe and (almost) re-entrant implementation
  */
-char *
+static char *
 prefix_toa2x (prefix_t *prefix, char *buff, int with_len)
 {
     if (prefix == NULL)
-	return ("(Null)");
+	return (char *)("(Null)");
     assert (prefix->ref_count >= 0);
     if (buff == NULL) {
 
@@ -208,19 +209,21 @@ prefix_toa2x (prefix_t *prefix, char *buff, int with_len)
 /* prefix_toa2
  * convert prefix information to ascii string
  */
-char *
+static char *
 prefix_toa2 (prefix_t *prefix, char *buff)
 {
     return (prefix_toa2x (prefix, buff, 0));
 }
 
+
 /* prefix_toa
  */
-char *
+static char *
 prefix_toa (prefix_t * prefix)
 {
     return (prefix_toa2 (prefix, (char *) NULL));
 }
+#endif
 
 prefix_t *
 New_Prefix2 (int family, void *dest, int bitlen, prefix_t *prefix)
@@ -240,18 +243,11 @@ New_Prefix2 (int family, void *dest, int bitlen, prefix_t *prefix)
     else
 #endif /* HAVE_IPV6 */
     if (family == AF_INET) {
-		if (prefix == NULL) {
-#ifndef NT
-            prefix = calloc(1, sizeof (prefix4_t));
-#else
-			//for some reason, compiler is getting
-			//prefix4_t size incorrect on NT
-			prefix = calloc(1, sizeof (prefix_t));
-#endif /* NT */
-
-			dynamic_allocated++;
-		}
-		memcpy (&prefix->add.sin, dest, 4);
+        if (prefix == NULL) {
+            prefix = calloc(1, sizeof (prefix_t));
+	    dynamic_allocated++;
+	}
+	memcpy (&prefix->add.sin, dest, 4);
     }
     else {
         return (NULL);
@@ -345,7 +341,7 @@ ascii2prefix (int family, char *string)
 			return (NULL);
 }
 
-prefix_t *
+static prefix_t *
 Ref_Prefix (prefix_t * prefix)
 {
     if (prefix == NULL)
@@ -359,7 +355,7 @@ Ref_Prefix (prefix_t * prefix)
     return (prefix);
 }
 
-void
+static void
 Deref_Prefix (prefix_t * prefix)
 {
     if (prefix == NULL)
@@ -470,7 +466,8 @@ patricia_process (patricia_tree_t *patricia, void_fn_t func)
     } PATRICIA_WALK_END;
 }
 
-size_t
+#if 0
+static size_t
 patricia_walk_inorder(patricia_node_t *node, void_fn_t func)
 {
     size_t n = 0;
@@ -491,7 +488,7 @@ patricia_walk_inorder(patricia_node_t *node, void_fn_t func)
 
     return n;
 }
-
+#endif
 
 patricia_node_t *
 patricia_search_exact (patricia_tree_t *patricia, prefix_t *prefix)
@@ -671,8 +668,8 @@ patricia_lookup (patricia_tree_t *patricia, prefix_t *prefix)
 {
     patricia_node_t *node, *new_node, *parent, *glue;
     u_char *addr, *test_addr;
-    u_int bitlen, check_bit, differ_bit;
-    int i, j, r;
+    u_int bitlen, check_bit, differ_bit, i;
+    int j, r;
 
     assert (patricia);
     assert (prefix);
@@ -1001,7 +998,8 @@ make_and_lookup (patricia_tree_t *tree, char *string)
     return (node);
 }
 
-patricia_node_t *
+#if 0
+static patricia_node_t *
 try_search_exact (patricia_tree_t *tree, char *string)
 {
     prefix_t *prefix;
@@ -1020,7 +1018,7 @@ try_search_exact (patricia_tree_t *tree, char *string)
     return (node);
 }
 
-void
+static void
 lookup_then_remove (patricia_tree_t *tree, char *string)
 {
     patricia_node_t *node;
@@ -1029,7 +1027,7 @@ lookup_then_remove (patricia_tree_t *tree, char *string)
         patricia_remove (tree, node);
 }
 
-patricia_node_t *
+static patricia_node_t *
 try_search_best (patricia_tree_t *tree, char *string)
 {
     prefix_t *prefix;
@@ -1045,5 +1043,6 @@ try_search_best (patricia_tree_t *tree, char *string)
     Deref_Prefix (prefix);
     return (node);
 }
+#endif
 
 /* } */

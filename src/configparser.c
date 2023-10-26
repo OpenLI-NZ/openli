@@ -1380,7 +1380,7 @@ static int global_parser(void *arg, yaml_document_t *doc,
 }
 
 
-static int mediator_parser(void *arg, yaml_document_t *doc,
+static int mediator_parser(void *arg, yaml_document_t *doc UNUSED,
         yaml_node_t *key, yaml_node_t *value) {
 
     mediator_state_t *state = (mediator_state_t *)arg;
@@ -1684,7 +1684,7 @@ static int intercept_parser(void *arg, yaml_document_t *doc,
     return 0;
 }
 
-static int provisioning_parser(void *arg, yaml_document_t *doc,
+static int provisioning_parser(void *arg, yaml_document_t *doc UNUSED,
         yaml_node_t *key, yaml_node_t *value) {
 
     provision_state_t *state = (provision_state_t *)arg;

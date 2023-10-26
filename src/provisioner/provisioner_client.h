@@ -137,19 +137,19 @@ int halt_provisioner_client_authtimer(int epollfd, prov_client_t *client,
  *  @param epollfd      The file descriptor used by the provisioner for
  *                      polling.
  *  @param client       The client that needs to authenticate.
- *  @param identifier   The name of the client, used for logging.
+ *  @param timeoutsecs  The number of seconds before timing out.
  */
 void start_provisioner_client_authtimer(int epollfd, prov_client_t *client,
-        char *identifier, int timeoutsecs);
+        int timeoutsecs);
 
 /** Starts the inactivity timer for a given client.
  *  @param epollfd      The file descriptor used by the provisioner for
  *                      polling.
  *  @param client       The client that has become inactive.
- *  @param identifier   The name of the client, used for logging.
+ *  @param timeoutsecs  The number of seconds before timing out.
  */
 void start_provisioner_client_idletimer(int epollfd, prov_client_t *client,
-        char *identifier, int timeoutsecs);
+        int timeoutsecs);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

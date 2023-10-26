@@ -145,8 +145,8 @@ void disconnect_provisioner_client(int epollfd, prov_client_t *client,
     	/* Start the idle timer, so we can remove this client if it is no
          * longer being used.
         */
-	    start_provisioner_client_idletimer(epollfd, client, identifier,
-	    		PROVISIONER_IDLE_TIMEOUT_SECS);
+	    start_provisioner_client_idletimer(epollfd, client,
+                PROVISIONER_IDLE_TIMEOUT_SECS);
     }
 
 	if (client->ssl) {
@@ -178,7 +178,7 @@ void destroy_provisioner_client(int epollfd, prov_client_t *client,
 }
 
 /** Create fresh socket state for a newly connected client */
-static void create_prov_socket_state(prov_client_t *client, int authtimerfd,
+static void create_prov_socket_state(prov_client_t *client,
         char *ipaddrstr, int isbad, int fd, int fdtype) {
 
     prov_sock_state_t *cs = (prov_sock_state_t *)malloc(
@@ -216,7 +216,7 @@ static void create_prov_socket_state(prov_client_t *client, int authtimerfd,
  *  @param sslconf      The SSL configuration used by the provisioner.
  *  @param epollfd      The file descriptor used by the provisioner for
  *                      polling.
- *  @param identifier   The name of the client, used for logging.
+ *  @param identifier   A string that describes the client, used for logging.
  *  @param client       The client that is attempting to connect.
  *  @param newfd        The file descriptor which the client connection
  *                      has been accepted on.
@@ -230,7 +230,7 @@ static void create_prov_socket_state(prov_client_t *client, int authtimerfd,
  */
 int accept_provisioner_client(openli_ssl_config_t *sslconf, int epollfd,
         char *identifier, prov_client_t *client, int newfd,
-		int successfdtype, int waitfdtype) {
+        int successfdtype, int waitfdtype) {
 
 	int r, sslreqmessage = 0;
 	const char *label;
@@ -265,7 +265,7 @@ int accept_provisioner_client(openli_ssl_config_t *sslconf, int epollfd,
     }
 
 	if (!client->state) {
-    	create_prov_socket_state(client, -1, identifier, 0, newfd,
+    	create_prov_socket_state(client, identifier, 0, newfd,
 				successfdtype);
 	} else {
 		client->state->incoming = create_net_buffer(NETBUF_RECV, newfd,
@@ -330,7 +330,7 @@ int accept_provisioner_client(openli_ssl_config_t *sslconf, int epollfd,
      * any intercept instructions. If it doesn't auth soon, we assume it is
  	 * not a valid OpenLI collector or mediator and want to drop it asap.
 	 */
-	start_provisioner_client_authtimer(epollfd, client, identifier,
+	start_provisioner_client_authtimer(epollfd, client,
 			PROVISIONER_AUTH_TIMEOUT_SECS);
     client->state->halted = 0;
 	return client->commev->fd;
@@ -371,7 +371,7 @@ int continue_provisioner_client_handshake(int epollfd, prov_client_t *client,
 				label, cs->ipaddr);
         client->lastsslerror = 0;
         client->lastothererror = 0;
-        start_provisioner_client_authtimer(epollfd, client, cs->ipaddr,
+        start_provisioner_client_authtimer(epollfd, client,
 			PROVISIONER_AUTH_TIMEOUT_SECS);
 
 		/* Change our epoll event type so the epoll loop knows that we are
@@ -479,10 +479,10 @@ int halt_provisioner_client_authtimer(int epollfd, prov_client_t *client,
  *  @param epollfd      The file descriptor used by the provisioner for
  *                      polling.
  *  @param client       The client that needs to authenticate.
- *  @param identifier   The name of the client, used for logging.
+ *  @param timeoutsecs  The number of seconds before timing out.
  */
 void start_provisioner_client_authtimer(int epollfd, prov_client_t *client,
-        char *identifier, int timeoutsecs) {
+        int timeoutsecs) {
 
     if (client->authev != NULL) {
         return;
@@ -500,10 +500,10 @@ void start_provisioner_client_authtimer(int epollfd, prov_client_t *client,
  *  @param epollfd      The file descriptor used by the provisioner for
  *                      polling.
  *  @param client       The client that has become inactive.
- *  @param identifier   The name of the client, used for logging.
+ *  @param timeoutsecs  The number of seconds before timing out.
  */
 void start_provisioner_client_idletimer(int epollfd, prov_client_t *client,
-        char *identifier, int timeoutsecs) {
+        int timeoutsecs) {
 
     if (client->idletimer != NULL) {
         return;

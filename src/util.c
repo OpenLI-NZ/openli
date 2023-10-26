@@ -189,7 +189,7 @@ endconnect:
     return sockfd;
 }
 
-int create_listener(char *addr, char *port, char *name) {
+int create_listener(char *addr, char *port, const char *name) {
     struct addrinfo hints, *res;
     int sockfd;
     int yes = 1;

@@ -190,7 +190,7 @@ static int send_json_object(struct MHD_Connection *connection,
 }
 
 static inline int extract_target_from_url(update_con_info_t *cinfo,
-        char *url, char *targetspace, int spacelen, char *methodtype) {
+        char *url, char *targetspace, int spacelen, const char *methodtype) {
 
     char *targetstart, *targetend, *urlstart;
 
@@ -481,8 +481,9 @@ static int consume_upload_data(update_con_info_t *cinfo, const char *data,
     return MHD_YES;
 }
 
-void complete_update_request(void *cls, struct MHD_Connection *conn,
-        void **con_cls, enum MHD_RequestTerminationCode toe) {
+void complete_update_request(void *cls UNUSED,
+        struct MHD_Connection *conn UNUSED, void **con_cls,
+        enum MHD_RequestTerminationCode toe UNUSED) {
 
     update_con_info_t *cinfo = (update_con_info_t *)(*con_cls);
 
@@ -512,7 +513,8 @@ static unsigned char *lookup_user_digest(provision_state_t *provstate,
 
     int rc, step;
     sqlite3_stmt *res;
-    char *sql = "SELECT username, digesthash FROM authcreds where username = ?";
+    const char *sql =
+            "SELECT username, digesthash FROM authcreds where username = ?";
     unsigned char *returning = NULL;
     const unsigned char *hashtext;
 
@@ -561,7 +563,7 @@ static int validate_user_apikey(provision_state_t *provstate,
 #ifdef HAVE_SQLCIPHER
     int rc, step;
     sqlite3_stmt *res;
-    char *sql = "SELECT username, apikey FROM authcreds where apikey = ?";
+    const char *sql = "SELECT username, apikey FROM authcreds where apikey = ?";
 
     rc = sqlite3_prepare_v2(provstate->authdb, sql, -1, &res, 0);
     if (rc != SQLITE_OK) {
@@ -632,7 +634,7 @@ static int authenticate_request(provision_state_t *provstate,
 }
 
 MHD_RESULT handle_update_request(void *cls, struct MHD_Connection *conn,
-        const char *url, const char *method, const char *version,
+        const char *url, const char *method, const char *version UNUSED,
         const char *upload_data, size_t *upload_data_size,
         void **con_cls) {
 

@@ -40,7 +40,7 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
         uint8_t setkeepalive);
 int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr);
 int epoll_add_ms_timer(int epoll_fd, uint32_t msecs, void *ptr);
-int create_listener(char *addr, char *port, char *name);
+int create_listener(char *addr, char *port, const char *name);
 char *sockaddr_to_string(struct sockaddr *sa, char *str, int len);
 uint8_t *sockaddr_to_key(struct sockaddr *sa, int *socklen);
 void convert_ipstr_to_sockaddr(char *knownip, struct sockaddr_storage **saddr,

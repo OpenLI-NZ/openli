@@ -40,9 +40,20 @@
 #define OPENLI_COLLECTOR_MAGIC 0x00180014202042a8
 #define OPENLI_MEDIATOR_MAGIC 0x01153200d6f12905
 
-#define NETBUF_SPACE_REM(nbuf) (nbuf->alloced - (nbuf->appendptr - nbuf->buf))
-#define NETBUF_FRONT_FREE(nbuf) (nbuf->actptr - nbuf->buf)
-#define NETBUF_CONTENT_SIZE(nbuf) (nbuf->appendptr - nbuf->actptr)
+#define NETBUF_SPACE_REM(nbuf) \
+    ((nbuf->alloced >= (nbuf->appendptr - nbuf->buf)) ? \
+        (unsigned int)(nbuf->alloced - (nbuf->appendptr - nbuf->buf)) : \
+        (unsigned int) 0)
+
+#define NETBUF_FRONT_FREE(nbuf) \
+    ((nbuf->actptr >= nbuf->buf) ? \
+        (unsigned int)(nbuf->actptr - nbuf->buf) : \
+        (unsigned int) 0)
+
+#define NETBUF_CONTENT_SIZE(nbuf) \
+    ((nbuf->appendptr >= nbuf->actptr) ? \
+        (unsigned int)(nbuf->appendptr - nbuf->actptr) : \
+        (unsigned int) 0)
 
 #include "intercept.h"
 #include "agency.h"

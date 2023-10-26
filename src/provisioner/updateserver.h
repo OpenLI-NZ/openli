@@ -128,6 +128,6 @@ struct json_object *get_email_intercept(update_con_info_t *cinfo,
         provision_state_t *state, char *target);
 struct json_object *get_provisioner_options(update_con_info_t *cinfo,
         provision_state_t *state);
-struct json_object *get_openli_version();
+struct json_object *get_openli_version(void);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
