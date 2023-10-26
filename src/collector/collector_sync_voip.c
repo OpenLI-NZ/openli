@@ -455,7 +455,6 @@ static inline int announce_rtp_streams_if_required(
         return 0;
     }
 
-    printf("%s\n", rtp->streamkey);
     /* If we get here, we need to push the RTP stream details to the
      * processing threads. */
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
@@ -909,7 +908,7 @@ static inline openli_sip_identity_t *check_sip_auth_fields(
 
 static int process_sip_183sessprog(collector_sync_voip_t *sync,
         rtpstreaminf_t *thisrtp, voipintercept_t *vint,
-        etsili_iri_type_t *iritype) {
+        etsili_iri_type_t *iritype, openli_export_recv_t *irimsg) {
 
     char *cseqstr, *ipstr, *portstr, *mediatype;
     int i = 1;
@@ -919,16 +918,24 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
 
     if (thisrtp->invitecseq && strcmp(thisrtp->invitecseq,
                 cseqstr) == 0) {
+        uint8_t dir = 0xff;
 
         ipstr = get_sip_media_ipaddr(sync->sipparser);
         portstr = get_sip_media_port(sync->sipparser, 0);
         mediatype = get_sip_media_type(sync->sipparser, 0);
 
-        printf("183: %s %s %s\n", ipstr, portstr, mediatype);
-        while (ipstr && portstr && mediatype) {
+        if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc,
+                16) == 0) {
+            dir = 0;
+        } else if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipdest,
+                16) == 0) {
+            dir = 1;
+        }
+
+        while (dir != 0xff && ipstr && portstr && mediatype) {
 
             if ((changed = update_rtp_stream(sync, thisrtp, vint, ipstr,
-                    portstr, mediatype, 1)) == -1) {
+                    portstr, mediatype, dir)) == -1) {
                 if (sync->log_bad_sip) {
                     logger(LOG_INFO,
                         "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
@@ -951,8 +958,9 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
     return 0;
 }
 
-static int process_sip_200ok(collector_sync_voip_t *sync, rtpstreaminf_t *thisrtp,
-        voipintercept_t *vint, etsili_iri_type_t *iritype) {
+static int process_sip_200ok(collector_sync_voip_t *sync,
+        rtpstreaminf_t *thisrtp, voipintercept_t *vint,
+        etsili_iri_type_t *iritype, openli_export_recv_t *irimsg) {
 
     char *ipstr, *portstr, *cseqstr, *mediatype;
     int i = 1;
@@ -960,19 +968,25 @@ static int process_sip_200ok(collector_sync_voip_t *sync, rtpstreaminf_t *thisrt
 
     cseqstr = get_sip_cseq(sync->sipparser);
 
-    printf("200 OK: %s\n", cseqstr);
     if (thisrtp->invitecseq && strcmp(thisrtp->invitecseq,
                 cseqstr) == 0) {
-
+        uint8_t dir = 0xff;
         ipstr = get_sip_media_ipaddr(sync->sipparser);
         portstr = get_sip_media_port(sync->sipparser, 0);
         mediatype = get_sip_media_type(sync->sipparser, 0);
 
-        printf("200: %s %s %s\n", ipstr, portstr, mediatype);
 
-        while (ipstr && portstr && mediatype) {
+        if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc,
+                16) == 0) {
+            dir = 0;
+        } else if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipdest,
+                16) == 0) {
+            dir = 1;
+        }
+
+        while (dir != 0xff && ipstr && portstr && mediatype) {
             if ((changed = update_rtp_stream(sync, thisrtp, vint, ipstr,
-                    portstr, mediatype, 1)) == -1) {
+                    portstr, mediatype, dir)) == -1) {
                 if (sync->log_bad_sip) {
                     logger(LOG_INFO,
                         "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
@@ -1150,7 +1164,7 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
 
         /* Check for a new RTP stream announcement in a 200 OK */
         if (sip_is_200ok(sync->sipparser)) {
-            if (process_sip_200ok(sync, thisrtp, vint, &iritype) < 0) {
+            if (process_sip_200ok(sync, thisrtp, vint, &iritype, irimsg) < 0) {
                 badsip = 1;
                 continue;
             }
@@ -1162,7 +1176,8 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
          */
         if (sip_is_183sessprog(sync->sipparser) ||
                     sip_is_180ringing(sync->sipparser)) {
-            if (process_sip_183sessprog(sync, thisrtp, vint, &iritype) < 0) {
+            if (process_sip_183sessprog(sync, thisrtp, vint, &iritype,
+                        irimsg) < 0) {
                 badsip = 1;
                 continue;
             }
@@ -1314,6 +1329,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     etsili_iri_type_t iritype = ETSILI_IRI_REPORT;
     int badsip = 0;
     int i = 1;
+    uint8_t dir = 0xff;
 
     regauths = NULL;
     proxyauths = NULL;
@@ -1447,11 +1463,21 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         portstr = get_sip_media_port(sync->sipparser, 0);
         mediatype = get_sip_media_type(sync->sipparser, 0);
 
-        while (ipstr && portstr && !badsip && mediatype) {
+        if (iritype == ETSILI_IRI_BEGIN) {
+            memcpy(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc, 16);
+            dir = 0;
+        } else if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc,
+                16) == 0) {
+            dir = 0;
+        } else if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipdest,
+                16) == 0) {
+            dir = 1;
+        }
+
+        while (dir != 0xff && ipstr && portstr && !badsip && mediatype) {
             int changed;
-            printf("INVITE: %s %s %s\n", ipstr, portstr, mediatype);
             if ((changed = update_rtp_stream(sync, thisrtp, vint, ipstr,
-                    portstr, mediatype, 0)) == -1) {
+                    portstr, mediatype, dir)) == -1) {
                 if (sync->log_bad_sip) {
                     logger(LOG_INFO,
                         "OpenLI: error adding new RTP stream for LIID %s (%s:%s)",
@@ -1477,13 +1503,6 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         if (badsip) {
             continue;
         }
-
-        /* TODO Catch case where there might be a subsequent INVITE in the
-         * reverse direction -- in this case, we want to be careful to only
-         * update the RTP addresses and ports if they have genuinely changed.
-         * The tricky part is: if the INVITE is in the reverse direction,
-         * then we need to flip our comparisons accordingly.
-         */
 
         thisrtp->invitecseq = get_sip_cseq(sync->sipparser);
 
@@ -2222,6 +2241,8 @@ static void examine_sip_update(collector_sync_voip_t *sync,
     int ret, doonce;
     libtrace_packet_t *pktref;
     openli_export_recv_t baseirimsg;
+
+    memset(&baseirimsg, 0, sizeof(openli_export_recv_t));
 
     ret = add_sip_packet_to_parser(&(sync->sipparser), recvdpkt,
             sync->log_bad_sip);
