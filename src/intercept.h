@@ -342,6 +342,8 @@ struct rtpstreaminf {
     char *invitecseq;
     char *byecseq;
 
+    uint8_t inviter[16];
+
     uint8_t skip_comfort;
     intercept_common_t common;
     voipintercept_t *parent;

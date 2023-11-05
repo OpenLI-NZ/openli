@@ -415,7 +415,7 @@ int extract_ip_addresses(libtrace_packet_t *pkt, uint8_t *srcip,
             return -1;
         }
 
-        *ipfamily = AF_INET;
+        *ipfamily = AF_INET6;
         memcpy(srcip, &(ip6->ip_src.s6_addr), sizeof(struct in6_addr));
         memcpy(destip, &(ip6->ip_dst.s6_addr), sizeof(struct in6_addr));
     }
