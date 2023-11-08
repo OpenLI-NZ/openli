@@ -35,8 +35,13 @@
 #include "util.h"
 #include "collector_publish.h"
 #include "emailiri.h"
+#include "export_buffer.h"
 
 int publish_openli_msg(void *pubsock, openli_export_recv_t *msg) {
+
+    if (msg == NULL) {
+        return 0;
+    }
 
     while (1) {
         if (zmq_send(pubsock, &msg, sizeof(openli_export_recv_t *), 0) < 0) {
@@ -97,7 +102,8 @@ void free_published_message(openli_export_recv_t *msg) {
         if (msg->data.mobiri.liid) {
             free(msg->data.mobiri.liid);
         }
-    } else if (msg->type == OPENLI_EXPORT_RAW_SYNC) {
+    } else if (msg->type == OPENLI_EXPORT_RAW_SYNC ||
+            msg->type == OPENLI_EXPORT_RAW_CC) {
         if (msg->data.rawip.liid) {
             free(msg->data.rawip.liid);
         }
@@ -107,6 +113,51 @@ void free_published_message(openli_export_recv_t *msg) {
     }
 
     free(msg);
+}
+
+openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
+        libtrace_packet_t *pkt) {
+
+    void *l3;
+    uint32_t rem;
+    uint16_t ethertype;
+    openli_export_recv_t *msg = NULL;
+    struct timeval tv;
+    openli_pcap_header_t *pcap;
+
+    l3 = trace_get_layer3(pkt, &ethertype, &rem);
+
+    if (l3 == NULL || rem == 0 || (ethertype != TRACE_ETHERTYPE_IP &&
+            ethertype != TRACE_ETHERTYPE_IPV6)) {
+        return NULL;
+    }
+
+    tv = trace_get_timeval(pkt);
+
+    msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    if (msg == NULL) {
+        return msg;
+    }
+
+    msg->type = OPENLI_EXPORT_RAW_CC;
+    msg->destid = destid;
+    msg->ts = trace_get_timeval(pkt);
+
+    msg->data.rawip.liid = strdup(liid);
+    msg->data.rawip.ipcontent = malloc(rem + sizeof(openli_pcap_header_t));
+
+    pcap = (openli_pcap_header_t *)msg->data.rawip.ipcontent;
+    pcap->ts_sec = tv.tv_sec;
+    pcap->ts_usec = tv.tv_usec;
+    pcap->caplen = rem;
+    pcap->wirelen = rem;
+
+    memcpy(msg->data.rawip.ipcontent + sizeof(openli_pcap_header_t), l3, rem);
+    msg->data.rawip.ipclen = rem + sizeof(openli_pcap_header_t);
+    msg->data.rawip.seqno = 0;
+    msg->data.rawip.cin = 0;
+
+    return msg;
 }
 
 openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,

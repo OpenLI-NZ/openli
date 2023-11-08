@@ -34,6 +34,13 @@
 #include "netcomms.h"
 #include "collector/collector_publish.h"
 
+typedef struct pcap_header {
+    uint32_t ts_sec;
+    uint32_t ts_usec;
+    uint32_t caplen;
+    uint32_t wirelen;
+} PACKED openli_pcap_header_t;
+
 typedef struct encoder_result {
     ii_header_t header;
     wandder_encoded_result_t *msgbody;

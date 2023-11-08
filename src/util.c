@@ -528,7 +528,7 @@ char *parse_iprange_string(char *ipr_str) {
  *  @return a pointer to the first character of the extracted LIID.
  */
 char *extract_liid_from_exported_msg(uint8_t *etsimsg,
-        uint16_t msglen, unsigned char *space, int maxspace,
+        uint64_t msglen, unsigned char *space, int maxspace,
         uint16_t *liidlen) {
 
     uint16_t l;

@@ -96,6 +96,13 @@ typedef struct col_known_liid {
     /** Timestamp when this LIID was last seen */
     uint64_t lastseen;
 
+    /** Flag indicating whether we have declared an RMQ for publishing
+     *  raw IP to the pcap thread.
+     */
+    uint8_t declared_raw_rmq;
+
+    const char *queuenames[3];
+
     UT_hash_handle hh;
 } col_known_liid_t;
 

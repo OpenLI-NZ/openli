@@ -126,6 +126,7 @@ typedef enum {
     OPENLI_PROTO_ANNOUNCE_EMAIL_TARGET,
     OPENLI_PROTO_WITHDRAW_EMAIL_TARGET,
     OPENLI_PROTO_ANNOUNCE_DEFAULT_EMAIL_COMPRESSION,
+    OPENLI_PROTO_RAWIP_CC,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -136,6 +137,9 @@ typedef struct net_buffer {
     int alloced;
     net_buffer_type_t buftype;
     SSL *ssl;
+    int unacked;
+    uint64_t last_tag;
+    amqp_channel_t rmq_channel;
 } net_buffer_t;
 
 typedef enum {
@@ -181,7 +185,7 @@ typedef enum {
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl);
 int fd_set_nonblock(int fd);
 int fd_set_block(int fd);
-void destroy_net_buffer(net_buffer_t *nb);
+void destroy_net_buffer(net_buffer_t *nb, amqp_connection_state_t amqp_state);
 
 int construct_netcomm_protocol_header(ii_header_t *hdr, uint32_t contentlen,
         uint16_t msgtype, uint64_t internalid, uint32_t *hdrlen);

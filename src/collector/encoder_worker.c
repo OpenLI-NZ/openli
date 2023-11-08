@@ -271,7 +271,7 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
 }
 
 static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
-        openli_encoded_result_t *res) {
+        openli_encoded_result_t *res, uint16_t rawtype) {
 
     uint16_t liidlen, l;
 
@@ -296,7 +296,7 @@ static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
     res->ipclen = job->origreq->data.rawip.ipclen;
     res->header.magic = htonl(OPENLI_PROTO_MAGIC);
     res->header.bodylen = htons(res->msgbody->len);
-    res->header.intercepttype = htons(OPENLI_PROTO_RAWIP_SYNC);
+    res->header.intercepttype = htons(rawtype);
     res->header.internalid = 0;
 
     return 0;
@@ -904,7 +904,9 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         }
 
         if (job.origreq->type == OPENLI_EXPORT_RAW_SYNC) {
-            encode_rawip(enc, &job, &(result[batch]));
+            encode_rawip(enc, &job, &(result[batch]), OPENLI_PROTO_RAWIP_SYNC);
+        } else if (job.origreq->type == OPENLI_EXPORT_RAW_CC) {
+            encode_rawip(enc, &job, &(result[batch]), OPENLI_PROTO_RAWIP_CC);
         } else {
 
             if ((x = encode_etsi(enc, &job, &(result[batch]))) <= 0) {

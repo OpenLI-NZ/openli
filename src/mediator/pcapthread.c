@@ -357,6 +357,7 @@ static uint32_t write_rawip_to_pcap(uint8_t *nextrec, uint64_t bufrem,
     uint32_t pdulen;
     unsigned char liidspace[2048];
     uint16_t liidlen;
+    uint8_t *pktdata;
 
     /* The raw IP packet record begins with a four-byte size field, which is
      * the size of the record (not including the size field itself)
@@ -377,9 +378,10 @@ static uint32_t write_rawip_to_pcap(uint8_t *nextrec, uint64_t bufrem,
 
     nextrec += liidlen;
     bufrem -= liidlen;
-
-    if (bufrem > 65535) {
+    //printf("%p %lu %lu %u\n", nextrec, pdulen, bufrem, liidlen);
+    if (pdulen - liidlen > 65535) {
         logger(LOG_INFO, "OpenLI Mediator: raw IP packet is too large to write as a pcap packet, possibly corrupt");
+        assert(0);
         return pdulen + sizeof(uint32_t);
     }
     HASH_FIND(hh, pstate->active, liidspace,
@@ -393,12 +395,18 @@ static uint32_t write_rawip_to_pcap(uint8_t *nextrec, uint64_t bufrem,
             pstate->packet = trace_create_packet();
         }
 
-        /* Thankfully, libtrace will let us "construct" a packet object
-         * from a buffer containing the raw packet contents.
+        /* nextrec should now point to a pcap header, followed by
+         * the raw IP packet content. Thankfully, libtrace will let us
+         * "prepare" a packet object from a buffer as long as it contains
+         * the format header followed by the raw packet contents.
          */
-        trace_construct_packet(pstate->packet, TRACE_TYPE_NONE,
-                (const void *)nextrec,
-                (uint16_t)(pdulen - liidlen - sizeof(uint32_t)));
+        pktdata = nextrec;
+        if (trace_prepare_packet(pstate->dummypcap, pstate->packet,
+                (void *)pktdata, TRACE_RT_DATA_DLT+TRACE_DLT_RAW,
+                TRACE_PREP_DO_NOT_OWN_BUFFER) < 0) {
+            logger(LOG_INFO, "OpenLI Mediator: error converting received raw IP into a valid libtrace pcap packet");
+            return pdulen + sizeof(uint32_t);
+        }
 
         /* Now we can have libtrace write the packet using the pcap format */
         if (trace_write_packet(pcapout->out, pstate->packet) < 0) {
@@ -434,6 +442,7 @@ static uint32_t write_etsicc_to_pcap(uint8_t *nextrec, uint64_t bufrem,
     active_pcap_output_t *pcapout;
     uint32_t pdulen;
     unsigned char liidspace[2048];
+    struct timeval tv;
 
     if (pstate->decoder == NULL) {
         pstate->decoder = wandder_create_etsili_decoder();
@@ -464,6 +473,7 @@ static uint32_t write_etsicc_to_pcap(uint8_t *nextrec, uint64_t bufrem,
     if (pcapout && pcapout->out) {
         uint8_t *rawip;
         uint32_t cclen;
+        uint32_t *tsptr;
         char ccname[128];
 
         if (!pstate->packet) {
@@ -486,8 +496,24 @@ static uint32_t write_etsicc_to_pcap(uint8_t *nextrec, uint64_t bufrem,
             goto exitpcapwrite;
         }
 
+        tv = wandder_etsili_get_header_timestamp(pstate->decoder);
+
         trace_construct_packet(pstate->packet, TRACE_TYPE_NONE,
                 (const void *)rawip, (uint16_t)cclen);
+
+        /* trace_construct_packet() sets the packet timestamp to "now",
+         * but we actually want to replace that with the time that the
+         * packet was intercepted (as per the timestamp field in the
+         * ETSI PS header).
+         */
+
+        /* A bit naughty, but this is the only way we can set the
+         * pcap timestamp in libtrace at the moment...
+         */
+        tsptr = (uint32_t *)(pstate->packet->header);
+        *tsptr = tv.tv_sec;
+        tsptr ++;
+        *tsptr = tv.tv_usec;
 
         if (trace_write_packet(pcapout->out, pstate->packet) < 0) {
             libtrace_err_t err = trace_get_err_output(pcapout->out);
@@ -596,13 +622,13 @@ static int consume_pcap_packets(handover_t *ho, lea_thread_state_t *state,
     /* if we get here, the buffer is empty so read more messages from RMQ */
     if (ho->handover_type == HANDOVER_HI3) {
         r = consume_mediator_cc_messages(ho->rmq_consumer,
-                &(ho->ho_state->buf), 32, &(ho->ho_state->next_rmq_ack));
+                &(ho->ho_state->buf), 1024, &(ho->ho_state->next_rmq_ack));
     } else if (ho->handover_type == HANDOVER_RAWIP) {
         r = consume_mediator_rawip_messages(ho->rmq_consumer,
-                &(ho->ho_state->buf), 32, &(ho->ho_state->next_rmq_ack));
+                &(ho->ho_state->buf), 512, &(ho->ho_state->next_rmq_ack));
     } else if (ho->handover_type == HANDOVER_HI2) {
         r = consume_mediator_iri_messages(ho->rmq_consumer,
-                &(ho->ho_state->buf), 32, &(ho->ho_state->next_rmq_ack));
+                &(ho->ho_state->buf), 1024, &(ho->ho_state->next_rmq_ack));
     } else {
         reset_handover_rmq(ho);
         return 0;
@@ -825,8 +851,6 @@ int handle_pcap_thread_messages(lea_thread_state_t *state,
         if (msg.type == MED_LEA_MESSAGE_RELOAD_CONFIG) {
             /* Config has potentially changed, so re-read it */
             if (read_parent_config(state) == 1) {
-                reset_handover_rmq(state->agency.hi3);
-                reset_handover_rmq(state->agency.hi2);
                 reset_handover_rmq(pstate->rawip_handover);
             }
         }
@@ -846,14 +870,6 @@ int handle_pcap_thread_messages(lea_thread_state_t *state,
             /* An LIID has been withdrawn */
             char *liid = (char *)(msg.data);
 
-            if (state->agency.hi2->rmq_consumer != NULL) {
-                deregister_mediator_iri_RMQ_consumer(
-                        state->agency.hi2->rmq_consumer, liid);
-            }
-            if (state->agency.hi3->rmq_consumer != NULL) {
-                deregister_mediator_cc_RMQ_consumer(
-                        state->agency.hi3->rmq_consumer, liid);
-            }
             if (pstate->rawip_handover->rmq_consumer != NULL) {
                 deregister_mediator_rawip_RMQ_consumer(
                         pstate->rawip_handover->rmq_consumer, liid);
@@ -958,6 +974,7 @@ static void *run_pcap_thread(void *params) {
     pstate.inqueue = (libtrace_message_queue_t *)params;
     pstate.decoder = NULL;
     pstate.packet = NULL;
+    pstate.dummypcap = trace_create_dead("pcapfile:/dev/null");
     pstate.rawip_handover = create_new_handover(state->epoll_fd, NULL, NULL,
             HANDOVER_RAWIP, 0, 0);
 
@@ -992,20 +1009,6 @@ static void *run_pcap_thread(void *params) {
 
         if (is_halted) {
             break;
-        }
-
-        /* register RMQ consumers if required */
-        if (!state->agency.hi2->rmq_registered) {
-            /* TODO uncomment
-            register_handover_RMQ_all(state->agency.hi2,
-                    &(state->active_liids), state->agencyid);
-            */
-        }
-
-        if (!state->agency.hi3->rmq_registered) {
-            register_handover_RMQ_all(state->agency.hi3,
-                    &(state->active_liids), state->agencyid,
-                    state->internalrmqpass);
         }
 
         /* epoll */
@@ -1043,7 +1046,6 @@ static void *run_pcap_thread(void *params) {
          * pcap files */
 
         /* TODO error handling? */
-        consume_pcap_packets(state->agency.hi3, state, &pstate);
         consume_pcap_packets(pstate.rawip_handover, state, &pstate);
 
         halt_mediator_timer(state->timerev);
@@ -1056,6 +1058,9 @@ threadexit:
     }
     if (pstate.packet) {
         trace_destroy_packet(pstate.packet);
+    }
+    if (pstate.dummypcap) {
+        trace_destroy_dead(pstate.dummypcap);
     }
     if (pstate.rawip_handover) {
         free_handover(pstate.rawip_handover);

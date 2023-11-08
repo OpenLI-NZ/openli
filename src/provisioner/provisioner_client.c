@@ -55,8 +55,8 @@ static void destroy_client_state(prov_sock_state_t *cs) {
 		return;
 	}
 
-	destroy_net_buffer(cs->incoming);
-	destroy_net_buffer(cs->outgoing);
+	destroy_net_buffer(cs->incoming, NULL);
+	destroy_net_buffer(cs->outgoing, NULL);
 	if (cs->ipaddr) {
 		free(cs->ipaddr);
 		cs->ipaddr = NULL;
@@ -106,11 +106,11 @@ static void halt_provisioner_client_mainfd(int epollfd, prov_client_t *client,
 
 	/* Destroy the buffers allocated for storing incoming and outgoing data */
 	if (cs->incoming) {
-		destroy_net_buffer(cs->incoming);
+		destroy_net_buffer(cs->incoming, NULL);
 		cs->incoming = NULL;
 	}
 	if (cs->outgoing) {
-		destroy_net_buffer(cs->outgoing);
+		destroy_net_buffer(cs->outgoing, NULL);
 		cs->outgoing = NULL;
 	}
 	cs->halted = 1;
@@ -393,9 +393,9 @@ int continue_provisioner_client_handshake(int epollfd, prov_client_t *client,
             }
             client->lastsslerror = 1;
 
-            destroy_net_buffer(cs->incoming);
+            destroy_net_buffer(cs->incoming, NULL);
             cs->incoming = NULL;
-            destroy_net_buffer(cs->outgoing);
+            destroy_net_buffer(cs->outgoing, NULL);
             cs->outgoing = create_net_buffer(NETBUF_SEND, client->commev->fd,
                     NULL);
 
