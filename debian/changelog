@@ -1,3 +1,25 @@
+openli (1.1.3-1) unstable; urgency=high
+
+  * Fix poor mediator throughput caused by suboptimal RabbitMQ
+    usage.
+  * Improved performance when writing intercepts to pcap files on
+    disk using the pcapdisk agency.
+  * Fix issue where intercepted records for pcapdisk intercepts would
+    not persist in RabbitMQ for more than 60 seconds.
+  * Fix memory errors in the mediator that occur when a RabbitMQ
+    message is larger than expected.
+  * SIP: fix issue where an INVITE sent by the callee (e.g. a codec
+    update) would prevent the following RTP from being intercepted.
+  * SIP: fix issue where a target would not be correctly matched if
+    there were additional parameters in the SIP username.
+  * SIP: fix issue where RTP would not be intercepted if a 180 message
+    was used to announce an RTP port.
+  * VoIP: fix bug where an intercepted call over IPv6 would be
+    described as IPv4 in the IRI.
+  * Added support for Cisco Tap as a vendor mirroring format.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Thu, 09 Nov 2023 09:58:50 +1300
+
 openli (1.1.2-1) unstable; urgency=medium
 
   * Email ingestion: add support for PART_ID field and attempt
