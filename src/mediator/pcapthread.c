@@ -378,7 +378,6 @@ static uint32_t write_rawip_to_pcap(uint8_t *nextrec, uint64_t bufrem,
 
     nextrec += liidlen;
     bufrem -= liidlen;
-    //printf("%p %lu %lu %u\n", nextrec, pdulen, bufrem, liidlen);
     if (pdulen - liidlen > 65535) {
         logger(LOG_INFO, "OpenLI Mediator: raw IP packet is too large to write as a pcap packet, possibly corrupt");
         assert(0);
