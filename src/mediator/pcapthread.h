@@ -55,6 +55,9 @@ typedef struct pcap_thread_state {
     /** The queue which this thread will receive messages from the mediator */
     libtrace_message_queue_t *inqueue;
 
+    /** A dummy libtrace instance, required for packet instance creation */
+    libtrace_t *dummypcap;
+
     /** A libtrace packet used to convert raw IP blobs into a usable packet */
     libtrace_packet_t *packet;
 

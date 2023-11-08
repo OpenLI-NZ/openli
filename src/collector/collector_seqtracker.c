@@ -75,6 +75,7 @@ static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
         case OPENLI_EXPORT_UMTSIRI:
             return recvd->data.mobiri.liid;
         case OPENLI_EXPORT_RAW_SYNC:
+        case OPENLI_EXPORT_RAW_CC:
             return recvd->data.rawip.liid;
         case OPENLI_EXPORT_EMAILIRI:
             return recvd->data.emailiri.liid;
@@ -98,6 +99,7 @@ static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
         case OPENLI_EXPORT_UMTSIRI:
             return recvd->data.mobiri.cin;
         case OPENLI_EXPORT_RAW_SYNC:
+        case OPENLI_EXPORT_RAW_CC:
             return recvd->data.rawip.cin;
         case OPENLI_EXPORT_EMAILIRI:
             return recvd->data.emailiri.cin;
@@ -389,7 +391,8 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 	if (recvd->type == OPENLI_EXPORT_IPMMCC ||
 			recvd->type == OPENLI_EXPORT_IPCC ||
             recvd->type == OPENLI_EXPORT_UMTSCC ||
-            recvd->type == OPENLI_EXPORT_EMAILCC) {
+            recvd->type == OPENLI_EXPORT_EMAILCC ||
+            recvd->type == OPENLI_EXPORT_RAW_CC) {
 	    job.seqno = cinseq->cc_seqno;
         cinseq->cc_seqno ++;
 
@@ -471,6 +474,7 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
                 case OPENLI_EXPORT_EMAILIRI:
                 case OPENLI_EXPORT_EMAILCC:
                 case OPENLI_EXPORT_RAW_SYNC:
+                case OPENLI_EXPORT_RAW_CC:
 					run_encoding_job(seqdata, job);
                     sincepurge ++;
                     break;

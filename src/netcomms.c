@@ -67,13 +67,25 @@ net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl) {
     nb->fd = fd;
     nb->buftype = buftype;
     nb->ssl = ssl;
+    nb->unacked = 0;
+    nb->last_tag = 0;
+    nb->rmq_channel = 0;
     return nb;
 }
 
-void destroy_net_buffer(net_buffer_t *nb) {
+void destroy_net_buffer(net_buffer_t *nb, amqp_connection_state_t amqp_state) {
     if (nb == NULL) {
         return;
     }
+    if (nb->unacked > 0 && amqp_state != NULL) {
+        if (amqp_basic_ack (amqp_state,
+                nb->rmq_channel,
+                nb->last_tag,
+                1) != 0 ) {
+            logger(LOG_INFO, "OpenLI: RMQ error in basic acknowledgement");
+        }
+    }
+
     free(nb->buf);
     free(nb);
 }
@@ -2258,6 +2270,16 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
         if (AMQP_RESPONSE_LIBRARY_EXCEPTION == ret.reply_type &&
                 AMQP_STATUS_UNEXPECTED_STATE == ret.library_error) {
             if (AMQP_STATUS_OK != amqp_simple_wait_frame(amqp_state, &frame)) {
+                if (nb->unacked > 0) {
+                    if (amqp_basic_ack (amqp_state,
+                                nb->rmq_channel,
+                                nb->last_tag,
+                                1) != 0 ) {
+                        logger(LOG_INFO,
+                                "OpenLI: RMQ error in basic acknowledgement");
+                    }
+                    nb->unacked = 0;
+                }
                 return OPENLI_PROTO_NO_MESSAGE;
             }
 
@@ -2317,16 +2339,12 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
         }
     }
     else {
-        if (amqp_basic_ack (amqp_state,
-                envelope.channel,
-                envelope.delivery_tag,
-                0) != 0 ) {
-            logger(LOG_INFO, "OpenLI: RMQ error in basic acknowledgement");
-        }
+        nb->last_tag = envelope.delivery_tag;
+        nb->unacked ++;
+        nb->rmq_channel = envelope.channel;
     }
-
     /* Ensure the buffer is big enough to hold the new message. */
-    if (NETBUF_SPACE_REM(nb) < envelope.message.body.len) {
+    while (NETBUF_SPACE_REM(nb) < envelope.message.body.len) {
         if (extend_net_buffer(nb, envelope.message.body.len) == -1) {
             return OPENLI_PROTO_BUFFER_TOO_FULL;
         }
@@ -2337,6 +2355,16 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
             envelope.message.body.len);
     nb->appendptr += envelope.message.body.len;
     amqp_destroy_envelope(&envelope);
+
+    if (nb->unacked >= 32) {
+        if (amqp_basic_ack (amqp_state,
+                nb->rmq_channel,
+                nb->last_tag,
+                1) != 0 ) {
+            logger(LOG_INFO, "OpenLI: RMQ error in basic acknowledgement");
+        }
+        nb->unacked = 0;
+    }
 
     rettype = parse_received_message(nb, msgbody, msglen, intid);
     return rettype;

@@ -246,7 +246,7 @@ static med_epoll_ev_t *prepare_collector_receive_rmq(coll_recv_t *col,
     col->amqp_state = amqp_state;
     /* Create a net buffer for receiving data from the RMQ socket */
     if (col->incoming_rmq) {
-        destroy_net_buffer(col->incoming_rmq);
+        destroy_net_buffer(col->incoming_rmq, col->amqp_state);
     }
     col->incoming_rmq = create_net_buffer(NETBUF_RECV, 0, NULL);
 
@@ -313,7 +313,7 @@ static med_epoll_ev_t *prepare_collector_receive_fd(coll_recv_t *col,
 
     /* Create a net buffer for receiving data from the TCP socket */
     if (col->incoming) {
-        destroy_net_buffer(col->incoming);
+        destroy_net_buffer(col->incoming, NULL);
     }
     col->incoming = create_net_buffer(NETBUF_RECV, col->col_fd,
             col->ssl);
@@ -399,6 +399,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
     HASH_FIND(hh, col->known_liids, liidstr, liidlen, found);
     if (!found) {
+        char qname[1024];
         /* This is an LIID that we haven't seen before (or recently), so
          * make sure we have a set of internal mediator RMQ queues for it.
          */
@@ -406,6 +407,14 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
         found->liid = strdup((const char *)liidstr);
         found->liidlen = strlen(found->liid);
         found->lastseen = 0;
+        found->declared_raw_rmq = 0;
+
+        snprintf(qname, 1024, "%s-iri", found->liid);
+        found->queuenames[0] = strdup(qname);
+        snprintf(qname, 1024, "%s-cc", found->liid);
+        found->queuenames[1] = strdup(qname);
+        snprintf(qname, 1024, "%s-rawip", found->liid);
+        found->queuenames[2] = strdup(qname);
 
         HASH_ADD_KEYPTR(hh, col->known_liids, found->liid, found->liidlen,
                 found);
@@ -425,24 +434,30 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
     /* Hand off to publishing methods defined in mediator_rmq.c */
     if (msgtype == OPENLI_PROTO_ETSI_CC) {
         r = publish_cc_on_mediator_liid_RMQ_queue(col->amqp_producer_state,
-                msgbody + (liidlen + 2), msglen - (liidlen + 2), found->liid);
+                msgbody + (liidlen + 2), msglen - (liidlen + 2), found->liid,
+                found->queuenames[1]);
         return r;
     }
 
     if (msgtype == OPENLI_PROTO_ETSI_IRI) {
         return publish_iri_on_mediator_liid_RMQ_queue(col->amqp_producer_state,
-                msgbody + (liidlen + 2), msglen - (liidlen + 2), found->liid);
+                msgbody + (liidlen + 2), msglen - (liidlen + 2), found->liid,
+                found->queuenames[0]);
     }
 
-    if (msgtype == OPENLI_PROTO_RAWIP_SYNC) {
+    if (msgtype == OPENLI_PROTO_RAWIP_SYNC ||
+            msgtype == OPENLI_PROTO_RAWIP_CC) {
 
         /* declare a queue for raw IP */
-        declare_mediator_rawip_RMQ_queue(col->amqp_producer_state, found->liid,
-                found->liidlen);
-
+        if (!found->declared_raw_rmq) {
+            declare_mediator_rawip_RMQ_queue(col->amqp_producer_state,
+                    found->liid, found->liidlen);
+            found->declared_raw_rmq = 1;
+        }
         /* publish to raw IP queue */
         return publish_rawip_on_mediator_liid_RMQ_queue(
-                col->amqp_producer_state, msgbody, msglen, found->liid);
+                col->amqp_producer_state, msgbody, msglen, found->liid,
+                found->queuenames[2]);
     }
 
     return 1;
@@ -502,6 +517,7 @@ static int receive_collector(coll_recv_t *col, med_epoll_ev_t *mev) {
                  */
                 break;
             case OPENLI_PROTO_RAWIP_SYNC:
+            case OPENLI_PROTO_RAWIP_CC:
             case OPENLI_PROTO_ETSI_CC:
             case OPENLI_PROTO_ETSI_IRI:
                 /* Intercept record -- process it appropriately */
@@ -606,10 +622,10 @@ static void cleanup_collector_thread(coll_recv_t *col) {
         remove_mediator_fdevent(col->rmq_colev);
     }
     if (col->incoming) {
-        destroy_net_buffer(col->incoming);
+        destroy_net_buffer(col->incoming, NULL);
     }
     if (col->incoming_rmq) {
-        destroy_net_buffer(col->incoming_rmq);
+        destroy_net_buffer(col->incoming_rmq, col->amqp_state);
     }
     if (col->amqp_state) {
         amqp_destroy_connection(col->amqp_state);
@@ -628,6 +644,15 @@ static void cleanup_collector_thread(coll_recv_t *col) {
     HASH_ITER(hh, col->known_liids, known, tmp) {
         if (known->liid) {
             free(known->liid);
+        }
+        if (known->queuenames[0]) {
+            free((void *)known->queuenames[0]);
+        }
+        if (known->queuenames[1]) {
+            free((void *)known->queuenames[1]);
+        }
+        if (known->queuenames[2]) {
+            free((void *)known->queuenames[2]);
         }
         HASH_DELETE(hh, col->known_liids, known);
         free(known);

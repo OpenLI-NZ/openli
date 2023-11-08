@@ -117,11 +117,11 @@ void disconnect_provisioner(mediator_prov_t *prov, int enable_reconnect) {
      * the provisioner.
      */
     if (prov->outgoing) {
-        destroy_net_buffer(prov->outgoing);
+        destroy_net_buffer(prov->outgoing, NULL);
         prov->outgoing = NULL;
     }
     if (prov->incoming) {
-        destroy_net_buffer(prov->incoming);
+        destroy_net_buffer(prov->incoming, NULL);
         prov->incoming = NULL;
     }
 
