@@ -1573,6 +1573,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->forwarding_threads = 1;
     glob->encoding_threads = 2;
     glob->email_threads = 1;
+    glob->sms_threads = 1;
     glob->sharedinfo.intpointid = NULL;
     glob->sharedinfo.intpointid_len = 0;
     glob->sharedinfo.operatorid = NULL;
