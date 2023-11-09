@@ -52,6 +52,8 @@
 #include "radius_hasher.h"
 #include "email_ingest_service.h"
 #include "email_worker.h"
+#include "sms_worker.h"
+#include "sipparsing.h"
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
@@ -80,6 +82,7 @@ enum {
     OPENLI_UPDATE_SMTP = 5,
     OPENLI_UPDATE_IMAP = 6,
     OPENLI_UPDATE_POP3 = 7,
+    OPENLI_UPDATE_SMS_SIP = 8,
 };
 
 typedef struct openli_intersync_msg {
@@ -200,8 +203,14 @@ typedef struct colthread_local {
        thread */
     libtrace_message_queue_t fromsyncq_voip;
 
+    /* Array of message queues to pass packets to the email worker threads */
     void **email_worker_queues;
 
+    /* Array of message queues to pass packets to the SMS worker threads */
+    void **sms_worker_queues;
+
+    /** SIP parser for detecting SMS over SIP */
+    openli_sip_parser_t *sipparser;
 
     /* Current intercepts */
     ipv4_target_t *activeipv4intercepts;
@@ -267,6 +276,7 @@ typedef struct collector_global {
     int encoding_threads;
     int forwarding_threads;
     int email_threads;
+    int sms_threads;
 
     void *zmq_encoder_ctrl;
 
@@ -282,6 +292,7 @@ typedef struct collector_global {
     openli_encoder_t *encoders;
     forwarding_thread_data_t *forwarders;
     openli_email_worker_t *emailworkers;
+    openli_sms_worker_t *smsworkers;
     colthread_local_t **collocals;
     int nextloc;
 

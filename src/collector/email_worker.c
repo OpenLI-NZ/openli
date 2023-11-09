@@ -1356,45 +1356,6 @@ static void email_worker_main(openli_email_worker_t *state) {
     }
 }
 
-static inline void clear_zmqsocks(void **zmq_socks, int sockcount) {
-    int i, zero = 0;
-    if (zmq_socks == NULL) {
-        return;
-    }
-
-    for (i = 0; i < sockcount; i++) {
-        if (zmq_socks[i] == NULL) {
-            continue;
-        }
-        zmq_setsockopt(zmq_socks[i], ZMQ_LINGER, &zero, sizeof(zero));
-        zmq_close(zmq_socks[i]);
-    }
-    free(zmq_socks);
-}
-
-static inline int init_zmqsocks(void **zmq_socks, int sockcount,
-        const char *basename, void *zmq_ctxt) {
-
-    int i;
-    char sockname[256];
-    int ret = 0;
-
-    for (i = 0; i < sockcount; i++) {
-        zmq_socks[i] = zmq_socket(zmq_ctxt, ZMQ_PUSH);
-        snprintf(sockname, 256, "%s-%d", basename, i);
-        if (zmq_connect(zmq_socks[i], sockname) < 0) {
-            ret = -1;
-            logger(LOG_INFO,
-                    "OpenLI: email worker failed to bind to publishing zmq %s: %s",
-                    sockname, strerror(errno));
-
-            zmq_close(zmq_socks[i]);
-            zmq_socks[i] = NULL;
-        }
-    }
-    return ret;
-}
-
 static void free_all_email_sessions(openli_email_worker_t *state) {
 
     emailsession_t *sess, *tmp;
@@ -1417,10 +1378,10 @@ void *start_email_worker_thread(void *arg) {
     state->zmq_pubsocks = calloc(state->tracker_threads, sizeof(void *));
     state->zmq_fwdsocks = calloc(state->fwd_threads, sizeof(void *));
 
-    init_zmqsocks(state->zmq_pubsocks, state->tracker_threads,
+    init_zmq_socket_array(state->zmq_pubsocks, state->tracker_threads,
             "inproc://openlipub", state->zmq_ctxt);
 
-    init_zmqsocks(state->zmq_fwdsocks, state->fwd_threads,
+    init_zmq_socket_array(state->zmq_fwdsocks, state->fwd_threads,
             "inproc://openliforwardercontrol_sync", state->zmq_ctxt);
 
     state->zmq_ii_sock = zmq_socket(state->zmq_ctxt, ZMQ_PULL);
@@ -1496,8 +1457,8 @@ haltemailworker:
     zmq_close(state->zmq_ingest_recvsock);
     zmq_close(state->zmq_colthread_recvsock);
 
-    clear_zmqsocks(state->zmq_pubsocks, state->tracker_threads);
-    clear_zmqsocks(state->zmq_fwdsocks, state->fwd_threads);
+    clear_zmq_socket_array(state->zmq_pubsocks, state->tracker_threads);
+    clear_zmq_socket_array(state->zmq_fwdsocks, state->fwd_threads);
 
     /* All timeouts should be freed when we release the active sessions,
      * but just in case there are any left floating around...

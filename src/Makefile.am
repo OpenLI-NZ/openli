@@ -70,6 +70,8 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/etsiencoding/etsiencoding.h \
                 collector/etsiencoding/etsiencoding.c \
                 collector/etsiencoding/encryptcontainer.c \
+                collector/sms_worker.c collector/sms_worker.h \
+                collector/collector_util.c collector/collector_util.h \
                 $(PLUGIN_SRCS)
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 

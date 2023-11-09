@@ -55,6 +55,9 @@ typedef struct packetinfo {
     uint16_t srcport;
     uint16_t destport;
     struct timeval tv;
+    uint32_t payload_len;
+    uint8_t *payload_ptr;
+    uint8_t trans_proto;
 } packet_info_t;
 
 
