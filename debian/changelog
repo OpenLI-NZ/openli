@@ -17,8 +17,9 @@ openli (1.1.3-1) unstable; urgency=high
   * VoIP: fix bug where an intercepted call over IPv6 would be
     described as IPv4 in the IRI.
   * Added support for Cisco Tap as a vendor mirroring format.
+  * Fixed high CPU usage by mediator if a collector has disconnected.
 
- -- Shane Alcock <salcock@searchlight.nz>  Thu, 09 Nov 2023 09:58:50 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Fri, 10 Nov 2023 15:40:14 +1300
 
 openli (1.1.2-1) unstable; urgency=medium
 
