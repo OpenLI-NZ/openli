@@ -821,6 +821,7 @@ static void *start_collector_thread(void *params) {
         }
 
         if (col->was_dropped) {
+            usleep(100000);
             continue;
         }
 
