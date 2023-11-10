@@ -543,6 +543,126 @@ static void free_sip_targets(libtrace_list_t *targets) {
     libtrace_list_deinit(targets);
 }
 
+void disable_sip_target_from_list(voipintercept_t *vint,
+        openli_sip_identity_t *sipid) {
+
+    openli_sip_identity_t *iter;
+    libtrace_list_node_t *n;
+
+    n = vint->targets->head;
+    while (n) {
+        iter = *((openli_sip_identity_t **)(n->data));
+        if (are_sip_identities_same(iter, sipid)) {
+            iter->active = 0;
+            iter->awaitingconfirm = 0;
+            break;
+        }
+        n = n->next;
+    }
+}
+
+void flag_voip_intercepts_as_unconfirmed(voipintercept_t **voipintercepts) {
+    voipintercept_t *v;
+    libtrace_list_node_t *n;
+    openli_sip_identity_t *sipid;
+
+    for (v = (*voipintercepts); v != NULL; v = v->hh_liid.next) {
+        v->awaitingconfirm = 1;
+
+        n = v->targets->head;
+        while (n) {
+            sipid = *((openli_sip_identity_t **)(n->data));
+            if (sipid->active) {
+                sipid->awaitingconfirm = 1;
+            }
+            n = n->next;
+        }
+    }
+}
+
+void disable_unconfirmed_voip_intercepts(voipintercept_t **voipintercepts,
+        void (*percept)(voipintercept_t *, void *),
+        void *percept_arg,
+        void (*pertgt)(openli_sip_identity_t *, voipintercept_t *vint, void *),
+        void *pertgt_arg) {
+
+    voipintercept_t *v, *tmp;
+    libtrace_list_node_t *n;
+    openli_sip_identity_t *sipid;
+
+    HASH_ITER(hh_liid, *voipintercepts, v, tmp) {
+        if (v->awaitingconfirm && v->active) {
+            v->active = 0;
+
+            if (percept) {
+                percept(v, percept_arg);
+            }
+            HASH_DELETE(hh_liid, *voipintercepts, v);
+            free_single_voipintercept(v);
+        } else if (v->active) {
+            /* Deal with any unconfirmed SIP targets */
+
+            n = v->targets->head;
+            while (n) {
+                sipid = *((openli_sip_identity_t **)(n->data));
+                n = n->next;
+
+                if (sipid->active && sipid->awaitingconfirm) {
+                    sipid->active = 0;
+                    if (pertgt) {
+                        pertgt(sipid, v, pertgt_arg);
+                    }
+                }
+            }
+        }
+    }
+}
+
+void add_new_sip_target_to_list(voipintercept_t *vint,
+        openli_sip_identity_t *sipid) {
+    openli_sip_identity_t *newid, *iter;
+    libtrace_list_node_t *n;
+
+    /* First, check if this ID is already in the list. If so, we can
+     * just confirm it as being still active. If not, add it to the
+     * list.
+     *
+     * TODO consider a hashmap instead if we often get more than 2 or
+     * 3 targets per intercept?
+     */
+    n = vint->targets->head;
+    while (n) {
+        iter = *((openli_sip_identity_t **)(n->data));
+        if (are_sip_identities_same(iter, sipid)) {
+            if (iter->active == 0) {
+                iter->active = 1;
+            }
+            iter->awaitingconfirm = 0;
+            if (sipid->username) {
+                free(sipid->username);
+            }
+            if (sipid->realm) {
+                free(sipid->realm);
+            }
+            return;
+        }
+        n = n->next;
+    }
+
+    newid = (openli_sip_identity_t *)calloc(1, sizeof(openli_sip_identity_t));
+    newid->realm = sipid->realm;
+    newid->realm_len = sipid->realm_len;
+    newid->username = sipid->username;
+    newid->username_len = sipid->username_len;
+    newid->awaitingconfirm = 0;
+    newid->active = 1;
+
+    sipid->realm = NULL;
+    sipid->username = NULL;
+
+    libtrace_list_push_back(vint->targets, &newid);
+}
+
 void free_single_voipintercept(voipintercept_t *v) {
     free_intercept_common(&(v->common));
     if (v->cin_sdp_map) {

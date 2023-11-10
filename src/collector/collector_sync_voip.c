@@ -1916,101 +1916,6 @@ static int halt_single_rtpstream(collector_sync_voip_t *sync, rtpstreaminf_t *rt
     return 0;
 }
 
-static inline void disable_sip_target(voipintercept_t *vint,
-        openli_sip_identity_t *sipid) {
-
-    openli_sip_identity_t *iter;
-    libtrace_list_node_t *n;
-
-    n = vint->targets->head;
-    while (n) {
-        iter = *((openli_sip_identity_t **)(n->data));
-        if (are_sip_identities_same(iter, sipid)) {
-            iter->active = 0;
-            iter->awaitingconfirm = 0;
-            if (iter->realm) {
-                logger(LOG_INFO,
-                        "OpenLI: collector is withdrawing SIP target %s@%s for LIID %s.",
-                        iter->username, iter->realm, vint->common.liid);
-            } else {
-                logger(LOG_INFO,
-                        "OpenLI: collector is withdrawing SIP target %s@* for LIID %s.",
-                        iter->username, vint->common.liid);
-            }
-
-            break;
-        }
-        n = n->next;
-    }
-}
-
-static inline void add_new_sip_target_to_list(voipintercept_t *vint,
-        openli_sip_identity_t *sipid) {
-
-    openli_sip_identity_t *newid, *iter;
-    libtrace_list_node_t *n;
-
-    /* First, check if this ID is already in the list. If so, we can
-     * just confirm it as being still active. If not, add it to the
-     * list.
-     *
-     * TODO consider a hashmap instead if we often get more than 2 or
-     * 3 targets per intercept?
-     */
-    n = vint->targets->head;
-    while (n) {
-        iter = *((openli_sip_identity_t **)(n->data));
-        if (are_sip_identities_same(iter, sipid)) {
-            if (iter->active == 0) {
-                if (iter->realm) {
-                    logger(LOG_INFO,
-                            "OpenLI: collector re-enabled SIP target %s@%s for LIID %s.",
-                            iter->username, iter->realm, vint->common.liid);
-                } else {
-                    logger(LOG_INFO,
-                            "OpenLI: collector re-enabled SIP target %s@* for LIID %s.",
-                            iter->username, vint->common.liid);
-                }
-
-                iter->active = 1;
-            }
-            iter->awaitingconfirm = 0;
-            if (sipid->username) {
-                free(sipid->username);
-            }
-            if (sipid->realm) {
-                free(sipid->realm);
-            }
-            return;
-        }
-        n = n->next;
-    }
-
-    newid = (openli_sip_identity_t *)calloc(1, sizeof(openli_sip_identity_t));
-    newid->realm = sipid->realm;
-    newid->realm_len = sipid->realm_len;
-    newid->username = sipid->username;
-    newid->username_len = sipid->username_len;
-    newid->awaitingconfirm = 0;
-    newid->active = 1;
-
-    sipid->realm = NULL;
-    sipid->username = NULL;
-
-    libtrace_list_push_back(vint->targets, &newid);
-
-    if (newid->realm) {
-        logger(LOG_INFO,
-                "OpenLI: collector received new SIP target %s@%s for LIID %s.",
-                newid->username, newid->realm, vint->common.liid);
-    } else {
-        logger(LOG_INFO,
-                "OpenLI: collector received new SIP target %s@* for LIID %s.",
-                newid->username, vint->common.liid);
-    }
-
-}
-
 static int new_voip_sip_target(collector_sync_voip_t *sync, uint8_t *intmsg,
 		uint16_t msglen) {
 
@@ -2039,6 +1944,16 @@ static int new_voip_sip_target(collector_sync_voip_t *sync, uint8_t *intmsg,
     }
 
     sync->log_bad_instruct = 1;
+    if (sipid.realm) {
+        logger(LOG_INFO,
+                "OpenLI: collector received new SIP target %s@%s for LIID %s.",
+                sipid.username, sipid.realm, vint->common.liid);
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: collector received new SIP target %s@* for LIID %s.",
+                sipid.username, vint->common.liid);
+    }
+
     add_new_sip_target_to_list(vint, &sipid);
     return 0;
 }
@@ -2050,6 +1965,7 @@ static int withdraw_voip_sip_target(collector_sync_voip_t *sync,
     voipintercept_t *vint;
     openli_sip_identity_t sipid;
     char liidspace[1024];
+    int ret = 0;
 
     if (decode_sip_target_announcement(intmsg, msglen, &sipid, liidspace,
             1024) < 0) {
@@ -2057,7 +1973,8 @@ static int withdraw_voip_sip_target(collector_sync_voip_t *sync,
             logger(LOG_INFO,
                 "OpenLI: received invalid SIP target withdrawal from provisioner.");
         }
-        return -1;
+        ret = -1;
+        goto withdrawend;
     }
 
     HASH_FIND(hh_liid, sync->voipintercepts, liidspace, strlen(liidspace),
@@ -2068,12 +1985,30 @@ static int withdraw_voip_sip_target(collector_sync_voip_t *sync,
                 "OpenLI: received SIP target withdrawal for unknown VOIP LIID %s.",
                 liidspace);
         }
-        return -1;
+        ret = -1;
+        goto withdrawend;
     }
 
     sync->log_bad_instruct = 1;
-    disable_sip_target(vint, &sipid);
-    return 0;
+    if (sipid.realm) {
+        logger(LOG_INFO,
+                "OpenLI: collector is withdrawing SIP target %s@%s for LIID %s.",
+                sipid.username, sipid.realm, vint->common.liid);
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: collector is withdrawing SIP target %s@* for LIID %s.",
+                sipid.username, vint->common.liid);
+    }
+    disable_sip_target_from_list(vint, &sipid);
+
+withdrawend:
+    if (sipid.username) {
+        free(sipid.username);
+    }
+    if (sipid.realm) {
+        free(sipid.realm);
+    }
+    return ret;
 }
 
 static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
@@ -2145,25 +2080,6 @@ static int new_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
     logger(LOG_INFO,
             "OpenLI: adding new VOIP intercept %s (start time %lu, end time %lu)", vint->common.liid, vint->common.tostart_time, vint->common.toend_time);
     return 0;
-}
-
-static void touch_all_voipintercepts(voipintercept_t *vints) {
-    voipintercept_t *v;
-    libtrace_list_node_t *n;
-    openli_sip_identity_t *sipid;
-
-    for (v = vints; v != NULL; v = v->hh_liid.next) {
-        v->awaitingconfirm = 1;
-
-        n = v->targets->head;
-        while (n) {
-            sipid = *((openli_sip_identity_t **)(n->data));
-            if (sipid->active) {
-                sipid->awaitingconfirm = 1;
-            }
-            n = n->next;
-        }
-    }
 }
 
 static libtrace_out_t *open_debug_output(char *basename, char *ext) {
@@ -2393,51 +2309,40 @@ static inline int process_colthread_message(collector_sync_voip_t *sync) {
     return 0;
 }
 
-static void disable_unconfirmed_voip_intercepts(collector_sync_voip_t *sync) {
+static void post_disable_unconfirmed_voip_intercept(voipintercept_t *vint,
+        void *arg) {
 
-    voipintercept_t *v, *tmp;
-    libtrace_list_node_t *n;
-    openli_sip_identity_t *sipid;
+    collector_sync_voip_t *sync = (collector_sync_voip_t *)(arg);
+    if (sync && vint) {
+        push_voipintercept_halt_to_threads(sync, vint);
+    }
+}
 
-    HASH_ITER(hh_liid, sync->voipintercepts, v, tmp) {
-        if (v->awaitingconfirm && v->active) {
-            v->active = 0;
+static void post_disable_unconfirmed_voip_target(openli_sip_identity_t *sipid,
+        voipintercept_t *v, void *arg) {
 
-            push_voipintercept_halt_to_threads(sync, v);
-            HASH_DELETE(hh_liid, sync->voipintercepts, v);
-            free_single_voipintercept(v);
-        } else if (v->active) {
-            /* Deal with any unconfirmed SIP targets */
-
-            n = v->targets->head;
-            while (n) {
-                sipid = *((openli_sip_identity_t **)(n->data));
-                n = n->next;
-
-                if (sipid->active && sipid->awaitingconfirm) {
-                    sipid->active = 0;
-                    if (sipid->realm) {
-                        logger(LOG_INFO, "OpenLI: removing unconfirmed SIP target %s@%s for LIID %s",
-                                sipid->username, sipid->realm,
-                                v->common.liid);
-                    } else {
-                        logger(LOG_INFO, "OpenLI: removing unconfirmed SIP target %s@* for LIID %s",
-                                sipid->username, v->common.liid);
-                    }
-
-                    /* remove any active calls for this identity */
-                    remove_cin_callids_for_target(&(v->cin_callid_map),
-                            sipid->username, sipid->realm);
-                    remove_cin_sdpkeys_for_target(&(v->cin_sdp_map),
-                            sipid->username, sipid->realm);
-                    remove_cin_callids_for_target(&(sync->knowncallids),
-                            sipid->username, sipid->realm);
-                }
-            }
-        }
+    collector_sync_voip_t *sync = (collector_sync_voip_t *)(arg);
+    if (sync == NULL || v == NULL || sipid == NULL) {
+        return;
     }
 
+    if (sipid->realm) {
+        logger(LOG_INFO,
+                "OpenLI: removing unconfirmed SIP target %s@%s for LIID %s",
+                sipid->username, sipid->realm, v->common.liid);
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: removing unconfirmed SIP target %s@* for LIID %s",
+                sipid->username, v->common.liid);
+    }
 
+    /* remove any active calls for this identity */
+    remove_cin_callids_for_target(&(v->cin_callid_map),
+            sipid->username, sipid->realm);
+    remove_cin_sdpkeys_for_target(&(v->cin_sdp_map),
+            sipid->username, sipid->realm);
+    remove_cin_callids_for_target(&(sync->knowncallids),
+            sipid->username, sipid->realm);
 }
 
 static inline int process_intersync_msg(collector_sync_voip_t *sync) {
@@ -2481,10 +2386,12 @@ static inline int process_intersync_msg(collector_sync_voip_t *sync) {
             }
             break;
         case OPENLI_PROTO_NOMORE_INTERCEPTS:
-            disable_unconfirmed_voip_intercepts(sync);
+            disable_unconfirmed_voip_intercepts(&(sync->voipintercepts),
+                    post_disable_unconfirmed_voip_intercept, sync,
+                    post_disable_unconfirmed_voip_target, sync);
             break;
         case OPENLI_PROTO_DISCONNECT:
-            touch_all_voipintercepts(sync->voipintercepts);
+            flag_voip_intercepts_as_unconfirmed(&(sync->voipintercepts));
             break;
         case OPENLI_PROTO_CONFIG_RELOADED:
             sync->log_bad_sip = 1;

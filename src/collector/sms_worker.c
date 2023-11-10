@@ -70,7 +70,69 @@ static int update_modified_sms_voip_intercept(openli_sms_worker_t *state,
 
 }
 
-static int add_new_voip_intercept(openli_sms_worker_t *state,
+static void remove_sms_voip_intercept(openli_sms_worker_t *state,
+        voipintercept_t *vint) {
+
+    /* Really simple, because we don't maintain a map of
+     * SIP identities to VoIP intercepts -- SIP identities
+     * are complex (wildcards, realms being optional, etc) so
+     * it's not something that we can be optimise with a
+     * lookup table, unlike RADIUS usernames or email addresses.
+     */
+    HASH_DELETE(hh_liid, state->voipintercepts, vint);
+    printf("DEVDEBUG: SMS worker has removed VINT %s\n", vint->common.liid);
+    free_single_voipintercept(vint);
+}
+
+static int halt_sms_voip_intercept(openli_sms_worker_t *state,
+        provisioner_msg_t *provmsg) {
+
+    voipintercept_t *decode, *found;
+    decode = calloc(1, sizeof(voipintercept_t));
+
+    if (decode_voipintercept_halt(provmsg->msgbody, provmsg->msglen,
+            decode) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: SMS worker received invalid VoIP intercept withdrawal");
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, state->voipintercepts, decode->common.liid,
+            decode->common.liid_len, found);
+    if (!found && state->workerid == 0) {
+        logger(LOG_INFO,
+                "OpenLI: tried to halt VoIP intercept %s within SMS worker but it was not in the intercept map?",
+                decode->common.liid);
+        free_single_voipintercept(decode);
+        return -1;
+    }
+    remove_sms_voip_intercept(state, found);
+    free_single_voipintercept(decode);
+    return 0;
+}
+
+static int modify_sms_voip_intercept(openli_sms_worker_t *state,
+        provisioner_msg_t *provmsg) {
+
+    voipintercept_t *vint, *found;
+
+    vint = calloc(1, sizeof(voipintercept_t));
+    if (decode_voipintercept_modify(provmsg->msgbody, provmsg->msglen,
+            vint) < 0) {
+        logger(LOG_INFO, "OpenLI: SMS worker failed to decode VoIP intercept modify message from provisioner");
+        return -1;
+    }
+    HASH_FIND(hh_liid, state->voipintercepts, vint->common.liid,
+            vint->common.liid_len, found);
+    if (!found) {
+        init_sms_voip_intercept(state, vint);
+    } else {
+        update_modified_sms_voip_intercept(state, found, vint);
+    }
+    return 0;
+}
+
+static int add_new_sms_voip_intercept(openli_sms_worker_t *state,
         provisioner_msg_t *msg) {
 
     voipintercept_t *vint, *found;
@@ -107,6 +169,66 @@ static int add_new_voip_intercept(openli_sms_worker_t *state,
         ret = 1;
     }
     return ret;
+}
+
+static inline voipintercept_t *lookup_sip_target_intercept(
+        openli_sms_worker_t *state, provisioner_msg_t *provmsg,
+        openli_sip_identity_t *sipid) {
+
+    voipintercept_t *found = NULL;
+    char liidspace[1024];
+    if (decode_sip_target_announcement(provmsg->msgbody,
+            provmsg->msglen, sipid, liidspace, 1024) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: SMS worker thread %d received invalid SIP target",
+                state->workerid);
+        return NULL;
+    }
+
+    HASH_FIND(hh_liid, state->voipintercepts, liidspace, strlen(liidspace),
+            found);
+    if (!found) {
+        logger(LOG_INFO,
+                "OpenLI: SMS worker thread %d received SIP target for unknown VoIP LIID %s.",
+                liidspace);
+    }
+    return found;
+}
+
+static int add_sms_sip_target(openli_sms_worker_t *state,
+        provisioner_msg_t *provmsg) {
+
+    voipintercept_t *found;
+    openli_sip_identity_t sipid;
+
+    found = lookup_sip_target_intercept(state, provmsg, &sipid);
+    if (!found) {
+        return -1;
+    }
+    add_new_sip_target_to_list(found, &sipid);
+    return 0;
+}
+
+static int remove_sms_sip_target(openli_sms_worker_t *state,
+        provisioner_msg_t *provmsg) {
+
+    voipintercept_t *found;
+    openli_sip_identity_t sipid;
+    int ret = 0;
+
+    found = lookup_sip_target_intercept(state, provmsg, &sipid);
+    if (!found) {
+        ret = -1;
+    } else {
+        disable_sip_target_from_list(found, &sipid);
+    }
+    if (sipid.username) {
+        free(sipid.username);
+    }
+    if (sipid.realm) {
+        free(sipid.realm);
+    }
+    return 0;
 }
 
 static int sms_worker_process_packet(openli_sms_worker_t *state) {
@@ -153,21 +275,29 @@ static int sms_worker_handle_provisioner_message(openli_sms_worker_t *state,
     int ret = 0;
     switch(msg->data.provmsg.msgtype) {
         case OPENLI_PROTO_START_VOIPINTERCEPT:
-            ret = add_new_voip_intercept(state, &(msg->data.provmsg));
+            ret = add_new_sms_voip_intercept(state, &(msg->data.provmsg));
             break;
         case OPENLI_PROTO_HALT_VOIPINTERCEPT:
+            ret = halt_sms_voip_intercept(state, &(msg->data.provmsg));
             break;
         case OPENLI_PROTO_MODIFY_VOIPINTERCEPT:
+            ret = modify_sms_voip_intercept(state, &(msg->data.provmsg));
             break;
         case OPENLI_PROTO_ANNOUNCE_SIP_TARGET:
+            ret = add_sms_sip_target(state, &(msg->data.provmsg));
             break;
         case OPENLI_PROTO_WITHDRAW_SIP_TARGET:
+            ret = remove_sms_sip_target(state, &(msg->data.provmsg));
             break;
         case OPENLI_PROTO_NOMORE_INTERCEPTS:
-            //sms_worker_disable_unconfirmed_voip_intercepts(state);
+            /* No additional per-intercept or per-target behaviour is
+             * required?
+             */
+            disable_unconfirmed_voip_intercepts(&(state->voipintercepts),
+                    NULL, NULL, NULL, NULL);
             break;
         case OPENLI_PROTO_DISCONNECT:
-            //sms_worker_flag_all_intercepts(state);
+            flag_voip_intercepts_as_unconfirmed(&(state->voipintercepts));
             break;
         default:
             logger(LOG_INFO, "OpenLI: SMS worker thread %d received unexpected message type from provisioner: %u",
@@ -295,6 +425,7 @@ static void sms_worker_main(openli_sms_worker_t *state) {
         }
     }
 
+    free(topoll);
 }
 
 void *start_sms_worker_thread(void *arg) {
@@ -356,6 +487,7 @@ haltsmsworker:
     zmq_close(state->zmq_ii_sock);
     zmq_close(state->zmq_colthread_recvsock);
 
+    free_all_voipintercepts(&(state->voipintercepts));
     clear_zmq_socket_array(state->zmq_pubsocks, state->tracker_threads);
 
     pthread_exit(NULL);
