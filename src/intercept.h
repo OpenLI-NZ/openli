@@ -41,6 +41,7 @@ typedef enum {
     OPENLI_INTERCEPT_TYPE_IP = 1,
     OPENLI_INTERCEPT_TYPE_VOIP = 2,
     OPENLI_INTERCEPT_TYPE_EMAIL = 3,
+    OPENLI_INTERCEPT_TYPE_EOL,
 } openli_intercept_types_t;
 
 typedef enum {
@@ -420,6 +421,9 @@ void free_single_rtpstream(rtpstreaminf_t *rtp);
 void free_single_vendmirror_intercept(vendmirror_intercept_t *mirror);
 void free_single_staticipsession(staticipsession_t *statint);
 void free_single_staticiprange(static_ipranges_t *ipr);
+
+int update_modified_intercept_common(intercept_common_t *current,
+        intercept_common_t *update, openli_intercept_types_t cepttype);
 
 /* Create a comma-separated string containing all of the SIP target IDs
  * for a VoIP intercept.

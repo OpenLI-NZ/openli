@@ -28,6 +28,9 @@
 #include "logger.h"
 #include "intercept.h"
 
+const char *cepttype_strings[] =
+        {"Unknown", "IP", "VoIP", "Email"};
+
 static inline void copy_intercept_common(intercept_common_t *src,
         intercept_common_t *dest) {
 
@@ -56,6 +59,81 @@ static inline void copy_intercept_common(intercept_common_t *src,
     } else {
         dest->encryptkey = NULL;
     }
+}
+
+int update_modified_intercept_common(intercept_common_t *current,
+        intercept_common_t *update, openli_intercept_types_t cepttype) {
+
+    int encodingchanged = 0, keychanged = 0;
+
+    if (cepttype < 0 || cepttype >= OPENLI_INTERCEPT_TYPE_EOL) {
+        logger(LOG_INFO,
+                "OpenLI: invalid intercept type passed to update_intercept_common(): %d\n", cepttype);
+        return -1;
+    }
+
+    if (update->tostart_time != current->tostart_time ||
+            update->toend_time != current->toend_time) {
+        logger(LOG_INFO,
+                "OpenLI: %s intercept %s has changed start / end times -- now %lu, %lu",
+                cepttype_strings[cepttype], current->liid, update->tostart_time,
+                update->toend_time);
+        current->tostart_time = update->tostart_time;
+        current->toend_time = update->toend_time;
+    }
+
+    if (update->tomediate != current->tomediate) {
+        char space[1024];
+        intercept_mediation_mode_as_string(update->tomediate, space,
+                1024);
+        logger(LOG_INFO,
+                "OpenLI: %s intercept %s has changed mediation mode to: %s",
+                cepttype_strings[cepttype], update->liid, space);
+        current->tomediate = update->tomediate;
+    }
+
+    if (update->encrypt != current->encrypt) {
+        char space[1024];
+        intercept_encryption_mode_as_string(update->encrypt, space,
+                1024);
+        logger(LOG_INFO,
+                "OpenLI: %s intercept %s has changed encryption mode to: %s",
+                cepttype_strings[cepttype], update->liid, space);
+        current->encrypt = update->encrypt;
+        encodingchanged = 1;
+    }
+
+    if (current->encryptkey && update->encryptkey) {
+        if (strcmp(current->encryptkey, update->encryptkey) != 0) {
+            keychanged = 1;
+        }
+    } else if (current->encryptkey == NULL && update->encryptkey) {
+        keychanged = 1;
+    } else if (current->encryptkey && update->encryptkey == NULL) {
+        keychanged = 1;
+    }
+
+    if (keychanged) {
+        char *tmp;
+        encodingchanged = 1;
+        tmp = current->encryptkey;
+        current->encryptkey = update->encryptkey;
+        update->encryptkey = tmp;
+    }
+
+    if (strcmp(update->delivcc, current->delivcc) != 0 ||
+            strcmp(update->authcc, current->authcc) != 0) {
+        char *tmp;
+        tmp = update->authcc;
+        update->authcc = current->authcc;
+        current->authcc = tmp;
+        tmp = update->delivcc;
+        update->delivcc = current->delivcc;
+        current->delivcc = tmp;
+        encodingchanged = 1;
+    }
+
+    return encodingchanged;
 }
 
 int are_sip_identities_same(openli_sip_identity_t *a,

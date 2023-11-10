@@ -609,69 +609,16 @@ static void start_email_intercept(openli_email_worker_t *state,
 static int update_modified_email_intercept(openli_email_worker_t *state,
         emailintercept_t *found, emailintercept_t *decode) {
     openli_export_recv_t *expmsg;
-    int encodingchanged = 0, keychanged = 0;
+    int encodingchanged = 0;
 
     found->delivercompressed = decode->delivercompressed;
 
-    if (decode->common.tostart_time != found->common.tostart_time ||
-            decode->common.toend_time != found->common.toend_time) {
-        logger(LOG_INFO,
-                "OpenLI: Email intercept %s has changed start / end times -- now %lu, %lu",
-                found->common.liid, decode->common.tostart_time,
-                decode->common.toend_time);
-        found->common.tostart_time = decode->common.tostart_time;
-        found->common.toend_time = decode->common.toend_time;
-    }
+    encodingchanged = update_modified_intercept_common(&(found->common),
+            &(decode->common), OPENLI_INTERCEPT_TYPE_EMAIL);
 
-    if (decode->common.tomediate != found->common.tomediate) {
-        char space[1024];
-        intercept_mediation_mode_as_string(decode->common.tomediate, space,
-                1024);
-        logger(LOG_INFO,
-                "OpenLI: Email intercept %s has changed mediation mode to: %s",
-                decode->common.liid, space);
-        found->common.tomediate = decode->common.tomediate;
-    }
-
-    if (decode->common.encrypt != found->common.encrypt) {
-        char space[1024];
-        intercept_encryption_mode_as_string(decode->common.encrypt, space,
-                1024);
-        logger(LOG_INFO,
-                "OpenLI: Email intercept %s has changed encryption mode to: %s",
-                decode->common.liid, space);
-        found->common.encrypt = decode->common.encrypt;
-        encodingchanged = 1;
-    }
-
-    if (found->common.encryptkey && decode->common.encryptkey) {
-        if (strcmp(found->common.encryptkey, decode->common.encryptkey) != 0) {
-            keychanged = 1;
-        }
-    } else if (found->common.encryptkey == NULL && decode->common.encryptkey) {
-        keychanged = 1;
-    } else if (found->common.encryptkey && decode->common.encryptkey == NULL) {
-        keychanged = 1;
-    }
-
-    if (keychanged) {
-        char *tmp;
-        encodingchanged = 1;
-        tmp = found->common.encryptkey;
-        found->common.encryptkey = decode->common.encryptkey;
-        decode->common.encryptkey = tmp;
-    }
-
-    if (strcmp(decode->common.delivcc, found->common.delivcc) != 0 ||
-            strcmp(decode->common.authcc, found->common.authcc) != 0) {
-        char *tmp;
-        tmp = decode->common.authcc;
-        decode->common.authcc = found->common.authcc;
-        found->common.authcc = tmp;
-        tmp = decode->common.delivcc;
-        decode->common.delivcc = found->common.delivcc;
-        found->common.delivcc = tmp;
-        encodingchanged = 1;
+    if (encodingchanged < 0) {
+        free_single_emailintercept(decode);
+        return -1;
     }
 
     if (encodingchanged) {

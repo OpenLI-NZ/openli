@@ -2161,8 +2161,11 @@ int main(int argc, char *argv[]) {
         glob->smsworkers[i].zmq_colthread_recvsock = NULL;
         glob->smsworkers[i].zmq_pubsocks = NULL;
         glob->smsworkers[i].tracker_threads = glob->seqtracker_threads;
+        glob->smsworkers[i].voipintercepts = NULL;
 
-        /* TODO rest of config and start sms threads */
+        pthread_create(&(glob->smsworkers[i].threadid), NULL,
+                start_sms_worker_thread, (void *)&(glob->smsworkers[i]));
+        pthread_setname_np(glob->smsworkers[i].threadid, name);
     }
 
 

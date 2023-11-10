@@ -56,6 +56,9 @@ typedef struct openli_sms_worker {
 
     /* The pthread ID for this SMS worker thread */
     pthread_t threadid;
+
+    /* Set of all the VoIP intercepts announced to this collector */
+    voipintercept_t *voipintercepts;
 } openli_sms_worker_t;
 
 void *start_sms_worker_thread(void *arg);

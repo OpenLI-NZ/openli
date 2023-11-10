@@ -34,6 +34,81 @@
 #include <sys/timerfd.h>
 #include <libtrace.h>
 
+static void init_sms_voip_intercept(openli_sms_worker_t *state,
+        voipintercept_t *vint) {
+
+    if (state->tracker_threads <= 1) {
+        vint->common.seqtrackerid = 0;
+    } else {
+        vint->common.seqtrackerid = hash_liid(vint->common.liid) %
+            state->tracker_threads;
+    }
+
+    HASH_ADD_KEYPTR(hh_liid, state->voipintercepts, vint->common.liid,
+            vint->common.liid_len, vint);
+
+    /* Don't need to tell the seqtracker about this intercept because
+     * hopefully the VOIP sync thread will handle that...
+     */
+    vint->awaitingconfirm = 0;
+
+}
+
+static int update_modified_sms_voip_intercept(openli_sms_worker_t *state,
+        voipintercept_t *found, voipintercept_t *decode) {
+
+    int r = 0;
+
+    if (update_modified_intercept_common(&(found->common),
+            &(decode->common), OPENLI_INTERCEPT_TYPE_VOIP) < 0) {
+        r = -1;
+    }
+
+    printf("DEVDEBUG: SMS worker has updated VINT %s\n", found->common.liid);
+    free_single_voipintercept(decode);
+    return r;
+
+}
+
+static int add_new_voip_intercept(openli_sms_worker_t *state,
+        provisioner_msg_t *msg) {
+
+    voipintercept_t *vint, *found;
+    int ret = 0;
+
+    vint = calloc(1, sizeof(voipintercept_t));
+    if (decode_voipintercept_start(msg->msgbody, msg->msglen, vint) < 0) {
+        logger(LOG_INFO, "OpenLI: SMS worker failed to decode VoIP intercept start message from provisioner");
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, state->voipintercepts, vint->common.liid,
+            vint->common.liid_len, found);
+
+    if (found) {
+        openli_sip_identity_t *tgt;
+        libtrace_list_node_t *n;
+
+        /* We already know about this intercept, but don't overwrite
+         * anything just yet because hopefully our (updated) targets
+         * will be announced to us shortly.
+         */
+        n = found->targets->head;
+        while (n) {
+            tgt = *((openli_sip_identity_t **)(n->data));
+            tgt->awaitingconfirm = 1;
+            n = n->next;
+        }
+        update_modified_sms_voip_intercept(state, found, vint);
+        found->awaitingconfirm = 0;
+        ret = 0;
+    } else {
+        init_sms_voip_intercept(state, vint);
+        ret = 1;
+    }
+    return ret;
+}
+
 static int sms_worker_process_packet(openli_sms_worker_t *state) {
 
     openli_state_update_t recvd;
@@ -78,6 +153,7 @@ static int sms_worker_handle_provisioner_message(openli_sms_worker_t *state,
     int ret = 0;
     switch(msg->data.provmsg.msgtype) {
         case OPENLI_PROTO_START_VOIPINTERCEPT:
+            ret = add_new_voip_intercept(state, &(msg->data.provmsg));
             break;
         case OPENLI_PROTO_HALT_VOIPINTERCEPT:
             break;
@@ -150,7 +226,7 @@ static void sms_worker_main(openli_sms_worker_t *state) {
     struct itimerspec its;
     int x;
 
-    logger(LOG_INFO, "OpenLI: starting SMS worker thread %s", state->workerid);
+    logger(LOG_INFO, "OpenLI: starting SMS worker thread %d", state->workerid);
 
     topoll = calloc(3, sizeof(zmq_pollitem_t));
 
@@ -274,7 +350,7 @@ void *start_sms_worker_thread(void *arg) {
     } while (x > 0);
 
 haltsmsworker:
-    logger(LOG_INFO, "OpenLI: halting SMS processing thread %s",
+    logger(LOG_INFO, "OpenLI: halting SMS processing thread %d",
             state->workerid);
 
     zmq_close(state->zmq_ii_sock);
