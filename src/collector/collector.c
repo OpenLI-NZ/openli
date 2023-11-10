@@ -1365,6 +1365,10 @@ static void destroy_collector_state(collector_global_t *glob) {
         free(glob->forwarders);
     }
 
+    if (glob->smsworkers) {
+        free(glob->smsworkers);
+    }
+
     if (glob->zmq_ctxt) {
         logger(LOG_INFO, "OpenLI: waiting for zeromq context to be destroyed.");
         zmq_ctx_destroy(glob->zmq_ctxt);
@@ -1389,10 +1393,6 @@ static void destroy_collector_state(collector_global_t *glob) {
             }
         }
         free(glob->collocals);
-    }
-
-    if (glob->default_email_domain) {
-        free(glob->default_email_domain);
     }
 
     pthread_mutex_destroy(&(glob->stats_mutex));
