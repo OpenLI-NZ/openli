@@ -51,6 +51,7 @@ static inline void dump_buffer_contents(uint8_t *buf, uint16_t len) {
         }
     }
 #else
+    (void)buf;
     (void)len;
 #endif
 
@@ -66,13 +67,25 @@ net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl) {
     nb->fd = fd;
     nb->buftype = buftype;
     nb->ssl = ssl;
+    nb->unacked = 0;
+    nb->last_tag = 0;
+    nb->rmq_channel = 0;
     return nb;
 }
 
-void destroy_net_buffer(net_buffer_t *nb) {
+void destroy_net_buffer(net_buffer_t *nb, amqp_connection_state_t amqp_state) {
     if (nb == NULL) {
         return;
     }
+    if (nb->unacked > 0 && amqp_state != NULL) {
+        if (amqp_basic_ack (amqp_state,
+                nb->rmq_channel,
+                nb->last_tag,
+                1) != 0 ) {
+            logger(LOG_INFO, "OpenLI: RMQ error in basic acknowledgement");
+        }
+    }
+
     free(nb->buf);
     free(nb);
 }
@@ -89,7 +102,7 @@ inline int fd_set_block(int fd){
     return fcntl(fd, F_SETFL, flags);
 }
 
-static inline int extend_net_buffer(net_buffer_t *nb, int musthave) {
+static inline int extend_net_buffer(net_buffer_t *nb, unsigned int musthave) {
 
     int frontfree = NETBUF_FRONT_FREE(nb);
     int contsize = NETBUF_CONTENT_SIZE(nb);
@@ -430,7 +443,7 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
             return -1;
         }
     }
-
+    return 0;
 }
 
 static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
@@ -444,12 +457,6 @@ static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
         totallen = VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint);
     } else {
         totallen = IPINTERCEPT_MODIFY_BODY_LEN(ipint);
-    }
-    if (totallen > 65535) {
-        logger(LOG_INFO,
-                "OpenLI: IP intercept modifcation is too long to fit in a single message (%d).",
-                totallen);
-        return -1;
     }
 
     /* Push on header */
@@ -511,13 +518,6 @@ static int _push_emailintercept_modify(net_buffer_t *nb, emailintercept_t *em) {
 
     /* Pre-compute our body length so we can write it in the header */
     totallen = EMAILINTERCEPT_MODIFY_BODY_LEN(em);
-    if (totallen > 65535) {
-        logger(LOG_INFO,
-                "OpenLI: Email intercept modifcation is too long to fit in a single message (%d).",
-                totallen);
-        return -1;
-    }
-
 
     /* Push on header */
     populate_header(&hdr, OPENLI_PROTO_MODIFY_EMAILINTERCEPT, totallen, 0);
@@ -558,13 +558,6 @@ static int _push_voipintercept_modify(net_buffer_t *nb, voipintercept_t *vint)
 
     /* Pre-compute our body length so we can write it in the header */
     totallen = VOIPINTERCEPT_MODIFY_BODY_LEN(vint);
-    if (totallen > 65535) {
-        logger(LOG_INFO,
-                "OpenLI: VOIP intercept modifcation is too long to fit in a single message (%d).",
-                totallen);
-        return -1;
-    }
-
 
     /* Push on header */
     populate_header(&hdr, OPENLI_PROTO_MODIFY_VOIPINTERCEPT, totallen, 0);
@@ -620,13 +613,6 @@ int push_emailintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
     /* Pre-compute our body length so we can write it in the header */
     totallen = EMAILINTERCEPT_BODY_LEN(em);
-    if (totallen > 65535) {
-        logger(LOG_INFO,
-                "OpenLI: Email intercept announcement is too long to fit in a single message (%d).",
-                totallen);
-        return -1;
-    }
-
 
     /* Push on header */
     populate_header(&hdr, OPENLI_PROTO_START_EMAILINTERCEPT, totallen, 0);
@@ -691,13 +677,6 @@ int push_intercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
 
     /* Pre-compute our body length so we can write it in the header */
     totallen = INTERCEPT_WITHDRAW_BODY_LEN(liid, authcc);
-    if (totallen > 65535) {
-        logger(LOG_INFO,
-                "OpenLI: intercept withdrawal is too long to fit in a single message (%d).",
-                totallen);
-        return -1;
-    }
-
 
     /* Push on header */
     populate_header(&hdr, wdtype, totallen, 0);
@@ -735,13 +714,6 @@ int push_voipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     voipintercept_t *vint = (voipintercept_t *)data;
 
     /* Pre-compute our body length so we can write it in the header */
-    if (VOIPINTERCEPT_BODY_LEN(vint) > 65535) {
-        logger(LOG_INFO,
-                "OpenLI: VOIP intercept announcement is too long to fit in a single message (%d).",
-                VOIPINTERCEPT_BODY_LEN(vint));
-        return -1;
-    }
-
     totallen = VOIPINTERCEPT_BODY_LEN(vint);
 
     /* Push on header */
@@ -797,13 +769,6 @@ static inline int push_sip_target_onto_net_buffer_generic(net_buffer_t *nb,
         totallen = SIPTARGET_BODY_LEN(sipid, vint);
     } else {
         totallen = SIPTARGET_BODY_LEN_NOREALM(sipid, vint);
-    }
-
-    if (totallen > 65535) {
-        logger(LOG_INFO,
-                "OpenLI: SIP target announcement is too long to fit in a single message (%d).",
-                totallen);
-        return -1;
     }
 
     /* Push on header */
@@ -886,13 +851,6 @@ static inline int push_email_target_onto_net_buffer_generic(net_buffer_t *nb,
 
     totallen = EMAILTARGET_BODY_LEN(tgt, em);
 
-    if (totallen > 65535) {
-        logger(LOG_INFO,
-                "OpenLI: Email target announcement is too long to fit in a single message (%d).",
-                totallen);
-        return -1;
-    }
-
     /* Push on header */
     populate_header(&hdr, msgtype, totallen, 0);
     if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
@@ -954,11 +912,6 @@ static int push_static_ipranges_generic(net_buffer_t *nb, ipintercept_t *ipint,
     }
 
     totallen = STATICIP_RANGE_BODY_LEN(ipint, ipr);
-    if (totallen > 65535) {
-        logger(LOG_INFO,
-                "OpenLI: static IP range is too long to fit in a single message (%d).", totallen);
-        return -1;
-    }
 
     populate_header(&hdr, msgtype, totallen, 0);
     if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
@@ -1108,13 +1061,6 @@ static inline int push_mediator_msg_onto_net_buffer(net_buffer_t *nb,
     int ret;
 
     /* Pre-compute our body length so we can write it in the header */
-    if (MEDIATOR_BODY_LEN(med) > 65535) {
-        logger(LOG_INFO,
-                "OpenLI: mediator announcement is too long to fit in a single message (%d).",
-                MEDIATOR_BODY_LEN(med));
-        return -1;
-    }
-
     totallen = MEDIATOR_BODY_LEN(med);
 
     /* Push on header */
@@ -1177,13 +1123,6 @@ int push_hi1_notification_onto_net_buffer(net_buffer_t *nb,
     } else {
         field_count = 9;
         target_info_len = strlen(ndata->target_info);
-    }
-
-    if (HI1_NOTIFY_BODY_LEN(ndata) > 65535) {
-        logger(LOG_INFO,
-                "OpenLI: HI1 notification message is too long to fit in a single message (%d).",
-                HI1_NOTIFY_BODY_LEN(ndata));
-        return -1;
     }
 
     totallen = HI1_NOTIFY_BODY_LEN(ndata);
@@ -1253,13 +1192,6 @@ static inline int push_default_radius_msg_onto_net_buffer(net_buffer_t *nb,
     int ret;
 
     /* Pre-compute our body length so we can write it in the header */
-    if (DEF_RADIUS_BODY_LEN(defrad) > 65535) {
-        logger(LOG_INFO,
-                "OpenLI: default radius usename announcement is too long to fit in a single message (%d).",
-                DEF_RADIUS_BODY_LEN(defrad));
-        return -1;
-    }
-
     totallen = DEF_RADIUS_BODY_LEN(defrad);
 
     /* Push on header */
@@ -1330,12 +1262,6 @@ static int push_coreserver_msg_onto_net_buffer(net_buffer_t *nb,
 
     /* Pre-compute our body length so we can write it in the header */
     totallen = CORESERVER_BODY_LEN(cs);
-    if (totallen > 65535) {
-        logger(LOG_INFO,
-                "OpenLI: %s server announcement is too long to fit in a single message (%d).",
-                coreserver_type_to_string(cstype), totallen);
-        return -1;
-    }
 
     /* Push on header */
     populate_header(&hdr, type, totallen, 0);
@@ -2344,6 +2270,16 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
         if (AMQP_RESPONSE_LIBRARY_EXCEPTION == ret.reply_type &&
                 AMQP_STATUS_UNEXPECTED_STATE == ret.library_error) {
             if (AMQP_STATUS_OK != amqp_simple_wait_frame(amqp_state, &frame)) {
+                if (nb->unacked > 0) {
+                    if (amqp_basic_ack (amqp_state,
+                                nb->rmq_channel,
+                                nb->last_tag,
+                                1) != 0 ) {
+                        logger(LOG_INFO,
+                                "OpenLI: RMQ error in basic acknowledgement");
+                    }
+                    nb->unacked = 0;
+                }
                 return OPENLI_PROTO_NO_MESSAGE;
             }
 
@@ -2403,16 +2339,12 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
         }
     }
     else {
-        if (amqp_basic_ack (amqp_state,
-                envelope.channel,
-                envelope.delivery_tag,
-                0) != 0 ) {
-            logger(LOG_INFO, "OpenLI: RMQ error in basic acknowledgement");
-        }
+        nb->last_tag = envelope.delivery_tag;
+        nb->unacked ++;
+        nb->rmq_channel = envelope.channel;
     }
-
     /* Ensure the buffer is big enough to hold the new message. */
-    if (NETBUF_SPACE_REM(nb) < envelope.message.body.len) {
+    while (NETBUF_SPACE_REM(nb) < envelope.message.body.len) {
         if (extend_net_buffer(nb, envelope.message.body.len) == -1) {
             return OPENLI_PROTO_BUFFER_TOO_FULL;
         }
@@ -2423,6 +2355,16 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
             envelope.message.body.len);
     nb->appendptr += envelope.message.body.len;
     amqp_destroy_envelope(&envelope);
+
+    if (nb->unacked >= 32) {
+        if (amqp_basic_ack (amqp_state,
+                nb->rmq_channel,
+                nb->last_tag,
+                1) != 0 ) {
+            logger(LOG_INFO, "OpenLI: RMQ error in basic acknowledgement");
+        }
+        nb->unacked = 0;
+    }
 
     rettype = parse_received_message(nb, msgbody, msglen, intid);
     return rettype;

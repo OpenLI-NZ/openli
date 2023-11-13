@@ -72,7 +72,7 @@ struct json_prov_options {
 
 #define EXTRACT_JSON_INT_PARAM(name, uptype, jsonobj, dest, errflag, force) \
     if ((*errflag) == 0) { \
-        int64_t ival; \
+        int64_t ival = 0; \
         errno = 0; \
         if (jsonobj != NULL) { \
             ival = json_object_get_int64(jsonobj); \
@@ -358,7 +358,8 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
                 return -1;
             }
 
-            if (common->tostart_time > 0 && common->tostart_time > tv.tv_sec) {
+            if (common->tostart_time > 0 && tv.tv_sec >= 0 &&
+                    common->tostart_time > (unsigned long)tv.tv_sec) {
                 if (add_intercept_timer(epoll_fd, common->tostart_time,
                         tv.tv_sec, timers, PROV_EPOLL_INTERCEPT_START) < 0) {
                     snprintf(cinfo->answerstring, 4096, "unable to create a 'intercept start' timer for intercept %s", common->liid);
@@ -366,7 +367,8 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
                 }
 
             }
-            if (common->toend_time > 0 && common->toend_time > tv.tv_sec) {
+            if (common->toend_time > 0 && tv.tv_sec >= 0 &&
+                    common->toend_time > (unsigned long)tv.tv_sec) {
                 if (add_intercept_timer(epoll_fd, common->toend_time,
                         tv.tv_sec, timers, PROV_EPOLL_INTERCEPT_HALT) < 0) {
                     snprintf(cinfo->answerstring, 4096, "unable to create a 'intercept end' timer for intercept %s", common->liid);
@@ -440,8 +442,8 @@ static int update_intercept_common(intercept_common_t *parsed,
     return 0;
 }
 
-int remove_voip_intercept(update_con_info_t *cinfo, provision_state_t *state,
-        const char *idstr) {
+int remove_voip_intercept(update_con_info_t *cinfo UNUSED,
+        provision_state_t *state, const char *idstr) {
 
     voipintercept_t *found;
     char *target_info;
@@ -471,8 +473,8 @@ int remove_voip_intercept(update_con_info_t *cinfo, provision_state_t *state,
     return 0;
 }
 
-int remove_email_intercept(update_con_info_t *cinfo, provision_state_t *state,
-        const char *idstr) {
+int remove_email_intercept(update_con_info_t *cinfo UNUSED,
+        provision_state_t *state, const char *idstr) {
 
     emailintercept_t *found;
     char *target_info;
@@ -502,8 +504,8 @@ int remove_email_intercept(update_con_info_t *cinfo, provision_state_t *state,
     return 0;
 }
 
-int remove_ip_intercept(update_con_info_t *cinfo, provision_state_t *state,
-        const char *idstr) {
+int remove_ip_intercept(update_con_info_t *cinfo UNUSED,
+        provision_state_t *state, const char *idstr) {
 
     ipintercept_t *found;
 
@@ -528,7 +530,7 @@ int remove_ip_intercept(update_con_info_t *cinfo, provision_state_t *state,
     return 0;
 }
 
-int remove_agency(update_con_info_t *cinfo, provision_state_t *state,
+int remove_agency(update_con_info_t *cinfo UNUSED, provision_state_t *state,
         const char *idstr) {
 
     prov_agency_t *found;
@@ -548,8 +550,8 @@ int remove_agency(update_con_info_t *cinfo, provision_state_t *state,
 
 }
 
-int remove_defaultradius(update_con_info_t *cinfo, provision_state_t *state,
-        const char *idstr) {
+int remove_defaultradius(update_con_info_t *cinfo UNUSED,
+        provision_state_t *state, const char *idstr) {
 
     default_radius_user_t *found;
 
@@ -568,7 +570,7 @@ int remove_defaultradius(update_con_info_t *cinfo, provision_state_t *state,
     return 0;
 }
 
-int remove_coreserver(update_con_info_t *cinfo, provision_state_t *state,
+int remove_coreserver(update_con_info_t *cinfo UNUSED, provision_state_t *state,
         const char *idstr, uint8_t srvtype) {
 
     char search[1024];
@@ -815,14 +817,14 @@ cserr:
 
 }
 
-int parse_emailintercept_targets(provision_state_t *state,
-        emailintercept_t *mailint, struct json_object *jsontargets,
-        update_con_info_t *cinfo) {
+static int parse_emailintercept_targets(emailintercept_t *mailint,
+        struct json_object *jsontargets, update_con_info_t *cinfo) {
 
     email_target_t *newtgt, *found;
     struct json_object *jobj;
     struct json_object *address;
-    int parseerr = 0, i, tgtcnt;
+    int parseerr = 0, tgtcnt;
+    size_t i;
 
     newtgt = NULL;
     tgtcnt = 0;
@@ -876,14 +878,14 @@ targeterr:
 
 }
 
-int parse_voipintercept_siptargets(provision_state_t *state,
-        voipintercept_t *vint, struct json_object *jsontargets,
-        update_con_info_t *cinfo) {
+static int parse_voipintercept_siptargets(voipintercept_t *vint,
+        struct json_object *jsontargets, update_con_info_t *cinfo) {
 
     openli_sip_identity_t *newtgt;
     struct json_object *jobj;
     struct json_object *username, *realm;
-    int parseerr = 0, i, tgtcnt;
+    int parseerr = 0, tgtcnt;
+    size_t i;
 
     newtgt = NULL;
     tgtcnt = 0;
@@ -939,7 +941,7 @@ siptargeterr:
 
 }
 
-int parse_ipintercept_staticips(provision_state_t *state,
+static int parse_ipintercept_staticips(provision_state_t *state,
         ipintercept_t *ipint, struct json_object *jsonips, update_con_info_t *cinfo) {
 
     static_ipranges_t *newr = NULL;
@@ -949,7 +951,7 @@ int parse_ipintercept_staticips(provision_state_t *state,
     char *rangestr = NULL;
     int parseerr = 0;
 
-    int i;
+    size_t i;
 
     if (json_object_get_type(jsonips) != json_type_array) {
         logger(LOG_INFO, "OpenLI update socket: 'staticips' for an IP intercept must be expressed as a JSON array");
@@ -1071,7 +1073,7 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     r = 0;
     if (emailjson.emailtargets != NULL) {
-        if ((r = parse_emailintercept_targets(state, mailint,
+        if ((r = parse_emailintercept_targets(mailint,
                 emailjson.emailtargets, cinfo)) < 0) {
             goto cepterr;
         }
@@ -1184,7 +1186,7 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     r = 0;
     if (voipjson.siptargets != NULL) {
-        if ((r = parse_voipintercept_siptargets(state, vint,
+        if ((r = parse_voipintercept_siptargets(vint,
                 voipjson.siptargets, cinfo)) < 0) {
             goto cepterr;
         }
@@ -1515,7 +1517,7 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (emailjson.emailtargets != NULL) {
 
-        if (parse_emailintercept_targets(state, mailint, emailjson.emailtargets,
+        if (parse_emailintercept_targets(mailint, emailjson.emailtargets,
                 cinfo) < 0) {
             goto cepterr;
         }
@@ -1645,7 +1647,7 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (voipjson.siptargets != NULL) {
 
-        if (parse_voipintercept_siptargets(state, vint, voipjson.siptargets,
+        if (parse_voipintercept_siptargets(vint, voipjson.siptargets,
                 cinfo) < 0) {
             goto cepterr;
         }

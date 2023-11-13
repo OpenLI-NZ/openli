@@ -391,7 +391,6 @@ static int reload_emailintercepts(provision_state_t *currstate,
 
     emailintercept_t *mailint, *tmp, *newequiv;
     char *target_info;
-    prov_intercept_data_t *local, *oldlocal;
     struct timeval tv;
 
     /* TODO error handling in the "inform other components about changes"
@@ -400,8 +399,6 @@ static int reload_emailintercepts(provision_state_t *currstate,
     HASH_ITER(hh_liid, curremail, mailint, tmp) {
         HASH_FIND(hh_liid, newemail, mailint->common.liid,
                 mailint->common.liid_len, newequiv);
-
-        local = (prov_intercept_data_t *)(mailint->common.local);
 
         if (!newequiv) {
             /* Intercept has been withdrawn entirely */
@@ -493,7 +490,6 @@ static int reload_voipintercepts(provision_state_t *currstate,
 
     voipintercept_t *voipint, *tmp, *newequiv;
     char *target_info;
-    prov_intercept_data_t *local, *oldlocal;
     struct timeval tv;
 
     /* TODO error handling in the "inform other components about changes"
@@ -502,8 +498,6 @@ static int reload_voipintercepts(provision_state_t *currstate,
     HASH_ITER(hh_liid, currvoip, voipint, tmp) {
         HASH_FIND(hh_liid, newvoip, voipint->common.liid,
                 voipint->common.liid_len, newequiv);
-
-        local = (prov_intercept_data_t *)(voipint->common.local);
 
         if (newequiv && currstate->ignorertpcomfort) {
             newequiv->options |= (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
@@ -599,14 +593,10 @@ static int reload_ipintercepts(provision_state_t *currstate,
 		prov_intercept_conf_t *intconf, int droppedcols, int droppedmeds) {
 
     ipintercept_t *ipint, *tmp, *newequiv;
-    prov_intercept_data_t *local, *oldlocal;
-    struct timeval tv;
 
     HASH_ITER(hh_liid, currints, ipint, tmp) {
         HASH_FIND(hh_liid, newints, ipint->common.liid,
                 ipint->common.liid_len, newequiv);
-
-        local = (prov_intercept_data_t *)(ipint->common.local);
 
         if (!newequiv) {
             /* Intercept has been withdrawn entirely */

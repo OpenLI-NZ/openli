@@ -364,13 +364,13 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
     if (res->origreq->type == OPENLI_EXPORT_IPCC ||
             res->origreq->type == OPENLI_EXPORT_IPMMCC ||
             res->origreq->type == OPENLI_EXPORT_UMTSCC ||
-            res->origreq->type == OPENLI_EXPORT_EMAILCC ) {
+            res->origreq->type == OPENLI_EXPORT_EMAILCC ||
+            res->origreq->type == OPENLI_EXPORT_RAW_CC) {
 
         reorderer = &(fwd->intreorderer_cc);
     } else {
         reorderer = &(fwd->intreorderer_iri);
     }
-
 
     /* reordering of results if required for each LIID/CIN */
     JSLG(jval, *reorderer, (unsigned char *)res->cinstr);
@@ -453,7 +453,6 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
     /* Check if this result is for a mediator we know about. If not,
      * create a destination for that mediator and buffer results until
      * we get a corresponding announcement. */
-
 
     JLG(jval, fwd->destinations_by_id, res->destid);
     if (jval == NULL) {
@@ -788,9 +787,11 @@ static void rmq_write_buffered(forwarding_thread_data_t *fwd) {
             continue;
         }
 
+        /*
         if (availsend < MIN_SEND_AMOUNT && fwd->forcesend_rmq == 0) {
             continue;
         }
+        */
 
         if (transmit_buffered_records_RMQ(&(dest->buffer), 
                 fwd->ampq_conn,

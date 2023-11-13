@@ -49,15 +49,27 @@ static int declare_RMQ_queue(amqp_connection_state_t state,
         char *queueid, int channel) {
 
     amqp_bytes_t rmq_queueid;
-    amqp_table_t queueargs;
 
-    queueargs.num_entries = 0;
-    queueargs.entries = NULL;
+#if 0
+    amqp_table_t queueargs;
+    amqp_table_entry_t entries[2];
+
+    entries[0].key = amqp_cstring_bytes("x-queue-type");
+    entries[0].value.kind = AMQP_FIELD_KIND_UTF8;
+    entries[0].value.value.bytes = amqp_cstring_bytes("stream");
+
+    entries[1].key = amqp_cstring_bytes("x-max-length-bytes");
+    entries[1].value.kind = AMQP_FIELD_KIND_U64;
+    entries[1].value.value.u64 = 20000000000;       // 20 GB max size
+    queueargs.num_entries = 2;
+    queueargs.entries = entries;
+#endif
 
     rmq_queueid.len = strlen(queueid);
     rmq_queueid.bytes = (void *)queueid;
 
-    amqp_queue_declare(state, channel, rmq_queueid, 0, 1, 0, 0, queueargs);
+    amqp_queue_declare(state, channel, rmq_queueid, 0, 1, 0, 0,
+            amqp_empty_table);
     if (amqp_get_rpc_reply(state).reply_type != AMQP_RESPONSE_NORMAL) {
         logger(LOG_INFO, "OpenLI Mediator: unable to declare RMQ queue for %s on channel %d: %u", queueid, channel, amqp_get_rpc_reply(state).reply_type);
         return -1;
@@ -209,7 +221,7 @@ int declare_mediator_rawip_RMQ_queue(amqp_connection_state_t state,
  *  @param msglen           The length of the message content, in bytes
  *  @param liid             The LIID that the message belongs to
  *  @param channel          The channel to publish the message to
- *  @param queuetype        The message type (one of "iri", "cc", or "rawip")
+ *  @param queuename        THe name of the queue to publish to
  *  @param expiry           The TTL of the message in seconds -- if set to 0,
  *                          the message will not be expired by RMQ
  *
@@ -217,14 +229,12 @@ int declare_mediator_rawip_RMQ_queue(amqp_connection_state_t state,
  */
 static int produce_mediator_RMQ(amqp_connection_state_t state,
         uint8_t *msg, uint16_t msglen, char *liid, int channel,
-        char *queuetype, uint32_t expiry) {
+        const char *queuename, uint32_t expiry) {
     amqp_bytes_t message_bytes;
     amqp_basic_properties_t props;
     int pub_ret;
-    char queuename[1024];
     char expirystr[1024];
 
-    snprintf(queuename, 1024, "%s-%s", liid, queuetype);
     message_bytes.len = msglen;
     message_bytes.bytes = msg;
 
@@ -252,22 +262,13 @@ static int produce_mediator_RMQ(amqp_connection_state_t state,
  *  @param msg              A pointer to the start of the packet body
  *  @param msglen           The length of the packet body, in bytes
  *  @param liid             The LIID that the message belongs to
+ *  @param queuename        THe name of the queue to publish to
  *
  *  @return 0 if an error occurs, 1 if the message is published successfully
  */
 int publish_rawip_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
-        uint8_t *msg, uint16_t msglen, char *liid) {
-    /* If we haven't managed to write this to a pcap file within 60 seconds,
-     * expire the message from the RMQ.
-     *
-     * This should mitigate any potential issues in the rare case where an
-     * intercept switches from pcapdisk to a regular agency then back to
-     * pcapdisk -- old raw IP from the first pcapdisk phase that was
-     * lingering in the queue won't be included in the "new" pcapdisk
-     * output (assuming 60 seconds have passed since the first pcapdisk
-     * output was halted).
-     */
-    return produce_mediator_RMQ(state, msg, msglen, liid, 4, "rawip", 60);
+        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename) {
+    return produce_mediator_RMQ(state, msg, msglen, liid, 4, queuename, 0);
 }
 
 /** Publishes an encoded IRI onto a mediator RMQ queue.
@@ -276,13 +277,14 @@ int publish_rawip_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
  *  @param msg              A pointer to the start of the encoded IRI
  *  @param msglen           The length of the encoded IRI, in bytes
  *  @param liid             The LIID that the message belongs to
+ *  @param queuename        THe name of the queue to publish to
  *
  *  @return 0 if an error occurs, 1 if the message is published successfully
  */
 int publish_iri_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
-        uint8_t *msg, uint16_t msglen, char *liid) {
+        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename) {
 
-    return produce_mediator_RMQ(state, msg, msglen, liid, 2, "iri", 0);
+    return produce_mediator_RMQ(state, msg, msglen, liid, 2, queuename, 0);
 }
 
 /** Publishes an encoded CC onto a mediator RMQ queue.
@@ -291,13 +293,14 @@ int publish_iri_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
  *  @param msg              A pointer to the start of the encoded CC
  *  @param msglen           The length of the encoded CC, in bytes
  *  @param liid             The LIID that the message belongs to
+ *  @param queuename        THe name of the queue to publish to
  *
  *  @return 0 if an error occurs, 1 if the message is published successfully
  */
 int publish_cc_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
-        uint8_t *msg, uint16_t msglen, char *liid) {
+        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename) {
 
-    return produce_mediator_RMQ(state, msg, msglen, liid, 3, "cc", 0);
+    return produce_mediator_RMQ(state, msg, msglen, liid, 3, queuename, 0);
 }
 
 void remove_mediator_liid_RMQ_queue(amqp_connection_state_t state,
@@ -879,9 +882,9 @@ static int consume_mediator_liid_messages(amqp_connection_state_t state,
         return 0;
     }
 
+    amqp_maybe_release_buffers(state);
     while (msgread < maxread) {
         /* Let the connection free any unused internal state / buffers */
-        amqp_maybe_release_buffers(state);
 
         /* Grab the next message */
         ret = amqp_consume_message(state, &envelope, &tv, 0);
@@ -889,7 +892,7 @@ static int consume_mediator_liid_messages(amqp_connection_state_t state,
             if (ret.reply_type == AMQP_RESPONSE_LIBRARY_EXCEPTION &&
                     ret.library_error == AMQP_STATUS_TIMEOUT) {
                 /* No messages available */
-                usleep(10000);
+                //usleep(10000);
                 return (msgread > 0);
             }
 

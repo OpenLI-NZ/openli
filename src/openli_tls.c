@@ -29,7 +29,8 @@
 #include "logger.h"
 #include "openli_tls.h"
 
-void dump_cert_info(SSL *ssl) {
+#if 0
+static void dump_cert_info(SSL *ssl) {
     logger(LOG_DEBUG,
         "SSL connection version: %s", 
         SSL_get_version(ssl)); //should ALWAYS be TLSv1_2
@@ -52,6 +53,7 @@ void dump_cert_info(SSL *ssl) {
         X509_free(client_cert);
     }
 }
+#endif
 
 
 //takes in 3 filenames for the CA, own cert and private key
@@ -59,7 +61,8 @@ void dump_cert_info(SSL *ssl) {
 //returns -1 if an error happened
 //otherwise returns a new SSL_CTX with the provided certificates using TLSv1_2
 //and enforces identity checking at handshake
-SSL_CTX * ssl_init(const char *cacertfile, const char *certfile, const char *keyfile) {
+static SSL_CTX * ssl_init(const char *cacertfile, const char *certfile,
+        const char *keyfile) {
 
     /* SSL library initialisation */
     SSL_library_init();

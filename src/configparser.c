@@ -100,6 +100,7 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         /* Each sequence item is a new input */
         inp = (colinput_t *)malloc(sizeof(colinput_t));
         inp->uri = NULL;
+        inp->hashconfigured = 0;
         inp->threadcount = 1;
         inp->trace = NULL;
         inp->pktcbs = NULL;
@@ -1205,6 +1206,15 @@ static int global_parser(void *arg, yaml_document_t *doc,
     }
 
     if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value, "ciscomirrors") == 0) {
+        if (parse_core_server_list(&glob->ciscomirrors,
+                OPENLI_CORE_SERVER_ALUMIRROR, doc, value) == -1) {
+            return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcmp((char *)key->data.scalar.value, "seqtrackerthreads") == 0) {
         glob->seqtracker_threads = strtoul((char *) value->data.scalar.value,
@@ -1305,6 +1315,15 @@ static int global_parser(void *arg, yaml_document_t *doc,
     }
 
     if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
+                    "cisconoradius") == 0) {
+
+       glob->sharedinfo.cisco_noradius =
+                check_onoff((char *)value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SEQUENCE_NODE &&
             strcmp((char *)key->data.scalar.value,
                     "emailsessiontimeouts") == 0) {
@@ -1361,7 +1380,7 @@ static int global_parser(void *arg, yaml_document_t *doc,
 }
 
 
-static int mediator_parser(void *arg, yaml_document_t *doc,
+static int mediator_parser(void *arg, yaml_document_t *doc UNUSED,
         yaml_node_t *key, yaml_node_t *value) {
 
     mediator_state_t *state = (mediator_state_t *)arg;
@@ -1665,7 +1684,7 @@ static int intercept_parser(void *arg, yaml_document_t *doc,
     return 0;
 }
 
-static int provisioning_parser(void *arg, yaml_document_t *doc,
+static int provisioning_parser(void *arg, yaml_document_t *doc UNUSED,
         yaml_node_t *key, yaml_node_t *value) {
 
     provision_state_t *state = (provision_state_t *)arg;

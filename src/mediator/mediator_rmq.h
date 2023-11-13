@@ -184,11 +184,12 @@ void remove_mediator_rawip_RMQ_queue(amqp_connection_state_t state,
  *  @param msg              A pointer to the start of the encoded CC
  *  @param msglen           The length of the encoded CC, in bytes
  *  @param liid             The LIID that the message belongs to
+ *  @param queuename        THe name of the queue to publish to
  *
  *  @return 0 if an error occurs, 1 if the message is published successfully
  */
 int publish_iri_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
-        uint8_t *msg, uint16_t msglen, char *liid);
+        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename);
 
 /** Publishes an encoded CC onto a mediator RMQ queue.
  *
@@ -196,11 +197,12 @@ int publish_iri_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
  *  @param msg              A pointer to the start of the encoded CC
  *  @param msglen           The length of the encoded CC, in bytes
  *  @param liid             The LIID that the message belongs to
+ *  @param queuename        THe name of the queue to publish to
  *
  *  @return 0 if an error occurs, 1 if the message is published successfully
  */
 int publish_cc_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
-        uint8_t *msg, uint16_t msglen, char *liid);
+        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename);
 
 /** Publishes an encoded CC onto a mediator RMQ queue.
  *
@@ -208,11 +210,12 @@ int publish_cc_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
  *  @param msg              A pointer to the start of the encoded CC
  *  @param msglen           The length of the encoded CC, in bytes
  *  @param liid             The LIID that the message belongs to
+ *  @param queuename        THe name of the queue to publish to
  *
  *  @return 0 if an error occurs, 1 if the message is published successfully
  */
 int publish_rawip_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
-        uint8_t *msg, uint16_t msglen, char *liid);
+        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename);
 
 /** Consumes CC records using an RMQ connection, writing them into the
  *  provided export buffer.

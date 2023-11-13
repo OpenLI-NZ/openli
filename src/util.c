@@ -189,7 +189,7 @@ endconnect:
     return sockfd;
 }
 
-int create_listener(char *addr, char *port, char *name) {
+int create_listener(char *addr, char *port, const char *name) {
     struct addrinfo hints, *res;
     int sockfd;
     int yes = 1;
@@ -415,7 +415,7 @@ int extract_ip_addresses(libtrace_packet_t *pkt, uint8_t *srcip,
             return -1;
         }
 
-        *ipfamily = AF_INET;
+        *ipfamily = AF_INET6;
         memcpy(srcip, &(ip6->ip_src.s6_addr), sizeof(struct in6_addr));
         memcpy(destip, &(ip6->ip_dst.s6_addr), sizeof(struct in6_addr));
     }
@@ -528,7 +528,7 @@ char *parse_iprange_string(char *ipr_str) {
  *  @return a pointer to the first character of the extracted LIID.
  */
 char *extract_liid_from_exported_msg(uint8_t *etsimsg,
-        uint16_t msglen, unsigned char *space, int maxspace,
+        uint64_t msglen, unsigned char *space, int maxspace,
         uint16_t *liidlen) {
 
     uint16_t l;

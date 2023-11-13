@@ -78,6 +78,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->outgoing = NULL;
     sync->incoming = NULL;
     sync->info = &(glob->sharedinfo);
+    sync->info_mutex = &(glob->config_mutex);
 
     sync->upcoming_intercept_events = NULL;
     sync->upcomingtimerfd = -1;
@@ -209,11 +210,11 @@ void clean_sync_data(collector_sync_t *sync) {
     free_all_voipintercepts(&(sync->knownvoips));
 
     if (sync->outgoing) {
-        destroy_net_buffer(sync->outgoing);
+        destroy_net_buffer(sync->outgoing, NULL);
     }
 
     if (sync->incoming) {
-        destroy_net_buffer(sync->incoming);
+        destroy_net_buffer(sync->incoming, NULL);
     }
 
     if (sync->radiusplugin) {
@@ -406,6 +407,8 @@ static int export_raw_sync_packet_content(access_plugin_t *p,
     openli_export_recv_t *msg;
     uint8_t *ipptr = NULL;
     uint16_t iplen;
+    struct timeval tv;
+    openli_pcap_header_t *pcap;
 
     int iteration = 0;
 
@@ -421,10 +424,25 @@ static int export_raw_sync_packet_content(access_plugin_t *p,
         msg->destid = ipint->common.destid;
         msg->data.rawip.liid = strdup(ipint->common.liid);
 
-        msg->data.rawip.ipcontent = ipptr;
-        msg->data.rawip.ipclen = iplen;
+        msg->data.rawip.ipcontent = malloc(iplen +
+                sizeof(openli_pcap_header_t));
+        memcpy(msg->data.rawip.ipcontent + sizeof(openli_pcap_header_t), ipptr,
+                iplen);
+        msg->data.rawip.ipclen = iplen + sizeof(openli_pcap_header_t);
         msg->data.rawip.seqno = seqno;
         msg->data.rawip.cin = cin;
+
+        /* XXX should probably add a plugin callback to get the timestamp
+         * for the packet, but since this code path is GTP specific and I'm
+         * planning to rewrite GTP handling soon, I'll just use 'now' as
+         * a substitute in the meantime.
+         */
+        gettimeofday(&tv, NULL);
+        pcap = (openli_pcap_header_t *)msg->data.rawip.ipcontent;
+        pcap->ts_sec = tv.tv_sec;
+        pcap->ts_usec = tv.tv_usec;
+        pcap->wirelen = iplen;
+        pcap->caplen = iplen;
         iteration ++;
 
         publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], msg);
@@ -1864,8 +1882,10 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
 
     int sockfd;
 
+    pthread_rwlock_rdlock(sync->info_mutex);
     sockfd = connect_socket(sync->info->provisionerip,
             sync->info->provisionerport, sync->instruct_fail, 0);
+    pthread_rwlock_unlock(sync->info_mutex);
 
     if (sockfd == -1) {
         sync->instruct_log = 0;
@@ -1967,8 +1987,8 @@ void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
     openli_export_recv_t *expmsg;
     int i;
 
-    destroy_net_buffer(sync->outgoing);
-    destroy_net_buffer(sync->incoming);
+    destroy_net_buffer(sync->outgoing, NULL);
+    destroy_net_buffer(sync->incoming, NULL);
 
     sync->outgoing = NULL;
     sync->incoming = NULL;

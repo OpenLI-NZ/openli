@@ -75,6 +75,7 @@ static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
         case OPENLI_EXPORT_UMTSIRI:
             return recvd->data.mobiri.liid;
         case OPENLI_EXPORT_RAW_SYNC:
+        case OPENLI_EXPORT_RAW_CC:
             return recvd->data.rawip.liid;
         case OPENLI_EXPORT_EMAILIRI:
             return recvd->data.emailiri.liid;
@@ -98,6 +99,7 @@ static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
         case OPENLI_EXPORT_UMTSIRI:
             return recvd->data.mobiri.cin;
         case OPENLI_EXPORT_RAW_SYNC:
+        case OPENLI_EXPORT_RAW_CC:
             return recvd->data.rawip.cin;
         case OPENLI_EXPORT_EMAILIRI:
             return recvd->data.emailiri.cin;
@@ -171,6 +173,7 @@ static inline void preencode_etsi_fields(seqtracker_thread_data_t *seqdata,
     intdetails.authcc = intstate->details.authcc;
     intdetails.delivcc = intstate->details.delivcc;
 
+    pthread_rwlock_rdlock(seqdata->colident_mutex);
     intdetails.operatorid = seqdata->colident->operatorid;
     intdetails.networkelemid = seqdata->colident->networkelemid;
     intdetails.intpointid = seqdata->colident->intpointid;
@@ -178,6 +181,7 @@ static inline void preencode_etsi_fields(seqtracker_thread_data_t *seqdata,
     intstate->preencoded = calloc(OPENLI_PREENCODE_LAST,
             sizeof(wandder_encode_job_t));
     etsili_preencode_static_fields(intstate->preencoded, &intdetails);
+    pthread_rwlock_unlock(seqdata->colident_mutex);
 }
 
 
@@ -387,7 +391,8 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 	if (recvd->type == OPENLI_EXPORT_IPMMCC ||
 			recvd->type == OPENLI_EXPORT_IPCC ||
             recvd->type == OPENLI_EXPORT_UMTSCC ||
-            recvd->type == OPENLI_EXPORT_EMAILCC) {
+            recvd->type == OPENLI_EXPORT_EMAILCC ||
+            recvd->type == OPENLI_EXPORT_RAW_CC) {
 	    job.seqno = cinseq->cc_seqno;
         cinseq->cc_seqno ++;
 
@@ -469,6 +474,7 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
                 case OPENLI_EXPORT_EMAILIRI:
                 case OPENLI_EXPORT_EMAILCC:
                 case OPENLI_EXPORT_RAW_SYNC:
+                case OPENLI_EXPORT_RAW_CC:
 					run_encoding_job(seqdata, job);
                     sincepurge ++;
                     break;

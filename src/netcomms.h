@@ -40,9 +40,20 @@
 #define OPENLI_COLLECTOR_MAGIC 0x00180014202042a8
 #define OPENLI_MEDIATOR_MAGIC 0x01153200d6f12905
 
-#define NETBUF_SPACE_REM(nbuf) (nbuf->alloced - (nbuf->appendptr - nbuf->buf))
-#define NETBUF_FRONT_FREE(nbuf) (nbuf->actptr - nbuf->buf)
-#define NETBUF_CONTENT_SIZE(nbuf) (nbuf->appendptr - nbuf->actptr)
+#define NETBUF_SPACE_REM(nbuf) \
+    ((nbuf->alloced >= (nbuf->appendptr - nbuf->buf)) ? \
+        (unsigned int)(nbuf->alloced - (nbuf->appendptr - nbuf->buf)) : \
+        (unsigned int) 0)
+
+#define NETBUF_FRONT_FREE(nbuf) \
+    ((nbuf->actptr >= nbuf->buf) ? \
+        (unsigned int)(nbuf->actptr - nbuf->buf) : \
+        (unsigned int) 0)
+
+#define NETBUF_CONTENT_SIZE(nbuf) \
+    ((nbuf->appendptr >= nbuf->actptr) ? \
+        (unsigned int)(nbuf->appendptr - nbuf->actptr) : \
+        (unsigned int) 0)
 
 #include "intercept.h"
 #include "agency.h"
@@ -115,6 +126,7 @@ typedef enum {
     OPENLI_PROTO_ANNOUNCE_EMAIL_TARGET,
     OPENLI_PROTO_WITHDRAW_EMAIL_TARGET,
     OPENLI_PROTO_ANNOUNCE_DEFAULT_EMAIL_COMPRESSION,
+    OPENLI_PROTO_RAWIP_CC,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -125,6 +137,9 @@ typedef struct net_buffer {
     int alloced;
     net_buffer_type_t buftype;
     SSL *ssl;
+    int unacked;
+    uint64_t last_tag;
+    amqp_channel_t rmq_channel;
 } net_buffer_t;
 
 typedef enum {
@@ -170,7 +185,7 @@ typedef enum {
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl);
 int fd_set_nonblock(int fd);
 int fd_set_block(int fd);
-void destroy_net_buffer(net_buffer_t *nb);
+void destroy_net_buffer(net_buffer_t *nb, amqp_connection_state_t amqp_state);
 
 int construct_netcomm_protocol_header(ii_header_t *hdr, uint32_t contentlen,
         uint16_t msgtype, uint64_t internalid, uint32_t *hdrlen);

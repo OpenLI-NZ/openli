@@ -144,8 +144,17 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
                 }
 
                 matched ++;
-                msg = create_ipcc_job(matchsess->cin, matchsess->common.liid,
-                        matchsess->common.destid, pkt, dir);
+                if (matchsess->common.targetagency == NULL ||
+                        strcmp(matchsess->common.targetagency, "pcapdisk") == 0)
+                {
+                    msg = create_rawip_cc_job(matchsess->common.liid,
+                        matchsess->common.destid, pkt);
+                } else {
+                    msg = create_ipcc_job(matchsess->cin,
+                        matchsess->common.liid, matchsess->common.destid, pkt,
+                        dir);
+                }
+
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
             }
         }
@@ -200,11 +209,17 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
                     }
 
                     *matched = ((*matched) + 1);
-                    msg = create_ipcc_job(sess->cin, sess->common.liid,
-                            sess->common.destid, pkt, 0);
-                    if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg)
-                    {
-                        msg->type = OPENLI_EXPORT_UMTSCC;
+                    if (sess->common.targetagency == NULL ||
+                            strcmp(sess->common.targetagency,"pcapdisk") == 0) {
+                        msg = create_rawip_cc_job(sess->common.liid,
+                            sess->common.destid, pkt);
+                    } else {
+                        msg = create_ipcc_job(sess->cin, sess->common.liid,
+                                sess->common.destid, pkt, 0);
+                        if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE &&
+                                msg) {
+                            msg->type = OPENLI_EXPORT_UMTSCC;
+                        }
                     }
                     if (msg != NULL) {
                         publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
@@ -284,10 +299,16 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             }
 
             matched ++;
-            msg = create_ipcc_job(sess->cin, sess->common.liid,
-                    sess->common.destid, pkt, 0);
-            if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg) {
-                msg->type = OPENLI_EXPORT_UMTSCC;
+            if (sess->common.targetagency == NULL ||
+                    strcmp(sess->common.targetagency, "pcapdisk") == 0) {
+                msg = create_rawip_cc_job(sess->common.liid,
+                        sess->common.destid, pkt);
+            } else {
+                msg = create_ipcc_job(sess->cin, sess->common.liid,
+                        sess->common.destid, pkt, 0);
+                if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg) {
+                    msg->type = OPENLI_EXPORT_UMTSCC;
+                }
             }
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
@@ -314,10 +335,16 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             }
 
             matched ++;
-            msg = create_ipcc_job(sess->cin, sess->common.liid,
-                    sess->common.destid, pkt, 1);
-            if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg) {
-                msg->type = OPENLI_EXPORT_UMTSCC;
+            if (sess->common.targetagency == NULL ||
+                    strcmp(sess->common.targetagency, "pcapdisk") == 0) {
+                msg = create_rawip_cc_job(sess->common.liid,
+                        sess->common.destid, pkt);
+            } else {
+                msg = create_ipcc_job(sess->cin, sess->common.liid,
+                        sess->common.destid, pkt, 1);
+                if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg) {
+                    msg->type = OPENLI_EXPORT_UMTSCC;
+                }
             }
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME

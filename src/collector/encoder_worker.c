@@ -271,7 +271,7 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
 }
 
 static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
-        openli_encoded_result_t *res) {
+        openli_encoded_result_t *res, uint16_t rawtype) {
 
     uint16_t liidlen, l;
 
@@ -296,7 +296,7 @@ static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
     res->ipclen = job->origreq->data.rawip.ipclen;
     res->header.magic = htonl(OPENLI_PROTO_MAGIC);
     res->header.bodylen = htons(res->msgbody->len);
-    res->header.intercepttype = htons(OPENLI_PROTO_RAWIP_SYNC);
+    res->header.intercepttype = htons(rawtype);
     res->header.internalid = 0;
 
     return 0;
@@ -488,7 +488,10 @@ static int encode_templated_umtsiri(openli_encoder_t *enc,
             (openli_mobiri_job_t *)&(job->origreq->data.mobiri);
     etsili_generic_t *np = NULL;
     char opid[6];
-    int opidlen = enc->shared->operatorid_len;
+    int opidlen;
+
+    pthread_rwlock_rdlock(enc->shared_mutex);
+    opidlen = enc->shared->operatorid_len;
 
     /* TODO maybe we could find a way to reuse this instead of creating
      * every time?
@@ -499,6 +502,7 @@ static int encode_templated_umtsiri(openli_encoder_t *enc,
 
     memcpy(opid, enc->shared->operatorid, opidlen);
     opid[opidlen] = '\0';
+    pthread_rwlock_unlock(enc->shared_mutex);
 
     np = create_etsili_generic(enc->freegenerics,
             UMTSIRI_CONTENTS_OPERATOR_IDENTIFIER, opidlen,
@@ -900,7 +904,9 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         }
 
         if (job.origreq->type == OPENLI_EXPORT_RAW_SYNC) {
-            encode_rawip(enc, &job, &(result[batch]));
+            encode_rawip(enc, &job, &(result[batch]), OPENLI_PROTO_RAWIP_SYNC);
+        } else if (job.origreq->type == OPENLI_EXPORT_RAW_CC) {
+            encode_rawip(enc, &job, &(result[batch]), OPENLI_PROTO_RAWIP_CC);
         } else {
 
             if ((x = encode_etsi(enc, &job, &(result[batch]))) <= 0) {

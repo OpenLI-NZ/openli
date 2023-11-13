@@ -45,6 +45,7 @@ typedef struct colsync_data {
 
     sync_thread_global_t *glob;
     collector_identity_t *info;
+    pthread_rwlock_t *info_mutex;
 
     int pubsockcount;
     int forwardcount;

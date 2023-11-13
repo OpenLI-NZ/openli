@@ -342,6 +342,8 @@ struct rtpstreaminf {
     char *invitecseq;
     char *byecseq;
 
+    uint8_t inviter[16];
+
     uint8_t skip_comfort;
     intercept_common_t common;
     voipintercept_t *parent;
@@ -405,7 +407,6 @@ void free_all_voipintercepts(voipintercept_t **vintercepts);
 void free_all_emailintercepts(emailintercept_t **mailintercepts);
 void free_all_rtpstreams(rtpstreaminf_t **streams);
 void free_all_ipsessions(ipsession_t **sessions);
-void free_all_emailsessions(emailsession_t **sessions);
 void free_all_vendmirror_intercepts(vendmirror_intercept_list_t **mirror_intercepts);
 void free_all_staticipsessions(staticipsession_t **statintercepts);
 
@@ -431,9 +432,6 @@ char *list_sip_targets(voipintercept_t *v, int maxchars);
 char *list_email_targets(emailintercept_t *m, int maxchars);
 
 sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
-        uint32_t cin);
-
-emailsession_t *create_emailsession(emailintercept_t *mailint, char *sessionid,
         uint32_t cin);
 
 rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin);

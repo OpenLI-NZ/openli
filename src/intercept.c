@@ -118,13 +118,6 @@ sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
     return newreg;
 }
 
-emailsession_t *create_emailsession(emailintercept_t *mailint, char *sessionid,
-        uint32_t cin) {
-
-    /* TODO */
-    return NULL;
-}
-
 rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
 
     rtpstreaminf_t *newcin = NULL;
@@ -693,11 +686,6 @@ void free_all_ipsessions(ipsession_t **sessions) {
         HASH_DELETE(hh, *sessions, s);
         free_single_ipsession(s);
     }
-}
-
-void free_all_emailsessions(emailsession_t **sessions) {
-    /* TODO */
-
 }
 
 int add_intercept_to_email_user_intercept_list(

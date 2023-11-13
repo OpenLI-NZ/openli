@@ -47,6 +47,7 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 coreserver.h coreserver.c collector/collector_push_messaging.c \
                 collector/collector_push_messaging.h \
 		collector/alushim_parser.c collector/alushim_parser.h \
+		collector/cisco_parser.c collector/cisco_parser.h \
                 collector/ipiri.c collector/ipiri.h \
 		collector/collector_sync_voip.c \
 		collector/collector_sync_voip.h collector/export_shared.h \

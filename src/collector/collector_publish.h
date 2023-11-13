@@ -58,6 +58,7 @@ enum {
     OPENLI_EXPORT_PROVISIONER_MESSAGE = 20,
     OPENLI_EXPORT_EMAILCC = 21,
     OPENLI_EXPORT_EMAILIRI = 22,
+    OPENLI_EXPORT_RAW_CC = 23,
 };
 
 /* This structure is also used for IPMMCCs since they require the same
@@ -191,6 +192,8 @@ openli_export_recv_t *create_ipcc_job(
         uint32_t cin, char *liid, uint32_t destid, libtrace_packet_t *pkt,
         uint8_t dir);
 
+openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
+        libtrace_packet_t *pkt);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

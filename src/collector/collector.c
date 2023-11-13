@@ -51,6 +51,7 @@
 #include "sipparsing.h"
 #include "alushim_parser.h"
 #include "jmirror_parser.h"
+#include "cisco_parser.h"
 #include "util.h"
 
 volatile int collector_halt = 0;
@@ -791,23 +792,78 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
         /* Is this from one of our ALU mirrors -- if yes, parse + strip it
          * for conversion to an ETSI record */
-        if (glob->alumirrors && check_alu_intercept(&(glob->sharedinfo), loc,
-                pkt, &pinfo, glob->alumirrors, loc->activemirrorintercepts)) {
-            forwarded = 1;
-            pthread_mutex_lock(&(glob->stats_mutex));
-            glob->stats.ipcc_created += 1;
-            pthread_mutex_unlock(&(glob->stats_mutex));
-            goto processdone;
+        if (glob->alumirrors) {
+            pthread_rwlock_rdlock(&(glob->config_mutex));
+            ret = check_alu_intercept(&(glob->sharedinfo), loc,
+                    pkt, &pinfo, glob->alumirrors,
+                    loc->activemirrorintercepts);
+            pthread_rwlock_unlock(&(glob->config_mutex));
+            if (ret > 0) {
+                forwarded = 1;
+                pthread_mutex_lock(&(glob->stats_mutex));
+                glob->stats.ipcc_created += 1;
+                pthread_mutex_unlock(&(glob->stats_mutex));
+                goto processdone;
+            }
+            if (ret < 0) {
+                goto processdone;
+            }
         }
 
-        if (glob->jmirrors && check_jmirror_intercept(&(glob->sharedinfo), loc,
-                pkt, &pinfo, glob->jmirrors, loc->activemirrorintercepts)) {
+        if (glob->jmirrors) {
+            pthread_rwlock_rdlock(&(glob->config_mutex));
+            ret = check_jmirror_intercept(&(glob->sharedinfo), loc,
+                    pkt, &pinfo, glob->jmirrors, loc->activemirrorintercepts);
+            pthread_rwlock_unlock(&(glob->config_mutex));
+            if (ret > 0) {
+                forwarded = 1;
+                pthread_mutex_lock(&(glob->stats_mutex));
+                glob->stats.ipcc_created += 1;
+                pthread_mutex_unlock(&(glob->stats_mutex));
+                goto processdone;
+            }
+            if (ret < 0) {
+                goto processdone;
+            }
+        }
 
-            forwarded = 1;
-            pthread_mutex_lock(&(glob->stats_mutex));
-            glob->stats.ipcc_created += 1;
-            pthread_mutex_unlock(&(glob->stats_mutex));
-            goto processdone;
+        if (glob->ciscomirrors) {
+            coreserver_t *cs;
+            if ((cs = match_packet_to_coreserver(glob->ciscomirrors,
+                    &pinfo)) != NULL) {
+                if (glob->sharedinfo.cisco_noradius) {
+                    pthread_rwlock_rdlock(&(glob->config_mutex));
+                    ret = generate_cc_from_cisco(
+                        &(glob->sharedinfo), loc, pkt, &pinfo,
+                        loc->activemirrorintercepts);
+                    pthread_rwlock_unlock(&(glob->config_mutex));
+                    if (ret > 0) {
+                        forwarded = 1;
+                        pthread_mutex_lock(&(glob->stats_mutex));
+                        glob->stats.ipcc_created += 1;
+                        pthread_mutex_unlock(&(glob->stats_mutex));
+                        goto processdone;
+                    }
+                    if (ret < 0) {
+                        goto processdone;
+                    }
+                } else {
+                    /* strip the cisco shim and just treat it like an
+                     * ordinary packet -- we'll instead rely on RADIUS
+                     * or some other session management protocol to tell
+                     * us whether we need to intercept this packet or not.
+                     */
+                    libtrace_packet_t *stripped;
+                    stripped = strip_cisco_mirror_header(pkt);
+                    if (stripped) {
+                        if (process_packet(trace, t, global, tls,
+                                stripped)) {
+                            trace_destroy_packet(stripped);
+                        }
+                    }
+                    goto processdone;
+                }
+            }
         }
 
         /* Is this a RADIUS packet? -- if yes, create a state update */
@@ -979,6 +1035,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
 
     trace_set_perpkt_threads(inp->trace, inp->threadcount);
     hash_radius_init_config(&(inp->hashradconf), 1);
+    inp->hashconfigured = 1;
 
     if (inp->hasher_apply == OPENLI_HASHER_BIDIR) {
         logger(LOG_INFO, "OpenLI: collector is using a bidirectional hasher for input %s", inp->uri);
@@ -1130,7 +1187,9 @@ static void clear_input(colinput_t *input) {
     if (input->filterstring) {
         free(input->filterstring);
     }
-    hash_radius_cleanup(&(input->hashradconf));
+    if (input->hashconfigured) {
+        hash_radius_cleanup(&(input->hashradconf));
+    }
 }
 
 static inline void init_sync_thread_data(collector_global_t *glob,
@@ -1247,6 +1306,14 @@ static void clear_global_config(collector_global_t *glob) {
         free(inp);
     }
 
+    if (glob->sipdebugfile) {
+        free(glob->sipdebugfile);
+    }
+
+    if (glob->default_email_domain) {
+        free(glob->default_email_domain);
+    }
+
     if (glob->sharedinfo.operatorid) {
         free(glob->sharedinfo.operatorid);
     }
@@ -1266,6 +1333,15 @@ static void clear_global_config(collector_global_t *glob) {
     if (glob->sharedinfo.provisionerport) {
         free(glob->sharedinfo.provisionerport);
     }
+    if (glob->alumirrors) {
+        free_coreserver_list(glob->alumirrors);
+    }
+    if (glob->jmirrors) {
+        free_coreserver_list(glob->jmirrors);
+    }
+    if (glob->ciscomirrors) {
+        free_coreserver_list(glob->ciscomirrors);
+    }
 
     if (glob->RMQ_conf.name) {
         free(glob->RMQ_conf.name);
@@ -1281,13 +1357,6 @@ static void clear_global_config(collector_global_t *glob) {
     }
 
     free_ssl_config(&(glob->sslconf));
-
-    if (glob->alumirrors) {
-        free_coreserver_list(glob->alumirrors);
-    }
-    if (glob->jmirrors) {
-        free_coreserver_list(glob->jmirrors);
-    }
 
     if (glob->emailconf.listenaddr) {
         free(glob->emailconf.listenaddr);
@@ -1406,6 +1475,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->sharedinfo.operatorid_len = 0;
     glob->sharedinfo.networkelemid = NULL;
     glob->sharedinfo.networkelemid_len = 0;
+    glob->sharedinfo.cisco_noradius = 0;       // defaults to "expect RADIUS"
     glob->total_col_threads = 0;
     glob->collocals = NULL;
     glob->expired_inputs = NULL;
@@ -1415,6 +1485,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->sharedinfo.provisionerport = NULL;
     glob->alumirrors = NULL;
     glob->jmirrors = NULL;
+    glob->ciscomirrors = NULL;
     glob->sipdebugfile = NULL;
     glob->nextloc = 0;
     glob->syncgenericfreelist = NULL;
@@ -1576,6 +1647,7 @@ static int reload_collector_config(collector_global_t *glob,
 
     collector_global_t newstate;
     int i, tlschanged, ret;
+    coreserver_t *tmp;
 
     ret = 0;
 
@@ -1592,6 +1664,7 @@ static int reload_collector_config(collector_global_t *glob,
         goto endreload;
     }
 
+    pthread_rwlock_wrlock(&(glob->config_mutex));
     if (strcmp(newstate.sharedinfo.provisionerip,
                 glob->sharedinfo.provisionerip) != 0 ||
             strcmp(newstate.sharedinfo.provisionerport,
@@ -1608,6 +1681,7 @@ static int reload_collector_config(collector_global_t *glob,
         logger(LOG_INFO,
                 "OpenLI collector: provisioner socket configuration is unchanged.");
     }
+    pthread_rwlock_unlock(&(glob->config_mutex));
 
     if (tlschanged) {
         if (sync->instruct_fd != -1) {
@@ -1638,6 +1712,22 @@ static int reload_collector_config(collector_global_t *glob,
      * effort to check for a change than it is worth and there are no
      * flow-on effects to a change.
      */
+
+    tmp = glob->alumirrors;
+    glob->alumirrors = newstate.alumirrors;
+    free_coreserver_list(tmp);
+    newstate.alumirrors = NULL;
+
+    tmp = glob->jmirrors;
+    glob->jmirrors = newstate.jmirrors;
+    free_coreserver_list(tmp);
+    newstate.jmirrors = NULL;
+
+    tmp = glob->ciscomirrors;
+    glob->ciscomirrors = newstate.ciscomirrors;
+    free_coreserver_list(tmp);
+    newstate.ciscomirrors = NULL;
+
     if (glob->sharedinfo.operatorid) {
         free(glob->sharedinfo.operatorid);
     }
@@ -1658,6 +1748,8 @@ static int reload_collector_config(collector_global_t *glob,
     glob->sharedinfo.intpointid = newstate.sharedinfo.intpointid;
     glob->sharedinfo.intpointid_len = newstate.sharedinfo.intpointid_len;
     newstate.sharedinfo.intpointid = NULL;
+
+    glob->sharedinfo.cisco_noradius = newstate.sharedinfo.cisco_noradius;
 
     pthread_rwlock_unlock(&(glob->config_mutex));
 
@@ -2001,6 +2093,7 @@ int main(int argc, char *argv[]) {
         glob->seqtrackers[i].zmq_recvpublished = NULL;
         glob->seqtrackers[i].intercepts = NULL;
         glob->seqtrackers[i].colident = &(glob->sharedinfo);
+        glob->seqtrackers[i].colident_mutex = &(glob->config_mutex);
         glob->seqtrackers[i].encoding_method = glob->encoding_method;
         pthread_create(&(glob->seqtrackers[i].threadid), NULL,
                 start_seqtracker_thread, (void *)&(glob->seqtrackers[i]));
@@ -2018,6 +2111,7 @@ int main(int argc, char *argv[]) {
 
         glob->encoders[i].workerid = i;
         glob->encoders[i].shared = &(glob->sharedinfo);
+        glob->encoders[i].shared_mutex = &(glob->config_mutex);
         glob->encoders[i].encoder = NULL;
         glob->encoders[i].freegenerics = NULL;
         glob->encoders[i].saved_intercept_templates = NULL;

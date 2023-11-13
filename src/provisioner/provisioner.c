@@ -57,14 +57,16 @@ volatile int provisioner_halt = 0;
 volatile int reload_config = 0;
 
 static void halt_signal(int signal) {
+    (void) signal;
     provisioner_halt = 1;
 }
 
 static void reload_signal(int signal) {
+    (void) signal;
     reload_config = 1;
 }
 
-static inline char *get_event_description(prov_epoll_ev_t *pev) {
+static inline const char *get_event_description(prov_epoll_ev_t *pev) {
     if (pev->fdtype == PROV_EPOLL_MEDIATOR) return "mediator";
     if (pev->fdtype == PROV_EPOLL_COLLECTOR) return "collector";
     if (pev->fdtype == PROV_EPOLL_SIGNAL) return "signal";
@@ -238,7 +240,7 @@ int map_intercepts_to_leas(prov_intercept_conf_t *conf) {
 
 }
 
-void free_openli_mediator(openli_mediator_t *med) {
+static void free_openli_mediator(openli_mediator_t *med) {
     if (!med) {
         return;
     }
@@ -873,9 +875,8 @@ static int push_all_voipintercepts(provision_state_t *state,
     return 0;
 }
 
-static int push_all_emailintercepts(provision_state_t *state,
-        emailintercept_t *mailintercepts, net_buffer_t *nb,
-        prov_agency_t *agencies) {
+static int push_all_emailintercepts(emailintercept_t *mailintercepts,
+        net_buffer_t *nb, prov_agency_t *agencies) {
 
     emailintercept_t *m;
     prov_agency_t *lea;
@@ -1060,7 +1061,7 @@ static int respond_collector_auth(provision_state_t *state,
         return -1;
     }
 
-    if (push_all_emailintercepts(state,
+    if (push_all_emailintercepts(
             state->interceptconf.emailintercepts, outgoing,
             state->interceptconf.leas) == -1) {
         logger(LOG_INFO,
@@ -1495,7 +1496,7 @@ int start_mediator_listener(provision_state_t *state) {
     return sockfd;
 }
 
-static int process_signal(provision_state_t *state, int sigfd) {
+static int process_signal(int sigfd) {
 
     struct signalfd_siginfo si;
     int ret;
@@ -1682,7 +1683,7 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
                     "OpenLI Provisioner: main epoll timer has failed.");
             return -1;
         case PROV_EPOLL_SIGNAL:
-            ret = process_signal(state, pev->fd);
+            ret = process_signal(pev->fd);
             break;
         case PROV_EPOLL_COLLECTOR:
             if (ev->events & EPOLLRDHUP) {

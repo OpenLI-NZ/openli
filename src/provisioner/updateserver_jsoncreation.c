@@ -238,8 +238,7 @@ static json_object *convert_voipintercept_to_json(voipintercept_t *vint) {
     return jobj;
 }
 
-static json_object *convert_coreserver_to_json(coreserver_t *cs,
-        uint8_t srvtype) {
+static json_object *convert_coreserver_to_json(coreserver_t *cs) {
     json_object *jobj;
     json_object *ipaddr, *port;
 
@@ -254,7 +253,7 @@ static json_object *convert_coreserver_to_json(coreserver_t *cs,
     return jobj;
 }
 
-struct json_object *get_openli_version() {
+struct json_object *get_openli_version(void) {
     json_object *jobj, *major, *minor, *revision, *full;
     int a,b,c;
 
@@ -276,7 +275,7 @@ struct json_object *get_openli_version() {
     return jobj;
 }
 
-json_object *get_provisioner_options(update_con_info_t *cinfo,
+json_object *get_provisioner_options(update_con_info_t *cinfo UNUSED,
         provision_state_t *state) {
 
     json_object *jobj;
@@ -299,7 +298,7 @@ json_object *get_provisioner_options(update_con_info_t *cinfo,
     return jobj;
 }
 
-json_object *get_default_radius(update_con_info_t *cinfo,
+json_object *get_default_radius(update_con_info_t *cinfo UNUSED,
         provision_state_t *state) {
 
     default_radius_user_t *dfr, *tmp;
@@ -314,8 +313,8 @@ json_object *get_default_radius(update_con_info_t *cinfo,
     return jarray;
 }
 
-json_object *get_coreservers(update_con_info_t *cinfo, provision_state_t *state,
-        uint8_t srvtype) {
+json_object *get_coreservers(update_con_info_t *cinfo UNUSED,
+        provision_state_t *state, uint8_t srvtype) {
 
     json_object *jobj, *jarray;
     coreserver_t *cs, *tmp, *toiter;
@@ -345,15 +344,15 @@ json_object *get_coreservers(update_con_info_t *cinfo, provision_state_t *state,
 
     jarray = json_object_new_array();
     HASH_ITER(hh, toiter, cs, tmp) {
-        jobj = convert_coreserver_to_json(cs, srvtype);
+        jobj = convert_coreserver_to_json(cs);
         json_object_array_add(jarray, jobj);
     }
 
     return jarray;
 }
 
-json_object *get_agency(update_con_info_t *cinfo, provision_state_t *state,
-        char *target) {
+json_object *get_agency(update_con_info_t *cinfo UNUSED,
+        provision_state_t *state, char *target) {
 
     prov_agency_t *found, *tmp;
     json_object *jobj, *jagency;
@@ -384,7 +383,7 @@ json_object *get_agency(update_con_info_t *cinfo, provision_state_t *state,
 
 }
 
-json_object *get_voip_intercept(update_con_info_t *cinfo,
+json_object *get_voip_intercept(update_con_info_t *cinfo UNUSED,
         provision_state_t *state, char *target) {
 
     voipintercept_t *vint, *tmp;
@@ -410,7 +409,7 @@ json_object *get_voip_intercept(update_con_info_t *cinfo,
     return jarray;
 }
 
-json_object *get_email_intercept(update_con_info_t *cinfo,
+json_object *get_email_intercept(update_con_info_t *cinfo UNUSED,
         provision_state_t *state, char *target) {
 
     emailintercept_t *mailint, *tmp;
@@ -436,7 +435,7 @@ json_object *get_email_intercept(update_con_info_t *cinfo,
     return jarray;
 }
 
-json_object *get_ip_intercept(update_con_info_t *cinfo,
+json_object *get_ip_intercept(update_con_info_t *cinfo UNUSED,
         provision_state_t *state, char *target) {
 
     ipintercept_t *ipint, *tmp;
