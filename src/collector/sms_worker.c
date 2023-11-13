@@ -64,7 +64,6 @@ static int update_modified_sms_voip_intercept(openli_sms_worker_t *state,
         r = -1;
     }
 
-    printf("DEVDEBUG: SMS worker has updated VINT %s\n", found->common.liid);
     free_single_voipintercept(decode);
     return r;
 
@@ -80,7 +79,6 @@ static void remove_sms_voip_intercept(openli_sms_worker_t *state,
      * lookup table, unlike RADIUS usernames or email addresses.
      */
     HASH_DELETE(hh_liid, state->voipintercepts, vint);
-    printf("DEVDEBUG: SMS worker has removed VINT %s\n", vint->common.liid);
     free_single_voipintercept(vint);
 }
 
@@ -235,6 +233,7 @@ static int sms_worker_process_packet(openli_sms_worker_t *state) {
 
     openli_state_update_t recvd;
     int rc;
+    char *callid;
 
     do {
         rc = zmq_recv(state->zmq_colthread_recvsock, &recvd, sizeof(recvd),
@@ -247,6 +246,31 @@ static int sms_worker_process_packet(openli_sms_worker_t *state) {
                     "OpenLI: error while receiving packet in SMS worker thread %d: %s",
                     state->workerid, strerror(errno));
             return -1;
+        }
+
+        if (recvd.type != OPENLI_UPDATE_SMS_SIP) {
+            logger(LOG_INFO,
+                    "OpenLI: SMS worker thread %d received unexpected update type %u",
+                    state->workerid, recvd.type);
+            goto donepkt;
+        }
+
+        if (state->sipparser == NULL) {
+            state->sipparser = (openli_sip_parser_t *)calloc(1,
+                    sizeof(openli_sip_parser_t));
+        }
+
+        if (parse_sip_content(state->sipparser, recvd.data.sip.content,
+                    recvd.data.sip.contentlen) < 0) {
+            goto donepkt;
+        }
+
+        callid = get_sip_callid(state->sipparser);
+        printf("DEVDEBUG: callid: %s\n", callid);
+        if (strncmp(recvd.data.sip.content, "MESSAGE ", 8) == 0) {
+            printf("DEVDEBUG: %d MESSAGE!\n", state->workerid);
+        } else {
+            printf("DEVDEBUG: %d not a MESSAGE\n", state->workerid);
         }
 
         /* TODO
@@ -263,8 +287,10 @@ static int sms_worker_process_packet(openli_sms_worker_t *state) {
          *
          * if intercepted, update timestamp of last session activity
          */
-
-         trace_destroy_packet(recvd.data.pkt);
+donepkt:
+        if (recvd.type == OPENLI_UPDATE_SMS_SIP && recvd.data.sip.content) {
+            free(recvd.data.sip.content);
+        }
     } while (rc > 0);
     return 0;
 }
@@ -414,7 +440,6 @@ static void sms_worker_main(openli_sms_worker_t *state) {
 
         if (topoll[2].revents & ZMQ_POLLIN) {
             /* expiry check is due for all known call-ids */
-            logger(LOG_INFO, "DEVDEBUG: checking for expired SMS call IDs");
             topoll[2].revents = 0;
 
             purgetimer.fdtype = 0;
@@ -428,12 +453,32 @@ static void sms_worker_main(openli_sms_worker_t *state) {
     free(topoll);
 }
 
+static void free_all_sip_callids(openli_sms_worker_t *state) {
+
+    callid_intercepts_t *iter, *tmp;
+    voipintercept_t *vint, *tmp2;
+
+    HASH_ITER(hh, state->known_callids, iter, tmp) {
+        HASH_ITER(hh_liid, iter->intlist, vint, tmp2) {
+            /* vint is just a reference into state->voipintercepts */
+            HASH_DELETE(hh_liid, iter->intlist, vint);
+        }
+        if (iter->callid) {
+            free((void *)iter->callid);
+        }
+        HASH_DELETE(hh, state->known_callids, iter);
+    }
+
+}
+
 void *start_sms_worker_thread(void *arg) {
     openli_sms_worker_t *state = (openli_sms_worker_t *)arg;
     char sockname[256];
     int zero = 0, x;
     openli_state_update_t recvd;
 
+    state->sipparser = NULL;
+    state->known_callids = NULL;
     state->zmq_pubsocks = calloc(state->tracker_threads, sizeof(void *));
 
     init_zmq_socket_array(state->zmq_pubsocks, state->tracker_threads,
@@ -484,9 +529,14 @@ haltsmsworker:
     logger(LOG_INFO, "OpenLI: halting SMS processing thread %d",
             state->workerid);
 
+    if (state->sipparser) {
+        release_sip_parser(state->sipparser);
+    }
+
     zmq_close(state->zmq_ii_sock);
     zmq_close(state->zmq_colthread_recvsock);
 
+    free_all_sip_callids(state);
     free_all_voipintercepts(&(state->voipintercepts));
     clear_zmq_socket_array(state->zmq_pubsocks, state->tracker_threads);
 

@@ -109,6 +109,34 @@ char *get_sip_contents(openli_sip_parser_t *p, uint16_t *siplen) {
     return p->sipmessage + p->sipoffset;
 }
 
+int parse_sip_content(openli_sip_parser_t *p, uint8_t *sipcontent,
+        uint16_t contentlen) {
+
+    int ret;
+    /* sipcontent MUST be a complete SIP message -- so only use this
+     * method on a SIP message that has already been through a parser
+     * instance (i.e. already been reassembled and then had
+     * get_sip_contents() called on it).
+     */
+
+    if (p->osip) {
+        osip_message_free(p->osip);
+        p->osip = NULL;
+    }
+
+    if (p->sdp) {
+        sdp_message_free(p->sdp);
+        p->sdp = NULL;
+    }
+
+    osip_message_init(&(p->osip));
+    ret = osip_message_parse(p->osip, (const char *)sipcontent, contentlen);
+    if (ret != 0) {
+        return -1;
+    }
+    return 1;
+}
+
 int parse_next_sip_message(openli_sip_parser_t *p,
         libtrace_packet_t *packet) {
 

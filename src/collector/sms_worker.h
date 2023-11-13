@@ -30,6 +30,14 @@
 #include "intercept.h"
 #include "collector_base.h"
 #include "collector_util.h"
+#include "sipparsing.h"
+
+typedef struct callid_intercept {
+    const char *callid;
+
+    voipintercept_t *intlist;
+    UT_hash_handle hh;
+} callid_intercepts_t;
 
 typedef struct openli_sms_worker {
     /* The global zeromq context for the entire program */
@@ -59,6 +67,14 @@ typedef struct openli_sms_worker {
 
     /* Set of all the VoIP intercepts announced to this collector */
     voipintercept_t *voipintercepts;
+
+    /* SIP Parser instance for processing SMS over SIP traffic */
+    openli_sip_parser_t *sipparser;
+
+    /* Mapping of SMS "SIP call IDs" to a list of intercepts that require
+     * those SMS sessions to be intercepted.
+     */
+    callid_intercepts_t *known_callids;
 } openli_sms_worker_t;
 
 void *start_sms_worker_thread(void *arg);

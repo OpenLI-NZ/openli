@@ -91,12 +91,21 @@ typedef struct openli_intersync_msg {
     uint16_t msglen;
 } PACKED openli_intersync_msg_t;
 
+typedef struct openli_sip_content {
+    uint8_t *content;
+    uint16_t contentlen;
+    uint8_t ipsrc[16];
+    uint8_t ipdest[16];
+    int ipfamily;
+} PACKED openli_sip_content_t;
+
 typedef struct openli_state_msg {
 
     uint8_t type;
     union {
         libtrace_message_queue_t *replyq;
         libtrace_packet_t *pkt;
+        openli_sip_content_t sip;
     } data;
 
 } PACKED openli_state_update_t;
