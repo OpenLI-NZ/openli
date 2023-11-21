@@ -40,7 +40,9 @@ static inline email_user_intercept_list_t *is_address_interceptable(
         openli_email_worker_t *state, const char *emailaddr) {
 
     email_user_intercept_list_t *active = NULL;
-
+    if (emailaddr == NULL) {
+        return active;
+    }
     HASH_FIND(hh, state->alltargets, emailaddr, strlen(emailaddr), active);
     return active;
 }
