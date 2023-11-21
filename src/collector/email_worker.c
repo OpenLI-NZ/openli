@@ -39,6 +39,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <Judy.h>
+#include <b64/cencode.h>
 
 #include "util.h"
 #include "logger.h"
@@ -1508,6 +1509,135 @@ haltemailworker:
     }
 
     pthread_exit(NULL);
+}
+
+/** Utility functions for the protocol parsers
+ *
+ *  ==========================================
+ */
+
+void mask_plainauth_creds(char *mailbox, char *reencoded, int buflen) {
+    char input[2048];
+    char *ptr;
+    base64_encodestate e;
+    int spaces, toencode, cnt;
+
+    /* reencode authtoken with replaced username and password */
+    base64_init_encodestate(&e);
+    snprintf(input, 2048, "%s XXX XXX", mailbox);
+    toencode = strlen(input);
+    ptr = input;
+    spaces = 0;
+
+    while(spaces < 2) {
+        if (*ptr == '\0') {
+            break;
+        }
+
+        if (*ptr == ' ') {
+            *ptr = '\0';
+            spaces ++;
+        }
+        ptr ++;
+    }
+
+    /* TODO try not to walk off the end of reencoded -- very unlikely, given
+     * that we have 2048 bytes of space but you never know...
+     */
+    ptr = reencoded;
+    cnt = base64_encode_block(input, toencode, ptr, &e);
+
+    ptr += cnt;
+    cnt = base64_encode_blockend(ptr, &e);
+
+    ptr += cnt;
+    /* libb64 likes to add a newline to the end of its encodings, so make
+     * sure we strip it if one is present.
+     */
+    if (*(ptr - 1) == '\n') {
+        ptr--;
+    }
+
+    *ptr = '\r'; ptr++;
+    *ptr = '\n'; ptr++;
+    *ptr = '\0'; ptr++;
+}
+
+int get_email_authentication_type(char *authmsg, const char *sesskey,
+        openli_email_auth_type_t *at_code, uint8_t is_imap) {
+
+    char *saveptr;
+    char *tag = NULL;
+    char *comm = NULL;
+    char *authtype = NULL;
+    char *lineend = NULL;
+    char *next = NULL;
+    int moveahead = 0;
+
+    lineend = strstr(authmsg, "\r\n");
+    if (lineend == NULL) {
+        return 0;
+    }
+
+    if (is_imap) {
+        tag = strtok_r(authmsg, " ", &saveptr);
+        if (!tag) {
+            logger(LOG_INFO, "OpenLI: unable to derive tag from Email AUTHENTICATE command");
+            return -1;
+        }
+        next = NULL;
+    } else {
+        next = authmsg;
+    }
+
+    comm = strtok_r(next, " ", &saveptr);
+    if (!comm) {
+        logger(LOG_INFO, "OpenLI: unable to derive command from Email AUTHENTICATE command");
+        return -1;
+    }
+
+    authtype = strtok_r(NULL,  " \r\n", &saveptr);
+
+    if (!authtype) {
+        logger(LOG_INFO, "OpenLI: unable to derive authentication type from Email AUTHENTICATE command");
+        return -1;
+    }
+
+    if (strcasecmp(authtype, "PLAIN") == 0) {
+        *at_code = OPENLI_EMAIL_AUTH_PLAIN;
+        moveahead = (5 + (authtype - authmsg));
+
+        if (lineend == authtype + 5) {
+            moveahead += 2;
+        } else {
+            moveahead += 1;
+        }
+    } else if (strcasecmp(authtype, "LOGIN") == 0) {
+        *at_code = OPENLI_EMAIL_AUTH_LOGIN;
+        moveahead = (5 + (authtype - authmsg));
+
+        if (lineend == authtype + 5) {
+            moveahead += 2;
+        } else {
+            moveahead += 1;
+        }
+    } else if (strcasecmp(authtype, "GSSAPI") == 0) {
+        *at_code = OPENLI_EMAIL_AUTH_GSSAPI;
+        moveahead = (6 + (authtype - authmsg));
+
+        if (lineend == authtype + 6) {
+            moveahead += 2;
+        } else {
+            moveahead += 1;
+        }
+
+    } else {
+        logger(LOG_INFO, "OpenLI: unsupported Email authentication type '%s' -- will not be able to derive mailbox owner for session %s",
+                authtype, sesskey);
+        return -1;
+    }
+
+    return moveahead;
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

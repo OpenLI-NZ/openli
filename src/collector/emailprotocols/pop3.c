@@ -28,6 +28,7 @@
 #include <string.h>
 #include <assert.h>
 #include <regex.h>
+#include <b64/cdecode.h>
 
 #include "email_worker.h"
 #include "logger.h"
@@ -93,6 +94,9 @@ typedef struct pop3session {
     int command_end;
     int reply_start;
 
+    int auth_read_from;
+    openli_email_auth_type_t auth_type;
+
     char *mailbox;
     char *mail_sender;
     char *password_content;
@@ -155,6 +159,168 @@ static int decode_login_username_command(emailsession_t *sess,
     add_email_participant(sess, pop3sess->mailbox, 0);
     free(usermsg);
     return 1;
+}
+
+static int update_auth_command(pop3_session_t *pop3sess, char *replace,
+        const char *origtoken, int origtoklen, const char *sesskey) {
+
+    char *ptr;
+    int replacelen;
+
+    ptr = strstr((const char *)(pop3sess->contbuffer +
+            pop3sess->auth_read_from), origtoken);
+    if (!ptr) {
+        logger(LOG_INFO, "OpenLI: cannot find original auth token for POP3 AUTH command, session %s", sesskey);
+        return -1;
+    }
+
+    replacelen = strlen(replace);
+    if (replacelen + 2 > origtoklen) {
+        logger(LOG_INFO, "OpenLI: cannot replace original auth token for POP3 AUTH command -- new token is longer than the original (session %s)", sesskey);
+        return 0;
+    }
+
+    memcpy(ptr, replace, replacelen);
+    ptr += replacelen;
+    *ptr = '\r'; ptr ++;
+    *ptr = '\n'; ptr ++;
+
+    /* wipe any remaining original token bytes, just to be safe */
+    memset(ptr, 0, origtoklen - (replacelen + 2));
+
+    pop3sess->command_end -= (origtoklen - (replacelen + 2));
+
+    return 1;
+}
+
+static int decode_plain_auth_content(char *authmsg, pop3_session_t *pop3sess,
+        emailsession_t *sess) {
+
+    char decoded[2048];
+    char reencoded[2048];
+    char *ptr;
+    int cnt, r;
+    char *crlf;
+    base64_decodestate s;
+
+    if (*authmsg == '\0') {
+        pop3sess->last_command_type = OPENLI_POP3_COMMAND_NONE;
+        sess->currstate = OPENLI_POP3_STATE_AUTH;
+        return 0;
+    }
+
+    crlf = strstr(authmsg, "\r\n");
+    if (crlf == NULL) {
+        return 0;
+    }
+
+    /* auth plain can be split across two messages with a
+     * "+" from the server in between :( */
+
+    if (*authmsg == '+') {
+        /* Client has not yet sent the auth token, so this line is
+         * the server indicating that it is waiting for the token.
+         * Skip the "+" line and remain in auth command state until
+         * the token arrives.
+         */
+        pop3sess->auth_read_from += ((crlf - authmsg) + 2);
+        sess->server_octets += ((crlf - authmsg) + 2);
+        return 0;
+    }
+
+    base64_init_decodestate(&s);
+    cnt = base64_decode_block(authmsg, strlen(authmsg), decoded, &s);
+    if (cnt == 0) {
+        return 0;
+    }
+    decoded[cnt] = '\0';
+
+    if (decoded[0] == '\0') {
+        ptr = decoded + 1;
+    } else {
+        ptr = decoded;
+    }
+    /* username and password are also inside 'decoded', each term is
+     * separated by null bytes (e.g. <mailbox> \0 <username> \0 <password>)
+     */
+    pop3sess->mailbox = strdup(ptr);
+    add_email_participant(sess, pop3sess->mailbox, 0);
+
+    /* replace encoded credentials, if requested by the user */
+    if (sess->mask_credentials) {
+        mask_plainauth_creds(pop3sess->mailbox, reencoded, 2048);
+        /* replace saved command with re-encoded auth token */
+        r = update_auth_command(pop3sess, reencoded, authmsg, crlf - authmsg,
+                sess->key);
+        if (r < 0) {
+            return r;
+        }
+        sess->client_octets += strlen(reencoded);
+    } else {
+        sess->client_octets += strlen(authmsg);
+    }
+
+    return 1;
+
+
+}
+
+static inline char *clone_authentication_message(pop3_session_t *pop3sess,
+        int msglen) {
+    char *authmsg;
+    authmsg = calloc(msglen + 1, sizeof(uint8_t));
+    memcpy(authmsg, pop3sess->contbuffer + pop3sess->auth_read_from, msglen);
+    return authmsg;
+}
+
+static int decode_auth_command(emailsession_t *sess, pop3_session_t *pop3sess) {
+    /* this command is essentially a clone of the IMAP AUTH command, so
+     * we can handle it using very similar code...
+     */
+
+    char *authmsg;
+    int msglen, r;
+
+    while (1) {
+        if (pop3sess->auth_read_from >= pop3sess->contbufused) {
+            pop3sess->last_command_type = OPENLI_POP3_COMMAND_NONE;
+            pop3sess->command_start = 0;
+            pop3sess->reply_start = 0;
+            return 0;
+        }
+        msglen = pop3sess->contbufread - pop3sess->auth_read_from;
+        authmsg = clone_authentication_message(pop3sess, msglen);
+
+        if (pop3sess->auth_type == OPENLI_EMAIL_AUTH_NONE) {
+            r = get_email_authentication_type(authmsg, sess->key,
+                    &(pop3sess->auth_type), 0);
+            if (r > 0) {
+                sess->client_octets -= msglen;
+                sess->client_octets += r;
+                pop3sess->auth_read_from += r;
+            }
+            free(authmsg);
+            if (r < 0) {
+                sess->currstate = OPENLI_POP3_STATE_IGNORING;
+            }
+            if (r <= 0) {
+                break;
+            }
+            continue;
+        }
+
+        /* TODO support other AUTH types? */
+        if (pop3sess->auth_type == OPENLI_EMAIL_AUTH_PLAIN) {
+            r = decode_plain_auth_content(authmsg, pop3sess, sess);
+            free(authmsg);
+            return r;
+        } else {
+            free(authmsg);
+            return -1;
+        }
+    }
+    return 1;
+
 }
 
 static int decode_login_apop_command(emailsession_t *sess,
@@ -359,6 +525,7 @@ static int parse_pop3_command(pop3_session_t *pop3sess) {
     }
     else if (strncmp(comm_copy, "AUTH ", 5) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_AUTH;
+        pop3sess->auth_read_from = pop3sess->command_start;
     }
     else if (strncmp(comm_copy, "UIDL", 4) == 0) {
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_OTHER_MULTI;
@@ -565,6 +732,9 @@ static int handle_client_command(emailsession_t *sess,
         }
     } else if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_AUTH) {
         sess->currstate = OPENLI_POP3_STATE_AUTH;
+        if (decode_auth_command(sess, pop3sess) < 0) {
+            return -1;
+        }
     } else {
         sess->currstate = OPENLI_POP3_STATE_WAITING_SERVER;
     }
@@ -819,6 +989,8 @@ int update_pop3_session_by_ingestion(openli_email_worker_t *state,
         pop3sess->contbufread = 0;
         pop3sess->contbufsize = 2048;
         pop3sess->auth_state = OPENLI_POP3_INIT;
+        pop3sess->auth_type = OPENLI_EMAIL_AUTH_NONE;
+        pop3sess->auth_read_from = 0;
         pop3sess->last_command_type = OPENLI_POP3_COMMAND_NONE;
 
         pop3sess->client_port = strdup(cap->remote_port);

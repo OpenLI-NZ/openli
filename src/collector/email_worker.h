@@ -69,6 +69,14 @@ typedef enum {
 } openli_imap_status_t;
 
 typedef enum {
+    OPENLI_EMAIL_AUTH_NONE,
+    OPENLI_EMAIL_AUTH_PLAIN,
+    OPENLI_EMAIL_AUTH_LOGIN,
+    OPENLI_EMAIL_AUTH_GSSAPI,
+    OPENLI_EMAIL_AUTH_OTHER,
+} openli_email_auth_type_t;
+
+typedef enum {
     OPENLI_SMTP_STATE_INIT = 0,
     OPENLI_SMTP_STATE_EHLO,
     OPENLI_SMTP_STATE_EHLO_RESPONSE,
@@ -167,10 +175,10 @@ void free_captured_email(openli_email_captured_t *cap);
 void free_smtp_session_state(emailsession_t *sess, void *smtpstate);
 int update_smtp_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
-void free_imap_session_state(emailsession_t *sess, void *smtpstate);
+void free_imap_session_state(emailsession_t *sess, void *imapstate);
 int update_imap_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
-void free_pop3_session_state(emailsession_t *sess, void *smtpstate);
+void free_pop3_session_state(emailsession_t *sess, void *pop3state);
 int update_pop3_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
 
@@ -185,6 +193,10 @@ void replace_email_session_serveraddr(emailsession_t *sess,
         char *server_ip, char *server_port);
 void replace_email_session_clientaddr(emailsession_t *sess,
         char *client_ip, char *client_port);
+
+int get_email_authentication_type(char *authmsg, const char *sesskey,
+        openli_email_auth_type_t *at_code, uint8_t is_imap);
+void mask_plainauth_creds(char *mailbox, char *reencoded, int buflen);
 
 /* Defined in emailiri.c */
 int generate_email_partial_download_success_iri(openli_email_worker_t *state,
