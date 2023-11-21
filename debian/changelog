@@ -1,3 +1,14 @@
+openli (1.1.4-1~rc01) unstable; urgency=medium
+
+  * Fix oversight preventing POP3 identities from being extracted for
+    sessions using the AUTH command.
+  * Email: fix segfault if no user identity has been found for an otherwise
+    authenticated session.
+  * IMAP: fix bug where PLAIN AUTH credentials could be replaced with
+    garbage if the `maskimapcreds` configuration option was disabled.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Tue, 21 Nov 2023 16:01:39 +1300
+
 openli (1.1.3-1) unstable; urgency=high
 
   * Fix poor mediator throughput caused by suboptimal RabbitMQ
