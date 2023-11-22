@@ -165,6 +165,7 @@ typedef struct collector_identity {
     int intpointid_len;
 
     uint8_t cisco_noradius;
+    uint8_t trust_sip_from;
 
 } collector_identity_t;
 

@@ -1303,7 +1303,8 @@ static int global_parser(void *arg, yaml_document_t *doc,
             strcasecmp((char *)key->data.scalar.value,
                     "SIPallowfromident") == 0) {
 
-       glob->trust_sip_from = check_onoff((char *)value->data.scalar.value);
+       glob->sharedinfo.trust_sip_from =
+                check_onoff((char *)value->data.scalar.value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&

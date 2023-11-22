@@ -32,12 +32,21 @@
 #include "collector_util.h"
 #include "sipparsing.h"
 
+typedef struct voip_intercept_ref {
+    char *liid;
+    voipintercept_t *vint;
+    UT_hash_handle hh;
+} voip_intercept_ref_t;
+
 typedef struct callid_intercept {
     const char *callid;
+    int64_t cin;
+    time_t last_observed;
 
-    voipintercept_t *intlist;
+    voip_intercept_ref_t *intlist;
     UT_hash_handle hh;
 } callid_intercepts_t;
+
 
 typedef struct openli_sms_worker {
     /* The global zeromq context for the entire program */
@@ -51,6 +60,12 @@ typedef struct openli_sms_worker {
 
     /* Collector statistics (e.g. CC and IRI counters since starting) */
     collector_stats_t *stats;
+
+    /* Shared global-level configuration for this collector instance */
+    collector_identity_t *shared;
+
+    /* RW mutex to protect the shared config against race conditions */
+    pthread_rwlock_t *shared_mutex;
 
     /* ZMQ for receiving instructions from sync thread */
     void *zmq_ii_sock;

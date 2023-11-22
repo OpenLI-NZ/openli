@@ -60,7 +60,6 @@ collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
     sync->info = &(glob->sharedinfo);
     sync->info_mutex = &(glob->config_mutex);
 
-    sync->trust_sip_from = glob->trust_sip_from;
     sync->log_bad_instruct = 1;
     sync->log_bad_sip = 1;
     sync->pubsockcount = glob->seqtracker_threads;
@@ -1049,6 +1048,7 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
     voipintercept_t *vint, *tmp;
     sipregister_t *sipreg;
     int exportcount = 0;
+    uint8_t trust_sip_from;
 
     openli_sip_identity_set_t all_identities;
 
@@ -1059,10 +1059,15 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
     }
 
 
+    pthread_rwlock_rdlock(sync->info_mutex);
+    trust_sip_from = sync->info->trust_sip_from;
+    pthread_rwlock_unlock(sync->info_mutex);
+
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
         sipreg = NULL;
+
         matched = match_sip_target_against_identities(vint->targets,
-                &all_identities, sync->trust_sip_from);
+                &all_identities, trust_sip_from);
         if (matched == NULL) {
             continue;
         }
@@ -1096,12 +1101,17 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     int i = 1;
     uint8_t dir = 0xff;
     openli_sip_identity_set_t all_identities;
+    uint8_t trust_sip_from;
 
     if (extract_sip_identities(sync->sipparser, &all_identities,
             sync->log_bad_sip) < 0) {
         sync->log_bad_sip = 0;
         return -1;
     }
+
+    pthread_rwlock_rdlock(sync->info_mutex);
+    trust_sip_from = sync->info->trust_sip_from;
+    pthread_rwlock_unlock(sync->info_mutex);
 
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
         vshared = NULL;
@@ -1150,7 +1160,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
             /* Doesn't match an existing intercept, but could match one of
              * our target identities */
             matched = match_sip_target_against_identities(vint->targets,
-                    &all_identities, sync->trust_sip_from);
+                    &all_identities, trust_sip_from);
             if (matched == NULL) {
                 continue;
             }
@@ -1916,7 +1926,6 @@ static void examine_sip_update(collector_sync_voip_t *sync,
     /* reassembled TCP streams can contain multiple messages, so
      * we need to keep trying until we have no new usable messages. */
     do {
-        ret = parse_next_sip_message(sync->sipparser, pktref);
         if (ret == 0) {
             break;
         }

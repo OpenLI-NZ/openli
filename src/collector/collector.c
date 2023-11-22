@@ -547,7 +547,8 @@ static inline void send_packet_to_sync(libtrace_packet_t *pkt,
 }
 
 static void send_packet_to_smsworker(char *content, uint16_t contentlen,
-        uint8_t *ipsrc, uint8_t *ipdest, int ipfamily, void *queue) {
+        uint8_t *ipsrc, uint8_t *ipdest, int ipfamily, void *queue,
+        struct timeval tv) {
 
     openli_state_update_t smssip;
 
@@ -559,6 +560,8 @@ static void send_packet_to_smsworker(char *content, uint16_t contentlen,
     smssip.data.sip.ipfamily = ipfamily;
     memcpy(smssip.data.sip.ipsrc, ipsrc, 16);
     memcpy(smssip.data.sip.ipdest, ipdest, 16);
+    smssip.data.sip.timestamp.tv_sec = tv.tv_sec;
+    smssip.data.sip.timestamp.tv_usec = tv.tv_usec;
 
     zmq_send(queue, (void *)(&smssip), sizeof(smssip), 0);
 }
@@ -696,7 +699,8 @@ static uint8_t is_sms_over_sip(packet_info_t *pinfo, libtrace_packet_t *pkt,
             hashval = hashlittle(callid, strlen(callid), 0xfffffffb);
             queueid = hashval % glob->sms_threads;
             send_packet_to_smsworker(sipcontents, siplen, ipsrc, ipdest,
-                    ipfamily, loc->sms_worker_queues[queueid]);
+                    ipfamily, loc->sms_worker_queues[queueid],
+                    trace_get_timeval(pkt));
 
             /* update global stats */
             pthread_mutex_lock(&(glob->stats_mutex));
@@ -1925,6 +1929,7 @@ static int reload_collector_config(collector_global_t *glob,
     newstate.sharedinfo.intpointid = NULL;
 
     glob->sharedinfo.cisco_noradius = newstate.sharedinfo.cisco_noradius;
+    glob->sharedinfo.trust_sip_from = newstate.sharedinfo.trust_sip_from;
 
     pthread_rwlock_unlock(&(glob->config_mutex));
 
@@ -2227,6 +2232,8 @@ int main(int argc, char *argv[]) {
         glob->smsworkers[i].workerid = i;
         glob->smsworkers[i].stats_mutex = &(glob->stats_mutex);
         glob->smsworkers[i].stats = &(glob->stats);
+        glob->smsworkers[i].shared = &(glob->sharedinfo);
+        glob->smsworkers[i].shared_mutex = &(glob->config_mutex);
         glob->smsworkers[i].zmq_ii_sock = NULL;
         glob->smsworkers[i].zmq_colthread_recvsock = NULL;
         glob->smsworkers[i].zmq_pubsocks = NULL;

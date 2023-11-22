@@ -97,6 +97,7 @@ typedef struct openli_sip_content {
     uint8_t ipsrc[16];
     uint8_t ipdest[16];
     int ipfamily;
+    struct timeval timestamp;
 } PACKED openli_sip_content_t;
 
 typedef struct openli_state_msg {

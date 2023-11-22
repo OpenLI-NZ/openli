@@ -30,9 +30,38 @@
 #include "sms_worker.h"
 #include "util.h"
 #include "logger.h"
+#include "ipmmiri.h"
 
 #include <sys/timerfd.h>
 #include <libtrace.h>
+
+static void free_single_sip_callid(callid_intercepts_t *cid) {
+    voip_intercept_ref_t *vint_ref, *tmp;
+
+    HASH_ITER(hh, cid->intlist, vint_ref, tmp) {
+        /* vint is just a reference into state->voipintercepts */
+        HASH_DELETE(hh, cid->intlist, vint_ref);
+        if (vint_ref->liid) {
+            free(vint_ref->liid);
+        }
+        free(vint_ref);
+    }
+    if (cid->callid) {
+        free((void *)cid->callid);
+    }
+    free(cid);
+}
+
+static void free_all_sip_callids(openli_sms_worker_t *state) {
+
+    callid_intercepts_t *iter, *tmp;
+
+    HASH_ITER(hh, state->known_callids, iter, tmp) {
+        HASH_DELETE(hh, state->known_callids, iter);
+        free_single_sip_callid(iter);
+    }
+
+}
 
 static void init_sms_voip_intercept(openli_sms_worker_t *state,
         voipintercept_t *vint) {
@@ -75,7 +104,7 @@ static void remove_sms_voip_intercept(openli_sms_worker_t *state,
     /* Really simple, because we don't maintain a map of
      * SIP identities to VoIP intercepts -- SIP identities
      * are complex (wildcards, realms being optional, etc) so
-     * it's not something that we can be optimise with a
+     * it's not something that we can optimise with a
      * lookup table, unlike RADIUS usernames or email addresses.
      */
     HASH_DELETE(hh_liid, state->voipintercepts, vint);
@@ -229,11 +258,153 @@ static int remove_sms_sip_target(openli_sms_worker_t *state,
     return 0;
 }
 
+static void generate_sms_ipmmiri(openli_sms_worker_t *state,
+        intercept_common_t *common, int64_t cin, openli_export_recv_t *irimsg) {
+
+    openli_export_recv_t *copy;
+
+    if (common->tostart_time > irimsg->ts.tv_sec) {
+        return;
+    }
+    if (common->toend_time > 0 && common->toend_time <= irimsg->ts.tv_sec) {
+        return;
+    }
+    copy = calloc(1, sizeof(openli_export_recv_t));
+    memcpy(copy, irimsg, sizeof(openli_export_recv_t));
+
+    copy->data.ipmmiri.liid = strdup(common->liid);
+    copy->destid = common->destid;
+    copy->data.ipmmiri.cin = cin;
+
+    copy->data.ipmmiri.content = malloc(copy->data.ipmmiri.contentlen);
+    memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,
+            irimsg->data.ipmmiri.contentlen);
+
+    pthread_mutex_lock(state->stats_mutex);
+    state->stats->ipmmiri_created ++;
+    pthread_mutex_unlock(state->stats_mutex);
+
+    publish_openli_msg(state->zmq_pubsocks[common->seqtrackerid], copy);
+}
+
+static int process_sms_sip_packet(openli_sms_worker_t *state,
+        openli_state_update_t *recvd) {
+
+    char *callid;
+    openli_sip_identity_set_t all_identities;
+    openli_sip_identity_t *matched = NULL;
+    voipintercept_t *vint, *tmp;
+    voip_intercept_ref_t *vint_ref, *tmp2;
+    callid_intercepts_t *cid_list;
+    etsili_iri_type_t iritype = ETSILI_IRI_REPORT;
+    struct timeval tv;
+    openli_export_recv_t irimsg;
+    uint8_t trust_sip_from;
+
+    if (state->sipparser == NULL) {
+        state->sipparser = (openli_sip_parser_t *)calloc(1,
+                sizeof(openli_sip_parser_t));
+    }
+
+    if (parse_sip_content(state->sipparser, recvd->data.sip.content,
+                recvd->data.sip.contentlen) < 0) {
+        return 0;
+    }
+
+    callid = get_sip_callid(state->sipparser);
+    if (strncmp(recvd->data.sip.content, "MESSAGE ", 8) == 0) {
+        HASH_FIND(hh, state->known_callids, callid, strlen(callid),
+                cid_list);
+
+        if (!cid_list) {
+            /* first time we've seen this call ID? */
+            cid_list = calloc(1, sizeof(callid_intercepts_t));
+            cid_list->callid = strdup(callid);
+            cid_list->cin = hashlittle(callid, strlen(callid),
+                    0xceefface);
+
+            HASH_ADD_KEYPTR(hh, state->known_callids, cid_list->callid,
+                    strlen(cid_list->callid), cid_list);
+
+            if (extract_sip_identities(state->sipparser, &all_identities,
+                        0) < 0) {
+                logger(LOG_INFO,
+                        "OpenLI: SMS worker thread %d failed to extract identities from SIP packet", state->workerid);
+                return 0;
+            }
+
+            pthread_rwlock_rdlock(state->shared_mutex);
+            trust_sip_from = state->shared->trust_sip_from;
+            pthread_rwlock_unlock(state->shared_mutex);
+
+            HASH_ITER(hh_liid, state->voipintercepts, vint, tmp) {
+                matched = match_sip_target_against_identities(vint->targets,
+                        &all_identities, trust_sip_from);
+                if (matched == NULL) {
+                    continue;
+                }
+                vint_ref = calloc(1, sizeof(voip_intercept_ref_t));
+                vint_ref->liid = strdup(vint->common.liid);
+                vint_ref->vint = vint;
+                HASH_ADD_KEYPTR(hh, cid_list->intlist, vint_ref->liid,
+                        strlen(vint_ref->liid), vint_ref);
+            }
+            release_openli_sip_identity_set(&all_identities);
+            iritype = ETSILI_IRI_BEGIN;
+        }
+
+    } else {
+        HASH_FIND(hh, state->known_callids, callid, strlen(callid),
+                cid_list);
+    }
+
+    if (cid_list == NULL) {
+        return 0;
+    }
+
+    gettimeofday(&tv, NULL);
+    cid_list->last_observed = tv.tv_sec;
+
+    memset(&irimsg, 0, sizeof(openli_export_recv_t));
+    irimsg.type = OPENLI_EXPORT_IPMMIRI;
+    irimsg.data.ipmmiri.ipmmiri_style = OPENLI_IPMMIRI_SIP;
+    irimsg.ts = recvd->data.sip.timestamp;
+    irimsg.data.ipmmiri.contentlen = recvd->data.sip.contentlen;
+    irimsg.data.ipmmiri.ipfamily = recvd->data.sip.ipfamily;
+    irimsg.data.ipmmiri.iritype = iritype;
+    memcpy(irimsg.data.ipmmiri.ipsrc, recvd->data.sip.ipsrc, 16);
+    memcpy(irimsg.data.ipmmiri.ipdest, recvd->data.sip.ipdest, 16);
+
+    HASH_ITER(hh, cid_list->intlist, vint_ref, tmp2) {
+        /* Make sure the intercept hasn't been removed */
+        HASH_FIND(hh_liid, state->voipintercepts, vint_ref->liid,
+                strlen(vint_ref->liid), vint);
+        if (vint == NULL) {
+            HASH_DELETE(hh, cid_list->intlist, vint_ref);
+            free(vint_ref->liid);
+            free(vint);
+            continue;
+        }
+
+        irimsg.data.ipmmiri.ipmmiri_style = OPENLI_IPMMIRI_SIP;
+        irimsg.data.ipmmiri.content = recvd->data.sip.content;
+
+        if (vint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
+            /* TODO rewrite message content with spaces and flag that
+             * we need to use iRIOnlySIPMessage as our IPMMIRIContents
+             */
+        }
+        /* build and send an IRI for this particular intercept */
+        generate_sms_ipmmiri(state, &(vint->common), cid_list->cin, &irimsg);
+    }
+
+    return 1;
+}
+
 static int sms_worker_process_packet(openli_sms_worker_t *state) {
 
     openli_state_update_t recvd;
     int rc;
-    char *callid;
 
     do {
         rc = zmq_recv(state->zmq_colthread_recvsock, &recvd, sizeof(recvd),
@@ -248,45 +419,16 @@ static int sms_worker_process_packet(openli_sms_worker_t *state) {
             return -1;
         }
 
-        if (recvd.type != OPENLI_UPDATE_SMS_SIP) {
+        if (recvd.type == OPENLI_UPDATE_SMS_SIP) {
+            if (process_sms_sip_packet(state, &recvd) == 0) {
+                goto donepkt;
+            }
+        } else {
             logger(LOG_INFO,
                     "OpenLI: SMS worker thread %d received unexpected update type %u",
                     state->workerid, recvd.type);
-            goto donepkt;
         }
 
-        if (state->sipparser == NULL) {
-            state->sipparser = (openli_sip_parser_t *)calloc(1,
-                    sizeof(openli_sip_parser_t));
-        }
-
-        if (parse_sip_content(state->sipparser, recvd.data.sip.content,
-                    recvd.data.sip.contentlen) < 0) {
-            goto donepkt;
-        }
-
-        callid = get_sip_callid(state->sipparser);
-        printf("DEVDEBUG: callid: %s\n", callid);
-        if (strncmp(recvd.data.sip.content, "MESSAGE ", 8) == 0) {
-            printf("DEVDEBUG: %d MESSAGE!\n", state->workerid);
-        } else {
-            printf("DEVDEBUG: %d not a MESSAGE\n", state->workerid);
-        }
-
-        /* TODO
-         *
-         * is it a "MESSAGE" ?
-         *   is it TO or FROM an intercept target?
-         *      is it a new call-ID or an existing one?
-         *         new: create "session"
-         *         existing: grab CIN etc. from existing session
-         *      create an IRI from this packet
-         *
-         * else: does the call ID match a known intercept session?
-         *      create an IRI from this packet
-         *
-         * if intercepted, update timestamp of last session activity
-         */
 donepkt:
         if (recvd.type == OPENLI_UPDATE_SMS_SIP && recvd.data.sip.content) {
             free(recvd.data.sip.content);
@@ -381,6 +523,8 @@ static void sms_worker_main(openli_sms_worker_t *state) {
     sync_epoll_t purgetimer;
     struct itimerspec its;
     int x;
+    struct timeval tv;
+    callid_intercepts_t *cid, *tmp;
 
     logger(LOG_INFO, "OpenLI: starting SMS worker thread %d", state->workerid);
 
@@ -442,6 +586,26 @@ static void sms_worker_main(openli_sms_worker_t *state) {
             /* expiry check is due for all known call-ids */
             topoll[2].revents = 0;
 
+            /* loop over all known_callids and remove any that
+             * have been inactive for 3 minutes */
+            /* NOTE: expiry here won't reset the sequence number in
+             * the seqtracker thread so if somehow this call ID re-appears
+             * later on, then the sequence numbers will continue
+             * from where the previous "call" ended. Ideally, this should
+             * never happen in practice but I'm making a note here
+             * just in case...
+             */
+            gettimeofday(&tv, NULL);
+            HASH_ITER(hh, state->known_callids, cid, tmp) {
+                if (cid->last_observed == 0) {
+                    continue;
+                }
+                if (cid->last_observed + 180 <= tv.tv_sec) {
+                    HASH_DELETE(hh, state->known_callids, cid);
+                    free_single_sip_callid(cid);
+                }
+            }
+
             purgetimer.fdtype = 0;
             purgetimer.fd = timerfd_create(CLOCK_MONOTONIC, 0);
             timerfd_settime(purgetimer.fd, 0, &its, NULL);
@@ -451,24 +615,6 @@ static void sms_worker_main(openli_sms_worker_t *state) {
     }
 
     free(topoll);
-}
-
-static void free_all_sip_callids(openli_sms_worker_t *state) {
-
-    callid_intercepts_t *iter, *tmp;
-    voipintercept_t *vint, *tmp2;
-
-    HASH_ITER(hh, state->known_callids, iter, tmp) {
-        HASH_ITER(hh_liid, iter->intlist, vint, tmp2) {
-            /* vint is just a reference into state->voipintercepts */
-            HASH_DELETE(hh_liid, iter->intlist, vint);
-        }
-        if (iter->callid) {
-            free((void *)iter->callid);
-        }
-        HASH_DELETE(hh, state->known_callids, iter);
-    }
-
 }
 
 void *start_sms_worker_thread(void *arg) {
