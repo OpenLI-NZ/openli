@@ -327,7 +327,6 @@ typedef struct collector_global {
     pthread_mutex_t stats_mutex;
 
     uint8_t etsitls;
-    uint8_t trust_sip_from;
 
     uint8_t encoding_method;
     openli_ssl_config_t sslconf;
