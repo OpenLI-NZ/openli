@@ -71,6 +71,17 @@ typedef enum {
 
 } openli_sipmsg_type_t;
 
+typedef struct openli_sip_identity_set {
+    openli_sip_identity_t touriid;
+    openli_sip_identity_t fromuriid;
+    openli_sip_identity_t remotepartyid;
+    openli_sip_identity_t passertid;
+    openli_sip_identity_t *proxyauths;
+    openli_sip_identity_t *regauths;
+    int proxyauthcount;
+    int regauthcount;
+} openli_sip_identity_set_t;
+
 typedef struct openli_sip_parser {
 
     osip_message_t *osip;
@@ -134,6 +145,12 @@ int sip_is_180ringing(openli_sip_parser_t *parser);
 int sip_is_bye(openli_sip_parser_t *parser);
 int sip_is_cancel(openli_sip_parser_t *parser);
 
+int extract_sip_identities(openli_sip_parser_t *parser,
+        openli_sip_identity_set_t *idset, uint8_t log_error);
+openli_sip_identity_t *match_sip_target_against_identities(
+        libtrace_list_t *targets, openli_sip_identity_set_t *idset,
+        uint8_t trust_from);
+void release_openli_sip_identity_set(openli_sip_identity_set_t *idset);
 #endif
 
 
