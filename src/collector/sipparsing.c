@@ -921,6 +921,16 @@ static inline int parse_sdp_body(openli_sip_parser_t *parser) {
     return 0;
 }
 
+char *get_sip_message_body(openli_sip_parser_t *parser, size_t *length) {
+    osip_body_t *body;
+    int r;
+    if ((r = osip_message_get_body(parser->osip, 0, &body)) != 0) {
+        return NULL;
+    }
+    *length = body->length;
+    return body->body;
+}
+
 char *get_sip_session_id(openli_sip_parser_t *parser) {
 
     char *sessid;

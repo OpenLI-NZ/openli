@@ -32,6 +32,7 @@
 #include "logger.h"
 #include "ipmmiri.h"
 
+#include <math.h>
 #include <sys/timerfd.h>
 #include <libtrace.h>
 
@@ -287,6 +288,196 @@ static void generate_sms_ipmmiri(openli_sms_worker_t *state,
     publish_openli_msg(state->zmq_pubsocks[common->seqtrackerid], copy);
 }
 
+static int mask_sms_submit_tpdu(uint8_t *ptr, uint8_t len) {
+
+    uint8_t tp_vp_fmt = 0;
+    uint8_t da_len = 0;
+    uint8_t *start = ptr;
+    uint8_t ud_len = 0;
+
+    if (len < 4) {
+        return 0;
+    }
+
+    /* first byte are flags, but we need to check if TP-VPF is set
+     * as that will indicate whether a TP-VP field is included and,
+     * if so, what format it is using */
+    tp_vp_fmt = (((*ptr) & 0x18) >> 3);
+
+    ptr ++;
+
+    /* next byte is the TP-MR -- can just skip */
+    ptr ++;
+
+    /* TP-Destination-Address */
+    /* length is expressed as "usable" half-octets */
+    da_len = *ptr;
+    ptr ++;
+
+    /* bits 4-6 of the Type-of-Address field may indicate that the
+     * number is being encoded as alphanumeric, in which case da_len
+     * should be treated as 7-bit characters instead.
+     *
+     * XXX get an example for testing!
+     */
+    if (((*ptr) & 0x70) == 0x50) {
+        /* alphanumeric */
+        ptr += (1 + (int)(ceil((7 * len) / 8)));
+    } else {
+        ptr += (1 + (int)(ceil(len / 2)));
+    }
+
+    if (ptr - start >= len) {
+        return 0;
+    }
+
+    /* TP-PID, can just skip */
+    ptr ++;
+
+    /* TP-DCS, for now just pray we don't get anything other than the
+     * default GSM 7 bit alphabet using class 0 */
+    if (*ptr != 0) {
+        logger(LOG_INFO, "OpenLI: unsupported TP-DCS when parsing SMS TPDU: %u",
+                *ptr);
+        return 0;
+    }
+    ptr ++;
+
+    if (tp_vp_fmt != 0) {
+        /* A TP-VP header is present... */
+        /* TODO */
+        if (tp_vp_fmt == 1) {
+            /* TP-VP with enhanced format */
+
+        } else if (tp_vp_fmt == 2) {
+            /* TP-VP with relative format */
+
+        } else if (tp_vp_fmt == 3) {
+            /* TP-VP with absolute format */
+
+        }
+    }
+
+    if (ptr - start >= len) {
+        return 0;
+    }
+    /* TP-User-Data-Length */
+    ud_len = *ptr;
+    ptr ++;
+    if (ptr - start > len) {
+        return 0;
+    }
+    if (ud_len > len - (ptr - start)) {
+        return 0;
+    }
+
+    /* Finally reached the TP-User-Data */
+    /* TODO */
+
+    return 1;
+}
+
+enum {
+    RP_MESSAGE_TYPE_DATA_MS_TO_N = 0,
+    RP_MESSAGE_TYPE_DATA_N_TO_MS = 1,
+    RP_MESSAGE_TYPE_ACK_MS_TO_N = 2,
+    RP_MESSAGE_TYPE_ACK_N_TO_MS = 3,
+    RP_MESSAGE_TYPE_ERROR_MS_TO_N = 4,
+    RP_MESSAGE_TYPE_ERROR_N_TO_MS = 5,
+    RP_MESSAGE_TYPE_SMMA_MS_TO_N = 6,
+};
+
+static int mask_sms_message_content(openli_sms_worker_t *state) {
+
+    uint8_t *bodystart;
+    size_t bodylen = 0;
+    uint8_t *ptr;
+    uint8_t msgtype;
+    uint8_t len;
+
+    bodystart = (uint8_t *)get_sip_message_body(state->sipparser, &bodylen);
+    if (bodystart == NULL || bodylen == 0) {
+        return 0;
+    }
+
+    ptr = bodystart;
+    /* RP-Message Type */
+    msgtype = *ptr;
+    ptr ++;
+
+    if (msgtype != RP_MESSAGE_TYPE_DATA_MS_TO_N &&
+            msgtype != RP_MESSAGE_TYPE_DATA_N_TO_MS) {
+        /* No content to mask */
+        return 1;
+    }
+
+    /* Message reference */
+    ptr ++;
+
+    /* Originator Address -- should be a single byte 0x00 if MS-to-N,
+     * otherwise 1 byte length field + contents.
+     */
+    if (msgtype == RP_MESSAGE_TYPE_DATA_MS_TO_N) {
+        if (*ptr != 0x00) {
+            /* log an error? */
+            logger(LOG_INFO,
+                "OpenLI: unexpected originator address when parsing SMS Data");
+            return 0;
+        }
+        ptr ++;
+    } else {
+        len = *ptr;
+        if (len >= bodylen - (ptr - bodystart)) {
+            logger(LOG_INFO,
+                "OpenLI: bogus length for originator address when parsing SMS Data: %u vs %u",
+                len, bodylen - (ptr - bodystart));
+            return 0;
+        }
+        ptr += (len + 1);
+    }
+
+    /* Destination Address -- should be a single byte 0x00 if N-to-MS (I think),
+     * otherwise 1 byte length field + contents.
+     */
+    if (msgtype == RP_MESSAGE_TYPE_DATA_N_TO_MS) {
+        if (*ptr != 0x00) {
+            /* log an error? */
+            logger(LOG_INFO,
+                "OpenLI: unexpected destination address when parsing SMS Data");
+            return 0;
+        }
+        ptr ++;
+    } else {
+        len = *ptr;
+        if (len >= bodylen - (ptr - bodystart)) {
+            logger(LOG_INFO,
+                "OpenLI: bogus length for destination address when parsing SMS Data: %u vs %u",
+                len, bodylen - (ptr - bodystart));
+            return 0;
+        }
+        ptr += (len + 1);
+    }
+
+    /* RP-User Data */
+    /* First byte is the length */
+    len = *ptr;
+    if (len > bodylen - (ptr - bodystart)) {
+        logger(LOG_INFO,
+                "OpenLI: bogus length for user data when parsing SMS Data: %u vs %u",
+                len, bodylen - (ptr - bodystart));
+        return 0;
+    }
+    ptr ++;
+
+    /* TPDU Message Type Indicator is the bottom 2 bits */
+    if (((*ptr) & 0x03) == 0x01) {
+        /* SMS-SUBMIT */
+        return mask_sms_submit_tpdu(ptr, len);
+    }
+
+    return 1;
+}
+
 static int process_sms_sip_packet(openli_sms_worker_t *state,
         openli_state_update_t *recvd) {
 
@@ -393,6 +584,7 @@ static int process_sms_sip_packet(openli_sms_worker_t *state,
             /* TODO rewrite message content with spaces and flag that
              * we need to use iRIOnlySIPMessage as our IPMMIRIContents
              */
+            mask_sms_message_content(state);
         }
         /* build and send an IRI for this particular intercept */
         generate_sms_ipmmiri(state, &(vint->common), cid_list->cin, &irimsg);
