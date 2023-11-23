@@ -1926,6 +1926,7 @@ static void examine_sip_update(collector_sync_voip_t *sync,
     /* reassembled TCP streams can contain multiple messages, so
      * we need to keep trying until we have no new usable messages. */
     do {
+        ret = parse_next_sip_message(sync->sipparser, pktref);
         if (ret == 0) {
             break;
         }

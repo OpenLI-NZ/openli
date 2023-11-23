@@ -1668,7 +1668,6 @@ static void init_collector_global(collector_global_t *glob) {
     glob->sipdebugfile = NULL;
     glob->nextloc = 0;
     glob->syncgenericfreelist = NULL;
-    glob->trust_sip_from = 0;
 
     glob->sslconf.certfile = NULL;
     glob->sslconf.keyfile = NULL;
@@ -1769,7 +1768,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     logger(LOG_DEBUG, "OpenLI: ETSI TLS encryption %s",
         glob->etsitls ? "enabled" : "disabled");
 
-    if (glob->trust_sip_from) {
+    if (glob->sharedinfo.trust_sip_from) {
         logger(LOG_INFO, "Allowing SIP From: URIs to be used for target identification");
     }
 
