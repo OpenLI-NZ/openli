@@ -20,7 +20,7 @@ BuildRequires: uthash-devel
 BuildRequires: libwandder2-devel >= 2.0.4
 BuildRequires: zeromq-devel
 BuildRequires: gperftools-devel
-BuildRequires: libosip2-devel
+BuildRequires: libosip2-devel >= 5.0.0
 BuildRequires: openssl-devel
 BuildRequires: json-c-devel
 BuildRequires: libmicrohttpd-devel

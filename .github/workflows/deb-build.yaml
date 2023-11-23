@@ -19,7 +19,6 @@ jobs:
            - "debian:bookworm"
            - "debian:buster"
            - "debian:bullseye"
-           - "ubuntu:bionic"
            - "ubuntu:focal"
            - "ubuntu:jammy"
 
@@ -55,7 +54,6 @@ jobs:
          target:
            - "debian:buster"
            - "debian:bullseye"
-           - "ubuntu:bionic"
            - "ubuntu:focal"
            - "ubuntu:jammy"
            - "debian:bookworm"
@@ -102,7 +100,6 @@ jobs:
            - "debian:buster"
            - "debian:bullseye"
            - "debian:bookworm"
-           - "ubuntu:bionic"
            - "ubuntu:focal"
            - "ubuntu:jammy"
      needs: test
