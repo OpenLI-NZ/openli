@@ -36,6 +36,10 @@
 #include <sys/timerfd.h>
 #include <libtrace.h>
 
+const uint8_t sms_masking_bytes[] = {
+    0x20, 0x10, 0x08, 0x04, 0x02, 0x81, 0x40
+};
+
 static void free_single_sip_callid(callid_intercepts_t *cid) {
     voip_intercept_ref_t *vint_ref, *tmp;
 
@@ -294,6 +298,8 @@ static int mask_sms_submit_tpdu(uint8_t *ptr, uint8_t len) {
     uint8_t da_len = 0;
     uint8_t *start = ptr;
     uint8_t ud_len = 0;
+    uint8_t vp_len = 0;
+    int i;
 
     if (len < 4) {
         return 0;
@@ -345,16 +351,16 @@ static int mask_sms_submit_tpdu(uint8_t *ptr, uint8_t len) {
 
     if (tp_vp_fmt != 0) {
         /* A TP-VP header is present... */
-        /* TODO */
         if (tp_vp_fmt == 1) {
-            /* TP-VP with enhanced format */
-
+            /* TP-VP with enhanced format, always 7 bytes */
+            ptr += 7;
         } else if (tp_vp_fmt == 2) {
-            /* TP-VP with relative format */
-
+            /* TP-VP with relative format, 1 byte length field */
+            vp_len = *ptr;
+            ptr += (1 + vp_len);
         } else if (tp_vp_fmt == 3) {
-            /* TP-VP with absolute format */
-
+            /* TP-VP with absolute format, always 7 bytes */
+            ptr += 7;
         }
     }
 
@@ -372,7 +378,18 @@ static int mask_sms_submit_tpdu(uint8_t *ptr, uint8_t len) {
     }
 
     /* Finally reached the TP-User-Data */
-    /* TODO */
+    for (i = 0; i < ud_len; i++) {
+        ind = i % 7;
+        if (i == ud_len - 1 && ind >= 5) {
+            /* this is the last byte, so we need to make sure that the
+             * unused bits are set to zero.
+             */
+            *ptr = (sms_masking_bytes[ind] & 0x0f);
+        } else {
+            *ptr = sms_masking_bytes[ind];
+        }
+        ptr ++;
+    }
 
     return 1;
 }
