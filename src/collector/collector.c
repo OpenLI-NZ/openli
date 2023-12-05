@@ -1287,10 +1287,6 @@ static void destroy_collector_state(collector_global_t *glob) {
         free(glob->collocals);
     }
 
-    if (glob->default_email_domain) {
-        free(glob->default_email_domain);
-    }
-
     pthread_mutex_destroy(&(glob->stats_mutex));
     pthread_rwlock_destroy(&(glob->email_config_mutex));
     pthread_rwlock_destroy(&glob->config_mutex);
@@ -2053,6 +2049,7 @@ int main(int argc, char *argv[]) {
         glob->emailworkers[i].zmq_ctxt = glob->zmq_ctxt;
         glob->emailworkers[i].topoll = NULL;
         glob->emailworkers[i].topoll_size = 0;
+        glob->emailworkers[i].fragreass = NULL;
         glob->emailworkers[i].emailid = i;
         glob->emailworkers[i].tracker_threads = glob->seqtracker_threads;
         glob->emailworkers[i].fwd_threads = glob->forwarding_threads;

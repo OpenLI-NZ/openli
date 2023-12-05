@@ -31,6 +31,7 @@
 #include <uthash.h>
 #include <Judy.h>
 
+#include "reassembler.h"
 #include "intercept.h"
 #include "collector_base.h"
 
@@ -135,6 +136,7 @@ typedef struct openli_email_worker {
     void *zmq_ctxt;
     zmq_pollitem_t *topoll;
     int topoll_size;
+    ipfrag_reassembler_t *fragreass;
     pthread_t threadid;
     int emailid;
     int tracker_threads;

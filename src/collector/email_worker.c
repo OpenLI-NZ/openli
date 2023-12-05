@@ -152,8 +152,66 @@ void replace_email_session_clientaddr(emailsession_t *sess,
     sess->clientaddr = repl;
 }
 
-static openli_email_captured_t *convert_packet_to_email_captured(
-        libtrace_packet_t *pkt, uint8_t emailtype) {
+struct fraginfo {
+    char *fragbuffer;
+    char *posttcp;
+    uint32_t plen;
+    uint16_t src_port;
+    uint16_t dest_port;
+    uint16_t fragoff;
+    uint8_t moreflag;
+};
+
+static int handle_fragments(openli_email_worker_t *state,
+        libtrace_packet_t *pkt, struct fraginfo *fraginfo) {
+
+    libtrace_tcp_t *tcp;
+    ip_reassemble_stream_t *ipstream;
+    uint16_t fraglen = 0;
+    uint8_t proto;
+    int r;
+    uint32_t rem;
+
+    ipstream = get_ipfrag_reassemble_stream(state->fragreass, pkt);
+    if (!ipstream) {
+        logger(LOG_INFO, "OpenLI: error trying to reassemble IP fragment inside email worker thread");
+        return -1;
+    }
+
+    r = update_ipfrag_reassemble_stream(ipstream, pkt, fraginfo->fragoff,
+            fraginfo->moreflag);
+    if (r < 0) {
+        logger(LOG_INFO, "OpenLI: error while trying to reassemble IP fragment in email worker thread");
+        return -1;
+    }
+
+    fraginfo->src_port = fraginfo->dest_port = 0;
+
+    if ((r = get_next_ip_reassembled(ipstream, &(fraginfo->fragbuffer),
+            &(fraglen), &proto)) <= 0) {
+        return r;
+    }
+
+    /* packet must be reassembled at this point */
+    assert(fraginfo->fragbuffer);
+    tcp = (libtrace_tcp_t *)(fraginfo->fragbuffer);
+    rem = fraglen;
+    if (rem < sizeof(libtrace_tcp_t)) {
+        logger(LOG_INFO, "OpenLI: reassembled IP fragment in email worker thread does not have a complete TCP header");
+        return -1;
+    }
+    fraginfo->src_port = ntohs(tcp->source);
+    fraginfo->dest_port = ntohs(tcp->dest);
+    fraginfo->posttcp = (char *)trace_get_payload_from_tcp(tcp, &rem);
+    fraginfo->plen = rem;
+
+    remove_ipfrag_reassemble_stream(state->fragreass, ipstream);
+    return 1;
+}
+
+static int convert_packet_to_email_captured(openli_email_worker_t * state,
+        libtrace_packet_t *pkt,
+        uint8_t emailtype, openli_email_captured_t **cap) {
 
     char space[256];
     int spacelen = 256;
@@ -161,27 +219,53 @@ static openli_email_captured_t *convert_packet_to_email_captured(
     char ip_b[INET6_ADDRSTRLEN];
     char portstr[16];
     libtrace_tcp_t *tcp;
-    uint32_t rem;
+    uint32_t rem, plen;
     uint8_t proto;
-    void *posttcp;
+    char *posttcp = NULL;
     uint8_t pktsender = 0;
+    uint8_t moreflag;
+    uint16_t fragoff = 0;
+
+    struct fraginfo fraginfo;
 
     uint16_t src_port, dest_port, rem_port, host_port;
-    openli_email_captured_t *cap = NULL;
 
-    src_port = trace_get_source_port(pkt);
-    dest_port = trace_get_destination_port(pkt);
+    /* account for possible fragmentation */
+    memset(&fraginfo, 0, sizeof(struct fraginfo));
+
+    fragoff = trace_get_fragment_offset(pkt, &moreflag);
+    if (moreflag || fragoff > 0) {
+        int r;
+        if ((r = handle_fragments(state, pkt, &fraginfo)) <= 0) {
+            if (fraginfo.fragbuffer) {
+                free(fraginfo.fragbuffer);
+            }
+            return r;
+        }
+        posttcp = fraginfo.posttcp;
+        plen = fraginfo.plen;
+        src_port = fraginfo.src_port;
+        dest_port = fraginfo.dest_port;
+
+    } else {
+        src_port = trace_get_source_port(pkt);
+        dest_port = trace_get_destination_port(pkt);
+        tcp = (libtrace_tcp_t *)(trace_get_transport(pkt, &proto, &rem));
+        if (tcp == NULL || proto != TRACE_IPPROTO_TCP || rem == 0) {
+            return -1;
+        }
+
+        plen = trace_get_payload_length(pkt);
+        posttcp = (char *)trace_get_payload_from_tcp(tcp, &rem);
+        if (rem < plen) {
+            plen = rem;
+        }
+    }
 
     if (src_port == 0 || dest_port == 0) {
-        return NULL;
+        logger(LOG_INFO, "OpenLI: unable to derive port numbers for packet seen in email worker thread");
+        goto errstate;
     }
-
-    tcp = (libtrace_tcp_t *)(trace_get_transport(pkt, &proto, &rem));
-    if (tcp == NULL || proto != TRACE_IPPROTO_TCP || rem == 0) {
-        return NULL;
-    }
-
-    posttcp = trace_get_payload_from_tcp(tcp, &rem);
 
     /* Ensure that bi-directional flows return the same session ID by
      * always putting the IP and port for the endpoint with the smallest of
@@ -191,11 +275,11 @@ static openli_email_captured_t *convert_packet_to_email_captured(
     if (src_port < dest_port) {
         if (trace_get_source_address_string(pkt, ip_a, INET6_ADDRSTRLEN)
                 == NULL) {
-            return NULL;
+            goto errstate;
         }
         if (trace_get_destination_address_string(pkt, ip_b, INET6_ADDRSTRLEN)
                 == NULL) {
-            return NULL;
+            goto errstate;
         }
 
         rem_port = dest_port;
@@ -204,11 +288,11 @@ static openli_email_captured_t *convert_packet_to_email_captured(
     } else {
         if (trace_get_source_address_string(pkt, ip_b, INET6_ADDRSTRLEN)
                 == NULL) {
-            return NULL;
+            goto errstate;
         }
         if (trace_get_destination_address_string(pkt, ip_a, INET6_ADDRSTRLEN)
                 == NULL) {
-            return NULL;
+            goto errstate;
         }
         host_port = dest_port;
         rem_port = src_port;
@@ -218,46 +302,58 @@ static openli_email_captured_t *convert_packet_to_email_captured(
     snprintf(space, spacelen, "%s-%s-%u-%u", ip_a, ip_b, host_port,
             rem_port);
 
-    cap = calloc(1, sizeof(openli_email_captured_t));
+    (*cap) = calloc(1, sizeof(openli_email_captured_t));
     if (emailtype == OPENLI_UPDATE_SMTP) {
-        cap->type = OPENLI_EMAIL_TYPE_SMTP;
+        (*cap)->type = OPENLI_EMAIL_TYPE_SMTP;
     } else if (emailtype == OPENLI_UPDATE_IMAP) {
-        cap->type = OPENLI_EMAIL_TYPE_IMAP;
+        (*cap)->type = OPENLI_EMAIL_TYPE_IMAP;
     } else if (emailtype == OPENLI_UPDATE_POP3) {
-        cap->type = OPENLI_EMAIL_TYPE_POP3;
+        (*cap)->type = OPENLI_EMAIL_TYPE_POP3;
     } else {
-        cap->type = OPENLI_EMAIL_TYPE_UNKNOWN;
+        (*cap)->type = OPENLI_EMAIL_TYPE_UNKNOWN;
     }
 
-    cap->session_id = strdup(space);
-    cap->target_id = NULL;
-    cap->datasource = NULL;
-    cap->remote_ip = strdup(ip_b);
-    cap->host_ip = strdup(ip_a);
-    cap->part_id = 0xFFFFFFFF;
-    cap->pkt_sender = pktsender;
+    (*cap)->session_id = strdup(space);
+    (*cap)->target_id = NULL;
+    (*cap)->datasource = NULL;
+    (*cap)->remote_ip = strdup(ip_b);
+    (*cap)->host_ip = strdup(ip_a);
+    (*cap)->part_id = 0xFFFFFFFF;
+    (*cap)->pkt_sender = pktsender;
 
     snprintf(portstr, 16, "%u", rem_port);
-    cap->remote_port = strdup(portstr);
+    (*cap)->remote_port = strdup(portstr);
     snprintf(portstr, 16, "%u", host_port);
-    cap->host_port = strdup(portstr);
+    (*cap)->host_port = strdup(portstr);
 
-    cap->timestamp = (trace_get_seconds(pkt) * 1000);
-    cap->mail_id = 0;
-    cap->msg_length = trace_get_payload_length(pkt);
+    (*cap)->timestamp = (trace_get_seconds(pkt) * 1000);
+    (*cap)->mail_id = 0;
+    (*cap)->msg_length = plen;
 
-    if (cap->msg_length > rem) {
-        cap->msg_length = rem;
-    }
-
-
-    cap->own_content = 0;
-    if (cap->msg_length > 0 && posttcp != NULL) {
-        cap->content = (char *)posttcp;
+    if (fraginfo.fragbuffer) {
+        (*cap)->own_content = 1;
+        if (posttcp && (*cap)->msg_length > 0) {
+            (*cap)->content = calloc((*cap)->msg_length, sizeof(char));
+            memcpy((*cap)->content, posttcp, (*cap)->msg_length);
+        } else {
+            (*cap)->content = NULL;
+        }
+        free(fraginfo.fragbuffer);
     } else {
-        cap->content = NULL;
+        (*cap)->own_content = 0;
+        if ((*cap)->msg_length > 0 && posttcp != NULL) {
+            (*cap)->content = (char *)posttcp;
+        } else {
+            (*cap)->content = NULL;
+        }
     }
-    return cap;
+    return 1;
+
+errstate:
+    if (fraginfo.fragbuffer) {
+        free(fraginfo.fragbuffer);
+    }
+    return -1;
 }
 
 static void init_email_session(emailsession_t *sess,
@@ -1191,7 +1287,7 @@ static int find_and_update_active_session(openli_email_worker_t *state,
 
 static int process_received_packet(openli_email_worker_t *state) {
     openli_state_update_t recvd;
-    int rc;
+    int rc, x;
     openli_email_captured_t *cap = NULL;
 
     do {
@@ -1206,13 +1302,19 @@ static int process_received_packet(openli_email_worker_t *state) {
             return -1;
         }
 
-        cap = convert_packet_to_email_captured(recvd.data.pkt, recvd.type);
-
-        if (cap == NULL || cap->session_id == NULL) {
+        if ((x = convert_packet_to_email_captured(state, recvd.data.pkt,
+                recvd.type, &cap)) < 0) {
             logger(LOG_INFO, "OpenLI: unable to derive email session ID from received packet in email thread %d", state->emailid);
             free_captured_email(cap);
             return -1;
+        } else if (x == 0) {
+            /* packet was a fragment and we need more fragments to complete
+             * the application payload.
+             */
+             trace_destroy_packet(recvd.data.pkt);
+             continue;
         }
+
         if (cap->content != NULL) {
             find_and_update_active_session(state, cap);
         } else {
@@ -1331,7 +1433,7 @@ static void email_worker_main(openli_email_worker_t *state) {
         }
 
         if (state->topoll[2].revents & ZMQ_POLLIN) {
-            /* message from the email ingesting thread */
+            /* captured packet from a collector thread */
             x = process_received_packet(state);
             if (x < 0) {
                 break;
@@ -1468,6 +1570,7 @@ void *start_email_worker_thread(void *arg) {
          goto haltemailworker;
     }
 
+    state->fragreass = create_new_ipfrag_reassembler();
     email_worker_main(state);
 
     do {
@@ -1507,7 +1610,9 @@ haltemailworker:
         HASH_DELETE(hh, state->timeouts, syncev);
         free(syncev);
     }
-
+    if (state->fragreass) {
+        destroy_ipfrag_reassembler(state->fragreass);
+    }
     pthread_exit(NULL);
 }
 

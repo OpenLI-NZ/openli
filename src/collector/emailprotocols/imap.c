@@ -35,6 +35,8 @@
 #include "email_worker.h"
 #include "logger.h"
 
+#define DECOMPRESS_BUFSIZE 65536
+
 enum {
     OPENLI_IMAP_COMMAND_NONE = 0,
     OPENLI_IMAP_COMMAND_SERVREADY,
@@ -744,7 +746,6 @@ static int save_imap_reply(imap_session_t *sess, char *sesskey,
     }
 
     if (*comm == NULL) {
-        logger(LOG_INFO, "OpenLI: %s unable to match IMAP reply (%s, %s) to any existing commands?", sesskey, sess->next_comm_tag, sess->next_command_name);
         free(sess->next_comm_tag);
         free(sess->next_command_name);
         sess->next_comm_tag = NULL;
@@ -953,7 +954,7 @@ static int _append_content_to_deflate_buffer(imap_session_t *imapsess,
 static int append_compressed_content_to_imap_buffer(imap_session_t *imapsess,
         openli_email_captured_t *cap) {
 
-    int status;
+    int status, i;
     struct compress_state *cs = NULL;
 
     if (cap->pkt_sender == OPENLI_EMAIL_PACKET_SENDER_CLIENT) {
@@ -966,8 +967,8 @@ static int append_compressed_content_to_imap_buffer(imap_session_t *imapsess,
     }
 
     if (cs->inbuffer == NULL) {
-        cs->inbuffer = calloc(65336, sizeof(uint8_t));
-        cs->inbufsize = 65536;
+        cs->inbuffer = calloc(DECOMPRESS_BUFSIZE, sizeof(uint8_t));
+        cs->inbufsize = DECOMPRESS_BUFSIZE;
         if (cs->inbuffer == NULL) {
             logger(LOG_INFO, "OpenLI: no memory available for append_compressed_content_to_imap_buffer");
             return -1;
@@ -975,8 +976,8 @@ static int append_compressed_content_to_imap_buffer(imap_session_t *imapsess,
     }
 
     if (cs->outbuffer == NULL) {
-        cs->outbuffer = calloc(65336, sizeof(uint8_t));
-        cs->outbufsize = 65536;
+        cs->outbuffer = calloc(DECOMPRESS_BUFSIZE, sizeof(uint8_t));
+        cs->outbufsize = DECOMPRESS_BUFSIZE;
 
         if (cs->outbuffer == NULL) {
             logger(LOG_INFO, "OpenLI: no memory available for append_compressed_content_to_imap_buffer");
@@ -996,8 +997,9 @@ static int append_compressed_content_to_imap_buffer(imap_session_t *imapsess,
     }
 
     while (cap->msg_length >= cs->inbufsize - cs->inwriteoffset) {
-        cs->inbuffer = realloc(cs->inbuffer, cs->inbufsize + 65536);
-        cs->inbufsize += 65536;
+        cs->inbuffer = realloc(cs->inbuffer,
+                cs->inbufsize + DECOMPRESS_BUFSIZE);
+        cs->inbufsize += DECOMPRESS_BUFSIZE;
     }
 
     memcpy(cs->inbuffer + cs->inwriteoffset, cap->content, cap->msg_length);
@@ -1023,7 +1025,7 @@ static int append_compressed_content_to_imap_buffer(imap_session_t *imapsess,
                 logger(LOG_INFO, "OpenLI: Z_STREAM_ERROR returned by inflate() within append_compressed_content_to_imap_buffer");
                 return -1;
             case Z_DATA_ERROR:
-                logger(LOG_INFO, "OpenLI: Z_DATA_ERROR returned by inflate() within append_compressed_content_to_imap_buffer");
+                logger(LOG_INFO, "OpenLI: Z_DATA_ERROR returned by inflate() within append_compressed_content_to_imap_buffer: %s", zError(status));
                 return -1;
             case Z_MEM_ERROR:
                 logger(LOG_INFO, "OpenLI: Z_MEM_ERROR returned by inflate() within append_compressed_content_to_imap_buffer");
@@ -1745,8 +1747,12 @@ static char *get_uid_command(char *command, uint8_t *buffer) {
         return command;
     }
 
-    if (nextspace == NULL || crlf < nextspace) {
+    if (nextspace == NULL || (crlf && crlf < nextspace)) {
         nextspace = crlf;
+    }
+
+    if (nextspace < buffer) {
+        return command;
     }
 
     new_comm = calloc(old_len + (nextspace - buffer) + 1, sizeof(char));
