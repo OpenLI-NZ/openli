@@ -291,12 +291,17 @@ static void parse_email_targets(email_target_t **targets, yaml_document_t *doc,
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value, "address") == 0) {
                 SET_CONFIG_STRING_OPTION(newtgt->address, value);
+            } else if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "targetID") == 0) {
+                SET_CONFIG_STRING_OPTION(newtgt->address, value);
             }
         }
 
         if (!newtgt->address) {
             logger(LOG_INFO,
-                    "OpenLI: a Email target requires an address, skipping.");
+                    "OpenLI: a Email target requires an address or targetID, skipping.");
             free(newtgt);
             continue;
         }

@@ -35,6 +35,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#include <openssl/evp.h>
 
 #include <libtrace_parallel.h>
 #include <libwandder.h>
@@ -1978,6 +1979,9 @@ int main(int argc, char *argv[]) {
     /* Initialise osipparser2 */
     parser_init();
 
+    /* Initialise OpenSSL */
+    OpenSSL_add_all_digests();
+
     sigact.sa_handler = cleanup_signal;
     sigemptyset(&sigact.sa_mask);
     sigact.sa_flags = SA_RESTART;
@@ -2061,7 +2065,8 @@ int main(int argc, char *argv[]) {
 
         glob->emailworkers[i].timeouts = NULL;
         glob->emailworkers[i].allintercepts = NULL;
-        glob->emailworkers[i].alltargets = NULL;
+        glob->emailworkers[i].alltargets.addresses = NULL;
+        glob->emailworkers[i].alltargets.targets = NULL;
         glob->emailworkers[i].activesessions = NULL;
         glob->emailworkers[i].stats_mutex = &(glob->stats_mutex);
         glob->emailworkers[i].stats = &(glob->stats);

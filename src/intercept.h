@@ -164,6 +164,7 @@ typedef struct ipintercept {
 
 typedef struct email_target {
     char *address;
+    char *sha512;
     uint8_t awaitingconfirm;
     UT_hash_handle hh;
 } email_target_t;
@@ -189,10 +190,22 @@ typedef struct email_intercept_ref {
     UT_hash_handle hh;
 } email_intercept_ref_t;
 
-typedef struct emailinterceptlist {
+typedef struct email_address_set {
     char *emailaddr;
     email_intercept_ref_t *intlist;
-    UT_hash_handle hh;
+    UT_hash_handle hh_addr;
+} email_address_set_t;
+
+typedef struct email_target_set {
+    char *sha512;
+    char *origaddress;
+    email_intercept_ref_t *intlist;
+    UT_hash_handle hh_sha;
+} email_target_set_t;
+
+typedef struct emailinterceptlist {
+    email_address_set_t *addresses;
+    email_target_set_t *targets;
 } email_user_intercept_list_t;
 
 
@@ -304,6 +317,8 @@ struct emailsession {
     uint8_t login_sent;
     uint64_t event_time;
 
+    char *ingest_target_id;
+    uint8_t ingest_direction;
     email_participant_t sender;
     email_participant_t *participants;
 
@@ -420,6 +435,7 @@ void free_single_rtpstream(rtpstreaminf_t *rtp);
 void free_single_vendmirror_intercept(vendmirror_intercept_t *mirror);
 void free_single_staticipsession(staticipsession_t *statint);
 void free_single_staticiprange(static_ipranges_t *ipr);
+void free_single_email_target(email_target_t *tgt);
 
 /* Create a comma-separated string containing all of the SIP target IDs
  * for a VoIP intercept.
@@ -456,10 +472,10 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
 
 void clear_email_user_intercept_list(email_user_intercept_list_t *ulist);
 int remove_intercept_from_email_user_intercept_list(
-        email_user_intercept_list_t **ulist, emailintercept_t *em,
+        email_user_intercept_list_t *ulist, emailintercept_t *em,
         email_target_t *tgt);
 int add_intercept_to_email_user_intercept_list(
-        email_user_intercept_list_t **ulist, emailintercept_t *em,
+        email_user_intercept_list_t *ulist, emailintercept_t *em,
         email_target_t *tgt);
 
 const char *get_access_type_string(internet_access_method_t method);

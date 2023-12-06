@@ -36,17 +36,6 @@
 #include "etsili_core.h"
 #include "emailiri.h"
 
-static inline email_user_intercept_list_t *is_address_interceptable(
-        openli_email_worker_t *state, const char *emailaddr) {
-
-    email_user_intercept_list_t *active = NULL;
-    if (emailaddr == NULL) {
-        return active;
-    }
-    HASH_FIND(hh, state->alltargets, emailaddr, strlen(emailaddr), active);
-    return active;
-}
-
 void free_email_iri_content(etsili_email_iri_content_t *content) {
 
     int i;
@@ -153,13 +142,13 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
 
 static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t iri_type, uint8_t email_ev,
-        uint8_t status, email_user_intercept_list_t *active, uint64_t ts,
+        uint8_t status, email_intercept_ref_t *intlist, uint64_t ts,
         const char *onlyrecipient) {
 
     openli_export_recv_t *irijob = NULL;
     email_intercept_ref_t *ref, *tmp;
 
-    HASH_ITER(hh, active->intlist, ref, tmp) {
+    HASH_ITER(hh, intlist, ref, tmp) {
         if (ref->em->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
             continue;
         }
@@ -192,16 +181,30 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t email_ev, uint8_t iri_type,
         uint8_t status, uint64_t timestamp) {
 
-    email_user_intercept_list_t *active = NULL;
+    email_address_set_t *active_addr = NULL;
+    email_target_set_t *active_tgt = NULL;
     email_participant_t *recip, *tmp;
 
     if (email_ev != ETSILI_EMAIL_EVENT_RECEIVE) {
         if (sess->sender.emailaddr) {
-            active = is_address_interceptable(state, sess->sender.emailaddr);
+            active_addr = is_address_interceptable(state,
+                    sess->sender.emailaddr);
         }
-        if (active) {
+        if (active_addr) {
             create_emailiris_for_intercept_list(state, sess, iri_type,
-                    email_ev, status, active, timestamp, NULL);
+                    email_ev, status, active_addr->intlist, timestamp, NULL);
+        }
+
+        if (sess->ingest_target_id && sess->sender.emailaddr &&
+                strcmp(sess->sender.emailaddr, sess->ingest_target_id) != 0 &&
+                sess->ingest_direction == OPENLI_EMAIL_DIRECTION_OUTBOUND) {
+            active_tgt = is_targetid_interceptable(state,
+                    sess->ingest_target_id);
+        }
+
+        if (active_tgt) {
+            create_emailiris_for_intercept_list(state, sess, iri_type,
+                    email_ev, status, active_tgt->intlist, timestamp, NULL);
         }
     }
 
@@ -214,19 +217,42 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
     }
 
     if (email_ev != ETSILI_EMAIL_EVENT_SEND) {
+        uint8_t recip_match_ingest_target = 0;
         HASH_ITER(hh, sess->participants, recip, tmp) {
             if (sess->sender.emailaddr && strcmp(recip->emailaddr,
                     sess->sender.emailaddr) == 0) {
                 continue;
             }
-
-            active = is_address_interceptable(state, recip->emailaddr);
-            if (!active) {
-                continue;
+            if (!sess->sender.emailaddr || strcmp(recip->emailaddr,
+                    sess->sender.emailaddr) != 0) {
+                active_addr = is_address_interceptable(state, recip->emailaddr);
+                if (active_addr) {
+                    create_emailiris_for_intercept_list(state, sess, iri_type,
+                            email_ev, status, active_addr->intlist, timestamp,
+                            recip->emailaddr);
+                }
             }
+            if (recip->emailaddr && sess->ingest_target_id &&
+                    strcmp(sess->ingest_target_id, recip->emailaddr) == 0) {
+                recip_match_ingest_target = 1;
+            }
+        }
 
-            create_emailiris_for_intercept_list(state, sess, iri_type,
-                    email_ev, status, active, timestamp, recip->emailaddr);
+        /* check for a match against the "TARGET_ID" reported via the
+         * ingestion socket
+         */
+        if (sess->ingest_direction == OPENLI_EMAIL_DIRECTION_INBOUND &&
+                sess->ingest_target_id != NULL &&
+                recip_match_ingest_target == 0) {
+            active_tgt = is_targetid_interceptable(state,
+                    sess->ingest_target_id);
+            if (active_tgt) {
+                /* have to include all recipients because we do not know
+                 * which one(s) are aliases for the actual target
+                 */
+                create_emailiris_for_intercept_list(state, sess, iri_type,
+                        email_ev, status, active_tgt->intlist, timestamp, NULL);
+            }
         }
     }
 
@@ -240,12 +266,23 @@ static int generate_email_login_iri(openli_email_worker_t *state,
     uint8_t iri_type;
     uint8_t status;
 
-    email_user_intercept_list_t *active = NULL;
+    email_address_set_t *active_addr = NULL;
+    email_target_set_t *active_tgt = NULL;
     email_participant_t *recip, *tmp;
+    email_intercept_ref_t *intlist = NULL;
 
-    active = is_address_interceptable(state, participant);
-    if (!active) {
-        return 0;
+    active_addr = is_address_interceptable(state, participant);
+    if (!active_addr) {
+        active_tgt = is_targetid_interceptable(state, sess->ingest_target_id);
+        if (sess->ingest_direction == OPENLI_EMAIL_DIRECTION_INBOUND) {
+            /* only generate login events for targets who are sending mail */
+            return 0;
+        }
+        if (active_tgt) {
+            intlist = active_tgt->intlist;
+        }
+    } else {
+        intlist = active_addr->intlist;
     }
 
     if (success) {
@@ -259,20 +296,34 @@ static int generate_email_login_iri(openli_email_worker_t *state,
     }
 
     create_emailiris_for_intercept_list(state, sess, iri_type, email_ev,
-            status, active, sess->login_time, participant);
+            status, intlist, sess->login_time, participant);
     return 0;
 }
 
 int generate_email_logoff_iri_for_user(openli_email_worker_t *state,
         emailsession_t *sess, const char *address) {
 
-    email_user_intercept_list_t *active = NULL;
-    active = is_address_interceptable(state, address);
+    email_address_set_t *active_addr = NULL;
+    email_target_set_t *active_tgt = NULL;
+    email_intercept_ref_t *intlist = NULL;
 
-    if (active) {
+    active_addr = is_address_interceptable(state, address);
+
+    if (!active_addr) {
+        active_tgt = is_targetid_interceptable(state, sess->ingest_target_id);
+        if (sess->ingest_direction == OPENLI_EMAIL_DIRECTION_INBOUND) {
+            /* only generate login events for targets who are sending mail */
+            return 0;
+        }
+        intlist = active_tgt->intlist;
+    } else {
+        intlist = active_addr->intlist;
+    }
+
+    if (intlist) {
         create_emailiris_for_intercept_list(state, sess,
                 ETSILI_IRI_END, ETSILI_EMAIL_EVENT_LOGOFF,
-                ETSILI_EMAIL_STATUS_SUCCESS, active, sess->event_time,
+                ETSILI_EMAIL_STATUS_SUCCESS, intlist, sess->event_time,
                 NULL);
     }
 

@@ -40,6 +40,7 @@
 #include <netdb.h>
 #include <Judy.h>
 #include <b64/cencode.h>
+#include <openssl/evp.h>
 
 #include "util.h"
 #include "logger.h"
@@ -320,6 +321,7 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
     (*cap)->host_ip = strdup(ip_a);
     (*cap)->part_id = 0xFFFFFFFF;
     (*cap)->pkt_sender = pktsender;
+    (*cap)->direction = OPENLI_EMAIL_DIRECTION_UNKNOWN;
 
     snprintf(portstr, 16, "%u", rem_port);
     (*cap)->remote_port = strdup(portstr);
@@ -375,6 +377,14 @@ static void init_email_session(emailsession_t *sess,
     } else {
         /* TODO */
     }
+
+    if (cap->target_id) {
+        sess->ingest_target_id = strdup(cap->target_id);
+    } else {
+        sess->ingest_target_id = NULL;
+    }
+
+    sess->ingest_direction = cap->direction;
 
     if (cap->type == OPENLI_EMAIL_TYPE_IMAP) {
         pthread_rwlock_rdlock(state->glob_config_mutex);
@@ -566,6 +576,9 @@ static void free_email_session(openli_email_worker_t *state,
     }
     if (sess->session_id) {
         free(sess->session_id);
+    }
+    if (sess->ingest_target_id) {
+        free(sess->ingest_target_id);
     }
     if (sess->key) {
         free(sess->key);
@@ -1000,10 +1013,7 @@ static int process_email_target_withdraw(openli_email_worker_t *state,
     HASH_FIND(hh, found->targets, tgt->address, strlen(tgt->address), tgtfound);
     if (tgtfound) {
         HASH_DELETE(hh, found->targets, tgtfound);
-        if (tgtfound->address) {
-            free(tgtfound->address);
-        }
-        free(tgtfound);
+        free_single_email_target(tgtfound);
     }
 
     return 0;
@@ -1025,11 +1035,7 @@ static int remove_email_target(openli_email_worker_t *state,
     }
 
     ret = process_email_target_withdraw(state, tgt, liid);
-
-    if (tgt->address) {
-        free(tgt->address);
-    }
-    free(tgt);
+    free_single_email_target(tgt);
     return ret;
 }
 
@@ -1039,6 +1045,11 @@ static int add_email_target(openli_email_worker_t *state,
     email_target_t *tgt, *tgtfound;
     emailintercept_t *found;
     char liid[256];
+    EVP_MD_CTX *ctx;
+    const EVP_MD *md;
+    unsigned char shaspace[EVP_MAX_MD_SIZE];
+    unsigned int sha_len;
+    int i;
 
     tgt = calloc(1, sizeof(email_target_t));
     if (decode_email_target_announcement(provmsg->msgbody, provmsg->msglen,
@@ -1046,6 +1057,28 @@ static int add_email_target(openli_email_worker_t *state,
         logger(LOG_INFO, "OpenLI: email worker %d received invalid email target announcement from provisioner", state->emailid);
         return -1;
     }
+
+    if (tgt->address == NULL) {
+        logger(LOG_INFO, "OpenLI: email worker %d has a target with no address for liid %s\n", state->emailid, liid);
+        return -1;
+    }
+    if (strlen(tgt->address) > 1023) {
+        logger(LOG_INFO, "OpenLI: insanely long email address for %s target -- %s\n", liid, tgt->address);
+        return -1;
+    }
+
+    ctx = EVP_MD_CTX_new();
+    md = EVP_sha512();
+    EVP_DigestInit_ex(ctx, md, NULL);
+    memset(shaspace, 0, EVP_MAX_MD_SIZE);
+    EVP_DigestUpdate(ctx, tgt->address, strlen(tgt->address));
+    EVP_DigestFinal_ex(ctx, shaspace, &sha_len);
+
+    tgt->sha512 = calloc(sha_len * 2 + 1, sizeof(char));
+    for (i = 0; i < sha_len; i++) {
+        sprintf(tgt->sha512 + (i * 2), "%02x", shaspace[i]);
+    }
+    EVP_MD_CTX_free(ctx);
 
     HASH_FIND(hh_liid, state->allintercepts, liid, strlen(liid), found);
     if (!found) {
@@ -1067,10 +1100,7 @@ static int add_email_target(openli_email_worker_t *state,
                 tgt);
     } else {
         tgtfound->awaitingconfirm = 0;
-        if (tgt->address) {
-            free(tgt->address);
-        }
-        free(tgt);
+        free_single_email_target(tgt);
     }
     return 0;
 }
@@ -1345,7 +1375,6 @@ static int process_ingested_capture(openli_email_worker_t *state) {
         if (x <= 0) {
             break;
         }
-
         if (cap == NULL || cap->session_id == NULL) {
             free_captured_email(cap);
             break;
@@ -1517,6 +1546,8 @@ void *start_email_worker_thread(void *arg) {
     sync_epoll_t *syncev, *tmp;
     openli_state_update_t recvd;
 
+    state->alltargets.addresses = NULL;
+    state->alltargets.targets = NULL;
     state->zmq_pubsocks = calloc(state->tracker_threads, sizeof(void *));
     state->zmq_fwdsocks = calloc(state->fwd_threads, sizeof(void *));
 
@@ -1586,7 +1617,7 @@ haltemailworker:
     logger(LOG_INFO, "OpenLI: halting email processing thread %d",
             state->emailid);
     /* free all state for intercepts and active sessions */
-    clear_email_user_intercept_list(state->alltargets);
+    clear_email_user_intercept_list(&(state->alltargets));
     free_all_emailintercepts(&(state->allintercepts));
     free_all_email_sessions(state);
 
@@ -1744,6 +1775,31 @@ int get_email_authentication_type(char *authmsg, const char *sesskey,
 
     return moveahead;
 }
+
+email_address_set_t *is_address_interceptable(
+        openli_email_worker_t *state, const char *emailaddr) {
+
+    email_address_set_t *active = NULL;
+    if (emailaddr == NULL) {
+        return active;
+    }
+    HASH_FIND(hh_addr, state->alltargets.addresses, emailaddr,
+            strlen(emailaddr), active);
+    return active;
+}
+
+email_target_set_t *is_targetid_interceptable(
+        openli_email_worker_t *state, const char *targetid) {
+
+    email_target_set_t *active = NULL;
+    if (targetid == NULL) {
+        return active;
+    }
+    HASH_FIND(hh_sha, state->alltargets.targets, targetid, strlen(targetid),
+            active);
+    return active;
+}
+
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 

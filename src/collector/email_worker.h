@@ -152,7 +152,7 @@ typedef struct openli_email_worker {
     sync_epoll_t *timeouts;
 
     emailintercept_t *allintercepts;
-    email_user_intercept_list_t *alltargets;
+    email_user_intercept_list_t alltargets;
 
     emailsession_t *activesessions;
 
@@ -199,6 +199,11 @@ void replace_email_session_clientaddr(emailsession_t *sess,
 int get_email_authentication_type(char *authmsg, const char *sesskey,
         openli_email_auth_type_t *at_code, uint8_t is_imap);
 void mask_plainauth_creds(char *mailbox, char *reencoded, int buflen);
+
+email_address_set_t *is_address_interceptable(
+        openli_email_worker_t *state, const char *emailaddr);
+email_target_set_t *is_targetid_interceptable(
+        openli_email_worker_t *state, const char *targetid);
 
 /* Defined in emailiri.c */
 int generate_email_partial_download_success_iri(openli_email_worker_t *state,

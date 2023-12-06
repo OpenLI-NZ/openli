@@ -32,15 +32,6 @@
 #include "logger.h"
 #include "etsili_core.h"
 
-static inline email_user_intercept_list_t *is_address_interceptable(
-        openli_email_worker_t *state, const char *emailaddr) {
-
-    email_user_intercept_list_t *active = NULL;
-
-    HASH_FIND(hh, state->alltargets, emailaddr, strlen(emailaddr), active);
-    return active;
-}
-
 static openli_export_recv_t *create_emailcc_job(char *liid,
         emailsession_t *sess, uint32_t destid, uint64_t timestamp,
         uint8_t *content, int content_len, uint8_t format, uint8_t dir) {
@@ -70,7 +61,7 @@ static openli_export_recv_t *create_emailcc_job(char *liid,
 
 static void create_emailccs_for_intercept_list(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
-        uint8_t format, email_user_intercept_list_t *active,
+        uint8_t format, email_intercept_ref_t *intlist,
         uint64_t timestamp, uint8_t dir, const char *key, uint8_t deflated) {
 
     openli_export_recv_t *ccjob = NULL;
@@ -79,7 +70,7 @@ static void create_emailccs_for_intercept_list(openli_email_worker_t *state,
 
     PWord_t pval;
 
-    HASH_ITER(hh, active->intlist, ref, tmp) {
+    HASH_ITER(hh, intlist, ref, tmp) {
 
         if (ref->em->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
             continue;
@@ -162,21 +153,43 @@ int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
         uint64_t timestamp, const char *address, uint8_t dir,
         int command_index) {
 
-    email_user_intercept_list_t *active = NULL;
+    email_address_set_t *active_addr = NULL;
+    email_target_set_t *active_tgt = NULL;
+    email_intercept_ref_t *intlist = NULL;
+
     email_participant_t *recip, *tmp;
     char key[1024];
+    const char *part_type;
 
     if (address == NULL || sess->sender.emailaddr == NULL) {
         return 0;
     }
-    active = is_address_interceptable(state, address);
+    active_addr = is_address_interceptable(state, address);
+    if (!active_addr) {
+        active_tgt = is_targetid_interceptable(state, address);
+        if (active_tgt) {
+            intlist = active_tgt->intlist;
+        }
+    } else {
+        intlist = active_addr->intlist;
+    }
 
-    if (active) {
-        snprintf(key, 1024, "%d-%u-%s", command_index, dir,
-                strcmp(address, sess->sender.emailaddr) == 0 ? "sender" :
-                        "recipient");
+    if (intlist) {
+        if (strcmp(address, sess->sender.emailaddr) == 0) {
+            part_type = "sender";
+        } else if (sess->ingest_target_id &&
+                strcmp(address, sess->ingest_target_id) == 0) {
+            if (sess->ingest_direction == OPENLI_EMAIL_DIRECTION_OUTBOUND) {
+                part_type = "sender";
+            } else {
+                part_type = "recipient";
+            }
+        } else {
+            part_type = "recipient";
+        }
+        snprintf(key, 1024, "%d-%u-%s", command_index, dir, part_type);
         create_emailccs_for_intercept_list(state, sess, content,
-                content_len, ETSILI_EMAIL_CC_FORMAT_APP, active, timestamp,
+                content_len, ETSILI_EMAIL_CC_FORMAT_APP, intlist, timestamp,
                 dir, key, 0);
     }
 
@@ -187,7 +200,7 @@ int generate_email_cc_from_pop3_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
         uint64_t timestamp, uint8_t etsidir) {
 
-    email_user_intercept_list_t *active = NULL;
+    email_address_set_t *active = NULL;
     email_participant_t *recip, *tmp;
 
     /* POP3 is purely a mail receiving protocol so sender should be
@@ -201,7 +214,7 @@ int generate_email_cc_from_pop3_payload(openli_email_worker_t *state,
         }
 
         create_emailccs_for_intercept_list(state, sess, content, content_len,
-                ETSILI_EMAIL_CC_FORMAT_APP, active, timestamp,
+                ETSILI_EMAIL_CC_FORMAT_APP, active->intlist, timestamp,
                 etsidir, NULL, 0);
     }
 
@@ -213,7 +226,7 @@ int generate_email_cc_from_imap_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
         uint64_t timestamp, uint8_t etsidir, uint8_t deflated) {
 
-    email_user_intercept_list_t *active = NULL;
+    email_address_set_t *active = NULL;
     email_participant_t *recip, *tmp;
 
     /* IMAP is purely a mail receiving protocol so sender should be
@@ -227,7 +240,7 @@ int generate_email_cc_from_imap_payload(openli_email_worker_t *state,
         }
 
         create_emailccs_for_intercept_list(state, sess, content, content_len,
-                ETSILI_EMAIL_CC_FORMAT_APP, active, timestamp,
+                ETSILI_EMAIL_CC_FORMAT_APP, active->intlist, timestamp,
                 etsidir, NULL, deflated);
     }
 

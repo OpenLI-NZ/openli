@@ -202,6 +202,8 @@ static int generate_smtp_ccs_from_saved(openli_email_worker_t *state,
         smtp_cc_list_t *ccs, const char *participant, uint8_t is_sender) {
 
     int i;
+    uint8_t dir;
+
     for (i = ccs->last_unsent; i < ccs->curr_command; i++) {
         smtp_command_t *comm = &(ccs->commands[i]);
         generate_email_cc_from_smtp_payload(state, sess,
@@ -216,6 +218,54 @@ static int generate_smtp_ccs_from_saved(openli_email_worker_t *state,
                 comm->timestamp, participant,
                 is_sender ? ETSI_DIR_TO_TARGET : ETSI_DIR_FROM_TARGET,
                 comm->command_index);
+        /* generate CCs in the case where the TARGET_ID matches an active
+         * intercept
+         */
+
+        /* make sure that we only generate each CC once for an intercept
+         * with a matching TARGET_ID, so don't repeat the check if/when
+         * we are subsequently called for each mail recipient.
+         */
+        if (!is_sender) {
+            continue;
+        }
+
+        /* also ignore if the TARGET_ID is an exact match of the sender
+         * address, as the CCs generated just previously will suffice
+         */
+        if (sess->ingest_target_id == NULL || strcmp(sess->ingest_target_id,
+                participant) == 0) {
+            continue;
+        }
+
+        /* direction outbound == the target is sending the email, i.e.
+         * commands come from the target, replies are to the target */
+        if (sess->ingest_direction == OPENLI_EMAIL_DIRECTION_OUTBOUND) {
+            dir = ETSI_DIR_FROM_TARGET;
+        } else if (sess->ingest_direction == OPENLI_EMAIL_DIRECTION_INBOUND) {
+            dir = ETSI_DIR_TO_TARGET;
+        } else {
+            continue;
+        }
+        generate_email_cc_from_smtp_payload(state, sess,
+                smtpsess->contbuffer + comm->command_start,
+                comm->reply_start - comm->command_start,
+                comm->timestamp, sess->ingest_target_id, dir,
+                comm->command_index);
+
+        /* direction inbound == the target is receiving the email, i.e.
+         * commands are sent "to" the target, replies are "from" the target */
+        if (sess->ingest_direction == OPENLI_EMAIL_DIRECTION_OUTBOUND) {
+            dir = ETSI_DIR_TO_TARGET;
+        } else {
+            dir = ETSI_DIR_FROM_TARGET;
+        }
+        generate_email_cc_from_smtp_payload(state, sess,
+                smtpsess->contbuffer + comm->reply_start,
+                comm->reply_end - comm->reply_start,
+                comm->timestamp, sess->ingest_target_id, dir,
+                comm->command_index);
+
     }
 
     ccs->last_unsent = ccs->curr_command;
