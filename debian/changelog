@@ -1,4 +1,4 @@
-openli (1.1.4-1~rc01) unstable; urgency=medium
+openli (1.1.4-1~rc02) unstable; urgency=medium
 
   * Fix oversight preventing POP3 identities from being extracted for
     sessions using the AUTH command.
@@ -6,8 +6,21 @@ openli (1.1.4-1~rc01) unstable; urgency=medium
     authenticated session.
   * IMAP: fix bug where PLAIN AUTH credentials could be replaced with
     garbage if the `maskimapcreds` configuration option was disabled.
+  * SMTP: email sessions delivered via the ingestion socket will now
+    be correctly intercepted if the TARGET_ID matches either one
+    of the intercept target addresses OR a SHA512 hash of one of those
+    addresses.
+  * SMTP: include all recipients in email-receive IRIs, regardless of
+    whether they are intercept targets or not.
+  * IMAP: fix segfault when processing compressed IMAP messages.
+  * IMAP: fix segfault when parsing an incomplete UID command.
+  * IMAP: disable "unmatched reply" log messages.
+  * Email: fragmented IP packets are now reassembled by email workers
+    before processing.
+  * Email: fix double-free on collector exit if a default email domain
+    had been configured.
 
- -- Shane Alcock <salcock@searchlight.nz>  Tue, 21 Nov 2023 16:01:39 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Thu, 07 Dec 2023 16:49:15 +1300
 
 openli (1.1.3-1) unstable; urgency=high
 
