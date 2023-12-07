@@ -64,8 +64,7 @@ void free_email_iri_content(etsili_email_iri_content_t *content) {
 
 static openli_export_recv_t *create_emailiri_job(char *liid,
         emailsession_t *sess, uint8_t iritype, uint8_t emailev,
-        uint8_t status, uint32_t destid, uint64_t timestamp,
-        const char *onlyrecipient) {
+        uint8_t status, uint32_t destid, uint64_t timestamp) {
 
     openli_export_recv_t *msg = NULL;
     etsili_email_iri_content_t *content;
@@ -115,22 +114,13 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
         content->sender = NULL;
     }
 
-    /* TODO maybe we need a config option to include ALL recipients
-     * regardless of whether they were intercept targets?
-     */
-    if (onlyrecipient) {
-        content->recipient_count = 1;
-        content->recipients = calloc(1, sizeof(char *));
-        content->recipients[0] = strdup(onlyrecipient);
-    } else {
-        content->recipient_count = HASH_CNT(hh, sess->participants);
-        content->recipients = calloc(content->recipient_count,
-                sizeof(char *));
-        i = 0;
-        HASH_ITER(hh, sess->participants, recip, tmp) {
-            content->recipients[i] = strdup(recip->emailaddr);
-            i++;
-        }
+    content->recipient_count = HASH_CNT(hh, sess->participants);
+    content->recipients = calloc(content->recipient_count,
+            sizeof(char *));
+    i = 0;
+    HASH_ITER(hh, sess->participants, recip, tmp) {
+        content->recipients[i] = strdup(recip->emailaddr);
+        i++;
     }
 
     content->status = status;
@@ -143,10 +133,12 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
 static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t iri_type, uint8_t email_ev,
         uint8_t status, email_intercept_ref_t *intlist, uint64_t ts,
-        const char *onlyrecipient) {
+        const char *key) {
 
     openli_export_recv_t *irijob = NULL;
     email_intercept_ref_t *ref, *tmp;
+    char fullkey[4096];
+    PWord_t pval;
 
     HASH_ITER(hh, intlist, ref, tmp) {
         if (ref->em->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
@@ -162,9 +154,21 @@ static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
             continue;
         }
 
+        if (key != NULL) {
+            snprintf(fullkey, 4096, "%s-%s", ref->em->common.liid, key);
+            JSLG(pval, sess->iris_sent, fullkey);
+            if (pval) {
+                /* We've already sent this particular IRI for this intercept.
+                 * Avoid sending a duplicate.
+                 */
+                continue;
+            }
+            JSLI(pval, sess->iris_sent, fullkey);
+            *pval = 1;
+        }
+
         irijob = create_emailiri_job(ref->em->common.liid, sess,
-                iri_type, email_ev, status, ref->em->common.destid, ts,
-                onlyrecipient);
+                iri_type, email_ev, status, ref->em->common.destid, ts);
         if (irijob == NULL) {
             continue;
         }
@@ -185,6 +189,13 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
     email_target_set_t *active_tgt = NULL;
     email_participant_t *recip, *tmp;
 
+    char senderkey[1024];
+    char recipkey[1024];
+
+    snprintf(senderkey, 1024, "iri-%d-sender", sess->iricount);
+    snprintf(recipkey, 1024, "iri-%d-recipient", sess->iricount);
+
+    sess->iricount ++;
     if (email_ev != ETSILI_EMAIL_EVENT_RECEIVE) {
         if (sess->sender.emailaddr) {
             active_addr = is_address_interceptable(state,
@@ -192,19 +203,20 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
         }
         if (active_addr) {
             create_emailiris_for_intercept_list(state, sess, iri_type,
-                    email_ev, status, active_addr->intlist, timestamp, NULL);
+                    email_ev, status, active_addr->intlist, timestamp,
+                    senderkey);
         }
 
-        if (sess->ingest_target_id && sess->sender.emailaddr &&
-                strcmp(sess->sender.emailaddr, sess->ingest_target_id) != 0 &&
+        if (sess->ingest_target_id &&
                 sess->ingest_direction == OPENLI_EMAIL_DIRECTION_OUTBOUND) {
             active_tgt = is_targetid_interceptable(state,
                     sess->ingest_target_id);
-        }
 
-        if (active_tgt) {
-            create_emailiris_for_intercept_list(state, sess, iri_type,
-                    email_ev, status, active_tgt->intlist, timestamp, NULL);
+            if (active_tgt) {
+                create_emailiris_for_intercept_list(state, sess, iri_type,
+                        email_ev, status, active_tgt->intlist, timestamp,
+                        senderkey);
+            }
         }
     }
 
@@ -217,7 +229,6 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
     }
 
     if (email_ev != ETSILI_EMAIL_EVENT_SEND) {
-        uint8_t recip_match_ingest_target = 0;
         HASH_ITER(hh, sess->participants, recip, tmp) {
             if (sess->sender.emailaddr && strcmp(recip->emailaddr,
                     sess->sender.emailaddr) == 0) {
@@ -229,12 +240,8 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
                 if (active_addr) {
                     create_emailiris_for_intercept_list(state, sess, iri_type,
                             email_ev, status, active_addr->intlist, timestamp,
-                            recip->emailaddr);
+                            recipkey);
                 }
-            }
-            if (recip->emailaddr && sess->ingest_target_id &&
-                    strcmp(sess->ingest_target_id, recip->emailaddr) == 0) {
-                recip_match_ingest_target = 1;
             }
         }
 
@@ -242,16 +249,13 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
          * ingestion socket
          */
         if (sess->ingest_direction == OPENLI_EMAIL_DIRECTION_INBOUND &&
-                sess->ingest_target_id != NULL &&
-                recip_match_ingest_target == 0) {
+                sess->ingest_target_id != NULL) {
             active_tgt = is_targetid_interceptable(state,
                     sess->ingest_target_id);
             if (active_tgt) {
-                /* have to include all recipients because we do not know
-                 * which one(s) are aliases for the actual target
-                 */
                 create_emailiris_for_intercept_list(state, sess, iri_type,
-                        email_ev, status, active_tgt->intlist, timestamp, NULL);
+                        email_ev, status, active_tgt->intlist, timestamp,
+                        recipkey);
             }
         }
     }

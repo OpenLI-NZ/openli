@@ -412,6 +412,8 @@ static void init_email_session(emailsession_t *sess,
     sess->next_expected_captured = 0;
     sess->handle_compress = OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET;
     sess->ccs_sent = NULL;
+    sess->iris_sent = NULL;
+    sess->iricount = 0;
 }
 
 int extract_email_sender_from_body(openli_email_worker_t *state,
@@ -530,6 +532,7 @@ static void free_email_session(openli_email_worker_t *state,
     }
 
     JSLFA(rc, sess->ccs_sent);
+    JSLFA(rc, sess->iris_sent);
 
     clear_email_sender(sess);
     clear_email_participant_list(sess);
@@ -1796,6 +1799,12 @@ email_target_set_t *is_targetid_interceptable(
         return active;
     }
     HASH_FIND(hh_sha, state->alltargets.targets, targetid, strlen(targetid),
+            active);
+    if (active) {
+        return active;
+    }
+
+    HASH_FIND(hh_plain, state->alltargets.targets, targetid, strlen(targetid),
             active);
     return active;
 }

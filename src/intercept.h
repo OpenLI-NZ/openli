@@ -201,11 +201,13 @@ typedef struct email_target_set {
     char *origaddress;
     email_intercept_ref_t *intlist;
     UT_hash_handle hh_sha;
+    UT_hash_handle hh_plain;
 } email_target_set_t;
 
 typedef struct emailinterceptlist {
     email_address_set_t *addresses;
     email_target_set_t *targets;
+    email_target_set_t *targets_plain;
 } email_user_intercept_list_t;
 
 
@@ -336,6 +338,8 @@ struct emailsession {
     uint8_t sender_validated_etsivalue;
 
     Pvoid_t ccs_sent;
+    Pvoid_t iris_sent;
+    int iricount;
     UT_hash_handle hh;
 };
 

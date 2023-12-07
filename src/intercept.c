@@ -701,7 +701,7 @@ void free_all_ipsessions(ipsession_t **sessions) {
 }
 
 static int add_email_targetid_to_user_intercept_list(
-        email_target_set_t **ulist, emailintercept_t *em,
+        email_user_intercept_list_t *ulist, emailintercept_t *em,
         char *emailaddr, char *targetid) {
 
     email_target_set_t *found;
@@ -711,7 +711,7 @@ static int add_email_targetid_to_user_intercept_list(
         return 0;
     }
 
-    HASH_FIND(hh_sha, *ulist, targetid, strlen(targetid), found);
+    HASH_FIND(hh_sha, ulist->targets, targetid, strlen(targetid), found);
     if (!found) {
         found = calloc(1, sizeof(email_target_set_t));
         if (!found) {
@@ -735,8 +735,10 @@ static int add_email_targetid_to_user_intercept_list(
         }
 
         found->intlist = NULL;
-        HASH_ADD_KEYPTR(hh_sha, *ulist, found->sha512,
+        HASH_ADD_KEYPTR(hh_sha, ulist->targets, found->sha512,
                 strlen(found->sha512), found);
+        HASH_ADD_KEYPTR(hh_plain, ulist->targets_plain, found->origaddress,
+                strlen(found->origaddress), found);
     }
 
     HASH_FIND(hh, found->intlist, em->common.liid, em->common.liid_len, intref);
@@ -804,7 +806,7 @@ int add_intercept_to_email_user_intercept_list(
         return -1;
     }
 
-    if (add_email_targetid_to_user_intercept_list(&(ulist->targets), em,
+    if (add_email_targetid_to_user_intercept_list(ulist, em,
             tgt->address, tgt->sha512) < 0) {
         return -1;
     }
@@ -864,6 +866,7 @@ int remove_intercept_from_email_user_intercept_list(
 
     email_address_set_t *found;
     email_target_set_t *sha_ref;
+    email_target_set_t *plain_ref;
     email_intercept_ref_t *existing;
 
     if (tgt->address == NULL) {
@@ -872,12 +875,10 @@ int remove_intercept_from_email_user_intercept_list(
         return -1;
     }
 
-
     HASH_FIND(hh_addr, ulist->addresses, tgt->address,
             strlen(tgt->address), found);
 
     if (found) {
-
         HASH_FIND(hh, found->intlist, em->common.liid, em->common.liid_len,
                 existing);
         if (!existing) {
@@ -900,6 +901,9 @@ int remove_intercept_from_email_user_intercept_list(
         return 0;
     }
 
+    HASH_FIND(hh_plain, ulist->targets_plain, tgt->address,
+            strlen(tgt->address), plain_ref);
+
     HASH_FIND(hh_sha, ulist->targets, tgt->sha512, strlen(tgt->sha512),
             sha_ref);
     if (sha_ref) {
@@ -915,6 +919,9 @@ int remove_intercept_from_email_user_intercept_list(
         /* If there are no intercepts left associated with this address, we can
          * remove them from the user list */
         if (HASH_CNT(hh, sha_ref->intlist) == 0) {
+            if (plain_ref) {
+                HASH_DELETE(hh_plain, ulist->targets_plain, plain_ref);
+            }
             HASH_DELETE(hh_sha, ulist->targets, sha_ref);
             free(sha_ref->sha512);
             free(sha_ref->origaddress);
