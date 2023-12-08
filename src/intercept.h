@@ -41,6 +41,7 @@ typedef enum {
     OPENLI_INTERCEPT_TYPE_IP = 1,
     OPENLI_INTERCEPT_TYPE_VOIP = 2,
     OPENLI_INTERCEPT_TYPE_EMAIL = 3,
+    OPENLI_INTERCEPT_TYPE_EOL,
 } openli_intercept_types_t;
 
 typedef enum {
@@ -440,10 +441,45 @@ void free_single_staticipsession(staticipsession_t *statint);
 void free_single_staticiprange(static_ipranges_t *ipr);
 void free_single_email_target(email_target_t *tgt);
 
+int update_modified_intercept_common(intercept_common_t *current,
+        intercept_common_t *update, openli_intercept_types_t cepttype);
+
 /* Create a comma-separated string containing all of the SIP target IDs
  * for a VoIP intercept.
  */
 char *list_sip_targets(voipintercept_t *v, int maxchars);
+
+/* Add a provided SIP identity to the targets list for a VoIP intercept.
+ */
+void add_new_sip_target_to_list(voipintercept_t *vint,
+        openli_sip_identity_t *sipid);
+
+/* Disables the provided SIP identity for a VoIP intercept. */
+void disable_sip_target_from_list(voipintercept_t *vint,
+        openli_sip_identity_t *sipid);
+
+/* Disables any VoIP intercepts that were not confirmed by the provisioner
+ * since we last had a reliable connection back to it.
+ *
+ * Takes two function callbacks as arguments: one function to be called
+ * for each unconfirmed intercept (percept), and one to be called for each
+ * unconfirmed target (whose intercept was confirmed) (pertgt).
+ *
+ * The percept_arg and pertgt_arg parameters allow the user to pass
+ * their own context data into the callback functions, if required.
+ */
+void disable_unconfirmed_voip_intercepts(voipintercept_t **voipintercepts,
+        void (*percept)(voipintercept_t *, void *),
+        void *percept_arg,
+        void (*pertgt)(openli_sip_identity_t *, voipintercept_t *vint, void *),
+        void *pertgt_arg);
+
+/* Mark all VoIP intercepts (and their targets) as unconfirmed, pending
+ * a re-announcement from the provisioner. You should call this on a
+ * set of known VoIP intercepts whenever the connection to the provisioner
+ * is lost.
+ */
+void flag_voip_intercepts_as_unconfirmed(voipintercept_t **voipintercepts);
 
 /* Create a comma-separated string containing all of the target addresses
  * for an email intercept.

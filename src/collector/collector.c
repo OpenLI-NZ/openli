@@ -119,6 +119,8 @@ static void log_collector_stats(collector_global_t *glob) {
             glob->stats.packets_sync_ip, glob->stats.packets_sync_voip);
     logger(LOG_INFO, "OpenLI: Packets sent to Email workers: %lu",
             glob->stats.packets_sync_email);
+    logger(LOG_INFO, "OpenLI: Packets sent to SMS workers: %lu",
+            glob->stats.packets_sms);
     logger(LOG_INFO, "OpenLI: Bad SIP packets: %lu   Bad RADIUS packets: %lu",
             glob->stats.bad_sip_packets, glob->stats.bad_ip_session_packets);
     logger(LOG_INFO, "OpenLI: Records created... IPCCs: %lu  IPIRIs: %lu  MobIRIs: %lu",
@@ -249,6 +251,8 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
     loc->accepted = 0;
     loc->dropped = 0;
 
+    loc->sipparser = NULL;
+
 
     loc->zmq_pubsocks = calloc(glob->seqtracker_threads, sizeof(void *));
     for (i = 0; i < glob->seqtracker_threads; i++) {
@@ -271,6 +275,17 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
         zmq_connect(loc->email_worker_queues[i], pubsockname);
     }
 
+    loc->sms_worker_queues = calloc(glob->sms_threads, sizeof(void *));
+    for (i = 0; i < glob->sms_threads; i++) {
+        char pubsockname[128];
+
+        snprintf(pubsockname, 128, "inproc://openlismsworker-colrecv%d", i);
+        loc->sms_worker_queues[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+        zmq_setsockopt(loc->sms_worker_queues[i], ZMQ_SNDHWM, &hwm,
+                sizeof(hwm));
+        zmq_connect(loc->sms_worker_queues[i], pubsockname);
+    }
+
     loc->fragreass = create_new_ipfrag_reassembler();
 
     loc->tosyncq_ip = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
@@ -291,6 +306,7 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     pthread_rwlock_wrlock(&(glob->config_mutex));
     loc = glob->collocals[glob->nextloc];
+    loc->sipparser = NULL;
     glob->nextloc ++;
     pthread_rwlock_unlock(&(glob->config_mutex));
 
@@ -432,6 +448,12 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
         zmq_close(loc->email_worker_queues[i]);
     }
 
+    for (i = 0; i < glob->sms_threads; i++) {
+        zmq_setsockopt(loc->sms_worker_queues[i], ZMQ_LINGER, &zero,
+                sizeof(zero));
+        zmq_close(loc->sms_worker_queues[i]);
+    }
+
     zmq_setsockopt(loc->tosyncq_ip, ZMQ_LINGER, &zero, sizeof(zero));
     zmq_close(loc->tosyncq_ip);
     zmq_setsockopt(loc->tosyncq_voip, ZMQ_LINGER, &zero, sizeof(zero));
@@ -439,6 +461,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     free(loc->zmq_pubsocks);
     free(loc->email_worker_queues);
+    free(loc->sms_worker_queues);
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
         free_all_ipsessions(&(v4->intercepts));
@@ -471,6 +494,10 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     Destroy_Patricia(loc->dynamicv6ranges, free_staticrange_data);
 
     free_staticcache(loc->staticcache);
+
+    if (loc->sipparser) {
+        release_sip_parser(loc->sipparser);
+    }
 }
 
 static inline void send_packet_to_sync(libtrace_packet_t *pkt,
@@ -520,6 +547,26 @@ static inline void send_packet_to_sync(libtrace_packet_t *pkt,
     zmq_send(q, (void *)(&syncup), sizeof(syncup), 0);
 }
 
+static void send_packet_to_smsworker(char *content, uint16_t contentlen,
+        uint8_t *ipsrc, uint8_t *ipdest, int ipfamily, void *queue,
+        struct timeval tv) {
+
+    openli_state_update_t smssip;
+
+    smssip.type = OPENLI_UPDATE_SMS_SIP;
+    /* make sure we end in a null byte so we can do string operations */
+    smssip.data.sip.content = calloc(contentlen + 1, sizeof(uint8_t));
+    memcpy(smssip.data.sip.content, content, contentlen);
+    smssip.data.sip.contentlen = contentlen;
+    smssip.data.sip.ipfamily = ipfamily;
+    memcpy(smssip.data.sip.ipsrc, ipsrc, 16);
+    memcpy(smssip.data.sip.ipdest, ipdest, 16);
+    smssip.data.sip.timestamp.tv_sec = tv.tv_sec;
+    smssip.data.sip.timestamp.tv_usec = tv.tv_usec;
+
+    zmq_send(queue, (void *)(&smssip), sizeof(smssip), 0);
+}
+
 static void send_packet_to_emailworker(libtrace_packet_t *pkt,
         void **queues, int qcount, uint32_t hashval, uint8_t pkttype) {
 
@@ -530,13 +577,147 @@ static void send_packet_to_emailworker(libtrace_packet_t *pkt,
     send_packet_to_sync(pkt, queues[destind], pkttype);
 }
 
-static inline uint8_t check_for_invalid_sip(libtrace_packet_t *pkt,
-        uint16_t fragoff) {
-
+static void add_payload_info_from_packet(libtrace_packet_t *pkt,
+        packet_info_t *pinfo) {
     void *transport, *payload;
-    uint32_t plen, fourbytes;
+    uint32_t plen;
     uint8_t proto;
     uint32_t rem;
+
+    if (pinfo->trans_proto != 0) {
+        /* already looked this up */
+        return;
+    }
+
+    transport = trace_get_transport(pkt, &proto, &rem);
+
+    if (transport == NULL || rem == 0) {
+        pinfo->trans_proto == 255;
+        return;
+    }
+
+    pinfo->trans_proto = proto;
+    plen = trace_get_payload_length(pkt);
+
+    if (proto == TRACE_IPPROTO_UDP) {
+        payload = trace_get_payload_from_udp((libtrace_udp_t *)transport,
+                &rem);
+        if (payload == NULL) {
+            return;
+        }
+    } else if (proto == TRACE_IPPROTO_TCP) {
+        payload = trace_get_payload_from_tcp((libtrace_tcp_t *)transport,
+                &rem);
+        if (payload == NULL) {
+            return;
+        }
+    } else {
+        return;
+    }
+
+    pinfo->payload_ptr = payload;
+    if (plen <= rem) {
+        pinfo->payload_len = plen;
+    } else {
+        pinfo->payload_len = rem;
+    }
+
+}
+
+static uint8_t is_sms_over_sip(packet_info_t *pinfo, libtrace_packet_t *pkt,
+        colthread_local_t *loc, collector_global_t *glob) {
+
+    uint8_t x = 0, doonce;
+    int ipfamily;
+    int is_sip = 0;
+    libtrace_packet_t *ref;
+    uint32_t hashval = 0;
+    char *callid, *cseq, *sipcontents;
+    uint16_t siplen;
+    uint32_t queueid;
+    uint8_t ipsrc[16], ipdest[16];
+
+    x = add_sip_packet_to_parser(&(loc->sipparser), pkt, 0);
+    if (x == SIP_ACTION_USE_PACKET) {
+        /* No fragments, no TCP reassembly required */
+        doonce = 1;
+        ref = pkt;
+    } else if (x == SIP_ACTION_REASSEMBLE_TCP) {
+        /* Reassembled TCP, could contain multiple messages */
+        ref = NULL;
+        doonce = 0;
+    } else if (x == SIP_ACTION_REASSEMBLE_IPFRAG) {
+        /* Reassembled IP/UDP fragment */
+        doonce = 1;
+        ref = NULL;
+    } else {
+        return 0;
+    }
+
+    memset(ipsrc, 0, 16);
+    memset(ipdest, 0, 16);
+    if (extract_ip_addresses(pkt, ipsrc, ipdest, &ipfamily) != 0) {
+        /* This error will get caught and logged by the VoIP sync thread
+         * so we don't need to log it ourselves.
+         */
+        return 0;
+    }
+
+    do {
+        is_sip = 0;
+        x = parse_next_sip_message(loc->sipparser, ref);
+        if (x == 0) {
+            /* no more SIP content available */
+            break;
+        }
+        if (x < 0) {
+            return 0;
+        }
+
+        sipcontents = get_sip_contents(loc->sipparser, &siplen);
+        /* payload begins with "MESSAGE" == SMS */
+        if (siplen > 8 && memcmp("MESSAGE ", sipcontents, 8) == 0) {
+            is_sip = 1;
+        } else {
+            /* CSEQ ends with " MESSAGE" == server response to SMS */
+            cseq = get_sip_cseq(loc->sipparser);
+            if (cseq != NULL) {
+                int slen = strlen(cseq);
+                if (slen > 8 && memcmp(cseq + (slen - 8), " MESSAGE", 8) == 0) {
+                    is_sip = 1;
+                }
+            }
+            free(cseq);
+        }
+
+        if (is_sip) {
+            callid = get_sip_callid(loc->sipparser);
+            if (callid == NULL) {
+                logger(LOG_INFO,
+                        "OpenLI: warning -- SIP SMS MESSAGE has no Call-Id");
+                continue;
+            }
+            hashval = hashlittle(callid, strlen(callid), 0xfffffffb);
+            queueid = hashval % glob->sms_threads;
+            send_packet_to_smsworker(sipcontents, siplen, ipsrc, ipdest,
+                    ipfamily, loc->sms_worker_queues[queueid],
+                    trace_get_timeval(pkt));
+
+            /* update global stats */
+            pthread_mutex_lock(&(glob->stats_mutex));
+            glob->stats.packets_sms ++;
+            pthread_mutex_unlock(&(glob->stats_mutex));
+        }
+
+    } while (!doonce);
+
+    return 0;
+}
+
+static inline uint8_t check_for_invalid_sip(packet_info_t *pinfo,
+        uint16_t fragoff) {
+
+    uint32_t fourbytes;
 
     /* STUN can be sent by clients to the SIP servers, so try to detect
      * that.
@@ -547,47 +728,40 @@ static inline uint8_t check_for_invalid_sip(libtrace_packet_t *pkt,
     if (fragoff > 0) {
         return 0;
     }
-    transport = trace_get_transport(pkt, &proto, &rem);
 
-    if (transport == NULL || rem == 0) {
-        return 1;
+    if (pinfo->trans_proto != TRACE_IPPROTO_UDP) {
+        return 0;
     }
 
-    if (proto == TRACE_IPPROTO_UDP) {
-        payload = trace_get_payload_from_udp((libtrace_udp_t *)transport, &rem);
+    if (pinfo->payload_len < 20 || pinfo->payload_ptr == NULL) {
+        return 0;
+    }
+    fourbytes = ntohl(*((uint32_t *)pinfo->payload_ptr));
 
-        if (payload == NULL || rem == 0) {
+    /* STUN matching borrowed from libprotoident */
+    if ((fourbytes & 0xffff) == pinfo->payload_len - 20) {
+        if ((fourbytes & 0xffff0000) == 0x00010000) {
             return 1;
         }
 
-        plen = trace_get_payload_length(pkt);
-        fourbytes = ntohl(*((uint32_t *)payload));
+        if ((fourbytes & 0xffff0000) == 0x01010000) {
+            return 1;
+        }
 
-        /* STUN matching borrowed from libprotoident */
-        if ((fourbytes & 0xffff) == plen - 20) {
-            if ((fourbytes & 0xffff0000) == 0x00010000) {
-                return 1;
-            }
+        if ((fourbytes & 0xffff0000) == 0x01110000) {
+            return 1;
+        }
 
-            if ((fourbytes & 0xffff0000) == 0x01010000) {
-                return 1;
-            }
+        if ((fourbytes & 0xffff0000) == 0x00030000) {
+            return 1;
+        }
 
-            if ((fourbytes & 0xffff0000) == 0x01110000) {
-                return 1;
-            }
+        if ((fourbytes & 0xffff0000) == 0x01030000) {
+            return 1;
+        }
 
-            if ((fourbytes & 0xffff0000) == 0x00030000) {
-                return 1;
-            }
-
-            if ((fourbytes & 0xffff0000) == 0x01030000) {
-                return 1;
-            }
-
-            if ((fourbytes & 0xffff0000) == 0x01130000) {
-                return 1;
-            }
+        if ((fourbytes & 0xffff0000) == 0x01130000) {
+            return 1;
         }
     }
 
@@ -684,7 +858,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     int forwarded = 0, ret;
     int ipsynced = 0, voipsynced = 0, emailsynced = 0;
     uint16_t fragoff = 0;
-    uint32_t servhash = 0;
+    uint32_t servhash = 0, smshash = 0;
 
     openli_pushed_t syncpush;
     packet_info_t pinfo;
@@ -709,7 +883,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     }
 
     //trace_increment_packet_refcount(pkt);
-
+    memset(&pinfo, 0, sizeof(pinfo));
     pinfo.tv = trace_get_timeval(pkt);
     iprem = rem;
     if (ethertype == TRACE_ETHERTYPE_IP) {
@@ -885,9 +1059,10 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         /* Is this a SIP packet? -- if yes, create a state update */
         if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
                     loc->sipservers)) {
-            if (!check_for_invalid_sip(pkt, fragoff)) {
-                send_packet_to_sync(pkt, loc->tosyncq_voip,
-                        OPENLI_UPDATE_SIP);
+            add_payload_info_from_packet(pkt, &pinfo);
+            if (!check_for_invalid_sip(&pinfo, fragoff)) {
+                is_sms_over_sip(&pinfo, pkt, loc, glob);
+                send_packet_to_sync(pkt, loc->tosyncq_voip, OPENLI_UPDATE_SIP);
                 voipsynced = 1;
             }
         }
@@ -895,6 +1070,8 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         /* Is this a SIP packet? -- if yes, create a state update */
         if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
                     loc->sipservers)) {
+            add_payload_info_from_packet(pkt, &pinfo);
+            is_sms_over_sip(&pinfo, pkt, loc, glob);
             send_packet_to_sync(pkt, loc->tosyncq_voip, OPENLI_UPDATE_SIP);
             voipsynced = 1;
         }
@@ -986,6 +1163,7 @@ processdone:
         glob->stats.packets_sync_voip ++;
         pthread_mutex_unlock(&(glob->stats_mutex));
     }
+
 
     if (forwarded) {
         pthread_mutex_lock(&(glob->stats_mutex));
@@ -1262,6 +1440,10 @@ static void destroy_collector_state(collector_global_t *glob) {
         free(glob->forwarders);
     }
 
+    if (glob->smsworkers) {
+        free(glob->smsworkers);
+    }
+
     if (glob->zmq_ctxt) {
         logger(LOG_INFO, "OpenLI: waiting for zeromq context to be destroyed.");
         zmq_ctx_destroy(glob->zmq_ctxt);
@@ -1466,6 +1648,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->forwarding_threads = 1;
     glob->encoding_threads = 2;
     glob->email_threads = 1;
+    glob->sms_threads = 1;
     glob->sharedinfo.intpointid = NULL;
     glob->sharedinfo.intpointid_len = 0;
     glob->sharedinfo.operatorid = NULL;
@@ -1486,7 +1669,6 @@ static void init_collector_global(collector_global_t *glob) {
     glob->sipdebugfile = NULL;
     glob->nextloc = 0;
     glob->syncgenericfreelist = NULL;
-    glob->trust_sip_from = 0;
 
     glob->sslconf.certfile = NULL;
     glob->sslconf.keyfile = NULL;
@@ -1587,7 +1769,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     logger(LOG_DEBUG, "OpenLI: ETSI TLS encryption %s",
         glob->etsitls ? "enabled" : "disabled");
 
-    if (glob->trust_sip_from) {
+    if (glob->sharedinfo.trust_sip_from) {
         logger(LOG_INFO, "Allowing SIP From: URIs to be used for target identification");
     }
 
@@ -1747,6 +1929,7 @@ static int reload_collector_config(collector_global_t *glob,
     newstate.sharedinfo.intpointid = NULL;
 
     glob->sharedinfo.cisco_noradius = newstate.sharedinfo.cisco_noradius;
+    glob->sharedinfo.trust_sip_from = newstate.sharedinfo.trust_sip_from;
 
     pthread_rwlock_unlock(&(glob->config_mutex));
 
@@ -2044,6 +2227,28 @@ int main(int argc, char *argv[]) {
         pthread_setname_np(glob->forwarders[i].threadid, name);
     }
 
+    glob->smsworkers = calloc(glob->sms_threads, sizeof(openli_sms_worker_t));
+    for (i = 0; i < glob->sms_threads; i++) {
+        snprintf(name, 1024, "smsworker-%d", i);
+
+        glob->smsworkers[i].zmq_ctxt = glob->zmq_ctxt;
+        glob->smsworkers[i].workerid = i;
+        glob->smsworkers[i].stats_mutex = &(glob->stats_mutex);
+        glob->smsworkers[i].stats = &(glob->stats);
+        glob->smsworkers[i].shared = &(glob->sharedinfo);
+        glob->smsworkers[i].shared_mutex = &(glob->config_mutex);
+        glob->smsworkers[i].zmq_ii_sock = NULL;
+        glob->smsworkers[i].zmq_colthread_recvsock = NULL;
+        glob->smsworkers[i].zmq_pubsocks = NULL;
+        glob->smsworkers[i].tracker_threads = glob->seqtracker_threads;
+        glob->smsworkers[i].voipintercepts = NULL;
+
+        pthread_create(&(glob->smsworkers[i].threadid), NULL,
+                start_sms_worker_thread, (void *)&(glob->smsworkers[i]));
+        pthread_setname_np(glob->smsworkers[i].threadid, name);
+    }
+
+
     glob->emailworkers = calloc(glob->email_threads,
             sizeof(openli_email_worker_t));
 
@@ -2248,6 +2453,9 @@ int main(int argc, char *argv[]) {
     }
     for (i = 0; i < glob->email_threads; i++) {
         pthread_join(glob->emailworkers[i].threadid, NULL);
+    }
+    for (i = 0; i < glob->sms_threads; i++) {
+        pthread_join(glob->smsworkers[i].threadid, NULL);
     }
 
     logger(LOG_INFO, "OpenLI: exiting OpenLI Collector.");

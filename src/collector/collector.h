@@ -52,6 +52,8 @@
 #include "radius_hasher.h"
 #include "email_ingest_service.h"
 #include "email_worker.h"
+#include "sms_worker.h"
+#include "sipparsing.h"
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
@@ -80,6 +82,7 @@ enum {
     OPENLI_UPDATE_SMTP = 5,
     OPENLI_UPDATE_IMAP = 6,
     OPENLI_UPDATE_POP3 = 7,
+    OPENLI_UPDATE_SMS_SIP = 8,
 };
 
 typedef struct openli_intersync_msg {
@@ -88,12 +91,22 @@ typedef struct openli_intersync_msg {
     uint16_t msglen;
 } PACKED openli_intersync_msg_t;
 
+typedef struct openli_sip_content {
+    uint8_t *content;
+    uint16_t contentlen;
+    uint8_t ipsrc[16];
+    uint8_t ipdest[16];
+    int ipfamily;
+    struct timeval timestamp;
+} PACKED openli_sip_content_t;
+
 typedef struct openli_state_msg {
 
     uint8_t type;
     union {
         libtrace_message_queue_t *replyq;
         libtrace_packet_t *pkt;
+        openli_sip_content_t sip;
     } data;
 
 } PACKED openli_state_update_t;
@@ -200,8 +213,14 @@ typedef struct colthread_local {
        thread */
     libtrace_message_queue_t fromsyncq_voip;
 
+    /* Array of message queues to pass packets to the email worker threads */
     void **email_worker_queues;
 
+    /* Array of message queues to pass packets to the SMS worker threads */
+    void **sms_worker_queues;
+
+    /** SIP parser for detecting SMS over SIP */
+    openli_sip_parser_t *sipparser;
 
     /* Current intercepts */
     ipv4_target_t *activeipv4intercepts;
@@ -267,6 +286,7 @@ typedef struct collector_global {
     int encoding_threads;
     int forwarding_threads;
     int email_threads;
+    int sms_threads;
 
     void *zmq_encoder_ctrl;
 
@@ -282,6 +302,7 @@ typedef struct collector_global {
     openli_encoder_t *encoders;
     forwarding_thread_data_t *forwarders;
     openli_email_worker_t *emailworkers;
+    openli_sms_worker_t *smsworkers;
     colthread_local_t **collocals;
     int nextloc;
 
@@ -306,7 +327,6 @@ typedef struct collector_global {
     pthread_mutex_t stats_mutex;
 
     uint8_t etsitls;
-    uint8_t trust_sip_from;
 
     uint8_t encoding_method;
     openli_ssl_config_t sslconf;

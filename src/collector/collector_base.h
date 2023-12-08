@@ -83,6 +83,7 @@ typedef struct collector_stats {
     uint64_t packets_sync_ip;
     uint64_t packets_sync_voip;
     uint64_t packets_sync_email;
+    uint64_t packets_sms;
     uint64_t ipcc_created;
     uint64_t ipiri_created;
     uint64_t mobiri_created;
@@ -164,6 +165,7 @@ typedef struct collector_identity {
     int intpointid_len;
 
     uint8_t cisco_noradius;
+    uint8_t trust_sip_from;
 
 } collector_identity_t;
 

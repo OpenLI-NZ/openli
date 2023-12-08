@@ -722,69 +722,16 @@ static void start_email_intercept(openli_email_worker_t *state,
 static int update_modified_email_intercept(openli_email_worker_t *state,
         emailintercept_t *found, emailintercept_t *decode) {
     openli_export_recv_t *expmsg;
-    int encodingchanged = 0, keychanged = 0;
+    int encodingchanged = 0;
 
     found->delivercompressed = decode->delivercompressed;
 
-    if (decode->common.tostart_time != found->common.tostart_time ||
-            decode->common.toend_time != found->common.toend_time) {
-        logger(LOG_INFO,
-                "OpenLI: Email intercept %s has changed start / end times -- now %lu, %lu",
-                found->common.liid, decode->common.tostart_time,
-                decode->common.toend_time);
-        found->common.tostart_time = decode->common.tostart_time;
-        found->common.toend_time = decode->common.toend_time;
-    }
+    encodingchanged = update_modified_intercept_common(&(found->common),
+            &(decode->common), OPENLI_INTERCEPT_TYPE_EMAIL);
 
-    if (decode->common.tomediate != found->common.tomediate) {
-        char space[1024];
-        intercept_mediation_mode_as_string(decode->common.tomediate, space,
-                1024);
-        logger(LOG_INFO,
-                "OpenLI: Email intercept %s has changed mediation mode to: %s",
-                decode->common.liid, space);
-        found->common.tomediate = decode->common.tomediate;
-    }
-
-    if (decode->common.encrypt != found->common.encrypt) {
-        char space[1024];
-        intercept_encryption_mode_as_string(decode->common.encrypt, space,
-                1024);
-        logger(LOG_INFO,
-                "OpenLI: Email intercept %s has changed encryption mode to: %s",
-                decode->common.liid, space);
-        found->common.encrypt = decode->common.encrypt;
-        encodingchanged = 1;
-    }
-
-    if (found->common.encryptkey && decode->common.encryptkey) {
-        if (strcmp(found->common.encryptkey, decode->common.encryptkey) != 0) {
-            keychanged = 1;
-        }
-    } else if (found->common.encryptkey == NULL && decode->common.encryptkey) {
-        keychanged = 1;
-    } else if (found->common.encryptkey && decode->common.encryptkey == NULL) {
-        keychanged = 1;
-    }
-
-    if (keychanged) {
-        char *tmp;
-        encodingchanged = 1;
-        tmp = found->common.encryptkey;
-        found->common.encryptkey = decode->common.encryptkey;
-        decode->common.encryptkey = tmp;
-    }
-
-    if (strcmp(decode->common.delivcc, found->common.delivcc) != 0 ||
-            strcmp(decode->common.authcc, found->common.authcc) != 0) {
-        char *tmp;
-        tmp = decode->common.authcc;
-        decode->common.authcc = found->common.authcc;
-        found->common.authcc = tmp;
-        tmp = decode->common.delivcc;
-        decode->common.delivcc = found->common.delivcc;
-        found->common.delivcc = tmp;
-        encodingchanged = 1;
+    if (encodingchanged < 0) {
+        free_single_emailintercept(decode);
+        return -1;
     }
 
     if (encodingchanged) {
@@ -1491,45 +1438,6 @@ static void email_worker_main(openli_email_worker_t *state) {
     }
 }
 
-static inline void clear_zmqsocks(void **zmq_socks, int sockcount) {
-    int i, zero = 0;
-    if (zmq_socks == NULL) {
-        return;
-    }
-
-    for (i = 0; i < sockcount; i++) {
-        if (zmq_socks[i] == NULL) {
-            continue;
-        }
-        zmq_setsockopt(zmq_socks[i], ZMQ_LINGER, &zero, sizeof(zero));
-        zmq_close(zmq_socks[i]);
-    }
-    free(zmq_socks);
-}
-
-static inline int init_zmqsocks(void **zmq_socks, int sockcount,
-        const char *basename, void *zmq_ctxt) {
-
-    int i;
-    char sockname[256];
-    int ret = 0;
-
-    for (i = 0; i < sockcount; i++) {
-        zmq_socks[i] = zmq_socket(zmq_ctxt, ZMQ_PUSH);
-        snprintf(sockname, 256, "%s-%d", basename, i);
-        if (zmq_connect(zmq_socks[i], sockname) < 0) {
-            ret = -1;
-            logger(LOG_INFO,
-                    "OpenLI: email worker failed to bind to publishing zmq %s: %s",
-                    sockname, strerror(errno));
-
-            zmq_close(zmq_socks[i]);
-            zmq_socks[i] = NULL;
-        }
-    }
-    return ret;
-}
-
 static void free_all_email_sessions(openli_email_worker_t *state) {
 
     emailsession_t *sess, *tmp;
@@ -1554,10 +1462,10 @@ void *start_email_worker_thread(void *arg) {
     state->zmq_pubsocks = calloc(state->tracker_threads, sizeof(void *));
     state->zmq_fwdsocks = calloc(state->fwd_threads, sizeof(void *));
 
-    init_zmqsocks(state->zmq_pubsocks, state->tracker_threads,
+    init_zmq_socket_array(state->zmq_pubsocks, state->tracker_threads,
             "inproc://openlipub", state->zmq_ctxt);
 
-    init_zmqsocks(state->zmq_fwdsocks, state->fwd_threads,
+    init_zmq_socket_array(state->zmq_fwdsocks, state->fwd_threads,
             "inproc://openliforwardercontrol_sync", state->zmq_ctxt);
 
     state->zmq_ii_sock = zmq_socket(state->zmq_ctxt, ZMQ_PULL);
@@ -1634,8 +1542,8 @@ haltemailworker:
     zmq_close(state->zmq_ingest_recvsock);
     zmq_close(state->zmq_colthread_recvsock);
 
-    clear_zmqsocks(state->zmq_pubsocks, state->tracker_threads);
-    clear_zmqsocks(state->zmq_fwdsocks, state->fwd_threads);
+    clear_zmq_socket_array(state->zmq_pubsocks, state->tracker_threads);
+    clear_zmq_socket_array(state->zmq_fwdsocks, state->fwd_threads);
 
     /* All timeouts should be freed when we release the active sessions,
      * but just in case there are any left floating around...

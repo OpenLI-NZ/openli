@@ -49,6 +49,7 @@
 #include "ipmmiri.h"
 #include "umtsiri.h"
 #include "ipiri.h"
+#include "collector_util.h"
 
 #define INTERCEPT_IS_ACTIVE(cept, now) \
     (cept->common.tostart_time <= now.tv_sec && ( \
@@ -91,10 +92,12 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->pubsockcount = glob->seqtracker_threads;
     sync->forwardcount = glob->forwarding_threads;
     sync->emailcount = glob->email_threads;
+    sync->smscount = glob->sms_threads;
 
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
     sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
     sync->zmq_emailsocks = calloc(sync->emailcount, sizeof(void *));
+    sync->zmq_smssocks = calloc(sync->smscount, sizeof(void *));
 
     sync->ctx = glob->sslconf.ctx;
     sync->ssl = NULL;
@@ -107,68 +110,20 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
         sync->zmq_colsock = NULL;
     }
 
-    for (i = 0; i < sync->forwardcount; i++) {
-        sync->zmq_fwdctrlsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
-        snprintf(sockname, 128, "inproc://openliforwardercontrol_sync-%d", i);
-        if (zmq_connect(sync->zmq_fwdctrlsocks[i], sockname) != 0) {
-            logger(LOG_INFO, "OpenLI: colsync thread unable to connect to zmq control socket for forwarding threads: %s",
-                    strerror(errno));
-            zmq_close(sync->zmq_fwdctrlsocks[i]);
-            sync->zmq_fwdctrlsocks[i] = NULL;
-        }
-    }
+    init_zmq_socket_array(sync->zmq_fwdctrlsocks, sync->forwardcount,
+            "inproc://openliforwardercontrol_sync", glob->zmq_ctxt);
 
-    for (i = 0; i < sync->emailcount; i++) {
-        sync->zmq_emailsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
-        snprintf(sockname, 128, "inproc://openliemailcontrol_sync-%d", i);
-        if (zmq_connect(sync->zmq_emailsocks[i], sockname) != 0) {
-            logger(LOG_INFO, "OpenLI: colsync thread unable to connect to zmq control socket for email threads: %s",
-                    strerror(errno));
-            zmq_close(sync->zmq_emailsocks[i]);
-            sync->zmq_emailsocks[i] = NULL;
-        }
-    }
+    init_zmq_socket_array(sync->zmq_emailsocks, sync->emailcount,
+            "inproc://openliemailcontrol_sync", glob->zmq_ctxt);
 
-    for (i = 0; i < sync->pubsockcount; i++) {
-        sync->zmq_pubsocks[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
-        snprintf(sockname, 128, "inproc://openlipub-%d", i);
-        if (zmq_connect(sync->zmq_pubsocks[i], sockname) < 0) {
-            logger(LOG_INFO,
-                    "OpenLI: colsync thread failed to bind to publishing zmq: %s",
-                    strerror(errno));
-            zmq_close(sync->zmq_pubsocks[i]);
-            sync->zmq_pubsocks[i] = NULL;
-        }
+    init_zmq_socket_array(sync->zmq_smssocks, sync->smscount,
+            "inproc://openlismscontrol_sync", glob->zmq_ctxt);
 
-        /* Do we need to set a HWM? */
-    }
+    init_zmq_socket_array(sync->zmq_pubsocks, sync->pubsockcount,
+            "inproc://openlipub", glob->zmq_ctxt);
 
     return sync;
 
-}
-
-static int send_halt_message_over_zmq(void *zmqsock) {
-    openli_export_recv_t *haltmsg;
-    int zero = 0, ret;
-
-    if (zmqsock == NULL) {
-        return 1;
-    }
-
-    /* Send a halt message to get the tracker thread to stop */
-    haltmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
-    haltmsg->type = OPENLI_EXPORT_HALT;
-    ret = zmq_send(zmqsock, &haltmsg, sizeof(haltmsg), ZMQ_NOBLOCK);
-    if (ret < 0 && errno == EAGAIN) {
-        free(haltmsg);
-        return 0;
-    } else if (ret <= 0) {
-        free(haltmsg);
-    }
-
-    zmq_setsockopt(zmqsock, ZMQ_LINGER, &zero, sizeof(zero));
-    zmq_close(zmqsock);
-    return 1;
 }
 
 void clean_sync_data(collector_sync_t *sync) {
@@ -267,46 +222,14 @@ void clean_sync_data(collector_sync_t *sync) {
             sync->zmq_colsock = NULL;
         }
 
-        for (i = 0; i < sync->pubsockcount; i++) {
-            int r;
-
-            r = send_halt_message_over_zmq(sync->zmq_pubsocks[i]);
-            if (r == 0) {
-                haltfails ++;
-                if (haltattempts < 9) {
-                    continue;
-                }
-            }
-            sync->zmq_pubsocks[i] = NULL;
-        }
-
-        for (i = 0; i < sync->forwardcount; i++) {
-            int r;
-
-            r = send_halt_message_over_zmq(sync->zmq_fwdctrlsocks[i]);
-            if (r == 0) {
-                haltfails ++;
-                if (haltattempts < 9) {
-                    i--;
-                    continue;
-                }
-            }
-            sync->zmq_fwdctrlsocks[i] = NULL;
-        }
-
-        for (i = 0; i < sync->emailcount; i++) {
-            int r;
-
-            r = send_halt_message_over_zmq(sync->zmq_emailsocks[i]);
-            if (r == 0) {
-                haltfails ++;
-                if (haltattempts < 9) {
-                    i--;
-                    continue;
-                }
-            }
-            sync->zmq_emailsocks[i] = NULL;
-        }
+        haltfails += send_halt_message_to_zmq_socket_array(sync->zmq_pubsocks,
+                sync->pubsockcount);
+        haltfails += send_halt_message_to_zmq_socket_array(
+                sync->zmq_fwdctrlsocks, sync->forwardcount);
+        haltfails += send_halt_message_to_zmq_socket_array(
+                sync->zmq_emailsocks, sync->emailcount);
+        haltfails += send_halt_message_to_zmq_socket_array(
+                sync->zmq_smssocks, sync->smscount);
 
         if (haltfails == 0) {
             break;
@@ -316,18 +239,20 @@ void clean_sync_data(collector_sync_t *sync) {
     }
 
     free(sync->zmq_emailsocks);
+    free(sync->zmq_smssocks);
     free(sync->zmq_pubsocks);
     free(sync->zmq_fwdctrlsocks);
 
 }
 
-static int forward_provmsg_to_email_workers(collector_sync_t *sync,
-        uint8_t *provmsg, uint16_t msglen, openli_proto_msgtype_t msgtype) {
+static int forward_provmsg_to_workers(void **zmq_socks, int sockcount,
+        uint8_t *provmsg, uint16_t msglen, openli_proto_msgtype_t msgtype,
+        const char *workertype) {
 
     openli_export_recv_t *topush;
     int i, ret, errcount = 0;
 
-    for (i = 0; i < sync->emailcount; i++) {
+    for (i = 0; i < sockcount; i++) {
         topush = (openli_export_recv_t *)calloc(1,
                 sizeof(openli_export_recv_t));
 
@@ -337,9 +262,9 @@ static int forward_provmsg_to_email_workers(collector_sync_t *sync,
         memcpy(topush->data.provmsg.msgbody, provmsg, msglen);
         topush->data.provmsg.msglen = msglen;
 
-        ret = zmq_send(sync->zmq_emailsocks[i], &topush, sizeof(topush), 0);
+        ret = zmq_send(zmq_socks[i], &topush, sizeof(topush), 0);
         if (ret < 0) {
-            logger(LOG_INFO, "Unable to forward provisioner message to email worker %d: %s", i, strerror(errno));
+            logger(LOG_INFO, "Unable to forward provisioner message to %s worker %d: %s", workertype, i, strerror(errno));
 
             free(topush->data.provmsg.msgbody);
             free(topush);
@@ -1830,6 +1755,11 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 if (ret == -1) {
                     return -1;
                 }
+                ret = forward_provmsg_to_workers(sync->zmq_smssocks,
+                        sync->smscount, provmsg, msglen, msgtype, "SMS");
+                if (ret == -1) {
+                    return -1;
+                }
                 break;
             case OPENLI_PROTO_NOMORE_INTERCEPTS:
                 disable_unconfirmed_intercepts(sync);
@@ -1838,8 +1768,13 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 if (ret == -1) {
                     return -1;
                 }
-                ret = forward_provmsg_to_email_workers(sync, provmsg, msglen,
-                        msgtype);
+                ret = forward_provmsg_to_workers(sync->zmq_emailsocks,
+                        sync->emailcount, provmsg, msglen, msgtype, "email");
+                if (ret == -1) {
+                    return -1;
+                }
+                ret = forward_provmsg_to_workers(sync->zmq_smssocks,
+                        sync->smscount, provmsg, msglen, msgtype, "SMS");
                 if (ret == -1) {
                     return -1;
                 }
@@ -1851,8 +1786,8 @@ static int recv_from_provisioner(collector_sync_t *sync) {
             case OPENLI_PROTO_ANNOUNCE_EMAIL_TARGET:
             case OPENLI_PROTO_WITHDRAW_EMAIL_TARGET:
             case OPENLI_PROTO_ANNOUNCE_DEFAULT_EMAIL_COMPRESSION:
-                ret = forward_provmsg_to_email_workers(sync, provmsg, msglen,
-                        msgtype);
+                ret = forward_provmsg_to_workers(sync->zmq_emailsocks,
+                        sync->emailcount, provmsg, msglen, msgtype, "email");
                 if (ret == -1) {
                     return -1;
                 }
@@ -2011,7 +1946,10 @@ void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
 
     /* Tell other sync thread to flag its intercepts too */
     forward_provmsg_to_voipsync(sync, NULL, 0, OPENLI_PROTO_DISCONNECT);
-    forward_provmsg_to_email_workers(sync, NULL, 0, OPENLI_PROTO_DISCONNECT);
+    forward_provmsg_to_workers(sync->zmq_emailsocks, sync->emailcount,
+            NULL, 0, OPENLI_PROTO_DISCONNECT, "email");
+    forward_provmsg_to_workers(sync->zmq_smssocks, sync->smscount,
+            NULL, 0, OPENLI_PROTO_DISCONNECT, "SMS");
 
     /* Same with mediators -- keep exporting to them, but flag them to be
      * disconnected if they are not announced after we reconnect. */

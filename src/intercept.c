@@ -28,6 +28,9 @@
 #include "logger.h"
 #include "intercept.h"
 
+const char *cepttype_strings[] =
+        {"Unknown", "IP", "VoIP", "Email"};
+
 static inline void copy_intercept_common(intercept_common_t *src,
         intercept_common_t *dest) {
 
@@ -56,6 +59,81 @@ static inline void copy_intercept_common(intercept_common_t *src,
     } else {
         dest->encryptkey = NULL;
     }
+}
+
+int update_modified_intercept_common(intercept_common_t *current,
+        intercept_common_t *update, openli_intercept_types_t cepttype) {
+
+    int encodingchanged = 0, keychanged = 0;
+
+    if (cepttype < 0 || cepttype >= OPENLI_INTERCEPT_TYPE_EOL) {
+        logger(LOG_INFO,
+                "OpenLI: invalid intercept type passed to update_intercept_common(): %d\n", cepttype);
+        return -1;
+    }
+
+    if (update->tostart_time != current->tostart_time ||
+            update->toend_time != current->toend_time) {
+        logger(LOG_INFO,
+                "OpenLI: %s intercept %s has changed start / end times -- now %lu, %lu",
+                cepttype_strings[cepttype], current->liid, update->tostart_time,
+                update->toend_time);
+        current->tostart_time = update->tostart_time;
+        current->toend_time = update->toend_time;
+    }
+
+    if (update->tomediate != current->tomediate) {
+        char space[1024];
+        intercept_mediation_mode_as_string(update->tomediate, space,
+                1024);
+        logger(LOG_INFO,
+                "OpenLI: %s intercept %s has changed mediation mode to: %s",
+                cepttype_strings[cepttype], update->liid, space);
+        current->tomediate = update->tomediate;
+    }
+
+    if (update->encrypt != current->encrypt) {
+        char space[1024];
+        intercept_encryption_mode_as_string(update->encrypt, space,
+                1024);
+        logger(LOG_INFO,
+                "OpenLI: %s intercept %s has changed encryption mode to: %s",
+                cepttype_strings[cepttype], update->liid, space);
+        current->encrypt = update->encrypt;
+        encodingchanged = 1;
+    }
+
+    if (current->encryptkey && update->encryptkey) {
+        if (strcmp(current->encryptkey, update->encryptkey) != 0) {
+            keychanged = 1;
+        }
+    } else if (current->encryptkey == NULL && update->encryptkey) {
+        keychanged = 1;
+    } else if (current->encryptkey && update->encryptkey == NULL) {
+        keychanged = 1;
+    }
+
+    if (keychanged) {
+        char *tmp;
+        encodingchanged = 1;
+        tmp = current->encryptkey;
+        current->encryptkey = update->encryptkey;
+        update->encryptkey = tmp;
+    }
+
+    if (strcmp(update->delivcc, current->delivcc) != 0 ||
+            strcmp(update->authcc, current->authcc) != 0) {
+        char *tmp;
+        tmp = update->authcc;
+        update->authcc = current->authcc;
+        current->authcc = tmp;
+        tmp = update->delivcc;
+        update->delivcc = current->delivcc;
+        current->delivcc = tmp;
+        encodingchanged = 1;
+    }
+
+    return encodingchanged;
 }
 
 int are_sip_identities_same(openli_sip_identity_t *a,
@@ -475,6 +553,126 @@ static void free_sip_targets(libtrace_list_t *targets) {
         n = n->next;
     }
     libtrace_list_deinit(targets);
+}
+
+void disable_sip_target_from_list(voipintercept_t *vint,
+        openli_sip_identity_t *sipid) {
+
+    openli_sip_identity_t *iter;
+    libtrace_list_node_t *n;
+
+    n = vint->targets->head;
+    while (n) {
+        iter = *((openli_sip_identity_t **)(n->data));
+        if (are_sip_identities_same(iter, sipid)) {
+            iter->active = 0;
+            iter->awaitingconfirm = 0;
+            break;
+        }
+        n = n->next;
+    }
+}
+
+void flag_voip_intercepts_as_unconfirmed(voipintercept_t **voipintercepts) {
+    voipintercept_t *v;
+    libtrace_list_node_t *n;
+    openli_sip_identity_t *sipid;
+
+    for (v = (*voipintercepts); v != NULL; v = v->hh_liid.next) {
+        v->awaitingconfirm = 1;
+
+        n = v->targets->head;
+        while (n) {
+            sipid = *((openli_sip_identity_t **)(n->data));
+            if (sipid->active) {
+                sipid->awaitingconfirm = 1;
+            }
+            n = n->next;
+        }
+    }
+}
+
+void disable_unconfirmed_voip_intercepts(voipintercept_t **voipintercepts,
+        void (*percept)(voipintercept_t *, void *),
+        void *percept_arg,
+        void (*pertgt)(openli_sip_identity_t *, voipintercept_t *vint, void *),
+        void *pertgt_arg) {
+
+    voipintercept_t *v, *tmp;
+    libtrace_list_node_t *n;
+    openli_sip_identity_t *sipid;
+
+    HASH_ITER(hh_liid, *voipintercepts, v, tmp) {
+        if (v->awaitingconfirm && v->active) {
+            v->active = 0;
+
+            if (percept) {
+                percept(v, percept_arg);
+            }
+            HASH_DELETE(hh_liid, *voipintercepts, v);
+            free_single_voipintercept(v);
+        } else if (v->active) {
+            /* Deal with any unconfirmed SIP targets */
+
+            n = v->targets->head;
+            while (n) {
+                sipid = *((openli_sip_identity_t **)(n->data));
+                n = n->next;
+
+                if (sipid->active && sipid->awaitingconfirm) {
+                    sipid->active = 0;
+                    if (pertgt) {
+                        pertgt(sipid, v, pertgt_arg);
+                    }
+                }
+            }
+        }
+    }
+}
+
+void add_new_sip_target_to_list(voipintercept_t *vint,
+        openli_sip_identity_t *sipid) {
+    openli_sip_identity_t *newid, *iter;
+    libtrace_list_node_t *n;
+
+    /* First, check if this ID is already in the list. If so, we can
+     * just confirm it as being still active. If not, add it to the
+     * list.
+     *
+     * TODO consider a hashmap instead if we often get more than 2 or
+     * 3 targets per intercept?
+     */
+    n = vint->targets->head;
+    while (n) {
+        iter = *((openli_sip_identity_t **)(n->data));
+        if (are_sip_identities_same(iter, sipid)) {
+            if (iter->active == 0) {
+                iter->active = 1;
+            }
+            iter->awaitingconfirm = 0;
+            if (sipid->username) {
+                free(sipid->username);
+            }
+            if (sipid->realm) {
+                free(sipid->realm);
+            }
+            return;
+        }
+        n = n->next;
+    }
+
+    newid = (openli_sip_identity_t *)calloc(1, sizeof(openli_sip_identity_t));
+    newid->realm = sipid->realm;
+    newid->realm_len = sipid->realm_len;
+    newid->username = sipid->username;
+    newid->username_len = sipid->username_len;
+    newid->awaitingconfirm = 0;
+    newid->active = 1;
+
+    sipid->realm = NULL;
+    sipid->username = NULL;
+
+    libtrace_list_push_back(vint->targets, &newid);
 }
 
 void free_single_voipintercept(voipintercept_t *v) {
