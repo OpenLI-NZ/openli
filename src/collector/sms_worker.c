@@ -32,6 +32,7 @@
 #include "logger.h"
 #include "ipmmiri.h"
 
+#include <assert.h>
 #include <math.h>
 #include <sys/timerfd.h>
 #include <libtrace.h>
@@ -299,7 +300,7 @@ static int mask_sms_submit_tpdu(uint8_t *ptr, uint8_t len) {
     uint8_t *start = ptr;
     uint8_t ud_len = 0;
     uint8_t vp_len = 0;
-    int i;
+    int i, ind;
 
     if (len < 4) {
         return 0;
@@ -330,7 +331,7 @@ static int mask_sms_submit_tpdu(uint8_t *ptr, uint8_t len) {
         /* alphanumeric */
         ptr += (1 + (int)(ceil((7 * len) / 8)));
     } else {
-        ptr += (1 + (int)(ceil(len / 2)));
+        ptr += (1 + (int)(ceil(((double)da_len) / 2)));
     }
 
     if (ptr - start >= len) {
@@ -370,10 +371,7 @@ static int mask_sms_submit_tpdu(uint8_t *ptr, uint8_t len) {
     /* TP-User-Data-Length */
     ud_len = *ptr;
     ptr ++;
-    if (ptr - start > len) {
-        return 0;
-    }
-    if (ud_len > len - (ptr - start)) {
+    if (ptr - start >= len) {
         return 0;
     }
 
@@ -389,6 +387,9 @@ static int mask_sms_submit_tpdu(uint8_t *ptr, uint8_t len) {
             *ptr = sms_masking_bytes[ind];
         }
         ptr ++;
+        if (ptr - start >= len) {
+            break;
+        }
     }
 
     return 1;
@@ -404,7 +405,8 @@ enum {
     RP_MESSAGE_TYPE_SMMA_MS_TO_N = 6,
 };
 
-static int mask_sms_message_content(openli_sms_worker_t *state) {
+static int mask_sms_message_content(openli_sms_worker_t *state,
+        uint8_t *sipstart, uint16_t siplen) {
 
     uint8_t *bodystart;
     size_t bodylen = 0;
@@ -412,12 +414,18 @@ static int mask_sms_message_content(openli_sms_worker_t *state) {
     uint8_t msgtype;
     uint8_t len;
 
-    bodystart = (uint8_t *)get_sip_message_body(state->sipparser, &bodylen);
-    if (bodystart == NULL || bodylen == 0) {
+    bodystart = (uint8_t *)(strstr((char *)sipstart, "\r\n\r\n"));
+    if (bodystart == NULL) {
+        return 0;
+    }
+    assert(bodystart > sipstart);
+
+    bodylen = siplen - (bodystart - sipstart);
+    if (bodylen <= 4 || bodylen > siplen) {
         return 0;
     }
 
-    ptr = bodystart;
+    ptr = bodystart + 4;
     /* RP-Message Type */
     msgtype = *ptr;
     ptr ++;
@@ -601,7 +609,8 @@ static int process_sms_sip_packet(openli_sms_worker_t *state,
             /* TODO rewrite message content with spaces and flag that
              * we need to use iRIOnlySIPMessage as our IPMMIRIContents
              */
-            mask_sms_message_content(state);
+            mask_sms_message_content(state, irimsg.data.ipmmiri.content,
+                    irimsg.data.ipmmiri.contentlen);
         }
         /* build and send an IRI for this particular intercept */
         generate_sms_ipmmiri(state, &(vint->common), cid_list->cin, &irimsg);
