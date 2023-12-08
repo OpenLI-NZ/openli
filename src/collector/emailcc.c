@@ -187,7 +187,7 @@ int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
         } else {
             part_type = "recipient";
         }
-        snprintf(key, 1024, "%d-%u-%s", command_index, dir, part_type);
+        snprintf(key, 1024, "%d-%u", command_index, dir);
         create_emailccs_for_intercept_list(state, sess, content,
                 content_len, ETSILI_EMAIL_CC_FORMAT_APP, intlist, timestamp,
                 dir, key, 0);

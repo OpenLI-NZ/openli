@@ -301,7 +301,6 @@ struct sipmediastream {
 typedef struct email_participant {
     char *emailaddr;
     uint8_t is_sender;
-
     UT_hash_handle hh;
 } email_participant_t;
 

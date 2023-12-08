@@ -990,11 +990,17 @@ void clear_email_user_intercept_list(email_user_intercept_list_t *ulist) {
     email_address_set_t *u, *tmp;
     email_intercept_ref_t *em, *tmp2;
     email_target_set_t *v, *tmp3;
+    email_target_set_t *plain_ref;
 
     HASH_ITER(hh_sha, ulist->targets, v, tmp3) {
         HASH_ITER(hh, v->intlist, em, tmp2) {
             HASH_DELETE(hh, v->intlist, em);
             free(em);
+        }
+        HASH_FIND(hh_plain, ulist->targets_plain, v->origaddress,
+                strlen(v->origaddress), plain_ref);
+        if (plain_ref) {
+            HASH_DELETE(hh_plain, ulist->targets_plain, plain_ref);
         }
         HASH_DELETE(hh_sha, ulist->targets, v);
         free(v->origaddress);
