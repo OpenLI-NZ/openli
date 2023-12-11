@@ -1710,6 +1710,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->mask_imap_creds = 1;      // defaults to "enabled"
     glob->mask_pop3_creds = 1;      // defaults to "enabled"
     glob->default_email_domain = NULL;
+    glob->email_ingest_use_targetid = 0; // defaults to "disabled"   XXX for now
 }
 
 static collector_global_t *parse_global_config(char *configfile) {
@@ -1950,6 +1951,10 @@ static int reload_collector_config(collector_global_t *glob,
         }
     }
 
+    if (glob->email_ingest_use_targetid != newstate.email_ingest_use_targetid) {
+        /* TODO log this change once it becomes a mainstream config option */
+    }
+
     if (glob->default_email_domain) {
         if (!newstate.default_email_domain) {
             logger(LOG_INFO, "OpenLI: default email domain has been unset.");
@@ -1974,6 +1979,7 @@ static int reload_collector_config(collector_global_t *glob,
 
     glob->mask_imap_creds = newstate.mask_imap_creds;
     glob->mask_pop3_creds = newstate.mask_pop3_creds;
+    glob->email_ingest_use_targetid = newstate.email_ingest_use_targetid;
     glob->email_timeouts.smtp = newstate.email_timeouts.smtp;
     glob->email_timeouts.imap = newstate.email_timeouts.imap;
     glob->email_timeouts.pop3 = newstate.email_timeouts.pop3;
@@ -2279,6 +2285,8 @@ int main(int argc, char *argv[]) {
         glob->emailworkers[i].glob_config_mutex = &(glob->email_config_mutex);
         glob->emailworkers[i].mask_imap_creds = &(glob->mask_imap_creds);
         glob->emailworkers[i].mask_pop3_creds = &(glob->mask_pop3_creds);
+        glob->emailworkers[i].email_ingest_use_targetid =
+                &(glob->email_ingest_use_targetid);
         glob->emailworkers[i].defaultdomain = &(glob->default_email_domain);
         glob->emailworkers[i].timeout_thresholds = &(glob->email_timeouts);
         glob->emailworkers[i].default_compress_delivery =

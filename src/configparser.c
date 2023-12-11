@@ -1323,6 +1323,23 @@ static int global_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value,
+                    "maskpop3creds") == 0) {
+
+       glob->mask_pop3_creds = check_onoff((char *)value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
+                    "emailingest-usetargetid") == 0) {
+
+       glob->email_ingest_use_targetid =
+            check_onoff((char *)value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
                     "cisconoradius") == 0) {
 
        glob->sharedinfo.cisco_noradius =

@@ -378,11 +378,13 @@ static void init_email_session(emailsession_t *sess,
         /* TODO */
     }
 
-    if (cap->target_id) {
+    pthread_rwlock_rdlock(state->glob_config_mutex);
+    if (cap->target_id && (*state->email_ingest_use_targetid)) {
         sess->ingest_target_id = strdup(cap->target_id);
     } else {
         sess->ingest_target_id = NULL;
     }
+    pthread_rwlock_unlock(state->glob_config_mutex);
 
     sess->ingest_direction = cap->direction;
 
@@ -1694,6 +1696,7 @@ email_address_set_t *is_address_interceptable(
     if (emailaddr == NULL) {
         return active;
     }
+
     HASH_FIND(hh_addr, state->alltargets.addresses, emailaddr,
             strlen(emailaddr), active);
     return active;
