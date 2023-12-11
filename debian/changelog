@@ -1,15 +1,14 @@
-openli (1.1.4-1~rc02) unstable; urgency=medium
+openli (1.1.4-1~rc03) unstable; urgency=medium
 
-  * Fix oversight preventing POP3 identities from being extracted for
+  * Add support for intercepting SMS messages delivered via SIP (i.e.
+    when transporting SMS using an IMS).
+  * POP3: fix oversight preventing POP3 identities from being extracted for
     sessions using the AUTH command.
   * Email: fix segfault if no user identity has been found for an otherwise
     authenticated session.
   * IMAP: fix bug where PLAIN AUTH credentials could be replaced with
     garbage if the `maskimapcreds` configuration option was disabled.
-  * SMTP: email sessions delivered via the ingestion socket will now
-    be correctly intercepted if the TARGET_ID matches either one
-    of the intercept target addresses OR a SHA512 hash of one of those
-    addresses.
+  * POP3: fix bug where `maskpop3creds` configuration option was ignored.
   * SMTP: include all recipients in email-receive IRIs, regardless of
     whether they are intercept targets or not.
   * IMAP: fix segfault when processing compressed IMAP messages.
@@ -20,7 +19,7 @@ openli (1.1.4-1~rc02) unstable; urgency=medium
   * Email: fix double-free on collector exit if a default email domain
     had been configured.
 
- -- Shane Alcock <salcock@searchlight.nz>  Thu, 07 Dec 2023 16:49:15 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Tue, 12 Dec 2023 11:17:19 +1300
 
 openli (1.1.3-1) unstable; urgency=high
 
