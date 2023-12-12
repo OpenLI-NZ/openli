@@ -216,9 +216,9 @@ static int complete_imap_append(openli_email_worker_t *state,
     }
 
     if (strcmp(comm->imap_reply, "OK") == 0) {
-        generate_email_upload_success_iri(state, sess);
+        generate_email_upload_success_iri(state, sess, imapsess->mailbox);
     } else {
-        generate_email_upload_failure_iri(state, sess);
+        generate_email_upload_failure_iri(state, sess, imapsess->mailbox);
     }
 
     return 1;
@@ -272,9 +272,11 @@ static int complete_imap_fetch(openli_email_worker_t *state,
 
     if (strcmp(comm->imap_reply, "OK") == 0) {
         extract_imap_email_sender(state, sess, imapsess, comm);
-        generate_email_partial_download_success_iri(state, sess);
+        generate_email_partial_download_success_iri(state, sess,
+                imapsess->mailbox);
     } else {
-        generate_email_partial_download_failure_iri(state, sess);
+        generate_email_partial_download_failure_iri(state, sess,
+                imapsess->mailbox);
     }
 
     if (imapsess->mail_sender) {

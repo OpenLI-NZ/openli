@@ -671,10 +671,11 @@ static int handle_multi_reply_state(openli_email_worker_t *state,
         /* if command was TOP, generate a partial download IRI */
         if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_RETR) {
             extract_pop3_email_sender(state, sess, pop3sess);
-            generate_email_download_success_iri(state, sess);
+            generate_email_download_success_iri(state, sess, pop3sess->mailbox);
         } else if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_TOP) {
             extract_pop3_email_sender(state, sess, pop3sess);
-            generate_email_partial_download_success_iri(state, sess);
+            generate_email_partial_download_success_iri(state, sess,
+                    pop3sess->mailbox);
         }
 
         /* free the sender so we don't include it in future IRIs where

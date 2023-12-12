@@ -366,6 +366,38 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
     return 0;
 }
 
+static int generate_iris_for_mailbox(openli_email_worker_t *state,
+        emailsession_t *sess, uint8_t email_ev, uint8_t iri_type,
+        uint8_t status, uint64_t timestamp, const char *mailbox) {
+
+    email_address_set_t *active_addr = NULL;
+    email_target_set_t *active_tgt = NULL;
+    email_intercept_ref_t *intlist = NULL;
+
+    char *tgtaddr = NULL;
+    char irikey[1024];
+
+    active_addr = is_address_interceptable(state, mailbox);
+    if (!active_addr) {
+        active_tgt = is_targetid_interceptable(state, sess->ingest_target_id);
+        if (active_tgt) {
+            tgtaddr = active_tgt->origaddress;
+            intlist = active_tgt->intlist;
+        }
+    } else {
+        intlist = active_addr->intlist;
+        tgtaddr = active_addr->emailaddr;
+    }
+
+    if (intlist) {
+        sess->iricount ++;
+        snprintf(irikey, 1024, "iri-%d-mailbox", sess->iricount);
+        create_emailiris_for_intercept_list(state, sess, iri_type, email_ev,
+                status, intlist, timestamp, irikey, tgtaddr, 0);
+    }
+    return 0;
+}
+
 static int generate_email_login_iri(openli_email_worker_t *state,
         emailsession_t *sess, const char *participant, uint8_t success) {
 
@@ -461,54 +493,60 @@ int generate_email_receive_iri(openli_email_worker_t *state,
 }
 
 int generate_email_partial_download_success_iri(openli_email_worker_t *state,
-        emailsession_t *sess) {
+        emailsession_t *sess, const char *mailbox) {
 
-    return generate_iris_for_participants(state, sess,
+    return generate_iris_for_mailbox(state, sess,
             ETSILI_EMAIL_EVENT_PARTIAL_DOWNLOAD,
-            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time,
+            mailbox);
 
 }
 
 int generate_email_partial_download_failure_iri(openli_email_worker_t *state,
-        emailsession_t *sess) {
+        emailsession_t *sess, const char *mailbox) {
 
-    return generate_iris_for_participants(state, sess,
+    return generate_iris_for_mailbox(state, sess,
             ETSILI_EMAIL_EVENT_PARTIAL_DOWNLOAD,
-            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time);
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time,
+            mailbox);
 }
 
 int generate_email_upload_success_iri(openli_email_worker_t *state,
-        emailsession_t *sess) {
+        emailsession_t *sess, const char *mailbox) {
 
-    return generate_iris_for_participants(state, sess,
+    return generate_iris_for_mailbox(state, sess,
             ETSILI_EMAIL_EVENT_UPLOAD,
-            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time,
+            mailbox);
 
 }
 
 int generate_email_upload_failure_iri(openli_email_worker_t *state,
-        emailsession_t *sess) {
+        emailsession_t *sess, const char *mailbox) {
 
-    return generate_iris_for_participants(state, sess,
+    return generate_iris_for_mailbox(state, sess,
             ETSILI_EMAIL_EVENT_UPLOAD,
-            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time);
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time,
+            mailbox);
 }
 
 int generate_email_download_success_iri(openli_email_worker_t *state,
-        emailsession_t *sess) {
+        emailsession_t *sess, const char *mailbox) {
 
-    return generate_iris_for_participants(state, sess,
+    return generate_iris_for_mailbox(state, sess,
             ETSILI_EMAIL_EVENT_DOWNLOAD,
-            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time,
+            mailbox);
 
 }
 
 int generate_email_download_failure_iri(openli_email_worker_t *state,
-        emailsession_t *sess) {
+        emailsession_t *sess, const char *mailbox) {
 
-    return generate_iris_for_participants(state, sess,
+    return generate_iris_for_mailbox(state, sess,
             ETSILI_EMAIL_EVENT_DOWNLOAD,
-            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time);
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time,
+            mailbox);
 }
 
 int generate_email_logoff_iri(openli_email_worker_t *state,

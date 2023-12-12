@@ -208,21 +208,21 @@ email_target_set_t *is_targetid_interceptable(
 
 /* Defined in emailiri.c */
 int generate_email_partial_download_success_iri(openli_email_worker_t *state,
-        emailsession_t *sess);
+        emailsession_t *sess, const char *mailbox);
 int generate_email_partial_download_failure_iri(openli_email_worker_t *state,
-        emailsession_t *sess);
+        emailsession_t *sess, const char *mailbox);
 int generate_email_download_success_iri(openli_email_worker_t *state,
-        emailsession_t *sess);
+        emailsession_t *sess, const char *mailbox);
 int generate_email_download_failure_iri(openli_email_worker_t *state,
-        emailsession_t *sess);
+        emailsession_t *sess, const char *mailbox);
 int generate_email_login_success_iri(openli_email_worker_t *state,
         emailsession_t *sess, const char *participant);
 int generate_email_login_failure_iri(openli_email_worker_t *state,
         emailsession_t *sess, const char *participant);
 int generate_email_upload_success_iri(openli_email_worker_t *state,
-        emailsession_t *sess);
+        emailsession_t *sess, const char *mailbox);
 int generate_email_upload_failure_iri(openli_email_worker_t *state,
-        emailsession_t *sess);
+        emailsession_t *sess, const char *mailbox);
 int generate_email_send_iri(openli_email_worker_t *state,
         emailsession_t *sess);
 int generate_email_receive_iri(openli_email_worker_t *state,
