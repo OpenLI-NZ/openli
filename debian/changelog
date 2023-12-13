@@ -1,4 +1,4 @@
-openli (1.1.4-1~rc03) unstable; urgency=medium
+openli (1.1.4-1~rc04) unstable; urgency=medium
 
   * Add support for intercepting SMS messages delivered via SIP (i.e.
     when transporting SMS using an IMS).
@@ -14,12 +14,15 @@ openli (1.1.4-1~rc03) unstable; urgency=medium
   * IMAP: fix segfault when processing compressed IMAP messages.
   * IMAP: fix segfault when parsing an incomplete UID command.
   * IMAP: disable "unmatched reply" log messages.
+  * IMAP: do not generate IRIs for FETCH commands that do not fetch
+    mail content (e.g. fetching FLAGS ).
+  * IMAP: fix bug where upload IRIs were not including the mail sender.
   * Email: fragmented IP packets are now reassembled by email workers
     before processing.
   * Email: fix double-free on collector exit if a default email domain
     had been configured.
 
- -- Shane Alcock <salcock@searchlight.nz>  Tue, 12 Dec 2023 11:17:19 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Thu, 14 Dec 2023 11:45:41 +1300
 
 openli (1.1.3-1) unstable; urgency=high
 
