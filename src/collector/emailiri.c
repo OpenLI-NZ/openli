@@ -134,7 +134,10 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
     }
 
     if (emailev == ETSILI_EMAIL_EVENT_RECEIVE ||
-            emailev == ETSILI_EMAIL_EVENT_SEND) {
+            emailev == ETSILI_EMAIL_EVENT_SEND ||
+            emailev == ETSILI_EMAIL_EVENT_PARTIAL_DOWNLOAD ||
+            emailev == ETSILI_EMAIL_EVENT_DOWNLOAD ||
+            emailev == ETSILI_EMAIL_EVENT_UPLOAD) {
 
         /* only add recipients for events that make sense */
         add_recipients(sess, content, tgtaddrs, tgtaddr_count);
@@ -144,7 +147,9 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
     content->messageid = NULL;
 
     if (content->recipient_count <= 0 &&
-            emailev == ETSILI_EMAIL_EVENT_RECEIVE) {
+            (emailev == ETSILI_EMAIL_EVENT_RECEIVE ||
+             emailev == ETSILI_EMAIL_EVENT_PARTIAL_DOWNLOAD ||
+             emailev == ETSILI_EMAIL_EVENT_DOWNLOAD)) {
         /* receive event but no recipients that we haven't already sent this
          * IRI for, so just bin it.
          */
@@ -210,7 +215,9 @@ static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
             *pval = 1;
         }
 
-        if (email_ev == ETSILI_EMAIL_EVENT_RECEIVE) {
+        if (email_ev == ETSILI_EMAIL_EVENT_RECEIVE ||
+                email_ev == ETSILI_EMAIL_EVENT_PARTIAL_DOWNLOAD ||
+                email_ev == ETSILI_EMAIL_EVENT_DOWNLOAD) {
             /* only include recipients that are also intercept targets
              *
              * exceptions:
@@ -240,7 +247,8 @@ static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
                 usetarget_count = tgtaddr_count;
             }
 
-        } else if (email_ev == ETSILI_EMAIL_EVENT_SEND) {
+        } else if (email_ev == ETSILI_EMAIL_EVENT_SEND ||
+                email_ev == ETSILI_EMAIL_EVENT_UPLOAD) {
             usetargets = fulltgtaddrs;
             usetarget_count = fulltgtaddr_count;
         } else {

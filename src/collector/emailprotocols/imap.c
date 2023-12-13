@@ -70,6 +70,7 @@ typedef struct imap_comm {
     char *imap_command;
     char *tag;
     char *imap_reply;
+    char *params;
 
     imap_cc_index_t *ccs;
     int cc_used;
@@ -121,6 +122,7 @@ typedef struct imapsession {
     uint8_t next_command_type;
     char *next_comm_tag;
     char *next_command_name;
+    char *next_command_params;
 
     int append_command_index;
     int idle_command_index;
@@ -141,6 +143,7 @@ static void init_imap_command(imap_command_t *comm) {
     comm->tag = NULL;
     comm->imap_reply = NULL;
     comm->imap_command = NULL;
+    comm->params = NULL;
 
     comm->reply_start = 0;
     comm->reply_end = 0;
@@ -208,23 +211,6 @@ static int update_deflate_ccs(imap_session_t *imapsess, int start, int end,
     return 0;
 }
 
-static int complete_imap_append(openli_email_worker_t *state,
-        emailsession_t *sess, imap_session_t *imapsess, imap_command_t *comm) {
-
-    if (imapsess->mailbox == NULL) {
-        return 1;
-    }
-
-    if (strcmp(comm->imap_reply, "OK") == 0) {
-        generate_email_upload_success_iri(state, sess, imapsess->mailbox);
-    } else {
-        generate_email_upload_failure_iri(state, sess, imapsess->mailbox);
-    }
-
-    return 1;
-
-}
-
 static int extract_imap_email_sender(openli_email_worker_t *state,
         emailsession_t *sess, imap_session_t *imapsess, imap_command_t *comm) {
 
@@ -253,6 +239,32 @@ static int extract_imap_email_sender(openli_email_worker_t *state,
     return r;
 }
 
+static int complete_imap_append(openli_email_worker_t *state,
+        emailsession_t *sess, imap_session_t *imapsess, imap_command_t *comm) {
+
+    if (imapsess->mailbox == NULL) {
+        return 1;
+    }
+
+    if (strcmp(comm->imap_reply, "OK") == 0) {
+        extract_imap_email_sender(state, sess, imapsess, comm);
+        if (imapsess->mail_sender) {
+            generate_email_upload_success_iri(state, sess, imapsess->mailbox);
+        }
+    } else {
+        generate_email_upload_failure_iri(state, sess, imapsess->mailbox);
+    }
+
+    if (imapsess->mail_sender) {
+        clear_email_sender(sess);
+        /* the memory is freed inside clear_email_sender()... */
+        imapsess->mail_sender = NULL;
+    }
+
+    return 1;
+
+}
+
 static int complete_imap_fetch(openli_email_worker_t *state,
         emailsession_t *sess, imap_session_t *imapsess, imap_command_t *comm) {
 
@@ -272,8 +284,10 @@ static int complete_imap_fetch(openli_email_worker_t *state,
 
     if (strcmp(comm->imap_reply, "OK") == 0) {
         extract_imap_email_sender(state, sess, imapsess, comm);
-        generate_email_partial_download_success_iri(state, sess,
-                imapsess->mailbox);
+        if (imapsess->mail_sender) {
+            generate_email_partial_download_success_iri(state, sess,
+                    imapsess->mailbox);
+        }
     } else {
         generate_email_partial_download_failure_iri(state, sess,
                 imapsess->mailbox);
@@ -485,11 +499,13 @@ static int save_imap_command(imap_session_t *sess, char *sesskey) {
     comm->reply_start = comm->commbufused;
     comm->reply_end = 0;
     comm->imap_command = sess->next_command_name;
+    comm->params = sess->next_command_params;
     comm->tag = sess->next_comm_tag;
 
 
     sess->next_comm_tag = NULL;
     sess->next_command_name = NULL;
+    sess->next_command_params = NULL;
 
     return index;
 }
@@ -750,8 +766,12 @@ static int save_imap_reply(imap_session_t *sess, char *sesskey,
     if (*comm == NULL) {
         free(sess->next_comm_tag);
         free(sess->next_command_name);
+        if (sess->next_command_params) {
+            free(sess->next_command_params);
+        }
         sess->next_comm_tag = NULL;
         sess->next_command_name = NULL;
+        sess->next_command_params = NULL;
         return 0;
     }
 
@@ -773,9 +793,12 @@ static int save_imap_reply(imap_session_t *sess, char *sesskey,
     (*comm)->imap_reply = sess->next_command_name;
 
     free(sess->next_comm_tag);
+    if (sess->next_command_params) {
+        free(sess->next_command_params);
+    }
     sess->next_comm_tag = NULL;
     sess->next_command_name = NULL;
-
+    sess->next_command_params = NULL;
     return 1;
 }
 
@@ -793,6 +816,10 @@ static void reset_imap_saved_command(imap_command_t *comm) {
     if (comm->imap_command) {
         free(comm->imap_command);
         comm->imap_command = NULL;
+    }
+    if (comm->params) {
+        free(comm->params);
+        comm->params = NULL;
     }
     if (comm->imap_reply) {
         free(comm->imap_reply);
@@ -819,6 +846,9 @@ void free_imap_session_state(emailsession_t *sess, void *imapstate) {
         if (imapsess->commands[i].imap_command) {
             free(imapsess->commands[i].imap_command);
         }
+        if (imapsess->commands[i].params) {
+            free(imapsess->commands[i].params);
+        }
         if (imapsess->commands[i].imap_reply) {
             free(imapsess->commands[i].imap_reply);
         }
@@ -832,6 +862,9 @@ void free_imap_session_state(emailsession_t *sess, void *imapstate) {
     }
     if (imapsess->next_command_name) {
         free(imapsess->next_command_name);
+    }
+    if (imapsess->next_command_params) {
+        free(imapsess->next_command_params);
     }
 
     if (imapsess->auth_tag) {
@@ -1770,11 +1803,11 @@ static int find_next_imap_message(openli_email_worker_t *state,
 
     char *tag;
     char *comm_resp;
+    char *comm_extra = NULL;
     uint8_t *spacefound = NULL;
     uint8_t *spacefound2 = NULL;
     uint8_t *crlffound = NULL;
     uint8_t *msgstart = imapsess->contbuffer + imapsess->contbufread;
-
 
     if (sess->currstate == OPENLI_IMAP_STATE_AUTHENTICATING) {
         /* Handle various auth response behaviours, as per RFC9051 */
@@ -1794,7 +1827,7 @@ static int find_next_imap_message(openli_email_worker_t *state,
         return 0;
     }
 
-    tag = calloc((spacefound - msgstart) + 1, sizeof(char *));
+    tag = calloc((spacefound - msgstart) + 1, sizeof(char));
     memcpy(tag, msgstart, spacefound - msgstart);
     tag[spacefound - msgstart] = '\0';
 
@@ -1811,11 +1844,16 @@ static int find_next_imap_message(openli_email_worker_t *state,
         return 0;
     }
 
-    if (spacefound2 == NULL || (crlffound != NULL && crlffound < spacefound2)) {
+    if (spacefound2 == NULL || (crlffound != NULL &&
+                crlffound <= spacefound2)) {
         spacefound2 = crlffound;
+    } else if (crlffound && spacefound2 && crlffound > spacefound2) {
+        comm_extra = calloc((crlffound - spacefound2), sizeof(char));
+        memcpy(comm_extra, spacefound2 + 1, (crlffound - spacefound2) - 1);
+        comm_extra[crlffound - spacefound2 - 1] = '\0';
     }
 
-    comm_resp = calloc((spacefound2 - spacefound), sizeof(char *));
+    comm_resp = calloc((spacefound2 - spacefound), sizeof(char));
     memcpy(comm_resp, spacefound + 1, (spacefound2 - spacefound) - 1);
     comm_resp[spacefound2 - spacefound - 1] = '\0';
 
@@ -1832,6 +1870,9 @@ static int find_next_imap_message(openli_email_worker_t *state,
             generate_email_logoff_iri(state, sess);
             free(tag);
             free(comm_resp);
+            if (comm_extra) {
+                free(comm_extra);
+            }
             return 0;
 
         } else if (strcasecmp(comm_resp, "PREAUTH") == 0) {
@@ -1840,7 +1881,11 @@ static int find_next_imap_message(openli_email_worker_t *state,
             /* a partial reply to a command, more to come... */
             imapsess->next_command_type = OPENLI_IMAP_COMMAND_REPLY_ONGOING;
             free(comm_resp);
+            if (comm_extra) {
+                free(comm_extra);
+            }
             comm_resp = NULL;
+            comm_extra = NULL;
 
             if (imapsess->reply_start == 0) {
                 imapsess->reply_start = msgstart - imapsess->contbuffer;
@@ -1897,6 +1942,11 @@ static int find_next_imap_message(openli_email_worker_t *state,
     if (imapsess->next_command_name) {
         free(imapsess->next_command_name);
     }
+
+    if (imapsess->next_command_params) {
+        free(imapsess->next_command_params);
+    }
+    imapsess->next_command_params = comm_extra;
 
     imapsess->next_command_name = comm_resp;
     imapsess->next_comm_start = msgstart - imapsess->contbuffer;
