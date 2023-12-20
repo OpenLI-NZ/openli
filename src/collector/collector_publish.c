@@ -88,6 +88,9 @@ void free_published_message(openli_export_recv_t *msg) {
         if (msg->data.ipmmiri.content) {
             free(msg->data.ipmmiri.content);
         }
+        if (msg->data.ipmmiri.locations) {
+            free(msg->data.ipmmiri.locations);
+        }
     } else if (msg->type == OPENLI_EXPORT_IPIRI) {
         if (msg->data.ipiri.liid) {
             free(msg->data.ipiri.liid);

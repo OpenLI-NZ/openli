@@ -71,6 +71,7 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/etsiencoding/etsiencoding.c \
                 collector/etsiencoding/encryptcontainer.c \
                 collector/sms_worker.c collector/sms_worker.h \
+                collector/location.c collector/location.h \
                 collector/collector_util.c collector/collector_util.h \
                 $(PLUGIN_SRCS)
 
