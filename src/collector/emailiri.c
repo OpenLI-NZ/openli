@@ -133,13 +133,12 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
         content->sender = NULL;
     }
 
-    if (emailev == ETSILI_EMAIL_EVENT_RECEIVE ||
-            emailev == ETSILI_EMAIL_EVENT_SEND ||
-            emailev == ETSILI_EMAIL_EVENT_PARTIAL_DOWNLOAD ||
-            emailev == ETSILI_EMAIL_EVENT_DOWNLOAD ||
-            emailev == ETSILI_EMAIL_EVENT_UPLOAD) {
-
-        /* only add recipients for events that make sense */
+    if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP &&
+            (emailev == ETSILI_EMAIL_EVENT_LOGON ||
+             emailev == ETSILI_EMAIL_EVENT_LOGON_FAILURE ||
+             emailev == ETSILI_EMAIL_EVENT_LOGOFF)) {
+        /* don't add recipients to SMTP logon or logoff events */
+    } else {
         add_recipients(sess, content, tgtaddrs, tgtaddr_count);
     }
 
@@ -248,7 +247,10 @@ static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
             }
 
         } else if (email_ev == ETSILI_EMAIL_EVENT_SEND ||
-                email_ev == ETSILI_EMAIL_EVENT_UPLOAD) {
+                email_ev == ETSILI_EMAIL_EVENT_UPLOAD ||
+                email_ev == ETSILI_EMAIL_EVENT_LOGON ||
+                email_ev == ETSILI_EMAIL_EVENT_LOGON_FAILURE ||
+                email_ev == ETSILI_EMAIL_EVENT_LOGOFF) {
             usetargets = fulltgtaddrs;
             usetarget_count = fulltgtaddr_count;
         } else {
