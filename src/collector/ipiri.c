@@ -361,6 +361,11 @@ int create_ipiri_job_from_iprange(collector_sync_t *sync,
     openli_export_recv_t *irimsg;
     char *uname = NULL;
 
+    if (ipint->common.targetagency == NULL ||
+            strcmp(ipint->common.targetagency, "pcapdisk") == 0) {
+        return 0;
+    }
+
     prefix = ascii2prefix(0, staticsess->rangestr);
     if (prefix == NULL) {
         logger(LOG_INFO,
@@ -431,6 +436,11 @@ int create_ipiri_job_from_packet(collector_sync_t *sync,
         return -1;
     }
 
+    if (ipint->common.targetagency == NULL ||
+            strcmp(ipint->common.targetagency, "pcapdisk") == 0) {
+        return 0;
+    }
+
     do {
         irimsg = _create_ipiri_job_basic(sync, ipint, ipint->username,
 				sess->cin);
@@ -468,6 +478,11 @@ int create_ipiri_job_from_session(collector_sync_t *sync,
 
     openli_export_recv_t *irimsg;
     int ret = 0;
+
+    if (ipint->common.targetagency == NULL ||
+            strcmp(ipint->common.targetagency, "pcapdisk") == 0) {
+        return 0;
+    }
 
     irimsg = _create_ipiri_job_basic(sync, ipint, ipint->username, sess->cin);
 

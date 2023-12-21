@@ -329,12 +329,16 @@ tcp_reassemble_stream_t *create_new_tcp_reassemble_stream(
     stream->streamid = *streamid;
     stream->lastts = 0;
     stream->established = TCP_STATE_OPENING;
+    stream->packets = calloc(4, sizeof(libtrace_packet_t *));
+    stream->pkt_alloc = 4;
+    stream->pkt_cnt = 0;
 
     return stream;
 }
 
 void destroy_tcp_reassemble_stream(tcp_reassemble_stream_t *stream) {
     tcp_reass_segment_t *iter, *tmp;
+    int i;
 
     HASH_ITER(hh, stream->segments, iter, tmp) {
         HASH_DELETE(hh, stream->segments, iter);
@@ -342,6 +346,14 @@ void destroy_tcp_reassemble_stream(tcp_reassemble_stream_t *stream) {
         free(iter);
     }
 
+    if (stream->packets) {
+        for (i = 0; i < stream->pkt_cnt; i++) {
+            if (stream->packets[i]) {
+                trace_destroy_packet(stream->packets[i]);
+            }
+        }
+        free(stream->packets);
+    }
     free(stream);
 }
 
@@ -482,12 +494,14 @@ int update_ipfrag_reassemble_stream(ip_reassemble_stream_t *stream,
 
 
 int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
-        uint8_t *content, uint16_t plen, uint32_t seqno) {
+        uint8_t *content, uint16_t plen, uint32_t seqno,
+        libtrace_packet_t *pkt) {
 
 
     tcp_reass_segment_t *seg, *existing;
     uint8_t *endptr;
 
+    printf("seqno: %u\n", seqno);
     HASH_FIND(hh, stream->segments, &seqno, sizeof(seqno), existing);
     if (existing) {
         /* retransmit? check for size difference... */
@@ -500,7 +514,15 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
             plen -= existing->length;
             seqno += existing->length;
             content = content + existing->length;
-            return update_tcp_reassemble_stream(stream, content, plen, seqno);
+            assert(stream->pkt_cnt > 0);
+            if (pkt) {
+                if (stream->packets[stream->pkt_cnt - 1] != NULL) {
+                    trace_destroy_packet(stream->packets[stream->pkt_cnt - 1]);
+                }
+                stream->packets[stream->pkt_cnt - 1] = openli_copy_packet(pkt);
+            }
+            return update_tcp_reassemble_stream(stream, content, plen, seqno,
+                    NULL);
         }
 
         /* segment is shorter? probably don't care... */
@@ -531,6 +553,16 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
     seg->length = plen;
     seg->content = (uint8_t *)malloc(plen);
     memcpy(seg->content, content, plen);
+
+    if (pkt) {
+        if (stream->pkt_cnt == stream->pkt_alloc) {
+            stream->packets = realloc(stream->packets,
+                    (stream->pkt_alloc + 4) * sizeof(libtrace_packet_t *));
+            stream->pkt_alloc += 4;
+        }
+        stream->packets[stream->pkt_cnt] = openli_copy_packet(pkt);
+        stream->pkt_cnt ++;
+    }
 
     HASH_ADD_KEYPTR(hh, stream->segments, &(seg->seqno), sizeof(seg->seqno),
             seg);
@@ -652,7 +684,7 @@ int get_next_ip_reassembled(ip_reassemble_stream_t *stream, char **content,
 }
 
 int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
-        uint16_t *len) {
+        uint16_t *len, libtrace_packet_t ***packets, int *pkt_cnt) {
 
     tcp_reass_segment_t *iter, *tmp;
     uint16_t contused = 0;
@@ -709,6 +741,26 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
             used = endfound - (contstart);
 
             stream->expectedseqno += used;
+
+            /* give all of the packets thus far back to the caller, so
+             * they can decide if they need to "intercept" them -- the
+             * raw packets are only required for pcapdisk intercepts, but
+             * we may not be able to know if the packets are part of a
+             * pcapdisk intercept until after we have reassembled the
+             * initial INVITE.
+             */
+            if (packets) {
+                *packets = NULL;
+            }
+
+            if (packets && stream->pkt_cnt > 0) {
+                *packets = stream->packets;
+                *pkt_cnt = stream->pkt_cnt;
+                stream->packets = calloc(4, sizeof(libtrace_packet_t *));
+                stream->pkt_cnt = 0;
+                stream->pkt_alloc = 4;
+            }
+
             if (contstart + iter->length == endfound) {
                 /* We've used the entire segment */
                 *len = contused + iter->length;
@@ -740,6 +792,7 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
 
     }
 
+    printf("incomplete....\n");
     /* If we get here, we've either run out of segments or we've found a
      * gap in the segments we have. We need to put our in-progress segment
      * back into the map since we've been removing its components as we
@@ -747,7 +800,7 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
      */
     if (contused > 0 || expseqno > stream->expectedseqno) {
         update_tcp_reassemble_stream(stream, (uint8_t *)(*content), contused,
-                stream->expectedseqno);
+                stream->expectedseqno, NULL);
     }
     *len = 0;
     return 0;

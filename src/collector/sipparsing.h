@@ -102,7 +102,7 @@ int add_sip_packet_to_parser(openli_sip_parser_t **parser,
 int parse_sip_content(openli_sip_parser_t *parser, uint8_t *sipcontent,
         uint16_t siplen);
 int parse_next_sip_message(openli_sip_parser_t *parser,
-        libtrace_packet_t *packet);
+        libtrace_packet_t ***packets, int *pkt_cnt);
 void release_sip_parser(openli_sip_parser_t *parser);
 
 char *get_sip_contents(openli_sip_parser_t *parser, uint16_t *siplen);
