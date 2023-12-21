@@ -560,5 +560,42 @@ char *extract_liid_from_exported_msg(uint8_t *etsimsg,
     return (char *)space;
 }
 
+libtrace_packet_t *openli_copy_packet(libtrace_packet_t *pkt) {
+    libtrace_packet_t *copy;
+    int caplen = trace_get_capture_length(pkt);
+    int framelen = trace_get_framing_length(pkt);
+
+    if (caplen == -1 || framelen == -1) {
+        return NULL;
+    }
+
+    copy = (libtrace_packet_t *)calloc((size_t)1, sizeof(libtrace_packet_t));
+    if (!copy) {
+        logger(LOG_INFO, "OpenLI: out of memory while copying libtrace packet");
+        exit(1);
+    }
+
+    copy->trace = pkt->trace;
+    copy->buf_control = TRACE_CTRL_PACKET;
+    copy->buffer = malloc(framelen + caplen);
+    copy->type = pkt->type;
+    copy->header = copy->buffer;
+    copy->payload = ((char *)copy->buffer) + framelen;
+    copy->order = pkt->order;
+    copy->hash = pkt->hash;
+    copy->error = pkt->error;
+    copy->which_trace_start = pkt->which_trace_start;
+    copy->cached.capture_length = caplen;
+    copy->cached.framing_length = framelen;
+    copy->cached.wire_length = -1;
+    copy->cached.payload_length = -1;
+    /* everything else in cache should be 0 or NULL due to our earlier
+     * calloc() */
+    memcpy(copy->header, pkt->header, framelen);
+    memcpy(copy->payload, pkt->payload, caplen);
+
+    return copy;
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 

@@ -58,6 +58,7 @@ void openli_copy_ipcontent(libtrace_packet_t *pkt, uint8_t **ipc,
 char *extract_liid_from_exported_msg(uint8_t *etsimsg,
         uint64_t msglen, unsigned char *space, int maxspace,
         uint16_t *liidlen);
+libtrace_packet_t *openli_copy_packet(libtrace_packet_t *pkt);
 
 uint32_t hash_liid(char *liid);
 uint32_t hashlittle( const void *key, size_t length, uint32_t initval);
