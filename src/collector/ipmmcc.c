@@ -146,9 +146,15 @@ static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
                 (struct sockaddr *)(&pinfo->srcip),
                 (struct sockaddr *)(&pinfo->destip), &is_comfort, pkt)) {
 
-            msg = create_ipcc_job(rtp->cin, rtp->common.liid,
-                    rtp->common.destid, pkt, ETSI_DIR_FROM_TARGET);
-            msg->type = OPENLI_EXPORT_IPMMCC;
+            if (rtp->common.targetagency == NULL ||
+                    strcmp(rtp->common.targetagency, "pcapdisk") == 0) {
+                msg = create_rawip_cc_job(rtp->common.liid,
+                        rtp->common.destid, pkt);
+            } else {
+                msg = create_ipcc_job(rtp->cin, rtp->common.liid,
+                        rtp->common.destid, pkt, ETSI_DIR_FROM_TARGET);
+                msg->type = OPENLI_EXPORT_IPMMCC;
+            }
             publish_openli_msg(loc->zmq_pubsocks[0], msg); // FIXME
             matched ++;
             continue;
@@ -159,9 +165,15 @@ static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
                 (struct sockaddr *)(&pinfo->destip),
                 (struct sockaddr *)(&pinfo->srcip), &is_comfort, pkt)) {
 
-            msg = create_ipcc_job(rtp->cin, rtp->common.liid,
-                    rtp->common.destid, pkt, ETSI_DIR_TO_TARGET);
-            msg->type = OPENLI_EXPORT_IPMMCC;
+            if (rtp->common.targetagency == NULL ||
+                    strcmp(rtp->common.targetagency, "pcapdisk") == 0) {
+                msg = create_rawip_cc_job(rtp->common.liid,
+                        rtp->common.destid, pkt);
+            } else {
+                msg = create_ipcc_job(rtp->cin, rtp->common.liid,
+                        rtp->common.destid, pkt, ETSI_DIR_TO_TARGET);
+                msg->type = OPENLI_EXPORT_IPMMCC;
+            }
             publish_openli_msg(loc->zmq_pubsocks[0], msg); // FIXME
             matched ++;
             continue;
