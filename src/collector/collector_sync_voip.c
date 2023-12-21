@@ -884,6 +884,12 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
         return;
     }
 
+    /* TODO add ability to include SIP packets in pcapdisk output */
+    if (vint->common.targetagency == NULL || strcmp(vint->common.targetagency,
+            "pcapdisk") == 0) {
+        return;
+    }
+
     /* TODO consider recycling IRI messages like we do with IPCCs */
 
     /* Wrap this packet up in an IRI and forward it on to the exporter.
