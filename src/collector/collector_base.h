@@ -43,6 +43,7 @@
 #include "collector_publish.h"
 #include "export_buffer.h"
 #include "openli_tls.h"
+#include "etsiencoding/etsiencoding.h"
 
 #define MAX_ENCODED_RESULT_BATCH 50
 
@@ -260,28 +261,13 @@ typedef struct encoder_state {
 
     Pvoid_t saved_intercept_templates;
     Pvoid_t saved_global_templates;
-    Pvoid_t saved_encryption_templates;
 
-    uint32_t encrypt_byte_counter;
-    uint32_t encrypt_byte_startts;
-    EVP_CIPHER_CTX *evp_ctx;
+    encrypt_encode_state_t encrypt;
 
     int seqtrackers;
     int forwarders;
     uint8_t halted;
 } openli_encoder_t;
-
-typedef struct encoder_job {
-    wandder_encode_job_t *preencoded;
-    uint32_t seqno;
-    int64_t cin;
-    char *cinstr;
-    openli_export_recv_t *origreq;
-    char *liid;
-    uint8_t cept_version;
-    payload_encryption_method_t encryptmethod;
-    char *encryptkey;
-} PACKED openli_encoding_job_t;
 
 void destroy_encoder_worker(openli_encoder_t *enc);
 void *run_encoder_worker(void *encstate);
