@@ -29,6 +29,70 @@
 #include "logger.h"
 #include "intercept.h"
 #include "etsili_core.h"
+#include "location.h"
+
+static void encode_ipmmiri_location_eps(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, openli_ipmmiri_job_t *job) {
+
+    wandder_encode_job_t *jobarray[4];
+    char encoded_uli[256];
+    int encoded_uli_len = 0;
+    int space = 256;
+
+    if (encode_user_location_information(encoded_uli, space, &encoded_uli_len,
+            job->locations, job->location_cnt, job->location_types) < 0) {
+        return;
+    }
+
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]); //targetLocation
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]); //epsLocation
+
+    wandder_encode_next_preencoded(encoder, jobarray, 2);
+
+    wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, encoded_uli, encoded_uli_len);
+
+    END_ENCODED_SEQUENCE(encoder, 2);
+
+}
+
+static void encode_ipmmiri_location(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, openli_ipmmiri_job_t *job) {
+
+    switch(job->location_encoding) {
+        case OPENLI_LOC_ENCODING_UMTS_HI2:
+            logger(LOG_INFO,
+                    "OpenLI: location encoding using UMTS HI2 is currently not supported");
+            return;
+            break;
+        case OPENLI_LOC_ENCODING_EPS:
+            encode_ipmmiri_location_eps(encoder, precomputed, job);
+            break;
+        case OPENLI_LOC_ENCODING_WLAN:
+            logger(LOG_INFO,
+                    "OpenLI: location encoding using WLAN location attributes is currently not supported");
+            return;
+            break;
+        case OPENLI_LOC_ENCODING_ETSI_671_HI2:
+            logger(LOG_INFO,
+                    "OpenLI: location encoding using ETSI HI2 operations is currently not supported");
+            return;
+            break;
+        case OPENLI_LOC_ENCODING_3GPP_33128:
+            logger(LOG_INFO,
+                    "OpenLI: location encoding using TS 33.128 is currently not supported");
+            return;
+            break;
+        default:
+            logger(LOG_INFO, "OpenLI: unexpected location encoding method: %u",
+                    job->location_encoding);
+            return;
+    }
+
+
+
+
+}
 
 static inline void encode_ipmmiri_body_common(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, etsili_iri_type_t iritype) {
@@ -54,26 +118,24 @@ static inline void encode_ipmmiri_body_common(wandder_encoder_t *encoder,
 }
 
 static wandder_encoded_result_t *encode_sipiri_body(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed,
-        etsili_iri_type_t iritype, uint8_t *ipsrc, uint8_t *ipdest,
-        int ipfamily, void *sipcontent, uint32_t siplen) {
+        wandder_encode_job_t *precomputed, openli_ipmmiri_job_t *job) {
 
     etsili_ipaddress_t encipsrc, encipdst;
     wandder_encode_job_t *jobarray[2];
 
-    if (ipfamily == AF_INET) {
+    if (job->ipfamily == AF_INET) {
         encipsrc.iptype = ETSILI_IPADDRESS_VERSION_4;
         encipsrc.assignment = ETSILI_IPADDRESS_ASSIGNED_UNKNOWN;
         encipsrc.v6prefixlen = 0;
         encipsrc.v4subnetmask = 0xffffffff;
         encipsrc.valtype = ETSILI_IPADDRESS_REP_BINARY;
         encipsrc.ipvalue = calloc(1, sizeof(uint32_t));
-        memcpy(encipsrc.ipvalue, ipsrc, sizeof(uint32_t));
+        memcpy(encipsrc.ipvalue, job->ipsrc, sizeof(uint32_t));
 
         encipdst = encipsrc;
         encipdst.ipvalue = calloc(1, sizeof(uint32_t));
-        memcpy(encipdst.ipvalue, ipdest, sizeof(uint32_t));
-    } else if (ipfamily == AF_INET6) {
+        memcpy(encipdst.ipvalue, job->ipdest, sizeof(uint32_t));
+    } else if (job->ipfamily == AF_INET6) {
         encipsrc.iptype = ETSILI_IPADDRESS_VERSION_6;
         encipsrc.assignment = ETSILI_IPADDRESS_ASSIGNED_UNKNOWN;
         encipsrc.v6prefixlen = 0;
@@ -81,15 +143,15 @@ static wandder_encoded_result_t *encode_sipiri_body(wandder_encoder_t *encoder,
         encipsrc.valtype = ETSILI_IPADDRESS_REP_BINARY;
 
         encipsrc.ipvalue = calloc(16, sizeof(uint8_t));
-        memcpy(encipsrc.ipvalue, ipsrc, 16);
+        memcpy(encipsrc.ipvalue, job->ipsrc, 16);
 
         encipdst = encipsrc;
         encipdst.ipvalue = calloc(16, sizeof(uint8_t));
-        memcpy(encipdst.ipvalue, ipdest, 16);
+        memcpy(encipdst.ipvalue, job->ipdest, 16);
     } else {
         return NULL;
     }
-    encode_ipmmiri_body_common(encoder, precomputed, iritype);
+    encode_ipmmiri_body_common(encoder, precomputed, job->iritype);
     jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]); // SIPMessage
     jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_0]); // Src IP
     wandder_encode_next_preencoded(encoder, jobarray, 2);
@@ -103,8 +165,15 @@ static wandder_encoded_result_t *encode_sipiri_body(wandder_encoder_t *encoder,
 
     /* SIP content */
     wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, sipcontent, siplen);
-    END_ENCODED_SEQUENCE(encoder, 7);
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, job->content, job->contentlen);
+
+    END_ENCODED_SEQUENCE(encoder, 2);
+
+    if (job->location_cnt > 0) {
+        encode_ipmmiri_location(encoder, precomputed, job);
+    }
+
+    END_ENCODED_SEQUENCE(encoder, 5);
 
     return wandder_encode_finish(encoder);
 }
@@ -131,20 +200,10 @@ int encode_templated_ipmmiri(wandder_encoder_t *encoder,
      * things further...
      */
 
-    /* For now though, let's just encode the body each time... */
-    if (irijob->locations) {
-        if (irijob->location_encoding == OPENLI_LOC_ENCODING_EPS) {
-    //        encoded_loc = encode_uli_binary(irijob->locations,
-      //              irijob->location_cnt, irijob->location_types);
-        }
-    }
-
     reset_wandder_encoder(encoder);
 
     /* Assuming SIP here for now, other protocols can be supported later */
-    body = encode_sipiri_body(encoder, job->preencoded, irijob->iritype,
-            irijob->ipsrc, irijob->ipdest, irijob->ipfamily,
-            irijob->content, irijob->contentlen);
+    body = encode_sipiri_body(encoder, job->preencoded, irijob);
 
 
     if (body == NULL || body->len == 0 || body->encoded == NULL) {

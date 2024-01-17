@@ -28,7 +28,9 @@
 #include <sys/types.h>
 #include <string.h>
 #include <stdio.h>
+#include <arpa/inet.h>
 #include "location.h"
+#include "logger.h"
 
 static void encode_e_utran_cell_id(char *encspace, e_utran_cell_id_t *cell) {
 
@@ -108,8 +110,55 @@ int parse_e_utran_fdd_field(const char *field, openli_location_t *loc) {
     cellid.eci = strtol(ecibuf, NULL, 16);
 
     encode_e_utran_cell_id(loc->encoded, &cellid);
+    loc->enc_len = 7;
     loc->loc_type = OPENLI_LOC_ECGI;
     return 0;
+}
+
+int encode_user_location_information(char *uli, int space, int *uli_len,
+        openli_location_t *locations, uint8_t location_cnt,
+        uint32_t location_types) {
+
+    uint16_t *lenfield = (uint16_t *)uli;
+    uint16_t used = 3;
+    uint8_t *ptr;
+    int i, n = 1;
+
+    memset(uli, 0, space);
+
+    ptr = ((uint8_t *)uli) + used;
+    if (location_types > 255) {
+        logger(LOG_INFO, "OpenLI: invalid location type flags: %u\n",
+                location_types);
+        return -1;
+    }
+    *ptr = (uint8_t)(location_types);
+    ptr ++;
+    used ++;
+
+    while (n <= OPENLI_LOC_EXT_MACRO_ENODE_B_ID) {
+        /* not the quickest approach, but shouldn't really matter for now */
+        if ((location_types & n) == n) {
+            for (i = 0; i < location_cnt; i++) {
+                if (locations[i].loc_type != n) {
+                    continue;
+                }
+                if (space - used < locations[i].enc_len) {
+                    logger(LOG_INFO, "OpenLI: ran out of space when encoding user location information");
+                    return -1;
+                }
+
+                memcpy(ptr, locations[i].encoded, locations[i].enc_len);
+                used += locations[i].enc_len;
+                ptr += locations[i].enc_len;
+                break;
+            }
+        }
+        n *= 2;
+    }
+
+    *lenfield = htons(used - 3);
+    return 1;
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -60,9 +60,13 @@ typedef enum {
 
 typedef struct openli_location {
     openli_location_type_t loc_type;
-
+    uint8_t enc_len;
     char encoded[8];
 } openli_location_t;
+
+int encode_user_location_information(char *uli, int space, int *uli_len,
+        openli_location_t *locations, uint8_t location_cnt,
+        uint32_t location_types);
 
 int parse_e_utran_fdd_field(const char *field, openli_location_t *loc);
 #endif
