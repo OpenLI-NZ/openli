@@ -225,4 +225,30 @@ openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,
     return msg;
 }
 
+void copy_location_into_ipmmiri_job(openli_export_recv_t *dest,
+        openli_location_t *loc, int loc_count) {
+    int i;
+
+    if (loc) {
+        dest->data.ipmmiri.location_types = 0;
+        dest->data.ipmmiri.locations = calloc(loc_count,
+                sizeof(openli_location_t));
+
+        for (i = 0; i < loc_count; i++) {
+            memcpy(dest->data.ipmmiri.locations[i].encoded, loc[i].encoded, 8);
+            dest->data.ipmmiri.locations[i].loc_type = loc[i].loc_type;
+            dest->data.ipmmiri.locations[i].enc_len = loc[i].enc_len;
+            dest->data.ipmmiri.location_types |= loc[i].loc_type;
+        }
+        dest->data.ipmmiri.location_cnt = loc_count;
+
+        /* TODO support other encoding methods as required */
+        dest->data.ipmmiri.location_encoding = OPENLI_LOC_ENCODING_EPS;
+    } else {
+        dest->data.ipmmiri.location_cnt = 0;
+        dest->data.ipmmiri.location_types = 0;
+        dest->data.ipmmiri.locations = NULL;
+    }
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

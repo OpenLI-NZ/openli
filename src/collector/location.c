@@ -32,25 +32,53 @@
 #include "location.h"
 #include "logger.h"
 
-static void encode_e_utran_cell_id(char *encspace, e_utran_cell_id_t *cell) {
+#define ENCODE_MNC_MMC(src, encspace) \
+    encspace[0] = ((src->mcc[0] - '0') & 0x0f) +                     \
+            (((src->mcc[1] - '0') & 0x0f) << 4);                     \
+    encspace[1] = ((src->mcc[2] - '0') & 0x0f);                      \
+                                                                     \
+    if (src->mnc[2] == '\0') {                                       \
+        encspace[1] += (0xf0);                                       \
+    } else {                                                         \
+        encspace[1] += (((src->mnc[2] - '0') & 0x0f) << 4);          \
+    }                                                                \
+                                                                     \
+    encspace[2] = ((src->mnc[0] - '0') & 0x0f) +                     \
+            (((src->mnc[1] - '0') & 0x0f) << 4);                     \
 
-    encspace[0] = ((cell->mcc[0] - '0') & 0x0f) +
-            (((cell->mcc[1] - '0') & 0x0f) << 4);
-    encspace[1] = ((cell->mcc[2] - '0') & 0x0f);
 
-    if (cell->mnc[2] == '\0') {
-        encspace[1] += (0xf0);
-    } else {
-        encspace[1] += (((cell->mnc[2] - '0') & 0x0f) << 4);
-    }
+static void encode_e_utran_cell_id(openli_location_t **loc,
+        int *loc_cnt, e_utran_cell_id_t *cell) {
 
-    encspace[2] = ((cell->mnc[0] - '0') & 0x0f) +
-            (((cell->mnc[1] - '0') & 0x0f) << 4);
+    char *encspace;
+    openli_location_t *l;
+
+    *loc = calloc(2, sizeof(openli_location_t));
+    *loc_cnt = 2;
+
+    /* Encode TAI */
+    l = &((*loc)[0]);
+    encspace = l->encoded;
+
+    ENCODE_MNC_MMC(cell, encspace);
+
+    encspace[3] = (cell->tac >> 8) & 0xff;
+    encspace[4] = (cell->tac) & 0xff;
+    l->enc_len = 5;
+    l->loc_type = OPENLI_LOC_TAI;
+
+    /* Encode ECGI */
+    l = &((*loc)[1]);
+    encspace = l->encoded;
+    ENCODE_MNC_MMC(cell, encspace);
 
     encspace[3] = (cell->eci >> 24) & 0x0f;
     encspace[4] = (cell->eci >> 16) & 0xff;
     encspace[5] = (cell->eci >> 8) & 0xff;
     encspace[6] = cell->eci & 0xff;
+
+    l->enc_len = 7;
+    l->loc_type = OPENLI_LOC_ECGI;
 }
 
 static inline uint8_t mnc_three_digits(const char *mcc, const char *mnc) {
@@ -58,7 +86,9 @@ static inline uint8_t mnc_three_digits(const char *mcc, const char *mnc) {
     return 0;
 }
 
-int parse_e_utran_fdd_field(const char *field, openli_location_t *loc) {
+int parse_e_utran_fdd_field(const char *field, openli_location_t **loc,
+        int *loc_cnt) {
+
     int step = 0;
     const char *ptr = NULL;
     char tacbuf[5];
@@ -109,9 +139,7 @@ int parse_e_utran_fdd_field(const char *field, openli_location_t *loc) {
     ecibuf[7] = '\0';
     cellid.eci = strtol(ecibuf, NULL, 16);
 
-    encode_e_utran_cell_id(loc->encoded, &cellid);
-    loc->enc_len = 7;
-    loc->loc_type = OPENLI_LOC_ECGI;
+    encode_e_utran_cell_id(loc, loc_cnt, &cellid);
     return 0;
 }
 
@@ -147,7 +175,6 @@ int encode_user_location_information(char *uli, int space, int *uli_len,
                     logger(LOG_INFO, "OpenLI: ran out of space when encoding user location information");
                     return -1;
                 }
-
                 memcpy(ptr, locations[i].encoded, locations[i].enc_len);
                 used += locations[i].enc_len;
                 ptr += locations[i].enc_len;
@@ -158,6 +185,8 @@ int encode_user_location_information(char *uli, int space, int *uli_len,
     }
 
     *lenfield = htons(used - 3);
+    *uli_len = used;
+
     return 1;
 }
 

@@ -38,6 +38,7 @@ static void encode_ipmmiri_location_eps(wandder_encoder_t *encoder,
     char encoded_uli[256];
     int encoded_uli_len = 0;
     int space = 256;
+    int i;
 
     if (encode_user_location_information(encoded_uli, space, &encoded_uli_len,
             job->locations, job->location_cnt, job->location_types) < 0) {
@@ -48,6 +49,7 @@ static void encode_ipmmiri_location_eps(wandder_encoder_t *encoder,
     jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]); //epsLocation
 
     wandder_encode_next_preencoded(encoder, jobarray, 2);
+
 
     wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, encoded_uli, encoded_uli_len);

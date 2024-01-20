@@ -200,6 +200,9 @@ openli_export_recv_t *create_ipcc_job(
 
 openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
         libtrace_packet_t *pkt);
+
+void copy_location_into_ipmmiri_job(openli_export_recv_t *dest,
+        openli_location_t *loc, int loc_count);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

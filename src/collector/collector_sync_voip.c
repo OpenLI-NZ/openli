@@ -868,7 +868,8 @@ static int process_sip_200ok(collector_sync_voip_t *sync,
 
 static inline void create_sip_ipiri(collector_sync_voip_t *sync,
         voipintercept_t *vint, openli_export_recv_t *irimsg,
-        etsili_iri_type_t iritype, int64_t cin, openli_location_t *loc) {
+        etsili_iri_type_t iritype, int64_t cin, openli_location_t *loc,
+        int loc_count) {
 
     openli_export_recv_t *copy;
 
@@ -902,20 +903,7 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
     memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,
             irimsg->data.ipmmiri.contentlen);
 
-    if (loc) {
-        copy->data.ipmmiri.locations = calloc(1, sizeof(openli_location_t));
-        copy->data.ipmmiri.locations[0].loc_type = loc->loc_type;
-        memcpy(copy->data.ipmmiri.locations[0].encoded, loc->encoded, 8);
-        copy->data.ipmmiri.location_cnt = 1;
-        copy->data.ipmmiri.location_types = loc->loc_type;
-
-        /* TODO support other encoding methods as required */
-        copy->data.ipmmiri.location_encoding = OPENLI_LOC_ENCODING_EPS;
-    } else {
-        copy->data.ipmmiri.location_cnt = 0;
-        copy->data.ipmmiri.location_types = 0;
-        copy->data.ipmmiri.locations = NULL;
-    }
+    copy_location_into_ipmmiri_job(copy, loc, loc_count);
 
     pthread_mutex_lock(sync->glob->stats_mutex);
     sync->glob->stats->ipmmiri_created ++;
@@ -928,7 +916,8 @@ static int process_sip_register_followup(collector_sync_voip_t *sync,
         openli_export_recv_t *irimsg) {
 
 
-    create_sip_ipiri(sync, vint, irimsg, ETSILI_IRI_REPORT, sipreg->cin, NULL);
+    create_sip_ipiri(sync, vint, irimsg, ETSILI_IRI_REPORT, sipreg->cin,
+            NULL, 0);
     return 1;
 }
 
@@ -943,19 +932,19 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
     rtpstreaminf_t *thisrtp;
     etsili_iri_type_t iritype = ETSILI_IRI_CONTINUE;
     int exportcount = 0;
-    int badsip = 0, r;
-    openli_location_t loc, *locptr;
+    int badsip = 0, r, loc_cnt;
+    openli_location_t *locptr;
 
     locptr = NULL;
-    if ((r = get_sip_paccess_network_info(sync->sipparser, &loc)) < 0) {
+    loc_cnt = 0;
+    if ((r = get_sip_paccess_network_info(sync->sipparser, &locptr,
+                &loc_cnt)) < 0) {
         if (sync->log_bad_sip) {
             logger(LOG_INFO,
                     "OpenLI: P-Access-Network-Info is malformed?");
             sync->log_bad_sip = 0;
 
         }
-    } else if (r > 0) {
-        locptr = &loc;
     }
 
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
@@ -1060,8 +1049,12 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
         }
 
         /* Wrap this packet up in an IRI and forward it on to the exporter */
-        create_sip_ipiri(sync, vint, irimsg, iritype, vshared->cin, locptr);
+        create_sip_ipiri(sync, vint, irimsg, iritype, vshared->cin, locptr,
+                loc_cnt);
         exportcount += 1;
+    }
+    if (locptr) {
+        free(locptr);
     }
     if (badsip) {
         return -1;
@@ -1076,13 +1069,14 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
     openli_sip_identity_t *matched = NULL;
     voipintercept_t *vint, *tmp;
     sipregister_t *sipreg;
-    int exportcount = 0, r;
+    int exportcount = 0, r, loc_cnt;
     uint8_t trust_sip_from;
-    openli_location_t loc, *locptr;
+    openli_location_t *locptr;
 
     openli_sip_identity_set_t all_identities;
 
     locptr = NULL;
+    loc_cnt = 0;
 
     if (extract_sip_identities(sync->sipparser, &all_identities,
             sync->log_bad_sip) < 0) {
@@ -1090,15 +1084,14 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
         return -1;
     }
 
-    if ((r = get_sip_paccess_network_info(sync->sipparser, &loc)) < 0) {
+    if ((r = get_sip_paccess_network_info(sync->sipparser, &locptr,
+                &loc_cnt)) < 0) {
         if (sync->log_bad_sip) {
             logger(LOG_INFO,
                     "OpenLI: P-Access-Network-Info is malformed?");
             sync->log_bad_sip = 0;
 
         }
-    } else if (r > 0) {
-        locptr = &loc;
     }
 
     pthread_rwlock_rdlock(sync->info_mutex);
@@ -1118,10 +1111,13 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
             continue;
         }
         create_sip_ipiri(sync, vint, irimsg, ETSILI_IRI_REPORT, sipreg->cin,
-                locptr);
+                locptr, loc_cnt);
         exportcount += 1;
     }
 
+    if (locptr) {
+        free(locptr);
+    }
     release_openli_sip_identity_set(&all_identities);
 
     return exportcount;
@@ -1141,13 +1137,14 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     int exportcount = 0;
     etsili_iri_type_t iritype = ETSILI_IRI_REPORT;
     int badsip = 0;
-    int i = 1, r;
+    int i = 1, r, loc_cnt;
     uint8_t dir = 0xff;
     openli_sip_identity_set_t all_identities;
     uint8_t trust_sip_from;
-    openli_location_t loc, *locptr;
+    openli_location_t *locptr;
 
     locptr = NULL;
+    loc_cnt = 0;
 
     if (extract_sip_identities(sync->sipparser, &all_identities,
             sync->log_bad_sip) < 0) {
@@ -1155,15 +1152,14 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         return -1;
     }
 
-    if ((r = get_sip_paccess_network_info(sync->sipparser, &loc)) < 0) {
+    if ((r = get_sip_paccess_network_info(sync->sipparser, &locptr,
+                &loc_cnt)) < 0) {
         if (sync->log_bad_sip) {
             logger(LOG_INFO,
                     "OpenLI: P-Access-Network-Info is malformed?");
             sync->log_bad_sip = 0;
 
         }
-    } else if (r > 0) {
-        locptr = &loc;
     }
 
     pthread_rwlock_rdlock(sync->info_mutex);
@@ -1292,10 +1288,14 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
 
         thisrtp->invitecseq = get_sip_cseq(sync->sipparser);
 
-        create_sip_ipiri(sync, vint, irimsg, iritype, vshared->cin, locptr);
+        create_sip_ipiri(sync, vint, irimsg, iritype, vshared->cin, locptr,
+                loc_cnt);
         exportcount += 1;
     }
 
+    if (locptr) {
+        free(locptr);
+    }
     release_openli_sip_identity_set(&all_identities);
 
     if (badsip) {

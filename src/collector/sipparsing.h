@@ -125,7 +125,7 @@ int get_sip_proxy_auth_identity(openli_sip_parser_t *parser, int index,
         int *authcount, openli_sip_identity_t *sipid,
         uint8_t logallowed);
 int get_sip_paccess_network_info(openli_sip_parser_t *parser,
-        openli_location_t *loc);
+        openli_location_t **loc, int *loc_cnt);
 int get_sip_passerted_identity(openli_sip_parser_t *parser,
         openli_sip_identity_t *sipid);
 int get_sip_remote_party(openli_sip_parser_t *parser,

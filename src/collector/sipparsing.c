@@ -891,14 +891,11 @@ int get_sip_remote_party(openli_sip_parser_t *parser,
 }
 
 int get_sip_paccess_network_info(openli_sip_parser_t *parser,
-        openli_location_t *loc) {
+        openli_location_t **loc, int *loc_cnt) {
 
     char *start;
     char *copy, *tok;
     osip_header_t *hdr;
-
-    loc->loc_type = OPENLI_LOC_UNKNOWN;
-    memset(loc->encoded, 0, 8);
 
     osip_message_header_get_byname(parser->osip, "P-Access-Network-Info", 0,
             &hdr);
@@ -919,17 +916,14 @@ int get_sip_paccess_network_info(openli_sip_parser_t *parser,
     /* access-type */
     if (strcasecmp(tok, "3GPP-E-UTRAN-FDD") == 0) {
         tok = strtok(NULL, ";");
-        if (parse_e_utran_fdd_field(tok, loc) < 0) {
+        if (parse_e_utran_fdd_field(tok, loc, loc_cnt) < 0) {
             free(copy);
             return -1;
         }
     }
 
     free(copy);
-    if (loc->loc_type != OPENLI_LOC_UNKNOWN) {
-        return 1;
-    }
-    return 0;
+    return *loc_cnt;
 }
 
 int get_sip_passerted_identity(openli_sip_parser_t *parser,

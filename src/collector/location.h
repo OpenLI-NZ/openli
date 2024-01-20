@@ -68,6 +68,7 @@ int encode_user_location_information(char *uli, int space, int *uli_len,
         openli_location_t *locations, uint8_t location_cnt,
         uint32_t location_types);
 
-int parse_e_utran_fdd_field(const char *field, openli_location_t *loc);
+int parse_e_utran_fdd_field(const char *field, openli_location_t **loc,
+        int *loc_cnt);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
