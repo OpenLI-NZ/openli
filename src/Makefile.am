@@ -70,7 +70,9 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/etsiencoding/etsiencoding.h \
                 collector/etsiencoding/etsiencoding.c \
                 collector/etsiencoding/encryptcontainer.c \
+                collector/etsiencoding/ipmmiri.c \
                 collector/sms_worker.c collector/sms_worker.h \
+                collector/location.c collector/location.h \
                 collector/collector_util.c collector/collector_util.h \
                 $(PLUGIN_SRCS)
 
@@ -97,6 +99,9 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
                 netcomms.h export_buffer.c intercept.c \
                 export_buffer.h etsili_core.h etsili_core.c \
                 collector/jenkinshash.c openli_tls.c openli_tls.h \
+                collector/etsiencoding/etsiencoding.h \
+                collector/etsiencoding/etsiencoding.c \
+                collector/etsiencoding/encryptcontainer.c \
                 coreserver.c coreserver.h
 openlimediator_LDADD = @ADD_LIBS@
 openlimediator_LDFLAGS=-lpthread @MEDIATOR_LIBS@

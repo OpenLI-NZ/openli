@@ -2331,11 +2331,11 @@ int main(int argc, char *argv[]) {
         glob->encoders[i].freegenerics = NULL;
         glob->encoders[i].saved_intercept_templates = NULL;
         glob->encoders[i].saved_global_templates = NULL;
-        glob->encoders[i].saved_encryption_templates = NULL;
 
-        glob->encoders[i].encrypt_byte_counter = 0;
-        glob->encoders[i].encrypt_byte_startts = 0;
-        glob->encoders[i].evp_ctx = NULL;
+        glob->encoders[i].encrypt.byte_counter = 0;
+        glob->encoders[i].encrypt.byte_startts = 0;
+        glob->encoders[i].encrypt.evp_ctx = NULL;
+        glob->encoders[i].encrypt.saved_encryption_templates = NULL;
         glob->encoders[i].seqtrackers = glob->seqtracker_threads;
         glob->encoders[i].forwarders = glob->forwarding_threads;
 

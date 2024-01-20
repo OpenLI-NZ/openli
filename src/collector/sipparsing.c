@@ -34,7 +34,7 @@
 #include "sipparsing.h"
 #include "logger.h"
 #include "util.h"
-
+#include "location.h"
 
 static int parse_tcp_sip_packet(openli_sip_parser_t *p,
         libtrace_tcp_t *tcp, uint32_t tcprem, tcp_streamid_t *tcpid,
@@ -888,6 +888,42 @@ int get_sip_remote_party(openli_sip_parser_t *parser,
         return 0;
     }
     return extract_identity(sipid, start);
+}
+
+int get_sip_paccess_network_info(openli_sip_parser_t *parser,
+        openli_location_t **loc, int *loc_cnt) {
+
+    char *start;
+    char *copy, *tok;
+    osip_header_t *hdr;
+
+    osip_message_header_get_byname(parser->osip, "P-Access-Network-Info", 0,
+            &hdr);
+    if (hdr == NULL) {
+        return 0;
+    }
+    start = osip_header_get_value(hdr);
+    if (start == NULL) {
+        return 0;
+    }
+
+    copy = strdup(start);
+    tok = strtok(copy, ";");
+    if (tok == NULL) {
+        free(copy);
+        return -1;
+    }
+    /* access-type */
+    if (strcasecmp(tok, "3GPP-E-UTRAN-FDD") == 0) {
+        tok = strtok(NULL, ";");
+        if (parse_e_utran_fdd_field(tok, loc, loc_cnt) < 0) {
+            free(copy);
+            return -1;
+        }
+    }
+
+    free(copy);
+    return *loc_cnt;
 }
 
 int get_sip_passerted_identity(openli_sip_parser_t *parser,

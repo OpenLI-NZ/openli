@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2023 The OpenLI Foundation
+ * Copyright (c) 2023 Searchlight NZ
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -67,6 +67,58 @@ static inline uint8_t encode_pspdu_sequence(uint8_t *space, uint8_t space_len,
     }
 
     return len_space_req + 2 + (2 + liidlen);
+}
+
+void encode_ipaddress(wandder_encoder_t *encoder, etsili_ipaddress_t *addr) {
+
+    uint32_t addrlen = 4;
+    uint32_t iptype = addr->iptype;
+    uint32_t assign = addr->assignment;
+    uint32_t prefbits = addr->v6prefixlen;
+
+    if (addr->ipvalue == NULL) {
+        return; // ???
+    }
+
+    if (addr->iptype == ETSILI_IPADDRESS_VERSION_6) {
+        addrlen = 16;
+    }
+
+    // iP-Type
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(iptype), sizeof(iptype));
+
+    ENC_CSEQUENCE(encoder, 2);      // iP-value
+    if (addr->valtype == ETSILI_IPADDRESS_REP_BINARY) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, addr->ipvalue, addrlen);
+    } else {
+        wandder_encode_next(encoder, WANDDER_TAG_IA5,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, addr->ipvalue,
+            strlen((char *)(addr->ipvalue)));
+    }
+
+    wandder_encode_endseq(encoder);     // ends iP-value
+
+    // iP-assignment
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 3, &(assign), sizeof(assign));
+
+    // iPv6PrefixLength
+    if (addr->v6prefixlen > 0) {
+        wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, &(prefbits), sizeof(prefbits));
+    }
+
+    // iPv4SubnetMask
+    if (addr->v4subnetmask > 0) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 5, &(addr->v4subnetmask),
+            sizeof(addr->v4subnetmask));
+    }
+
+    free(addr->ipvalue);
+    addr->ipvalue = NULL;
 }
 
 
