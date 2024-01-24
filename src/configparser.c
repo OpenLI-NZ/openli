@@ -291,12 +291,17 @@ static void parse_email_targets(email_target_t **targets, yaml_document_t *doc,
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value, "address") == 0) {
                 SET_CONFIG_STRING_OPTION(newtgt->address, value);
+            } else if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "targetID") == 0) {
+                SET_CONFIG_STRING_OPTION(newtgt->address, value);
             }
         }
 
         if (!newtgt->address) {
             logger(LOG_INFO,
-                    "OpenLI: a Email target requires an address, skipping.");
+                    "OpenLI: a Email target requires an address or targetID, skipping.");
             free(newtgt);
             continue;
         }
@@ -1303,7 +1308,8 @@ static int global_parser(void *arg, yaml_document_t *doc,
             strcasecmp((char *)key->data.scalar.value,
                     "SIPallowfromident") == 0) {
 
-       glob->trust_sip_from = check_onoff((char *)value->data.scalar.value);
+       glob->sharedinfo.trust_sip_from =
+                check_onoff((char *)value->data.scalar.value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -1312,6 +1318,23 @@ static int global_parser(void *arg, yaml_document_t *doc,
                     "maskimapcreds") == 0) {
 
        glob->mask_imap_creds = check_onoff((char *)value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
+                    "maskpop3creds") == 0) {
+
+       glob->mask_pop3_creds = check_onoff((char *)value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
+                    "emailingest-usetargetid") == 0) {
+
+       glob->email_ingest_use_targetid =
+            check_onoff((char *)value->data.scalar.value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&

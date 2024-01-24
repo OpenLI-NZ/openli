@@ -39,6 +39,8 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <Judy.h>
+#include <b64/cencode.h>
+#include <openssl/evp.h>
 
 #include "util.h"
 #include "logger.h"
@@ -151,8 +153,66 @@ void replace_email_session_clientaddr(emailsession_t *sess,
     sess->clientaddr = repl;
 }
 
-static openli_email_captured_t *convert_packet_to_email_captured(
-        libtrace_packet_t *pkt, uint8_t emailtype) {
+struct fraginfo {
+    char *fragbuffer;
+    char *posttcp;
+    uint32_t plen;
+    uint16_t src_port;
+    uint16_t dest_port;
+    uint16_t fragoff;
+    uint8_t moreflag;
+};
+
+static int handle_fragments(openli_email_worker_t *state,
+        libtrace_packet_t *pkt, struct fraginfo *fraginfo) {
+
+    libtrace_tcp_t *tcp;
+    ip_reassemble_stream_t *ipstream;
+    uint16_t fraglen = 0;
+    uint8_t proto;
+    int r;
+    uint32_t rem;
+
+    ipstream = get_ipfrag_reassemble_stream(state->fragreass, pkt);
+    if (!ipstream) {
+        logger(LOG_INFO, "OpenLI: error trying to reassemble IP fragment inside email worker thread");
+        return -1;
+    }
+
+    r = update_ipfrag_reassemble_stream(ipstream, pkt, fraginfo->fragoff,
+            fraginfo->moreflag);
+    if (r < 0) {
+        logger(LOG_INFO, "OpenLI: error while trying to reassemble IP fragment in email worker thread");
+        return -1;
+    }
+
+    fraginfo->src_port = fraginfo->dest_port = 0;
+
+    if ((r = get_next_ip_reassembled(ipstream, &(fraginfo->fragbuffer),
+            &(fraglen), &proto)) <= 0) {
+        return r;
+    }
+
+    /* packet must be reassembled at this point */
+    assert(fraginfo->fragbuffer);
+    tcp = (libtrace_tcp_t *)(fraginfo->fragbuffer);
+    rem = fraglen;
+    if (rem < sizeof(libtrace_tcp_t)) {
+        logger(LOG_INFO, "OpenLI: reassembled IP fragment in email worker thread does not have a complete TCP header");
+        return -1;
+    }
+    fraginfo->src_port = ntohs(tcp->source);
+    fraginfo->dest_port = ntohs(tcp->dest);
+    fraginfo->posttcp = (char *)trace_get_payload_from_tcp(tcp, &rem);
+    fraginfo->plen = rem;
+
+    remove_ipfrag_reassemble_stream(state->fragreass, ipstream);
+    return 1;
+}
+
+static int convert_packet_to_email_captured(openli_email_worker_t * state,
+        libtrace_packet_t *pkt,
+        uint8_t emailtype, openli_email_captured_t **cap) {
 
     char space[256];
     int spacelen = 256;
@@ -160,27 +220,53 @@ static openli_email_captured_t *convert_packet_to_email_captured(
     char ip_b[INET6_ADDRSTRLEN];
     char portstr[16];
     libtrace_tcp_t *tcp;
-    uint32_t rem;
+    uint32_t rem, plen;
     uint8_t proto;
-    void *posttcp;
+    char *posttcp = NULL;
     uint8_t pktsender = 0;
+    uint8_t moreflag;
+    uint16_t fragoff = 0;
+
+    struct fraginfo fraginfo;
 
     uint16_t src_port, dest_port, rem_port, host_port;
-    openli_email_captured_t *cap = NULL;
 
-    src_port = trace_get_source_port(pkt);
-    dest_port = trace_get_destination_port(pkt);
+    /* account for possible fragmentation */
+    memset(&fraginfo, 0, sizeof(struct fraginfo));
+
+    fragoff = trace_get_fragment_offset(pkt, &moreflag);
+    if (moreflag || fragoff > 0) {
+        int r;
+        if ((r = handle_fragments(state, pkt, &fraginfo)) <= 0) {
+            if (fraginfo.fragbuffer) {
+                free(fraginfo.fragbuffer);
+            }
+            return r;
+        }
+        posttcp = fraginfo.posttcp;
+        plen = fraginfo.plen;
+        src_port = fraginfo.src_port;
+        dest_port = fraginfo.dest_port;
+
+    } else {
+        src_port = trace_get_source_port(pkt);
+        dest_port = trace_get_destination_port(pkt);
+        tcp = (libtrace_tcp_t *)(trace_get_transport(pkt, &proto, &rem));
+        if (tcp == NULL || proto != TRACE_IPPROTO_TCP || rem == 0) {
+            return -1;
+        }
+
+        plen = trace_get_payload_length(pkt);
+        posttcp = (char *)trace_get_payload_from_tcp(tcp, &rem);
+        if (rem < plen) {
+            plen = rem;
+        }
+    }
 
     if (src_port == 0 || dest_port == 0) {
-        return NULL;
+        logger(LOG_INFO, "OpenLI: unable to derive port numbers for packet seen in email worker thread");
+        goto errstate;
     }
-
-    tcp = (libtrace_tcp_t *)(trace_get_transport(pkt, &proto, &rem));
-    if (tcp == NULL || proto != TRACE_IPPROTO_TCP || rem == 0) {
-        return NULL;
-    }
-
-    posttcp = trace_get_payload_from_tcp(tcp, &rem);
 
     /* Ensure that bi-directional flows return the same session ID by
      * always putting the IP and port for the endpoint with the smallest of
@@ -190,11 +276,11 @@ static openli_email_captured_t *convert_packet_to_email_captured(
     if (src_port < dest_port) {
         if (trace_get_source_address_string(pkt, ip_a, INET6_ADDRSTRLEN)
                 == NULL) {
-            return NULL;
+            goto errstate;
         }
         if (trace_get_destination_address_string(pkt, ip_b, INET6_ADDRSTRLEN)
                 == NULL) {
-            return NULL;
+            goto errstate;
         }
 
         rem_port = dest_port;
@@ -203,11 +289,11 @@ static openli_email_captured_t *convert_packet_to_email_captured(
     } else {
         if (trace_get_source_address_string(pkt, ip_b, INET6_ADDRSTRLEN)
                 == NULL) {
-            return NULL;
+            goto errstate;
         }
         if (trace_get_destination_address_string(pkt, ip_a, INET6_ADDRSTRLEN)
                 == NULL) {
-            return NULL;
+            goto errstate;
         }
         host_port = dest_port;
         rem_port = src_port;
@@ -217,46 +303,59 @@ static openli_email_captured_t *convert_packet_to_email_captured(
     snprintf(space, spacelen, "%s-%s-%u-%u", ip_a, ip_b, host_port,
             rem_port);
 
-    cap = calloc(1, sizeof(openli_email_captured_t));
+    (*cap) = calloc(1, sizeof(openli_email_captured_t));
     if (emailtype == OPENLI_UPDATE_SMTP) {
-        cap->type = OPENLI_EMAIL_TYPE_SMTP;
+        (*cap)->type = OPENLI_EMAIL_TYPE_SMTP;
     } else if (emailtype == OPENLI_UPDATE_IMAP) {
-        cap->type = OPENLI_EMAIL_TYPE_IMAP;
+        (*cap)->type = OPENLI_EMAIL_TYPE_IMAP;
     } else if (emailtype == OPENLI_UPDATE_POP3) {
-        cap->type = OPENLI_EMAIL_TYPE_POP3;
+        (*cap)->type = OPENLI_EMAIL_TYPE_POP3;
     } else {
-        cap->type = OPENLI_EMAIL_TYPE_UNKNOWN;
+        (*cap)->type = OPENLI_EMAIL_TYPE_UNKNOWN;
     }
 
-    cap->session_id = strdup(space);
-    cap->target_id = NULL;
-    cap->datasource = NULL;
-    cap->remote_ip = strdup(ip_b);
-    cap->host_ip = strdup(ip_a);
-    cap->part_id = 0xFFFFFFFF;
-    cap->pkt_sender = pktsender;
+    (*cap)->session_id = strdup(space);
+    (*cap)->target_id = NULL;
+    (*cap)->datasource = NULL;
+    (*cap)->remote_ip = strdup(ip_b);
+    (*cap)->host_ip = strdup(ip_a);
+    (*cap)->part_id = 0xFFFFFFFF;
+    (*cap)->pkt_sender = pktsender;
+    (*cap)->direction = OPENLI_EMAIL_DIRECTION_UNKNOWN;
 
     snprintf(portstr, 16, "%u", rem_port);
-    cap->remote_port = strdup(portstr);
+    (*cap)->remote_port = strdup(portstr);
     snprintf(portstr, 16, "%u", host_port);
-    cap->host_port = strdup(portstr);
+    (*cap)->host_port = strdup(portstr);
 
-    cap->timestamp = (trace_get_seconds(pkt) * 1000);
-    cap->mail_id = 0;
-    cap->msg_length = trace_get_payload_length(pkt);
+    (*cap)->timestamp = (trace_get_seconds(pkt) * 1000);
+    (*cap)->mail_id = 0;
+    (*cap)->msg_length = plen;
 
-    if (cap->msg_length > rem) {
-        cap->msg_length = rem;
-    }
-
-
-    cap->own_content = 0;
-    if (cap->msg_length > 0 && posttcp != NULL) {
-        cap->content = (char *)posttcp;
+    if (fraginfo.fragbuffer) {
+        (*cap)->own_content = 1;
+        if (posttcp && (*cap)->msg_length > 0) {
+            (*cap)->content = calloc((*cap)->msg_length, sizeof(char));
+            memcpy((*cap)->content, posttcp, (*cap)->msg_length);
+        } else {
+            (*cap)->content = NULL;
+        }
+        free(fraginfo.fragbuffer);
     } else {
-        cap->content = NULL;
+        (*cap)->own_content = 0;
+        if ((*cap)->msg_length > 0 && posttcp != NULL) {
+            (*cap)->content = (char *)posttcp;
+        } else {
+            (*cap)->content = NULL;
+        }
     }
-    return cap;
+    return 1;
+
+errstate:
+    if (fraginfo.fragbuffer) {
+        free(fraginfo.fragbuffer);
+    }
+    return -1;
 }
 
 static void init_email_session(emailsession_t *sess,
@@ -278,6 +377,16 @@ static void init_email_session(emailsession_t *sess,
     } else {
         /* TODO */
     }
+
+    pthread_rwlock_rdlock(state->glob_config_mutex);
+    if (cap->target_id && (*state->email_ingest_use_targetid)) {
+        sess->ingest_target_id = strdup(cap->target_id);
+    } else {
+        sess->ingest_target_id = NULL;
+    }
+    pthread_rwlock_unlock(state->glob_config_mutex);
+
+    sess->ingest_direction = cap->direction;
 
     if (cap->type == OPENLI_EMAIL_TYPE_IMAP) {
         pthread_rwlock_rdlock(state->glob_config_mutex);
@@ -305,6 +414,8 @@ static void init_email_session(emailsession_t *sess,
     sess->next_expected_captured = 0;
     sess->handle_compress = OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET;
     sess->ccs_sent = NULL;
+    sess->iris_sent = NULL;
+    sess->iricount = 0;
 }
 
 int extract_email_sender_from_body(openli_email_worker_t *state,
@@ -423,6 +534,7 @@ static void free_email_session(openli_email_worker_t *state,
     }
 
     JSLFA(rc, sess->ccs_sent);
+    JSLFA(rc, sess->iris_sent);
 
     clear_email_sender(sess);
     clear_email_participant_list(sess);
@@ -469,6 +581,9 @@ static void free_email_session(openli_email_worker_t *state,
     }
     if (sess->session_id) {
         free(sess->session_id);
+    }
+    if (sess->ingest_target_id) {
+        free(sess->ingest_target_id);
     }
     if (sess->key) {
         free(sess->key);
@@ -609,69 +724,16 @@ static void start_email_intercept(openli_email_worker_t *state,
 static int update_modified_email_intercept(openli_email_worker_t *state,
         emailintercept_t *found, emailintercept_t *decode) {
     openli_export_recv_t *expmsg;
-    int encodingchanged = 0, keychanged = 0;
+    int encodingchanged = 0;
 
     found->delivercompressed = decode->delivercompressed;
 
-    if (decode->common.tostart_time != found->common.tostart_time ||
-            decode->common.toend_time != found->common.toend_time) {
-        logger(LOG_INFO,
-                "OpenLI: Email intercept %s has changed start / end times -- now %lu, %lu",
-                found->common.liid, decode->common.tostart_time,
-                decode->common.toend_time);
-        found->common.tostart_time = decode->common.tostart_time;
-        found->common.toend_time = decode->common.toend_time;
-    }
+    encodingchanged = update_modified_intercept_common(&(found->common),
+            &(decode->common), OPENLI_INTERCEPT_TYPE_EMAIL);
 
-    if (decode->common.tomediate != found->common.tomediate) {
-        char space[1024];
-        intercept_mediation_mode_as_string(decode->common.tomediate, space,
-                1024);
-        logger(LOG_INFO,
-                "OpenLI: Email intercept %s has changed mediation mode to: %s",
-                decode->common.liid, space);
-        found->common.tomediate = decode->common.tomediate;
-    }
-
-    if (decode->common.encrypt != found->common.encrypt) {
-        char space[1024];
-        intercept_encryption_mode_as_string(decode->common.encrypt, space,
-                1024);
-        logger(LOG_INFO,
-                "OpenLI: Email intercept %s has changed encryption mode to: %s",
-                decode->common.liid, space);
-        found->common.encrypt = decode->common.encrypt;
-        encodingchanged = 1;
-    }
-
-    if (found->common.encryptkey && decode->common.encryptkey) {
-        if (strcmp(found->common.encryptkey, decode->common.encryptkey) != 0) {
-            keychanged = 1;
-        }
-    } else if (found->common.encryptkey == NULL && decode->common.encryptkey) {
-        keychanged = 1;
-    } else if (found->common.encryptkey && decode->common.encryptkey == NULL) {
-        keychanged = 1;
-    }
-
-    if (keychanged) {
-        char *tmp;
-        encodingchanged = 1;
-        tmp = found->common.encryptkey;
-        found->common.encryptkey = decode->common.encryptkey;
-        decode->common.encryptkey = tmp;
-    }
-
-    if (strcmp(decode->common.delivcc, found->common.delivcc) != 0 ||
-            strcmp(decode->common.authcc, found->common.authcc) != 0) {
-        char *tmp;
-        tmp = decode->common.authcc;
-        decode->common.authcc = found->common.authcc;
-        found->common.authcc = tmp;
-        tmp = decode->common.delivcc;
-        decode->common.delivcc = found->common.delivcc;
-        found->common.delivcc = tmp;
-        encodingchanged = 1;
+    if (encodingchanged < 0) {
+        free_single_emailintercept(decode);
+        return -1;
     }
 
     if (encodingchanged) {
@@ -903,10 +965,7 @@ static int process_email_target_withdraw(openli_email_worker_t *state,
     HASH_FIND(hh, found->targets, tgt->address, strlen(tgt->address), tgtfound);
     if (tgtfound) {
         HASH_DELETE(hh, found->targets, tgtfound);
-        if (tgtfound->address) {
-            free(tgtfound->address);
-        }
-        free(tgtfound);
+        free_single_email_target(tgtfound);
     }
 
     return 0;
@@ -928,11 +987,7 @@ static int remove_email_target(openli_email_worker_t *state,
     }
 
     ret = process_email_target_withdraw(state, tgt, liid);
-
-    if (tgt->address) {
-        free(tgt->address);
-    }
-    free(tgt);
+    free_single_email_target(tgt);
     return ret;
 }
 
@@ -942,6 +997,11 @@ static int add_email_target(openli_email_worker_t *state,
     email_target_t *tgt, *tgtfound;
     emailintercept_t *found;
     char liid[256];
+    EVP_MD_CTX *ctx;
+    const EVP_MD *md;
+    unsigned char shaspace[EVP_MAX_MD_SIZE];
+    unsigned int sha_len;
+    int i;
 
     tgt = calloc(1, sizeof(email_target_t));
     if (decode_email_target_announcement(provmsg->msgbody, provmsg->msglen,
@@ -949,6 +1009,36 @@ static int add_email_target(openli_email_worker_t *state,
         logger(LOG_INFO, "OpenLI: email worker %d received invalid email target announcement from provisioner", state->emailid);
         return -1;
     }
+
+    if (tgt->address == NULL) {
+        logger(LOG_INFO, "OpenLI: email worker %d has a target with no address for liid %s\n", state->emailid, liid);
+        return -1;
+    }
+    if (strlen(tgt->address) > 1023) {
+        logger(LOG_INFO, "OpenLI: insanely long email address for %s target -- %s\n", liid, tgt->address);
+        return -1;
+    }
+
+#ifdef HAVE_LIBSSL_11
+    ctx = EVP_MD_CTX_new();
+#else
+    ctx = EVP_MD_CTX_create();
+#endif
+    md = EVP_sha512();
+    EVP_DigestInit_ex(ctx, md, NULL);
+    memset(shaspace, 0, EVP_MAX_MD_SIZE);
+    EVP_DigestUpdate(ctx, tgt->address, strlen(tgt->address));
+    EVP_DigestFinal_ex(ctx, shaspace, &sha_len);
+
+    tgt->sha512 = calloc(sha_len * 2 + 1, sizeof(char));
+    for (i = 0; i < sha_len; i++) {
+        sprintf(tgt->sha512 + (i * 2), "%02x", shaspace[i]);
+    }
+#ifdef HAVE_LIBSSL_11
+    EVP_MD_CTX_free(ctx);
+#else
+    EVP_MD_CTX_destroy(ctx);
+#endif
 
     HASH_FIND(hh_liid, state->allintercepts, liid, strlen(liid), found);
     if (!found) {
@@ -970,10 +1060,7 @@ static int add_email_target(openli_email_worker_t *state,
                 tgt);
     } else {
         tgtfound->awaitingconfirm = 0;
-        if (tgt->address) {
-            free(tgt->address);
-        }
-        free(tgt);
+        free_single_email_target(tgt);
     }
     return 0;
 }
@@ -1190,7 +1277,7 @@ static int find_and_update_active_session(openli_email_worker_t *state,
 
 static int process_received_packet(openli_email_worker_t *state) {
     openli_state_update_t recvd;
-    int rc;
+    int rc, x;
     openli_email_captured_t *cap = NULL;
 
     do {
@@ -1205,13 +1292,19 @@ static int process_received_packet(openli_email_worker_t *state) {
             return -1;
         }
 
-        cap = convert_packet_to_email_captured(recvd.data.pkt, recvd.type);
-
-        if (cap == NULL || cap->session_id == NULL) {
+        if ((x = convert_packet_to_email_captured(state, recvd.data.pkt,
+                recvd.type, &cap)) < 0) {
             logger(LOG_INFO, "OpenLI: unable to derive email session ID from received packet in email thread %d", state->emailid);
             free_captured_email(cap);
             return -1;
+        } else if (x == 0) {
+            /* packet was a fragment and we need more fragments to complete
+             * the application payload.
+             */
+             trace_destroy_packet(recvd.data.pkt);
+             continue;
         }
+
         if (cap->content != NULL) {
             find_and_update_active_session(state, cap);
         } else {
@@ -1242,7 +1335,6 @@ static int process_ingested_capture(openli_email_worker_t *state) {
         if (x <= 0) {
             break;
         }
-
         if (cap == NULL || cap->session_id == NULL) {
             free_captured_email(cap);
             break;
@@ -1330,7 +1422,7 @@ static void email_worker_main(openli_email_worker_t *state) {
         }
 
         if (state->topoll[2].revents & ZMQ_POLLIN) {
-            /* message from the email ingesting thread */
+            /* captured packet from a collector thread */
             x = process_received_packet(state);
             if (x < 0) {
                 break;
@@ -1356,45 +1448,6 @@ static void email_worker_main(openli_email_worker_t *state) {
     }
 }
 
-static inline void clear_zmqsocks(void **zmq_socks, int sockcount) {
-    int i, zero = 0;
-    if (zmq_socks == NULL) {
-        return;
-    }
-
-    for (i = 0; i < sockcount; i++) {
-        if (zmq_socks[i] == NULL) {
-            continue;
-        }
-        zmq_setsockopt(zmq_socks[i], ZMQ_LINGER, &zero, sizeof(zero));
-        zmq_close(zmq_socks[i]);
-    }
-    free(zmq_socks);
-}
-
-static inline int init_zmqsocks(void **zmq_socks, int sockcount,
-        const char *basename, void *zmq_ctxt) {
-
-    int i;
-    char sockname[256];
-    int ret = 0;
-
-    for (i = 0; i < sockcount; i++) {
-        zmq_socks[i] = zmq_socket(zmq_ctxt, ZMQ_PUSH);
-        snprintf(sockname, 256, "%s-%d", basename, i);
-        if (zmq_connect(zmq_socks[i], sockname) < 0) {
-            ret = -1;
-            logger(LOG_INFO,
-                    "OpenLI: email worker failed to bind to publishing zmq %s: %s",
-                    sockname, strerror(errno));
-
-            zmq_close(zmq_socks[i]);
-            zmq_socks[i] = NULL;
-        }
-    }
-    return ret;
-}
-
 static void free_all_email_sessions(openli_email_worker_t *state) {
 
     emailsession_t *sess, *tmp;
@@ -1414,13 +1467,15 @@ void *start_email_worker_thread(void *arg) {
     sync_epoll_t *syncev, *tmp;
     openli_state_update_t recvd;
 
+    state->alltargets.addresses = NULL;
+    state->alltargets.targets = NULL;
     state->zmq_pubsocks = calloc(state->tracker_threads, sizeof(void *));
     state->zmq_fwdsocks = calloc(state->fwd_threads, sizeof(void *));
 
-    init_zmqsocks(state->zmq_pubsocks, state->tracker_threads,
+    init_zmq_socket_array(state->zmq_pubsocks, state->tracker_threads,
             "inproc://openlipub", state->zmq_ctxt);
 
-    init_zmqsocks(state->zmq_fwdsocks, state->fwd_threads,
+    init_zmq_socket_array(state->zmq_fwdsocks, state->fwd_threads,
             "inproc://openliforwardercontrol_sync", state->zmq_ctxt);
 
     state->zmq_ii_sock = zmq_socket(state->zmq_ctxt, ZMQ_PULL);
@@ -1467,6 +1522,7 @@ void *start_email_worker_thread(void *arg) {
          goto haltemailworker;
     }
 
+    state->fragreass = create_new_ipfrag_reassembler();
     email_worker_main(state);
 
     do {
@@ -1482,7 +1538,7 @@ haltemailworker:
     logger(LOG_INFO, "OpenLI: halting email processing thread %d",
             state->emailid);
     /* free all state for intercepts and active sessions */
-    clear_email_user_intercept_list(state->alltargets);
+    clear_email_user_intercept_list(&(state->alltargets));
     free_all_emailintercepts(&(state->allintercepts));
     free_all_email_sessions(state);
 
@@ -1496,8 +1552,8 @@ haltemailworker:
     zmq_close(state->zmq_ingest_recvsock);
     zmq_close(state->zmq_colthread_recvsock);
 
-    clear_zmqsocks(state->zmq_pubsocks, state->tracker_threads);
-    clear_zmqsocks(state->zmq_fwdsocks, state->fwd_threads);
+    clear_zmq_socket_array(state->zmq_pubsocks, state->tracker_threads);
+    clear_zmq_socket_array(state->zmq_fwdsocks, state->fwd_threads);
 
     /* All timeouts should be freed when we release the active sessions,
      * but just in case there are any left floating around...
@@ -1506,9 +1562,172 @@ haltemailworker:
         HASH_DELETE(hh, state->timeouts, syncev);
         free(syncev);
     }
-
+    if (state->fragreass) {
+        destroy_ipfrag_reassembler(state->fragreass);
+    }
     pthread_exit(NULL);
 }
+
+/** Utility functions for the protocol parsers
+ *
+ *  ==========================================
+ */
+
+void mask_plainauth_creds(char *mailbox, char *reencoded, int buflen) {
+    char input[2048];
+    char *ptr;
+    base64_encodestate e;
+    int spaces, toencode, cnt;
+
+    /* reencode authtoken with replaced username and password */
+    base64_init_encodestate(&e);
+    snprintf(input, 2048, "%s XXX XXX", mailbox);
+    toencode = strlen(input);
+    ptr = input;
+    spaces = 0;
+
+    while(spaces < 2) {
+        if (*ptr == '\0') {
+            break;
+        }
+
+        if (*ptr == ' ') {
+            *ptr = '\0';
+            spaces ++;
+        }
+        ptr ++;
+    }
+
+    /* TODO try not to walk off the end of reencoded -- very unlikely, given
+     * that we have 2048 bytes of space but you never know...
+     */
+    ptr = reencoded;
+    cnt = base64_encode_block(input, toencode, ptr, &e);
+
+    ptr += cnt;
+    cnt = base64_encode_blockend(ptr, &e);
+
+    ptr += cnt;
+    /* libb64 likes to add a newline to the end of its encodings, so make
+     * sure we strip it if one is present.
+     */
+    if (*(ptr - 1) == '\n') {
+        ptr--;
+    }
+
+    *ptr = '\r'; ptr++;
+    *ptr = '\n'; ptr++;
+    *ptr = '\0'; ptr++;
+}
+
+int get_email_authentication_type(char *authmsg, const char *sesskey,
+        openli_email_auth_type_t *at_code, uint8_t is_imap) {
+
+    char *saveptr;
+    char *tag = NULL;
+    char *comm = NULL;
+    char *authtype = NULL;
+    char *lineend = NULL;
+    char *next = NULL;
+    int moveahead = 0;
+
+    lineend = strstr(authmsg, "\r\n");
+    if (lineend == NULL) {
+        return 0;
+    }
+
+    if (is_imap) {
+        tag = strtok_r(authmsg, " ", &saveptr);
+        if (!tag) {
+            logger(LOG_INFO, "OpenLI: unable to derive tag from Email AUTHENTICATE command");
+            return -1;
+        }
+        next = NULL;
+    } else {
+        next = authmsg;
+    }
+
+    comm = strtok_r(next, " ", &saveptr);
+    if (!comm) {
+        logger(LOG_INFO, "OpenLI: unable to derive command from Email AUTHENTICATE command");
+        return -1;
+    }
+
+    authtype = strtok_r(NULL,  " \r\n", &saveptr);
+
+    if (!authtype) {
+        logger(LOG_INFO, "OpenLI: unable to derive authentication type from Email AUTHENTICATE command");
+        return -1;
+    }
+
+    if (strcasecmp(authtype, "PLAIN") == 0) {
+        *at_code = OPENLI_EMAIL_AUTH_PLAIN;
+        moveahead = (5 + (authtype - authmsg));
+
+        if (lineend == authtype + 5) {
+            moveahead += 2;
+        } else {
+            moveahead += 1;
+        }
+    } else if (strcasecmp(authtype, "LOGIN") == 0) {
+        *at_code = OPENLI_EMAIL_AUTH_LOGIN;
+        moveahead = (5 + (authtype - authmsg));
+
+        if (lineend == authtype + 5) {
+            moveahead += 2;
+        } else {
+            moveahead += 1;
+        }
+    } else if (strcasecmp(authtype, "GSSAPI") == 0) {
+        *at_code = OPENLI_EMAIL_AUTH_GSSAPI;
+        moveahead = (6 + (authtype - authmsg));
+
+        if (lineend == authtype + 6) {
+            moveahead += 2;
+        } else {
+            moveahead += 1;
+        }
+
+    } else {
+        logger(LOG_INFO, "OpenLI: unsupported Email authentication type '%s' -- will not be able to derive mailbox owner for session %s",
+                authtype, sesskey);
+        return -1;
+    }
+
+    return moveahead;
+}
+
+email_address_set_t *is_address_interceptable(
+        openli_email_worker_t *state, const char *emailaddr) {
+
+    email_address_set_t *active = NULL;
+    if (emailaddr == NULL) {
+        return active;
+    }
+
+    HASH_FIND(hh_addr, state->alltargets.addresses, emailaddr,
+            strlen(emailaddr), active);
+    return active;
+}
+
+email_target_set_t *is_targetid_interceptable(
+        openli_email_worker_t *state, const char *targetid) {
+
+    email_target_set_t *active = NULL;
+    if (targetid == NULL) {
+        return active;
+    }
+    HASH_FIND(hh_sha, state->alltargets.targets, targetid, strlen(targetid),
+            active);
+    if (active) {
+        return active;
+    }
+
+    HASH_FIND(hh_plain, state->alltargets.targets, targetid, strlen(targetid),
+            active);
+    return active;
+}
+
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 

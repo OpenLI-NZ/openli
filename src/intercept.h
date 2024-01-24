@@ -41,6 +41,7 @@ typedef enum {
     OPENLI_INTERCEPT_TYPE_IP = 1,
     OPENLI_INTERCEPT_TYPE_VOIP = 2,
     OPENLI_INTERCEPT_TYPE_EMAIL = 3,
+    OPENLI_INTERCEPT_TYPE_EOL,
 } openli_intercept_types_t;
 
 typedef enum {
@@ -164,6 +165,7 @@ typedef struct ipintercept {
 
 typedef struct email_target {
     char *address;
+    char *sha512;
     uint8_t awaitingconfirm;
     UT_hash_handle hh;
 } email_target_t;
@@ -189,10 +191,24 @@ typedef struct email_intercept_ref {
     UT_hash_handle hh;
 } email_intercept_ref_t;
 
-typedef struct emailinterceptlist {
+typedef struct email_address_set {
     char *emailaddr;
     email_intercept_ref_t *intlist;
-    UT_hash_handle hh;
+    UT_hash_handle hh_addr;
+} email_address_set_t;
+
+typedef struct email_target_set {
+    char *sha512;
+    char *origaddress;
+    email_intercept_ref_t *intlist;
+    UT_hash_handle hh_sha;
+    UT_hash_handle hh_plain;
+} email_target_set_t;
+
+typedef struct emailinterceptlist {
+    email_address_set_t *addresses;
+    email_target_set_t *targets;
+    email_target_set_t *targets_plain;
 } email_user_intercept_list_t;
 
 
@@ -286,7 +302,6 @@ struct sipmediastream {
 typedef struct email_participant {
     char *emailaddr;
     uint8_t is_sender;
-
     UT_hash_handle hh;
 } email_participant_t;
 
@@ -304,6 +319,8 @@ struct emailsession {
     uint8_t login_sent;
     uint64_t event_time;
 
+    char *ingest_target_id;
+    uint8_t ingest_direction;
     email_participant_t sender;
     email_participant_t *participants;
 
@@ -321,6 +338,8 @@ struct emailsession {
     uint8_t sender_validated_etsivalue;
 
     Pvoid_t ccs_sent;
+    Pvoid_t iris_sent;
+    int iricount;
     UT_hash_handle hh;
 };
 
@@ -420,11 +439,47 @@ void free_single_rtpstream(rtpstreaminf_t *rtp);
 void free_single_vendmirror_intercept(vendmirror_intercept_t *mirror);
 void free_single_staticipsession(staticipsession_t *statint);
 void free_single_staticiprange(static_ipranges_t *ipr);
+void free_single_email_target(email_target_t *tgt);
+
+int update_modified_intercept_common(intercept_common_t *current,
+        intercept_common_t *update, openli_intercept_types_t cepttype);
 
 /* Create a comma-separated string containing all of the SIP target IDs
  * for a VoIP intercept.
  */
 char *list_sip_targets(voipintercept_t *v, int maxchars);
+
+/* Add a provided SIP identity to the targets list for a VoIP intercept.
+ */
+void add_new_sip_target_to_list(voipintercept_t *vint,
+        openli_sip_identity_t *sipid);
+
+/* Disables the provided SIP identity for a VoIP intercept. */
+void disable_sip_target_from_list(voipintercept_t *vint,
+        openli_sip_identity_t *sipid);
+
+/* Disables any VoIP intercepts that were not confirmed by the provisioner
+ * since we last had a reliable connection back to it.
+ *
+ * Takes two function callbacks as arguments: one function to be called
+ * for each unconfirmed intercept (percept), and one to be called for each
+ * unconfirmed target (whose intercept was confirmed) (pertgt).
+ *
+ * The percept_arg and pertgt_arg parameters allow the user to pass
+ * their own context data into the callback functions, if required.
+ */
+void disable_unconfirmed_voip_intercepts(voipintercept_t **voipintercepts,
+        void (*percept)(voipintercept_t *, void *),
+        void *percept_arg,
+        void (*pertgt)(openli_sip_identity_t *, voipintercept_t *vint, void *),
+        void *pertgt_arg);
+
+/* Mark all VoIP intercepts (and their targets) as unconfirmed, pending
+ * a re-announcement from the provisioner. You should call this on a
+ * set of known VoIP intercepts whenever the connection to the provisioner
+ * is lost.
+ */
+void flag_voip_intercepts_as_unconfirmed(voipintercept_t **voipintercepts);
 
 /* Create a comma-separated string containing all of the target addresses
  * for an email intercept.
@@ -456,10 +511,10 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
 
 void clear_email_user_intercept_list(email_user_intercept_list_t *ulist);
 int remove_intercept_from_email_user_intercept_list(
-        email_user_intercept_list_t **ulist, emailintercept_t *em,
+        email_user_intercept_list_t *ulist, emailintercept_t *em,
         email_target_t *tgt);
 int add_intercept_to_email_user_intercept_list(
-        email_user_intercept_list_t **ulist, emailintercept_t *em,
+        email_user_intercept_list_t *ulist, emailintercept_t *em,
         email_target_t *tgt);
 
 const char *get_access_type_string(internet_access_method_t method);

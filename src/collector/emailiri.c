@@ -36,15 +36,6 @@
 #include "etsili_core.h"
 #include "emailiri.h"
 
-static inline email_user_intercept_list_t *is_address_interceptable(
-        openli_email_worker_t *state, const char *emailaddr) {
-
-    email_user_intercept_list_t *active = NULL;
-
-    HASH_FIND(hh, state->alltargets, emailaddr, strlen(emailaddr), active);
-    return active;
-}
-
 void free_email_iri_content(etsili_email_iri_content_t *content) {
 
     int i;
@@ -71,14 +62,32 @@ void free_email_iri_content(etsili_email_iri_content_t *content) {
 
 }
 
+static void add_recipients(emailsession_t *sess,
+        etsili_email_iri_content_t *content, const char **tgtaddrs,
+        int tgtaddr_count) {
+
+    int i;
+
+    /* XXX removing non-target recipients when the target is also a
+     * recipient is possibly a country-specific requirement, so we
+     * may need to make this a configurable option in the future...
+     */
+    content->recipient_count = tgtaddr_count;
+    content->recipients = calloc(content->recipient_count, sizeof(char *));
+
+    for (i = 0; i < tgtaddr_count; i++) {
+        content->recipients[i] = strdup(tgtaddrs[i]);
+    }
+
+}
+
 static openli_export_recv_t *create_emailiri_job(char *liid,
         emailsession_t *sess, uint8_t iritype, uint8_t emailev,
         uint8_t status, uint32_t destid, uint64_t timestamp,
-        const char *onlyrecipient) {
+        const char **tgtaddrs, int tgtaddr_count) {
 
     openli_export_recv_t *msg = NULL;
     etsili_email_iri_content_t *content;
-    int i;
     email_participant_t *recip, *tmp;
 
     msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
@@ -124,26 +133,28 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
         content->sender = NULL;
     }
 
-    /* TODO maybe we need a config option to include ALL recipients
-     * regardless of whether they were intercept targets?
-     */
-    if (onlyrecipient) {
-        content->recipient_count = 1;
-        content->recipients = calloc(1, sizeof(char *));
-        content->recipients[0] = strdup(onlyrecipient);
+    if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP &&
+            (emailev == ETSILI_EMAIL_EVENT_LOGON ||
+             emailev == ETSILI_EMAIL_EVENT_LOGON_FAILURE ||
+             emailev == ETSILI_EMAIL_EVENT_LOGOFF)) {
+        /* don't add recipients to SMTP logon or logoff events */
     } else {
-        content->recipient_count = HASH_CNT(hh, sess->participants);
-        content->recipients = calloc(content->recipient_count,
-                sizeof(char *));
-        i = 0;
-        HASH_ITER(hh, sess->participants, recip, tmp) {
-            content->recipients[i] = strdup(recip->emailaddr);
-            i++;
-        }
+        add_recipients(sess, content, tgtaddrs, tgtaddr_count);
     }
 
     content->status = status;
     content->messageid = NULL;
+
+    if (content->recipient_count <= 0 &&
+            (emailev == ETSILI_EMAIL_EVENT_RECEIVE ||
+             emailev == ETSILI_EMAIL_EVENT_PARTIAL_DOWNLOAD ||
+             emailev == ETSILI_EMAIL_EVENT_DOWNLOAD)) {
+        /* receive event but no recipients that we haven't already sent this
+         * IRI for, so just bin it.
+         */
+        free_published_message(msg);
+        return NULL;
+    }
 
     return msg;
 
@@ -151,13 +162,32 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
 
 static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t iri_type, uint8_t email_ev,
-        uint8_t status, email_user_intercept_list_t *active, uint64_t ts,
-        const char *onlyrecipient) {
+        uint8_t status, email_intercept_ref_t *intlist, uint64_t ts,
+        const char *key, const char *tgtaddr, uint8_t full_recip_list) {
 
     openli_export_recv_t *irijob = NULL;
     email_intercept_ref_t *ref, *tmp;
+    email_target_t *found;
+    char fullkey[4096];
+    PWord_t pval;
+    const char **fulltgtaddrs = NULL;
+    const char **tgtaddrs = NULL;
+    const char **usetargets = NULL;
+    int usetarget_count = 0;
+    int fulltgtaddr_count = 0;
+    int tgtaddr_count = 0, i;
+    email_participant_t *recip, *tmp2;
 
-    HASH_ITER(hh, active->intlist, ref, tmp) {
+    fulltgtaddr_count = HASH_CNT(hh, sess->participants);
+    fulltgtaddrs = calloc(HASH_CNT(hh, sess->participants), sizeof(char *));
+
+    i = 0;
+    HASH_ITER(hh, sess->participants, recip, tmp2) {
+        fulltgtaddrs[i] = recip->emailaddr;
+        i++;
+    }
+
+    HASH_ITER(hh, intlist, ref, tmp) {
         if (ref->em->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
             continue;
         }
@@ -171,9 +201,66 @@ static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
             continue;
         }
 
+        if (key != NULL) {
+            snprintf(fullkey, 4096, "%s-%s", ref->em->common.liid, key);
+            JSLG(pval, sess->iris_sent, fullkey);
+            if (pval) {
+                /* We've already sent this particular IRI for this intercept.
+                 * Avoid sending a duplicate.
+                 */
+                continue;
+            }
+            JSLI(pval, sess->iris_sent, fullkey);
+            *pval = 1;
+        }
+
+        if (email_ev == ETSILI_EMAIL_EVENT_RECEIVE ||
+                email_ev == ETSILI_EMAIL_EVENT_PARTIAL_DOWNLOAD ||
+                email_ev == ETSILI_EMAIL_EVENT_DOWNLOAD) {
+            /* only include recipients that are also intercept targets
+             *
+             * exceptions:
+             *  - the target address that we matched on is NOT present in
+             *    the participant list (i.e. one of the recipients is actually
+             *    an alias, but we do not know which one)
+             */
+            if (full_recip_list) {
+                usetargets = fulltgtaddrs;
+                usetarget_count = fulltgtaddr_count;
+            } else {
+                if (!tgtaddrs) {
+                    tgtaddrs = calloc(fulltgtaddr_count, sizeof(char *));
+                }
+                tgtaddr_count = 0;
+
+                HASH_ITER(hh, sess->participants, recip, tmp2) {
+                    found = NULL;
+                    HASH_FIND(hh, ref->em->targets, recip->emailaddr,
+                            strlen(recip->emailaddr), found);
+                    if (found) {
+                        tgtaddrs[tgtaddr_count] = recip->emailaddr;
+                        tgtaddr_count ++;
+                    }
+                }
+                usetargets = tgtaddrs;
+                usetarget_count = tgtaddr_count;
+            }
+
+        } else if (email_ev == ETSILI_EMAIL_EVENT_SEND ||
+                email_ev == ETSILI_EMAIL_EVENT_UPLOAD ||
+                email_ev == ETSILI_EMAIL_EVENT_LOGON ||
+                email_ev == ETSILI_EMAIL_EVENT_LOGON_FAILURE ||
+                email_ev == ETSILI_EMAIL_EVENT_LOGOFF) {
+            usetargets = fulltgtaddrs;
+            usetarget_count = fulltgtaddr_count;
+        } else {
+            usetargets = NULL;
+            usetarget_count = 0;
+        }
+
         irijob = create_emailiri_job(ref->em->common.liid, sess,
                 iri_type, email_ev, status, ref->em->common.destid, ts,
-                onlyrecipient);
+                usetargets, usetarget_count);
         if (irijob == NULL) {
             continue;
         }
@@ -183,6 +270,12 @@ static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
         publish_openli_msg(
                 state->zmq_pubsocks[ref->em->common.seqtrackerid], irijob);
     }
+    if (tgtaddrs) {
+        free(tgtaddrs);
+    }
+    if (fulltgtaddrs) {
+        free(fulltgtaddrs);
+    }
 
 }
 
@@ -190,17 +283,47 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t email_ev, uint8_t iri_type,
         uint8_t status, uint64_t timestamp) {
 
-    email_user_intercept_list_t *active = NULL;
+    email_address_set_t *active_addr = NULL;
+    email_target_set_t *active_tgt = NULL;
     email_participant_t *recip, *tmp;
+    email_intercept_ref_t *intlist = NULL;
+
+    const char *tgtaddr = NULL;
+    char senderkey[1024];
+    char recipkey[1024];
+
+    sess->iricount ++;
+    snprintf(senderkey, 1024, "iri-%d-sender", sess->iricount);
+    snprintf(recipkey, 1024, "iri-%d-recipient", sess->iricount);
 
     if (email_ev != ETSILI_EMAIL_EVENT_RECEIVE) {
         if (sess->sender.emailaddr) {
-            active = is_address_interceptable(state, sess->sender.emailaddr);
+            active_addr = is_address_interceptable(state,
+                    sess->sender.emailaddr);
         }
-        if (active) {
+        if (active_addr) {
+            intlist = active_addr->intlist;
+            tgtaddr = active_addr->emailaddr;
+        } else if (sess->ingest_target_id &&
+                sess->ingest_direction == OPENLI_EMAIL_DIRECTION_OUTBOUND) {
+            active_tgt = is_targetid_interceptable(state,
+                    sess->ingest_target_id);
+
+            if (active_tgt) {
+                intlist = active_tgt->intlist;
+                tgtaddr = active_tgt->origaddress;
+            }
+        }
+
+        if (intlist) {
+            /* If the sender is a target, we'll need to include all recipients
+             * in the recipient list.
+             */
             create_emailiris_for_intercept_list(state, sess, iri_type,
-                    email_ev, status, active, timestamp, NULL);
+                    email_ev, status, intlist, timestamp, senderkey,
+                    tgtaddr, 1);
         }
+
     }
 
     /* Don't generate login / logoff IRIs for SMTP recipients */
@@ -212,22 +335,76 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
     }
 
     if (email_ev != ETSILI_EMAIL_EVENT_SEND) {
+        /* Look for the TARGET_ID first.
+         * If we have a match, check if the original address is in the
+         * participant list. If not, it's an alias situation and we need
+         * to include all recipients in our IRI.
+         *
+         * If there's no match, or if the match is explicitly included
+         * as a recipient, then we just want to include recipients who
+         * are named as target addresses in the intercept configuration.
+         */
+        if (sess->ingest_direction == OPENLI_EMAIL_DIRECTION_INBOUND &&
+                sess->ingest_target_id != NULL) {
+            active_tgt = is_targetid_interceptable(state,
+                    sess->ingest_target_id);
+            if (active_tgt) {
+                HASH_FIND(hh, sess->participants, active_tgt->origaddress,
+                        strlen(active_tgt->origaddress), recip);
+                if (!recip) {
+                    /* one of the recipients is an alias for this intercept
+                     * target, but we don't know which one so we have to
+                     * include them all
+                     */
+                    create_emailiris_for_intercept_list(state, sess, iri_type,
+                            email_ev, status, active_tgt->intlist, timestamp,
+                            recipkey, active_tgt->origaddress, 1);
+                }
+            }
+        }
+
         HASH_ITER(hh, sess->participants, recip, tmp) {
-            if (sess->sender.emailaddr && strcmp(recip->emailaddr,
-                    sess->sender.emailaddr) == 0) {
-                continue;
+            active_addr = is_address_interceptable(state, recip->emailaddr);
+            if (active_addr) {
+                create_emailiris_for_intercept_list(state, sess, iri_type,
+                        email_ev, status, active_addr->intlist, timestamp,
+                        recipkey, active_addr->emailaddr, 0);
             }
-
-            active = is_address_interceptable(state, recip->emailaddr);
-            if (!active) {
-                continue;
-            }
-
-            create_emailiris_for_intercept_list(state, sess, iri_type,
-                    email_ev, status, active, timestamp, recip->emailaddr);
         }
     }
 
+    return 0;
+}
+
+static int generate_iris_for_mailbox(openli_email_worker_t *state,
+        emailsession_t *sess, uint8_t email_ev, uint8_t iri_type,
+        uint8_t status, uint64_t timestamp, const char *mailbox) {
+
+    email_address_set_t *active_addr = NULL;
+    email_target_set_t *active_tgt = NULL;
+    email_intercept_ref_t *intlist = NULL;
+
+    char *tgtaddr = NULL;
+    char irikey[1024];
+
+    active_addr = is_address_interceptable(state, mailbox);
+    if (!active_addr) {
+        active_tgt = is_targetid_interceptable(state, sess->ingest_target_id);
+        if (active_tgt) {
+            tgtaddr = active_tgt->origaddress;
+            intlist = active_tgt->intlist;
+        }
+    } else {
+        intlist = active_addr->intlist;
+        tgtaddr = active_addr->emailaddr;
+    }
+
+    if (intlist) {
+        sess->iricount ++;
+        snprintf(irikey, 1024, "iri-%d-mailbox", sess->iricount);
+        create_emailiris_for_intercept_list(state, sess, iri_type, email_ev,
+                status, intlist, timestamp, irikey, tgtaddr, 0);
+    }
     return 0;
 }
 
@@ -238,12 +415,26 @@ static int generate_email_login_iri(openli_email_worker_t *state,
     uint8_t iri_type;
     uint8_t status;
 
-    email_user_intercept_list_t *active = NULL;
+    char *tgtaddr = NULL;
+    email_address_set_t *active_addr = NULL;
+    email_target_set_t *active_tgt = NULL;
     email_participant_t *recip, *tmp;
+    email_intercept_ref_t *intlist = NULL;
 
-    active = is_address_interceptable(state, participant);
-    if (!active) {
-        return 0;
+    active_addr = is_address_interceptable(state, participant);
+    if (!active_addr) {
+        active_tgt = is_targetid_interceptable(state, sess->ingest_target_id);
+        if (sess->ingest_direction == OPENLI_EMAIL_DIRECTION_INBOUND) {
+            /* only generate login events for targets who are sending mail */
+            return 0;
+        }
+        if (active_tgt) {
+            intlist = active_tgt->intlist;
+            tgtaddr = active_tgt->origaddress;
+        }
+    } else {
+        intlist = active_addr->intlist;
+        tgtaddr = active_addr->emailaddr;
     }
 
     if (success) {
@@ -257,21 +448,38 @@ static int generate_email_login_iri(openli_email_worker_t *state,
     }
 
     create_emailiris_for_intercept_list(state, sess, iri_type, email_ev,
-            status, active, sess->login_time, participant);
+            status, intlist, sess->login_time, participant, tgtaddr, 0);
     return 0;
 }
 
 int generate_email_logoff_iri_for_user(openli_email_worker_t *state,
         emailsession_t *sess, const char *address) {
 
-    email_user_intercept_list_t *active = NULL;
-    active = is_address_interceptable(state, address);
+    email_address_set_t *active_addr = NULL;
+    email_target_set_t *active_tgt = NULL;
+    email_intercept_ref_t *intlist = NULL;
+    char *tgtaddr = NULL;
 
-    if (active) {
+    active_addr = is_address_interceptable(state, address);
+
+    if (!active_addr) {
+        active_tgt = is_targetid_interceptable(state, sess->ingest_target_id);
+        if (sess->ingest_direction == OPENLI_EMAIL_DIRECTION_INBOUND) {
+            /* only generate login events for targets who are sending mail */
+            return 0;
+        }
+        intlist = active_tgt->intlist;
+        tgtaddr = active_tgt->origaddress;
+    } else {
+        intlist = active_addr->intlist;
+        tgtaddr = active_addr->emailaddr;
+    }
+
+    if (intlist) {
         create_emailiris_for_intercept_list(state, sess,
                 ETSILI_IRI_END, ETSILI_EMAIL_EVENT_LOGOFF,
-                ETSILI_EMAIL_STATUS_SUCCESS, active, sess->event_time,
-                NULL);
+                ETSILI_EMAIL_STATUS_SUCCESS, intlist, sess->event_time,
+                NULL, tgtaddr, 0);
     }
 
     return 0;
@@ -295,54 +503,60 @@ int generate_email_receive_iri(openli_email_worker_t *state,
 }
 
 int generate_email_partial_download_success_iri(openli_email_worker_t *state,
-        emailsession_t *sess) {
+        emailsession_t *sess, const char *mailbox) {
 
-    return generate_iris_for_participants(state, sess,
+    return generate_iris_for_mailbox(state, sess,
             ETSILI_EMAIL_EVENT_PARTIAL_DOWNLOAD,
-            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time,
+            mailbox);
 
 }
 
 int generate_email_partial_download_failure_iri(openli_email_worker_t *state,
-        emailsession_t *sess) {
+        emailsession_t *sess, const char *mailbox) {
 
-    return generate_iris_for_participants(state, sess,
+    return generate_iris_for_mailbox(state, sess,
             ETSILI_EMAIL_EVENT_PARTIAL_DOWNLOAD,
-            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time);
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time,
+            mailbox);
 }
 
 int generate_email_upload_success_iri(openli_email_worker_t *state,
-        emailsession_t *sess) {
+        emailsession_t *sess, const char *mailbox) {
 
-    return generate_iris_for_participants(state, sess,
+    return generate_iris_for_mailbox(state, sess,
             ETSILI_EMAIL_EVENT_UPLOAD,
-            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time,
+            mailbox);
 
 }
 
 int generate_email_upload_failure_iri(openli_email_worker_t *state,
-        emailsession_t *sess) {
+        emailsession_t *sess, const char *mailbox) {
 
-    return generate_iris_for_participants(state, sess,
+    return generate_iris_for_mailbox(state, sess,
             ETSILI_EMAIL_EVENT_UPLOAD,
-            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time);
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time,
+            mailbox);
 }
 
 int generate_email_download_success_iri(openli_email_worker_t *state,
-        emailsession_t *sess) {
+        emailsession_t *sess, const char *mailbox) {
 
-    return generate_iris_for_participants(state, sess,
+    return generate_iris_for_mailbox(state, sess,
             ETSILI_EMAIL_EVENT_DOWNLOAD,
-            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time);
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_SUCCESS, sess->event_time,
+            mailbox);
 
 }
 
 int generate_email_download_failure_iri(openli_email_worker_t *state,
-        emailsession_t *sess) {
+        emailsession_t *sess, const char *mailbox) {
 
-    return generate_iris_for_participants(state, sess,
+    return generate_iris_for_mailbox(state, sess,
             ETSILI_EMAIL_EVENT_DOWNLOAD,
-            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time);
+            ETSILI_IRI_REPORT, ETSILI_EMAIL_STATUS_FAILED, sess->event_time,
+            mailbox);
 }
 
 int generate_email_logoff_iri(openli_email_worker_t *state,

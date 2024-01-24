@@ -18,7 +18,7 @@ jobs:
          target:
            - "rockylinux:8"
            - "rockylinux:9"
-           - "fedora:37"
+           - "fedora:39"
            - "fedora:38"
            - "centos:7"
 
@@ -54,7 +54,7 @@ jobs:
          target:
            - "rockylinux:8"
            - "rockylinux:9"
-           - "fedora:37"
+           - "fedora:39"
            - "fedora:38"
            - "centos:7"
      needs: build
@@ -108,7 +108,7 @@ jobs:
          target:
            - "rockylinux:8"
            - "rockylinux:9"
-           - "fedora:37"
+           - "fedora:39"
            - "fedora:38"
            - "centos:7"
      needs: test

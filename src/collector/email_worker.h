@@ -31,6 +31,7 @@
 #include <uthash.h>
 #include <Judy.h>
 
+#include "reassembler.h"
 #include "intercept.h"
 #include "collector_base.h"
 
@@ -67,6 +68,14 @@ typedef enum {
     OPENLI_IMAP_STATE_LOGOUT,
     OPENLI_IMAP_STATE_IGNORING,
 } openli_imap_status_t;
+
+typedef enum {
+    OPENLI_EMAIL_AUTH_NONE,
+    OPENLI_EMAIL_AUTH_PLAIN,
+    OPENLI_EMAIL_AUTH_LOGIN,
+    OPENLI_EMAIL_AUTH_GSSAPI,
+    OPENLI_EMAIL_AUTH_OTHER,
+} openli_email_auth_type_t;
 
 typedef enum {
     OPENLI_SMTP_STATE_INIT = 0,
@@ -127,6 +136,7 @@ typedef struct openli_email_worker {
     void *zmq_ctxt;
     zmq_pollitem_t *topoll;
     int topoll_size;
+    ipfrag_reassembler_t *fragreass;
     pthread_t threadid;
     int emailid;
     int tracker_threads;
@@ -142,7 +152,7 @@ typedef struct openli_email_worker {
     sync_epoll_t *timeouts;
 
     emailintercept_t *allintercepts;
-    email_user_intercept_list_t *alltargets;
+    email_user_intercept_list_t alltargets;
 
     emailsession_t *activesessions;
 
@@ -152,6 +162,7 @@ typedef struct openli_email_worker {
     openli_email_timeouts_t *timeout_thresholds;
     uint8_t *mask_imap_creds;
     uint8_t *mask_pop3_creds;
+    uint8_t *email_ingest_use_targetid;
 
     /* The default domain to apply to authenticated usernames that do not
      * include a domain.
@@ -167,10 +178,10 @@ void free_captured_email(openli_email_captured_t *cap);
 void free_smtp_session_state(emailsession_t *sess, void *smtpstate);
 int update_smtp_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
-void free_imap_session_state(emailsession_t *sess, void *smtpstate);
+void free_imap_session_state(emailsession_t *sess, void *imapstate);
 int update_imap_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
-void free_pop3_session_state(emailsession_t *sess, void *smtpstate);
+void free_pop3_session_state(emailsession_t *sess, void *pop3state);
 int update_pop3_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
 
@@ -186,23 +197,32 @@ void replace_email_session_serveraddr(emailsession_t *sess,
 void replace_email_session_clientaddr(emailsession_t *sess,
         char *client_ip, char *client_port);
 
+int get_email_authentication_type(char *authmsg, const char *sesskey,
+        openli_email_auth_type_t *at_code, uint8_t is_imap);
+void mask_plainauth_creds(char *mailbox, char *reencoded, int buflen);
+
+email_address_set_t *is_address_interceptable(
+        openli_email_worker_t *state, const char *emailaddr);
+email_target_set_t *is_targetid_interceptable(
+        openli_email_worker_t *state, const char *targetid);
+
 /* Defined in emailiri.c */
 int generate_email_partial_download_success_iri(openli_email_worker_t *state,
-        emailsession_t *sess);
+        emailsession_t *sess, const char *mailbox);
 int generate_email_partial_download_failure_iri(openli_email_worker_t *state,
-        emailsession_t *sess);
+        emailsession_t *sess, const char *mailbox);
 int generate_email_download_success_iri(openli_email_worker_t *state,
-        emailsession_t *sess);
+        emailsession_t *sess, const char *mailbox);
 int generate_email_download_failure_iri(openli_email_worker_t *state,
-        emailsession_t *sess);
+        emailsession_t *sess, const char *mailbox);
 int generate_email_login_success_iri(openli_email_worker_t *state,
         emailsession_t *sess, const char *participant);
 int generate_email_login_failure_iri(openli_email_worker_t *state,
         emailsession_t *sess, const char *participant);
 int generate_email_upload_success_iri(openli_email_worker_t *state,
-        emailsession_t *sess);
+        emailsession_t *sess, const char *mailbox);
 int generate_email_upload_failure_iri(openli_email_worker_t *state,
-        emailsession_t *sess);
+        emailsession_t *sess, const char *mailbox);
 int generate_email_send_iri(openli_email_worker_t *state,
         emailsession_t *sess);
 int generate_email_receive_iri(openli_email_worker_t *state,

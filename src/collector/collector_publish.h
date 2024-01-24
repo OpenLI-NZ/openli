@@ -34,6 +34,7 @@
 #include "etsili_core.h"
 #include "intercept.h"
 #include "internetaccess.h"
+#include "location.h"
 
 enum {
     OPENLI_EXPORT_HALT_WORKER = 1,
@@ -101,6 +102,11 @@ typedef struct openli_ipmmiri_job {
     uint8_t ipsrc[16];
     uint8_t ipdest[16];
     int ipfamily;
+
+    openli_location_t *locations;
+    uint8_t location_cnt;
+    uint32_t location_types;
+    uint8_t location_encoding;
 }  openli_ipmmiri_job_t;
 
 typedef struct openli_mobiri_job {
@@ -194,6 +200,9 @@ openli_export_recv_t *create_ipcc_job(
 
 openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
         libtrace_packet_t *pkt);
+
+void copy_location_into_ipmmiri_job(openli_export_recv_t *dest,
+        openli_location_t *loc, int loc_count);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

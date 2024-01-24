@@ -35,6 +35,7 @@
 
 #include "intercept.h"
 #include "reassembler.h"
+#include "location.h"
 
 typedef enum {
     SIP_IPV4_TCP,
@@ -71,6 +72,17 @@ typedef enum {
 
 } openli_sipmsg_type_t;
 
+typedef struct openli_sip_identity_set {
+    openli_sip_identity_t touriid;
+    openli_sip_identity_t fromuriid;
+    openli_sip_identity_t remotepartyid;
+    openli_sip_identity_t passertid;
+    openli_sip_identity_t *proxyauths;
+    openli_sip_identity_t *regauths;
+    int proxyauthcount;
+    int regauthcount;
+} openli_sip_identity_set_t;
+
 typedef struct openli_sip_parser {
 
     osip_message_t *osip;
@@ -88,6 +100,8 @@ typedef struct openli_sip_parser {
 
 int add_sip_packet_to_parser(openli_sip_parser_t **parser,
         libtrace_packet_t *packet, uint8_t logallowed);
+int parse_sip_content(openli_sip_parser_t *parser, uint8_t *sipcontent,
+        uint16_t siplen);
 int parse_next_sip_message(openli_sip_parser_t *parser,
         libtrace_packet_t *packet);
 void release_sip_parser(openli_sip_parser_t *parser);
@@ -110,6 +124,8 @@ int get_sip_auth_identity(openli_sip_parser_t *parser, int index,
 int get_sip_proxy_auth_identity(openli_sip_parser_t *parser, int index,
         int *authcount, openli_sip_identity_t *sipid,
         uint8_t logallowed);
+int get_sip_paccess_network_info(openli_sip_parser_t *parser,
+        openli_location_t **loc, int *loc_cnt);
 int get_sip_passerted_identity(openli_sip_parser_t *parser,
         openli_sip_identity_t *sipid);
 int get_sip_remote_party(openli_sip_parser_t *parser,
@@ -124,6 +140,7 @@ char *get_sip_session_version(openli_sip_parser_t *parser);
 char *get_sip_media_ipaddr(openli_sip_parser_t *parser);
 char *get_sip_media_port(openli_sip_parser_t *parser, int index);
 char *get_sip_media_type(openli_sip_parser_t *parser, int index);
+char *get_sip_message_body(openli_sip_parser_t *parser, size_t *length);
 int sip_is_invite(openli_sip_parser_t *parser);
 int sip_is_register(openli_sip_parser_t *parser);
 int sip_is_200ok(openli_sip_parser_t *parser);
@@ -132,6 +149,12 @@ int sip_is_180ringing(openli_sip_parser_t *parser);
 int sip_is_bye(openli_sip_parser_t *parser);
 int sip_is_cancel(openli_sip_parser_t *parser);
 
+int extract_sip_identities(openli_sip_parser_t *parser,
+        openli_sip_identity_set_t *idset, uint8_t log_error);
+openli_sip_identity_t *match_sip_target_against_identities(
+        libtrace_list_t *targets, openli_sip_identity_set_t *idset,
+        uint8_t trust_from);
+void release_openli_sip_identity_set(openli_sip_identity_set_t *idset);
 #endif
 
 
