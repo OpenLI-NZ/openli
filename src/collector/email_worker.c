@@ -1019,7 +1019,11 @@ static int add_email_target(openli_email_worker_t *state,
         return -1;
     }
 
+#ifdef HAVE_LIBSSL_11
     ctx = EVP_MD_CTX_new();
+#else
+    ctx = EVP_MD_CTX_create();
+#endif
     md = EVP_sha512();
     EVP_DigestInit_ex(ctx, md, NULL);
     memset(shaspace, 0, EVP_MAX_MD_SIZE);
@@ -1030,7 +1034,11 @@ static int add_email_target(openli_email_worker_t *state,
     for (i = 0; i < sha_len; i++) {
         sprintf(tgt->sha512 + (i * 2), "%02x", shaspace[i]);
     }
+#ifdef HAVE_LIBSSL_11
     EVP_MD_CTX_free(ctx);
+#else
+    EVP_MD_CTX_destroy(ctx);
+#endif
 
     HASH_FIND(hh_liid, state->allintercepts, liid, strlen(liid), found);
     if (!found) {
