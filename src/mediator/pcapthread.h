@@ -40,6 +40,9 @@ typedef struct active_pcap_output {
     /** The LIID for the intercept that is being written as pcap */
     char *liid;
 
+    /** The URI for the output file (i.e. the file format and path) */
+    char *uri;
+
     /** The libtrace output file handle for the output file */
     libtrace_out_t *out;
 

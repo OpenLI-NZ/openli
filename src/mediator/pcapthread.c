@@ -62,6 +62,9 @@ static void halt_pcap_outputs(pcap_thread_state_t *pstate) {
 
     HASH_ITER(hh, pstate->active, out, tmp) {
         HASH_DELETE(hh, pstate->active, out);
+        if (out->uri) {
+            free(out->uri);
+        }
         free(out->liid);
         trace_destroy_output(out->out);
         free(out);
@@ -294,8 +297,7 @@ static int open_pcap_output_file(lea_thread_state_t *state,
         goto pcaptraceerr;
     }
 
-    logger(LOG_INFO, "OpenLI Mediator: opened new trace file %s for LIID %s",
-            uri, act->liid);
+    act->uri = strdup(uri);
     act->pktwritten = 0;
 
     return 0;
@@ -329,9 +331,13 @@ static active_pcap_output_t *create_new_pcap_output(
 
     act = (active_pcap_output_t *)malloc(sizeof(active_pcap_output_t));
     act->liid = strdup(liid);
+    act->uri = NULL;
 
     if (open_pcap_output_file(state, pstate, act) == -1) {
         free(act->liid);
+        if (act->uri) {
+            free(act->uri);
+        }
         free(act);
         return NULL;
     }
@@ -410,10 +416,19 @@ static uint32_t write_rawip_to_pcap(uint8_t *nextrec, uint64_t bufrem,
         /* Now we can have libtrace write the packet using the pcap format */
         if (trace_write_packet(pcapout->out, pstate->packet) < 0) {
             libtrace_err_t err = trace_get_err_output(pcapout->out);
-            logger(LOG_INFO, "OpenLI Mediator: failed to write raw IP to pcap for LIID %s: %s", liidspace, err.problem);
+            logger(LOG_INFO, "OpenLI Mediator: failed to write raw IP to pcap for LIID %s to %s: %s", liidspace, pcapout->uri, err.problem);
             trace_destroy_output(pcapout->out);
             pcapout->out = NULL;
+            if (pcapout->uri) {
+                free(pcapout->uri);
+            }
         } else {
+            if (pcapout->pktwritten == 0 && pcapout->uri) {
+                logger(LOG_INFO,
+                        "OpenLI Mediator: opened new trace file %s for LIID %s",
+                        pcapout->uri, pcapout->liid);
+            }
+
             pcapout->pktwritten += 1;
         }
     }
@@ -520,6 +535,11 @@ static uint32_t write_etsicc_to_pcap(uint8_t *nextrec, uint64_t bufrem,
             trace_destroy_output(pcapout->out);
             pcapout->out = NULL;
         } else {
+            if (pcapout->pktwritten == 0 && pcapout->uri) {
+                logger(LOG_INFO,
+                        "OpenLI Mediator: opened new trace file %s for LIID %s",
+                        pcapout->uri, pcapout->liid);
+            }
             pcapout->pktwritten += 1;
         }
     }
@@ -678,6 +698,9 @@ static void pcap_flush_traces(pcap_thread_state_t *pstate) {
             pcapout->out = NULL;
             HASH_DELETE(hh, pstate->active, pcapout);
             free(pcapout->liid);
+            if (pcapout->uri) {
+                free(pcapout->uri);
+            }
             free(pcapout);
         }
         pcapout->pktwritten = 0;
@@ -715,6 +738,9 @@ static void pcap_rotate_traces(lea_thread_state_t *state,
             }
             HASH_DELETE(hh, pstate->active, pcapout);
             free(pcapout->liid);
+            if (pcapout->uri) {
+                free(pcapout->uri);
+            }
             free(pcapout);
         }
     }
@@ -742,6 +768,9 @@ static void pcap_disable_liid(pcap_thread_state_t *pstate, char *liid) {
         pcapout->out = NULL;
     }
     HASH_DELETE(hh, pstate->active, pcapout);
+    if (pcapout->uri) {
+        free(pcapout->uri);
+    }
     free(pcapout->liid);
     free(pcapout);
 }
