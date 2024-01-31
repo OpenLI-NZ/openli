@@ -44,37 +44,6 @@ static inline uint32_t jmirror_get_interceptid(jmirrorhdr_t *header) {
     return (ntohl(header->interceptid) & 0x3fffffff);
 }
 
-static void push_jmirror_ipcc_job(colthread_local_t *loc,
-        libtrace_packet_t *packet, vendmirror_intercept_t *cept,
-        uint32_t cin, collector_identity_t *info, void *l3, uint32_t rem) {
-
-    openli_export_recv_t *msg;
-
-    if (cept->common.targetagency == NULL || strcmp(cept->common.targetagency,
-            "pcapdisk") == 0) {
-        msg = create_rawip_cc_job_from_ip(cept->common.liid,
-                cept->common.destid, l3, rem, trace_get_timeval(packet));
-    } else {
-        msg = calloc(1, sizeof(openli_export_recv_t));
-
-        msg->type = OPENLI_EXPORT_IPCC;
-        msg->ts = trace_get_timeval(packet);
-        msg->destid = cept->common.destid;
-        msg->data.ipcc.liid = strdup(cept->common.liid);
-        msg->data.ipcc.cin = cin;
-        msg->data.ipcc.dir = ETSI_DIR_INDETERMINATE;
-        msg->data.ipcc.ipcontent = (uint8_t *)calloc(1, rem);
-        msg->data.ipcc.ipclen = rem;
-
-        memcpy(msg->data.ipcc.ipcontent, l3, rem);
-    }
-
-    if (msg) {
-        publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
-    }
-
-}
-
 int check_jmirror_intercept(collector_identity_t *info, colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
         coreserver_t *jmirror_sources,
@@ -119,7 +88,14 @@ int check_jmirror_intercept(collector_identity_t *info, colthread_local_t *loc,
                 cept->common.toend_time < pinfo->tv.tv_sec) {
             continue;
         }
-        push_jmirror_ipcc_job(loc, packet, cept, cin, info, l3, rem);
+                /* Create an appropriate IPCC and export it */
+        if (push_vendor_mirrored_ipcc_job(loc->zmq_pubsocks[0], &(cept->common),
+                trace_get_timeval(packet), cin, ETSI_DIR_INDETERMINATE,
+                l3, rem) == 0) {
+            /* for some reason, we failed to create or send the IPCC to
+             * the sequencing thread? */
+
+        }
     }
     return 1;
 

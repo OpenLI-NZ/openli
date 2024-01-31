@@ -120,7 +120,14 @@ int generate_cc_from_cisco(collector_identity_t *info, colthread_local_t *loc,
                 cept->common.toend_time < pinfo->tv.tv_sec) {
             continue;
         }
-        push_ciscomirror_ipcc_job(loc, packet, cept, cept_id, info, l3, rem);
+        /* Create an appropriate IPCC and export it */
+        if (push_vendor_mirrored_ipcc_job(loc->zmq_pubsocks[0], &(cept->common),
+                trace_get_timeval(packet), cept_id, ETSI_DIR_INDETERMINATE,
+                l3, rem) == 0) {
+            /* for some reason, we failed to create or send the IPCC to
+             * the sequencing thread? */
+
+        }
     }
     return 1;
 }

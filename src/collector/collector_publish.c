@@ -191,6 +191,38 @@ openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
 
 }
 
+int push_vendor_mirrored_ipcc_job(void *pubqueue,
+        intercept_common_t *common, struct timeval tv,
+        uint32_t cin, uint8_t dir, void *l3, uint32_t rem) {
+
+    openli_export_recv_t *msg;
+
+    if (common->targetagency == NULL || strcmp(common->targetagency,
+            "pcapdisk") == 0) {
+        msg = create_rawip_cc_job_from_ip(common->liid,
+                common->destid, l3, rem, tv);
+    } else {
+        msg = calloc(1, sizeof(openli_export_recv_t));
+
+        msg->type = OPENLI_EXPORT_IPCC;
+        msg->ts = tv;
+        msg->destid = common->destid;
+        msg->data.ipcc.liid = strdup(common->liid);
+        msg->data.ipcc.cin = cin;
+        msg->data.ipcc.dir = dir;
+        msg->data.ipcc.ipcontent = (uint8_t *)calloc(1, rem);
+        msg->data.ipcc.ipclen = rem;
+
+        memcpy(msg->data.ipcc.ipcontent, l3, rem);
+    }
+
+    if (msg) {
+        publish_openli_msg(pubqueue, msg);  //FIXME
+        return 1;
+    }
+    return 0;
+}
+
 openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,
         uint32_t destid, libtrace_packet_t *pkt, uint8_t dir) {
 
