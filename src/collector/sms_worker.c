@@ -93,10 +93,10 @@ static void init_sms_voip_intercept(openli_sms_worker_t *state,
 static int update_modified_sms_voip_intercept(openli_sms_worker_t *state,
         voipintercept_t *found, voipintercept_t *decode) {
 
-    int r = 0;
+    int r = 0, changed = 0;
 
     if (update_modified_intercept_common(&(found->common),
-            &(decode->common), OPENLI_INTERCEPT_TYPE_VOIP) < 0) {
+            &(decode->common), OPENLI_INTERCEPT_TYPE_VOIP, &changed) < 0) {
         r = -1;
     }
 

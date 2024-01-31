@@ -50,20 +50,28 @@ static void push_jmirror_ipcc_job(colthread_local_t *loc,
 
     openli_export_recv_t *msg;
 
-	msg = calloc(1, sizeof(openli_export_recv_t));
+    if (cept->common.targetagency == NULL || strcmp(cept->common.targetagency,
+            "pcapdisk") == 0) {
+        msg = create_rawip_cc_job_from_ip(cept->common.liid,
+                cept->common.destid, l3, rem, trace_get_timeval(packet));
+    } else {
+        msg = calloc(1, sizeof(openli_export_recv_t));
 
-    msg->type = OPENLI_EXPORT_IPCC;
-    msg->ts = trace_get_timeval(packet);
-    msg->destid = cept->common.destid;
-    msg->data.ipcc.liid = strdup(cept->common.liid);
-    msg->data.ipcc.cin = cin;
-    msg->data.ipcc.dir = ETSI_DIR_INDETERMINATE;
-    msg->data.ipcc.ipcontent = (uint8_t *)calloc(1, rem);
-    msg->data.ipcc.ipclen = rem;
+        msg->type = OPENLI_EXPORT_IPCC;
+        msg->ts = trace_get_timeval(packet);
+        msg->destid = cept->common.destid;
+        msg->data.ipcc.liid = strdup(cept->common.liid);
+        msg->data.ipcc.cin = cin;
+        msg->data.ipcc.dir = ETSI_DIR_INDETERMINATE;
+        msg->data.ipcc.ipcontent = (uint8_t *)calloc(1, rem);
+        msg->data.ipcc.ipclen = rem;
 
-    memcpy(msg->data.ipcc.ipcontent, l3, rem);
+        memcpy(msg->data.ipcc.ipcontent, l3, rem);
+    }
 
-    publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
+    if (msg) {
+        publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
+    }
 
 }
 

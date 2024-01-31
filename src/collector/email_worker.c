@@ -724,12 +724,12 @@ static void start_email_intercept(openli_email_worker_t *state,
 static int update_modified_email_intercept(openli_email_worker_t *state,
         emailintercept_t *found, emailintercept_t *decode) {
     openli_export_recv_t *expmsg;
-    int encodingchanged = 0;
+    int encodingchanged = 0, changed = 0;
 
     found->delivercompressed = decode->delivercompressed;
 
     encodingchanged = update_modified_intercept_common(&(found->common),
-            &(decode->common), OPENLI_INTERCEPT_TYPE_EMAIL);
+            &(decode->common), OPENLI_INTERCEPT_TYPE_EMAIL, &changed);
 
     if (encodingchanged < 0) {
         free_single_emailintercept(decode);

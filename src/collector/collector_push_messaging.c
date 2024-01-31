@@ -57,6 +57,10 @@ static inline void update_intercept_common(intercept_common_t *found,
     tmp = found->encryptkey;
     found->encryptkey = replace->encryptkey;
     replace->encryptkey = tmp;
+
+    tmp = found->targetagency;
+    found->targetagency = replace->targetagency;
+    replace->targetagency = tmp;
 }
 
 static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {

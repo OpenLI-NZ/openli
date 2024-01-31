@@ -62,9 +62,13 @@ static inline void copy_intercept_common(intercept_common_t *src,
 }
 
 int update_modified_intercept_common(intercept_common_t *current,
-        intercept_common_t *update, openli_intercept_types_t cepttype) {
+        intercept_common_t *update, openli_intercept_types_t cepttype,
+        int *updatereq) {
 
+    char *tmp;
     int encodingchanged = 0, keychanged = 0;
+
+    *updatereq = 0;
 
     if (cepttype < 0 || cepttype >= OPENLI_INTERCEPT_TYPE_EOL) {
         logger(LOG_INFO,
@@ -80,6 +84,7 @@ int update_modified_intercept_common(intercept_common_t *current,
                 update->toend_time);
         current->tostart_time = update->tostart_time;
         current->toend_time = update->toend_time;
+        *updatereq = 1;
     }
 
     if (update->tomediate != current->tomediate) {
@@ -90,6 +95,7 @@ int update_modified_intercept_common(intercept_common_t *current,
                 "OpenLI: %s intercept %s has changed mediation mode to: %s",
                 cepttype_strings[cepttype], update->liid, space);
         current->tomediate = update->tomediate;
+        *updatereq = 1;
     }
 
     if (update->encrypt != current->encrypt) {
@@ -113,24 +119,33 @@ int update_modified_intercept_common(intercept_common_t *current,
         keychanged = 1;
     }
 
+    if (strcmp(update->targetagency, current->targetagency) != 0) {
+        tmp = update->targetagency;
+        update->targetagency = current->targetagency;
+        current->targetagency = tmp;
+        *updatereq = 1;
+    }
+
     if (keychanged) {
-        char *tmp;
         encodingchanged = 1;
         tmp = current->encryptkey;
         current->encryptkey = update->encryptkey;
         update->encryptkey = tmp;
+        *updatereq = 1;
     }
 
     if (strcmp(update->delivcc, current->delivcc) != 0 ||
             strcmp(update->authcc, current->authcc) != 0) {
-        char *tmp;
         tmp = update->authcc;
         update->authcc = current->authcc;
         current->authcc = tmp;
+        current->authcc_len = strlen(current->authcc);
         tmp = update->delivcc;
         update->delivcc = current->delivcc;
         current->delivcc = tmp;
+        current->delivcc_len = strlen(current->delivcc);
         encodingchanged = 1;
+        *updatereq = 1;
     }
 
     return encodingchanged;
