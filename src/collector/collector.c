@@ -592,7 +592,7 @@ static void add_payload_info_from_packet(libtrace_packet_t *pkt,
     transport = trace_get_transport(pkt, &proto, &rem);
 
     if (transport == NULL || rem == 0) {
-        pinfo->trans_proto == 255;
+        pinfo->trans_proto = 255;
         return;
     }
 
