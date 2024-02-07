@@ -1,3 +1,16 @@
+openli (1.1.5-1) unstable; urgency=medium
+
+  * Fix bug where pcap disk output was not producing pcap files for IP
+    intercepts that were wrapped in a vendor mirroring header.
+  * Fix bug where changing an existing intercept to use the
+    pcapdisk agency would not result in pcap files being written for
+    that intercept.
+  * Mediator: fixed log spam of "pcap file opened" messages when in fact
+    no file was being created due to the lack of intercepted traffic for
+    that intercept.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 7 Feb 2024 17:25:41 +1300
+
 openli (1.1.4-1) unstable; urgency=medium
 
   * Add support for intercepting SMS messages delivered via SIP (i.e.
