@@ -1724,7 +1724,7 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
 
     pthread_rwlock_rdlock(sync->info_mutex);
     sockfd = connect_socket(sync->info->provisionerip,
-            sync->info->provisionerport, sync->instruct_fail, 0);
+            sync->info->provisionerport, sync->instruct_fail, 1);
     pthread_rwlock_unlock(sync->info_mutex);
 
     if (sockfd == -1) {
@@ -1786,7 +1786,7 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
         sync_disconnect_provisioner(sync, 0);
         return 0;
     }
-    sync->instruct_events = ZMQ_POLLIN | ZMQ_POLLOUT;
+    sync->instruct_events = ZMQ_POLLIN | ZMQ_POLLOUT | ZMQ_POLLERR;
     return 1;
 }
 
@@ -2352,6 +2352,11 @@ int sync_thread_main(collector_sync_t *sync) {
 
     if (zmq_poll(items, 3, 50) < 0) {
         return -1;
+    }
+
+    if (items[1].revents & ZMQ_POLLERR) {
+        sync_disconnect_provisioner(sync, 0);
+        return 0;
     }
 
     if (items[2].revents & ZMQ_POLLIN) {

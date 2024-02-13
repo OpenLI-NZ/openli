@@ -526,7 +526,7 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx) {
         return -1;
     }
 
-    sockfd = connect_socket(dest->ipstr, dest->portstr, dest->failmsg, 0);
+    sockfd = connect_socket(dest->ipstr, dest->portstr, dest->failmsg, 1);
     fd_set_nonblock(sockfd);
 
     if (sockfd == -1) {

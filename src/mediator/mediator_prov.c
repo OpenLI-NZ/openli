@@ -305,7 +305,7 @@ int attempt_provisioner_connect(mediator_prov_t *prov, int provfail) {
 		return 0;
 	}
 
-	s = connect_socket(prov->provaddr, prov->provport, provfail, 0);
+	s = connect_socket(prov->provaddr, prov->provport, provfail, 1);
 
     provfail = 0;
     if (s == -1) {
