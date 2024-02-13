@@ -891,12 +891,147 @@ static int rcpt_to_reply(openli_email_worker_t *state,
 
         //generate_email_login_success_iri(state, sess, address);
         save_latest_command(state, sess, smtpsess, timestamp,
-                SMTP_COMMAND_TYPE_RCPT_TO, 1, 0);
+                SMTP_COMMAND_TYPE_RCPT_TO, 0, 0);
     } else {
         sess->currstate = OPENLI_SMTP_STATE_MAIL_FROM_OVER;
     }
 
     return 1;
+}
+
+static void activate_latest_sender(openli_email_worker_t *state,
+        emailsession_t *sess, smtp_session_t *smtpsess, uint64_t timestamp,
+        smtp_participant_t **sender) {
+
+    PWord_t pval;
+    char index[1024];
+    smtp_participant_t *s, *r;
+    int found = 0;
+
+    index[0] = '\0';
+    JSLF(pval, smtpsess->senders, index);
+    while (pval) {
+        s = (smtp_participant_t *)(*pval);
+        if (strcmp(index, sess->sender.emailaddr) == 0) {
+            found = 1;
+            *sender = s;
+
+        } else if (s->active == 1 && sess->login_sent) {
+            /* If we have sent a login IRI and the MAIL FROM
+             * address has now changed, send a logoff IRI to indicate
+             * that this session is no longer being used by the
+             * previous address (remember, the new address may
+             * not be a target so we cannot rely on a login event
+             * IRI for the new address being seen by the LEA).
+             */
+            s->active = 0;
+            sess->event_time = timestamp;
+            generate_email_logoff_iri_for_user(state, sess, index);
+        }
+
+        if (s != smtpsess->activesender) {
+            s->ccs.curr_command = 0;
+            s->last_mail_from = 0;
+        }
+        JSLN(pval, smtpsess->senders, index);
+    }
+
+    index[0] = '\0';
+    JSLF(pval, smtpsess->recipients, index);
+    while (pval) {
+        r = (smtp_participant_t *)(*pval);
+        r->active = 0;
+        JSLN(pval, smtpsess->recipients, index);
+    }
+
+    if (!found) {
+        s = calloc(1, sizeof(smtp_participant_t));
+        s->ccs.commands = calloc(10, sizeof(smtp_command_t));
+        s->ccs.commands_size = 10;
+        s->ccs.curr_command = 0;
+        s->active = 0;
+        s->last_mail_from = 0;
+
+        JSLI(pval, smtpsess->senders, sess->sender.emailaddr);
+        *pval = (Word_t)s;
+        *sender = s;
+    }
+}
+
+static int parse_mail_content(openli_email_worker_t *state,
+        emailsession_t *sess, smtp_session_t *smtpsess) {
+
+    char *next, *copy, *start, *header, *hdrwrite, *val;
+    int len, fwdhdr_len, ret = 0;
+
+    if (*(state->email_forwarding_header) == NULL) {
+        return 0;
+    }
+
+    /* Only pay attention to forwarding headers on mail that we
+     * are sending, not mail that is being received by our SMTP
+     * server
+     */
+    if (sess->ingest_direction != OPENLI_EMAIL_DIRECTION_OUTBOUND) {
+        return 0;
+    }
+
+    len = smtpsess->reply_start - smtpsess->command_start;
+
+    copy = calloc(sizeof(char), len + 1);
+    header = calloc(sizeof(char), len + 1);
+    memcpy(copy, smtpsess->contbuffer + smtpsess->command_start, len);
+
+    start = copy;
+    hdrwrite = header;
+
+    pthread_rwlock_rdlock(state->glob_config_mutex);
+    fwdhdr_len = strlen(*(state->email_forwarding_header));
+
+    while ((next = strstr(start, "\r\n")) != NULL) {
+
+        if (next == start) {
+            /* empty line, headers are over */
+            if (strncasecmp(header, *(state->email_forwarding_header),
+                    fwdhdr_len) == 0) {
+                printf("%s\n", header);
+            }
+            break;
+        }
+
+        if (*start != ' ' && *start != '\t') {
+            if (header != hdrwrite) {
+                if (strncmp(header, *(state->email_forwarding_header),
+                        fwdhdr_len) == 0) {
+                    /* this email was automatically forwarded */
+                    val = header + fwdhdr_len;
+                    if (*val == ':') {
+                        val ++;
+                        while (*val == ' ') {
+                            val ++;
+                        }
+                        if (*val != '\0') {
+                            /* we now have the "real" sender of this forward */
+                            add_email_participant(sess, strdup(val), 1);
+                            ret = 1;
+                            break;
+                        }
+                    }
+                }
+
+                memset(header, 0, len + 1);
+            }
+            hdrwrite = header;
+        }
+        memcpy(hdrwrite, start, next - start);
+        hdrwrite += (next - start);
+        start = next + 2;
+    }
+    pthread_rwlock_unlock(state->glob_config_mutex);
+
+    free(header);
+    free(copy);
+    return ret;
 }
 
 static void data_content_over(openli_email_worker_t *state,
@@ -905,11 +1040,35 @@ static void data_content_over(openli_email_worker_t *state,
     PWord_t pval;
     char index[1024];
     smtp_participant_t *recipient;
+    smtp_participant_t *sender = NULL;
     int i;
 
     if (smtpsess->reply_code == 250) {
         sess->currstate = OPENLI_SMTP_STATE_DATA_OVER;
         sess->event_time = timestamp;
+        if (parse_mail_content(state, sess, smtpsess) == 1) {
+            activate_latest_sender(state, sess, smtpsess, timestamp, &sender);
+
+            if (smtpsess->activesender && smtpsess->activesender != sender) {
+                for (i = smtpsess->activesender->ccs.last_unsent;
+                        i < smtpsess->activesender->ccs.curr_command; i++) {
+                    copy_smtp_command(&(sender->ccs),
+                            &(smtpsess->activesender->ccs.commands[i]));
+                }
+                smtpsess->activesender->ccs.curr_command = 0;
+                smtpsess->activesender->last_mail_from = 0;
+            } else {
+                for (i = 0; i < smtpsess->preambles.curr_command; i++) {
+                    copy_smtp_command(&(sender->ccs),
+                            &(smtpsess->preambles.commands[i]));
+                }
+            }
+
+            smtpsess->activesender = sender;
+            sender->active = 1;
+            sess->login_sent = 0;
+        }
+
         /* generate email send CC and IRI */
         generate_email_send_iri(state, sess);
         generate_email_receive_iri(state, sess);
@@ -947,62 +1106,6 @@ static void data_content_over(openli_email_worker_t *state,
     }
     smtpsess->next_command_index ++;
 
-}
-
-static void activate_latest_sender(openli_email_worker_t *state,
-        emailsession_t *sess, smtp_session_t *smtpsess, uint64_t timestamp,
-        smtp_participant_t **sender) {
-
-    PWord_t pval;
-    char index[1024];
-    smtp_participant_t *s, *r;
-    int found = 0;
-
-    index[0] = '\0';
-    JSLF(pval, smtpsess->senders, index);
-    while (pval) {
-        s = (smtp_participant_t *)(*pval);
-        if (strcmp(index, sess->sender.emailaddr) == 0) {
-            found = 1;
-            *sender = s;
-
-        } else if (s->active == 1 && sess->login_sent) {
-            /* If we have sent a login IRI and the MAIL FROM
-             * address has now changed, send a logoff IRI to indicate
-             * that this session is no longer being used by the
-             * previous address (remember, the new address may
-             * not be a target so we cannot rely on a login event
-             * IRI for the new address being seen by the LEA).
-             */
-            s->active = 0;
-            sess->event_time = timestamp;
-            generate_email_logoff_iri_for_user(state, sess, index);
-        }
-        s->ccs.curr_command = 0;
-        s->last_mail_from = 0;
-        JSLN(pval, smtpsess->senders, index);
-    }
-
-    index[0] = '\0';
-    JSLF(pval, smtpsess->recipients, index);
-    while (pval) {
-        r = (smtp_participant_t *)(*pval);
-        r->active = 0;
-        JSLN(pval, smtpsess->recipients, index);
-    }
-
-    if (!found) {
-        s = calloc(1, sizeof(smtp_participant_t));
-        s->ccs.commands = calloc(10, sizeof(smtp_command_t));
-        s->ccs.commands_size = 10;
-        s->ccs.curr_command = 0;
-        s->active = 0;
-        s->last_mail_from = 0;
-
-        JSLI(pval, smtpsess->senders, sess->sender.emailaddr);
-        *pval = (Word_t)s;
-        *sender = s;
-    }
 }
 
 static int set_sender_using_mail_from(openli_email_worker_t *state,
@@ -1080,8 +1183,10 @@ static int mail_from_reply(openli_email_worker_t *state,
             copy_smtp_command(&(sender->ccs), &(smtpsess->last_mail_from));
 
             /* Send the CCs */
+            /*
             generate_smtp_ccs_from_saved(state, sess, smtpsess,
                     &(sender->ccs), sess->sender.emailaddr, 1);
+            */
         }
     } else {
         sess->currstate = OPENLI_SMTP_STATE_EHLO_OVER;
@@ -1219,7 +1324,6 @@ static int authenticate_success(openli_email_worker_t *state,
         defaultdomain = "example.org";
     }
 
-    /* TODO add option to set default domain */
     r = extract_sender_from_auth_creds(sess, smtpsess, defaultdomain,
             &sendername, 1);
     pthread_rwlock_unlock(state->glob_config_mutex);
@@ -1666,7 +1770,9 @@ static int process_next_smtp_state(openli_email_worker_t *state,
         if ((r = find_quit_reply_code(smtpsess)) == 1) {
             sess->currstate = OPENLI_SMTP_STATE_QUIT_REPLY;
             sess->event_time = timestamp;
-            generate_email_logoff_iri(state, sess);
+            if (sess->login_sent) {
+                generate_email_logoff_iri(state, sess);
+            }
             save_latest_command(state, sess, smtpsess, timestamp,
                     SMTP_COMMAND_TYPE_QUIT, 1, 0);
             return 0;

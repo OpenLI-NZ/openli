@@ -168,6 +168,7 @@ typedef struct openli_email_worker {
      * include a domain.
      */
     char **defaultdomain;
+    char **email_forwarding_header;
     pthread_rwlock_t *glob_config_mutex;
 
 } openli_email_worker_t;
