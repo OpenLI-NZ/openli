@@ -958,13 +958,41 @@ static void activate_latest_sender(openli_email_worker_t *state,
     }
 }
 
+static int forwarding_header_check(openli_email_worker_t *state,
+        emailsession_t *sess, char *header) {
+
+    string_set_t *s, *tmp;
+    char *val;
+
+    HASH_ITER(hh, *(state->email_forwarding_headers), s, tmp) {
+        if (strncmp(header, s->term, s->termlen) != 0) {
+            continue;
+        }
+        val = header + s->termlen;
+        if (*val == ':') {
+            /* this email was automatically forwarded */
+            val ++;
+            /* skip extraneous spaces... */
+            while (*val == ' ') {
+                val ++;
+            }
+            if (*val != '\0') {
+                /* we now have the "real" sender of this forward */
+                add_email_participant(sess, strdup(val), 1);
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 static int parse_mail_content(openli_email_worker_t *state,
         emailsession_t *sess, smtp_session_t *smtpsess) {
 
     char *next, *copy, *start, *header, *hdrwrite, *val;
-    int len, fwdhdr_len, ret = 0;
+    int len, ret = 0;
 
-    if (*(state->email_forwarding_header) == NULL) {
+    if (*(state->email_forwarding_headers) == NULL) {
         return 0;
     }
 
@@ -986,39 +1014,21 @@ static int parse_mail_content(openli_email_worker_t *state,
     hdrwrite = header;
 
     pthread_rwlock_rdlock(state->glob_config_mutex);
-    fwdhdr_len = strlen(*(state->email_forwarding_header));
 
     while ((next = strstr(start, "\r\n")) != NULL) {
 
         if (next == start) {
             /* empty line, headers are over */
-            if (strncasecmp(header, *(state->email_forwarding_header),
-                    fwdhdr_len) == 0) {
-                printf("%s\n", header);
-            }
+            forwarding_header_check(state, sess, header);
             break;
         }
 
         if (*start != ' ' && *start != '\t') {
             if (header != hdrwrite) {
-                if (strncmp(header, *(state->email_forwarding_header),
-                        fwdhdr_len) == 0) {
-                    /* this email was automatically forwarded */
-                    val = header + fwdhdr_len;
-                    if (*val == ':') {
-                        val ++;
-                        while (*val == ' ') {
-                            val ++;
-                        }
-                        if (*val != '\0') {
-                            /* we now have the "real" sender of this forward */
-                            add_email_participant(sess, strdup(val), 1);
-                            ret = 1;
-                            break;
-                        }
-                    }
-                }
 
+                if (forwarding_header_check(state, sess, header)) {
+                    break;
+                }
                 memset(header, 0, len + 1);
             }
             hdrwrite = header;

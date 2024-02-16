@@ -1493,8 +1493,8 @@ static void clear_global_config(collector_global_t *glob) {
         free(glob->default_email_domain);
     }
 
-    if (glob->email_forwarding_header) {
-        free(glob->email_forwarding_header);
+    if (glob->email_forwarding_headers) {
+        purge_string_set(&(glob->email_forwarding_headers));
     }
 
     if (glob->sharedinfo.operatorid) {
@@ -1714,7 +1714,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->mask_imap_creds = 1;      // defaults to "enabled"
     glob->mask_pop3_creds = 1;      // defaults to "enabled"
     glob->default_email_domain = NULL;
-    glob->email_forwarding_header = NULL;
+    glob->email_forwarding_headers = NULL;
     glob->email_ingest_use_targetid = 0; // defaults to "disabled"   XXX for now
 }
 
@@ -1792,9 +1792,16 @@ static collector_global_t *parse_global_config(char *configfile) {
                 glob->default_email_domain);
     }
 
-    if (glob->email_forwarding_header) {
-        logger(LOG_INFO, "Using '%s' as the header to detect email forwards",
-                glob->email_forwarding_header);
+    if (glob->email_forwarding_headers) {
+        string_set_t *s, *tmp;
+        HASH_ITER(hh, glob->email_forwarding_headers, s, tmp) {
+            if (s->term == NULL) {
+                continue;
+            }
+            logger(LOG_INFO,
+                    "Using '%s' as the header to detect email forwards",
+                    s->term);
+        }
     }
 
     logger(LOG_DEBUG, "OpenLI: session idle timeout for SMTP sessions: %u minutes", glob->email_timeouts.smtp);
@@ -1987,28 +1994,9 @@ static int reload_collector_config(collector_global_t *glob,
         newstate.default_email_domain = NULL;
     }
 
-    if (glob->email_forwarding_header) {
-        if (!newstate.email_forwarding_header) {
-            logger(LOG_INFO, "OpenLI: the email forwarding header has been unset.");
-            free(glob->email_forwarding_header);
-            glob->email_forwarding_header = NULL;
-        } else if (strcmp(glob->email_forwarding_header,
-                newstate.email_forwarding_header) != 0) {
-            logger(LOG_INFO,
-                    "OpenLI: changing email forwarding header from '%s' to '%s'",
-                    glob->email_forwarding_header,
-                    newstate.email_forwarding_header);
-            free(glob->email_forwarding_header);
-            glob->email_forwarding_header = newstate.email_forwarding_header;
-            newstate.email_forwarding_header = NULL;
-        }
-    } else if (newstate.email_forwarding_header) {
-        logger(LOG_INFO,
-                "OpenLI: setting email forwarding header to be '%s'",
-                newstate.email_forwarding_header);
-        glob->email_forwarding_header = newstate.email_forwarding_header;
-        newstate.email_forwarding_header = NULL;
-    }
+    purge_string_set(&(glob->email_forwarding_headers));
+    glob->email_forwarding_headers = newstate.email_forwarding_headers;
+    newstate.email_forwarding_headers = NULL;
 
     glob->mask_imap_creds = newstate.mask_imap_creds;
     glob->mask_pop3_creds = newstate.mask_pop3_creds;
@@ -2321,8 +2309,8 @@ int main(int argc, char *argv[]) {
         glob->emailworkers[i].email_ingest_use_targetid =
                 &(glob->email_ingest_use_targetid);
         glob->emailworkers[i].defaultdomain = &(glob->default_email_domain);
-        glob->emailworkers[i].email_forwarding_header =
-                &(glob->email_forwarding_header);
+        glob->emailworkers[i].email_forwarding_headers =
+                &(glob->email_forwarding_headers);
         glob->emailworkers[i].timeout_thresholds = &(glob->email_timeouts);
         glob->emailworkers[i].default_compress_delivery =
                 OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;

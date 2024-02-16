@@ -225,6 +225,31 @@ static int parse_email_ingest_config(collector_global_t *glob,
     return 0;
 }
 
+static int parse_email_forwarding_headers(collector_global_t *glob,
+        yaml_document_t *doc, yaml_node_t *inputs) {
+
+    yaml_node_item_t *item;
+
+    for (item = inputs->data.sequence.items.start;
+            item != inputs->data.sequence.items.top; item ++) {
+
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+        if (node->type != YAML_SCALAR_NODE) {
+            continue;
+        }
+
+        if (add_to_string_set(&(glob->email_forwarding_headers),
+                (char *)(node->data.scalar.value)) == -1) {
+
+            logger(LOG_INFO, "OpenLI: error while parsing emailforwardingheaders configuration for collector");
+            return -1;
+        }
+
+    }
+
+    return 0;
+}
+
 static int parse_email_timeouts_config(collector_global_t *glob,
         yaml_document_t *doc, yaml_node_t *inputs) {
 
@@ -1362,10 +1387,12 @@ static int global_parser(void *arg, yaml_document_t *doc,
     }
 
     if (key->type == YAML_SCALAR_NODE &&
-            value->type == YAML_SCALAR_NODE &&
-            strcmp((char *)key->data.scalar.value, "emailforwardingheader")
+            value->type == YAML_SEQUENCE_NODE &&
+            strcmp((char *)key->data.scalar.value, "emailforwardingheaders")
                     == 0) {
-        SET_CONFIG_STRING_OPTION(glob->email_forwarding_header, value);
+        if (parse_email_forwarding_headers(glob, doc, value) == -1) {
+            return -1;
+        }
     }
 
     if (key->type == YAML_SCALAR_NODE &&

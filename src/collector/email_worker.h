@@ -31,6 +31,7 @@
 #include <uthash.h>
 #include <Judy.h>
 
+#include "util.h"
 #include "reassembler.h"
 #include "intercept.h"
 #include "collector_base.h"
@@ -168,7 +169,7 @@ typedef struct openli_email_worker {
      * include a domain.
      */
     char **defaultdomain;
-    char **email_forwarding_header;
+    string_set_t **email_forwarding_headers;
     pthread_rwlock_t *glob_config_mutex;
 
 } openli_email_worker_t;

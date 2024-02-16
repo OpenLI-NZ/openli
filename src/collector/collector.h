@@ -338,7 +338,7 @@ typedef struct collector_global {
     uint8_t mask_imap_creds;
     uint8_t mask_pop3_creds;
     char *default_email_domain;
-    char *email_forwarding_header;
+    string_set_t *email_forwarding_headers;
     uint8_t email_ingest_use_targetid;
     int emailsockfd;
     email_ingestor_state_t *email_ingestor;
