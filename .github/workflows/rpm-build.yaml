@@ -20,11 +20,10 @@ jobs:
            - "rockylinux:9"
            - "fedora:39"
            - "fedora:38"
-           - "centos:7"
 
      steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Install prereq packages
         run: ./rpmpkg-setup.sh ${{ matrix.target }}
       - name: Build packages
@@ -36,7 +35,7 @@ jobs:
           mkdir -p packages/${DIRNAME}
           cp ~/rpmbuild/RPMS/x86_64/*.rpm packages/${DIRNAME}/
       - name: Store packages
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: packages-${{ env.DIRNAME }}
           path: packages/${{ env.DIRNAME }}/*.rpm
@@ -56,13 +55,12 @@ jobs:
            - "rockylinux:9"
            - "fedora:39"
            - "fedora:38"
-           - "centos:7"
      needs: build
      steps:
        - name: Set environment variables for download
          run: echo DIRNAME=${{ matrix.target }} | tr ':' '_' >> $GITHUB_ENV
        - name: Download artifact
-         uses: actions/download-artifact@v3
+         uses: actions/download-artifact@v4
          with:
            name: packages-${{ env.DIRNAME }}
        - name: Add repositories
@@ -77,9 +75,6 @@ jobs:
            gpg --import packagecloud-rabbitmq-key.asc
            curl -s https://packagecloud.io/install/repositories/rabbitmq/rabbitmq-server/script.rpm.sh | bash
            curl -s https://packagecloud.io/install/repositories/rabbitmq/erlang/script.rpm.sh | bash
-           if [ "${TARGET}" == "centos:7" ]; then
-               yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm || true
-           fi
            if [[ "${TARGET}" =~ rocky* ]]; then
                dnf install -y dnf-plugins-core epel-release || true
                dnf config-manager --set-enabled powertools || true
@@ -110,13 +105,12 @@ jobs:
            - "rockylinux:9"
            - "fedora:39"
            - "fedora:38"
-           - "centos:7"
      needs: test
      steps:
        - name: Set environment variables for download
          run: echo DIRNAME=${{ matrix.target }} | tr ':' '_' >> $GITHUB_ENV
        - name: Download artifact
-         uses: actions/download-artifact@v3
+         uses: actions/download-artifact@v4
          with:
            name: packages-${{ env.DIRNAME }}
        - name: Copy packages

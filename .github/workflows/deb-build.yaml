@@ -24,7 +24,7 @@ jobs:
 
      steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Install prereq packages
         run: ./debpkg-setup.sh
       - name: Build packages
@@ -36,7 +36,7 @@ jobs:
           mkdir -p packages/${DIRNAME}
           cp ../*.deb packages/${DIRNAME}/
       - name: Store packages
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: packages-${{ env.DIRNAME }}
           path: packages/${{ env.DIRNAME }}/*.deb
@@ -62,7 +62,7 @@ jobs:
        - name: Set environment variables for download
          run: echo DIRNAME=${{ matrix.target }} | tr ':' '_' >> $GITHUB_ENV
        - name: Download artifact
-         uses: actions/download-artifact@v3
+         uses: actions/download-artifact@v4
          with:
            name: packages-${{ env.DIRNAME }}
        - name: Add repositories
@@ -107,7 +107,7 @@ jobs:
        - name: Set environment variables for download
          run: echo DIRNAME=${{ matrix.target }} | tr ':' '_' >> $GITHUB_ENV
        - name: Download artifact
-         uses: actions/download-artifact@v3
+         uses: actions/download-artifact@v4
          with:
            name: packages-${{ env.DIRNAME }}
        - name: Copy packages
