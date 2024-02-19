@@ -834,7 +834,7 @@ static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
     access_session_t *sess, *tmp2;
     static_ipranges_t *ipr, *tmpr;
 
-    logger(LOG_INFO, "OpenLI: collector will stop intercepting traffic for target %s (LIID = %s)", ipint->username, ipint->common.liid);
+    logger(LOG_INFO, "OpenLI: collector will stop intercepting traffic for LIID  %s", ipint->common.liid);
 
     /* Remove all static IP ranges for this intercept -- its over */
     HASH_ITER(hh, ipint->statics, ipr, tmpr) {
@@ -869,7 +869,7 @@ static void push_ipintercept_update_to_threads(collector_sync_t *sync,
     int irirequired = -1;
     char *tmp;
 
-    logger(LOG_INFO, "OpenLI: collector is updating intercept for target %s (LIID = %s)", ipint->username, ipint->common.liid);
+    logger(LOG_INFO, "OpenLI: collector is updating intercept for LIID %s", ipint->common.liid);
 
     /* In cases where a change to start or end time have changed whether
      * an active session is now being intercepted or not, we need to force
@@ -1066,11 +1066,10 @@ static inline void announce_vendormirror_id(collector_sync_t *sync,
 
     sync_sendq_t *sendq, *tmp;
     logger(LOG_INFO,
-            "OpenLI: received IP intercept from provisioner for Vendor Mirrored ID %u (LIID %s, authCC %s, start time %lu, end time %lu), target is %s",
+            "OpenLI: received IP intercept from provisioner for Vendor Mirrored ID %u (LIID %s, authCC %s, start time %lu, end time %lu)",
             ipint->vendmirrorid, ipint->common.liid, ipint->common.authcc,
             ipint->common.tostart_time,
-            ipint->common.toend_time,
-            ipint->username ? ipint->username : "unknown");
+            ipint->common.toend_time);
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
             sendq, tmp) {
         push_single_vendmirrorid(sendq->q, ipint,
@@ -1126,8 +1125,8 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
         announce_vendormirror_id(sync, cept);
     } else if (cept->username != NULL) {
         logger(LOG_INFO,
-                "OpenLI: received IP intercept for target %s from provisioner (LIID %s, authCC %s, start time %lu, end time %lu)",
-                cept->username, cept->common.liid, cept->common.authcc,
+                "OpenLI: received IP intercept from provisioner (LIID %s, authCC %s, start time %lu, end time %lu)",
+                cept->common.liid, cept->common.authcc,
                 cept->common.tostart_time, cept->common.toend_time);
     }
 
@@ -1164,9 +1163,8 @@ static inline void remove_vendormirror_id(collector_sync_t *sync,
 
     sync_sendq_t *sendq, *tmp;
     logger(LOG_INFO,
-            "OpenLI: removing IP intercept for Vendor Mirrored ID %u (LIID %s, authCC %s), target was %s",
-            ipint->vendmirrorid, ipint->common.liid, ipint->common.authcc,
-            ipint->username ? ipint->username : "unknown");
+            "OpenLI: removing IP intercept for Vendor Mirrored ID %u (LIID %s, authCC %s)",
+            ipint->vendmirrorid, ipint->common.liid, ipint->common.authcc);
 
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
             sendq, tmp) {
@@ -1233,7 +1231,7 @@ static int update_modified_intercept(collector_sync_t *sync,
         add_intercept_to_user_intercept_list(&sync->userintercepts, ipint);
 
         push_existing_user_sessions(sync, ipint);
-        logger(LOG_INFO, "OpenLI: IP intercept %s is now using '%s' as the designated target", ipint->common.liid, ipint->username);
+        logger(LOG_INFO, "OpenLI: IP intercept %s has changed target", ipint->common.liid);
     }
 
     if (ipint->vendmirrorid != modified->vendmirrorid) {
@@ -1458,8 +1456,8 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         if (x->username && cept->username) {
             if (strcmp(x->username, cept->username) != 0) {
                 logger(LOG_INFO,
-                        "OpenLI: duplicate IP ID %s seen, but targets are different (was %s, now %s).",
-                        x->common.liid, x->username, cept->username);
+                        "OpenLI: duplicate IP ID %s seen, but targets are different.",
+                        x->common.liid);
             }
         }
 

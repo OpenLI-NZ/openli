@@ -958,7 +958,7 @@ static int process_email_target_withdraw(openli_email_worker_t *state,
 
     if (remove_intercept_from_email_user_intercept_list(&(state->alltargets),
             found, tgt) < 0) {
-        logger(LOG_INFO, "OpenLI: email worker thread %d failed to remove email target %s for intercept %s", state->emailid, tgt->address, liid);
+        logger(LOG_INFO, "OpenLI: email worker thread %d failed to remove email target for intercept %s", state->emailid, liid);
         return -1;
     }
 
@@ -1015,7 +1015,7 @@ static int add_email_target(openli_email_worker_t *state,
         return -1;
     }
     if (strlen(tgt->address) > 1023) {
-        logger(LOG_INFO, "OpenLI: insanely long email address for %s target -- %s\n", liid, tgt->address);
+        logger(LOG_INFO, "OpenLI: insanely long email address for %s target\n", liid);
         return -1;
     }
 
@@ -1049,7 +1049,7 @@ static int add_email_target(openli_email_worker_t *state,
 
     if (add_intercept_to_email_user_intercept_list(&(state->alltargets),
             found, tgt) < 0) {
-        logger(LOG_INFO, "OpenLI: email worker thread %d failed to add email target %s for intercept %s", state->emailid, tgt->address, liid);
+        logger(LOG_INFO, "OpenLI: email worker thread %d failed to add email target for intercept %s", state->emailid, liid);
         return -1;
     }
 

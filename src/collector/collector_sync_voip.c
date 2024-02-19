@@ -1664,15 +1664,9 @@ static int new_voip_sip_target(collector_sync_voip_t *sync, uint8_t *intmsg,
     }
 
     sync->log_bad_instruct = 1;
-    if (sipid.realm) {
-        logger(LOG_INFO,
-                "OpenLI: collector received new SIP target %s@%s for LIID %s.",
-                sipid.username, sipid.realm, vint->common.liid);
-    } else {
-        logger(LOG_INFO,
-                "OpenLI: collector received new SIP target %s@* for LIID %s.",
-                sipid.username, vint->common.liid);
-    }
+    logger(LOG_INFO,
+            "OpenLI: collector received new SIP target for LIID %s.",
+            vint->common.liid);
 
     add_new_sip_target_to_list(vint, &sipid);
     return 0;
@@ -1710,15 +1704,9 @@ static int withdraw_voip_sip_target(collector_sync_voip_t *sync,
     }
 
     sync->log_bad_instruct = 1;
-    if (sipid.realm) {
-        logger(LOG_INFO,
-                "OpenLI: collector is withdrawing SIP target %s@%s for LIID %s.",
-                sipid.username, sipid.realm, vint->common.liid);
-    } else {
-        logger(LOG_INFO,
-                "OpenLI: collector is withdrawing SIP target %s@* for LIID %s.",
-                sipid.username, vint->common.liid);
-    }
+    logger(LOG_INFO,
+            "OpenLI: collector is withdrawing SIP target for LIID %s.",
+            vint->common.liid);
     disable_sip_target_from_list(vint, &sipid);
 
 withdrawend:
@@ -2044,16 +2032,6 @@ static void post_disable_unconfirmed_voip_target(openli_sip_identity_t *sipid,
     collector_sync_voip_t *sync = (collector_sync_voip_t *)(arg);
     if (sync == NULL || v == NULL || sipid == NULL) {
         return;
-    }
-
-    if (sipid->realm) {
-        logger(LOG_INFO,
-                "OpenLI: removing unconfirmed SIP target %s@%s for LIID %s",
-                sipid->username, sipid->realm, v->common.liid);
-    } else {
-        logger(LOG_INFO,
-                "OpenLI: removing unconfirmed SIP target %s@* for LIID %s",
-                sipid->username, v->common.liid);
     }
 
     /* remove any active calls for this identity */
