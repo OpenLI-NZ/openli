@@ -8,8 +8,13 @@ openli (1.1.5-1) unstable; urgency=medium
   * Mediator: fixed log spam of "pcap file opened" messages when in fact
     no file was being created due to the lack of intercepted traffic for
     that intercept.
+  * SMTP: add ability to detect automatic email forwarding by searching
+    for certain message headers in the email content. The set of headers
+    to search for must be defined by the user in the collector configuration
+    file.
+  * Remove target identities from collector log messages.
 
- -- Shane Alcock <salcock@searchlight.nz>  Wed, 7 Feb 2024 17:25:41 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Mon, 19 Feb 2024 14:14:30 +1300
 
 openli (1.1.4-1) unstable; urgency=medium
 
