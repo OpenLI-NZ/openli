@@ -1027,6 +1027,7 @@ static int parse_mail_content(openli_email_worker_t *state,
             if (header != hdrwrite) {
 
                 if (forwarding_header_check(state, sess, header)) {
+                    ret = 1;
                     break;
                 }
                 memset(header, 0, len + 1);
