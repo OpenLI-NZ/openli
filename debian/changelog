@@ -13,6 +13,9 @@ openli (1.1.5-1) unstable; urgency=medium
     to search for must be defined by the user in the collector configuration
     file.
   * Remove target identities from collector log messages.
+  * Enable TCP keep alives on all inter-component communications sessions.
+  * Fix issue where socket-level errors would not be properly detected on
+    the control socket linking the provisioner and a collector.
 
  -- Shane Alcock <salcock@searchlight.nz>  Mon, 19 Feb 2024 14:14:30 +1300
 
