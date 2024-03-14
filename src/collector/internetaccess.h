@@ -113,6 +113,7 @@ struct access_session {
     internetaccess_ip_t *sessionips;
     uint8_t sessipcount;
     session_ipversion_t sessipversion;
+    uint8_t ips_mapped;
 
     access_plugin_t *plugin;
     void *sessionid;

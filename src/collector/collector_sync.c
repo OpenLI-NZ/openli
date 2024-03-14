@@ -1906,6 +1906,10 @@ static int remove_ip_to_session_mapping(collector_sync_t *sync,
     char ipstr[128];
     int i, j, errs = 0, nullsess = 0;
 
+    if (!sess->ips_mapped) {
+        return 0;
+    }
+
     for (i = 0; i < sess->sessipcount; i++) {
         nullsess = 0;
 
@@ -2106,6 +2110,7 @@ static int newly_active_session(collector_sync_t *sync,
                 "OpenLI: error while updating IP->session map in sync thread.");
             return -1;
         }
+        sess->ips_mapped = 1;
     }
 
     if (!userint) {
