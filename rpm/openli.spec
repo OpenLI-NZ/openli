@@ -14,10 +14,10 @@ BuildRequires: bison
 BuildRequires: doxygen
 BuildRequires: flex
 BuildRequires: libyaml-devel
-BuildRequires: libtrace4-devel >= 4.0.23
+BuildRequires: libtrace4-devel >= 4.0.24
 BuildRequires: Judy-devel
 BuildRequires: uthash-devel
-BuildRequires: libwandder2-devel >= 2.0.8
+BuildRequires: libwandder2-devel >= 2.0.10
 BuildRequires: zeromq-devel
 BuildRequires: gperftools-devel
 BuildRequires: libosip2-devel >= 5.0.0
