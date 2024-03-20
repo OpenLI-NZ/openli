@@ -256,14 +256,12 @@ static inline void encode_email_recipients(wandder_encoder_t *encoder,
 
     int i;
 
-    ENC_USEQUENCE(encoder);
     for (i = 0; i < recipients->count; i++) {
         wandder_encode_next(encoder, WANDDER_TAG_UTF8STR,
-                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, recipients->addresses[i],
+                WANDDER_CLASS_UNIVERSAL_PRIMITIVE, WANDDER_TAG_UTF8STR,
+                recipients->addresses[i],
                 strlen(recipients->addresses[i]));
     }
-
-    END_ENCODED_SEQUENCE(encoder, 1);
 }
 
 static inline void encode_other_targets(wandder_encoder_t *encoder,
