@@ -1259,6 +1259,22 @@ const char *get_radius_ident_string(uint32_t radoptions) {
     return "any";
 }
 
+const char *get_mobile_identifier_string(openli_mobile_identifier_t idtype) {
+    switch(idtype) {
+        case OPENLI_MOBILE_IDENTIFIER_MSISDN:
+            return "MSISDN";
+        case OPENLI_MOBILE_IDENTIFIER_IMSI:
+            return "IMSI";
+        case OPENLI_MOBILE_IDENTIFIER_IMEI:
+            return "IMEI";
+        case OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED:
+            return "Unspecified";
+        default:
+            break;
+    }
+    return "Unknown";
+}
+
 const char *get_access_type_string(internet_access_method_t method) {
 
     switch(method) {
@@ -1295,6 +1311,22 @@ payload_encryption_method_t map_encrypt_method_string(char *encstr) {
     }
 
     return OPENLI_PAYLOAD_ENCRYPTION_NONE;
+}
+
+openli_mobile_identifier_t map_mobile_ident_string(char *idstr) {
+    if (idstr == NULL) {
+        return OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
+    }
+    if (strcasecmp(idstr, "IMSI") == 0) {
+        return OPENLI_MOBILE_IDENTIFIER_IMSI;
+    } else if (strcasecmp(idstr, "MSISDN") == 0) {
+        return OPENLI_MOBILE_IDENTIFIER_MSISDN;
+    } else if (strcasecmp(idstr, "IMEI") == 0) {
+        return OPENLI_MOBILE_IDENTIFIER_IMEI;
+    }
+    logger(LOG_INFO, "OpenLI: unexpected mobile identifier type: %s",
+            idstr);
+    return OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
 }
 
 uint8_t map_email_decompress_option_string(char *decstr) {

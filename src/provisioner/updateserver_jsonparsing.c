@@ -54,6 +54,7 @@ struct json_intercept {
     struct json_object *accesstype;
     struct json_object *user;
     struct json_object *radiusident;
+    struct json_object *mobileident;
     struct json_object *vendmirrorid;
     struct json_object *starttime;
     struct json_object *endtime;
@@ -201,6 +202,7 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "user", &(ipjson->user));
     json_object_object_get_ex(parsed, "accesstype", &(ipjson->accesstype));
     json_object_object_get_ex(parsed, "radiusident", &(ipjson->radiusident));
+    json_object_object_get_ex(parsed, "mobileident", &(ipjson->mobileident));
     json_object_object_get_ex(parsed, "starttime", &(ipjson->starttime));
     json_object_object_get_ex(parsed, "endtime", &(ipjson->endtime));
     json_object_object_get_ex(parsed, "outputhandovers", &(ipjson->tomediate));
@@ -1271,6 +1273,7 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipintercept_t *found = NULL;
     int parseerr = 0;
     char *accessstring = NULL;
+    char *mobileidentstring = NULL;
     char *radiusidentstring = NULL;
     ipintercept_t *ipint = NULL;
     prov_intercept_data_t *timers = NULL;
@@ -1282,6 +1285,7 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipint->awaitingconfirm = 1;
     ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
+    ipint->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
     ipint->options = 0;
 
     if (parse_intercept_common_json(&ipjson, &(ipint->common),
@@ -1300,6 +1304,8 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             accessstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("radiusident", "IP intercept", ipjson.radiusident,
             radiusidentstring, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("mobileident", "IP intercept", ipjson.mobileident,
+            mobileidentstring, &parseerr, false);
 
     if (parseerr) {
         goto cepterr;
@@ -1330,6 +1336,12 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     } else {
         ipint->options = (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID) |
                 (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER);
+    }
+
+    ipint->mobileident = map_mobile_ident_string(mobileidentstring);
+    if (mobileidentstring) {
+        free(mobileidentstring);
+        mobileidentstring = NULL;
     }
 
     HASH_FIND(hh_liid, state->interceptconf.ipintercepts,
@@ -1384,6 +1396,9 @@ cepterr:
     }
     if (radiusidentstring) {
         free(radiusidentstring);
+    }
+    if (mobileidentstring) {
+        free(mobileidentstring);
     }
     if (parsed) {
         json_object_put(parsed);

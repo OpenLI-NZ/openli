@@ -72,6 +72,7 @@ typedef enum {
     USER_IDENT_RADIUS_CSID,
     USER_IDENT_GTP_MSISDN,
     USER_IDENT_GTP_IMSI,
+    USER_IDENT_GTP_IMEI,
     USER_IDENT_MAX
 } user_identity_method_t;
 

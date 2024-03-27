@@ -114,12 +114,6 @@ struct gtp_infelem {
     gtp_infoelem_t *next;
 };
 
-typedef struct gtp_userid {
-    char *imsi;
-    char *msisdn;
-
-} PACKED gtp_user_identity_t;
-
 typedef struct gtp_sess_saved {
     uint8_t *imsi;
     uint16_t imsi_len;
@@ -137,11 +131,14 @@ typedef struct gtp_sess_saved {
 typedef struct gtp_session {
 
     char *sessid;
-    gtp_user_identity_t userid;
     gtp_sess_saved_t saved;
 
-    char idstr[64];
-    int idstr_len;
+    char idstr_msisdn[64];
+    int idstr_msisdn_len;
+    char idstr_imsi[64];
+    int idstr_imsi_len;
+    char idstr_imei[64];
+    int idstr_imei_len;
     uint32_t teid;
 
     internetaccess_ip_t *pdpaddrs;
@@ -252,14 +249,6 @@ static inline void destroy_gtp_session(gtp_session_t *sess) {
 
     if (sess->sessid) {
         free(sess->sessid);
-    }
-
-    if (sess->userid.imsi) {
-        free(sess->userid.imsi);
-    }
-
-    if (sess->userid.msisdn) {
-        free(sess->userid.msisdn);
     }
 
     if (sess->saved.imei) {
@@ -871,6 +860,34 @@ static void *gtp_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
     return glob->parsedpkt;
 }
 
+static inline user_identity_t *copy_identifiers(gtp_parsed_t *gparsed,
+        int *numberids) {
+
+    int x = 0;
+    user_identity_t *uids;
+
+    uids = calloc(3, sizeof(user_identity_t));
+
+    if (gparsed->matched_session->idstr_msisdn[0] != '\0') {
+        uids[x].method = USER_IDENT_GTP_MSISDN;
+        uids[x].idstr = strdup(gparsed->matched_session->idstr_msisdn);
+        uids[x].idlength = gparsed->matched_session->idstr_msisdn_len;
+        *numberids += 1;
+        x ++;
+    }
+    return uids;
+}
+
+static void save_identifier_strings(gtp_parsed_t *gparsed, gtp_session_t *sess)
+{
+    if (gparsed->msisdn[0] != '\0') {
+        snprintf(sess->idstr_msisdn, 64, "%s", gparsed->msisdn);
+        sess->idstr_msisdn_len = strlen(sess->idstr_msisdn);
+    } else {
+        sess->idstr_msisdn_len = 0;
+    }
+}
+
 #define GEN_SESSID(sessid, gparsed, teid) \
     if (gparsed->serveripfamily == 4) { \
         snprintf(sessid, 64, "%u-%u", *(uint32_t *)gparsed->serverid, teid); \
@@ -900,11 +917,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
     }
 
     if (gparsed->matched_session) {
-        uids = calloc(1, sizeof(user_identity_t));
-        uids[0].method = USER_IDENT_GTP_MSISDN;
-        uids[0].idstr = strdup(gparsed->matched_session->idstr);
-        uids[0].idlength = gparsed->matched_session->idstr_len;
-        *numberids = 1;
+        uids = copy_identifiers(gparsed, numberids);
         return uids;
     }
 
@@ -922,13 +935,9 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
     if (pval) {
         gparsed->matched_session = (gtp_session_t *)(*pval);
 
-        if (gparsed->matched_session->idstr_len == 0 &&
+        if (gparsed->matched_session->idstr_msisdn_len == 0 &&
                 gparsed->msisdn[0] != '\0') {
-            gparsed->matched_session->userid.msisdn = strdup(gparsed->msisdn);
-            snprintf(gparsed->matched_session->idstr, 64, "%s",
-                    gparsed->msisdn);
-            gparsed->matched_session->idstr_len =
-                    strlen(gparsed->matched_session->idstr);
+            save_identifier_strings(gparsed, gparsed->matched_session);
         }
 
         if (search == glob->alt_session_map) {
@@ -950,16 +959,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
 
         }
 
-        if (gparsed->matched_session->idstr_len == 0) {
-            *numberids = 0;
-            return NULL;
-        }
-
-        uids = calloc(1, sizeof(user_identity_t));
-        uids[0].method = USER_IDENT_GTP_MSISDN;
-        uids[0].idstr = strdup(gparsed->matched_session->idstr);
-        uids[0].idlength = gparsed->matched_session->idstr_len;
-        *numberids = 1;
+        uids = copy_identifiers(gparsed, numberids);
         return uids;
     }
 
@@ -1009,38 +1009,13 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
     memcpy(sess->serverid, gparsed->serverid, 16);
     sess->serveripfamily = gparsed->serveripfamily;
 
-    /* For now, I'm going to just use the MSISDN as the user identity
-     * until I'm told otherwise.
-     */
-    if (gparsed->msisdn[0] != '\0') {
-        sess->userid.msisdn = strdup(gparsed->msisdn);
-        snprintf(sess->idstr, 64, "%s", sess->userid.msisdn);
-        sess->idstr_len = strlen(sess->idstr);
-    } else {
-        sess->userid.msisdn = NULL;
-        sess->idstr_len = 0;
-    }
-
-    if (gparsed->imsi[0] != '\0') {
-        sess->userid.imsi = strdup(gparsed->imsi);
-    }
-
     JSLI(pval, glob->session_map, (unsigned char *)sess->sessid);
     *pval = (Word_t)sess;
 
     gparsed->matched_session = sess;
+    save_identifier_strings(gparsed, sess);
 
-    if (sess->idstr_len == 0) {
-        *numberids = 0;
-        return NULL;
-    }
-
-    uids = calloc(1, sizeof(user_identity_t));
-    uids[0].method = USER_IDENT_GTP_MSISDN;
-    uids[0].idstr = strdup(gparsed->matched_session->idstr);
-    uids[0].idlength = gparsed->matched_session->idstr_len;
-    uids[0].plugindata = NULL;
-    *numberids = 1;
+    uids = copy_identifiers(gparsed, numberids);
     return uids;
 }
 
