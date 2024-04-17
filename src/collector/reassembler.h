@@ -57,7 +57,7 @@ typedef struct tcp_stream_id {
 } tcp_streamid_t;
 
 typedef struct reass_stream {
-    tcp_streamid_t streamid;
+    tcp_streamid_t *streamid;
     uint32_t lastts;
     uint32_t expectedseqno;
     tcp_reass_segment_t *segments;
