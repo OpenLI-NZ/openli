@@ -16,8 +16,17 @@ openli (1.1.5-1) unstable; urgency=medium
   * Enable TCP keep alives on all inter-component communications sessions.
   * Fix issue where socket-level errors would not be properly detected on
     the control socket linking the provisioner and a collector.
+  * Fix bugs in the TCP reassembly of SIP messages which would prevent
+    certain large SIP messages from being properly reassembled.
+  * SIP: do not throw a parsing error if a callee is defined using a
+    "tel:" URL.
+  * Fix assertion failure if a RADIUS session is missing a NASIdentifier
+    AVP.
+  * RADIUS: do not attempt to remove IP->session mappings that would never
+    have existed in the first place.
+  * Fix incorrect ETSI encoding of email recipients lists.
 
- -- Shane Alcock <salcock@searchlight.nz>  Mon, 19 Feb 2024 14:14:30 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Mon, 22 Apr 2024 08:51:12 +1200
 
 openli (1.1.4-1) unstable; urgency=medium
 
