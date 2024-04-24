@@ -207,12 +207,17 @@ tcp_reassemble_stream_t *get_tcp_reassemble_stream(tcp_reassembler_t *reass,
 
     HASH_FIND(hh, reass->knownstreams, id, sizeof(tcp_streamid_t), existing);
     if (existing) {
-        if (tcprem > 0 && !tcp->syn &&
+        if (tcp->syn && !tcp->ack) {
+            HASH_DELETE(hh, reass->knownstreams, existing);
+            destroy_tcp_reassemble_stream(existing);
+            existing = create_new_tcp_reassemble_stream(reass->method, id,
+                    ntohl(tcp->seq));
+            HASH_ADD_KEYPTR(hh, reass->knownstreams, existing->streamid,
+                    sizeof(tcp_streamid_t), existing);
+        } else if (tcprem > 0 && !tcp->syn &&
                 existing->established == TCP_STATE_OPENING) {
             existing->established = TCP_STATE_ESTAB;
-        }
-
-        if (existing->established == TCP_STATE_ESTAB &&
+        } else if (existing->established == TCP_STATE_ESTAB &&
                 (tcp->fin || tcp->rst)) {
             existing->established = TCP_STATE_CLOSING;
         }
