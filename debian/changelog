@@ -25,8 +25,13 @@ openli (1.1.5-1) unstable; urgency=medium
   * RADIUS: do not attempt to remove IP->session mappings that would never
     have existed in the first place.
   * Fix incorrect ETSI encoding of email recipients lists.
+  * SIP: add support for extracting target identities from the
+    P-Preferred-Identity header (only if `sipallowfromident` is enabled).
+  * SIP: fix failure to intercept subsequent calls if the 5 tuple for the
+    SIP sessions is exactly the same.
+  * Mediator: fix failure to acknowledge RMQ messages when exiting.
 
- -- Shane Alcock <salcock@searchlight.nz>  Mon, 22 Apr 2024 08:51:12 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Fri, 26 Apr 2024 17:18:24 +1200
 
 openli (1.1.4-1) unstable; urgency=medium
 
