@@ -207,7 +207,7 @@ tcp_reassemble_stream_t *get_tcp_reassemble_stream(tcp_reassembler_t *reass,
 
     HASH_FIND(hh, reass->knownstreams, id, sizeof(tcp_streamid_t), existing);
     if (existing) {
-        if (tcp->syn && !tcp->ack) {
+        if (tcp->syn) {
             HASH_DELETE(hh, reass->knownstreams, existing);
             destroy_tcp_reassemble_stream(existing);
             existing = create_new_tcp_reassemble_stream(reass->method, id,
