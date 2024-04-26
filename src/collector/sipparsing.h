@@ -77,6 +77,7 @@ typedef struct openli_sip_identity_set {
     openli_sip_identity_t fromuriid;
     openli_sip_identity_t remotepartyid;
     openli_sip_identity_t passertid;
+    openli_sip_identity_t ppreferredid;
     openli_sip_identity_t *proxyauths;
     openli_sip_identity_t *regauths;
     int proxyauthcount;
