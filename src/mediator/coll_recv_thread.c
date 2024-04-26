@@ -618,9 +618,6 @@ static void cleanup_collector_thread(coll_recv_t *col) {
     if (col->colev) {
         remove_mediator_fdevent(col->colev);
     }
-    if (col->rmq_colev) {
-        remove_mediator_fdevent(col->rmq_colev);
-    }
     if (col->incoming) {
         destroy_net_buffer(col->incoming, NULL);
     }
@@ -634,6 +631,9 @@ static void cleanup_collector_thread(coll_recv_t *col) {
         amqp_destroy_connection(col->amqp_producer_state);
     }
 
+    if (col->rmq_colev) {
+        remove_mediator_fdevent(col->rmq_colev);
+    }
     if (col->ssl) {
         SSL_free(col->ssl);
     }
