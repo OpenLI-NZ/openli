@@ -29,9 +29,12 @@ openli (1.1.5-1) unstable; urgency=medium
     P-Preferred-Identity header (only if `sipallowfromident` is enabled).
   * SIP: fix failure to intercept subsequent calls if the 5 tuple for the
     SIP sessions is exactly the same.
-  * Mediator: fix failure to acknowledge RMQ messages when exiting.
+  * Mediator: fix failure to acknowledge received RMQ messages when exiting, or
+    when a collector disconnects.
+  * Mediator: fix memory leak whenever a collector disconnects and subsequently
+    reconnects.
 
- -- Shane Alcock <salcock@searchlight.nz>  Fri, 26 Apr 2024 17:18:24 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Fri, 03 May 2024 10:08:02 +1200
 
 openli (1.1.4-1) unstable; urgency=medium
 
