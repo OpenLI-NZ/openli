@@ -727,17 +727,46 @@ int get_sip_to_uri_identity(openli_sip_parser_t *parser,
 int get_sip_from_uri_identity(openli_sip_parser_t *parser,
         openli_sip_identity_t *sipid) {
 
-    sipid->username = get_sip_from_uri_username(parser);
-    if (sipid->username == NULL) {
+    char *scheme = get_sip_from_uri_scheme(parser);
+    if (scheme == NULL) {
         return -1;
     }
-    sipid->username_len = strlen(sipid->username);
 
-    sipid->realm = get_sip_from_uri_realm(parser);
-    if (sipid->realm == NULL) {
-        return -1;
+    if (strcmp(scheme, "tel") == 0) {
+        /* TODO do we need to support targets using tel: ?
+         * Would be slightly annoying because libosip2 doesn't seem
+         * to handle tel nicely.
+         */
+
+        /* For now, just ignore tel: URIs */
+        sipid->realm = NULL;
+        sipid->realm_len = 0;
+
+        sipid->username = NULL;
+        sipid->username_len = 0;
+        sipid->active = 0;
+    } else if (strcmp(scheme, "sip") == 0 || strcmp(scheme, "sips") == 0) {
+        sipid->username = get_sip_from_uri_username(parser);
+        if (sipid->username == NULL) {
+            return -1;
+        }
+        sipid->username_len = strlen(sipid->username);
+
+        sipid->realm = get_sip_from_uri_realm(parser);
+        if (sipid->realm == NULL) {
+            return -1;
+        }
+        sipid->realm_len = strlen(sipid->realm);
+    } else {
+        logger(LOG_INFO, "OpenLI: unexpected SIP scheme '%s', ignoring",
+                scheme);
+        sipid->realm = NULL;
+        sipid->realm_len = 0;
+
+        sipid->username = NULL;
+        sipid->username_len = 0;
+        sipid->active = 0;
     }
-    sipid->realm_len = strlen(sipid->realm);
     return 1;
 }
 
