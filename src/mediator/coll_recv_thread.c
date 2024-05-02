@@ -156,9 +156,32 @@ static void remove_expired_liid_queues(coll_recv_t *col) {
         if (known->liid) {
             free(known->liid);
         }
+        if (known->queuenames[0]) {
+            free((void *)known->queuenames[0]);
+        }
+        if (known->queuenames[1]) {
+            free((void *)known->queuenames[1]);
+        }
+        if (known->queuenames[2]) {
+            free((void *)known->queuenames[2]);
+        }
         HASH_DELETE(hh, col->known_liids, known);
         free(known);
     }
+}
+
+static void destroy_rmq_colev(coll_recv_t *col) {
+
+    if (col->incoming_rmq) {
+        destroy_net_buffer(col->incoming_rmq, col->amqp_state);
+    }
+    if (col->amqp_state) {
+        amqp_destroy_connection(col->amqp_state);
+    }
+    remove_mediator_fdevent(col->rmq_colev);
+    col->rmq_colev = NULL;
+    col->amqp_state = NULL;
+    col->incoming_rmq = NULL;
 }
 
 /** Perform the necessary setup to establish a TLS connection with the
@@ -245,9 +268,6 @@ static med_epoll_ev_t *prepare_collector_receive_rmq(coll_recv_t *col,
 
     col->amqp_state = amqp_state;
     /* Create a net buffer for receiving data from the RMQ socket */
-    if (col->incoming_rmq) {
-        destroy_net_buffer(col->incoming_rmq, col->amqp_state);
-    }
     col->incoming_rmq = create_net_buffer(NETBUF_RECV, 0, NULL);
 
     /* Create an epoll event and add it to our epoll FD set */
@@ -621,19 +641,11 @@ static void cleanup_collector_thread(coll_recv_t *col) {
     if (col->incoming) {
         destroy_net_buffer(col->incoming, NULL);
     }
-    if (col->incoming_rmq) {
-        destroy_net_buffer(col->incoming_rmq, col->amqp_state);
-    }
-    if (col->amqp_state) {
-        amqp_destroy_connection(col->amqp_state);
-    }
     if (col->amqp_producer_state) {
         amqp_destroy_connection(col->amqp_producer_state);
     }
 
-    if (col->rmq_colev) {
-        remove_mediator_fdevent(col->rmq_colev);
-    }
+    destroy_rmq_colev(col);
     if (col->ssl) {
         SSL_free(col->ssl);
     }
@@ -740,10 +752,7 @@ static void *start_collector_thread(void *params) {
                 /* Stop using RMQ if it has been disabled */
                 if (col->parentconfig->rmqconf->enabled == 0 &&
                         col->rmqenabled == 1) {
-                    if (col->rmq_colev) {
-                        remove_mediator_fdevent(col->rmq_colev);
-                        col->rmq_colev = NULL;
-                    }
+                    destroy_rmq_colev(col);
                 }
 
                 /* TODO handle change in mediator ID ? */
@@ -759,8 +768,7 @@ static void *start_collector_thread(void *params) {
                             strdup(col->parentconfig->rmqconf->internalpass);
                     }
                     /* Need to reconnect to RMQ */
-                    remove_mediator_fdevent(col->rmq_colev);
-                    col->rmq_colev = NULL;
+                    destroy_rmq_colev(col);
                 }
 
                 /* If our FD socket has changed TLS status, we should
@@ -791,8 +799,7 @@ static void *start_collector_thread(void *params) {
                     col->colev = NULL;
                 }
                 if (col->rmq_colev) {
-                    remove_mediator_fdevent(col->rmq_colev);
-                    col->rmq_colev = NULL;
+                    destroy_rmq_colev(col);
                 }
                 /* Disable logging until the collector starts working
                  * properly again to avoid spamming connection failure
@@ -811,8 +818,7 @@ static void *start_collector_thread(void *params) {
                     col->colev = NULL;
                 }
                 if (col->rmq_colev) {
-                    remove_mediator_fdevent(col->rmq_colev);
-                    col->rmq_colev = NULL;
+                    destroy_rmq_colev(col);
                 }
                 col->col_fd = (int)msg.arg;
                 col->was_dropped = 0;
@@ -878,8 +884,7 @@ static void *start_collector_thread(void *params) {
                         col->colev = NULL;
                     }
                     if (col->rmq_colev) {
-                        remove_mediator_fdevent(col->rmq_colev);
-                        col->rmq_colev = NULL;
+                        destroy_rmq_colev(col);
                     }
                     if (col->disabled_log == 0) {
                         logger(LOG_INFO, "OpenLI Mediator: collector thread for %s is now inactive", col->ipaddr);
