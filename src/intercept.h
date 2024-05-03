@@ -526,6 +526,9 @@ int add_intercept_to_email_user_intercept_list(
         email_user_intercept_list_t *ulist, emailintercept_t *em,
         email_target_t *tgt);
 
+int generate_ipint_userkey(ipintercept_t *ipint, char *space,
+        int spacelen);
+
 const char *get_mobile_identifier_string(openli_mobile_identifier_t idtype);
 const char *get_access_type_string(internet_access_method_t method);
 const char *get_radius_ident_string(uint32_t radoptions);

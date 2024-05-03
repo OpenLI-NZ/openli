@@ -1027,11 +1027,42 @@ int add_intercept_to_email_user_intercept_list(
     return 0;
 }
 
+int generate_ipint_userkey(ipintercept_t *ipint, char *space,
+        int spacelen) {
+
+    char *ptr = space;
+    int used = 0;
+
+    memset(space, 0, spacelen);
+    if (ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_MSISDN) {
+        memcpy(ptr, "msisdn:", strlen("msisdn:"));
+        ptr += strlen("msisdn:");
+    } else if (ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_IMSI) {
+        memcpy(ptr, "imsi:", strlen("imsi:"));
+        ptr += strlen("imsi:");
+    } else if (ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_IMEI) {
+        memcpy(ptr, "imei:", strlen("imei:"));
+        ptr += strlen("imei:");
+    }
+
+    used = ptr - space;
+
+    if (strlen(ipint->username) + used + 1 > spacelen) {
+        logger(LOG_INFO, "OpenLI: username is too long to fit in a key?");
+        return -1;
+    }
+
+    memcpy(ptr, ipint->username, ipint->username_len);
+    return used + ipint->username_len;
+}
+
 int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
         ipintercept_t *ipint) {
 
     user_intercept_list_t *found;
     ipintercept_t *check;
+    char taggeduser[2048];
+
 
     if (ipint->username == NULL) {
         logger(LOG_INFO,
@@ -1039,7 +1070,14 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
         return -1;
     }
 
-    HASH_FIND(hh, *ulist, ipint->username, ipint->username_len, found);
+    if (generate_ipint_userkey(ipint, taggeduser, 2048) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error while constructing user key for IP intercept %s",
+                ipint->common.liid);
+        return -1;
+    }
+
+    HASH_FIND(hh, *ulist, taggeduser, strlen(taggeduser), found);
     if (!found) {
         found = (user_intercept_list_t *)malloc(sizeof(user_intercept_list_t));
         if (!found) {
@@ -1047,7 +1085,7 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
                     "OpenLI: out of memory in add_intercept_to_userlist()");
             return -1;
         }
-        found->username = strdup(ipint->username);
+        found->username = strdup(taggeduser);
         if (!found->username) {
             free(found);
             logger(LOG_INFO,
@@ -1055,7 +1093,7 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
             return -1;
         }
         found->intlist = NULL;
-        HASH_ADD_KEYPTR(hh, *ulist, found->username, ipint->username_len,
+        HASH_ADD_KEYPTR(hh, *ulist, found->username, strlen(found->username),
                 found);
     }
 
@@ -1149,6 +1187,7 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
 
     user_intercept_list_t *found;
     ipintercept_t *existing;
+    char taggeduser[2048];
 
     if (ipint->username == NULL) {
         logger(LOG_INFO,
@@ -1156,10 +1195,17 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
         return -1;
     }
 
-    HASH_FIND(hh, *ulist, ipint->username, ipint->username_len, found);
+    if (generate_ipint_userkey(ipint, taggeduser, 2048) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error while generating user key for intercept %s",
+                ipint->common.liid);
+        return -1;
+    }
+
+    HASH_FIND(hh, *ulist, taggeduser, strlen(taggeduser), found);
 
     if (!found) {
-        printf("!found: %s\n", ipint->username);
+        printf("!found: %s\n", taggeduser);
         return 0;
     }
 

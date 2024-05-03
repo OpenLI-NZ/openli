@@ -114,6 +114,9 @@ struct gtp_infelem {
     gtp_infoelem_t *next;
 };
 
+/* Stored copies of the IEs that we need to include in IRI messages, in their
+ * original binary format (for easier encoding).
+ */
 typedef struct gtp_sess_saved {
     uint8_t *imsi;
     uint16_t imsi_len;
@@ -150,6 +153,13 @@ typedef struct gtp_session {
     uint8_t serveripfamily;
 
     session_state_t current;
+
+
+    uint64_t last_reqid;
+    uint8_t last_reqtype;
+    session_state_t savedoldstate;
+    session_state_t savednewstate;
+
 } gtp_session_t;
 
 typedef struct gtp_saved_packet gtp_saved_pkt_t;
@@ -186,6 +196,7 @@ typedef struct gtp_parsed {
 
     char imsi[16];
     char msisdn[16];
+    char imei[16];
 
     gtp_saved_pkt_t *request;
     gtp_saved_pkt_t *response;
@@ -222,6 +233,7 @@ static void reset_parsed_pkt(gtp_parsed_t *parsed) {
     parsed->serveripfamily = 0;
     memset(parsed->serverid, 0, 16);
     memset(parsed->imsi, 0, 16);
+    memset(parsed->imei, 0, 16);
     memset(parsed->msisdn, 0, 16);
 
     parsed->ies = NULL;
@@ -620,6 +632,9 @@ static void walk_gtpv2_ies(gtp_parsed_t *parsedpkt, uint8_t *ptr, uint32_t rem,
                 if (ietype == GTPV2_IE_IMSI) {
                     get_gtpnum_from_ie(gtpel, parsedpkt->imsi, 0);
                 }
+                if (ietype == GTPV2_IE_MEI) {
+                    get_gtpnum_from_ie(gtpel, parsedpkt->imei, 0);
+                }
                 if (ietype == GTPV2_IE_MSISDN) {
                     get_gtpnum_from_ie(gtpel, parsedpkt->msisdn, 0);
                 }
@@ -875,6 +890,20 @@ static inline user_identity_t *copy_identifiers(gtp_parsed_t *gparsed,
         *numberids += 1;
         x ++;
     }
+    if (gparsed->matched_session->idstr_imsi[0] != '\0') {
+        uids[x].method = USER_IDENT_GTP_IMSI;
+        uids[x].idstr = strdup(gparsed->matched_session->idstr_imsi);
+        uids[x].idlength = gparsed->matched_session->idstr_imsi_len;
+        *numberids += 1;
+        x ++;
+    }
+    if (gparsed->matched_session->idstr_imei[0] != '\0') {
+        uids[x].method = USER_IDENT_GTP_IMEI;
+        uids[x].idstr = strdup(gparsed->matched_session->idstr_imei);
+        uids[x].idlength = gparsed->matched_session->idstr_imei_len;
+        *numberids += 1;
+        x ++;
+    }
     return uids;
 }
 
@@ -885,6 +914,18 @@ static void save_identifier_strings(gtp_parsed_t *gparsed, gtp_session_t *sess)
         sess->idstr_msisdn_len = strlen(sess->idstr_msisdn);
     } else {
         sess->idstr_msisdn_len = 0;
+    }
+    if (gparsed->imsi[0] != '\0') {
+        snprintf(sess->idstr_imsi, 64, "%s", gparsed->imsi);
+        sess->idstr_imsi_len = strlen(sess->idstr_imsi);
+    } else {
+        sess->idstr_imsi_len = 0;
+    }
+    if (gparsed->imei[0] != '\0') {
+        snprintf(sess->idstr_imei, 64, "%s", gparsed->imei);
+        sess->idstr_imei_len = strlen(sess->idstr_imei);
+    } else {
+        sess->idstr_imei_len = 0;
     }
 }
 
@@ -1297,12 +1338,29 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parsed;
     PWord_t pval;
     Word_t rcint;
+    uint64_t reqid = (((uint64_t)gparsed->teid) << 32) |
+            ((uint64_t)gparsed->seqno);
+
+
+    if (reqid == gparsed->matched_session->last_reqid &&
+            gparsed->msgtype == gparsed->matched_session->last_reqtype) {
+
+        /* Do NOT save the packet, because we've already saved it when
+         * this method was called on a previous identity found in
+         * the packet.
+         */
+        thissess = find_matched_session(p, sesslist, gparsed->matched_session,
+                gparsed->teid);
+        *oldstate = gparsed->matched_session->savedoldstate;
+        *newstate = gparsed->matched_session->savednewstate;
+        *action = gparsed->action;
+        return thissess;
+    }
 
     saved = calloc(1, sizeof(gtp_saved_pkt_t));
 
     saved->type = gparsed->msgtype;
-    saved->reqid = (((uint64_t)gparsed->teid) << 32) |
-            ((uint64_t)gparsed->seqno);
+    saved->reqid = reqid;
     saved->ies = gparsed->ies;
     saved->version = gparsed->version;
     saved->matched_session = gparsed->matched_session;
@@ -1311,7 +1369,10 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
     saved->ipcontent = NULL;
     saved->iplen = 0;
     saved->response_cause = gparsed->response_cause;
+
     gparsed->ies = NULL;
+    gparsed->matched_session->last_reqid = reqid;
+    gparsed->matched_session->last_reqtype = gparsed->msgtype;
 
     openli_copy_ipcontent(gparsed->origpkt, &(saved->ipcontent),
             &(saved->iplen));
@@ -1330,9 +1391,11 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
                     gparsed->matched_session, gparsed->teid);
             if (thissess) {
                 *oldstate = gparsed->matched_session->current;
+                gparsed->matched_session->savedoldstate = *oldstate;
                 apply_gtp_fsm_logic(gparsed, &(gparsed->action), thissess,
                         saved);
                 *newstate = gparsed->matched_session->current;
+                gparsed->matched_session->savednewstate = *newstate;
                 saved->applied = 1;
             }
         }
@@ -1408,11 +1471,13 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
                     gparsed->request->matched_session, gparsed->teid);
             *oldstate = gparsed->request->matched_session->current;
             gparsed->matched_session = gparsed->request->matched_session;
+            gparsed->matched_session->savedoldstate = *oldstate;
         } else if (gparsed->response->matched_session) {
             thissess = find_matched_session(p, sesslist,
                     gparsed->response->matched_session, gparsed->teid);
             *oldstate = gparsed->response->matched_session->current;
             gparsed->matched_session = gparsed->response->matched_session;
+            gparsed->matched_session->savedoldstate = *oldstate;
         }
 
         if (thissess) {
@@ -1426,6 +1491,7 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
             }
         }
         *newstate = gparsed->matched_session->current;
+        gparsed->matched_session->savednewstate = *newstate;
     }
 
     *action = gparsed->action;

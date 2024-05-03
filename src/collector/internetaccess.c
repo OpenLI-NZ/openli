@@ -103,6 +103,73 @@ static inline char *fast_strdup(char *orig, int origlen) {
     return dup;
 }
 
+static int generate_tagged_userid(user_identity_t *userid, char *taggedid,
+        int space) {
+
+    char *ptr = taggedid;
+    memset(taggedid, 0, space);
+
+    if (userid->method == USER_IDENT_GTP_MSISDN) {
+        memcpy(ptr, "msisdn:", strlen("msisdn:"));
+        ptr += strlen("msisdn:");
+    } else if (userid->method == USER_IDENT_GTP_IMSI) {
+        memcpy(ptr, "imsi:", strlen("imsi:"));
+        ptr += strlen("imsi:");
+    } else if (userid->method == USER_IDENT_GTP_IMEI) {
+        memcpy(ptr, "imei:", strlen("imei:"));
+        ptr += strlen("imei:");
+    }
+
+    if ((ptr - taggedid) + userid->idlength + 1 > space) {
+        logger(LOG_INFO,
+                "OpenLI: user identity string is too long!");
+        return -1;
+    }
+
+    memcpy(ptr, userid->idstr, userid->idlength);
+    return userid->idlength + (ptr - taggedid);
+}
+
+internet_user_t *lookup_user_by_identity(internet_user_t *allusers,
+        user_identity_t *userid) {
+
+    char taggedid[2048];
+    internet_user_t *found = NULL;
+
+    if (generate_tagged_userid(userid, taggedid, 2048) < 0) {
+        return NULL;
+    }
+    HASH_FIND(hh, allusers, taggedid, strlen(taggedid), found);
+    return found;
+}
+
+internet_user_t *lookup_user_by_intercept(internet_user_t *allusers,
+        ipintercept_t *ipint) {
+
+    char taggedid[2048];
+    internet_user_t *found = NULL;
+
+    if (generate_ipint_userkey(ipint, taggedid, 2048) < 0) {
+        return NULL;
+    }
+    HASH_FIND(hh, allusers, taggedid, strlen(taggedid), found);
+    return found;
+}
+
+int add_userid_to_allusers_map(internet_user_t **allusers,
+        internet_user_t *newuser, user_identity_t *userid) {
+
+    char taggedid[2048];
+
+    if (generate_tagged_userid(userid, taggedid, 2048) < 0) {
+        return -1;
+    }
+    newuser->userid = strdup(taggedid);
+    HASH_ADD_KEYPTR(hh, *allusers, newuser->userid, strlen(newuser->userid),
+            newuser);
+    return 0;
+}
+
 access_session_t *create_access_session(access_plugin_t *p, char *sessid,
         int sessid_len) {
     access_session_t *newsess;
@@ -191,15 +258,7 @@ void add_new_session_ip(access_session_t *sess, void *att_val,
     sess->sessipcount ++;
 }
 
-int free_single_session(internet_user_t *user, access_session_t *sess) {
-
-    if (user == NULL) {
-        logger(LOG_INFO,
-                "OpenLI: called free_single_session() for a NULL user!");
-        return -1;
-    }
-
-    HASH_DELETE(hh, user->sessions, sess);
+int free_single_session(access_session_t *sess) {
     free_session(sess);
     return 0;
 }

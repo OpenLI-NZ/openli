@@ -188,7 +188,7 @@ access_plugin_t *init_access_plugin(uint8_t accessmethod);
 void destroy_access_plugin(access_plugin_t *p);
 
 void free_all_users(internet_user_t *users);
-int free_single_session(internet_user_t *user, access_session_t *sess);
+int free_single_session(access_session_t *sess);
 
 access_plugin_t *get_radius_access_plugin(void);
 access_plugin_t *get_gtp_access_plugin(void);
@@ -200,6 +200,13 @@ void add_new_session_ip(access_session_t *sess, void *att_val,
 int remove_session_ip(access_session_t *sess, internetaccess_ip_t *sessip);
 
 const char *accesstype_to_string(internet_access_method_t am);
+
+internet_user_t *lookup_user_by_identity(internet_user_t *allusers,
+        user_identity_t *userid);
+int add_userid_to_allusers_map(internet_user_t **allusers,
+        internet_user_t *newuser, user_identity_t *userid);
+internet_user_t *lookup_user_by_intercept(internet_user_t *allusers,
+        ipintercept_t *ipint);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
