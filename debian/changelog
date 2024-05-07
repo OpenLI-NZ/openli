@@ -33,8 +33,10 @@ openli (1.1.5-1) unstable; urgency=medium
     when a collector disconnects.
   * Mediator: fix memory leak whenever a collector disconnects and subsequently
     reconnects.
+  * Collector: fix bug where intercepts that re-use an LIID will not produce
+    CCs.
 
- -- Shane Alcock <salcock@searchlight.nz>  Fri, 03 May 2024 10:08:02 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 08 May 2024 11:31:48 +1200
 
 openli (1.1.4-1) unstable; urgency=medium
 

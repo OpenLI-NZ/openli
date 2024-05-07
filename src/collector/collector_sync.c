@@ -1180,6 +1180,7 @@ static inline void remove_vendormirror_id(collector_sync_t *sync,
 static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
 
     openli_export_recv_t *expmsg;
+    int i;
 
     if (!ipint) {
         logger(LOG_INFO,
@@ -1212,6 +1213,16 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
         remove_vendormirror_id(sync, ipint);
     }
     publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], expmsg);
+    for (i = 0; i < sync->forwardcount; i++) {
+        expmsg = (openli_export_recv_t *)calloc(1,
+                sizeof(openli_export_recv_t));
+        expmsg->type = OPENLI_EXPORT_INTERCEPT_OVER;
+        expmsg->data.cept.liid = strdup(ipint->common.liid);
+        expmsg->data.cept.authcc = strdup(ipint->common.authcc);
+        expmsg->data.cept.delivcc = strdup(ipint->common.delivcc);
+        expmsg->data.cept.seqtrackerid = ipint->common.seqtrackerid;
+        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+    }
     free_single_ipintercept(ipint);
 }
 
