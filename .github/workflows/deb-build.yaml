@@ -21,6 +21,7 @@ jobs:
            - "debian:bullseye"
            - "ubuntu:focal"
            - "ubuntu:jammy"
+           - "ubuntu:noble"
 
      steps:
       - name: Checkout repo
@@ -57,6 +58,7 @@ jobs:
            - "ubuntu:focal"
            - "ubuntu:jammy"
            - "debian:bookworm"
+           - "ubuntu:noble"
      needs: build
      steps:
        - name: Set environment variables for download
@@ -102,6 +104,7 @@ jobs:
            - "debian:bookworm"
            - "ubuntu:focal"
            - "ubuntu:jammy"
+           - "ubuntu:noble"
      needs: test
      steps:
        - name: Set environment variables for download
@@ -115,7 +118,7 @@ jobs:
            mkdir -p packages/${DIRNAME}
            find . -name "*.deb" | xargs cp -t packages/${DIRNAME}/
        - name: Publish package to cloudsmith
-         uses: wanduow/action-cloudsmith-upload-packages@v1
+         uses: salcock/action-cloudsmith-upload-packages@v1.8
          with:
            path: packages/
            repo: ${{ secrets.CLOUDSMITH_OWNER }}/openli

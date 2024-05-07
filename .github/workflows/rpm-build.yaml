@@ -119,7 +119,7 @@ jobs:
            yum install -y findutils
            find . -name "*.rpm" | xargs cp -t packages/${DIRNAME}/
        - name: Publish package to cloudsmith
-         uses: wanduow/action-cloudsmith-upload-packages@v1
+         uses: salcock/action-cloudsmith-upload-packages@v1.8
          with:
            path: packages/
            repo: ${{ secrets.CLOUDSMITH_OWNER }}/openli
