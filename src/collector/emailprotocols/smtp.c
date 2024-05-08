@@ -165,38 +165,6 @@ void free_smtp_session_state(emailsession_t *sess, void *smtpstate) {
 
 }
 
-static void set_all_smtp_participants_inactive(smtp_session_t *smtpsess) {
-
-    PWord_t pval;
-    uint8_t index[1024];
-    smtp_participant_t *part;
-
-    index[0] = '\0';
-    JSLF(pval, smtpsess->senders, index);
-    while (pval != NULL) {
-        part = (smtp_participant_t *)(*pval);
-        if (!smtpsess->authenticated) {
-            part->active = 0;
-        }
-        part->ccs.curr_command = 0;
-        part->ccs.last_unsent = 0;
-        JSLN(pval, smtpsess->senders, index);
-    }
-
-    index[0] = '\0';
-    JSLF(pval, smtpsess->recipients, index);
-    while (pval != NULL) {
-        part = (smtp_participant_t *)(*pval);
-        part->active = 0;
-        part->ccs.curr_command = 0;
-        part->ccs.last_unsent = 0;
-        JSLN(pval, smtpsess->recipients, index);
-    }
-    if (!smtpsess->authenticated) {
-        smtpsess->activesender = NULL;
-    }
-}
-
 static int generate_smtp_ccs_from_saved(openli_email_worker_t *state,
         emailsession_t *sess, smtp_session_t *smtpsess,
         smtp_cc_list_t *ccs, const char *participant, uint8_t is_sender) {
@@ -270,6 +238,43 @@ static int generate_smtp_ccs_from_saved(openli_email_worker_t *state,
 
     ccs->last_unsent = ccs->curr_command;
     return 0;
+}
+
+static void set_all_smtp_participants_inactive(openli_email_worker_t *state,
+        emailsession_t *sess, smtp_session_t *smtpsess) {
+
+    PWord_t pval;
+    uint8_t index[1024];
+    smtp_participant_t *part;
+
+    index[0] = '\0';
+    JSLF(pval, smtpsess->senders, index);
+    while (pval != NULL) {
+        part = (smtp_participant_t *)(*pval);
+        generate_smtp_ccs_from_saved(state, sess, smtpsess, &(part->ccs),
+                index, 1);
+        if (!smtpsess->authenticated) {
+            part->active = 0;
+        }
+        part->ccs.curr_command = 0;
+        part->ccs.last_unsent = 0;
+        JSLN(pval, smtpsess->senders, index);
+    }
+
+    index[0] = '\0';
+    JSLF(pval, smtpsess->recipients, index);
+    while (pval != NULL) {
+        part = (smtp_participant_t *)(*pval);
+        generate_smtp_ccs_from_saved(state, sess, smtpsess, &(part->ccs),
+                index, 0);
+        part->active = 0;
+        part->ccs.curr_command = 0;
+        part->ccs.last_unsent = 0;
+        JSLN(pval, smtpsess->recipients, index);
+    }
+    if (!smtpsess->authenticated) {
+        smtpsess->activesender = NULL;
+    }
 }
 
 static int copy_smtp_command(smtp_cc_list_t *ccs, smtp_command_t *cmd) {
@@ -1767,7 +1772,7 @@ static int process_next_smtp_state(openli_email_worker_t *state,
             }
             if (sess->currstate != OPENLI_SMTP_STATE_DATA_OVER) {
                 clear_email_participant_list(sess);
-                set_all_smtp_participants_inactive(smtpsess);
+                set_all_smtp_participants_inactive(state, sess, smtpsess);
             }
             save_latest_command(state, sess, smtpsess, timestamp,
                     SMTP_COMMAND_TYPE_RSET, 1, 0);
