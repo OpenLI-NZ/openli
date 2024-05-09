@@ -58,6 +58,26 @@ int publish_openli_msg(void *pubsock, openli_export_recv_t *msg) {
     return 0;
 }
 
+openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common) {
+
+    openli_export_recv_t *expmsg;
+    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    expmsg->type = OPENLI_EXPORT_INTERCEPT_DETAILS;
+    expmsg->data.cept.liid = strdup(common->liid);
+    expmsg->data.cept.authcc = strdup(common->authcc);
+    expmsg->data.cept.delivcc = strdup(common->delivcc);
+    expmsg->data.cept.encryptmethod = common->encrypt;
+    if (common->encryptkey) {
+        expmsg->data.cept.encryptkey = strdup(common->encryptkey);
+    } else {
+        expmsg->data.cept.encryptkey = NULL;
+    }
+    expmsg->data.cept.seqtrackerid = common->seqtrackerid;
+
+    return expmsg;
+}
+
+
 void free_published_message(openli_export_recv_t *msg) {
 
     if (msg->type == OPENLI_EXPORT_IPCC || msg->type == OPENLI_EXPORT_IPMMCC
@@ -118,15 +138,46 @@ void free_published_message(openli_export_recv_t *msg) {
     free(msg);
 }
 
+openli_export_recv_t *create_rawip_cc_job_from_ip(char *liid,
+        uint32_t destid, void *l3, uint32_t l3_len, struct timeval tv) {
+
+    openli_export_recv_t *msg = NULL;
+    openli_pcap_header_t *pcap;
+
+    msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    if (msg == NULL) {
+        return msg;
+    }
+
+    msg->type = OPENLI_EXPORT_RAW_CC;
+    msg->destid = destid;
+    msg->ts = tv;
+
+    msg->data.rawip.liid = strdup(liid);
+    msg->data.rawip.ipcontent = malloc(l3_len + sizeof(openli_pcap_header_t));
+
+    pcap = (openli_pcap_header_t *)msg->data.rawip.ipcontent;
+    pcap->ts_sec = tv.tv_sec;
+    pcap->ts_usec = tv.tv_usec;
+    pcap->caplen = l3_len;
+    pcap->wirelen = l3_len;
+
+    memcpy(msg->data.rawip.ipcontent + sizeof(openli_pcap_header_t), l3,
+            l3_len);
+    msg->data.rawip.ipclen = l3_len + sizeof(openli_pcap_header_t);
+    msg->data.rawip.seqno = 0;
+    msg->data.rawip.cin = 0;
+
+    return msg;
+}
+
 openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
         libtrace_packet_t *pkt) {
 
     void *l3;
     uint32_t rem;
     uint16_t ethertype;
-    openli_export_recv_t *msg = NULL;
     struct timeval tv;
-    openli_pcap_header_t *pcap;
 
     l3 = trace_get_layer3(pkt, &ethertype, &rem);
 
@@ -136,31 +187,40 @@ openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
     }
 
     tv = trace_get_timeval(pkt);
+    return create_rawip_cc_job_from_ip(liid, destid, l3, rem, tv);
 
-    msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
-    if (msg == NULL) {
-        return msg;
+}
+
+int push_vendor_mirrored_ipcc_job(void *pubqueue,
+        intercept_common_t *common, struct timeval tv,
+        uint32_t cin, uint8_t dir, void *l3, uint32_t rem) {
+
+    openli_export_recv_t *msg;
+
+    if (common->targetagency == NULL || strcmp(common->targetagency,
+            "pcapdisk") == 0) {
+        msg = create_rawip_cc_job_from_ip(common->liid,
+                common->destid, l3, rem, tv);
+    } else {
+        msg = calloc(1, sizeof(openli_export_recv_t));
+
+        msg->type = OPENLI_EXPORT_IPCC;
+        msg->ts = tv;
+        msg->destid = common->destid;
+        msg->data.ipcc.liid = strdup(common->liid);
+        msg->data.ipcc.cin = cin;
+        msg->data.ipcc.dir = dir;
+        msg->data.ipcc.ipcontent = (uint8_t *)calloc(1, rem);
+        msg->data.ipcc.ipclen = rem;
+
+        memcpy(msg->data.ipcc.ipcontent, l3, rem);
     }
 
-    msg->type = OPENLI_EXPORT_RAW_CC;
-    msg->destid = destid;
-    msg->ts = trace_get_timeval(pkt);
-
-    msg->data.rawip.liid = strdup(liid);
-    msg->data.rawip.ipcontent = malloc(rem + sizeof(openli_pcap_header_t));
-
-    pcap = (openli_pcap_header_t *)msg->data.rawip.ipcontent;
-    pcap->ts_sec = tv.tv_sec;
-    pcap->ts_usec = tv.tv_usec;
-    pcap->caplen = rem;
-    pcap->wirelen = rem;
-
-    memcpy(msg->data.rawip.ipcontent + sizeof(openli_pcap_header_t), l3, rem);
-    msg->data.rawip.ipclen = rem + sizeof(openli_pcap_header_t);
-    msg->data.rawip.seqno = 0;
-    msg->data.rawip.cin = 0;
-
-    return msg;
+    if (msg) {
+        publish_openli_msg(pubqueue, msg);  //FIXME
+        return 1;
+    }
+    return 0;
 }
 
 openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,

@@ -1424,10 +1424,13 @@ sipgiveup:
 static int update_modified_voipintercept(collector_sync_voip_t *sync,
         voipintercept_t *vint, voipintercept_t *tomod) {
 
-    int changed = 0, keychanged = 0;
+    int changed = 0, encodingchanged = 0;
     char *tmp;
 
     sync->log_bad_instruct = 1;
+
+    encodingchanged = update_modified_intercept_common(&(vint->common),
+            &(tomod->common), OPENLI_INTERCEPT_TYPE_VOIP, &changed);
 
     if (tomod->options != vint->options) {
         if (tomod->options & (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
@@ -1439,74 +1442,17 @@ static int update_modified_voipintercept(collector_sync_voip_t *sync,
                     "OpenLI: VOIP intercept %s is now intercepting RTP comfort noise",
                     tomod->common.liid);
         }
-    }
-
-    if (tomod->common.tostart_time != vint->common.tostart_time ||
-            tomod->common.toend_time != vint->common.toend_time) {
+        vint->options = tomod->options;
         changed = 1;
-        logger(LOG_INFO,
-                "OpenLI: VOIP intercept %s has changed start / end times -- now %lu, %lu", tomod->common.liid, tomod->common.tostart_time, tomod->common.toend_time);
     }
 
-    if (tomod->common.tomediate != vint->common.tomediate) {
-        char space[1024];
-        changed = 1;
-        intercept_mediation_mode_as_string(tomod->common.tomediate, space,
-                1024);
-        logger(LOG_INFO,
-                "OpenLI: VOIP intercept %s has changed mediation mode to: %s",
-                vint->common.liid, space);
+    if (encodingchanged) {
+        openli_export_recv_t *expmsg;
+        expmsg = create_intercept_details_msg(&(vint->common));
+        expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
+        publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid],
+                expmsg);
     }
-
-    if (tomod->common.encrypt != vint->common.encrypt) {
-        char space[1024];
-        changed = 1;
-        intercept_encryption_mode_as_string(tomod->common.encrypt, space,
-                1024);
-        logger(LOG_INFO,
-                "OpenLI: VOIP intercept %s has changed encryption mode to: %s",
-                vint->common.liid, space);
-    }
-
-   if (vint->common.encryptkey && tomod->common.encryptkey) {
-        if (strcmp(vint->common.encryptkey, tomod->common.encryptkey) != 0)
-        {
-            keychanged = 1;
-        }
-    } else if (vint->common.encryptkey == NULL && tomod->common.encryptkey) {
-        keychanged = 1;
-    } else if (vint->common.encryptkey && tomod->common.encryptkey == NULL) {
-        keychanged = 1;
-    }
-
-    if (keychanged) {
-        changed = 1;
-        tmp = vint->common.encryptkey;
-        vint->common.encryptkey = tomod->common.encryptkey;
-        tomod->common.encryptkey = tmp;
-    }
-
-    if (strcmp(tomod->common.delivcc, vint->common.delivcc) != 0 ||
-            strcmp(tomod->common.authcc, vint->common.authcc) != 0) {
-
-        changed = 1;
-        tmp = vint->common.authcc;
-        vint->common.authcc = tomod->common.authcc;
-        vint->common.authcc_len = tomod->common.authcc_len;
-        tomod->common.authcc = tmp;
-
-        tmp = vint->common.delivcc;
-        vint->common.delivcc = tomod->common.delivcc;
-        vint->common.delivcc_len = tomod->common.delivcc_len;
-        tomod->common.delivcc = tmp;
-
-    }
-
-    vint->options = tomod->options;
-    vint->common.tostart_time = tomod->common.tostart_time;
-    vint->common.toend_time = tomod->common.toend_time;
-    vint->common.tomediate = tomod->common.tomediate;
-    vint->common.encrypt = tomod->common.encrypt;
 
     if (changed) {
         push_voip_intercept_update_to_threads(sync, vint);
@@ -1718,15 +1664,9 @@ static int new_voip_sip_target(collector_sync_voip_t *sync, uint8_t *intmsg,
     }
 
     sync->log_bad_instruct = 1;
-    if (sipid.realm) {
-        logger(LOG_INFO,
-                "OpenLI: collector received new SIP target %s@%s for LIID %s.",
-                sipid.username, sipid.realm, vint->common.liid);
-    } else {
-        logger(LOG_INFO,
-                "OpenLI: collector received new SIP target %s@* for LIID %s.",
-                sipid.username, vint->common.liid);
-    }
+    logger(LOG_INFO,
+            "OpenLI: collector received new SIP target for LIID %s.",
+            vint->common.liid);
 
     add_new_sip_target_to_list(vint, &sipid);
     return 0;
@@ -1764,15 +1704,9 @@ static int withdraw_voip_sip_target(collector_sync_voip_t *sync,
     }
 
     sync->log_bad_instruct = 1;
-    if (sipid.realm) {
-        logger(LOG_INFO,
-                "OpenLI: collector is withdrawing SIP target %s@%s for LIID %s.",
-                sipid.username, sipid.realm, vint->common.liid);
-    } else {
-        logger(LOG_INFO,
-                "OpenLI: collector is withdrawing SIP target %s@* for LIID %s.",
-                sipid.username, vint->common.liid);
-    }
+    logger(LOG_INFO,
+            "OpenLI: collector is withdrawing SIP target for LIID %s.",
+            vint->common.liid);
     disable_sip_target_from_list(vint, &sipid);
 
 withdrawend:
@@ -2098,16 +2032,6 @@ static void post_disable_unconfirmed_voip_target(openli_sip_identity_t *sipid,
     collector_sync_voip_t *sync = (collector_sync_voip_t *)(arg);
     if (sync == NULL || v == NULL || sipid == NULL) {
         return;
-    }
-
-    if (sipid->realm) {
-        logger(LOG_INFO,
-                "OpenLI: removing unconfirmed SIP target %s@%s for LIID %s",
-                sipid->username, sipid->realm, v->common.liid);
-    } else {
-        logger(LOG_INFO,
-                "OpenLI: removing unconfirmed SIP target %s@* for LIID %s",
-                sipid->username, v->common.liid);
     }
 
     /* remove any active calls for this identity */

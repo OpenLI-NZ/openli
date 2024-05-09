@@ -253,6 +253,8 @@ two key-value elements:
 * port -- the port that the sink is listening on for mirrored traffic
 
 
+### Email interception options
+
 When performing email interception, mail protocol sessions will be ended as
 soon as the protocol "closing" command (i.e. "QUIT" for SMTP, "BYE" for IMAP)
 are observed. However, OpenLI will also expire any incomplete mail protocol
@@ -269,6 +271,24 @@ are:
 * imap (default is 30 minutes)
 * pop3 (default is 10 minutes)
 
+
+An email intercept target may have configured an auto-forward on any
+mail that arrives in their mailbox. By default, the SMTP session for an
+auto-forward may not be intercepted by OpenLI as the address of the
+forwarder does not appear in the SMTP protocol messages. Instead, the
+forwarder address is typically included in an RFC-822 message header within the
+mail body itself, but the name of the header may differ between mail service
+implementations (for instance, Sieve rules in Dovecot will add a
+`X-Sieve-Redirected-From` header).
+
+To ensure that auto-forwarding behaviour is intercepted correctly by OpenLI,
+you can use the `emailforwardingheaders` configuration option to provide a
+list of headers that you want OpenLI to check for the appearance of a target
+email address (in addition to the normal MAIL FROM and RCPT TO checks). The
+`emailforwardingheaders` option takes the form of a YAML sequence, so you
+can provide multiple header names if necessary. Note that only mail content
+observed for SMTP sessions will be examined for the presence of these
+headers.
 
 ### Email ingestion service
 Instead of intercepting email by capturing all SMTP, POP3 and/or IMAP traffic

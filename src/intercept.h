@@ -442,7 +442,8 @@ void free_single_staticiprange(static_ipranges_t *ipr);
 void free_single_email_target(email_target_t *tgt);
 
 int update_modified_intercept_common(intercept_common_t *current,
-        intercept_common_t *update, openli_intercept_types_t cepttype);
+        intercept_common_t *update, openli_intercept_types_t cepttype,
+        int *changed);
 
 /* Create a comma-separated string containing all of the SIP target IDs
  * for a VoIP intercept.

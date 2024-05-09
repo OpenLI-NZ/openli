@@ -468,8 +468,10 @@ int generate_email_logoff_iri_for_user(openli_email_worker_t *state,
             /* only generate login events for targets who are sending mail */
             return 0;
         }
-        intlist = active_tgt->intlist;
-        tgtaddr = active_tgt->origaddress;
+        if (active_tgt) {
+            intlist = active_tgt->intlist;
+            tgtaddr = active_tgt->origaddress;
+        }
     } else {
         intlist = active_addr->intlist;
         tgtaddr = active_addr->emailaddr;

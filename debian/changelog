@@ -1,3 +1,43 @@
+openli (1.1.5-1) unstable; urgency=medium
+
+  * Fix bug where pcap disk output was not producing pcap files for IP
+    intercepts that were wrapped in a vendor mirroring header.
+  * Fix bug where changing an existing intercept to use the
+    pcapdisk agency would not result in pcap files being written for
+    that intercept.
+  * Mediator: fixed log spam of "pcap file opened" messages when in fact
+    no file was being created due to the lack of intercepted traffic for
+    that intercept.
+  * SMTP: add ability to detect automatic email forwarding by searching
+    for certain message headers in the email content. The set of headers
+    to search for must be defined by the user in the collector configuration
+    file.
+  * Remove target identities from collector log messages.
+  * Enable TCP keep alives on all inter-component communications sessions.
+  * Fix issue where socket-level errors would not be properly detected on
+    the control socket linking the provisioner and a collector.
+  * Fix bugs in the TCP reassembly of SIP messages which would prevent
+    certain large SIP messages from being properly reassembled.
+  * SIP: do not throw a parsing error if a callee is defined using a
+    "tel:" URL.
+  * Fix assertion failure if a RADIUS session is missing a NASIdentifier
+    AVP.
+  * RADIUS: do not attempt to remove IP->session mappings that would never
+    have existed in the first place.
+  * Fix incorrect ETSI encoding of email recipients lists.
+  * SIP: add support for extracting target identities from the
+    P-Preferred-Identity header (only if `sipallowfromident` is enabled).
+  * SIP: fix failure to intercept subsequent calls if the 5 tuple for the
+    SIP sessions is exactly the same.
+  * Mediator: fix failure to acknowledge received RMQ messages when exiting, or
+    when a collector disconnects.
+  * Mediator: fix memory leak whenever a collector disconnects and subsequently
+    reconnects.
+  * Collector: fix bug where intercepts that re-use an LIID may not produce
+    CCs in certain circumstances.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 08 May 2024 11:31:48 +1200
+
 openli (1.1.4-1) unstable; urgency=medium
 
   * Add support for intercepting SMS messages delivered via SIP (i.e.

@@ -570,6 +570,42 @@ char *get_sip_from_uri_username(openli_sip_parser_t *parser) {
     return uriuser;
 }
 
+char *get_sip_to_uri_scheme(openli_sip_parser_t *parser) {
+
+    char *scheme;
+
+    osip_uri_t *uri;
+    osip_to_t *to = osip_message_get_to(parser->osip);
+
+    if (to == NULL) {
+        return NULL;
+    }
+    uri = osip_to_get_url(to);
+    if (uri == NULL) {
+        return NULL;
+    }
+    scheme = osip_uri_get_scheme(uri);
+    return scheme;
+}
+
+char *get_sip_from_uri_scheme(openli_sip_parser_t *parser) {
+
+    char *scheme;
+
+    osip_uri_t *uri;
+    osip_to_t *from = osip_message_get_from(parser->osip);
+
+    if (from == NULL) {
+        return NULL;
+    }
+    uri = osip_to_get_url(from);
+    if (uri == NULL) {
+        return NULL;
+    }
+    scheme = osip_uri_get_scheme(uri);
+    return scheme;
+}
+
 char *get_sip_to_uri_username(openli_sip_parser_t *parser) {
 
     char *uriuser;
@@ -645,34 +681,92 @@ char *get_sip_from_uri_realm(openli_sip_parser_t *parser) {
 int get_sip_to_uri_identity(openli_sip_parser_t *parser,
         openli_sip_identity_t *sipid) {
 
-    sipid->username = get_sip_to_uri_username(parser);
-    if (sipid->username == NULL) {
+    char *scheme = get_sip_to_uri_scheme(parser);
+    if (scheme == NULL) {
         return -1;
     }
-    sipid->username_len = strlen(sipid->username);
 
-    sipid->realm = get_sip_to_uri_realm(parser);
-    if (sipid->realm == NULL) {
-        return -1;
+    if (strcmp(scheme, "tel") == 0) {
+        /* TODO do we need to support targets using tel: ?
+         * Would be slightly annoying because libosip2 doesn't seem
+         * to handle tel nicely.
+         */
+
+        /* For now, just ignore tel: URIs */
+        sipid->realm = NULL;
+        sipid->realm_len = 0;
+
+        sipid->username = NULL;
+        sipid->username_len = 0;
+        sipid->active = 0;
+    } else if (strcmp(scheme, "sip") == 0 || strcmp(scheme, "sips") == 0) {
+        sipid->username = get_sip_to_uri_username(parser);
+        if (sipid->username == NULL) {
+            return -1;
+        }
+        sipid->username_len = strlen(sipid->username);
+
+        sipid->realm = get_sip_to_uri_realm(parser);
+        if (sipid->realm == NULL) {
+            return -1;
+        }
+        sipid->realm_len = strlen(sipid->realm);
+    } else {
+        logger(LOG_INFO, "OpenLI: unexpected SIP scheme '%s', ignoring",
+                scheme);
+        sipid->realm = NULL;
+        sipid->realm_len = 0;
+
+        sipid->username = NULL;
+        sipid->username_len = 0;
+        sipid->active = 0;
     }
-    sipid->realm_len = strlen(sipid->realm);
     return 1;
 }
 
 int get_sip_from_uri_identity(openli_sip_parser_t *parser,
         openli_sip_identity_t *sipid) {
 
-    sipid->username = get_sip_from_uri_username(parser);
-    if (sipid->username == NULL) {
+    char *scheme = get_sip_from_uri_scheme(parser);
+    if (scheme == NULL) {
         return -1;
     }
-    sipid->username_len = strlen(sipid->username);
 
-    sipid->realm = get_sip_from_uri_realm(parser);
-    if (sipid->realm == NULL) {
-        return -1;
+    if (strcmp(scheme, "tel") == 0) {
+        /* TODO do we need to support targets using tel: ?
+         * Would be slightly annoying because libosip2 doesn't seem
+         * to handle tel nicely.
+         */
+
+        /* For now, just ignore tel: URIs */
+        sipid->realm = NULL;
+        sipid->realm_len = 0;
+
+        sipid->username = NULL;
+        sipid->username_len = 0;
+        sipid->active = 0;
+    } else if (strcmp(scheme, "sip") == 0 || strcmp(scheme, "sips") == 0) {
+        sipid->username = get_sip_from_uri_username(parser);
+        if (sipid->username == NULL) {
+            return -1;
+        }
+        sipid->username_len = strlen(sipid->username);
+
+        sipid->realm = get_sip_from_uri_realm(parser);
+        if (sipid->realm == NULL) {
+            return -1;
+        }
+        sipid->realm_len = strlen(sipid->realm);
+    } else {
+        logger(LOG_INFO, "OpenLI: unexpected SIP scheme '%s', ignoring",
+                scheme);
+        sipid->realm = NULL;
+        sipid->realm_len = 0;
+
+        sipid->username = NULL;
+        sipid->username_len = 0;
+        sipid->active = 0;
     }
-    sipid->realm_len = strlen(sipid->realm);
     return 1;
 }
 
@@ -821,14 +915,17 @@ char *get_sip_callid(openli_sip_parser_t *parser) {
 
 static inline int extract_identity(openli_sip_identity_t *sipid, char *start) {
     char *idstring, *at, *end, *ptr;
+    uint8_t saw_wrapping = 0;
 
     /* Make sure we strip the '<' and '>' that wrap the identity value */
-    start = strchr((const char *)start, '<');
-    if (start == NULL) {
-        return -1;
+    idstring = strchr((const char *)start, '<');
+    if (idstring != NULL) {
+        idstring = strdup(idstring + 1);
+        saw_wrapping = 1;
+    } else {
+        idstring = strdup(start);
     }
 
-    idstring = strdup(start + 1);
     ptr = strip_sip_uri(idstring);
     if (ptr == NULL) {
         free(idstring);
@@ -842,13 +939,15 @@ static inline int extract_identity(openli_sip_identity_t *sipid, char *start) {
     }
 
     ptr += 1;
-    end = strchr((const char *)ptr, '>');
-    if (end != NULL) {
-        *end = '\0';
-    }
+    if (saw_wrapping) {
+        end = strchr((const char *)ptr, '>');
+        if (end != NULL) {
+            *end = '\0';
+        }
 
-    if (ptr[strlen(ptr) - 1] == '>') {
-        ptr[strlen(ptr) - 1] = '\0';
+        if (ptr[strlen(ptr) - 1] == '>') {
+            ptr[strlen(ptr) - 1] = '\0';
+        }
     }
 
     at = strchr((const char *)ptr, '@');
@@ -868,26 +967,6 @@ static inline int extract_identity(openli_sip_identity_t *sipid, char *start) {
     free(idstring);
 
     return 1;
-}
-
-int get_sip_remote_party(openli_sip_parser_t *parser,
-        openli_sip_identity_t *sipid) {
-
-    char *start;
-    osip_header_t *hdr;
-
-    osip_message_header_get_byname(parser->osip, "Remote-Party-ID",
-            0, &hdr);
-    if (hdr == NULL) {
-        return 0;
-    }
-
-    /* dangerously assuming that this will be null terminated... */
-    start = osip_header_get_value(hdr);
-    if (start == NULL) {
-        return 0;
-    }
-    return extract_identity(sipid, start);
 }
 
 int get_sip_paccess_network_info(openli_sip_parser_t *parser,
@@ -926,13 +1005,13 @@ int get_sip_paccess_network_info(openli_sip_parser_t *parser,
     return *loc_cnt;
 }
 
-int get_sip_passerted_identity(openli_sip_parser_t *parser,
-        openli_sip_identity_t *sipid) {
+int get_sip_identity_by_header_name(openli_sip_parser_t *parser,
+        openli_sip_identity_t *sipid, const char *header) {
+
     char *start;
     osip_header_t *hdr;
 
-    osip_message_header_get_byname(parser->osip, "P-Asserted-Identity",
-            0, &hdr);
+    osip_message_header_get_byname(parser->osip, header, 0, &hdr);
     if (hdr == NULL) {
         return 0;
     }
@@ -1258,7 +1337,8 @@ int extract_sip_identities(openli_sip_parser_t *parser,
         }
     }
 
-    if (get_sip_passerted_identity(parser, &(idset->passertid)) < 0) {
+    if (get_sip_identity_by_header_name(parser, &(idset->passertid),
+                "P-Asserted-Identity") < 0) {
         if (log_error) {
             logger(LOG_INFO,
                     "OpenLI: error while extracting P-Asserted-Identity from SIP message");
@@ -1266,7 +1346,17 @@ int extract_sip_identities(openli_sip_parser_t *parser,
         return -1;
     }
 
-    if (get_sip_remote_party(parser, &(idset->remotepartyid)) < 0) {
+    if (get_sip_identity_by_header_name(parser, &(idset->ppreferredid),
+                "P-Preferred-Identity") < 0) {
+        if (log_error) {
+            logger(LOG_INFO,
+                    "OpenLI: error while extracting P-Preferred-Identity from SIP message");
+        }
+        return -1;
+    }
+
+    if (get_sip_identity_by_header_name(parser, &(idset->remotepartyid),
+                "Remote-Party-ID") < 0) {
         if (log_error) {
             logger(LOG_INFO,
                     "OpenLI: error while extracting Remote-Party from SIP message");
@@ -1288,10 +1378,6 @@ openli_sip_identity_t *match_sip_target_against_identities(
     if ((matched = sipid_matches_target(targets, &(idset->touriid)))) {
         return matched;
     }
-    if (trust_from && (matched = sipid_matches_target(targets,
-            &(idset->fromuriid)))) {
-        return matched;
-    }
     if ((matched = sipid_matches_target(targets, &(idset->passertid)))) {
         return matched;
     }
@@ -1310,6 +1396,16 @@ openli_sip_identity_t *match_sip_target_against_identities(
             return matched;
         }
     }
+
+    if (trust_from && (matched = sipid_matches_target(targets, &(idset->ppreferredid)))) {
+        return matched;
+    }
+
+    if (trust_from && (matched = sipid_matches_target(targets,
+            &(idset->fromuriid)))) {
+        return matched;
+    }
+
     return NULL;
 }
 
@@ -1325,6 +1421,12 @@ void release_openli_sip_identity_set(openli_sip_identity_set_t *idset) {
     }
     if (idset->passertid.realm) {
         free(idset->passertid.realm);
+    }
+    if (idset->ppreferredid.username) {
+        free(idset->ppreferredid.username);
+    }
+    if (idset->ppreferredid.realm) {
+        free(idset->ppreferredid.realm);
     }
     if (idset->remotepartyid.username) {
         free(idset->remotepartyid.username);

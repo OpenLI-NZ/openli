@@ -194,12 +194,21 @@ struct openli_export_recv {
 int publish_openli_msg(void *pubsock, openli_export_recv_t *msg);
 void free_published_message(openli_export_recv_t *msg);
 
+openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common);
+
 openli_export_recv_t *create_ipcc_job(
         uint32_t cin, char *liid, uint32_t destid, libtrace_packet_t *pkt,
         uint8_t dir);
 
 openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
         libtrace_packet_t *pkt);
+
+openli_export_recv_t *create_rawip_cc_job_from_ip(char *liid,
+        uint32_t destid, void *l3, uint32_t l3_len, struct timeval tv);
+
+int push_vendor_mirrored_ipcc_job(void *pubqueue,
+        intercept_common_t *common, struct timeval tv,
+        uint32_t cin, uint8_t dir, void *l3, uint32_t rem);
 
 void copy_location_into_ipmmiri_job(openli_export_recv_t *dest,
         openli_location_t *loc, int loc_count);

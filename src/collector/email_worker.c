@@ -724,12 +724,12 @@ static void start_email_intercept(openli_email_worker_t *state,
 static int update_modified_email_intercept(openli_email_worker_t *state,
         emailintercept_t *found, emailintercept_t *decode) {
     openli_export_recv_t *expmsg;
-    int encodingchanged = 0;
+    int encodingchanged = 0, changed = 0;
 
     found->delivercompressed = decode->delivercompressed;
 
     encodingchanged = update_modified_intercept_common(&(found->common),
-            &(decode->common), OPENLI_INTERCEPT_TYPE_EMAIL);
+            &(decode->common), OPENLI_INTERCEPT_TYPE_EMAIL, &changed);
 
     if (encodingchanged < 0) {
         free_single_emailintercept(decode);
@@ -958,7 +958,7 @@ static int process_email_target_withdraw(openli_email_worker_t *state,
 
     if (remove_intercept_from_email_user_intercept_list(&(state->alltargets),
             found, tgt) < 0) {
-        logger(LOG_INFO, "OpenLI: email worker thread %d failed to remove email target %s for intercept %s", state->emailid, tgt->address, liid);
+        logger(LOG_INFO, "OpenLI: email worker thread %d failed to remove email target for intercept %s", state->emailid, liid);
         return -1;
     }
 
@@ -1015,7 +1015,7 @@ static int add_email_target(openli_email_worker_t *state,
         return -1;
     }
     if (strlen(tgt->address) > 1023) {
-        logger(LOG_INFO, "OpenLI: insanely long email address for %s target -- %s\n", liid, tgt->address);
+        logger(LOG_INFO, "OpenLI: insanely long email address for %s target\n", liid);
         return -1;
     }
 
@@ -1049,7 +1049,7 @@ static int add_email_target(openli_email_worker_t *state,
 
     if (add_intercept_to_email_user_intercept_list(&(state->alltargets),
             found, tgt) < 0) {
-        logger(LOG_INFO, "OpenLI: email worker thread %d failed to add email target %s for intercept %s", state->emailid, tgt->address, liid);
+        logger(LOG_INFO, "OpenLI: email worker thread %d failed to add email target for intercept %s", state->emailid, liid);
         return -1;
     }
 

@@ -117,6 +117,7 @@ access_session_t *create_access_session(access_plugin_t *p, char *sessid,
     newsess->sessionips = calloc(SESSION_IP_INCR, sizeof(internetaccess_ip_t));
     newsess->sessipcount = 0;
     newsess->sessipversion = SESSION_IP_VERSION_NONE;
+    newsess->ips_mapped = 0;
 
 	newsess->iriseqno = 0;
 	newsess->started.tv_sec = 0;

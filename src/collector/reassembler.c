@@ -112,8 +112,8 @@ void remove_tcp_reassemble_stream(tcp_reassembler_t *reass,
 
     tcp_reassemble_stream_t *existing;
 
-    HASH_FIND(hh, reass->knownstreams, &(stream->streamid),
-            sizeof(stream->streamid), existing);
+    HASH_FIND(hh, reass->knownstreams, stream->streamid,
+            sizeof(tcp_streamid_t), existing);
 
     if (existing) {
         HASH_DELETE(hh, reass->knownstreams, existing);
@@ -205,14 +205,19 @@ tcp_reassemble_stream_t *get_tcp_reassemble_stream(tcp_reassembler_t *reass,
 
     tcp_reassemble_stream_t *existing;
 
-    HASH_FIND(hh, reass->knownstreams, &id, sizeof(id), existing);
+    HASH_FIND(hh, reass->knownstreams, id, sizeof(tcp_streamid_t), existing);
     if (existing) {
-        if (tcprem > 0 && !tcp->syn &&
+        if (tcp->syn) {
+            HASH_DELETE(hh, reass->knownstreams, existing);
+            destroy_tcp_reassemble_stream(existing);
+            existing = create_new_tcp_reassemble_stream(reass->method, id,
+                    ntohl(tcp->seq));
+            HASH_ADD_KEYPTR(hh, reass->knownstreams, existing->streamid,
+                    sizeof(tcp_streamid_t), existing);
+        } else if (tcprem > 0 && !tcp->syn &&
                 existing->established == TCP_STATE_OPENING) {
             existing->established = TCP_STATE_ESTAB;
-        }
-
-        if (existing->established == TCP_STATE_ESTAB &&
+        } else if (existing->established == TCP_STATE_ESTAB &&
                 (tcp->fin || tcp->rst)) {
             existing->established = TCP_STATE_CLOSING;
         }
@@ -240,8 +245,8 @@ tcp_reassemble_stream_t *get_tcp_reassemble_stream(tcp_reassembler_t *reass,
     }
 
     purge_inactive_tcp_streams(reass, tv->tv_sec);
-    HASH_ADD_KEYPTR(hh, reass->knownstreams, &(existing->streamid),
-            sizeof(existing->streamid), existing);
+    HASH_ADD_KEYPTR(hh, reass->knownstreams, existing->streamid,
+            sizeof(tcp_streamid_t), existing);
     existing->lastts = tv->tv_sec;
     return existing;
 }
@@ -326,7 +331,8 @@ tcp_reassemble_stream_t *create_new_tcp_reassemble_stream(
     stream->segments = NULL;
     stream->expectedseqno = synseq + 1;
     stream->sorted = 0;
-    stream->streamid = *streamid;
+    stream->streamid = calloc(1, sizeof(tcp_streamid_t));
+    memcpy(stream->streamid, streamid, sizeof(tcp_streamid_t));
     stream->lastts = 0;
     stream->established = TCP_STATE_OPENING;
 
@@ -342,6 +348,7 @@ void destroy_tcp_reassemble_stream(tcp_reassemble_stream_t *stream) {
         free(iter);
     }
 
+    free(stream->streamid);
     free(stream);
 }
 
@@ -516,7 +523,6 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
      * has our expected sequence number -- if yes, we can tell the caller
      * to just use the packet payload directly without memcpying
      */
-
     if (seq_cmp(seqno, stream->expectedseqno) == 0) {
         if (endptr == content + plen) {
             stream->expectedseqno += plen;
@@ -699,14 +705,14 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
         memcpy(contstart, iter->content + iter->offset,
                 iter->length);
 
-        endfound = find_sip_message_end((uint8_t *)((*content) + checked),
-                (contused - checked) + iter->length);
+        endfound = find_sip_message_end((uint8_t *)(*content),
+                (contused + iter->length));
 
         if (endfound) {
             assert(endfound <= contstart + iter->length);
             assert(endfound > contstart);
 
-            used = endfound - (contstart);
+            used = endfound - (uint8_t *)(*content);
 
             stream->expectedseqno += used;
             if (contstart + iter->length == endfound) {
@@ -746,8 +752,8 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
      * went.
      */
     if (contused > 0 || expseqno > stream->expectedseqno) {
-        update_tcp_reassemble_stream(stream, (uint8_t *)(*content), contused,
-                stream->expectedseqno);
+        update_tcp_reassemble_stream(stream, (uint8_t *)(*content),
+                contused, stream->expectedseqno);
     }
     *len = 0;
     return 0;

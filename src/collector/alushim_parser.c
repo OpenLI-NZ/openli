@@ -83,28 +83,6 @@ static inline int alushim_get_direction(alushimhdr_t *aluhdr) {
     return 2;
 }
 
-static void push_alu_ipcc_job(colthread_local_t *loc, libtrace_packet_t *packet,
-        vendmirror_intercept_t *alu, uint32_t cin, uint8_t dir,
-        collector_identity_t *info, void *l3, uint32_t rem) {
-
-    openli_export_recv_t *msg;
-    msg = calloc(1, sizeof(openli_export_recv_t));
-
-    msg->type = OPENLI_EXPORT_IPCC;
-    msg->ts = trace_get_timeval(packet);
-    msg->destid = alu->common.destid;
-    msg->data.ipcc.liid = strdup(alu->common.liid);
-    msg->data.ipcc.cin = cin;
-    msg->data.ipcc.dir = dir;
-    msg->data.ipcc.ipcontent = (uint8_t *)calloc(1, rem);
-    msg->data.ipcc.ipclen = rem;
-
-    memcpy(msg->data.ipcc.ipcontent, l3, rem);
-
-    publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
-
-}
-
 int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
         coreserver_t *alusources, vendmirror_intercept_list_t *aluints) {
@@ -194,8 +172,13 @@ int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
         }
 
         /* Create an appropriate IPCC and export it */
-        push_alu_ipcc_job(loc, packet, alu, cin,
-                alushim_get_direction(aluhdr), info, l3, rem);
+        if (push_vendor_mirrored_ipcc_job(loc->zmq_pubsocks[0], &(alu->common),
+                trace_get_timeval(packet), cin, alushim_get_direction(aluhdr),
+                l3, rem) == 0) {
+            /* for some reason, we failed to create or send the IPCC to
+             * the sequencing thread? */
+
+        }
     }
 
     return 1;

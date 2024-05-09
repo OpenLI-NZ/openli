@@ -108,6 +108,15 @@ emailsessiontimeouts:
   - imap: 30
   - pop3: 10
 
+# RFC-822 headers in the mail body where the presence of a intercept target's
+# email address would indicate that the email was automatically forwarded by
+# the target (and therefore the target should be considered as the sender
+# of the email).
+#
+# emailforwardingheaders:
+#   - "X-Sieve-Redirected-From"
+
+
 # Email ingestion service configuration -- instead of intercepting email
 # by capturing traffic from an interface, OpenLI can also receive email
 # application messages that are POSTed to this HTTP service. This is
