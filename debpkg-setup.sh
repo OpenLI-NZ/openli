@@ -25,7 +25,7 @@ case ${DISTRO} in
                 sed -i 's/ dh-systemd (>=1.5),//' debian/control
         ;;
 
-        jammy )
+        jammy | noble )
                 sed -i 's/ dh-systemd (>=1.5),//' debian/control
         ;;
 
