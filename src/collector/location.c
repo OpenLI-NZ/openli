@@ -147,14 +147,12 @@ int encode_user_location_information(char *uli, int space, int *uli_len,
         openli_location_t *locations, uint8_t location_cnt,
         uint32_t location_types) {
 
-    uint16_t *lenfield = (uint16_t *)uli;
-    uint16_t used = 3;
-    uint8_t *ptr;
+    uint16_t used = 0;
+    uint8_t *ptr = (uint8_t *)uli;
     int i, n = 1;
 
     memset(uli, 0, space);
 
-    ptr = ((uint8_t *)uli) + used;
     if (location_types > 255) {
         logger(LOG_INFO, "OpenLI: invalid location type flags: %u\n",
                 location_types);
@@ -184,9 +182,7 @@ int encode_user_location_information(char *uli, int space, int *uli_len,
         n *= 2;
     }
 
-    *lenfield = htons(used - 3);
     *uli_len = used;
-
     return 1;
 }
 
