@@ -1,3 +1,9 @@
+openli (1.1.6-1) unstable; urgency=medium
+
+  * Fix incorrect encoding of userLocationInformation field.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 15 May 2024 15:03:19 +1200
+
 openli (1.1.5-1) unstable; urgency=medium
 
   * Fix bug where pcap disk output was not producing pcap files for IP
