@@ -1034,7 +1034,8 @@ int generate_ipint_userkey(ipintercept_t *ipint, char *space,
     int used = 0;
 
     memset(space, 0, spacelen);
-    if (ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_MSISDN) {
+    if (ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_MSISDN ||
+            ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED) {
         memcpy(ptr, "msisdn:", strlen("msisdn:"));
         ptr += strlen("msisdn:");
     } else if (ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_IMSI) {

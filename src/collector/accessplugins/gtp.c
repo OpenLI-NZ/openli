@@ -131,6 +131,8 @@ typedef struct gtp_sess_saved {
     uint8_t loc_version;
 } PACKED gtp_sess_saved_t;
 
+typedef struct gtp_saved_packet gtp_saved_pkt_t;
+
 typedef struct gtp_session {
 
     char *sessid;
@@ -159,10 +161,9 @@ typedef struct gtp_session {
     uint8_t last_reqtype;
     session_state_t savedoldstate;
     session_state_t savednewstate;
+    gtp_saved_pkt_t *lastsavedpkt;
 
 } gtp_session_t;
-
-typedef struct gtp_saved_packet gtp_saved_pkt_t;
 
 struct gtp_saved_packet {
     uint64_t reqid;
@@ -1240,9 +1241,8 @@ static void copy_session_params_v2(gtp_parsed_t *gparsed,
 }
 
 static void apply_gtp_fsm_logic(gtp_parsed_t *gparsed, access_action_t *action,
-        access_session_t *sess, gtp_saved_pkt_t *gpkt) {
-
-    session_state_t current = gparsed->matched_session->current;
+        access_session_t *sess, gtp_saved_pkt_t *gpkt,
+        session_state_t current) {
 
     if (gpkt->version == 1) {
         copy_session_params_v1(gparsed, gpkt);
@@ -1352,8 +1352,11 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
         thissess = find_matched_session(p, sesslist, gparsed->matched_session,
                 gparsed->teid);
         *oldstate = gparsed->matched_session->savedoldstate;
+        apply_gtp_fsm_logic(gparsed, action, thissess,
+                        gparsed->matched_session->lastsavedpkt,
+                        gparsed->matched_session->savedoldstate);
+
         *newstate = gparsed->matched_session->savednewstate;
-        *action = gparsed->action;
         return thissess;
     }
 
@@ -1373,6 +1376,7 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
     gparsed->ies = NULL;
     gparsed->matched_session->last_reqid = reqid;
     gparsed->matched_session->last_reqtype = gparsed->msgtype;
+    gparsed->matched_session->lastsavedpkt = saved;
 
     openli_copy_ipcontent(gparsed->origpkt, &(saved->ipcontent),
             &(saved->iplen));
@@ -1393,7 +1397,7 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
                 *oldstate = gparsed->matched_session->current;
                 gparsed->matched_session->savedoldstate = *oldstate;
                 apply_gtp_fsm_logic(gparsed, &(gparsed->action), thissess,
-                        saved);
+                        saved, *oldstate);
                 *newstate = gparsed->matched_session->current;
                 gparsed->matched_session->savednewstate = *newstate;
                 saved->applied = 1;
@@ -1483,11 +1487,11 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
         if (thissess) {
             if (gparsed->request->applied == 0) {
                 apply_gtp_fsm_logic(gparsed, &(gparsed->action), thissess,
-                        gparsed->request);
+                        gparsed->request, gparsed->matched_session->current);
             }
             if (gparsed->response->applied == 0) {
                 apply_gtp_fsm_logic(gparsed, &(gparsed->action), thissess,
-                        gparsed->response);
+                        gparsed->response, gparsed->matched_session->current);
             }
         }
         *newstate = gparsed->matched_session->current;

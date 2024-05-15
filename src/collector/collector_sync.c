@@ -1219,12 +1219,14 @@ static int update_modified_intercept(collector_sync_t *sync,
     int changed = 0;
     int encodingchanged = 0;
 
-    if (strcmp(ipint->username, modified->username) != 0) {
+    if (strcmp(ipint->username, modified->username) != 0
+            || ipint->mobileident != modified->mobileident) {
         push_ipintercept_halt_to_threads(sync, ipint);
         remove_intercept_from_user_intercept_list(&sync->userintercepts, ipint);
 
         free(ipint->username);
         ipint->username = modified->username;
+        ipint->mobileident = modified->mobileident;
         modified->username = NULL;
         add_intercept_to_user_intercept_list(&sync->userintercepts, ipint);
 
@@ -1919,12 +1921,6 @@ static int remove_ip_to_session_mapping(collector_sync_t *sync,
                 sizeof(internetaccess_ip_t), mapping);
 
         if (!mapping) {
-            logger(LOG_INFO,
-                "OpenLI: attempt to remove session mapping for IP %s, but the mapping doesn't exist?",
-                sockaddr_to_string(
-                    (struct sockaddr *)&(sess->sessionips[i].assignedip),
-                    ipstr, 128));
-            errs ++;
             continue;
         }
 
@@ -2043,6 +2039,7 @@ static int add_ip_to_session_mapping(collector_sync_t *sync,
         newmap->session[0] = sess;
         newmap->owner[0] = iuser;
 
+
         HASH_ADD_KEYPTR(hh, sync->activeips, &newmap->ip,
                 sizeof(internetaccess_ip_t), newmap);
 
@@ -2099,8 +2096,6 @@ static int newly_active_session(collector_sync_t *sync,
     int mapret = 0;
     sync_sendq_t *sendq, *tmpq;
     ipintercept_t *ipint, *tmp;
-
-    printf("newly active session for %s\n", iuser->userid);
 
     if (sess->sessipcount > 0) {
         mapret = add_ip_to_session_mapping(sync, sess, iuser);
