@@ -963,6 +963,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->username_len = 0;
         newcept->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
         newcept->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
+        newcept->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
         newcept->statics = NULL;
         newcept->options = 0;
 
@@ -1034,6 +1035,14 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                     radchosen = 1;
                 }
 
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "mobileident")
+                    == 0) {
+                newcept->mobileident = map_mobile_ident_string(
+                        (char *)value->data.scalar.value);
             }
         }
 

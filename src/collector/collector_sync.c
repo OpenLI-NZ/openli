@@ -440,8 +440,7 @@ static void generate_startend_ipiris(collector_sync_t *sync,
         create_ipiri_job_from_iprange(sync, ipr, ipint, irirequired);
     }
 
-    HASH_FIND(hh, sync->allusers, ipint->username, ipint->username_len,
-            user);
+    user = lookup_user_by_intercept(sync->allusers, ipint);
 
     if (user == NULL) {
         return;
@@ -841,8 +840,7 @@ static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
         remove_staticiprange(sync, ipr);
     }
 
-    HASH_FIND(hh, sync->allusers, ipint->username, ipint->username_len,
-            user);
+    user = lookup_user_by_intercept(sync->allusers, ipint);
 
     if (user == NULL) {
         return;
@@ -916,8 +914,7 @@ static void push_ipintercept_update_to_threads(collector_sync_t *sync,
         }
     }
 
-    HASH_FIND(hh, sync->allusers, ipint->username, ipint->username_len,
-            user);
+    user = lookup_user_by_intercept(sync->allusers, ipint);
 
     if (user == NULL) {
         return;
@@ -1089,7 +1086,7 @@ static void push_existing_user_sessions(collector_sync_t *sync,
     sync_sendq_t *tmp, *sendq;
     internet_user_t *user;
 
-    HASH_FIND(hh, sync->allusers, cept->username, cept->username_len, user);
+    user = lookup_user_by_intercept(sync->allusers, cept);
 
     if (user) {
         access_session_t *sess, *tmp2;
@@ -1233,12 +1230,15 @@ static int update_modified_intercept(collector_sync_t *sync,
     int changed = 0;
     int encodingchanged = 0;
 
-    if (strcmp(ipint->username, modified->username) != 0) {
+    if (strcmp(ipint->username, modified->username) != 0
+            || ipint->mobileident != modified->mobileident) {
         push_ipintercept_halt_to_threads(sync, ipint);
         remove_intercept_from_user_intercept_list(&sync->userintercepts, ipint);
 
         free(ipint->username);
         ipint->username = modified->username;
+        ipint->mobileident = modified->mobileident;
+        modified->username = NULL;
         add_intercept_to_user_intercept_list(&sync->userintercepts, ipint);
 
         push_existing_user_sessions(sync, ipint);
@@ -1894,7 +1894,7 @@ static void push_all_active_intercepts(collector_sync_t *sync,
     HASH_ITER(hh_liid, intlist, orig, tmp) {
         /* Do we have a valid user that matches the target username? */
         if (orig->username != NULL) {
-            HASH_FIND(hh, allusers, orig->username, orig->username_len, user);
+            user = lookup_user_by_intercept(allusers, orig);
             if (user) {
                 HASH_ITER(hh, user->sessions, sess, tmp2) {
                     push_single_ipintercept(sync, q, orig, sess);
@@ -1932,12 +1932,6 @@ static int remove_ip_to_session_mapping(collector_sync_t *sync,
                 sizeof(internetaccess_ip_t), mapping);
 
         if (!mapping) {
-            logger(LOG_INFO,
-                "OpenLI: attempt to remove session mapping for IP %s, but the mapping doesn't exist?",
-                sockaddr_to_string(
-                    (struct sockaddr *)&(sess->sessionips[i].assignedip),
-                    ipstr, 128));
-            errs ++;
             continue;
         }
 
@@ -2003,7 +1997,8 @@ static inline int report_silent_logoffs(collector_sync_t *sync,
         }
 
         if (remove_session_ip(prev->session[i], &(prev->ip)) == 1) {
-            free_single_session(prev->owner[i], prev->session[i]);
+            HASH_DELETE(hh, prev->owner[i]->sessions, prev->session[i]);
+            free_single_session(prev->session[i]);
         }
     }
     HASH_DELETE(hh, sync->activeips, prev);
@@ -2055,6 +2050,7 @@ static int add_ip_to_session_mapping(collector_sync_t *sync,
         newmap->session[0] = sess;
         newmap->owner[0] = iuser;
 
+
         HASH_ADD_KEYPTR(hh, sync->activeips, &newmap->ip,
                 sizeof(internetaccess_ip_t), newmap);
 
@@ -2067,7 +2063,7 @@ static inline internet_user_t *lookup_userid(collector_sync_t *sync,
 
     internet_user_t *iuser;
 
-    HASH_FIND(hh, sync->allusers, userid->idstr, userid->idlength, iuser);
+    iuser = lookup_user_by_identity(sync->allusers, userid);
     if (iuser == NULL) {
         iuser = (internet_user_t *)malloc(sizeof(internet_user_t));
 
@@ -2075,12 +2071,10 @@ static inline internet_user_t *lookup_userid(collector_sync_t *sync,
             logger(LOG_INFO, "OpenLI: unable to allocate memory for new Internet user");
             return NULL;
         }
-        iuser->userid = userid->idstr;
-        userid->idstr = NULL;
+        iuser->userid = NULL;
         iuser->sessions = NULL;
 
-        HASH_ADD_KEYPTR(hh, sync->allusers, iuser->userid,
-                userid->idlength, iuser);
+        add_userid_to_allusers_map(&(sync->allusers), iuser, userid);
     }
     return iuser;
 }
@@ -2174,7 +2168,7 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     access_plugin_t *p = NULL;
     user_identity_t *identities = NULL;
     internet_user_t *iuser;
-    access_session_t *sess;
+    access_session_t *sess = NULL;
     access_action_t accessaction;
     session_state_t oldstate, newstate;
     user_intercept_list_t *userint;
@@ -2182,6 +2176,9 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
     int expcount = 0;
     void *parseddata = NULL;
     int i, ret, useridcnt = 0;
+
+    oldstate = SESSION_STATE_NEW;
+    newstate = SESSION_STATE_NEW;
 
     if (accesstype == ACCESS_RADIUS) {
         p = sync->radiusplugin;
@@ -2224,16 +2221,16 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
             ret = -1;
             break;
         }
-
-        sess = p->update_session_state(p, parseddata, identities[i].plugindata,
-                &(iuser->sessions), &oldstate, &newstate, &accessaction);
+        sess = p->update_session_state(p, parseddata,
+                identities[i].plugindata, &(iuser->sessions), &oldstate,
+                &newstate, &accessaction);
         if (!sess) {
             /* Unable to assign packet to a session, just quietly ignore it */
             continue;
         }
 
         HASH_FIND(hh, sync->userintercepts, iuser->userid,
-                identities[i].idlength, userint);
+                strlen(iuser->userid), userint);
 
         if (oldstate != newstate) {
             if (newstate == SESSION_STATE_ACTIVE) {
@@ -2289,11 +2286,12 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
                 }
             }
         }
-
-        if (oldstate != newstate && newstate == SESSION_STATE_OVER) {
-            free_single_session(iuser, sess);
+        if (sess && oldstate != newstate && newstate == SESSION_STATE_OVER) {
+            HASH_DELETE(hh, iuser->sessions, sess);
+            free_single_session(sess);
         }
     }
+
 
 endupdate:
     if (parseddata) {

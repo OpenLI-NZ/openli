@@ -659,6 +659,23 @@ static int emit_ipintercepts(ipintercept_t *ipints, yaml_emitter_t *emitter) {
             if (!yaml_emitter_emit(emitter, &event)) return -1;
         }
 
+        if (ipint->mobileident != OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED) {
+            const char *mobtype = NULL;
+
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"mobileident", strlen("mobileident"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+            mobtype = get_mobile_identifier_string(ipint->mobileident);
+
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)mobtype, strlen(mobtype), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
+
         if (ipint->options & (1<<OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID) &&
                 !(ipint->options & (1<<OPENLI_IPINT_OPTION_RADIUS_IDENT_USER)))
         {

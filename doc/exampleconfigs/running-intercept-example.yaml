@@ -143,6 +143,8 @@ ipintercepts:
    mediator: 6001               # ID of the mediator to send intercept via
    agencyid: "Police"           # ID of agency to send intercept to
    accesstype: "mobile"         # Must be "mobile" for UMTS intercepts
+   mobileident: "msisdn"        # Intercept sessions where the MSISDN matches
+                                # the "user" value
    payloadencryption: "aes-192-cbc"     # Encrypt IP content using AES-192-CBC
    encryptionkey: "alongencryptionkeyisgood"  # Key to use for encryption,
                                               # should be provided by the agency
