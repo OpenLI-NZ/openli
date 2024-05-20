@@ -1,8 +1,13 @@
 openli (1.1.6-1) unstable; urgency=medium
 
   * Fix incorrect encoding of userLocationInformation field.
+  * Add support for IMSI and IMEI as target identifiers for mobile
+    data (IP) intercepts.
+  * Added new parameter for IP intercepts: mobileident -- this is
+    used to indicate whether the user identifier for a mobile data
+    intercept is an MSISDN, IMEI or IMSI.
 
- -- Shane Alcock <salcock@searchlight.nz>  Wed, 15 May 2024 15:03:19 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Tue, 21 May 2024 11:24:07 +1200
 
 openli (1.1.5-1) unstable; urgency=medium
 
