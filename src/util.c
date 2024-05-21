@@ -62,6 +62,73 @@ void openli_copy_ipcontent(libtrace_packet_t *pkt, uint8_t **ipc,
 	*iplen = rem;
 }
 
+int add_to_string_set(string_set_t **set, char *term) {
+
+    string_set_t *toadd, *found;
+    int termlen;
+
+    if (set == NULL || term == NULL) {
+        return -1;
+    }
+
+    termlen = strlen(term);
+    HASH_FIND(hh, *set, term, termlen, found);
+    if (found) {
+        return 0;
+    }
+
+    toadd = calloc(1, sizeof(string_set_t));
+    toadd->term = strdup(term);
+    toadd->termlen = termlen;
+
+    HASH_ADD_KEYPTR(hh, *set, toadd->term, toadd->termlen, toadd);
+    return 1;
+}
+
+int search_string_set(string_set_t *set, char *term) {
+
+    string_set_t *found;
+
+    if (term == NULL) {
+        return 0;
+    }
+
+    HASH_FIND(hh, set, term, strlen(term), found);
+    if (found) {
+        return 1;
+    }
+    return 0;
+}
+
+int remove_from_string_set(string_set_t **set, char *term) {
+
+    string_set_t *found;
+    if (term == NULL) {
+        return 0;
+    }
+
+    HASH_FIND(hh, *set, term, strlen(term), found);
+    if (found) {
+        HASH_DELETE(hh, *set, found);
+        free(found->term);
+        free(found);
+        return 1;
+    }
+    return 0;
+}
+
+void purge_string_set(string_set_t **set) {
+
+    string_set_t *iter, *tmp;
+
+    HASH_ITER(hh, *set, iter, tmp) {
+        HASH_DELETE(hh, *set, iter);
+        free(iter->term);
+        free(iter);
+    }
+
+}
+
 int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
         uint8_t setkeepalive) {
 

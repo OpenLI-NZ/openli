@@ -34,6 +34,7 @@
 #include "etsili_core.h"
 #include "intercept.h"
 #include "internetaccess.h"
+#include "location.h"
 
 enum {
     OPENLI_EXPORT_HALT_WORKER = 1,
@@ -101,6 +102,11 @@ typedef struct openli_ipmmiri_job {
     uint8_t ipsrc[16];
     uint8_t ipdest[16];
     int ipfamily;
+
+    openli_location_t *locations;
+    uint8_t location_cnt;
+    uint32_t location_types;
+    uint8_t location_encoding;
 }  openli_ipmmiri_job_t;
 
 typedef struct openli_mobiri_job {
@@ -188,12 +194,24 @@ struct openli_export_recv {
 int publish_openli_msg(void *pubsock, openli_export_recv_t *msg);
 void free_published_message(openli_export_recv_t *msg);
 
+openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common);
+
 openli_export_recv_t *create_ipcc_job(
         uint32_t cin, char *liid, uint32_t destid, libtrace_packet_t *pkt,
         uint8_t dir);
 
 openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
         libtrace_packet_t *pkt);
+
+openli_export_recv_t *create_rawip_cc_job_from_ip(char *liid,
+        uint32_t destid, void *l3, uint32_t l3_len, struct timeval tv);
+
+int push_vendor_mirrored_ipcc_job(void *pubqueue,
+        intercept_common_t *common, struct timeval tv,
+        uint32_t cin, uint8_t dir, void *l3, uint32_t rem);
+
+void copy_location_into_ipmmiri_job(openli_export_recv_t *dest,
+        openli_location_t *loc, int loc_count);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

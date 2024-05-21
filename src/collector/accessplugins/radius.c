@@ -1635,7 +1635,8 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
 
     /* TODO fall back to NAS-IP */
     if (raduser->nasidentifier == NULL) {
-        assert(0);
+        raduser->nasidentifier = strdup("unknown");
+        raduser->nasid_len = strlen(raduser->nasidentifier);
     }
 
     ptr = sessionid;

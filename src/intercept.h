@@ -59,6 +59,13 @@ typedef enum {
 } internet_access_method_t;
 
 typedef enum {
+    OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED = 0,
+    OPENLI_MOBILE_IDENTIFIER_MSISDN = 1,
+    OPENLI_MOBILE_IDENTIFIER_IMSI = 2,
+    OPENLI_MOBILE_IDENTIFIER_IMEI = 3,
+} openli_mobile_identifier_t;
+
+typedef enum {
     OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED = 0,
     OPENLI_PAYLOAD_ENCRYPTION_NONE = 1,
     OPENLI_PAYLOAD_ENCRYPTION_NATIONAL = 2,
@@ -157,6 +164,7 @@ typedef struct ipintercept {
 
     static_ipranges_t *statics;
 
+    openli_mobile_identifier_t mobileident;
     uint8_t awaitingconfirm;
     uint32_t options;
     UT_hash_handle hh_liid;
@@ -442,7 +450,8 @@ void free_single_staticiprange(static_ipranges_t *ipr);
 void free_single_email_target(email_target_t *tgt);
 
 int update_modified_intercept_common(intercept_common_t *current,
-        intercept_common_t *update, openli_intercept_types_t cepttype);
+        intercept_common_t *update, openli_intercept_types_t cepttype,
+        int *changed);
 
 /* Create a comma-separated string containing all of the SIP target IDs
  * for a VoIP intercept.
@@ -517,12 +526,17 @@ int add_intercept_to_email_user_intercept_list(
         email_user_intercept_list_t *ulist, emailintercept_t *em,
         email_target_t *tgt);
 
+int generate_ipint_userkey(ipintercept_t *ipint, char *space,
+        int spacelen);
+
+const char *get_mobile_identifier_string(openli_mobile_identifier_t idtype);
 const char *get_access_type_string(internet_access_method_t method);
 const char *get_radius_ident_string(uint32_t radoptions);
 internet_access_method_t map_access_type_string(char *confstr);
 uint32_t map_radius_ident_string(char *confstr);
 payload_encryption_method_t map_encrypt_method_string(char *encstr);
 uint8_t map_email_decompress_option_string(char *decstr);
+openli_mobile_identifier_t map_mobile_ident_string(char *idstr);
 
 void intercept_mediation_mode_as_string(intercept_outputs_t mode,
         char *space, int spacelen);

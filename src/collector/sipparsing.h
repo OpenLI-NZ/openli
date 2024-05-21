@@ -35,6 +35,7 @@
 
 #include "intercept.h"
 #include "reassembler.h"
+#include "location.h"
 
 typedef enum {
     SIP_IPV4_TCP,
@@ -57,6 +58,13 @@ enum {
     SIP_ACTION_REASSEMBLE_IPFRAG,
 };
 
+enum {
+    SIP_PROCESSING_PARSING,
+    SIP_PROCESSING_UPDATING_STATE,
+    SIP_PROCESSING_EXTRACTING_IPS,
+    SIP_PROCESSING_ADD_PARSER,
+};
+
 typedef struct sipserverdetails {
     sipproto_t proto;
     union {
@@ -76,6 +84,7 @@ typedef struct openli_sip_identity_set {
     openli_sip_identity_t fromuriid;
     openli_sip_identity_t remotepartyid;
     openli_sip_identity_t passertid;
+    openli_sip_identity_t ppreferredid;
     openli_sip_identity_t *proxyauths;
     openli_sip_identity_t *regauths;
     int proxyauthcount;
@@ -123,6 +132,8 @@ int get_sip_auth_identity(openli_sip_parser_t *parser, int index,
 int get_sip_proxy_auth_identity(openli_sip_parser_t *parser, int index,
         int *authcount, openli_sip_identity_t *sipid,
         uint8_t logallowed);
+int get_sip_paccess_network_info(openli_sip_parser_t *parser,
+        openli_location_t **loc, int *loc_cnt);
 int get_sip_passerted_identity(openli_sip_parser_t *parser,
         openli_sip_identity_t *sipid);
 int get_sip_remote_party(openli_sip_parser_t *parser,

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2023 The OpenLI Foundation
+ * Copyright (c) 2023 Searchlight NZ
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -74,13 +74,13 @@ static inline uint32_t job_origreq_to_encrypted_payload_type(
     return OPENLI_ENCRYPTED_PAYLOAD_TYPE_UNKNOWN;
 }
 
-void etsili_destroy_encrypted_templates(openli_encoder_t *enc) {
+void etsili_destroy_encrypted_templates(Pvoid_t templates) {
     Word_t indexint;
     PWord_t pval;
     int rcint;
 
     indexint = 0;
-    JLF(pval, enc->saved_encryption_templates, indexint);
+    JLF(pval, templates, indexint);
     while (pval) {
         encoded_encrypt_template_t *t;
 
@@ -89,9 +89,9 @@ void etsili_destroy_encrypted_templates(openli_encoder_t *enc) {
             free(t->start);
         }
         free(t);
-        JLN(pval, enc->saved_encryption_templates, indexint);
+        JLN(pval, templates, indexint);
     }
-    JLFA(rcint, enc->saved_encryption_templates);
+    JLFA(rcint, templates);
 
 
 }
@@ -207,7 +207,7 @@ static int etsili_create_encrypted_template(wandder_encoder_t *encoder,
 }
 
 static encoded_encrypt_template_t *lookup_encrypted_template(
-        openli_encoder_t *enc, uint16_t length,
+        Pvoid_t *saved_encryption_templates, uint16_t length,
         payload_encryption_method_t method, uint8_t *is_new) {
 
     PWord_t pval;
@@ -215,12 +215,12 @@ static encoded_encrypt_template_t *lookup_encrypted_template(
     encoded_encrypt_template_t *tplate = NULL;
 
     key = (method << 16) + length;
-    JLG(pval, enc->saved_encryption_templates, key);
+    JLG(pval, *saved_encryption_templates, key);
 
     if (pval == NULL) {
         tplate = calloc(1, sizeof(encoded_encrypt_template_t));
         tplate->key = key;
-        JLI(pval, enc->saved_encryption_templates, key);
+        JLI(pval, *saved_encryption_templates, key);
         *pval = (Word_t)tplate;
         *is_new = 1;
     } else {
@@ -276,7 +276,8 @@ static int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx,
 
 }
 
-int create_encrypted_message_body(openli_encoder_t *enc,
+int create_encrypted_message_body(wandder_encoder_t *encoder,
+                encrypt_encode_state_t *encrypt,
                 openli_encoded_result_t *res,
                 encoded_header_template_t *hdr_tplate,
                 uint8_t *payloadbody, uint16_t bodylen,
@@ -362,18 +363,18 @@ int create_encrypted_message_body(openli_encoder_t *enc,
     ptr++;
 
     /* next four bytes are the unix timestamp when we first started */
-    if (enc->encrypt_byte_startts == 0) {
+    if (encrypt->byte_startts == 0) {
         struct timeval tv;
         gettimeofday(&tv, NULL);
         /* this never changes so we can just store it pre-byteswapped */
-        enc->encrypt_byte_startts = htonl(tv.tv_sec);
+        encrypt->byte_startts = htonl(tv.tv_sec);
     }
-    memcpy(ptr, &enc->encrypt_byte_startts, sizeof(uint32_t));
+    memcpy(ptr, &encrypt->byte_startts, sizeof(uint32_t));
 
     ptr += sizeof(uint32_t);
 
     /* followed by the byte counter (in network byte order) */
-    bytecounter = htonl(enc->encrypt_byte_counter);
+    bytecounter = htonl(encrypt->byte_counter);
     memcpy(ptr, &bytecounter, sizeof(uint32_t));
     ptr += sizeof(uint32_t);
 
@@ -381,7 +382,7 @@ int create_encrypted_message_body(openli_encoder_t *enc,
      * of the "unencrypted" record, not the encrypted one...
      */
     bc_increase = calculate_pspdu_length(inplen + hdr_tplate->header_len);
-    enc->encrypt_byte_counter += bc_increase;
+    encrypt->byte_counter += bc_increase;
 
 
     /* Put the body contents and any additional IP packet content into
@@ -402,9 +403,9 @@ int create_encrypted_message_body(openli_encoder_t *enc,
     }
 
     /* If this is our first time through, we'll need an encryption context */
-    if (enc->evp_ctx == NULL) {
-        enc->evp_ctx = EVP_CIPHER_CTX_new();
-        if (enc->evp_ctx == NULL) {
+    if (encrypt->evp_ctx == NULL) {
+        encrypt->evp_ctx = EVP_CIPHER_CTX_new();
+        if (encrypt->evp_ctx == NULL) {
             logger(LOG_INFO, "OpenLI: unable to create EVP encryption context -- openssl error %s", ERR_error_string(ERR_get_error(), NULL));
             return -1;
         }
@@ -412,8 +413,8 @@ int create_encrypted_message_body(openli_encoder_t *enc,
 
     /* Do the encryption */
     if (job->encryptmethod == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
-        if (encrypt_aes_192_cbc(enc->evp_ctx, buf, enclen, encrypted, enclen,
-                job->seqno, job->encryptkey) < 0) {
+        if (encrypt_aes_192_cbc(encrypt->evp_ctx, buf, enclen, encrypted,
+                enclen, job->seqno, job->encryptkey) < 0) {
             return -1;
         }
     } else {
@@ -423,14 +424,14 @@ int create_encrypted_message_body(openli_encoder_t *enc,
     free(buf);
 
     /* Lookup the template for a message of this length and encryption method */
-    tplate = lookup_encrypted_template(enc, enclen, job->encryptmethod,
-            &is_new);
+    tplate = lookup_encrypted_template(&(encrypt->saved_encryption_templates),
+            enclen, job->encryptmethod, &is_new);
 
     /* If we need to create a template, then do so -- otherwise, update
      * the one that we already have.
      */
     if (is_new) {
-        if (etsili_create_encrypted_template(enc->encoder, job->preencoded,
+        if (etsili_create_encrypted_template(encoder, job->preencoded,
                 job->encryptmethod, encrypted, enclen, tplate, job) < 0) {
             free(encrypted);
             return -1;

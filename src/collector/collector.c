@@ -565,7 +565,7 @@ static void add_payload_info_from_packet(libtrace_packet_t *pkt,
     transport = trace_get_transport(pkt, &proto, &rem);
 
     if (transport == NULL || rem == 0) {
-        pinfo->trans_proto == 255;
+        pinfo->trans_proto = 255;
         return;
     }
 
@@ -1471,6 +1471,10 @@ static void clear_global_config(collector_global_t *glob) {
         free(glob->default_email_domain);
     }
 
+    if (glob->email_forwarding_headers) {
+        purge_string_set(&(glob->email_forwarding_headers));
+    }
+
     if (glob->sharedinfo.operatorid) {
         free(glob->sharedinfo.operatorid);
     }
@@ -1688,6 +1692,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->mask_imap_creds = 1;      // defaults to "enabled"
     glob->mask_pop3_creds = 1;      // defaults to "enabled"
     glob->default_email_domain = NULL;
+    glob->email_forwarding_headers = NULL;
     glob->email_ingest_use_targetid = 0; // defaults to "disabled"   XXX for now
 }
 
@@ -1763,6 +1768,18 @@ static collector_global_t *parse_global_config(char *configfile) {
     if (glob->default_email_domain) {
         logger(LOG_INFO, "Using '%s' as the default email domain",
                 glob->default_email_domain);
+    }
+
+    if (glob->email_forwarding_headers) {
+        string_set_t *s, *tmp;
+        HASH_ITER(hh, glob->email_forwarding_headers, s, tmp) {
+            if (s->term == NULL) {
+                continue;
+            }
+            logger(LOG_INFO,
+                    "Using '%s' as the header to detect email forwards",
+                    s->term);
+        }
     }
 
     logger(LOG_DEBUG, "OpenLI: session idle timeout for SMTP sessions: %u minutes", glob->email_timeouts.smtp);
@@ -1954,6 +1971,10 @@ static int reload_collector_config(collector_global_t *glob,
         glob->default_email_domain = newstate.default_email_domain;
         newstate.default_email_domain = NULL;
     }
+
+    purge_string_set(&(glob->email_forwarding_headers));
+    glob->email_forwarding_headers = newstate.email_forwarding_headers;
+    newstate.email_forwarding_headers = NULL;
 
     glob->mask_imap_creds = newstate.mask_imap_creds;
     glob->mask_pop3_creds = newstate.mask_pop3_creds;
@@ -2266,6 +2287,8 @@ int main(int argc, char *argv[]) {
         glob->emailworkers[i].email_ingest_use_targetid =
                 &(glob->email_ingest_use_targetid);
         glob->emailworkers[i].defaultdomain = &(glob->default_email_domain);
+        glob->emailworkers[i].email_forwarding_headers =
+                &(glob->email_forwarding_headers);
         glob->emailworkers[i].timeout_thresholds = &(glob->email_timeouts);
         glob->emailworkers[i].default_compress_delivery =
                 OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
@@ -2309,11 +2332,11 @@ int main(int argc, char *argv[]) {
         glob->encoders[i].freegenerics = NULL;
         glob->encoders[i].saved_intercept_templates = NULL;
         glob->encoders[i].saved_global_templates = NULL;
-        glob->encoders[i].saved_encryption_templates = NULL;
 
-        glob->encoders[i].encrypt_byte_counter = 0;
-        glob->encoders[i].encrypt_byte_startts = 0;
-        glob->encoders[i].evp_ctx = NULL;
+        glob->encoders[i].encrypt.byte_counter = 0;
+        glob->encoders[i].encrypt.byte_startts = 0;
+        glob->encoders[i].encrypt.evp_ctx = NULL;
+        glob->encoders[i].encrypt.saved_encryption_templates = NULL;
         glob->encoders[i].seqtrackers = glob->seqtracker_threads;
         glob->encoders[i].forwarders = glob->forwarding_threads;
 

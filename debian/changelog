@@ -1,11 +1,68 @@
-openli (1.1.4-1~rc04) unstable; urgency=medium
+openli (1.1.6-1) unstable; urgency=medium
+
+  * Fix incorrect encoding of userLocationInformation field.
+  * Add support for IMSI and IMEI as target identifiers for mobile
+    data (IP) intercepts.
+  * Added new parameter for IP intercepts: mobileident -- this is
+    used to indicate whether the user identifier for a mobile data
+    intercept is an MSISDN, IMEI or IMSI.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Tue, 21 May 2024 11:24:07 +1200
+
+openli (1.1.5-1) unstable; urgency=medium
+
+  * Fix bug where pcap disk output was not producing pcap files for IP
+    intercepts that were wrapped in a vendor mirroring header.
+  * Fix bug where changing an existing intercept to use the
+    pcapdisk agency would not result in pcap files being written for
+    that intercept.
+  * Mediator: fixed log spam of "pcap file opened" messages when in fact
+    no file was being created due to the lack of intercepted traffic for
+    that intercept.
+  * SMTP: add ability to detect automatic email forwarding by searching
+    for certain message headers in the email content. The set of headers
+    to search for must be defined by the user in the collector configuration
+    file.
+  * Remove target identities from collector log messages.
+  * Enable TCP keep alives on all inter-component communications sessions.
+  * Fix issue where socket-level errors would not be properly detected on
+    the control socket linking the provisioner and a collector.
+  * Fix bugs in the TCP reassembly of SIP messages which would prevent
+    certain large SIP messages from being properly reassembled.
+  * SIP: do not throw a parsing error if a callee is defined using a
+    "tel:" URL.
+  * Fix assertion failure if a RADIUS session is missing a NASIdentifier
+    AVP.
+  * RADIUS: do not attempt to remove IP->session mappings that would never
+    have existed in the first place.
+  * Fix incorrect ETSI encoding of email recipients lists.
+  * SIP: add support for extracting target identities from the
+    P-Preferred-Identity header (only if `sipallowfromident` is enabled).
+  * SIP: fix failure to intercept subsequent calls if the 5 tuple for the
+    SIP sessions is exactly the same.
+  * Mediator: fix failure to acknowledge received RMQ messages when exiting, or
+    when a collector disconnects.
+  * Mediator: fix memory leak whenever a collector disconnects and subsequently
+    reconnects.
+  * Collector: fix bug where intercepts that re-use an LIID may not produce
+    CCs in certain circumstances.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 08 May 2024 11:31:48 +1200
+
+openli (1.1.4-1) unstable; urgency=medium
 
   * Add support for intercepting SMS messages delivered via SIP (i.e.
     when transporting SMS using an IMS).
+  * IPMMIRI: include targetLocation field if a P-Access-Network-Info
+    field is in the SIP header and the location is provided as a
+    3GPP-E-UTRAN-FDD. targetLocation is encoded as a UserLocationInformation
+    element within an epsLocation element.
   * POP3: fix oversight preventing POP3 identities from being extracted for
     sessions using the AUTH command.
   * Email: fix segfault if no user identity has been found for an otherwise
     authenticated session.
+  * IMAP/POP3: fix bug introduced in 1.1.3 that would produce duplicate
+    IRIs when the intercept target was the sender of the email.
   * IMAP: fix bug where PLAIN AUTH credentials could be replaced with
     garbage if the `maskimapcreds` configuration option was disabled.
   * POP3: fix bug where `maskpop3creds` configuration option was ignored.
@@ -21,8 +78,12 @@ openli (1.1.4-1~rc04) unstable; urgency=medium
     before processing.
   * Email: fix double-free on collector exit if a default email domain
     had been configured.
+  * Pcap output: do not generate IRIs for VoIP intercepts that are being
+    written using the `pcapdisk` agency.
+  * Pcap output: fix bug introduced in 1.1.3 that was causing IPMMCCs to
+    not be written to the pcap files.
 
- -- Shane Alcock <salcock@searchlight.nz>  Thu, 14 Dec 2023 11:45:41 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Sat, 20 Jan 2024 17:17:25 +1300
 
 openli (1.1.3-1) unstable; urgency=high
 

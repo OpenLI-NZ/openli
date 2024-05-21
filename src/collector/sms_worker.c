@@ -31,6 +31,7 @@
 #include "util.h"
 #include "logger.h"
 #include "ipmmiri.h"
+#include "location.h"
 
 #include <assert.h>
 #include <math.h>
@@ -92,10 +93,10 @@ static void init_sms_voip_intercept(openli_sms_worker_t *state,
 static int update_modified_sms_voip_intercept(openli_sms_worker_t *state,
         voipintercept_t *found, voipintercept_t *decode) {
 
-    int r = 0;
+    int r = 0, changed = 0;
 
     if (update_modified_intercept_common(&(found->common),
-            &(decode->common), OPENLI_INTERCEPT_TYPE_VOIP) < 0) {
+            &(decode->common), OPENLI_INTERCEPT_TYPE_VOIP, &changed) < 0) {
         r = -1;
     }
 
@@ -265,7 +266,8 @@ static int remove_sms_sip_target(openli_sms_worker_t *state,
 }
 
 static void generate_sms_ipmmiri(openli_sms_worker_t *state,
-        intercept_common_t *common, int64_t cin, openli_export_recv_t *irimsg) {
+        intercept_common_t *common, int64_t cin, openli_export_recv_t *irimsg,
+        openli_location_t *loc, int loc_count) {
 
     openli_export_recv_t *copy;
 
@@ -285,6 +287,8 @@ static void generate_sms_ipmmiri(openli_sms_worker_t *state,
     copy->data.ipmmiri.content = malloc(copy->data.ipmmiri.contentlen);
     memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,
             irimsg->data.ipmmiri.contentlen);
+
+    copy_location_into_ipmmiri_job(copy, loc, loc_count);
 
     pthread_mutex_lock(state->stats_mutex);
     state->stats->ipmmiri_created ++;
@@ -516,6 +520,11 @@ static int process_sms_sip_packet(openli_sms_worker_t *state,
     struct timeval tv;
     openli_export_recv_t irimsg;
     uint8_t trust_sip_from;
+    openli_location_t *locptr;
+    int loc_cnt, r;
+
+    locptr = NULL;
+    loc_cnt = 0;
 
     if (state->sipparser == NULL) {
         state->sipparser = (openli_sip_parser_t *)calloc(1,
@@ -581,6 +590,12 @@ static int process_sms_sip_packet(openli_sms_worker_t *state,
     gettimeofday(&tv, NULL);
     cid_list->last_observed = tv.tv_sec;
 
+    if ((r = get_sip_paccess_network_info(state->sipparser, &locptr,
+                    &loc_cnt)) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: P-Access-Network-Info is malformed?");
+    }
+
     memset(&irimsg, 0, sizeof(openli_export_recv_t));
     irimsg.type = OPENLI_EXPORT_IPMMIRI;
     irimsg.data.ipmmiri.ipmmiri_style = OPENLI_IPMMIRI_SIP;
@@ -613,7 +628,11 @@ static int process_sms_sip_packet(openli_sms_worker_t *state,
                     irimsg.data.ipmmiri.contentlen);
         }
         /* build and send an IRI for this particular intercept */
-        generate_sms_ipmmiri(state, &(vint->common), cid_list->cin, &irimsg);
+        generate_sms_ipmmiri(state, &(vint->common), cid_list->cin, &irimsg,
+                locptr, loc_cnt);
+    }
+    if (locptr) {
+        free(locptr);
     }
 
     return 1;

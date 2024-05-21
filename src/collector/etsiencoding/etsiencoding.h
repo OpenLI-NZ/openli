@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2023 The OpenLI Foundation
+ * Copyright (c) 2023 Searchlight NZ
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -32,10 +32,12 @@
 #include <libwandder.h>
 #include <uthash.h>
 #include <libwandder_etsili.h>
+#include <openssl/evp.h>
+
 
 #include "intercept.h"
 #include "etsili_core.h"
-#include "collector_base.h"
+#include "export_buffer.h"
 
 /* 16 byte block size for AES, and 16 bytes for the IV
  *
@@ -64,7 +66,29 @@ enum {
     OPENLI_ENCRYPTED_PAYLOAD_TYPE_PART1 = 8
 };
 
-int create_encrypted_message_body(openli_encoder_t *enc,
+typedef struct encrypt_encode_state {
+    uint32_t byte_counter;
+    uint32_t byte_startts;
+    EVP_CIPHER_CTX *evp_ctx;
+    Pvoid_t saved_encryption_templates;
+} encrypt_encode_state_t;
+
+typedef struct encoder_job {
+    wandder_encode_job_t *preencoded;
+    uint32_t seqno;
+    int64_t cin;
+    char *cinstr;
+    openli_export_recv_t *origreq;
+    char *liid;
+    uint8_t cept_version;
+    payload_encryption_method_t encryptmethod;
+    char *encryptkey;
+} PACKED openli_encoding_job_t;
+
+void encode_ipaddress(wandder_encoder_t *encoder, etsili_ipaddress_t *addr);
+
+int create_encrypted_message_body(wandder_encoder_t *encoder,
+                encrypt_encode_state_t *encrypt,
                 openli_encoded_result_t *res,
                 encoded_header_template_t *hdr_tplate,
                 uint8_t *payloadbody, uint16_t bodylen,
@@ -77,7 +101,12 @@ int create_etsi_encoded_result(openli_encoded_result_t *res,
         uint8_t *trailing, uint16_t traillen,
         openli_encoding_job_t *job);
 
-void etsili_destroy_encrypted_templates(openli_encoder_t *enc);
+void etsili_destroy_encrypted_templates(Pvoid_t templates);
+
+int encode_templated_ipmmiri(wandder_encoder_t *encoder,
+        encrypt_encode_state_t *encrypt,
+        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
