@@ -66,6 +66,7 @@ void openli_copy_ipcontent(libtrace_packet_t *pkt, uint8_t **ipc,
 char *extract_liid_from_exported_msg(uint8_t *etsimsg,
         uint64_t msglen, unsigned char *space, int maxspace,
         uint16_t *liidlen);
+libtrace_packet_t *openli_copy_packet(libtrace_packet_t *pkt);
 
 /* string set methods */
 int remove_from_string_set(string_set_t **set, char *term);

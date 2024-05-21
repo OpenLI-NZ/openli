@@ -46,6 +46,7 @@
 #include "util.h"
 #include "ipmmiri.h"
 
+#include <libpacketdump.h>
 
 collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
 
@@ -869,7 +870,7 @@ static int process_sip_200ok(collector_sync_voip_t *sync,
 static inline void create_sip_ipiri(collector_sync_voip_t *sync,
         voipintercept_t *vint, openli_export_recv_t *irimsg,
         etsili_iri_type_t iritype, int64_t cin, openli_location_t *loc,
-        int loc_count) {
+        int loc_count, libtrace_packet_t **pkts, int pkt_cnt) {
 
     openli_export_recv_t *copy;
 
@@ -886,12 +887,23 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
         return;
     }
 
-    /* TODO add ability to include SIP packets in pcapdisk output */
-    if (vint->common.targetagency == NULL || strcmp(vint->common.targetagency,
-            "pcapdisk") == 0) {
+    if (vint->common.targetagency == NULL ||
+            strcmp(vint->common.targetagency, "pcapdisk") == 0) {
+        int i;
+        if (pkts == NULL) {
+            return;
+        }
+        for (i = 0; i < pkt_cnt; i++) {
+            if (pkts[i] == NULL) {
+                continue;
+            }
+            copy = create_rawip_iri_job(vint->common.liid, vint->common.destid,
+                pkts[i]);
+            publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid],
+                    copy);
+        }
         return;
     }
-
     /* TODO consider recycling IRI messages like we do with IPCCs */
 
     /* Wrap this packet up in an IRI and forward it on to the exporter.
@@ -908,7 +920,6 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
     copy->data.ipmmiri.content = malloc(copy->data.ipmmiri.contentlen);
     memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,
             irimsg->data.ipmmiri.contentlen);
-
     copy_location_into_ipmmiri_job(copy, loc, loc_count);
 
     pthread_mutex_lock(sync->glob->stats_mutex);
@@ -919,16 +930,18 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
 
 static int process_sip_register_followup(collector_sync_voip_t *sync,
         voipintercept_t *vint, sipregister_t *sipreg,
-        openli_export_recv_t *irimsg) {
+        openli_export_recv_t *irimsg, libtrace_packet_t **pkts,
+        int pkt_cnt) {
 
 
     create_sip_ipiri(sync, vint, irimsg, ETSILI_IRI_REPORT, sipreg->cin,
-            NULL, 0);
+            NULL, 0, pkts, pkt_cnt);
     return 1;
 }
 
 static int process_sip_other(collector_sync_voip_t *sync, char *callid,
-        sip_sdp_identifier_t *sdpo, openli_export_recv_t *irimsg) {
+        sip_sdp_identifier_t *sdpo, openli_export_recv_t *irimsg,
+        libtrace_packet_t **pkts, int pkt_cnt) {
 
     voipintercept_t *vint, *tmp;
     voipcinmap_t *findcin;
@@ -964,7 +977,7 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
                     strlen(callid), findreg);
             if (findreg) {
                 exportcount += process_sip_register_followup(sync, vint,
-                        findreg, irimsg);
+                        findreg, irimsg, pkts, pkt_cnt);
             }
             continue;
         }
@@ -1056,7 +1069,7 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
 
         /* Wrap this packet up in an IRI and forward it on to the exporter */
         create_sip_ipiri(sync, vint, irimsg, iritype, vshared->cin, locptr,
-                loc_cnt);
+                loc_cnt, pkts, pkt_cnt);
         exportcount += 1;
     }
     if (locptr) {
@@ -1070,7 +1083,7 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
 }
 
 static int process_sip_register(collector_sync_voip_t *sync, char *callid,
-        openli_export_recv_t *irimsg) {
+        openli_export_recv_t *irimsg, libtrace_packet_t **pkts, int pkt_cnt) {
 
     openli_sip_identity_t *matched = NULL;
     voipintercept_t *vint, *tmp;
@@ -1117,7 +1130,7 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
             continue;
         }
         create_sip_ipiri(sync, vint, irimsg, ETSILI_IRI_REPORT, sipreg->cin,
-                locptr, loc_cnt);
+                locptr, loc_cnt, pkts, pkt_cnt);
         exportcount += 1;
     }
 
@@ -1130,7 +1143,8 @@ static int process_sip_register(collector_sync_voip_t *sync, char *callid,
 }
 
 static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
-        sip_sdp_identifier_t *sdpo, openli_export_recv_t *irimsg) {
+        sip_sdp_identifier_t *sdpo, openli_export_recv_t *irimsg,
+        libtrace_packet_t **pkts, int pkt_cnt) {
 
     voipintercept_t *vint, *tmp;
     voipcinmap_t *findcin;
@@ -1295,7 +1309,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         thisrtp->invitecseq = get_sip_cseq(sync->sipparser);
 
         create_sip_ipiri(sync, vint, irimsg, iritype, vshared->cin, locptr,
-                loc_cnt);
+                loc_cnt, pkts, pkt_cnt);
         exportcount += 1;
     }
 
@@ -1312,7 +1326,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
 }
 
 static int update_sip_state(collector_sync_voip_t *sync,
-        libtrace_packet_t *pkt, openli_export_recv_t *irimsg) {
+        libtrace_packet_t **pkts, int pkt_cnt, openli_export_recv_t *irimsg) {
 
     char *callid, *sessid, *sessversion, *sessaddr, *sessuser;
     sip_sdp_identifier_t sdpo;
@@ -1380,7 +1394,8 @@ static int update_sip_state(collector_sync_voip_t *sync,
 
     ret = 0;
     if (sip_is_invite(sync->sipparser)) {
-        if ((ret = process_sip_invite(sync, callid, &sdpo, irimsg)) < 0) {
+        if ((ret = process_sip_invite(sync, callid, &sdpo, irimsg, pkts,
+                pkt_cnt)) < 0) {
             iserr = 1;
             if (sync->log_bad_sip) {
                 logger(LOG_INFO, "OpenLI: error while processing SIP invite");
@@ -1388,7 +1403,8 @@ static int update_sip_state(collector_sync_voip_t *sync,
             goto sipgiveup;
         }
     } else if (sip_is_register(sync->sipparser)) {
-        if ((ret = process_sip_register(sync, callid, irimsg)) < 0) {
+        if ((ret = process_sip_register(sync, callid, irimsg, pkts,
+                pkt_cnt)) < 0) {
             iserr = 1;
             if (sync->log_bad_sip) {
                 logger(LOG_INFO, "OpenLI: error while processing SIP register");
@@ -1397,7 +1413,8 @@ static int update_sip_state(collector_sync_voip_t *sync,
         }
     } else if (lookup_sip_callid(sync, callid) != 0) {
         /* SIP packet matches a "known" call of interest */
-        if ((ret = process_sip_other(sync, callid, &sdpo, irimsg)) < 0) {
+        if ((ret = process_sip_other(sync, callid, &sdpo, irimsg, pkts,
+                pkt_cnt)) < 0) {
             iserr = 1;
             if (sync->log_bad_sip) {
                 logger(LOG_INFO, "OpenLI: error while processing non-invite SIP");
@@ -1859,49 +1876,65 @@ static inline void get_ip_addresses(libtrace_packet_t *pkt,
 
 }
 
+static inline void handle_bad_sip_update(collector_sync_voip_t *sync,
+        libtrace_packet_t **packets, int pkt_cnt, uint8_t during) {
 
-static void examine_sip_update(collector_sync_voip_t *sync,
-        libtrace_packet_t *recvdpkt) {
+    int i;
 
-    int ret, doonce;
-    libtrace_packet_t *pktref;
-    openli_export_recv_t baseirimsg;
-
-    memset(&baseirimsg, 0, sizeof(openli_export_recv_t));
-
-    ret = add_sip_packet_to_parser(&(sync->sipparser), recvdpkt,
-            sync->log_bad_sip);
-
-    if (ret == SIP_ACTION_ERROR) {
-        if (sync->log_bad_sip) {
+    if (sync->log_bad_sip) {
+        if (during == SIP_PROCESSING_PARSING) {
+            logger(LOG_INFO,
+                    "OpenLI: sync thread parsed an invalid SIP packet?");
+        } else if (during == SIP_PROCESSING_UPDATING_STATE) {
+            logger(LOG_INFO,
+                    "OpenLI: error while updating SIP state in collector.");
+        } else if (during == SIP_PROCESSING_EXTRACTING_IPS) {
+            logger(LOG_INFO,
+                    "OpenLI: error while extracting IP addresses from SIP packet");
+        } else if (during == SIP_PROCESSING_ADD_PARSER) {
             logger(LOG_INFO,
                     "OpenLI: sync thread received an invalid SIP packet?");
+        } else {
             logger(LOG_INFO,
-                    "OpenLI: will not log any further invalid SIP instances.");
-            sync->log_bad_sip = 0;
+                    "OpenLI: unexpected error when processing SIP packet");
+
         }
-        if (sync->sipdebugfile) {
-            if (!sync->sipdebugout) {
-                sync->sipdebugout = open_debug_output(sync->sipdebugfile,
-                        "invalid");
-            }
-            if (sync->sipdebugout) {
-                trace_write_packet(sync->sipdebugout, recvdpkt);
-            }
-        }
-        return;
-    } else if (ret == SIP_ACTION_USE_PACKET) {
-        pktref = recvdpkt;
-        doonce = 1;
-    } else if (ret == SIP_ACTION_REASSEMBLE_TCP) {
-        pktref = NULL;
-        doonce = 0;
-    } else if (ret == SIP_ACTION_REASSEMBLE_IPFRAG) {
-        doonce = 1;
-        pktref = NULL;
-    } else {
-        return;
+        logger(LOG_INFO,
+                "OpenLI: will not log any further invalid SIP instances.");
+        sync->log_bad_sip = 0;
     }
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->bad_sip_packets ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
+
+    if (sync->sipdebugfile && packets) {
+        if (!sync->sipdebugout) {
+            sync->sipdebugout = open_debug_output(
+                    sync->sipdebugfile, "invalid");
+        }
+        if (sync->sipdebugout) {
+            for (i = 0; i < pkt_cnt; i++) {
+                if (packets[i] == NULL) {
+                    continue;
+                }
+                trace_write_packet(sync->sipdebugout, packets[i]);
+            }
+        }
+    }
+}
+
+static void sip_update_fast_path(collector_sync_voip_t *sync,
+        libtrace_packet_t *recvdpkt) {
+
+    int ret;
+    openli_export_recv_t baseirimsg;
+
+    /* The provided packet contains an entire SIP message, so we
+     * don't need to worry about segmentation or multiple
+     * messages within the same packet.
+     */
+
+    memset(&baseirimsg, 0, sizeof(openli_export_recv_t));
 
     baseirimsg.type = OPENLI_EXPORT_IPMMIRI;
     baseirimsg.data.ipmmiri.ipmmiri_style = OPENLI_IPMMIRI_SIP;
@@ -1910,71 +1943,125 @@ static void examine_sip_update(collector_sync_voip_t *sync,
     if (extract_ip_addresses(recvdpkt, baseirimsg.data.ipmmiri.ipsrc,
             baseirimsg.data.ipmmiri.ipdest,
             &(baseirimsg.data.ipmmiri.ipfamily)) != 0) {
-        if (sync->log_bad_sip) {
-            logger(LOG_INFO,
-                "OpenLI: error while extracting IP addresses from SIP packet");
-            logger(LOG_INFO,
-                    "OpenLI: will not log any further invalid SIP instances.");
-            sync->log_bad_sip = 0;
-        }
-        ret = SIP_ACTION_IGNORE;
+        handle_bad_sip_update(sync, &recvdpkt, 1,
+                SIP_PROCESSING_EXTRACTING_IPS);
+        trace_destroy_packet(recvdpkt);
+        return;
     }
 
-    /* reassembled TCP streams can contain multiple messages, so
-     * we need to keep trying until we have no new usable messages. */
+    ret = parse_next_sip_message(sync->sipparser, NULL, NULL);
+    if (ret == 0) {
+        trace_destroy_packet(recvdpkt);
+        return;
+    }
+    if (ret < 0) {
+        handle_bad_sip_update(sync, &recvdpkt, 1, SIP_PROCESSING_PARSING);
+        trace_destroy_packet(recvdpkt);
+        return;
+
+    }
+    baseirimsg.data.ipmmiri.content = get_sip_contents(sync->sipparser,
+            &(baseirimsg.data.ipmmiri.contentlen));
+
+    if (update_sip_state(sync, &recvdpkt, 1, &baseirimsg) < 0) {
+        handle_bad_sip_update(sync, &recvdpkt, 1,
+                SIP_PROCESSING_UPDATING_STATE);
+    }
+
+    trace_destroy_packet(recvdpkt);
+}
+
+static void sip_update_slow_path(collector_sync_voip_t *sync,
+        libtrace_packet_t *recvdpkt, uint8_t doonce) {
+
+    int ret, i;
+    openli_export_recv_t baseirimsg;
+    libtrace_packet_t **packets = NULL;
+    int pkt_cnt = 0;
+
+    memset(&baseirimsg, 0, sizeof(openli_export_recv_t));
+
+    baseirimsg.type = OPENLI_EXPORT_IPMMIRI;
+    baseirimsg.data.ipmmiri.ipmmiri_style = OPENLI_IPMMIRI_SIP;
+    baseirimsg.ts = trace_get_timeval(recvdpkt);
+
+    if (extract_ip_addresses(recvdpkt, baseirimsg.data.ipmmiri.ipsrc,
+            baseirimsg.data.ipmmiri.ipdest,
+            &(baseirimsg.data.ipmmiri.ipfamily)) != 0) {
+        handle_bad_sip_update(sync, &recvdpkt, 1,
+                SIP_PROCESSING_EXTRACTING_IPS);
+        trace_destroy_packet(recvdpkt);
+        return;
+    }
+
     do {
-        ret = parse_next_sip_message(sync->sipparser, pktref);
+        if (packets != NULL) {
+            for (i = 0; i < pkt_cnt; i++) {
+                if (packets[i]) {
+                    trace_destroy_packet(packets[i]);
+                }
+            }
+            free(packets);
+            pkt_cnt = 0;
+            packets = NULL;
+        }
+
+        ret = parse_next_sip_message(sync->sipparser, &packets, &pkt_cnt);
         if (ret == 0) {
-            break;
+            return;
         }
-
         if (ret < 0) {
-            if (sync->log_bad_sip) {
-                logger(LOG_INFO,
-                        "OpenLI: sync thread parsed an invalid SIP packet?");
-                logger(LOG_INFO,
-                        "OpenLI: will not log any further invalid SIP instances.");
-                sync->log_bad_sip = 0;
-            }
-            pthread_mutex_lock(sync->glob->stats_mutex);
-            sync->glob->stats->bad_sip_packets ++;
-            pthread_mutex_unlock(sync->glob->stats_mutex);
-
-            if (sync->sipdebugfile && pktref) {
-                if (!sync->sipdebugout) {
-                    sync->sipdebugout = open_debug_output(
-                            sync->sipdebugfile, "invalid");
-                }
-                if (sync->sipdebugout) {
-                    trace_write_packet(sync->sipdebugout, pktref);
-                }
-            }
+            handle_bad_sip_update(sync, packets, pkt_cnt,
+                    SIP_PROCESSING_PARSING);
+            continue;
         }
-
         baseirimsg.data.ipmmiri.content = get_sip_contents(sync->sipparser,
                 &(baseirimsg.data.ipmmiri.contentlen));
-
-        if (ret > 0 && update_sip_state(sync, pktref, &baseirimsg) < 0) {
-            if (sync->log_bad_sip) {
-                logger(LOG_INFO,
-                        "OpenLI: error while updating SIP state in collector.");
-                logger(LOG_INFO,
-                        "OpenLI: will not log any further invalid SIP instances.");
-                sync->log_bad_sip = 0;
-            }
-            if (sync->sipdebugfile && pktref) {
-                if (!sync->sipdebugupdate) {
-                    sync->sipdebugupdate = open_debug_output(
-                            sync->sipdebugfile,
-                            "update");
-                }
-                if (sync->sipdebugupdate) {
-                    trace_write_packet(sync->sipdebugupdate, pktref);
-                }
-            }
+        if (update_sip_state(sync, packets, pkt_cnt, &baseirimsg) < 0) {
+            handle_bad_sip_update(sync, packets, pkt_cnt,
+                    SIP_PROCESSING_UPDATING_STATE);
+            continue;
         }
+
     } while (!doonce);
 
+    if (packets) {
+        for (i = 0; i < pkt_cnt; i++) {
+            if (packets[i]) {
+                trace_destroy_packet(packets[i]);
+            }
+        }
+        free(packets);
+    }
+
+}
+
+static void examine_sip_update(collector_sync_voip_t *sync,
+        libtrace_packet_t *recvdpkt) {
+
+    int ret;
+
+    ret = add_sip_packet_to_parser(&(sync->sipparser), recvdpkt,
+            sync->log_bad_sip);
+
+    if (ret == SIP_ACTION_ERROR) {
+        handle_bad_sip_update(sync, &recvdpkt, 1,
+                SIP_PROCESSING_ADD_PARSER);
+        return;
+    } else if (ret == SIP_ACTION_USE_PACKET) {
+        sip_update_fast_path(sync, recvdpkt);
+        return;
+    } else if (ret == SIP_ACTION_REASSEMBLE_TCP) {
+        sip_update_slow_path(sync, recvdpkt, 0);
+        return;
+    } else if (ret == SIP_ACTION_REASSEMBLE_IPFRAG) {
+        sip_update_slow_path(sync, recvdpkt, 1);
+        return;
+    }
+
+    if (recvdpkt) {
+        trace_destroy_packet(recvdpkt);
+    }
 }
 
 static inline int process_colthread_message(collector_sync_voip_t *sync) {
@@ -2010,7 +2097,6 @@ static inline int process_colthread_message(collector_sync_voip_t *sync) {
 
         if (recvd.type == OPENLI_UPDATE_SIP) {
             examine_sip_update(sync, recvd.data.pkt);
-            trace_destroy_packet(recvd.data.pkt);
         }
     } while (rc > 0);
 

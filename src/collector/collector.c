@@ -504,41 +504,14 @@ static inline void send_packet_to_sync(libtrace_packet_t *pkt,
         void *q, uint8_t updatetype) {
     openli_state_update_t syncup;
     libtrace_packet_t *copy;
-    int caplen = trace_get_capture_length(pkt);
-    int framelen = trace_get_framing_length(pkt);
-
-    if (caplen == -1 || framelen == -1) {
-        logger(LOG_INFO, "OpenLI: unable to copy packet for sync thread (caplen=%d, framelen=%d)", caplen, framelen);
-        exit(1);
-    }
 
     /* We do this ourselves instead of calling trace_copy_packet() because
      * we don't want to be allocating 64K per copied packet -- we could be
      * doing this a lot and don't want to be wasteful */
-    copy = (libtrace_packet_t *)calloc((size_t)1, sizeof(libtrace_packet_t));
-    if (!copy) {
-        logger(LOG_INFO, "OpenLI: out of memory while copying packet for sync thread");
+    copy = openli_copy_packet(pkt);
+    if (copy == NULL) {
         exit(1);
     }
-
-    copy->trace = pkt->trace;
-    copy->buf_control = TRACE_CTRL_PACKET;
-    copy->buffer = malloc(framelen + caplen);
-    copy->type = pkt->type;
-    copy->header = copy->buffer;
-    copy->payload = ((char *)copy->buffer) + framelen;
-    copy->order = pkt->order;
-    copy->hash = pkt->hash;
-    copy->error = pkt->error;
-    copy->which_trace_start = pkt->which_trace_start;
-    copy->cached.capture_length = caplen;
-    copy->cached.framing_length = framelen;
-    copy->cached.wire_length = -1;
-    copy->cached.payload_length = -1;
-    /* everything else in cache should be 0 or NULL due to our earlier
-     * calloc() */
-    memcpy(copy->header, pkt->header, framelen);
-    memcpy(copy->payload, pkt->payload, caplen);
 
     syncup.type = updatetype;
     syncup.data.pkt = copy;
@@ -636,6 +609,10 @@ static uint8_t is_sms_over_sip(packet_info_t *pinfo, libtrace_packet_t *pkt,
     uint16_t siplen;
     uint32_t queueid;
     uint8_t ipsrc[16], ipdest[16];
+    libtrace_packet_t **pkts = NULL;
+    int pkt_cnt = 0;
+
+    return 0; // XXX TEMPORARY
 
     x = add_sip_packet_to_parser(&(loc->sipparser), pkt, 0);
     if (x == SIP_ACTION_USE_PACKET) {
@@ -665,7 +642,8 @@ static uint8_t is_sms_over_sip(packet_info_t *pinfo, libtrace_packet_t *pkt,
 
     do {
         is_sip = 0;
-        x = parse_next_sip_message(loc->sipparser, ref);
+        /* TODO account for TCP reassembly, IP fragmentation... */
+        x = parse_next_sip_message(loc->sipparser, &pkts, &pkt_cnt);
         if (x == 0) {
             /* no more SIP content available */
             break;

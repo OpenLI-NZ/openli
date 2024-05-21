@@ -127,6 +127,7 @@ typedef enum {
     OPENLI_PROTO_WITHDRAW_EMAIL_TARGET,
     OPENLI_PROTO_ANNOUNCE_DEFAULT_EMAIL_COMPRESSION,
     OPENLI_PROTO_RAWIP_CC,
+    OPENLI_PROTO_RAWIP_IRI,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {

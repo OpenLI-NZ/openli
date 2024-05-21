@@ -36,7 +36,7 @@
 #include "util.h"
 #include "location.h"
 
-static int parse_tcp_sip_packet(openli_sip_parser_t *p,
+static int parse_tcp_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *pkt,
         libtrace_tcp_t *tcp, uint32_t tcprem, tcp_streamid_t *tcpid,
         struct timeval *tv) {
 
@@ -70,7 +70,7 @@ static int parse_tcp_sip_packet(openli_sip_parser_t *p,
     }
 
     ret = update_tcp_reassemble_stream(stream, (uint8_t *)payload, tcprem,
-            ntohl(tcp->seq));
+            ntohl(tcp->seq), pkt);
 
     return ret;
 
@@ -138,9 +138,9 @@ int parse_sip_content(openli_sip_parser_t *p, uint8_t *sipcontent,
 }
 
 int parse_next_sip_message(openli_sip_parser_t *p,
-        libtrace_packet_t *packet) {
+        libtrace_packet_t ***packets, int *pkt_cnt) {
 
-    int ret;
+    int ret, i;
 
     if (p->osip) {
         osip_message_free(p->osip);
@@ -152,7 +152,7 @@ int parse_next_sip_message(openli_sip_parser_t *p,
         p->sdp = NULL;
     }
 
-    if (!packet) {
+    if (packets != NULL && (*packets) == NULL) {
 
         if (!p->sipalloced) {
             p->sipmessage = NULL;
@@ -160,7 +160,7 @@ int parse_next_sip_message(openli_sip_parser_t *p,
 
         if (p->thisstream) {
             ret = get_next_tcp_reassembled(p->thisstream, &(p->sipmessage),
-                    &(p->siplen));
+                    &(p->siplen), packets, pkt_cnt);
             if (p->sipmessage != NULL) {
                 p->sipalloced = 1;
             }
@@ -240,7 +240,7 @@ static int _add_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *packet,
         if (plen + (tcp->doff * 4) < rem) {
             rem = plen + (tcp->doff * 4);
         }
-        ret = parse_tcp_sip_packet(p, tcp, rem, &tcpid, tv);
+        ret = parse_tcp_sip_packet(p, packet, tcp, rem, &tcpid, tv);
         if (ret == -1) {
             return SIP_ACTION_IGNORE;
         } else if (ret == 0) {
@@ -298,7 +298,7 @@ static int _add_sip_fragment(openli_sip_parser_t *p,
         memcpy(tcpid.srcip, stream->streamid.srcip, 16);
         memcpy(tcpid.destip, stream->streamid.destip, 16);
 
-        ret = parse_tcp_sip_packet(p, tcp, fraglen, &tcpid, tv);
+        ret = parse_tcp_sip_packet(p, NULL, tcp, fraglen, &tcpid, tv);
         if (ret == -1) {
             return SIP_ACTION_IGNORE;
         } else if (ret == 0) {

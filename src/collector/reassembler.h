@@ -61,6 +61,9 @@ typedef struct reass_stream {
     uint32_t lastts;
     uint32_t expectedseqno;
     tcp_reass_segment_t *segments;
+    libtrace_packet_t **packets;
+    int pkt_cnt;
+    int pkt_alloc;
     uint8_t sorted;
     uint8_t established;
     UT_hash_handle hh;
@@ -117,9 +120,10 @@ tcp_reassemble_stream_t *create_new_tcp_reassemble_stream(
         reassembly_method_t method, tcp_streamid_t *streamid, uint32_t synseq);
 void destroy_tcp_reassemble_stream(tcp_reassemble_stream_t *reass);
 int update_tcp_reassemble_stream(tcp_reassemble_stream_t *reass,
-        uint8_t *content, uint16_t plen, uint32_t seqno);
+        uint8_t *content, uint16_t plen, uint32_t seqno,
+        libtrace_packet_t *pkt);
 int get_next_tcp_reassembled(tcp_reassemble_stream_t *reass, char **content,
-        uint16_t *len);
+        uint16_t *len, libtrace_packet_t ***packets, int *pkt_cnt);
 
 
 ipfrag_reassembler_t *create_new_ipfrag_reassembler(void);
