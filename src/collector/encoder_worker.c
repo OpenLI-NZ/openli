@@ -860,6 +860,8 @@ static int process_job(openli_encoder_t *enc, void *socket) {
             encode_rawip(enc, &job, &(result[batch]), OPENLI_PROTO_RAWIP_SYNC);
         } else if (job.origreq->type == OPENLI_EXPORT_RAW_CC) {
             encode_rawip(enc, &job, &(result[batch]), OPENLI_PROTO_RAWIP_CC);
+        } else if (job.origreq->type == OPENLI_EXPORT_RAW_IRI) {
+            encode_rawip(enc, &job, &(result[batch]), OPENLI_PROTO_RAWIP_IRI);
         } else {
 
             if ((x = encode_etsi(enc, &job, &(result[batch]))) <= 0) {

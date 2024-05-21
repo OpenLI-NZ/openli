@@ -466,7 +466,8 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
     }
 
     if (msgtype == OPENLI_PROTO_RAWIP_SYNC ||
-            msgtype == OPENLI_PROTO_RAWIP_CC) {
+            msgtype == OPENLI_PROTO_RAWIP_CC ||
+            msgtype == OPENLI_PROTO_RAWIP_IRI) {
 
         /* declare a queue for raw IP */
         if (!found->declared_raw_rmq) {
@@ -538,6 +539,7 @@ static int receive_collector(coll_recv_t *col, med_epoll_ev_t *mev) {
                 break;
             case OPENLI_PROTO_RAWIP_SYNC:
             case OPENLI_PROTO_RAWIP_CC:
+            case OPENLI_PROTO_RAWIP_IRI:
             case OPENLI_PROTO_ETSI_CC:
             case OPENLI_PROTO_ETSI_IRI:
                 /* Intercept record -- process it appropriately */

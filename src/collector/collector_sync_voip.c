@@ -889,28 +889,37 @@ static inline void create_sip_ipiri(collector_sync_voip_t *sync,
 
     if (vint->common.targetagency == NULL ||
             strcmp(vint->common.targetagency, "pcapdisk") == 0) {
-        //copy = create_rawip_cc_job(vint->common.liid, vint->common.destid,
-        //        pkt);
+        int i;
+        if (pkts == NULL) {
+            return;
+        }
+        for (i = 0; i < pkt_cnt; i++) {
+            if (pkts[i] == NULL) {
+                continue;
+            }
+            copy = create_rawip_iri_job(vint->common.liid, vint->common.destid,
+                pkts[i]);
+            publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid],
+                    copy);
+        }
         return;
-    } else {
-        /* TODO consider recycling IRI messages like we do with IPCCs */
-
-        /* Wrap this packet up in an IRI and forward it on to the exporter.
-         * irimsg may be used multiple times, so make a copy and forward
-         * that instead. */
-        copy = calloc(1, sizeof(openli_export_recv_t));
-        memcpy(copy, irimsg, sizeof(openli_export_recv_t));
-
-        copy->data.ipmmiri.liid = strdup(vint->common.liid);
-        copy->destid = vint->common.destid;
-        copy->data.ipmmiri.iritype = iritype;
-        copy->data.ipmmiri.cin = cin;
-
-        copy->data.ipmmiri.content = malloc(copy->data.ipmmiri.contentlen);
-        memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,
-                irimsg->data.ipmmiri.contentlen);
     }
+    /* TODO consider recycling IRI messages like we do with IPCCs */
 
+    /* Wrap this packet up in an IRI and forward it on to the exporter.
+     * irimsg may be used multiple times, so make a copy and forward
+     * that instead. */
+    copy = calloc(1, sizeof(openli_export_recv_t));
+    memcpy(copy, irimsg, sizeof(openli_export_recv_t));
+
+    copy->data.ipmmiri.liid = strdup(vint->common.liid);
+    copy->destid = vint->common.destid;
+    copy->data.ipmmiri.iritype = iritype;
+    copy->data.ipmmiri.cin = cin;
+
+    copy->data.ipmmiri.content = malloc(copy->data.ipmmiri.contentlen);
+    memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,
+            irimsg->data.ipmmiri.contentlen);
     copy_location_into_ipmmiri_job(copy, loc, loc_count);
 
     pthread_mutex_lock(sync->glob->stats_mutex);
