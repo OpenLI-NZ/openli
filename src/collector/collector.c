@@ -768,8 +768,8 @@ static uint8_t check_if_gtp(packet_info_t *pinfo, libtrace_packet_t *pkt,
                 return 0;
             }
             v2_hdr = (gtpv2_header_teid_t *)pinfo->payload_ptr;
-            fwdto = hashlittle(&(v1_hdr->teid), sizeof(v2_hdr->teid),
-                    312267023);
+            fwdto = hashlittle(&(v2_hdr->teid), sizeof(v2_hdr->teid),
+                    312267023) % loc->gtpq_count;
 
         } else if (((*(pinfo->payload_ptr)) & 0xe0) == 0x20) {
             /* GTPv1 */
@@ -779,7 +779,7 @@ static uint8_t check_if_gtp(packet_info_t *pinfo, libtrace_packet_t *pkt,
 
             v1_hdr = (gtpv1_header_t *)pinfo->payload_ptr;
             fwdto = hashlittle(&(v1_hdr->teid), sizeof(v1_hdr->teid),
-                    312267023);
+                    312267023) % loc->gtpq_count;
         }
     }
 

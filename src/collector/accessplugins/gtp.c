@@ -324,6 +324,7 @@ static void gtp_destroy_plugin_data(access_plugin_t *p) {
         free(glob->parsedpkt);
     }
     free(glob);
+    p->plugindata = NULL;
 }
 
 static void gtp_uncouple_parsed_data(access_plugin_t *p) {
@@ -1931,10 +1932,22 @@ static access_plugin_t gtpplugin = {
     gtp_get_ip_contents,
 };
 
+const char *gtp_plugin_name = "GTP";
+
 access_plugin_t *get_gtp_access_plugin(void) {
-    return &gtpplugin;
+    access_plugin_t *gtp = calloc(1, sizeof(access_plugin_t));
+
+    memcpy(gtp, &gtpplugin, sizeof(access_plugin_t));
+
+    return gtp;
 }
 
+void destroy_gtp_access_plugin(access_plugin_t *gtp) {
+    if (gtp->plugindata) {
+        gtp_destroy_plugin_data(gtp);
+    }
+    free(gtp);
+}
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 
 

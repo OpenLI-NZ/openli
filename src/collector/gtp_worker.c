@@ -543,8 +543,7 @@ haltgtpworker:
     clear_zmq_socket_array(worker->zmq_pubsocks, worker->tracker_threads);
 
     if (worker->gtpplugin) {
-        destroy_access_plugin(worker->gtpplugin);
-        free(worker->gtpplugin);
+        destroy_gtp_access_plugin(worker->gtpplugin);
     }
 
     pthread_exit(NULL);
@@ -572,7 +571,7 @@ int start_gtp_worker_thread(openli_gtp_worker_t *worker, int id,
     worker->ipintercepts = NULL;
     worker->allusers = NULL;
     worker->userintercepts = NULL;
-    worker->gtpplugin = init_access_plugin(ACCESS_GTP);
+    worker->gtpplugin = get_gtp_access_plugin();
 
     pthread_create(&(worker->threadid), NULL, gtp_thread_begin,
             (void *)worker);

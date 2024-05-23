@@ -233,6 +233,7 @@ int free_single_session(access_session_t *sess);
 
 access_plugin_t *get_radius_access_plugin(void);
 access_plugin_t *get_gtp_access_plugin(void);
+void destroy_gtp_access_plugin(access_plugin_t *gtp);
 
 access_session_t *create_access_session(access_plugin_t *p,
         char *idstr, int idstr_len);
