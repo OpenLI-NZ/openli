@@ -126,6 +126,10 @@ static inline int ip_intercept_equal(ipintercept_t *a, ipintercept_t *b) {
         return 0;
     }
 
+    if (a->mobileident != b->mobileident) {
+        return 0;
+    }
+
     return 1;
 }
 
@@ -250,9 +254,11 @@ static void remove_withdrawn_intercept(provision_state_t *currstate,
     if (!droppedmeds) {
         announce_hi1_notification_to_mediators(currstate,
                 common, target_info, HI1_LI_DEACTIVATED);
-        if (target_info) {
-            free(target_info);
-        }
+    }
+
+    if (common->local) {
+        free(common->local);
+        common->local = NULL;
     }
 
     logger(LOG_INFO, "OpenLI provisioner: LIID %s has been withdrawn following a config reload.",
@@ -606,7 +612,6 @@ static int reload_ipintercepts(provision_state_t *currstate,
             }
             remove_withdrawn_intercept(currstate, &(ipint->common),
                     ipint->username, droppedmeds);
-
             continue;
         } else {
             int staticchanged = reload_staticips(currstate, ipint, newequiv);
