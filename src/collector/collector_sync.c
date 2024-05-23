@@ -93,10 +93,12 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->forwardcount = glob->forwarding_threads;
     sync->emailcount = glob->email_threads;
     sync->smscount = glob->sms_threads;
+    sync->gtpcount = glob->gtp_threads;
 
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
     sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
     sync->zmq_emailsocks = calloc(sync->emailcount, sizeof(void *));
+    sync->zmq_gtpsocks = calloc(sync->gtpcount, sizeof(void *));
     sync->zmq_smssocks = calloc(sync->smscount, sizeof(void *));
 
     sync->ctx = glob->sslconf.ctx;
@@ -115,6 +117,9 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
     init_zmq_socket_array(sync->zmq_emailsocks, sync->emailcount,
             "inproc://openliemailcontrol_sync", glob->zmq_ctxt);
+
+    init_zmq_socket_array(sync->zmq_gtpsocks, sync->gtpcount,
+            "inproc://openligtpcontrol_sync", glob->zmq_ctxt);
 
     init_zmq_socket_array(sync->zmq_smssocks, sync->smscount,
             "inproc://openlismscontrol_sync", glob->zmq_ctxt);
@@ -229,6 +234,8 @@ void clean_sync_data(collector_sync_t *sync) {
         haltfails += send_halt_message_to_zmq_socket_array(
                 sync->zmq_emailsocks, sync->emailcount);
         haltfails += send_halt_message_to_zmq_socket_array(
+                sync->zmq_gtpsocks, sync->gtpcount);
+        haltfails += send_halt_message_to_zmq_socket_array(
                 sync->zmq_smssocks, sync->smscount);
 
         if (haltfails == 0) {
@@ -240,6 +247,7 @@ void clean_sync_data(collector_sync_t *sync) {
 
     free(sync->zmq_emailsocks);
     free(sync->zmq_smssocks);
+    free(sync->zmq_gtpsocks);
     free(sync->zmq_pubsocks);
     free(sync->zmq_fwdctrlsocks);
 
@@ -1242,7 +1250,7 @@ static int update_modified_intercept(collector_sync_t *sync,
         add_intercept_to_user_intercept_list(&sync->userintercepts, ipint);
 
         push_existing_user_sessions(sync, ipint);
-        logger(LOG_INFO, "OpenLI: IP intercept %s has changed target", ipint->common.liid);
+        logger(LOG_INFO, "OpenLI: IP intercept %s has changed target, resuming interception for new target", ipint->common.liid);
     }
 
     if (ipint->vendmirrorid != modified->vendmirrorid) {
@@ -1580,6 +1588,11 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 if (ret == -1) {
                     return -1;
                 }
+                ret = forward_provmsg_to_workers(sync->zmq_gtpsocks,
+                        sync->gtpcount, provmsg, msglen, msgtype, "GTP");
+                if (ret == -1) {
+                    return -1;
+                }
                 break;
             case OPENLI_PROTO_ADD_STATICIPS:
                 ret = new_staticiprange(sync, provmsg, msglen);
@@ -1626,6 +1639,11 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 if (ret == -1) {
                     return -1;
                 }
+                ret = forward_provmsg_to_workers(sync->zmq_gtpsocks,
+                        sync->gtpcount, provmsg, msglen, msgtype, "GTP");
+                if (ret == -1) {
+                    return -1;
+                }
                 break;
             case OPENLI_PROTO_ANNOUNCE_DEFAULT_RADIUS:
                 ret = new_default_radius(sync, provmsg, msglen);
@@ -1657,6 +1675,11 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 if (ret < 0) {
                     return -1;
                 }
+                ret = forward_provmsg_to_workers(sync->zmq_gtpsocks,
+                        sync->gtpcount, provmsg, msglen, msgtype, "GTP");
+                if (ret == -1) {
+                    return -1;
+                }
                 break;
 
             case OPENLI_PROTO_START_VOIPINTERCEPT:
@@ -1684,6 +1707,11 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 }
                 ret = forward_provmsg_to_workers(sync->zmq_emailsocks,
                         sync->emailcount, provmsg, msglen, msgtype, "email");
+                if (ret == -1) {
+                    return -1;
+                }
+                ret = forward_provmsg_to_workers(sync->zmq_gtpsocks,
+                        sync->gtpcount, provmsg, msglen, msgtype, "GTP");
                 if (ret == -1) {
                     return -1;
                 }
@@ -1862,6 +1890,8 @@ void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
     forward_provmsg_to_voipsync(sync, NULL, 0, OPENLI_PROTO_DISCONNECT);
     forward_provmsg_to_workers(sync->zmq_emailsocks, sync->emailcount,
             NULL, 0, OPENLI_PROTO_DISCONNECT, "email");
+    forward_provmsg_to_workers(sync->zmq_gtpsocks, sync->gtpcount,
+            NULL, 0, OPENLI_PROTO_DISCONNECT, "GTP");
     forward_provmsg_to_workers(sync->zmq_smssocks, sync->smscount,
             NULL, 0, OPENLI_PROTO_DISCONNECT, "SMS");
 

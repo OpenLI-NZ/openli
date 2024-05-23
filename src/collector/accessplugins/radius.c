@@ -1653,6 +1653,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     if (!thissess) {
         thissess = create_access_session(p, sessionid, 5000 - rem);
         thissess->cin = assign_cin(raddata);
+        thissess->identifier_type = OPENLI_ACCESS_SESSION_IP;
 
         HASH_ADD_KEYPTR(hh, *sesslist, thissess->sessionid,
                 strlen(thissess->sessionid), thissess);

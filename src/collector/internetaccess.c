@@ -176,6 +176,7 @@ access_session_t *create_access_session(access_plugin_t *p, char *sessid,
 
     newsess = (access_session_t *)malloc(sizeof(access_session_t));
 
+    newsess->identifier_type = OPENLI_ACCESS_SESSION_UNKNOWN;
     newsess->plugin = p;
     newsess->sessionid = fast_strdup(sessid, sessid_len);
 	newsess->statedata = NULL;
@@ -190,13 +191,14 @@ access_session_t *create_access_session(access_plugin_t *p, char *sessid,
 	newsess->started.tv_sec = 0;
 	newsess->started.tv_usec = 0;
 
+    newsess->teid = 0;
 	return newsess;
 }
 
 void add_new_session_ip(access_session_t *sess, void *att_val,
         int family, uint8_t pfxbits, int att_len) {
 
-	    int ind = sess->sessipcount;
+	int ind = sess->sessipcount;
 
     if (sess->sessipcount > 0 && (sess->sessipcount % SESSION_IP_INCR) == 0) {
         sess->sessionips = realloc(sess->sessionips,
@@ -256,6 +258,7 @@ void add_new_session_ip(access_session_t *sess, void *att_val,
     sess->sessionips[ind].ipfamily = family;
     sess->sessionips[ind].prefixbits = pfxbits;
     sess->sessipcount ++;
+    sess->identifier_type |= OPENLI_ACCESS_SESSION_IP;
 }
 
 int free_single_session(access_session_t *sess) {

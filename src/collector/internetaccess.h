@@ -109,12 +109,31 @@ typedef struct ip_to_session {
     UT_hash_handle hh;
 } ip_to_session_t;
 
+typedef struct teid_to_session {
+    uint32_t teid;
+    int sessioncount;
+    access_session_t **session;
+    internet_user_t **owner;
+    uint32_t cin;
+    UT_hash_handle hh;
+} teid_to_session_t;
+
+typedef enum {
+    OPENLI_ACCESS_SESSION_UNKNOWN = 0,
+    OPENLI_ACCESS_SESSION_IP = 1,
+    OPENLI_ACCESS_SESSION_TEID = 2,
+} openli_access_session_id_t;
+
 struct access_session {
+
+    openli_access_session_id_t identifier_type;
 
     internetaccess_ip_t *sessionips;
     uint8_t sessipcount;
     session_ipversion_t sessipversion;
     uint8_t ips_mapped;
+
+    uint32_t teid;
 
     access_plugin_t *plugin;
     void *sessionid;

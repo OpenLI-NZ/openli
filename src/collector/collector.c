@@ -121,6 +121,8 @@ static void log_collector_stats(collector_global_t *glob) {
             glob->stats.packets_sync_email);
     logger(LOG_INFO, "OpenLI: Packets sent to SMS workers: %lu",
             glob->stats.packets_sms);
+    logger(LOG_INFO, "OpenLI: Packets sent to GTP workers: %lu",
+            glob->stats.packets_gtp);
     logger(LOG_INFO, "OpenLI: Bad SIP packets: %lu   Bad RADIUS packets: %lu",
             glob->stats.bad_sip_packets, glob->stats.bad_ip_session_packets);
     logger(LOG_INFO, "OpenLI: Records created... IPCCs: %lu  IPIRIs: %lu  MobIRIs: %lu",
@@ -286,6 +288,24 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
         zmq_connect(loc->sms_worker_queues[i], pubsockname);
     }
 
+    loc->fromgtp_queues = calloc(glob->gtp_threads,
+            sizeof(libtrace_message_queue_t));
+
+    loc->gtp_worker_queues = calloc(glob->gtp_threads, sizeof(void *));
+    for (i = 0; i < glob->gtp_threads; i++) {
+        char pubsockname[128];
+
+        snprintf(pubsockname, 128, "inproc://openligtpworker-colrecv%d", i);
+        loc->gtp_worker_queues[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+        zmq_setsockopt(loc->gtp_worker_queues[i], ZMQ_SNDHWM, &hwm,
+                sizeof(hwm));
+        zmq_connect(loc->gtp_worker_queues[i], pubsockname);
+
+        libtrace_message_queue_init(&(loc->fromgtp_queues[i]),
+                sizeof(openli_pushed_t));
+    }
+    loc->gtpq_count = glob->gtp_threads;
+
     loc->fragreass = create_new_ipfrag_reassembler();
 
     loc->tosyncq_ip = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
@@ -303,6 +323,8 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     collector_global_t *glob = (collector_global_t *)global;
     colthread_local_t *loc = NULL;
+    int i;
+    sync_sendq_t *syncq, *sendq_hash;
 
     pthread_rwlock_wrlock(&(glob->config_mutex));
     loc = glob->collocals[glob->nextloc];
@@ -314,6 +336,20 @@ static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 			&(loc->fromsyncq_ip), t);
     register_sync_queues(&(glob->syncvoip), loc->tosyncq_voip,
 			&(loc->fromsyncq_voip), t);
+
+    for (i = 0; i < glob->gtp_threads; i++) {
+        syncq = (sync_sendq_t *)malloc(sizeof(sync_sendq_t));
+        syncq->q = &(loc->fromgtp_queues[i]);
+        syncq->parent = t;
+
+        pthread_mutex_lock(&(glob->gtpworkers[i].col_queue_mutex));
+
+        sendq_hash = (sync_sendq_t *)(glob->gtpworkers[i].collector_queues);
+        HASH_ADD_PTR(sendq_hash, parent, syncq);
+        glob->gtpworkers[i].collector_queues = (void *)sendq_hash;
+
+        pthread_mutex_unlock(&(glob->gtpworkers[i].col_queue_mutex));
+    }
 
     return loc;
 }
@@ -414,6 +450,7 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     ipv6_target_t *v6, *tmp2;
     openli_pushed_t syncpush;
     int zero = 0, i;
+    sync_sendq_t *syncq, *sendq_hash;
 
     if (trace_is_err(trace)) {
         libtrace_err_t err = trace_get_err(trace);
@@ -448,6 +485,33 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
         zmq_close(loc->email_worker_queues[i]);
     }
 
+    for (i = 0; i < glob->gtp_threads; i++) {
+        openli_gtp_worker_t *worker;
+
+        worker = &(glob->gtpworkers[i]);
+
+        zmq_setsockopt(loc->gtp_worker_queues[i], ZMQ_LINGER, &zero,
+                sizeof(zero));
+        zmq_close(loc->gtp_worker_queues[i]);
+
+        while (libtrace_message_queue_try_get(&(loc->fromgtp_queues[i]),
+                    (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
+            process_incoming_messages(t, glob, loc, &syncpush);
+        }
+        pthread_mutex_lock(&(worker->col_queue_mutex));
+        sendq_hash = (sync_sendq_t *)(worker->collector_queues);
+
+        HASH_FIND_PTR(sendq_hash, &t, syncq);
+        if (syncq) {
+            HASH_DELETE(hh, sendq_hash, syncq);
+            free(syncq);
+            worker->collector_queues = (void *)sendq_hash;
+        }
+        pthread_mutex_unlock(&(worker->col_queue_mutex));
+
+        libtrace_message_queue_destroy(&(loc->fromgtp_queues[i]));
+    }
+
     for (i = 0; i < glob->sms_threads; i++) {
         zmq_setsockopt(loc->sms_worker_queues[i], ZMQ_LINGER, &zero,
                 sizeof(zero));
@@ -459,9 +523,11 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     zmq_setsockopt(loc->tosyncq_voip, ZMQ_LINGER, &zero, sizeof(zero));
     zmq_close(loc->tosyncq_voip);
 
+    free(loc->fromgtp_queues);
     free(loc->zmq_pubsocks);
     free(loc->email_worker_queues);
     free(loc->sms_worker_queues);
+    free(loc->gtp_worker_queues);
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
         free_all_ipsessions(&(v4->intercepts));
@@ -833,7 +899,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     uint16_t ethertype;
     uint32_t rem, iprem;
     uint8_t proto;
-    int forwarded = 0, ret;
+    int forwarded = 0, ret, i;
     int ipsynced = 0, voipsynced = 0, emailsynced = 0;
     uint16_t fragoff = 0;
     uint32_t servhash = 0, smshash = 0;
@@ -852,6 +918,14 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
         process_incoming_messages(t, glob, loc, &syncpush);
+    }
+
+    for (i = 0; i < loc->gtpq_count; i++) {
+        while (libtrace_message_queue_try_get(&(loc->fromgtp_queues[i]),
+                (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
+
+            process_incoming_messages(t, glob, loc, &syncpush);
+        }
     }
 
 
@@ -1400,6 +1474,13 @@ static void destroy_collector_state(collector_global_t *glob) {
         free(glob->emailworkers);
     }
 
+    if (glob->gtpworkers) {
+        for (i = 0; i < glob->gtp_threads; i++) {
+            pthread_mutex_destroy(&(glob->gtpworkers[i].col_queue_mutex));
+        }
+        free(glob->gtpworkers);
+    }
+
     libtrace_message_queue_destroy(&(glob->intersyncq));
 
     if (glob->zmq_encoder_ctrl) {
@@ -1630,6 +1711,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->forwarding_threads = 1;
     glob->encoding_threads = 2;
     glob->email_threads = 1;
+    glob->gtp_threads = 1;
     glob->sms_threads = 1;
     glob->sharedinfo.intpointid = NULL;
     glob->sharedinfo.intpointid_len = 0;
@@ -2253,6 +2335,10 @@ int main(int argc, char *argv[]) {
         pthread_setname_np(glob->smsworkers[i].threadid, name);
     }
 
+    glob->gtpworkers = calloc(glob->gtp_threads, sizeof(openli_gtp_worker_t));
+    for (i = 0; i < glob->gtp_threads; i++) {
+        start_gtp_worker_thread(&(glob->gtpworkers[i]), i, glob);
+    }
 
     glob->emailworkers = calloc(glob->email_threads,
             sizeof(openli_email_worker_t));
@@ -2462,6 +2548,9 @@ int main(int argc, char *argv[]) {
     }
     for (i = 0; i < glob->email_threads; i++) {
         pthread_join(glob->emailworkers[i].threadid, NULL);
+    }
+    for (i = 0; i < glob->gtp_threads; i++) {
+        pthread_join(glob->gtpworkers[i].threadid, NULL);
     }
     for (i = 0; i < glob->sms_threads; i++) {
         pthread_join(glob->smsworkers[i].threadid, NULL);
