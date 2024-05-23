@@ -285,6 +285,88 @@ static int gtp_worker_process_sync_thread_message(openli_gtp_worker_t *worker) {
     return 1;
 }
 
+static void process_gtp_u_packet(openli_gtp_worker_t *worker,
+        uint8_t *payload, uint32_t plen, uint32_t teid) {
+
+
+}
+
+static void process_gtp_c_packet(openli_gtp_worker_t *worker,
+        libtrace_packet_t *packet) {
+
+
+}
+
+static void process_gtp_packet(openli_gtp_worker_t *worker,
+        libtrace_packet_t *packet) {
+    access_plugin_t *p = worker->gtpplugin;
+    uint8_t *payload;
+    uint32_t plen;
+    uint8_t proto;
+    uint32_t rem;
+    void *transport;
+    uint8_t msgtype;
+    uint32_t teid;
+
+    if (packet == NULL) {
+        return;
+    }
+
+    transport = trace_get_transport(packet, &proto, &rem);
+    if (transport == NULL || rem == 0) {
+        return;
+    }
+
+    plen = trace_get_payload_length(packet);
+    if (proto != TRACE_IPPROTO_UDP) {
+        /* should be UDP only */
+        return;
+    }
+    payload = (uint8_t *)trace_get_payload_from_udp((libtrace_udp_t *)transport,
+            &rem);
+    if (rem < plen) {
+        plen = rem;
+    }
+
+    if (((*payload) & 0xe8) == 0x48) {
+        /* GTPv2 */
+        gtpv2_header_teid_t *v2hdr = (gtpv2_header_teid_t *)payload;
+
+        if (plen <= sizeof(gtpv2_header_teid_t)) {
+            return;
+        }
+
+        msgtype = v2hdr->msgtype;
+        teid = v2hdr->teid;
+        payload += sizeof(gtpv2_header_teid_t);
+        plen -= sizeof(gtpv2_header_teid_t);
+
+    } else if (((*payload) & 0xe0) == 0x20) {
+        /* GTPv1 */
+        gtpv1_header_t *v1hdr = (gtpv1_header_t *)payload;
+
+        if (plen <= sizeof(gtpv1_header_t)) {
+            return;
+        }
+
+        msgtype = v1hdr->msgtype;
+        teid = v1hdr->teid;
+        payload += sizeof(gtpv1_header_t);
+        plen -= sizeof(gtpv1_header_t);
+
+    } else {
+        return;
+    }
+
+    if (msgtype == 0xff) {
+        /* This is GTP-U */
+        process_gtp_u_packet(worker, payload, plen, teid);
+    } else {
+        /* This is GTP-C */
+        process_gtp_c_packet(worker, packet);
+    }
+}
+
 static int gtp_worker_process_packet(openli_gtp_worker_t *worker) {
     openli_state_update_t recvd;
     int rc;
@@ -310,6 +392,7 @@ static int gtp_worker_process_packet(openli_gtp_worker_t *worker) {
         }
 
         /* TODO insert packet processing code here! */
+        process_gtp_packet(worker, recvd.data.pkt);
 
         if (recvd.data.pkt) {
             trace_destroy_packet(recvd.data.pkt);
@@ -461,6 +544,7 @@ haltgtpworker:
 
     if (worker->gtpplugin) {
         destroy_access_plugin(worker->gtpplugin);
+        free(worker->gtpplugin);
     }
 
     pthread_exit(NULL);
@@ -488,7 +572,7 @@ int start_gtp_worker_thread(openli_gtp_worker_t *worker, int id,
     worker->ipintercepts = NULL;
     worker->allusers = NULL;
     worker->userintercepts = NULL;
-    worker->gtpplugin = NULL;
+    worker->gtpplugin = init_access_plugin(ACCESS_GTP);
 
     pthread_create(&(worker->threadid), NULL, gtp_thread_begin,
             (void *)worker);

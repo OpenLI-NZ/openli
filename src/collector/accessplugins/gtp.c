@@ -86,24 +86,6 @@ enum {
     GTPV2_DELETE_SESSION_RESPONSE = 37,
 };
 
-typedef struct gtpv1_header {
-    uint8_t octet1;
-    uint8_t msgtype;
-    uint16_t msglen;
-    uint32_t teid;
-    uint16_t seqno;
-    uint8_t npdu;
-    uint8_t next_ext;
-} PACKED gtpv1_header_t;
-
-typedef struct gtpv2_header_teid {
-    uint8_t octet1;
-    uint8_t msgtype;
-    uint16_t msglen;
-    uint32_t teid;
-    uint32_t seqno;
-} PACKED gtpv2_header_teid_t;
-
 typedef struct gtp_infelem gtp_infoelem_t;
 
 struct gtp_infelem {

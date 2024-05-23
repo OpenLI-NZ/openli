@@ -80,7 +80,7 @@ typedef struct openli_gtp_worker {
      * sessions */
     internet_user_t *allusers;
 
-    /* Map of usernames -> active intercepts */
+    /* Map of user identities -> active intercepts */
     user_intercept_list_t *userintercepts;
 
     /* Instance of the GTP session state processing plugin used to

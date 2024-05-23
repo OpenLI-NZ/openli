@@ -85,7 +85,6 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->upcomingtimerfd = -1;
 
     sync->radiusplugin = init_access_plugin(ACCESS_RADIUS);
-    sync->gtpplugin = init_access_plugin(ACCESS_GTP);
     sync->freegenerics = glob->syncgenericfreelist;
     sync->activeips = NULL;
 
@@ -181,10 +180,6 @@ void clean_sync_data(collector_sync_t *sync) {
         destroy_access_plugin(sync->radiusplugin);
     }
 
-    if (sync->gtpplugin) {
-        destroy_access_plugin(sync->gtpplugin);
-    }
-
     if(sync->ssl){
         SSL_free(sync->ssl);
     }
@@ -197,7 +192,6 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->outgoing = NULL;
     sync->incoming = NULL;
     sync->radiusplugin = NULL;
-    sync->gtpplugin = NULL;
     sync->activeips = NULL;
 
     while (haltattempts < 10) {
@@ -2212,8 +2206,6 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
 
     if (accesstype == ACCESS_RADIUS) {
         p = sync->radiusplugin;
-    } else if (accesstype == ACCESS_GTP) {
-        p = sync->gtpplugin;
     }
 
     if (!p) {

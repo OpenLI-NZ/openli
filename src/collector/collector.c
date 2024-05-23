@@ -663,6 +663,134 @@ static void add_payload_info_from_packet(libtrace_packet_t *pkt,
 
 }
 
+static inline uint32_t is_core_server_packet(libtrace_packet_t *pkt,
+        packet_info_t *pinfo, coreserver_t *servers) {
+
+    coreserver_t *rad, *tmp;
+    coreserver_t *found = NULL;
+    uint32_t hashval = 0;
+
+    if (pinfo->srcport == 0 || pinfo->destport == 0) {
+        return 0;
+    }
+
+    HASH_ITER(hh, servers, rad, tmp) {
+        if (rad->info == NULL) {
+            rad->info = populate_addrinfo(rad->ipstr, rad->portstr,
+                    SOCK_DGRAM);
+            if (!rad->info) {
+                logger(LOG_INFO,
+                        "Removing %s:%s from %s server list due to getaddrinfo error",
+                        rad->ipstr, rad->portstr,
+                        coreserver_type_to_string(rad->servertype));
+
+                HASH_DELETE(hh, servers, rad);
+                continue;
+            }
+            if (rad->info->ai_family == AF_INET) {
+                rad->portswapped = ntohs(CS_TO_V4(rad)->sin_port);
+            } else if (rad->info->ai_family == AF_INET6) {
+                rad->portswapped = ntohs(CS_TO_V6(rad)->sin6_port);
+            }
+        }
+
+        if (pinfo->family == AF_INET) {
+            struct sockaddr_in *sa;
+            sa = (struct sockaddr_in *)(&(pinfo->srcip));
+
+            if (CORESERVER_MATCH_V4(rad, sa, pinfo->srcport)) {
+                found = rad;
+                break;
+            }
+            sa = (struct sockaddr_in *)(&(pinfo->destip));
+            if (CORESERVER_MATCH_V4(rad, sa, pinfo->destport)) {
+                found = rad;
+                break;
+            }
+        } else if (pinfo->family == AF_INET6) {
+            struct sockaddr_in6 *sa6;
+            sa6 = (struct sockaddr_in6 *)(&(pinfo->srcip));
+            if (CORESERVER_MATCH_V6(rad, sa6, pinfo->srcport)) {
+                found = rad;
+                break;
+            }
+            sa6 = (struct sockaddr_in6 *)(&(pinfo->destip));
+            if (CORESERVER_MATCH_V6(rad, sa6, pinfo->destport)) {
+                found = rad;
+                break;
+            }
+        }
+    }
+
+    /* Doesn't match any of our known core servers */
+    if (found == NULL) {
+        return 0;
+    }
+
+    /* Not technically an LIID, but we just need a hashed ID for the server
+     * entity.
+     */
+    hashval = hash_liid(found->serverkey);
+
+    /* 0 is our value for "not found", so make sure we never use it... */
+    if (hashval == 0) {
+        hashval = 1;
+    }
+    return hashval;
+
+}
+
+static uint8_t check_if_gtp(packet_info_t *pinfo, libtrace_packet_t *pkt,
+        colthread_local_t *loc, collector_global_t *glob) {
+
+    uint32_t fwdto = 0;
+    gtpv1_header_t *v1_hdr;
+    gtpv2_header_teid_t *v2_hdr;
+
+    if (loc->gtpservers == NULL) {
+        return 0;
+    }
+
+    if ( !is_core_server_packet(pkt, pinfo, loc->gtpservers)) {
+        return 0;
+    }
+
+    add_payload_info_from_packet(pkt, pinfo);
+    if (pinfo->payload_len == 0) {
+        return 0;
+    }
+
+    if (loc->gtpq_count > 1) {
+        /* check GTP version */
+        if (((*(pinfo->payload_ptr)) & 0xe8) == 0x48) {
+            /* GTPv2 */
+            if (pinfo->payload_len < sizeof(gtpv2_header_teid_t)) {
+                return 0;
+            }
+            v2_hdr = (gtpv2_header_teid_t *)pinfo->payload_ptr;
+            fwdto = hashlittle(&(v1_hdr->teid), sizeof(v2_hdr->teid),
+                    312267023);
+
+        } else if (((*(pinfo->payload_ptr)) & 0xe0) == 0x20) {
+            /* GTPv1 */
+            if (pinfo->payload_len < sizeof(gtpv1_header_t)) {
+                return 0;
+            }
+
+            v1_hdr = (gtpv1_header_t *)pinfo->payload_ptr;
+            fwdto = hashlittle(&(v1_hdr->teid), sizeof(v1_hdr->teid),
+                    312267023);
+        }
+    }
+
+    send_packet_to_sync(pkt, loc->gtp_worker_queues[fwdto], OPENLI_UPDATE_GTP);
+
+    pthread_mutex_lock(&(glob->stats_mutex));
+    glob->stats.packets_gtp ++;
+    pthread_mutex_unlock(&(glob->stats_mutex));
+    return 1;
+}
+
 static uint8_t is_sms_over_sip(packet_info_t *pinfo, libtrace_packet_t *pkt,
         colthread_local_t *loc, collector_global_t *glob) {
 
@@ -810,83 +938,6 @@ static inline uint8_t check_for_invalid_sip(packet_info_t *pinfo,
     }
 
     return 0;
-}
-
-static inline uint32_t is_core_server_packet(libtrace_packet_t *pkt,
-        packet_info_t *pinfo, coreserver_t *servers) {
-
-    coreserver_t *rad, *tmp;
-    coreserver_t *found = NULL;
-    uint32_t hashval = 0;
-
-    if (pinfo->srcport == 0 || pinfo->destport == 0) {
-        return 0;
-    }
-
-    HASH_ITER(hh, servers, rad, tmp) {
-        if (rad->info == NULL) {
-            rad->info = populate_addrinfo(rad->ipstr, rad->portstr,
-                    SOCK_DGRAM);
-            if (!rad->info) {
-                logger(LOG_INFO,
-                        "Removing %s:%s from %s server list due to getaddrinfo error",
-                        rad->ipstr, rad->portstr,
-                        coreserver_type_to_string(rad->servertype));
-
-                HASH_DELETE(hh, servers, rad);
-                continue;
-            }
-            if (rad->info->ai_family == AF_INET) {
-                rad->portswapped = ntohs(CS_TO_V4(rad)->sin_port);
-            } else if (rad->info->ai_family == AF_INET6) {
-                rad->portswapped = ntohs(CS_TO_V6(rad)->sin6_port);
-            }
-        }
-
-        if (pinfo->family == AF_INET) {
-            struct sockaddr_in *sa;
-            sa = (struct sockaddr_in *)(&(pinfo->srcip));
-
-            if (CORESERVER_MATCH_V4(rad, sa, pinfo->srcport)) {
-                found = rad;
-                break;
-            }
-            sa = (struct sockaddr_in *)(&(pinfo->destip));
-            if (CORESERVER_MATCH_V4(rad, sa, pinfo->destport)) {
-                found = rad;
-                break;
-            }
-        } else if (pinfo->family == AF_INET6) {
-            struct sockaddr_in6 *sa6;
-            sa6 = (struct sockaddr_in6 *)(&(pinfo->srcip));
-            if (CORESERVER_MATCH_V6(rad, sa6, pinfo->srcport)) {
-                found = rad;
-                break;
-            }
-            sa6 = (struct sockaddr_in6 *)(&(pinfo->destip));
-            if (CORESERVER_MATCH_V6(rad, sa6, pinfo->destport)) {
-                found = rad;
-                break;
-            }
-        }
-    }
-
-    /* Doesn't match any of our known core servers */
-    if (found == NULL) {
-        return 0;
-    }
-
-    /* Not technically an LIID, but we just need a hashed ID for the server
-     * entity.
-     */
-    hashval = hash_liid(found->serverkey);
-
-    /* 0 is our value for "not found", so make sure we never use it... */
-    if (hashval == 0) {
-        hashval = 1;
-    }
-    return hashval;
-
 }
 
 static libtrace_packet_t *process_packet(libtrace_t *trace,
@@ -1101,12 +1152,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             goto processdone;
         }
 
-        if (loc->gtpservers && is_core_server_packet(pkt, &pinfo,
-                    loc->gtpservers)) {
-            send_packet_to_sync(pkt, loc->tosyncq_ip, OPENLI_UPDATE_GTP);
-            ipsynced = 1;
-            goto processdone;
-        }
+        check_if_gtp(&pinfo, pkt, loc, glob);
 
         /* Is this a SIP packet? -- if yes, create a state update */
         if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
