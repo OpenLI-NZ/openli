@@ -6,8 +6,10 @@ openli (1.1.6-1) unstable; urgency=medium
   * Added new parameter for IP intercepts: mobileident -- this is
     used to indicate whether the user identifier for a mobile data
     intercept is an MSISDN, IMEI or IMSI.
+  * VOIP intercepts that are written to pcap files will now include
+    their corresponding SIP packets alongside the RTP streams.
 
- -- Shane Alcock <salcock@searchlight.nz>  Tue, 21 May 2024 11:24:07 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 22 May 2024 11:08:41 +1200
 
 openli (1.1.5-1) unstable; urgency=medium
 
