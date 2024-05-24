@@ -51,10 +51,6 @@
 #include "ipiri.h"
 #include "collector_util.h"
 
-#define INTERCEPT_IS_ACTIVE(cept, now) \
-    (cept->common.tostart_time <= now.tv_sec && ( \
-        cept->common.toend_time == 0 || cept->common.toend_time > now.tv_sec))
-
 collector_sync_t *init_sync_data(collector_global_t *glob) {
 
 	collector_sync_t *sync = (collector_sync_t *)
@@ -515,34 +511,6 @@ static inline void push_static_iprange_remove_to_collectors(
 
 }
 
-static inline void push_single_ipintercept(collector_sync_t *sync,
-        libtrace_message_queue_t *q, ipintercept_t *ipint,
-        access_session_t *session) {
-
-    ipsession_t *ipsess;
-    openli_pushed_t msg;
-    int i;
-
-    for (i = 0; i < session->sessipcount; i++) {
-
-        ipsess = create_ipsession(ipint, session->cin,
-            session->sessionips[i].ipfamily,
-            (struct sockaddr *)&(session->sessionips[i].assignedip),
-            session->sessionips[i].prefixbits);
-
-        if (!ipsess) {
-            logger(LOG_INFO,
-                    "OpenLI: ran out of memory while creating IP session message.");
-            return;
-        }
-        memset(&msg, 0, sizeof(openli_pushed_t));
-        msg.type = OPENLI_PUSH_IPINTERCEPT;
-        msg.data.ipsess = ipsess;
-
-        libtrace_message_queue_put(q, (void *)(&msg));
-    }
-}
-
 static inline void push_single_vendmirrorid(libtrace_message_queue_t *q,
         ipintercept_t *ipint, uint8_t msgtype) {
 
@@ -806,24 +774,10 @@ static void push_session_update_to_threads(void *sendqs,
         access_session_t *sess, ipintercept_t *ipint, int updatetype) {
 
     sync_sendq_t *sendq, *tmp;
-    int i;
 
-    for (i = 0; i < sess->sessipcount; i++) {
-        openli_pushed_t pmsg;
-        ipsession_t *sessdup;
-
-        HASH_ITER(hh, (sync_sendq_t *)sendqs, sendq, tmp) {
-            memset(&pmsg, 0, sizeof(openli_pushed_t));
-            pmsg.type = updatetype;
-            sessdup = create_ipsession(ipint, sess->cin,
-                    sess->sessionips[i].ipfamily,
-                    (struct sockaddr *)&(sess->sessionips[i].assignedip),
-                    sess->sessionips[i].prefixbits);
-
-            pmsg.data.ipsess = sessdup;
-            libtrace_message_queue_put(sendq->q, &pmsg);
-        }
-
+    HASH_ITER(hh, (sync_sendq_t *)sendqs, sendq, tmp) {
+        push_session_update_to_collector_queue(sendq->q, ipint, sess,
+                updatetype);
     }
 
 }
@@ -1096,7 +1050,7 @@ static void push_existing_user_sessions(collector_sync_t *sync,
         HASH_ITER(hh, user->sessions, sess, tmp2) {
             HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                     sendq, tmp) {
-                push_single_ipintercept(sync, sendq->q, cept, sess);
+                push_session_ips_to_collector_queue(sendq->q, cept, sess);
             }
 
             create_iri_from_session(sync, sess, cept,
@@ -1921,7 +1875,7 @@ static void push_all_active_intercepts(collector_sync_t *sync,
             user = lookup_user_by_intercept(allusers, orig);
             if (user) {
                 HASH_ITER(hh, user->sessions, sess, tmp2) {
-                    push_single_ipintercept(sync, q, orig, sess);
+                    push_session_ips_to_collector_queue(q, orig, sess);
                 }
             }
         }
@@ -2155,7 +2109,7 @@ static int newly_active_session(collector_sync_t *sync,
         }
         HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                 sendq, tmpq) {
-            push_single_ipintercept(sync, sendq->q, ipint, sess);
+            push_session_ips_to_collector_queue(sendq->q, ipint, sess);
         }
     }
     pthread_mutex_lock(sync->glob->stats_mutex);

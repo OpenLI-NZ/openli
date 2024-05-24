@@ -27,6 +27,7 @@
 #include "logger.h"
 #include "util.h"
 #include "internetaccess.h"
+#include "collector.h"
 
 access_plugin_t *init_access_plugin(uint8_t accessmethod) {
 
@@ -53,6 +54,54 @@ access_plugin_t *init_access_plugin(uint8_t accessmethod) {
 
 void destroy_access_plugin(access_plugin_t *p) {
     p->destroy_plugin_data(p);
+}
+
+
+int push_session_ips_to_collector_queue(libtrace_message_queue_t *q,
+        ipintercept_t *ipint, access_session_t *session) {
+
+    ipsession_t *ipsess;
+    openli_pushed_t msg;
+    int i;
+
+    for (i = 0; i < session->sessipcount; i++) {
+
+        ipsess = create_ipsession(ipint, session->cin,
+            session->sessionips[i].ipfamily,
+            (struct sockaddr *)&(session->sessionips[i].assignedip),
+            session->sessionips[i].prefixbits);
+
+        if (!ipsess) {
+            logger(LOG_INFO,
+                    "OpenLI: ran out of memory while creating IP session message.");
+            return -1;
+        }
+        memset(&msg, 0, sizeof(openli_pushed_t));
+        msg.type = OPENLI_PUSH_IPINTERCEPT;
+        msg.data.ipsess = ipsess;
+
+        libtrace_message_queue_put(q, (void *)(&msg));
+    }
+    return session->sessipcount;
+}
+
+void push_session_update_to_collector_queue(libtrace_message_queue_t *q,
+        ipintercept_t *ipint, access_session_t *sess, int updatetype) {
+
+    openli_pushed_t pmsg;
+    int i;
+    ipsession_t *sessdup;
+
+    for (i = 0; i < sess->sessipcount; i++) {
+        memset(&pmsg, 0, sizeof(openli_pushed_t));
+        pmsg.type = updatetype;
+        sessdup = create_ipsession(ipint, sess->cin,
+                sess->sessionips[i].ipfamily,
+                (struct sockaddr *)&(sess->sessionips[i].assignedip),
+                sess->sessionips[i].prefixbits);
+        pmsg.data.ipsess = sessdup;
+        libtrace_message_queue_put(q, &pmsg);
+    }
 }
 
 static inline void free_session(access_session_t *sess) {

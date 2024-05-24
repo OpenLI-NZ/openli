@@ -1325,6 +1325,8 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
             ((uint64_t)gparsed->seqno);
 
 
+    printf("DEVDEBUG:   TEID=%u\n", gparsed->teid);
+
     if (reqid == gparsed->matched_session->last_reqid &&
             gparsed->msgtype == gparsed->matched_session->last_reqtype) {
 
@@ -1938,7 +1940,7 @@ access_plugin_t *get_gtp_access_plugin(void) {
     access_plugin_t *gtp = calloc(1, sizeof(access_plugin_t));
 
     memcpy(gtp, &gtpplugin, sizeof(access_plugin_t));
-
+    gtp_init_plugin_data(gtp);
     return gtp;
 }
 

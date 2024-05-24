@@ -285,6 +285,147 @@ static int gtp_worker_process_sync_thread_message(openli_gtp_worker_t *worker) {
     return 1;
 }
 
+static inline internet_user_t *lookup_gtp_userid(openli_gtp_worker_t *worker,
+        user_identity_t *userid) {
+
+    internet_user_t *iuser;
+
+    iuser = lookup_user_by_identity(worker->allusers, userid);
+
+    if (iuser == NULL) {
+        iuser = (internet_user_t *)malloc(sizeof(internet_user_t));
+        if (!iuser) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to allocate memory for new Internet user in GTP worker %d",
+                    worker->workerid);
+            return NULL;
+        }
+        iuser->userid = NULL;
+        iuser->sessions = NULL;
+
+        add_userid_to_allusers_map(&(worker->allusers), iuser, userid);
+    }
+    return iuser;
+}
+
+static void push_gtp_session_over(openli_gtp_worker_t *worker,
+        user_intercept_list_t *userint, access_session_t *sess) {
+
+    ipintercept_t *ipint, *tmp;
+    sync_sendq_t *sendq, *tmpq, *queues;
+
+    queues = (sync_sendq_t *)worker->collector_queues;
+
+    if (userint == NULL || sess == NULL ) {
+        return;
+    }
+
+    /* For each intercept associated with this user identity, tell
+     * all of the collector threads to stop intercepting traffic for
+     * the IP address(es) that belongs to that session.
+     */
+    HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
+        printf("DEVDEBUG: %d ENDING SESSION: %s %s\n", worker->workerid,
+                ipint->common.liid, (char *)sess->sessionid);
+        HASH_ITER(hh, queues, sendq, tmpq) {
+            push_session_update_to_collector_queue(sendq->q, ipint, sess,
+                    OPENLI_PUSH_HALT_IPINTERCEPT);
+        }
+    }
+}
+
+
+static void newly_active_gtp_session(openli_gtp_worker_t *worker,
+        user_intercept_list_t *userint, access_session_t *sess) {
+
+    ipintercept_t *ipint, *tmp;
+    sync_sendq_t *sendq, *tmpq;
+
+    if (userint == NULL || sess == NULL) {
+        return;
+    }
+
+    /* Save the TEID for this session as one that we have to now
+     * intercept from now on -- TODO
+     */
+
+    if (sess->sessipcount == 0) {
+        return;
+    }
+
+    /* Tell the collector threads about any IPs associated with this
+     * newly active session.
+     */
+    HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
+        printf("DEVDEBUG: %d NEW SESSION: %s %s\n", worker->workerid,
+                ipint->common.liid, (char *)sess->sessionid);
+        HASH_ITER(hh, (sync_sendq_t *)(worker->collector_queues), sendq,
+                tmpq) {
+            push_session_ips_to_collector_queue(sendq->q, ipint, sess);
+        }
+    }
+
+}
+
+static void export_raw_gtp_c_packet_content(openli_gtp_worker_t *worker,
+        ipintercept_t *ipint, void *parseddata, uint32_t seqno,
+        uint32_t cin) {
+
+    /* Generate a RAW IRI encoding job for each GTP-C packet that contributed
+     * to the current GTP "action", so that pcapdisk intercepts can
+     * write them into the pcap file nicely */
+
+    /* TODO */
+
+}
+
+static void create_iri_from_gtp_action(openli_gtp_worker_t *worker,
+        ipintercept_t *ipint, access_session_t *sess, void *parseddata) {
+
+    struct timeval now;
+
+    if (ipint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
+        return;
+    }
+
+    gettimeofday(&now, NULL);
+    if (!INTERCEPT_IS_ACTIVE(ipint, now)) {
+        return;
+    }
+
+    /* TODO */
+
+    /* Determine if this requires a UMTS or EPS (or some other?) IRI */
+
+
+
+}
+
+static void generate_encoding_jobs(openli_gtp_worker_t *worker,
+        user_intercept_list_t *userint, access_session_t *sess,
+        void *parseddata, access_action_t action) {
+
+    ipintercept_t *ipint, *tmp;
+    access_plugin_t *p = worker->gtpplugin;
+
+    if (userint == NULL) {
+        return;
+    }
+
+    HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
+        if (ipint->common.targetagency == NULL ||
+                strcmp(ipint->common.targetagency, "pcapdisk") == 0) {
+            uint32_t seqno;
+            seqno = p->get_packet_sequence(p, parseddata);
+
+            export_raw_gtp_c_packet_content(worker, ipint, parseddata,
+                    seqno, sess->cin);
+        } else if (action != ACCESS_ACTION_NONE) {
+            create_iri_from_gtp_action(worker, ipint, sess, parseddata);
+        }
+    }
+}
+
 static void process_gtp_u_packet(openli_gtp_worker_t *worker,
         uint8_t *payload, uint32_t plen, uint32_t teid) {
 
@@ -294,6 +435,87 @@ static void process_gtp_u_packet(openli_gtp_worker_t *worker,
 static void process_gtp_c_packet(openli_gtp_worker_t *worker,
         libtrace_packet_t *packet) {
 
+    access_plugin_t *p = worker->gtpplugin;
+    void *parseddata;
+    user_identity_t *identities = NULL;
+    int useridcnt = 0, i;
+    internet_user_t *iuser;
+    access_session_t *sess = NULL;
+    session_state_t oldstate, newstate;
+    access_action_t accessaction;
+    user_intercept_list_t *userint;
+
+    parseddata = p->process_packet(p, packet);
+    if (parseddata == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: GTP worker %d was unable to parse GTP-C packet",
+                worker->workerid);
+        pthread_mutex_lock(worker->stats_mutex);
+        worker->stats->bad_ip_session_packets ++;
+        pthread_mutex_unlock(worker->stats_mutex);
+        return;
+    }
+
+    identities = p->get_userid(p, parseddata, &useridcnt);
+    if (identities == NULL) {
+        goto end_gtpc_processing;
+    }
+
+    oldstate = SESSION_STATE_NEW;
+    newstate = SESSION_STATE_NEW;
+
+    for (i = 0; i < useridcnt; i++) {
+        iuser = lookup_gtp_userid(worker, &identities[i]);
+
+        if (iuser == NULL) {
+            break;
+        }
+        sess = p->update_session_state(p, parseddata, identities[i].plugindata,
+                &(iuser->sessions), &oldstate, &newstate, &accessaction);
+        if (sess == NULL) {
+            /* Unable to match packet to a session, ignore it */
+            continue;
+        }
+
+        printf("IDCHECK: %s %s %d %d\n", iuser->userid,
+                (char *)sess->sessionid, oldstate, newstate);
+
+        HASH_FIND(hh, worker->userintercepts, iuser->userid,
+                strlen(iuser->userid), userint);
+
+        if (oldstate != newstate) {
+            if (newstate == SESSION_STATE_ACTIVE) {
+                printf("ACTIVE: %s\n", (char *)sess->sessionid);
+                newly_active_gtp_session(worker, userint, sess);
+
+            } else if (newstate == SESSION_STATE_OVER) {
+                printf("OVER: %s\n", (char *)sess->sessionid);
+                push_gtp_session_over(worker, userint, sess);
+                /* TODO remove TEID from list of intercepted TEIDs */
+            }
+        }
+
+        generate_encoding_jobs(worker, userint, sess, parseddata, accessaction);
+
+        if (oldstate != newstate && newstate == SESSION_STATE_OVER) {
+            HASH_DELETE(hh, iuser->sessions, sess);
+            free_single_session(sess);
+        }
+    }
+
+end_gtpc_processing:
+    if (parseddata) {
+        p->destroy_parsed_data(p, parseddata);
+    }
+
+    if (identities) {
+        for (i = 0; i < useridcnt; i++) {
+            if (identities[i].idstr) {
+                free(identities[i].idstr);
+            }
+        }
+        free(identities);
+    }
 
 }
 
@@ -353,7 +575,6 @@ static void process_gtp_packet(openli_gtp_worker_t *worker,
         teid = v1hdr->teid;
         payload += sizeof(gtpv1_header_t);
         plen -= sizeof(gtpv1_header_t);
-
     } else {
         return;
     }
@@ -391,7 +612,6 @@ static int gtp_worker_process_packet(openli_gtp_worker_t *worker) {
             break;
         }
 
-        /* TODO insert packet processing code here! */
         process_gtp_packet(worker, recvd.data.pkt);
 
         if (recvd.data.pkt) {

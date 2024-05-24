@@ -503,12 +503,10 @@ void handle_push_ipintercept(libtrace_thread_t *t, colthread_local_t *loc,
         free_single_ipsession(sess);
         return;
     }
-    /*
     logger(LOG_INFO,
             "OpenLI: collector thread %d has started intercepting %s IP session %s",
             trace_get_perpkt_thread_id(t),
             accesstype_to_string(sess->accesstype), sess->streamkey);
-    */
 }
 
 void handle_push_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
