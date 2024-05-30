@@ -247,10 +247,6 @@ uint8_t DERIVE_INTEGER_LENGTH(uint64_t x);
 
 int calculate_pspdu_length(uint32_t contentsize);
 
-wandder_encoded_result_t *encode_umtscc_body(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, void *ipcontent, uint32_t iplen,
-        uint8_t dir);
-
 wandder_encoded_result_t *encode_ipiri_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, etsili_iri_type_t iritype,
         etsili_generic_t **params);

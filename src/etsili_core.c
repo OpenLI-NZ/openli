@@ -114,7 +114,7 @@ static inline void encode_hi1_notification_body(wandder_encoder_t *encoder,
     wandder_encode_endseq(encoder);     // End Outermost Sequence
 }
 
-wandder_encoded_result_t *encode_umtscc_body(wandder_encoder_t *encoder,
+void encode_umtscc_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, void *ipcontent, uint32_t iplen,
         uint8_t dir) {
 
@@ -151,7 +151,6 @@ wandder_encoded_result_t *encode_umtscc_body(wandder_encoder_t *encoder,
     wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, ipcontent, iplen);
     END_ENCODED_SEQUENCE(encoder, 4);
-    return wandder_encode_finish(encoder);
 }
 
 static inline void encode_emailcc_body(wandder_encoder_t *encoder,
