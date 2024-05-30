@@ -126,7 +126,8 @@ void free_published_message(openli_export_recv_t *msg) {
             free(msg->data.mobiri.liid);
         }
     } else if (msg->type == OPENLI_EXPORT_RAW_SYNC ||
-            msg->type == OPENLI_EXPORT_RAW_CC) {
+            msg->type == OPENLI_EXPORT_RAW_CC ||
+            msg->type == OPENLI_EXPORT_RAW_IRI) {
         if (msg->data.rawip.liid) {
             free(msg->data.rawip.liid);
         }
