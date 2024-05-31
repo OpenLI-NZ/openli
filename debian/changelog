@@ -6,8 +6,14 @@ openli (1.1.6-1) unstable; urgency=medium
   * Added new parameter for IP intercepts: mobileident -- this is
     used to indicate whether the user identifier for a mobile data
     intercept is an MSISDN, IMEI or IMSI.
+  * Add support for including SIP packets in pcapdisk output for
+    VoIP intercepts.
+  * Fix bug where mediators receiving message from a collector via
+    RabbitMQ would be disconnected due to regular consumer timeouts.
+    This in turn should resolve issues where old IRIs or CCs would be
+    periodically retransmitted by a mediator to the LEA.
 
- -- Shane Alcock <salcock@searchlight.nz>  Tue, 21 May 2024 11:24:07 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Fri, 31 May 2024 18:13:41 +1200
 
 openli (1.1.5-1) unstable; urgency=medium
 

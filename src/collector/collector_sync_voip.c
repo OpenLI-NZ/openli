@@ -46,8 +46,6 @@
 #include "util.h"
 #include "ipmmiri.h"
 
-#include <libpacketdump.h>
-
 collector_sync_voip_t *init_voip_sync_data(collector_global_t *glob) {
 
     int i;
