@@ -77,7 +77,7 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 $(PLUGIN_SRCS)
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 
-openlicollector_LDFLAGS=-lpthread -lpatricia @COLLECTOR_LIBS@ -lpacketdump
+openlicollector_LDFLAGS=-lpthread -lpatricia @COLLECTOR_LIBS@
 openlicollector_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/ -I$(builddir)
 
 endif
