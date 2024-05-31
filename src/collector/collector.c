@@ -612,8 +612,6 @@ static uint8_t is_sms_over_sip(packet_info_t *pinfo, libtrace_packet_t *pkt,
     libtrace_packet_t **pkts = NULL;
     int pkt_cnt = 0;
 
-    return 0; // XXX TEMPORARY
-
     x = add_sip_packet_to_parser(&(loc->sipparser), pkt, 0);
     if (x == SIP_ACTION_USE_PACKET) {
         /* No fragments, no TCP reassembly required */
