@@ -773,25 +773,14 @@ static void rmq_write_buffered(forwarding_thread_data_t *fwd) {
 
         if (dest->fd != -1 && fwd->forcesend_rmq &&
                 !dest->waitingforhandshake) {
-            /* XXX Warning: will block */
-            if (transmit_heartbeat(dest->fd, dest->ssl) < 0) {
-                logger(LOG_INFO,
-                        "OpenLI: failed to send heartbeat to mediator %s:%s",
-                        dest->ipstr, dest->portstr);
-                disconnect_mediator(fwd, dest);
-            }
+
+            append_heartbeat_to_buffer(&(dest->buffer));
         }
 
         availsend = get_buffered_amount(&(dest->buffer));
         if (availsend == 0) {
             continue;
         }
-
-        /*
-        if (availsend < MIN_SEND_AMOUNT && fwd->forcesend_rmq == 0) {
-            continue;
-        }
-        */
 
         if (transmit_buffered_records_RMQ(&(dest->buffer), 
                 fwd->ampq_conn,
@@ -889,7 +878,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         fwd->forcesend_rmq = 1;
         its.it_interval.tv_sec = 0;
         its.it_interval.tv_nsec = 0;
-        its.it_value.tv_sec = 1;
+        its.it_value.tv_sec = 5;
         its.it_value.tv_nsec = 0;
 
         timerfd_settime(fwd->conntimerfd, 0, &its, NULL);

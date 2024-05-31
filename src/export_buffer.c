@@ -222,6 +222,44 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     return (buf->buftail - buf->bufhead);
 }
 
+uint64_t append_heartbeat_to_buffer(export_buffer_t *buf) {
+    ii_header_t hbeat;
+
+    uint32_t enclen = sizeof(hbeat);
+    uint64_t bufused = buf->buftail - buf->bufhead;
+    uint64_t spaceleft = buf->alloced - bufused;
+    uint32_t added = 0;
+    int rcint;
+
+    hbeat.magic = htonl(OPENLI_PROTO_MAGIC);
+    hbeat.bodylen = 0;
+    hbeat.intercepttype = htons((uint16_t)OPENLI_PROTO_HEARTBEAT);
+    hbeat.internalid = 0;
+
+    if (bufused == 0) {
+        buf->partialfront = 0;
+    }
+
+    while (spaceleft < sizeof(hbeat)) {
+        /* Add some space to the buffer */
+        spaceleft = extend_buffer(buf);
+        if (spaceleft == 0) {
+            return 0;
+        }
+    }
+
+    memcpy(buf->buftail, &hbeat, sizeof(hbeat));
+    buf->buftail += sizeof(hbeat);
+    added += sizeof(hbeat);
+
+    if (buf->since_last_saved_offset + added >= BUF_OFFSET_FREQUENCY) {
+        J1S(rcint, buf->record_offsets, bufused);
+        buf->since_last_saved_offset = 0;
+    }
+    buf->since_last_saved_offset += added;
+    return (buf->buftail - buf->bufhead);
+}
+
 int transmit_heartbeat(int fd, SSL *ssl) {
     ii_header_t hbeat;
     char *ptr;
