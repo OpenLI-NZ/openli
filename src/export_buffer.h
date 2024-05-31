@@ -77,6 +77,7 @@ void release_export_buffer(export_buffer_t *buf);
 uint64_t get_buffered_amount(export_buffer_t *buf);
 uint64_t append_message_to_buffer(export_buffer_t *buf,
         openli_encoded_result_t *msg, uint32_t beensent);
+uint64_t append_heartbeat_to_buffer(export_buffer_t *buf);
 uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
         uint8_t *pdustart, uint32_t pdulen, uint32_t beensent);
 int transmit_buffered_records(export_buffer_t *buf, int fd,
