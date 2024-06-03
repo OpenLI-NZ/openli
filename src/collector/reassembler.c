@@ -565,7 +565,7 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
                     (stream->pkt_alloc + 4) * sizeof(libtrace_packet_t *));
             stream->pkt_alloc += 4;
         }
-        stream->packets[stream->pkt_cnt] = pkt;
+        stream->packets[stream->pkt_cnt] = openli_copy_packet(pkt);
         stream->pkt_cnt ++;
     }
 

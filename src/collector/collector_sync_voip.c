@@ -1966,7 +1966,6 @@ static void sip_update_fast_path(collector_sync_voip_t *sync,
                 SIP_PROCESSING_UPDATING_STATE);
     }
 
-    trace_destroy_packet(recvdpkt);
 }
 
 static void sip_update_slow_path(collector_sync_voip_t *sync,
@@ -2045,16 +2044,12 @@ static void examine_sip_update(collector_sync_voip_t *sync,
     if (ret == SIP_ACTION_ERROR) {
         handle_bad_sip_update(sync, &recvdpkt, 1,
                 SIP_PROCESSING_ADD_PARSER);
-        return;
     } else if (ret == SIP_ACTION_USE_PACKET) {
         sip_update_fast_path(sync, recvdpkt);
-        return;
     } else if (ret == SIP_ACTION_REASSEMBLE_TCP) {
         sip_update_slow_path(sync, recvdpkt, 0);
-        return;
     } else if (ret == SIP_ACTION_REASSEMBLE_IPFRAG) {
         sip_update_slow_path(sync, recvdpkt, 1);
-        return;
     }
 
     if (recvdpkt) {
