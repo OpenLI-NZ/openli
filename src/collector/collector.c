@@ -744,6 +744,7 @@ static uint8_t check_if_gtp(packet_info_t *pinfo, libtrace_packet_t *pkt,
         colthread_local_t *loc, collector_global_t *glob) {
 
     uint32_t fwdto = 0;
+    uint8_t msgtype;
     gtpv1_header_t *v1_hdr;
     gtpv2_header_teid_t *v2_hdr;
 
@@ -768,8 +769,12 @@ static uint8_t check_if_gtp(packet_info_t *pinfo, libtrace_packet_t *pkt,
                 return 0;
             }
             v2_hdr = (gtpv2_header_teid_t *)pinfo->payload_ptr;
+            msgtype = v2_hdr->msgtype;
+
+            /*
             fwdto = hashlittle(&(v2_hdr->teid), sizeof(v2_hdr->teid),
                     312267023) % loc->gtpq_count;
+            */
 
         } else if (((*(pinfo->payload_ptr)) & 0xe0) == 0x20) {
             /* GTPv1 */
@@ -778,8 +783,38 @@ static uint8_t check_if_gtp(packet_info_t *pinfo, libtrace_packet_t *pkt,
             }
 
             v1_hdr = (gtpv1_header_t *)pinfo->payload_ptr;
+            msgtype = v1_hdr->msgtype;
+
+            /*
             fwdto = hashlittle(&(v1_hdr->teid), sizeof(v1_hdr->teid),
                     312267023) % loc->gtpq_count;
+            */
+
+        } else {
+            return 0;
+        }
+
+        switch(msgtype) {
+            case GTPV1_CREATE_PDP_CONTEXT_REQUEST:
+            case GTPV1_UPDATE_PDP_CONTEXT_REQUEST:
+            case GTPV1_DELETE_PDP_CONTEXT_REQUEST:
+            case GTPV2_CREATE_SESSION_REQUEST:
+            case GTPV2_DELETE_SESSION_REQUEST:
+                fwdto = hashlittle(&(pinfo->srcip),
+                        sizeof(struct sockaddr_storage), 312267023) %
+                        loc->gtpq_count;
+                break;
+            case GTPV1_CREATE_PDP_CONTEXT_RESPONSE:
+            case GTPV1_UPDATE_PDP_CONTEXT_RESPONSE:
+            case GTPV1_DELETE_PDP_CONTEXT_RESPONSE:
+            case GTPV2_CREATE_SESSION_RESPONSE:
+            case GTPV2_DELETE_SESSION_RESPONSE:
+                fwdto = hashlittle(&(pinfo->destip),
+                        sizeof(struct sockaddr_storage), 312267023) %
+                        loc->gtpq_count;
+                break;
+            default:
+                fwdto = 0;
         }
     }
 

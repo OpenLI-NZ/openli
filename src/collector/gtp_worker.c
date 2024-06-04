@@ -345,8 +345,8 @@ static void newly_active_gtp_session(openli_gtp_worker_t *worker,
         return;
     }
 
-    /* Save the TEID for this session as one that we have to now
-     * intercept from now on -- TODO
+    /* Save the Data TEIDs for this session as we have to now
+     * intercept GTP-U for those TEIDs from now on -- TODO
      */
 
     if (sess->sessipcount == 0) {
@@ -491,13 +491,14 @@ static void process_gtp_c_packet(openli_gtp_worker_t *worker,
             } else if (newstate == SESSION_STATE_OVER) {
                 printf("OVER: %s\n", (char *)sess->sessionid);
                 push_gtp_session_over(worker, userint, sess);
-                /* TODO remove TEID from list of intercepted TEIDs */
+
             }
         }
 
         generate_encoding_jobs(worker, userint, sess, parseddata, accessaction);
 
         if (oldstate != newstate && newstate == SESSION_STATE_OVER) {
+            /* TODO remove data TEID from list of intercepted TEIDs */
             HASH_DELETE(hh, iuser->sessions, sess);
             free_single_session(sess);
         }

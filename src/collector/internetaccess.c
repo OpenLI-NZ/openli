@@ -117,6 +117,9 @@ static inline void free_session(access_session_t *sess) {
     if (sess->sessionips) {
         free(sess->sessionips);
     }
+    if (sess->sessionid) {
+        free(sess->sessionid);
+    }
     free(sess);
 }
 
@@ -240,7 +243,6 @@ access_session_t *create_access_session(access_plugin_t *p, char *sessid,
 	newsess->started.tv_sec = 0;
 	newsess->started.tv_usec = 0;
 
-    newsess->teid = 0;
 	return newsess;
 }
 

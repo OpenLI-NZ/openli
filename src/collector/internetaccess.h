@@ -58,6 +58,20 @@ typedef struct gtpv2_header_teid {
     uint32_t seqno;
 } PACKED gtpv2_header_teid_t;
 
+enum {
+    GTPV1_CREATE_PDP_CONTEXT_REQUEST = 16,
+    GTPV1_CREATE_PDP_CONTEXT_RESPONSE = 17,
+    GTPV1_UPDATE_PDP_CONTEXT_REQUEST = 18,
+    GTPV1_UPDATE_PDP_CONTEXT_RESPONSE = 19,
+    GTPV1_DELETE_PDP_CONTEXT_REQUEST = 20,
+    GTPV1_DELETE_PDP_CONTEXT_RESPONSE = 21,
+
+    GTPV2_CREATE_SESSION_REQUEST = 32,
+    GTPV2_CREATE_SESSION_RESPONSE = 33,
+    GTPV2_DELETE_SESSION_REQUEST = 36,
+    GTPV2_DELETE_SESSION_RESPONSE = 37,
+};
+
 
 enum {
     ACCESS_RADIUS,
@@ -154,8 +168,6 @@ struct access_session {
     uint8_t sessipcount;
     session_ipversion_t sessipversion;
     uint8_t ips_mapped;
-
-    uint32_t teid;
 
     access_plugin_t *plugin;
     void *sessionid;
