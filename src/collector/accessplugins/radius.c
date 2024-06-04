@@ -2150,10 +2150,6 @@ static void radius_destroy_session_data(access_plugin_t *p,
     Word_t rcw;
     radius_user_session_t *usess = (radius_user_session_t *)sess->statedata;
 
-    if (sess->sessionid) {
-        free(sess->sessionid);
-    }
-
     if (usess == NULL) {
         return;
     }
