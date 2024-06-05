@@ -61,6 +61,8 @@ enum {
     OPENLI_EXPORT_EMAILIRI = 22,
     OPENLI_EXPORT_RAW_CC = 23,
     OPENLI_EXPORT_RAW_IRI = 24,
+    OPENLI_EXPORT_EPSCC = 16,
+    OPENLI_EXPORT_EPSIRI = 17,
 };
 
 /* This structure is also used for IPMMCCs since they require the same

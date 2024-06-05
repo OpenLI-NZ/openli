@@ -27,6 +27,7 @@
 #ifndef OPENLI_GTP_WORKER_H_
 #define OPENLI_GTP_WORKER_H_
 
+#include "gtp.h"
 #include "intercept.h"
 #include "collector_base.h"
 #include "collector_util.h"
@@ -87,6 +88,11 @@ typedef struct openli_gtp_worker {
      * track sessions observed in GTP-C traffic
      */
     access_plugin_t *gtpplugin;
+
+    /* Free list of ETSILI generic IEs that have been used for encoding
+     * fields in previous ETSI records by this thread instance.
+     */
+    etsili_generic_freelist_t *freegenerics;
 
 } openli_gtp_worker_t;
 

@@ -45,8 +45,6 @@ static void remove_gtp_intercept(openli_gtp_worker_t *worker,
      * announced.
      */
 
-    logger(LOG_INFO, "DEVDEBUG: removing intercept %s from GTP worker %d",
-            ipint->common.liid, worker->workerid);
     remove_intercept_from_user_intercept_list(&worker->userintercepts, ipint);
     HASH_DELETE(hh_liid, worker->ipintercepts, ipint);
     free_single_ipintercept(ipint);
@@ -91,8 +89,6 @@ static int init_gtp_intercept(openli_gtp_worker_t *worker,
     /* Discard any static IPs announced for this intercept, as they are
      * irrelevant for the purposes of this thread.
      */
-    logger(LOG_INFO, "DEVDEBUG: adding intercept %s -- %s to GTP worker %d",
-            ipint->common.liid, ipint->username, worker->workerid);
     free_all_staticipranges(&(ipint->statics));
     ipint->statics = NULL;
 
@@ -114,12 +110,8 @@ static void update_modified_gtp_intercept(openli_gtp_worker_t *worker,
 
     int r = 0, changed = 0;
 
-    logger(LOG_INFO, "DEVDEBUG: updating intercept %s -- %s on GTP worker %d",
-            found->common.liid, found->username, worker->workerid);
     if (ipint->accesstype != INTERNET_ACCESS_TYPE_MOBILE) {
         /* Intercept has changed to be NOT mobile, so just remove it */
-        logger(LOG_INFO, "DEVDEBUG: GTP worker %d -- %s is no longer mobile",
-                worker->workerid, found->common.liid);
         remove_intercept_from_user_intercept_list(&worker->userintercepts,
                 found);
         HASH_DELETE(hh_liid, worker->ipintercepts, found);
@@ -134,8 +126,6 @@ static void update_modified_gtp_intercept(openli_gtp_worker_t *worker,
     } else {
         if (strcmp(ipint->username, found->username) != 0 ||
                 ipint->mobileident != found->mobileident) {
-            logger(LOG_INFO, "DEVDEBUG: GTP worker %d -- %s has new username '%s'",
-                    worker->workerid, found->common.liid, ipint->username);
             remove_intercept_from_user_intercept_list(&worker->userintercepts,
                     found);
             free(found->username);
@@ -325,8 +315,6 @@ static void push_gtp_session_over(openli_gtp_worker_t *worker,
      * the IP address(es) that belongs to that session.
      */
     HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
-        printf("DEVDEBUG: %d ENDING SESSION: %s %s\n", worker->workerid,
-                ipint->common.liid, (char *)sess->sessionid);
         HASH_ITER(hh, queues, sendq, tmpq) {
             push_session_update_to_collector_queue(sendq->q, ipint, sess,
                     OPENLI_PUSH_HALT_IPINTERCEPT);
@@ -357,8 +345,6 @@ static void newly_active_gtp_session(openli_gtp_worker_t *worker,
      * newly active session.
      */
     HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
-        printf("DEVDEBUG: %d NEW SESSION: %s %s\n", worker->workerid,
-                ipint->common.liid, (char *)sess->sessionid);
         HASH_ITER(hh, (sync_sendq_t *)(worker->collector_queues), sendq,
                 tmpq) {
             push_session_ips_to_collector_queue(sendq->q, ipint, sess);
@@ -383,6 +369,10 @@ static void create_iri_from_gtp_action(openli_gtp_worker_t *worker,
         ipintercept_t *ipint, access_session_t *sess, void *parseddata) {
 
     struct timeval now;
+    access_plugin_t *p = worker->gtpplugin;
+    openli_export_recv_t *irimsg;
+    int tracker = ipint->common.seqtrackerid;
+    int ret;
 
     if (ipint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
         return;
@@ -393,12 +383,35 @@ static void create_iri_from_gtp_action(openli_gtp_worker_t *worker,
         return;
     }
 
-    /* TODO */
+    irimsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    irimsg->type = gtp_get_parsed_version(parseddata) == 1 ?
+            OPENLI_EXPORT_UMTSIRI : OPENLI_EXPORT_EPSIRI;
+    irimsg->destid = ipint->common.destid;
+    irimsg->data.mobiri.liid = strdup(ipint->common.liid);
+    irimsg->data.mobiri.cin = sess->cin;
+    irimsg->data.mobiri.iritype = ETSILI_IRI_NONE;
+    irimsg->data.mobiri.customparams = NULL;
 
-    /* Determine if this requires a UMTS or EPS (or some other?) IRI */
+    ret = p->generate_iri_data(p, parseddata,
+            &(irimsg->data.mobiri.customparams),
+            &(irimsg->data.mobiri.iritype), worker->freegenerics, 0);
+    if (ret == -1) {
+        logger(LOG_INFO,
+                "OpenLI: error while creating IRI from GTP session state change for %s (worker=%d)", irimsg->data.mobiri.liid, worker->workerid);
+        free(irimsg->data.mobiri.liid);
+        free(irimsg);
+        return;
+    }
 
-
-
+    if (irimsg->data.mobiri.iritype == ETSILI_IRI_NONE) {
+        free(irimsg->data.mobiri.liid);
+        free(irimsg);
+        return;
+    }
+    pthread_mutex_lock(worker->stats_mutex);
+    worker->stats->mobiri_created ++;
+    pthread_mutex_unlock(worker->stats_mutex);
+    publish_openli_msg(worker->zmq_pubsocks[tracker], irimsg);
 }
 
 static void generate_encoding_jobs(openli_gtp_worker_t *worker,
@@ -477,19 +490,14 @@ static void process_gtp_c_packet(openli_gtp_worker_t *worker,
             continue;
         }
 
-        printf("IDCHECK: %s %s %d %d\n", iuser->userid,
-                (char *)sess->sessionid, oldstate, newstate);
-
         HASH_FIND(hh, worker->userintercepts, iuser->userid,
                 strlen(iuser->userid), userint);
 
         if (oldstate != newstate) {
             if (newstate == SESSION_STATE_ACTIVE) {
-                printf("ACTIVE: %s\n", (char *)sess->sessionid);
                 newly_active_gtp_session(worker, userint, sess);
 
             } else if (newstate == SESSION_STATE_OVER) {
-                printf("OVER: %s\n", (char *)sess->sessionid);
                 push_gtp_session_over(worker, userint, sess);
 
             }
@@ -762,6 +770,7 @@ haltgtpworker:
     clear_user_intercept_list(worker->userintercepts);
     free_all_ipintercepts(&(worker->ipintercepts));
     clear_zmq_socket_array(worker->zmq_pubsocks, worker->tracker_threads);
+    free_etsili_generics(worker->freegenerics);
 
     if (worker->gtpplugin) {
         destroy_gtp_access_plugin(worker->gtpplugin);
@@ -793,6 +802,7 @@ int start_gtp_worker_thread(openli_gtp_worker_t *worker, int id,
     worker->allusers = NULL;
     worker->userintercepts = NULL;
     worker->gtpplugin = get_gtp_access_plugin();
+    worker->freegenerics = create_etsili_generic_freelist(1);
 
     pthread_create(&(worker->threadid), NULL, gtp_thread_begin,
             (void *)worker);

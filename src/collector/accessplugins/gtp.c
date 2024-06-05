@@ -33,6 +33,7 @@
 #include "logger.h"
 #include "internetaccess.h"
 #include "util.h"
+#include "gtp.h"
 
 #define GTP_FLUSH_OLD_PKT_FREQ 180
 
@@ -41,6 +42,7 @@ enum {
     GTPV1_IE_IMSI = 2,
     GTPV1_IE_TEID_DATA = 16,
     GTPV1_IE_TEID_CTRL = 17,
+    GTPV1_IE_RAT_TYPE = 82,
     GTPV1_IE_END_USER_ADDRESS = 128,
     GTPV1_IE_APNAME = 131,
     GTPV1_IE_MSISDN = 134,
@@ -66,9 +68,14 @@ enum {
 
 enum {
     GTPV1_CAUSE_REQUEST_ACCEPTED = 128,
+    GTPV1_CAUSE_SYSTEM_FAILURE = 204,
+    GTPV1_CAUSE_AUTH_FAILED = 209,
 };
 
 enum {
+    SM_CAUSE_USER_AUTH_FAILED = 29,
+    SM_CAUSE_UNSUPPORTED_OPTION = 32,
+    SM_CAUSE_TEMP_OUT_OF_ORDER = 34,
     SM_CAUSE_REGULAR_DEACTIVATION = 36,
 };
 
@@ -1229,12 +1236,10 @@ static void apply_gtp_fsm_logic(gtp_parsed_t *gparsed, access_action_t *action,
         access_session_t *sess, gtp_saved_pkt_t *gpkt,
         session_state_t current) {
 
-    if (gpkt != gparsed->matched_session->lastsavedpkt) {
-        if (gpkt->version == 1) {
-            copy_session_params_v1(gparsed, gpkt);
-        } else {
-            copy_session_params_v2(gparsed, gpkt);
-        }
+    if (gpkt->version == 1) {
+        copy_session_params_v1(gparsed, gpkt);
+    } else {
+        copy_session_params_v2(gparsed, gpkt);
     }
 
     if (current == SESSION_STATE_NEW &&
@@ -1344,8 +1349,6 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
     } else {
         incr_refcount = 0;
     }
-
-    printf("DEVDEBUG:   TEID=%u\n", gparsed->teid);
 
     if (reqid == gparsed->matched_session->last_reqid &&
             gparsed->msgtype == gparsed->matched_session->last_reqtype) {
@@ -1586,7 +1589,7 @@ static void parse_uli_v2(uint8_t *locinfo,
 
 }
 
-static int gtp_create_pdp_generic_iri(gtp_parsed_t *gparsed,
+static int gtp_create_umts_generic_iri(gtp_parsed_t *gparsed,
         gtp_session_t *gsess,
         etsili_generic_t **params, etsili_generic_freelist_t *freelist,
         uint32_t evtype) {
@@ -1709,7 +1712,7 @@ static int gtp_create_pdp_generic_iri(gtp_parsed_t *gparsed,
 
 }
 
-static inline uint8_t gtpv2_cause_to_sm(uint8_t *gtpcause) {
+static inline uint8_t gtpv2_cause_to_sm(uint8_t *gtpcause, uint32_t evtype) {
 
     switch(*gtpcause) {
         case GTPV2_CAUSE_REQUEST_ACCEPTED:
@@ -1719,14 +1722,44 @@ static inline uint8_t gtpv2_cause_to_sm(uint8_t *gtpcause) {
     return 0;
 }
 
-static inline uint8_t gtpv1_cause_to_sm(uint8_t *gtpcause) {
+static inline uint8_t gtpv1_cause_to_sm(uint8_t *gtpcause, uint32_t evtype) {
 
     switch(*gtpcause) {
         case GTPV1_CAUSE_REQUEST_ACCEPTED:
-            return SM_CAUSE_REGULAR_DEACTIVATION;
+            if (evtype == UMTSIRI_EVENT_TYPE_PDPCONTEXT_DEACTIVATION) {
+                return SM_CAUSE_REGULAR_DEACTIVATION;
+            }
+            break;
+        case GTPV1_CAUSE_AUTH_FAILED:
+            return SM_CAUSE_USER_AUTH_FAILED;
+        case GTPV1_CAUSE_SYSTEM_FAILURE:
+            return SM_CAUSE_TEMP_OUT_OF_ORDER;
     }
 
     return 0;
+}
+
+static void insert_gtp_cause_as_gprs_error(gtp_infoelem_t *el,
+        etsili_generic_t **params, etsili_generic_freelist_t *freelist,
+        uint32_t evtype) {
+
+    uint8_t smcauseval = 0;
+    uint8_t *attrptr = (uint8_t *)el->iecontent;
+    uint16_t attrlen = el->ielength;
+    etsili_generic_t *np;
+
+    if (el->ietype == GTPV2_IE_CAUSE) {
+        smcauseval = gtpv2_cause_to_sm(attrptr, evtype);
+    } else if (el->ietype == GTPV1_IE_CAUSE) {
+        smcauseval = gtpv1_cause_to_sm(attrptr, evtype);
+    }
+
+    if (smcauseval != 0) {
+        np = create_etsili_generic(freelist,
+                UMTSIRI_CONTENTS_GPRS_ERROR_CODE, sizeof(uint8_t),
+                &(smcauseval));
+        HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+    }
 }
 
 static int gtp_create_context_deactivation_iri(gtp_parsed_t *gparsed,
@@ -1734,49 +1767,39 @@ static int gtp_create_context_deactivation_iri(gtp_parsed_t *gparsed,
 
     uint32_t evtype = UMTSIRI_EVENT_TYPE_PDPCONTEXT_DEACTIVATION;
     gtp_infoelem_t *el;
-    etsili_generic_t *np;
 
-    gtp_create_pdp_generic_iri(gparsed, gparsed->matched_session,
+    gtp_create_umts_generic_iri(gparsed, gparsed->matched_session,
             params, freelist, evtype);
 
     el = gparsed->response->ies;
     while (el) {
-        uint8_t ieattr = 0;
-        uint8_t *attrptr = (uint8_t *)el->iecontent;
-        uint16_t attrlen = el->ielength;
-
         switch(el->ietype) {
-            case GTPV2_IE_CAUSE: {
-                uint8_t smcauseval = gtpv2_cause_to_sm(attrptr);
-                if (smcauseval != 0) {
-                    np = create_etsili_generic(freelist,
-                            UMTSIRI_CONTENTS_GPRS_ERROR_CODE,
-                            sizeof(uint8_t), &(smcauseval));
-                    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum),
-                            sizeof(np->itemnum), np);
-                }
+            case GTPV1_IE_CAUSE:
+                insert_gtp_cause_as_gprs_error(el, params, freelist, evtype);
                 break;
-            }
-            case GTPV1_IE_CAUSE: {
-                uint8_t smcauseval = gtpv1_cause_to_sm(attrptr);
-                if (smcauseval != 0) {
-                    np = create_etsili_generic(freelist,
-                            UMTSIRI_CONTENTS_GPRS_ERROR_CODE,
-                            sizeof(uint8_t), &(smcauseval));
-                    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum),
-                            sizeof(np->itemnum), np);
-                }
+        }
+        el = el->next;
+    }
+
+    return 0;
+}
+
+static int gtp_create_context_activation_failed_iri(gtp_parsed_t *gparsed,
+        etsili_generic_t **params, etsili_generic_freelist_t *freelist) {
+
+    uint32_t evtype = UMTSIRI_EVENT_TYPE_PDPCONTEXT_ACTIVATION;
+    gtp_infoelem_t *el;
+
+    gtp_create_umts_generic_iri(gparsed, gparsed->matched_session,
+            params, freelist, evtype);
+
+    el = gparsed->response->ies;
+    while (el) {
+        switch(el->ietype) {
+            case GTPV1_IE_CAUSE:
+                insert_gtp_cause_as_gprs_error(el, params, freelist, evtype);
                 break;
-            }
-
         }
-
-        if (ieattr != 0) {
-            np = create_etsili_generic(freelist, ieattr, attrlen, attrptr);
-            HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
-                    np);
-        }
-
         el = el->next;
     }
 
@@ -1788,7 +1811,7 @@ static int gtp_create_context_modification_iri(gtp_parsed_t *gparsed,
 
     uint32_t evtype = UMTSIRI_EVENT_TYPE_PDPCONTEXT_MODIFICATION;
 
-    gtp_create_pdp_generic_iri(gparsed, gparsed->matched_session,
+    gtp_create_umts_generic_iri(gparsed, gparsed->matched_session,
             params, freelist, evtype);
 
     return 0;
@@ -1800,7 +1823,7 @@ static int gtp_create_start_with_context_active_iri(gtp_session_t *gsess,
 
     uint32_t evtype = UMTSIRI_EVENT_TYPE_START_WITH_PDPCONTEXT_ACTIVE;
 
-    gtp_create_pdp_generic_iri(NULL, gsess, params, freelist, evtype);
+    gtp_create_umts_generic_iri(NULL, gsess, params, freelist, evtype);
 
     return 0;
 }
@@ -1810,7 +1833,7 @@ static int gtp_create_context_activation_iri(gtp_parsed_t *gparsed,
 
     uint32_t evtype = UMTSIRI_EVENT_TYPE_PDPCONTEXT_ACTIVATION;
 
-    gtp_create_pdp_generic_iri(gparsed, gparsed->matched_session,
+    gtp_create_umts_generic_iri(gparsed, gparsed->matched_session,
             params, freelist, evtype);
 
     return 0;
@@ -1824,27 +1847,36 @@ static int gtp_generate_iri_data(access_plugin_t *p, void *parseddata,
 
     if (gparsed->action == ACCESS_ACTION_ACCEPT) {
         *iritype = ETSILI_IRI_BEGIN;
-        if (gtp_create_context_activation_iri(gparsed, params,
-                freelist) < 0) {
+        if (gparsed->version == 1 &&
+                gtp_create_context_activation_iri(gparsed, params,
+                        freelist) < 0) {
             return -1;
         }
         return 0;
     }
     else if (gparsed->action == ACCESS_ACTION_REJECT) {
-        printf("need to generate a PDP context activation failed IRI\n");
+        *iritype = ETSILI_IRI_REPORT;
+        if (gparsed->version == 1 &&
+                gtp_create_context_activation_failed_iri(gparsed, params,
+                        freelist) < 0) {
+            return -1;
+        }
+        return 0;
     }
     else if (gparsed->action == ACCESS_ACTION_INTERIM_UPDATE) {
         *iritype = ETSILI_IRI_CONTINUE;
-        if (gtp_create_context_modification_iri(gparsed, params, freelist) < 0)
-        {
+        if (gparsed->version == 1 &&
+                gtp_create_context_modification_iri(gparsed, params,
+                        freelist) < 0) {
             return -1;
         }
         return 0;
     }
     else if (gparsed->action == ACCESS_ACTION_END) {
         *iritype = ETSILI_IRI_END;
-        if (gtp_create_context_deactivation_iri(gparsed, params,
-                freelist) < 0) {
+        if (gparsed->version == 1 &&
+                gtp_create_context_deactivation_iri(gparsed, params,
+                        freelist) < 0) {
             return -1;
         }
         return 0;
@@ -1941,7 +1973,6 @@ static void gtp_destroy_session_data(access_plugin_t *p,
             }
 
             destroy_gtp_session(gtpsess);
-            printf("DEVDEBUG: destroying session %s\n", (char *)sess->sessionid);
         }
     }
 
@@ -1985,12 +2016,23 @@ access_plugin_t *get_gtp_access_plugin(void) {
     return gtp;
 }
 
+uint8_t gtp_get_parsed_version(void *parseddata) {
+    gtp_parsed_t *gparsed = (gtp_parsed_t *)parseddata;
+
+    if (gparsed) {
+        return gparsed->version;
+    }
+    return 0;
+}
+
 void destroy_gtp_access_plugin(access_plugin_t *gtp) {
     if (gtp->plugindata) {
         gtp_destroy_plugin_data(gtp);
     }
     free(gtp);
 }
+
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 
 

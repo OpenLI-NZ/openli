@@ -37,42 +37,6 @@
 
 #define SESSION_IP_INCR (5)
 
-/* Need these GTP header definitions in multiple places, so they go in
- * here rather than being confined to the GTP plugin...
- */
-typedef struct gtpv1_header {
-    uint8_t octet1;
-    uint8_t msgtype;
-    uint16_t msglen;
-    uint32_t teid;
-    uint16_t seqno;
-    uint8_t npdu;
-    uint8_t next_ext;
-} PACKED gtpv1_header_t;
-
-typedef struct gtpv2_header_teid {
-    uint8_t octet1;
-    uint8_t msgtype;
-    uint16_t msglen;
-    uint32_t teid;
-    uint32_t seqno;
-} PACKED gtpv2_header_teid_t;
-
-enum {
-    GTPV1_CREATE_PDP_CONTEXT_REQUEST = 16,
-    GTPV1_CREATE_PDP_CONTEXT_RESPONSE = 17,
-    GTPV1_UPDATE_PDP_CONTEXT_REQUEST = 18,
-    GTPV1_UPDATE_PDP_CONTEXT_RESPONSE = 19,
-    GTPV1_DELETE_PDP_CONTEXT_REQUEST = 20,
-    GTPV1_DELETE_PDP_CONTEXT_RESPONSE = 21,
-
-    GTPV2_CREATE_SESSION_REQUEST = 32,
-    GTPV2_CREATE_SESSION_RESPONSE = 33,
-    GTPV2_DELETE_SESSION_REQUEST = 36,
-    GTPV2_DELETE_SESSION_RESPONSE = 37,
-};
-
-
 enum {
     ACCESS_RADIUS,
     ACCESS_GTP,
