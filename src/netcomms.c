@@ -2303,16 +2303,15 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
             if (AMQP_FRAME_METHOD == frame.frame_type) {
                 switch (frame.payload.method.id) {
                     case AMQP_BASIC_ACK_METHOD: 
-                        /* if we've turned publisher confirms on, and we've published a
-                        * message here is a message being confirmed.
-                        */
-                        logger(LOG_INFO, "basic ack");
-                        //break;
+                        /* if we've turned publisher confirms on, and
+                         * we've published a message here, then this is a
+                         * message being confirmed.
+                         */
                         return OPENLI_PROTO_NO_MESSAGE;
                     case AMQP_BASIC_RETURN_METHOD:
-                        /* if a published message couldn't be routed and the mandatory
-                        * flag was set this is what would be returned. The message then
-                        * needs to be read.
+                        /* if a published message couldn't be routed and the
+                         * mandatory flag was set this is what would be
+                         * returned. The message then needs to be read.
                         */
                         {
                             amqp_message_t message;
@@ -2323,28 +2322,28 @@ openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
                             amqp_destroy_message(&message);
                         }
 
-                        //break;
                         return OPENLI_PROTO_NO_MESSAGE;
 
                     case AMQP_CHANNEL_CLOSE_METHOD:
-                        /* a channel.close method happens when a channel exception occurs,
-                        * this can happen by publishing to an exchange that doesn't exist
-                        * for example.
-                        *
-                        * In this case you would need to open another channel redeclare
-                        * any queues that were declared auto-delete, and restart any
-                        * consumers that were attached to the previous channel.
-                        */
+                        /* a channel.close method happens when a channel
+                         * exception occurs, this can happen by publishing to
+                         * an exchange that doesn't exist (for example).
+                         *
+                         * In this case you would need to open another channel,
+                         * redeclare any queues that were declared auto-delete,
+                         * and restart any consumers that were attached to the
+                         * previous channel.
+                         */
                         logger(LOG_INFO, "OpenLI: RMQ Channel closed");
                         return OPENLI_PROTO_RECV_ERROR;
 
                     case AMQP_CONNECTION_CLOSE_METHOD:
-                        /* a connection.close method happens when a connection exception
-                        * occurs, this can happen by trying to use a channel that isn't
-                        * open for example.
-                        *
-                        * In this case the whole connection must be restarted.
-                        */
+                        /* a connection.close method happens when a connection
+                         * exception occurs, this can happen by trying to use
+                         * a channel that isn't open (for example).
+                         *
+                         * In this case the whole connection must be restarted.
+                         */
                         return OPENLI_PROTO_PEER_DISCONNECTED;
 
                     default:

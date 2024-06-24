@@ -94,6 +94,7 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
         newdest->ssl = NULL;
         newdest->ssllasterror = 0;
         newdest->waitingforhandshake = 0;
+        newdest->rmq_declared = 0;
 
         if (fwd->ampq_conn) {
             snprintf(stringspace, 32, "ID%d", newdest->mediatorid);
@@ -605,21 +606,6 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
             continue;
         }
 
-        if (fwd->ampq_conn) {
-            amqp_queue_declare(
-                    fwd->ampq_conn,
-                    1,
-                    dest->rmq_queueid,
-                    0,
-                    1,
-                    0,
-                    0,
-                    amqp_empty_table);
-
-            if (amqp_get_rpc_reply(fwd->ampq_conn).reply_type != AMQP_RESPONSE_NORMAL ) {
-                logger(LOG_INFO, "OpenLI: Failed to declare queue");
-            }
-        }
 
         JLI(jval2, fwd->destinations_by_fd, dest->fd);
         if (jval2 == NULL) {
@@ -759,7 +745,7 @@ static int process_control_message(forwarding_thread_data_t *fwd) {
     return 1;
 }
 
-static void rmq_write_buffered(forwarding_thread_data_t *fwd) {
+static int rmq_write_buffered(forwarding_thread_data_t *fwd) {
 
     export_dest_t *dest;
     PWord_t jval;
@@ -772,7 +758,7 @@ static void rmq_write_buffered(forwarding_thread_data_t *fwd) {
         JLN(jval, fwd->destinations_by_id, index);
 
         if (dest->fd != -1 && fwd->forcesend_rmq &&
-                !dest->waitingforhandshake) {
+                !dest->waitingforhandshake && !fwd->ampq_blocked) {
 
             append_heartbeat_to_buffer(&(dest->buffer));
         }
@@ -782,15 +768,35 @@ static void rmq_write_buffered(forwarding_thread_data_t *fwd) {
             continue;
         }
 
+        if (fwd->ampq_conn && !fwd->ampq_blocked && dest->rmq_declared == 0) {
+            amqp_queue_declare(
+                    fwd->ampq_conn,
+                    1,
+                    dest->rmq_queueid,
+                    0,
+                    1,
+                    0,
+                    0,
+                    amqp_empty_table);
+
+            if (amqp_get_rpc_reply(fwd->ampq_conn).reply_type != AMQP_RESPONSE_NORMAL ) {
+                logger(LOG_INFO, "OpenLI: Failed to declare queue");
+            }
+            dest->rmq_declared = 1;
+        }
+
         if (transmit_buffered_records_RMQ(&(dest->buffer), 
                 fwd->ampq_conn,
                 1,
                 amqp_cstring_bytes(""),
                 dest->rmq_queueid,
-                BUF_BATCH_SIZE) < 0 ) {
+                BUF_BATCH_SIZE,
+                &(fwd->ampq_blocked)) < 0 ) {
             logger(LOG_INFO, "OpenLI: Error Publishing to RMQ");
+            return -1;
         }
     }
+    return 0;
 }
 
 static void complete_ssl_handshake(forwarding_thread_data_t *fwd,
@@ -827,6 +833,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
     int topollc, x, i;
     int towait = 10000;
 
+
     /* Add the mediator confirmation timer to our poll item list, if
      * required.
      */
@@ -838,6 +845,69 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         topollc = fwd->nextpoll + 1;
     } else {
         topollc = fwd->nextpoll;
+    }
+
+    if (fwd->RMQ_conf.enabled && fwd->ampq_conn == NULL) {
+        amqp_table_entry_t login_properties[1];
+        amqp_table_t login_properties_table;
+
+        amqp_table_entry_t client_capabilities[1];
+        amqp_table_t client_capabilities_table;
+        if ( fwd->RMQ_conf.name && fwd->RMQ_conf.pass ) {
+            fwd->ampq_conn = amqp_new_connection();
+            fwd->ampq_sock = amqp_tcp_socket_new(fwd->ampq_conn);
+
+            //TODO RMQ instance will always be on localhost? (for collector)
+            if (amqp_socket_open(fwd->ampq_sock, "localhost", 5672 )){
+                logger(LOG_INFO,
+                        "OpenLI: RMQ forwarding thread %d failed to open amqp socket",
+                        fwd->forwardid);
+                return 0;
+            }
+
+            client_capabilities[0].key = amqp_cstring_bytes("connection.blocked");
+            client_capabilities[0].value.kind = AMQP_FIELD_KIND_BOOLEAN;
+            client_capabilities[0].value.value.boolean = 1;
+
+            client_capabilities_table.entries = client_capabilities;
+            client_capabilities_table.num_entries = 1;
+
+            login_properties[0].key = amqp_cstring_bytes("capabilities");
+            login_properties[0].value.kind = AMQP_FIELD_KIND_TABLE;
+            login_properties[0].value.value.table = client_capabilities_table;
+
+            login_properties_table.entries = login_properties;
+            login_properties_table.num_entries = 1;
+
+            /* login using PLAIN, must specify username and password */
+            if ( (amqp_login_with_properties(fwd->ampq_conn, "OpenLI", 0,
+                            AMQP_FRAME_MAX,0, &login_properties_table, 
+                            AMQP_SASL_METHOD_PLAIN, fwd->RMQ_conf.name,
+                            fwd->RMQ_conf.pass)
+                    ).reply_type != AMQP_RESPONSE_NORMAL ) {
+                logger(LOG_ERR, "OpenLI: RMQ Failed to login to broker using PLAIN auth");
+                return 0;
+            }
+
+            amqp_channel_open(fwd->ampq_conn, 1);
+
+            if ( (amqp_get_rpc_reply(fwd->ampq_conn).reply_type) != AMQP_RESPONSE_NORMAL ) {
+                logger(LOG_ERR, "OpenLI: Failed to open channel");
+                return 0;
+            }
+            logger(LOG_INFO, "OpenLI: Connected to RMQ instance");
+
+            if (check_rmq_connection_block_status(fwd->ampq_conn,
+                        &(fwd->ampq_blocked)) < 0) {
+                logger(LOG_ERR,
+                        "OpenLI: Error while checking status of new RMQ instance");
+                return 0;
+            }
+
+        } else {
+            logger(LOG_INFO, "OpenLI: Incomplete RMQ login information supplied");
+            return 0;
+        }
     }
 
     while (1) {
@@ -904,11 +974,17 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         }
     }
 
+
     if (fwd->ampq_conn) {
         /* Loop over all destinations and see if they have anything to
          * write to their queue.
          */
-        rmq_write_buffered(fwd);
+        if (rmq_write_buffered(fwd) < 0) {
+            amqp_connection_close(fwd->ampq_conn, AMQP_REPLY_SUCCESS);
+            amqp_destroy_connection(fwd->ampq_conn);
+            fwd->ampq_conn = NULL;
+            fwd->ampq_sock = NULL;
+        }
         fwd->forcesend_rmq = 0;
     }
 
@@ -944,6 +1020,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         }
 
         if (fwd->ampq_conn) {
+            fwd->topoll[i].events = 0;
             continue;
         }
 
@@ -1087,40 +1164,6 @@ void *start_forwarding_thread(void *data) {
         goto haltforwarder;
     }
 
-    if (fwd->RMQ_conf.enabled) {
-        if ( fwd->RMQ_conf.name && fwd->RMQ_conf.pass ) {
-            fwd->ampq_conn = amqp_new_connection();
-            fwd->ampq_sock = amqp_tcp_socket_new(fwd->ampq_conn);
-
-            //TODO RMQ instance will always be on localhost? (for collector)
-            if (amqp_socket_open(fwd->ampq_sock, "localhost", 5672 )){
-                logger(LOG_INFO, 
-                        "OpenLI: RMQ forwarding thread %d failed to open amqp socket",
-                        fwd->forwardid);
-                goto haltforwarder;
-            }
-
-            /* login using PLAIN, must specify username and password */
-            if ( (amqp_login(fwd->ampq_conn, "OpenLI", 0, AMQP_FRAME_MAX,0,
-                            AMQP_SASL_METHOD_PLAIN, fwd->RMQ_conf.name,
-                            fwd->RMQ_conf.pass)
-                    ).reply_type != AMQP_RESPONSE_NORMAL ) {
-                logger(LOG_ERR, "OpenLI: RMQ Failed to login to broker using PLAIN auth");
-                goto haltforwarder;
-            }
-
-            amqp_channel_open(fwd->ampq_conn, 1);
-
-            if ( (amqp_get_rpc_reply(fwd->ampq_conn).reply_type) != AMQP_RESPONSE_NORMAL ) {
-                logger(LOG_ERR, "OpenLI: Failed to open channel");
-                goto haltforwarder;
-            }
-            logger(LOG_INFO, "OpenLI: Connected to RMQ instance");
-        } else {
-            logger(LOG_INFO, "OpenLI: Incomplete RMQ login information supplied");
-            goto haltforwarder;
-        }
-    }
 
     forwarder_main(fwd);
 

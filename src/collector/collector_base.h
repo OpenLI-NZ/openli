@@ -72,6 +72,7 @@ typedef struct export_dest {
     int ssllasterror;
 
     amqp_bytes_t rmq_queueid;
+    uint8_t rmq_declared;
 
     UT_hash_handle hh_fd;
     UT_hash_handle hh_medid;
@@ -241,6 +242,7 @@ typedef struct forwarding_thread_data {
 
     amqp_connection_state_t ampq_conn;
     amqp_socket_t *ampq_sock;
+    uint8_t ampq_blocked;
     openli_RMQ_config_t RMQ_conf;
 
 } forwarding_thread_data_t;

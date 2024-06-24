@@ -85,7 +85,9 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
 int transmit_buffered_records_RMQ(export_buffer_t *buf, 
         amqp_connection_state_t amqp_state, amqp_channel_t channel, 
         amqp_bytes_t exchange, amqp_bytes_t routing_key,
-        uint64_t bytelimit);
+        uint64_t bytelimit, uint8_t *is_blocked);
+int check_rmq_connection_block_status(amqp_connection_state_t amqp_state,
+        uint8_t *is_blocked);
 int transmit_heartbeat(int fd, SSL *ssl);
 int advance_export_buffer_head(export_buffer_t *buf, uint64_t amount);
 uint8_t *get_buffered_head(export_buffer_t *buf, uint64_t *rem);

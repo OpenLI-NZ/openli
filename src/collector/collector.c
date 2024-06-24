@@ -2264,6 +2264,7 @@ int main(int argc, char *argv[]) {
                 (glob->sslconf.ctx && glob->etsitls) ? glob->sslconf.ctx : NULL;
         //forwarder only needs CTX if ctx exists and is enabled 
         glob->forwarders[i].RMQ_conf = glob->RMQ_conf;
+        glob->forwarders[i].ampq_blocked = 0;
 
         pthread_create(&(glob->forwarders[i].threadid), NULL,
                 start_forwarding_thread, (void *)&(glob->forwarders[i]));
