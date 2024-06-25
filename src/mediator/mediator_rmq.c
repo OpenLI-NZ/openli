@@ -212,6 +212,70 @@ int declare_mediator_rawip_RMQ_queue(amqp_connection_state_t state,
     return declare_RMQ_queue(state, queuename, 4);
 }
 
+static int update_mediator_rmq_connection_block_status(
+        amqp_connection_state_t state, uint8_t *is_blocked) {
+
+    /* copy of code from export_buffer.c, but with different log
+     * messages when things go awry
+     */
+    amqp_frame_t frame;
+    struct timeval tv;
+    int x, ret;
+
+    tv.tv_sec = tv.tv_usec = 0;
+    x = amqp_simple_wait_frame_noblock(state, &frame, &tv);
+
+    if (x != AMQP_STATUS_OK && x != AMQP_STATUS_TIMEOUT) {
+        logger(LOG_INFO,
+                "OpenLI mediator: unable to check status of an internal RMQ publishing socket");
+        return -1;
+    }
+
+    if (*is_blocked) {
+        ret = 0;
+    } else {
+        ret = 1;
+    }
+
+    if (x == AMQP_STATUS_TIMEOUT) {
+        return ret;
+    }
+
+    if (AMQP_FRAME_METHOD == frame.frame_type) {
+        switch(frame.payload.method.id) {
+            case AMQP_CONNECTION_BLOCKED_METHOD:
+                if ((*is_blocked) == 0) {
+                    logger(LOG_INFO,
+                            "OpenLI mediator: RMQ is unable to handle any more published ETSI records!");
+                    logger(LOG_INFO,
+                            "OpenLI mediator: this is a SERIOUS problem -- received ETSI records are going to be dropped!");
+                }
+                *is_blocked = 1;
+                ret = 0;
+                break;
+            case AMQP_CONNECTION_UNBLOCKED_METHOD:
+                if ((*is_blocked) == 1) {
+                    logger(LOG_INFO,
+                            "OpenLI mediator: RMQ has become unblocked and will resume publishing ETSI records.");
+                    ret = 0;
+                } else {
+                    ret = 1;
+                }
+                *is_blocked = 0;
+                break;
+            case AMQP_CONNECTION_CLOSE_METHOD:
+                logger(LOG_INFO,
+                        "OpenLI mediator: 'close' exception occurred on an internal RMQ connection -- must restart connection");
+                return -1;
+            case AMQP_CHANNEL_CLOSE_METHOD:
+                logger(LOG_INFO,
+                        "OpenLI mediator: channel exception occurred on an internal RMQ connection -- must reset connection");
+                return -1;
+        }
+    }
+    return ret;
+}
+
 /** Publishes a message onto a mediator RMQ queue.
  *
  *  A message can be an encoded CC, an encoded IRI, or a raw IP packet body.
@@ -224,12 +288,13 @@ int declare_mediator_rawip_RMQ_queue(amqp_connection_state_t state,
  *  @param queuename        THe name of the queue to publish to
  *  @param expiry           The TTL of the message in seconds -- if set to 0,
  *                          the message will not be expired by RMQ
+ *  @param is_blocked       [in|out] Is the RMQ broker accepting publishes?
  *
  *  @return 0 if an error occurs, 1 if the message is published successfully
  */
 static int produce_mediator_RMQ(amqp_connection_state_t state,
         uint8_t *msg, uint16_t msglen, char *liid, int channel,
-        const char *queuename, uint32_t expiry) {
+        const char *queuename, uint32_t expiry, uint8_t *is_blocked) {
     amqp_bytes_t message_bytes;
     amqp_basic_properties_t props;
     int pub_ret;
@@ -246,10 +311,18 @@ static int produce_mediator_RMQ(amqp_connection_state_t state,
         props.expiration = amqp_cstring_bytes(expirystr);
     }
 
-    pub_ret = amqp_basic_publish(state, channel, amqp_cstring_bytes(""),
-            amqp_cstring_bytes(queuename), 0, 0, &props, message_bytes);
-    if (pub_ret != 0) {
-        logger(LOG_INFO, "OpenLI Mediator: error publishing to internal RMQ for LIID %s: %d", liid, pub_ret);
+    if (update_mediator_rmq_connection_block_status(state, is_blocked) < 0) {
+        return -1;
+    }
+
+    if ((*is_blocked) == 0) {
+        pub_ret = amqp_basic_publish(state, channel, amqp_cstring_bytes(""),
+                amqp_cstring_bytes(queuename), 0, 0, &props, message_bytes);
+        if (pub_ret != 0) {
+            logger(LOG_INFO, "OpenLI Mediator: error publishing to internal RMQ for LIID %s: %d", liid, pub_ret);
+            return -1;
+        }
+    } else {
         return 0;
     }
 
@@ -263,12 +336,15 @@ static int produce_mediator_RMQ(amqp_connection_state_t state,
  *  @param msglen           The length of the packet body, in bytes
  *  @param liid             The LIID that the message belongs to
  *  @param queuename        THe name of the queue to publish to
+ *  @param is_blocked       [in|out] Is the RMQ broker accepting publishes?
  *
  *  @return 0 if an error occurs, 1 if the message is published successfully
  */
 int publish_rawip_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
-        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename) {
-    return produce_mediator_RMQ(state, msg, msglen, liid, 4, queuename, 0);
+        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename,
+        uint8_t *is_blocked) {
+    return produce_mediator_RMQ(state, msg, msglen, liid, 4, queuename, 0,
+            is_blocked);
 }
 
 /** Publishes an encoded IRI onto a mediator RMQ queue.
@@ -278,13 +354,16 @@ int publish_rawip_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
  *  @param msglen           The length of the encoded IRI, in bytes
  *  @param liid             The LIID that the message belongs to
  *  @param queuename        THe name of the queue to publish to
+ *  @param is_blocked       [in|out] Is the RMQ broker accepting publishes?
  *
  *  @return 0 if an error occurs, 1 if the message is published successfully
  */
 int publish_iri_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
-        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename) {
+        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename,
+        uint8_t *is_blocked) {
 
-    return produce_mediator_RMQ(state, msg, msglen, liid, 2, queuename, 0);
+    return produce_mediator_RMQ(state, msg, msglen, liid, 2, queuename, 0,
+            is_blocked);
 }
 
 /** Publishes an encoded CC onto a mediator RMQ queue.
@@ -293,14 +372,17 @@ int publish_iri_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
  *  @param msg              A pointer to the start of the encoded CC
  *  @param msglen           The length of the encoded CC, in bytes
  *  @param liid             The LIID that the message belongs to
- *  @param queuename        THe name of the queue to publish to
+ *  @param queuename        The name of the queue to publish to
+ *  @param is_blocked       [in|out] Is the RMQ broker accepting publishes?
  *
  *  @return 0 if an error occurs, 1 if the message is published successfully
  */
 int publish_cc_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
-        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename) {
+        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename,
+        uint8_t *is_blocked) {
 
-    return produce_mediator_RMQ(state, msg, msglen, liid, 3, queuename, 0);
+    return produce_mediator_RMQ(state, msg, msglen, liid, 3, queuename, 0,
+            is_blocked);
 }
 
 void remove_mediator_liid_RMQ_queue(amqp_connection_state_t state,
@@ -433,6 +515,12 @@ consfailed:
  */
 amqp_connection_state_t join_mediator_RMQ_as_producer(coll_recv_t *col) {
 
+    amqp_table_entry_t login_properties[1];
+    amqp_table_t login_properties_table;
+
+    amqp_table_entry_t client_capabilities[1];
+    amqp_table_t client_capabilities_table;
+
     if (col->amqp_producer_state) {
         return col->amqp_producer_state;
     }
@@ -452,10 +540,25 @@ amqp_connection_state_t join_mediator_RMQ_as_producer(coll_recv_t *col) {
         goto prodfailed;
     }
 
+    client_capabilities[0].key = amqp_cstring_bytes("connection.blocked");
+    client_capabilities[0].value.kind = AMQP_FIELD_KIND_BOOLEAN;
+    client_capabilities[0].value.value.boolean = 1;
+
+    client_capabilities_table.entries = client_capabilities;
+    client_capabilities_table.num_entries = 1;
+
+    login_properties[0].key = amqp_cstring_bytes("capabilities");
+    login_properties[0].value.kind = AMQP_FIELD_KIND_TABLE;
+    login_properties[0].value.value.table = client_capabilities_table;
+
+    login_properties_table.entries = login_properties;
+    login_properties_table.num_entries = 1;
+
     /* Hard-coded username and password -- not ideal, but the RMQ instance
      * should only be accessible via localhost.
      */
-    if ((amqp_login(col->amqp_producer_state, "OpenLI-med", 0, 131072, 0,
+    if ((amqp_login_with_properties(col->amqp_producer_state, "OpenLI-med", 0,
+                131072, 0, &login_properties_table,
                 AMQP_SASL_METHOD_PLAIN, "openli.nz", col->internalpass))
             .reply_type != AMQP_RESPONSE_NORMAL) {
         if (col->disabled_log == 0) {

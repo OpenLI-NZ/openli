@@ -148,8 +148,11 @@ static void remove_expired_liid_queues(coll_recv_t *col) {
         if (tv.tv_sec - known->lastseen < LIID_QUEUE_EXPIRY_THRESH) {
             /* Not expired yet, so redeclare the queue to keep rabbitmq
              * from deleting it accidentally */
-            declare_mediator_liid_RMQ_queue(col->amqp_producer_state,
-                    known->liid, known->liidlen);
+            if (!col->rmq_blocked) {
+                declare_mediator_liid_RMQ_queue(col->amqp_producer_state,
+                        known->liid, known->liidlen);
+                known->declared_int_rmq = 1;
+            }
             continue;
         }
 
@@ -213,6 +216,7 @@ static int start_collector_ssl(coll_recv_t *col) {
                     "OpenLI Mediator: SSL handshake failed for collector %s",
                     col->ipaddr);
         }
+
         col->lastsslerror = r;
         return -1;
     }
@@ -382,6 +386,16 @@ static int continue_collector_handshake(coll_recv_t *col, med_epoll_ev_t *mev) {
     return 1;
 }
 
+static void increment_col_drop_counter(coll_recv_t *col) {
+
+    col->dropped_recs ++;
+    if (col->dropped_recs == 10 || col->dropped_recs % 1000 == 0) {
+        logger(LOG_INFO,
+                "OpenLI mediator: dropped %lu records from collector %s so far",
+                col->dropped_recs, col->ipaddr);
+    }
+}
+
 /** Processes an intercept record received from a collector and inserts
  *  it into the appropriate mediator-internal LIID queue.
  *
@@ -428,6 +442,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
         found->liidlen = strlen(found->liid);
         found->lastseen = 0;
         found->declared_raw_rmq = 0;
+        found->declared_int_rmq = 0;
 
         snprintf(qname, 1024, "%s-iri", found->liid);
         found->queuenames[0] = strdup(qname);
@@ -440,12 +455,16 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
                 found);
         logger(LOG_INFO, "OpenLI Mediator: LIID %s has been seen coming from collector %s", found->liid, col->ipaddr);
 
+    }
+
+    if (found->declared_int_rmq == 0 && !col->rmq_blocked) {
         /* declare amqp queue for this LIID */
         if (declare_mediator_liid_RMQ_queue(col->amqp_producer_state,
                     found->liid, found->liidlen) < 0) {
             logger(LOG_INFO, "OpenLI Mediator: failed to create internal RMQ queues for LIID %s in collector thread %s", found->liid, col->ipaddr);
             return -1;
         }
+        found->declared_int_rmq = 1;
     }
 
     gettimeofday(&tv, NULL);
@@ -453,16 +472,42 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
     /* Hand off to publishing methods defined in mediator_rmq.c */
     if (msgtype == OPENLI_PROTO_ETSI_CC) {
-        r = publish_cc_on_mediator_liid_RMQ_queue(col->amqp_producer_state,
-                msgbody + (liidlen + 2), msglen - (liidlen + 2), found->liid,
-                found->queuenames[1]);
+        if (found->declared_int_rmq) {
+            r = publish_cc_on_mediator_liid_RMQ_queue(col->amqp_producer_state,
+                    msgbody + (liidlen + 2), msglen - (liidlen + 2),
+                    found->liid, found->queuenames[1], &(col->rmq_blocked));
+            if (r <= 0) {
+                increment_col_drop_counter(col);
+            }
+            if (r < 0) {
+                amqp_destroy_connection(col->amqp_producer_state);
+                col->amqp_producer_state = NULL;
+            }
+        } else {
+            increment_col_drop_counter(col);
+            r = 0;
+        }
         return r;
     }
 
     if (msgtype == OPENLI_PROTO_ETSI_IRI) {
-        return publish_iri_on_mediator_liid_RMQ_queue(col->amqp_producer_state,
-                msgbody + (liidlen + 2), msglen - (liidlen + 2), found->liid,
-                found->queuenames[0]);
+        if (found->declared_int_rmq) {
+            r = publish_iri_on_mediator_liid_RMQ_queue(
+                    col->amqp_producer_state,
+                    msgbody + (liidlen + 2), msglen - (liidlen + 2),
+                    found->liid, found->queuenames[0], &(col->rmq_blocked));
+            if (r <= 0) {
+                increment_col_drop_counter(col);
+            }
+            if (r < 0) {
+                amqp_destroy_connection(col->amqp_producer_state);
+                col->amqp_producer_state = NULL;
+            }
+        } else {
+            increment_col_drop_counter(col);
+            r = 0;
+        }
+        return r;
     }
 
     if (msgtype == OPENLI_PROTO_RAWIP_SYNC ||
@@ -470,15 +515,28 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
             msgtype == OPENLI_PROTO_RAWIP_IRI) {
 
         /* declare a queue for raw IP */
-        if (!found->declared_raw_rmq) {
+        if (!found->declared_raw_rmq && col->rmq_blocked == 0) {
             declare_mediator_rawip_RMQ_queue(col->amqp_producer_state,
                     found->liid, found->liidlen);
             found->declared_raw_rmq = 1;
         }
         /* publish to raw IP queue */
-        return publish_rawip_on_mediator_liid_RMQ_queue(
-                col->amqp_producer_state, msgbody, msglen, found->liid,
-                found->queuenames[2]);
+        if (found->declared_raw_rmq) {
+            r = publish_rawip_on_mediator_liid_RMQ_queue(
+                    col->amqp_producer_state, msgbody, msglen, found->liid,
+                    found->queuenames[2], &(col->rmq_blocked));
+            if (r <= 0) {
+                increment_col_drop_counter(col);
+            }
+            if (r < 0) {
+                amqp_destroy_connection(col->amqp_producer_state);
+                col->amqp_producer_state = NULL;
+            }
+        } else {
+            increment_col_drop_counter(col);
+            r = 0;
+        }
+        return r;
     }
 
     return 1;
@@ -675,6 +733,10 @@ static void cleanup_collector_thread(coll_recv_t *col) {
     if (col->ipaddr) {
         logger(LOG_INFO, "OpenLI mediator: exiting collector thread for %s",
                 col->ipaddr);
+        logger(LOG_INFO,
+                "OpenLI mediator: dropped %lu records from collector %s",
+                col->dropped_recs, col->ipaddr);
+
         free(col->ipaddr);
     }
 
@@ -959,6 +1021,7 @@ int mediator_accept_collector_connection(mediator_collector_t *medcol,
         newcol->ipaddr = strdup(strbuf);
         newcol->iplen = strlen(strbuf);
         newcol->col_fd = newfd;
+        newcol->rmq_blocked = 0;
 
         HASH_ADD_KEYPTR(hh, medcol->threads, newcol->ipaddr, newcol->iplen,
                 newcol);
