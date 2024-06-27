@@ -384,13 +384,17 @@ static void create_iri_from_gtp_action(openli_gtp_worker_t *worker,
     }
 
     irimsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
-    irimsg->type = gtp_get_parsed_version(parseddata) == 1 ?
-            OPENLI_EXPORT_UMTSIRI : OPENLI_EXPORT_EPSIRI;
     irimsg->destid = ipint->common.destid;
     irimsg->data.mobiri.liid = strdup(ipint->common.liid);
     irimsg->data.mobiri.cin = sess->cin;
     irimsg->data.mobiri.iritype = ETSILI_IRI_NONE;
     irimsg->data.mobiri.customparams = NULL;
+
+    if (gtp_get_parsed_version(parseddata) == 1) {
+        irimsg->type = OPENLI_EXPORT_UMTSIRI;
+    } else {
+        irimsg->type = OPENLI_EXPORT_EPSIRI;
+    }
 
     ret = p->generate_iri_data(p, parseddata,
             &(irimsg->data.mobiri.customparams),

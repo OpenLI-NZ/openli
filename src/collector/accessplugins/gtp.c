@@ -34,6 +34,7 @@
 #include "internetaccess.h"
 #include "util.h"
 #include "gtp.h"
+#include "epsiri.h"
 
 #define GTP_FLUSH_OLD_PKT_FREQ 180
 
@@ -127,6 +128,7 @@ typedef struct gtp_session {
     uint8_t pdpaddrcount;
     uint16_t pdptype;
     int64_t cin;
+    uint8_t gtpversion;
 
     uint8_t serverid[16];
     uint8_t serveripfamily;
@@ -1039,6 +1041,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
     sess->pdpaddrs = NULL;
     sess->pdpaddrcount = 0;
     sess->refcount = 0;
+    sess->gtpversion = gparsed->version;
 
     memcpy(sess->serverid, gparsed->serverid, 16);
     sess->serveripfamily = gparsed->serveripfamily;
@@ -1293,7 +1296,7 @@ static void apply_gtp_fsm_logic(gtp_parsed_t *gparsed, access_action_t *action,
         *action = ACCESS_ACTION_END;
     } else if (current == SESSION_STATE_ACTIVE &&
             (gpkt->type == GTPV1_UPDATE_PDP_CONTEXT_RESPONSE)) {
-        *action = ACCESS_ACTION_INTERIM_UPDATE;
+        *action = ACCESS_ACTION_MODIFIED;
     }
 
     gparsed->matched_session->current = current;
@@ -1589,6 +1592,154 @@ static void parse_uli_v2(uint8_t *locinfo,
 
 }
 
+static int gtp_create_eps_generic_iri(gtp_parsed_t *gparsed,
+        gtp_session_t *gsess,
+        etsili_generic_t **params, etsili_generic_freelist_t *freelist,
+        uint32_t evtype) {
+
+    etsili_generic_t *np;
+    etsili_ipaddress_t ipaddr;
+    uint32_t initiator = 1;
+    struct timeval tv;
+    /*
+     *  - EVENT_TIME = timestamp
+     *  - INITIATOR
+     *  - IMEI
+     *  - IMSI
+     *  - MSISDN
+     *  - EVENT_TYPE
+     *  - APN
+     *  - PDN Address type and addresses
+     *  - Operator Identifier (added later by encoder thread)
+     *  - Correlation Number = CIN
+     *
+     * RAW INFORMATION ELEMENTS REQUIRED
+     *
+     * PDN Address Allocation
+     * APN
+     * PDN Type
+     * Bearer QOS
+     * Bearer activation type
+     * APN-AMBR
+     * Protocol Configuration Options
+     * Bearer ID
+     * Procedure Transaction Identifier ?
+     * RAT Type
+     *
+     */
+
+    if (gsess->serveripfamily == 4) {
+        etsili_create_ipaddress_v4((uint32_t *)(gsess->serverid),
+                ETSILI_IPV4_SUBNET_UNKNOWN, ETSILI_IPADDRESS_ASSIGNED_UNKNOWN,
+                &ipaddr);
+    } else {
+        etsili_create_ipaddress_v6((uint8_t *)(gsess->serverid),
+                ETSILI_IPV6_SUBNET_UNKNOWN, ETSILI_IPADDRESS_ASSIGNED_UNKNOWN,
+                &ipaddr);
+    }
+
+    np = create_etsili_generic(freelist, EPSIRI_CONTENTS_GGSN_IPADDRESS,
+        sizeof(etsili_ipaddress_t), (uint8_t *)&ipaddr);
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+
+    np = create_etsili_generic(freelist, EPSIRI_CONTENTS_IMSI,
+        gsess->saved.imsi_len, (uint8_t *)gsess->saved.imsi);
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+
+    np = create_etsili_generic(freelist, EPSIRI_CONTENTS_IMEI,
+        gsess->saved.imei_len, (uint8_t *)gsess->saved.imei);
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+
+    np = create_etsili_generic(freelist, EPSIRI_CONTENTS_MSISDN,
+        gsess->saved.msisdn_len, (uint8_t *)gsess->saved.msisdn);
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+
+    np = create_etsili_generic(freelist, EPSIRI_CONTENTS_APNAME,
+        gsess->saved.apname_len, (uint8_t *)gsess->saved.apname);
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+
+    /* TODO encode all PDP addresses according to the standards */
+    if (gsess->pdpaddrcount > 0) {
+        if (gsess->pdpaddrs[0].ipfamily == AF_INET) {
+            struct sockaddr_in *sin = (struct sockaddr_in *)
+                    &(gsess->pdpaddrs[0].assignedip);
+
+            etsili_create_ipaddress_v4((uint32_t *)&(sin->sin_addr.s_addr),
+                    ETSILI_IPV4_SUBNET_UNKNOWN,
+                    ETSILI_IPADDRESS_ASSIGNED_DYNAMIC,
+                    &ipaddr);
+        } else {
+            struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)
+                    &(gsess->pdpaddrs[0].assignedip);
+
+            etsili_create_ipaddress_v6((uint8_t *)(sin6->sin6_addr.s6_addr),
+                    ETSILI_IPV6_SUBNET_UNKNOWN,
+                    ETSILI_IPADDRESS_ASSIGNED_DYNAMIC,
+                    &ipaddr);
+        }
+    }
+
+    np = create_etsili_generic(freelist, EPSIRI_CONTENTS_PDP_ADDRESS,
+            sizeof(etsili_ipaddress_t), (uint8_t *)&ipaddr);
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+            np);
+
+    np = create_etsili_generic(freelist, EPSIRI_CONTENTS_PDPTYPE,
+            sizeof(uint16_t), (uint8_t *)&(gsess->pdptype));
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+            np);
+
+    np = create_etsili_generic(freelist, EPSIRI_CONTENTS_EVENT_TYPE,
+            sizeof(uint32_t), (uint8_t *)&(evtype));
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+            np);
+
+    np = create_etsili_generic(freelist, EPSIRI_CONTENTS_INITIATOR,
+            sizeof(uint32_t), (uint8_t *)&(initiator));
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+            np);
+
+    if (gparsed) {
+        TIMESTAMP_TO_TV((&tv), gparsed->response->tvsec);
+        np = create_etsili_generic(freelist, EPSIRI_CONTENTS_EVENT_TIME,
+                sizeof(struct timeval), (uint8_t *)(&tv));
+        HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+                np);
+
+        TIMESTAMP_TO_TV((&tv), gparsed->request->tvsec);
+        np = create_etsili_generic(freelist, EPSIRI_CONTENTS_LOCATION_TIME,
+                sizeof(struct timeval), (uint8_t *)(&tv));
+        HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+                np);
+    } else {
+        gettimeofday(&tv, NULL);
+        np = create_etsili_generic(freelist, EPSIRI_CONTENTS_EVENT_TIME,
+                sizeof(struct timeval), (uint8_t *)(&tv));
+        HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+                np);
+
+        np = create_etsili_generic(freelist, EPSIRI_CONTENTS_LOCATION_TIME,
+                sizeof(struct timeval), (uint8_t *)(&tv));
+        HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+                np);
+    }
+
+    if (gsess->saved.location) {
+        np = create_etsili_generic(freelist, EPSIRI_CONTENTS_RAW_ULI,
+                gsess->saved.location_len, gsess->saved.location);
+        HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+                np);
+    }
+
+    np = create_etsili_generic(freelist, EPSIRI_CONTENTS_GPRS_CORRELATION,
+            sizeof(int64_t), (uint8_t *)(&(gsess->cin)));
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+            np);
+
+
+    return 0;
+}
+
 static int gtp_create_umts_generic_iri(gtp_parsed_t *gparsed,
         gtp_session_t *gsess,
         etsili_generic_t **params, etsili_generic_freelist_t *freelist,
@@ -1762,6 +1913,18 @@ static void insert_gtp_cause_as_gprs_error(gtp_infoelem_t *el,
     }
 }
 
+static int gtp_create_bearer_deactivation_iri(gtp_parsed_t *gparsed,
+        etsili_generic_t **params, etsili_generic_freelist_t *freelist) {
+
+    /*
+     * Bearer deactivation type
+     * Bearer deactivation cause
+     */
+
+    /* TODO */
+    return 0;
+}
+
 static int gtp_create_context_deactivation_iri(gtp_parsed_t *gparsed,
         etsili_generic_t **params, etsili_generic_freelist_t *freelist) {
 
@@ -1781,6 +1944,15 @@ static int gtp_create_context_deactivation_iri(gtp_parsed_t *gparsed,
         el = el->next;
     }
 
+    return 0;
+}
+
+static int gtp_create_bearer_activation_failed_iri(gtp_parsed_t *gparsed,
+        etsili_generic_t **params, etsili_generic_freelist_t *freelist) {
+
+    /* Failed bearer activation reason */
+
+    /* TODO */
     return 0;
 }
 
@@ -1818,6 +1990,15 @@ static int gtp_create_context_modification_iri(gtp_parsed_t *gparsed,
 }
 
 
+static int gtp_create_start_with_bearer_active_iri(gtp_session_t *gsess,
+        etsili_generic_t **params, etsili_generic_freelist_t *freelist) {
+
+    uint32_t evtype = EPSIRI_EVENT_TYPE_START_WITH_BEARER_ACTIVE;
+
+    gtp_create_eps_generic_iri(NULL, gsess, params, freelist, evtype);
+    return 0;
+}
+
 static int gtp_create_start_with_context_active_iri(gtp_session_t *gsess,
         etsili_generic_t **params, etsili_generic_freelist_t *freelist) {
 
@@ -1825,6 +2006,16 @@ static int gtp_create_start_with_context_active_iri(gtp_session_t *gsess,
 
     gtp_create_umts_generic_iri(NULL, gsess, params, freelist, evtype);
 
+    return 0;
+}
+
+static int gtp_create_bearer_activation_iri(gtp_parsed_t *gparsed,
+        etsili_generic_t **params, etsili_generic_freelist_t *freelist) {
+
+    uint32_t evtype = EPSIRI_EVENT_TYPE_BEARER_ACTIVATION;
+
+    gtp_create_eps_generic_iri(gparsed, gparsed->matched_session,
+            params, freelist, evtype);
     return 0;
 }
 
@@ -1852,6 +2043,11 @@ static int gtp_generate_iri_data(access_plugin_t *p, void *parseddata,
                         freelist) < 0) {
             return -1;
         }
+        if (gparsed->version == 2 &&
+                gtp_create_bearer_activation_iri(gparsed, params,
+                        freelist) < 0) {
+            return -1;
+        }
         return 0;
     }
     else if (gparsed->action == ACCESS_ACTION_REJECT) {
@@ -1861,21 +2057,36 @@ static int gtp_generate_iri_data(access_plugin_t *p, void *parseddata,
                         freelist) < 0) {
             return -1;
         }
+        if (gparsed->version == 2 &&
+                gtp_create_bearer_activation_failed_iri(gparsed, params,
+                        freelist) < 0) {
+            return -1;
+        }
         return 0;
     }
-    else if (gparsed->action == ACCESS_ACTION_INTERIM_UPDATE) {
+    else if (gparsed->action == ACCESS_ACTION_MODIFIED) {
         *iritype = ETSILI_IRI_CONTINUE;
         if (gparsed->version == 1 &&
                 gtp_create_context_modification_iri(gparsed, params,
                         freelist) < 0) {
             return -1;
         }
+        /* TODO GTPv2 bearer modification */
         return 0;
+    }
+    else if (gparsed->action == ACCESS_ACTION_INTERIM_UPDATE) {
+        /* TODO location updates, anything else that requires a REPORT */
+
     }
     else if (gparsed->action == ACCESS_ACTION_END) {
         *iritype = ETSILI_IRI_END;
         if (gparsed->version == 1 &&
                 gtp_create_context_deactivation_iri(gparsed, params,
+                        freelist) < 0) {
+            return -1;
+        }
+        if (gparsed->version == 2 &&
+                gtp_create_bearer_deactivation_iri(gparsed, params,
                         freelist) < 0) {
             return -1;
         }
@@ -1908,8 +2119,9 @@ static int gtp_generate_iri_from_session(access_plugin_t *p,
 
     if (trigger == OPENLI_IPIRI_STARTWHILEACTIVE) {
         *iritype = ETSILI_IRI_BEGIN;
-        if (gtp_create_start_with_context_active_iri(gsess, params, freelist)
-                    < 0) {
+        if (gsess->gtpversion == 1 &&
+                gtp_create_start_with_context_active_iri(gsess, params,
+                    freelist) < 0) {
             return -1;
         }
     }

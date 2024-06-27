@@ -172,6 +172,7 @@ typedef enum {
     OPENLI_PREENCODE_CSEQUENCE_7,	/* Microsecond timestamp */
     OPENLI_PREENCODE_CSEQUENCE_11,  /* IPMMIRI */
     OPENLI_PREENCODE_CSEQUENCE_12,  /* IPMMCC */
+    OPENLI_PREENCODE_CSEQUENCE_15,  /* EPSIRI */
     OPENLI_PREENCODE_PSDOMAINID,
     OPENLI_PREENCODE_LIID,
     OPENLI_PREENCODE_AUTHCC,
@@ -184,6 +185,7 @@ typedef enum {
     OPENLI_PREENCODE_IPCCOID,
     OPENLI_PREENCODE_IPIRIOID,
     OPENLI_PREENCODE_UMTSIRIOID,
+    OPENLI_PREENCODE_EPSIRIOID,
     OPENLI_PREENCODE_EMAILIRIOID,
     OPENLI_PREENCODE_EMAILCCOID,
     OPENLI_PREENCODE_IPMMCCOID,
@@ -252,6 +254,10 @@ wandder_encoded_result_t *encode_ipiri_body(wandder_encoder_t *encoder,
         etsili_generic_t **params);
 
 wandder_encoded_result_t *encode_umtsiri_body(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed,
+        etsili_iri_type_t iritype, etsili_generic_t *params);
+
+wandder_encoded_result_t *encode_epsiri_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed,
         etsili_iri_type_t iritype, etsili_generic_t *params);
 

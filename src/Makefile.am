@@ -71,6 +71,7 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/etsiencoding/etsiencoding.c \
                 collector/etsiencoding/encryptcontainer.c \
                 collector/etsiencoding/ipmmiri.c \
+                collector/etsiencoding/epsiri.c collector/epsiri.h \
                 collector/sms_worker.c collector/sms_worker.h \
                 collector/gtp_worker.c collector/gtp_worker.h \
 				collector/gtp.h \

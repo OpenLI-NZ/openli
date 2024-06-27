@@ -65,6 +65,7 @@ static inline uint32_t job_origreq_to_encrypted_payload_type(
             return OPENLI_ENCRYPTED_PAYLOAD_TYPE_PART3;
         case OPENLI_EXPORT_UMTSCC:
         case OPENLI_EXPORT_UMTSIRI:
+        case OPENLI_EXPORT_EPSIRI:
             return OPENLI_ENCRYPTED_PAYLOAD_TYPE_PART7;
         case OPENLI_EXPORT_IPMMCC:
         case OPENLI_EXPORT_IPMMIRI:

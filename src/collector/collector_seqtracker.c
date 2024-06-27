@@ -73,6 +73,7 @@ static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
         case OPENLI_EXPORT_IPMMIRI:
             return recvd->data.ipmmiri.liid;
         case OPENLI_EXPORT_UMTSIRI:
+        case OPENLI_EXPORT_EPSIRI:
             return recvd->data.mobiri.liid;
         case OPENLI_EXPORT_RAW_SYNC:
         case OPENLI_EXPORT_RAW_CC:
@@ -98,6 +99,7 @@ static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
         case OPENLI_EXPORT_IPMMIRI:
             return recvd->data.ipmmiri.cin;
         case OPENLI_EXPORT_UMTSIRI:
+        case OPENLI_EXPORT_EPSIRI:
             return recvd->data.mobiri.cin;
         case OPENLI_EXPORT_RAW_SYNC:
         case OPENLI_EXPORT_RAW_IRI:
@@ -473,6 +475,7 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
                 case OPENLI_EXPORT_IPIRI:
                 case OPENLI_EXPORT_UMTSCC:
                 case OPENLI_EXPORT_UMTSIRI:
+                case OPENLI_EXPORT_EPSIRI:
                 case OPENLI_EXPORT_EMAILIRI:
                 case OPENLI_EXPORT_EMAILCC:
                 case OPENLI_EXPORT_RAW_SYNC:
