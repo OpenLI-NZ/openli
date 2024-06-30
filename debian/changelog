@@ -12,8 +12,13 @@ openli (1.1.6-1) unstable; urgency=medium
     RabbitMQ would be disconnected due to regular consumer timeouts.
     This in turn should resolve issues where old IRIs or CCs would be
     periodically retransmitted by a mediator to the LEA.
+  * Fix memory errors when reassembling TCP segments in the collector
+    libtrace threads.
+  * Generate error log messages when a component (either mediator or
+    collector) cannot publish to RabbitMQ due to the connection being
+    blocked.
 
- -- Shane Alcock <salcock@searchlight.nz>  Fri, 31 May 2024 18:13:41 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Mon, 1 Jul 2024 09:57:07 +1200
 
 openli (1.1.5-1) unstable; urgency=medium
 
