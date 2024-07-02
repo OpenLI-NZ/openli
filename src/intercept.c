@@ -1028,7 +1028,7 @@ int add_intercept_to_email_user_intercept_list(
 }
 
 int generate_ipint_userkey(ipintercept_t *ipint, char *space,
-        int spacelen) {
+        size_t spacelen) {
 
     char *ptr = space;
     int used = 0;

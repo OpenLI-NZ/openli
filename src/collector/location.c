@@ -89,7 +89,7 @@ static inline uint8_t mnc_three_digits(const char *mcc, const char *mnc) {
 int parse_e_utran_fdd_field(const char *field, openli_location_t **loc,
         int *loc_cnt) {
 
-    int step = 0;
+    size_t step = 0;
     const char *ptr = NULL;
     char tacbuf[5];
     char ecibuf[8];
@@ -149,7 +149,8 @@ int encode_user_location_information(char *uli, int space, int *uli_len,
 
     uint16_t used = 0;
     uint8_t *ptr = (uint8_t *)uli;
-    int i, n = 1;
+    uint8_t i;
+    uint32_t n = 1;
 
     memset(uli, 0, space);
 

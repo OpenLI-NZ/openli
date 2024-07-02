@@ -151,7 +151,7 @@ struct upcoming_intercept_event {
 };
 
 typedef struct upcoming_intercept_time {
-    uint64_t timestamp;
+    time_t timestamp;
     struct upcoming_intercept_event *events;
 } upcoming_intercept_time_t;
 

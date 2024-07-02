@@ -97,14 +97,14 @@ struct compress_state {
 typedef struct imapsession {
 
     uint8_t *contbuffer;
-    int contbufsize;
-    int contbufused;
-    int contbufread;
+    size_t contbufsize;
+    size_t contbufused;
+    size_t contbufread;
 
     uint8_t *deflatebuffer;
-    int deflatebufsize;
-    int deflatebufused;
-    int deflatebufread;
+    size_t deflatebufsize;
+    size_t deflatebufused;
+    size_t deflatebufread;
 
     imap_cc_index_t *deflate_ccs;
     int deflate_ccs_size;
@@ -117,8 +117,8 @@ typedef struct imapsession {
     char *mailbox;
     char *mail_sender;
 
-    int reply_start;
-    int next_comm_start;
+    size_t reply_start;
+    size_t next_comm_start;
     uint8_t next_command_type;
     char *next_comm_tag;
     char *next_command_name;
@@ -128,7 +128,7 @@ typedef struct imapsession {
     int idle_command_index;
     int auth_command_index;
     int auth_token_index;
-    int auth_read_from;
+    size_t auth_read_from;
     openli_email_auth_type_t auth_type;
 
     struct compress_state decompress_server;
@@ -327,7 +327,7 @@ static int complete_imap_authentication(openli_email_worker_t *state,
 
 static int generate_ccs_from_imap_command(openli_email_worker_t *state,
         emailsession_t *sess, imap_session_t *imapsess,
-        imap_command_t *comm, uint64_t timestamp) {
+        imap_command_t *comm, time_t timestamp) {
 
     int i, len;
     uint8_t dir;
@@ -1212,8 +1212,8 @@ static int parse_id_command(emailsession_t *sess, imap_session_t *imapsess) {
     return ret;
 }
 
-static int find_next_crlf(imap_session_t *sess, int start_index) {
-    int rem, regres;
+static int find_next_crlf(imap_session_t *sess, size_t start_index) {
+    int regres;
     uint8_t *found = NULL;
     uint8_t *openparent = NULL;
     uint8_t *closeparent = NULL;
@@ -1221,13 +1221,18 @@ static int find_next_crlf(imap_session_t *sess, int start_index) {
     regmatch_t matches[1];
     regex_t regex;
     int nests = 0;
+    size_t rem;
 
     if (regcomp(&regex, "\\{[0-9]+\\}", REG_EXTENDED) != 0) {
         logger(LOG_INFO, "OpenLI: failed to compile regex pattern for matching curly braces in IMAP content?");
         return -1;
     }
 
-    rem = sess->contbufused - start_index;
+    if (sess->contbufused > start_index) {
+        rem = sess->contbufused - start_index;
+    } else {
+        return 0;
+    }
 
     sess->contbuffer[sess->contbufused] = '\0';
     while (1) {
@@ -1394,7 +1399,7 @@ static int find_command_end(emailsession_t *sess, imap_session_t *imapsess) {
 }
 
 static int find_reply_end(openli_email_worker_t *state,
-        emailsession_t *sess, imap_session_t *imapsess, uint64_t timestamp) {
+        emailsession_t *sess, imap_session_t *imapsess, time_t timestamp) {
     int r;
     imap_command_t *comm;
 
@@ -1955,7 +1960,7 @@ static int find_next_imap_message(openli_email_worker_t *state,
 }
 
 static int process_next_imap_state(openli_email_worker_t *state,
-        emailsession_t *sess, imap_session_t *imapsess, uint64_t timestamp) {
+        emailsession_t *sess, imap_session_t *imapsess, time_t timestamp) {
 
     int r;
 

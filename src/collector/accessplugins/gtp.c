@@ -686,7 +686,7 @@ static int gtp_parse_v2_teid(gtp_global_t *glob, libtrace_packet_t *pkt,
         uint8_t *gtpstart, uint32_t rem) {
 
     uint8_t *ptr;
-    uint16_t len;
+    uint32_t len;
 
     gtpv2_header_teid_t *header = (gtpv2_header_teid_t *)gtpstart;
 
@@ -725,7 +725,7 @@ static int gtp_parse_v1_teid(gtp_global_t *glob, libtrace_packet_t *pkt,
         uint8_t *gtpstart, uint32_t rem) {
 
     uint8_t *ptr;
-    uint16_t len;
+    uint32_t len;
 
     gtpv1_header_t *header = (gtpv1_header_t *)gtpstart;
 
@@ -1280,7 +1280,7 @@ static void apply_gtp_fsm_logic(gtp_parsed_t *gparsed, access_action_t *action,
 
             extract_gtp_assigned_ip_address(gpkt, sess,
                     gparsed->matched_session);
-        } else if (gpkt->response_cause >= 192 && gpkt->response_cause <= 255) {
+        } else if (gpkt->response_cause >= 192) {
             current = SESSION_STATE_OVER;
             *action = ACCESS_ACTION_REJECT;
         }

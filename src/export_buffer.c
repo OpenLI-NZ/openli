@@ -392,7 +392,7 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
                 return -1;
             }
             return 0;
-        } else if (ret < sent) {
+        } else if ((uint64_t)ret < sent) {
             /* Partial send, move partialfront ahead by whatever we did send. */
             buf->partialfront += (uint32_t)ret;
             buf->partialrem -= (uint32_t)ret;
@@ -490,6 +490,7 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
 
         props._flags = AMQP_BASIC_DELIVERY_MODE_FLAG;
         props.delivery_mode = 2;        /* persistent mode */
+	ret = 0;
 
         if ((*is_blocked) == 0) {
             int pub_ret = amqp_basic_publish(

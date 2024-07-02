@@ -168,7 +168,7 @@ static MHD_RESULT iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
                 ptr ++;
             }
 
-            if (*ptr == '\0' || ptr - data >= size) {
+            if (*ptr == '\0' || (size_t)(ptr - data) >= size) {
                 free(con_info->thismsg->content);
                 con_info->thismsg->content = NULL;
             }

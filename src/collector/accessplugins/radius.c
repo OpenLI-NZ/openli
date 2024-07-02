@@ -1041,19 +1041,9 @@ static inline void nasid_to_string(radius_attribute_t *nasattr, char *strspace,
 
     assert (spacelen >= 256);
 
-    if (nasattr->att_len < 256) {
-        memcpy(strspace, nasattr->att_val, nasattr->att_len);
-        strspace[nasattr->att_len] = '\0';
-        *keylen = nasattr->att_len;
-    } else {
-        memcpy(strspace, nasattr->att_val, 255);
-        strspace[255] = '\0';
-        *keylen = 255;
-        logger(LOG_INFO,
-                "OpenLI RADIUS: NAS-Identifier is too long, truncated to %s",
-                strspace);
-    }
-
+    memcpy(strspace, nasattr->att_val, nasattr->att_len);
+    strspace[nasattr->att_len] = '\0';
+    *keylen = nasattr->att_len;
 }
 
 static inline void process_nasid_attribute(radius_parsed_t *raddata) {
