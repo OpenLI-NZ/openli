@@ -148,9 +148,9 @@ static void remove_expired_liid_queues(coll_recv_t *col) {
         if (tv.tv_sec - known->lastseen < LIID_QUEUE_EXPIRY_THRESH) {
             /* Not expired yet, so redeclare the queue to keep rabbitmq
              * from deleting it accidentally */
-            if (!col->rmq_blocked) {
-                declare_mediator_liid_RMQ_queue(col->amqp_producer_state,
-                        known->liid, known->liidlen);
+            if (declare_mediator_liid_RMQ_queue(col->amqp_producer_state,
+                    known->liid, known->liidlen,
+                    &(col->rmq_blocked)) > 0) {
                 known->declared_int_rmq = 1;
             }
             continue;
@@ -457,14 +457,17 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
     }
 
-    if (found->declared_int_rmq == 0 && !col->rmq_blocked) {
+    if (found->declared_int_rmq == 0) {
         /* declare amqp queue for this LIID */
-        if (declare_mediator_liid_RMQ_queue(col->amqp_producer_state,
-                    found->liid, found->liidlen) < 0) {
+        r = declare_mediator_liid_RMQ_queue(col->amqp_producer_state,
+                    found->liid, found->liidlen, &(col->rmq_blocked));
+        if (r < 0) {
             logger(LOG_INFO, "OpenLI Mediator: failed to create internal RMQ queues for LIID %s in collector thread %s", found->liid, col->ipaddr);
             return -1;
         }
-        found->declared_int_rmq = 1;
+        if (r > 0) {
+            found->declared_int_rmq = 1;
+        }
     }
 
     gettimeofday(&tv, NULL);
@@ -515,10 +518,14 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
             msgtype == OPENLI_PROTO_RAWIP_IRI) {
 
         /* declare a queue for raw IP */
-        if (!found->declared_raw_rmq && col->rmq_blocked == 0) {
-            declare_mediator_rawip_RMQ_queue(col->amqp_producer_state,
-                    found->liid, found->liidlen);
-            found->declared_raw_rmq = 1;
+        if (!found->declared_raw_rmq) {
+            r = declare_mediator_rawip_RMQ_queue(col->amqp_producer_state,
+                    found->liid, found->liidlen, &(col->rmq_blocked));
+            if (r < 0) {
+                return -1;
+            } else if (r > 0) {
+                found->declared_raw_rmq = 1;
+            }
         }
         /* publish to raw IP queue */
         if (found->declared_raw_rmq) {

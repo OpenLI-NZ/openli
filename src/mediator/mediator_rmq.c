@@ -43,7 +43,8 @@
  *  @param queueid      The name to assign to the queue
  *  @param channel      The channel to declare the queue on
  *
- *  @return -1 if an error occurs, 0 otherwise
+ *  @return -1 if an error occurs, 0 if the queue cannot be declared right
+ *  now, 1 if the queue was declared successfully.
  */
 static int declare_RMQ_queue(amqp_connection_state_t state,
         char *queueid, int channel) {
@@ -75,7 +76,7 @@ static int declare_RMQ_queue(amqp_connection_state_t state,
         return -1;
     }
 
-    return 0;
+    return 1;
 }
 
 /** Checks if a particular RabbitMQ queue is empty (i.e. contains zero
@@ -147,71 +148,6 @@ static int register_RMQ_consumer(amqp_connection_state_t state,
     return 0;
 }
 
-/** Disables consumption from a RabbitMQ queue by an existing connection
- *
- *  @param state            The RMQ connection to disassociate the queue from
- *  @param queueid          The name of the queue to disable
- *  @param channel          The channel that the queue should be on
- *
- *  @return -1 if an error occurs, 0 otherwise.
- */
-static int cancel_RMQ_consumer(amqp_connection_state_t state,
-        char *queueid, int channel) {
-
-    if (state == NULL) {
-        return 0;
-    }
-
-    amqp_basic_cancel(state, channel, amqp_cstring_bytes(queueid));
-    if (amqp_get_rpc_reply(state).reply_type != AMQP_RESPONSE_NORMAL) {
-        return -1;
-    }
-    return 0;
-}
-
-/** Declares the CC and IRI queues in RabbitMQ for a particular LIID
- *
- *  If the queues are already declared, this should be a no-op.
- *
- *  @param state        The RMQ connection to use to declare the queues
- *  @param liid         The LIID to declare queues for
- *  @param liidlen      The length of the LIID (in bytes)
- *
- *  @return -1 if an error occurs, 0 otherwise.
- */
-int declare_mediator_liid_RMQ_queue(amqp_connection_state_t state,
-        char *liid, int liidlen) {
-
-    char cc_queuename[1024];
-    char iri_queuename[1024];
-
-    snprintf(cc_queuename, 1024, "%s-%s", liid, "cc");
-    snprintf(iri_queuename, 1024, "%s-%s", liid, "iri");
-
-    if (declare_RMQ_queue(state, iri_queuename, 2) < 0) {
-        return -1;
-    }
-    return declare_RMQ_queue(state, cc_queuename, 3);
-}
-
-/** Declares the Raw IP queue in RabbitMQ for a particular LIID
- *
- *  Only required for LIIDs that are being written to pcap files.
- *
- *  @param state        The RMQ connection to use to declare the queue
- *  @param liid         The LIID to declare a raw IP queue for
- *  @param liidlen      The length of the LIID (in bytes)
- *
- *  @return -1 if an error occurs, 0 otherwise.
- */
-int declare_mediator_rawip_RMQ_queue(amqp_connection_state_t state,
-        char *liid, int liidlen) {
-
-    char queuename[1024];
-    snprintf(queuename, 1024, "%s-rawip", liid);
-    return declare_RMQ_queue(state, queuename, 4);
-}
-
 static int update_mediator_rmq_connection_block_status(
         amqp_connection_state_t state, uint8_t *is_blocked) {
 
@@ -274,6 +210,89 @@ static int update_mediator_rmq_connection_block_status(
         }
     }
     return ret;
+}
+
+/** Disables consumption from a RabbitMQ queue by an existing connection
+ *
+ *  @param state            The RMQ connection to disassociate the queue from
+ *  @param queueid          The name of the queue to disable
+ *  @param channel          The channel that the queue should be on
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
+static int cancel_RMQ_consumer(amqp_connection_state_t state,
+        char *queueid, int channel) {
+
+    if (state == NULL) {
+        return 0;
+    }
+
+    amqp_basic_cancel(state, channel, amqp_cstring_bytes(queueid));
+    if (amqp_get_rpc_reply(state).reply_type != AMQP_RESPONSE_NORMAL) {
+        return -1;
+    }
+    return 0;
+}
+
+/** Declares the CC and IRI queues in RabbitMQ for a particular LIID
+ *
+ *  If the queues are already declared, this should be a no-op.
+ *
+ *  @param state        The RMQ connection to use to declare the queues
+ *  @param liid         The LIID to declare queues for
+ *  @param liidlen      The length of the LIID (in bytes)
+ *
+ *  @return -1 if an error occurs, 0 if the queue cannot be declared right
+ *  now, 1 if the queue was declared successfully.
+ */
+int declare_mediator_liid_RMQ_queue(amqp_connection_state_t state,
+        char *liid, int liidlen, uint8_t *is_blocked) {
+
+    char cc_queuename[1024];
+    char iri_queuename[1024];
+
+    /*
+    if (update_mediator_rmq_connection_block_status(state, is_blocked) < 0) {
+        return -1;
+    }
+    */
+    if (*is_blocked) {
+        return 0;
+    }
+    snprintf(cc_queuename, 1024, "%s-%s", liid, "cc");
+    snprintf(iri_queuename, 1024, "%s-%s", liid, "iri");
+
+    if (declare_RMQ_queue(state, iri_queuename, 2) < 0) {
+        return -1;
+    }
+    return declare_RMQ_queue(state, cc_queuename, 3);
+}
+
+/** Declares the Raw IP queue in RabbitMQ for a particular LIID
+ *
+ *  Only required for LIIDs that are being written to pcap files.
+ *
+ *  @param state        The RMQ connection to use to declare the queue
+ *  @param liid         The LIID to declare a raw IP queue for
+ *  @param liidlen      The length of the LIID (in bytes)
+ *
+ *  @return -1 if an error occurs, 0 if the queue cannot be declared right
+ *  now, 1 if the queue was declared successfully.
+ */
+int declare_mediator_rawip_RMQ_queue(amqp_connection_state_t state,
+        char *liid, int liidlen, uint8_t *is_blocked) {
+
+    char queuename[1024];
+    /*
+    if (update_mediator_rmq_connection_block_status(state, is_blocked) < 0) {
+        return -1;
+    }
+    */
+    if (*is_blocked == 0) {
+        snprintf(queuename, 1024, "%s-rawip", liid);
+        return declare_RMQ_queue(state, queuename, 4);
+    }
+    return 0;
 }
 
 /** Publishes a message onto a mediator RMQ queue.
