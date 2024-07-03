@@ -581,6 +581,9 @@ static int walk_gtpv1_ies(gtp_parsed_t *parsedpkt, uint8_t *ptr, uint32_t rem,
                 if (ietype == GTPV1_IE_IMSI) {
                     get_gtpnum_from_ie(gtpel, parsedpkt->imsi, 0);
                 }
+                if (ietype == GTPV1_IE_MEI) {
+                    get_gtpnum_from_ie(gtpel, parsedpkt->imei, 0);
+                }
                 if (ietype == GTPV1_IE_MSISDN) {
                     get_gtpnum_from_ie(gtpel, parsedpkt->msisdn, 1);
                 }
@@ -966,7 +969,8 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
     /* Need to look up the session */
     GEN_SESSID((char *)sessid, gparsed, gparsed->teid);
 
-    if (gparsed->msgtype == GTPV1_DELETE_PDP_CONTEXT_REQUEST) {
+    if (gparsed->msgtype == GTPV1_DELETE_PDP_CONTEXT_REQUEST ||
+            gparsed->msgtype == GTPV1_UPDATE_PDP_CONTEXT_REQUEST) {
         search = glob->alt_session_map;
     } else {
         search = glob->session_map;
@@ -1341,6 +1345,10 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
     uint64_t reqid = (((uint64_t)gparsed->teid) << 32) |
             ((uint64_t)gparsed->seqno);
 
+    if (gparsed->matched_session == NULL) {
+        *action = ACCESS_ACTION_NONE;
+        return NULL;
+    }
 
     if (reqid == gparsed->matched_session->last_reqid &&
             gparsed->msgtype == gparsed->matched_session->last_reqtype) {
@@ -1389,7 +1397,8 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
         if (gparsed->msgtype == GTPV2_CREATE_SESSION_REQUEST ||
                 gparsed->msgtype == GTPV2_DELETE_SESSION_REQUEST ||
                 gparsed->msgtype == GTPV1_CREATE_PDP_CONTEXT_REQUEST ||
-                gparsed->msgtype == GTPV1_DELETE_PDP_CONTEXT_REQUEST) {
+                gparsed->msgtype == GTPV1_DELETE_PDP_CONTEXT_REQUEST ||
+                gparsed->msgtype == GTPV1_UPDATE_PDP_CONTEXT_REQUEST) {
 
             thissess = find_matched_session(p, sesslist,
                     gparsed->matched_session, gparsed->teid);
@@ -1402,6 +1411,11 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
                 gparsed->matched_session->savednewstate = *newstate;
                 saved->applied = 1;
             }
+        } else {
+            /* response but we've never seen the request? */
+            gparsed->matched_session = NULL;
+            *action = ACCESS_ACTION_NONE;
+            return NULL;
         }
 
     } else {
