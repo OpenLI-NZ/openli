@@ -1360,10 +1360,7 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
         thissess = find_matched_session(p, sesslist, gparsed->matched_session,
                 gparsed->teid);
         *oldstate = gparsed->matched_session->savedoldstate;
-        apply_gtp_fsm_logic(gparsed, action, thissess,
-                        gparsed->matched_session->lastsavedpkt,
-                        gparsed->matched_session->savedoldstate);
-
+        *action = gparsed->action;
         *newstate = gparsed->matched_session->savednewstate;
         return thissess;
     }
@@ -1502,10 +1499,12 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
             if (gparsed->request->applied == 0) {
                 apply_gtp_fsm_logic(gparsed, &(gparsed->action), thissess,
                         gparsed->request, gparsed->matched_session->current);
+                gparsed->request->applied = 1;
             }
             if (gparsed->response->applied == 0) {
                 apply_gtp_fsm_logic(gparsed, &(gparsed->action), thissess,
                         gparsed->response, gparsed->matched_session->current);
+                gparsed->response->applied = 1;
             }
         }
         *newstate = gparsed->matched_session->current;
@@ -1835,7 +1834,7 @@ static int gtp_generate_iri_data(access_plugin_t *p, void *parseddata,
         return 0;
     }
     else if (gparsed->action == ACCESS_ACTION_REJECT) {
-        printf("need to generate a PDP context activation failed IRI\n");
+        /* TODO need to generate a PDP context activation failed IRI */
     }
     else if (gparsed->action == ACCESS_ACTION_INTERIM_UPDATE) {
         *iritype = ETSILI_IRI_CONTINUE;
