@@ -787,61 +787,10 @@ static inline uint8_t check_for_invalid_sip(packet_info_t *pinfo,
 static inline uint32_t is_core_server_packet(libtrace_packet_t *pkt,
         packet_info_t *pinfo, coreserver_t *servers) {
 
-    coreserver_t *rad, *tmp;
     coreserver_t *found = NULL;
     uint32_t hashval = 0;
 
-    if (pinfo->srcport == 0 || pinfo->destport == 0) {
-        return 0;
-    }
-
-    HASH_ITER(hh, servers, rad, tmp) {
-        if (rad->info == NULL) {
-            rad->info = populate_addrinfo(rad->ipstr, rad->portstr,
-                    SOCK_DGRAM);
-            if (!rad->info) {
-                logger(LOG_INFO,
-                        "Removing %s:%s from %s server list due to getaddrinfo error",
-                        rad->ipstr, rad->portstr,
-                        coreserver_type_to_string(rad->servertype));
-
-                HASH_DELETE(hh, servers, rad);
-                continue;
-            }
-            if (rad->info->ai_family == AF_INET) {
-                rad->portswapped = ntohs(CS_TO_V4(rad)->sin_port);
-            } else if (rad->info->ai_family == AF_INET6) {
-                rad->portswapped = ntohs(CS_TO_V6(rad)->sin6_port);
-            }
-        }
-
-        if (pinfo->family == AF_INET) {
-            struct sockaddr_in *sa;
-            sa = (struct sockaddr_in *)(&(pinfo->srcip));
-
-            if (CORESERVER_MATCH_V4(rad, sa, pinfo->srcport)) {
-                found = rad;
-                break;
-            }
-            sa = (struct sockaddr_in *)(&(pinfo->destip));
-            if (CORESERVER_MATCH_V4(rad, sa, pinfo->destport)) {
-                found = rad;
-                break;
-            }
-        } else if (pinfo->family == AF_INET6) {
-            struct sockaddr_in6 *sa6;
-            sa6 = (struct sockaddr_in6 *)(&(pinfo->srcip));
-            if (CORESERVER_MATCH_V6(rad, sa6, pinfo->srcport)) {
-                found = rad;
-                break;
-            }
-            sa6 = (struct sockaddr_in6 *)(&(pinfo->destip));
-            if (CORESERVER_MATCH_V6(rad, sa6, pinfo->destport)) {
-                found = rad;
-                break;
-            }
-        }
-    }
+    found = match_packet_to_coreserver(servers, pinfo, 0);
 
     /* Doesn't match any of our known core servers */
     if (found == NULL) {
@@ -1021,7 +970,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         if (glob->ciscomirrors) {
             coreserver_t *cs;
             if ((cs = match_packet_to_coreserver(glob->ciscomirrors,
-                    &pinfo)) != NULL) {
+                    &pinfo, 1)) != NULL) {
                 if (glob->sharedinfo.cisco_noradius) {
                     pthread_rwlock_rdlock(&(glob->config_mutex));
                     ret = generate_cc_from_cisco(

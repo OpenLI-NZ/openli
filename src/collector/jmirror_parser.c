@@ -56,7 +56,7 @@ int check_jmirror_intercept(collector_identity_t *info, colthread_local_t *loc,
     vendmirror_intercept_list_t *vmilist;
     char *l3;
 
-    if ((cs = match_packet_to_coreserver(jmirror_sources, pinfo)) == NULL) {
+    if ((cs = match_packet_to_coreserver(jmirror_sources, pinfo, 1)) == NULL) {
         return 0;
     }
 

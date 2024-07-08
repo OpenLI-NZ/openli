@@ -1263,9 +1263,29 @@ int push_default_email_compression_onto_net_buffer(net_buffer_t *nb,
     return totallen;
 }
 
-#define CORESERVER_BODY_LEN(cs) \
-    (sizeof(uint8_t) + strlen(cs->ipstr) + \
-    (cs->portstr ? (strlen(cs->portstr) + (3 * 4)) : (2 * 4)))
+static inline uint16_t get_coreserver_body_len(coreserver_t *cs) {
+    uint16_t len = 0;
+    size_t fcount = 2;
+    len += (sizeof(uint8_t) + strlen(cs->ipstr));
+
+    if (cs->portstr) {
+        len += strlen(cs->portstr);
+        fcount ++;
+    }
+
+    if (cs->upper_portstr) {
+        len += strlen(cs->upper_portstr);
+        fcount ++;
+    }
+
+    if (cs->lower_portstr) {
+        len += strlen(cs->lower_portstr);
+        fcount ++;
+    }
+
+    len += (fcount * 4);
+    return len;
+}
 
 static int push_coreserver_msg_onto_net_buffer(net_buffer_t *nb,
         coreserver_t *cs, uint8_t cstype, openli_proto_msgtype_t type) {
@@ -1275,7 +1295,7 @@ static int push_coreserver_msg_onto_net_buffer(net_buffer_t *nb,
     int ret;
 
     /* Pre-compute our body length so we can write it in the header */
-    totallen = CORESERVER_BODY_LEN(cs);
+    totallen = get_coreserver_body_len(cs);
 
     /* Push on header */
     populate_header(&hdr, type, totallen, 0);
@@ -1298,6 +1318,22 @@ static int push_coreserver_msg_onto_net_buffer(net_buffer_t *nb,
     if (cs->portstr) {
         if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_PORT,
                 (uint8_t *)cs->portstr, strlen(cs->portstr))) == -1) {
+            return -1;
+        }
+    }
+
+    if (cs->upper_portstr) {
+        if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_UPPER_PORT,
+                (uint8_t *)cs->upper_portstr,
+                strlen(cs->upper_portstr))) == -1) {
+            return -1;
+        }
+    }
+
+    if (cs->lower_portstr) {
+        if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_LOWER_PORT,
+                (uint8_t *)cs->lower_portstr,
+                strlen(cs->lower_portstr))) == -1) {
             return -1;
         }
     }
@@ -1887,6 +1923,8 @@ int decode_coreserver_announcement(uint8_t *msgbody, uint16_t len,
     cs->servertype = OPENLI_CORE_SERVER_UNKNOWN;
     cs->ipstr = NULL;
     cs->portstr = NULL;
+    cs->upper_portstr = NULL;
+    cs->lower_portstr = NULL;
     cs->info = NULL;
     cs->awaitingconfirm = 0;
     cs->serverkey = NULL;
@@ -1906,6 +1944,10 @@ int decode_coreserver_announcement(uint8_t *msgbody, uint16_t len,
             DECODE_STRING_FIELD(cs->ipstr, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_CORESERVER_PORT) {
             DECODE_STRING_FIELD(cs->portstr, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_CORESERVER_UPPER_PORT) {
+            DECODE_STRING_FIELD(cs->upper_portstr, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_CORESERVER_LOWER_PORT) {
+            DECODE_STRING_FIELD(cs->lower_portstr, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
