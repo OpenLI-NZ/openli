@@ -582,7 +582,7 @@ static void push_all_coreservers(coreserver_t *servers,
 static int send_to_provisioner(collector_sync_t *sync) {
 
     int ret;
-    openli_proto_msgtype_t err;
+    openli_proto_msgtype_t err = OPENLI_PROTO_NO_MESSAGE;
 
     ret = transmit_net_buffer(sync->outgoing, &err);
     if (ret == -1) {

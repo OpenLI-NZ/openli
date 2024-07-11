@@ -2483,6 +2483,10 @@ void nb_log_receive_error(openli_proto_msgtype_t err) {
             logger(LOG_INFO,
                     "OpenLI: received invalid protocol message.");
             break;
+        case OPENLI_PROTO_NO_MESSAGE:
+            logger(LOG_INFO,
+                    "OpenLI: error cause not recorded by OpenLI :(");
+            break;
         default:
             logger(LOG_DEBUG,
                     "OpenLI: unrecognised receive net buffer error %d.", err);
