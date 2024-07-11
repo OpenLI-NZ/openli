@@ -95,7 +95,7 @@ int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
     uint32_t rem = 0, shimintid, cin;
     void *l3, *l2;
 
-    if ((cs = match_packet_to_coreserver(alusources, pinfo)) == NULL) {
+    if ((cs = match_packet_to_coreserver(alusources, pinfo, 1)) == NULL) {
         return 0;
     }
 
@@ -151,8 +151,8 @@ int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
 
     if (!l3 || rem == 0) {
         logger(LOG_INFO,
-                "Warning: unable to find IP header of ALU-intercepted packet from mirror %s:%s (ID: %u)",
-                cs->ipstr, cs->portstr, shimintid);
+                "Warning: unable to find IP header of ALU-intercepted packet from mirror (ID: %u)",
+                cs->serverkey, shimintid);
         return -1;
     }
 

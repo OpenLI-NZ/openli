@@ -20,7 +20,7 @@ openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
 
 openliprovisioner_LDFLAGS = -lpthread @PROVISIONER_LIBS@
 openliprovisioner_LDADD = @ADD_LIBS@
-openliprovisioner_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ @PROVISIONER_CFLAGS@
+openliprovisioner_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ @PROVISIONER_CFLAGS@ -Werror -Wextra
 
 dist_sbin_SCRIPTS += provisioner/authsetup/openli-prov-authsetup.sh \
                 provisioner/authsetup/openli-prov-adduser.sh
@@ -78,7 +78,7 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 
 openlicollector_LDFLAGS=-lpthread -lpatricia @COLLECTOR_LIBS@
-openlicollector_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/ -I$(builddir)
+openlicollector_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/ -I$(builddir) -Werror -Wextra
 
 endif
 
@@ -105,6 +105,6 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
                 coreserver.c coreserver.h
 openlimediator_LDADD = @ADD_LIBS@
 openlimediator_LDFLAGS=-lpthread @MEDIATOR_LIBS@
-openlimediator_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/
+openlimediator_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Werror -Wextra
 endif
 

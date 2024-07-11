@@ -65,9 +65,12 @@ typedef struct coreserver {
     char *serverkey;
     uint8_t servertype;
     char *ipstr;
-    char *portstr;
+    char *portstr;    // kinda deprecated, but need for backwards compat
+    char *lower_portstr;
+    char *upper_portstr;
     struct addrinfo *info;
-    uint16_t portswapped;
+    uint16_t lower_portnumeric;
+    uint16_t upper_portnumeric;
     uint8_t awaitingconfirm;
 
     UT_hash_handle hh;
@@ -80,18 +83,18 @@ const char *coreserver_type_to_string(uint8_t cstype);
 coreserver_t *deep_copy_coreserver(coreserver_t *cs);
 
 coreserver_t *match_packet_to_coreserver(coreserver_t *serverlist,
-        packet_info_t *pinfo);
+        packet_info_t *pinfo, uint8_t just_dest);
 
 #define CS_TO_V4(cs) ((struct sockaddr_in *)(cs->info->ai_addr))
 #define CS_TO_V6(cs) ((struct sockaddr_in6 *)(cs->info->ai_addr))
 
 #define CORESERVER_MATCH_V4(cs, sa, port) \
-    ((port == cs->portswapped) && \
+    ((port >= cs->lower_portnumeric && port <= cs->upper_portnumeric) && \
      (memcmp(&(sa->sin_addr), &(CS_TO_V4(cs)->sin_addr), \
             sizeof(struct in_addr)) == 0))
 
 #define CORESERVER_MATCH_V6(cs, sa, port) \
-    ((port == cs->portswapped) && \
+    ((port >= cs->lower_portnumeric && port <= cs->upper_portnumeric) && \
      (memcmp(&(sa->sin6_addr), &(CS_TO_V6(cs)->sin6_addr), \
             sizeof(struct in6_addr)) == 0))
 
