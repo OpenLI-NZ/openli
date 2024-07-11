@@ -126,6 +126,12 @@ static inline int ip_intercept_equal(ipintercept_t *a, ipintercept_t *b) {
         return 0;
     }
 
+    if (a->accesstype == INTERNET_ACCESS_TYPE_MOBILE &&
+            b->accesstype == INTERNET_ACCESS_TYPE_MOBILE &&
+            a->mobileident != b->mobileident) {
+        return 0;
+    }
+
     return 1;
 }
 

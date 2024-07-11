@@ -1338,7 +1338,11 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                 (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER);
     }
 
-    ipint->mobileident = map_mobile_ident_string(mobileidentstring);
+    if (ipint->accesstype != INTERNET_ACCESS_TYPE_MOBILE) {
+        ipint->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
+    } else {
+        ipint->mobileident = map_mobile_ident_string(mobileidentstring);
+    }
     if (mobileidentstring) {
         free(mobileidentstring);
         mobileidentstring = NULL;
@@ -1743,6 +1747,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *liidstr = NULL;
     char *accessstring = NULL;
     char *radiusidentstring = NULL;
+    char *mobileidentstring = NULL;
     int parseerr = 0, changed = 0, agencychanged = 0;
     int timeschanged = 0;
 
@@ -1790,6 +1795,8 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             accessstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("radiusident", "IP intercept", ipjson.radiusident,
             radiusidentstring, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("mobileident", "IP intercept", ipjson.mobileident,
+            mobileidentstring, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
             ipint->vendmirrorid, &parseerr, false);
 
@@ -1851,12 +1858,22 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                 (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID);
     }
 
+    if (ipint->accesstype != INTERNET_ACCESS_TYPE_MOBILE) {
+        ipint->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
+    } else {
+        ipint->mobileident = map_mobile_ident_string(mobileidentstring);
+    }
     /* TODO: warn if user tries to change fields that we don't support
      * changing (e.g. mediator) ?
      *
      */
     MODIFY_STRING_MEMBER(ipint->username, found->username, &changed);
     found->username_len = strlen(found->username);
+
+    if (mobileidentstring && ipint->mobileident != found->mobileident) {
+        changed = 1;
+        found->mobileident = ipint->mobileident;
+    }
 
     if (accessstring && ipint->accesstype != found->accesstype) {
         changed = 1;
@@ -1900,6 +1917,9 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
     if (radiusidentstring) {
         free(radiusidentstring);
+    }
+    if (mobileidentstring) {
+        free(mobileidentstring);
     }
 
     if (ipint) {
