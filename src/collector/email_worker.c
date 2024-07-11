@@ -827,7 +827,7 @@ static void remove_email_intercept(openli_email_worker_t *state,
 static int update_default_email_compression(openli_email_worker_t *state,
         provisioner_msg_t *provmsg) {
 
-    uint8_t newval;
+    uint8_t newval = OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET;
 
     if (decode_default_email_compression_announcement(provmsg->msgbody,
             provmsg->msglen, &newval) < 0) {
