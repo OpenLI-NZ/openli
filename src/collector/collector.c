@@ -780,7 +780,7 @@ static inline uint8_t check_for_invalid_sip(packet_info_t *pinfo,
     return 0;
 }
 
-static inline uint32_t is_core_server_packet(libtrace_packet_t *pkt,
+static inline uint32_t is_core_server_packet(
         packet_info_t *pinfo, coreserver_t *servers) {
 
     coreserver_t *found = NULL;
@@ -828,13 +828,13 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
-        process_incoming_messages(t, glob, loc, &syncpush);
+        process_incoming_messages(t, loc, &syncpush);
     }
 
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_voip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
-        process_incoming_messages(t, glob, loc, &syncpush);
+        process_incoming_messages(t, loc, &syncpush);
     }
 
 
@@ -1003,14 +1003,14 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         }
 
         /* Is this a RADIUS packet? -- if yes, create a state update */
-        if (loc->radiusservers && is_core_server_packet(pkt, &pinfo,
+        if (loc->radiusservers && is_core_server_packet(&pinfo,
                     loc->radiusservers)) {
             send_packet_to_sync(pkt, loc->tosyncq_ip, OPENLI_UPDATE_RADIUS);
             ipsynced = 1;
             goto processdone;
         }
 
-        if (loc->gtpservers && is_core_server_packet(pkt, &pinfo,
+        if (loc->gtpservers && is_core_server_packet(&pinfo,
                     loc->gtpservers)) {
             send_packet_to_sync(pkt, loc->tosyncq_ip, OPENLI_UPDATE_GTP);
             ipsynced = 1;
@@ -1018,7 +1018,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         }
 
         /* Is this a SIP packet? -- if yes, create a state update */
-        if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
+        if (loc->sipservers && is_core_server_packet(&pinfo,
                     loc->sipservers)) {
             add_payload_info_from_packet(pkt, &pinfo);
             if (!check_for_invalid_sip(&pinfo, fragoff)) {
@@ -1029,7 +1029,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         }
     } else if (proto == TRACE_IPPROTO_TCP) {
         /* Is this a SIP packet? -- if yes, create a state update */
-        if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
+        if (loc->sipservers && is_core_server_packet(&pinfo,
                     loc->sipservers)) {
             add_payload_info_from_packet(pkt, &pinfo);
             is_sms_over_sip(pkt, loc, glob);
@@ -1038,7 +1038,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         }
 
         else if (loc->smtpservers &&
-                (servhash = is_core_server_packet(pkt, &pinfo,
+                (servhash = is_core_server_packet(&pinfo,
                     loc->smtpservers))) {
             send_packet_to_emailworker(pkt, loc->email_worker_queues,
                     glob->email_threads, servhash, OPENLI_UPDATE_SMTP);
@@ -1047,7 +1047,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         }
 
         else if (loc->imapservers &&
-                (servhash = is_core_server_packet(pkt, &pinfo,
+                (servhash = is_core_server_packet(&pinfo,
                     loc->imapservers))) {
             send_packet_to_emailworker(pkt, loc->email_worker_queues,
                     glob->email_threads, servhash, OPENLI_UPDATE_IMAP);
@@ -1055,7 +1055,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         }
 
         else if (loc->pop3servers &&
-                (servhash = is_core_server_packet(pkt, &pinfo,
+                (servhash = is_core_server_packet(&pinfo,
                     loc->pop3servers))) {
             send_packet_to_emailworker(pkt, loc->email_worker_queues,
                     glob->email_threads, servhash, OPENLI_UPDATE_POP3);
