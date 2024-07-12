@@ -1885,8 +1885,7 @@ void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
 
 }
 
-static void push_all_active_intercepts(collector_sync_t *sync,
-        internet_user_t *allusers,
+static void push_all_active_intercepts(internet_user_t *allusers,
         ipintercept_t *intlist, libtrace_message_queue_t *q) {
 
     ipintercept_t *orig, *tmp;
@@ -2437,7 +2436,7 @@ int sync_thread_main(collector_sync_t *sync) {
 
             /* If a hello from a thread, push all active intercepts back */
             if (recvd.type == OPENLI_UPDATE_HELLO) {
-                push_all_active_intercepts(sync, sync->allusers,
+                push_all_active_intercepts(sync->allusers,
                         sync->ipintercepts, recvd.data.replyq);
                 push_all_coreservers(sync->coreservers, recvd.data.replyq);
                 sync->hellosreceived ++;

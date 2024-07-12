@@ -76,8 +76,7 @@ static int parse_tcp_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *pkt,
 
 }
 
-static int parse_udp_sip_packet(openli_sip_parser_t *p, libtrace_udp_t *udp,
-        uint32_t udprem) {
+static int parse_udp_sip_packet(libtrace_udp_t *udp, uint32_t udprem) {
 
     void *payload = NULL;
 
@@ -140,7 +139,7 @@ int parse_sip_content(openli_sip_parser_t *p, uint8_t *sipcontent,
 int parse_next_sip_message(openli_sip_parser_t *p,
         libtrace_packet_t ***packets, int *pkt_cnt) {
 
-    int ret, i;
+    int ret;
 
     if (p->osip) {
         osip_message_free(p->osip);
