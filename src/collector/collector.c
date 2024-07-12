@@ -63,7 +63,7 @@ static void cleanup_signal(int signal UNUSED)
     collector_halt = 1;
 }
 
-static void reload_signal(int signal) {
+static void reload_signal(int signal UNUSED) {
     reload_config = 1;
 }
 
@@ -221,8 +221,7 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
     }
 }
 
-static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
-        int threadid) {
+static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
 
     int i, hwm=1000;
     libtrace_message_queue_init(&(loc->fromsyncq_ip),
@@ -298,8 +297,8 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
 
 }
 
-static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
-        void *global) {
+static void *start_processing_thread(libtrace_t *trace UNUSED,
+        libtrace_thread_t *t, void *global) {
 
     collector_global_t *glob = (collector_global_t *)global;
     colthread_local_t *loc = NULL;
@@ -340,8 +339,7 @@ static void free_staticcache(static_ipcache_t *cache) {
 }
 
 static void process_incoming_messages(libtrace_thread_t *t,
-        collector_global_t *glob, colthread_local_t *loc,
-        openli_pushed_t *syncpush) {
+        colthread_local_t *loc, openli_pushed_t *syncpush) {
 
     if (syncpush->type == OPENLI_PUSH_IPINTERCEPT) {
         handle_push_ipintercept(t, loc, syncpush->data.ipsess);
@@ -423,12 +421,12 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
-        process_incoming_messages(t, glob, loc, &syncpush);
+        process_incoming_messages(t, loc, &syncpush);
     }
 
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_voip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
-        process_incoming_messages(t, glob, loc, &syncpush);
+        process_incoming_messages(t, loc, &syncpush);
     }
 
     deregister_sync_queues(&(glob->syncip), t);
@@ -669,8 +667,7 @@ static uint8_t sms_check_fast_path(colthread_local_t *loc,
 }
 
 static uint8_t sms_check_slow_path(colthread_local_t *loc,
-            libtrace_packet_t *pkt, collector_global_t *glob,
-            uint8_t doonce) {
+            collector_global_t *glob, uint8_t doonce) {
 
     int x, i;
     libtrace_packet_t **pkts = NULL;
@@ -710,11 +707,10 @@ static uint8_t sms_check_slow_path(colthread_local_t *loc,
     return 0;
 }
 
-static uint8_t is_sms_over_sip(packet_info_t *pinfo, libtrace_packet_t *pkt,
+static uint8_t is_sms_over_sip(libtrace_packet_t *pkt,
         colthread_local_t *loc, collector_global_t *glob) {
 
-    uint8_t x = 0, doonce;
-    libtrace_packet_t *ref;
+    uint8_t x = 0;
 
     x = add_sip_packet_to_parser(&(loc->sipparser), pkt, 0);
     if (x == SIP_ACTION_USE_PACKET) {
@@ -722,10 +718,10 @@ static uint8_t is_sms_over_sip(packet_info_t *pinfo, libtrace_packet_t *pkt,
         return sms_check_fast_path(loc, pkt, glob);
     } else if (x == SIP_ACTION_REASSEMBLE_TCP) {
         /* Reassembled TCP, could contain multiple messages */
-        return sms_check_slow_path(loc, pkt, glob, 0);
+        return sms_check_slow_path(loc, glob, 0);
     } else if (x == SIP_ACTION_REASSEMBLE_IPFRAG) {
         /* Reassembled IP/UDP fragment */
-        return sms_check_slow_path(loc, pkt, glob, 1);
+        return sms_check_slow_path(loc, glob, 1);
     }
     return 0;
 }
@@ -823,7 +819,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     int forwarded = 0, ret;
     int ipsynced = 0, voipsynced = 0, emailsynced = 0;
     uint16_t fragoff = 0;
-    uint32_t servhash = 0, smshash = 0;
+    uint32_t servhash = 0;
 
     openli_pushed_t syncpush;
     packet_info_t pinfo;
@@ -1026,7 +1022,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                     loc->sipservers)) {
             add_payload_info_from_packet(pkt, &pinfo);
             if (!check_for_invalid_sip(&pinfo, fragoff)) {
-                is_sms_over_sip(&pinfo, pkt, loc, glob);
+                is_sms_over_sip(pkt, loc, glob);
                 send_packet_to_sync(pkt, loc->tosyncq_voip, OPENLI_UPDATE_SIP);
                 voipsynced = 1;
             }
@@ -1036,7 +1032,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
                     loc->sipservers)) {
             add_payload_info_from_packet(pkt, &pinfo);
-            is_sms_over_sip(&pinfo, pkt, loc, glob);
+            is_sms_over_sip(pkt, loc, glob);
             send_packet_to_sync(pkt, loc->tosyncq_voip, OPENLI_UPDATE_SIP);
             voipsynced = 1;
         }
@@ -1305,7 +1301,7 @@ static void reload_inputs(collector_global_t *glob,
 
         for (i = oldcolthreads; i < glob->total_col_threads; i++) {
             glob->collocals[i] = calloc(1, sizeof(colthread_local_t));
-            init_collocal(glob->collocals[i], glob, i);
+            init_collocal(glob->collocals[i], glob);
         }
     }
 
@@ -1589,7 +1585,7 @@ static int prepare_collector_glob(collector_global_t *glob) {
 
     for (i = 0; i < glob->total_col_threads; i++) {
         glob->collocals[i] = calloc(1, sizeof(colthread_local_t));
-        init_collocal(glob->collocals[i], glob, i);
+        init_collocal(glob->collocals[i], glob);
     }
 
     glob->syncgenericfreelist = create_etsili_generic_freelist(1);

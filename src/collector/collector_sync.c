@@ -59,8 +59,6 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
 	collector_sync_t *sync = (collector_sync_t *)
 			malloc(sizeof(collector_sync_t));
-    int i;
-    char sockname[128];
 
     sync->glob = &(glob->syncip);
     sync->intersyncq = &(glob->intersyncq);
@@ -128,7 +126,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
 void clean_sync_data(collector_sync_t *sync) {
 
-    int i = 0, zero=0;
+    int zero=0;
     int haltattempts = 0, haltfails = 0;
     ip_to_session_t *iter, *tmp;
     default_radius_user_t *raditer, *radtmp;
@@ -519,7 +517,7 @@ static inline void push_static_iprange_remove_to_collectors(
 
 }
 
-static inline void push_single_ipintercept(collector_sync_t *sync,
+static inline void push_single_ipintercept(
         libtrace_message_queue_t *q, ipintercept_t *ipint,
         access_session_t *session) {
 
@@ -780,7 +778,7 @@ static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
 }
 
 static void update_vendmirror_intercept(collector_sync_t *sync,
-        ipintercept_t *ipint, int irirequired) {
+        ipintercept_t *ipint, int irirequired UNUSED) {
 
     openli_pushed_t pmsg;
     vendmirror_intercept_t *mirror;
@@ -871,7 +869,6 @@ static void push_ipintercept_update_to_threads(collector_sync_t *sync,
     static_ipranges_t *ipr, *tmpr;
     struct timeval now;
     int irirequired = -1;
-    char *tmp;
 
     logger(LOG_INFO, "OpenLI: collector is updating intercept for LIID %s", ipint->common.liid);
 
@@ -1100,7 +1097,7 @@ static void push_existing_user_sessions(collector_sync_t *sync,
         HASH_ITER(hh, user->sessions, sess, tmp2) {
             HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                     sendq, tmp) {
-                push_single_ipintercept(sync, sendq->q, cept, sess);
+                push_single_ipintercept(sendq->q, cept, sess);
             }
 
             create_iri_from_session(sync, sess, cept,
@@ -1903,7 +1900,7 @@ static void push_all_active_intercepts(collector_sync_t *sync,
             user = lookup_user_by_intercept(allusers, orig);
             if (user) {
                 HASH_ITER(hh, user->sessions, sess, tmp2) {
-                    push_single_ipintercept(sync, q, orig, sess);
+                    push_single_ipintercept(q, orig, sess);
                 }
             }
         }
@@ -1920,7 +1917,6 @@ static int remove_ip_to_session_mapping(collector_sync_t *sync,
         access_session_t *sess) {
 
     ip_to_session_t *mapping;
-    char ipstr[128];
     int i, j, errs = 0, nullsess = 0;
 
     if (!sess->ips_mapped) {
@@ -2137,7 +2133,7 @@ static int newly_active_session(collector_sync_t *sync,
         }
         HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                 sendq, tmpq) {
-            push_single_ipintercept(sync, sendq->q, ipint, sess);
+            push_single_ipintercept(sendq->q, ipint, sess);
         }
     }
     pthread_mutex_lock(sync->glob->stats_mutex);

@@ -225,7 +225,6 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
 uint64_t append_heartbeat_to_buffer(export_buffer_t *buf) {
     ii_header_t hbeat;
 
-    uint32_t enclen = sizeof(hbeat);
     uint64_t bufused = buf->buftail - buf->bufhead;
     uint64_t spaceleft = buf->alloced - bufused;
     uint32_t added = 0;
