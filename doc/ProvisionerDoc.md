@@ -245,17 +245,25 @@ to or from your SIP and RADIUS servers.
 SIP servers are defined using the sipservers option. Each SIP server that
 you have in your network should be included as a list item within the
 'sipservers' option. Failure to configure SIP servers will prevent OpenLI from
-performing any VOIP intercepts. A SIP server is configured using two parameters:
+performing any VOIP intercepts. A SIP server is configured using the
+following parameters:
 * ip -- the IP address of the SIP server
-* port -- the port that the SIP server is listening on.
+* port_lower -- the lowest port number that the SIP server is listening on.
+* port_upper -- the highest port number that the SIP server is listening on.
 
 RADIUS servers are defined using the 'radiusservers' option. The configuration
 works much the same as for SIP, except that most RADIUS deployments will need
-TWO server entries: one for the auth service and one for the accounting service,
-as these are usually listening on different ports. A RADIUS server entry is
-configured using two parameters:
+to ensure that their port range covers both the auth service and the accounting
+service, as these are usually listening on different ports. A RADIUS server
+entry is configured using the same parameters as a SIP server, i.e.:
 * ip -- the IP address of the RADIUS server
-* port -- the port that the RADIUS server is communicating on.
+* port_lower -- the lowest port number that the RADIUS server is listening on.
+* port_upper -- the highest port number that the RADIUS server is listening on.
+
+For SIP and RADIUS servers that are only listening on a single port, you may
+choose to omit `port_lower` and `port_upper` and instead provide the following
+parameter:
+* port -- the single port that the server is listening on.
 
 
 ### Email Servers
