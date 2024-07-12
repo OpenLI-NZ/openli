@@ -284,9 +284,15 @@ static int forward_provmsg_to_voipsync(collector_sync_t *sync,
     openli_intersync_msg_t topush;
 
     topush.msgtype = msgtype;
-    topush.msgbody = (uint8_t *)malloc(msglen);
-    memcpy(topush.msgbody, provmsg, msglen);
-    topush.msglen = msglen;
+
+    if (provmsg && msglen > 0) {
+        topush.msgbody = (uint8_t *)malloc(msglen);
+        memcpy(topush.msgbody, provmsg, msglen);
+        topush.msglen = msglen;
+    } else {
+        topush.msgbody = NULL;
+        topush.msglen = 0;
+    }
 
     libtrace_message_queue_put(sync->intersyncq, &topush);
     return 1;
