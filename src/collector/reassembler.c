@@ -693,7 +693,6 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
 
     tcp_reass_segment_t *iter, *tmp;
     uint16_t contused = 0;
-    uint16_t checked = 0;
     uint32_t used = 0;
     uint32_t expseqno;
     uint8_t *endfound = NULL;
@@ -791,7 +790,6 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
         HASH_DELETE(hh, stream->segments, iter);
         contused += iter->length;
         expseqno += iter->length;
-        checked = contused;
 
         free(iter->content);
         free(iter);

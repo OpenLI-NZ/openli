@@ -86,7 +86,7 @@ static void create_emailccs_for_intercept_list(openli_email_worker_t *state,
 
         if (key != NULL) {
             snprintf(fullkey, 4096, "%s-%s", ref->em->common.liid, key);
-            JSLG(pval, sess->ccs_sent, fullkey);
+            JSLG(pval, sess->ccs_sent, (const uint8_t *)fullkey);
             if (pval != NULL) {
                 /* We've already sent this particular CC for this intercept, but
                  * it has reached us again (probably because the target has
@@ -97,7 +97,7 @@ static void create_emailccs_for_intercept_list(openli_email_worker_t *state,
                  */
                 continue;
             }
-            JSLI(pval, sess->ccs_sent, fullkey);
+            JSLI(pval, sess->ccs_sent, (const uint8_t *)fullkey);
             *pval = 1;
         }
 
@@ -156,10 +156,7 @@ int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
     email_address_set_t *active_addr = NULL;
     email_target_set_t *active_tgt = NULL;
     email_intercept_ref_t *intlist = NULL;
-
-    email_participant_t *recip, *tmp;
     char key[1024];
-    const char *part_type;
 
     if (address == NULL || sess->sender.emailaddr == NULL) {
         return 0;
@@ -175,18 +172,6 @@ int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
     }
 
     if (intlist) {
-        if (strcmp(address, sess->sender.emailaddr) == 0) {
-            part_type = "sender";
-        } else if (sess->ingest_target_id &&
-                strcmp(address, sess->ingest_target_id) == 0) {
-            if (sess->ingest_direction == OPENLI_EMAIL_DIRECTION_OUTBOUND) {
-                part_type = "sender";
-            } else {
-                part_type = "recipient";
-            }
-        } else {
-            part_type = "recipient";
-        }
         snprintf(key, 1024, "%d-%u", command_index, dir);
         create_emailccs_for_intercept_list(state, sess, content,
                 content_len, ETSILI_EMAIL_CC_FORMAT_APP, intlist, timestamp,

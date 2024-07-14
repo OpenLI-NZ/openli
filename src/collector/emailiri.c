@@ -88,7 +88,6 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
 
     openli_export_recv_t *msg = NULL;
     etsili_email_iri_content_t *content;
-    email_participant_t *recip, *tmp;
 
     msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
     if (msg == NULL) {
@@ -203,14 +202,14 @@ static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
 
         if (key != NULL) {
             snprintf(fullkey, 4096, "%s-%s", ref->em->common.liid, key);
-            JSLG(pval, sess->iris_sent, fullkey);
+            JSLG(pval, sess->iris_sent, (const uint8_t *)fullkey);
             if (pval) {
                 /* We've already sent this particular IRI for this intercept.
                  * Avoid sending a duplicate.
                  */
                 continue;
             }
-            JSLI(pval, sess->iris_sent, fullkey);
+            JSLI(pval, sess->iris_sent, (const uint8_t *)fullkey);
             *pval = 1;
         }
 
@@ -418,7 +417,6 @@ static int generate_email_login_iri(openli_email_worker_t *state,
     char *tgtaddr = NULL;
     email_address_set_t *active_addr = NULL;
     email_target_set_t *active_tgt = NULL;
-    email_participant_t *recip, *tmp;
     email_intercept_ref_t *intlist = NULL;
 
     active_addr = is_address_interceptable(state, participant);

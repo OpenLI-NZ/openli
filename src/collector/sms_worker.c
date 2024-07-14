@@ -248,12 +248,9 @@ static int remove_sms_sip_target(openli_sms_worker_t *state,
 
     voipintercept_t *found;
     openli_sip_identity_t sipid;
-    int ret = 0;
 
     found = lookup_sip_target_intercept(state, provmsg, &sipid);
-    if (!found) {
-        ret = -1;
-    } else {
+    if (found) {
         disable_sip_target_from_list(found, &sipid);
     }
     if (sipid.username) {
@@ -537,7 +534,7 @@ static int process_sms_sip_packet(openli_sms_worker_t *state,
     }
 
     callid = get_sip_callid(state->sipparser);
-    if (strncmp(recvd->data.sip.content, "MESSAGE ", 8) == 0) {
+    if (strncmp((const char *)recvd->data.sip.content, "MESSAGE ", 8) == 0) {
         HASH_FIND(hh, state->known_callids, callid, strlen(callid),
                 cid_list);
 
