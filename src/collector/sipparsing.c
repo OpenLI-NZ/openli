@@ -202,7 +202,7 @@ static int _add_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *packet,
         if (plen + sizeof(libtrace_udp_t) < rem) {
             rem = plen + sizeof(libtrace_udp_t);
         }
-        ret = parse_udp_sip_packet(p, (libtrace_udp_t *)transport, rem);
+        ret = parse_udp_sip_packet((libtrace_udp_t *)transport, rem);
         if (ret < 0) {
             return SIP_ACTION_IGNORE;
         }
@@ -266,7 +266,7 @@ static int _add_sip_fragment(openli_sip_parser_t *p,
     int ret;
 
     if (stream->subproto == TRACE_IPPROTO_UDP) {
-        ret = parse_udp_sip_packet(p, (libtrace_udp_t *)completefrag,
+        ret = parse_udp_sip_packet((libtrace_udp_t *)completefrag,
                 fraglen);
         if (ret < 0) {
             return SIP_ACTION_IGNORE;
