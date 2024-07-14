@@ -43,35 +43,12 @@ static inline uint32_t ciscomirror_get_intercept_id(ciscomirror_hdr_t *hdr) {
     return ntohl(hdr->interceptid);
 }
 
-static void push_ciscomirror_ipcc_job(colthread_local_t *loc,
-        libtrace_packet_t *packet, vendmirror_intercept_t *cept,
-        uint32_t cin, collector_identity_t *info, void *l3, uint32_t rem) {
-
-    openli_export_recv_t *msg;
-    msg = calloc(1, sizeof(openli_export_recv_t));
-
-    msg->type = OPENLI_EXPORT_IPCC;
-    msg->ts = trace_get_timeval(packet);
-    msg->destid = cept->common.destid;
-    msg->data.ipcc.liid = strdup(cept->common.liid);
-    msg->data.ipcc.cin = cin;
-    msg->data.ipcc.dir = ETSI_DIR_INDETERMINATE;
-    msg->data.ipcc.ipcontent = (uint8_t *)calloc(1, rem);
-    msg->data.ipcc.ipclen = rem;
-
-    memcpy(msg->data.ipcc.ipcontent, l3, rem);
-
-    publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
-}
-
 /** Converts a Cisco LI-mirrored packet directly into a CC encoding job for
  *  any intercepts that have requested its vendor mirror ID.
  *
  *  The vendor mirror ID is used as the CIN for this intercept, as there is
  *  no useful session identifier in the headers applied by Cisco.
  *
- * @param info          The identity of this collector (e.g. the operator ID,
- *                      device ID, etc).
  * @param loc           The thread-specific state for the thread calling this
  *                      function.
  * @param packet        The packet to be intercepted.
@@ -83,7 +60,7 @@ static void push_ciscomirror_ipcc_job(colthread_local_t *loc,
  * @return 1 if a CC encoding job is successfully created and actioned. Returns
  *         0 otherwise.
  */
-int generate_cc_from_cisco(collector_identity_t *info, colthread_local_t *loc,
+int generate_cc_from_cisco(colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
         vendmirror_intercept_list_t *ciscomirrors) {
 

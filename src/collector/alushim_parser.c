@@ -83,7 +83,7 @@ static inline int alushim_get_direction(alushimhdr_t *aluhdr) {
     return 2;
 }
 
-int check_alu_intercept(collector_identity_t *info, colthread_local_t *loc,
+int check_alu_intercept(colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
         coreserver_t *alusources, vendmirror_intercept_list_t *aluints) {
 

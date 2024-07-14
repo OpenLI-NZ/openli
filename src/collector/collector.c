@@ -338,67 +338,67 @@ static void free_staticcache(static_ipcache_t *cache) {
     }
 }
 
-static void process_incoming_messages(libtrace_thread_t *t,
-        colthread_local_t *loc, openli_pushed_t *syncpush) {
+static void process_incoming_messages(colthread_local_t *loc,
+        openli_pushed_t *syncpush) {
 
     if (syncpush->type == OPENLI_PUSH_IPINTERCEPT) {
-        handle_push_ipintercept(t, loc, syncpush->data.ipsess);
+        handle_push_ipintercept(loc, syncpush->data.ipsess);
     }
 
     if (syncpush->type == OPENLI_PUSH_HALT_IPINTERCEPT) {
-        handle_halt_ipintercept(t, loc, syncpush->data.ipsess);
+        handle_halt_ipintercept(loc, syncpush->data.ipsess);
     }
 
     if (syncpush->type == OPENLI_PUSH_IPMMINTERCEPT) {
-        handle_push_ipmmintercept(t, loc, syncpush->data.ipmmint);
+        handle_push_ipmmintercept(loc, syncpush->data.ipmmint);
     }
 
     if (syncpush->type == OPENLI_PUSH_HALT_IPMMINTERCEPT) {
-        handle_halt_ipmmintercept(t, loc, syncpush->data.rtpstreamkey);
+        handle_halt_ipmmintercept(loc, syncpush->data.rtpstreamkey);
     }
 
     if (syncpush->type == OPENLI_PUSH_CORESERVER) {
-        handle_push_coreserver(t, loc, syncpush->data.coreserver);
+        handle_push_coreserver(loc, syncpush->data.coreserver);
     }
 
     if (syncpush->type == OPENLI_PUSH_REMOVE_CORESERVER) {
-        handle_remove_coreserver(t, loc, syncpush->data.coreserver);
+        handle_remove_coreserver(loc, syncpush->data.coreserver);
     }
 
     if (syncpush->type == OPENLI_PUSH_VENDMIRROR_INTERCEPT) {
-        handle_push_mirror_intercept(t, loc, syncpush->data.mirror);
+        handle_push_mirror_intercept(loc, syncpush->data.mirror);
     }
 
     if (syncpush->type == OPENLI_PUSH_HALT_VENDMIRROR_INTERCEPT) {
-        handle_halt_mirror_intercept(t, loc, syncpush->data.mirror);
+        handle_halt_mirror_intercept(loc, syncpush->data.mirror);
     }
 
     if (syncpush->type == OPENLI_PUSH_IPRANGE) {
-        handle_iprange(t, loc, syncpush->data.iprange);
+        handle_iprange(loc, syncpush->data.iprange);
     }
 
     if (syncpush->type == OPENLI_PUSH_REMOVE_IPRANGE) {
-        handle_remove_iprange(t, loc, syncpush->data.iprange);
+        handle_remove_iprange(loc, syncpush->data.iprange);
     }
 
     if (syncpush->type == OPENLI_PUSH_MODIFY_IPRANGE) {
-        handle_modify_iprange(t, loc, syncpush->data.iprange);
+        handle_modify_iprange(loc, syncpush->data.iprange);
     }
 
     if (syncpush->type == OPENLI_PUSH_UPDATE_VOIPINTERCEPT) {
-        handle_change_voip_intercept(t, loc, syncpush->data.ipmmint);
+        handle_change_voip_intercept(loc, syncpush->data.ipmmint);
     }
 
     if (syncpush->type == OPENLI_PUSH_UPDATE_IPINTERCEPT) {
-        handle_change_ipint_intercept(t, loc, syncpush->data.ipsess);
+        handle_change_ipint_intercept(loc, syncpush->data.ipsess);
     }
 
     if (syncpush->type == OPENLI_PUSH_UPDATE_VENDMIRROR_INTERCEPT) {
-        handle_change_vendmirror_intercept(t, loc, syncpush->data.mirror);
+        handle_change_vendmirror_intercept(loc, syncpush->data.mirror);
     }
 
     if (syncpush->type == OPENLI_PUSH_UPDATE_IPRANGE_INTERCEPT) {
-        handle_change_iprange_intercept(t, loc, syncpush->data.iprange);
+        handle_change_iprange_intercept(loc, syncpush->data.iprange);
     }
 
 }
@@ -421,12 +421,12 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
-        process_incoming_messages(t, loc, &syncpush);
+        process_incoming_messages(loc, &syncpush);
     }
 
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_voip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
-        process_incoming_messages(t, loc, &syncpush);
+        process_incoming_messages(loc, &syncpush);
     }
 
     deregister_sync_queues(&(glob->syncip), t);
@@ -828,13 +828,13 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
-        process_incoming_messages(t, loc, &syncpush);
+        process_incoming_messages(loc, &syncpush);
     }
 
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_voip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
-        process_incoming_messages(t, loc, &syncpush);
+        process_incoming_messages(loc, &syncpush);
     }
 
 
@@ -930,7 +930,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
          * for conversion to an ETSI record */
         if (glob->alumirrors) {
             pthread_rwlock_rdlock(&(glob->config_mutex));
-            ret = check_alu_intercept(&(glob->sharedinfo), loc,
+            ret = check_alu_intercept(loc,
                     pkt, &pinfo, glob->alumirrors,
                     loc->activemirrorintercepts);
             pthread_rwlock_unlock(&(glob->config_mutex));
@@ -969,8 +969,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                     &pinfo, 1)) != NULL) {
                 if (glob->sharedinfo.cisco_noradius) {
                     pthread_rwlock_rdlock(&(glob->config_mutex));
-                    ret = generate_cc_from_cisco(
-                        &(glob->sharedinfo), loc, pkt, &pinfo,
+                    ret = generate_cc_from_cisco(loc, pkt, &pinfo,
                         loc->activemirrorintercepts);
                     pthread_rwlock_unlock(&(glob->config_mutex));
                     if (ret > 0) {
