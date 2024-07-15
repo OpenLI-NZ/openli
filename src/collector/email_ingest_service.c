@@ -99,7 +99,7 @@ static MHD_RESULT iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
             size_t size) {
 
     email_connection_t *con_info = (email_connection_t *)(coninfo_cls);
-    char *ptr, *writeptr;
+    uint8_t *ptr, *writeptr;
 
     if (strcmp(key, "TARGET_ID") == 0) {
         CALLOC_THISMSG
@@ -160,18 +160,18 @@ static MHD_RESULT iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
         //con_info->thismsg->msg_length = strtoul(data, NULL, 10);
     } else if (strcmp(key, "BUFFER") == 0) {
         CALLOC_THISMSG
-        ptr = (char *)data;
+        ptr = (uint8_t *)data;
         if (con_info->thismsg->content == NULL) {
             while (*ptr == 0x0a || *ptr == 0x0d) {
                 ptr ++;
             }
 
-            if (*ptr == '\0' || (size_t)(ptr - data) >= size) {
+            if (*ptr == '\0' || (size_t)(ptr - (uint8_t *)data) >= size) {
                 free(con_info->thismsg->content);
                 con_info->thismsg->content = NULL;
             }
 
-            size -= (ptr - data);
+            size -= (ptr - (uint8_t *)data);
         }
 
         if (con_info->thismsg->content) {

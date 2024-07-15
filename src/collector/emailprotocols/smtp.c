@@ -851,10 +851,9 @@ static int other_command_reply(openli_email_worker_t *state,
 static int rcpt_to_reply(openli_email_worker_t *state,
         emailsession_t *sess, smtp_session_t *smtpsess, time_t timestamp) {
 
-    int r, i;
+    int i;
     PWord_t pval;
     smtp_participant_t *recipient;
-    int found = 0;
     char *address;
 
     if (smtpsess->reply_code == 250) {
@@ -877,7 +876,7 @@ static int rcpt_to_reply(openli_email_worker_t *state,
             recipient->active = 0;
             recipient->last_mail_from = 0;
 
-            JSLI(pval, smtpsess->recipients, address);
+            JSLI(pval, smtpsess->recipients, (uint8_t *)address);
             *pval = (Word_t)recipient;
 
         } else {

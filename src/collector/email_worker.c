@@ -344,7 +344,7 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
     } else {
         (*cap)->own_content = 0;
         if ((*cap)->msg_length > 0 && posttcp != NULL) {
-            (*cap)->content = (char *)posttcp;
+            (*cap)->content = (uint8_t *)posttcp;
         } else {
             (*cap)->content = NULL;
         }
