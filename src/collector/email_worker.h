@@ -122,7 +122,7 @@ typedef struct openli_email_captured {
     char *datasource;
     uint8_t direction;
 
-    uint64_t timestamp;
+    time_t timestamp;
     uint32_t mail_id;
     uint32_t part_id;
     uint32_t msg_length;
@@ -237,13 +237,13 @@ int generate_email_logoff_iri_for_user(openli_email_worker_t *state,
 /* Defined in emailcc.c */
 int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
-        uint64_t timestamp, const char *participant, uint8_t dir,
+        time_t timestamp, const char *participant, uint8_t dir,
         int command_index);
 int generate_email_cc_from_imap_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
-        uint64_t timestamp, uint8_t dir, uint8_t deflated);
+        time_t timestamp, uint8_t dir, uint8_t deflated);
 int generate_email_cc_from_pop3_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
-        uint64_t timestamp, uint8_t dir);
+        time_t timestamp, uint8_t dir);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

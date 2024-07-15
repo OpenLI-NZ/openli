@@ -254,7 +254,7 @@ static inline void encode_ipiri_id(wandder_encoder_t *encoder,
 static inline void encode_email_recipients(wandder_encoder_t *encoder,
         etsili_email_recipients_t *recipients) {
 
-    int i;
+    size_t i;
 
     for (i = 0; i < recipients->count; i++) {
         wandder_encode_next(encoder, WANDDER_TAG_UTF8STR,

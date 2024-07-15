@@ -44,13 +44,13 @@
  */
 int xmit_handover_keepalive(handover_t *ho) {
 
-	/* We don't lock the handover mutex here, because we're going to be
+    /* We don't lock the handover mutex here, because we're going to be
      * doing this a lot and the mutex is mostly protecting logging-related
- 	 * members (e.g. disconnect_msg). A few bogus messages are a small
+     * members (e.g. disconnect_msg). A few bogus messages are a small
      * price to pay compared with the performance impact of locking a mutex
      * everytime we want to send a record to a client.
      */
-	int ret = 0;
+    int ret = 0;
 
     if (!ho->ho_state->pending_ka) {
         return 0;
@@ -74,7 +74,7 @@ int xmit_handover_keepalive(handover_t *ho) {
     if (ret == 0) {
         return -1;
     }
-    if (ret == ho->ho_state->pending_ka->len) {
+    if ((unsigned int)ret == ho->ho_state->pending_ka->len) {
         /* Sent the whole thing successfully */
         wandder_release_encoded_result(NULL, ho->ho_state->pending_ka);
         ho->ho_state->pending_ka = NULL;

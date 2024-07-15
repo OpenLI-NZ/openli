@@ -504,41 +504,14 @@ static inline void send_packet_to_sync(libtrace_packet_t *pkt,
         void *q, uint8_t updatetype) {
     openli_state_update_t syncup;
     libtrace_packet_t *copy;
-    int caplen = trace_get_capture_length(pkt);
-    int framelen = trace_get_framing_length(pkt);
-
-    if (caplen == -1 || framelen == -1) {
-        logger(LOG_INFO, "OpenLI: unable to copy packet for sync thread (caplen=%d, framelen=%d)", caplen, framelen);
-        exit(1);
-    }
 
     /* We do this ourselves instead of calling trace_copy_packet() because
      * we don't want to be allocating 64K per copied packet -- we could be
      * doing this a lot and don't want to be wasteful */
-    copy = (libtrace_packet_t *)calloc((size_t)1, sizeof(libtrace_packet_t));
-    if (!copy) {
-        logger(LOG_INFO, "OpenLI: out of memory while copying packet for sync thread");
+    copy = openli_copy_packet(pkt);
+    if (copy == NULL) {
         exit(1);
     }
-
-    copy->trace = pkt->trace;
-    copy->buf_control = TRACE_CTRL_PACKET;
-    copy->buffer = malloc(framelen + caplen);
-    copy->type = pkt->type;
-    copy->header = copy->buffer;
-    copy->payload = ((char *)copy->buffer) + framelen;
-    copy->order = pkt->order;
-    copy->hash = pkt->hash;
-    copy->error = pkt->error;
-    copy->which_trace_start = pkt->which_trace_start;
-    copy->cached.capture_length = caplen;
-    copy->cached.framing_length = framelen;
-    copy->cached.wire_length = -1;
-    copy->cached.payload_length = -1;
-    /* everything else in cache should be 0 or NULL due to our earlier
-     * calloc() */
-    memcpy(copy->header, pkt->header, framelen);
-    memcpy(copy->payload, pkt->payload, caplen);
 
     syncup.type = updatetype;
     syncup.data.pkt = copy;
@@ -624,35 +597,17 @@ static void add_payload_info_from_packet(libtrace_packet_t *pkt,
 
 }
 
-static uint8_t is_sms_over_sip(packet_info_t *pinfo, libtrace_packet_t *pkt,
-        colthread_local_t *loc, collector_global_t *glob) {
 
-    uint8_t x = 0, doonce;
+static void do_sms_check(colthread_local_t *loc,
+            libtrace_packet_t *pkt, collector_global_t *glob) {
+
+    uint8_t ipsrc[16], ipdest[16];
     int ipfamily;
     int is_sip = 0;
-    libtrace_packet_t *ref;
     uint32_t hashval = 0;
     char *callid, *cseq, *sipcontents;
     uint16_t siplen;
     uint32_t queueid;
-    uint8_t ipsrc[16], ipdest[16];
-
-    x = add_sip_packet_to_parser(&(loc->sipparser), pkt, 0);
-    if (x == SIP_ACTION_USE_PACKET) {
-        /* No fragments, no TCP reassembly required */
-        doonce = 1;
-        ref = pkt;
-    } else if (x == SIP_ACTION_REASSEMBLE_TCP) {
-        /* Reassembled TCP, could contain multiple messages */
-        ref = NULL;
-        doonce = 0;
-    } else if (x == SIP_ACTION_REASSEMBLE_IPFRAG) {
-        /* Reassembled IP/UDP fragment */
-        doonce = 1;
-        ref = NULL;
-    } else {
-        return 0;
-    }
 
     memset(ipsrc, 0, 16);
     memset(ipdest, 0, 16);
@@ -660,57 +615,118 @@ static uint8_t is_sms_over_sip(packet_info_t *pinfo, libtrace_packet_t *pkt,
         /* This error will get caught and logged by the VoIP sync thread
          * so we don't need to log it ourselves.
          */
-        return 0;
+        return;
     }
 
-    do {
-        is_sip = 0;
-        x = parse_next_sip_message(loc->sipparser, ref);
-        if (x == 0) {
-            /* no more SIP content available */
-            break;
+    sipcontents = get_sip_contents(loc->sipparser, &siplen);
+    /* payload begins with "MESSAGE" == SMS */
+    if (siplen > 8 && memcmp("MESSAGE ", sipcontents, 8) == 0) {
+        is_sip = 1;
+    } else {
+        /* CSEQ ends with " MESSAGE" == server response to SMS */
+        cseq = get_sip_cseq(loc->sipparser);
+        if (cseq != NULL) {
+            int slen = strlen(cseq);
+            if (slen > 8 && memcmp(cseq + (slen - 8), " MESSAGE", 8) == 0) {
+                is_sip = 1;
+            }
         }
-        if (x < 0) {
-            return 0;
-        }
+        free(cseq);
+    }
 
-        sipcontents = get_sip_contents(loc->sipparser, &siplen);
-        /* payload begins with "MESSAGE" == SMS */
-        if (siplen > 8 && memcmp("MESSAGE ", sipcontents, 8) == 0) {
-            is_sip = 1;
-        } else {
-            /* CSEQ ends with " MESSAGE" == server response to SMS */
-            cseq = get_sip_cseq(loc->sipparser);
-            if (cseq != NULL) {
-                int slen = strlen(cseq);
-                if (slen > 8 && memcmp(cseq + (slen - 8), " MESSAGE", 8) == 0) {
-                    is_sip = 1;
+    if (is_sip) {
+        callid = get_sip_callid(loc->sipparser);
+        if (callid == NULL) {
+            logger(LOG_INFO,
+                    "OpenLI: warning -- SIP SMS MESSAGE has no Call-Id");
+            return;
+        }
+        hashval = hashlittle(callid, strlen(callid), 0xfffffffb);
+        queueid = hashval % glob->sms_threads;
+        send_packet_to_smsworker(sipcontents, siplen, ipsrc, ipdest,
+                ipfamily, loc->sms_worker_queues[queueid],
+                trace_get_timeval(pkt));
+
+        /* update global stats */
+        pthread_mutex_lock(&(glob->stats_mutex));
+        glob->stats.packets_sms ++;
+        pthread_mutex_unlock(&(glob->stats_mutex));
+    }
+
+}
+
+static uint8_t sms_check_fast_path(colthread_local_t *loc,
+            libtrace_packet_t *pkt, collector_global_t *glob) {
+
+    int x;
+
+    x = parse_next_sip_message(loc->sipparser, NULL, NULL);
+    if (x <= 0) {
+        return 0;
+    }
+    do_sms_check(loc, pkt, glob);
+    return 0;
+}
+
+static uint8_t sms_check_slow_path(colthread_local_t *loc,
+            libtrace_packet_t *pkt, collector_global_t *glob,
+            uint8_t doonce) {
+
+    int x, i;
+    libtrace_packet_t **pkts = NULL;
+    int pkt_cnt = 0;
+
+    do {
+        if (pkts != NULL) {
+            for (i = 0; i < pkt_cnt; i++) {
+                if (pkts[i]) {
+                    trace_destroy_packet(pkts[i]);
                 }
             }
-            free(cseq);
+            free(pkts);
+            pkt_cnt = 0;
+            pkts = NULL;
         }
 
-        if (is_sip) {
-            callid = get_sip_callid(loc->sipparser);
-            if (callid == NULL) {
-                logger(LOG_INFO,
-                        "OpenLI: warning -- SIP SMS MESSAGE has no Call-Id");
-                continue;
-            }
-            hashval = hashlittle(callid, strlen(callid), 0xfffffffb);
-            queueid = hashval % glob->sms_threads;
-            send_packet_to_smsworker(sipcontents, siplen, ipsrc, ipdest,
-                    ipfamily, loc->sms_worker_queues[queueid],
-                    trace_get_timeval(pkt));
-
-            /* update global stats */
-            pthread_mutex_lock(&(glob->stats_mutex));
-            glob->stats.packets_sms ++;
-            pthread_mutex_unlock(&(glob->stats_mutex));
+        x = parse_next_sip_message(loc->sipparser, &pkts, &pkt_cnt);
+        if (x == 0) {
+            return 0;
         }
-
+        if (x < 0 || pkt_cnt == 0) {
+            continue;
+        }
+        do_sms_check(loc, pkts[0], glob);
     } while (!doonce);
 
+    if (pkts) {
+        for (i = 0; i < pkt_cnt; i++) {
+            if (pkts[i]) {
+                trace_destroy_packet(pkts[i]);
+            }
+        }
+        free(pkts);
+    }
+
+    return 0;
+}
+
+static uint8_t is_sms_over_sip(packet_info_t *pinfo, libtrace_packet_t *pkt,
+        colthread_local_t *loc, collector_global_t *glob) {
+
+    uint8_t x = 0, doonce;
+    libtrace_packet_t *ref;
+
+    x = add_sip_packet_to_parser(&(loc->sipparser), pkt, 0);
+    if (x == SIP_ACTION_USE_PACKET) {
+        /* No fragments, no TCP reassembly required */
+        return sms_check_fast_path(loc, pkt, glob);
+    } else if (x == SIP_ACTION_REASSEMBLE_TCP) {
+        /* Reassembled TCP, could contain multiple messages */
+        return sms_check_slow_path(loc, pkt, glob, 0);
+    } else if (x == SIP_ACTION_REASSEMBLE_IPFRAG) {
+        /* Reassembled IP/UDP fragment */
+        return sms_check_slow_path(loc, pkt, glob, 1);
+    }
     return 0;
 }
 
@@ -771,61 +787,10 @@ static inline uint8_t check_for_invalid_sip(packet_info_t *pinfo,
 static inline uint32_t is_core_server_packet(libtrace_packet_t *pkt,
         packet_info_t *pinfo, coreserver_t *servers) {
 
-    coreserver_t *rad, *tmp;
     coreserver_t *found = NULL;
     uint32_t hashval = 0;
 
-    if (pinfo->srcport == 0 || pinfo->destport == 0) {
-        return 0;
-    }
-
-    HASH_ITER(hh, servers, rad, tmp) {
-        if (rad->info == NULL) {
-            rad->info = populate_addrinfo(rad->ipstr, rad->portstr,
-                    SOCK_DGRAM);
-            if (!rad->info) {
-                logger(LOG_INFO,
-                        "Removing %s:%s from %s server list due to getaddrinfo error",
-                        rad->ipstr, rad->portstr,
-                        coreserver_type_to_string(rad->servertype));
-
-                HASH_DELETE(hh, servers, rad);
-                continue;
-            }
-            if (rad->info->ai_family == AF_INET) {
-                rad->portswapped = ntohs(CS_TO_V4(rad)->sin_port);
-            } else if (rad->info->ai_family == AF_INET6) {
-                rad->portswapped = ntohs(CS_TO_V6(rad)->sin6_port);
-            }
-        }
-
-        if (pinfo->family == AF_INET) {
-            struct sockaddr_in *sa;
-            sa = (struct sockaddr_in *)(&(pinfo->srcip));
-
-            if (CORESERVER_MATCH_V4(rad, sa, pinfo->srcport)) {
-                found = rad;
-                break;
-            }
-            sa = (struct sockaddr_in *)(&(pinfo->destip));
-            if (CORESERVER_MATCH_V4(rad, sa, pinfo->destport)) {
-                found = rad;
-                break;
-            }
-        } else if (pinfo->family == AF_INET6) {
-            struct sockaddr_in6 *sa6;
-            sa6 = (struct sockaddr_in6 *)(&(pinfo->srcip));
-            if (CORESERVER_MATCH_V6(rad, sa6, pinfo->srcport)) {
-                found = rad;
-                break;
-            }
-            sa6 = (struct sockaddr_in6 *)(&(pinfo->destip));
-            if (CORESERVER_MATCH_V6(rad, sa6, pinfo->destport)) {
-                found = rad;
-                break;
-            }
-        }
-    }
+    found = match_packet_to_coreserver(servers, pinfo, 0);
 
     /* Doesn't match any of our known core servers */
     if (found == NULL) {
@@ -1005,7 +970,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         if (glob->ciscomirrors) {
             coreserver_t *cs;
             if ((cs = match_packet_to_coreserver(glob->ciscomirrors,
-                    &pinfo)) != NULL) {
+                    &pinfo, 1)) != NULL) {
                 if (glob->sharedinfo.cisco_noradius) {
                     pthread_rwlock_rdlock(&(glob->config_mutex));
                     ret = generate_cc_from_cisco(
@@ -2248,6 +2213,7 @@ int main(int argc, char *argv[]) {
                 (glob->sslconf.ctx && glob->etsitls) ? glob->sslconf.ctx : NULL;
         //forwarder only needs CTX if ctx exists and is enabled 
         glob->forwarders[i].RMQ_conf = glob->RMQ_conf;
+        glob->forwarders[i].ampq_blocked = 0;
 
         pthread_create(&(glob->forwarders[i].threadid), NULL,
                 start_forwarding_thread, (void *)&(glob->forwarders[i]));

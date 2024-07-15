@@ -153,11 +153,12 @@ int deregister_mediator_rawip_RMQ_consumer(amqp_connection_state_t state,
  *  @param state        The RMQ connection to use to declare the queues
  *  @param liid         The LIID to declare queues for
  *  @param liidlen      The length of the LIID (in bytes)
+ *  @param is_blocked   [in|out] Is the RMQ broker accepting publishes?
  *
  *  @return -1 if an error occurs, 0 otherwise.
  */
 int declare_mediator_liid_RMQ_queue(amqp_connection_state_t state,
-        char *liid, int liidlen);
+        char *liid, int liidlen, uint8_t *is_blocked);
 
 /** Declares the Raw IP queue in RabbitMQ for a particular LIID
  *
@@ -166,11 +167,12 @@ int declare_mediator_liid_RMQ_queue(amqp_connection_state_t state,
  *  @param state        The RMQ connection to use to declare the queue
  *  @param liid         The LIID to declare a raw IP queue for
  *  @param liidlen      The length of the LIID (in bytes)
+ *  @param is_blocked   [in|out] Is the RMQ broker accepting publishes?
  *
  *  @return -1 if an error occurs, 0 otherwise.
  */
 int declare_mediator_rawip_RMQ_queue(amqp_connection_state_t state,
-        char *liid, int liidlen);
+        char *liid, int liidlen, uint8_t *is_blocked);
 
 
 void remove_mediator_liid_RMQ_queue(amqp_connection_state_t state,
@@ -185,11 +187,13 @@ void remove_mediator_rawip_RMQ_queue(amqp_connection_state_t state,
  *  @param msglen           The length of the encoded CC, in bytes
  *  @param liid             The LIID that the message belongs to
  *  @param queuename        THe name of the queue to publish to
+ *  @param is_blocked       [in|out] Is the RMQ broker accepting publishes?
  *
  *  @return 0 if an error occurs, 1 if the message is published successfully
  */
 int publish_iri_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
-        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename);
+        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename,
+        uint8_t *is_blocked);
 
 /** Publishes an encoded CC onto a mediator RMQ queue.
  *
@@ -198,11 +202,13 @@ int publish_iri_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
  *  @param msglen           The length of the encoded CC, in bytes
  *  @param liid             The LIID that the message belongs to
  *  @param queuename        THe name of the queue to publish to
+ *  @param is_blocked       [in|out] Is the RMQ broker accepting publishes?
  *
  *  @return 0 if an error occurs, 1 if the message is published successfully
  */
 int publish_cc_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
-        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename);
+        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename,
+        uint8_t *is_blocked);
 
 /** Publishes an encoded CC onto a mediator RMQ queue.
  *
@@ -211,11 +217,13 @@ int publish_cc_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
  *  @param msglen           The length of the encoded CC, in bytes
  *  @param liid             The LIID that the message belongs to
  *  @param queuename        THe name of the queue to publish to
+ *  @param is_blocked       [in|out] Is the RMQ broker accepting publishes?
  *
  *  @return 0 if an error occurs, 1 if the message is published successfully
  */
 int publish_rawip_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
-        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename);
+        uint8_t *msg, uint16_t msglen, char *liid, const char *queuename,
+        uint8_t *is_blocked);
 
 /** Consumes CC records using an RMQ connection, writing them into the
  *  provided export buffer.

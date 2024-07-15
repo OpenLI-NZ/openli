@@ -33,7 +33,7 @@
 #include "etsili_core.h"
 
 static openli_export_recv_t *create_emailcc_job(char *liid,
-        emailsession_t *sess, uint32_t destid, uint64_t timestamp,
+        emailsession_t *sess, uint32_t destid, time_t timestamp,
         uint8_t *content, int content_len, uint8_t format, uint8_t dir) {
 
     openli_export_recv_t *msg = NULL;
@@ -62,7 +62,7 @@ static openli_export_recv_t *create_emailcc_job(char *liid,
 static void create_emailccs_for_intercept_list(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
         uint8_t format, email_intercept_ref_t *intlist,
-        uint64_t timestamp, uint8_t dir, const char *key, uint8_t deflated) {
+        time_t timestamp, uint8_t dir, const char *key, uint8_t deflated) {
 
     openli_export_recv_t *ccjob = NULL;
     email_intercept_ref_t *ref, *tmp;
@@ -150,7 +150,7 @@ static void create_emailccs_for_intercept_list(openli_email_worker_t *state,
 
 int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
-        uint64_t timestamp, const char *address, uint8_t dir,
+        time_t timestamp, const char *address, uint8_t dir,
         int command_index) {
 
     email_address_set_t *active_addr = NULL;
@@ -198,7 +198,7 @@ int generate_email_cc_from_smtp_payload(openli_email_worker_t *state,
 
 int generate_email_cc_from_pop3_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
-        uint64_t timestamp, uint8_t etsidir) {
+        time_t timestamp, uint8_t etsidir) {
 
     email_address_set_t *active = NULL;
     email_participant_t *recip, *tmp;
@@ -224,7 +224,7 @@ int generate_email_cc_from_pop3_payload(openli_email_worker_t *state,
 
 int generate_email_cc_from_imap_payload(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t *content, int content_len,
-        uint64_t timestamp, uint8_t etsidir, uint8_t deflated) {
+        time_t timestamp, uint8_t etsidir, uint8_t deflated) {
 
     email_address_set_t *active = NULL;
     email_participant_t *recip, *tmp;

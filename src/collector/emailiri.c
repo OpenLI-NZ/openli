@@ -38,7 +38,7 @@
 
 void free_email_iri_content(etsili_email_iri_content_t *content) {
 
-    int i;
+    size_t i;
 
     if (content->recipients) {
         for (i = 0; i < content->recipient_count; i++) {
@@ -83,7 +83,7 @@ static void add_recipients(emailsession_t *sess,
 
 static openli_export_recv_t *create_emailiri_job(char *liid,
         emailsession_t *sess, uint8_t iritype, uint8_t emailev,
-        uint8_t status, uint32_t destid, uint64_t timestamp,
+        uint8_t status, uint32_t destid, time_t timestamp,
         const char **tgtaddrs, int tgtaddr_count) {
 
     openli_export_recv_t *msg = NULL;
@@ -162,7 +162,7 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
 
 static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t iri_type, uint8_t email_ev,
-        uint8_t status, email_intercept_ref_t *intlist, uint64_t ts,
+        uint8_t status, email_intercept_ref_t *intlist, time_t ts,
         const char *key, const char *tgtaddr, uint8_t full_recip_list) {
 
     openli_export_recv_t *irijob = NULL;
@@ -281,7 +281,7 @@ static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
 
 static inline int generate_iris_for_participants(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t email_ev, uint8_t iri_type,
-        uint8_t status, uint64_t timestamp) {
+        uint8_t status, time_t timestamp) {
 
     email_address_set_t *active_addr = NULL;
     email_target_set_t *active_tgt = NULL;
@@ -378,7 +378,7 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
 
 static int generate_iris_for_mailbox(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t email_ev, uint8_t iri_type,
-        uint8_t status, uint64_t timestamp, const char *mailbox) {
+        uint8_t status, time_t timestamp, const char *mailbox) {
 
     email_address_set_t *active_addr = NULL;
     email_target_set_t *active_tgt = NULL;
@@ -583,7 +583,7 @@ int generate_email_login_failure_iri(openli_email_worker_t *state,
 static inline void emailiri_free_recipients(
         etsili_email_recipients_t *recipients) {
 
-    int i;
+    size_t i;
     for (i = 0; i < recipients->count; i++) {
         free(recipients->addresses[i]);
     }
@@ -594,7 +594,7 @@ static inline void emailiri_populate_recipients(
         etsili_email_recipients_t *recipients,
         uint32_t count, char **reciplist) {
 
-    int i;
+    size_t i;
 
     recipients->count = count;
     recipients->addresses = calloc(count, sizeof(char *));

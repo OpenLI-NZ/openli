@@ -126,7 +126,8 @@ void free_published_message(openli_export_recv_t *msg) {
             free(msg->data.mobiri.liid);
         }
     } else if (msg->type == OPENLI_EXPORT_RAW_SYNC ||
-            msg->type == OPENLI_EXPORT_RAW_CC) {
+            msg->type == OPENLI_EXPORT_RAW_CC ||
+            msg->type == OPENLI_EXPORT_RAW_IRI) {
         if (msg->data.rawip.liid) {
             free(msg->data.rawip.liid);
         }
@@ -138,8 +139,9 @@ void free_published_message(openli_export_recv_t *msg) {
     free(msg);
 }
 
-openli_export_recv_t *create_rawip_cc_job_from_ip(char *liid,
-        uint32_t destid, void *l3, uint32_t l3_len, struct timeval tv) {
+static openli_export_recv_t *create_rawip_job_from_ip(char *liid,
+        uint32_t destid, void *l3, uint32_t l3_len, struct timeval tv,
+        uint8_t msgtype) {
 
     openli_export_recv_t *msg = NULL;
     openli_pcap_header_t *pcap;
@@ -149,7 +151,7 @@ openli_export_recv_t *create_rawip_cc_job_from_ip(char *liid,
         return msg;
     }
 
-    msg->type = OPENLI_EXPORT_RAW_CC;
+    msg->type = msgtype;
     msg->destid = destid;
     msg->ts = tv;
 
@@ -187,7 +189,29 @@ openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
     }
 
     tv = trace_get_timeval(pkt);
-    return create_rawip_cc_job_from_ip(liid, destid, l3, rem, tv);
+    return create_rawip_job_from_ip(liid, destid, l3, rem, tv,
+            OPENLI_EXPORT_RAW_CC);
+
+}
+
+openli_export_recv_t *create_rawip_iri_job(char *liid, uint32_t destid,
+        libtrace_packet_t *pkt) {
+
+    void *l3;
+    uint32_t rem;
+    uint16_t ethertype;
+    struct timeval tv;
+
+    l3 = trace_get_layer3(pkt, &ethertype, &rem);
+
+    if (l3 == NULL || rem == 0 || (ethertype != TRACE_ETHERTYPE_IP &&
+            ethertype != TRACE_ETHERTYPE_IPV6)) {
+        return NULL;
+    }
+
+    tv = trace_get_timeval(pkt);
+    return create_rawip_job_from_ip(liid, destid, l3, rem, tv,
+            OPENLI_EXPORT_RAW_IRI);
 
 }
 
@@ -199,8 +223,8 @@ int push_vendor_mirrored_ipcc_job(void *pubqueue,
 
     if (common->targetagency == NULL || strcmp(common->targetagency,
             "pcapdisk") == 0) {
-        msg = create_rawip_cc_job_from_ip(common->liid,
-                common->destid, l3, rem, tv);
+        msg = create_rawip_job_from_ip(common->liid,
+                common->destid, l3, rem, tv, OPENLI_EXPORT_RAW_CC);
     } else {
         msg = calloc(1, sizeof(openli_export_recv_t));
 

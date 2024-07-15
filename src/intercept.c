@@ -1027,11 +1027,45 @@ int add_intercept_to_email_user_intercept_list(
     return 0;
 }
 
+int generate_ipint_userkey(ipintercept_t *ipint, char *space,
+        size_t spacelen) {
+
+    char *ptr = space;
+    int used = 0;
+
+    memset(space, 0, spacelen);
+    if (ipint->accesstype == INTERNET_ACCESS_TYPE_MOBILE) {
+        if (ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_MSISDN ||
+                ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED) {
+            memcpy(ptr, "msisdn:", strlen("msisdn:"));
+            ptr += strlen("msisdn:");
+        } else if (ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_IMSI) {
+            memcpy(ptr, "imsi:", strlen("imsi:"));
+            ptr += strlen("imsi:");
+        } else if (ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_IMEI) {
+            memcpy(ptr, "imei:", strlen("imei:"));
+            ptr += strlen("imei:");
+        }
+    }
+
+    used = ptr - space;
+
+    if (strlen(ipint->username) + used + 1 > spacelen) {
+        logger(LOG_INFO, "OpenLI: username is too long to fit in a key?");
+        return -1;
+    }
+
+    memcpy(ptr, ipint->username, ipint->username_len);
+    return used + ipint->username_len;
+}
+
 int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
         ipintercept_t *ipint) {
 
     user_intercept_list_t *found;
     ipintercept_t *check;
+    char taggeduser[2048];
+
 
     if (ipint->username == NULL) {
         logger(LOG_INFO,
@@ -1039,7 +1073,14 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
         return -1;
     }
 
-    HASH_FIND(hh, *ulist, ipint->username, ipint->username_len, found);
+    if (generate_ipint_userkey(ipint, taggeduser, 2048) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error while constructing user key for IP intercept %s",
+                ipint->common.liid);
+        return -1;
+    }
+
+    HASH_FIND(hh, *ulist, taggeduser, strlen(taggeduser), found);
     if (!found) {
         found = (user_intercept_list_t *)malloc(sizeof(user_intercept_list_t));
         if (!found) {
@@ -1047,7 +1088,7 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
                     "OpenLI: out of memory in add_intercept_to_userlist()");
             return -1;
         }
-        found->username = strdup(ipint->username);
+        found->username = strdup(taggeduser);
         if (!found->username) {
             free(found);
             logger(LOG_INFO,
@@ -1055,7 +1096,7 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
             return -1;
         }
         found->intlist = NULL;
-        HASH_ADD_KEYPTR(hh, *ulist, found->username, ipint->username_len,
+        HASH_ADD_KEYPTR(hh, *ulist, found->username, strlen(found->username),
                 found);
     }
 
@@ -1149,6 +1190,7 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
 
     user_intercept_list_t *found;
     ipintercept_t *existing;
+    char taggeduser[2048];
 
     if (ipint->username == NULL) {
         logger(LOG_INFO,
@@ -1156,10 +1198,17 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
         return -1;
     }
 
-    HASH_FIND(hh, *ulist, ipint->username, ipint->username_len, found);
+    if (generate_ipint_userkey(ipint, taggeduser, 2048) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error while generating user key for intercept %s",
+                ipint->common.liid);
+        return -1;
+    }
+
+    HASH_FIND(hh, *ulist, taggeduser, strlen(taggeduser), found);
 
     if (!found) {
-        printf("!found: %s\n", ipint->username);
+        printf("!found: %s\n", taggeduser);
         return 0;
     }
 
@@ -1259,6 +1308,22 @@ const char *get_radius_ident_string(uint32_t radoptions) {
     return "any";
 }
 
+const char *get_mobile_identifier_string(openli_mobile_identifier_t idtype) {
+    switch(idtype) {
+        case OPENLI_MOBILE_IDENTIFIER_MSISDN:
+            return "MSISDN";
+        case OPENLI_MOBILE_IDENTIFIER_IMSI:
+            return "IMSI";
+        case OPENLI_MOBILE_IDENTIFIER_IMEI:
+            return "IMEI";
+        case OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED:
+            return "Unspecified";
+        default:
+            break;
+    }
+    return "Unknown";
+}
+
 const char *get_access_type_string(internet_access_method_t method) {
 
     switch(method) {
@@ -1295,6 +1360,22 @@ payload_encryption_method_t map_encrypt_method_string(char *encstr) {
     }
 
     return OPENLI_PAYLOAD_ENCRYPTION_NONE;
+}
+
+openli_mobile_identifier_t map_mobile_ident_string(char *idstr) {
+    if (idstr == NULL) {
+        return OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
+    }
+    if (strcasecmp(idstr, "IMSI") == 0) {
+        return OPENLI_MOBILE_IDENTIFIER_IMSI;
+    } else if (strcasecmp(idstr, "MSISDN") == 0) {
+        return OPENLI_MOBILE_IDENTIFIER_MSISDN;
+    } else if (strcasecmp(idstr, "IMEI") == 0) {
+        return OPENLI_MOBILE_IDENTIFIER_IMEI;
+    }
+    logger(LOG_INFO, "OpenLI: unexpected mobile identifier type: %s",
+            idstr);
+    return OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
 }
 
 uint8_t map_email_decompress_option_string(char *decstr) {

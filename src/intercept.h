@@ -59,6 +59,13 @@ typedef enum {
 } internet_access_method_t;
 
 typedef enum {
+    OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED = 0,
+    OPENLI_MOBILE_IDENTIFIER_MSISDN = 1,
+    OPENLI_MOBILE_IDENTIFIER_IMSI = 2,
+    OPENLI_MOBILE_IDENTIFIER_IMEI = 3,
+} openli_mobile_identifier_t;
+
+typedef enum {
     OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED = 0,
     OPENLI_PAYLOAD_ENCRYPTION_NONE = 1,
     OPENLI_PAYLOAD_ENCRYPTION_NATIONAL = 2,
@@ -117,8 +124,8 @@ typedef struct intercept_common {
     char *targetagency;
     int seqtrackerid;
     uint32_t hi1_seqno;
-    uint64_t tostart_time;
-    uint64_t toend_time;
+    time_t tostart_time;
+    time_t toend_time;
     intercept_outputs_t tomediate;
     payload_encryption_method_t encrypt;
     char *encryptkey;
@@ -157,6 +164,7 @@ typedef struct ipintercept {
 
     static_ipranges_t *statics;
 
+    openli_mobile_identifier_t mobileident;
     uint8_t awaitingconfirm;
     uint32_t options;
     UT_hash_handle hh_liid;
@@ -317,7 +325,7 @@ struct emailsession {
     uint32_t client_octets;
     uint64_t login_time;
     uint8_t login_sent;
-    uint64_t event_time;
+    time_t event_time;
 
     char *ingest_target_id;
     uint8_t ingest_direction;
@@ -333,8 +341,8 @@ struct emailsession {
 
     void *proto_state;
     void **held_captured;
-    int held_captured_size;
-    int next_expected_captured;
+    uint32_t held_captured_size;
+    uint32_t next_expected_captured;
     uint8_t sender_validated_etsivalue;
 
     Pvoid_t ccs_sent;
@@ -518,12 +526,17 @@ int add_intercept_to_email_user_intercept_list(
         email_user_intercept_list_t *ulist, emailintercept_t *em,
         email_target_t *tgt);
 
+int generate_ipint_userkey(ipintercept_t *ipint, char *space,
+        size_t spacelen);
+
+const char *get_mobile_identifier_string(openli_mobile_identifier_t idtype);
 const char *get_access_type_string(internet_access_method_t method);
 const char *get_radius_ident_string(uint32_t radoptions);
 internet_access_method_t map_access_type_string(char *confstr);
 uint32_t map_radius_ident_string(char *confstr);
 payload_encryption_method_t map_encrypt_method_string(char *encstr);
 uint8_t map_email_decompress_option_string(char *decstr);
+openli_mobile_identifier_t map_mobile_ident_string(char *idstr);
 
 void intercept_mediation_mode_as_string(intercept_outputs_t mode,
         char *space, int spacelen);

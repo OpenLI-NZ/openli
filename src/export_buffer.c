@@ -222,6 +222,44 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
     return (buf->buftail - buf->bufhead);
 }
 
+uint64_t append_heartbeat_to_buffer(export_buffer_t *buf) {
+    ii_header_t hbeat;
+
+    uint32_t enclen = sizeof(hbeat);
+    uint64_t bufused = buf->buftail - buf->bufhead;
+    uint64_t spaceleft = buf->alloced - bufused;
+    uint32_t added = 0;
+    int rcint;
+
+    hbeat.magic = htonl(OPENLI_PROTO_MAGIC);
+    hbeat.bodylen = 0;
+    hbeat.intercepttype = htons((uint16_t)OPENLI_PROTO_HEARTBEAT);
+    hbeat.internalid = 0;
+
+    if (bufused == 0) {
+        buf->partialfront = 0;
+    }
+
+    while (spaceleft < sizeof(hbeat)) {
+        /* Add some space to the buffer */
+        spaceleft = extend_buffer(buf);
+        if (spaceleft == 0) {
+            return 0;
+        }
+    }
+
+    memcpy(buf->buftail, &hbeat, sizeof(hbeat));
+    buf->buftail += sizeof(hbeat);
+    added += sizeof(hbeat);
+
+    if (buf->since_last_saved_offset + added >= BUF_OFFSET_FREQUENCY) {
+        J1S(rcint, buf->record_offsets, bufused);
+        buf->since_last_saved_offset = 0;
+    }
+    buf->since_last_saved_offset += added;
+    return (buf->buftail - buf->bufhead);
+}
+
 int transmit_heartbeat(int fd, SSL *ssl) {
     ii_header_t hbeat;
     char *ptr;
@@ -354,7 +392,7 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
                 return -1;
             }
             return 0;
-        } else if (ret < sent) {
+        } else if ((uint64_t)ret < sent) {
             /* Partial send, move partialfront ahead by whatever we did send. */
             buf->partialfront += (uint32_t)ret;
             buf->partialrem -= (uint32_t)ret;
@@ -367,14 +405,76 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
     return sent;
 }
 
+int check_rmq_connection_block_status(amqp_connection_state_t amqp_state,
+        uint8_t *is_blocked) {
+
+    amqp_frame_t frame;
+    struct timeval tv;
+    int x, ret;
+
+    tv.tv_sec = tv.tv_usec = 0;
+    x = amqp_simple_wait_frame_noblock(amqp_state, &frame, &tv);
+
+    if (x != AMQP_STATUS_OK && x != AMQP_STATUS_TIMEOUT) {
+        logger(LOG_INFO,
+                "OpenLI: unable to check status of collector RMQ publishing socket");
+        return -1;
+    }
+
+    if (*is_blocked) {
+        ret = 0;
+    } else {
+        ret = 1;
+    }
+
+    if (x == AMQP_STATUS_TIMEOUT) {
+        return ret;
+    }
+
+    if (AMQP_FRAME_METHOD == frame.frame_type) {
+        switch(frame.payload.method.id) {
+            case AMQP_CONNECTION_BLOCKED_METHOD:
+                if ((*is_blocked) == 0) {
+                    logger(LOG_INFO,
+                            "OpenLI: collector RMQ is unable to handle any more published ETSI records!");
+                    logger(LOG_INFO,
+                            "OpenLI: this is a SERIOUS problem -- OpenLI will buffer in memory for now, but this will only buy you a little time");
+                }
+                *is_blocked = 1;
+                ret = 0;
+                break;
+            case AMQP_CONNECTION_UNBLOCKED_METHOD:
+                if ((*is_blocked) == 1) {
+                    logger(LOG_INFO,
+                            "OpenLI: collector RMQ has become unblocked and will resume publishing ETSI records.");
+                    ret = 0;
+                } else {
+                    ret = 1;
+                }
+                *is_blocked = 0;
+                break;
+            case AMQP_CONNECTION_CLOSE_METHOD:
+                logger(LOG_INFO,
+                        "OpenLI: 'close' exception occurred on the collector RMQ connection -- must restart connection");
+                return -1;
+            case AMQP_CHANNEL_CLOSE_METHOD:
+                logger(LOG_INFO,
+                        "OpenLI: channel exception occurred on the collector RMQ connection -- going to reset connection");
+                return -1;
+        }
+    }
+    return ret;
+}
+
+
 int transmit_buffered_records_RMQ(export_buffer_t *buf, 
         amqp_connection_state_t amqp_state, amqp_channel_t channel, 
         amqp_bytes_t exchange, amqp_bytes_t routing_key,
-        uint64_t bytelimit) {
+        uint64_t bytelimit, uint8_t *is_blocked) {
 
     uint64_t sent = 0;
     uint8_t *bhead = buf->bufhead + buf->deadfront;
-    int ret;
+    int ret, x;
 
     sent = (buf->buftail - (bhead));
 
@@ -390,26 +490,36 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
 
         props._flags = AMQP_BASIC_DELIVERY_MODE_FLAG;
         props.delivery_mode = 2;        /* persistent mode */
+	ret = 0;
 
-        int pub_ret = amqp_basic_publish(
-                amqp_state,
-                channel,
-                exchange,
-                routing_key,
-                0,
-                0,
-                &props,
-                message_bytes);
+        if ((*is_blocked) == 0) {
+            int pub_ret = amqp_basic_publish(
+                    amqp_state,
+                    channel,
+                    exchange,
+                    routing_key,
+                    0,
+                    0,
+                    &props,
+                    message_bytes);
 
-        if ( pub_ret != 0 ){
-            logger(LOG_INFO,
-                    "OpenLI: RMQ publish error %d", pub_ret);
-            ret = 0;
-        } else {
-            ret = sent;
+            if ( pub_ret != 0 ){
+                logger(LOG_INFO,
+                        "OpenLI: RMQ publish error %d", pub_ret);
+                return -1;
+            } else {
+                ret = sent;
+            }
         }
 
-        buf->deadfront += ((uint32_t)ret);
+        if ((x = check_rmq_connection_block_status(amqp_state,
+                        is_blocked)) < 0) {
+            return -1;
+        }
+
+        if (x > 0) {
+            buf->deadfront += ((uint32_t)ret);
+        }
     }
 
     post_transmit(buf);

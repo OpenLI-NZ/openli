@@ -60,6 +60,7 @@ enum {
     OPENLI_EXPORT_EMAILCC = 21,
     OPENLI_EXPORT_EMAILIRI = 22,
     OPENLI_EXPORT_RAW_CC = 23,
+    OPENLI_EXPORT_RAW_IRI = 24,
 };
 
 /* This structure is also used for IPMMCCs since they require the same
@@ -200,11 +201,35 @@ openli_export_recv_t *create_ipcc_job(
         uint32_t cin, char *liid, uint32_t destid, libtrace_packet_t *pkt,
         uint8_t dir);
 
+/** Creates a raw IP packet encoding job using the OPENLI_EXPORT_RAW_CC type.
+ *
+ *  Used to export IP packets that are being intercepted by pcapdisk
+ *  IP data intercepts.
+ *
+ *  @param liid     The LIID that this packet has been intercepted for
+ *  @param destid   The mediator that should receive the raw IP packet
+ *  @param pkt      The packet that was intercepted
+ *
+ *  @return an encoding job that is ready to be published using
+ *          publish_openli_msg()
+ */
 openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
         libtrace_packet_t *pkt);
 
-openli_export_recv_t *create_rawip_cc_job_from_ip(char *liid,
-        uint32_t destid, void *l3, uint32_t l3_len, struct timeval tv);
+/** Creates a raw IP packet encoding job using the OPENLI_EXPORT_RAW_IRI type.
+ *
+ *  Used to export SIP packets that are being intercepted by pcapdisk
+ *  VOIP intercepts.
+ *
+ *  @param liid     The LIID that this packet has been intercepted for
+ *  @param destid   The mediator that should receive the raw IP packet
+ *  @param pkt      The packet that was intercepted
+ *
+ *  @return an encoding job that is ready to be published using
+ *          publish_openli_msg()
+ */
+openli_export_recv_t *create_rawip_iri_job(char *liid, uint32_t destid,
+        libtrace_packet_t *pkt);
 
 int push_vendor_mirrored_ipcc_job(void *pubqueue,
         intercept_common_t *common, struct timeval tv,

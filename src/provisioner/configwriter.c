@@ -131,15 +131,49 @@ static int emit_core_server_list(coreserver_t *servers, const char *label,
                 YAML_PLAIN_SCALAR_STYLE);
         if (!yaml_emitter_emit(emitter, &event)) return -1;
 
-        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)"port", strlen("port"), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
+        if (cs->portstr) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"port", strlen("port"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
 
-        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)cs->portstr, strlen(cs->portstr), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)cs->portstr, strlen(cs->portstr), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
+
+        if (cs->lower_portstr) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"port_lower", strlen("port_lower"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)cs->lower_portstr,
+                    strlen(cs->lower_portstr), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
+
+        if (cs->upper_portstr) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"port_upper", strlen("port_upper"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)cs->upper_portstr,
+                    strlen(cs->upper_portstr), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
 
         yaml_mapping_end_event_initialize(&event);
         if (!yaml_emitter_emit(emitter, &event)) return -1;
@@ -656,6 +690,23 @@ static int emit_ipintercepts(ipintercept_t *ipints, yaml_emitter_t *emitter) {
             }
 
             yaml_sequence_end_event_initialize(&event);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
+
+        if (ipint->mobileident != OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED) {
+            const char *mobtype = NULL;
+
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"mobileident", strlen("mobileident"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+            mobtype = get_mobile_identifier_string(ipint->mobileident);
+
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)mobtype, strlen(mobtype), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
             if (!yaml_emitter_emit(emitter, &event)) return -1;
         }
 

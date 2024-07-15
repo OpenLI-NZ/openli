@@ -526,7 +526,7 @@ void clear_email_sender(emailsession_t *sess) {
 
 static void free_email_session(openli_email_worker_t *state,
         emailsession_t *sess) {
-    int i;
+    uint32_t i;
     Word_t rc;
 
     if (!sess) {
@@ -827,7 +827,7 @@ static void remove_email_intercept(openli_email_worker_t *state,
 static int update_default_email_compression(openli_email_worker_t *state,
         provisioner_msg_t *provmsg) {
 
-    uint8_t newval;
+    uint8_t newval = OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET;
 
     if (decode_default_email_compression_announcement(provmsg->msgbody,
             provmsg->msglen, &newval) < 0) {
@@ -1000,8 +1000,7 @@ static int add_email_target(openli_email_worker_t *state,
     EVP_MD_CTX *ctx;
     const EVP_MD *md;
     unsigned char shaspace[EVP_MAX_MD_SIZE];
-    unsigned int sha_len;
-    int i;
+    unsigned int sha_len, i;
 
     tgt = calloc(1, sizeof(email_target_t));
     if (decode_email_target_announcement(provmsg->msgbody, provmsg->msglen,
@@ -1180,7 +1179,8 @@ static int find_and_update_active_session(openli_email_worker_t *state,
 
     char sesskey[256];
     emailsession_t *sess;
-    int r = 0, i;
+    int r = 0;
+    size_t i;
 
     if (cap->session_id == NULL) {
         logger(LOG_INFO,

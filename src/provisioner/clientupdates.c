@@ -405,8 +405,7 @@ int announce_hi1_notification_to_mediators(provision_state_t *state,
         if (ceptdata->start_hi1_sent) {
             return 0;
         }
-        if (tv.tv_sec >= 0 && intcomm->tostart_time >
-                    (unsigned long)tv.tv_sec) {
+        if (tv.tv_sec >= 0 && intcomm->tostart_time > tv.tv_sec) {
             return 0;
         }
         ceptdata->start_hi1_sent = 1;
@@ -425,8 +424,7 @@ int announce_hi1_notification_to_mediators(provision_state_t *state,
             return 0;
         }
         if (!ceptdata->start_hi1_sent) {
-            if (tv.tv_sec >= 0 && intcomm->tostart_time >
-                    (unsigned long)tv.tv_sec) {
+            if (tv.tv_sec >= 0 && intcomm->tostart_time > tv.tv_sec) {
                 return 0;
             } else {
                 /* shouldn't get here ideally, but just in case we do then

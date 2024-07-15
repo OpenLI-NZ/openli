@@ -165,7 +165,11 @@ intercept must be configured with the following parameters:
 * Access type -- the technology used to provide the target with Internet
   access (e.g. DSL, Fiber, Wireless, etc).
 * User -- the username assigned to that user within your AAA system. This is
-  required, even if the target is only using static IP addresses.
+  required, even if the target is only using static IP addresses. For mobile
+  intercepts, this should be either the MSISDN, IMSI, or IMEI of the target
+  device.
+* Mobile Identifier -- (for mobile intercepts only) indicates whether the
+  target is to be identified based on their MSISDN, IMSI, or IMEI.
 
 An IP intercept may also include ONE of the following parameters, which is
 used to identify the intercept target.
@@ -177,6 +181,10 @@ used to identify the intercept target.
   traffic into the OpenLI collector(s), any mirrored traffic with an intercept
   ID that matches this value will be treated as belonging to this OpenLI IP
   intercept.
+* Cisco Mirror ID -- if you are using Cisco packet mirroring to feed
+  intercepted traffic into an OpenLI collector, any mirrored traffic with
+  an intercept ID that matches this value will be assumed to belong to this
+  OpenLI IP intercept.
 * Static IPs -- if the target has a static IP (range), you can use this
   parameter to tell OpenLI which IPs belong to the target.
 
@@ -194,8 +202,11 @@ as the one that is receiving the mirrored packets.
 For mobile IP intercepts, there are some slight differences. The Access type
 must be set to "mobile" to tell OpenLI to detect IP sessions using mobile
 session management protocols (such as GTP), instead of RADIUS. The User must
-also be set to the target's phone number (MSISDN). The ALU Shim and JMirror
-methods do not apply to mobile IP intercepts.
+also be set to either the MSISDN, IMSI, or IMEI of the device that is to be
+intercepted. You must use the "Mobile Identifier" parameter to tell OpenLI
+which type of identifier is described by the User field.
+
+The vendor mirroring interception methods do not apply to mobile IP intercepts.
 
 #### Using the RADIUS Calling Station ID to Identify IP Intercept Targets
 In a conventional RADIUS deployment, the identity of the subscriber can be
@@ -234,17 +245,25 @@ to or from your SIP and RADIUS servers.
 SIP servers are defined using the sipservers option. Each SIP server that
 you have in your network should be included as a list item within the
 'sipservers' option. Failure to configure SIP servers will prevent OpenLI from
-performing any VOIP intercepts. A SIP server is configured using two parameters:
+performing any VOIP intercepts. A SIP server is configured using the
+following parameters:
 * ip -- the IP address of the SIP server
-* port -- the port that the SIP server is listening on.
+* port_lower -- the lowest port number that the SIP server is listening on.
+* port_upper -- the highest port number that the SIP server is listening on.
 
 RADIUS servers are defined using the 'radiusservers' option. The configuration
 works much the same as for SIP, except that most RADIUS deployments will need
-TWO server entries: one for the auth service and one for the accounting service,
-as these are usually listening on different ports. A RADIUS server entry is
-configured using two parameters:
+to ensure that their port range covers both the auth service and the accounting
+service, as these are usually listening on different ports. A RADIUS server
+entry is configured using the same parameters as a SIP server, i.e.:
 * ip -- the IP address of the RADIUS server
-* port -- the port that the RADIUS server is communicating on.
+* port_lower -- the lowest port number that the RADIUS server is listening on.
+* port_upper -- the highest port number that the RADIUS server is listening on.
+
+For SIP and RADIUS servers that are only listening on a single port, you may
+choose to omit `port_lower` and `port_upper` and instead provide the following
+parameter:
+* port -- the single port that the server is listening on.
 
 
 ### Email Servers
@@ -442,21 +461,28 @@ An IP intercept must contain the following key-value elements:
 * `liid`                  -- the LIID
 * `authcountrycode`       -- the authorisation country code
 * `deliverycountrycode`   -- the delivery country code
-* `user`                  -- the AAA username for the target
+* `user`                  -- the AAA username for the target, or the target
+                             identifier for mobile intercepts
 * `mediator`              -- the ID of the mediator which will forward the
                              intercept
 * `agencyid`              -- the internal identifier of the agency that
                              requested the intercept
-* `accesstype`            -- the access type providied to the user, will
-                             default to 'undefined' if not set.
+* `accesstype`            -- the access type provided to the user, will
+                             default to 'undefined' if not set
+* `mobileident`           -- (required for mobile intercepts only) the type
+                             of identifier specified in the `user` element
 
 Valid access types are:
   'dialup', 'adsl', 'vdsl', 'fiber', 'wireless', 'lan', 'satellite', 'wimax',
   'cable', 'mobile' and 'wireless-other'.
 
+Valid mobileident values are:
+  'imsi', 'msisdn', and 'imei'. If not specified, the default is `msisdn`.
+
 Note that setting the access type to 'mobile' will cause OpenLI to use GTPv2
 traffic to identify the target's IP sessions, and the resulting ETSI records
-will conform to the UMTS format (as opposed to the standard IP format).
+will conform to the UMTS format (as opposed to the standard IP format
+defined in ETSI TS 102 232-3).
 
 Optional key-value elements for an IP intercept are:
 

@@ -297,6 +297,9 @@ static int open_pcap_output_file(lea_thread_state_t *state,
         goto pcaptraceerr;
     }
 
+    if (act->uri) {
+        free(act->uri);
+    }
     act->uri = strdup(uri);
     act->pktwritten = 0;
 

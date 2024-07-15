@@ -353,7 +353,7 @@ int attempt_provisioner_connect(mediator_prov_t *prov, int provfail) {
 int transmit_provisioner(mediator_prov_t *prov, med_epoll_ev_t *mev) {
 
     int ret;
-    openli_proto_msgtype_t err;
+    openli_proto_msgtype_t err = OPENLI_PROTO_NO_MESSAGE;
 
     /* Try to send whatever we've got in the netcomms buffer */
     ret = transmit_net_buffer(prov->outgoing, &err);

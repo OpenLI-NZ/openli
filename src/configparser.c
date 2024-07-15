@@ -462,6 +462,8 @@ static int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
         cs->info = NULL;
         cs->ipstr = NULL;
         cs->portstr = NULL;
+        cs->lower_portstr = NULL;
+        cs->upper_portstr = NULL;
         cs->servertype = cstype;
         cs->awaitingconfirm = 1;
 
@@ -482,6 +484,18 @@ static int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value, "port") == 0) {
                 SET_CONFIG_STRING_OPTION(cs->portstr, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "port_lower") == 0) {
+                SET_CONFIG_STRING_OPTION(cs->lower_portstr, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "port_upper") == 0) {
+                SET_CONFIG_STRING_OPTION(cs->upper_portstr, value);
             }
         }
 
@@ -963,6 +977,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->username_len = 0;
         newcept->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
         newcept->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
+        newcept->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
         newcept->statics = NULL;
         newcept->options = 0;
 
@@ -1034,6 +1049,14 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                     radchosen = 1;
                 }
 
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value, "mobileident")
+                    == 0) {
+                newcept->mobileident = map_mobile_ident_string(
+                        (char *)value->data.scalar.value);
             }
         }
 

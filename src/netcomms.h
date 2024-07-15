@@ -127,6 +127,7 @@ typedef enum {
     OPENLI_PROTO_WITHDRAW_EMAIL_TARGET,
     OPENLI_PROTO_ANNOUNCE_DEFAULT_EMAIL_COMPRESSION,
     OPENLI_PROTO_RAWIP_CC,
+    OPENLI_PROTO_RAWIP_IRI,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -180,6 +181,9 @@ typedef enum {
     OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION,
     OPENLI_PROTO_FIELD_ENCRYPTION_KEY,
     OPENLI_PROTO_FIELD_DELIVER_COMPRESSED,
+    OPENLI_PROTO_FIELD_MOBILEIDENT,
+    OPENLI_PROTO_FIELD_CORESERVER_UPPER_PORT,
+    OPENLI_PROTO_FIELD_CORESERVER_LOWER_PORT,
 } openli_proto_fieldtype_t;
 
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl);

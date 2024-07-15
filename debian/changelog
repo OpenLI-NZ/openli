@@ -1,3 +1,25 @@
+openli (1.1.6-1) unstable; urgency=medium
+
+  * Fix incorrect encoding of userLocationInformation field.
+  * Add support for IMSI and IMEI as target identifiers for mobile
+    data (IP) intercepts.
+  * Added new parameter for IP intercepts: mobileident -- this is
+    used to indicate whether the user identifier for a mobile data
+    intercept is an MSISDN, IMEI or IMSI.
+  * Add support for including SIP packets in pcapdisk output for
+    VoIP intercepts.
+  * Fix bug where mediators receiving message from a collector via
+    RabbitMQ would be disconnected due to regular consumer timeouts.
+    This in turn should resolve issues where old IRIs or CCs would be
+    periodically retransmitted by a mediator to the LEA.
+  * Fix memory errors when reassembling TCP segments in the collector
+    libtrace threads.
+  * Generate error log messages when a component (either mediator or
+    collector) cannot publish to RabbitMQ due to the connection being
+    blocked.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Mon, 1 Jul 2024 09:57:07 +1200
+
 openli (1.1.5-1) unstable; urgency=medium
 
   * Fix bug where pcap disk output was not producing pcap files for IP
