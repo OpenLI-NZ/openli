@@ -252,7 +252,7 @@ static void set_all_smtp_participants_inactive(openli_email_worker_t *state,
     while (pval != NULL) {
         part = (smtp_participant_t *)(*pval);
         generate_smtp_ccs_from_saved(state, sess, smtpsess, &(part->ccs),
-                index, 1);
+                (const char *)index, 1);
         if (!smtpsess->authenticated) {
             part->active = 0;
         }
@@ -266,7 +266,7 @@ static void set_all_smtp_participants_inactive(openli_email_worker_t *state,
     while (pval != NULL) {
         part = (smtp_participant_t *)(*pval);
         generate_smtp_ccs_from_saved(state, sess, smtpsess, &(part->ccs),
-                index, 0);
+                (const char *)index, 0);
         part->active = 0;
         part->ccs.curr_command = 0;
         part->ccs.last_unsent = 0;
@@ -299,6 +299,7 @@ static int copy_smtp_command(smtp_cc_list_t *ccs, smtp_command_t *cmd) {
     copy->command_index = cmd->command_index;
 
     ccs->curr_command ++;
+    return 0;
 }
 
 static int add_new_smtp_command(smtp_cc_list_t *ccs,
@@ -734,7 +735,7 @@ static int save_latest_command(openli_email_worker_t *state,
         uint8_t command_type, uint8_t publish_now, uint8_t sender_only) {
 
     PWord_t pval;
-    char index[1024];
+    uint8_t index[1024];
     smtp_participant_t *recipient;
     smtp_cc_list_t *cclist;
 
@@ -777,7 +778,7 @@ static int save_latest_command(openli_email_worker_t *state,
                     smtpsess->contbufread, smtpsess->reply_code, timestamp);
             if (publish_now) {
                 generate_smtp_ccs_from_saved(state, sess, smtpsess,
-                        &(recipient->ccs), index, 0);
+                        &(recipient->ccs), (const char *)index, 0);
             }
         }
         JSLN(pval, smtpsess->recipients, index);
@@ -909,7 +910,7 @@ static void activate_latest_sender(openli_email_worker_t *state,
         smtp_participant_t **sender) {
 
     PWord_t pval;
-    char index[1024];
+    uint8_t index[1024];
     smtp_participant_t *s, *r;
     int found = 0;
 
@@ -917,7 +918,7 @@ static void activate_latest_sender(openli_email_worker_t *state,
     JSLF(pval, smtpsess->senders, index);
     while (pval) {
         s = (smtp_participant_t *)(*pval);
-        if (strcmp(index, sess->sender.emailaddr) == 0) {
+        if (strcmp((const char *)index, sess->sender.emailaddr) == 0) {
             found = 1;
             *sender = s;
 
@@ -931,7 +932,8 @@ static void activate_latest_sender(openli_email_worker_t *state,
              */
             s->active = 0;
             sess->event_time = timestamp;
-            generate_email_logoff_iri_for_user(state, sess, index);
+            generate_email_logoff_iri_for_user(state, sess,
+                    (const char *)index);
         }
 
         if (s != smtpsess->activesender) {
@@ -1054,7 +1056,7 @@ static void data_content_over(openli_email_worker_t *state,
         emailsession_t *sess, smtp_session_t *smtpsess, time_t timestamp) {
 
     PWord_t pval;
-    char index[1024];
+    uint8_t index[1024];
     smtp_participant_t *recipient;
     smtp_participant_t *sender = NULL;
     int i;
@@ -1117,7 +1119,7 @@ static void data_content_over(openli_email_worker_t *state,
                 smtpsess->contbufread, smtpsess->reply_code, timestamp);
 
         generate_smtp_ccs_from_saved(state, sess, smtpsess,
-                &(recipient->ccs), index, 0);
+                &(recipient->ccs), (const char *)index, 0);
         JSLN(pval, smtpsess->recipients, index);
     }
     smtpsess->next_command_index ++;
@@ -1378,7 +1380,7 @@ static int authenticate_failure(openli_email_worker_t *state,
         emailsession_t *sess, smtp_session_t *smtpsess, time_t timestamp) {
 
     char *sendername = NULL;
-    int r, i;
+    int r;
 
     /* TODO add option to set default domain */
     r = extract_sender_from_auth_creds(sess, smtpsess, "example.org",

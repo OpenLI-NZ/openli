@@ -1959,8 +1959,8 @@ static void sip_update_fast_path(collector_sync_voip_t *sync,
         return;
 
     }
-    baseirimsg.data.ipmmiri.content = get_sip_contents(sync->sipparser,
-            &(baseirimsg.data.ipmmiri.contentlen));
+    baseirimsg.data.ipmmiri.content = (uint8_t *)get_sip_contents(
+            sync->sipparser, &(baseirimsg.data.ipmmiri.contentlen));
 
     if (update_sip_state(sync, &recvdpkt, 1, &baseirimsg) < 0) {
         handle_bad_sip_update(sync, &recvdpkt, 1,
@@ -2013,8 +2013,8 @@ static void sip_update_slow_path(collector_sync_voip_t *sync,
                     SIP_PROCESSING_PARSING);
             continue;
         }
-        baseirimsg.data.ipmmiri.content = get_sip_contents(sync->sipparser,
-                &(baseirimsg.data.ipmmiri.contentlen));
+        baseirimsg.data.ipmmiri.content = (uint8_t *)get_sip_contents(
+                sync->sipparser, &(baseirimsg.data.ipmmiri.contentlen));
         if (update_sip_state(sync, packets, pkt_cnt, &baseirimsg) < 0) {
             handle_bad_sip_update(sync, packets, pkt_cnt,
                     SIP_PROCESSING_UPDATING_STATE);

@@ -34,25 +34,6 @@
 #include "intercept.h"
 #include "etsiencoding.h"
 
-static void DEVDEBUG_dump_contents(uint8_t *buf, uint16_t len) {
-
-    int i = 0;
-    FILE *f;
-
-    for (i = 0; i < len; i++) {
-        printf("%02x ", *(buf + i));
-        if ((i % 16) == 15) {
-            printf("\n");
-        }
-    }
-    printf("\n");
-
-    f = fopen("/tmp/encrypt.debug", "w");
-    fwrite(buf, len, 1, f);
-    fclose(f);
-
-}
-
 static inline uint32_t job_origreq_to_encrypted_payload_type(
         openli_encoding_job_t *job) {
 

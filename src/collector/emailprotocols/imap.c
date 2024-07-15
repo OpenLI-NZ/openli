@@ -679,7 +679,7 @@ static int decode_authentication_command(emailsession_t *sess,
         imap_session_t *imapsess) {
 
     char *authmsg;
-    int msglen, r;
+    int r;
 
     while (1) {
         /* There's no readable content in the buffer */
@@ -690,7 +690,6 @@ static int decode_authentication_command(emailsession_t *sess,
             return 0;
         }
 
-        msglen = imapsess->contbufread - imapsess->auth_read_from;
         authmsg = clone_authentication_message(imapsess);
 
         if (imapsess->auth_type == OPENLI_EMAIL_AUTH_NONE) {
@@ -989,7 +988,7 @@ static int _append_content_to_deflate_buffer(imap_session_t *imapsess,
 static int append_compressed_content_to_imap_buffer(imap_session_t *imapsess,
         openli_email_captured_t *cap) {
 
-    int status, i;
+    int status;
     struct compress_state *cs = NULL;
 
     if (cap->pkt_sender == OPENLI_EMAIL_PACKET_SENDER_CLIENT) {
@@ -1267,8 +1266,9 @@ static int find_next_crlf(imap_session_t *sess, size_t start_index) {
             closeparent = (uint8_t *)memmem(sess->contbuffer + start_index, rem,
                     ")", 1);
 
-            regres = regexec(&regex, sess->contbuffer + start_index, 1,
-                    matches, 0);
+            regres = regexec(&regex,
+                    (const char *)sess->contbuffer + start_index, 1, matches,
+                    0);
             if (regres == 0) {
                 curly = sess->contbuffer + start_index + matches[0].rm_so;
             } else {
@@ -1295,7 +1295,8 @@ static int find_next_crlf(imap_session_t *sess, size_t start_index) {
                  * us up (especially if they're not balanced!).
                  */
                 char *endptr = NULL;
-                unsigned long toskip = strtoul(curly + 1, &endptr, 10);
+                unsigned long toskip;
+                toskip = strtoul((char *)(curly + 1), &endptr, 10);
 
                 if (toskip >= rem) {
                     /* The whole section is not here yet, so we can't
