@@ -1,0 +1,78 @@
+name: OpenLI standard build test
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - master
+      - develop
+  workflow_dispatch:
+
+jobs:
+  pre_job:
+    name: Prerequisite checks
+    runs-on: ubuntu-latest
+    outputs:
+      should_skip: ${{ steps.skip_check.outputs.should_skip }}
+    steps:
+      - id: skip_check
+        uses: fkirc/skip-duplicate-actions@master
+        with:
+          concurrent_skipping: 'same_content'
+          cancel_others: 'true'
+
+  run-build-test-debian:
+    name: Run tests ${{ matrix.target }}
+    needs: pre_job
+    if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
+    runs-on: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - amd64
+        target:
+          - "debian:latest"
+          - "ubuntu:latest"
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Install prereq packages
+        run: |
+          ./debpkg-setup.sh
+          mk-build-deps -i -r -t 'apt-get -f -y --force-yes'
+      - name: Set up build
+        run: |
+          ./bootstrap.sh
+          ./configure
+      - name: Compile
+        run: make
+
+  run-build-test-rpm:
+    name: Run tests ${{ matrix.target }}
+    needs: pre_job
+    if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
+    runs-on: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - amd64
+        target:
+          - "fedora:latest"
+          - "rockylinux:9"
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Install prereq packages
+        run: |
+          ./rpmpkg-setup.sh ${{ matrix.target }}
+      - name: Set up build
+        run: |
+          ./bootstrap.sh
+          ./configure
+      - name: Compile
+        run: make
+
+
