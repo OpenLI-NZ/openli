@@ -503,6 +503,10 @@ static inline void send_packet_to_sync(libtrace_packet_t *pkt,
     openli_state_update_t syncup;
     libtrace_packet_t *copy;
 
+    if (collector_halt) {
+        return;
+    }
+
     /* We do this ourselves instead of calling trace_copy_packet() because
      * we don't want to be allocating 64K per copied packet -- we could be
      * doing this a lot and don't want to be wasteful */
