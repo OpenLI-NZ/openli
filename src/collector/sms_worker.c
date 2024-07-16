@@ -819,6 +819,7 @@ static void sms_worker_main(openli_sms_worker_t *state) {
         if (topoll[2].revents & ZMQ_POLLIN) {
             /* expiry check is due for all known call-ids */
             topoll[2].revents = 0;
+            close(topoll[2].fd);
 
             /* loop over all known_callids and remove any that
              * have been inactive for 3 minutes */
@@ -848,6 +849,7 @@ static void sms_worker_main(openli_sms_worker_t *state) {
         }
     }
 
+    close(purgetimer.fd);
     free(topoll);
 }
 
