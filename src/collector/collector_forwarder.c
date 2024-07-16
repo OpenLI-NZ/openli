@@ -416,7 +416,7 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
                 "OpenLI: forced to drop mediator %u because we cannot buffer any more records for it -- please investigate now!",
                 med->mediatorid);
         remove_destination(fwd, med);
-        return 1;
+        return -1;
     }
 
     reord->expectedseqno = res->seqno + 1;
@@ -719,7 +719,7 @@ static int receive_incoming_etsi(forwarding_thread_data_t *fwd) {
 
 static int process_control_message(forwarding_thread_data_t *fwd) {
     openli_export_recv_t *msg;
-    int x;
+    int x, y;
 
     do {
         /* Got something on the control socket */
@@ -736,8 +736,8 @@ static int process_control_message(forwarding_thread_data_t *fwd) {
             break;
         }
 
-        if (handle_ctrl_message(fwd,msg)  <= 0) {
-            return -1;
+        if ((y = handle_ctrl_message(fwd,msg))  <= 0) {
+            return y;
         }
 
     } while (x > 0);
@@ -929,8 +929,8 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
 
     if (fwd->topoll[0].revents & ZMQ_POLLIN) {
         x = process_control_message(fwd);
-        if (x < 0) {
-            return 0;
+        if (x <= 0) {
+            return x;
         }
         fwd->topoll[0].revents = 0;
         towait = 0;
@@ -957,8 +957,8 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
 
     if (fwd->topoll[1].revents & ZMQ_POLLIN) {
         x = receive_incoming_etsi(fwd);
-        if (x < 0) {
-            return 0;
+        if (x <= 0) {
+            return x;
         }
         fwd->topoll[1].revents = 0;
         towait = 0;
@@ -1166,19 +1166,6 @@ void *start_forwarding_thread(void *data) {
 
 
     forwarder_main(fwd);
-
-    do {
-        x = zmq_recv(fwd->zmq_pullressock, &res, sizeof(res), ZMQ_DONTWAIT);
-        if (x < 0) {
-            if (errno == EAGAIN) {
-                continue;
-            }
-            break;
-        }
-
-        free_encoded_result(&res);
-
-    } while (x > 0);
 
 haltforwarder:
     if (fwd->ampq_conn){
