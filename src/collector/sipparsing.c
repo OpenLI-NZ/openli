@@ -56,11 +56,11 @@ static int parse_tcp_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *pkt,
     }
 
     /* Check for a CRLF keep alive */
-    if (memcmp(payload, "\x0d\x0a\x0d\x0a", 4) == 0 && tcprem == 4) {
+    if (tcprem == 4 && memcmp(payload, "\x0d\x0a\x0d\x0a", 4) == 0) {
         return -1;
     }
 
-    if (memcmp(payload, "\x0d\x0a", 2) == 0 && tcprem == 2) {
+    if (tcprem == 2 && memcmp(payload, "\x0d\x0a", 2) == 0) {
         return -1;
     }
 
@@ -86,11 +86,20 @@ static int parse_udp_sip_packet(libtrace_udp_t *udp, uint32_t udprem) {
     }
 
     /* Check for a CRLF keep alive */
-    if (memcmp(payload, "\x0d\x0a\x0d\x0a", 4) == 0 && udprem == 4) {
+    if (udprem == 4 && memcmp(payload, "\x0d\x0a\x0d\x0a", 4) == 0) {
         return -1;
     }
 
-    if (memcmp(payload, "\x0d\x0a", 2) == 0 && udprem == 2) {
+    if (udprem == 2 && memcmp(payload, "\x0d\x0a", 2) == 0) {
+        return -1;
+    }
+
+    if (udprem == 1 && memcmp(payload, "\x20", 1) == 0) {
+        return -1;
+    }
+
+    /* eXosip keep alive */
+    if (udprem >= 4 && memcmp(payload, "\x6a\x61\x4b\x00", 4) == 0) {
         return -1;
     }
 
