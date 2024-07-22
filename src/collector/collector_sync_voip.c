@@ -1566,6 +1566,7 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
             torem.common.liid);
 
     remove_voipintercept(sync, vint);
+    free_single_voipintercept(torem);
     return 0;
 }
 
