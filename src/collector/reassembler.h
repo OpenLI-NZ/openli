@@ -117,7 +117,7 @@ void remove_tcp_reassemble_stream(tcp_reassembler_t *reass,
 
 
 tcp_reassemble_stream_t *create_new_tcp_reassemble_stream(
-        reassembly_method_t method, tcp_streamid_t *streamid, uint32_t synseq);
+        tcp_streamid_t *streamid, uint32_t synseq);
 void destroy_tcp_reassemble_stream(tcp_reassemble_stream_t *reass);
 int update_tcp_reassemble_stream(tcp_reassemble_stream_t *reass,
         uint8_t *content, uint16_t plen, uint32_t seqno,

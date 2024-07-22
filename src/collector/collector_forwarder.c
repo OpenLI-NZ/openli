@@ -247,8 +247,7 @@ static void disconnect_all_destinations(forwarding_thread_data_t *fwd) {
     }
 }
 
-static void remove_reorderers(forwarding_thread_data_t *fwd, char *liid,
-        Pvoid_t *reorderer_array) {
+static void remove_reorderers(char *liid, Pvoid_t *reorderer_array) {
 
     PWord_t jval;
     PWord_t pval;
@@ -317,8 +316,8 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
     }
 
     if (msg->type == OPENLI_EXPORT_INTERCEPT_OVER) {
-        remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_cc));
-        remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_iri));
+        remove_reorderers(msg->data.cept.liid, &(fwd->intreorderer_cc));
+        remove_reorderers(msg->data.cept.liid, &(fwd->intreorderer_iri));
 
         free(msg->data.cept.liid);
         free(msg->data.cept.authcc);
@@ -1104,8 +1103,8 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
         x = forwarder_main_loop(fwd);
     } while (x == 1);
 
-    remove_reorderers(fwd, NULL, &(fwd->intreorderer_cc));
-    remove_reorderers(fwd, NULL, &(fwd->intreorderer_iri));
+    remove_reorderers(NULL, &(fwd->intreorderer_cc));
+    remove_reorderers(NULL, &(fwd->intreorderer_iri));
 
     if (x == 0) {
         drain_incoming_etsi(fwd);
@@ -1126,8 +1125,7 @@ void *start_forwarding_thread(void *data) {
 
     forwarding_thread_data_t *fwd = (forwarding_thread_data_t *)data;
     char sockname[128];
-    int zero = 0, x;
-    openli_encoded_result_t res;
+    int zero = 0;
 
     fwd->zmq_ctrlsock = zmq_socket(fwd->zmq_ctxt, ZMQ_PULL);
     snprintf(sockname, 128, "inproc://openliforwardercontrol_sync-%d",

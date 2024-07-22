@@ -225,7 +225,7 @@ static int extract_imap_email_sender(openli_email_worker_t *state,
     safecopy = calloc(sizeof(char), copylen);
     memcpy(safecopy, search, (end - search));
 
-    r = extract_email_sender_from_body(state, sess, safecopy, &extracted);
+    r = extract_email_sender_from_body(safecopy, &extracted);
 
     if (r == 0 || extracted == NULL) {
         free(safecopy);
@@ -646,7 +646,7 @@ static int decode_plain_auth_content(char *authmsg, imap_session_t *imapsess,
 
     /* replace encoded credentials, if requested by the user */
     if (sess->mask_credentials) {
-        mask_plainauth_creds(imapsess->mailbox, reencoded, 2048);
+        mask_plainauth_creds(imapsess->mailbox, reencoded);
         /* replace saved imap command with re-encoded auth token */
         r = update_saved_auth_command(imapsess, reencoded, authmsg, sess->key);
         if (r < 0) {

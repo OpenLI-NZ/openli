@@ -248,7 +248,7 @@ static int decode_plain_auth_content(char *authmsg, pop3_session_t *pop3sess,
 
     /* replace encoded credentials, if requested by the user */
     if (sess->mask_credentials) {
-        mask_plainauth_creds(pop3sess->mailbox, reencoded, 2048);
+        mask_plainauth_creds(pop3sess->mailbox, reencoded);
         /* replace saved command with re-encoded auth token */
         r = update_auth_command(pop3sess, reencoded, authmsg, crlf - authmsg,
                 sess->key);
@@ -639,7 +639,7 @@ static int extract_pop3_email_sender(openli_email_worker_t *state,
     safecopy = calloc(sizeof(char), copylen);
     memcpy(safecopy, search, (end - search));
 
-    r = extract_email_sender_from_body(state, sess, safecopy, &extracted);
+    r = extract_email_sender_from_body(safecopy, &extracted);
 
     if (r == 0 || extracted == NULL) {
         free(safecopy);

@@ -418,8 +418,7 @@ static void init_email_session(emailsession_t *sess,
     sess->iricount = 0;
 }
 
-int extract_email_sender_from_body(openli_email_worker_t *state,
-        emailsession_t *sess, char *bodycontent, char **extracted) {
+int extract_email_sender_from_body(char *bodycontent, char **extracted) {
 
     char fromaddr[2048];
     int found = 0;
@@ -1573,7 +1572,7 @@ haltemailworker:
  *  ==========================================
  */
 
-void mask_plainauth_creds(char *mailbox, char *reencoded, int buflen) {
+void mask_plainauth_creds(char *mailbox, char *reencoded) {
     char input[2048];
     char *ptr;
     base64_encodestate e;

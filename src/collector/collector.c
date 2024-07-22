@@ -952,8 +952,8 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
         if (glob->jmirrors) {
             pthread_rwlock_rdlock(&(glob->config_mutex));
-            ret = check_jmirror_intercept(&(glob->sharedinfo), loc,
-                    pkt, &pinfo, glob->jmirrors, loc->activemirrorintercepts);
+            ret = check_jmirror_intercept(loc, pkt, &pinfo, glob->jmirrors,
+                    loc->activemirrorintercepts);
             pthread_rwlock_unlock(&(glob->config_mutex));
             if (ret > 0) {
                 forwarded = 1;
