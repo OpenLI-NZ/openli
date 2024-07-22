@@ -1552,9 +1552,10 @@ static inline void remove_voipintercept(collector_sync_voip_t *sync,
 static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
-    voipintercept_t *vint, torem;
+    voipintercept_t *vint, *torem;
 
-    if (decode_voipintercept_halt(intmsg, msglen, &torem) == -1) {
+    torem = calloc(1, sizeof(voipintercept_t));
+    if (decode_voipintercept_halt(intmsg, msglen, torem) == -1) {
         if (sync->log_bad_instruct) {
             logger(LOG_INFO,
                 "OpenLI: received invalid VOIP intercept withdrawal from provisioner.");
@@ -1562,15 +1563,15 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sync->voipintercepts, torem.common.liid,
-            torem.common.liid_len, vint);
+    HASH_FIND(hh_liid, sync->voipintercepts, torem->common.liid,
+            torem->common.liid_len, vint);
     if (!vint) {
         return 0;
     }
 
     sync->log_bad_instruct = 1;
     logger(LOG_INFO, "OpenLI: sync thread withdrawing VOIP intercept %s",
-            torem.common.liid);
+            torem->common.liid);
 
     remove_voipintercept(sync, vint);
     free_single_voipintercept(torem);
