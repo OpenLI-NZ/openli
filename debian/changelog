@@ -1,3 +1,22 @@
+openli (1.1.7-1) unstable; urgency=medium
+
+  * Collector: fix file descriptor leak caused by timers in SMS worker
+    threads.
+  * Collector: fix bug where a forwarder thread would be unable to exit
+    if the collector is trying to shut down due to an error.
+  * Collector: fix another race condition that can cause a collector to
+    hang when it is being halted.
+  * Collector: VoIP sync thread now recognises more SIP keep alive
+    payloads (including eXoSIP keep alives) so will no longer complain
+    about invalid SIP payload when these KAs are observed.
+  * Collector: fix segfault that can occur if an IP data session is
+    assigned to more than 5 IP addresses.
+  * Collector: fix segfault in VoIP sync thread if the expiry timer for
+    a completed call cannot be properly created (e.g. if we run out of
+    file descriptors).
+
+ -- Shane Alcock <salcock@searchlight.nz>  Tue, 23 Jul 2024 09:53:36 +1200
+
 openli (1.1.6-1) unstable; urgency=medium
 
   * Fix incorrect encoding of userLocationInformation field.
