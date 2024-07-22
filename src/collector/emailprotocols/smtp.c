@@ -958,7 +958,7 @@ static void activate_latest_sender(openli_email_worker_t *state,
         s->active = 0;
         s->last_mail_from = 0;
 
-        JSLI(pval, smtpsess->senders, sess->sender.emailaddr);
+        JSLI(pval, smtpsess->senders, (uint8_t *)sess->sender.emailaddr);
         *pval = (Word_t)s;
         *sender = s;
     }
@@ -995,7 +995,7 @@ static int forwarding_header_check(openli_email_worker_t *state,
 static int parse_mail_content(openli_email_worker_t *state,
         emailsession_t *sess, smtp_session_t *smtpsess) {
 
-    char *next, *copy, *start, *header, *hdrwrite, *val;
+    char *next, *copy, *start, *header, *hdrwrite;
     int len, ret = 0;
 
     if (*(state->email_forwarding_headers) == NULL) {
