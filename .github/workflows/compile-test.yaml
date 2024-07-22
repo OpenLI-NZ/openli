@@ -64,8 +64,8 @@ jobs:
         arch:
           - amd64
         target:
-          - "fedora:latest"
           - "rockylinux:9"
+          - "rockylinux:8"
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
