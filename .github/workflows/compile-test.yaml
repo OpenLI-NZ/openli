@@ -26,7 +26,9 @@ jobs:
     name: Run tests ${{ matrix.target }}
     needs: pre_job
     if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
-    runs-on: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    container:
+      image : ${{ matrix.target }}
     strategy:
       fail-fast: false
       matrix:
@@ -53,7 +55,9 @@ jobs:
     name: Run tests ${{ matrix.target }}
     needs: pre_job
     if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
-    runs-on: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    container:
+      image : ${{ matrix.target }}
     strategy:
       fail-fast: false
       matrix:
