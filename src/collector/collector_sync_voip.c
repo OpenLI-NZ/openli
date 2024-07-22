@@ -857,9 +857,16 @@ static int process_sip_200ok(collector_sync_voip_t *sync,
         timerfd_settime(timeout->fd, 0, &its, NULL);
 
         timeout->ptr = thisrtp;
-        HASH_ADD_KEYPTR(hh, sync->timeouts, &(timeout->fd), sizeof(int),
-                timeout);
-
+        if (timeout->fd > 0) {
+            HASH_ADD_KEYPTR(hh, sync->timeouts, &(timeout->fd), sizeof(int),
+                    timeout);
+        } else {
+            /* if we can't get a valid file descriptor for a timer, we
+             * have to just purge the call right away... */
+            free(timeout);
+            thisrtp->timeout_ev = NULL;
+            push_voipintercept_halt_to_threads(sync, thisrtp->parent);
+        }
 
         thisrtp->byematched = 1;
         *iritype = ETSILI_IRI_END;
