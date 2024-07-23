@@ -31,35 +31,34 @@
 #include "intercept.h"
 
 
-void handle_push_mirror_intercept(libtrace_thread_t *t, colthread_local_t *loc,
+void handle_push_mirror_intercept(colthread_local_t *loc,
         vendmirror_intercept_t *vmi);
-void handle_halt_mirror_intercept(libtrace_thread_t *t, colthread_local_t *loc,
+void handle_halt_mirror_intercept(colthread_local_t *loc,
         vendmirror_intercept_t *vmi);
-void handle_push_ipintercept(libtrace_thread_t *t, colthread_local_t *loc,
+void handle_push_ipintercept(colthread_local_t *loc,
         ipsession_t *sess);
-void handle_push_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
+void handle_push_ipmmintercept(colthread_local_t *loc,
         rtpstreaminf_t *rtp);
-void handle_halt_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
+void handle_halt_ipmmintercept(colthread_local_t *loc,
         char *streamkey);
-void handle_halt_ipintercept(libtrace_thread_t *t , colthread_local_t *loc,
+void handle_halt_ipintercept(colthread_local_t *loc,
         ipsession_t *sess);
-void handle_push_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
+void handle_push_coreserver(colthread_local_t *loc,
         coreserver_t *cs);
-void handle_remove_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
+void handle_remove_coreserver(colthread_local_t *loc,
         coreserver_t *cs);
-void handle_iprange(libtrace_thread_t *t, colthread_local_t *loc,
+void handle_iprange(colthread_local_t *loc,
         staticipsession_t *ipr);
-void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
+void handle_remove_iprange(colthread_local_t *loc,
         staticipsession_t *ipr);
-void handle_modify_iprange(libtrace_thread_t *t, colthread_local_t *loc,
+void handle_modify_iprange(colthread_local_t *loc,
         staticipsession_t *ipr);
-void handle_change_voip_intercept(libtrace_thread_t *t, colthread_local_t *loc,
+void handle_change_voip_intercept(colthread_local_t *loc,
         rtpstreaminf_t *tochange);
-void handle_change_vendmirror_intercept(libtrace_thread_t *t,
-        colthread_local_t *loc, vendmirror_intercept_t *vend);
-void handle_change_iprange_intercept(libtrace_thread_t *t,
-        colthread_local_t *loc, staticipsession_t *ipr);
-void handle_change_ipint_intercept(libtrace_thread_t *t, colthread_local_t *loc,
-        ipsession_t *sess);
+void handle_change_vendmirror_intercept(colthread_local_t *loc,
+        vendmirror_intercept_t *vend);
+void handle_change_iprange_intercept(colthread_local_t *loc,
+        staticipsession_t *ipr);
+void handle_change_ipint_intercept(colthread_local_t *loc, ipsession_t *sess);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

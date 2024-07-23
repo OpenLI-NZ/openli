@@ -247,8 +247,7 @@ static void disconnect_all_destinations(forwarding_thread_data_t *fwd) {
     }
 }
 
-static void remove_reorderers(forwarding_thread_data_t *fwd, char *liid,
-        Pvoid_t *reorderer_array) {
+static void remove_reorderers(char *liid, Pvoid_t *reorderer_array) {
 
     PWord_t jval;
     PWord_t pval;
@@ -317,8 +316,8 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
     }
 
     if (msg->type == OPENLI_EXPORT_INTERCEPT_OVER) {
-        remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_cc));
-        remove_reorderers(fwd, msg->data.cept.liid, &(fwd->intreorderer_iri));
+        remove_reorderers(msg->data.cept.liid, &(fwd->intreorderer_cc));
+        remove_reorderers(msg->data.cept.liid, &(fwd->intreorderer_iri));
 
         free(msg->data.cept.liid);
         free(msg->data.cept.authcc);
@@ -416,7 +415,7 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
                 "OpenLI: forced to drop mediator %u because we cannot buffer any more records for it -- please investigate now!",
                 med->mediatorid);
         remove_destination(fwd, med);
-        return 1;
+        return -1;
     }
 
     reord->expectedseqno = res->seqno + 1;
@@ -719,7 +718,7 @@ static int receive_incoming_etsi(forwarding_thread_data_t *fwd) {
 
 static int process_control_message(forwarding_thread_data_t *fwd) {
     openli_export_recv_t *msg;
-    int x;
+    int x, y;
 
     do {
         /* Got something on the control socket */
@@ -736,8 +735,8 @@ static int process_control_message(forwarding_thread_data_t *fwd) {
             break;
         }
 
-        if (handle_ctrl_message(fwd,msg)  <= 0) {
-            return -1;
+        if ((y = handle_ctrl_message(fwd,msg))  <= 0) {
+            return y;
         }
 
     } while (x > 0);
@@ -929,8 +928,8 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
 
     if (fwd->topoll[0].revents & ZMQ_POLLIN) {
         x = process_control_message(fwd);
-        if (x < 0) {
-            return 0;
+        if (x <= 0) {
+            return x;
         }
         fwd->topoll[0].revents = 0;
         towait = 0;
@@ -957,8 +956,8 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
 
     if (fwd->topoll[1].revents & ZMQ_POLLIN) {
         x = receive_incoming_etsi(fwd);
-        if (x < 0) {
-            return 0;
+        if (x <= 0) {
+            return x;
         }
         fwd->topoll[1].revents = 0;
         towait = 0;
@@ -1104,8 +1103,8 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
         x = forwarder_main_loop(fwd);
     } while (x == 1);
 
-    remove_reorderers(fwd, NULL, &(fwd->intreorderer_cc));
-    remove_reorderers(fwd, NULL, &(fwd->intreorderer_iri));
+    remove_reorderers(NULL, &(fwd->intreorderer_cc));
+    remove_reorderers(NULL, &(fwd->intreorderer_iri));
 
     if (x == 0) {
         drain_incoming_etsi(fwd);
@@ -1126,8 +1125,7 @@ void *start_forwarding_thread(void *data) {
 
     forwarding_thread_data_t *fwd = (forwarding_thread_data_t *)data;
     char sockname[128];
-    int zero = 0, x;
-    openli_encoded_result_t res;
+    int zero = 0;
 
     fwd->zmq_ctrlsock = zmq_socket(fwd->zmq_ctxt, ZMQ_PULL);
     snprintf(sockname, 128, "inproc://openliforwardercontrol_sync-%d",
@@ -1166,19 +1164,6 @@ void *start_forwarding_thread(void *data) {
 
 
     forwarder_main(fwd);
-
-    do {
-        x = zmq_recv(fwd->zmq_pullressock, &res, sizeof(res), ZMQ_DONTWAIT);
-        if (x < 0) {
-            if (errno == EAGAIN) {
-                continue;
-            }
-            break;
-        }
-
-        free_encoded_result(&res);
-
-    } while (x > 0);
 
 haltforwarder:
     if (fwd->ampq_conn){

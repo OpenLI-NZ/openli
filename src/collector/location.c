@@ -29,6 +29,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <arpa/inet.h>
+#include <libtrace.h>
+
 #include "location.h"
 #include "logger.h"
 
@@ -81,7 +83,8 @@ static void encode_e_utran_cell_id(openli_location_t **loc,
     l->loc_type = OPENLI_LOC_ECGI;
 }
 
-static inline uint8_t mnc_three_digits(const char *mcc, const char *mnc) {
+static inline uint8_t mnc_three_digits(const char *mcc UNUSED,
+        const char *mnc UNUSED) {
     /* TODO */
     return 0;
 }

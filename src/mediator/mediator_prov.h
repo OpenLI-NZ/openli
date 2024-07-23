@@ -111,11 +111,10 @@ void free_provisioner(mediator_prov_t *prov);
 /** Sends any pending messages to the provisioner.
  *
  *  @param prov             The reference to the provisioner.
- *  @param mev              The epoll event for the provisioner socket.
  *
  *  @return -1 if an error occurs, 1 otherwise.
  */
-int transmit_provisioner(mediator_prov_t *prov, med_epoll_ev_t *mev);
+int transmit_provisioner(mediator_prov_t *prov);
 
 /** Attempts to connect to the provisioner.
  *

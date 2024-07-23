@@ -38,8 +38,6 @@
  *  The vendor mirror ID is used as the CIN for this intercept, as there is
  *  no useful session identifier in the headers applied by Cisco.
  *
- * @param info          The identity of this collector (e.g. the operator ID,
- *                      device ID, etc).
  * @param loc           The thread-specific state for the thread calling this
  *                      function.
  * @param packet        The packet to be intercepted.
@@ -51,7 +49,7 @@
  * @return 1 if a CC encoding job is successfully created and actioned. Returns
  *         0 otherwise.
  */
-int generate_cc_from_cisco(collector_identity_t *info, colthread_local_t *loc,
+int generate_cc_from_cisco(colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
         vendmirror_intercept_list_t *ciscomirrors);
 

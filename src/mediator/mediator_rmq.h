@@ -152,13 +152,12 @@ int deregister_mediator_rawip_RMQ_consumer(amqp_connection_state_t state,
  *
  *  @param state        The RMQ connection to use to declare the queues
  *  @param liid         The LIID to declare queues for
- *  @param liidlen      The length of the LIID (in bytes)
  *  @param is_blocked   [in|out] Is the RMQ broker accepting publishes?
  *
  *  @return -1 if an error occurs, 0 otherwise.
  */
 int declare_mediator_liid_RMQ_queue(amqp_connection_state_t state,
-        char *liid, int liidlen, uint8_t *is_blocked);
+        char *liid, uint8_t *is_blocked);
 
 /** Declares the Raw IP queue in RabbitMQ for a particular LIID
  *
@@ -166,13 +165,12 @@ int declare_mediator_liid_RMQ_queue(amqp_connection_state_t state,
  *
  *  @param state        The RMQ connection to use to declare the queue
  *  @param liid         The LIID to declare a raw IP queue for
- *  @param liidlen      The length of the LIID (in bytes)
  *  @param is_blocked   [in|out] Is the RMQ broker accepting publishes?
  *
  *  @return -1 if an error occurs, 0 otherwise.
  */
 int declare_mediator_rawip_RMQ_queue(amqp_connection_state_t state,
-        char *liid, int liidlen, uint8_t *is_blocked);
+        char *liid, uint8_t *is_blocked);
 
 
 void remove_mediator_liid_RMQ_queue(amqp_connection_state_t state,

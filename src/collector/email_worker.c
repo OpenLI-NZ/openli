@@ -344,7 +344,7 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
     } else {
         (*cap)->own_content = 0;
         if ((*cap)->msg_length > 0 && posttcp != NULL) {
-            (*cap)->content = (char *)posttcp;
+            (*cap)->content = (uint8_t *)posttcp;
         } else {
             (*cap)->content = NULL;
         }
@@ -418,8 +418,7 @@ static void init_email_session(emailsession_t *sess,
     sess->iricount = 0;
 }
 
-int extract_email_sender_from_body(openli_email_worker_t *state,
-        emailsession_t *sess, char *bodycontent, char **extracted) {
+int extract_email_sender_from_body(char *bodycontent, char **extracted) {
 
     char fromaddr[2048];
     int found = 0;
@@ -562,15 +561,15 @@ static void free_email_session(openli_email_worker_t *state,
     }
 
     if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
-        free_smtp_session_state(sess, sess->proto_state);
+        free_smtp_session_state(sess->proto_state);
     }
 
     if (sess->protocol == OPENLI_EMAIL_TYPE_IMAP) {
-        free_imap_session_state(sess, sess->proto_state);
+        free_imap_session_state(sess->proto_state);
     }
 
     if (sess->protocol == OPENLI_EMAIL_TYPE_POP3) {
-        free_pop3_session_state(sess, sess->proto_state);
+        free_pop3_session_state(sess->proto_state);
     }
 
     if (sess->serveraddr) {
@@ -1573,7 +1572,7 @@ haltemailworker:
  *  ==========================================
  */
 
-void mask_plainauth_creds(char *mailbox, char *reencoded, int buflen) {
+void mask_plainauth_creds(char *mailbox, char *reencoded) {
     char input[2048];
     char *ptr;
     base64_encodestate e;

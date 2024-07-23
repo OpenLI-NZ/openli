@@ -1006,8 +1006,6 @@ int add_intercept_to_email_user_intercept_list(
         email_user_intercept_list_t *ulist, emailintercept_t *em,
         email_target_t *tgt) {
 
-    email_user_intercept_list_t *found;
-
     if (tgt->address == NULL) {
         logger(LOG_INFO,
                 "OpenLI: attempted to add address-less email intercept to user intercept list.");

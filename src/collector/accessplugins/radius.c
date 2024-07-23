@@ -617,7 +617,7 @@ static void radius_uncouple_parsed_data(access_plugin_t *p) {
 
 }
 
-static void create_orphan(radius_global_t *glob, radius_orphaned_resp_t **head,
+static void create_orphan(radius_orphaned_resp_t **head,
         radius_orphaned_resp_t **tail, libtrace_packet_t *pkt,
         radius_parsed_t *raddata, uint32_t reqid) {
 
@@ -1153,9 +1153,8 @@ static void update_user_session_data(radius_parsed_t *raddata,
     }
 }
 
-static inline void extract_assigned_ip_address(radius_global_t *glob,
-        radius_parsed_t *raddata, radius_attribute_t *attrlist,
-        access_session_t *sess) {
+static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
+        radius_attribute_t *attrlist, access_session_t *sess) {
 
     radius_attribute_t *attr;
 
@@ -1193,8 +1192,7 @@ static inline void extract_assigned_ip_address(radius_global_t *glob,
 
 }
 
-static inline void find_matching_request(radius_global_t *glob,
-        radius_parsed_t *raddata) {
+static inline void find_matching_request(radius_parsed_t *raddata) {
 
     uint32_t reqid;
     int rcint, i;
@@ -1216,7 +1214,7 @@ static inline void find_matching_request(radius_global_t *glob,
                 sizeof(reqid), req);
 
         if (req == NULL) {
-            create_orphan(glob, &(raddata->matchednas->orphans),
+            create_orphan(&(raddata->matchednas->orphans),
                     &(raddata->matchednas->orphans_tail), raddata->origpkt,
                     raddata, reqid);
             return;
@@ -1242,17 +1240,14 @@ static inline void find_matching_request(radius_global_t *glob,
 }
 
 
-static user_identity_t *radius_get_userid(access_plugin_t *p, void *parsed,
-        int *numberids) {
+static user_identity_t *radius_get_userid(access_plugin_t *p UNUSED,
+        void *parsed, int *numberids) {
 
     radius_parsed_t *raddata;
-    radius_global_t *glob;
     int i, idx;
     user_identity_t *idarray = NULL;
 
-    glob = (radius_global_t *)(p->plugindata);
     raddata = (radius_parsed_t *)parsed;
-
     *numberids = 0;
 
     if (raddata->muser_count == 0) {
@@ -1280,7 +1275,7 @@ static user_identity_t *radius_get_userid(access_plugin_t *p, void *parsed,
         /* This must be a response packet, try to match it to a previously
          * seen request...
          */
-        find_matching_request(glob, raddata);
+        find_matching_request(raddata);
     }
 
     if (raddata->muser_count == 0) {
@@ -1319,7 +1314,7 @@ static user_identity_t *radius_get_userid(access_plugin_t *p, void *parsed,
 
 }
 
-static inline void apply_fsm_logic(radius_parsed_t *raddata,
+static inline void apply_fsm_logic(
         radius_user_session_t *radsess, uint8_t msgtype, uint32_t accttype,
         session_state_t *newstate, access_action_t *action) {
 
@@ -1526,24 +1521,24 @@ static inline char *quickcat(char *ptr, int *rem, char *toadd, int towrite) {
  * end = attrs
  */
 
-static inline void update_first_action(radius_global_t *glob,
-        radius_parsed_t *raddata, access_session_t *sess) {
+static inline void update_first_action(radius_parsed_t *raddata,
+        access_session_t *sess) {
 
     switch(raddata->firstaction) {
         case ACCESS_ACTION_ACCEPT:
             raddata->firstattrs = raddata->attrs;
             TIMESTAMP_TO_TV((&(sess->started)), raddata->tvsec);
-            extract_assigned_ip_address(glob, raddata, raddata->attrs, sess);
+            extract_assigned_ip_address(raddata, raddata->attrs, sess);
             break;
         case ACCESS_ACTION_ALREADY_ACTIVE:
             raddata->firstattrs = raddata->savedreq->attrs;
-            extract_assigned_ip_address(glob, raddata, raddata->savedreq->attrs,
+            extract_assigned_ip_address(raddata, raddata->savedreq->attrs,
                     sess);
             TIMESTAMP_TO_TV((&(sess->started)), raddata->savedreq->tvsec);
             break;
         case ACCESS_ACTION_ATTEMPT:
             if (raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
-                extract_assigned_ip_address(glob, raddata, raddata->attrs,
+                extract_assigned_ip_address(raddata, raddata->attrs,
                         sess);
                 TIMESTAMP_TO_TV((&(sess->started)), raddata->tvsec);
             }
@@ -1556,7 +1551,7 @@ static inline void update_first_action(radius_global_t *glob,
             if (raddata->msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
                     raddata->accttype == RADIUS_ACCT_START &&
                     sess->sessipcount == 0) {
-                extract_assigned_ip_address(glob, raddata, raddata->firstattrs,
+                extract_assigned_ip_address(raddata, raddata->firstattrs,
                         sess);
             }
             break;
@@ -1568,15 +1563,15 @@ static inline void update_first_action(radius_global_t *glob,
     }
 }
 
-static inline void update_second_action(radius_global_t *glob,
-        radius_parsed_t *raddata, access_session_t *sess) {
+static inline void update_second_action(radius_parsed_t *raddata,
+        access_session_t *sess) {
 
 
     if (raddata->secondaction == ACCESS_ACTION_ACCEPT &&
             raddata->savedresp->resptype == RADIUS_CODE_ACCESS_ACCEPT) {
 
         raddata->secondattrs = raddata->savedresp->savedattrs;
-        extract_assigned_ip_address(glob, raddata, raddata->secondattrs, sess);
+        extract_assigned_ip_address(raddata, raddata->secondattrs, sess);
         TIMESTAMP_TO_TV((&(sess->started)), raddata->savedresp->tvsec);
         return;
 
@@ -1585,7 +1580,7 @@ static inline void update_second_action(radius_global_t *glob,
             raddata->savedresp->resptype == RADIUS_CODE_ACCOUNT_RESPONSE) {
 
         raddata->secondattrs = raddata->attrs;
-        extract_assigned_ip_address(glob, raddata, raddata->secondattrs, sess);
+        extract_assigned_ip_address(raddata, raddata->secondattrs, sess);
         TIMESTAMP_TO_TV((&(sess->started)), raddata->savedresp->tvsec);
         return;
     }
@@ -1749,17 +1744,17 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     }
 
     *oldstate = usess->current;
-    apply_fsm_logic(raddata, usess, raddata->msgtype, raddata->accttype,
+    apply_fsm_logic(usess, raddata->msgtype, raddata->accttype,
             newstate, &(raddata->firstaction));
     if (raddata->savedresp) {
-        apply_fsm_logic(raddata, usess, raddata->savedresp->resptype,
+        apply_fsm_logic(usess, raddata->savedresp->resptype,
                 raddata->accttype, newstate, &(raddata->secondaction));
     }
 
     update_user_session_data(raddata, usess);
 
-    update_first_action(glob, raddata, thissess);
-    update_second_action(glob, raddata, thissess);
+    update_first_action(raddata, thissess);
+    update_second_action(raddata, thissess);
 
     /* Handle case where we're "active" but have no assigned IP yet" */
     if (thissess->sessipcount == 0 && *newstate == SESSION_STATE_ACTIVE) {
@@ -1782,8 +1777,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
 }
 
 static int generate_iri(etsili_generic_t **paramlist,
-        etsili_generic_freelist_t *freegenerics, radius_parsed_t *raddata,
-        radius_attribute_t *attr,
+        etsili_generic_freelist_t *freegenerics, radius_attribute_t *attr,
         struct timeval *tv, uint32_t eventtype, etsili_iri_type_t *iritype) {
 
 
@@ -1889,81 +1883,81 @@ static int generate_iri(etsili_generic_t **paramlist,
 }
 
 static int radius_generate_access_attempt_iri(etsili_generic_t **params,
-        etsili_generic_freelist_t *freelist, radius_parsed_t *raddata,
+        etsili_generic_freelist_t *freelist,
         radius_attribute_t *attrs, struct timeval *tv,
         etsili_iri_type_t *iritype) {
 
     *iritype = ETSILI_IRI_REPORT;
 
-    return generate_iri(params, freelist, raddata, attrs,
-            tv, IPIRI_ACCESS_ATTEMPT, iritype);
+    return generate_iri(params, freelist, attrs, tv, IPIRI_ACCESS_ATTEMPT,
+            iritype);
 }
 
 
 static int radius_generate_access_accept_iri(etsili_generic_t **params,
-        etsili_generic_freelist_t *freelist, radius_parsed_t *raddata,
+        etsili_generic_freelist_t *freelist,
         radius_attribute_t *attrs, struct timeval *tv,
         etsili_iri_type_t *iritype) {
 
     *iritype = ETSILI_IRI_BEGIN;
 
-    return generate_iri(params, freelist, raddata, attrs,
-            tv, IPIRI_ACCESS_ACCEPT, iritype);
+    return generate_iri(params, freelist, attrs, tv, IPIRI_ACCESS_ACCEPT,
+            iritype);
 }
 
 static int radius_generate_interim_iri(etsili_generic_t **params,
-        etsili_generic_freelist_t *freelist, radius_parsed_t *raddata,
+        etsili_generic_freelist_t *freelist,
         radius_attribute_t *attrs, struct timeval *tv,
         etsili_iri_type_t *iritype) {
 
     *iritype = ETSILI_IRI_CONTINUE;
 
-    return generate_iri(params, freelist, raddata, attrs,
-            tv, IPIRI_INTERIM_UPDATE, iritype);
+    return generate_iri(params, freelist, attrs, tv, IPIRI_INTERIM_UPDATE,
+            iritype);
 }
 
 static int radius_generate_access_end_iri(etsili_generic_t **params,
-        etsili_generic_freelist_t *freelist, radius_parsed_t *raddata,
+        etsili_generic_freelist_t *freelist,
         radius_attribute_t *attrs, struct timeval *tv,
         etsili_iri_type_t *iritype) {
 
     *iritype = ETSILI_IRI_END;
 
-    return generate_iri(params, freelist, raddata, attrs,
-            tv, IPIRI_ACCESS_END, iritype);
+    return generate_iri(params, freelist, attrs, tv, IPIRI_ACCESS_END,
+            iritype);
 }
 
 static int radius_generate_access_reject_iri(etsili_generic_t **params,
-        etsili_generic_freelist_t *freelist, radius_parsed_t *raddata,
+        etsili_generic_freelist_t *freelist,
         radius_attribute_t *attrs, struct timeval *tv,
         etsili_iri_type_t *iritype) {
 
     *iritype = ETSILI_IRI_REPORT;
 
-    return generate_iri(params, freelist, raddata, attrs,
-            tv, IPIRI_ACCESS_REJECT, iritype);
+    return generate_iri(params, freelist, attrs, tv, IPIRI_ACCESS_REJECT,
+            iritype);
 }
 
 static int radius_generate_access_failed_iri(etsili_generic_t **params,
-        etsili_generic_freelist_t *freelist, radius_parsed_t *raddata,
+        etsili_generic_freelist_t *freelist,
         radius_attribute_t *attrs, struct timeval *tv,
         etsili_iri_type_t *iritype) {
 
     *iritype = ETSILI_IRI_REPORT;
 
-    return generate_iri(params, freelist, raddata, attrs,
-            tv, IPIRI_ACCESS_FAILED, iritype);
+    return generate_iri(params, freelist, attrs, tv, IPIRI_ACCESS_FAILED,
+            iritype);
 }
 
 static int radius_generate_already_active_iri(etsili_generic_t **params,
-        etsili_generic_freelist_t *freelist, radius_parsed_t *raddata,
+        etsili_generic_freelist_t *freelist,
         radius_attribute_t *attrs, struct timeval *tv,
         etsili_iri_type_t *iritype) {
 
     *iritype = ETSILI_IRI_BEGIN;
 
-    return generate_iri(params, freelist, raddata, attrs,
-            tv, IPIRI_START_WHILE_ACTIVE, iritype);
+    return generate_iri(params, freelist, attrs, tv, IPIRI_START_WHILE_ACTIVE,
+            iritype);
 }
 
 static inline int action_to_iri(etsili_generic_t **params,
@@ -1977,43 +1971,43 @@ static inline int action_to_iri(etsili_generic_t **params,
     switch(action) {
         case ACCESS_ACTION_ATTEMPT:
             if (radius_generate_access_attempt_iri(params, freegenerics,
-                        raddata, attrs, &tv, iritype) < 0) {
+                        attrs, &tv, iritype) < 0) {
                 return -1;
             }
             break;
         case ACCESS_ACTION_ACCEPT:
             if (radius_generate_access_accept_iri(params, freegenerics,
-                        raddata, attrs, &tv, iritype) < 0) {
+                        attrs, &tv, iritype) < 0) {
                 return -1;
             }
             break;
         case ACCESS_ACTION_END:
             if (radius_generate_access_end_iri(params, freegenerics,
-                        raddata, attrs, &tv, iritype) < 0) {
+                        attrs, &tv, iritype) < 0) {
                 return -1;
             }
             break;
         case ACCESS_ACTION_INTERIM_UPDATE:
             if (radius_generate_interim_iri(params, freegenerics,
-                        raddata, attrs, &tv, iritype) < 0) {
+                        attrs, &tv, iritype) < 0) {
                 return -1;
             }
             break;
         case ACCESS_ACTION_REJECT:
             if (radius_generate_access_reject_iri(params, freegenerics,
-                        raddata, attrs, &tv, iritype) < 0) {
+                        attrs, &tv, iritype) < 0) {
                 return -1;
             }
             break;
         case ACCESS_ACTION_FAILED:
             if (radius_generate_access_failed_iri(params, freegenerics,
-                        raddata, attrs, &tv, iritype) < 0) {
+                        attrs, &tv, iritype) < 0) {
                 return -1;
             }
             break;
         case ACCESS_ACTION_ALREADY_ACTIVE:
             if (radius_generate_already_active_iri(params, freegenerics,
-                        raddata, attrs, &tv, iritype) < 0) {
+                        attrs, &tv, iritype) < 0) {
                 return -1;
             }
             break;
@@ -2028,7 +2022,7 @@ static inline int action_to_iri(etsili_generic_t **params,
 
 }
 
-static int radius_generate_iri_data(access_plugin_t *p, void *parseddata,
+static int radius_generate_iri_data(access_plugin_t *p UNUSED, void *parseddata,
         etsili_generic_t **params, etsili_iri_type_t *iritype,
         etsili_generic_freelist_t *freelist, int iteration) {
 
@@ -2066,7 +2060,7 @@ static int radius_generate_iri_data(access_plugin_t *p, void *parseddata,
     return -1;
 }
 
-static int radius_generate_iri_from_session(access_plugin_t *p,
+static int radius_generate_iri_from_session(access_plugin_t *p UNUSED,
         access_session_t *session, etsili_generic_t **params,
         etsili_iri_type_t *iritype, etsili_generic_freelist_t *freelist,
         uint8_t trigger) {
@@ -2132,7 +2126,7 @@ static int radius_generate_iri_from_session(access_plugin_t *p,
     return 1;
 }
 
-static void radius_destroy_session_data(access_plugin_t *p,
+static void radius_destroy_session_data(access_plugin_t *p UNUSED,
         access_session_t *sess) {
 
     int rcint;
@@ -2169,7 +2163,7 @@ static void radius_destroy_session_data(access_plugin_t *p,
     free(usess);
 }
 
-static uint32_t radius_get_packet_sequence(access_plugin_t *p,
+static uint32_t radius_get_packet_sequence(access_plugin_t *p UNUSED,
         void *parseddata) {
 
     radius_parsed_t *raddata;
@@ -2178,8 +2172,8 @@ static uint32_t radius_get_packet_sequence(access_plugin_t *p,
     return DERIVE_REQUEST_ID(raddata, raddata->msgtype);
 }
 
-static uint8_t *radius_get_ip_contents(access_plugin_t *p, void *parseddata,
-        uint16_t *iplen, int iteration) {
+static uint8_t *radius_get_ip_contents(access_plugin_t *p UNUSED,
+        void *parseddata UNUSED, uint16_t *iplen, int iteration UNUSED) {
 
     /* TODO */
 

@@ -93,13 +93,14 @@ static int init_email_ingest_state(email_ingestor_state_t *state,
         con_info->thismsg->part_id = 0xFFFFFFFF; \
     }
 
-static MHD_RESULT iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
-            const char *key, const char *filename, const char *content_type,
-            const char *transfer_encoding, const char *data, uint64_t off,
-            size_t size) {
+static MHD_RESULT iterate_post (void *coninfo_cls,
+            enum MHD_ValueKind kind UNUSED, const char *key,
+            const char *filename UNUSED, const char *content_type UNUSED,
+            const char *transfer_encoding UNUSED, const char *data,
+            uint64_t off UNUSED, size_t size) {
 
     email_connection_t *con_info = (email_connection_t *)(coninfo_cls);
-    char *ptr, *writeptr;
+    uint8_t *ptr, *writeptr;
 
     if (strcmp(key, "TARGET_ID") == 0) {
         CALLOC_THISMSG
@@ -159,21 +160,19 @@ static MHD_RESULT iterate_post (void *coninfo_cls, enum MHD_ValueKind kind,
     } else if (strcmp(key, "BYTES") == 0) {
         //con_info->thismsg->msg_length = strtoul(data, NULL, 10);
     } else if (strcmp(key, "BUFFER") == 0) {
-        int datalen = 0;
-
         CALLOC_THISMSG
-        ptr = (char *)data;
+        ptr = (uint8_t *)data;
         if (con_info->thismsg->content == NULL) {
             while (*ptr == 0x0a || *ptr == 0x0d) {
                 ptr ++;
             }
 
-            if (*ptr == '\0' || (size_t)(ptr - data) >= size) {
+            if (*ptr == '\0' || (size_t)(ptr - (uint8_t *)data) >= size) {
                 free(con_info->thismsg->content);
                 con_info->thismsg->content = NULL;
             }
 
-            size -= (ptr - data);
+            size -= (ptr - (uint8_t *)data);
         }
 
         if (con_info->thismsg->content) {
@@ -246,9 +245,9 @@ static int send_page(struct MHD_Connection *connection, const char *page,
     return ret;
 }
 
-static void email_request_completed(void *cls,
-        struct MHD_Connection *connection,
-        void **con_cls, enum MHD_RequestTerminationCode toe) {
+static void email_request_completed(void *cls UNUSED,
+        struct MHD_Connection *connection UNUSED,
+        void **con_cls, enum MHD_RequestTerminationCode toe UNUSED) {
 
     email_connection_t *con_info = (email_connection_t *)(*con_cls);
 
@@ -288,8 +287,8 @@ static void email_request_completed(void *cls,
 
 static MHD_RESULT answer_email_connection(void *cls,
                       struct MHD_Connection *connection,
-                      const char *url, const char *method,
-                      const char *version, const char *upload_data,
+                      const char *url UNUSED, const char *method,
+                      const char *version UNUSED, const char *upload_data,
                       size_t *upload_data_size, void **con_cls) {
 
     email_connection_t *con_info = (email_connection_t *)(*con_cls);

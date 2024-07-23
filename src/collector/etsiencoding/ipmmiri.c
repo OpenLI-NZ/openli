@@ -38,7 +38,6 @@ static void encode_ipmmiri_location_eps(wandder_encoder_t *encoder,
     char encoded_uli[256];
     int encoded_uli_len = 0;
     int space = 256;
-    int i;
 
     if (encode_user_location_information(encoded_uli, space, &encoded_uli_len,
             job->locations, job->location_cnt, job->location_types) < 0) {
@@ -186,12 +185,9 @@ int encode_templated_ipmmiri(wandder_encoder_t *encoder,
         openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
 
-    int i;
     wandder_encoded_result_t *body = NULL;
     openli_ipmmiri_job_t *irijob =
             (openli_ipmmiri_job_t *)&(job->origreq->data.ipmmiri);
-
-    char *encoded_loc = NULL;
 
     /* We could consider templating the body portion of IPMMIRIs if we
      * really need the performance -- we'd need to create templates for each

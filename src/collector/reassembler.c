@@ -210,8 +210,7 @@ tcp_reassemble_stream_t *get_tcp_reassemble_stream(tcp_reassembler_t *reass,
         if (tcp->syn) {
             HASH_DELETE(hh, reass->knownstreams, existing);
             destroy_tcp_reassemble_stream(existing);
-            existing = create_new_tcp_reassemble_stream(reass->method, id,
-                    ntohl(tcp->seq));
+            existing = create_new_tcp_reassemble_stream(id, ntohl(tcp->seq));
             HASH_ADD_KEYPTR(hh, reass->knownstreams, existing->streamid,
                     sizeof(tcp_streamid_t), existing);
         } else if (tcprem > 0 && !tcp->syn &&
@@ -232,11 +231,9 @@ tcp_reassemble_stream_t *get_tcp_reassemble_stream(tcp_reassembler_t *reass,
     }
 
     if (tcp->syn) {
-        existing = create_new_tcp_reassemble_stream(reass->method, id,
-                ntohl(tcp->seq));
+        existing = create_new_tcp_reassemble_stream(id, ntohl(tcp->seq));
     } else {
-        existing = create_new_tcp_reassemble_stream(reass->method, id,
-                ntohl(tcp->seq) - 1);
+        existing = create_new_tcp_reassemble_stream(id, ntohl(tcp->seq) - 1);
         if (tcp->fin) {
             existing->established = TCP_STATE_CLOSING;
         } else {
@@ -323,7 +320,7 @@ ip_reassemble_stream_t *get_ipfrag_reassemble_stream(
 }
 
 tcp_reassemble_stream_t *create_new_tcp_reassemble_stream(
-        reassembly_method_t method, tcp_streamid_t *streamid, uint32_t synseq) {
+        tcp_streamid_t *streamid, uint32_t synseq) {
 
     tcp_reassemble_stream_t *stream;
 
@@ -693,7 +690,6 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
 
     tcp_reass_segment_t *iter, *tmp;
     uint16_t contused = 0;
-    uint16_t checked = 0;
     uint32_t used = 0;
     uint32_t expseqno;
     uint8_t *endfound = NULL;
@@ -791,7 +787,6 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
         HASH_DELETE(hh, stream->segments, iter);
         contused += iter->length;
         expseqno += iter->length;
-        checked = contused;
 
         free(iter->content);
         free(iter);

@@ -877,7 +877,7 @@ static int parse_emailintercept_targets(emailintercept_t *mailint,
         goto targeterr;
     }
 
-    for (i = 0; i < json_object_array_length(jsontargets); i++) {
+    for (i = 0; i < (size_t)json_object_array_length(jsontargets); i++) {
         jobj = json_object_array_get_idx(jsontargets, i);
 
         json_object_object_get_ex(jobj, "address", &(address));
@@ -938,7 +938,7 @@ static int parse_voipintercept_siptargets(voipintercept_t *vint,
         goto siptargeterr;
     }
 
-    for (i = 0; i < json_object_array_length(jsontargets); i++) {
+    for (i = 0; i < (size_t)json_object_array_length(jsontargets); i++) {
         jobj = json_object_array_get_idx(jsontargets, i);
 
         json_object_object_get_ex(jobj, "username", &(username));
@@ -1001,7 +1001,7 @@ static int parse_ipintercept_staticips(provision_state_t *state,
         goto staticerr;
     }
 
-    for (i = 0; i < json_object_array_length(jsonips); i++) {
+    for (i = 0; i < (size_t)json_object_array_length(jsonips); i++) {
         jobj = json_object_array_get_idx(jsonips, i);
 
         json_object_object_get_ex(jobj, "iprange", &(iprange));
@@ -1035,7 +1035,6 @@ static int parse_ipintercept_staticips(provision_state_t *state,
             goto staticerr;
         }
 
-        free(rangestr);
         if (newr->cin >= (uint32_t)(pow(2,31))) {
             logger(LOG_INFO,
                     "OpenLI: CIN %u for static IP range %s is too large.",
@@ -1044,6 +1043,7 @@ static int parse_ipintercept_staticips(provision_state_t *state,
             logger(LOG_INFO, "OpenLI: replaced CIN with %u.",
                     newr->cin);
         }
+        free(rangestr);
 
         HASH_FIND(hh, ipint->statics, newr->rangestr, strlen(newr->rangestr),
                 existing);

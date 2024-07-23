@@ -63,7 +63,7 @@ static void cleanup_signal(int signal UNUSED)
     collector_halt = 1;
 }
 
-static void reload_signal(int signal) {
+static void reload_signal(int signal UNUSED) {
     reload_config = 1;
 }
 
@@ -221,8 +221,7 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
     }
 }
 
-static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
-        int threadid) {
+static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
 
     int i, hwm=1000;
     libtrace_message_queue_init(&(loc->fromsyncq_ip),
@@ -298,8 +297,8 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob,
 
 }
 
-static void *start_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
-        void *global) {
+static void *start_processing_thread(libtrace_t *trace UNUSED,
+        libtrace_thread_t *t, void *global) {
 
     collector_global_t *glob = (collector_global_t *)global;
     colthread_local_t *loc = NULL;
@@ -339,68 +338,67 @@ static void free_staticcache(static_ipcache_t *cache) {
     }
 }
 
-static void process_incoming_messages(libtrace_thread_t *t,
-        collector_global_t *glob, colthread_local_t *loc,
+static void process_incoming_messages(colthread_local_t *loc,
         openli_pushed_t *syncpush) {
 
     if (syncpush->type == OPENLI_PUSH_IPINTERCEPT) {
-        handle_push_ipintercept(t, loc, syncpush->data.ipsess);
+        handle_push_ipintercept(loc, syncpush->data.ipsess);
     }
 
     if (syncpush->type == OPENLI_PUSH_HALT_IPINTERCEPT) {
-        handle_halt_ipintercept(t, loc, syncpush->data.ipsess);
+        handle_halt_ipintercept(loc, syncpush->data.ipsess);
     }
 
     if (syncpush->type == OPENLI_PUSH_IPMMINTERCEPT) {
-        handle_push_ipmmintercept(t, loc, syncpush->data.ipmmint);
+        handle_push_ipmmintercept(loc, syncpush->data.ipmmint);
     }
 
     if (syncpush->type == OPENLI_PUSH_HALT_IPMMINTERCEPT) {
-        handle_halt_ipmmintercept(t, loc, syncpush->data.rtpstreamkey);
+        handle_halt_ipmmintercept(loc, syncpush->data.rtpstreamkey);
     }
 
     if (syncpush->type == OPENLI_PUSH_CORESERVER) {
-        handle_push_coreserver(t, loc, syncpush->data.coreserver);
+        handle_push_coreserver(loc, syncpush->data.coreserver);
     }
 
     if (syncpush->type == OPENLI_PUSH_REMOVE_CORESERVER) {
-        handle_remove_coreserver(t, loc, syncpush->data.coreserver);
+        handle_remove_coreserver(loc, syncpush->data.coreserver);
     }
 
     if (syncpush->type == OPENLI_PUSH_VENDMIRROR_INTERCEPT) {
-        handle_push_mirror_intercept(t, loc, syncpush->data.mirror);
+        handle_push_mirror_intercept(loc, syncpush->data.mirror);
     }
 
     if (syncpush->type == OPENLI_PUSH_HALT_VENDMIRROR_INTERCEPT) {
-        handle_halt_mirror_intercept(t, loc, syncpush->data.mirror);
+        handle_halt_mirror_intercept(loc, syncpush->data.mirror);
     }
 
     if (syncpush->type == OPENLI_PUSH_IPRANGE) {
-        handle_iprange(t, loc, syncpush->data.iprange);
+        handle_iprange(loc, syncpush->data.iprange);
     }
 
     if (syncpush->type == OPENLI_PUSH_REMOVE_IPRANGE) {
-        handle_remove_iprange(t, loc, syncpush->data.iprange);
+        handle_remove_iprange(loc, syncpush->data.iprange);
     }
 
     if (syncpush->type == OPENLI_PUSH_MODIFY_IPRANGE) {
-        handle_modify_iprange(t, loc, syncpush->data.iprange);
+        handle_modify_iprange(loc, syncpush->data.iprange);
     }
 
     if (syncpush->type == OPENLI_PUSH_UPDATE_VOIPINTERCEPT) {
-        handle_change_voip_intercept(t, loc, syncpush->data.ipmmint);
+        handle_change_voip_intercept(loc, syncpush->data.ipmmint);
     }
 
     if (syncpush->type == OPENLI_PUSH_UPDATE_IPINTERCEPT) {
-        handle_change_ipint_intercept(t, loc, syncpush->data.ipsess);
+        handle_change_ipint_intercept(loc, syncpush->data.ipsess);
     }
 
     if (syncpush->type == OPENLI_PUSH_UPDATE_VENDMIRROR_INTERCEPT) {
-        handle_change_vendmirror_intercept(t, loc, syncpush->data.mirror);
+        handle_change_vendmirror_intercept(loc, syncpush->data.mirror);
     }
 
     if (syncpush->type == OPENLI_PUSH_UPDATE_IPRANGE_INTERCEPT) {
-        handle_change_iprange_intercept(t, loc, syncpush->data.iprange);
+        handle_change_iprange_intercept(loc, syncpush->data.iprange);
     }
 
 }
@@ -423,12 +421,12 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
-        process_incoming_messages(t, glob, loc, &syncpush);
+        process_incoming_messages(loc, &syncpush);
     }
 
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_voip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
-        process_incoming_messages(t, glob, loc, &syncpush);
+        process_incoming_messages(loc, &syncpush);
     }
 
     deregister_sync_queues(&(glob->syncip), t);
@@ -504,6 +502,10 @@ static inline void send_packet_to_sync(libtrace_packet_t *pkt,
         void *q, uint8_t updatetype) {
     openli_state_update_t syncup;
     libtrace_packet_t *copy;
+
+    if (collector_halt) {
+        return;
+    }
 
     /* We do this ourselves instead of calling trace_copy_packet() because
      * we don't want to be allocating 64K per copied packet -- we could be
@@ -669,8 +671,7 @@ static uint8_t sms_check_fast_path(colthread_local_t *loc,
 }
 
 static uint8_t sms_check_slow_path(colthread_local_t *loc,
-            libtrace_packet_t *pkt, collector_global_t *glob,
-            uint8_t doonce) {
+            collector_global_t *glob, uint8_t doonce) {
 
     int x, i;
     libtrace_packet_t **pkts = NULL;
@@ -710,11 +711,10 @@ static uint8_t sms_check_slow_path(colthread_local_t *loc,
     return 0;
 }
 
-static uint8_t is_sms_over_sip(packet_info_t *pinfo, libtrace_packet_t *pkt,
+static uint8_t is_sms_over_sip(libtrace_packet_t *pkt,
         colthread_local_t *loc, collector_global_t *glob) {
 
-    uint8_t x = 0, doonce;
-    libtrace_packet_t *ref;
+    uint8_t x = 0;
 
     x = add_sip_packet_to_parser(&(loc->sipparser), pkt, 0);
     if (x == SIP_ACTION_USE_PACKET) {
@@ -722,10 +722,10 @@ static uint8_t is_sms_over_sip(packet_info_t *pinfo, libtrace_packet_t *pkt,
         return sms_check_fast_path(loc, pkt, glob);
     } else if (x == SIP_ACTION_REASSEMBLE_TCP) {
         /* Reassembled TCP, could contain multiple messages */
-        return sms_check_slow_path(loc, pkt, glob, 0);
+        return sms_check_slow_path(loc, glob, 0);
     } else if (x == SIP_ACTION_REASSEMBLE_IPFRAG) {
         /* Reassembled IP/UDP fragment */
-        return sms_check_slow_path(loc, pkt, glob, 1);
+        return sms_check_slow_path(loc, glob, 1);
     }
     return 0;
 }
@@ -784,7 +784,7 @@ static inline uint8_t check_for_invalid_sip(packet_info_t *pinfo,
     return 0;
 }
 
-static inline uint32_t is_core_server_packet(libtrace_packet_t *pkt,
+static inline uint32_t is_core_server_packet(
         packet_info_t *pinfo, coreserver_t *servers) {
 
     coreserver_t *found = NULL;
@@ -823,7 +823,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     int forwarded = 0, ret;
     int ipsynced = 0, voipsynced = 0, emailsynced = 0;
     uint16_t fragoff = 0;
-    uint32_t servhash = 0, smshash = 0;
+    uint32_t servhash = 0;
 
     openli_pushed_t syncpush;
     packet_info_t pinfo;
@@ -832,13 +832,13 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
-        process_incoming_messages(t, glob, loc, &syncpush);
+        process_incoming_messages(loc, &syncpush);
     }
 
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_voip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
-        process_incoming_messages(t, glob, loc, &syncpush);
+        process_incoming_messages(loc, &syncpush);
     }
 
 
@@ -934,7 +934,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
          * for conversion to an ETSI record */
         if (glob->alumirrors) {
             pthread_rwlock_rdlock(&(glob->config_mutex));
-            ret = check_alu_intercept(&(glob->sharedinfo), loc,
+            ret = check_alu_intercept(loc,
                     pkt, &pinfo, glob->alumirrors,
                     loc->activemirrorintercepts);
             pthread_rwlock_unlock(&(glob->config_mutex));
@@ -952,8 +952,8 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
         if (glob->jmirrors) {
             pthread_rwlock_rdlock(&(glob->config_mutex));
-            ret = check_jmirror_intercept(&(glob->sharedinfo), loc,
-                    pkt, &pinfo, glob->jmirrors, loc->activemirrorintercepts);
+            ret = check_jmirror_intercept(loc, pkt, &pinfo, glob->jmirrors,
+                    loc->activemirrorintercepts);
             pthread_rwlock_unlock(&(glob->config_mutex));
             if (ret > 0) {
                 forwarded = 1;
@@ -973,8 +973,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                     &pinfo, 1)) != NULL) {
                 if (glob->sharedinfo.cisco_noradius) {
                     pthread_rwlock_rdlock(&(glob->config_mutex));
-                    ret = generate_cc_from_cisco(
-                        &(glob->sharedinfo), loc, pkt, &pinfo,
+                    ret = generate_cc_from_cisco(loc, pkt, &pinfo,
                         loc->activemirrorintercepts);
                     pthread_rwlock_unlock(&(glob->config_mutex));
                     if (ret > 0) {
@@ -1007,14 +1006,14 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         }
 
         /* Is this a RADIUS packet? -- if yes, create a state update */
-        if (loc->radiusservers && is_core_server_packet(pkt, &pinfo,
+        if (loc->radiusservers && is_core_server_packet(&pinfo,
                     loc->radiusservers)) {
             send_packet_to_sync(pkt, loc->tosyncq_ip, OPENLI_UPDATE_RADIUS);
             ipsynced = 1;
             goto processdone;
         }
 
-        if (loc->gtpservers && is_core_server_packet(pkt, &pinfo,
+        if (loc->gtpservers && is_core_server_packet(&pinfo,
                     loc->gtpservers)) {
             send_packet_to_sync(pkt, loc->tosyncq_ip, OPENLI_UPDATE_GTP);
             ipsynced = 1;
@@ -1022,27 +1021,27 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         }
 
         /* Is this a SIP packet? -- if yes, create a state update */
-        if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
+        if (loc->sipservers && is_core_server_packet(&pinfo,
                     loc->sipservers)) {
             add_payload_info_from_packet(pkt, &pinfo);
             if (!check_for_invalid_sip(&pinfo, fragoff)) {
-                is_sms_over_sip(&pinfo, pkt, loc, glob);
+                is_sms_over_sip(pkt, loc, glob);
                 send_packet_to_sync(pkt, loc->tosyncq_voip, OPENLI_UPDATE_SIP);
                 voipsynced = 1;
             }
         }
     } else if (proto == TRACE_IPPROTO_TCP) {
         /* Is this a SIP packet? -- if yes, create a state update */
-        if (loc->sipservers && is_core_server_packet(pkt, &pinfo,
+        if (loc->sipservers && is_core_server_packet(&pinfo,
                     loc->sipservers)) {
             add_payload_info_from_packet(pkt, &pinfo);
-            is_sms_over_sip(&pinfo, pkt, loc, glob);
+            is_sms_over_sip(pkt, loc, glob);
             send_packet_to_sync(pkt, loc->tosyncq_voip, OPENLI_UPDATE_SIP);
             voipsynced = 1;
         }
 
         else if (loc->smtpservers &&
-                (servhash = is_core_server_packet(pkt, &pinfo,
+                (servhash = is_core_server_packet(&pinfo,
                     loc->smtpservers))) {
             send_packet_to_emailworker(pkt, loc->email_worker_queues,
                     glob->email_threads, servhash, OPENLI_UPDATE_SMTP);
@@ -1051,7 +1050,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         }
 
         else if (loc->imapservers &&
-                (servhash = is_core_server_packet(pkt, &pinfo,
+                (servhash = is_core_server_packet(&pinfo,
                     loc->imapservers))) {
             send_packet_to_emailworker(pkt, loc->email_worker_queues,
                     glob->email_threads, servhash, OPENLI_UPDATE_IMAP);
@@ -1059,7 +1058,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         }
 
         else if (loc->pop3servers &&
-                (servhash = is_core_server_packet(pkt, &pinfo,
+                (servhash = is_core_server_packet(&pinfo,
                     loc->pop3servers))) {
             send_packet_to_emailworker(pkt, loc->email_worker_queues,
                     glob->email_threads, servhash, OPENLI_UPDATE_POP3);
@@ -1305,7 +1304,7 @@ static void reload_inputs(collector_global_t *glob,
 
         for (i = oldcolthreads; i < glob->total_col_threads; i++) {
             glob->collocals[i] = calloc(1, sizeof(colthread_local_t));
-            init_collocal(glob->collocals[i], glob, i);
+            init_collocal(glob->collocals[i], glob);
         }
     }
 
@@ -1589,7 +1588,7 @@ static int prepare_collector_glob(collector_global_t *glob) {
 
     for (i = 0; i < glob->total_col_threads; i++) {
         glob->collocals[i] = calloc(1, sizeof(colthread_local_t));
-        init_collocal(glob->collocals[i], glob, i);
+        init_collocal(glob->collocals[i], glob);
     }
 
     glob->syncgenericfreelist = create_etsili_generic_freelist(1);

@@ -135,6 +135,7 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
 
     json_object_object_add(jobj, "user", user);
     json_object_object_add(jobj, "accesstype", accesstype);
+    json_object_object_add(jobj, "radiusident", radiusident);
 
     if (ipint->mobileident != OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED) {
         mobileident = json_object_new_string(

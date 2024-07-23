@@ -1001,9 +1001,9 @@ static void *run_agency_thread(void *params) {
             int r_hi2 = 0, r_hi3 = 0;
 
             r_hi2 = connect_mediator_handover(state->agency.hi2,
-                    state->epoll_fd, state->handover_id, state->agencyid);
+                    state->epoll_fd, state->handover_id);
             r_hi3 = connect_mediator_handover(state->agency.hi3,
-                    state->epoll_fd, state->handover_id + 1, state->agencyid);
+                    state->epoll_fd, state->handover_id + 1);
             if (r_hi2 < 0 || r_hi3 < 0) {
                 break;
             }

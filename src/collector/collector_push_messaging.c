@@ -420,7 +420,7 @@ static int remove_ipv6_intercept(colthread_local_t *loc, ipsession_t *torem) {
     return 1;
 }
 
-void handle_push_mirror_intercept(libtrace_thread_t *t, colthread_local_t *loc,
+void handle_push_mirror_intercept(colthread_local_t *loc,
         vendmirror_intercept_t *vmi) {
 
     vendmirror_intercept_list_t *vmilist = NULL;
@@ -444,15 +444,14 @@ void handle_push_mirror_intercept(libtrace_thread_t *t, colthread_local_t *loc,
         HASH_ADD_KEYPTR(hh, vmilist->intercepts, vmi->common.liid,
                 vmi->common.liid_len, vmi);
     } else {
-        logger(LOG_INFO, "OpenLI: collector received duplicate vendmirror intercept %u:%s, ignoring. %d", vmi->sessionid, vmi->common.liid,
-                trace_get_perpkt_thread_id(t));
+        logger(LOG_INFO, "OpenLI: collector received duplicate vendmirror intercept %u:%s, ignoring.", vmi->sessionid, vmi->common.liid);
         free_single_vendmirror_intercept(vmi);
     }
 
 }
 
-void handle_halt_mirror_intercept(libtrace_thread_t *t,
-        colthread_local_t *loc, vendmirror_intercept_t *vmi) {
+void handle_halt_mirror_intercept(colthread_local_t *loc,
+        vendmirror_intercept_t *vmi) {
     vendmirror_intercept_t *found;
     vendmirror_intercept_list_t *parent;
 
@@ -483,7 +482,7 @@ void handle_halt_mirror_intercept(libtrace_thread_t *t,
     free_single_vendmirror_intercept(vmi);
 }
 
-void handle_push_ipintercept(libtrace_thread_t *t, colthread_local_t *loc,
+void handle_push_ipintercept(colthread_local_t *loc,
         ipsession_t *sess) {
 
     if (sess->ai_family == AF_INET) {
@@ -503,15 +502,9 @@ void handle_push_ipintercept(libtrace_thread_t *t, colthread_local_t *loc,
         free_single_ipsession(sess);
         return;
     }
-    /*
-    logger(LOG_INFO,
-            "OpenLI: collector thread %d has started intercepting %s IP session %s",
-            trace_get_perpkt_thread_id(t),
-            accesstype_to_string(sess->accesstype), sess->streamkey);
-    */
 }
 
-void handle_push_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
+void handle_push_ipmmintercept(colthread_local_t *loc,
         rtpstreaminf_t *rtp) {
 
     /* If stream key already exists, remove it and replace it */
@@ -519,46 +512,20 @@ void handle_push_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
 
     HASH_ADD_KEYPTR(hh, loc->activertpintercepts, rtp->streamkey,
             strlen(rtp->streamkey), rtp);
-    /*
-    logger(LOG_INFO,
-            "OpenLI: collector thread %d has started intercepting RTP stream %s",
-            trace_get_perpkt_thread_id(t), rtp->streamkey);
-    */
 }
 
-void handle_halt_ipmmintercept(libtrace_thread_t *t, colthread_local_t *loc,
+void handle_halt_ipmmintercept(colthread_local_t *loc,
         char *streamkey) {
-    if (remove_rtp_stream(loc, streamkey) != 0) {
-        /*
-        logger(LOG_INFO,
-                "OpenLI: collector thread %d has stopped intercepting RTP stream %s",
-                trace_get_perpkt_thread_id(t), streamkey);
-        */
-    }
+    remove_rtp_stream(loc, streamkey);
     free(streamkey);
 }
 
-void handle_halt_ipintercept(libtrace_thread_t *t , colthread_local_t *loc,
-        ipsession_t *sess) {
+void handle_halt_ipintercept(colthread_local_t *loc, ipsession_t *sess) {
 
     if (sess->ai_family == AF_INET) {
-        if (remove_ipv4_intercept(loc, sess) > 0) {
-            /*
-            logger(LOG_INFO,
-                    "OpenLI: collector thread %d has stopped intercepting IP session %s",
-                    trace_get_perpkt_thread_id(t), sess->streamkey);
-            */
-
-        }
+        remove_ipv4_intercept(loc, sess);
     } else if (sess->ai_family == AF_INET6) {
-        if (remove_ipv6_intercept(loc, sess) > 0) {
-            /*
-            logger(LOG_INFO,
-                    "OpenLI: collector thread %d has stopped intercepting IP session %s",
-                    trace_get_perpkt_thread_id(t), sess->streamkey);
-            */
-
-        }
+        remove_ipv6_intercept(loc, sess);
     } else {
         logger(LOG_INFO,
                  "OpenLI: invalid address family for new IP intercept: %d",
@@ -567,8 +534,7 @@ void handle_halt_ipintercept(libtrace_thread_t *t , colthread_local_t *loc,
     free_single_ipsession(sess);
 }
 
-void handle_push_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
-        coreserver_t *cs) {
+void handle_push_coreserver(colthread_local_t *loc, coreserver_t *cs) {
     coreserver_t *found, **servlist;
 
     switch(cs->servertype) {
@@ -592,27 +558,21 @@ void handle_push_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
             break;
         default:
             logger(LOG_INFO,
-                    "OpenLI: unexpected core server type received by collector thread %d: %d",
-                    trace_get_perpkt_thread_id(t), cs->servertype);
+                    "OpenLI: unexpected core server type received by collector thread: %d",
+                    cs->servertype);
             return;
     }
     HASH_FIND(hh, *servlist, cs->serverkey, strlen(cs->serverkey), found);
     if (!found) {
         HASH_ADD_KEYPTR(hh, *servlist, cs->serverkey, strlen(cs->serverkey),
                 cs);
-        /*
-        logger(LOG_INFO, "OpenLI: collector thread %d has added %s to its %s core server list.",
-                trace_get_perpkt_thread_id(t),
-                cs->serverkey, coreserver_type_to_string(cs->servertype));
-        */
     } else {
         free_single_coreserver(cs);
     }
 
 }
 
-void handle_remove_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
-        coreserver_t *cs) {
+void handle_remove_coreserver(colthread_local_t *loc, coreserver_t *cs) {
     coreserver_t *found, **servlist;
 
     switch(cs->servertype) {
@@ -636,25 +596,19 @@ void handle_remove_coreserver(libtrace_thread_t *t, colthread_local_t *loc,
             break;
         default:
             logger(LOG_INFO,
-                    "OpenLI: unexpected core server type received by collector thread %d: %d",
-                    trace_get_perpkt_thread_id(t), cs->servertype);
+                    "OpenLI: unexpected core server type received by collector thread: %d",
+                    cs->servertype);
             return;
     }
     HASH_FIND(hh, *servlist, cs->serverkey, strlen(cs->serverkey), found);
     if (found) {
         HASH_DELETE(hh, *servlist, found);
-        /*
-        logger(LOG_INFO, "OpenLI: collector thread %d has removed %s from its %s core server list.",
-                trace_get_perpkt_thread_id(t),
-                cs->serverkey, coreserver_type_to_string(cs->servertype));
-        */
         free_single_coreserver(found);
     }
     free_single_coreserver(cs);
 }
 
-void handle_iprange(libtrace_thread_t *t, colthread_local_t *loc,
-        staticipsession_t *ipr) {
+void handle_iprange(colthread_local_t *loc, staticipsession_t *ipr) {
 
     staticipsession_t *ipr_exist;
     patricia_tree_t *ptree = NULL;
@@ -684,8 +638,7 @@ void handle_iprange(libtrace_thread_t *t, colthread_local_t *loc,
     }
 }
 
-void handle_modify_iprange(libtrace_thread_t *t, colthread_local_t *loc,
-        staticipsession_t *ipr) {
+void handle_modify_iprange(colthread_local_t *loc, staticipsession_t *ipr) {
 
     liid_set_t *found = NULL, **all;
     staticipsession_t *sessrec, *ipr_exist;
@@ -696,8 +649,8 @@ void handle_modify_iprange(libtrace_thread_t *t, colthread_local_t *loc,
     prefix = ascii2prefix(0, ipr->rangestr);
     if (prefix == NULL) {
         logger(LOG_INFO,
-                "OpenLI: error converting %s into a valid IP prefix in thread %d",
-                ipr->rangestr, trace_get_perpkt_thread_id(t));
+                "OpenLI: error converting %s into a valid IP prefix",
+                ipr->rangestr);
         goto bailmodrange;
     }
 
@@ -709,8 +662,8 @@ void handle_modify_iprange(libtrace_thread_t *t, colthread_local_t *loc,
 
     if (!node) {
         logger(LOG_INFO,
-                "OpenLI: thread %d was supposed to modify IP prefix %s for LIID %s but no such prefix exists in the tree.",
-                trace_get_perpkt_thread_id(t), ipr->rangestr, ipr->common.liid);
+                "OpenLI: processing thread was supposed to modify IP prefix %s for LIID %s but no such prefix exists in the tree.",
+                ipr->rangestr, ipr->common.liid);
         goto bailmodrange;
     }
 
@@ -718,8 +671,8 @@ void handle_modify_iprange(libtrace_thread_t *t, colthread_local_t *loc,
     HASH_FIND(hh, *all, ipr->common.liid, ipr->common.liid_len, found);
     if (!found) {
         logger(LOG_INFO,
-                "OpenLI: thread %d was supposed to modify IP prefix %s for LIID %s but the LIID is not associated with that prefix.",
-                trace_get_perpkt_thread_id(t), ipr->rangestr, ipr->common.liid);
+                "OpenLI: processing thread was supposed to modify IP prefix %s for LIID %s but the LIID is not associated with that prefix.",
+                ipr->rangestr, ipr->common.liid);
         goto bailmodrange;
     }
 
@@ -766,8 +719,7 @@ bailmodrange:
     return;
 }
 
-void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
-        staticipsession_t *ipr) {
+void handle_remove_iprange(colthread_local_t *loc, staticipsession_t *ipr) {
 
     staticipsession_t *sessrec;
     patricia_tree_t *ptree;
@@ -798,7 +750,7 @@ void handle_remove_iprange(libtrace_thread_t *t, colthread_local_t *loc,
     return;
 }
 
-void handle_change_voip_intercept(libtrace_thread_t *t, colthread_local_t *loc,
+void handle_change_voip_intercept(colthread_local_t *loc,
         rtpstreaminf_t *tochange) {
 
     rtpstreaminf_t *rtp;
@@ -820,8 +772,8 @@ void handle_change_voip_intercept(libtrace_thread_t *t, colthread_local_t *loc,
     free_single_rtpstream(tochange);
 }
 
-void handle_change_vendmirror_intercept(libtrace_thread_t *t,
-        colthread_local_t *loc, vendmirror_intercept_t *vend) {
+void handle_change_vendmirror_intercept(colthread_local_t *loc,
+        vendmirror_intercept_t *vend) {
 
     vendmirror_intercept_t *found;
     vendmirror_intercept_list_t *parent;
@@ -847,8 +799,8 @@ void handle_change_vendmirror_intercept(libtrace_thread_t *t,
     free_single_vendmirror_intercept(vend);
 }
 
-void handle_change_iprange_intercept(libtrace_thread_t *t,
-        colthread_local_t *loc, staticipsession_t *ipr) {
+void handle_change_iprange_intercept(colthread_local_t *loc,
+        staticipsession_t *ipr) {
 
     staticipsession_t *sessrec;
 
@@ -861,8 +813,7 @@ void handle_change_iprange_intercept(libtrace_thread_t *t,
     free_single_staticipsession(ipr);
 }
 
-void handle_change_ipint_intercept(libtrace_thread_t *t, colthread_local_t *loc,
-        ipsession_t *sess) {
+void handle_change_ipint_intercept(colthread_local_t *loc, ipsession_t *sess) {
 
     if (sess->ai_family == AF_INET) {
         if (update_ipv4_intercept(loc, sess) > 0) {

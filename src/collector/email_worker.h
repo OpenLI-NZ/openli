@@ -126,7 +126,7 @@ typedef struct openli_email_captured {
     uint32_t mail_id;
     uint32_t part_id;
     uint32_t msg_length;
-    char *content;
+    uint8_t *content;
     uint8_t own_content;
     uint8_t pkt_sender;
 
@@ -177,13 +177,13 @@ typedef struct openli_email_worker {
 void *start_email_worker_thread(void *arg);
 void free_captured_email(openli_email_captured_t *cap);
 
-void free_smtp_session_state(emailsession_t *sess, void *smtpstate);
+void free_smtp_session_state(void *smtpstate);
 int update_smtp_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
-void free_imap_session_state(emailsession_t *sess, void *imapstate);
+void free_imap_session_state(void *imapstate);
 int update_imap_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
-void free_pop3_session_state(emailsession_t *sess, void *pop3state);
+void free_pop3_session_state(void *pop3state);
 int update_pop3_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
 
@@ -191,8 +191,7 @@ void add_email_participant(emailsession_t *sess, char *address, int issender);
 void clear_email_participant_list(emailsession_t *sess);
 void clear_email_sender(emailsession_t *sess);
 
-int extract_email_sender_from_body(openli_email_worker_t *state,
-        emailsession_t *sess, char *bodycontent, char **extracted);
+int extract_email_sender_from_body(char *bodycontent, char **extracted);
 
 void replace_email_session_serveraddr(emailsession_t *sess,
         char *server_ip, char *server_port);
@@ -201,7 +200,7 @@ void replace_email_session_clientaddr(emailsession_t *sess,
 
 int get_email_authentication_type(char *authmsg, const char *sesskey,
         openli_email_auth_type_t *at_code, uint8_t is_imap);
-void mask_plainauth_creds(char *mailbox, char *reencoded, int buflen);
+void mask_plainauth_creds(char *mailbox, char *reencoded);
 
 email_address_set_t *is_address_interceptable(
         openli_email_worker_t *state, const char *emailaddr);

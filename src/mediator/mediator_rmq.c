@@ -246,7 +246,7 @@ static int cancel_RMQ_consumer(amqp_connection_state_t state,
  *  now, 1 if the queue was declared successfully.
  */
 int declare_mediator_liid_RMQ_queue(amqp_connection_state_t state,
-        char *liid, int liidlen, uint8_t *is_blocked) {
+        char *liid, uint8_t *is_blocked) {
 
     char cc_queuename[1024];
     char iri_queuename[1024];
@@ -280,7 +280,7 @@ int declare_mediator_liid_RMQ_queue(amqp_connection_state_t state,
  *  now, 1 if the queue was declared successfully.
  */
 int declare_mediator_rawip_RMQ_queue(amqp_connection_state_t state,
-        char *liid, int liidlen, uint8_t *is_blocked) {
+        char *liid, uint8_t *is_blocked) {
 
     char queuename[1024];
     /*

@@ -68,7 +68,7 @@ int sort_generics(etsili_generic_t *a, etsili_generic_t *b) {
     return 0;
 }
 
-static inline void add_another_target_identifier(internetaccess_ip_t *nextip,
+static inline void add_another_target_identifier(
        etsili_other_targets_t *others,  etsili_ipaddress_t *ipaddr) {
 
     if (others->alloced == others->count) {
@@ -205,7 +205,7 @@ void prepare_ipiri_parameters(etsili_generic_freelist_t *freegenerics,
                             sizeof(np->itemnum), np);
                     donev4 = 1;
                 } else {
-                    add_another_target_identifier(nextip, &othertargets,
+                    add_another_target_identifier(&othertargets,
                             &targetip);
                 }
 
@@ -234,7 +234,7 @@ void prepare_ipiri_parameters(etsili_generic_freelist_t *freegenerics,
                             sizeof(np->itemnum), np);
                     donev6 = 1;
                 } else {
-                    add_another_target_identifier(nextip, &othertargets,
+                    add_another_target_identifier(&othertargets,
                             &targetip);
                 }
             }
@@ -285,6 +285,7 @@ int ipiri_create_id_printable(char *idstr, int length, ipiri_id_t *iriid) {
     return 0;
 }
 
+#if 0
 int ipiri_create_id_mac(uint8_t *macaddr, ipiri_id_t *iriid) {
     /* TODO */
     return -1;
@@ -295,6 +296,7 @@ int ipiri_create_id_ipv4(uint32_t addrnum, uint8_t slashbits,
     /* TODO */
     return -1;
 }
+#endif
 
 void ipiri_free_id(ipiri_id_t *iriid) {
     if (iriid->type == IPIRI_ID_PRINTABLE) {
@@ -334,7 +336,6 @@ static inline void finish_ipiri_job(collector_sync_t *sync,
 }
 
 static inline openli_export_recv_t *_create_ipiri_job_basic(
-		collector_sync_t *sync,
         ipintercept_t *ipint, char *username, uint32_t cin) {
 
     openli_export_recv_t *irimsg;
@@ -379,7 +380,7 @@ int create_ipiri_job_from_iprange(collector_sync_t *sync,
     } else {
         uname = ipint->username;
     }
-    irimsg = _create_ipiri_job_basic(sync, ipint, uname, staticsess->cin);
+    irimsg = _create_ipiri_job_basic(ipint, uname, staticsess->cin);
 
     irimsg->data.ipiri.special = special;
     irimsg->data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_STATIC;
@@ -442,7 +443,7 @@ int create_ipiri_job_from_packet(collector_sync_t *sync,
     }
 
     do {
-        irimsg = _create_ipiri_job_basic(sync, ipint, ipint->username,
+        irimsg = _create_ipiri_job_basic(ipint, ipint->username,
 				sess->cin);
 
         irimsg->data.ipiri.special = OPENLI_IPIRI_STANDARD;
@@ -484,7 +485,7 @@ int create_ipiri_job_from_session(collector_sync_t *sync,
         return 0;
     }
 
-    irimsg = _create_ipiri_job_basic(sync, ipint, ipint->username, sess->cin);
+    irimsg = _create_ipiri_job_basic(ipint, ipint->username, sess->cin);
 
     ret = sess->plugin->generate_iri_from_session(sess->plugin, sess,
             &(irimsg->data.ipiri.customparams),

@@ -228,7 +228,7 @@ static inline void push_single_voipstreamintercept(collector_sync_voip_t *sync,
     libtrace_message_queue_put(q, (void *)(&msg));
 }
 
-static void push_time_update_active_voipstreams(collector_sync_voip_t *sync,
+static void push_time_update_active_voipstreams(
         libtrace_message_queue_t *q, voipintercept_t *vint) {
 
     openli_pushed_t msg;
@@ -252,7 +252,7 @@ static void push_time_update_active_voipstreams(collector_sync_voip_t *sync,
 }
 
 static void push_halt_active_voipstreams(collector_sync_voip_t *sync,
-        libtrace_message_queue_t *q, voipintercept_t *vint, int epollfd) {
+        libtrace_message_queue_t *q, voipintercept_t *vint) {
 
     rtpstreaminf_t *cin = NULL;
     char *streamdup;
@@ -303,8 +303,7 @@ static void push_voipintercept_halt_to_threads(collector_sync_voip_t *sync,
     sync_sendq_t *sendq, *tmp;
 
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
-        push_halt_active_voipstreams(sync, sendq->q, vint,
-                sync->glob->epoll_fd);
+        push_halt_active_voipstreams(sync, sendq->q, vint);
     }
 }
 
@@ -329,7 +328,7 @@ static void push_voip_intercept_update_to_threads(collector_sync_voip_t *sync,
     publish_openli_msg(sync->zmq_pubsocks[vint->common.seqtrackerid], expmsg);
 
     HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
-        push_time_update_active_voipstreams(sync, sendq->q, vint);
+        push_time_update_active_voipstreams(sendq->q, vint);
     }
 }
 
@@ -353,8 +352,7 @@ static void push_all_active_voipstreams(collector_sync_voip_t *sync,
 }
 
 static int update_rtp_stream(collector_sync_voip_t *sync, rtpstreaminf_t *rtp,
-        voipintercept_t *vint, char *ipstr, char *portstr, char *mediatype,
-        uint8_t dir) {
+        char *ipstr, char *portstr, char *mediatype, uint8_t dir) {
 
     uint32_t port;
     struct sockaddr_storage *saddr;
@@ -612,10 +610,15 @@ static inline voipsdpmap_t *update_cin_sdp_map(voipintercept_t *vint,
     }
     newsdpmap->sdpkey.sessionid = sdpo->sessionid;
     newsdpmap->sdpkey.version = sdpo->version;
+
+    /* make sure we null terminate if the address or username is very long */
+    /* TODO maybe we'd be better off just strduping these as well? */
     strncpy(newsdpmap->sdpkey.address, sdpo->address,
-            sizeof(newsdpmap->sdpkey.address) - 1);
+            sizeof(newsdpmap->sdpkey.address));
+    newsdpmap->sdpkey.address[sizeof(newsdpmap->sdpkey.address) - 1] = '\0';
     strncpy(newsdpmap->sdpkey.username, sdpo->username,
             sizeof(newsdpmap->sdpkey.username) - 1);
+    newsdpmap->sdpkey.username[sizeof(newsdpmap->sdpkey.username) - 1] = '\0';
 
     newsdpmap->username = strdup(targetuser);
     if (targetrealm) {
@@ -740,7 +743,7 @@ static voipintshared_t *create_new_voip_session(collector_sync_voip_t *sync,
 
 static int process_sip_183sessprog(collector_sync_voip_t *sync,
         rtpstreaminf_t *thisrtp, voipintercept_t *vint,
-        etsili_iri_type_t *iritype, openli_export_recv_t *irimsg) {
+        openli_export_recv_t *irimsg) {
 
     char *cseqstr, *ipstr, *portstr, *mediatype;
     int i = 1;
@@ -766,7 +769,7 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
 
         while (dir != 0xff && ipstr && portstr && mediatype) {
 
-            if ((changed = update_rtp_stream(sync, thisrtp, vint, ipstr,
+            if ((changed = update_rtp_stream(sync, thisrtp, ipstr,
                     portstr, mediatype, dir)) == -1) {
                 if (sync->log_bad_sip) {
                     logger(LOG_INFO,
@@ -817,7 +820,7 @@ static int process_sip_200ok(collector_sync_voip_t *sync,
         }
 
         while (dir != 0xff && ipstr && portstr && mediatype) {
-            if ((changed = update_rtp_stream(sync, thisrtp, vint, ipstr,
+            if ((changed = update_rtp_stream(sync, thisrtp, ipstr,
                     portstr, mediatype, dir)) == -1) {
                 if (sync->log_bad_sip) {
                     logger(LOG_INFO,
@@ -854,9 +857,16 @@ static int process_sip_200ok(collector_sync_voip_t *sync,
         timerfd_settime(timeout->fd, 0, &its, NULL);
 
         timeout->ptr = thisrtp;
-        HASH_ADD_KEYPTR(hh, sync->timeouts, &(timeout->fd), sizeof(int),
-                timeout);
-
+        if (timeout->fd > 0) {
+            HASH_ADD_KEYPTR(hh, sync->timeouts, &(timeout->fd), sizeof(int),
+                    timeout);
+        } else {
+            /* if we can't get a valid file descriptor for a timer, we
+             * have to just purge the call right away... */
+            free(timeout);
+            thisrtp->timeout_ev = NULL;
+            push_voipintercept_halt_to_threads(sync, thisrtp->parent);
+        }
 
         thisrtp->byematched = 1;
         *iritype = ETSILI_IRI_END;
@@ -938,8 +948,7 @@ static int process_sip_register_followup(collector_sync_voip_t *sync,
 }
 
 static int process_sip_other(collector_sync_voip_t *sync, char *callid,
-        sip_sdp_identifier_t *sdpo, openli_export_recv_t *irimsg,
-        libtrace_packet_t **pkts, int pkt_cnt) {
+        openli_export_recv_t *irimsg, libtrace_packet_t **pkts, int pkt_cnt) {
 
     voipintercept_t *vint, *tmp;
     voipcinmap_t *findcin;
@@ -1044,8 +1053,7 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
          */
         if (sip_is_183sessprog(sync->sipparser) ||
                     sip_is_180ringing(sync->sipparser)) {
-            if (process_sip_183sessprog(sync, thisrtp, vint, &iritype,
-                        irimsg) < 0) {
+            if (process_sip_183sessprog(sync, thisrtp, vint, irimsg) < 0) {
                 badsip = 1;
                 continue;
             }
@@ -1276,7 +1284,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
 
         while (dir != 0xff && ipstr && portstr && !badsip && mediatype) {
             int changed;
-            if ((changed = update_rtp_stream(sync, thisrtp, vint, ipstr,
+            if ((changed = update_rtp_stream(sync, thisrtp, ipstr,
                     portstr, mediatype, dir)) == -1) {
                 if (sync->log_bad_sip) {
                     logger(LOG_INFO,
@@ -1411,7 +1419,7 @@ static int update_sip_state(collector_sync_voip_t *sync,
         }
     } else if (lookup_sip_callid(sync, callid) != 0) {
         /* SIP packet matches a "known" call of interest */
-        if ((ret = process_sip_other(sync, callid, &sdpo, irimsg, pkts,
+        if ((ret = process_sip_other(sync, callid, irimsg, pkts,
                 pkt_cnt)) < 0) {
             iserr = 1;
             if (sync->log_bad_sip) {
@@ -1440,7 +1448,6 @@ static int update_modified_voipintercept(collector_sync_voip_t *sync,
         voipintercept_t *vint, voipintercept_t *tomod) {
 
     int changed = 0, encodingchanged = 0;
-    char *tmp;
 
     sync->log_bad_instruct = 1;
 
@@ -1503,6 +1510,7 @@ static int modify_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
 
     update_modified_voipintercept(sync, vint, tomod);
     free_single_voipintercept(tomod);
+    return 1;
 }
 
 static inline void remove_voipintercept(collector_sync_voip_t *sync,
@@ -1544,9 +1552,10 @@ static inline void remove_voipintercept(collector_sync_voip_t *sync,
 static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
-    voipintercept_t *vint, torem;
+    voipintercept_t *vint, *torem;
 
-    if (decode_voipintercept_halt(intmsg, msglen, &torem) == -1) {
+    torem = calloc(1, sizeof(voipintercept_t));
+    if (decode_voipintercept_halt(intmsg, msglen, torem) == -1) {
         if (sync->log_bad_instruct) {
             logger(LOG_INFO,
                 "OpenLI: received invalid VOIP intercept withdrawal from provisioner.");
@@ -1554,17 +1563,18 @@ static int halt_voipintercept(collector_sync_voip_t *sync, uint8_t *intmsg,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sync->voipintercepts, torem.common.liid,
-            torem.common.liid_len, vint);
+    HASH_FIND(hh_liid, sync->voipintercepts, torem->common.liid,
+            torem->common.liid_len, vint);
     if (!vint) {
         return 0;
     }
 
     sync->log_bad_instruct = 1;
     logger(LOG_INFO, "OpenLI: sync thread withdrawing VOIP intercept %s",
-            torem.common.liid);
+            torem->common.liid);
 
     remove_voipintercept(sync, vint);
+    free_single_voipintercept(torem);
     return 0;
 }
 
@@ -1958,8 +1968,8 @@ static void sip_update_fast_path(collector_sync_voip_t *sync,
         return;
 
     }
-    baseirimsg.data.ipmmiri.content = get_sip_contents(sync->sipparser,
-            &(baseirimsg.data.ipmmiri.contentlen));
+    baseirimsg.data.ipmmiri.content = (uint8_t *)get_sip_contents(
+            sync->sipparser, &(baseirimsg.data.ipmmiri.contentlen));
 
     if (update_sip_state(sync, &recvdpkt, 1, &baseirimsg) < 0) {
         handle_bad_sip_update(sync, &recvdpkt, 1,
@@ -2012,8 +2022,8 @@ static void sip_update_slow_path(collector_sync_voip_t *sync,
                     SIP_PROCESSING_PARSING);
             continue;
         }
-        baseirimsg.data.ipmmiri.content = get_sip_contents(sync->sipparser,
-                &(baseirimsg.data.ipmmiri.contentlen));
+        baseirimsg.data.ipmmiri.content = (uint8_t *)get_sip_contents(
+                sync->sipparser, &(baseirimsg.data.ipmmiri.contentlen));
         if (update_sip_state(sync, packets, pkt_cnt, &baseirimsg) < 0) {
             handle_bad_sip_update(sync, packets, pkt_cnt,
                     SIP_PROCESSING_UPDATING_STATE);
