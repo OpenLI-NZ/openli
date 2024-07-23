@@ -92,7 +92,6 @@ static char *stradd(const char *str, char *bufp, char *buflim) {
 /** Constructs the pcap filename URI for an output file.
  *
  *  @param state            The LEA send thread state for this pcap thread
- *  @param pstate           The pcap specific state for this pcap thread
  *  @param urispace         The string that the URI is to be written into
  *  @param urispacelen      The number of bytes allocated for the urispace
  *                          string.
@@ -103,8 +102,7 @@ static char *stradd(const char *str, char *bufp, char *buflim) {
  */
 
 static int populate_pcap_uri(lea_thread_state_t *state,
-        pcap_thread_state_t *pstate, char *urispace,
-        int urispacelen, active_pcap_output_t *act) {
+        char *urispace, int urispacelen, active_pcap_output_t *act) {
 
     char *ptr = state->pcap_outtemplate;
     struct timeval tv;
@@ -243,7 +241,7 @@ static int open_pcap_output_file(lea_thread_state_t *state,
                 state->pcap_dir, act->liid, tv.tv_sec);
         }
     } else {
-        if (populate_pcap_uri(state, pstate, uri, 4096, act) == 0) {
+        if (populate_pcap_uri(state, uri, 4096, act) == 0) {
             logger(LOG_INFO,
                     "OpenLI Mediator: unable to create pcap output file name from template '%s'",
                     state->pcap_outtemplate);
@@ -555,7 +553,6 @@ exitpcapwrite:
  *  pcap format and writes them into their corresponding pcap output file(s).
  *
  *  @param ho           The handover which owns the export buffer
- *  @param state        The LEA send thread state for this pcap thread
  *  @param pstate       The pcap-specific thread state for this thread
  *
  *  @return -1 if an error occurs while writing to disk, -2 if an error
@@ -563,7 +560,7 @@ exitpcapwrite:
  *          the writing was successful.
  */
 static int write_pcap_from_buffered_rmq(handover_t *ho,
-        lea_thread_state_t *state, pcap_thread_state_t *pstate) {
+        pcap_thread_state_t *pstate) {
     uint64_t bufrem;
     uint8_t *nextrec = NULL;
     uint32_t advance = 0;
@@ -626,12 +623,11 @@ static int write_pcap_from_buffered_rmq(handover_t *ho,
     return 0;
 }
 
-static int consume_pcap_packets(handover_t *ho, lea_thread_state_t *state,
-        pcap_thread_state_t *pstate) {
+static int consume_pcap_packets(handover_t *ho, pcap_thread_state_t *pstate) {
 
     int r;
 
-    if ((r = write_pcap_from_buffered_rmq(ho, state, pstate)) == 1) {
+    if ((r = write_pcap_from_buffered_rmq(ho, pstate)) == 1) {
         return 0;
     } else if (r == -2) {
         reset_handover_rmq(ho);
@@ -663,7 +659,7 @@ static int consume_pcap_packets(handover_t *ho, lea_thread_state_t *state,
         ho->ho_state->valid_rmq_ack = 1;
     }
 
-    r = write_pcap_from_buffered_rmq(ho, state, pstate);
+    r = write_pcap_from_buffered_rmq(ho, pstate);
     if (r == -2) {
         reset_handover_rmq(ho);
         return 0;
@@ -1077,7 +1073,7 @@ static void *run_pcap_thread(void *params) {
          * pcap files */
 
         /* TODO error handling? */
-        consume_pcap_packets(pstate.rawip_handover, state, &pstate);
+        consume_pcap_packets(pstate.rawip_handover, &pstate);
 
         halt_mediator_timer(state->timerev);
     }

@@ -75,11 +75,13 @@ volatile int reload_config = 0;
 
 /** Signal handler for SIGINT / SIGTERM */
 static void halt_signal(int signal) {
+    (void)signal;
     mediator_halt = 1;
 }
 
 /** Signal handler for SIGHUP */
 static void reload_signal(int signal) {
+    (void)signal;
     reload_config = 1;
 }
 
@@ -470,7 +472,7 @@ static int start_collector_listener(mediator_state_t *state) {
  *
  *  @return a negative value if an error occurs, 0 if successful.
  */
-static int process_signal(mediator_state_t *state, int sigfd) {
+static int process_signal(int sigfd) {
 
     struct signalfd_siginfo si;
     int ret;
@@ -792,11 +794,10 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
 /** Receives and actions one or more messages received from the provisioner.
  *
  *  @param state            The global state for this mediator
- *  @param mev              The epoll event for the provisioner socket
  *
  *  @return -1 if an error occurs, 0 otherwise.
  */
-static int receive_provisioner(mediator_state_t *state, med_epoll_ev_t *mev) {
+static int receive_provisioner(mediator_state_t *state) {
 
     uint8_t *msgbody = NULL;
     uint16_t msglen = 0;
@@ -892,7 +893,7 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             return -1;
         case MED_EPOLL_SIGNAL:
             /* we got a signal that needs to be handled */
-            ret = process_signal(state, mev->fd);
+            ret = process_signal(mev->fd);
             break;
         case MED_EPOLL_COLL_CONN:
             /* a connection is occuring on our listening socket */
@@ -917,10 +918,10 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
                 ret = -1;
             } else if (ev->events & EPOLLOUT) {
                 /* we can send a pending message to the provisioner */
-                ret = transmit_provisioner(&(state->provisioner), mev);
+                ret = transmit_provisioner(&(state->provisioner));
             } else if (ev->events & EPOLLIN) {
                 /* provisioner has sent us an instruction */
-                ret = receive_provisioner(state, mev);
+                ret = receive_provisioner(state);
                 if (ret == 0 && state->provisioner.disable_log == 1) {
                     logger(LOG_INFO,
                             "OpenLI Mediator: Connected to provisioner at %s:%s",

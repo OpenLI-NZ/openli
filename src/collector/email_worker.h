@@ -177,13 +177,13 @@ typedef struct openli_email_worker {
 void *start_email_worker_thread(void *arg);
 void free_captured_email(openli_email_captured_t *cap);
 
-void free_smtp_session_state(emailsession_t *sess, void *smtpstate);
+void free_smtp_session_state(void *smtpstate);
 int update_smtp_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
-void free_imap_session_state(emailsession_t *sess, void *imapstate);
+void free_imap_session_state(void *imapstate);
 int update_imap_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
-void free_pop3_session_state(emailsession_t *sess, void *pop3state);
+void free_pop3_session_state(void *pop3state);
 int update_pop3_session_by_ingestion(openli_email_worker_t *state,
         emailsession_t *sess, openli_email_captured_t *cap);
 

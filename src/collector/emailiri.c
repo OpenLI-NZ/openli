@@ -62,9 +62,8 @@ void free_email_iri_content(etsili_email_iri_content_t *content) {
 
 }
 
-static void add_recipients(emailsession_t *sess,
-        etsili_email_iri_content_t *content, const char **tgtaddrs,
-        int tgtaddr_count) {
+static void add_recipients(etsili_email_iri_content_t *content,
+        const char **tgtaddrs, int tgtaddr_count) {
 
     int i;
 
@@ -138,7 +137,7 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
              emailev == ETSILI_EMAIL_EVENT_LOGOFF)) {
         /* don't add recipients to SMTP logon or logoff events */
     } else {
-        add_recipients(sess, content, tgtaddrs, tgtaddr_count);
+        add_recipients(content, tgtaddrs, tgtaddr_count);
     }
 
     content->status = status;
@@ -162,7 +161,7 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
 static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
         emailsession_t *sess, uint8_t iri_type, uint8_t email_ev,
         uint8_t status, email_intercept_ref_t *intlist, time_t ts,
-        const char *key, const char *tgtaddr, uint8_t full_recip_list) {
+        const char *key, uint8_t full_recip_list) {
 
     openli_export_recv_t *irijob = NULL;
     email_intercept_ref_t *ref, *tmp;
@@ -287,7 +286,6 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
     email_participant_t *recip, *tmp;
     email_intercept_ref_t *intlist = NULL;
 
-    const char *tgtaddr = NULL;
     char senderkey[1024];
     char recipkey[1024];
 
@@ -302,7 +300,6 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
         }
         if (active_addr) {
             intlist = active_addr->intlist;
-            tgtaddr = active_addr->emailaddr;
         } else if (sess->ingest_target_id &&
                 sess->ingest_direction == OPENLI_EMAIL_DIRECTION_OUTBOUND) {
             active_tgt = is_targetid_interceptable(state,
@@ -310,7 +307,6 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
 
             if (active_tgt) {
                 intlist = active_tgt->intlist;
-                tgtaddr = active_tgt->origaddress;
             }
         }
 
@@ -319,8 +315,7 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
              * in the recipient list.
              */
             create_emailiris_for_intercept_list(state, sess, iri_type,
-                    email_ev, status, intlist, timestamp, senderkey,
-                    tgtaddr, 1);
+                    email_ev, status, intlist, timestamp, senderkey, 1);
         }
 
     }
@@ -357,7 +352,7 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
                      */
                     create_emailiris_for_intercept_list(state, sess, iri_type,
                             email_ev, status, active_tgt->intlist, timestamp,
-                            recipkey, active_tgt->origaddress, 1);
+                            recipkey, 1);
                 }
             }
         }
@@ -367,7 +362,7 @@ static inline int generate_iris_for_participants(openli_email_worker_t *state,
             if (active_addr) {
                 create_emailiris_for_intercept_list(state, sess, iri_type,
                         email_ev, status, active_addr->intlist, timestamp,
-                        recipkey, active_addr->emailaddr, 0);
+                        recipkey, 0);
             }
         }
     }
@@ -383,26 +378,23 @@ static int generate_iris_for_mailbox(openli_email_worker_t *state,
     email_target_set_t *active_tgt = NULL;
     email_intercept_ref_t *intlist = NULL;
 
-    char *tgtaddr = NULL;
     char irikey[1024];
 
     active_addr = is_address_interceptable(state, mailbox);
     if (!active_addr) {
         active_tgt = is_targetid_interceptable(state, sess->ingest_target_id);
         if (active_tgt) {
-            tgtaddr = active_tgt->origaddress;
             intlist = active_tgt->intlist;
         }
     } else {
         intlist = active_addr->intlist;
-        tgtaddr = active_addr->emailaddr;
     }
 
     if (intlist) {
         sess->iricount ++;
         snprintf(irikey, 1024, "iri-%d-mailbox", sess->iricount);
         create_emailiris_for_intercept_list(state, sess, iri_type, email_ev,
-                status, intlist, timestamp, irikey, tgtaddr, 0);
+                status, intlist, timestamp, irikey, 0);
     }
     return 0;
 }
@@ -414,7 +406,6 @@ static int generate_email_login_iri(openli_email_worker_t *state,
     uint8_t iri_type;
     uint8_t status;
 
-    char *tgtaddr = NULL;
     email_address_set_t *active_addr = NULL;
     email_target_set_t *active_tgt = NULL;
     email_intercept_ref_t *intlist = NULL;
@@ -428,11 +419,9 @@ static int generate_email_login_iri(openli_email_worker_t *state,
         }
         if (active_tgt) {
             intlist = active_tgt->intlist;
-            tgtaddr = active_tgt->origaddress;
         }
     } else {
         intlist = active_addr->intlist;
-        tgtaddr = active_addr->emailaddr;
     }
 
     if (success) {
@@ -446,7 +435,7 @@ static int generate_email_login_iri(openli_email_worker_t *state,
     }
 
     create_emailiris_for_intercept_list(state, sess, iri_type, email_ev,
-            status, intlist, sess->login_time, participant, tgtaddr, 0);
+            status, intlist, sess->login_time, participant, 0);
     return 0;
 }
 
@@ -456,7 +445,6 @@ int generate_email_logoff_iri_for_user(openli_email_worker_t *state,
     email_address_set_t *active_addr = NULL;
     email_target_set_t *active_tgt = NULL;
     email_intercept_ref_t *intlist = NULL;
-    char *tgtaddr = NULL;
 
     active_addr = is_address_interceptable(state, address);
 
@@ -468,18 +456,16 @@ int generate_email_logoff_iri_for_user(openli_email_worker_t *state,
         }
         if (active_tgt) {
             intlist = active_tgt->intlist;
-            tgtaddr = active_tgt->origaddress;
         }
     } else {
         intlist = active_addr->intlist;
-        tgtaddr = active_addr->emailaddr;
     }
 
     if (intlist) {
         create_emailiris_for_intercept_list(state, sess,
                 ETSILI_IRI_END, ETSILI_EMAIL_EVENT_LOGOFF,
                 ETSILI_EMAIL_STATUS_SUCCESS, intlist, sess->event_time,
-                NULL, tgtaddr, 0);
+                NULL, 0);
     }
 
     return 0;

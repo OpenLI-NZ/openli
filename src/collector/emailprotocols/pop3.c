@@ -625,8 +625,8 @@ static int handle_xclient_seen_state(emailsession_t *sess,
     return 0;
 }
 
-static int extract_pop3_email_sender(openli_email_worker_t *state,
-        emailsession_t *sess, pop3_session_t *pop3sess) {
+static int extract_pop3_email_sender(emailsession_t *sess,
+        pop3_session_t *pop3sess) {
 
     int r;
     char *extracted = NULL;
@@ -670,10 +670,10 @@ static int handle_multi_reply_state(openli_email_worker_t *state,
         /* if command was RETR, generate an email download IRI */
         /* if command was TOP, generate a partial download IRI */
         if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_RETR) {
-            extract_pop3_email_sender(state, sess, pop3sess);
+            extract_pop3_email_sender(sess, pop3sess);
             generate_email_download_success_iri(state, sess, pop3sess->mailbox);
         } else if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_TOP) {
-            extract_pop3_email_sender(state, sess, pop3sess);
+            extract_pop3_email_sender(sess, pop3sess);
             generate_email_partial_download_success_iri(state, sess,
                     pop3sess->mailbox);
         }
@@ -949,7 +949,7 @@ static int process_next_pop3_line(openli_email_worker_t *state,
     return 0;
 }
 
-void free_pop3_session_state(emailsession_t *sess, void *pop3state) {
+void free_pop3_session_state(void *pop3state) {
     pop3_session_t *pop3sess;
 
     if (pop3state == NULL) {

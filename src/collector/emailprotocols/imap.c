@@ -211,8 +211,8 @@ static int update_deflate_ccs(imap_session_t *imapsess, int start, int end,
     return 0;
 }
 
-static int extract_imap_email_sender(openli_email_worker_t *state,
-        emailsession_t *sess, imap_session_t *imapsess, imap_command_t *comm) {
+static int extract_imap_email_sender(emailsession_t *sess,
+        imap_session_t *imapsess, imap_command_t *comm) {
 
     int r = 0;
     char *extracted = NULL;
@@ -247,7 +247,7 @@ static int complete_imap_append(openli_email_worker_t *state,
     }
 
     if (strcmp(comm->imap_reply, "OK") == 0) {
-        extract_imap_email_sender(state, sess, imapsess, comm);
+        extract_imap_email_sender(sess, imapsess, comm);
         if (imapsess->mail_sender) {
             generate_email_upload_success_iri(state, sess, imapsess->mailbox);
         }
@@ -283,7 +283,7 @@ static int complete_imap_fetch(openli_email_worker_t *state,
      */
 
     if (strcmp(comm->imap_reply, "OK") == 0) {
-        extract_imap_email_sender(state, sess, imapsess, comm);
+        extract_imap_email_sender(sess, imapsess, comm);
         if (imapsess->mail_sender) {
             generate_email_partial_download_success_iri(state, sess,
                     imapsess->mailbox);
@@ -455,7 +455,7 @@ static int update_saved_auth_command(imap_session_t *sess, char *replace,
 
 }
 
-static int save_imap_command(imap_session_t *sess, char *sesskey) {
+static int save_imap_command(imap_session_t *sess) {
 
     int i, index;
     int comm_start;
@@ -744,8 +744,7 @@ static int decode_authentication_command(emailsession_t *sess,
     return 1;
 }
 
-static int save_imap_reply(imap_session_t *sess, char *sesskey,
-        imap_command_t **comm) {
+static int save_imap_reply(imap_session_t *sess, imap_command_t **comm) {
 
     int i;
     int comm_start;
@@ -826,7 +825,7 @@ static void reset_imap_saved_command(imap_command_t *comm) {
     }
 }
 
-void free_imap_session_state(emailsession_t *sess, void *imapstate) {
+void free_imap_session_state(void *imapstate) {
     imap_session_t *imapsess;
     int i;
 
@@ -1348,7 +1347,7 @@ static int find_command_end(emailsession_t *sess, imap_session_t *imapsess) {
         return 0;
     }
 
-    ind = save_imap_command(imapsess, sess->key);
+    ind = save_imap_command(imapsess);
     if (ind < 0) {
         return ind;
     }
@@ -1410,7 +1409,7 @@ static int find_reply_end(openli_email_worker_t *state,
     }
     sess->server_octets += (imapsess->contbufread - imapsess->next_comm_start);
 
-    if ((r = save_imap_reply(imapsess, sess->key, &comm)) < 0) {
+    if ((r = save_imap_reply(imapsess, &comm)) < 0) {
         return r;
     }
 

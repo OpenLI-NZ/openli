@@ -115,7 +115,7 @@ typedef struct smtpsession {
 
 } smtp_session_t;
 
-void free_smtp_session_state(emailsession_t *sess, void *smtpstate) {
+void free_smtp_session_state(void *smtpstate) {
 
     PWord_t pval;
     Word_t res;
@@ -1376,7 +1376,7 @@ static int authenticate_success(openli_email_worker_t *state,
 }
 
 static int authenticate_failure(openli_email_worker_t *state,
-        emailsession_t *sess, smtp_session_t *smtpsess, time_t timestamp) {
+        emailsession_t *sess, smtp_session_t *smtpsess) {
 
     char *sendername = NULL;
     int r;
@@ -1537,8 +1537,7 @@ static int process_next_smtp_state(openli_email_worker_t *state,
                 }
                 sess->currstate = OPENLI_SMTP_STATE_EHLO_OVER;
             } else if (smtpsess->reply_code == 535) {
-                if (authenticate_failure(state, sess, smtpsess, timestamp) < 0)
-                {
+                if (authenticate_failure(state, sess, smtpsess) < 0) {
                     return -1;
                 }
                 sess->currstate = OPENLI_SMTP_STATE_EHLO_OVER;

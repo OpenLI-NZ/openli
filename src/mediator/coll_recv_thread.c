@@ -149,8 +149,7 @@ static void remove_expired_liid_queues(coll_recv_t *col) {
             /* Not expired yet, so redeclare the queue to keep rabbitmq
              * from deleting it accidentally */
             if (declare_mediator_liid_RMQ_queue(col->amqp_producer_state,
-                    known->liid, known->liidlen,
-                    &(col->rmq_blocked)) > 0) {
+                    known->liid, &(col->rmq_blocked)) > 0) {
                 known->declared_int_rmq = 1;
             }
             continue;
@@ -460,7 +459,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
     if (found->declared_int_rmq == 0) {
         /* declare amqp queue for this LIID */
         r = declare_mediator_liid_RMQ_queue(col->amqp_producer_state,
-                    found->liid, found->liidlen, &(col->rmq_blocked));
+                    found->liid, &(col->rmq_blocked));
         if (r < 0) {
             logger(LOG_INFO, "OpenLI Mediator: failed to create internal RMQ queues for LIID %s in collector thread %s", found->liid, col->ipaddr);
             return -1;
@@ -520,7 +519,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
         /* declare a queue for raw IP */
         if (!found->declared_raw_rmq) {
             r = declare_mediator_rawip_RMQ_queue(col->amqp_producer_state,
-                    found->liid, found->liidlen, &(col->rmq_blocked));
+                    found->liid, &(col->rmq_blocked));
             if (r < 0) {
                 return -1;
             } else if (r > 0) {

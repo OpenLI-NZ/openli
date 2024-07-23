@@ -90,8 +90,8 @@ static void init_sms_voip_intercept(openli_sms_worker_t *state,
 
 }
 
-static int update_modified_sms_voip_intercept(openli_sms_worker_t *state,
-        voipintercept_t *found, voipintercept_t *decode) {
+static int update_modified_sms_voip_intercept(voipintercept_t *found,
+        voipintercept_t *decode) {
 
     int r = 0, changed = 0;
 
@@ -161,7 +161,7 @@ static int modify_sms_voip_intercept(openli_sms_worker_t *state,
     if (!found) {
         init_sms_voip_intercept(state, vint);
     } else {
-        update_modified_sms_voip_intercept(state, found, vint);
+        update_modified_sms_voip_intercept(found, vint);
     }
     return 0;
 }
@@ -195,7 +195,7 @@ static int add_new_sms_voip_intercept(openli_sms_worker_t *state,
             tgt->awaitingconfirm = 1;
             n = n->next;
         }
-        update_modified_sms_voip_intercept(state, found, vint);
+        update_modified_sms_voip_intercept(found, vint);
         found->awaitingconfirm = 0;
         ret = 0;
     } else {
@@ -406,8 +406,7 @@ enum {
     RP_MESSAGE_TYPE_SMMA_MS_TO_N = 6,
 };
 
-static int mask_sms_message_content(openli_sms_worker_t *state,
-        uint8_t *sipstart, uint16_t siplen) {
+static int mask_sms_message_content(uint8_t *sipstart, uint16_t siplen) {
 
     uint8_t *bodystart;
     size_t bodylen = 0;
@@ -618,10 +617,10 @@ static int process_sms_sip_packet(openli_sms_worker_t *state,
         irimsg.data.ipmmiri.content = recvd->data.sip.content;
 
         if (vint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
-            /* TODO rewrite message content with spaces and flag that
-             * we need to use iRIOnlySIPMessage as our IPMMIRIContents
+            /* TODO flag that we need to use iRIOnlySIPMessage as our
+             * IPMMIRIContents
              */
-            mask_sms_message_content(state, irimsg.data.ipmmiri.content,
+            mask_sms_message_content(irimsg.data.ipmmiri.content,
                     irimsg.data.ipmmiri.contentlen);
         }
         /* build and send an IRI for this particular intercept */

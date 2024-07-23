@@ -561,15 +561,15 @@ static void free_email_session(openli_email_worker_t *state,
     }
 
     if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
-        free_smtp_session_state(sess, sess->proto_state);
+        free_smtp_session_state(sess->proto_state);
     }
 
     if (sess->protocol == OPENLI_EMAIL_TYPE_IMAP) {
-        free_imap_session_state(sess, sess->proto_state);
+        free_imap_session_state(sess->proto_state);
     }
 
     if (sess->protocol == OPENLI_EMAIL_TYPE_POP3) {
-        free_pop3_session_state(sess, sess->proto_state);
+        free_pop3_session_state(sess->proto_state);
     }
 
     if (sess->serveraddr) {

@@ -512,12 +512,10 @@ int register_handover_RMQ_all(handover_t *ho, liid_map_t *liidmap,
  *  @param ho           The handover object that is to be connected
  *  @param epoll_fd     The epoll fd to add handover events to
  *  @param ho_id        The unique ID number for this handover
- *  @param agency_id    The name of the agency this handover is connecting to
  *
  *  @return -1 if the connection fails, 0 otherwise.
  */
-int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id,
-        char *agencyid) {
+int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id) {
 
 	uint32_t epollev;
 	int outsock;

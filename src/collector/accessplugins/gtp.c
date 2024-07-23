@@ -345,10 +345,10 @@ static void gtp_destroy_plugin_data(access_plugin_t *p) {
 }
 
 static void gtp_uncouple_parsed_data(access_plugin_t *p) {
-
+    (void)p;
 }
 
-static void gtp_destroy_parsed_data(access_plugin_t *p, void *parsed) {
+static void gtp_destroy_parsed_data(access_plugin_t *p UNUSED, void *parsed) {
 
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parsed;
 
@@ -1332,7 +1332,7 @@ static inline access_session_t *find_matched_session(access_plugin_t *p,
 }
 
 static access_session_t *gtp_update_session_state(access_plugin_t *p,
-        void *parsed, void *plugindata, access_session_t **sesslist,
+        void *parsed, void *plugindata UNUSED, access_session_t **sesslist,
         session_state_t *oldstate, session_state_t *newstate,
         access_action_t *action) {
 
@@ -1819,9 +1819,9 @@ static int gtp_create_context_activation_iri(gtp_parsed_t *gparsed,
     return 0;
 }
 
-static int gtp_generate_iri_data(access_plugin_t *p, void *parseddata,
+static int gtp_generate_iri_data(access_plugin_t *p UNUSED, void *parseddata,
         etsili_generic_t **params, etsili_iri_type_t *iritype,
-        etsili_generic_freelist_t *freelist, int iteration) {
+        etsili_generic_freelist_t *freelist, int iteration UNUSED) {
 
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parseddata;
 
@@ -1893,7 +1893,7 @@ static int gtp_generate_iri_from_session(access_plugin_t *p,
     return 0;
 }
 
-static uint8_t *gtp_get_ip_contents(access_plugin_t *p, void *parseddata,
+static uint8_t *gtp_get_ip_contents(access_plugin_t *p UNUSED, void *parseddata,
         uint16_t *iplen, int iteration) {
 
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parseddata;
@@ -1925,7 +1925,7 @@ static uint8_t *gtp_get_ip_contents(access_plugin_t *p, void *parseddata,
 
 }
 
-static void gtp_destroy_session_data(access_plugin_t *p,
+static void gtp_destroy_session_data(access_plugin_t *p UNUSED,
         access_session_t *sess) {
 
     if (sess->sessionid) {
@@ -1934,7 +1934,8 @@ static void gtp_destroy_session_data(access_plugin_t *p,
 
 }
 
-static uint32_t gtp_get_packet_sequence(access_plugin_t *p, void *parseddata) {
+static uint32_t gtp_get_packet_sequence(access_plugin_t *p UNUSED,
+        void *parseddata) {
 
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parseddata;
 
