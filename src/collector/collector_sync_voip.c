@@ -1953,18 +1953,15 @@ static void sip_update_fast_path(collector_sync_voip_t *sync,
             &(baseirimsg.data.ipmmiri.ipfamily)) != 0) {
         handle_bad_sip_update(sync, &recvdpkt, 1,
                 SIP_PROCESSING_EXTRACTING_IPS);
-        trace_destroy_packet(recvdpkt);
         return;
     }
 
     ret = parse_next_sip_message(sync->sipparser, NULL, NULL);
     if (ret == 0) {
-        trace_destroy_packet(recvdpkt);
         return;
     }
     if (ret < 0) {
         handle_bad_sip_update(sync, &recvdpkt, 1, SIP_PROCESSING_PARSING);
-        trace_destroy_packet(recvdpkt);
         return;
 
     }
@@ -1997,7 +1994,6 @@ static void sip_update_slow_path(collector_sync_voip_t *sync,
             &(baseirimsg.data.ipmmiri.ipfamily)) != 0) {
         handle_bad_sip_update(sync, &recvdpkt, 1,
                 SIP_PROCESSING_EXTRACTING_IPS);
-        trace_destroy_packet(recvdpkt);
         return;
     }
 
