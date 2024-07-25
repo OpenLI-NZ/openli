@@ -1,6 +1,6 @@
 # Super primitive configure script
 
-AC_INIT([openli],[1.1.7],[shane@alcock.co.nz])
+AC_INIT([openli],[1.1.8],[shane@alcock.co.nz])
 
 AM_INIT_AUTOMAKE([subdir-objects])
 AC_CONFIG_SRCDIR(src/collector/collector.c)

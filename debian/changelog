@@ -1,3 +1,12 @@
+openli (1.1.8-1) unstable; urgency=medium
+
+  * Collector: fix crash in sync_voip thread if an invalid SIP packet
+    is encountered.
+  * Collector: add a single zero byte to the list of recognised SIP
+    keep alives.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Thu, 25 Jul 2024 14:33:13 +1200
+
 openli (1.1.7-1) unstable; urgency=medium
 
   * Collector: fix file descriptor leak caused by timers in SMS worker
