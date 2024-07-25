@@ -69,6 +69,11 @@ static int parse_tcp_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *pkt,
         return -1;
     }
 
+    /* Yet another keep alive pattern */
+    if (tcprem == 1 && *payload == 0x00) {
+        return -1;
+    }
+
     ret = update_tcp_reassemble_stream(stream, (uint8_t *)payload, tcprem,
             ntohl(tcp->seq), pkt);
 
@@ -95,6 +100,11 @@ static int parse_udp_sip_packet(libtrace_udp_t *udp, uint32_t udprem) {
     }
 
     if (udprem == 1 && memcmp(payload, "\x20", 1) == 0) {
+        return -1;
+    }
+
+    /* Yet another keep alive pattern */
+    if (udprem == 1 && *payload == 0x00) {
         return -1;
     }
 
