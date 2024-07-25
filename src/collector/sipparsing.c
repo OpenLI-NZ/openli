@@ -70,7 +70,7 @@ static int parse_tcp_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *pkt,
     }
 
     /* Yet another keep alive pattern */
-    if (tcprem == 1 && *payload == 0x00) {
+    if (tcprem == 1 && memcmp(payload, "\x00", 1) == 0) {
         return -1;
     }
 
@@ -104,7 +104,7 @@ static int parse_udp_sip_packet(libtrace_udp_t *udp, uint32_t udprem) {
     }
 
     /* Yet another keep alive pattern */
-    if (udprem == 1 && *payload == 0x00) {
+    if (udprem == 1 && memcmp(payload, "\x00", 1) == 0) {
         return -1;
     }
 
