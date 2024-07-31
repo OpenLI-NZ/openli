@@ -243,9 +243,9 @@ int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
         hdrdata.liid = liidstring;
         hdrdata.liid_len = strlen(hdrdata.liid);
 
-        hdrdata.authcc = "NA";
+        hdrdata.authcc = "-";
         hdrdata.authcc_len = strlen(hdrdata.authcc);
-        hdrdata.delivcc = "NA";
+        hdrdata.delivcc = "-";
         hdrdata.delivcc_len = strlen(hdrdata.delivcc);
 
         if (operator_id) {
