@@ -100,7 +100,7 @@ typedef struct openli_ipmmiri_job {
     uint32_t cin;
     etsili_iri_type_t iritype;
     uint8_t ipmmiri_style;
-    char *content;
+    uint8_t *content;
     uint16_t contentlen;
     uint8_t ipsrc[16];
     uint8_t ipdest[16];

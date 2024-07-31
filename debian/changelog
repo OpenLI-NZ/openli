@@ -1,3 +1,22 @@
+openli (1.1.7-1) unstable; urgency=medium
+
+  * Collector: fix file descriptor leak caused by timers in SMS worker
+    threads.
+  * Collector: fix bug where a forwarder thread would be unable to exit
+    if the collector is trying to shut down due to an error.
+  * Collector: fix another race condition that can cause a collector to
+    hang when it is being halted.
+  * Collector: VoIP sync thread now recognises more SIP keep alive
+    payloads (including eXoSIP keep alives) so will no longer complain
+    about invalid SIP payload when these KAs are observed.
+  * Collector: fix segfault that can occur if an IP data session is
+    assigned to more than 5 IP addresses.
+  * Collector: fix segfault in VoIP sync thread if the expiry timer for
+    a completed call cannot be properly created (e.g. if we run out of
+    file descriptors).
+
+ -- Shane Alcock <salcock@searchlight.nz>  Tue, 23 Jul 2024 09:53:36 +1200
+
 openli (1.1.6-1) unstable; urgency=medium
 
   * Fix incorrect encoding of userLocationInformation field.
@@ -6,10 +25,26 @@ openli (1.1.6-1) unstable; urgency=medium
   * Added new parameter for IP intercepts: mobileident -- this is
     used to indicate whether the user identifier for a mobile data
     intercept is an MSISDN, IMEI or IMSI.
+<<<<<<< HEAD
   * VOIP intercepts that are written to pcap files will now include
     their corresponding SIP packets alongside the RTP streams.
 
  -- Shane Alcock <salcock@searchlight.nz>  Wed, 22 May 2024 11:08:41 +1200
+=======
+  * Add support for including SIP packets in pcapdisk output for
+    VoIP intercepts.
+  * Fix bug where mediators receiving message from a collector via
+    RabbitMQ would be disconnected due to regular consumer timeouts.
+    This in turn should resolve issues where old IRIs or CCs would be
+    periodically retransmitted by a mediator to the LEA.
+  * Fix memory errors when reassembling TCP segments in the collector
+    libtrace threads.
+  * Generate error log messages when a component (either mediator or
+    collector) cannot publish to RabbitMQ due to the connection being
+    blocked.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Mon, 1 Jul 2024 09:57:07 +1200
+>>>>>>> master
 
 openli (1.1.5-1) unstable; urgency=medium
 

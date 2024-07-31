@@ -44,7 +44,7 @@ static inline uint32_t jmirror_get_interceptid(jmirrorhdr_t *header) {
     return (ntohl(header->interceptid) & 0x3fffffff);
 }
 
-int check_jmirror_intercept(collector_identity_t *info, colthread_local_t *loc,
+int check_jmirror_intercept(colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
         coreserver_t *jmirror_sources,
         vendmirror_intercept_list_t *jmirror_ints) {
@@ -56,7 +56,7 @@ int check_jmirror_intercept(collector_identity_t *info, colthread_local_t *loc,
     vendmirror_intercept_list_t *vmilist;
     char *l3;
 
-    if ((cs = match_packet_to_coreserver(jmirror_sources, pinfo)) == NULL) {
+    if ((cs = match_packet_to_coreserver(jmirror_sources, pinfo, 1)) == NULL) {
         return 0;
     }
 

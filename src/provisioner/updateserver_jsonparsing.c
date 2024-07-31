@@ -29,6 +29,7 @@
 #include <string.h>
 #include <json-c/json.h>
 #include <assert.h>
+#include <errno.h>
 
 #include "provisioner.h"
 #include "updateserver.h"
@@ -220,21 +221,20 @@ static inline int compare_intercept_times(intercept_common_t *latest,
 
     int changed = 0;
 
-    if (latest->tostart_time == (uint64_t)-1 &&
-            latest->toend_time == (uint64_t)-1) {
+    if (latest->tostart_time == -1 && latest->toend_time == -1) {
 
         /* No new times were provided in the JSON object */
         return 0;
     }
 
-    if (latest->tostart_time != (uint64_t)-1) {
+    if (latest->tostart_time != -1) {
         if (latest->tostart_time != current->tostart_time) {
             current->tostart_time = latest->tostart_time;
             changed = 1;
         }
     }
 
-    if (latest->toend_time != (uint64_t)-1) {
+    if (latest->toend_time != -1) {
         if (latest->toend_time != current->toend_time) {
             current->toend_time = latest->toend_time;
             changed = 1;
@@ -361,7 +361,7 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
             }
 
             if (common->tostart_time > 0 && tv.tv_sec >= 0 &&
-                    common->tostart_time > (unsigned long)tv.tv_sec) {
+                    common->tostart_time > tv.tv_sec) {
                 if (add_intercept_timer(epoll_fd, common->tostart_time,
                         tv.tv_sec, timers, PROV_EPOLL_INTERCEPT_START) < 0) {
                     snprintf(cinfo->answerstring, 4096, "unable to create a 'intercept start' timer for intercept %s", common->liid);
@@ -370,7 +370,7 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
 
             }
             if (common->toend_time > 0 && tv.tv_sec >= 0 &&
-                    common->toend_time > (unsigned long)tv.tv_sec) {
+                    common->toend_time > tv.tv_sec) {
                 if (add_intercept_timer(epoll_fd, common->toend_time,
                         tv.tv_sec, timers, PROV_EPOLL_INTERCEPT_HALT) < 0) {
                     snprintf(cinfo->answerstring, 4096, "unable to create a 'intercept end' timer for intercept %s", common->liid);
@@ -576,11 +576,42 @@ int remove_coreserver(update_con_info_t *cinfo UNUSED, provision_state_t *state,
         const char *idstr, uint8_t srvtype) {
 
     char search[1024];
+    char addendum[64];
     coreserver_t *found = NULL;
     coreserver_t **src;
+    char *tok, *saved, *copy;
 
-    snprintf(search, 1024, "%s-%s", idstr, coreserver_type_to_string(srvtype));
+    copy = strdup(idstr);
+    /* check for case where the user has provided only one port in the key */
+    tok = strtok(copy, "-");
+    if (!tok) {
+        logger(LOG_INFO,
+                "OpenLI: unable to remove %s server %s via update socket.",
+                coreserver_type_to_string(srvtype), idstr);
+        free(copy);
+        return 0;
+    }
+    tok = strtok(NULL, "-");
+    if (!tok) {
+        logger(LOG_INFO,
+                "OpenLI: unable to remove %s server %s via update socket.",
+                coreserver_type_to_string(srvtype), idstr);
+        free(copy);
+        return 0;
+    }
+    saved = tok;
 
+    tok = strtok(NULL, "-");
+    if (tok == NULL) {
+        snprintf(addendum, 64, "-%s", saved);
+    } else {
+        addendum[0] = '\0';
+    }
+
+    snprintf(search, 1024, "%s%s-%s", idstr, addendum,
+            coreserver_type_to_string(srvtype));
+
+    free(copy);
     if (srvtype == OPENLI_CORE_SERVER_SIP) {
         HASH_FIND(hh, state->interceptconf.sipservers, search, strlen(search),
                 found);
@@ -703,6 +734,8 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
     coreserver_t *new_cs = NULL;
     struct json_object *ipaddr;
     struct json_object *port;
+    struct json_object *upper_port;
+    struct json_object *lower_port;
 
     char srvstring[1024];
 
@@ -728,6 +761,8 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
 
     json_object_object_get_ex(parsed, "ipaddress", &(ipaddr));
     json_object_object_get_ex(parsed, "port", &(port));
+    json_object_object_get_ex(parsed, "port_upper", &(upper_port));
+    json_object_object_get_ex(parsed, "port_lower", &(lower_port));
 
     snprintf(srvstring, 1024, "%s server",
             coreserver_type_to_string(srvtype));
@@ -735,7 +770,11 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
     EXTRACT_JSON_STRING_PARAM("ipaddress", srvstring, ipaddr,
             new_cs->ipstr, &parseerr, true);
     EXTRACT_JSON_STRING_PARAM("port", srvstring, port,
-            new_cs->portstr, &parseerr, true);
+            new_cs->portstr, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("port_upper", srvstring, upper_port,
+            new_cs->upper_portstr, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("port_lower", srvstring, lower_port,
+            new_cs->lower_portstr, &parseerr, false);
 
     if (parseerr) {
         goto cserr;
@@ -797,8 +836,8 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
         }
 
         announce_coreserver_change(state, new_cs, true);
-        logger(LOG_INFO, "OpenLI: added %s '%s:%s' via update socket.",
-                srvstring, new_cs->ipstr, new_cs->portstr);
+        logger(LOG_INFO, "OpenLI: added %s '%s' via update socket.",
+                srvstring, new_cs->serverkey);
     }
 
     if (parsed) {
@@ -838,7 +877,7 @@ static int parse_emailintercept_targets(emailintercept_t *mailint,
         goto targeterr;
     }
 
-    for (i = 0; i < json_object_array_length(jsontargets); i++) {
+    for (i = 0; i < (size_t)json_object_array_length(jsontargets); i++) {
         jobj = json_object_array_get_idx(jsontargets, i);
 
         json_object_object_get_ex(jobj, "address", &(address));
@@ -899,7 +938,7 @@ static int parse_voipintercept_siptargets(voipintercept_t *vint,
         goto siptargeterr;
     }
 
-    for (i = 0; i < json_object_array_length(jsontargets); i++) {
+    for (i = 0; i < (size_t)json_object_array_length(jsontargets); i++) {
         jobj = json_object_array_get_idx(jsontargets, i);
 
         json_object_object_get_ex(jobj, "username", &(username));
@@ -962,7 +1001,7 @@ static int parse_ipintercept_staticips(provision_state_t *state,
         goto staticerr;
     }
 
-    for (i = 0; i < json_object_array_length(jsonips); i++) {
+    for (i = 0; i < (size_t)json_object_array_length(jsonips); i++) {
         jobj = json_object_array_get_idx(jsonips, i);
 
         json_object_object_get_ex(jobj, "iprange", &(iprange));
@@ -996,7 +1035,6 @@ static int parse_ipintercept_staticips(provision_state_t *state,
             goto staticerr;
         }
 
-        free(rangestr);
         if (newr->cin >= (uint32_t)(pow(2,31))) {
             logger(LOG_INFO,
                     "OpenLI: CIN %u for static IP range %s is too large.",
@@ -1005,6 +1043,7 @@ static int parse_ipintercept_staticips(provision_state_t *state,
             logger(LOG_INFO, "OpenLI: replaced CIN with %u.",
                     newr->cin);
         }
+        free(rangestr);
 
         HASH_FIND(hh, ipint->statics, newr->rangestr, strlen(newr->rangestr),
                 existing);
@@ -1338,7 +1377,11 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                 (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER);
     }
 
-    ipint->mobileident = map_mobile_ident_string(mobileidentstring);
+    if (ipint->accesstype != INTERNET_ACCESS_TYPE_MOBILE) {
+        ipint->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
+    } else {
+        ipint->mobileident = map_mobile_ident_string(mobileidentstring);
+    }
     if (mobileidentstring) {
         free(mobileidentstring);
         mobileidentstring = NULL;
@@ -1743,6 +1786,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *liidstr = NULL;
     char *accessstring = NULL;
     char *radiusidentstring = NULL;
+    char *mobileidentstring = NULL;
     int parseerr = 0, changed = 0, agencychanged = 0;
     int timeschanged = 0;
 
@@ -1790,6 +1834,8 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             accessstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("radiusident", "IP intercept", ipjson.radiusident,
             radiusidentstring, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("mobileident", "IP intercept", ipjson.mobileident,
+            mobileidentstring, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
             ipint->vendmirrorid, &parseerr, false);
 
@@ -1851,12 +1897,22 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                 (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID);
     }
 
+    if (ipint->accesstype != INTERNET_ACCESS_TYPE_MOBILE) {
+        ipint->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
+    } else {
+        ipint->mobileident = map_mobile_ident_string(mobileidentstring);
+    }
     /* TODO: warn if user tries to change fields that we don't support
      * changing (e.g. mediator) ?
      *
      */
     MODIFY_STRING_MEMBER(ipint->username, found->username, &changed);
     found->username_len = strlen(found->username);
+
+    if (mobileidentstring && ipint->mobileident != found->mobileident) {
+        changed = 1;
+        found->mobileident = ipint->mobileident;
+    }
 
     if (accessstring && ipint->accesstype != found->accesstype) {
         changed = 1;
@@ -1900,6 +1956,9 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
     if (radiusidentstring) {
         free(radiusidentstring);
+    }
+    if (mobileidentstring) {
+        free(mobileidentstring);
     }
 
     if (ipint) {

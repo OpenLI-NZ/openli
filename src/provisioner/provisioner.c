@@ -1295,7 +1295,7 @@ static int transmit_socket(provision_state_t *state, prov_epoll_ev_t *pev) {
     int ret;
     struct epoll_event ev;
     prov_sock_state_t *cs = (prov_sock_state_t *)(pev->client->state);
-    openli_proto_msgtype_t err;
+    openli_proto_msgtype_t err = OPENLI_PROTO_NO_MESSAGE;
 
     ret = transmit_net_buffer(cs->outgoing, &err);
     if (ret == -1) {

@@ -333,10 +333,10 @@ static void gtp_destroy_plugin_data(access_plugin_t *p) {
 }
 
 static void gtp_uncouple_parsed_data(access_plugin_t *p) {
-
+    (void)p;
 }
 
-static void gtp_destroy_parsed_data(access_plugin_t *p, void *parsed) {
+static void gtp_destroy_parsed_data(access_plugin_t *p UNUSED, void *parsed) {
 
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parsed;
 
@@ -566,6 +566,9 @@ static int walk_gtpv1_ies(gtp_parsed_t *parsedpkt, uint8_t *ptr, uint32_t rem,
                 if (ietype == GTPV1_IE_IMSI) {
                     get_gtpnum_from_ie(gtpel, parsedpkt->imsi, 0);
                 }
+                if (ietype == GTPV1_IE_MEI) {
+                    get_gtpnum_from_ie(gtpel, parsedpkt->imei, 0);
+                }
                 if (ietype == GTPV1_IE_MSISDN) {
                     get_gtpnum_from_ie(gtpel, parsedpkt->msisdn, 1);
                 }
@@ -670,7 +673,7 @@ static int gtp_parse_v2_teid(gtp_global_t *glob, libtrace_packet_t *pkt,
         uint8_t *gtpstart, uint32_t rem) {
 
     uint8_t *ptr;
-    uint16_t len;
+    uint32_t len;
 
     gtpv2_header_teid_t *header = (gtpv2_header_teid_t *)gtpstart;
 
@@ -712,7 +715,7 @@ static int gtp_parse_v1_teid(gtp_global_t *glob, libtrace_packet_t *pkt,
         uint8_t *gtpstart, uint32_t rem) {
 
     uint8_t *ptr;
-    uint16_t len;
+    uint32_t len;
 
     gtpv1_header_t *header = (gtpv1_header_t *)gtpstart;
 
@@ -957,7 +960,8 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
     /* Need to look up the session */
     GEN_SESSID((char *)sessid, gparsed, gparsed->teid);
 
-    if (gparsed->msgtype == GTPV1_DELETE_PDP_CONTEXT_REQUEST) {
+    if (gparsed->msgtype == GTPV1_DELETE_PDP_CONTEXT_REQUEST ||
+            gparsed->msgtype == GTPV1_UPDATE_PDP_CONTEXT_REQUEST) {
         search = glob->alt_session_map;
     } else {
         search = glob->session_map;
@@ -981,13 +985,13 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
             GEN_SESSID((char *)alt_sessid, gparsed, gparsed->teid_ctl);
             JSLG(pval, glob->alt_session_map, alt_sessid);
 
-            gparsed->matched_session->altsessid = strdup(alt_sessid);
+            gparsed->matched_session->altsessid = strdup((char *)alt_sessid);
             gparsed->matched_session->control_teid[1] = gparsed->teid_ctl;
             gparsed->matched_session->data_teid[1] = gparsed->teid_data;
 
             if (!pval) {
                 JSLI(pval, glob->alt_session_map,
-                        gparsed->matched_session->altsessid);
+                        (uint8_t *)gparsed->matched_session->altsessid);
                 *pval = (Word_t)gparsed->matched_session;
             }
 
@@ -1279,7 +1283,7 @@ static void apply_gtp_fsm_logic(gtp_parsed_t *gparsed, access_action_t *action,
                     gparsed->matched_session);
 
             /* TODO: set up GTP-U data sessions */
-        } else if (gpkt->response_cause >= 192 && gpkt->response_cause <= 255) {
+        } else if (gpkt->response_cause >= 192) {
             current = SESSION_STATE_OVER;
             *action = ACCESS_ACTION_REJECT;
         }
@@ -1331,7 +1335,7 @@ static inline access_session_t *find_matched_session(access_plugin_t *p,
 }
 
 static access_session_t *gtp_update_session_state(access_plugin_t *p,
-        void *parsed, void *plugindata, access_session_t **sesslist,
+        void *parsed, void *plugindata UNUSED, access_session_t **sesslist,
         session_state_t *oldstate, session_state_t *newstate,
         access_action_t *action) {
 
@@ -1345,6 +1349,11 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
             ((uint64_t)gparsed->seqno);
 
     uint8_t incr_refcount = 0;
+
+    if (gparsed->matched_session == NULL) {
+        *action = ACCESS_ACTION_NONE;
+        return NULL;
+    }
 
     if (gparsed->msgtype == GTPV2_CREATE_SESSION_REQUEST ||
             gparsed->msgtype == GTPV1_CREATE_PDP_CONTEXT_REQUEST) {
@@ -1363,10 +1372,7 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
         thissess = find_matched_session(p, sesslist, gparsed->matched_session,
                 gparsed->teid, incr_refcount);
         *oldstate = gparsed->matched_session->savedoldstate;
-        apply_gtp_fsm_logic(gparsed, action, thissess,
-                        gparsed->matched_session->lastsavedpkt,
-                        gparsed->matched_session->savedoldstate);
-
+        *action = gparsed->action;
         *newstate = gparsed->matched_session->savednewstate;
         return thissess;
     }
@@ -1400,7 +1406,8 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
         if (gparsed->msgtype == GTPV2_CREATE_SESSION_REQUEST ||
                 gparsed->msgtype == GTPV2_DELETE_SESSION_REQUEST ||
                 gparsed->msgtype == GTPV1_CREATE_PDP_CONTEXT_REQUEST ||
-                gparsed->msgtype == GTPV1_DELETE_PDP_CONTEXT_REQUEST) {
+                gparsed->msgtype == GTPV1_DELETE_PDP_CONTEXT_REQUEST ||
+                gparsed->msgtype == GTPV1_UPDATE_PDP_CONTEXT_REQUEST) {
 
             thissess = find_matched_session(p, sesslist,
                     gparsed->matched_session, gparsed->teid, incr_refcount);
@@ -1413,6 +1420,11 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
                 gparsed->matched_session->savednewstate = *newstate;
                 saved->applied = 1;
             }
+        } else {
+            /* response but we've never seen the request? */
+            gparsed->matched_session = NULL;
+            *action = ACCESS_ACTION_NONE;
+            return NULL;
         }
 
     } else {
@@ -1504,10 +1516,12 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
             if (gparsed->request->applied == 0) {
                 apply_gtp_fsm_logic(gparsed, &(gparsed->action), thissess,
                         gparsed->request, gparsed->matched_session->current);
+                gparsed->request->applied = 1;
             }
             if (gparsed->response->applied == 0) {
                 apply_gtp_fsm_logic(gparsed, &(gparsed->action), thissess,
                         gparsed->response, gparsed->matched_session->current);
+                gparsed->response->applied = 1;
             }
         }
         *newstate = gparsed->matched_session->current;
@@ -1863,7 +1877,8 @@ static int gtp_create_umts_generic_iri(gtp_parsed_t *gparsed,
 
 }
 
-static inline uint8_t gtpv2_cause_to_sm(uint8_t *gtpcause, uint32_t evtype) {
+static inline uint8_t gtpv2_cause_to_sm(uint8_t *gtpcause,
+        uint32_t evtype UNUSED) {
 
     switch(*gtpcause) {
         case GTPV2_CAUSE_REQUEST_ACCEPTED:
@@ -1896,7 +1911,6 @@ static void insert_gtp_cause_as_gprs_error(gtp_infoelem_t *el,
 
     uint8_t smcauseval = 0;
     uint8_t *attrptr = (uint8_t *)el->iecontent;
-    uint16_t attrlen = el->ielength;
     etsili_generic_t *np;
 
     if (el->ietype == GTPV2_IE_CAUSE) {
@@ -1913,8 +1927,9 @@ static void insert_gtp_cause_as_gprs_error(gtp_infoelem_t *el,
     }
 }
 
-static int gtp_create_bearer_deactivation_iri(gtp_parsed_t *gparsed,
-        etsili_generic_t **params, etsili_generic_freelist_t *freelist) {
+static int gtp_create_bearer_deactivation_iri(gtp_parsed_t *gparsed UNUSED,
+        etsili_generic_t **params UNUSED,
+        etsili_generic_freelist_t *freelist UNUSED) {
 
     /*
      * Bearer deactivation type
@@ -1947,8 +1962,9 @@ static int gtp_create_context_deactivation_iri(gtp_parsed_t *gparsed,
     return 0;
 }
 
-static int gtp_create_bearer_activation_failed_iri(gtp_parsed_t *gparsed,
-        etsili_generic_t **params, etsili_generic_freelist_t *freelist) {
+static int gtp_create_bearer_activation_failed_iri(gtp_parsed_t *gparsed UNUSED,
+        etsili_generic_t **params UNUSED,
+        etsili_generic_freelist_t *freelist UNUSED) {
 
     /* Failed bearer activation reason */
 
@@ -2030,9 +2046,9 @@ static int gtp_create_context_activation_iri(gtp_parsed_t *gparsed,
     return 0;
 }
 
-static int gtp_generate_iri_data(access_plugin_t *p, void *parseddata,
+static int gtp_generate_iri_data(access_plugin_t *p UNUSED, void *parseddata,
         etsili_generic_t **params, etsili_iri_type_t *iritype,
-        etsili_generic_freelist_t *freelist, int iteration) {
+        etsili_generic_freelist_t *freelist, int iteration UNUSED) {
 
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parseddata;
 
@@ -2060,6 +2076,13 @@ static int gtp_generate_iri_data(access_plugin_t *p, void *parseddata,
         if (gparsed->version == 2 &&
                 gtp_create_bearer_activation_failed_iri(gparsed, params,
                         freelist) < 0) {
+        /* TODO need to generate a PDP context activation failed IRI */
+        }
+    }
+    else if (gparsed->action == ACCESS_ACTION_INTERIM_UPDATE) {
+        *iritype = ETSILI_IRI_CONTINUE;
+        if (gtp_create_context_modification_iri(gparsed, params, freelist) < 0)
+        {
             return -1;
         }
         return 0;
@@ -2123,6 +2146,10 @@ static int gtp_generate_iri_from_session(access_plugin_t *p,
                 gtp_create_start_with_context_active_iri(gsess, params,
                     freelist) < 0) {
             return -1;
+        } else if (gsess->gtpversion == 2 &&
+                gtp_create_start_with_bearer_active_iri(gsess, params,
+                    freelist) < 0) {
+            return -1;
         }
     }
 
@@ -2134,7 +2161,7 @@ static int gtp_generate_iri_from_session(access_plugin_t *p,
     return 0;
 }
 
-static uint8_t *gtp_get_ip_contents(access_plugin_t *p, void *parseddata,
+static uint8_t *gtp_get_ip_contents(access_plugin_t *p UNUSED, void *parseddata,
         uint16_t *iplen, int iteration) {
 
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parseddata;
@@ -2166,7 +2193,7 @@ static uint8_t *gtp_get_ip_contents(access_plugin_t *p, void *parseddata,
 
 }
 
-static void gtp_destroy_session_data(access_plugin_t *p,
+static void gtp_destroy_session_data(access_plugin_t *p UNUSED,
         access_session_t *sess) {
 
     gtp_global_t *glob = (gtp_global_t *)(p->plugindata);
@@ -2179,9 +2206,9 @@ static void gtp_destroy_session_data(access_plugin_t *p,
         gtpsess = (gtp_session_t *)(*pval);
         gtpsess->refcount --;
         if (gtpsess->refcount <= 0) {
-            JSLD(rc, glob->session_map, gtpsess->sessid);
+            JSLD(rc, glob->session_map, (uint8_t *)gtpsess->sessid);
             if (gtpsess->altsessid) {
-                JSLD(rc, glob->alt_session_map, gtpsess->altsessid);
+                JSLD(rc, glob->alt_session_map, (uint8_t *)gtpsess->altsessid);
             }
 
             destroy_gtp_session(gtpsess);
@@ -2190,7 +2217,8 @@ static void gtp_destroy_session_data(access_plugin_t *p,
 
 }
 
-static uint32_t gtp_get_packet_sequence(access_plugin_t *p, void *parseddata) {
+static uint32_t gtp_get_packet_sequence(access_plugin_t *p UNUSED,
+        void *parseddata) {
 
     gtp_parsed_t *gparsed = (gtp_parsed_t *)parseddata;
 

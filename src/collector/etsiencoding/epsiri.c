@@ -39,7 +39,7 @@ wandder_encoded_result_t *encode_epsiri_body(wandder_encoder_t *encoder,
     wandder_encode_job_t *jobarray[6];
     etsili_generic_t *p, *savedtime;
     uint8_t lookup;
-    uint32_t iriversion = 8;
+    //uint32_t iriversion = 8;
     uint32_t gprstarget = 3;
 
     jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);

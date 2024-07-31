@@ -13,19 +13,23 @@
 
 # List of SIP servers on our network (for managing VOIP intercepts)
 sipservers:
+
+  # This server is listening on a single port -- we could have used the
+  # 'port' parameter instead, but I want to demonstrate how port_lower and
+  # port_upper would look for a single port configuration.
   - ip: 192.168.110.100
-    port: 5060
+    port_lower: 5060
+    port_upper: 5060
 
 # List of RADIUS servers on our network (for managing IP intercepts).
-# NOTE: we have two entries with the same IP -- one for the Auth service
-#       on port 1812 and one for the Accounting service on port 1813.
+# NOTE: the port range below must cover the listening ports for both the
+#       Authentication and Accounting services.
 # NOTE: make sure you are mirroring ALL RADIUS traffic into your collector(s),
 #       even the Accounting-Response records as these are necessary for ETSI LI.
 radiusservers:
   - ip: 10.199.0.253
-    port: 1812
-  - ip: 10.199.0.253
-    port: 1813
+    port_lower: 1812
+    port_upper: 1813
 
 # List of GTP servers on our network (for managing mobile IP intercepts)
 gtpservers:

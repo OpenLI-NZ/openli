@@ -56,11 +56,11 @@ static int parse_tcp_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *pkt,
     }
 
     /* Check for a CRLF keep alive */
-    if (memcmp(payload, "\x0d\x0a\x0d\x0a", 4) == 0 && tcprem == 4) {
+    if (tcprem == 4 && memcmp(payload, "\x0d\x0a\x0d\x0a", 4) == 0) {
         return -1;
     }
 
-    if (memcmp(payload, "\x0d\x0a", 2) == 0 && tcprem == 2) {
+    if (tcprem == 2 && memcmp(payload, "\x0d\x0a", 2) == 0) {
         return -1;
     }
 
@@ -76,8 +76,7 @@ static int parse_tcp_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *pkt,
 
 }
 
-static int parse_udp_sip_packet(openli_sip_parser_t *p, libtrace_udp_t *udp,
-        uint32_t udprem) {
+static int parse_udp_sip_packet(libtrace_udp_t *udp, uint32_t udprem) {
 
     void *payload = NULL;
 
@@ -87,11 +86,20 @@ static int parse_udp_sip_packet(openli_sip_parser_t *p, libtrace_udp_t *udp,
     }
 
     /* Check for a CRLF keep alive */
-    if (memcmp(payload, "\x0d\x0a\x0d\x0a", 4) == 0 && udprem == 4) {
+    if (udprem == 4 && memcmp(payload, "\x0d\x0a\x0d\x0a", 4) == 0) {
         return -1;
     }
 
-    if (memcmp(payload, "\x0d\x0a", 2) == 0 && udprem == 2) {
+    if (udprem == 2 && memcmp(payload, "\x0d\x0a", 2) == 0) {
+        return -1;
+    }
+
+    if (udprem == 1 && memcmp(payload, "\x20", 1) == 0) {
+        return -1;
+    }
+
+    /* eXosip keep alive */
+    if (udprem >= 4 && memcmp(payload, "\x6a\x61\x4b\x00", 4) == 0) {
         return -1;
     }
 
@@ -140,7 +148,7 @@ int parse_sip_content(openli_sip_parser_t *p, uint8_t *sipcontent,
 int parse_next_sip_message(openli_sip_parser_t *p,
         libtrace_packet_t ***packets, int *pkt_cnt) {
 
-    int ret, i;
+    int ret;
 
     if (p->osip) {
         osip_message_free(p->osip);
@@ -203,7 +211,7 @@ static int _add_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *packet,
         if (plen + sizeof(libtrace_udp_t) < rem) {
             rem = plen + sizeof(libtrace_udp_t);
         }
-        ret = parse_udp_sip_packet(p, (libtrace_udp_t *)transport, rem);
+        ret = parse_udp_sip_packet((libtrace_udp_t *)transport, rem);
         if (ret < 0) {
             return SIP_ACTION_IGNORE;
         }
@@ -267,7 +275,7 @@ static int _add_sip_fragment(openli_sip_parser_t *p,
     int ret;
 
     if (stream->subproto == TRACE_IPPROTO_UDP) {
-        ret = parse_udp_sip_packet(p, (libtrace_udp_t *)completefrag,
+        ret = parse_udp_sip_packet((libtrace_udp_t *)completefrag,
                 fraglen);
         if (ret < 0) {
             return SIP_ACTION_IGNORE;

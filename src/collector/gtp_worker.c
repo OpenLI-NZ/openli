@@ -71,8 +71,8 @@ static void flag_gtp_intercepts(ipintercept_t *cepts) {
 
 }
 
-static void push_existing_ip_sessions(openli_gtp_worker_t *worker,
-        ipintercept_t *ipint) {
+static void push_existing_ip_sessions(openli_gtp_worker_t *worker UNUSED,
+        ipintercept_t *ipint UNUSED) {
 
     /* TODO */
 }
@@ -103,12 +103,13 @@ static int init_gtp_intercept(openli_gtp_worker_t *worker,
     HASH_ADD_KEYPTR(hh_liid, worker->ipintercepts, ipint->common.liid,
             ipint->common.liid_len, ipint);
     ipint->awaitingconfirm = 0;
+    return 1;
 }
 
 static void update_modified_gtp_intercept(openli_gtp_worker_t *worker,
         ipintercept_t *found, ipintercept_t *ipint) {
 
-    int r = 0, changed = 0;
+    int changed = 0;
 
     if (ipint->accesstype != INTERNET_ACCESS_TYPE_MOBILE) {
         /* Intercept has changed to be NOT mobile, so just remove it */
@@ -120,26 +121,23 @@ static void update_modified_gtp_intercept(openli_gtp_worker_t *worker,
         return;
     }
 
-    if (update_modified_intercept_common(&(found->common), &(ipint->common),
-            OPENLI_INTERCEPT_TYPE_IP, &changed) < 0) {
-        r = -1;
-    } else {
-        if (strcmp(ipint->username, found->username) != 0 ||
-                ipint->mobileident != found->mobileident) {
-            remove_intercept_from_user_intercept_list(&worker->userintercepts,
-                    found);
-            free(found->username);
-            found->username = ipint->username;
-            found->username_len = ipint->username_len;
-            found->mobileident = ipint->mobileident;
-            ipint->username = NULL;
-            add_intercept_to_user_intercept_list(&worker->userintercepts,
-                    found);
+    update_modified_intercept_common(&(found->common), &(ipint->common),
+            OPENLI_INTERCEPT_TYPE_IP, &changed);
+    if (strcmp(ipint->username, found->username) != 0 ||
+            ipint->mobileident != found->mobileident) {
+        remove_intercept_from_user_intercept_list(&worker->userintercepts,
+                found);
+        free(found->username);
+        found->username = ipint->username;
+        found->username_len = ipint->username_len;
+        found->mobileident = ipint->mobileident;
+        ipint->username = NULL;
+        add_intercept_to_user_intercept_list(&worker->userintercepts,
+                found);
 
-            push_existing_ip_sessions(worker, found);
-        }
-        found->awaitingconfirm = 0;
+        push_existing_ip_sessions(worker, found);
     }
+    found->awaitingconfirm = 0;
     free_single_ipintercept(ipint);
 }
 
@@ -353,9 +351,9 @@ static void newly_active_gtp_session(openli_gtp_worker_t *worker,
 
 }
 
-static void export_raw_gtp_c_packet_content(openli_gtp_worker_t *worker,
-        ipintercept_t *ipint, void *parseddata, uint32_t seqno,
-        uint32_t cin) {
+static void export_raw_gtp_c_packet_content(openli_gtp_worker_t *worker UNUSED,
+        ipintercept_t *ipint UNUSED, void *parseddata UNUSED,
+        uint32_t seqno UNUSED, uint32_t cin UNUSED) {
 
     /* Generate a RAW IRI encoding job for each GTP-C packet that contributed
      * to the current GTP "action", so that pcapdisk intercepts can
@@ -443,8 +441,9 @@ static void generate_encoding_jobs(openli_gtp_worker_t *worker,
     }
 }
 
-static void process_gtp_u_packet(openli_gtp_worker_t *worker,
-        uint8_t *payload, uint32_t plen, uint32_t teid) {
+static void process_gtp_u_packet(openli_gtp_worker_t *worker UNUSED,
+        uint8_t *payload UNUSED, uint32_t plen UNUSED,
+        uint32_t teid UNUSED) {
 
 
 }
@@ -534,7 +533,6 @@ end_gtpc_processing:
 
 static void process_gtp_packet(openli_gtp_worker_t *worker,
         libtrace_packet_t *packet) {
-    access_plugin_t *p = worker->gtpplugin;
     uint8_t *payload;
     uint32_t plen;
     uint8_t proto;
@@ -640,7 +638,6 @@ static void gtp_worker_main(openli_gtp_worker_t *worker) {
     zmq_pollitem_t *topoll;
     sync_epoll_t purgetimer;
     struct itimerspec its;
-    struct timeval tv;
     int x;
 
     logger(LOG_INFO, "OpenLI: starting GTP worker thread %d",

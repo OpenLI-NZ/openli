@@ -104,7 +104,7 @@ static inline int match_rtp_stream(rtpstreaminf_t *rtp, uint16_t porta,
     return 0;
 }
 
-static inline int generic_mm_comm_contents(int family, libtrace_packet_t *pkt,
+static inline int generic_mm_comm_contents(libtrace_packet_t *pkt,
         packet_info_t *pinfo, colthread_local_t *loc) {
 
     openli_export_recv_t *msg;
@@ -204,7 +204,7 @@ int ip4mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     }
 
 
-    return generic_mm_comm_contents(AF_INET, pkt, pinfo, loc);
+    return generic_mm_comm_contents(pkt, pinfo, loc);
 }
 
 int ip6mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
@@ -226,7 +226,7 @@ int ip6mm_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     }
 
 
-    return generic_mm_comm_contents(AF_INET6, pkt, pinfo, loc);
+    return generic_mm_comm_contents(pkt, pinfo, loc);
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

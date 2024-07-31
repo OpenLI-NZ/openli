@@ -82,19 +82,19 @@ enum {
 typedef struct pop3session {
 
     uint8_t *contbuffer;
-    int contbufsize;
-    int contbufused;
-    int contbufread;
+    size_t contbufsize;
+    size_t contbufused;
+    size_t contbufread;
 
     int auth_state;
     int last_command_type;
     int server_indicator;
 
-    int command_start;
-    int command_end;
-    int reply_start;
+    size_t command_start;
+    size_t command_end;
+    size_t reply_start;
 
-    int auth_read_from;
+    size_t auth_read_from;
     openli_email_auth_type_t auth_type;
 
     char *mailbox;
@@ -248,7 +248,7 @@ static int decode_plain_auth_content(char *authmsg, pop3_session_t *pop3sess,
 
     /* replace encoded credentials, if requested by the user */
     if (sess->mask_credentials) {
-        mask_plainauth_creds(pop3sess->mailbox, reencoded, 2048);
+        mask_plainauth_creds(pop3sess->mailbox, reencoded);
         /* replace saved command with re-encoded auth token */
         r = update_auth_command(pop3sess, reencoded, authmsg, crlf - authmsg,
                 sess->key);
@@ -625,8 +625,8 @@ static int handle_xclient_seen_state(emailsession_t *sess,
     return 0;
 }
 
-static int extract_pop3_email_sender(openli_email_worker_t *state,
-        emailsession_t *sess, pop3_session_t *pop3sess) {
+static int extract_pop3_email_sender(emailsession_t *sess,
+        pop3_session_t *pop3sess) {
 
     int r;
     char *extracted = NULL;
@@ -639,7 +639,7 @@ static int extract_pop3_email_sender(openli_email_worker_t *state,
     safecopy = calloc(sizeof(char), copylen);
     memcpy(safecopy, search, (end - search));
 
-    r = extract_email_sender_from_body(state, sess, safecopy, &extracted);
+    r = extract_email_sender_from_body(safecopy, &extracted);
 
     if (r == 0 || extracted == NULL) {
         free(safecopy);
@@ -654,7 +654,7 @@ static int extract_pop3_email_sender(openli_email_worker_t *state,
 }
 
 static int handle_multi_reply_state(openli_email_worker_t *state,
-        emailsession_t *sess, pop3_session_t *pop3sess, uint64_t timestamp) {
+        emailsession_t *sess, pop3_session_t *pop3sess, time_t timestamp) {
 
     int r;
 
@@ -670,10 +670,10 @@ static int handle_multi_reply_state(openli_email_worker_t *state,
         /* if command was RETR, generate an email download IRI */
         /* if command was TOP, generate a partial download IRI */
         if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_RETR) {
-            extract_pop3_email_sender(state, sess, pop3sess);
+            extract_pop3_email_sender(sess, pop3sess);
             generate_email_download_success_iri(state, sess, pop3sess->mailbox);
         } else if (pop3sess->last_command_type == OPENLI_POP3_COMMAND_TOP) {
-            extract_pop3_email_sender(state, sess, pop3sess);
+            extract_pop3_email_sender(sess, pop3sess);
             generate_email_partial_download_success_iri(state, sess,
                     pop3sess->mailbox);
         }
@@ -763,7 +763,7 @@ static int handle_client_command(emailsession_t *sess,
 
 
 static int handle_server_reply_state(openli_email_worker_t *state,
-        emailsession_t *sess, pop3_session_t *pop3sess, uint64_t timestamp) {
+        emailsession_t *sess, pop3_session_t *pop3sess, time_t timestamp) {
 
     int r = 1;
 
@@ -858,7 +858,7 @@ static int handle_server_reply_state(openli_email_worker_t *state,
 }
 
 static int process_next_pop3_line(openli_email_worker_t *state,
-        emailsession_t *sess, pop3_session_t *pop3sess, uint64_t timestamp) {
+        emailsession_t *sess, pop3_session_t *pop3sess, time_t timestamp) {
 
     int r;
 
@@ -949,7 +949,7 @@ static int process_next_pop3_line(openli_email_worker_t *state,
     return 0;
 }
 
-void free_pop3_session_state(emailsession_t *sess, void *pop3state) {
+void free_pop3_session_state(void *pop3state) {
     pop3_session_t *pop3sess;
 
     if (pop3state == NULL) {

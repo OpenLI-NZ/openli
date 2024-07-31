@@ -31,7 +31,7 @@
 #include "coreserver.h"
 #include "intercept.h"
 
-int check_jmirror_intercept(collector_identity_t *info, colthread_local_t *loc,
+int check_jmirror_intercept(colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
         coreserver_t *alusources, vendmirror_intercept_list_t *jmirrors);
 

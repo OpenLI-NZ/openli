@@ -232,7 +232,7 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
 }
 
 int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
-        libtrace_ip6_t *ip, uint32_t rem, colthread_local_t *loc) {
+        libtrace_ip6_t *ip UNUSED, uint32_t rem, colthread_local_t *loc) {
 
     struct sockaddr_in6 *cmp;
     int matched = 0;
@@ -262,7 +262,7 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
 
 
 int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
-        libtrace_ip_t *ip, uint32_t rem, colthread_local_t *loc) {
+        libtrace_ip_t *ip UNUSED, uint32_t rem, colthread_local_t *loc) {
 
     struct sockaddr_in *cmp;
     openli_export_recv_t *msg;

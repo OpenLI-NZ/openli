@@ -44,13 +44,13 @@
  */
 int xmit_handover_keepalive(handover_t *ho) {
 
-	/* We don't lock the handover mutex here, because we're going to be
+    /* We don't lock the handover mutex here, because we're going to be
      * doing this a lot and the mutex is mostly protecting logging-related
- 	 * members (e.g. disconnect_msg). A few bogus messages are a small
+     * members (e.g. disconnect_msg). A few bogus messages are a small
      * price to pay compared with the performance impact of locking a mutex
      * everytime we want to send a record to a client.
      */
-	int ret = 0;
+    int ret = 0;
 
     if (!ho->ho_state->pending_ka) {
         return 0;
@@ -74,7 +74,7 @@ int xmit_handover_keepalive(handover_t *ho) {
     if (ret == 0) {
         return -1;
     }
-    if (ret == ho->ho_state->pending_ka->len) {
+    if ((unsigned int)ret == ho->ho_state->pending_ka->len) {
         /* Sent the whole thing successfully */
         wandder_release_encoded_result(NULL, ho->ho_state->pending_ka);
         ho->ho_state->pending_ka = NULL;
@@ -512,12 +512,10 @@ int register_handover_RMQ_all(handover_t *ho, liid_map_t *liidmap,
  *  @param ho           The handover object that is to be connected
  *  @param epoll_fd     The epoll fd to add handover events to
  *  @param ho_id        The unique ID number for this handover
- *  @param agency_id    The name of the agency this handover is connecting to
  *
  *  @return -1 if the connection fails, 0 otherwise.
  */
-int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id,
-        char *agencyid) {
+int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id) {
 
 	uint32_t epollev;
 	int outsock;

@@ -135,6 +135,7 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
 
     json_object_object_add(jobj, "user", user);
     json_object_object_add(jobj, "accesstype", accesstype);
+    json_object_object_add(jobj, "radiusident", radiusident);
 
     if (ipint->mobileident != OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED) {
         mobileident = json_object_new_string(
@@ -245,15 +246,29 @@ static json_object *convert_voipintercept_to_json(voipintercept_t *vint) {
 
 static json_object *convert_coreserver_to_json(coreserver_t *cs) {
     json_object *jobj;
-    json_object *ipaddr, *port;
+    json_object *ipaddr, *port, *upper_port, *lower_port;
+
+    port = upper_port = lower_port = NULL;
 
     jobj = json_object_new_object();
 
     ipaddr = json_object_new_string(cs->ipstr);
-    port = json_object_new_string(cs->portstr);
 
     json_object_object_add(jobj, "ipaddress", ipaddr);
-    json_object_object_add(jobj, "port", port);
+    if (cs->upper_portstr) {
+        upper_port = json_object_new_string(cs->upper_portstr);
+        json_object_object_add(jobj, "port_upper", upper_port);
+    }
+
+    if (cs->lower_portstr) {
+        lower_port = json_object_new_string(cs->lower_portstr);
+        json_object_object_add(jobj, "port_lower", lower_port);
+    }
+
+    if (cs->portstr) {
+        port = json_object_new_string(cs->portstr);
+        json_object_object_add(jobj, "port", port);
+    }
 
     return jobj;
 }

@@ -1011,8 +1011,6 @@ int add_intercept_to_email_user_intercept_list(
         email_user_intercept_list_t *ulist, emailintercept_t *em,
         email_target_t *tgt) {
 
-    email_user_intercept_list_t *found;
-
     if (tgt->address == NULL) {
         logger(LOG_INFO,
                 "OpenLI: attempted to add address-less email intercept to user intercept list.");
@@ -1033,22 +1031,24 @@ int add_intercept_to_email_user_intercept_list(
 }
 
 int generate_ipint_userkey(ipintercept_t *ipint, char *space,
-        int spacelen) {
+        size_t spacelen) {
 
     char *ptr = space;
     int used = 0;
 
     memset(space, 0, spacelen);
-    if (ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_MSISDN ||
-            ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED) {
-        memcpy(ptr, "msisdn:", strlen("msisdn:"));
-        ptr += strlen("msisdn:");
-    } else if (ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_IMSI) {
-        memcpy(ptr, "imsi:", strlen("imsi:"));
-        ptr += strlen("imsi:");
-    } else if (ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_IMEI) {
-        memcpy(ptr, "imei:", strlen("imei:"));
-        ptr += strlen("imei:");
+    if (ipint->accesstype == INTERNET_ACCESS_TYPE_MOBILE) {
+        if (ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_MSISDN ||
+                ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED) {
+            memcpy(ptr, "msisdn:", strlen("msisdn:"));
+            ptr += strlen("msisdn:");
+        } else if (ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_IMSI) {
+            memcpy(ptr, "imsi:", strlen("imsi:"));
+            ptr += strlen("imsi:");
+        } else if (ipint->mobileident == OPENLI_MOBILE_IDENTIFIER_IMEI) {
+            memcpy(ptr, "imei:", strlen("imei:"));
+            ptr += strlen("imei:");
+        }
     }
 
     used = ptr - space;

@@ -344,7 +344,7 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
     } else {
         (*cap)->own_content = 0;
         if ((*cap)->msg_length > 0 && posttcp != NULL) {
-            (*cap)->content = (char *)posttcp;
+            (*cap)->content = (uint8_t *)posttcp;
         } else {
             (*cap)->content = NULL;
         }
@@ -418,8 +418,7 @@ static void init_email_session(emailsession_t *sess,
     sess->iricount = 0;
 }
 
-int extract_email_sender_from_body(openli_email_worker_t *state,
-        emailsession_t *sess, char *bodycontent, char **extracted) {
+int extract_email_sender_from_body(char *bodycontent, char **extracted) {
 
     char fromaddr[2048];
     int found = 0;
@@ -526,7 +525,7 @@ void clear_email_sender(emailsession_t *sess) {
 
 static void free_email_session(openli_email_worker_t *state,
         emailsession_t *sess) {
-    int i;
+    uint32_t i;
     Word_t rc;
 
     if (!sess) {
@@ -562,15 +561,15 @@ static void free_email_session(openli_email_worker_t *state,
     }
 
     if (sess->protocol == OPENLI_EMAIL_TYPE_SMTP) {
-        free_smtp_session_state(sess, sess->proto_state);
+        free_smtp_session_state(sess->proto_state);
     }
 
     if (sess->protocol == OPENLI_EMAIL_TYPE_IMAP) {
-        free_imap_session_state(sess, sess->proto_state);
+        free_imap_session_state(sess->proto_state);
     }
 
     if (sess->protocol == OPENLI_EMAIL_TYPE_POP3) {
-        free_pop3_session_state(sess, sess->proto_state);
+        free_pop3_session_state(sess->proto_state);
     }
 
     if (sess->serveraddr) {
@@ -827,7 +826,7 @@ static void remove_email_intercept(openli_email_worker_t *state,
 static int update_default_email_compression(openli_email_worker_t *state,
         provisioner_msg_t *provmsg) {
 
-    uint8_t newval;
+    uint8_t newval = OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET;
 
     if (decode_default_email_compression_announcement(provmsg->msgbody,
             provmsg->msglen, &newval) < 0) {
@@ -1000,8 +999,7 @@ static int add_email_target(openli_email_worker_t *state,
     EVP_MD_CTX *ctx;
     const EVP_MD *md;
     unsigned char shaspace[EVP_MAX_MD_SIZE];
-    unsigned int sha_len;
-    int i;
+    unsigned int sha_len, i;
 
     tgt = calloc(1, sizeof(email_target_t));
     if (decode_email_target_announcement(provmsg->msgbody, provmsg->msglen,
@@ -1180,7 +1178,8 @@ static int find_and_update_active_session(openli_email_worker_t *state,
 
     char sesskey[256];
     emailsession_t *sess;
-    int r = 0, i;
+    int r = 0;
+    size_t i;
 
     if (cap->session_id == NULL) {
         logger(LOG_INFO,
@@ -1573,7 +1572,7 @@ haltemailworker:
  *  ==========================================
  */
 
-void mask_plainauth_creds(char *mailbox, char *reencoded, int buflen) {
+void mask_plainauth_creds(char *mailbox, char *reencoded) {
     char input[2048];
     char *ptr;
     base64_encodestate e;

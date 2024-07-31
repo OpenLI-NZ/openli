@@ -139,9 +139,10 @@ void prepare_ipiri_parameters(etsili_generic_freelist_t *freegenerics,
 
 /* TODO consider adding free lists to these APIs to avoid excess mallocs */
 int ipiri_create_id_printable(char *idstr, int length, ipiri_id_t *ipiriid);
-int ipiri_create_id_mac(uint8_t *macaddr, ipiri_id_t *ipiriid);
-int ipiri_create_id_ipv4(uint32_t addrnum, uint8_t slashbits,
-        ipiri_id_t *ipiriid);
+
+//int ipiri_create_id_mac(uint8_t *macaddr, ipiri_id_t *ipiriid);
+//int ipiri_create_id_ipv4(uint32_t addrnum, uint8_t slashbits,
+//        ipiri_id_t *ipiriid);
 
 void ipiri_free_id(ipiri_id_t *iriid);
 

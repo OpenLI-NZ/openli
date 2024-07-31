@@ -255,7 +255,7 @@ void add_new_session_ip(access_session_t *sess, void *att_val,
         sess->sessionips = realloc(sess->sessionips,
                 (sess->sessipcount + SESSION_IP_INCR) *
                 sizeof(internetaccess_ip_t));
-
+        memset(sess->sessionips + sess->sessipcount, 0, SESSION_IP_INCR * sizeof(internetaccess_ip_t));
     }
 
     if (family == AF_INET) {

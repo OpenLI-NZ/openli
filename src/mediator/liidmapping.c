@@ -26,6 +26,7 @@
 
 #include <Judy.h>
 #include <string.h>
+#include <libtrace.h>
 #include "liidmapping.h"
 #include "logger.h"
 
@@ -161,7 +162,7 @@ int add_liid_agency_mapping(liid_map_t *map, char *liidstr) {
  *
  *  @return 0 always
  */
-int set_liid_as_unconfirmed(liid_map_entry_t *m, void *arg) {
+int set_liid_as_unconfirmed(liid_map_entry_t *m, void *arg UNUSED) {
     m->unconfirmed = 1;
     return 0;
 }

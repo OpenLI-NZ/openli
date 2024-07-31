@@ -346,14 +346,13 @@ int attempt_provisioner_connect(mediator_prov_t *prov, int provfail) {
 /** Sends any pending messages to the provisioner.
  *
  *  @param prov             The reference to the provisioner.
- *  @param mev              The epoll event for the provisioner socket.
  *
  *  @return -1 if an error occurs, 1 otherwise.
  */
-int transmit_provisioner(mediator_prov_t *prov, med_epoll_ev_t *mev) {
+int transmit_provisioner(mediator_prov_t *prov) {
 
     int ret;
-    openli_proto_msgtype_t err;
+    openli_proto_msgtype_t err = OPENLI_PROTO_NO_MESSAGE;
 
     /* Try to send whatever we've got in the netcomms buffer */
     ret = transmit_net_buffer(prov->outgoing, &err);

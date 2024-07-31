@@ -55,8 +55,6 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
 	collector_sync_t *sync = (collector_sync_t *)
 			malloc(sizeof(collector_sync_t));
-    int i;
-    char sockname[128];
 
     sync->glob = &(glob->syncip);
     sync->intersyncq = &(glob->intersyncq);
@@ -128,7 +126,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
 void clean_sync_data(collector_sync_t *sync) {
 
-    int i = 0, zero=0;
+    int zero=0;
     int haltattempts = 0, haltfails = 0;
     ip_to_session_t *iter, *tmp;
     default_radius_user_t *raditer, *radtmp;
@@ -282,9 +280,15 @@ static int forward_provmsg_to_voipsync(collector_sync_t *sync,
     openli_intersync_msg_t topush;
 
     topush.msgtype = msgtype;
-    topush.msgbody = (uint8_t *)malloc(msglen);
-    memcpy(topush.msgbody, provmsg, msglen);
-    topush.msglen = msglen;
+
+    if (provmsg && msglen > 0) {
+        topush.msgbody = (uint8_t *)malloc(msglen);
+        memcpy(topush.msgbody, provmsg, msglen);
+        topush.msglen = msglen;
+    } else {
+        topush.msgbody = NULL;
+        topush.msglen = 0;
+    }
 
     libtrace_message_queue_put(sync->intersyncq, &topush);
     return 1;
@@ -552,7 +556,7 @@ static void push_all_coreservers(coreserver_t *servers,
 static int send_to_provisioner(collector_sync_t *sync) {
 
     int ret;
-    openli_proto_msgtype_t err;
+    openli_proto_msgtype_t err = OPENLI_PROTO_NO_MESSAGE;
 
     ret = transmit_net_buffer(sync->outgoing, &err);
     if (ret == -1) {
@@ -744,7 +748,7 @@ static int remove_staticiprange(collector_sync_t *sync, static_ipranges_t *ipr)
 }
 
 static void update_vendmirror_intercept(collector_sync_t *sync,
-        ipintercept_t *ipint, int irirequired) {
+        ipintercept_t *ipint, int irirequired UNUSED) {
 
     openli_pushed_t pmsg;
     vendmirror_intercept_t *mirror;
@@ -821,7 +825,6 @@ static void push_ipintercept_update_to_threads(collector_sync_t *sync,
     static_ipranges_t *ipr, *tmpr;
     struct timeval now;
     int irirequired = -1;
-    char *tmp;
 
     logger(LOG_INFO, "OpenLI: collector is updating intercept for LIID %s", ipint->common.liid);
 
@@ -1860,8 +1863,7 @@ void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
 
 }
 
-static void push_all_active_intercepts(collector_sync_t *sync,
-        internet_user_t *allusers,
+static void push_all_active_intercepts(internet_user_t *allusers,
         ipintercept_t *intlist, libtrace_message_queue_t *q) {
 
     ipintercept_t *orig, *tmp;
@@ -1892,7 +1894,6 @@ static int remove_ip_to_session_mapping(collector_sync_t *sync,
         access_session_t *sess) {
 
     ip_to_session_t *mapping;
-    char ipstr[128];
     int i, j, errs = 0, nullsess = 0;
 
     if (!sess->ips_mapped) {
@@ -2411,7 +2412,7 @@ int sync_thread_main(collector_sync_t *sync) {
 
             /* If a hello from a thread, push all active intercepts back */
             if (recvd.type == OPENLI_UPDATE_HELLO) {
-                push_all_active_intercepts(sync, sync->allusers,
+                push_all_active_intercepts(sync->allusers,
                         sync->ipintercepts, recvd.data.replyq);
                 push_all_coreservers(sync->coreservers, recvd.data.replyq);
                 sync->hellosreceived ++;

@@ -101,6 +101,11 @@ typedef struct col_known_liid {
      */
     uint8_t declared_raw_rmq;
 
+    /** Flag indicating whether we have declared the RMQs for publishing
+     *  IRIs and CCs internally
+     */
+    uint8_t declared_int_rmq;
+
     const char *queuenames[3];
 
     UT_hash_handle hh;
@@ -213,6 +218,16 @@ typedef struct single_coll_receiver {
      *  from the main mediator thread.
      */
     libtrace_message_queue_t in_main;
+
+    /** Flag that indicates whether RMQ has told us that it is "connection
+     *  blocked, i.e. no longer able to accept published messages
+     */
+    uint8_t rmq_blocked;
+
+    /** Number of received records that we have been unable to publish
+     *  to the internal RMQ
+     */
+    uint64_t dropped_recs;
 
     UT_hash_handle hh;
 
