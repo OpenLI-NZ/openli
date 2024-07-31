@@ -700,6 +700,7 @@ static void gtp_worker_main(openli_gtp_worker_t *worker) {
 
         if (topoll[2].revents & ZMQ_POLLIN) {
             topoll[2].revents = 0;
+            close(topoll[2].fd);
 
             /* TODO purge "inactive" sessions */
 
