@@ -39,6 +39,7 @@ typedef struct liagency {
     char *hi3_ipstr;
     char *hi3_portstr;
     char *agencyid;
+    char *agencycc;
     uint32_t keepalivefreq;
     uint32_t keepalivewait;
 } liagency_t;

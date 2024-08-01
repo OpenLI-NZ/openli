@@ -595,6 +595,8 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         newag->hi3_ipstr = NULL;
         newag->hi3_portstr = NULL;
         newag->agencyid = NULL;
+        newag->agencycc = malloc(1);
+        newag->agencycc[0] = '\0';
         newag->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
         newag->keepalivewait = DEFAULT_AGENCY_KEEPALIVE_WAIT;
 
@@ -643,6 +645,13 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcmp((char *)key->data.scalar.value,
+                            "agencycountrycode") == 0) {
+                SET_CONFIG_STRING_OPTION(newag->agencycc, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcmp((char *)key->data.scalar.value,
                             "keepalivefreq") == 0) {
                 newag->keepalivefreq = strtoul(
                         (char *)value->data.scalar.value, NULL, 10);
@@ -664,6 +673,7 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
             logger(LOG_INFO,
                     "OpenLI: 'pcapdisk' is a reserved agencyid, please rename to something else.");
             free(newag->agencyid);
+            free(newag->agencycc);
             newag->agencyid = NULL;
         }
 

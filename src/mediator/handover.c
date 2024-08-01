@@ -209,7 +209,7 @@ void trigger_handover_ka_failure(handover_t *ho) {
  *  @return -1 if an error occurs, 0 otherwise
  */
 int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
-        char *operator_id) {
+        char *operator_id, char *agency_cc) {
 
     wandder_encoded_result_t *kamsg;
     wandder_etsipshdr_data_t hdrdata;
@@ -239,14 +239,19 @@ int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
          * sender.
          */
         /* PACKAGE_NAME and PACKAGE_VERSION come from config.h */
-        snprintf(liidstring, 24, "%s-%s", PACKAGE_NAME, PACKAGE_VERSION);
+        if (strcmp(agency_cc, "NL")==0) {
+        	snprintf(liidstring, 2, "-");
+            hdrdata.delivcc = "NL";
+        } else {
+        	snprintf(liidstring, 24, "%s-%s", PACKAGE_NAME, PACKAGE_VERSION);
+            hdrdata.delivcc = "-";
+        }
         hdrdata.liid = liidstring;
         hdrdata.liid_len = strlen(hdrdata.liid);
 
+        hdrdata.delivcc_len = strlen(hdrdata.delivcc);
         hdrdata.authcc = "-";
         hdrdata.authcc_len = strlen(hdrdata.authcc);
-        hdrdata.delivcc = "-";
-        hdrdata.delivcc_len = strlen(hdrdata.delivcc);
 
         if (operator_id) {
             hdrdata.operatorid = operator_id;
@@ -256,7 +261,11 @@ int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
         hdrdata.operatorid_len = strlen(hdrdata.operatorid);
 
         /* Stupid 16 character limit... */
-        snprintf(elemstring, 16, "med-%u", mediator_id);
+        if (strcmp(agency_cc, "NL")==0) {
+        	snprintf(elemstring, 16, "%u", mediator_id);
+        } else {
+        	snprintf(elemstring, 16, "med-%u", mediator_id);
+        }
         hdrdata.networkelemid = elemstring;
         hdrdata.networkelemid_len = strlen(hdrdata.networkelemid);
 
