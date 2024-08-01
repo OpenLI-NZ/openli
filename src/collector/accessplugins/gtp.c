@@ -57,9 +57,12 @@ enum {
     GTPV2_IE_APNAME = 71,
     GTPV2_IE_MEI = 75,
     GTPV2_IE_MSISDN = 76,
+    GTPV2_IE_PCO = 78,
     GTPV2_IE_PDN_ALLOC = 79,
+    GTPV2_IE_RAT_TYPE = 82,
     GTPV2_IE_ULI = 86,
     GTPV2_IE_FTEID = 87,
+    GTPV2_IE_BEARER_CONTEXT = 93,
 };
 
 /* TODO add more cause values here */
@@ -381,6 +384,9 @@ static inline bool interesting_info_element(uint8_t gtpv, uint8_t ietype) {
             case GTPV2_IE_MEI:
             case GTPV2_IE_APNAME:
             case GTPV2_IE_ULI:
+            case GTPV2_IE_BEARER_CONTEXT:
+            case GTPV2_IE_PCO:
+            case GTPV2_IE_RAT_TYPE:
                 return true;
         }
     } else if (gtpv == 1) {
@@ -457,6 +463,55 @@ static inline uint32_t get_teid_from_fteid(gtp_infoelem_t *gtpel) {
 static inline uint8_t get_cause_from_ie(gtp_infoelem_t *gtpel) {
 
     return *((uint8_t *)(gtpel->iecontent));
+}
+
+static void walk_bearer_context_ie(etsili_generic_freelist_t *freelist,
+        gtp_infoelem_t *el, etsili_generic_t **params) {
+
+    uint8_t *ptr = (uint8_t *)el->iecontent;
+    uint8_t *start = ptr;
+    uint8_t subtype;
+    uint16_t sublen;
+    etsili_generic_t *np;
+
+    /* Need at least 5 bytes for a complete sub-IE (4 for header, plus at
+     * least one for the value)
+     */
+    while (ptr - start < el->ielength) {
+        np = NULL;
+        if (el->ielength - (ptr - start) <= 4) {
+            logger(LOG_INFO, "OpenLI: incomplete IE header while decoding GTPv2 Bearer Context Information Element");
+            break;
+        }
+
+        subtype = *ptr;
+        sublen = *(ptr + 1);
+        sublen = sublen << 8;
+        sublen += *(ptr + 2);
+        ptr += 4;
+
+        if (el->ielength - (ptr - start) < sublen) {
+            logger(LOG_INFO, "OpenLI: truncated IE body while decoding GTPv2 Bearer Context Information Element");
+            break;
+        }
+
+        switch(subtype) {
+            case 0x49:      // EPS Bearer ID
+                np = create_etsili_generic(freelist,
+                        EPSIRI_CONTENTS_RAW_BEARER_ID, sublen, ptr);
+                break;
+            case 0x57:      // F-TEID
+                break;
+            case 0x50:      // Bearer QoS
+                break;
+        }
+
+        if (np) {
+            HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+                    np);
+        }
+        ptr += sublen;
+    }
 }
 
 static inline void get_gtpnum_from_ie(gtp_infoelem_t *gtpel, char *field,
@@ -1615,6 +1670,8 @@ static int gtp_create_eps_generic_iri(gtp_parsed_t *gparsed,
     etsili_ipaddress_t ipaddr;
     uint32_t initiator = 1;
     struct timeval tv;
+    gtp_infoelem_t *el;
+
     /*
      *  - EVENT_TIME = timestamp
      *  - INITIATOR
@@ -1749,6 +1806,51 @@ static int gtp_create_eps_generic_iri(gtp_parsed_t *gparsed,
             sizeof(int64_t), (uint8_t *)(&(gsess->cin)));
     HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
             np);
+
+    if (gparsed->request) {
+        el = gparsed->request->ies;
+        while (el) {
+            switch(el->ietype) {
+                case GTPV2_IE_PCO:
+                    np = create_etsili_generic(freelist,
+                            EPSIRI_CONTENTS_RAW_PCO_FROM_UE, el->ielength,
+                            (uint8_t *)(el->iecontent));
+                    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum),
+                            sizeof(np->itemnum), np);
+                    break;
+                case GTPV2_IE_BEARER_CONTEXT:
+                    walk_bearer_context_ie(freelist, el, params);
+                    break;
+                case GTPV2_IE_RAT_TYPE:
+                    np = create_etsili_generic(freelist,
+                            EPSIRI_CONTENTS_RAW_RAT_TYPE, el->ielength,
+                            (uint8_t *)(el->iecontent));
+                    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum),
+                            sizeof(np->itemnum), np);
+                    break;
+
+            }
+            el = el->next;
+        }
+
+    }
+
+    if (gparsed->response) {
+        el = gparsed->response->ies;
+        while (el) {
+            switch(el->ietype) {
+                case GTPV2_IE_PDN_ALLOC:
+                    np = create_etsili_generic(freelist,
+                            EPSIRI_CONTENTS_RAW_PDN_ADDRESS_ALLOCATION,
+                            el->ielength, (uint8_t *)(el->iecontent));
+                    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum),
+                            sizeof(np->itemnum), np);
+                    break;
+
+            }
+            el = el->next;
+        }
+    }
 
 
     return 0;

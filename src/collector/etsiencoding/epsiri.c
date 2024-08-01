@@ -207,8 +207,8 @@ wandder_encoded_result_t *encode_epsiri_body(wandder_encoder_t *encoder,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 20, p->itemptr, p->itemlen);
     }
 
-    /* ggsnAddress (25) -- also appears in networkIdentifier, but why not... */
-    ENC_CSEQUENCE(encoder, 25);
+    /* ggsnAddress (24) -- also appears in networkIdentifier, but why not... */
+    ENC_CSEQUENCE(encoder, 24);
     lookup = EPSIRI_CONTENTS_GGSN_IPADDRESS;
 
     HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
@@ -218,7 +218,6 @@ wandder_encoded_result_t *encode_epsiri_body(wandder_encoder_t *encoder,
         encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
         END_ENCODED_SEQUENCE(encoder, 2);
     }
-    END_ENCODED_SEQUENCE(encoder, 1);
 
     /* networkIdentifier (26) -- nested */
     ENC_CSEQUENCE(encoder, 26);
@@ -234,20 +233,61 @@ wandder_encoded_result_t *encode_epsiri_body(wandder_encoder_t *encoder,
         logger(LOG_INFO, "OpenLI: EPS IRI record may be invalid...");
     }
 
-    lookup = EPSIRI_CONTENTS_GGSN_IPADDRESS;
-
-    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
-    if (p) {
-        ENC_CSEQUENCE(encoder, 1);
-        ENC_CSEQUENCE(encoder, 5);
-        encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
-        END_ENCODED_SEQUENCE(encoder, 2);
-    }
-    END_ENCODED_SEQUENCE(encoder, 1);
-
     /* eps-GTPV2-specificParameters (36) */
     ENC_CSEQUENCE(encoder, 36);
+    lookup = EPSIRI_CONTENTS_RAW_PDN_ADDRESS_ALLOCATION;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, p->itemptr, p->itemlen);
+    }
 
+    lookup = EPSIRI_CONTENTS_APNAME;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, p->itemptr, p->itemlen);
+    }
+
+    /* can we have protconfigoptions from both directions at the same time?
+     * XXX
+     */
+    lookup = EPSIRI_CONTENTS_RAW_PCO_FROM_UE;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        ENC_CSEQUENCE(encoder, 3);
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, p->itemptr, p->itemlen);
+        END_ENCODED_SEQUENCE(encoder, 1);
+    } else {
+        lookup = EPSIRI_CONTENTS_RAW_PCO_FROM_NETWORK;
+        HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+        if (p) {
+            ENC_CSEQUENCE(encoder, 3);
+            wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                    WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, p->itemptr, p->itemlen);
+            END_ENCODED_SEQUENCE(encoder, 1);
+        }
+    }
+
+    /* Attach Type goes here... */
+
+    lookup = EPSIRI_CONTENTS_RAW_BEARER_ID;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 5, p->itemptr, p->itemlen);
+    }
+
+
+    /* Detach Type goes here... */
+
+    lookup = EPSIRI_CONTENTS_RAW_RAT_TYPE;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 7, p->itemptr, p->itemlen);
+    }
 
     END_ENCODED_SEQUENCE(encoder, 7);
     return wandder_encode_finish(encoder);
