@@ -596,7 +596,7 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         newag->hi3_portstr = NULL;
         newag->agencyid = NULL;
         newag->agencycc = malloc(1);
-        newag->agencycc[0] = '\0';
+        newag->agencycc[0] = '\0'; /* don't let a char pointer go along uninitialized */
         newag->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
         newag->keepalivewait = DEFAULT_AGENCY_KEEPALIVE_WAIT;
 

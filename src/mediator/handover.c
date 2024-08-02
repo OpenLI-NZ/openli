@@ -237,21 +237,26 @@ int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
         /* Include the OpenLI version in the LIID field, so the LEAs can
          * identify which version of the software is being used by the
          * sender.
+         *
+         * PACKAGE_NAME and PACKAGE_VERSION come from config.h
          */
-        /* PACKAGE_NAME and PACKAGE_VERSION come from config.h */
+        if (strlen(agency_cc) == 2) {
+            hdrdata.delivcc = agency_cc;
+            hdrdata.authcc = agency_cc;
+        } else {
+            hdrdata.delivcc = "--";
+            hdrdata.authcc = "--";
+        }
+        hdrdata.delivcc_len = strlen(hdrdata.delivcc);
+        hdrdata.authcc_len = strlen(hdrdata.authcc);
+
         if (strcmp(agency_cc, "NL")==0) {
         	snprintf(liidstring, 2, "-");
-            hdrdata.delivcc = "NL";
         } else {
         	snprintf(liidstring, 24, "%s-%s", PACKAGE_NAME, PACKAGE_VERSION);
-            hdrdata.delivcc = "-";
         }
         hdrdata.liid = liidstring;
         hdrdata.liid_len = strlen(hdrdata.liid);
-
-        hdrdata.delivcc_len = strlen(hdrdata.delivcc);
-        hdrdata.authcc = "-";
-        hdrdata.authcc_len = strlen(hdrdata.authcc);
 
         if (operator_id) {
             hdrdata.operatorid = operator_id;
