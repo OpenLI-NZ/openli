@@ -87,6 +87,7 @@ typedef struct handover {
 
 typedef struct mediator_agency {
     char *agencyid;
+    char *agencycc;
     int awaitingconfirm;
     int disabled;
     int disabled_msg;
@@ -135,7 +136,7 @@ void trigger_handover_ka_failure(handover_t *ho);
  *  @return -1 if an error occurs, 0 otherwise
  */
 int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
-        char *operator_id);
+        char *operator_id, char *agency_cc);
 
 /** Disconnects a single mediator handover connection to an LEA.
  *
