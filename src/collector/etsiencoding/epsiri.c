@@ -208,20 +208,19 @@ wandder_encoded_result_t *encode_epsiri_body(wandder_encoder_t *encoder,
     }
 
     /* ggsnAddress (24) -- also appears in networkIdentifier, but why not... */
-    ENC_CSEQUENCE(encoder, 24);
     lookup = EPSIRI_CONTENTS_GGSN_IPADDRESS;
 
     HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
     if (p) {
-        ENC_CSEQUENCE(encoder, 1);
-        ENC_CSEQUENCE(encoder, 5);
+        ENC_CSEQUENCE(encoder, 24);
+        ENC_CSEQUENCE(encoder, 1);  // ipAddress
         encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
         END_ENCODED_SEQUENCE(encoder, 2);
     }
 
     /* networkIdentifier (26) -- nested */
-    ENC_CSEQUENCE(encoder, 26);
 
+    ENC_CSEQUENCE(encoder, 26);
     lookup = EPSIRI_CONTENTS_OPERATOR_IDENTIFIER;
     HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
     if (p) {
@@ -232,6 +231,18 @@ wandder_encoded_result_t *encode_epsiri_body(wandder_encoder_t *encoder,
                 "OpenLI: warning, no operator identifier available for building EPS IRI");
         logger(LOG_INFO, "OpenLI: EPS IRI record may be invalid...");
     }
+
+    lookup = EPSIRI_CONTENTS_NETWORK_ELEMENT_IPADDRESS;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+
+    if (p) {
+        ENC_CSEQUENCE(encoder, 1);
+        ENC_CSEQUENCE(encoder, 5);
+        encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
+        END_ENCODED_SEQUENCE(encoder, 2);
+    }
+
+    END_ENCODED_SEQUENCE(encoder, 1);
 
     /* eps-GTPV2-specificParameters (36) */
     ENC_CSEQUENCE(encoder, 36);
@@ -289,6 +300,28 @@ wandder_encoded_result_t *encode_epsiri_body(wandder_encoder_t *encoder,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 7, p->itemptr, p->itemlen);
     }
 
-    END_ENCODED_SEQUENCE(encoder, 7);
+    lookup = EPSIRI_CONTENTS_RAW_FAILED_BEARER_ACTIVATION_REASON;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 8, p->itemptr, p->itemlen);
+    }
+
+    lookup = EPSIRI_CONTENTS_RAW_BEARER_QOS;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 9, p->itemptr, p->itemlen);
+    }
+
+    lookup = EPSIRI_CONTENTS_BEARER_ACTIVATION_TYPE;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 10, p->itemptr, p->itemlen);
+    }
+
+
+    END_ENCODED_SEQUENCE(encoder, 8);
     return wandder_encode_finish(encoder);
 }

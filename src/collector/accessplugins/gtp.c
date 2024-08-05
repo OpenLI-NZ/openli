@@ -55,6 +55,7 @@ enum {
     GTPV2_IE_IMSI = 1,
     GTPV2_IE_CAUSE = 2,
     GTPV2_IE_APNAME = 71,
+    GTPV2_IE_BEARER_ID = 73,
     GTPV2_IE_MEI = 75,
     GTPV2_IE_MSISDN = 76,
     GTPV2_IE_PCO = 78,
@@ -145,6 +146,7 @@ typedef struct gtp_session {
     gtp_saved_pkt_t *lastsavedpkt;
 
     int refcount;
+    uint8_t defaultbearer;
 
 } gtp_session_t;
 
@@ -175,6 +177,7 @@ typedef struct gtp_parsed {
     uint32_t teid_data;
     uint32_t seqno;
     uint8_t response_cause;
+    uint8_t bearerid;
 
     uint8_t serveripfamily;
     uint8_t serverid[16];
@@ -465,8 +468,50 @@ static inline uint8_t get_cause_from_ie(gtp_infoelem_t *gtpel) {
     return *((uint8_t *)(gtpel->iecontent));
 }
 
+static void parse_new_session_bearer_context(gtp_parsed_t *parsedpkt,
+        gtp_infoelem_t *el) {
+
+    uint8_t *ptr = (uint8_t *)el->iecontent;
+    uint8_t *start = ptr;
+    uint8_t subtype;
+    uint16_t sublen;
+    uint32_t *teidkey;
+
+    /* Need at least 5 bytes for a complete sub-IE (4 for header, plus at
+     * least one for the value)
+     */
+    while (ptr - start < el->ielength) {
+        if (el->ielength - (ptr - start) <= 4) {
+            logger(LOG_INFO, "OpenLI: incomplete IE header while decoding GTPv2 Bearer Context Information Element");
+            break;
+        }
+
+        subtype = *ptr;
+        sublen = *(ptr + 1);
+        sublen = sublen << 8;
+        sublen += *(ptr + 2);
+        ptr += 4;
+
+        if (el->ielength - (ptr - start) < sublen) {
+            logger(LOG_INFO, "OpenLI: truncated IE body while decoding GTPv2 Bearer Context Information Element");
+            break;
+        }
+
+        switch(subtype) {
+            case 0x49:      // EPS Bearer ID
+                parsedpkt->bearerid = *ptr;
+                break;
+            case 0x57:      // F-TEID
+                teidkey = (uint32_t *)(ptr + 1);
+                parsedpkt->teid_data = ntohl(*teidkey);
+                break;
+        }
+        ptr += sublen;
+    }
+}
+
 static void walk_bearer_context_ie(etsili_generic_freelist_t *freelist,
-        gtp_infoelem_t *el, etsili_generic_t **params) {
+        gtp_infoelem_t *el, etsili_generic_t **params, uint8_t is_req) {
 
     uint8_t *ptr = (uint8_t *)el->iecontent;
     uint8_t *start = ptr;
@@ -497,12 +542,18 @@ static void walk_bearer_context_ie(etsili_generic_freelist_t *freelist,
 
         switch(subtype) {
             case 0x49:      // EPS Bearer ID
-                np = create_etsili_generic(freelist,
-                        EPSIRI_CONTENTS_RAW_BEARER_ID, sublen, ptr);
+                if (!is_req) {
+                    np = create_etsili_generic(freelist,
+                            EPSIRI_CONTENTS_RAW_BEARER_ID, sublen, ptr);
+                }
                 break;
             case 0x57:      // F-TEID
                 break;
             case 0x50:      // Bearer QoS
+                if (is_req) {
+                    np = create_etsili_generic(freelist,
+                            EPSIRI_CONTENTS_RAW_BEARER_QOS, sublen, ptr);
+                }
                 break;
         }
 
@@ -683,6 +734,11 @@ static void walk_gtpv2_ies(gtp_parsed_t *parsedpkt, uint8_t *ptr, uint32_t rem,
                     get_gtpnum_from_ie(gtpel, parsedpkt->msisdn, 0);
                 }
             }
+
+            if (ietype == GTPV2_IE_BEARER_CONTEXT) {
+                parse_new_session_bearer_context(parsedpkt, gtpel);
+            }
+
 
             if (ietype == GTPV2_IE_FTEID) {
                 parsedpkt->teid_ctl = get_teid_from_fteid(gtpel);
@@ -1050,6 +1106,10 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
                 *pval = (Word_t)gparsed->matched_session;
             }
 
+        }
+
+        if (gparsed->msgtype == GTPV2_CREATE_SESSION_RESPONSE) {
+            gparsed->matched_session->defaultbearer = gparsed->bearerid;
         }
 
         uids = copy_identifiers(gparsed, numberids);
@@ -1661,13 +1721,30 @@ static void parse_uli_v2(uint8_t *locinfo,
 
 }
 
+static void parse_gtpv2_cause(gtp_parsed_t *gparsed, gtp_infoelem_t *el,
+        etsili_generic_freelist_t *freelist, etsili_generic_t **params) {
+    uint8_t *ptr = el->iecontent;
+    etsili_generic_t *np;
+
+    if (gparsed->request->type == GTPV2_CREATE_SESSION_REQUEST) {
+        if ((*ptr) > 64) {
+            np = create_etsili_generic(freelist,
+                    EPSIRI_CONTENTS_RAW_FAILED_BEARER_ACTIVATION_REASON,
+                    el->ielength, ptr);
+            HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum),
+                    np);
+        }
+    }
+
+}
+
 static int gtp_create_eps_generic_iri(gtp_parsed_t *gparsed,
         gtp_session_t *gsess,
         etsili_generic_t **params, etsili_generic_freelist_t *freelist,
         uint32_t evtype) {
 
     etsili_generic_t *np;
-    etsili_ipaddress_t ipaddr;
+    etsili_ipaddress_t ipaddr, netelipaddr;
     uint32_t initiator = 1;
     struct timeval tv;
     gtp_infoelem_t *el;
@@ -1703,14 +1780,25 @@ static int gtp_create_eps_generic_iri(gtp_parsed_t *gparsed,
         etsili_create_ipaddress_v4((uint32_t *)(gsess->serverid),
                 ETSILI_IPV4_SUBNET_UNKNOWN, ETSILI_IPADDRESS_ASSIGNED_UNKNOWN,
                 &ipaddr);
+        etsili_create_ipaddress_v4((uint32_t *)(gsess->serverid),
+                ETSILI_IPV4_SUBNET_UNKNOWN, ETSILI_IPADDRESS_ASSIGNED_UNKNOWN,
+                &netelipaddr);
     } else {
         etsili_create_ipaddress_v6((uint8_t *)(gsess->serverid),
                 ETSILI_IPV6_SUBNET_UNKNOWN, ETSILI_IPADDRESS_ASSIGNED_UNKNOWN,
                 &ipaddr);
+        etsili_create_ipaddress_v6((uint8_t *)(gsess->serverid),
+                ETSILI_IPV6_SUBNET_UNKNOWN, ETSILI_IPADDRESS_ASSIGNED_UNKNOWN,
+                &netelipaddr);
     }
 
     np = create_etsili_generic(freelist, EPSIRI_CONTENTS_GGSN_IPADDRESS,
         sizeof(etsili_ipaddress_t), (uint8_t *)&ipaddr);
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+
+    np = create_etsili_generic(freelist,
+            EPSIRI_CONTENTS_NETWORK_ELEMENT_IPADDRESS,
+            sizeof(etsili_ipaddress_t), (uint8_t *)&netelipaddr);
     HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
 
     np = create_etsili_generic(freelist, EPSIRI_CONTENTS_IMSI,
@@ -1819,7 +1907,7 @@ static int gtp_create_eps_generic_iri(gtp_parsed_t *gparsed,
                             sizeof(np->itemnum), np);
                     break;
                 case GTPV2_IE_BEARER_CONTEXT:
-                    walk_bearer_context_ie(freelist, el, params);
+                    walk_bearer_context_ie(freelist, el, params, 1);
                     break;
                 case GTPV2_IE_RAT_TYPE:
                     np = create_etsili_generic(freelist,
@@ -1845,6 +1933,12 @@ static int gtp_create_eps_generic_iri(gtp_parsed_t *gparsed,
                             el->ielength, (uint8_t *)(el->iecontent));
                     HASH_ADD_KEYPTR(hh, *params, &(np->itemnum),
                             sizeof(np->itemnum), np);
+                    break;
+                case GTPV2_IE_CAUSE:
+                    parse_gtpv2_cause(gparsed, el, freelist, params);
+                    break;
+                case GTPV2_IE_BEARER_CONTEXT:
+                    walk_bearer_context_ie(freelist, el, params, 0);
                     break;
 
             }
@@ -2064,13 +2158,28 @@ static int gtp_create_context_deactivation_iri(gtp_parsed_t *gparsed,
     return 0;
 }
 
-static int gtp_create_bearer_activation_failed_iri(gtp_parsed_t *gparsed UNUSED,
-        etsili_generic_t **params UNUSED,
-        etsili_generic_freelist_t *freelist UNUSED) {
+static int gtpv2_create_session_activation_failed_iri(
+        gtp_parsed_t *gparsed,
+        etsili_generic_t **params,
+        etsili_generic_freelist_t *freelist) {
 
-    /* Failed bearer activation reason */
+    uint32_t evtype = EPSIRI_EVENT_TYPE_BEARER_ACTIVATION;
+    etsili_generic_t *np = NULL;
+    uint32_t bearertype = 0;
 
-    /* TODO */
+    gtp_create_eps_generic_iri(gparsed, gparsed->matched_session,
+            params, freelist, evtype);
+
+    /* XXX do we get a valid bearer ID in this case? */
+    if (gparsed->bearerid == gparsed->matched_session->defaultbearer) {
+        bearertype = 1;
+    } else {
+        bearertype = 2;
+    }
+    np = create_etsili_generic(freelist, EPSIRI_CONTENTS_BEARER_ACTIVATION_TYPE,
+            sizeof(bearertype), (uint8_t *)(&bearertype));
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+
     return 0;
 }
 
@@ -2127,13 +2236,25 @@ static int gtp_create_start_with_context_active_iri(gtp_session_t *gsess,
     return 0;
 }
 
-static int gtp_create_bearer_activation_iri(gtp_parsed_t *gparsed,
+static int gtpv2_create_session_activation_iri(gtp_parsed_t *gparsed,
         etsili_generic_t **params, etsili_generic_freelist_t *freelist) {
 
     uint32_t evtype = EPSIRI_EVENT_TYPE_BEARER_ACTIVATION;
+    etsili_generic_t *np = NULL;
+    uint32_t bearertype = 0;
 
     gtp_create_eps_generic_iri(gparsed, gparsed->matched_session,
             params, freelist, evtype);
+
+    if (gparsed->bearerid == gparsed->matched_session->defaultbearer) {
+        bearertype = 1;
+    } else {
+        bearertype = 2;
+    }
+    np = create_etsili_generic(freelist, EPSIRI_CONTENTS_BEARER_ACTIVATION_TYPE,
+            sizeof(bearertype), (uint8_t *)(&bearertype));
+    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum), sizeof(np->itemnum), np);
+
     return 0;
 }
 
@@ -2162,7 +2283,7 @@ static int gtp_generate_iri_data(access_plugin_t *p UNUSED, void *parseddata,
             return -1;
         }
         if (gparsed->version == 2 &&
-                gtp_create_bearer_activation_iri(gparsed, params,
+                gtpv2_create_session_activation_iri(gparsed, params,
                         freelist) < 0) {
             return -1;
         }
@@ -2176,10 +2297,11 @@ static int gtp_generate_iri_data(access_plugin_t *p UNUSED, void *parseddata,
             return -1;
         }
         if (gparsed->version == 2 &&
-                gtp_create_bearer_activation_failed_iri(gparsed, params,
+                gtpv2_create_session_activation_failed_iri(gparsed, params,
                         freelist) < 0) {
-        /* TODO need to generate a PDP context activation failed IRI */
+            return -1;
         }
+        return 0;
     }
     else if (gparsed->action == ACCESS_ACTION_INTERIM_UPDATE) {
         *iritype = ETSILI_IRI_CONTINUE;
