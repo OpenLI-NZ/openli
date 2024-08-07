@@ -51,6 +51,7 @@ enum {
         EPSIRI_CONTENTS_PDPTYPE = 17,
         EPSIRI_CONTENTS_NETWORK_ELEMENT_IPADDRESS = 18,
         EPSIRI_CONTENTS_BEARER_ACTIVATION_TYPE = 19,
+        EPSIRI_CONTENTS_BEARER_DEACTIVATION_TYPE = 20,
         /* separate the fields that are a direct copy of the IE from the
          * GTPv2 header -- these go in the EPS-GTPV2-SpecificParameters
          * sequence in the EPS IRI
@@ -69,6 +70,9 @@ enum {
         EPSIRI_CONTENTS_RAW_FAILED_BEARER_ACTIVATION_REASON,
         EPSIRI_CONTENTS_RAW_ATTACH_TYPE,
         EPSIRI_CONTENTS_RAW_DETACH_TYPE,
+        EPSIRI_CONTENTS_RAW_LINKED_BEARER_ID,
+        EPSIRI_CONTENTS_RAW_FAILED_BEARER_MODIFICATION_REASON,
+        EPSIRI_CONTENTS_RAW_BEARER_DEACTIVATION_CAUSE,
 };
 
 /* Values for EPSEvent as defined in 133.108 Appendix B.9 */

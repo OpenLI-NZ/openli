@@ -321,6 +321,48 @@ wandder_encoded_result_t *encode_epsiri_body(wandder_encoder_t *encoder,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 10, p->itemptr, p->itemlen);
     }
 
+    lookup = EPSIRI_CONTENTS_RAW_APN_AMBR;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 11, p->itemptr, p->itemlen);
+    }
+
+    /* procedureTransactionID goes here */
+
+    lookup = EPSIRI_CONTENTS_RAW_LINKED_BEARER_ID;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 13, p->itemptr, p->itemlen);
+    }
+
+    /* TFT goes here */
+
+    /* Handover Indication */
+
+    lookup = EPSIRI_CONTENTS_RAW_FAILED_BEARER_MODIFICATION_REASON;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 16, p->itemptr, p->itemlen);
+    }
+
+    lookup = EPSIRI_CONTENTS_BEARER_DEACTIVATION_TYPE;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 21, p->itemptr, p->itemlen);
+    }
+
+    lookup = EPSIRI_CONTENTS_RAW_BEARER_DEACTIVATION_CAUSE;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 22, p->itemptr, p->itemlen);
+    }
+
+
 
     END_ENCODED_SEQUENCE(encoder, 8);
     return wandder_encode_finish(encoder);
