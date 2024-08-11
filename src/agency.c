@@ -43,6 +43,9 @@ void free_liagency(liagency_t *lea) {
 	if (lea->agencyid) {
 		free(lea->agencyid);
 	}
+    if (lea->agencycc) {
+        free(lea->agencycc);
+    }
 	free(lea);
 }
 

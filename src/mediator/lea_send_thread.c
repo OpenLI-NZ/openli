@@ -208,6 +208,12 @@ static void update_agency_handovers(mediator_agency_t *currag,
 
     }
 
+    if (currag->agencycc) {
+        free(currag->agencycc);
+    }
+    currag->agencycc = newag->agencycc;
+    newag->agencycc = NULL;
+
     if (currag->hi3 == NULL || currag->hi3->ipstr == NULL ||
             currag->hi3->portstr == NULL) {
         currag->hi3 = create_new_handover(epollfd, newag->hi3_ipstr,
@@ -495,7 +501,7 @@ static int agency_thread_epoll_event(lea_thread_state_t *state,
             /* we are due to send a keep alive */
             ho = (handover_t *)(mev->state);
             trigger_handover_keepalive(ho, state->mediator_id,
-                    state->operator_id, state->agencycc);
+                    state->operator_id, state->agency.agencycc);
             ret = 0;
             break;
         case MED_EPOLL_KA_RESPONSE_TIMER:
@@ -1112,7 +1118,6 @@ void destroy_agency_thread_state(lea_thread_state_t *state) {
     }
     purge_liid_map(&(state->active_liids));
     free(state->agencyid);
-    free(state->agencycc);
 
     close(state->epoll_fd);
 }
@@ -1176,7 +1181,6 @@ int mediator_start_agency_thread(mediator_lea_t *medleas, liagency_t *lea) {
     libtrace_message_queue_init(&(found->in_main),
             sizeof(lea_thread_msg_t));
     found->agencyid = strdup(lea->agencyid);
-    found->agencycc = strdup(lea->agencycc);
 
     /* Add to the set of running LEA send threads */
     HASH_ADD_KEYPTR(hh, medleas->threads, found->agencyid,

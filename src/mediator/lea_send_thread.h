@@ -188,9 +188,6 @@ typedef struct lea_thread_state {
     /** The ID string for this agency */
     char *agencyid;
 
-    /** The CountryCode of this agency */
-    char *agencycc;
-
     /** Mediator epoll event for the shutdown timer */
     med_epoll_ev_t *shutdown_wait;
     /** Mediator epoll event for the message queue checking timer */
