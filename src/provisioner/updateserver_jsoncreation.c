@@ -45,10 +45,14 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     json_object *ka_freq;
     json_object *ka_wait;
     json_object *agencyid;
+    json_object *agencycc = NULL;
 
     jobj = json_object_new_object();
 
     agencyid = json_object_new_string(lea->ag->agencyid);
+    if (lea->ag->agencycc) {
+        agencycc = json_object_new_string(lea->ag->agencycc);
+    }
     hi3addr = json_object_new_string(lea->ag->hi3_ipstr);
     hi3port = json_object_new_string(lea->ag->hi3_portstr);
     hi2addr = json_object_new_string(lea->ag->hi2_ipstr);
@@ -57,6 +61,9 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     ka_wait = json_object_new_int(lea->ag->keepalivewait);
 
     json_object_object_add(jobj, "agencyid", agencyid);
+    if (agencycc) {
+        json_object_object_add(jobj, "agencycc", agencycc);
+    }
     json_object_object_add(jobj, "hi3address", hi3addr);
     json_object_object_add(jobj, "hi2address", hi2addr);
     json_object_object_add(jobj, "hi3port", hi3port);

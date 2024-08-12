@@ -240,7 +240,7 @@ int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
          *
          * PACKAGE_NAME and PACKAGE_VERSION come from config.h
          */
-        if (strlen(agency_cc) == 2) {
+        if (agency_cc && strlen(agency_cc) == 2) {
             hdrdata.delivcc = agency_cc;
             hdrdata.authcc = agency_cc;
         } else {
@@ -250,7 +250,10 @@ int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
         hdrdata.delivcc_len = strlen(hdrdata.delivcc);
         hdrdata.authcc_len = strlen(hdrdata.authcc);
 
-        if (strcmp(agency_cc, "NL")==0) {
+        /* Netherlands has a specific rule regarding the content of the
+         * LIID within keepalives
+         */
+        if (agency_cc && strcmp(agency_cc, "NL")==0) {
         	snprintf(liidstring, 2, "-");
         } else {
         	snprintf(liidstring, 24, "%s-%s", PACKAGE_NAME, PACKAGE_VERSION);
@@ -266,7 +269,7 @@ int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
         hdrdata.operatorid_len = strlen(hdrdata.operatorid);
 
         /* Stupid 16 character limit... */
-        if (strcmp(agency_cc, "NL")==0) {
+        if (agency_cc && strcmp(agency_cc, "NL")==0) {
         	snprintf(elemstring, 16, "%u", mediator_id);
         } else {
         	snprintf(elemstring, 16, "med-%u", mediator_id);

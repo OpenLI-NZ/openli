@@ -66,7 +66,11 @@ static void init_mediator_agency(mediator_agency_t *agency,
 
     agency->awaitingconfirm = 0;
     agency->agencyid = strdup(fromprov->agencyid);
-    agency->agencycc = strdup(fromprov->agencycc);
+    if (fromprov->agencycc) {
+        agency->agencycc = strdup(fromprov->agencycc);
+    } else {
+        agency->agencycc = NULL;
+    }
     agency->disabled = 0;
     agency->disabled_msg = 0;
     agency->hi2 = create_new_handover(epollfd, fromprov->hi2_ipstr,

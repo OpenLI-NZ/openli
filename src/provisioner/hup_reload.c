@@ -188,8 +188,8 @@ static int reload_leas(provision_state_t *state, prov_intercept_conf_t *curr,
         } else if (agency_equal(lea->ag, newequiv->ag)) {
             newequiv->announcereq = 0;
         } else {
-            /* Agency has changed, withdraw current and announce new */
-            withdraw_agency_from_mediators(state, lea);
+            /* Agency has changed, re-announce the new version */
+            //withdraw_agency_from_mediators(state, lea);
             newequiv->announcereq = 1;
         }
     }

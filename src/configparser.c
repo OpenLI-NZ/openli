@@ -595,10 +595,9 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         newag->hi3_ipstr = NULL;
         newag->hi3_portstr = NULL;
         newag->agencyid = NULL;
-        newag->agencycc = malloc(1);
-        newag->agencycc[0] = '\0'; /* don't let a char pointer go along uninitialized */
+        newag->agencycc = NULL;
         newag->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
-        newag->keepalivewait = DEFAULT_AGENCY_KEEPALIVE_WAIT;
+        newag->keepalivewait = 0;
 
         for (pair = node->data.mapping.pairs.start;
                 pair < node->data.mapping.pairs.top; pair ++) {
@@ -673,7 +672,9 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
             logger(LOG_INFO,
                     "OpenLI: 'pcapdisk' is a reserved agencyid, please rename to something else.");
             free(newag->agencyid);
-            free(newag->agencycc);
+            if (newag->agencycc) {
+                free(newag->agencycc);
+            }
             newag->agencyid = NULL;
         }
 
@@ -694,6 +695,12 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
                     strlen(prov_ag->ag->agencyid), prov_ag);
 
         } else {
+            if (newag->agencyid) {
+                free(newag->agencyid);
+            }
+            if (newag->agencycc) {
+                free(newag->agencycc);
+            }
             free(newag);
             logger(LOG_INFO, "OpenLI: LEA configuration was incomplete -- skipping.");
         }

@@ -49,7 +49,10 @@ typedef struct liagency {
      (strcmp(a->hi2_portstr, b->hi2_portstr) == 0) && \
      (strcmp(a->hi3_ipstr, b->hi3_ipstr) == 0) && \
      (strcmp(a->hi3_portstr, b->hi3_portstr) == 0) && \
-     (strcmp(a->agencyid, b->agencyid) == 0))
+     (strcmp(a->agencyid, b->agencyid) == 0) && \
+     ((a->agencycc == NULL && b->agencycc == NULL) || \
+        (a->agencycc != NULL && b->agencycc != NULL && \
+         strcmp(a->agencycc, b->agencycc) == 0)))
 
 #endif
 

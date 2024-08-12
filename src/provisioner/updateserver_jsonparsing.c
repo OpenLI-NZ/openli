@@ -44,6 +44,7 @@ struct json_agency {
     struct json_object *hi2port;
     struct json_object *ka_freq;
     struct json_object *ka_wait;
+    struct json_object *agencycc;
 };
 
 struct json_intercept {
@@ -180,6 +181,7 @@ static inline void extract_agency_json_objects(struct json_agency *agjson,
     json_object_object_get_ex(parsed, "hi2port", &(agjson->hi2port));
     json_object_object_get_ex(parsed, "keepalivefreq", &(agjson->ka_freq));
     json_object_object_get_ex(parsed, "keepalivewait", &(agjson->ka_wait));
+    json_object_object_get_ex(parsed, "agencycc", &(agjson->agencycc));
 
 }
 
@@ -2016,6 +2018,8 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
             nag->hi3_portstr, &parseerr, true);
     EXTRACT_JSON_STRING_PARAM("hi2port", "agency", agjson.hi2port,
             nag->hi2_portstr, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("agencycc", "agency", agjson.agencycc,
+            nag->agencycc, &parseerr, false);
 
     EXTRACT_JSON_INT_PARAM("keepalivefreq", "agency", agjson.ka_freq,
             nag->keepalivefreq, &parseerr, false);
@@ -2070,6 +2074,9 @@ agencyerr:
         if (nag->agencyid) {
             free(nag->agencyid);
         }
+        if (nag->agencycc) {
+            free(nag->agencycc);
+        }
         free(nag);
     }
     if (parsed) {
@@ -2116,6 +2123,8 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
             modified.hi3_portstr, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("hi2port", "agency", agjson.hi2port,
             modified.hi2_portstr, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("agencycc", "agency", agjson.agencycc,
+            modified.agencycc, &parseerr, false);
 
     EXTRACT_JSON_INT_PARAM("keepalivefreq", "agency", agjson.ka_freq,
             modified.keepalivefreq, &parseerr, false);
@@ -2126,6 +2135,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         goto agencyerr;
     }
 
+    MODIFY_STRING_MEMBER(modified.agencycc, found->ag->agencycc, &changed);
     MODIFY_STRING_MEMBER(modified.hi3_ipstr, found->ag->hi3_ipstr, &changed);
     MODIFY_STRING_MEMBER(modified.hi2_ipstr, found->ag->hi2_ipstr, &changed);
     MODIFY_STRING_MEMBER(modified.hi3_portstr, found->ag->hi3_portstr,
@@ -2175,6 +2185,9 @@ agencyerr:
     }
     if (modified.hi3_portstr) {
         free(modified.hi3_portstr);
+    }
+    if (modified.agencycc) {
+        free(modified.agencycc);
     }
     if (parsed) {
         json_object_put(parsed);
