@@ -290,9 +290,12 @@ int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
 }
 
 #define LEA_BODY_LEN(lea) \
-    (strlen(lea->agencyid) + strlen(lea->hi2_ipstr) + \
-    strlen(lea->hi2_portstr) + strlen(lea->hi3_ipstr) + \
-    strlen(lea->hi3_portstr) + sizeof(uint32_t) + sizeof(uint32_t) + (7 * 4))
+    (strlen(lea->agencyid) + \
+     (lea->agencycc ? strlen(lea->agencycc) + 4 : 0)  + \
+     strlen(lea->hi2_ipstr) + strlen(lea->hi2_portstr) + \
+	 strlen(lea->hi3_ipstr) + strlen(lea->hi3_portstr) + \
+	 sizeof(uint32_t) + sizeof(uint32_t) + \
+	 (7 * 4)) /* each field has 4 bytes for the key, length of field and terminating \0 */
 
 #define LEA_WITHDRAW_BODY_LEN(lea) \
     (strlen(lea->agencyid) + (1 * 4))
@@ -311,6 +314,13 @@ int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
     if (push_tlv(nb, OPENLI_PROTO_FIELD_LEAID, (uint8_t *)(lea->agencyid),
                 strlen(lea->agencyid)) == -1) {
         return -1;
+    }
+
+    if (lea->agencycc) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_LEACC, (uint8_t *)(lea->agencycc),
+                    strlen(lea->agencycc)) == -1) {
+            return -1;
+        }
     }
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_HI2IP, (uint8_t *)(lea->hi2_ipstr),
@@ -2119,6 +2129,7 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
     lea->hi3_ipstr = NULL;
     lea->hi3_portstr = NULL;
     lea->agencyid = NULL;
+    lea->agencycc = NULL;
     lea->keepalivefreq = 300;
     lea->keepalivewait = 0;
 
@@ -2133,6 +2144,8 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
 
         if (f == OPENLI_PROTO_FIELD_LEAID) {
             DECODE_STRING_FIELD(lea->agencyid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_LEACC) {
+                DECODE_STRING_FIELD(lea->agencycc, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_HI2IP) {
             DECODE_STRING_FIELD(lea->hi2_ipstr, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_HI2PORT) {

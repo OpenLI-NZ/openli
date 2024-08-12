@@ -66,6 +66,11 @@ static void init_mediator_agency(mediator_agency_t *agency,
 
     agency->awaitingconfirm = 0;
     agency->agencyid = strdup(fromprov->agencyid);
+    if (fromprov->agencycc) {
+        agency->agencycc = strdup(fromprov->agencycc);
+    } else {
+        agency->agencycc = NULL;
+    }
     agency->disabled = 0;
     agency->disabled_msg = 0;
     agency->hi2 = create_new_handover(epollfd, fromprov->hi2_ipstr,
@@ -206,6 +211,12 @@ static void update_agency_handovers(mediator_agency_t *currag,
         newag->hi2_portstr = NULL;
 
     }
+
+    if (currag->agencycc) {
+        free(currag->agencycc);
+    }
+    currag->agencycc = newag->agencycc;
+    newag->agencycc = NULL;
 
     if (currag->hi3 == NULL || currag->hi3->ipstr == NULL ||
             currag->hi3->portstr == NULL) {
@@ -494,7 +505,7 @@ static int agency_thread_epoll_event(lea_thread_state_t *state,
             /* we are due to send a keep alive */
             ho = (handover_t *)(mev->state);
             trigger_handover_keepalive(ho, state->mediator_id,
-                    state->operator_id);
+                    state->operator_id, state->agency.agencycc);
             ret = 0;
             break;
         case MED_EPOLL_KA_RESPONSE_TIMER:
@@ -1111,6 +1122,7 @@ void destroy_agency_thread_state(lea_thread_state_t *state) {
     }
     purge_liid_map(&(state->active_liids));
     free(state->agencyid);
+
     close(state->epoll_fd);
 }
 

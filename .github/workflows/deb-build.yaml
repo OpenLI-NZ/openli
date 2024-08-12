@@ -35,12 +35,13 @@ jobs:
       - name: Copy packages to uploadable location
         run: |
           mkdir -p packages/${DIRNAME}
-          cp ../*.deb packages/${DIRNAME}/
+          cp ../*.deb packages/${DIRNAME}/ || true
+          cp ../*.ddeb packages/${DIRNAME}/ || true
       - name: Store packages
         uses: actions/upload-artifact@v4
         with:
           name: packages-${{ env.DIRNAME }}
-          path: packages/${{ env.DIRNAME }}/*.deb
+          path: packages/${{ env.DIRNAME }}/*deb
           retention-days: 1
 
   test:
@@ -116,7 +117,7 @@ jobs:
        - name: Copy packages
          run: |
            mkdir -p packages/${DIRNAME}
-           find . -name "*.deb" | xargs cp -t packages/${DIRNAME}/
+           find . -name "*deb" | xargs cp -t packages/${DIRNAME}/
        - name: Publish package to cloudsmith
          uses: salcock/action-cloudsmith-upload-packages@v1.8
          with:
