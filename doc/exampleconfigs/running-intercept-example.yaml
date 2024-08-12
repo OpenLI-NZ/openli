@@ -61,6 +61,8 @@ defaultradiususers:
 agencies:
 
  - agencyid: "Police"           # id must be unique per agency
+   agencycountrycode: "NZ"      # 2 letter country code (ISO 3166) matching the
+                                # agency's jurisdiction
    hi2address: 192.168.200.1    # address of the HI2 service at the agency
    hi2port: 35530               # port number of the HI2 service at the agency
    hi3address: 192.168.200.1    # address of the HI3 service at the agency
@@ -71,6 +73,8 @@ agencies:
                                 # 30 seconds to avoid being disconnected
 
  - agencyid: "Spooks"           # id must be unique per agency
+   agencycountrycode: "NZ"      # 2 letter country code (ISO 3166) matching the
+                                # agency's jurisdiction
    hi2address: 10.10.1.1        # address of the HI2 service at the agency
    hi2port: 7001                # port number of the HI2 service at the agency
    hi3address: 10.10.1.2        # address of the HI3 service at the agency
