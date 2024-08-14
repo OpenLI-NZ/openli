@@ -209,7 +209,7 @@ void trigger_handover_ka_failure(handover_t *ho) {
  *  @return -1 if an error occurs, 0 otherwise
  */
 int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
-        char *operator_id) {
+        char *operator_id, char *agency_cc) {
 
     wandder_encoded_result_t *kamsg;
     wandder_etsipshdr_data_t hdrdata;
@@ -237,16 +237,29 @@ int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
         /* Include the OpenLI version in the LIID field, so the LEAs can
          * identify which version of the software is being used by the
          * sender.
+         *
+         * PACKAGE_NAME and PACKAGE_VERSION come from config.h
          */
-        /* PACKAGE_NAME and PACKAGE_VERSION come from config.h */
-        snprintf(liidstring, 24, "%s-%s", PACKAGE_NAME, PACKAGE_VERSION);
+        if (agency_cc && strlen(agency_cc) == 2) {
+            hdrdata.delivcc = agency_cc;
+            hdrdata.authcc = agency_cc;
+        } else {
+            hdrdata.delivcc = "--";
+            hdrdata.authcc = "--";
+        }
+        hdrdata.delivcc_len = strlen(hdrdata.delivcc);
+        hdrdata.authcc_len = strlen(hdrdata.authcc);
+
+        /* Netherlands has a specific rule regarding the content of the
+         * LIID within keepalives
+         */
+        if (agency_cc && strcmp(agency_cc, "NL")==0) {
+        	snprintf(liidstring, 2, "-");
+        } else {
+        	snprintf(liidstring, 24, "%s-%s", PACKAGE_NAME, PACKAGE_VERSION);
+        }
         hdrdata.liid = liidstring;
         hdrdata.liid_len = strlen(hdrdata.liid);
-
-        hdrdata.authcc = "NA";
-        hdrdata.authcc_len = strlen(hdrdata.authcc);
-        hdrdata.delivcc = "NA";
-        hdrdata.delivcc_len = strlen(hdrdata.delivcc);
 
         if (operator_id) {
             hdrdata.operatorid = operator_id;
@@ -256,7 +269,11 @@ int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
         hdrdata.operatorid_len = strlen(hdrdata.operatorid);
 
         /* Stupid 16 character limit... */
-        snprintf(elemstring, 16, "med-%u", mediator_id);
+        if (agency_cc && strcmp(agency_cc, "NL")==0) {
+        	snprintf(elemstring, 16, "%u", mediator_id);
+        } else {
+        	snprintf(elemstring, 16, "med-%u", mediator_id);
+        }
         hdrdata.networkelemid = elemstring;
         hdrdata.networkelemid_len = strlen(hdrdata.networkelemid);
 

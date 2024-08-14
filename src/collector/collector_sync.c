@@ -2000,6 +2000,7 @@ static inline int report_silent_logoffs(collector_sync_t *sync,
         if (remove_session_ip(prev->session[i], &(prev->ip)) == 1) {
             HASH_DELETE(hh, prev->owner[i]->sessions, prev->session[i]);
             free_single_session(prev->session[i]);
+            prev->session[i] = NULL;
         }
     }
     HASH_DELETE(hh, sync->activeips, prev);
@@ -2012,7 +2013,7 @@ static inline int report_silent_logoffs(collector_sync_t *sync,
 static int add_ip_to_session_mapping(collector_sync_t *sync,
         access_session_t *sess, internet_user_t *iuser) {
 
-    int i, replaced = 0;
+    int i, j, replaced = 0;
     ip_to_session_t *prev;
 
     prev = NULL;
@@ -2028,6 +2029,21 @@ static int add_ip_to_session_mapping(collector_sync_t *sync,
                 sizeof(internetaccess_ip_t), prev);
 
         if (prev && prev->cin == sess->cin) {
+            int already = 0;
+            for (j = 0; j < prev->sessioncount; j++) {
+                if (prev->session[j] == sess) {
+                    already = 1;
+                    break;
+                }
+            }
+
+            /* This IP->session mapping is already known (somehow?),
+             * don't insert it twice because that can cause issues
+             * if we have to do a silent-logoff later on */
+            if (already) {
+                continue;
+            }
+
             prev->session = realloc(prev->session,
                     (prev->sessioncount + 1) * sizeof(access_session_t *));
             prev->owner = realloc(prev->owner,

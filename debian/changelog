@@ -1,3 +1,22 @@
+openli (1.1.8-1) unstable; urgency=medium
+
+  * Collector: fix crash in sync_voip thread if an invalid SIP packet
+    is encountered.
+  * Collector: add a single zero byte to the list of recognised SIP
+    keep alives.
+  * Collector: fix crash that can occur if an IP is mapped to a
+    RADIUS session more than once.
+  * Add config option to specify the country where an agency has
+    jurisdiction, which allows us to support country-specific
+    requirements for HI1 operations and keep alive messages.
+  * Keep alive messages for NL agencies now conform to the ETSI-IP.nl
+    requirements.
+  * Use '--' instead of 'NA' as the auth and delivery country code for
+    keep alives when we do not know the country code for the receiving
+    agency.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 14 Aug 2024 10:13:28 +1200
+
 openli (1.1.7-1) unstable; urgency=medium
 
   * Collector: fix file descriptor leak caused by timers in SMS worker

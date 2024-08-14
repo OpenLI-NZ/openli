@@ -439,6 +439,8 @@ Agencies are expressed as a YAML sequence with a key of `agencies:`. Each
 sequence item represents a single agency and must contain the following
 key-value elements:
 * `agencyid`      -- the unique internal identifier for this agency
+* `agencycountrycode`  -- the 2-letter ISO 3166 country code for the country
+                          where the agency is located.
 * `hi2address`    -- the address of the HI2 handover on the agency side
 * `hi2port`       -- the port number for the HI2 handover on the agency side
 * `hi3address`    -- the address of the HI3 handover on the agency side

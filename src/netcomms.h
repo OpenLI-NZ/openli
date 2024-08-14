@@ -184,6 +184,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_MOBILEIDENT,
     OPENLI_PROTO_FIELD_CORESERVER_UPPER_PORT,
     OPENLI_PROTO_FIELD_CORESERVER_LOWER_PORT,
+    OPENLI_PROTO_FIELD_LEACC,
 } openli_proto_fieldtype_t;
 
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl);
