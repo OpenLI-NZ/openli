@@ -65,6 +65,7 @@ enum {
     GTPV2_IE_ULI = 86,
     GTPV2_IE_FTEID = 87,
     GTPV2_IE_BEARER_CONTEXT = 93,
+    GTPV2_IE_PDN_TYPE = 99,
 };
 
 /* TODO add more cause values here */
@@ -410,6 +411,7 @@ static inline bool interesting_info_element(uint8_t gtpv, uint8_t ietype) {
             case GTPV2_IE_RAT_TYPE:
             case GTPV2_IE_AMBR:
             case GTPV2_IE_BEARER_ID:
+            case GTPV2_IE_PDN_TYPE:
                 return true;
         }
     } else if (gtpv == 1) {
@@ -1577,6 +1579,22 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
         return thissess;
     }
 
+    if (gparsed->msgtype == GTPV2_MODIFY_BEARER_COMMAND ||
+            gparsed->msgtype == GTPV2_DELETE_BEARER_COMMAND) {
+
+        /* TODO */
+        gparsed->matched_session = NULL;
+        *action = ACCESS_ACTION_NONE;
+        return NULL;
+    } else if (gparsed->msgtype == GTPV2_MODIFY_BEARER_FAILURE_INDICATION ||
+            gparsed->msgtype == GTPV2_DELETE_BEARER_FAILURE_INDICATION) {
+
+        /* TODO */
+        gparsed->matched_session = NULL;
+        *action = ACCESS_ACTION_NONE;
+        return NULL;
+    }
+
     saved = calloc(1, sizeof(gtp_saved_pkt_t));
 
     saved->type = gparsed->msgtype;
@@ -1601,22 +1619,6 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
 
     openli_copy_ipcontent(gparsed->origpkt, &(saved->ipcontent),
             &(saved->iplen));
-
-    if (gparsed->msgtype == GTPV2_MODIFY_BEARER_COMMAND ||
-            gparsed->msgtype == GTPV2_DELETE_BEARER_COMMAND) {
-
-        /* TODO */
-        gparsed->matched_session = NULL;
-        *action = ACCESS_ACTION_NONE;
-        return NULL;
-    } else if (gparsed->msgtype == GTPV2_MODIFY_BEARER_FAILURE_INDICATION ||
-            gparsed->msgtype == GTPV2_DELETE_BEARER_FAILURE_INDICATION) {
-
-        /* TODO */
-        gparsed->matched_session = NULL;
-        *action = ACCESS_ACTION_NONE;
-        return NULL;
-    }
 
     JLG(pval, glob->saved_packets, saved->reqid);
     if (pval == NULL) {
@@ -1667,6 +1669,14 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
             gparsed->request = check;
             gparsed->response = saved;
             incr_refcount = 1;
+        } else if (saved->type == GTPV2_MODIFY_BEARER_REQUEST &&
+                check->type == GTPV2_MODIFY_BEARER_RESPONSE) {
+            gparsed->request = saved;
+            gparsed->response = check;
+        } else if (check->type == GTPV2_MODIFY_BEARER_REQUEST &&
+                saved->type == GTPV2_MODIFY_BEARER_RESPONSE) {
+            gparsed->request = check;
+            gparsed->response = saved;
         } else if (saved->type == GTPV2_DELETE_SESSION_REQUEST &&
                 check->type == GTPV2_DELETE_SESSION_RESPONSE) {
             gparsed->request = saved;
@@ -2048,6 +2058,21 @@ static int gtp_create_eps_generic_iri(gtp_parsed_t *gparsed,
                     HASH_ADD_KEYPTR(hh, *params, &(np->itemnum),
                             sizeof(np->itemnum), np);
                     break;
+                case GTPV2_IE_ULI:
+                    np = create_etsili_generic(freelist,
+                            EPSIRI_CONTENTS_RAW_ULI, el->ielength,
+                            (uint8_t *)(el->iecontent));
+                    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum),
+                            sizeof(np->itemnum), np);
+                    break;
+                case GTPV2_IE_PDN_TYPE:
+                    np = create_etsili_generic(freelist,
+                            EPSIRI_CONTENTS_RAW_PDN_TYPE, el->ielength,
+                            (uint8_t *)(el->iecontent));
+                    HASH_ADD_KEYPTR(hh, *params, &(np->itemnum),
+                            sizeof(np->itemnum), np);
+                    break;
+
 
 
             }
