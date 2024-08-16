@@ -110,6 +110,7 @@ typedef struct ip_to_session {
 } ip_to_session_t;
 
 typedef struct teid_to_session {
+    char *idstring;
     uint32_t teid;
     int sessioncount;
     access_session_t **session;
@@ -141,6 +142,10 @@ struct access_session {
     uint32_t iriseqno;
 
     struct timeval started;
+
+    char *gtp_tunnel_endpoints;
+    uint32_t teids[2];
+    uint8_t teids_mapped;
 
     UT_hash_handle hh;
 } ;

@@ -320,9 +320,103 @@ static void push_gtp_session_over(openli_gtp_worker_t *worker,
     }
 }
 
+static void add_teid_to_session_mapping(openli_gtp_worker_t *worker,
+        access_session_t *sess, uint32_t teid, internet_user_t *iuser) {
+
+    teid_to_session_t *found;
+    char keystr[1024];
+
+    memset(keystr, 0, 1024);
+
+    if (teid == 0) {
+        logger(LOG_INFO, "OpenLI: called add_teid_to_session_mapping() but the assigned TEID is zero for the session?");
+        return;
+    }
+    snprintf(keystr, 1024, "%s-%u", sess->gtp_tunnel_endpoints, teid);
+
+    printf("TEID ID: %s\n", keystr);
+
+    HASH_FIND(hh, worker->all_data_teids, keystr, strlen(keystr), found);
+    if (found && found->cin == sess->cin) {
+        found->session = realloc(found->session,
+                (found->sessioncount + 1) * sizeof(access_session_t *));
+        found->owner = realloc(found->owner,
+                (found->sessioncount + 1) * sizeof(internet_user_t *));
+        found->session[found->sessioncount] = sess;
+        found->owner[found->sessioncount] = iuser;
+        found->sessioncount ++;
+        return;
+    } else if (found) {
+        /* a silent log-off scenario? XXX do we need to generate an IRI? */
+
+        /* For now, just delete the old entry and fall through... */
+        HASH_DELETE(hh, worker->all_data_teids, found);
+        free(found->idstring);
+        free(found->session);
+        free(found->owner);
+        free(found);
+    }
+
+    found = calloc(1, sizeof(teid_to_session_t));
+    found->idstring = strdup(keystr);
+    found->teid = teid;
+    found->cin = sess->cin;
+    found->sessioncount = 1;
+    found->session = calloc(1, sizeof(access_session_t *));
+    found->owner = calloc(1, sizeof(internet_user_t *));
+    found->session[0] = sess;
+    found->owner[0] = iuser;
+
+    HASH_ADD_KEYPTR(hh, worker->all_data_teids, &(found->teid),
+            sizeof(found->teid), found);
+}
+
+static void remove_teid_to_session_mapping(openli_gtp_worker_t *worker,
+        access_session_t *sess, uint32_t teid) {
+
+    teid_to_session_t *found;
+    int nullsess = 0, i;
+    char keystr[1024];
+
+    if (!sess->teids_mapped) {
+        return;
+    }
+    snprintf(keystr, 1024, "%s-%u", sess->gtp_tunnel_endpoints, teid);
+    printf("DELETING %s\n", keystr);
+
+    HASH_FIND(hh, worker->all_data_teids, keystr, strlen(keystr), found);
+    if (!found) {
+        /* Weird, but ok we'll just ignore this */
+        return;
+    }
+
+    for (i = 0; i < found->sessioncount; i++) {
+        if (found->session[i] == NULL) {
+            nullsess ++;
+            continue;
+        }
+        if (found->session[i] == sess) {
+            found->session[i] = NULL;
+            found->owner[i] = NULL;
+            nullsess ++;
+        }
+    }
+    if (nullsess == found->sessioncount) {
+        /* All sessions relating to this TEID have been removed, so
+         * free the entire object
+         */
+        HASH_DELETE(hh, worker->all_data_teids, found);
+        free(found->idstring);
+        free(found->session);
+        free(found->owner);
+        free(found);
+    }
+
+}
 
 static void newly_active_gtp_session(openli_gtp_worker_t *worker,
-        user_intercept_list_t *userint, access_session_t *sess) {
+        user_intercept_list_t *userint, access_session_t *sess,
+        internet_user_t *iuser) {
 
     ipintercept_t *ipint, *tmp;
     sync_sendq_t *sendq, *tmpq;
@@ -334,6 +428,11 @@ static void newly_active_gtp_session(openli_gtp_worker_t *worker,
     /* Save the Data TEIDs for this session as we have to now
      * intercept GTP-U for those TEIDs from now on -- TODO
      */
+    if (sess->identifier_type & OPENLI_ACCESS_SESSION_TEID) {
+        add_teid_to_session_mapping(worker, sess, sess->teids[0], iuser);
+        add_teid_to_session_mapping(worker, sess, sess->teids[1], iuser);
+        sess->teids_mapped = 1;
+    }
 
     if (sess->sessipcount == 0) {
         return;
@@ -442,9 +541,54 @@ static void generate_encoding_jobs(openli_gtp_worker_t *worker,
 }
 
 static void process_gtp_u_packet(openli_gtp_worker_t *worker UNUSED,
-        uint8_t *payload UNUSED, uint32_t plen UNUSED,
-        uint32_t teid UNUSED) {
+        libtrace_packet_t *packet, uint8_t *payload UNUSED,
+        uint32_t plen UNUSED, uint32_t teid) {
 
+    void *l3;
+    uint16_t ethertype;
+    uint32_t rem;
+
+    char keystr[1024];
+
+    l3 = trace_get_layer3(packet, &ethertype, &rem);
+    if (l3 == NULL || rem < sizeof(libtrace_ip_t)) {
+        return;
+    }
+    if (ethertype == TRACE_ETHERTYPE_IP) {
+        libtrace_ip_t *ip = (libtrace_ip_t *)l3;
+
+        if (ip->ip_src.s_addr < ip->ip_dst.s_addr) {
+            snprintf(keystr, 1024, "%u-%u-%u", ip->ip_src.s_addr,
+                    ip->ip_dst.s_addr, teid);
+        } else {
+            snprintf(keystr, 1024, "%u-%u-%u", ip->ip_dst.s_addr,
+                    ip->ip_src.s_addr, teid);
+        }
+    } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
+        libtrace_ip6_t *ip6 = (libtrace_ip6_t *)l3;
+        if (rem < sizeof(libtrace_ip6_t)) {
+            return;
+        }
+        if (memcmp(&(ip6->ip_src.s6_addr), &(ip6->ip_dst.s6_addr), 16) < 0) {
+            snprintf(keystr, 1024, "%lu-%lu-%lu-%lu-%u",
+                    *(uint64_t *)(&(ip6->ip_src.s6_addr)),
+                    *(uint64_t *)(&(ip6->ip_src.s6_addr[8])),
+                    *(uint64_t *)(&(ip6->ip_dst.s6_addr)),
+                    *(uint64_t *)(&(ip6->ip_dst.s6_addr[8])),
+                    teid);
+        } else {
+            snprintf(keystr, 1024, "%lu-%lu-%lu-%lu-%u",
+                    *(uint64_t *)(&(ip6->ip_dst.s6_addr)),
+                    *(uint64_t *)(&(ip6->ip_dst.s6_addr[8])),
+                    *(uint64_t *)(&(ip6->ip_src.s6_addr)),
+                    *(uint64_t *)(&(ip6->ip_src.s6_addr[8])),
+                    teid);
+        }
+    } else {
+        return;
+    }
+
+    printf("GTP-U: lookup for %s\n", keystr);
 
 }
 
@@ -498,11 +642,12 @@ static void process_gtp_c_packet(openli_gtp_worker_t *worker,
 
         if (oldstate != newstate) {
             if (newstate == SESSION_STATE_ACTIVE) {
-                newly_active_gtp_session(worker, userint, sess);
+                newly_active_gtp_session(worker, userint, sess, iuser);
 
             } else if (newstate == SESSION_STATE_OVER) {
                 push_gtp_session_over(worker, userint, sess);
-
+                remove_teid_to_session_mapping(worker, sess, sess->teids[0]);
+                remove_teid_to_session_mapping(worker, sess, sess->teids[1]);
             }
         }
 
@@ -592,7 +737,7 @@ static void process_gtp_packet(openli_gtp_worker_t *worker,
 
     if (msgtype == 0xff) {
         /* This is GTP-U */
-        process_gtp_u_packet(worker, payload, plen, teid);
+        process_gtp_u_packet(worker, packet, payload, plen, teid);
     } else {
         /* This is GTP-C */
         process_gtp_c_packet(worker, packet);
@@ -717,6 +862,7 @@ void *gtp_thread_begin(void *arg) {
     char sockname[256];
     int zero = 0, x;
     openli_state_update_t recvd;
+    teid_to_session_t *iter, *tmp;
 
     worker->zmq_pubsocks = calloc(worker->tracker_threads, sizeof(void *));
     init_zmq_socket_array(worker->zmq_pubsocks, worker->tracker_threads,
@@ -766,6 +912,14 @@ haltgtpworker:
     logger(LOG_INFO, "OpenLI: halting GTP processing thread %d",
             worker->workerid);
 
+    HASH_ITER(hh, worker->all_data_teids, iter, tmp) {
+        HASH_DELETE(hh, worker->all_data_teids, iter);
+        free(iter->idstring);
+        free(iter->session);
+        free(iter->owner);
+        free(iter);
+    }
+
     zmq_close(worker->zmq_ii_sock);
     zmq_close(worker->zmq_colthread_recvsock);
     free_all_users(worker->allusers);
@@ -802,6 +956,7 @@ int start_gtp_worker_thread(openli_gtp_worker_t *worker, int id,
     worker->tracker_threads = glob->seqtracker_threads;
     worker->ipintercepts = NULL;
     worker->allusers = NULL;
+    worker->all_data_teids = NULL;
     worker->userintercepts = NULL;
     worker->gtpplugin = get_gtp_access_plugin();
     worker->freegenerics = create_etsili_generic_freelist(1);

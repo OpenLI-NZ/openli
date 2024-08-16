@@ -139,6 +139,8 @@ typedef struct gtp_session {
     uint8_t serverid[16];
     uint8_t serveripfamily;
 
+    char *tunnel_endpoints;
+
     session_state_t current;
 
     uint64_t last_reqid;
@@ -188,6 +190,7 @@ typedef struct gtp_parsed {
     uint8_t serveripfamily;
     uint8_t serverid[16];
 
+    char tunnel_endpoints[256];
     char imsi[16];
     char msisdn[16];
     char imei[16];
@@ -227,6 +230,7 @@ static void reset_parsed_pkt(gtp_parsed_t *parsed) {
     parsed->bearerid = 255;
 
     parsed->serveripfamily = 0;
+    memset(parsed->tunnel_endpoints, 0, 256);
     memset(parsed->serverid, 0, 16);
     memset(parsed->imsi, 0, 16);
     memset(parsed->imei, 0, 16);
@@ -265,6 +269,10 @@ static inline void destroy_gtp_session(gtp_session_t *sess) {
 
     if (sess->sessid) {
         free(sess->sessid);
+    }
+
+    if (sess->tunnel_endpoints) {
+        free(sess->tunnel_endpoints);
     }
 
     if (sess->altsessid) {
@@ -948,6 +956,14 @@ static void *gtp_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
         /* It appears that update bearer requests are sent by the server.
          * Every other request so far is sent by the UE / client */
 
+        if (ip->ip_src.s_addr < ip->ip_dst.s_addr) {
+            snprintf(glob->parsedpkt->tunnel_endpoints, 256, "%u-%u",
+                    ip->ip_src.s_addr, ip->ip_dst.s_addr);
+        } else {
+            snprintf(glob->parsedpkt->tunnel_endpoints, 256, "%u-%u",
+                    ip->ip_dst.s_addr, ip->ip_src.s_addr);
+        }
+
         switch(glob->parsedpkt->msgtype) {
             case GTPV2_CREATE_SESSION_REQUEST:
             case GTPV2_DELETE_SESSION_REQUEST:
@@ -983,6 +999,20 @@ static void *gtp_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
         libtrace_ip6_t *ip6 = (libtrace_ip6_t *)l3;
 
         glob->parsedpkt->serveripfamily = 6;
+
+        if (memcmp(&(ip6->ip_src.s6_addr), &(ip6->ip_dst.s6_addr), 16) < 0) {
+            snprintf(glob->parsedpkt->tunnel_endpoints, 256, "%lu-%lu-%lu-%lu",
+                    *(uint64_t *)(&(ip6->ip_src.s6_addr)),
+                    *(uint64_t *)(&(ip6->ip_src.s6_addr[8])),
+                    *(uint64_t *)(&(ip6->ip_dst.s6_addr)),
+                    *(uint64_t *)(&(ip6->ip_dst.s6_addr[8])));
+        } else {
+            snprintf(glob->parsedpkt->tunnel_endpoints, 256, "%lu-%lu-%lu-%lu",
+                    *(uint64_t *)(&(ip6->ip_dst.s6_addr)),
+                    *(uint64_t *)(&(ip6->ip_dst.s6_addr[8])),
+                    *(uint64_t *)(&(ip6->ip_src.s6_addr)),
+                    *(uint64_t *)(&(ip6->ip_src.s6_addr[8])));
+        }
 
         switch(glob->parsedpkt->msgtype) {
             case GTPV2_CREATE_SESSION_REQUEST:
@@ -1188,6 +1218,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
     sess->gtpversion = gparsed->version;
     sess->defaultbearer = 255;
     memcpy(sess->serverid, gparsed->serverid, 16);
+    sess->tunnel_endpoints = strdup(gparsed->tunnel_endpoints);
     sess->serveripfamily = gparsed->serveripfamily;
 
     JSLI(pval, glob->session_map, (unsigned char *)sess->sessid);
@@ -1406,6 +1437,16 @@ static void create_alt_session_entry(gtp_global_t *glob,
     }
 }
 
+static inline void add_new_session_teids(access_session_t *sess,
+        gtp_session_t *gsess) {
+
+    sess->teids[0] = gsess->data_teid[0];
+    sess->teids[1] = gsess->data_teid[1];
+    sess->gtp_tunnel_endpoints = strdup(gsess->tunnel_endpoints);
+    sess->identifier_type |= OPENLI_ACCESS_SESSION_TEID;
+
+}
+
 static void apply_gtp_fsm_logic(gtp_global_t *glob,
         gtp_parsed_t *gparsed, access_action_t *action,
         access_session_t *sess, gtp_saved_pkt_t *gpkt,
@@ -1456,6 +1497,7 @@ static void apply_gtp_fsm_logic(gtp_global_t *glob,
             if (gpkt->teid_data != 0) {
                 gparsed->matched_session->data_teid[1] = gpkt->teid_data;
             }
+            add_new_session_teids(sess, gparsed->matched_session);
         } else if (gpkt->response_cause >= 64 && gpkt->response_cause <= 239) {
             current = SESSION_STATE_OVER;
             *action = ACCESS_ACTION_REJECT;
@@ -1477,6 +1519,8 @@ static void apply_gtp_fsm_logic(gtp_global_t *glob,
             if (gpkt->teid_data != 0) {
                 gparsed->matched_session->data_teid[1] = gpkt->teid_data;
             }
+            add_new_session_teids(sess, gparsed->matched_session);
+
         } else if (gpkt->response_cause >= 192) {
             current = SESSION_STATE_OVER;
             *action = ACCESS_ACTION_REJECT;

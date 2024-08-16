@@ -81,6 +81,9 @@ typedef struct openli_gtp_worker {
      * sessions */
     internet_user_t *allusers;
 
+    /* Set of all data TEIDs for active intercepts */
+    teid_to_session_t *all_data_teids;
+
     /* Map of user identities -> active intercepts */
     user_intercept_list_t *userintercepts;
 
