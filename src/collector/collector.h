@@ -52,6 +52,7 @@
 #include "radius_hasher.h"
 #include "email_ingest_service.h"
 #include "email_worker.h"
+#include "gtp_worker.h"
 #include "sms_worker.h"
 #include "sipparsing.h"
 
@@ -213,11 +214,22 @@ typedef struct colthread_local {
        thread */
     libtrace_message_queue_t fromsyncq_voip;
 
+    /* Array of message threads for receiving intercept instructions from
+     * the GTP processing threads
+     */
+    libtrace_message_queue_t *fromgtp_queues;
+
+    /* Number of GTP processing threads that have queues in the above array */
+    int gtpq_count;
+
     /* Array of message queues to pass packets to the email worker threads */
     void **email_worker_queues;
 
     /* Array of message queues to pass packets to the SMS worker threads */
     void **sms_worker_queues;
+
+    /* Array of message queues to pass packets to the GTP worker threads */
+    void **gtp_worker_queues;
 
     /** SIP parser for detecting SMS over SIP */
     openli_sip_parser_t *sipparser;
@@ -286,6 +298,7 @@ typedef struct collector_global {
     int encoding_threads;
     int forwarding_threads;
     int email_threads;
+    int gtp_threads;
     int sms_threads;
 
     void *zmq_encoder_ctrl;
@@ -302,6 +315,7 @@ typedef struct collector_global {
     openli_encoder_t *encoders;
     forwarding_thread_data_t *forwarders;
     openli_email_worker_t *emailworkers;
+    openli_gtp_worker_t *gtpworkers;
     openli_sms_worker_t *smsworkers;
     colthread_local_t **collocals;
     int nextloc;

@@ -345,6 +345,29 @@ static void parse_email_targets(email_target_t **targets, yaml_document_t *doc,
 
 }
 
+static void parse_col_thread_count(int *toset, const char *expectedkey,
+        yaml_node_t *key, yaml_node_t *value, const char *errlabel) {
+
+    if (key->type != YAML_SCALAR_NODE) {
+        return;
+    }
+    if (value->type != YAML_SCALAR_NODE) {
+        return;
+    }
+
+    if (strcmp(expectedkey, (const char *)key->data.scalar.value) != 0) {
+        return;
+    }
+
+    *toset = strtoul((const char *)value->data.scalar.value, NULL, 10);
+    if (*toset <= 0) {
+        *toset = 1;
+        logger(LOG_INFO,
+                "OpenLI: must have at least one %s thread per collector!",
+                errlabel);
+    }
+}
+
 static void parse_sip_targets(libtrace_list_t *targets, yaml_document_t *doc,
         yaml_node_t *tgtconf) {
 
@@ -1284,38 +1307,18 @@ static int global_parser(void *arg, yaml_document_t *doc,
         }
     }
 
-    if (key->type == YAML_SCALAR_NODE &&
-            value->type == YAML_SCALAR_NODE &&
-            strcmp((char *)key->data.scalar.value, "seqtrackerthreads") == 0) {
-        glob->seqtracker_threads = strtoul((char *) value->data.scalar.value,
-                NULL, 10);
-        if (glob->seqtracker_threads <= 0) {
-            glob->seqtracker_threads = 1;
-            logger(LOG_INFO, "OpenLI: must have at least one sequence tracker thread per collector!");
-        }
-    }
-
-    if (key->type == YAML_SCALAR_NODE &&
-            value->type == YAML_SCALAR_NODE &&
-            strcmp((char *)key->data.scalar.value, "encoderthreads") == 0) {
-        glob->encoding_threads = strtoul((char *) value->data.scalar.value,
-                NULL, 10);
-        if (glob->encoding_threads <= 0) {
-            glob->encoding_threads = 1;
-            logger(LOG_INFO, "OpenLI: must have at least one encoder thread per collector!");
-        }
-    }
-
-    if (key->type == YAML_SCALAR_NODE &&
-            value->type == YAML_SCALAR_NODE &&
-            strcmp((char *)key->data.scalar.value, "forwardingthreads") == 0) {
-        glob->forwarding_threads = strtoul((char *) value->data.scalar.value,
-                NULL, 10);
-        if (glob->forwarding_threads <= 0) {
-            glob->forwarding_threads = 1;
-            logger(LOG_INFO, "OpenLI: must have at least one forwarding thread per collector!");
-        }
-    }
+    parse_col_thread_count(&(glob->encoding_threads), "seqtrackerthreads",
+            key, value, "sequence tracker");
+    parse_col_thread_count(&(glob->encoding_threads), "encoderthreads",
+            key, value, "encoder");
+    parse_col_thread_count(&(glob->forwarding_threads), "forwardingthreads",
+            key, value, "forwarding");
+    parse_col_thread_count(&(glob->email_threads), "emailthreads",
+            key, value, "email worker");
+    parse_col_thread_count(&(glob->sms_threads), "smsthreads",
+            key, value, "SMS worker");
+    parse_col_thread_count(&(glob->gtp_threads), "gtpthreads",
+            key, value, "GTP worker");
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&

@@ -51,10 +51,6 @@
 #include "ipiri.h"
 #include "collector_util.h"
 
-#define INTERCEPT_IS_ACTIVE(cept, now) \
-    (cept->common.tostart_time <= now.tv_sec && ( \
-        cept->common.toend_time == 0 || cept->common.toend_time > now.tv_sec))
-
 collector_sync_t *init_sync_data(collector_global_t *glob) {
 
 	collector_sync_t *sync = (collector_sync_t *)
@@ -83,7 +79,6 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->upcomingtimerfd = -1;
 
     sync->radiusplugin = init_access_plugin(ACCESS_RADIUS);
-    sync->gtpplugin = init_access_plugin(ACCESS_GTP);
     sync->freegenerics = glob->syncgenericfreelist;
     sync->activeips = NULL;
 
@@ -91,10 +86,12 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->forwardcount = glob->forwarding_threads;
     sync->emailcount = glob->email_threads;
     sync->smscount = glob->sms_threads;
+    sync->gtpcount = glob->gtp_threads;
 
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
     sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
     sync->zmq_emailsocks = calloc(sync->emailcount, sizeof(void *));
+    sync->zmq_gtpsocks = calloc(sync->gtpcount, sizeof(void *));
     sync->zmq_smssocks = calloc(sync->smscount, sizeof(void *));
 
     sync->ctx = glob->sslconf.ctx;
@@ -113,6 +110,9 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
     init_zmq_socket_array(sync->zmq_emailsocks, sync->emailcount,
             "inproc://openliemailcontrol_sync", glob->zmq_ctxt);
+
+    init_zmq_socket_array(sync->zmq_gtpsocks, sync->gtpcount,
+            "inproc://openligtpcontrol_sync", glob->zmq_ctxt);
 
     init_zmq_socket_array(sync->zmq_smssocks, sync->smscount,
             "inproc://openlismscontrol_sync", glob->zmq_ctxt);
@@ -174,10 +174,6 @@ void clean_sync_data(collector_sync_t *sync) {
         destroy_access_plugin(sync->radiusplugin);
     }
 
-    if (sync->gtpplugin) {
-        destroy_access_plugin(sync->gtpplugin);
-    }
-
     if(sync->ssl){
         SSL_free(sync->ssl);
     }
@@ -190,7 +186,6 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->outgoing = NULL;
     sync->incoming = NULL;
     sync->radiusplugin = NULL;
-    sync->gtpplugin = NULL;
     sync->activeips = NULL;
 
     while (haltattempts < 10) {
@@ -227,6 +222,8 @@ void clean_sync_data(collector_sync_t *sync) {
         haltfails += send_halt_message_to_zmq_socket_array(
                 sync->zmq_emailsocks, sync->emailcount);
         haltfails += send_halt_message_to_zmq_socket_array(
+                sync->zmq_gtpsocks, sync->gtpcount);
+        haltfails += send_halt_message_to_zmq_socket_array(
                 sync->zmq_smssocks, sync->smscount);
 
         if (haltfails == 0) {
@@ -238,6 +235,7 @@ void clean_sync_data(collector_sync_t *sync) {
 
     free(sync->zmq_emailsocks);
     free(sync->zmq_smssocks);
+    free(sync->zmq_gtpsocks);
     free(sync->zmq_pubsocks);
     free(sync->zmq_fwdctrlsocks);
 
@@ -517,34 +515,6 @@ static inline void push_static_iprange_remove_to_collectors(
 
 }
 
-static inline void push_single_ipintercept(
-        libtrace_message_queue_t *q, ipintercept_t *ipint,
-        access_session_t *session) {
-
-    ipsession_t *ipsess;
-    openli_pushed_t msg;
-    int i;
-
-    for (i = 0; i < session->sessipcount; i++) {
-
-        ipsess = create_ipsession(ipint, session->cin,
-            session->sessionips[i].ipfamily,
-            (struct sockaddr *)&(session->sessionips[i].assignedip),
-            session->sessionips[i].prefixbits);
-
-        if (!ipsess) {
-            logger(LOG_INFO,
-                    "OpenLI: ran out of memory while creating IP session message.");
-            return;
-        }
-        memset(&msg, 0, sizeof(openli_pushed_t));
-        msg.type = OPENLI_PUSH_IPINTERCEPT;
-        msg.data.ipsess = ipsess;
-
-        libtrace_message_queue_put(q, (void *)(&msg));
-    }
-}
-
 static inline void push_single_vendmirrorid(libtrace_message_queue_t *q,
         ipintercept_t *ipint, uint8_t msgtype) {
 
@@ -808,24 +778,10 @@ static void push_session_update_to_threads(void *sendqs,
         access_session_t *sess, ipintercept_t *ipint, int updatetype) {
 
     sync_sendq_t *sendq, *tmp;
-    int i;
 
-    for (i = 0; i < sess->sessipcount; i++) {
-        openli_pushed_t pmsg;
-        ipsession_t *sessdup;
-
-        HASH_ITER(hh, (sync_sendq_t *)sendqs, sendq, tmp) {
-            memset(&pmsg, 0, sizeof(openli_pushed_t));
-            pmsg.type = updatetype;
-            sessdup = create_ipsession(ipint, sess->cin,
-                    sess->sessionips[i].ipfamily,
-                    (struct sockaddr *)&(sess->sessionips[i].assignedip),
-                    sess->sessionips[i].prefixbits);
-
-            pmsg.data.ipsess = sessdup;
-            libtrace_message_queue_put(sendq->q, &pmsg);
-        }
-
+    HASH_ITER(hh, (sync_sendq_t *)sendqs, sendq, tmp) {
+        push_session_update_to_collector_queue(sendq->q, ipint, sess,
+                updatetype);
     }
 
 }
@@ -1097,7 +1053,7 @@ static void push_existing_user_sessions(collector_sync_t *sync,
         HASH_ITER(hh, user->sessions, sess, tmp2) {
             HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                     sendq, tmp) {
-                push_single_ipintercept(sendq->q, cept, sess);
+                push_session_ips_to_collector_queue(sendq->q, cept, sess);
             }
 
             create_iri_from_session(sync, sess, cept,
@@ -1245,7 +1201,7 @@ static int update_modified_intercept(collector_sync_t *sync,
         add_intercept_to_user_intercept_list(&sync->userintercepts, ipint);
 
         push_existing_user_sessions(sync, ipint);
-        logger(LOG_INFO, "OpenLI: IP intercept %s has changed target", ipint->common.liid);
+        logger(LOG_INFO, "OpenLI: IP intercept %s has changed target, resuming interception for new target", ipint->common.liid);
     }
 
     if (ipint->vendmirrorid != modified->vendmirrorid) {
@@ -1583,6 +1539,11 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 if (ret == -1) {
                     return -1;
                 }
+                ret = forward_provmsg_to_workers(sync->zmq_gtpsocks,
+                        sync->gtpcount, provmsg, msglen, msgtype, "GTP");
+                if (ret == -1) {
+                    return -1;
+                }
                 break;
             case OPENLI_PROTO_ADD_STATICIPS:
                 ret = new_staticiprange(sync, provmsg, msglen);
@@ -1629,6 +1590,11 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 if (ret == -1) {
                     return -1;
                 }
+                ret = forward_provmsg_to_workers(sync->zmq_gtpsocks,
+                        sync->gtpcount, provmsg, msglen, msgtype, "GTP");
+                if (ret == -1) {
+                    return -1;
+                }
                 break;
             case OPENLI_PROTO_ANNOUNCE_DEFAULT_RADIUS:
                 ret = new_default_radius(sync, provmsg, msglen);
@@ -1660,6 +1626,11 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 if (ret < 0) {
                     return -1;
                 }
+                ret = forward_provmsg_to_workers(sync->zmq_gtpsocks,
+                        sync->gtpcount, provmsg, msglen, msgtype, "GTP");
+                if (ret == -1) {
+                    return -1;
+                }
                 break;
 
             case OPENLI_PROTO_START_VOIPINTERCEPT:
@@ -1687,6 +1658,11 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 }
                 ret = forward_provmsg_to_workers(sync->zmq_emailsocks,
                         sync->emailcount, provmsg, msglen, msgtype, "email");
+                if (ret == -1) {
+                    return -1;
+                }
+                ret = forward_provmsg_to_workers(sync->zmq_gtpsocks,
+                        sync->gtpcount, provmsg, msglen, msgtype, "GTP");
                 if (ret == -1) {
                     return -1;
                 }
@@ -1865,6 +1841,8 @@ void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
     forward_provmsg_to_voipsync(sync, NULL, 0, OPENLI_PROTO_DISCONNECT);
     forward_provmsg_to_workers(sync->zmq_emailsocks, sync->emailcount,
             NULL, 0, OPENLI_PROTO_DISCONNECT, "email");
+    forward_provmsg_to_workers(sync->zmq_gtpsocks, sync->gtpcount,
+            NULL, 0, OPENLI_PROTO_DISCONNECT, "GTP");
     forward_provmsg_to_workers(sync->zmq_smssocks, sync->smscount,
             NULL, 0, OPENLI_PROTO_DISCONNECT, "SMS");
 
@@ -1899,7 +1877,7 @@ static void push_all_active_intercepts(internet_user_t *allusers,
             user = lookup_user_by_intercept(allusers, orig);
             if (user) {
                 HASH_ITER(hh, user->sessions, sess, tmp2) {
-                    push_single_ipintercept(q, orig, sess);
+                    push_session_ips_to_collector_queue(q, orig, sess);
                 }
             }
         }
@@ -2148,7 +2126,7 @@ static int newly_active_session(collector_sync_t *sync,
         }
         HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues),
                 sendq, tmpq) {
-            push_single_ipintercept(sendq->q, ipint, sess);
+            push_session_ips_to_collector_queue(sendq->q, ipint, sess);
         }
     }
     pthread_mutex_lock(sync->glob->stats_mutex);
@@ -2199,8 +2177,6 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
 
     if (accesstype == ACCESS_RADIUS) {
         p = sync->radiusplugin;
-    } else if (accesstype == ACCESS_GTP) {
-        p = sync->gtpplugin;
     }
 
     if (!p) {

@@ -109,7 +109,25 @@ typedef struct ip_to_session {
     UT_hash_handle hh;
 } ip_to_session_t;
 
+typedef struct teid_to_session {
+    char *idstring;
+    uint32_t teid;
+    int sessioncount;
+    access_session_t **session;
+    internet_user_t **owner;
+    uint32_t cin;
+    UT_hash_handle hh;
+} teid_to_session_t;
+
+typedef enum {
+    OPENLI_ACCESS_SESSION_UNKNOWN = 0,
+    OPENLI_ACCESS_SESSION_IP = 1,
+    OPENLI_ACCESS_SESSION_TEID = 2,
+} openli_access_session_id_t;
+
 struct access_session {
+
+    openli_access_session_id_t identifier_type;
 
     internetaccess_ip_t *sessionips;
     uint8_t sessipcount;
@@ -124,6 +142,10 @@ struct access_session {
     uint32_t iriseqno;
 
     struct timeval started;
+
+    char *gtp_tunnel_endpoints;
+    uint32_t teids[2];
+    uint8_t teids_mapped;
 
     UT_hash_handle hh;
 } ;
@@ -192,12 +214,17 @@ int free_single_session(access_session_t *sess);
 
 access_plugin_t *get_radius_access_plugin(void);
 access_plugin_t *get_gtp_access_plugin(void);
+void destroy_gtp_access_plugin(access_plugin_t *gtp);
 
 access_session_t *create_access_session(access_plugin_t *p,
         char *idstr, int idstr_len);
 void add_new_session_ip(access_session_t *sess, void *att_val,
         int family, uint8_t pfxbits, int att_len);
 int remove_session_ip(access_session_t *sess, internetaccess_ip_t *sessip);
+int push_session_ips_to_collector_queue(libtrace_message_queue_t *q,
+        ipintercept_t *ipint, access_session_t *session);
+void push_session_update_to_collector_queue(libtrace_message_queue_t *q,
+        ipintercept_t *ipint, access_session_t *sess, int updatetype);
 
 const char *accesstype_to_string(internet_access_method_t am);
 

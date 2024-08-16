@@ -42,6 +42,7 @@ uint8_t etsi_emailirioid[4] = {0x05, 0x02, 0x0f, 0x01};
 uint8_t etsi_emailccoid[4] = {0x05, 0x02, 0x0f, 0x02};
 uint8_t etsi_umtsirioid[9] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x04, 0x01, 0x0f, 0x05};
 uint8_t etsi_hi1operationoid[8] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x00, 0x01, 0x06};
+uint8_t etsi_epsirioid[9] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x04, 0x08, 0x11, 0x00};
 
 static inline void encode_tri_body(wandder_encoder_t *encoder) {
     ENC_CSEQUENCE(encoder, 2);          // Payload
@@ -114,7 +115,7 @@ static inline void encode_hi1_notification_body(wandder_encoder_t *encoder,
     wandder_encode_endseq(encoder);     // End Outermost Sequence
 }
 
-wandder_encoded_result_t *encode_umtscc_body(wandder_encoder_t *encoder,
+void encode_umtscc_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, void *ipcontent, uint32_t iplen,
         uint8_t dir) {
 
@@ -151,7 +152,6 @@ wandder_encoded_result_t *encode_umtscc_body(wandder_encoder_t *encoder,
     wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, ipcontent, iplen);
     END_ENCODED_SEQUENCE(encoder, 4);
-    return wandder_encode_finish(encoder);
 }
 
 static inline void encode_emailcc_body(wandder_encoder_t *encoder,
@@ -456,10 +456,6 @@ wandder_encoded_result_t *encode_umtsiri_body(wandder_encoder_t *encoder,
         ENC_CSEQUENCE(encoder, 1);       // datanodeaddress
         encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
         END_ENCODED_SEQUENCE(encoder, 2);
-    } else {
-        logger(LOG_INFO,
-                "OpenLI: warning, no PDP Address available for constructing UMTS IRI");
-        logger(LOG_INFO, "OpenLI: UMTS IRI record may be invalid...");
     }
 
     /* TODO figure out if we need to include the "length" field in our
@@ -1161,6 +1157,13 @@ void etsili_preencode_static_fields(
     p->valspace = NULL;
     p->vallen = 0;
 
+    p = &(pendarray[OPENLI_PREENCODE_CSEQUENCE_15]);
+    p->identclass = WANDDER_CLASS_CONTEXT_CONSTRUCT;
+    p->identifier = 15;
+    p->encodeas = WANDDER_TAG_SEQUENCE;
+    p->valspace = NULL;
+    p->vallen = 0;
+
     p = &(pendarray[OPENLI_PREENCODE_PSDOMAINID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
@@ -1257,6 +1260,12 @@ void etsili_preencode_static_fields(
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_OID;
     wandder_encode_preencoded_value(p, etsi_umtsirioid, sizeof(etsi_umtsirioid));
+
+    p = &(pendarray[OPENLI_PREENCODE_EPSIRIOID]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_OID;
+    wandder_encode_preencoded_value(p, etsi_epsirioid, sizeof(etsi_epsirioid));
 
     p = &(pendarray[OPENLI_PREENCODE_IPMMCCOID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;

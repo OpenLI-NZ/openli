@@ -36,6 +36,10 @@
 
 #define OPENLI_VENDOR_MIRROR_NONE (0xffffffff)
 
+#define INTERCEPT_IS_ACTIVE(cept, now) \
+    (cept->common.tostart_time <= now.tv_sec && ( \
+        cept->common.toend_time == 0 || cept->common.toend_time > now.tv_sec))
+
 typedef enum {
     OPENLI_INTERCEPT_TYPE_UNKNOWN = 0,
     OPENLI_INTERCEPT_TYPE_IP = 1,
@@ -436,6 +440,7 @@ void free_all_rtpstreams(rtpstreaminf_t **streams);
 void free_all_ipsessions(ipsession_t **sessions);
 void free_all_vendmirror_intercepts(vendmirror_intercept_list_t **mirror_intercepts);
 void free_all_staticipsessions(staticipsession_t **statintercepts);
+void free_all_staticipranges(static_ipranges_t **ipranges);
 
 void free_voip_cinmap(voipcinmap_t *cins);
 void free_single_ipintercept(ipintercept_t *cept);

@@ -403,19 +403,24 @@ void free_single_emailintercept(emailintercept_t *m) {
     free(m);
 }
 
-void free_single_ipintercept(ipintercept_t *cept) {
+void free_all_staticipranges(static_ipranges_t **ipranges) {
     static_ipranges_t *ipr, *tmp;
+
+    HASH_ITER(hh, *ipranges, ipr, tmp) {
+        HASH_DELETE(hh, *ipranges, ipr);
+        free_single_staticiprange(ipr);
+    }
+    *ipranges = NULL;
+}
+
+void free_single_ipintercept(ipintercept_t *cept) {
 
     free_intercept_common(&(cept->common));
     if (cept->username) {
         free(cept->username);
     }
 
-    HASH_ITER(hh, cept->statics, ipr, tmp) {
-        HASH_DELETE(hh, cept->statics, ipr);
-        free_single_staticiprange(ipr);
-    }
-
+    free_all_staticipranges(&(cept->statics));
     free(cept);
 }
 

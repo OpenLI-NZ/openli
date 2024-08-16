@@ -51,10 +51,12 @@ typedef struct colsync_data {
     int forwardcount;
     int emailcount;
     int smscount;
+    int gtpcount;
 
     void **zmq_pubsocks;
     void **zmq_fwdctrlsocks;
     void **zmq_emailsocks;
+    void **zmq_gtpsocks;
     void **zmq_smssocks;
     void *zmq_colsock;
 
@@ -81,7 +83,6 @@ typedef struct colsync_data {
     wandder_encoder_t *encoder;
 
     access_plugin_t *radiusplugin;
-    access_plugin_t *gtpplugin;
     etsili_generic_freelist_t *freegenerics;
 
     ip_to_session_t *activeips;
