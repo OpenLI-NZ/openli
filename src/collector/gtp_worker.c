@@ -334,7 +334,7 @@ static void add_teid_to_session_mapping(openli_gtp_worker_t *worker,
     }
     snprintf(keystr, 1024, "%s-%u", sess->gtp_tunnel_endpoints, teid);
 
-    printf("TEID ID: %s\n", keystr);
+    //printf("TEID ID: %s\n", keystr);
 
     HASH_FIND(hh, worker->all_data_teids, keystr, strlen(keystr), found);
     if (found && found->cin == sess->cin) {
@@ -382,7 +382,7 @@ static void remove_teid_to_session_mapping(openli_gtp_worker_t *worker,
         return;
     }
     snprintf(keystr, 1024, "%s-%u", sess->gtp_tunnel_endpoints, teid);
-    printf("DELETING %s\n", keystr);
+    //printf("DELETING %s\n", keystr);
 
     HASH_FIND(hh, worker->all_data_teids, keystr, strlen(keystr), found);
     if (!found) {
@@ -588,7 +588,7 @@ static void process_gtp_u_packet(openli_gtp_worker_t *worker UNUSED,
         return;
     }
 
-    printf("GTP-U: lookup for %s\n", keystr);
+    //printf("GTP-U: lookup for %s\n", keystr);
 
 }
 
