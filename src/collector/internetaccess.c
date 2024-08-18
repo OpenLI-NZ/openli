@@ -114,8 +114,11 @@ static inline void free_session(access_session_t *sess) {
     if (sess->plugin) {
         sess->plugin->destroy_session_data(sess->plugin, sess);
     }
-    if (sess->gtp_tunnel_endpoints) {
-        free(sess->gtp_tunnel_endpoints);
+    if (sess->gtp_tunnel_endpoints[0]) {
+        free(sess->gtp_tunnel_endpoints[0]);
+    }
+    if (sess->gtp_tunnel_endpoints[1]) {
+        free(sess->gtp_tunnel_endpoints[1]);
     }
     if (sess->sessionips) {
         free(sess->sessionips);
@@ -249,7 +252,8 @@ access_session_t *create_access_session(access_plugin_t *p, char *sessid,
     newsess->teids[0] = 0;
     newsess->teids[1] = 0;
     newsess->teids_mapped = 0;
-    newsess->gtp_tunnel_endpoints = NULL;
+    newsess->gtp_tunnel_endpoints[0] = NULL;
+    newsess->gtp_tunnel_endpoints[1] = NULL;
 	return newsess;
 }
 

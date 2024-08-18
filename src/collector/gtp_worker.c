@@ -321,7 +321,8 @@ static void push_gtp_session_over(openli_gtp_worker_t *worker,
 }
 
 static void add_teid_to_session_mapping(openli_gtp_worker_t *worker,
-        access_session_t *sess, uint32_t teid, internet_user_t *iuser) {
+        access_session_t *sess, uint32_t teid, char *endpoint_ip,
+        internet_user_t *iuser) {
 
     teid_to_session_t *found;
     char keystr[1024];
@@ -332,7 +333,11 @@ static void add_teid_to_session_mapping(openli_gtp_worker_t *worker,
         logger(LOG_INFO, "OpenLI: called add_teid_to_session_mapping() but the assigned TEID is zero for the session?");
         return;
     }
-    snprintf(keystr, 1024, "%s-%u", sess->gtp_tunnel_endpoints, teid);
+    if (endpoint_ip == NULL) {
+        logger(LOG_INFO, "OpenLI: called add_teid_to_session_mapping() but the endpoint IP is NULL for the session?");
+        return;
+    }
+    snprintf(keystr, 1024, "%s-%u", endpoint_ip, teid);
 
     //printf("TEID ID: %s\n", keystr);
 
@@ -372,7 +377,7 @@ static void add_teid_to_session_mapping(openli_gtp_worker_t *worker,
 }
 
 static void remove_teid_to_session_mapping(openli_gtp_worker_t *worker,
-        access_session_t *sess, uint32_t teid) {
+        access_session_t *sess, uint32_t teid, char *endpoint_ip) {
 
     teid_to_session_t *found;
     int nullsess = 0, i;
@@ -381,8 +386,11 @@ static void remove_teid_to_session_mapping(openli_gtp_worker_t *worker,
     if (!sess->teids_mapped) {
         return;
     }
-    snprintf(keystr, 1024, "%s-%u", sess->gtp_tunnel_endpoints, teid);
-    //printf("DELETING %s\n", keystr);
+    if (endpoint_ip == NULL) {
+        return;
+    }
+    snprintf(keystr, 1024, "%s-%u", endpoint_ip, teid);
+    printf("DELETING %s\n", keystr);
 
     HASH_FIND(hh, worker->all_data_teids, keystr, strlen(keystr), found);
     if (!found) {
@@ -425,12 +433,14 @@ static void newly_active_gtp_session(openli_gtp_worker_t *worker,
         return;
     }
 
-    /* Save the Data TEIDs for this session as we have to now
-     * intercept GTP-U for those TEIDs from now on -- TODO
+    /* Save the Data TEIDs for this session as we have to
+     * intercept GTP-U for those TEIDs from now on
      */
     if (sess->identifier_type & OPENLI_ACCESS_SESSION_TEID) {
-        add_teid_to_session_mapping(worker, sess, sess->teids[0], iuser);
-        add_teid_to_session_mapping(worker, sess, sess->teids[1], iuser);
+        add_teid_to_session_mapping(worker, sess, sess->teids[0],
+                sess->gtp_tunnel_endpoints[0], iuser);
+        add_teid_to_session_mapping(worker, sess, sess->teids[1],
+                sess->gtp_tunnel_endpoints[1], iuser);
         sess->teids_mapped = 1;
     }
 
@@ -557,33 +567,16 @@ static void process_gtp_u_packet(openli_gtp_worker_t *worker UNUSED,
     if (ethertype == TRACE_ETHERTYPE_IP) {
         libtrace_ip_t *ip = (libtrace_ip_t *)l3;
 
-        if (ip->ip_src.s_addr < ip->ip_dst.s_addr) {
-            snprintf(keystr, 1024, "%u-%u-%u", ip->ip_src.s_addr,
-                    ip->ip_dst.s_addr, teid);
-        } else {
-            snprintf(keystr, 1024, "%u-%u-%u", ip->ip_dst.s_addr,
-                    ip->ip_src.s_addr, teid);
-        }
+        snprintf(keystr, 1024, "%u-%u", ip->ip_dst.s_addr, teid);
     } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
         libtrace_ip6_t *ip6 = (libtrace_ip6_t *)l3;
         if (rem < sizeof(libtrace_ip6_t)) {
             return;
         }
-        if (memcmp(&(ip6->ip_src.s6_addr), &(ip6->ip_dst.s6_addr), 16) < 0) {
-            snprintf(keystr, 1024, "%lu-%lu-%lu-%lu-%u",
-                    *(uint64_t *)(&(ip6->ip_src.s6_addr)),
-                    *(uint64_t *)(&(ip6->ip_src.s6_addr[8])),
-                    *(uint64_t *)(&(ip6->ip_dst.s6_addr)),
-                    *(uint64_t *)(&(ip6->ip_dst.s6_addr[8])),
-                    teid);
-        } else {
-            snprintf(keystr, 1024, "%lu-%lu-%lu-%lu-%u",
-                    *(uint64_t *)(&(ip6->ip_dst.s6_addr)),
-                    *(uint64_t *)(&(ip6->ip_dst.s6_addr[8])),
-                    *(uint64_t *)(&(ip6->ip_src.s6_addr)),
-                    *(uint64_t *)(&(ip6->ip_src.s6_addr[8])),
-                    teid);
-        }
+        snprintf(keystr, 1024, "%lu-%lu-%u",
+                *(uint64_t *)(&(ip6->ip_dst.s6_addr)),
+                *(uint64_t *)(&(ip6->ip_dst.s6_addr[8])),
+                teid);
     } else {
         return;
     }
@@ -646,8 +639,10 @@ static void process_gtp_c_packet(openli_gtp_worker_t *worker,
 
             } else if (newstate == SESSION_STATE_OVER) {
                 push_gtp_session_over(worker, userint, sess);
-                remove_teid_to_session_mapping(worker, sess, sess->teids[0]);
-                remove_teid_to_session_mapping(worker, sess, sess->teids[1]);
+                remove_teid_to_session_mapping(worker, sess, sess->teids[0],
+                        sess->gtp_tunnel_endpoints[0]);
+                remove_teid_to_session_mapping(worker, sess, sess->teids[1],
+                        sess->gtp_tunnel_endpoints[1]);
             }
         }
 

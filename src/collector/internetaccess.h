@@ -143,7 +143,7 @@ struct access_session {
 
     struct timeval started;
 
-    char *gtp_tunnel_endpoints;
+    char *gtp_tunnel_endpoints[2];
     uint32_t teids[2];
     uint8_t teids_mapped;
 

@@ -129,6 +129,7 @@ typedef struct gtp_session {
     int idstr_imei_len;
     uint32_t control_teid[2];
     uint32_t data_teid[2];
+    char *tunnel_endpoints[2];
 
     internetaccess_ip_t *pdpaddrs;
     uint8_t pdpaddrcount;
@@ -138,8 +139,6 @@ typedef struct gtp_session {
 
     uint8_t serverid[16];
     uint8_t serveripfamily;
-
-    char *tunnel_endpoints;
 
     session_state_t current;
 
@@ -165,6 +164,7 @@ struct gtp_saved_packet {
     uint32_t teid_ctl;
     uint32_t teid_data;
     uint32_t teid;
+    char *endpoint_ip;
 
     uint8_t *ipcontent;
     uint16_t iplen;
@@ -190,7 +190,7 @@ typedef struct gtp_parsed {
     uint8_t serveripfamily;
     uint8_t serverid[16];
 
-    char tunnel_endpoints[256];
+    char tunnel_endpoint[256];
     char imsi[16];
     char msisdn[16];
     char imei[16];
@@ -230,7 +230,7 @@ static void reset_parsed_pkt(gtp_parsed_t *parsed) {
     parsed->bearerid = 255;
 
     parsed->serveripfamily = 0;
-    memset(parsed->tunnel_endpoints, 0, 256);
+    memset(parsed->tunnel_endpoint, 0, 256);
     memset(parsed->serverid, 0, 16);
     memset(parsed->imsi, 0, 16);
     memset(parsed->imei, 0, 16);
@@ -271,8 +271,11 @@ static inline void destroy_gtp_session(gtp_session_t *sess) {
         free(sess->sessid);
     }
 
-    if (sess->tunnel_endpoints) {
-        free(sess->tunnel_endpoints);
+    if (sess->tunnel_endpoints[0]) {
+        free(sess->tunnel_endpoints[0]);
+    }
+    if (sess->tunnel_endpoints[1]) {
+        free(sess->tunnel_endpoints[1]);
     }
 
     if (sess->altsessid) {
@@ -383,6 +386,9 @@ static void gtp_destroy_parsed_data(access_plugin_t *p UNUSED, void *parsed) {
         if (gparsed->request->ipcontent) {
             free(gparsed->request->ipcontent);
         }
+        if (gparsed->request->endpoint_ip) {
+            free(gparsed->request->endpoint_ip);
+        }
         gtp_free_ie_list(gparsed->request->ies);
         free(gparsed->request);
     }
@@ -390,6 +396,9 @@ static void gtp_destroy_parsed_data(access_plugin_t *p UNUSED, void *parsed) {
     if (gparsed->response) {
         if (gparsed->response->ipcontent) {
             free(gparsed->response->ipcontent);
+        }
+        if (gparsed->response->endpoint_ip) {
+            free(gparsed->response->endpoint_ip);
         }
         gtp_free_ie_list(gparsed->response->ies);
         free(gparsed->response);
@@ -809,6 +818,9 @@ static void flush_old_gtp_packets(gtp_global_t *glob, double ts) {
             if (pkt->ipcontent) {
                 free(pkt->ipcontent);
             }
+            if (pkt->endpoint_ip) {
+                free(pkt->endpoint_ip);
+            }
             JLD(rc, glob->saved_packets, pkt->reqid);
             free(pkt);
             purged ++;
@@ -955,17 +967,18 @@ static void *gtp_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
 
         /* It appears that update bearer requests are sent by the server.
          * Every other request so far is sent by the UE / client */
-
-        if (ip->ip_src.s_addr < ip->ip_dst.s_addr) {
-            snprintf(glob->parsedpkt->tunnel_endpoints, 256, "%u-%u",
-                    ip->ip_src.s_addr, ip->ip_dst.s_addr);
-        } else {
-            snprintf(glob->parsedpkt->tunnel_endpoints, 256, "%u-%u",
-                    ip->ip_dst.s_addr, ip->ip_src.s_addr);
-        }
-
         switch(glob->parsedpkt->msgtype) {
             case GTPV2_CREATE_SESSION_REQUEST:
+            case GTPV1_CREATE_PDP_CONTEXT_REQUEST:
+                /* Use source IP because the TEID to use is announced by the
+                 * intended recipient.
+                 */
+                snprintf(glob->parsedpkt->tunnel_endpoint, 256, "%u",
+                        ip->ip_src.s_addr);
+
+                memcpy(glob->parsedpkt->serverid, &(ip->ip_dst.s_addr), 4);
+                break;
+
             case GTPV2_DELETE_SESSION_REQUEST:
             case GTPV2_MODIFY_BEARER_REQUEST:
             case GTPV2_CREATE_BEARER_REQUEST:
@@ -973,12 +986,21 @@ static void *gtp_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
             case GTPV2_UPDATE_BEARER_RESPONSE:
             case GTPV2_MODIFY_BEARER_COMMAND:
             case GTPV2_DELETE_BEARER_COMMAND:
-            case GTPV1_CREATE_PDP_CONTEXT_REQUEST:
             case GTPV1_UPDATE_PDP_CONTEXT_REQUEST:
             case GTPV1_DELETE_PDP_CONTEXT_REQUEST:
                 memcpy(glob->parsedpkt->serverid, &(ip->ip_dst.s_addr), 4);
                 break;
             case GTPV2_CREATE_SESSION_RESPONSE:
+            case GTPV1_CREATE_PDP_CONTEXT_RESPONSE:
+                /* Use source IP because the TEID to use is announced by the
+                 * intended recipient.
+                 */
+                snprintf(glob->parsedpkt->tunnel_endpoint, 256, "%u",
+                        ip->ip_src.s_addr);
+
+                memcpy(glob->parsedpkt->serverid, &(ip->ip_src.s_addr), 4);
+                break;
+
             case GTPV2_DELETE_SESSION_RESPONSE:
             case GTPV2_MODIFY_BEARER_RESPONSE:
             case GTPV2_CREATE_BEARER_RESPONSE:
@@ -986,7 +1008,6 @@ static void *gtp_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
             case GTPV2_DELETE_BEARER_RESPONSE:
             case GTPV2_MODIFY_BEARER_FAILURE_INDICATION:
             case GTPV2_DELETE_BEARER_FAILURE_INDICATION:
-            case GTPV1_CREATE_PDP_CONTEXT_RESPONSE:
             case GTPV1_UPDATE_PDP_CONTEXT_RESPONSE:
             case GTPV1_DELETE_PDP_CONTEXT_RESPONSE:
                 memcpy(glob->parsedpkt->serverid, &(ip->ip_src.s_addr), 4);
@@ -1000,22 +1021,20 @@ static void *gtp_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
 
         glob->parsedpkt->serveripfamily = 6;
 
-        if (memcmp(&(ip6->ip_src.s6_addr), &(ip6->ip_dst.s6_addr), 16) < 0) {
-            snprintf(glob->parsedpkt->tunnel_endpoints, 256, "%lu-%lu-%lu-%lu",
-                    *(uint64_t *)(&(ip6->ip_src.s6_addr)),
-                    *(uint64_t *)(&(ip6->ip_src.s6_addr[8])),
-                    *(uint64_t *)(&(ip6->ip_dst.s6_addr)),
-                    *(uint64_t *)(&(ip6->ip_dst.s6_addr[8])));
-        } else {
-            snprintf(glob->parsedpkt->tunnel_endpoints, 256, "%lu-%lu-%lu-%lu",
-                    *(uint64_t *)(&(ip6->ip_dst.s6_addr)),
-                    *(uint64_t *)(&(ip6->ip_dst.s6_addr[8])),
-                    *(uint64_t *)(&(ip6->ip_src.s6_addr)),
-                    *(uint64_t *)(&(ip6->ip_src.s6_addr[8])));
-        }
-
         switch(glob->parsedpkt->msgtype) {
             case GTPV2_CREATE_SESSION_REQUEST:
+            case GTPV1_CREATE_PDP_CONTEXT_REQUEST:
+                /* Use source IP because the TEID to use is announced by the
+                 * intended recipient.
+                 */
+                snprintf(glob->parsedpkt->tunnel_endpoint, 256, "%lu-%lu",
+                        *(uint64_t *)(&(ip6->ip_src.s6_addr)),
+                        *(uint64_t *)(&(ip6->ip_src.s6_addr[8])));
+
+                memcpy(glob->parsedpkt->serverid, &(ip6->ip_dst.s6_addr),
+                        16);
+                break;
+
             case GTPV2_DELETE_SESSION_REQUEST:
             case GTPV2_MODIFY_BEARER_REQUEST:
             case GTPV2_CREATE_BEARER_REQUEST:
@@ -1023,13 +1042,25 @@ static void *gtp_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
             case GTPV2_DELETE_BEARER_REQUEST:
             case GTPV2_MODIFY_BEARER_COMMAND:
             case GTPV2_DELETE_BEARER_COMMAND:
-            case GTPV1_CREATE_PDP_CONTEXT_REQUEST:
             case GTPV1_UPDATE_PDP_CONTEXT_REQUEST:
             case GTPV1_DELETE_PDP_CONTEXT_REQUEST:
                 memcpy(glob->parsedpkt->serverid, &(ip6->ip_dst.s6_addr),
                         16);
                 break;
+
             case GTPV2_CREATE_SESSION_RESPONSE:
+            case GTPV1_CREATE_PDP_CONTEXT_RESPONSE:
+                /* Use source IP because the TEID to use is announced by the
+                 * intended recipient.
+                 */
+                snprintf(glob->parsedpkt->tunnel_endpoint, 256, "%lu-%lu",
+                        *(uint64_t *)(&(ip6->ip_src.s6_addr)),
+                        *(uint64_t *)(&(ip6->ip_src.s6_addr[8])));
+
+                memcpy(glob->parsedpkt->serverid, &(ip6->ip_src.s6_addr),
+                        16);
+                break;
+
             case GTPV2_DELETE_SESSION_RESPONSE:
             case GTPV2_MODIFY_BEARER_RESPONSE:
             case GTPV2_CREATE_BEARER_RESPONSE:
@@ -1037,7 +1068,6 @@ static void *gtp_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
             case GTPV2_DELETE_BEARER_RESPONSE:
             case GTPV2_MODIFY_BEARER_FAILURE_INDICATION:
             case GTPV2_DELETE_BEARER_FAILURE_INDICATION:
-            case GTPV1_CREATE_PDP_CONTEXT_RESPONSE:
             case GTPV1_UPDATE_PDP_CONTEXT_RESPONSE:
             case GTPV1_DELETE_PDP_CONTEXT_RESPONSE:
                 memcpy(glob->parsedpkt->serverid, &(ip6->ip_src.s6_addr),
@@ -1188,6 +1218,9 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
         saved->iplen = 0;
         saved->response_cause = gparsed->response_cause;
         saved->bearerid = gparsed->bearerid;
+        if (gparsed->tunnel_endpoint[0] != '\0') {
+            saved->endpoint_ip = strdup(gparsed->tunnel_endpoint);
+        }
         gparsed->ies = NULL;
 
         openli_copy_ipcontent(gparsed->origpkt, &(saved->ipcontent),
@@ -1201,6 +1234,9 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
             gparsed->ies = saved->ies;
             if (saved->ipcontent) {
                 free(saved->ipcontent);
+            }
+            if (saved->endpoint_ip) {
+                free(saved->endpoint_ip);
             }
             free(saved);
         }
@@ -1218,7 +1254,7 @@ static user_identity_t *gtp_get_userid(access_plugin_t *p, void *parsed,
     sess->gtpversion = gparsed->version;
     sess->defaultbearer = 255;
     memcpy(sess->serverid, gparsed->serverid, 16);
-    sess->tunnel_endpoints = strdup(gparsed->tunnel_endpoints);
+    sess->tunnel_endpoints[0] = strdup(gparsed->tunnel_endpoint);
     sess->serveripfamily = gparsed->serveripfamily;
 
     JSLI(pval, glob->session_map, (unsigned char *)sess->sessid);
@@ -1442,7 +1478,11 @@ static inline void add_new_session_teids(access_session_t *sess,
 
     sess->teids[0] = gsess->data_teid[0];
     sess->teids[1] = gsess->data_teid[1];
-    sess->gtp_tunnel_endpoints = strdup(gsess->tunnel_endpoints);
+    sess->gtp_tunnel_endpoints[0] = gsess->tunnel_endpoints[0];
+    sess->gtp_tunnel_endpoints[1] = gsess->tunnel_endpoints[1];
+
+    gsess->tunnel_endpoints[0] = NULL;
+    gsess->tunnel_endpoints[1] = NULL;
     sess->identifier_type |= OPENLI_ACCESS_SESSION_TEID;
 
 }
@@ -1496,6 +1536,9 @@ static void apply_gtp_fsm_logic(gtp_global_t *glob,
             }
             if (gpkt->teid_data != 0) {
                 gparsed->matched_session->data_teid[1] = gpkt->teid_data;
+                gparsed->matched_session->tunnel_endpoints[1] =
+                    gpkt->endpoint_ip;
+                gpkt->endpoint_ip = NULL;
             }
             add_new_session_teids(sess, gparsed->matched_session);
         } else if (gpkt->response_cause >= 64 && gpkt->response_cause <= 239) {
@@ -1518,6 +1561,9 @@ static void apply_gtp_fsm_logic(gtp_global_t *glob,
             }
             if (gpkt->teid_data != 0) {
                 gparsed->matched_session->data_teid[1] = gpkt->teid_data;
+                gparsed->matched_session->tunnel_endpoints[1] =
+                    gpkt->endpoint_ip;
+                gpkt->endpoint_ip = NULL;
             }
             add_new_session_teids(sess, gparsed->matched_session);
 
@@ -1764,6 +1810,9 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
 
             if (check->ipcontent) {
                 free(check->ipcontent);
+            }
+            if (check->endpoint_ip) {
+                free(check->endpoint_ip);
             }
             gtp_free_ie_list(check->ies);
             free(check);
