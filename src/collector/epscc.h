@@ -37,10 +37,10 @@
 
 openli_export_recv_t *create_epscc_job(char *liid, uint32_t cin,
         uint32_t destid, uint8_t dir, uint8_t *ipcontent, uint32_t ipclen,
-        uint8_t icetype);
+        uint8_t icetype, uint16_t gtpseqno);
 
 wandder_encoded_result_t *encode_epscc_body(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, uint32_t cin, uint32_t seqno,
+        wandder_encode_job_t *precomputed, uint32_t cin, uint16_t gtpseqno,
         uint8_t dir, struct timeval tv, uint8_t icetype);
 
 #endif

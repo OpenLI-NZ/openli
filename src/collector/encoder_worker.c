@@ -524,7 +524,7 @@ static int encode_templated_epscc(openli_encoder_t *enc,
     reset_wandder_encoder(enc->encoder);
 
     body = encode_epscc_body(enc->encoder, job->preencoded,
-            job->cin, job->seqno, epsccjob->dir, job->origreq->ts,
+            job->cin, epsccjob->gtpseqno, epsccjob->dir, job->origreq->ts,
             epsccjob->icetype);
 
     if (body == NULL ||  body->len == 0 || body->encoded == NULL) {

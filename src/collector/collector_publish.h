@@ -85,6 +85,7 @@ typedef struct openli_mobcc_job {
     uint8_t *ipcontent;
     uint32_t ipclen;
     uint8_t icetype;
+    uint16_t gtpseqno;
 } PACKED openli_mobcc_job_t;
 
 typedef struct openli_emailiri_job {

@@ -33,7 +33,7 @@
 
 openli_export_recv_t *create_epscc_job(char *liid, uint32_t cin,
         uint32_t destid, uint8_t dir, uint8_t *ipcontent, uint32_t ipclen,
-        uint8_t icetype) {
+        uint8_t icetype, uint16_t gtpseqno) {
 
     openli_export_recv_t *msg = NULL;
 
@@ -53,13 +53,14 @@ openli_export_recv_t *create_epscc_job(char *liid, uint32_t cin,
     memcpy(msg->data.mobcc.ipcontent, ipcontent, ipclen);
     msg->data.mobcc.ipclen = ipclen;
     msg->data.mobcc.icetype = icetype;
+    msg->data.mobcc.gtpseqno = gtpseqno;
 
     return msg;
 }
 
 wandder_encoded_result_t *encode_epscc_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed UNUSED, uint32_t cin UNUSED,
-        uint32_t seqno UNUSED, uint8_t dir UNUSED, struct timeval tv UNUSED,
+        uint16_t gtpseqno UNUSED, uint8_t dir UNUSED, struct timeval tv UNUSED,
         uint8_t icetype UNUSED) {
 
     return wandder_encode_finish(encoder);

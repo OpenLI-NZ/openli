@@ -605,7 +605,7 @@ static void generate_encoding_jobs(openli_gtp_worker_t *worker,
 
 static void process_gtp_u_packet(openli_gtp_worker_t *worker,
         libtrace_packet_t *packet, uint8_t *payload,
-        uint32_t plen, uint32_t teid) {
+        uint32_t plen, uint32_t teid, uint16_t gtpseqno) {
 
     void *l3;
     uint16_t ethertype;
@@ -672,7 +672,8 @@ static void process_gtp_u_packet(openli_gtp_worker_t *worker,
                  * value to use here...
                  */
                 expmsg = create_epscc_job(ipint->common.liid, found->cin,
-                        ipint->common.destid, found->dir, payload, plen, 0);
+                        ipint->common.destid, found->dir, payload, plen, 0,
+                        gtpseqno);
             }
             publish_openli_msg(worker->zmq_pubsocks[ipint->common.seqtrackerid],
                     expmsg);
@@ -775,6 +776,7 @@ static void process_gtp_packet(openli_gtp_worker_t *worker,
     void *transport;
     uint8_t msgtype;
     uint32_t teid;
+    uint16_t seqno = 0;
 
     if (packet == NULL) {
         return;
@@ -806,6 +808,7 @@ static void process_gtp_packet(openli_gtp_worker_t *worker,
 
         msgtype = v2hdr->msgtype;
         teid = ntohl(v2hdr->teid);
+        seqno = ntohs(v2hdr->seqno);
         payload += sizeof(gtpv2_header_teid_t);
         plen -= sizeof(gtpv2_header_teid_t);
 
@@ -819,6 +822,7 @@ static void process_gtp_packet(openli_gtp_worker_t *worker,
 
         msgtype = v1hdr->msgtype;
         teid = ntohl(v1hdr->teid);
+        seqno = ntohs(v1hdr->seqno);
         payload += sizeof(gtpv1_header_t);
         plen -= sizeof(gtpv1_header_t);
     } else {
@@ -827,7 +831,7 @@ static void process_gtp_packet(openli_gtp_worker_t *worker,
 
     if (msgtype == 0xff) {
         /* This is GTP-U */
-        process_gtp_u_packet(worker, packet, payload, plen, teid);
+        process_gtp_u_packet(worker, packet, payload, plen, teid, seqno);
     } else {
         /* This is GTP-C */
         process_gtp_c_packet(worker, packet);
