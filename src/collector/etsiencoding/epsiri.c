@@ -181,19 +181,6 @@ wandder_encoded_result_t *encode_epsiri_body(wandder_encoder_t *encoder,
     END_ENCODED_SEQUENCE(encoder, 3);
 
     /* gprs correlation number (18) */
-    lookup = EPSIRI_CONTENTS_GPRS_CORRELATION;
-    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
-    if (!p) {
-        logger(LOG_INFO,
-                "OpenLI: warning, no GPRS correlation number available for building EPS IRI");
-        logger(LOG_INFO, "OpenLI: EPS IRI record may be invalid...");
-    } else {
-        char space[24];
-        snprintf(space, 24, "%lu", *((uint64_t *)(p->itemptr)));
-
-        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
-                WANDDER_CLASS_CONTEXT_PRIMITIVE, 18, space, strlen(space));
-    }
 
     /* EPS event (20) */
     lookup = EPSIRI_CONTENTS_EVENT_TYPE;

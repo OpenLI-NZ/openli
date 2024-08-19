@@ -116,6 +116,7 @@ typedef struct teid_to_session {
     access_session_t **session;
     internet_user_t **owner;
     uint32_t cin;
+    uint8_t dir;
     UT_hash_handle hh;
 } teid_to_session_t;
 
