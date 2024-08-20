@@ -236,7 +236,7 @@ static void setup_gtpu_testing_intercept(openli_gtp_worker_t *worker,
     user_identity_t newid;
 
     newid.method = USER_IDENT_GTP_MSISDN;
-    newid.idstr = "foobar";
+    newid.idstr = "5511950140000";
     newid.idlength = strlen(newid.idstr);
 
     iuser = calloc(1, sizeof(internet_user_t));

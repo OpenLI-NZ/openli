@@ -523,9 +523,9 @@ static int encode_templated_epscc(openli_encoder_t *enc,
      */
     reset_wandder_encoder(enc->encoder);
 
-    body = encode_epscc_body(enc->encoder, job->preencoded,
+    body = encode_epscc_body(enc->encoder, job->preencoded, job->liid,
             job->cin, epsccjob->gtpseqno, epsccjob->dir, job->origreq->ts,
-            epsccjob->icetype);
+            epsccjob->icetype, epsccjob->ipclen);
 
     if (body == NULL ||  body->len == 0 || body->encoded == NULL) {
         logger(LOG_INFO, "OpenLI: failed to encode ETSI EPSCC body");

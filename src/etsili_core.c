@@ -43,6 +43,7 @@ uint8_t etsi_emailccoid[4] = {0x05, 0x02, 0x0f, 0x02};
 uint8_t etsi_umtsirioid[9] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x04, 0x01, 0x0f, 0x05};
 uint8_t etsi_hi1operationoid[8] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x00, 0x01, 0x06};
 uint8_t etsi_epsirioid[9] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x04, 0x08, 0x11, 0x00};
+uint8_t etsi_epsccoid[9] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x04, 0x09, 0x11, 0x00};
 
 static inline void encode_tri_body(wandder_encoder_t *encoder) {
     ENC_CSEQUENCE(encoder, 2);          // Payload
@@ -1164,6 +1165,13 @@ void etsili_preencode_static_fields(
     p->valspace = NULL;
     p->vallen = 0;
 
+    p = &(pendarray[OPENLI_PREENCODE_CSEQUENCE_17]);
+    p->identclass = WANDDER_CLASS_CONTEXT_CONSTRUCT;
+    p->identifier = 17;
+    p->encodeas = WANDDER_TAG_SEQUENCE;
+    p->valspace = NULL;
+    p->vallen = 0;
+
     p = &(pendarray[OPENLI_PREENCODE_PSDOMAINID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
@@ -1266,6 +1274,12 @@ void etsili_preencode_static_fields(
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_OID;
     wandder_encode_preencoded_value(p, etsi_epsirioid, sizeof(etsi_epsirioid));
+
+    p = &(pendarray[OPENLI_PREENCODE_EPSCCOID]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 0;
+    p->encodeas = WANDDER_TAG_OID;
+    wandder_encode_preencoded_value(p, etsi_epsccoid, sizeof(etsi_epsccoid));
 
     p = &(pendarray[OPENLI_PREENCODE_IPMMCCOID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;

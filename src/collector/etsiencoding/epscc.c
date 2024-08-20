@@ -59,9 +59,73 @@ openli_export_recv_t *create_epscc_job(char *liid, uint32_t cin,
 }
 
 wandder_encoded_result_t *encode_epscc_body(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed UNUSED, uint32_t cin UNUSED,
-        uint16_t gtpseqno UNUSED, uint8_t dir UNUSED, struct timeval tv UNUSED,
-        uint8_t icetype UNUSED) {
+        wandder_encode_job_t *precomputed, const char *liid, uint32_t cin,
+        uint16_t gtpseqno, uint8_t dir, struct timeval tv, uint8_t icetype,
+        uint32_t ipclen) {
 
+    wandder_encode_job_t *jobarray[8];
+    char correlation[32];
+    uint32_t seqno = gtpseqno;
+    uint32_t tpdudir;
+    uint32_t ice32 = icetype;
+
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
+    jobarray[2] = &(precomputed[OPENLI_PREENCODE_USEQUENCE]);
+
+    if (dir == ETSI_DIR_FROM_TARGET) {
+        jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRFROM]);
+    } else if (dir == ETSI_DIR_TO_TARGET) {
+        jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRTO]);
+    } else {
+        jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRUNKNOWN]);
+    }
+    jobarray[4] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]); // ccContents
+    jobarray[5] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_17]); // EPSCC-PDU
+    jobarray[6] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]); // ULIC-header
+    jobarray[7] = &(precomputed[OPENLI_PREENCODE_EPSCCOID]);    // hi3DomainID
+    wandder_encode_next_preencoded(encoder, jobarray, 8);
+
+    wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, (void *)liid, strlen(liid));
+
+    snprintf(correlation, 32, "%u", cin);
+    wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 3, correlation,
+            strlen(correlation));
+
+    ENC_CSEQUENCE(encoder, 4);
+    wandder_encode_next(encoder, WANDDER_TAG_UTCTIME,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &tv, sizeof(tv));
+    wandder_encode_endseq(encoder);
+
+    // sequenceNumber
+    wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 5, &seqno, sizeof(seqno));
+
+    // tpdu-direction
+    if (dir == ETSI_DIR_FROM_TARGET) {
+        tpdudir = 1;
+    } else if (dir == ETSI_DIR_TO_TARGET) {
+        tpdudir = 2;
+    } else {
+        tpdudir = 3;
+    }
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 6, &(tpdudir), sizeof(tpdudir));
+
+    // national parameters go here (7)
+
+    // ice-type
+    if (icetype != 0) {
+        wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 8, &(ice32), sizeof(ice32));
+    }
+
+    END_ENCODED_SEQUENCE(encoder, 1);
+
+    // payload
+    wandder_encode_next(encoder, WANDDER_TAG_IPPACKET,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, NULL, ipclen);
     return wandder_encode_finish(encoder);
 }
