@@ -512,7 +512,7 @@ static inline void send_packet_to_sync(libtrace_packet_t *pkt,
      * doing this a lot and don't want to be wasteful */
     copy = openli_copy_packet(pkt);
     if (copy == NULL) {
-        exit(1);
+        return;
     }
 
     syncup.type = updatetype;
