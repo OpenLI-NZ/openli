@@ -1,3 +1,14 @@
+openli (1.1.9-1~hotfixes01) unstable; urgency=medium
+
+  * Fix RADIUS crash that can occur under very rare circumstances due to
+    a dangling user record pointer in an old unmatched request.
+  * Fix bug where CINs for all RADIUS sessions were zero.
+  * Fix potential silent exit in collector if a packet cannot be
+    copied to be sent to another thread.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 21 Aug 2024 23:46:18 +1200
+
+
 openli (1.1.8-1) unstable; urgency=medium
 
   * Collector: fix crash in sync_voip thread if an invalid SIP packet
