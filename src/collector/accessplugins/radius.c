@@ -106,6 +106,8 @@ struct radius_user {
     Pvoid_t sessions;
     Pvoid_t savedrequests;
     radius_nas_t *parent_nas;
+
+    time_t inactive_since;
 };
 
 typedef struct radius_v6_prefix_attr {
@@ -129,7 +131,7 @@ struct radius_saved_request {
 
     uint32_t reqid;
     uint32_t statustype;
-    uint32_t acctsess;
+    uint32_t acctsess_hash;
     double tvsec;
     radius_attribute_t *attrs;
 
@@ -175,7 +177,7 @@ typedef struct radius_parsed {
     uint8_t msgident;
     uint8_t *authptr;
     uint32_t accttype;
-    uint32_t acctsess;
+    uint32_t acctsess_hash;
     uint32_t nasport;
     double tvsec;
     radius_attribute_t *attrs;
@@ -235,7 +237,7 @@ static inline void reset_parsed_packet(radius_parsed_t *parsed) {
     parsed->savedreq = NULL;
     parsed->savedresp = NULL;
     parsed->muser_count = 0;
-    parsed->acctsess = 0;
+    parsed->acctsess_hash = 0;
     memset(parsed->matchedusers, 0, sizeof(radius_user_t *) * USER_IDENT_MAX);
     memset(&(parsed->nasip), 0, sizeof(struct sockaddr_storage));
     memset(&(parsed->radiusip), 0, sizeof(struct sockaddr_storage));
@@ -391,7 +393,6 @@ static void destroy_radius_user(radius_user_t *user, unsigned char *userind) {
     JLF(pval, user->savedrequests, index);
     while (pval) {
         radius_saved_req_t *req = (radius_saved_req_t *)(*pval);
-
         for (i = 0; i < req->targetuser_count; i++) {
             if (req->targetusers[i] == NULL) {
                 continue;
@@ -884,7 +885,8 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
                     memcpy(sessstr, newattr->att_val, att_len - 2);
                 }
 
-                parsed->acctsess = strtoul(sessstr, NULL, 10);
+                parsed->acctsess_hash = hashlittle(sessstr, strlen(sessstr),
+                        0x85F8B41B);
             }
         }
 
@@ -921,8 +923,8 @@ static radius_user_t *add_user_identity(uint8_t att_type, uint8_t *att_val,
     }
 
     assert(keyrem > att_len);
-    memcpy(nextchar, att_val, att_len);
 
+    memcpy(nextchar, att_val, att_len);
     nextchar += att_len;
     keyrem -= att_len;
 
@@ -934,6 +936,7 @@ static radius_user_t *add_user_identity(uint8_t att_type, uint8_t *att_val,
         index = raddata->muser_count;
         raddata->muser_count ++;
         raddata->matchedusers[index] = (radius_user_t *)(*pval);
+        raddata->matchedusers[index]->inactive_since = 0;
         return raddata->matchedusers[index];
     }
 
@@ -946,6 +949,7 @@ static radius_user_t *add_user_identity(uint8_t att_type, uint8_t *att_val,
     user->sessions = NULL;
     user->savedrequests = NULL;
     user->parent_nas = raddata->matchednas;
+    user->inactive_since = 0;
     //user->current = SESSION_STATE_NEW;
 
     JSLI(pval, raddata->matchednas->user_map, (unsigned char *)user->userid);
@@ -1013,7 +1017,7 @@ static uint32_t assign_cin(radius_parsed_t *raddata) {
             /* Modulo 2^31 to avoid possible issues with the CIN
              * being treated as a negative number by the recipient.
              */
-            hashval = raddata->acctsess % (uint32_t)(pow(2, 31));
+            hashval = raddata->acctsess_hash % (uint32_t)(pow(2, 31));
             return hashval;
         }
         attr = attr->next;
@@ -1222,7 +1226,7 @@ static inline void find_matching_request(radius_parsed_t *raddata) {
 
         raddata->savedreq = req;
         raddata->accttype = raddata->savedreq->statustype;
-        raddata->acctsess = raddata->savedreq->acctsess;
+        raddata->acctsess_hash = raddata->savedreq->acctsess_hash;
 
         memcpy(raddata->matchedusers, raddata->savedreq->targetusers,
                 sizeof(radius_user_t *) * USER_IDENT_MAX);
@@ -1630,7 +1634,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     ptr = quickcat(ptr, &rem, raduser->nasidentifier, raduser->nasid_len);
     ptr = quickcat(ptr, &rem, "-", 1);
 
-    snprintf(tempstr, 24, "%u", raddata->acctsess);
+    snprintf(tempstr, 24, "%u", raddata->acctsess_hash);
     ptr = quickcat(ptr, &rem, tempstr, strlen(tempstr));
 
     HASH_FIND(hh, *sesslist, sessionid, strlen(sessionid), thissess);
@@ -1666,7 +1670,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
             HASH_FIND(hh, raddata->matchednas->request_map, &(reqid),
                     sizeof(reqid), check);
             if (check && raddata->tvsec == check->tvsec &&
-                    raddata->acctsess == check->acctsess) {
+                    raddata->acctsess_hash == check->acctsess_hash) {
                 /* This *is* the same request -- we've already inserted it,
                  * probably due to having both CSID and username in the
                  * AVP list.
@@ -1702,7 +1706,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
 
                 req->reqid = reqid;
                 req->statustype = raddata->accttype;
-                req->acctsess = raddata->acctsess;
+                req->acctsess_hash = raddata->acctsess_hash;
                 req->tvsec = raddata->tvsec;
                 req->next = NULL;
                 req->attrs = raddata->attrs;
@@ -1722,12 +1726,12 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         }
     }
 
-    JLG(pval, raduser->sessions, raddata->acctsess);
+    JLG(pval, raduser->sessions, raddata->acctsess_hash);
     if (pval == NULL) {
         usess = calloc(1, sizeof(radius_user_session_t));
 
         usess->current = SESSION_STATE_NEW;
-        usess->session_id = raddata->acctsess;
+        usess->session_id = raddata->acctsess_hash;
         usess->nasidentifier = NULL;
         usess->nas_port = 0;
         usess->nas_ip = NULL;
@@ -2151,8 +2155,11 @@ static void radius_destroy_session_data(access_plugin_t *p UNUSED,
         JLD(rcint, usess->parent->sessions, usess->session_id);
         JLC(rcw, usess->parent->sessions, 0, -1);
         if (rcw == 0) {
-            destroy_radius_user(usess->parent,
-                    (unsigned char *)usess->parent->userid);
+            struct timeval tv;
+            gettimeofday(&tv, NULL);
+            usess->parent->inactive_since = tv.tv_sec;
+
+            // TODO expire users who have been inactive for a long time?
         }
     }
 
