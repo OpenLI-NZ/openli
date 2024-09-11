@@ -779,20 +779,26 @@ static uint8_t sms_check_slow_path(colthread_local_t *loc,
 static uint8_t is_sms_over_sip(libtrace_packet_t *pkt,
         colthread_local_t *loc, collector_global_t *glob) {
 
-    uint8_t x = 0;
+    uint8_t x = 0, ret = 0;
 
-    x = add_sip_packet_to_parser(&(loc->sipparser), pkt, 0);
+    libtrace_packet_t *copy = openli_copy_packet(pkt);
+
+    x = add_sip_packet_to_parser(&(loc->sipparser), copy, 0);
     if (x == SIP_ACTION_USE_PACKET) {
         /* No fragments, no TCP reassembly required */
-        return sms_check_fast_path(loc, pkt, glob);
+        ret = sms_check_fast_path(loc, copy, glob);
     } else if (x == SIP_ACTION_REASSEMBLE_TCP) {
         /* Reassembled TCP, could contain multiple messages */
-        return sms_check_slow_path(loc, glob, 0);
+        ret = sms_check_slow_path(loc, glob, 0);
+        copy = NULL;            // consumed by the reassembler
     } else if (x == SIP_ACTION_REASSEMBLE_IPFRAG) {
         /* Reassembled IP/UDP fragment */
-        return sms_check_slow_path(loc, glob, 1);
+        ret = sms_check_slow_path(loc, glob, 1);
     }
-    return 0;
+    if (copy) {
+        trace_destroy_packet(copy);
+    }
+    return ret;
 }
 
 static inline uint8_t check_for_invalid_sip(packet_info_t *pinfo,

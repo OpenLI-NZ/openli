@@ -2054,6 +2054,7 @@ static void examine_sip_update(collector_sync_voip_t *sync,
         sip_update_fast_path(sync, recvdpkt);
     } else if (ret == SIP_ACTION_REASSEMBLE_TCP) {
         sip_update_slow_path(sync, recvdpkt, 0);
+        recvdpkt = NULL;        // consumed by the reassembler
     } else if (ret == SIP_ACTION_REASSEMBLE_IPFRAG) {
         sip_update_slow_path(sync, recvdpkt, 1);
     }
