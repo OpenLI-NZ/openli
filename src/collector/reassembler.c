@@ -739,9 +739,8 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
             assert(endfound <= contstart + iter->length);
             assert(endfound > contstart);
 
-            used = endfound - (uint8_t *)(*content);
-
-            stream->expectedseqno += used;
+            used = endfound - contstart;
+            stream->expectedseqno += (used + contused);
 
             /* give all of the packets thus far back to the caller, so
              * they can decide if they need to "intercept" them -- the
