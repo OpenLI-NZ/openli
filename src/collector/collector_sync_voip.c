@@ -1271,7 +1271,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         portstr = get_sip_media_port(sync->sipparser, 0);
         mediatype = get_sip_media_type(sync->sipparser, 0);
 
-        if (iritype == ETSILI_IRI_BEGIN) {
+        if (iritype == ETSILI_IRI_BEGIN || thisrtp->active == 0) {
             memcpy(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc, 16);
             dir = 0;
         } else if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc,
