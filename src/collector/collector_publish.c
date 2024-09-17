@@ -254,6 +254,42 @@ int push_vendor_mirrored_ipcc_job(void *pubqueue,
     return 0;
 }
 
+openli_export_recv_t *create_epscc_job_from_ip(uint32_t cin, char *liid,
+        uint32_t destid, libtrace_packet_t *pkt, uint8_t dir) {
+
+    void *l3;
+    uint32_t rem;
+    uint16_t ethertype;
+    openli_export_recv_t *msg = NULL;
+
+    msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    if (msg == NULL) {
+        return msg;
+    }
+
+    l3 = trace_get_layer3(pkt, &ethertype, &rem);
+
+    if (l3 == NULL || rem == 0) {
+        free(msg);
+        return NULL;
+    }
+
+    msg->type = OPENLI_EXPORT_EPSCC;
+    msg->destid = destid;
+    msg->ts = trace_get_timeval(pkt);
+    msg->data.mobcc.liid = strdup(liid);
+    msg->data.mobcc.ipcontent = calloc(rem, sizeof(uint8_t));
+    memcpy(msg->data.mobcc.ipcontent, l3, rem);
+    msg->data.mobcc.ipclen = rem;
+    msg->data.mobcc.cin = cin;
+    msg->data.mobcc.dir = dir;
+
+    msg->data.mobcc.icetype = 0;
+    msg->data.mobcc.gtpseqno = 0;
+
+    return msg;
+}
+
 openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,
         uint32_t destid, libtrace_packet_t *pkt, uint8_t dir) {
 

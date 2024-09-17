@@ -215,6 +215,9 @@ openli_export_recv_t *create_ipcc_job(
         uint32_t cin, char *liid, uint32_t destid, libtrace_packet_t *pkt,
         uint8_t dir);
 
+openli_export_recv_t *create_epscc_job_from_ip(uint32_t cin, char *liid,
+        uint32_t destid, libtrace_packet_t *pkt, uint8_t dir);
+
 /** Creates a raw IP packet encoding job from a pointer to an IP header.
  *  Supports creating messages using both the OPENLI_EXPORT_RAW_CC type and
  *  the OPENLI_EXPORT_RAW_IRI type.
