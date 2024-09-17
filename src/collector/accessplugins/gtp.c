@@ -1480,6 +1480,7 @@ static inline void add_new_session_teids(access_session_t *sess,
     sess->teids[1] = gsess->data_teid[1];
     sess->gtp_tunnel_endpoints[0] = gsess->tunnel_endpoints[0];
     sess->gtp_tunnel_endpoints[1] = gsess->tunnel_endpoints[1];
+    sess->gtp_version = gsess->gtpversion;
 
     gsess->tunnel_endpoints[0] = NULL;
     gsess->tunnel_endpoints[1] = NULL;

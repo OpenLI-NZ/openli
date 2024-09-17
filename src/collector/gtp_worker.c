@@ -107,8 +107,6 @@ static void add_teid_to_session_mapping(openli_gtp_worker_t *worker,
         etsidir = ETSI_DIR_TO_TARGET;
     }
 
-    printf("TEID ID: %s\n", keystr);
-
     HASH_FIND(hh, worker->all_data_teids, keystr, strlen(keystr), found);
     if (found && found->cin == sess->cin && found->dir == etsidir) {
         found->session = realloc(found->session,
@@ -159,7 +157,6 @@ static void remove_teid_to_session_mapping(openli_gtp_worker_t *worker,
         return;
     }
     snprintf(keystr, 1024, "%s-%u", endpoint_ip, teid);
-    printf("DELETING %s\n", keystr);
 
     HASH_FIND(hh, worker->all_data_teids, keystr, strlen(keystr), found);
     if (!found) {
@@ -227,43 +224,6 @@ static void newly_active_gtp_session(openli_gtp_worker_t *worker,
 
 }
 
-static void setup_gtpu_testing_intercept(openli_gtp_worker_t *worker,
-        ipintercept_t *ipint) {
-
-    internet_user_t *iuser;
-    user_intercept_list_t *userint;
-    access_session_t *sess;
-    user_identity_t newid;
-
-    newid.method = USER_IDENT_GTP_MSISDN;
-    newid.idstr = "5511950140000";
-    newid.idlength = strlen(newid.idstr);
-
-    iuser = calloc(1, sizeof(internet_user_t));
-
-    add_userid_to_allusers_map(&worker->allusers, iuser, &newid);
-
-    printf("iuser->userid: %s\n", iuser->userid);
-    HASH_FIND(hh, worker->userintercepts, iuser->userid,
-                strlen(iuser->userid), userint);
-    if (userint == NULL) {
-        logger(LOG_INFO, "NO USER INTERCEPT LIST for %s?", ipint->common.liid);
-        return;
-    }
-
-    sess = create_access_session(worker->gtpplugin, "foobar", strlen("foobar"));
-    sess->identifier_type = OPENLI_ACCESS_SESSION_TEID;
-    sess->cin = 240;
-    sess->teids[0] = 1;
-    sess->teids[1] = 1;
-    sess->gtp_tunnel_endpoints[0] = strdup("2989009088");
-    sess->gtp_tunnel_endpoints[1] = strdup("3005786304");
-    sess->teids_mapped = 0;
-
-    newly_active_gtp_session(worker, userint, sess, iuser);
-
-}
-
 static int init_gtp_intercept(openli_gtp_worker_t *worker,
         ipintercept_t *ipint) {
 
@@ -291,11 +251,6 @@ static int init_gtp_intercept(openli_gtp_worker_t *worker,
             ipint->common.liid_len, ipint);
     ipint->awaitingconfirm = 0;
 
-
-    // XXX VERY TEMPORARY for testing and dev
-    if (strcmp(ipint->common.liid, "gtpv2test") == 0) {
-        setup_gtpu_testing_intercept(worker, ipint);
-    }
     return 1;
 }
 
@@ -647,6 +602,7 @@ static void process_gtp_u_packet(openli_gtp_worker_t *worker,
 
     for (i = 0; i < found->sessioncount; i++) {
         internet_user_t *owner = found->owner[i];
+        access_session_t *sess = found->session[i];
         user_intercept_list_t *userint;
 
         HASH_FIND(hh, worker->userintercepts, owner->userid,
@@ -663,13 +619,16 @@ static void process_gtp_u_packet(openli_gtp_worker_t *worker,
                         ipint->common.destid, payload, plen, tv,
                         OPENLI_EXPORT_RAW_CC);
 
-            } else {
+            } else if (sess->gtp_version == 2) {
                 /* TODO define ICE types and figure out how we decide what
                  * value to use here...
                  */
                 expmsg = create_epscc_job(ipint->common.liid, found->cin,
                         ipint->common.destid, found->dir, payload, plen, 0,
                         gtpseqno);
+            } else {
+                /* XXX don't bother with UMTSCC right now */
+                continue;
             }
             publish_openli_msg(worker->zmq_pubsocks[ipint->common.seqtrackerid],
                     expmsg);
