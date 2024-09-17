@@ -997,7 +997,6 @@ static void *gtp_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
                  */
                 snprintf(glob->parsedpkt->tunnel_endpoint, 256, "%u",
                         ip->ip_src.s_addr);
-
                 memcpy(glob->parsedpkt->serverid, &(ip->ip_src.s_addr), 4);
                 break;
 
@@ -1530,8 +1529,7 @@ static void apply_gtp_fsm_logic(gtp_global_t *glob,
             extract_gtp_assigned_ip_address(gpkt, sess,
                     gparsed->matched_session);
 
-            /* TODO: set up GTP-U data sessions */
-
+            /* set up GTP-U data sessions */
             if (gpkt->teid_ctl != 0) {
                 create_alt_session_entry(glob, gparsed, gpkt->teid_ctl);
             }
@@ -1556,7 +1554,7 @@ static void apply_gtp_fsm_logic(gtp_global_t *glob,
             extract_gtp_assigned_ip_address(gpkt, sess,
                     gparsed->matched_session);
 
-            /* TODO: set up GTP-U data sessions */
+            /* set up GTP-U data sessions */
             if (gpkt->teid_ctl != 0) {
                 create_alt_session_entry(glob, gparsed, gpkt->teid_ctl);
             }
@@ -1702,6 +1700,7 @@ static access_session_t *gtp_update_session_state(access_plugin_t *p,
     saved->teid = gparsed->teid;
     saved->teid_ctl = gparsed->teid_ctl;
     saved->teid_data = gparsed->teid_data;
+    saved->endpoint_ip = strdup(gparsed->tunnel_endpoint);
 
     gparsed->ies = NULL;
     gparsed->matched_session->last_reqid = reqid;
