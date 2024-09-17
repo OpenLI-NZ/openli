@@ -166,6 +166,7 @@ int create_etsi_encoded_result(openli_encoded_result_t *res,
         case OPENLI_EXPORT_IPMMCC:
         case OPENLI_EXPORT_UMTSCC:
         case OPENLI_EXPORT_EMAILCC:
+        case OPENLI_EXPORT_EPSCC:
             res->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
             break;
         case OPENLI_EXPORT_IPIRI:

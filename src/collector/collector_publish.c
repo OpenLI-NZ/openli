@@ -88,7 +88,14 @@ void free_published_message(openli_export_recv_t *msg) {
         if (msg->data.ipcc.ipcontent) {
             free(msg->data.ipcc.ipcontent);
         }
-    } else if (msg->type == OPENLI_EXPORT_EMAILCC) {
+    } else if (msg->type == OPENLI_EXPORT_EPSCC) {
+        if (msg->data.mobcc.liid) {
+            free(msg->data.mobcc.liid);
+        }
+        if (msg->data.mobcc.ipcontent) {
+            free(msg->data.mobcc.ipcontent);
+        }
+    }else if (msg->type == OPENLI_EXPORT_EMAILCC) {
         if (msg->data.emailcc.liid) {
             free(msg->data.emailcc.liid);
         }
@@ -139,7 +146,7 @@ void free_published_message(openli_export_recv_t *msg) {
     free(msg);
 }
 
-static openli_export_recv_t *create_rawip_job_from_ip(char *liid,
+openli_export_recv_t *create_rawip_job_from_ip(char *liid,
         uint32_t destid, void *l3, uint32_t l3_len, struct timeval tv,
         uint8_t msgtype) {
 

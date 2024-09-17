@@ -37,7 +37,7 @@ wandder_encoded_result_t *encode_epsiri_body(wandder_encoder_t *encoder,
         etsili_iri_type_t iritype, etsili_generic_t *params) {
 
     wandder_encode_job_t *jobarray[6];
-    etsili_generic_t *p, *savedtime;
+    etsili_generic_t *p;
     uint8_t lookup;
     //uint32_t iriversion = 8;
     uint32_t gprstarget = 3;
@@ -50,21 +50,6 @@ wandder_encoded_result_t *encode_epsiri_body(wandder_encoder_t *encoder,
     wandder_encode_next(encoder, WANDDER_TAG_ENUM,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &iritype,
             sizeof(iritype));
-
-    /* timeStamp -- as generalized time */
-    lookup = EPSIRI_CONTENTS_EVENT_TIME;
-    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
-    if (p) {
-        wandder_encode_next(encoder, WANDDER_TAG_GENERALTIME,
-                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1,
-                p->itemptr, p->itemlen);
-        savedtime = p;
-    } else {
-        savedtime = NULL;
-        logger(LOG_INFO,
-                "OpenLI: warning, no timestamp available for building EPS IRI");
-        logger(LOG_INFO, "OpenLI: EPS IRI record may be invalid...");
-    }
 
     jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
     jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_15]);
@@ -81,14 +66,16 @@ wandder_encoded_result_t *encode_epsiri_body(wandder_encoder_t *encoder,
 
     jobarray[4] = &(precomputed[OPENLI_PREENCODE_LIID]);
 
-    /* timeStamp again (3) -- different format, use UTCTime */
+    /* timeStamp (3) -- use UTCTime */
     jobarray[5] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_3]);
     wandder_encode_next_preencoded(encoder, jobarray, 6);
 
-    if (savedtime) {
+    lookup = EPSIRI_CONTENTS_EVENT_TIME;
+    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
+    if (p) {
         wandder_encode_next(encoder, WANDDER_TAG_UTCTIME,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 1,
-                savedtime->itemptr, savedtime->itemlen);
+                p->itemptr, p->itemlen);
     }
     END_ENCODED_SEQUENCE(encoder, 1);
 
@@ -181,19 +168,6 @@ wandder_encoded_result_t *encode_epsiri_body(wandder_encoder_t *encoder,
     END_ENCODED_SEQUENCE(encoder, 3);
 
     /* gprs correlation number (18) */
-    lookup = EPSIRI_CONTENTS_GPRS_CORRELATION;
-    HASH_FIND(hh, params, &lookup, sizeof(lookup), p);
-    if (!p) {
-        logger(LOG_INFO,
-                "OpenLI: warning, no GPRS correlation number available for building EPS IRI");
-        logger(LOG_INFO, "OpenLI: EPS IRI record may be invalid...");
-    } else {
-        char space[24];
-        snprintf(space, 24, "%lu", *((uint64_t *)(p->itemptr)));
-
-        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
-                WANDDER_CLASS_CONTEXT_PRIMITIVE, 18, space, strlen(space));
-    }
 
     /* EPS event (20) */
     lookup = EPSIRI_CONTENTS_EVENT_TYPE;

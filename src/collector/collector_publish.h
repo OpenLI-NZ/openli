@@ -78,6 +78,16 @@ typedef struct openli_ipcc_job {
     uint8_t dir;
 } PACKED openli_ipcc_job_t;
 
+typedef struct openli_mobcc_job {
+    char *liid;
+    uint32_t cin;
+    uint8_t dir;
+    uint8_t *ipcontent;
+    uint32_t ipclen;
+    uint8_t icetype;
+    uint16_t gtpseqno;
+} PACKED openli_mobcc_job_t;
+
 typedef struct openli_emailiri_job {
     char *liid;
     uint32_t cin;
@@ -118,6 +128,7 @@ typedef struct openli_mobiri_job {
     etsili_iri_type_t iritype;
     etsili_generic_t *customparams;
 }  openli_mobiri_job_t;
+
 
 typedef struct openli_ipiri_job {
     char *liid;
@@ -188,6 +199,7 @@ struct openli_export_recv {
         openli_ipmmiri_job_t ipmmiri;
         openli_ipiri_job_t ipiri;
         openli_mobiri_job_t mobiri;
+        openli_mobcc_job_t mobcc;
         openli_rawip_job_t rawip;
         openli_emailiri_job_t emailiri;
         openli_emailcc_job_t emailcc;
@@ -202,6 +214,30 @@ openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common);
 openli_export_recv_t *create_ipcc_job(
         uint32_t cin, char *liid, uint32_t destid, libtrace_packet_t *pkt,
         uint8_t dir);
+
+/** Creates a raw IP packet encoding job from a pointer to an IP header.
+ *  Supports creating messages using both the OPENLI_EXPORT_RAW_CC type and
+ *  the OPENLI_EXPORT_RAW_IRI type.
+ *
+ *  Used to export IP packets that are being intercepted by pcapdisk
+ *  IP data intercepts.
+ *
+ *  @param liid     The LIID that this packet has been intercepted for
+ *  @param destid   The mediator that should receive the raw IP packet
+ *  @param l3       Pointer to the start of the IP header from the packet
+ *                  that is being intercepted
+ *  @param l3_len   The number of bytes in the intercepted packet, starting
+ *                  from the pointer given as `l3`
+ *  @param tv       The timestamp for the intercepted packet
+ *  @param msgtype  The type of job to encode (either OPENLI_EXPORT_RAW_CC
+ *                  or OPENLI_EXPORT_RAW_IRI)
+ *
+ *  @return an encoding job that is ready to be published using
+ *          publish_openli_msg()
+ */
+openli_export_recv_t *create_rawip_job_from_ip(char *liid,
+        uint32_t destid, void *l3, uint32_t l3_len, struct timeval tv,
+        uint8_t msgtype);
 
 /** Creates a raw IP packet encoding job using the OPENLI_EXPORT_RAW_CC type.
  *
