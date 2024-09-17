@@ -34,16 +34,9 @@
 #include "collector/emailiri.h"
 #include "logger.h"
 
-uint8_t etsi_ipccoid[4] = {0x05, 0x03, 0x0a, 0x02};
-uint8_t etsi_ipirioid[4] = {0x05, 0x03, 0x0a, 0x01};
-uint8_t etsi_ipmmccoid[4] = {0x05, 0x05, 0x06, 0x02};
-uint8_t etsi_ipmmirioid[4] = {0x05, 0x05, 0x06, 0x01};
+uint8_t etsi_hi1operationoid[8] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x00, 0x01, 0x06};
 uint8_t etsi_emailirioid[4] = {0x05, 0x02, 0x0f, 0x01};
 uint8_t etsi_emailccoid[4] = {0x05, 0x02, 0x0f, 0x02};
-uint8_t etsi_umtsirioid[9] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x04, 0x01, 0x0f, 0x05};
-uint8_t etsi_hi1operationoid[8] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x00, 0x01, 0x06};
-uint8_t etsi_epsirioid[9] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x04, 0x08, 0x11, 0x00};
-uint8_t etsi_epsccoid[9] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x04, 0x09, 0x11, 0x00};
 
 static inline void encode_tri_body(wandder_encoder_t *encoder) {
     ENC_CSEQUENCE(encoder, 2);          // Payload
@@ -1235,57 +1228,64 @@ void etsili_preencode_static_fields(
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_RELATIVEOID;
-    wandder_encode_preencoded_value(p, etsi_ipmmirioid, sizeof(etsi_ipmmirioid));
+    wandder_encode_preencoded_value(p, (uint8_t *)etsi_ipmmirioid,
+            sizeof(etsi_ipmmirioid));
 
     p = &(pendarray[OPENLI_PREENCODE_IPCCOID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_RELATIVEOID;
-    wandder_encode_preencoded_value(p, etsi_ipccoid, sizeof(etsi_ipccoid));
+    wandder_encode_preencoded_value(p, (uint8_t *)etsi_ipccoid,
+            sizeof(etsi_ipccoid));
 
     p = &(pendarray[OPENLI_PREENCODE_IPIRIOID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_RELATIVEOID;
-    wandder_encode_preencoded_value(p, etsi_ipirioid, sizeof(etsi_ipirioid));
+    wandder_encode_preencoded_value(p, (uint8_t *)etsi_ipirioid,
+            sizeof(etsi_ipirioid));
 
     p = &(pendarray[OPENLI_PREENCODE_EMAILIRIOID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_RELATIVEOID;
-    wandder_encode_preencoded_value(p, etsi_emailirioid,
+    wandder_encode_preencoded_value(p, (uint8_t *)etsi_emailirioid,
             sizeof(etsi_emailirioid));
 
     p = &(pendarray[OPENLI_PREENCODE_EMAILCCOID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_RELATIVEOID;
-    wandder_encode_preencoded_value(p, etsi_emailccoid,
+    wandder_encode_preencoded_value(p, (uint8_t *)etsi_emailccoid,
             sizeof(etsi_emailccoid));
 
     p = &(pendarray[OPENLI_PREENCODE_UMTSIRIOID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_OID;
-    wandder_encode_preencoded_value(p, etsi_umtsirioid, sizeof(etsi_umtsirioid));
+    wandder_encode_preencoded_value(p, (uint8_t *)etsi_umtsirioid,
+            sizeof(etsi_umtsirioid));
 
     p = &(pendarray[OPENLI_PREENCODE_EPSIRIOID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_OID;
-    wandder_encode_preencoded_value(p, etsi_epsirioid, sizeof(etsi_epsirioid));
+    wandder_encode_preencoded_value(p, (uint8_t *)etsi_epsirioid,
+            sizeof(etsi_epsirioid));
 
     p = &(pendarray[OPENLI_PREENCODE_EPSCCOID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_OID;
-    wandder_encode_preencoded_value(p, etsi_epsccoid, sizeof(etsi_epsccoid));
+    wandder_encode_preencoded_value(p, (uint8_t *)etsi_epsccoid,
+            sizeof(etsi_epsccoid));
 
     p = &(pendarray[OPENLI_PREENCODE_IPMMCCOID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_RELATIVEOID;
-    wandder_encode_preencoded_value(p, etsi_ipmmccoid, sizeof(etsi_ipmmccoid));
+    wandder_encode_preencoded_value(p, (uint8_t *)etsi_ipmmccoid,
+            sizeof(etsi_ipmmccoid));
 
     p = &(pendarray[OPENLI_PREENCODE_DIRFROM]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
@@ -1473,6 +1473,8 @@ int etsili_create_header_template(wandder_encoder_t *encoder,
 int etsili_update_header_template(encoded_header_template_t *tplate,
         int64_t seqno, struct timeval *tv) {
     int i;
+    time_t tvsec = tv->tv_sec;
+    time_t tvusec = tv->tv_usec;
 
     /* Assume that we've been provided the right template with sufficient
      * space to fit the sequence number and timestamps -- ideally we would
@@ -1487,13 +1489,13 @@ int etsili_update_header_template(encoded_header_template_t *tplate,
     }
 
     for (i = tplate->tssec_size - 1; i >= 0; i--) {
-        *(tplate->tssec_ptr + i) = (tv->tv_sec & 0xff);
-        tv->tv_sec = tv->tv_sec >> 8;
+        *(tplate->tssec_ptr + i) = (tvsec & 0xff);
+        tvsec = tvsec >> 8;
     }
 
     for (i = tplate->tsusec_size - 1; i >= 0; i--) {
-        *(tplate->tsusec_ptr + i) = (tv->tv_usec & 0xff);
-        tv->tv_usec = tv->tv_usec >> 8;
+        *(tplate->tsusec_ptr + i) = (tvusec & 0xff);
+        tvusec = tvusec >> 8;
     }
 
     return 0;

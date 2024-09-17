@@ -638,8 +638,6 @@ static void process_gtp_u_packet(openli_gtp_worker_t *worker,
         return;
     }
 
-    printf("\nGTP-U: lookup for %s\n", keystr);
-
     HASH_FIND(hh, worker->all_data_teids, keystr, strlen(keystr), found);
     if (!found) {
         return;
@@ -651,7 +649,6 @@ static void process_gtp_u_packet(openli_gtp_worker_t *worker,
         internet_user_t *owner = found->owner[i];
         user_intercept_list_t *userint;
 
-        printf("%d %s\n", i, owner->userid);
         HASH_FIND(hh, worker->userintercepts, owner->userid,
                 strlen(owner->userid), userint);
 
@@ -660,7 +657,6 @@ static void process_gtp_u_packet(openli_gtp_worker_t *worker,
         }
 
         HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
-            printf("%s-%s\n", ipint->common.liid, ipint->common.targetagency);
             if (ipint->common.targetagency == NULL ||
                     strcmp(ipint->common.targetagency, "pcapdisk") == 0) {
                 expmsg = create_rawip_job_from_ip(ipint->common.liid,
