@@ -14,18 +14,19 @@ openli (1.1.9-1) unstable; urgency=medium
   * Mobile data: add support for intercepting GTP-C traffic for intercept
     targets and encoding it as either EPS-IRIs (for GTPv2) or UMTS-IRIs
     (for GTPv1).
+  * Mobile data: IP-based mobile intercepts are now encoded as EPS-CCs,
+    instead of UMTS-CCs.
   * Mediator: allow RabbitMQ internal password to be specified using
     either "RMQlocalpass" OR "RMQinternalpass" config options, so
     as to match the existing documentation.
   * SIP: fix bug where RTP would not be intercepted if the SIP traffic
     is proxied back to the original source IP.
   * SIP: fix assertion failure when reassembling TCP SIP traffic that
-    happens to have trailing bytes (such as an extra '\r\n' sequence.
+    happens to have trailing bytes (such as an extra '\r\n' sequence).
   * SIP: fix double frees that could occur when reassembling TCP SIP
     traffic.
 
  -- Shane Alcock <salcock@searchlight.nz>  Wed, 18 Sep 2024 09:10:41 +1200
-
 
 openli (1.1.8-1) unstable; urgency=medium
 
