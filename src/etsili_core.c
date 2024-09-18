@@ -1228,22 +1228,22 @@ void etsili_preencode_static_fields(
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_RELATIVEOID;
-    wandder_encode_preencoded_value(p, (uint8_t *)etsi_ipmmirioid,
-            sizeof(etsi_ipmmirioid));
+    wandder_encode_preencoded_value(p, (uint8_t *)wandder_etsi_ipmmirioid,
+            sizeof(wandder_etsi_ipmmirioid));
 
     p = &(pendarray[OPENLI_PREENCODE_IPCCOID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_RELATIVEOID;
-    wandder_encode_preencoded_value(p, (uint8_t *)etsi_ipccoid,
-            sizeof(etsi_ipccoid));
+    wandder_encode_preencoded_value(p, (uint8_t *)wandder_etsi_ipccoid,
+            sizeof(wandder_etsi_ipccoid));
 
     p = &(pendarray[OPENLI_PREENCODE_IPIRIOID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_RELATIVEOID;
-    wandder_encode_preencoded_value(p, (uint8_t *)etsi_ipirioid,
-            sizeof(etsi_ipirioid));
+    wandder_encode_preencoded_value(p, (uint8_t *)wandder_etsi_ipirioid,
+            sizeof(wandder_etsi_ipirioid));
 
     p = &(pendarray[OPENLI_PREENCODE_EMAILIRIOID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
@@ -1263,29 +1263,29 @@ void etsili_preencode_static_fields(
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_OID;
-    wandder_encode_preencoded_value(p, (uint8_t *)etsi_umtsirioid,
-            sizeof(etsi_umtsirioid));
+    wandder_encode_preencoded_value(p, (uint8_t *)wandder_etsi_umtsirioid,
+            sizeof(wandder_etsi_umtsirioid));
 
     p = &(pendarray[OPENLI_PREENCODE_EPSIRIOID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_OID;
-    wandder_encode_preencoded_value(p, (uint8_t *)etsi_epsirioid,
-            sizeof(etsi_epsirioid));
+    wandder_encode_preencoded_value(p, (uint8_t *)wandder_etsi_epsirioid,
+            sizeof(wandder_etsi_epsirioid));
 
     p = &(pendarray[OPENLI_PREENCODE_EPSCCOID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_OID;
-    wandder_encode_preencoded_value(p, (uint8_t *)etsi_epsccoid,
-            sizeof(etsi_epsccoid));
+    wandder_encode_preencoded_value(p, (uint8_t *)wandder_etsi_epsccoid,
+            sizeof(wandder_etsi_epsccoid));
 
     p = &(pendarray[OPENLI_PREENCODE_IPMMCCOID]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_RELATIVEOID;
-    wandder_encode_preencoded_value(p, (uint8_t *)etsi_ipmmccoid,
-            sizeof(etsi_ipmmccoid));
+    wandder_encode_preencoded_value(p, (uint8_t *)wandder_etsi_ipmmccoid,
+            sizeof(wandder_etsi_ipmmccoid));
 
     p = &(pendarray[OPENLI_PREENCODE_DIRFROM]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
