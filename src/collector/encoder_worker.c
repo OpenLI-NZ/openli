@@ -605,7 +605,6 @@ static int encode_templated_epsiri(openli_encoder_t *enc,
 
     wandder_release_encoded_result(enc->encoder, body);
     free_mobileiri_parameters(irijob->customparams);
-    free(irijob->liid);
     /* Success */
     return 1;
 }
@@ -657,7 +656,6 @@ static int encode_templated_umtsiri(openli_encoder_t *enc,
 
     wandder_release_encoded_result(enc->encoder, body);
     free_mobileiri_parameters(irijob->customparams);
-    free(irijob->liid);
     /* Success */
     return 1;
 }

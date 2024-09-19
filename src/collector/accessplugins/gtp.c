@@ -354,6 +354,9 @@ static void gtp_destroy_plugin_data(access_plugin_t *p) {
         if (pkt->ipcontent) {
             free(pkt->ipcontent);
         }
+        if (pkt->endpoint_ip) {
+            free(pkt->endpoint_ip);
+        }
         gtp_free_ie_list(pkt->ies);
         free(pkt);
         JLN(pval, glob->saved_packets, indexnum);
@@ -436,6 +439,7 @@ static inline bool interesting_info_element(uint8_t gtpv, uint8_t ietype) {
             case GTPV1_IE_CAUSE:
             case GTPV1_IE_IMSI:
             case GTPV1_IE_TEID_CTRL:
+            case GTPV1_IE_TEID_DATA:
             case GTPV1_IE_END_USER_ADDRESS:
             case GTPV1_IE_APNAME:
             case GTPV1_IE_MSISDN:
@@ -722,9 +726,10 @@ static int walk_gtpv1_ies(gtp_parsed_t *parsedpkt, uint8_t *ptr, uint32_t rem,
                 if (ietype == GTPV1_IE_MSISDN) {
                     get_gtpnum_from_ie(gtpel, parsedpkt->msisdn, 1);
                 }
-                if (ietype == GTPV1_IE_TEID_DATA) {
-                    parsedpkt->teid_data = get_teid_from_teidctl(gtpel);
-                }
+            }
+
+            if (ietype == GTPV1_IE_TEID_DATA) {
+                parsedpkt->teid_data = get_teid_from_teidctl(gtpel);
             }
 
             if (ietype == GTPV1_IE_TEID_CTRL) {
