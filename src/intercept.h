@@ -372,6 +372,7 @@ struct rtpstreaminf {
     uint8_t byematched;
     char *invitecseq;
     char *byecseq;
+    uint16_t invitecseq_stack;
 
     uint8_t inviter[16];
 

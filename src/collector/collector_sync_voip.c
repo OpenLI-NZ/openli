@@ -759,6 +759,12 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
         portstr = get_sip_media_port(sync->sipparser, 0);
         mediatype = get_sip_media_type(sync->sipparser, 0);
 
+        if (!ipstr || !portstr || !mediatype) {
+            free(cseqstr);
+            return 0;
+        }
+
+
         if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc,
                 16) == 0) {
             dir = 0;
@@ -767,7 +773,7 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
             dir = 1;
         }
 
-        while (dir != 0xff && ipstr && portstr && mediatype) {
+        if (dir != 0xff && thisrtp->invitecseq_stack == 1) {
 
             if ((changed = update_rtp_stream(sync, thisrtp, ipstr,
                     portstr, mediatype, dir)) == -1) {
@@ -787,8 +793,10 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
             }
         }
 
-
-        announce_rtp_streams_if_required(sync, thisrtp);
+        if (thisrtp->invitecseq_stack >= 1) {
+            thisrtp->invitecseq_stack --;
+            announce_rtp_streams_if_required(sync, thisrtp);
+        }
     }
     free(cseqstr);
     return 0;
@@ -811,6 +819,10 @@ static int process_sip_200ok(collector_sync_voip_t *sync,
         portstr = get_sip_media_port(sync->sipparser, 0);
         mediatype = get_sip_media_type(sync->sipparser, 0);
 
+        if (!ipstr || !portstr || !mediatype) {
+            free(cseqstr);
+            return 0;
+        }
 
         if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc,
                 16) == 0) {
@@ -820,7 +832,7 @@ static int process_sip_200ok(collector_sync_voip_t *sync,
             dir = 1;
         }
 
-        while (dir != 0xff && ipstr && portstr && mediatype) {
+        if (dir != 0xff && thisrtp->invitecseq_stack == 1) {
             if ((changed = update_rtp_stream(sync, thisrtp, ipstr,
                     portstr, mediatype, dir)) == -1) {
                 if (sync->log_bad_sip) {
@@ -838,8 +850,11 @@ static int process_sip_200ok(collector_sync_voip_t *sync,
                 thisrtp->changed = 1;
             }
         }
+        if (thisrtp->invitecseq_stack >= 1) {
+            thisrtp->invitecseq_stack --;
+            announce_rtp_streams_if_required(sync, thisrtp);
+        }
 
-        announce_rtp_streams_if_required(sync, thisrtp);
     } else if (thisrtp->byecseq && strcmp(thisrtp->byecseq,
                 cseqstr) == 0 && thisrtp->byematched == 0) {
         sync_epoll_t *timeout = (sync_epoll_t *)calloc(1,
@@ -1003,42 +1018,6 @@ static int process_sip_other(collector_sync_voip_t *sync, char *callid,
             badsip = 1;
             continue;
         }
-
-        /* One thing to note here -- we only track the RTP streams for the
-         * SIP exchange that BEGAN most recently.
-         * If we're capturing both sides of a SIP proxy / SBC, we may see (for
-         * example) the INVITE enter the proxy, then the same INVITE being
-         * forwarded on to the next hop. We'll also see something
-         * similar for the response coming back.
-         *
-         * Imagine a scenario where we have two clients: A and B, with a proxy
-         * P between them. Our collector capture sees everything sent to and
-         * from the proxy.
-         *
-         * So we might see (in approximate order):
-         * INVITE from A to P  (RTP port 10001)
-         * 100 Trying from P to A
-         * INVITE from P to B  (RTP port 40000)
-         * 100 Trying from B to P
-         * 180 Ringing from B to P
-         * 183 Session Progress from B to P (port 40001)
-         * 180 Ringing from P to A
-         * 183 Session Progress from P to A (port 12344)
-         *
-         *
-         * In this case, we will look for RTP on ports 40000 and 40001,
-         * because that is the most recent INVITE for this call. 10001
-         * and 12344 are ignored, i.e. we capture RTP from the P to B link.
-         *
-         * If the call direction is reversed, we would instead try to capture
-         * RTP from the P to A side, as P to A would be the most recent INVITE.
-         *
-         * This could become a gotcha when an existing callee in a case like
-         * this decides to change RTP ports and issue a new INVITE in the
-         * middle of the call -- that will change which side of the proxy we
-         * are looking for RTP on, so hopefully the collector is able to
-         * see the RTP on both sides...
-         */
 
         /* Check for a new RTP stream announcement in a 200 OK */
         if (sip_is_200ok(sync->sipparser)) {
@@ -1274,9 +1253,10 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         portstr = get_sip_media_port(sync->sipparser, 0);
         mediatype = get_sip_media_type(sync->sipparser, 0);
 
-        if (iritype == ETSILI_IRI_BEGIN || (
-                thisrtp->invitecseq && invitecseq &&
-                strcmp(thisrtp->invitecseq, invitecseq) == 0)) {
+        if (thisrtp->invitecseq && invitecseq &&
+                strcmp(thisrtp->invitecseq, invitecseq) == 0) {
+            dir = 0xff;
+        } else if (iritype == ETSILI_IRI_BEGIN) {
             memcpy(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc, 16);
             dir = 0;
         } else if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc,
@@ -1287,7 +1267,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
             dir = 1;
         }
 
-        while (dir != 0xff && ipstr && portstr && !badsip && mediatype) {
+        if (dir != 0xff && ipstr && portstr && !badsip && mediatype) {
             int changed;
             if ((changed = update_rtp_stream(sync, thisrtp, ipstr,
                     portstr, mediatype, dir)) == -1) {
@@ -1308,17 +1288,62 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         }
 
         //announce_rtp_streams_if_required(sync, thisrtp);
-
-        if (thisrtp->invitecseq != NULL) {
-            free(thisrtp->invitecseq);
-            thisrtp->invitecseq = NULL;
-        }
         if (badsip) {
             continue;
         }
 
-        thisrtp->invitecseq = invitecseq;
-        invitecseq = NULL;
+        /* A bit of an explanation of invitecseq_stack...
+         *
+         * This is mainly dedicated to resolving issues that arise
+         * when we see both sides of a proxied SIP session (i.e.
+         * A->B followed by B->C and the reverse for the opposite
+         * direction).
+         *
+         * In these cases, we have to be careful to only track the
+         * RTP session for ONE of the sides of the proxying, otherwise
+         * we get confused and try to intercept RTP streams that don't
+         * exist (such as the outgoing port from A->B and the incoming
+         * port for C->B).
+         *
+         * To further complicate matters, we can see reversed direction
+         * INVITEs (e.g. on call connection to confirm the media port)
+         * so we cannot assume that an INVITE is coming from the caller.
+         *
+         * So what I'm trying to do here is two things:
+         *  1. always track the RTP stream for A->B session only.
+         *  2. don't screw up if we see a reversed INVITE.
+         *
+         * I'm doing this by counting the number of times I see a
+         * specific INVITE cseq, and reducing that count whenever I
+         * see a 183 or 200 with the response SDP info. When the count
+         * gets down to zero, that response must belong to the initial
+         * A->B INVITE.
+         *
+         * For subsequent INVITEs, the counting only starts when the initial
+         * inviting IP address was involved (either as a sender or receiver)
+         * so if a reverse INVITE from C->B won't be looked at for RTP stream
+         * tracking purposes until it is proxied to the B->A link.
+         *
+         * There is one edge case where this will still break and I have
+         * no idea how to resolve it: if the proxy is not A->B and B->C,
+         * but instead is A->B and B->A.
+         */
+        if (invitecseq) {
+            if (dir != 0xff && thisrtp->invitecseq == NULL) {
+                thisrtp->invitecseq = invitecseq;
+                thisrtp->invitecseq_stack = 1;
+                invitecseq = NULL;
+            } else if (thisrtp->invitecseq != NULL &&
+                    strcmp(invitecseq, thisrtp->invitecseq) == 0) {
+                thisrtp->invitecseq_stack ++;
+            } else if (dir != 0xff && thisrtp->invitecseq != NULL) {
+                free(thisrtp->invitecseq);
+                thisrtp->invitecseq = NULL;
+                thisrtp->invitecseq = invitecseq;
+                thisrtp->invitecseq_stack = 1;
+                invitecseq = NULL;
+            }
+        }
 
         create_sip_ipiri(sync, vint, irimsg, iritype, vshared->cin, locptr,
                 loc_cnt, pkts, pkt_cnt);

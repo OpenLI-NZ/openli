@@ -234,6 +234,7 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
     newcin->ai_family = 0;
     newcin->seqno = 0;
     newcin->invitecseq = NULL;
+    newcin->invitecseq_stack = 0;
     newcin->byecseq = NULL;
     newcin->timeout_ev = NULL;
     newcin->byematched = 0;
@@ -299,6 +300,7 @@ rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *orig) {
     copy->seqno = 0;
     copy->active = 1;
     copy->invitecseq = NULL;
+    copy->invitecseq_stack = 0;
     copy->byecseq = NULL;
     copy->timeout_ev = NULL;
     copy_intercept_common(&(orig->common), &(copy->common));
