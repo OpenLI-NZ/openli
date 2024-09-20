@@ -787,6 +787,7 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
             }
         }
 
+
         announce_rtp_streams_if_required(sync, thisrtp);
     }
     free(cseqstr);
@@ -1168,6 +1169,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     openli_sip_identity_set_t all_identities;
     uint8_t trust_sip_from;
     openli_location_t *locptr;
+    char *invitecseq = NULL;
 
     locptr = NULL;
     loc_cnt = 0;
@@ -1192,6 +1194,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
     trust_sip_from = sync->info->trust_sip_from;
     pthread_rwlock_unlock(sync->info_mutex);
 
+    invitecseq = get_sip_cseq(sync->sipparser);
     HASH_ITER(hh_liid, sync->voipintercepts, vint, tmp) {
         vshared = NULL;
 
@@ -1271,7 +1274,9 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
         portstr = get_sip_media_port(sync->sipparser, 0);
         mediatype = get_sip_media_type(sync->sipparser, 0);
 
-        if (iritype == ETSILI_IRI_BEGIN || thisrtp->active == 0) {
+        if (iritype == ETSILI_IRI_BEGIN || (
+                thisrtp->invitecseq && invitecseq &&
+                strcmp(thisrtp->invitecseq, invitecseq) == 0)) {
             memcpy(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc, 16);
             dir = 0;
         } else if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc,
@@ -1312,13 +1317,17 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
             continue;
         }
 
-        thisrtp->invitecseq = get_sip_cseq(sync->sipparser);
+        thisrtp->invitecseq = invitecseq;
+        invitecseq = NULL;
 
         create_sip_ipiri(sync, vint, irimsg, iritype, vshared->cin, locptr,
                 loc_cnt, pkts, pkt_cnt);
         exportcount += 1;
     }
 
+    if (invitecseq) {
+        free(invitecseq);
+    }
     if (locptr) {
         free(locptr);
     }
