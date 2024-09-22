@@ -773,7 +773,8 @@ static int process_sip_183sessprog(collector_sync_voip_t *sync,
             dir = 1;
         }
 
-        if (dir != 0xff && thisrtp->invitecseq_stack == 1) {
+        while (dir != 0xff && thisrtp->invitecseq_stack == 1 && portstr &&
+                mediatype && ipstr) {
 
             if ((changed = update_rtp_stream(sync, thisrtp, ipstr,
                     portstr, mediatype, dir)) == -1) {
@@ -832,7 +833,11 @@ static int process_sip_200ok(collector_sync_voip_t *sync,
             dir = 1;
         }
 
-        if (dir != 0xff && thisrtp->invitecseq_stack == 1) {
+        /* while loop here because there may be multiple media streams
+         * in the SDP body (e.g. video and audio).
+         */
+        while (dir != 0xff && thisrtp->invitecseq_stack == 1 && portstr &&
+                ipstr && mediatype) {
             if ((changed = update_rtp_stream(sync, thisrtp, ipstr,
                     portstr, mediatype, dir)) == -1) {
                 if (sync->log_bad_sip) {
@@ -1267,7 +1272,7 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
             dir = 1;
         }
 
-        if (dir != 0xff && ipstr && portstr && !badsip && mediatype) {
+        while (dir != 0xff && ipstr && portstr && !badsip && mediatype) {
             int changed;
             if ((changed = update_rtp_stream(sync, thisrtp, ipstr,
                     portstr, mediatype, dir)) == -1) {
