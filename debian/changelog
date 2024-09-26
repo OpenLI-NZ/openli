@@ -25,8 +25,10 @@ openli (1.1.9-1) unstable; urgency=medium
     happens to have trailing bytes (such as an extra '\r\n' sequence).
   * SIP: fix double frees that could occur when reassembling TCP SIP
     traffic.
+  * Removed some internally defined OID consts and replaced them with
+    ones defined by libwandder.
 
- -- Shane Alcock <salcock@searchlight.nz>  Wed, 18 Sep 2024 09:10:41 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Fri, 27 Sep 2024 10:47:19 +1200
 
 openli (1.1.8-1) unstable; urgency=medium
 
