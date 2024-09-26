@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2023 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2024 SearchLight Ltd, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.

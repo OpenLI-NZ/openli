@@ -4,7 +4,7 @@ Version: 1.1.9
 
 ---------------------------------------------------------------------------
 
-Copyright (c) 2018 - 2024 The University of Waikato, Hamilton, New Zealand.
+Copyright (c) 2024 SearchLight Ltd, New Zealand.
 All rights reserved.
 
 OpenLI was originally developed by the University of Waikato WAND research
@@ -78,11 +78,11 @@ will be more than happy to accept your contribution.
 
 ## Dependencies for building from source
 
-* [libtrace 4.0.18 or later](https://github.com/LibtraceTeam/libtrace/)
+* [libtrace 4.0.24 or later](https://github.com/LibtraceTeam/libtrace/)
   (packages for Debian / Ubuntu are available
   [from WAND](https://cloudsmith.io/~wand/repos/libtrace/packages/) as well).
 
-* [libwandder 2.0.4 or later](https://github.com/LibtraceTeam/libwandder/)
+* [libwandder 2.0.13 or later](https://github.com/LibtraceTeam/libwandder/)
   (packages for Debian / Ubuntu are available
   [from WAND](https://cloudsmith.io/~wand/repos/libwandder/packages/) as well).
 
