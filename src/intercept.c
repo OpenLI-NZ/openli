@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2024 SearchLight Ltd, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -234,6 +234,7 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
     newcin->ai_family = 0;
     newcin->seqno = 0;
     newcin->invitecseq = NULL;
+    newcin->invitecseq_stack = 0;
     newcin->byecseq = NULL;
     newcin->timeout_ev = NULL;
     newcin->byematched = 0;
@@ -299,6 +300,7 @@ rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *orig) {
     copy->seqno = 0;
     copy->active = 1;
     copy->invitecseq = NULL;
+    copy->invitecseq_stack = 0;
     copy->byecseq = NULL;
     copy->timeout_ev = NULL;
     copy_intercept_common(&(orig->common), &(copy->common));
@@ -403,19 +405,24 @@ void free_single_emailintercept(emailintercept_t *m) {
     free(m);
 }
 
-void free_single_ipintercept(ipintercept_t *cept) {
+void free_all_staticipranges(static_ipranges_t **ipranges) {
     static_ipranges_t *ipr, *tmp;
+
+    HASH_ITER(hh, *ipranges, ipr, tmp) {
+        HASH_DELETE(hh, *ipranges, ipr);
+        free_single_staticiprange(ipr);
+    }
+    *ipranges = NULL;
+}
+
+void free_single_ipintercept(ipintercept_t *cept) {
 
     free_intercept_common(&(cept->common));
     if (cept->username) {
         free(cept->username);
     }
 
-    HASH_ITER(hh, cept->statics, ipr, tmp) {
-        HASH_DELETE(hh, cept->statics, ipr);
-        free_single_staticiprange(ipr);
-    }
-
+    free_all_staticipranges(&(cept->statics));
     free(cept);
 }
 

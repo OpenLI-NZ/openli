@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2024 SearchLight Ltd, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -58,6 +58,10 @@ enum {
     TEMPLATE_TYPE_EMAILCC_APP_DIRFROM,
     TEMPLATE_TYPE_EMAILCC_IP_DIROTHER,
     TEMPLATE_TYPE_EMAILCC_APP_DIROTHER,
+
+    TEMPLATE_TYPE_EPSCC_DIRFROM,
+    TEMPLATE_TYPE_EPSCC_DIRTO,
+    TEMPLATE_TYPE_EPSCC_DIROTHER,
 };
 
 typedef struct saved_encoding_templates {

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2024 SearchLight Ltd, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -69,6 +69,11 @@ static int parse_tcp_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *pkt,
         return -1;
     }
 
+    if (tcprem == 8 && memcmp(payload, "\x00\x00\x00\x00\x00\x00\x00\x00",
+                8) == 0) {
+        return -1;
+    }
+
     /* Yet another keep alive pattern */
     if (tcprem == 1 && memcmp(payload, "\x00", 1) == 0) {
         return -1;
@@ -118,6 +123,10 @@ static int parse_udp_sip_packet(libtrace_udp_t *udp, uint32_t udprem) {
         return -1;
     }
 
+    if (udprem == 8 && memcmp(payload, "\x00\x00\x00\x00\x00\x00\x00\x00",
+                8) == 0) {
+        return -1;
+    }
 
     return 1;
 }

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2024 SearchLight Ltd, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -365,7 +365,8 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
             res->origreq->type == OPENLI_EXPORT_IPMMCC ||
             res->origreq->type == OPENLI_EXPORT_UMTSCC ||
             res->origreq->type == OPENLI_EXPORT_EMAILCC ||
-            res->origreq->type == OPENLI_EXPORT_RAW_CC) {
+            res->origreq->type == OPENLI_EXPORT_RAW_CC ||
+            res->origreq->type == OPENLI_EXPORT_EPSCC) {
 
         reorderer = &(fwd->intreorderer_cc);
     } else {

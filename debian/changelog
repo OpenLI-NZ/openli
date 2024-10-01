@@ -1,3 +1,35 @@
+openli (1.1.9-1) unstable; urgency=medium
+
+  * RADIUS: fix crash that can occur under very rare circumstances due to
+    a dangling user record pointer in an old unmatched request.
+  * RADIUS: fix bug where CINs for all RADIUS sessions were zero.
+  * Fix potential silent exit in collector if a packet cannot be
+    copied to be sent to another thread.
+  * Mobile data: move processing of GTP traffic / sessions into separate worker
+    threads.
+  * Mobile data: add (experimental) support for intercepting GTP-U traffic for
+    sessions where the GTP-C identity matches an intercept target.
+    Only applies to GTPv2 sessions -- no CC interception is performed for
+    GTPv1 sessions (i.e UMTS-CCs).
+  * Mobile data: add support for intercepting GTP-C traffic for intercept
+    targets and encoding it as either EPS-IRIs (for GTPv2) or UMTS-IRIs
+    (for GTPv1).
+  * Mobile data: IP-based mobile intercepts are now encoded as EPS-CCs,
+    instead of UMTS-CCs.
+  * Mediator: allow RabbitMQ internal password to be specified using
+    either "RMQlocalpass" OR "RMQinternalpass" config options, so
+    as to match the existing documentation.
+  * SIP: fix bug where RTP would not be intercepted if the SIP traffic
+    is proxied back to the original source IP.
+  * SIP: fix assertion failure when reassembling TCP SIP traffic that
+    happens to have trailing bytes (such as an extra '\r\n' sequence).
+  * SIP: fix double frees that could occur when reassembling TCP SIP
+    traffic.
+  * Removed some internally defined OID consts and replaced them with
+    ones defined by libwandder.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Fri, 27 Sep 2024 10:47:19 +1200
+
 openli (1.1.8-1) unstable; urgency=medium
 
   * Collector: fix crash in sync_voip thread if an invalid SIP packet

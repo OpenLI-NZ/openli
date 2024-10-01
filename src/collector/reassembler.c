@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2024 SearchLight Ltd, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -562,7 +562,7 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
                     (stream->pkt_alloc + 4) * sizeof(libtrace_packet_t *));
             stream->pkt_alloc += 4;
         }
-        stream->packets[stream->pkt_cnt] = openli_copy_packet(pkt);
+        stream->packets[stream->pkt_cnt] = pkt;
         stream->pkt_cnt ++;
     }
 
@@ -739,9 +739,8 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
             assert(endfound <= contstart + iter->length);
             assert(endfound > contstart);
 
-            used = endfound - (uint8_t *)(*content);
-
-            stream->expectedseqno += used;
+            used = endfound - contstart;
+            stream->expectedseqno += (used + contused);
 
             /* give all of the packets thus far back to the caller, so
              * they can decide if they need to "intercept" them -- the

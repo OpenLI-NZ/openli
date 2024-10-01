@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2024 SearchLight Ltd, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -27,6 +27,7 @@
 #include "logger.h"
 #include "util.h"
 #include "internetaccess.h"
+#include "collector.h"
 
 access_plugin_t *init_access_plugin(uint8_t accessmethod) {
 
@@ -55,6 +56,54 @@ void destroy_access_plugin(access_plugin_t *p) {
     p->destroy_plugin_data(p);
 }
 
+
+int push_session_ips_to_collector_queue(libtrace_message_queue_t *q,
+        ipintercept_t *ipint, access_session_t *session) {
+
+    ipsession_t *ipsess;
+    openli_pushed_t msg;
+    int i;
+
+    for (i = 0; i < session->sessipcount; i++) {
+
+        ipsess = create_ipsession(ipint, session->cin,
+            session->sessionips[i].ipfamily,
+            (struct sockaddr *)&(session->sessionips[i].assignedip),
+            session->sessionips[i].prefixbits);
+
+        if (!ipsess) {
+            logger(LOG_INFO,
+                    "OpenLI: ran out of memory while creating IP session message.");
+            return -1;
+        }
+        memset(&msg, 0, sizeof(openli_pushed_t));
+        msg.type = OPENLI_PUSH_IPINTERCEPT;
+        msg.data.ipsess = ipsess;
+
+        libtrace_message_queue_put(q, (void *)(&msg));
+    }
+    return session->sessipcount;
+}
+
+void push_session_update_to_collector_queue(libtrace_message_queue_t *q,
+        ipintercept_t *ipint, access_session_t *sess, int updatetype) {
+
+    openli_pushed_t pmsg;
+    int i;
+    ipsession_t *sessdup;
+
+    for (i = 0; i < sess->sessipcount; i++) {
+        memset(&pmsg, 0, sizeof(openli_pushed_t));
+        pmsg.type = updatetype;
+        sessdup = create_ipsession(ipint, sess->cin,
+                sess->sessionips[i].ipfamily,
+                (struct sockaddr *)&(sess->sessionips[i].assignedip),
+                sess->sessionips[i].prefixbits);
+        pmsg.data.ipsess = sessdup;
+        libtrace_message_queue_put(q, &pmsg);
+    }
+}
+
 static inline void free_session(access_session_t *sess) {
 
     if (sess == NULL) {
@@ -65,8 +114,17 @@ static inline void free_session(access_session_t *sess) {
     if (sess->plugin) {
         sess->plugin->destroy_session_data(sess->plugin, sess);
     }
+    if (sess->gtp_tunnel_endpoints[0]) {
+        free(sess->gtp_tunnel_endpoints[0]);
+    }
+    if (sess->gtp_tunnel_endpoints[1]) {
+        free(sess->gtp_tunnel_endpoints[1]);
+    }
     if (sess->sessionips) {
         free(sess->sessionips);
+    }
+    if (sess->sessionid) {
+        free(sess->sessionid);
     }
     free(sess);
 }
@@ -176,6 +234,7 @@ access_session_t *create_access_session(access_plugin_t *p, char *sessid,
 
     newsess = (access_session_t *)malloc(sizeof(access_session_t));
 
+    newsess->identifier_type = OPENLI_ACCESS_SESSION_UNKNOWN;
     newsess->plugin = p;
     newsess->sessionid = fast_strdup(sessid, sessid_len);
 	newsess->statedata = NULL;
@@ -190,13 +249,18 @@ access_session_t *create_access_session(access_plugin_t *p, char *sessid,
 	newsess->started.tv_sec = 0;
 	newsess->started.tv_usec = 0;
 
+    newsess->teids[0] = 0;
+    newsess->teids[1] = 0;
+    newsess->teids_mapped = 0;
+    newsess->gtp_tunnel_endpoints[0] = NULL;
+    newsess->gtp_tunnel_endpoints[1] = NULL;
 	return newsess;
 }
 
 void add_new_session_ip(access_session_t *sess, void *att_val,
         int family, uint8_t pfxbits, int att_len) {
 
-	    int ind = sess->sessipcount;
+	int ind = sess->sessipcount;
 
     if (sess->sessipcount > 0 && (sess->sessipcount % SESSION_IP_INCR) == 0) {
         sess->sessionips = realloc(sess->sessionips,
@@ -256,6 +320,7 @@ void add_new_session_ip(access_session_t *sess, void *att_val,
     sess->sessionips[ind].ipfamily = family;
     sess->sessionips[ind].prefixbits = pfxbits;
     sess->sessipcount ++;
+    sess->identifier_type |= OPENLI_ACCESS_SESSION_IP;
 }
 
 int free_single_session(access_session_t *sess) {

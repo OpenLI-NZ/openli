@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2023 Searchlight NZ
+ * Copyright (c) 2024 SearchLight Ltd, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -166,11 +166,13 @@ int create_etsi_encoded_result(openli_encoded_result_t *res,
         case OPENLI_EXPORT_IPMMCC:
         case OPENLI_EXPORT_UMTSCC:
         case OPENLI_EXPORT_EMAILCC:
+        case OPENLI_EXPORT_EPSCC:
             res->header.intercepttype = htons(OPENLI_PROTO_ETSI_CC);
             break;
         case OPENLI_EXPORT_IPIRI:
         case OPENLI_EXPORT_IPMMIRI:
         case OPENLI_EXPORT_UMTSIRI:
+        case OPENLI_EXPORT_EPSIRI:
         case OPENLI_EXPORT_EMAILIRI:
             res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
             break;

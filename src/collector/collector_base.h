@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2024 SearchLight Ltd, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -85,6 +85,7 @@ typedef struct collector_stats {
     uint64_t packets_sync_ip;
     uint64_t packets_sync_voip;
     uint64_t packets_sync_email;
+    uint64_t packets_gtp;
     uint64_t packets_sms;
     uint64_t ipcc_created;
     uint64_t ipiri_created;

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2024 SearchLight Ltd, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -32,7 +32,9 @@
 #include "ipcc.h"
 #include "ipmmiri.h"
 #include "umtsiri.h"
+#include "epsiri.h"
 #include "emailiri.h"
+#include "epscc.h"
 #include "collector_base.h"
 #include "logger.h"
 #include "etsili_core.h"
@@ -152,7 +154,7 @@ static void free_encoded_header_templates(Pvoid_t headers) {
     }
 }
 
-static void free_umtsiri_parameters(etsili_generic_t *params) {
+static void free_mobileiri_parameters(etsili_generic_t *params) {
 
     etsili_generic_t *oldp, *tmp;
 
@@ -225,11 +227,8 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
                 }
                 break;
             }
-
-            if (job.origreq->type == OPENLI_EXPORT_IPCC) {
+            if (job.origreq) {
                 free_published_message(job.origreq);
-            } else {
-                free(job.origreq);
             }
             if (job.liid) {
                 free(job.liid);
@@ -481,13 +480,10 @@ static int encode_templated_emailiri(openli_encoder_t *enc,
     return 1;
 }
 
-static int encode_templated_umtsiri(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
-        openli_encoded_result_t *res) {
+static inline void create_mobile_operator_identifier(openli_encoder_t *enc,
+        openli_mobiri_job_t *irijob, int elem_id) {
 
-    wandder_encoded_result_t *body = NULL;
-    openli_mobiri_job_t *irijob =
-            (openli_mobiri_job_t *)&(job->origreq->data.mobiri);
+
     etsili_generic_t *np = NULL;
     char opid[6];
     int opidlen;
@@ -506,12 +502,123 @@ static int encode_templated_umtsiri(openli_encoder_t *enc,
     opid[opidlen] = '\0';
     pthread_rwlock_unlock(enc->shared_mutex);
 
-    np = create_etsili_generic(enc->freegenerics,
-            UMTSIRI_CONTENTS_OPERATOR_IDENTIFIER, opidlen,
+    np = create_etsili_generic(enc->freegenerics, elem_id, opidlen,
             (uint8_t *)opid);
     HASH_ADD_KEYPTR(hh, irijob->customparams,
             &(np->itemnum), sizeof(np->itemnum), np);
 
+}
+
+static int encode_templated_epscc(openli_encoder_t *enc,
+        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res) {
+
+    wandder_encoded_result_t *body = NULL;
+    openli_mobcc_job_t *epsccjob;
+
+    epsccjob = (openli_mobcc_job_t *)&(job->origreq->data.mobcc);
+
+    /* Templating is going to be difficult because of the timestamp and
+     * sequence number fields in the ULIC header
+     */
+    reset_wandder_encoder(enc->encoder);
+
+    body = encode_epscc_body(enc->encoder, job->preencoded, job->liid,
+            job->cin, epsccjob->gtpseqno, epsccjob->dir, job->origreq->ts,
+            epsccjob->icetype, epsccjob->ipclen);
+
+    if (body == NULL ||  body->len == 0 || body->encoded == NULL) {
+        logger(LOG_INFO, "OpenLI: failed to encode ETSI EPSCC body");
+        if (body) {
+            wandder_release_encoded_result(enc->encoder, body);
+        }
+        return -1;
+    }
+
+    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (create_encrypted_message_body(enc->encoder, &enc->encrypt,
+                res, hdr_tplate,
+                body->encoded, body->len, epsccjob->ipcontent,
+                epsccjob->ipclen, job) < 0) {
+
+            wandder_release_encoded_result(enc->encoder, body);
+            return -1;
+        }
+    } else {
+        if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
+                body->len, epsccjob->ipcontent, epsccjob->ipclen, job) < 0) {
+            wandder_release_encoded_result(enc->encoder, body);
+            return -1;
+        }
+    }
+
+    wandder_release_encoded_result(enc->encoder, body);
+    /* Success */
+    return 1;
+
+}
+
+
+static int encode_templated_epsiri(openli_encoder_t *enc,
+        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res) {
+
+    wandder_encoded_result_t *body = NULL;
+    openli_mobiri_job_t *irijob =
+            (openli_mobiri_job_t *)&(job->origreq->data.mobiri);
+
+    create_mobile_operator_identifier(enc, irijob,
+            EPSIRI_CONTENTS_OPERATOR_IDENTIFIER);
+
+    /* Not worth trying to template the body of EPS IRIs -- way too
+     * many variables in here that may or may not change on a semi-regular
+     * basis.
+     */
+    reset_wandder_encoder(enc->encoder);
+
+    body = encode_epsiri_body(enc->encoder, job->preencoded, irijob->iritype,
+            irijob->customparams);
+
+    if (body == NULL || body->len == 0 || body->encoded == NULL) {
+        logger(LOG_INFO, "OpenLI: failed to encode ETSI EPSIRI body");
+        if (body) {
+            wandder_release_encoded_result(enc->encoder, body);
+        }
+        return -1;
+    }
+
+    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (create_encrypted_message_body(enc->encoder, &enc->encrypt,
+                res, hdr_tplate,
+                body->encoded, body->len, NULL, 0, job) < 0) {
+
+            wandder_release_encoded_result(enc->encoder, body);
+            return -1;
+        }
+    } else {
+        if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
+                body->len, NULL, 0, job) < 0) {
+            wandder_release_encoded_result(enc->encoder, body);
+            return -1;
+        }
+    }
+
+    wandder_release_encoded_result(enc->encoder, body);
+    free_mobileiri_parameters(irijob->customparams);
+    /* Success */
+    return 1;
+}
+
+static int encode_templated_umtsiri(openli_encoder_t *enc,
+        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res) {
+
+    wandder_encoded_result_t *body = NULL;
+    openli_mobiri_job_t *irijob =
+            (openli_mobiri_job_t *)&(job->origreq->data.mobiri);
+
+    create_mobile_operator_identifier(enc, irijob,
+            UMTSIRI_CONTENTS_OPERATOR_IDENTIFIER);
     /* Not worth trying to template the body of UMTS IRIs -- way too
      * many variables in here that may or may not change on a semi-regular
      * basis.
@@ -548,7 +655,7 @@ static int encode_templated_umtsiri(openli_encoder_t *enc,
     }
 
     wandder_release_encoded_result(enc->encoder, body);
-    free_umtsiri_parameters(irijob->customparams);
+    free_mobileiri_parameters(irijob->customparams);
     /* Success */
     return 1;
 }
@@ -605,6 +712,7 @@ static int encode_templated_umtscc(openli_encoder_t *enc,
     return 1;
 
 }
+
 
 static int encode_templated_emailcc(openli_encoder_t *enc,
         openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
@@ -823,11 +931,17 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
         case OPENLI_EXPORT_UMTSIRI:
             ret = encode_templated_umtsiri(enc, job, hdr_tplate, res);
             break;
+        case OPENLI_EXPORT_EPSIRI:
+            ret = encode_templated_epsiri(enc, job, hdr_tplate, res);
+            break;
         case OPENLI_EXPORT_EMAILIRI:
             ret = encode_templated_emailiri(enc, job, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_EMAILCC:
             ret = encode_templated_emailcc(enc, job, hdr_tplate, res);
+            break;
+        case OPENLI_EXPORT_EPSCC:
+            ret = encode_templated_epscc(enc, job, hdr_tplate, res);
             break;
         default:
             ret = 0;

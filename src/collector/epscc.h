@@ -5,7 +5,7 @@
  *
  * This file is part of OpenLI.
  *
- * This code has been developed by the University of Waikato WAND
+ * OpenLI was originally developed by the University of Waikato WAND
  * research group. For further information please see http://www.wand.net.nz/
  *
  * OpenLI is free software; you can redistribute it and/or modify
@@ -24,21 +24,26 @@
  *
  */
 
-#include "config.h"
+#ifndef OPENLI_EPSCC_H_
+#define OPENLI_EPSCC_H_
 
-#include <libtrace/message_queue.h>
-#include <libtrace.h>
 #include <libwandder.h>
 #include <libwandder_etsili.h>
-
 #include "collector.h"
 #include "intercept.h"
+#include "internetaccess.h"
 #include "etsili_core.h"
+#include "collector_sync.h"
 
-enum {
-    OPENLI_IPMMIRI_ORIGINAL,
-    OPENLI_IPMMIRI_SIP,
-    OPENLI_IPMMIRI_H323,
-};
+openli_export_recv_t *create_epscc_job(char *liid, uint32_t cin,
+        uint32_t destid, uint8_t dir, uint8_t *ipcontent, uint32_t ipclen,
+        uint8_t icetype, uint16_t gtpseqno);
 
+wandder_encoded_result_t *encode_epscc_body(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, const char *liid, uint32_t cin,
+        uint16_t gtpseqno, uint8_t dir, struct timeval tv, uint8_t icetype,
+        uint32_t ipclen);
+
+#endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
+

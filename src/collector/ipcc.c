@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018 The University of Waikato, Hamilton, New Zealand.
+ * Copyright (c) 2024 SearchLight Ltd, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -213,13 +213,14 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
                             strcmp(sess->common.targetagency,"pcapdisk") == 0) {
                         msg = create_rawip_cc_job(sess->common.liid,
                             sess->common.destid, pkt);
+                    } else if (sess->accesstype ==
+                            INTERNET_ACCESS_TYPE_MOBILE) {
+
+                        msg = create_epscc_job_from_ip(sess->cin,
+                                sess->common.liid, sess->common.destid, pkt, 0);
                     } else {
                         msg = create_ipcc_job(sess->cin, sess->common.liid,
                                 sess->common.destid, pkt, 0);
-                        if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE &&
-                                msg) {
-                            msg->type = OPENLI_EXPORT_UMTSCC;
-                        }
                     }
                     if (msg != NULL) {
                         publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
@@ -303,12 +304,12 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
                     strcmp(sess->common.targetagency, "pcapdisk") == 0) {
                 msg = create_rawip_cc_job(sess->common.liid,
                         sess->common.destid, pkt);
+            } else if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE) {
+                msg = create_epscc_job_from_ip(sess->cin,
+                        sess->common.liid, sess->common.destid, pkt, 0);
             } else {
                 msg = create_ipcc_job(sess->cin, sess->common.liid,
                         sess->common.destid, pkt, 0);
-                if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg) {
-                    msg->type = OPENLI_EXPORT_UMTSCC;
-                }
             }
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
@@ -339,12 +340,12 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
                     strcmp(sess->common.targetagency, "pcapdisk") == 0) {
                 msg = create_rawip_cc_job(sess->common.liid,
                         sess->common.destid, pkt);
+            } else if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE) {
+                msg = create_epscc_job_from_ip(sess->cin,
+                        sess->common.liid, sess->common.destid, pkt, 1);
             } else {
                 msg = create_ipcc_job(sess->cin, sess->common.liid,
                         sess->common.destid, pkt, 1);
-                if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE && msg) {
-                    msg->type = OPENLI_EXPORT_UMTSCC;
-                }
             }
             if (msg != NULL) {
                 publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME

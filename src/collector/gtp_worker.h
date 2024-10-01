@@ -24,35 +24,20 @@
  *
  */
 
-#ifndef OPENLI_SMS_WORKER_H_
-#define OPENLI_SMS_WORKER_H_
+#ifndef OPENLI_GTP_WORKER_H_
+#define OPENLI_GTP_WORKER_H_
 
+#include "gtp.h"
 #include "intercept.h"
 #include "collector_base.h"
 #include "collector_util.h"
-#include "sipparsing.h"
+#include "internetaccess.h"
 
-typedef struct voip_intercept_ref {
-    char *liid;
-    voipintercept_t *vint;
-    UT_hash_handle hh;
-} voip_intercept_ref_t;
-
-typedef struct callid_intercept {
-    const char *callid;
-    int64_t cin;
-    time_t last_observed;
-
-    voip_intercept_ref_t *intlist;
-    UT_hash_handle hh;
-} callid_intercepts_t;
-
-
-typedef struct openli_sms_worker {
+typedef struct openli_gtp_worker {
     /* The global zeromq context for the entire program */
     void *zmq_ctxt;
 
-    /* A sequential identifier for this SMS worker thread */
+    /* A sequential identifier for this worker thread */
     int workerid;
 
     /* Mutex to protect the collector stats from races */
@@ -69,31 +54,52 @@ typedef struct openli_sms_worker {
 
     /* ZMQ for receiving instructions from sync thread */
     void *zmq_ii_sock;
+
     /* ZMQs for publishing to seqtracker threads */
     void **zmq_pubsocks;
+
     /* ZMQ for receiving from collector threads */
     void *zmq_colthread_recvsock;
+
+    /* Hash map of send_syncq_t instances that are used to push interceptable
+     * IP addresses back to the collector threads */
+    void *collector_queues;
+
+    /* Mutex to protect the collector_queues map */
+    pthread_mutex_t col_queue_mutex;
 
     /* Number of sequence tracker threads operated by this collector */
     int tracker_threads;
 
-    /* The pthread ID for this SMS worker thread */
+    /* The pthread ID for this worker thread */
     pthread_t threadid;
 
-    /* Set of all the VoIP intercepts announced to this collector */
-    voipintercept_t *voipintercepts;
+    /* Set of all mobile IP data intercepts announced to this collector */
+    ipintercept_t *ipintercepts;
 
-    /* SIP Parser instance for processing SMS over SIP traffic */
-    openli_sip_parser_t *sipparser;
+    /* Set of all "users" (i.e. MSISDNs, IMSIs, IMEIs) with active GTP
+     * sessions */
+    internet_user_t *allusers;
 
-    /* Mapping of SMS "SIP call IDs" to a list of intercepts that require
-     * those SMS sessions to be intercepted.
+    /* Set of all data TEIDs for active intercepts */
+    teid_to_session_t *all_data_teids;
+
+    /* Map of user identities -> active intercepts */
+    user_intercept_list_t *userintercepts;
+
+    /* Instance of the GTP session state processing plugin used to
+     * track sessions observed in GTP-C traffic
      */
-    callid_intercepts_t *known_callids;
-} openli_sms_worker_t;
+    access_plugin_t *gtpplugin;
 
-void *start_sms_worker_thread(void *arg);
+    /* Free list of ETSILI generic IEs that have been used for encoding
+     * fields in previous ETSI records by this thread instance.
+     */
+    etsili_generic_freelist_t *freegenerics;
+
+} openli_gtp_worker_t;
+
+int start_gtp_worker_thread(openli_gtp_worker_t *worker, int id,
+        void *globarg);
 
 #endif
-
-// vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

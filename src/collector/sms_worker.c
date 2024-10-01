@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2018-2023 Searchlight New Zealand Ltd.
+ * Copyright (c) 2024 SearchLight Ltd, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
