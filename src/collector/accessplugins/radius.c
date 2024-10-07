@@ -1201,16 +1201,11 @@ static inline void find_matching_request(radius_parsed_t *raddata) {
     uint32_t reqid;
     int rcint, i;
 
-    if (raddata->msgtype == RADIUS_CODE_ACCOUNT_RESPONSE) {
-        reqid = DERIVE_REQUEST_ID(raddata, RADIUS_CODE_ACCOUNT_REQUEST);
-    } else {
-        reqid = DERIVE_REQUEST_ID(raddata, RADIUS_CODE_ACCESS_REQUEST);
-    }
+    reqid = DERIVE_REQUEST_ID(raddata, RADIUS_CODE_ACCESS_REQUEST);
 
     if (raddata->msgtype == RADIUS_CODE_ACCESS_ACCEPT ||
             raddata->msgtype == RADIUS_CODE_ACCESS_REJECT ||
-            raddata->msgtype == RADIUS_CODE_ACCESS_CHALLENGE ||
-            raddata->msgtype == RADIUS_CODE_ACCOUNT_RESPONSE) {
+            raddata->msgtype == RADIUS_CODE_ACCESS_CHALLENGE) {
 
         radius_saved_req_t *req = NULL;
 
@@ -1254,6 +1249,11 @@ static user_identity_t *radius_get_userid(access_plugin_t *p UNUSED,
     raddata = (radius_parsed_t *)parsed;
     *numberids = 0;
 
+    if (raddata->msgtype == RADIUS_CODE_ACCOUNT_RESPONSE) {
+        raddata->muser_count = 0;
+        return NULL;
+    }
+
     if (raddata->muser_count == 0) {
         if (!raddata->matchednas) {
             logger(LOG_INFO, "OpenLI RADIUS: please parse the packet before attempting to get the user id.");
@@ -1268,9 +1268,7 @@ static user_identity_t *radius_get_userid(access_plugin_t *p UNUSED,
 
     //process_nasport_attribute(raddata);
 
-    if (raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST ||
-            raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
-
+    if (raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST) {
         if (raddata->muser_count == 0) {
             return NULL;
         }
@@ -1328,12 +1326,18 @@ static inline void apply_fsm_logic(
     /* TODO figure out what Access-Failed is, since it is in the ETSI spec */
     if ((radsess->current == SESSION_STATE_NEW ||
             radsess->current == SESSION_STATE_OVER) && (
-            msgtype == RADIUS_CODE_ACCESS_REQUEST ||
-            (msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
-                accttype == RADIUS_ACCT_START))) {
+            msgtype == RADIUS_CODE_ACCESS_REQUEST)) {
 
         radsess->current = SESSION_STATE_AUTHING;
         *action = ACCESS_ACTION_ATTEMPT;
+    } else if ((radsess->current == SESSION_STATE_NEW ||
+            radsess->current == SESSION_STATE_OVER) && (
+            msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
+                accttype == RADIUS_ACCT_START)) {
+
+        radsess->current = SESSION_STATE_ACTIVE;
+        *action = ACCESS_ACTION_ACCEPT;
+
     } else if (radsess->current == SESSION_STATE_AUTHING && (
             msgtype == RADIUS_CODE_ACCESS_REJECT)) {
 
@@ -1346,24 +1350,15 @@ static inline void apply_fsm_logic(
         radsess->current = SESSION_STATE_AUTHING;
         *action = ACCESS_ACTION_RETRY;
 
-    } else if (radsess->current == SESSION_STATE_AUTHING && (
-            msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
-            accttype == RADIUS_ACCT_STOP)) {
-
-        radsess->current = SESSION_STATE_OVER;
-        *action = ACCESS_ACTION_FAILED;
-
-    } else if (radsess->current == SESSION_STATE_AUTHING && (
-            msgtype == RADIUS_CODE_ACCESS_ACCEPT ||
-            (msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
-                accttype == RADIUS_ACCT_START))) {
+    } else if (radsess->current == SESSION_STATE_AUTHING &&
+            msgtype == RADIUS_CODE_ACCESS_ACCEPT) {
 
         radsess->current = SESSION_STATE_ACTIVE;
         *action = ACCESS_ACTION_ACCEPT;
 
     } else if ((radsess->current == SESSION_STATE_ACTIVE ||
                 radsess->current == SESSION_STATE_ACTIVE_NO_IP) &&
-            (msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
+            (msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
             (accttype == RADIUS_ACCT_START ||
                 accttype == RADIUS_ACCT_INTERIM_UPDATE))) {
 
@@ -1375,7 +1370,7 @@ static inline void apply_fsm_logic(
 
     } else if ((radsess->current == SESSION_STATE_ACTIVE ||
                 radsess->current == SESSION_STATE_ACTIVE_NO_IP) &&
-            (msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
+            (msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
             accttype == RADIUS_ACCT_STOP)) {
 
         radsess->current = SESSION_STATE_OVER;
@@ -1383,7 +1378,7 @@ static inline void apply_fsm_logic(
 
     } else if ((radsess->current == SESSION_STATE_NEW ||
             radsess->current == SESSION_STATE_OVER) && (
-            msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
+            msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
             accttype == RADIUS_ACCT_INTERIM_UPDATE)) {
 
         /* session was already underway when we started the intercept,
@@ -1552,7 +1547,7 @@ static inline void update_first_action(radius_parsed_t *raddata,
             /* handle rare case where assigned IPs were missing from access
              * accept message -- seen this in the wild */
             raddata->firstattrs = raddata->savedreq->attrs;
-            if (raddata->msgtype == RADIUS_CODE_ACCOUNT_RESPONSE &&
+            if (raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
                     raddata->accttype == RADIUS_ACCT_START &&
                     sess->sessipcount == 0) {
                 extract_assigned_ip_address(raddata, raddata->firstattrs,
@@ -1579,14 +1574,6 @@ static inline void update_second_action(radius_parsed_t *raddata,
         TIMESTAMP_TO_TV((&(sess->started)), raddata->savedresp->tvsec);
         return;
 
-    } else if ((raddata->secondaction == ACCESS_ACTION_ACCEPT ||
-            raddata->secondaction == ACCESS_ACTION_ALREADY_ACTIVE) &&
-            raddata->savedresp->resptype == RADIUS_CODE_ACCOUNT_RESPONSE) {
-
-        raddata->secondattrs = raddata->attrs;
-        extract_assigned_ip_address(raddata, raddata->secondattrs, sess);
-        TIMESTAMP_TO_TV((&(sess->started)), raddata->savedresp->tvsec);
-        return;
     }
 
     switch(raddata->secondaction) {
@@ -1609,7 +1596,9 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     radius_user_t *raduser = (radius_user_t *)plugindata;
     access_session_t *thissess;
     radius_user_session_t *usess;
+    radius_saved_req_t *req = NULL;
 
+    uint32_t reqid;
     char sessionid[5000];
     char tempstr[24];
     char *ptr;
@@ -1648,11 +1637,33 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
                 strlen(thissess->sessionid), thissess);
     }
 
-    if (raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST ||
-            raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
+    if (raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
+        if (glob->freeaccreqs == NULL) {
+            req = (radius_saved_req_t *)malloc(
+                    sizeof(radius_saved_req_t));
+        } else {
+            req = glob->freeaccreqs;
+            glob->freeaccreqs = req->next;
+        }
+        reqid = DERIVE_REQUEST_ID(raddata, raddata->msgtype);
+
+        req->reqid = reqid;
+        req->statustype = raddata->accttype;
+        req->acctsess_hash = raddata->acctsess_hash;
+        req->tvsec = raddata->tvsec;
+        req->next = NULL;
+        req->attrs = raddata->attrs;
+        req->targetuser_count = raddata->muser_count;
+        req->active_targets = raddata->muser_count;
+        memcpy(req->targetusers, raddata->matchedusers,
+                sizeof(radius_user_t *) * USER_IDENT_MAX);
+
+        raddata->savedreq = req;
+    }
+
+    if (raddata->msgtype == RADIUS_CODE_ACCESS_REQUEST) {
 
         /* Save the request so we can match the reply later on */
-        radius_saved_req_t *req = NULL;
         radius_saved_req_t *check = NULL;
 
         radius_orphaned_resp_t *orphan = NULL;
@@ -1664,7 +1675,6 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         if (orphan) {
             raddata->savedresp = orphan;
         } else if (!raddata->savedresp) {
-            uint32_t reqid;
             reqid = DERIVE_REQUEST_ID(raddata, raddata->msgtype);
 
             HASH_FIND(hh, raddata->matchednas->request_map, &(reqid),
