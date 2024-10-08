@@ -133,10 +133,20 @@ typedef struct mediator_collector_config {
 
 
 /** State associated with a single collector connection */
-typedef struct single_coll_receiver {
+typedef struct single_coll_receiver coll_recv_t;
+
+struct single_coll_receiver {
 
     /** ID of the thread that this connection is running in */
     pthread_t tid;
+
+    /** The particular forwarding thread on the collector that is
+     *  connected via this receiver thread.
+     */
+    int forwarder_id;
+
+    /** The RabbitMQ queue name for this receiving thread (if using RMQ) */
+    char *rmq_queuename;
 
     /** The IP address that the collector has connected from */
     char *ipaddr;
@@ -229,9 +239,18 @@ typedef struct single_coll_receiver {
      */
     uint64_t dropped_recs;
 
+    /** Pointer to the next receive thread for this collector, i.e. in
+     *  cases where the collector has multiple forwarding threads */
+    coll_recv_t *next;
+
+    /** Pointer to the first receive thread in the list for this collector */
+    coll_recv_t *head;
+    /** Pointer to the last receive thread in the list for this collector */
+    coll_recv_t *tail;
+
     UT_hash_handle hh;
 
-} coll_recv_t;
+};
 
 /** Structure that tracks the set of existing collector receive threads
  *  and their shared configuration.

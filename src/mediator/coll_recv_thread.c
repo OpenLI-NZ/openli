@@ -982,6 +982,39 @@ threadexit:
 
 }
 
+static void init_new_colrecv_thread(mediator_collector_t *medcol,
+        int newfd, char *ipstr, coll_recv_t *head) {
+
+    mediator_collector_config_t *config = &(medcol->config);
+    coll_recv_t *newcol;
+
+    newcol = (coll_recv_t *)calloc(1, sizeof(coll_recv_t));
+    newcol->parentconfig = config;
+
+    newcol->ipaddr = strdup(ipstr);
+    newcol->iplen = strlen(ipstr);
+    newcol->col_fd = newfd;
+    newcol->rmq_blocked = 0;
+    newcol->forwarder_id = 0;
+    newcol->next = NULL;
+    newcol->rmq_queuename = NULL;
+
+    if (head) {
+        newcol->head = head;
+        head->tail->next = newcol;
+    } else {
+        newcol->head = newcol;
+    }
+    newcol->tail = newcol;
+
+    HASH_ADD_KEYPTR(hh, medcol->threads, newcol->ipaddr, newcol->iplen,
+            newcol);
+
+    libtrace_message_queue_init(&(newcol->in_main),
+            sizeof(col_thread_msg_t));
+    pthread_create(&(newcol->tid), NULL, start_collector_thread, newcol);
+}
+
 /** Accepts a connection from a collector and spawns a new collector
  *  receive thread for that collector.
  *
@@ -998,8 +1031,7 @@ int mediator_accept_collector_connection(mediator_collector_t *medcol,
     struct sockaddr_storage saddr;
     socklen_t socklen = sizeof(saddr);
     char strbuf[INET6_ADDRSTRLEN];
-    coll_recv_t *newcol = NULL;
-    mediator_collector_config_t *config = &(medcol->config);
+    coll_recv_t *found = NULL;
 
     /* Standard socket connection accept code... */
     newfd = accept(listenfd, (struct sockaddr *)&saddr, &socklen);
@@ -1015,34 +1047,20 @@ int mediator_accept_collector_connection(mediator_collector_t *medcol,
         return newfd;
     }
 
-    HASH_FIND(hh, medcol->threads, strbuf, strlen(strbuf), newcol);
+    HASH_FIND(hh, medcol->threads, strbuf, strlen(strbuf), found);
 
-    if (newcol == NULL) {
+    if (found == NULL) {
         /* Never seen a connection from this collector before, so spawn
          * a new receive thread for it.
          */
-        newcol = (coll_recv_t *)calloc(1, sizeof(coll_recv_t));
-        newcol->parentconfig = config;
-
-        newcol->ipaddr = strdup(strbuf);
-        newcol->iplen = strlen(strbuf);
-        newcol->col_fd = newfd;
-        newcol->rmq_blocked = 0;
-
-        HASH_ADD_KEYPTR(hh, medcol->threads, newcol->ipaddr, newcol->iplen,
-                newcol);
-
-        libtrace_message_queue_init(&(newcol->in_main),
-                sizeof(col_thread_msg_t));
-        pthread_create(&(newcol->tid), NULL, start_collector_thread, newcol);
+        init_new_colrecv_thread(medcol, newfd, strbuf, NULL);
     } else {
-        /* We've already got a thread for this collector (?), so swap over to
-         * using the new file descriptor as the old one is probably dead
+        /* We've already got a thread for this collector, so this is
+         * probably another forwarding thread. If this is a reconnection
+         * instead, we should be able to deal with that once the forwarder
+         * identifies itself.
          */
-        col_thread_msg_t reconn_msg;
-        reconn_msg.type = MED_COLL_MESSAGE_RECONNECT;
-        reconn_msg.arg = newfd;
-        libtrace_message_queue_put(&(newcol->in_main), &reconn_msg);
+        init_new_colrecv_thread(medcol, newfd, strbuf, found);
     }
 
     return newfd;
@@ -1055,21 +1073,26 @@ int mediator_accept_collector_connection(mediator_collector_t *medcol,
  */
 void mediator_disconnect_all_collectors(mediator_collector_t *medcol) {
 
-    coll_recv_t *col, *tmp;
+    coll_recv_t *col, *tmp, *tofree;
 
     /* Send a halt message to all known threads, then use pthread_join() to
      * block until each thread exits.
      */
     HASH_ITER(hh, medcol->threads, col, tmp) {
         col_thread_msg_t end_msg;
-        end_msg.type = MED_COLL_MESSAGE_HALT;
-        end_msg.arg = 0;
-        libtrace_message_queue_put(&(col->in_main), &end_msg);
 
-        pthread_join(col->tid, NULL);
-        libtrace_message_queue_destroy(&(col->in_main));
         HASH_DELETE(hh, medcol->threads, col);
-        free(col);
+        while (col != NULL) {
+            end_msg.type = MED_COLL_MESSAGE_HALT;
+            end_msg.arg = 0;
+            libtrace_message_queue_put(&(col->in_main), &end_msg);
+
+            pthread_join(col->tid, NULL);
+            libtrace_message_queue_destroy(&(col->in_main));
+            tofree = col;
+            col = col->next;
+            free(tofree);
+        }
     }
 }
 
