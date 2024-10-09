@@ -66,6 +66,15 @@ typedef struct ii_header {
     uint64_t internalid;
 } PACKED ii_header_t;
 
+struct fwd_hello_body {
+    int threadid;
+    uint8_t using_rmq;
+} PACKED;
+
+typedef struct openli_forwarder_hello {
+    ii_header_t ii_hdr;
+    struct fwd_hello_body fwd_hello_body;
+} openli_forwarder_hello_t;
 
 typedef struct openli_mediator {
     uint32_t mediatorid;
@@ -128,6 +137,7 @@ typedef enum {
     OPENLI_PROTO_ANNOUNCE_DEFAULT_EMAIL_COMPRESSION,
     OPENLI_PROTO_RAWIP_CC,
     OPENLI_PROTO_RAWIP_IRI,
+    OPENLI_PROTO_COLLECTOR_FORWARDER_HELLO,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -247,6 +257,9 @@ int push_email_target_onto_net_buffer(net_buffer_t *nb,
         email_target_t *tgt, emailintercept_t *mailint);
 int push_email_target_withdrawal_onto_net_buffer(net_buffer_t *nb,
         email_target_t *tgt, emailintercept_t *mailint);
+
+int transmit_forwarder_hello(int sockfd, SSL *ssl, int threadid,
+        uint8_t using_rmq);
 
 openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
         amqp_connection_state_t amqp_state, uint8_t **msgbody,

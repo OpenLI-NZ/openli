@@ -518,9 +518,10 @@ static void purge_unconfirmed_mediators(forwarding_thread_data_t *fwd) {
 
 }
 
-static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx) {
+static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx,
+        forwarding_thread_data_t *fwd) {
 
-    int sockfd;
+    int sockfd, r;
 
     if (dest->ipstr == NULL) {
         /* This is an unannounced mediator */
@@ -564,6 +565,18 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx) {
     else {
         logger(LOG_INFO, "OpenLI: collector has connected to mediator %s:%s using a non-TLS connection", dest->ipstr, dest->portstr);
         dest->ssl = NULL;
+
+        /* Send the HELLO message right away */
+        r = transmit_forwarder_hello(sockfd, NULL, fwd->forwardid,
+                fwd->RMQ_conf.enabled);
+
+        if (r < 0) {
+            logger(LOG_INFO, "OpenLI: forwarding thread %d was unable to send hello to mediator %s:%s -- %s",
+                    fwd->forwardid, dest->ipstr, dest->portstr,
+                    strerror(errno));
+            close(sockfd);
+            return -1;
+        }
     }
 
     dest->failmsg = 0;
@@ -600,7 +613,7 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
         }
 
         pthread_mutex_lock(&(fwd->sslmutex));
-        dest->fd = connect_single_target(dest, fwd->ctx);
+        dest->fd = connect_single_target(dest, fwd->ctx, fwd);
         pthread_mutex_unlock(&(fwd->sslmutex));
         if (dest->fd == -1) {
             continue;
@@ -826,6 +839,17 @@ static void complete_ssl_handshake(forwarding_thread_data_t *fwd,
         logger(LOG_DEBUG, "OpenLI: SSL Handshake from mediator accepted");
         dest->waitingforhandshake = 0;
         dest->ssllasterror = 0;
+
+        ret = transmit_forwarder_hello(dest->fd, dest->ssl, fwd->forwardid,
+                fwd->RMQ_conf.enabled);
+
+        if (ret < 0) {
+            logger(LOG_INFO, "OpenLI: forwarding thread %d was unable to send hello to mediator %s:%s -- %s",
+                    fwd->forwardid, dest->ipstr, dest->portstr,
+                    strerror(errno));
+            dest->ssllasterror = 1;
+            disconnect_mediator(fwd, dest);
+        }
     }
 }
 

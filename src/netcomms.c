@@ -1381,7 +1381,28 @@ int push_ssl_required(net_buffer_t *nb) {
             sizeof(ii_header_t));
 }
 
+int transmit_forwarder_hello(int sockfd, SSL *ssl, int threadid,
+        uint8_t using_rmq) {
 
+    openli_forwarder_hello_t hellomsg;
+    int r;
+
+    memset(&hellomsg, 0, sizeof(hellomsg));
+
+    populate_header(&(hellomsg.ii_hdr),
+            OPENLI_PROTO_COLLECTOR_FORWARDER_HELLO,
+            sizeof(hellomsg.fwd_hello_body), 0);
+    hellomsg.fwd_hello_body.using_rmq = using_rmq;
+    hellomsg.fwd_hello_body.threadid = htonl(threadid);
+
+    if (ssl) {
+        r = SSL_write(ssl, &hellomsg, sizeof(hellomsg));
+    } else {
+        r = send(sockfd, &hellomsg, sizeof(hellomsg), 0);
+    }
+
+    return r;
+}
 
 int transmit_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t *err) {
     int ret;

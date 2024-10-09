@@ -140,10 +140,18 @@ struct single_coll_receiver {
     /** ID of the thread that this connection is running in */
     pthread_t tid;
 
+    /** Timestamp of when the connection attempt was made */
+    time_t creation;
+
     /** The particular forwarding thread on the collector that is
      *  connected via this receiver thread.
      */
     int forwarder_id;
+
+    /** Whether the forwarder is writing into RMQ or onto the socket
+     *  directly
+     */
+    uint8_t forwarder_using_rmq;
 
     /** The RabbitMQ queue name for this receiving thread (if using RMQ) */
     char *rmq_queuename;
@@ -168,7 +176,7 @@ struct single_coll_receiver {
      */
     int rmq_hb_freq;
 
-    /** Flag indicating whether the collector receive thread should be
+    /** Flag indicating whether the mediator is configured to be
      *  consuming from RMQ (as opposed to reading from a TCP socket)
      */
     int rmqenabled;
@@ -242,6 +250,10 @@ struct single_coll_receiver {
     /** Pointer to the next receive thread for this collector, i.e. in
      *  cases where the collector has multiple forwarding threads */
     coll_recv_t *next;
+
+    /** Pointer to the previous receive thread for this collector, i.e. in
+     *  cases where the collector has multiple forwarding threads */
+    coll_recv_t *prev;
 
     /** Pointer to the first receive thread in the list for this collector */
     coll_recv_t *head;
