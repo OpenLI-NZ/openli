@@ -415,8 +415,8 @@ static int process_fwd_hello(coll_recv_t *col, uint8_t *msgbody,
     col->forwarder_using_rmq = hellomsg->using_rmq;
 
     logger(LOG_INFO,
-            "DEVDEBUG: received forwarder hello from %s for thread %d: %s",
-            col->ipaddr, col->forwarder_id,
+            "DEVDEBUG: %d received forwarder hello from %s for thread %d: %s",
+            col->tid, col->ipaddr, col->forwarder_id,
             col->forwarder_using_rmq ? "RMQ" : "socket");
 
     return 1;
@@ -768,13 +768,15 @@ static void cleanup_collector_thread(coll_recv_t *col) {
         free(known);
     }
 
-    if (col->ipaddr) {
-        logger(LOG_INFO, "OpenLI mediator: exiting collector thread for %s",
-                col->ipaddr);
+    if (col->ipaddr && col->forwarder_id >= 0) {
+        logger(LOG_INFO, "OpenLI mediator: exiting collector thread %d for %s",
+                col->forwarder_id, col->ipaddr);
         logger(LOG_INFO,
-                "OpenLI mediator: dropped %lu records from collector %s",
-                col->dropped_recs, col->ipaddr);
+                "OpenLI mediator: dropped %lu records from collector %s:%d",
+                col->dropped_recs, col->ipaddr, col->forwarder_id);
+    }
 
+    if (col->ipaddr) {
         free(col->ipaddr);
     }
 
@@ -800,7 +802,8 @@ static void *start_collector_thread(void *params) {
         logger(LOG_INFO, "OpenLI Mediator: started collector thread for NULL collector IP??");
         pthread_exit(NULL);
     }
-
+    logger(LOG_INFO, "DEVDEBUG: starting collector receive thread %d for %s",
+            col->tid, col->ipaddr);
     /* Save frequently read fields from parent config so we don't have to
      * lock it frequently for reading. We'll get a RELOAD message when
      * we need to check if these values may have changed.
@@ -995,7 +998,7 @@ static void *start_collector_thread(void *params) {
                         destroy_rmq_colev(col);
                     }
                     if (col->disabled_log == 0) {
-                        logger(LOG_INFO, "OpenLI Mediator: collector thread for %s is now inactive", col->ipaddr);
+                        logger(LOG_INFO, "OpenLI Mediator: collector thread %d for %s is now inactive", col->tid, col->ipaddr);
                     }
                     col->was_dropped = 1;
                     col->disabled_log = 1;
@@ -1013,6 +1016,9 @@ threadexit:
 
     destroy_mediator_timer(queuecheck);
     destroy_mediator_timer(timerev);
+
+    logger(LOG_INFO, "DEVDEBUG: exiting collector receive thread %d for %s:%d",
+            col->tid, col->ipaddr, col->forwarder_id);
     cleanup_collector_thread(col);
 
     close(epoll_fd);
@@ -1044,14 +1050,15 @@ static void init_new_colrecv_thread(mediator_collector_t *medcol,
         newcol->head = head;
         head->tail->next = newcol;
         newcol->prev = head->tail;
+        head->tail = newcol;
     } else {
         newcol->head = newcol;
         newcol->prev = NULL;
+        HASH_ADD_KEYPTR(hh, medcol->threads, newcol->ipaddr, newcol->iplen,
+                newcol);
     }
     newcol->tail = newcol;
 
-    HASH_ADD_KEYPTR(hh, medcol->threads, newcol->ipaddr, newcol->iplen,
-            newcol);
 
     libtrace_message_queue_init(&(newcol->in_main),
             sizeof(col_thread_msg_t));
@@ -1137,6 +1144,140 @@ void mediator_disconnect_all_collectors(mediator_collector_t *medcol) {
             free(tofree);
         }
     }
+}
+
+/** Walks the set of collector receive threads and removes any threads
+ *  that are duplicates of another forwarding thread connection.
+ *
+ *  This is intended to handle cases where a collector re-connects to
+ *  us and so we therefore create a new set of receive threads, but the
+ *  old threads have not been removed.
+ *
+ *  In theory, the oldest threads should be closer to the head of the
+ *  list of threads for each collector IP address so we should be able
+ *  to do the bulk of the "cleaning" work with a single iteration.
+ */
+void mediator_clean_collectors(mediator_collector_t *medcol) {
+
+    coll_recv_t *col, *tmp, *iter, *tofree, *found, *seensofar, *newtail;
+    coll_recv_t *newhead, *oldhead, *oldtail;
+    struct timeval tv;
+    col_thread_msg_t end_msg;
+
+    gettimeofday(&tv, NULL);
+
+    HASH_ITER(hh, medcol->threads, col, tmp) {
+        seensofar = NULL;
+        newtail = col->head;
+        newhead = col->tail;
+        oldhead = col->head;
+        oldtail = col->tail;
+        iter = col;
+
+        while (iter) {
+            if (iter->forwarder_id < 0) {
+                continue;
+            }
+
+            tofree = NULL;
+
+            HASH_FIND(hh_ssf, seensofar, &(iter->forwarder_id),
+                    sizeof(iter->forwarder_id), found);
+            if (found) {
+                /* already have an entry for this forwarding thread ID, so
+                 * let's mark the oldest thread for removal -- it should
+                 * be the one in 'found', but let's compare the creation
+                 * times just to be sure.
+                 */
+                if (found->creation < iter->creation) {
+                    HASH_REPLACE(hh_ssf, seensofar, forwarder_id,
+                            sizeof(iter->forwarder_id), iter, tofree);
+                } else {
+                    tofree = iter;
+                }
+            } else {
+                HASH_ADD(hh_ssf, seensofar, forwarder_id,
+                        sizeof(iter->forwarder_id), iter);
+            }
+
+            iter = iter->next;
+            if (tofree == NULL) {
+                /* This receive thread is fine, keep it around for now */
+                continue;
+            }
+
+            if (tofree->prev) {
+                tofree->prev->next = tofree->next;
+            }
+
+            if (tofree->next) {
+                tofree->next->prev = tofree->prev;
+            }
+
+            if (newtail == tofree) {
+                newtail = tofree->prev;
+            }
+
+            if (newhead == tofree) {
+                newhead = tofree->next;
+            }
+
+            logger(LOG_INFO, "DEVDEBUG: removing colrecv thread %ld, as a duplicate entry for %s:%d", tofree->tid, tofree->ipaddr, tofree->forwarder_id);
+
+            end_msg.type = MED_COLL_MESSAGE_HALT;
+            end_msg.arg = 0;
+            libtrace_message_queue_put(&(tofree->in_main), &end_msg);
+
+            pthread_join(tofree->tid, NULL);
+            libtrace_message_queue_destroy(&(tofree->in_main));
+
+            if (tofree == col && newhead != oldhead) {
+                /* we are removing the head, so we need
+                 * to remove this collector entry from the threads hash map
+                 * before we free it */
+                HASH_DELETE(hh, medcol->threads, tofree);
+            }
+            free(tofree);
+        }
+
+        HASH_CLEAR(hh_ssf, seensofar);
+        /* If the head or tail of the list has changed, we need to
+         * update the shortcut pointers within every single list entry, hence
+         * a second iteration here.
+         */
+
+        if (newhead == oldhead && newtail == oldtail) {
+            continue;
+        }
+
+        if (newhead == NULL && newtail == NULL) {
+            continue;
+        }
+
+        assert (newhead != NULL);
+
+        iter = newhead;
+
+        /* If we have removed the head of the list, then we need to
+         * update the threads hashmap to point to the new head when we
+         * next do a look for the receiver threads for this collector
+         */
+        if (newhead != oldhead) {
+            HASH_ADD_KEYPTR(hh, medcol->threads, newhead->ipaddr,
+                    newhead->iplen, newhead);
+        }
+
+        while (iter) {
+            if (newhead) {
+                iter->head = newhead;
+            }
+            if (newtail) {
+                iter->tail = newtail;
+            }
+            iter = iter->next;
+        }
+    }
+
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

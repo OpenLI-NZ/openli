@@ -261,6 +261,7 @@ struct single_coll_receiver {
     coll_recv_t *tail;
 
     UT_hash_handle hh;
+    UT_hash_handle hh_ssf;
 
 };
 
@@ -344,6 +345,19 @@ int mediator_accept_collector_connection(mediator_collector_t *medcol,
  *  @param medcol       The shared state for all collector receive threads
  */
 void mediator_disconnect_all_collectors(mediator_collector_t *medcol);
+
+/** Walks the set of collector receive threads and removes any threads
+ *  that are duplicates of another forwarding thread connection.
+ *
+ *  This is intended to handle cases where a collector re-connects to
+ *  us and so we therefore create a new set of receive threads, but the
+ *  old threads have not been removed.
+ *
+ *  In theory, the oldest threads should be closer to the head of the
+ *  list of threads for each collector IP address so we should be able
+ *  to do the bulk of the "cleaning" work with a single iteration.
+ */
+void mediator_clean_collectors(mediator_collector_t *medcol);
 
 #endif
 
