@@ -108,8 +108,10 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
         JLI(jval, fwd->destinations_by_id, newdest->mediatorid);
         *jval = (Word_t)newdest;
 
-        logger(LOG_INFO, "OpenLI: adding new mediator %u at %s:%s",
-                newdest->mediatorid, newdest->ipstr, newdest->portstr);
+        if (fwd->forwardid == 0) {
+            logger(LOG_INFO, "OpenLI: adding new mediator %u at %s:%s",
+                    newdest->mediatorid, newdest->ipstr, newdest->portstr);
+        }
     } else {
         found = (export_dest_t *)(*jval);
 
@@ -124,10 +126,13 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
             if (strcmp(found->ipstr, msg->data.med.ipstr) != 0 ||
                     strcmp(found->portstr, msg->data.med.portstr) != 0) {
                 /* Mediator has changed IP or port */
-                logger(LOG_INFO, "OpenLI: mediator %u has changed location from %s:%s to %s:%s",
-                        found->mediatorid,
-                        found->ipstr, found->portstr, msg->data.med.ipstr,
-                        msg->data.med.portstr);
+                if (fwd->forwardid == 0) {
+                    logger(LOG_INFO,
+                            "OpenLI: mediator %u has changed location from %s:%s to %s:%s",
+                            found->mediatorid,
+                            found->ipstr, found->portstr, msg->data.med.ipstr,
+                            msg->data.med.portstr);
+                }
                 free(found->ipstr);
                 free(found->portstr);
                 found->ipstr = msg->data.med.ipstr;
@@ -153,7 +158,7 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
         if (fwd->flagtimerfd == -1) {
             fwd->flagtimerfd = timerfd_create(CLOCK_MONOTONIC, 0);
             if (fwd->flagtimerfd == -1) {
-                logger(LOG_INFO, "OpenLI: failed to create forwarder timer fd: %s", strerror(errno));
+                logger(LOG_INFO, "OpenLI: failed to create forwarder timer fd in thread %d: %s", fwd->forwardid, strerror(errno));
                 return -1;
             }
         }
@@ -176,7 +181,7 @@ static inline void disconnect_mediator(forwarding_thread_data_t *fwd,
     }
     med->fd = -1;
 
-    if (med->logallowed) {
+    if (med->logallowed && fwd->forwardid == 0) {
         logger(LOG_INFO, "OpenLI: disconnecting mediator %s:%s",
                 med->ipstr, med->portstr);
     }
@@ -329,7 +334,7 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         export_dest_t *med;
 
         JLG(jval, fwd->destinations_by_id, msg->data.med.mediatorid);
-        if (jval == NULL) {
+        if (jval == NULL && fwd->forwardid == 0) {
             logger(LOG_DEBUG, "asked to remove mediator %d but cannot find it?",
                     msg->data.med.mediatorid);
             free(msg);
@@ -337,14 +342,15 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         }
         med = (export_dest_t *)(*jval);
         remove_destination(fwd, med);
-        logger(LOG_DEBUG, "removed mediator %d due to provisioner request",
-                msg->data.med.mediatorid);
+        if (fwd->forwardid == 0) {
+            logger(LOG_DEBUG, "removed mediator %d due to provisioner request",
+                    msg->data.med.mediatorid);
+        }
     } else if (msg->type == OPENLI_EXPORT_DROP_ALL_MEDIATORS) {
         remove_all_destinations(fwd);
     } else if (msg->type == OPENLI_EXPORT_FLAG_MEDIATORS) {
         flag_all_destinations(fwd);
     } else if (msg->type == OPENLI_EXPORT_RECONNECT_ALL_MEDIATORS) {
-        logger(LOG_DEBUG, "causing all mediators to reconnect");
         disconnect_all_destinations(fwd);
     }
     free(msg);
@@ -380,8 +386,8 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
         if (jval == NULL) {
             logger(LOG_INFO,
-                    "OpenLI: unable to create new intercept record reorderer due to lack of memory"
-                    );
+                    "OpenLI: forwarding thread %d was unable to create new intercept record reorderer due to lack of memory",
+                    fwd->forwardid);
             exit(-2);
         }
 
@@ -403,7 +409,7 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
         JLI(pval, reord->pending, res->seqno);
         if (pval == NULL) {
-            logger(LOG_INFO, "OpenLI: unable to create stored intercept record due to lack of memory");
+            logger(LOG_INFO, "OpenLI: forwarding thread %d was unable to create stored intercept record due to lack of memory", fwd->forwardid);
             exit(-3);
         }
 
@@ -413,8 +419,8 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
     if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
         logger(LOG_INFO,
-                "OpenLI: forced to drop mediator %u because we cannot buffer any more records for it -- please investigate now!",
-                med->mediatorid);
+                "OpenLI: forwarding thread %d was forced to drop mediator %u because we cannot buffer any more records for it -- please investigate now!",
+                fwd->forwardid, med->mediatorid);
         remove_destination(fwd, med);
         return -1;
     }
@@ -429,8 +435,8 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
         if (append_message_to_buffer(&(med->buffer), stored, 0) == 0) {
             logger(LOG_INFO,
-                    "OpenLI: forced to drop mediator %u because we cannot buffer any more records for it -- please investigate asap!",
-                    med->mediatorid);
+                    "OpenLI: forwarding thread %d was forced to drop mediator %u because we cannot buffer any more records for it -- please investigate asap!",
+                    fwd->forwardid, med->mediatorid);
             remove_destination(fwd, med);
             return -1;
         }
@@ -462,8 +468,8 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
 
         if (jval == NULL) {
             logger(LOG_INFO,
-                    "OpenLI: unable to allocate memory for unknown mediator %u",
-                    res->destid);
+                    "OpenLI: forwarding thread %d was unable to allocate memory for unknown mediator %u",
+                    fwd->forwardid, res->destid);
             exit(-2);
         }
 
@@ -554,16 +560,16 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx,
                 close(sockfd);
                 SSL_free(dest->ssl);
                 dest->ssl = NULL;
-                logger(LOG_INFO, "OpenLI: SSL Handshake with mediator failed");
+                logger(LOG_INFO, "OpenLI: SSL Handshake with mediator failed in forwarding thread %d", fwd->forwardid);
                 return -1;
             }
         }
         if (dest->ssllasterror == 0) {
-            logger(LOG_DEBUG, "OpenLI: SSL Handshake with mediator started");
+            logger(LOG_DEBUG, "OpenLI: SSL Handshake with mediator started in forwarding thread %d", fwd->forwardid);
         }
     }
     else {
-        logger(LOG_INFO, "OpenLI: collector has connected to mediator %s:%s using a non-TLS connection", dest->ipstr, dest->portstr);
+        logger(LOG_INFO, "OpenLI: collector forwarding thread %d has connected to mediator %s:%s using a non-TLS connection", fwd->forwardid, dest->ipstr, dest->portstr);
         dest->ssl = NULL;
 
         /* Send the HELLO message right away */
@@ -571,7 +577,7 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx,
                 fwd->RMQ_conf.enabled);
 
         if (r < 0) {
-            logger(LOG_INFO, "OpenLI: forwarding thread %d was unable to send hello to mediator %s:%s -- %s",
+            logger(LOG_INFO, "OpenLI: collector forwarding thread %d was unable to send hello to mediator %s:%s -- %s",
                     fwd->forwardid, dest->ipstr, dest->portstr,
                     strerror(errno));
             close(sockfd);
@@ -622,7 +628,7 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
 
         JLI(jval2, fwd->destinations_by_fd, dest->fd);
         if (jval2 == NULL) {
-            logger(LOG_INFO, "memory issue while connecting to export target");
+            logger(LOG_INFO, "OpenLI: forwarding thread %d encountered a memory issue while connecting to export target", fwd->forwardid);
             close(dest->fd);
             dest->fd = -1;
             exit(-2);
@@ -674,8 +680,8 @@ static int drain_incoming_etsi(forwarding_thread_data_t *fwd) {
         }
 
         if (x % sizeof(openli_encoded_result_t) != 0) {
-            logger(LOG_INFO, "forwarder received odd sized message (%d bytes)?",
-                    x);
+            logger(LOG_INFO, "OpenLI: forwarding thread %d received odd sized message (%d bytes)?",
+                    fwd->forwardid, x);
             return -1;
         }
         msgcnt = x / sizeof(openli_encoded_result_t);
@@ -683,7 +689,9 @@ static int drain_incoming_etsi(forwarding_thread_data_t *fwd) {
         for (i = 0; i < msgcnt; i++) {
 
             if (res[i].liid == NULL && res[i].destid == 0) {
-                logger(LOG_INFO, "encoder %d has ceased encoding", encoders_over);
+                if (fwd->forwardid == 0) {
+                    logger(LOG_INFO, "OpenLI: encoder %d has ceased encoding", encoders_over);
+                }
                 encoders_over ++;
             }
 
@@ -714,8 +722,8 @@ static int receive_incoming_etsi(forwarding_thread_data_t *fwd) {
         }
 
         if (x % sizeof(openli_encoded_result_t) != 0) {
-            logger(LOG_INFO, "forwarder received odd sized message (%d bytes)?",
-                    x);
+            logger(LOG_INFO, "OpenLI: forwarding thread %d received odd sized message (%d bytes)?",
+                    fwd->forwardid, x);
             return -1;
         }
         msgcnt = x / sizeof(openli_encoded_result_t);
@@ -793,7 +801,7 @@ static int rmq_write_buffered(forwarding_thread_data_t *fwd) {
                     amqp_empty_table);
 
             if (amqp_get_rpc_reply(fwd->ampq_conn).reply_type != AMQP_RESPONSE_NORMAL ) {
-                logger(LOG_INFO, "OpenLI: Failed to declare queue");
+                logger(LOG_INFO, "OpenLI: Failed to declare producer queue '%s' for forwarder thread %d", dest->rmq_queueid, fwd->forwardid);
             }
             dest->rmq_declared = 1;
         }
@@ -805,7 +813,7 @@ static int rmq_write_buffered(forwarding_thread_data_t *fwd) {
                 dest->rmq_queueid,
                 BUF_BATCH_SIZE,
                 &(fwd->ampq_blocked)) < 0 ) {
-            logger(LOG_INFO, "OpenLI: Error Publishing to RMQ");
+            logger(LOG_INFO, "OpenLI: forwarder thread %d encountered an error when publishing to RMQ %s", fwd->forwardid, dest->rmq_queueid);
             return -1;
         }
     }
@@ -828,15 +836,15 @@ static void complete_ssl_handshake(forwarding_thread_data_t *fwd,
             //fail out
             if (dest->ssllasterror == 0) {
                 logger(LOG_INFO,
-                        "OpenLI: error in continuing SSL handshake with mediator: %s:%s",
-                        dest->ipstr, dest->portstr);
+                        "OpenLI: forwarding thread %d encountered an error in continuing SSL handshake with mediator: %s:%s",
+                        fwd->forwardid, dest->ipstr, dest->portstr);
             }
             dest->waitingforhandshake = 0;
             dest->ssllasterror = 1;
             disconnect_mediator(fwd, dest);
         }
     } else {
-        logger(LOG_DEBUG, "OpenLI: SSL Handshake from mediator accepted");
+        logger(LOG_DEBUG, "OpenLI: SSL Handshake from mediator accepted by forwarding thread %d", fwd->forwardid);
         dest->waitingforhandshake = 0;
         dest->ssllasterror = 0;
 
@@ -909,27 +917,29 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
                             AMQP_SASL_METHOD_PLAIN, fwd->RMQ_conf.name,
                             fwd->RMQ_conf.pass)
                     ).reply_type != AMQP_RESPONSE_NORMAL ) {
-                logger(LOG_ERR, "OpenLI: RMQ Failed to login to broker using PLAIN auth");
+                logger(LOG_ERR, "OpenLI: forwarding thread %d failed to login to broker using PLAIN auth", fwd->forwardid);
                 return 0;
             }
 
             amqp_channel_open(fwd->ampq_conn, 1);
 
             if ( (amqp_get_rpc_reply(fwd->ampq_conn).reply_type) != AMQP_RESPONSE_NORMAL ) {
-                logger(LOG_ERR, "OpenLI: Failed to open channel");
+                logger(LOG_ERR, "OpenLI: forwarding thread %d failed to open RMQ channel", fwd->forwardid);
                 return 0;
             }
-            logger(LOG_INFO, "OpenLI: Connected to RMQ instance");
+            logger(LOG_INFO, "OpenLI: forwarding thread %d has connected to RMQ instance", fwd->forwardid);
 
             if (check_rmq_connection_block_status(fwd->ampq_conn,
                         &(fwd->ampq_blocked)) < 0) {
                 logger(LOG_ERR,
-                        "OpenLI: Error while checking status of new RMQ instance");
+                        "OpenLI: forwarding thread %d encountered an error while checking status of new RMQ instance", fwd->forwardid);
                 return 0;
             }
 
         } else {
-            logger(LOG_INFO, "OpenLI: Incomplete RMQ login information supplied");
+            if (fwd->forwardid == 0) {
+                logger(LOG_INFO, "OpenLI: Incomplete RMQ login information supplied");
+            }
             return 0;
         }
     }
@@ -1029,8 +1039,8 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
 
         JLG(jval, fwd->destinations_by_fd, fwd->topoll[i].fd);
         if (jval == NULL) {
-            logger(LOG_INFO, "OpenLI: no matching destination for fd %d?",
-                    fwd->topoll[i].fd);
+            logger(LOG_INFO, "OpenLI: forwarding thread %d has no matching destination for fd %d?",
+                    fwd->forwardid, fwd->topoll[i].fd);
             fwd->topoll[i].events = 0;
             continue;
         }
@@ -1062,13 +1072,14 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
                 BUF_BATCH_SIZE, dest->ssl) < 0) {
             if (dest->logallowed) {
                 logger(LOG_INFO,
-                    "OpenLI: error transmitting records to mediator %s:%s: %s",
-                    dest->ipstr, dest->portstr, strerror(errno));
+                    "OpenLI: forwarding thread %d encountered an error while transmitting records to mediator %s:%s: %s",
+                    fwd->forwardid, dest->ipstr, dest->portstr,
+                    strerror(errno));
             }
             disconnect_mediator(fwd, dest);
         } else if (dest->logallowed == 0) {
             logger(LOG_INFO,
-                    "OpenLI: successfully started transmitting records to mediator %s:%s", dest->ipstr, dest->portstr);
+                    "OpenLI: forwarding thread %d has successfully started transmitting records to mediator %s:%s", fwd->forwardid, dest->ipstr, dest->portstr);
             dest->logallowed = 1;
         }
         towait = 0;
@@ -1096,8 +1107,8 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
 
     fwd->conntimerfd = timerfd_create(CLOCK_MONOTONIC, 0);
     if (fwd->conntimerfd == -1) {
-        logger(LOG_INFO, "OpenLI: failed to create export connection timer: %s",
-                strerror(errno));
+        logger(LOG_INFO, "OpenLI: forwarding thread %d failed to create export connection timer: %s",
+                fwd->forwardid, strerror(errno));
         return;
     }
 
