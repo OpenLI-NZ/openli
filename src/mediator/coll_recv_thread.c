@@ -1168,8 +1168,8 @@ void mediator_clean_collectors(mediator_collector_t *medcol) {
 
     HASH_ITER(hh, medcol->threads, col, tmp) {
         seensofar = NULL;
-        newtail = col->head;
-        newhead = col->tail;
+        newhead = col->head;
+        newtail = col->tail;
         oldhead = col->head;
         oldtail = col->tail;
         iter = col;
@@ -1277,7 +1277,6 @@ void mediator_clean_collectors(mediator_collector_t *medcol) {
             iter = iter->next;
         }
     }
-
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
