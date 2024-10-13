@@ -89,8 +89,8 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
         newdest->halted = 0;
         newdest->logallowed = 1;
         newdest->mediatorid = msg->data.med.mediatorid;
-        newdest->ipstr = msg->data.med.ipstr;
-        newdest->portstr = msg->data.med.portstr;
+        newdest->ipstr = strdup(msg->data.med.ipstr);
+        newdest->portstr = strdup(msg->data.med.portstr);
         newdest->ssl = NULL;
         newdest->ssllasterror = 0;
         newdest->waitingforhandshake = 0;
@@ -117,8 +117,8 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
 
         if (found->ipstr == NULL) {
             /* Announcement for a previously unknown mediator */
-            found->ipstr = msg->data.med.ipstr;
-            found->portstr = msg->data.med.portstr;
+            found->ipstr = strdup(msg->data.med.ipstr);
+            found->portstr = strdup(msg->data.med.portstr);
             found->fd = -1;
             found->failmsg = 0;
             found->logallowed = 1;
@@ -135,23 +135,22 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
                 }
                 free(found->ipstr);
                 free(found->portstr);
-                found->ipstr = msg->data.med.ipstr;
-                found->portstr = msg->data.med.portstr;
+                found->ipstr = strdup(msg->data.med.ipstr);
+                found->portstr = strdup(msg->data.med.portstr);
                 found->logallowed = 1;
 
                 if (found->fd != -1) {
                     close(found->fd);
                     found->fd = -1;
                 }
-            } else {
-                free(msg->data.med.ipstr);
-                free(msg->data.med.portstr);
             }
             found->awaitingconfirm = 0;
             found->halted = 0;
         }
     }
 
+    free(msg->data.med.ipstr);
+    free(msg->data.med.portstr);
     free(msg);
 
     if (fwd->awaitingconfirm) {
