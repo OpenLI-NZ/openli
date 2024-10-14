@@ -504,6 +504,7 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
 
     tcp_reass_segment_t *seg, *existing;
     uint8_t *endptr;
+    int i;
 
     HASH_FIND(hh, stream->segments, &seqno, sizeof(seqno), existing);
     if (existing) {
@@ -560,6 +561,9 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
         if (stream->pkt_cnt == stream->pkt_alloc) {
             stream->packets = realloc(stream->packets,
                     (stream->pkt_alloc + 4) * sizeof(libtrace_packet_t *));
+            for (i = stream->pkt_alloc; i < stream->pkt_alloc + 4; i++) {
+                stream->packets[i] = NULL;
+            }
             stream->pkt_alloc += 4;
         }
         stream->packets[stream->pkt_cnt] = pkt;
