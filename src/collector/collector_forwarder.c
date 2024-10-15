@@ -97,7 +97,8 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
         newdest->rmq_declared = 0;
 
         if (fwd->ampq_conn) {
-            snprintf(stringspace, 32, "ID%d", newdest->mediatorid);
+            snprintf(stringspace, 32, "ID%d-%d", newdest->mediatorid,
+                    fwd->forwardid);
 
             newdest->rmq_queueid.len = strlen(stringspace);
             newdest->rmq_queueid.bytes = (void *)(strdup(stringspace));
@@ -485,7 +486,8 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
         init_export_buffer(&(med->buffer));
 
         if (fwd->ampq_conn) {
-            snprintf(stringspace, 32, "ID%d", med->mediatorid);
+            snprintf(stringspace, 32, "ID%d-%d", med->mediatorid,
+                    fwd->forwardid);
 
             med->rmq_queueid.len = strlen(stringspace);
             med->rmq_queueid.bytes = (void *)(strdup(stringspace));
