@@ -658,7 +658,7 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
         fwd->forcesend[ind] = 0;
         fwd->topoll[ind].socket = NULL;
         fwd->topoll[ind].fd = dest->fd;
-        fwd->topoll[ind].events = ZMQ_POLLOUT;
+        fwd->topoll[ind].events = ZMQ_POLLOUT | ZMQ_POLLIN;
         fwd->topoll[ind].revents = 0;
     }
 
@@ -848,7 +848,6 @@ static void complete_ssl_handshake(forwarding_thread_data_t *fwd,
         logger(LOG_DEBUG, "OpenLI: SSL Handshake from mediator accepted by forwarding thread %d", fwd->forwardid);
         dest->waitingforhandshake = 0;
         dest->ssllasterror = 0;
-
         ret = transmit_forwarder_hello(dest->fd, dest->ssl, fwd->forwardid,
                 fwd->RMQ_conf.enabled);
 
@@ -1029,12 +1028,9 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         PWord_t jval;
         uint64_t availsend = 0;
         /* check if any destinations can received any buffered data */
-        if (!(fwd->topoll[i].revents & ZMQ_POLLOUT)) {
-            continue;
-        }
-        fwd->topoll[i].revents = 0;
 
         if (fwd->topoll[i].events == 0) {
+            fwd->topoll[i].revents = 0;
             continue;
         }
 
@@ -1048,14 +1044,56 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
 
         dest = (export_dest_t *)(*jval);
 
-        if (dest->waitingforhandshake){
-            complete_ssl_handshake(fwd, dest);
-            towait = 0;
+        if (fwd->topoll[i].revents & ZMQ_POLLERR) {
+            logger(LOG_INFO,
+                    "OpenLI: connection to mediator %s:%s has failed in forwarding thread %d: (%s)",
+                    dest->ipstr, dest->portstr, fwd->forwardid,
+                    strerror(errno));
+            disconnect_mediator(fwd, dest);
             continue;
         }
 
+        if (fwd->topoll[i].revents & ZMQ_POLLIN) {
+            char recvbuf[2048];
+            int r;
+
+            if (dest->waitingforhandshake) {
+                complete_ssl_handshake(fwd, dest);
+                towait = 0;
+                continue;
+            }
+            /* We don't actually receive messages from the mediator (yet?).
+             * so this is entirely for detecting peer disconnections.
+             */
+            if ((r = recv(fwd->topoll[i].fd, recvbuf, 8, 0) <= 0)) {
+                if (r < 0) {
+                    logger(LOG_INFO,
+                        "OpenLI: connection to mediator %s:%s has failed in forwarding thread %d: (%s)",
+                        dest->ipstr, dest->portstr, fwd->forwardid,
+                        strerror(errno));
+                } else {
+                    logger(LOG_INFO,
+                        "OpenLI: connection to mediator %s:%s has closed in forwarding thread %d",
+                        dest->ipstr, dest->portstr, fwd->forwardid);
+                }
+
+                disconnect_mediator(fwd, dest);
+                continue;
+            }
+
+            /* We received something, just discard it for now as it is
+             * probably just SSL-related exchanges. Note, if we do start
+             * receiving messages over this connection, we're going to have
+             * to be a bit smarter about this (i.e. use SSL_read() if we
+             * have an SSL socket instead of overloading recv() )
+             */
+        }
+
+        if (!(fwd->topoll[i].revents & ZMQ_POLLOUT)) {
+            continue;
+        }
+        fwd->topoll[i].revents = 0;
         if (fwd->ampq_conn) {
-            fwd->topoll[i].events = 0;
             continue;
         }
 

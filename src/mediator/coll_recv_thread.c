@@ -413,12 +413,6 @@ static int process_fwd_hello(coll_recv_t *col, uint8_t *msgbody,
         return -1;
     }
     col->forwarder_using_rmq = hellomsg->using_rmq;
-
-    logger(LOG_INFO,
-            "DEVDEBUG: %d received forwarder hello from %s for thread %d: %s",
-            col->tid, col->ipaddr, col->forwarder_id,
-            col->forwarder_using_rmq ? "RMQ" : "socket");
-
     return 1;
 }
 
@@ -802,8 +796,6 @@ static void *start_collector_thread(void *params) {
         logger(LOG_INFO, "OpenLI Mediator: started collector thread for NULL collector IP??");
         pthread_exit(NULL);
     }
-    logger(LOG_INFO, "DEVDEBUG: starting collector receive thread %d for %s",
-            col->tid, col->ipaddr);
     /* Save frequently read fields from parent config so we don't have to
      * lock it frequently for reading. We'll get a RELOAD message when
      * we need to check if these values may have changed.
@@ -1016,9 +1008,6 @@ threadexit:
 
     destroy_mediator_timer(queuecheck);
     destroy_mediator_timer(timerev);
-
-    logger(LOG_INFO, "DEVDEBUG: exiting collector receive thread %d for %s:%d",
-            col->tid, col->ipaddr, col->forwarder_id);
     cleanup_collector_thread(col);
 
     close(epoll_fd);
@@ -1221,8 +1210,6 @@ void mediator_clean_collectors(mediator_collector_t *medcol) {
             if (newhead == tofree) {
                 newhead = tofree->next;
             }
-
-            logger(LOG_INFO, "DEVDEBUG: removing colrecv thread %ld, as a duplicate entry for %s:%d", tofree->tid, tofree->ipaddr, tofree->forwarder_id);
 
             end_msg.type = MED_COLL_MESSAGE_HALT;
             end_msg.arg = 0;
