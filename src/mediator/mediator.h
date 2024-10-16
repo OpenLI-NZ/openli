@@ -92,6 +92,9 @@ typedef struct med_state {
     /** The epoll event for the epoll loop timer */
     med_epoll_ev_t *timerev;
 
+    /** The epoll event for the collector receiver cleanup timer */
+    med_epoll_ev_t *col_clean_timerev;
+
     /** State for managing the connection back to the provisioner */
     mediator_prov_t provisioner;
 

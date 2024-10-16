@@ -133,10 +133,28 @@ typedef struct mediator_collector_config {
 
 
 /** State associated with a single collector connection */
-typedef struct single_coll_receiver {
+typedef struct single_coll_receiver coll_recv_t;
+
+struct single_coll_receiver {
 
     /** ID of the thread that this connection is running in */
     pthread_t tid;
+
+    /** Timestamp of when the connection attempt was made */
+    time_t creation;
+
+    /** The particular forwarding thread on the collector that is
+     *  connected via this receiver thread.
+     */
+    int forwarder_id;
+
+    /** Whether the forwarder is writing into RMQ or onto the socket
+     *  directly
+     */
+    uint8_t forwarder_using_rmq;
+
+    /** The RabbitMQ queue name for this receiving thread (if using RMQ) */
+    char *rmq_queuename;
 
     /** The IP address that the collector has connected from */
     char *ipaddr;
@@ -158,7 +176,7 @@ typedef struct single_coll_receiver {
      */
     int rmq_hb_freq;
 
-    /** Flag indicating whether the collector receive thread should be
+    /** Flag indicating whether the mediator is configured to be
      *  consuming from RMQ (as opposed to reading from a TCP socket)
      */
     int rmqenabled;
@@ -229,9 +247,23 @@ typedef struct single_coll_receiver {
      */
     uint64_t dropped_recs;
 
-    UT_hash_handle hh;
+    /** Pointer to the next receive thread for this collector, i.e. in
+     *  cases where the collector has multiple forwarding threads */
+    coll_recv_t *next;
 
-} coll_recv_t;
+    /** Pointer to the previous receive thread for this collector, i.e. in
+     *  cases where the collector has multiple forwarding threads */
+    coll_recv_t *prev;
+
+    /** Pointer to the first receive thread in the list for this collector */
+    coll_recv_t *head;
+    /** Pointer to the last receive thread in the list for this collector */
+    coll_recv_t *tail;
+
+    UT_hash_handle hh;
+    UT_hash_handle hh_ssf;
+
+};
 
 /** Structure that tracks the set of existing collector receive threads
  *  and their shared configuration.
@@ -313,6 +345,19 @@ int mediator_accept_collector_connection(mediator_collector_t *medcol,
  *  @param medcol       The shared state for all collector receive threads
  */
 void mediator_disconnect_all_collectors(mediator_collector_t *medcol);
+
+/** Walks the set of collector receive threads and removes any threads
+ *  that are duplicates of another forwarding thread connection.
+ *
+ *  This is intended to handle cases where a collector re-connects to
+ *  us and so we therefore create a new set of receive threads, but the
+ *  old threads have not been removed.
+ *
+ *  In theory, the oldest threads should be closer to the head of the
+ *  list of threads for each collector IP address so we should be able
+ *  to do the bulk of the "cleaning" work with a single iteration.
+ */
+void mediator_clean_collectors(mediator_collector_t *medcol);
 
 #endif
 

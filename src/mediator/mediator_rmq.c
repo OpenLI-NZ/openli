@@ -808,7 +808,8 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
     }
 
     /* Make sure we have a declared instance of the queue for this mediator */
-    snprintf(stringspace, sizeof(stringspace), "ID%d", medid);
+    snprintf(stringspace, sizeof(stringspace), "ID%d-%d", medid,
+            col->forwarder_id);
     if (declare_RMQ_queue(amqp_state, stringspace, 1) < 0) {
         if (!col->disabled_log) {
             logger(LOG_INFO, "OpenLI Mediator: RMQ failed to declare queue %s on collector %s", stringspace, col->ipaddr);
