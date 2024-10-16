@@ -519,33 +519,39 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
             seqno += existing->length;
             content = content + existing->length;
             assert(stream->pkt_cnt > 0);
+            /*
             if (pkt) {
                 if (stream->packets[stream->pkt_cnt - 1] != NULL) {
                     trace_destroy_packet(stream->packets[stream->pkt_cnt - 1]);
                 }
                 stream->packets[stream->pkt_cnt - 1] = pkt;
             }
+            */
             return update_tcp_reassemble_stream(stream, content, plen, seqno,
-                    NULL);
+                    pkt);
         }
 
-        /* segment is shorter? probably don't care... */
-        return 0;
-    }
+        /* segment is shorter? remove the larger segment because presumably
+         * everything is going to be retransmitted anyway... */
+        HASH_DELETE(hh, stream->segments, existing);
+        free(existing->content);
+        free(existing);
+    } else {
 
-    if (seq_cmp(seqno, stream->expectedseqno) < 0) {
-        return -1;
-    }
+        if (seq_cmp(seqno, stream->expectedseqno) < 0) {
+            return -1;
+        }
 
-    endptr = find_sip_message_end(content, plen);
-    /* fast path, check if the segment is a complete message AND
-     * has our expected sequence number -- if yes, we can tell the caller
-     * to just use the packet payload directly without memcpying
-     */
-    if (seq_cmp(seqno, stream->expectedseqno) == 0) {
-        if (endptr == content + plen) {
-            stream->expectedseqno += plen;
-            return 1;
+        /* fast path, check if the segment is a complete message AND
+         * has our expected sequence number -- if yes, we can tell the caller
+         * to just use the packet payload directly without memcpying
+         */
+        if (seq_cmp(seqno, stream->expectedseqno) == 0) {
+            endptr = find_sip_message_end(content, plen);
+            if (endptr == content + plen) {
+                stream->expectedseqno += plen;
+                return 1;
+            }
         }
     }
 
