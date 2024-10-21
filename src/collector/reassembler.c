@@ -509,7 +509,15 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
     if (existing) {
         /* retransmit? check for size difference... */
         if (plen == existing->length) {
-            return -1;
+            if (pkt) {
+                /* this is an entire packet, so we can ignore it */
+                return -1;
+            } else {
+                /* this could be just part of a packet, so we need to tell
+                 * the caller that the packet should not be freed
+                 */
+                return 0;
+            }
         }
 
         /* segment is longer? try to add the "extra" bit as a new segment */
@@ -517,34 +525,43 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
             plen -= existing->length;
             seqno += existing->length;
             content = content + existing->length;
-            assert(stream->pkt_cnt > 0);
-            if (pkt) {
-                if (stream->packets[stream->pkt_cnt - 1] != NULL) {
-                    trace_destroy_packet(stream->packets[stream->pkt_cnt - 1]);
-                }
-                stream->packets[stream->pkt_cnt - 1] = pkt;
+        } else {
+            /* segment is shorter? remove the larger segment because presumably
+             * everything is going to be retransmitted anyway? */
+            HASH_DELETE(hh, stream->segments, existing);
+            free(existing->content);
+            free(existing);
+        }
+        assert(stream->pkt_cnt > 0);
+        if (pkt) {
+            if (stream->packets[stream->pkt_cnt - 1] != NULL) {
+                trace_destroy_packet(stream->packets[stream->pkt_cnt - 1]);
             }
-            return update_tcp_reassemble_stream(stream, content, plen, seqno,
-                    NULL);
+            stream->packets[stream->pkt_cnt - 1] = pkt;
+        }
+        /* Go around again -- if we are shorter, then this will add
+         * the shorter segment in place of the one we just removed.
+         * If we are longer, this should add a new segment containing
+         * just the additional payload.
+         */
+        return update_tcp_reassemble_stream(stream, content, plen, seqno,
+                NULL);
+    } else {
+
+        if (seq_cmp(seqno, stream->expectedseqno) < 0) {
+            return -1;
         }
 
-        /* segment is shorter? probably don't care... */
-        return 0;
-    }
-
-    if (seq_cmp(seqno, stream->expectedseqno) < 0) {
-        return -1;
-    }
-
-    endptr = find_sip_message_end(content, plen);
-    /* fast path, check if the segment is a complete message AND
-     * has our expected sequence number -- if yes, we can tell the caller
-     * to just use the packet payload directly without memcpying
-     */
-    if (seq_cmp(seqno, stream->expectedseqno) == 0) {
-        if (endptr == content + plen) {
-            stream->expectedseqno += plen;
-            return 1;
+        /* fast path, check if the segment is a complete message AND
+         * has our expected sequence number -- if yes, we can tell the caller
+         * to just use the packet payload directly without memcpying
+         */
+        if (seq_cmp(seqno, stream->expectedseqno) == 0) {
+            endptr = find_sip_message_end(content, plen);
+            if (endptr == content + plen) {
+                stream->expectedseqno += plen;
+                return 1;
+            }
         }
     }
 
