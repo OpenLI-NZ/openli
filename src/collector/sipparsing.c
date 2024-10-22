@@ -55,32 +55,8 @@ static int parse_tcp_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *pkt,
         return -1;
     }
 
-    /* Check for a CRLF keep alive */
-    if (tcprem == 4 && memcmp(payload, "\x0d\x0a\x0d\x0a", 4) == 0) {
-        return -1;
-    }
-
-    if (tcprem == 2 && memcmp(payload, "\x0d\x0a", 2) == 0) {
-        return -1;
-    }
-
-    /* 00 00 00 00 seems to be some sort of keep alive as well? */
-    if (tcprem == 4 && memcmp(payload, "\x00\x00\x00\x00", 4) == 0) {
-        return -1;
-    }
-
-    if (tcprem == 8 && memcmp(payload, "\x00\x00\x00\x00\x00\x00\x00\x00",
-                8) == 0) {
-        return -1;
-    }
-
-    /* Yet another keep alive pattern */
-    if (tcprem == 1 && memcmp(payload, "\x00", 1) == 0) {
-        return -1;
-    }
-
     ret = update_tcp_reassemble_stream(stream, (uint8_t *)payload, tcprem,
-            ntohl(tcp->seq), pkt);
+            ntohl(tcp->seq), pkt, 1);
 
     return ret;
 
@@ -167,7 +143,7 @@ int parse_sip_content(openli_sip_parser_t *p, uint8_t *sipcontent,
 int parse_next_sip_message(openli_sip_parser_t *p,
         libtrace_packet_t ***packets, int *pkt_cnt) {
 
-    int ret;
+    int i, ret, gottcpsip = 0;
 
     if (p->osip) {
         osip_message_free(p->osip);
@@ -186,24 +162,43 @@ int parse_next_sip_message(openli_sip_parser_t *p,
         }
 
         if (p->thisstream) {
-            ret = get_next_tcp_reassembled(p->thisstream, &(p->sipmessage),
-                    &(p->siplen), packets, pkt_cnt);
-            if (p->sipmessage != NULL) {
-                p->sipalloced = 1;
-            }
+            do {
+                ret = get_next_tcp_reassembled(p->thisstream, &(p->sipmessage),
+                        &(p->siplen), packets, pkt_cnt);
+                if (p->sipmessage != NULL) {
+                    p->sipalloced = 1;
+                }
 
-            if (ret <= 0) {
-                return ret;
-            }
-            p->sipoffset = 0;
+                if (ret <= 0) {
+                    return ret;
+                }
+                p->sipoffset = 0;
+                if (*(p->sipmessage) == 0x0d || *(p->sipmessage) == 0x00) {
+                    /* keep-alive(s), skip them */
+                    if (*packets) {
+                        for (i = 0; i < *pkt_cnt; i++) {
+                            if ((*packets)[i]) {
+                                trace_destroy_packet((*packets)[i]);
+                            }
+                        }
+                        free(*packets);
+                        *packets = NULL;
+                    }
+                    continue;
+                }
+                gottcpsip = 1;
+            } while (!gottcpsip);
         }
     }
 
-    osip_message_init(&(p->osip));
-    ret = osip_message_parse(p->osip,
-            (const char *)(p->sipmessage + p->sipoffset), p->siplen);
-    if (ret != 0) {
-        return -1;
+
+    if (p->siplen > 0) {
+        osip_message_init(&(p->osip));
+        ret = osip_message_parse(p->osip,
+                (const char *)(p->sipmessage + p->sipoffset), p->siplen);
+        if (ret != 0) {
+            return -1;
+        }
     }
 
     /* Don't do an SDP parse until it is required -- collector processing
