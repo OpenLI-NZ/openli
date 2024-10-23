@@ -346,7 +346,7 @@ static void parse_email_targets(email_target_t **targets, yaml_document_t *doc,
 }
 
 static void parse_col_thread_count(int *toset, const char *expectedkey,
-        yaml_node_t *key, yaml_node_t *value, const char *errlabel) {
+        yaml_node_t *key, yaml_node_t *value, const char *errlabel, int min) {
 
     if (key->type != YAML_SCALAR_NODE) {
         return;
@@ -360,11 +360,11 @@ static void parse_col_thread_count(int *toset, const char *expectedkey,
     }
 
     *toset = strtoul((const char *)value->data.scalar.value, NULL, 10);
-    if (*toset <= 0) {
-        *toset = 1;
+    if (*toset < min) {
+        *toset = min;
         logger(LOG_INFO,
-                "OpenLI: must have at least one %s thread per collector!",
-                errlabel);
+                "OpenLI: must have at least %s %s thread per collector!",
+                min, errlabel);
     }
 }
 
@@ -1308,17 +1308,17 @@ static int global_parser(void *arg, yaml_document_t *doc,
     }
 
     parse_col_thread_count(&(glob->encoding_threads), "seqtrackerthreads",
-            key, value, "sequence tracker");
+            key, value, "sequence tracker", 1);
     parse_col_thread_count(&(glob->encoding_threads), "encoderthreads",
-            key, value, "encoder");
+            key, value, "encoder", 1);
     parse_col_thread_count(&(glob->forwarding_threads), "forwardingthreads",
-            key, value, "forwarding");
+            key, value, "forwarding", 1);
     parse_col_thread_count(&(glob->email_threads), "emailthreads",
-            key, value, "email worker");
+            key, value, "email worker", 0);
     parse_col_thread_count(&(glob->sms_threads), "smsthreads",
-            key, value, "SMS worker");
+            key, value, "SMS worker", 0);
     parse_col_thread_count(&(glob->gtp_threads), "gtpthreads",
-            key, value, "GTP worker");
+            key, value, "GTP worker", 0);
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&

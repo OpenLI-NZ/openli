@@ -265,45 +265,60 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
         zmq_connect(loc->zmq_pubsocks[i], pubsockname);
     }
 
-    loc->email_worker_queues = calloc(glob->email_threads, sizeof(void *));
-    for (i = 0; i < glob->email_threads; i++) {
-        char pubsockname[128];
+    if (glob->email_threads > 0) {
+        loc->email_worker_queues = calloc(glob->email_threads, sizeof(void *));
+        for (i = 0; i < glob->email_threads; i++) {
+            char pubsockname[128];
 
-        snprintf(pubsockname, 128, "inproc://openliemailworker-colrecv%d", i);
-        loc->email_worker_queues[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
-        zmq_setsockopt(loc->email_worker_queues[i], ZMQ_SNDHWM, &hwm,
-                sizeof(hwm));
-        zmq_connect(loc->email_worker_queues[i], pubsockname);
+            snprintf(pubsockname, 128, "inproc://openliemailworker-colrecv%d",
+                    i);
+            loc->email_worker_queues[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+            zmq_setsockopt(loc->email_worker_queues[i], ZMQ_SNDHWM, &hwm,
+                    sizeof(hwm));
+            zmq_connect(loc->email_worker_queues[i], pubsockname);
+        }
+    } else {
+        loc->email_worker_queues = NULL;
     }
 
-    loc->sms_worker_queues = calloc(glob->sms_threads, sizeof(void *));
-    for (i = 0; i < glob->sms_threads; i++) {
-        char pubsockname[128];
+    if (glob->sms_threads > 0) {
+        loc->sms_worker_queues = calloc(glob->sms_threads, sizeof(void *));
+        for (i = 0; i < glob->sms_threads; i++) {
+            char pubsockname[128];
 
-        snprintf(pubsockname, 128, "inproc://openlismsworker-colrecv%d", i);
-        loc->sms_worker_queues[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
-        zmq_setsockopt(loc->sms_worker_queues[i], ZMQ_SNDHWM, &hwm,
-                sizeof(hwm));
-        zmq_connect(loc->sms_worker_queues[i], pubsockname);
+            snprintf(pubsockname, 128, "inproc://openlismsworker-colrecv%d", i);
+            loc->sms_worker_queues[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+            zmq_setsockopt(loc->sms_worker_queues[i], ZMQ_SNDHWM, &hwm,
+                    sizeof(hwm));
+            zmq_connect(loc->sms_worker_queues[i], pubsockname);
+        }
+    } else {
+        loc->sms_worker_queues = NULL;
     }
 
-    loc->fromgtp_queues = calloc(glob->gtp_threads,
-            sizeof(libtrace_message_queue_t));
+    if (glob->gtp_threads > 0) {
+        loc->fromgtp_queues = calloc(glob->gtp_threads,
+                sizeof(libtrace_message_queue_t));
 
-    loc->gtp_worker_queues = calloc(glob->gtp_threads, sizeof(void *));
-    for (i = 0; i < glob->gtp_threads; i++) {
-        char pubsockname[128];
+        loc->gtp_worker_queues = calloc(glob->gtp_threads, sizeof(void *));
+        for (i = 0; i < glob->gtp_threads; i++) {
+            char pubsockname[128];
 
-        snprintf(pubsockname, 128, "inproc://openligtpworker-colrecv%d", i);
-        loc->gtp_worker_queues[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
-        zmq_setsockopt(loc->gtp_worker_queues[i], ZMQ_SNDHWM, &hwm,
-                sizeof(hwm));
-        zmq_connect(loc->gtp_worker_queues[i], pubsockname);
+            snprintf(pubsockname, 128, "inproc://openligtpworker-colrecv%d", i);
+            loc->gtp_worker_queues[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+            zmq_setsockopt(loc->gtp_worker_queues[i], ZMQ_SNDHWM, &hwm,
+                    sizeof(hwm));
+            zmq_connect(loc->gtp_worker_queues[i], pubsockname);
 
-        libtrace_message_queue_init(&(loc->fromgtp_queues[i]),
-                sizeof(openli_pushed_t));
+            libtrace_message_queue_init(&(loc->fromgtp_queues[i]),
+                    sizeof(openli_pushed_t));
+        }
+        loc->gtpq_count = glob->gtp_threads;
+    } else {
+        loc->gtpq_count = 0;
+        loc->fromgtp_queues = NULL;
+        loc->gtp_worker_queues = NULL;
     }
-    loc->gtpq_count = glob->gtp_threads;
 
     loc->fragreass = create_new_ipfrag_reassembler();
 
@@ -521,11 +536,19 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     zmq_setsockopt(loc->tosyncq_voip, ZMQ_LINGER, &zero, sizeof(zero));
     zmq_close(loc->tosyncq_voip);
 
-    free(loc->fromgtp_queues);
+    if (loc->fromgtp_queues) {
+        free(loc->fromgtp_queues);
+    }
     free(loc->zmq_pubsocks);
-    free(loc->email_worker_queues);
-    free(loc->sms_worker_queues);
-    free(loc->gtp_worker_queues);
+    if (loc->email_worker_queues) {
+        free(loc->email_worker_queues);
+    }
+    if (loc->sms_worker_queues) {
+        free(loc->sms_worker_queues);
+    }
+    if (loc->gtp_worker_queues) {
+        free(loc->gtp_worker_queues);
+    }
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
         free_all_ipsessions(&(v4->intercepts));
@@ -613,6 +636,9 @@ static void send_packet_to_emailworker(libtrace_packet_t *pkt,
 
     int destind;
 
+    if (qcount == 0) {
+        return;
+    }
     assert(hashval != 0);
     destind = (hashval - 1) % qcount;
     send_packet_to_sync(pkt, queues[destind], pkttype);
@@ -781,7 +807,11 @@ static uint8_t is_sms_over_sip(libtrace_packet_t *pkt,
 
     uint8_t x = 0, ret = 0;
 
-    libtrace_packet_t *copy = openli_copy_packet(pkt);
+    libtrace_packet_t *copy;
+    if (glob->sms_threads == 0) {
+        return 0;
+    }
+    copy = openli_copy_packet(pkt);
 
     x = add_sip_packet_to_parser(&(loc->sipparser), copy, 0);
     if (x == SIP_ACTION_USE_PACKET) {
@@ -890,6 +920,10 @@ static uint8_t check_if_gtp(packet_info_t *pinfo, libtrace_packet_t *pkt,
     gtpv2_header_teid_t *v2_hdr;
 
     if (loc->gtpservers == NULL) {
+        return 0;
+    }
+
+    if (glob->gtp_threads == 0) {
         return 0;
     }
 
@@ -2387,74 +2421,92 @@ int main(int argc, char *argv[]) {
         pthread_setname_np(glob->forwarders[i].threadid, name);
     }
 
-    glob->smsworkers = calloc(glob->sms_threads, sizeof(openli_sms_worker_t));
-    for (i = 0; i < glob->sms_threads; i++) {
-        snprintf(name, 1024, "smsworker-%d", i);
+    if (glob->sms_threads > 0) {
+        glob->smsworkers = calloc(glob->sms_threads,
+                sizeof(openli_sms_worker_t));
+        for (i = 0; i < glob->sms_threads; i++) {
+            snprintf(name, 1024, "smsworker-%d", i);
 
-        glob->smsworkers[i].zmq_ctxt = glob->zmq_ctxt;
-        glob->smsworkers[i].workerid = i;
-        glob->smsworkers[i].stats_mutex = &(glob->stats_mutex);
-        glob->smsworkers[i].stats = &(glob->stats);
-        glob->smsworkers[i].shared = &(glob->sharedinfo);
-        glob->smsworkers[i].shared_mutex = &(glob->config_mutex);
-        glob->smsworkers[i].zmq_ii_sock = NULL;
-        glob->smsworkers[i].zmq_colthread_recvsock = NULL;
-        glob->smsworkers[i].zmq_pubsocks = NULL;
-        glob->smsworkers[i].tracker_threads = glob->seqtracker_threads;
-        glob->smsworkers[i].voipintercepts = NULL;
+            glob->smsworkers[i].zmq_ctxt = glob->zmq_ctxt;
+            glob->smsworkers[i].workerid = i;
+            glob->smsworkers[i].stats_mutex = &(glob->stats_mutex);
+            glob->smsworkers[i].stats = &(glob->stats);
+            glob->smsworkers[i].shared = &(glob->sharedinfo);
+            glob->smsworkers[i].shared_mutex = &(glob->config_mutex);
+            glob->smsworkers[i].zmq_ii_sock = NULL;
+            glob->smsworkers[i].zmq_colthread_recvsock = NULL;
+            glob->smsworkers[i].zmq_pubsocks = NULL;
+            glob->smsworkers[i].tracker_threads = glob->seqtracker_threads;
+            glob->smsworkers[i].voipintercepts = NULL;
 
-        pthread_create(&(glob->smsworkers[i].threadid), NULL,
-                start_sms_worker_thread, (void *)&(glob->smsworkers[i]));
-        pthread_setname_np(glob->smsworkers[i].threadid, name);
+            pthread_create(&(glob->smsworkers[i].threadid), NULL,
+                    start_sms_worker_thread, (void *)&(glob->smsworkers[i]));
+            pthread_setname_np(glob->smsworkers[i].threadid, name);
+        }
+    } else {
+        glob->smsworkers = NULL;
     }
 
-    glob->gtpworkers = calloc(glob->gtp_threads, sizeof(openli_gtp_worker_t));
-    for (i = 0; i < glob->gtp_threads; i++) {
-        start_gtp_worker_thread(&(glob->gtpworkers[i]), i, glob);
+    if (glob->gtp_threads > 0) {
+        glob->gtpworkers = calloc(glob->gtp_threads,
+                sizeof(openli_gtp_worker_t));
+        for (i = 0; i < glob->gtp_threads; i++) {
+            start_gtp_worker_thread(&(glob->gtpworkers[i]), i, glob);
+        }
+    } else {
+        glob->gtpworkers = NULL;
     }
 
-    glob->emailworkers = calloc(glob->email_threads,
-            sizeof(openli_email_worker_t));
+    if (glob->email_threads > 0) {
 
-    for (i = 0; i < glob->email_threads; i++) {
-        snprintf(name, 1024, "emailworker-%d", i);
+        glob->emailworkers = calloc(glob->email_threads,
+                sizeof(openli_email_worker_t));
 
-        glob->emailworkers[i].zmq_ctxt = glob->zmq_ctxt;
-        glob->emailworkers[i].topoll = NULL;
-        glob->emailworkers[i].topoll_size = 0;
-        glob->emailworkers[i].fragreass = NULL;
-        glob->emailworkers[i].emailid = i;
-        glob->emailworkers[i].tracker_threads = glob->seqtracker_threads;
-        glob->emailworkers[i].fwd_threads = glob->forwarding_threads;
-        glob->emailworkers[i].zmq_pubsocks = NULL;
-        glob->emailworkers[i].zmq_fwdsocks = NULL;
-        glob->emailworkers[i].zmq_ingest_recvsock = NULL;
-        glob->emailworkers[i].zmq_colthread_recvsock = NULL;
-        glob->emailworkers[i].zmq_ii_sock = NULL;
+        for (i = 0; i < glob->email_threads; i++) {
+            snprintf(name, 1024, "emailworker-%d", i);
 
-        glob->emailworkers[i].timeouts = NULL;
-        glob->emailworkers[i].allintercepts = NULL;
-        glob->emailworkers[i].alltargets.addresses = NULL;
-        glob->emailworkers[i].alltargets.targets = NULL;
-        glob->emailworkers[i].activesessions = NULL;
-        glob->emailworkers[i].stats_mutex = &(glob->stats_mutex);
-        glob->emailworkers[i].stats = &(glob->stats);
+            glob->emailworkers[i].zmq_ctxt = glob->zmq_ctxt;
+            glob->emailworkers[i].topoll = NULL;
+            glob->emailworkers[i].topoll_size = 0;
+            glob->emailworkers[i].fragreass = NULL;
+            glob->emailworkers[i].emailid = i;
+            glob->emailworkers[i].tracker_threads = glob->seqtracker_threads;
+            glob->emailworkers[i].fwd_threads = glob->forwarding_threads;
+            glob->emailworkers[i].zmq_pubsocks = NULL;
+            glob->emailworkers[i].zmq_fwdsocks = NULL;
+            glob->emailworkers[i].zmq_ingest_recvsock = NULL;
+            glob->emailworkers[i].zmq_colthread_recvsock = NULL;
+            glob->emailworkers[i].zmq_ii_sock = NULL;
 
-        glob->emailworkers[i].glob_config_mutex = &(glob->email_config_mutex);
-        glob->emailworkers[i].mask_imap_creds = &(glob->mask_imap_creds);
-        glob->emailworkers[i].mask_pop3_creds = &(glob->mask_pop3_creds);
-        glob->emailworkers[i].email_ingest_use_targetid =
-                &(glob->email_ingest_use_targetid);
-        glob->emailworkers[i].defaultdomain = &(glob->default_email_domain);
-        glob->emailworkers[i].email_forwarding_headers =
-                &(glob->email_forwarding_headers);
-        glob->emailworkers[i].timeout_thresholds = &(glob->email_timeouts);
-        glob->emailworkers[i].default_compress_delivery =
-                OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
+            glob->emailworkers[i].timeouts = NULL;
+            glob->emailworkers[i].allintercepts = NULL;
+            glob->emailworkers[i].alltargets.addresses = NULL;
+            glob->emailworkers[i].alltargets.targets = NULL;
+            glob->emailworkers[i].activesessions = NULL;
+            glob->emailworkers[i].stats_mutex = &(glob->stats_mutex);
+            glob->emailworkers[i].stats = &(glob->stats);
 
-        pthread_create(&(glob->emailworkers[i].threadid), NULL,
-                start_email_worker_thread, (void *)&(glob->emailworkers[i]));
-        pthread_setname_np(glob->emailworkers[i].threadid, name);
+            glob->emailworkers[i].glob_config_mutex =
+                    &(glob->email_config_mutex);
+            glob->emailworkers[i].mask_imap_creds =
+                    &(glob->mask_imap_creds);
+            glob->emailworkers[i].mask_pop3_creds = &(glob->mask_pop3_creds);
+            glob->emailworkers[i].email_ingest_use_targetid =
+                    &(glob->email_ingest_use_targetid);
+            glob->emailworkers[i].defaultdomain = &(glob->default_email_domain);
+            glob->emailworkers[i].email_forwarding_headers =
+                    &(glob->email_forwarding_headers);
+            glob->emailworkers[i].timeout_thresholds = &(glob->email_timeouts);
+            glob->emailworkers[i].default_compress_delivery =
+                    OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
+
+            pthread_create(&(glob->emailworkers[i].threadid), NULL,
+                    start_email_worker_thread,
+                    (void *)&(glob->emailworkers[i]));
+            pthread_setname_np(glob->emailworkers[i].threadid, name);
+        }
+    } else {
+        glob->emailworkers = NULL;
     }
 
     glob->seqtrackers = calloc(glob->seqtracker_threads,
