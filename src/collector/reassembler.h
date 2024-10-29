@@ -37,7 +37,8 @@ typedef enum {
 enum {
     TCP_STATE_OPENING,
     TCP_STATE_ESTAB,
-    TCP_STATE_CLOSING
+    TCP_STATE_CLOSING,
+    TCP_STATE_LOSS
 };
 
 typedef struct reass_segment {

@@ -58,6 +58,9 @@ static int parse_tcp_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *pkt,
     ret = update_tcp_reassemble_stream(stream, (uint8_t *)payload, tcprem,
             ntohl(tcp->seq), pkt, 1);
 
+    if (stream->established == TCP_STATE_LOSS) {
+        remove_tcp_reassemble_stream(p->tcpreass, p->thisstream);
+    }
     return ret;
 
 }
@@ -197,6 +200,14 @@ int parse_next_sip_message(openli_sip_parser_t *p,
         ret = osip_message_parse(p->osip,
                 (const char *)(p->sipmessage + p->sipoffset), p->siplen);
         if (ret != 0) {
+            if (p->thisstream) {
+                /* reassembled stream is probably in a bad state, so let's
+                 * try to "reset" the stream until we see a segment
+                 * that lines up with the start of a SIP message.
+                 */
+                remove_tcp_reassemble_stream(p->tcpreass, p->thisstream);
+                return 0;
+            }
             return -1;
         }
     }

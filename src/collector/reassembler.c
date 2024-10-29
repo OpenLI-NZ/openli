@@ -33,6 +33,8 @@
 #include "logger.h"
 #include "util.h"
 
+#define TCP_STREAM_MAX_GAP 65536
+
 const char *SIP_END_SEQUENCE = "\x0d\x0a\x0d\x0a";
 const char *SIP_CONTENT_LENGTH_FIELD = "Content-Length: ";
 const char *SINGLE_CRLF = "\x0d\x0a";
@@ -415,13 +417,6 @@ static uint8_t *find_sip_message_end(uint8_t *content, uint16_t contlen) {
         return ptr;
     }
 
-    /* Look for a double \r\n to indicate the end of the SIP header */
-    crlf = memmem(ptr, contleft, SIP_END_SEQUENCE, strlen(SIP_END_SEQUENCE));
-    if (crlf == NULL) {
-        return NULL;
-    }
-    crlf += strlen(SIP_END_SEQUENCE);
-
     /* Some SIP messages, e.g. INVITE, will also have SDP content after the
      * SIP header. The Content-Length field in the SIP header will tell us
      * how much SDP content there is going to be.
@@ -456,6 +451,14 @@ static uint8_t *find_sip_message_end(uint8_t *content, uint16_t contlen) {
     /* Our message is only complete if we have both the SIP header and any
      * SDP payload in the buffer.
      */
+
+    /* Look for a double \r\n to indicate the end of the SIP header */
+    crlf = memmem(clengthend, contleft - (clengthend - ptr), SIP_END_SEQUENCE,
+            strlen(SIP_END_SEQUENCE));
+    if (crlf == NULL) {
+        return NULL;
+    }
+    crlf += strlen(SIP_END_SEQUENCE);
 
     if (crlf + clenval > ptr + contleft) {
         /* Some message payload is in an upcoming segment, so return NULL to
@@ -590,6 +593,16 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
 
             return -1;
         }
+
+        /* If the gap between this segment and the expected one is very
+         * large, let's assume that the processing thread dropped the
+         * packet and therefore this stream is never going to be able
+         * to be reassembled.
+         */
+        if (seq_cmp(seqno, stream->expectedseqno + TCP_STREAM_MAX_GAP) >= 0) {
+            stream->established = TCP_STATE_LOSS;
+        }
+
 
         /* fast path, check if the segment is a complete message AND
          * has our expected sequence number -- if yes, we can tell the caller
@@ -758,7 +771,7 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
     uint8_t *endfound = NULL;
     uint8_t *contstart = NULL;
 
-    if (stream == NULL) {
+    if (stream == NULL || stream->established == TCP_STATE_LOSS) {
         return 0;
     }
 
