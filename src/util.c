@@ -37,6 +37,7 @@
 #include <netinet/tcp.h>
 #include <stdio.h>
 #include <fcntl.h>
+#include <pthread.h>
 
 #include "logger.h"
 #include "util.h"
@@ -636,7 +637,7 @@ libtrace_packet_t *openli_copy_packet(libtrace_packet_t *pkt) {
         return NULL;
     }
 
-    copy = (libtrace_packet_t *)calloc((size_t)1, sizeof(libtrace_packet_t));
+    copy = (libtrace_packet_t *)malloc(sizeof(libtrace_packet_t));
     if (!copy) {
         logger(LOG_INFO, "OpenLI: out of memory while copying libtrace packet");
         exit(1);
@@ -651,13 +652,19 @@ libtrace_packet_t *openli_copy_packet(libtrace_packet_t *pkt) {
     copy->order = pkt->order;
     copy->hash = pkt->hash;
     copy->error = pkt->error;
+    copy->srcbucket = NULL;
+    copy->fmtdata = NULL;
+    copy->refcount = 0;
+    copy->internalid = 0;
     copy->which_trace_start = pkt->which_trace_start;
+    memset(&(copy->cached), 0, sizeof(libtrace_packet_cache_t));
     copy->cached.capture_length = caplen;
     copy->cached.framing_length = framelen;
     copy->cached.wire_length = -1;
     copy->cached.payload_length = -1;
-    /* everything else in cache should be 0 or NULL due to our earlier
-     * calloc() */
+    /* everything else in cached should be zero or NULL */
+
+    pthread_mutex_init(&copy->ref_lock, NULL);
     memcpy(copy->header, pkt->header, framelen);
     memcpy(copy->payload, pkt->payload, caplen);
 
