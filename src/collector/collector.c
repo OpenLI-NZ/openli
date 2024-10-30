@@ -2551,6 +2551,11 @@ int main(int argc, char *argv[]) {
         glob->encoders[i].seqtrackers = glob->seqtracker_threads;
         glob->encoders[i].forwarders = glob->forwarding_threads;
 
+        glob->encoders[i].result_array = calloc(glob->forwarding_threads,
+                sizeof(openli_encoded_result_t *));
+        glob->encoders[i].result_batch = calloc(glob->forwarding_threads,
+                sizeof(size_t));
+
         pthread_create(&(glob->encoders[i].threadid), NULL,
                 run_encoder_worker, (void *)&(glob->encoders[i]));
         pthread_setname_np(glob->encoders[i].threadid, name);
