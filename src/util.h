@@ -32,6 +32,8 @@
 #include <libtrace.h>
 #include <uthash.h>
 
+#include "coreserver.h"
+
 #define TIMESTAMP_TO_TV(tv, floatts) \
     tv->tv_sec = (uint32_t)(floatts); \
     tv->tv_usec = (uint32_t)(((floatts - tv->tv_sec) * 1000000));
@@ -74,6 +76,7 @@ void purge_string_set(string_set_t **set);
 int search_string_set(string_set_t *set, char *term);
 int add_to_string_set(string_set_t **set, char *term);
 
+int hash_packet_info_fivetuple(packet_info_t *pinfo, int modulo);
 uint32_t hash_liid(char *liid);
 uint32_t hashlittle( const void *key, size_t length, uint32_t initval);
 #endif
