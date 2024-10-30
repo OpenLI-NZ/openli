@@ -38,6 +38,7 @@
 #include <stdio.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <assert.h>
 
 #include "logger.h"
 #include "util.h"
@@ -626,6 +627,96 @@ char *extract_liid_from_exported_msg(uint8_t *etsimsg,
     /* Update LIID length to include the 2 bytes of length. */
     *liidlen += sizeof(l);
     return (char *)space;
+}
+
+int hash_packet_info_fivetuple(packet_info_t *pinfo, int modulo) {
+
+    char buf[300];
+    int used = 0;
+    char *ptr = buf;
+
+    memcpy(ptr, &(pinfo->trans_proto), sizeof(pinfo->trans_proto));
+    used += sizeof(pinfo->trans_proto);
+    ptr = buf + used;
+    assert(used < 256);
+
+    if (pinfo->srcport < pinfo->destport) {
+        memcpy(ptr, &(pinfo->srcport), sizeof(pinfo->srcport));
+        used += sizeof(pinfo->srcport);
+        ptr = buf + used;
+        assert(used < 256);
+
+        memcpy(ptr, &(pinfo->destport), sizeof(pinfo->destport));
+        used += sizeof(pinfo->destport);
+        ptr = buf + used;
+        assert(used < 256);
+    } else {
+        memcpy(ptr, &(pinfo->destport), sizeof(pinfo->destport));
+        used += sizeof(pinfo->destport);
+        ptr = buf + used;
+        assert(used < 256);
+
+        memcpy(ptr, &(pinfo->srcport), sizeof(pinfo->srcport));
+        used += sizeof(pinfo->srcport);
+        ptr = buf + used;
+        assert(used < 256);
+    }
+
+
+    if (pinfo->family == AF_INET) {
+        struct sockaddr_in *in_src = (struct sockaddr_in *)&(pinfo->srcip);
+        struct sockaddr_in *in_dst = (struct sockaddr_in *)&(pinfo->destip);
+
+        if (memcmp(&(in_src->sin_addr), &(in_dst->sin_addr),
+                    sizeof(struct in_addr)) < 0) {
+            memcpy(ptr, &(in_src->sin_addr), sizeof(struct in_addr));
+            used += sizeof(struct in_addr);
+            ptr = buf+used;
+            assert(used < 256);
+
+            memcpy(ptr, &(in_dst->sin_addr), sizeof(struct in_addr));
+            used += sizeof(struct in_addr);
+            assert(used < 256);
+        } else {
+            memcpy(ptr, &(in_dst->sin_addr), sizeof(struct in_addr));
+            used += sizeof(struct in_addr);
+            ptr = buf+used;
+            assert(used < 256);
+
+            memcpy(ptr, &(in_src->sin_addr), sizeof(struct in_addr));
+            used += sizeof(struct in_addr);
+            assert(used < 256);
+        }
+    } else if (pinfo->family == AF_INET6) {
+        struct sockaddr_in6 *in6_src = (struct sockaddr_in6 *)&(pinfo->srcip);
+        struct sockaddr_in6 *in6_dst = (struct sockaddr_in6 *)&(pinfo->destip);
+
+        if (memcmp(&(in6_src->sin6_addr), &(in6_dst->sin6_addr),
+                    sizeof(struct in6_addr)) < 0) {
+
+            memcpy(ptr, &(in6_src->sin6_addr), sizeof(struct in6_addr));
+            used += sizeof(struct in6_addr);
+            ptr = buf+used;
+            assert(used < 256);
+
+            memcpy(ptr, &(in6_dst->sin6_addr), sizeof(struct in6_addr));
+            used += sizeof(struct in6_addr);
+            ptr = buf+used;
+            assert(used < 256);
+        } else {
+            memcpy(ptr, &(in6_dst->sin6_addr), sizeof(struct in6_addr));
+            used += sizeof(struct in6_addr);
+            ptr = buf+used;
+            assert(used < 256);
+
+            memcpy(ptr, &(in6_src->sin6_addr), sizeof(struct in6_addr));
+            used += sizeof(struct in6_addr);
+            ptr = buf+used;
+            assert(used < 256);
+        }
+    }
+
+    return hashlittle(buf, used, 12582917) % modulo;
 }
 
 libtrace_packet_t *openli_copy_packet(libtrace_packet_t *pkt) {
