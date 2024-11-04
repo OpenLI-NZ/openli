@@ -256,6 +256,8 @@ typedef struct voipcinmap {
     char *username;
     char *realm;
     voipintshared_t *shared;
+    time_t lastsip;
+    uint8_t smsonly;        // if 1, this "call" has only sent MESSAGEs
     UT_hash_handle hh_callid;
 
 } voipcinmap_t;

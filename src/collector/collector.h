@@ -300,6 +300,7 @@ typedef struct collector_global {
     int email_threads;
     int gtp_threads;
     int sms_threads;
+    int sip_threads;
 
     void *zmq_encoder_ctrl;
 
@@ -317,6 +318,7 @@ typedef struct collector_global {
     openli_email_worker_t *emailworkers;
     openli_gtp_worker_t *gtpworkers;
     openli_sms_worker_t *smsworkers;
+    openli_sip_worker_t *sipworkers;
     colthread_local_t **collocals;
     int nextloc;
 
