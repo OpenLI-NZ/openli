@@ -1223,7 +1223,9 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                     loc->sipservers, 0)) {
             add_payload_info_from_packet(pkt, &pinfo);
             if (!check_for_invalid_sip(&pinfo, fragoff)) {
+                //int sipthread;
                 is_sms_over_sip(pkt, loc, glob);
+                //sipthread = hash_packet_info_fivetuple(&pinfo, 4);
                 send_packet_to_sync(pkt, loc->tosyncq_voip, OPENLI_UPDATE_SIP);
                 voipsynced = 1;
             }
@@ -1233,10 +1235,10 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         if (loc->sipservers && is_core_server_packet(&pinfo,
                     loc->sipservers, 0)) {
 
-            int sipthread;
+            //int sipthread;
             add_payload_info_from_packet(pkt, &pinfo);
             is_sms_over_sip(pkt, loc, glob);
-            sipthread = hash_packet_info_fivetuple(&pinfo, 4);
+            //sipthread = hash_packet_info_fivetuple(&pinfo, 4);
             send_packet_to_sync(pkt, loc->tosyncq_voip, OPENLI_UPDATE_SIP);
             voipsynced = 1;
         }
