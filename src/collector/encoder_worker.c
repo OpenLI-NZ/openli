@@ -27,6 +27,7 @@
 #include <unistd.h>
 #include <assert.h>
 
+#include "util.h"
 #include "ipiri.h"
 #include "ipmmcc.h"
 #include "ipcc.h"
@@ -951,41 +952,65 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
 }
 
 static int process_job(openli_encoder_t *enc, void *socket) {
-    int x;
-    int batch = 0;
-    openli_encoding_job_t job;
-    openli_encoded_result_t result[MAX_ENCODED_RESULT_BATCH];
+    int x, i;
+    int encoded_total = 0;
+    size_t index, next;
+    uint8_t fullbatch = 0;
 
-    while (batch < MAX_ENCODED_RESULT_BATCH) {
+    openli_encoding_job_t job;
+
+    for (i = 0; i < enc->forwarders; i++) {
+        if (enc->result_array[i] == NULL) {
+            enc->result_array[i] = calloc(MAX_ENCODED_RESULT_BATCH,
+                    sizeof(openli_encoded_result_t));
+        }
+        enc->result_batch[i] = 0;
+    }
+
+    while (!fullbatch) {
+        openli_encoded_result_t *result = NULL;
+
         memset(&job, 0, sizeof(openli_encoding_job_t));
         x = zmq_recv(socket, &job, sizeof(openli_encoding_job_t), 0);
         if (x < 0 && (errno != EAGAIN && errno != EINTR)) {
             logger(LOG_INFO,
                     "OpenLI: error reading job in encoder worker %d",
                     enc->workerid);
-            return 0;
+            encoded_total = -1;
+            break;
         } else if (x < 0) {
             break;
         } else if (x == 0) {
-            return 0;
+            encoded_total = 0;
+            break;
         }
 
+        if (job.liid == NULL) {
+            goto encodejoberror;
+        }
+
+        index = hash_liid(job.liid) % enc->forwarders;
+        assert(enc->forwarders > 0 && index < (size_t)enc->forwarders);
+
+        result = enc->result_array[index];
+        next = enc->result_batch[index];
+
         if (job.origreq->type == OPENLI_EXPORT_RAW_SYNC) {
-            encode_rawip(&job, &(result[batch]), OPENLI_PROTO_RAWIP_SYNC);
+            encode_rawip(&job, &(result[next]), OPENLI_PROTO_RAWIP_SYNC);
         } else if (job.origreq->type == OPENLI_EXPORT_RAW_CC) {
-            encode_rawip(&job, &(result[batch]), OPENLI_PROTO_RAWIP_CC);
+            encode_rawip(&job, &(result[next]), OPENLI_PROTO_RAWIP_CC);
         } else if (job.origreq->type == OPENLI_EXPORT_RAW_IRI) {
-            encode_rawip(&job, &(result[batch]), OPENLI_PROTO_RAWIP_IRI);
+            encode_rawip(&job, &(result[next]), OPENLI_PROTO_RAWIP_IRI);
         } else {
 
-            if ((x = encode_etsi(enc, &job, &(result[batch]))) <= 0) {
+            if ((x = encode_etsi(enc, &job, &(result[next]))) <= 0) {
                 /* What do we do in the event of an error? */
                 if (x < 0) {
                     logger(LOG_INFO,
                             "OpenLI: encoder worker had an error when encoding %d record",
                             job.origreq->type);
                 }
-
+encodejoberror:
                 if (job.cinstr) {
                     free(job.cinstr);
                 }
@@ -1002,33 +1027,44 @@ static int process_job(openli_encoder_t *enc, void *socket) {
             }
         }
 
-        result[batch].cinstr = job.cinstr;
-        result[batch].liid = job.liid;
-        result[batch].seqno = job.seqno;
-        result[batch].destid = job.origreq->destid;
-        result[batch].origreq = job.origreq;
-        result[batch].encodedby = enc->workerid;
+        result[next].cinstr = job.cinstr;
+        result[next].liid = job.liid;
+        result[next].seqno = job.seqno;
+        result[next].destid = job.origreq->destid;
+        result[next].origreq = job.origreq;
+        result[next].encodedby = enc->workerid;
 
         if (job.encryptkey) {
             free(job.encryptkey);
         }
-        batch++;
+        encoded_total ++;
+        enc->result_batch[index] ++;
+
+        if (enc->result_batch[index] >= MAX_ENCODED_RESULT_BATCH) {
+            fullbatch = 1;
+        }
     }
 
-    /* TODO if we have multiple forwarding threads, we will need to
+    /* If we have multiple forwarding threads, we will need to
      * assign individual results to the forwarder based on its LIID --
      * this will also require multiple result[] arrays (one per forwarder)
      * for message batching.
      */
-    if (batch > 0) {
-        if (zmq_send(enc->zmq_pushresults[0], result,
-                    batch * sizeof(openli_encoded_result_t), 0) < 0) {
-            logger(LOG_INFO, "OpenLI: error while pushing encoded result back to exporter (worker=%d)", enc->workerid);
-            return -1;
+    for (i = 0; i < enc->forwarders; i++) {
+        if (enc->result_batch[i] == 0 || encoded_total <= 0) {
+            continue;
+        }
+
+        if (zmq_send(enc->zmq_pushresults[i], enc->result_array[i],
+                    enc->result_batch[i] * sizeof(openli_encoded_result_t),
+                    0) < 0) {
+            logger(LOG_INFO, "OpenLI: error while pushing encoded result to forwarding thread %d (worker=%d)", i, enc->workerid);
+            encoded_total = 1;
+            break;
         }
     }
 
-    return batch;
+    return encoded_total;
 }
 
 static inline void poll_nextjob(openli_encoder_t *enc) {
@@ -1058,6 +1094,7 @@ static inline void poll_nextjob(openli_encoder_t *enc) {
 
 void *run_encoder_worker(void *encstate) {
     openli_encoder_t *enc = (openli_encoder_t *)encstate;
+    int i;
 
     if (init_worker(enc) == -1) {
         logger(LOG_INFO,
@@ -1068,6 +1105,17 @@ void *run_encoder_worker(void *encstate) {
 
     while (!enc->halted) {
         poll_nextjob(enc);
+    }
+    for (i = 0; i < enc->forwarders; i++) {
+        if (enc->result_array[i]) {
+            free(enc->result_array[i]);
+        }
+    }
+    if (enc->result_array) {
+        free(enc->result_array);
+    }
+    if (enc->result_batch) {
+        free(enc->result_batch);
     }
     logger(LOG_INFO, "OpenLI: halting encoding worker %d", enc->workerid);
     pthread_exit(NULL);

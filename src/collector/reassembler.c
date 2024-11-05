@@ -33,6 +33,8 @@
 #include "logger.h"
 #include "util.h"
 
+#define TCP_STREAM_MAX_GAP 65536
+
 const char *SIP_END_SEQUENCE = "\x0d\x0a\x0d\x0a";
 const char *SIP_CONTENT_LENGTH_FIELD = "Content-Length: ";
 const char *SINGLE_CRLF = "\x0d\x0a";
@@ -386,19 +388,40 @@ static uint8_t *find_sip_message_end(uint8_t *content, uint16_t contlen) {
     uint8_t *clengthfield, *clengthend, *clengthstart;
     char clenstr[12];
     unsigned long int clenval;
+    uint8_t *ptr = content;
+    uint16_t contleft = contlen;
 
-    /* First, look for a double \r\n to indicate the end of the SIP header */
-    crlf = memmem(content, contlen, SIP_END_SEQUENCE, strlen(SIP_END_SEQUENCE));
-    if (crlf == NULL) {
-        return NULL;
+    /* Any \r\n or \x00 bytes at the front of the content are probably
+     * the result of SIP keep alives.
+     */
+    while (ptr - content < contlen) {
+        /* keep alives have varying lengths depending on the implementor,
+         * so let's just aggregate them into a single "message" for
+         * protocol parsing purposes.
+         */
+        contleft = contlen - (ptr - content);
+        if (contleft >= 2 && memcmp(ptr, "\x0d\x0a", 2) == 0) {
+            ptr += 2;
+            continue;
+        }
+
+        if (*ptr == 0x00) {
+            ptr ++;
+            continue;
+        }
+
+        break;
     }
-    crlf += strlen(SIP_END_SEQUENCE);
+
+    if (ptr != content) {
+        return ptr;
+    }
 
     /* Some SIP messages, e.g. INVITE, will also have SDP content after the
      * SIP header. The Content-Length field in the SIP header will tell us
      * how much SDP content there is going to be.
      */
-    clengthfield = memmem(content, contlen, SIP_CONTENT_LENGTH_FIELD,
+    clengthfield = memmem(ptr, contleft, SIP_CONTENT_LENGTH_FIELD,
             strlen(SIP_CONTENT_LENGTH_FIELD));
     if (clengthfield == NULL) {
         return NULL;
@@ -409,7 +432,7 @@ static uint8_t *find_sip_message_end(uint8_t *content, uint16_t contlen) {
      */
     clengthstart = clengthfield + strlen(SIP_CONTENT_LENGTH_FIELD);
 
-    clengthend = memmem(clengthstart, contlen - (clengthstart - content),
+    clengthend = memmem(clengthstart, contleft - (clengthstart - ptr),
             SINGLE_CRLF, strlen(SINGLE_CRLF));
 
     if (clengthend == NULL) {
@@ -429,7 +452,15 @@ static uint8_t *find_sip_message_end(uint8_t *content, uint16_t contlen) {
      * SDP payload in the buffer.
      */
 
-    if (crlf + clenval > content + contlen) {
+    /* Look for a double \r\n to indicate the end of the SIP header */
+    crlf = memmem(clengthend, contleft - (clengthend - ptr), SIP_END_SEQUENCE,
+            strlen(SIP_END_SEQUENCE));
+    if (crlf == NULL) {
+        return NULL;
+    }
+    crlf += strlen(SIP_END_SEQUENCE);
+
+    if (crlf + clenval > ptr + contleft) {
         /* Some message payload is in an upcoming segment, so return NULL to
          * let the caller know that the message is incomplete.
          */
@@ -499,17 +530,26 @@ int update_ipfrag_reassemble_stream(ip_reassemble_stream_t *stream,
 
 int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
         uint8_t *content, uint16_t plen, uint32_t seqno,
-        libtrace_packet_t *pkt) {
+        libtrace_packet_t *pkt, uint8_t allow_fastpath) {
 
 
     tcp_reass_segment_t *seg, *existing;
     uint8_t *endptr;
+    int i;
 
     HASH_FIND(hh, stream->segments, &seqno, sizeof(seqno), existing);
     if (existing) {
         /* retransmit? check for size difference... */
         if (plen == existing->length) {
-            return -1;
+            if (pkt) {
+                /* this is an entire packet, so we can ignore it */
+                return -1;
+            } else {
+                /* this could be just part of a packet, so we need to tell
+                 * the caller that the packet should not be freed
+                 */
+                return 0;
+            }
         }
 
         /* segment is longer? try to add the "extra" bit as a new segment */
@@ -517,34 +557,67 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
             plen -= existing->length;
             seqno += existing->length;
             content = content + existing->length;
-            assert(stream->pkt_cnt > 0);
-            if (pkt) {
-                if (stream->packets[stream->pkt_cnt - 1] != NULL) {
-                    trace_destroy_packet(stream->packets[stream->pkt_cnt - 1]);
-                }
-                stream->packets[stream->pkt_cnt - 1] = pkt;
+        } else {
+            /* segment is shorter? remove the larger segment because presumably
+             * everything is going to be retransmitted anyway? */
+            HASH_DELETE(hh, stream->segments, existing);
+            free(existing->content);
+            free(existing);
+        }
+        assert(stream->pkt_cnt > 0);
+        if (pkt) {
+            if (stream->packets[stream->pkt_cnt - 1] != NULL) {
+                trace_destroy_packet(stream->packets[stream->pkt_cnt - 1]);
             }
-            return update_tcp_reassemble_stream(stream, content, plen, seqno,
-                    NULL);
+            stream->packets[stream->pkt_cnt - 1] = pkt;
+        }
+        /* Go around again -- if we are shorter, then this will add
+         * the shorter segment in place of the one we just removed.
+         * If we are longer, this should add a new segment containing
+         * just the additional payload.
+         */
+        return update_tcp_reassemble_stream(stream, content, plen, seqno,
+                NULL, 0);
+    } else {
+
+        if (seq_cmp(seqno, stream->expectedseqno) < 0) {
+            if (seq_cmp(seqno + plen, stream->expectedseqno) > 0) {
+                /* retransmit with extra payload, but we've already
+                 * processed the original segment */
+                plen -= (stream->expectedseqno - seqno);
+                content = content + (stream->expectedseqno - seqno);
+                seqno = stream->expectedseqno;
+                return update_tcp_reassemble_stream(stream, content, plen,
+                        seqno, pkt, 0);
+            }
+
+            return -1;
         }
 
-        /* segment is shorter? probably don't care... */
-        return 0;
-    }
+        /* If the gap between this segment and the expected one is very
+         * large, let's assume that the processing thread dropped the
+         * packet and therefore this stream is never going to be able
+         * to be reassembled.
+         */
+        if (seq_cmp(seqno, stream->expectedseqno + TCP_STREAM_MAX_GAP) >= 0) {
+            stream->established = TCP_STATE_LOSS;
+        }
 
-    if (seq_cmp(seqno, stream->expectedseqno) < 0) {
-        return -1;
-    }
 
-    endptr = find_sip_message_end(content, plen);
-    /* fast path, check if the segment is a complete message AND
-     * has our expected sequence number -- if yes, we can tell the caller
-     * to just use the packet payload directly without memcpying
-     */
-    if (seq_cmp(seqno, stream->expectedseqno) == 0) {
-        if (endptr == content + plen) {
-            stream->expectedseqno += plen;
-            return 1;
+        /* fast path, check if the segment is a complete message AND
+         * has our expected sequence number -- if yes, we can tell the caller
+         * to just use the packet payload directly without memcpying
+         *
+         * ... but only if the segment doesn't look like a keep alive
+         * i.e. begins with \r\n or \x00
+         */
+        if (allow_fastpath && seq_cmp(seqno, stream->expectedseqno) == 0 &&
+                *content != 0x0d && *content != 0x00) {
+            endptr = find_sip_message_end(content, plen);
+            if (endptr == content + plen) {
+                stream->expectedseqno += plen;
+                return 1;
+            }
         }
     }
 
@@ -560,6 +633,9 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
         if (stream->pkt_cnt == stream->pkt_alloc) {
             stream->packets = realloc(stream->packets,
                     (stream->pkt_alloc + 4) * sizeof(libtrace_packet_t *));
+            for (i = stream->pkt_alloc; i < stream->pkt_alloc + 4; i++) {
+                stream->packets[i] = NULL;
+            }
             stream->pkt_alloc += 4;
         }
         stream->packets[stream->pkt_cnt] = pkt;
@@ -695,7 +771,7 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
     uint8_t *endfound = NULL;
     uint8_t *contstart = NULL;
 
-    if (stream == NULL) {
+    if (stream == NULL || stream->established == TCP_STATE_LOSS) {
         return 0;
     }
 
@@ -799,7 +875,7 @@ int get_next_tcp_reassembled(tcp_reassemble_stream_t *stream, char **content,
      */
     if (contused > 0 || expseqno > stream->expectedseqno) {
         update_tcp_reassemble_stream(stream, (uint8_t *)(*content),
-                contused, stream->expectedseqno, NULL);
+                contused, stream->expectedseqno, NULL, 0);
     }
     *len = 0;
     return 0;

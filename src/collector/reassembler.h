@@ -37,7 +37,8 @@ typedef enum {
 enum {
     TCP_STATE_OPENING,
     TCP_STATE_ESTAB,
-    TCP_STATE_CLOSING
+    TCP_STATE_CLOSING,
+    TCP_STATE_LOSS
 };
 
 typedef struct reass_segment {
@@ -121,7 +122,7 @@ tcp_reassemble_stream_t *create_new_tcp_reassemble_stream(
 void destroy_tcp_reassemble_stream(tcp_reassemble_stream_t *reass);
 int update_tcp_reassemble_stream(tcp_reassemble_stream_t *reass,
         uint8_t *content, uint16_t plen, uint32_t seqno,
-        libtrace_packet_t *pkt);
+        libtrace_packet_t *pkt, uint8_t allow_fastpath);
 int get_next_tcp_reassembled(tcp_reassemble_stream_t *reass, char **content,
         uint16_t *len, libtrace_packet_t ***packets, int *pkt_cnt);
 

@@ -1335,18 +1335,16 @@ static int process_sip_invite(collector_sync_voip_t *sync, char *callid,
          */
         if (invitecseq) {
             if (dir != 0xff && thisrtp->invitecseq == NULL) {
-                thisrtp->invitecseq = invitecseq;
+                thisrtp->invitecseq = strdup(invitecseq);
                 thisrtp->invitecseq_stack = 1;
-                invitecseq = NULL;
             } else if (thisrtp->invitecseq != NULL &&
                     strcmp(invitecseq, thisrtp->invitecseq) == 0) {
                 thisrtp->invitecseq_stack ++;
             } else if (dir != 0xff && thisrtp->invitecseq != NULL) {
                 free(thisrtp->invitecseq);
                 thisrtp->invitecseq = NULL;
-                thisrtp->invitecseq = invitecseq;
+                thisrtp->invitecseq = strdup(invitecseq);
                 thisrtp->invitecseq_stack = 1;
-                invitecseq = NULL;
             }
         }
 

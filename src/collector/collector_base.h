@@ -267,6 +267,9 @@ typedef struct encoder_state {
 
     encrypt_encode_state_t encrypt;
 
+    openli_encoded_result_t **result_array;
+    size_t *result_batch;
+
     int seqtrackers;
     int forwarders;
     uint8_t halted;

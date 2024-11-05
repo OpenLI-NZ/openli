@@ -1,3 +1,40 @@
+openli (1.1.10-1) unstable; urgency=medium
+
+  * RADIUS: Accounting Response packets no longer need to be seen by
+    the collector; session state updates are now inferred from
+    Accounting Requests automatically without the need to see the
+    matching Response.
+  * Collector: using multiple forwarding threads now actually
+    behaves as expected.
+  * Collector: support the use of zero GTP, SMS, or email worker
+    threads. Having no SMS worker threads, in particular, can increase
+    collector performance for operators who do not require SMS
+    interception.
+  * Collector: reduce CPU usage in encoder worker threads when they are idle.
+  * Collector: improve performance when copying packets to distribute to
+    other worker threads.
+  * Collector: reduce CPU usage when checking if a packet matches a
+    user-specified RADIUS, GTP, or SIP server.
+  * Voice: fix bug where the RTP stream might not be intercepted if
+    there are multiple intercepts configured for the same target.
+  * Mediator: fix bug where a mediator using RabbitMQ would never receive
+    intercept records from a collector.
+  * SIP: fix bug where SIP sessions using TCP keepalives would not be
+    intercepted due to errors in the TCP reassembly code.
+  * SIP: fix crash caused by incorrectly freeing a packet that had been
+    claimed by the TCP reassembler.
+  * SIP: fix bug where SIP messages that do not begin at the start of the
+    TCP payload would not be intercepted or used to update the call
+    state.
+  * SIP: assume TCP packets for a stream are lost forever if the gap between
+    the expected sequence number and the observed packets exceeds 64KB.
+  * SIP: reset the SIP and TCP reassembly state for TCP streams where a
+    packet has been lost or the SIP parser reported an error.
+  * SIP: fix bug that caused an assertion failure in find_sip_message_end()
+    when processing a TCP SIP stream after a packet was lost.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Mon, 04 Nov 2024 11:21:40 +1300
+
 openli (1.1.9-1) unstable; urgency=medium
 
   * RADIUS: fix crash that can occur under very rare circumstances due to

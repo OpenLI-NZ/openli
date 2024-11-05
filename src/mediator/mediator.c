@@ -176,6 +176,13 @@ static void destroy_med_state(mediator_state_t *state) {
 		free(state->timerev);
 	}
 
+	if (state->col_clean_timerev) {
+		if (state->col_clean_timerev->fd != -1) {
+			close(state->col_clean_timerev->fd);
+		}
+		free(state->col_clean_timerev);
+	}
+
 }
 
 /** Reads the configuration for a mediator instance and sets the relevant
@@ -267,6 +274,7 @@ static int init_mediator_config(mediator_state_t *state,
 static int init_med_state(mediator_state_t *state, char *configfile) {
     state->listenerev = NULL;
     state->timerev = NULL;
+    state->col_clean_timerev = NULL;
     state->epoll_fd = -1;
 
     init_provisioner_instance(&(state->provisioner), &(state->sslconf.ctx));
@@ -891,6 +899,12 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 			logger(LOG_INFO,
                     "OpenLI Mediator: main epoll timer has failed.");
             return -1;
+        case MED_EPOLL_CLEAN_DEAD_COLRECV:
+            assert(ev->events == EPOLLIN);
+            halt_mediator_timer(mev);
+            mediator_clean_collectors(&(state->collector_threads));
+            ret = start_mediator_timer(state->col_clean_timerev, 30);
+            break;
         case MED_EPOLL_SIGNAL:
             /* we got a signal that needs to be handled */
             ret = process_signal(mev->fd);
@@ -1348,8 +1362,26 @@ static void run(mediator_state_t *state) {
     state->timerev = create_mediator_timer(state->epoll_fd, NULL,
             MED_EPOLL_SIGCHECK_TIMER, 0);
 
+    state->col_clean_timerev = create_mediator_timer(state->epoll_fd, NULL,
+            MED_EPOLL_CLEAN_DEAD_COLRECV, 0);
+
     if (state->timerev == NULL) {
         logger(LOG_INFO, "OpenLI Mediator: failed to create main loop timer");
+        goto runfailure;
+    }
+
+    if (state->col_clean_timerev == NULL) {
+        logger(LOG_INFO,
+                "OpenLI Mediator: failed to create collector cleanup timer");
+        goto runfailure;
+    }
+
+    /* TODO this timer should be longer, but for testing I've set to fire
+     * more frequently
+     */
+    if (start_mediator_timer(state->col_clean_timerev, 30) < 0) {
+        logger(LOG_INFO,
+                "OpenLI Mediator: failed to start collector cleanup timer");
         goto runfailure;
     }
 

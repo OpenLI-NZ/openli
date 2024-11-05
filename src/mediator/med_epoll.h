@@ -102,6 +102,12 @@ enum {
      *  has disconnected, or failed to re-announce them after reconnecting
      */
     MED_EPOLL_SHUTDOWN_LEA_THREAD,
+
+    /** A periodic timer to purge any "dead" collector receive threads
+     *  that have been superceded by a subsequent re-connection from that
+     *  same collector
+     */
+    MED_EPOLL_CLEAN_DEAD_COLRECV,
 };
 
 /** Starts an existing timer and adds it to the global epoll event set.
