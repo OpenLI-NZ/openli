@@ -378,6 +378,7 @@ struct rtpstreaminf {
 
     uint8_t inviter[16];
 
+    uint8_t announced;
     uint8_t skip_comfort;
     intercept_common_t common;
     voipintercept_t *parent;
@@ -445,6 +446,7 @@ void free_all_vendmirror_intercepts(vendmirror_intercept_list_t **mirror_interce
 void free_all_staticipsessions(staticipsession_t **statintercepts);
 void free_all_staticipranges(static_ipranges_t **ipranges);
 
+void free_single_voip_cinmap_entry(voipcinmap_t *c);
 void free_voip_cinmap(voipcinmap_t *cins);
 void free_single_ipintercept(ipintercept_t *cept);
 void free_single_voipintercept(voipintercept_t *v);

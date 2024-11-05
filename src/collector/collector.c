@@ -281,6 +281,22 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
         loc->email_worker_queues = NULL;
     }
 
+    if (glob->sip_threads > 0) {
+        loc->sip_worker_queues = calloc(glob->sip_threads, sizeof(void *));
+        for (i = 0; i < glob->sip_threads; i++) {
+            char pubsockname[128];
+
+            snprintf(pubsockname, 128, "inproc://openlisipworker-colrecv-%d",
+                    i);
+            loc->sip_worker_queues[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+            zmq_setsockopt(loc->sip_worker_queues[i], ZMQ_SNDHWM, &hwm,
+                    sizeof(hwm));
+            zmq_connect(loc->sip_worker_queues[i], pubsockname);
+        }
+    } else {
+        loc->sip_worker_queues = NULL;
+    }
+
     if (glob->sms_threads > 0) {
         loc->sms_worker_queues = calloc(glob->sms_threads, sizeof(void *));
         for (i = 0; i < glob->sms_threads; i++) {
@@ -529,6 +545,12 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
         zmq_setsockopt(loc->sms_worker_queues[i], ZMQ_LINGER, &zero,
                 sizeof(zero));
         zmq_close(loc->sms_worker_queues[i]);
+    }
+
+    for (i = 0; i < glob->sip_threads; i++) {
+        zmq_setsockopt(loc->sip_worker_queues[i], ZMQ_LINGER, &zero,
+                sizeof(zero));
+        zmq_close(loc->sip_worker_queues[i]);
     }
 
     zmq_setsockopt(loc->tosyncq_ip, ZMQ_LINGER, &zero, sizeof(zero));
@@ -1828,6 +1850,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->email_threads = 1;
     glob->gtp_threads = 1;
     glob->sms_threads = 1;
+    glob->sip_threads = 1;
     glob->sharedinfo.intpointid = NULL;
     glob->sharedinfo.intpointid_len = 0;
     glob->sharedinfo.operatorid = NULL;
@@ -2301,6 +2324,47 @@ haltsyncthread:
 
 }
 
+static int init_sip_worker_thread(openli_sip_worker_t *sipworker,
+        collector_global_t *glob, size_t workerid) {
+
+    char name[1024];
+
+    snprintf(name, 1024, "sipworker-%zu", workerid);
+
+    sipworker->workerid = workerid;
+    sipworker->worker_threadname = strdup(name);
+    sipworker->zmq_ctxt = glob->zmq_ctxt;
+    sipworker->stats_mutex = &(glob->stats_mutex);
+    sipworker->stats = &(glob->stats);
+    sipworker->shared = &(glob->sharedinfo);
+    sipworker->shared_mutex = &(glob->config_mutex);
+    sipworker->collector_queues = NULL;
+
+    /* It is ok to initialize this mutex here because this method will
+     * be called by the main collector thread before we start any packet
+     * processing threads.
+     */
+    pthread_mutex_init(&(sipworker->col_queue_mutex), NULL);
+    sipworker->zmq_ii_sock = NULL;
+    sipworker->zmq_pubsocks = NULL;
+    sipworker->zmq_fwdsocks = NULL;
+    sipworker->zmq_colthread_recvsock = NULL;
+    sipworker->tracker_threads = glob->seqtracker_threads;
+    sipworker->forwarding_threads = glob->forwarding_threads;
+    sipworker->voipintercepts = NULL;
+    sipworker->sipparser = NULL;
+    sipworker->knowncallids = NULL;
+    sipworker->ignore_sdpo_matches = glob->ignore_sdpo_matches;
+
+    sipworker->debug.sipdebugfile_base = strdup(glob->sipdebugfile);
+    sipworker->debug.sipdebugout = NULL;
+    sipworker->debug.sipdebugupdate = NULL;
+    sipworker->debug.log_bad_sip = 1;
+    sipworker->timeouts = NULL;
+
+    return 0;
+}
+
 
 int main(int argc, char *argv[]) {
 
@@ -2428,6 +2492,16 @@ int main(int argc, char *argv[]) {
         pthread_create(&(glob->forwarders[i].threadid), NULL,
                 start_forwarding_thread, (void *)&(glob->forwarders[i]));
         pthread_setname_np(glob->forwarders[i].threadid, name);
+    }
+
+    if (glob->sip_threads > 0) {
+        glob->sipworkers = calloc(glob->sip_threads,
+                sizeof(openli_sip_worker_t));
+        for (i = 0; i < glob->sip_threads; i++) {
+            init_sip_worker_thread(&(glob->sipworkers[i]), glob, i);
+        }
+    } else {
+        glob->sipworkers = NULL;
     }
 
     if (glob->sms_threads > 0) {
@@ -2693,6 +2767,9 @@ int main(int argc, char *argv[]) {
     }
     for (i = 0; i < glob->sms_threads; i++) {
         pthread_join(glob->smsworkers[i].threadid, NULL);
+    }
+    for (i = 0; i < glob->sip_threads; i++) {
+        pthread_join(glob->sipworkers[i].threadid, NULL);
     }
 
     logger(LOG_INFO, "OpenLI: exiting OpenLI Collector.");

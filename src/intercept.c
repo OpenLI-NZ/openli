@@ -238,6 +238,7 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
     newcin->byecseq = NULL;
     newcin->timeout_ev = NULL;
     newcin->byematched = 0;
+    newcin->announced = 0;
 
     newcin->streamcount = 0;
     newcin->mediastreams = calloc(RTP_STREAM_ALLOC,
@@ -444,22 +445,26 @@ void free_all_ipintercepts(ipintercept_t **interceptlist) {
     }
 }
 
+void free_single_voip_cinmap_entry(voipcinmap_t *c) {
+    if (c->shared) {
+        free(c->shared);
+    }
+    if (c->username) {
+        free(c->username);
+    }
+    if (c->realm) {
+        free(c->realm);
+    }
+    free(c->callid);
+    free(c);
+}
+
 void free_voip_cinmap(voipcinmap_t *cins) {
     voipcinmap_t *c, *tmp;
 
     HASH_ITER(hh_callid, cins, c, tmp) {
         HASH_DELETE(hh_callid, cins, c);
-        if (c->shared) {
-            free(c->shared);
-        }
-        if (c->username) {
-            free(c->username);
-        }
-        if (c->realm) {
-            free(c->realm);
-        }
-        free(c->callid);
-        free(c);
+        free_single_voip_cinmap_entry(c);
     }
 
 }

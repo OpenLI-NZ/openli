@@ -30,18 +30,18 @@
 #include <libtrace.h>
 
 #include "intercept.h"
-#include "collector.h"
 #include "sipparsing.h"
 #include "util.h"
 #include "collector_util.h"
 #include "collector_base.h"
+
+#define SMS_SESSION_EXPIRY 180
 
 typedef struct sip_debug_settings {
     char *sipdebugfile_base;
     libtrace_out_t *sipdebugout;
     libtrace_out_t *sipdebugupdate;
 
-    uint8_t log_bad_instruct;
     uint8_t log_bad_sip;
 } sip_debug_settings_t;
 
@@ -67,6 +67,13 @@ typedef struct openli_sip_worker {
     /* RW mutex to protect the shared config against race conditions */
     pthread_rwlock_t *shared_mutex;
 
+    /* Hash map of send_syncq_t instances that are used to push interceptable
+     * RTP streams back to the collector threads */
+    void *collector_queues;
+
+    /* Mutex to protect the collector_queues map */
+    pthread_mutex_t col_queue_mutex;
+
     /* ZMQ for receiving instructions from sync thread */
     void *zmq_ii_sock;
     /* ZMQs for publishing to seqtracker threads */
@@ -74,7 +81,7 @@ typedef struct openli_sip_worker {
     /* ZMQ for receiving from collector threads */
     void *zmq_colthread_recvsock;
     /* ZMQ for sending messages to forwarding threads */
-    void **zmq_fwdsocks = NULL;
+    void **zmq_fwdsocks;
 
     /* Number of sequence tracker threads operated by this collector */
     int tracker_threads;
@@ -115,8 +122,6 @@ typedef struct openli_sip_worker {
 
 } openli_sip_worker_t;
 
-int init_sip_worker_thread(openli_sip_worker_t *sipworker,
-        collector_global_t *glob, size_t workerid);
 void *start_sip_worker_thread(void *arg);
 
 #endif

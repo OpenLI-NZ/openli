@@ -45,42 +45,6 @@
 #include "intercept.h"
 #include "location.h"
 
-
-int init_sip_worker_thread(openli_sip_worker_t *sipworker,
-        collector_global_t *glob, size_t workerid) {
-
-    char name[1024];
-
-    snprintf(name, 1024, "sipworker-%zu", workerid);
-
-    sipworker->workerid = workerid;
-    sipworker->worker_threadname = strdup(name);
-    sipworker->zmq_ctxt = glob->zmq_ctxt;
-    sipworker->stats_mutex = &(glob->stats_mutex);
-    sipworker->stats = &(glob->stats);
-    sipworker->shared = &(glob->sharedinfo);
-    sipworker->shared_mutex = &(glob->config_mutex);
-    sipworker->zmq_ii_sock = NULL;
-    sipworker->zmq_pubsocks = NULL;
-    sipworker->zmq_fwdsocks = NULL;
-    sipworker->zmq_colthread_recvsock = NULL;
-    sipworker->tracker_threads = glob->seqtracker_threads;
-    sipworker->forwarding_threads = glob->forwarding_threads;
-    sipworker->voipintercepts = NULL;
-    sipworker->sipparser = NULL;
-    sipworker->knowncallids = NULL;
-    sipworker->ignore_sdpo_matches = glob->ignore_sdpo_matches;
-
-    sipworker->debug.sipdebugfile_base = strdup(glob->sipdebugfile);
-    sipworker->debug.sipdebugout = NULL;
-    sipworker->debug.sipdebugupdate = NULL;
-    sipworker->debug.log_bad_instruct = 1;
-    sipworker->debug.log_bad_sip = 1;
-    sipworker->timeouts = NULL;
-
-    return 0;
-}
-
 static void destroy_sip_worker_thread(openli_sip_worker_t *sipworker) {
     sync_epoll_t *syncev, *tmp;
 
@@ -98,7 +62,7 @@ static void destroy_sip_worker_thread(openli_sip_worker_t *sipworker) {
     }
 
     if (sipworker->worker_threadname) {
-        free(sipworker->worker_threadname);
+        free((void *)sipworker->worker_threadname);
     }
 
 
@@ -125,10 +89,14 @@ static void destroy_sip_worker_thread(openli_sip_worker_t *sipworker) {
     clear_zmq_socket_array(sipworker->zmq_pubsocks, sipworker->tracker_threads);
     clear_zmq_socket_array(sipworker->zmq_fwdsocks,
             sipworker->forwarding_threads);
+
+    /* Don't destroy the col_queue_mutex here -- let the main collector thread
+     * handle that.
+     */
 }
 
 static int setup_zmq_sockets(openli_sip_worker_t *sipworker) {
-    int i, zero = 0;
+    int zero = 0;
     char sockname[256];
 
     sipworker->zmq_pubsocks = calloc(sipworker->tracker_threads,
@@ -220,14 +188,536 @@ static size_t setup_pollset(openli_sip_worker_t *sipworker,
     return i;
 }
 
+static void purge_old_sms_sessions(openli_sip_worker_t *sipworker) {
+    struct timeval tv;
+    voipcinmap_t *cid, *tmp;
+
+    gettimeofday(&tv, NULL);
+    HASH_ITER(hh_callid, sipworker->knowncallids, cid, tmp) {
+        if (!cid->smsonly) {
+            continue;
+        }
+        if (cid->lastsip != 0 && tv.tv_sec - cid->lastsip >
+                SMS_SESSION_EXPIRY) {
+            HASH_DELETE(hh_callid, sipworker->knowncallids, cid);
+            free_single_voip_cinmap_entry(cid);
+        }
+    }
+}
+
+static inline voipintercept_t *lookup_sip_target_intercept(
+        openli_sip_worker_t *sipworker, provisioner_msg_t *provmsg,
+        openli_sip_identity_t *sipid) {
+
+    voipintercept_t *found = NULL;
+    char liidspace[1024];
+
+    sipid->username = NULL;
+    sipid->realm = NULL;
+
+    if (decode_sip_target_announcement(provmsg->msgbody,
+            provmsg->msglen, sipid, liidspace, 1024) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: SIP worker thread %d received invalid SIP target",
+                sipworker->workerid);
+        return NULL;
+    }
+
+    HASH_FIND(hh_liid, sipworker->voipintercepts, liidspace, strlen(liidspace),
+            found);
+    if (!found) {
+        logger(LOG_INFO,
+                "OpenLI: SIP worker thread %d received SIP target for unknown VoIP LIID %s.",
+                liidspace);
+    }
+    return found;
+}
+
+
+static inline void sip_worker_push_single_voipstreamintercept(
+        openli_sip_worker_t *sipworker, libtrace_message_queue_t *q,
+        rtpstreaminf_t *orig) {
+
+    rtpstreaminf_t *copy;
+    openli_pushed_t msg;
+
+    copy = deep_copy_rtpstream(orig);
+    if (!copy) {
+        logger(LOG_INFO,
+                "OpenLI: unable to copy RTP stream in SIP worker thread due to lack of memory.");
+        logger(LOG_INFO,
+                "OpenLI: forcing collector instance to halt.");
+        exit(-2);
+    }
+
+    memset(&msg, 0, sizeof(openli_pushed_t));
+    msg.type = OPENLI_PUSH_IPMMINTERCEPT;
+    msg.data.ipmmint = copy;
+
+    if (orig->announced == 0) {
+        pthread_mutex_lock(sipworker->stats_mutex);
+        sipworker->stats->voipsessions_added_diff ++;
+        sipworker->stats->voipsessions_added_total ++;
+        pthread_mutex_unlock(sipworker->stats_mutex);
+
+        orig->announced = 1;
+    }
+    libtrace_message_queue_put(q, (void *)(&msg));
+}
+
+static void sip_worker_push_all_active_voipstreams(
+        openli_sip_worker_t *sipworker, libtrace_message_queue_t *q,
+        voipintercept_t *vint) {
+
+    rtpstreaminf_t *cin = NULL;
+
+    if (vint->active_cins == NULL) {
+        return;
+    }
+
+    for (cin = vint->active_cins; cin != NULL; cin=cin->hh.next) {
+        if (cin->active == 0) {
+            continue;
+        }
+
+        sip_worker_push_single_voipstreamintercept(sipworker, q, cin);
+    }
+
+}
+
+static void sip_worker_send_intercept_update_to_seqtracker(
+        openli_sip_worker_t *sipworker, voipintercept_t *vint, uint8_t type) {
+
+    openli_export_recv_t *expmsg;
+
+    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    expmsg->type = type;
+    expmsg->data.cept.liid = strdup(vint->common.liid);
+    expmsg->data.cept.authcc = strdup(vint->common.authcc);
+    expmsg->data.cept.delivcc = strdup(vint->common.delivcc);
+    expmsg->data.cept.encryptmethod = vint->common.encrypt;
+    if (vint->common.encryptkey) {
+        expmsg->data.cept.encryptkey = strdup(vint->common.encryptkey);
+    } else {
+        expmsg->data.cept.encryptkey = NULL;
+    }
+    expmsg->data.cept.seqtrackerid = vint->common.seqtrackerid;
+
+    publish_openli_msg(sipworker->zmq_pubsocks[vint->common.seqtrackerid],
+            expmsg);
+
+}
+
+static void sip_worker_push_intercept_halt(openli_sip_worker_t *sipworker,
+        voipintercept_t *vint) {
+
+    /* Need to do this inside every SIP worker, because we don't know
+     * which one actually has the RTP streams for the intercept (if any)
+     */
+    sync_sendq_t *sendq, *tmp;
+    rtpstreaminf_t *cin = NULL;
+    char *streamdup;
+    openli_pushed_t msg;
+
+    if (vint->active_cins == NULL) {
+        return;
+    }
+
+    HASH_ITER(hh, (sync_sendq_t *)(sipworker->collector_queues), sendq, tmp) {
+        for (cin = vint->active_cins; cin != NULL; cin=cin->hh.next) {
+            if (cin->active == 0) {
+                continue;
+            }
+            streamdup = strdup(cin->streamkey);
+            memset(&msg, 0, sizeof(openli_pushed_t));
+            msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
+            msg.data.rtpstreamkey = streamdup;
+
+            pthread_mutex_lock(sipworker->stats_mutex);
+            sipworker->stats->voipsessions_ended_diff ++;
+            sipworker->stats->voipsessions_ended_total ++;
+            pthread_mutex_unlock(sipworker->stats_mutex);
+
+            libtrace_message_queue_put(sendq->q, (void *)(&msg));
+
+            /* If we were already about to time this intercept out, make sure
+             * we kill the timer.
+             */
+            if (cin->timeout_ev) {
+                sync_epoll_t *timerev = (sync_epoll_t *)(cin->timeout_ev);
+                sync_epoll_t *syncev;
+
+                HASH_FIND(hh, sipworker->timeouts, &(timerev->fd),
+                        sizeof(int), syncev);
+                if (syncev) {
+                    HASH_DELETE(hh, sipworker->timeouts, syncev);
+                }
+
+                close(timerev->fd);
+                free(timerev);
+                cin->timeout_ev = NULL;
+            }
+        }
+    }
+}
+
+static void sip_worker_push_active_voipstream_update(
+        openli_sip_worker_t *sipworker UNUSED, libtrace_message_queue_t *q,
+        voipintercept_t *vint) {
+
+    openli_pushed_t msg;
+    rtpstreaminf_t *cin = NULL;
+
+    for (cin = vint->active_cins; cin != NULL; cin=cin->hh.next) {
+        if (cin->active == 0) {
+            continue;
+        }
+        memset(&msg, 0, sizeof(openli_pushed_t));
+        msg.type = OPENLI_PUSH_UPDATE_VOIPINTERCEPT;
+        msg.data.ipmmint = create_rtpstream(vint, cin->cin);
+
+        libtrace_message_queue_put(q, (void *)(&msg));
+    }
+
+}
+
+static int sip_worker_update_modified_voip_intercept(
+        openli_sip_worker_t *sipworker, voipintercept_t *found,
+        voipintercept_t *decoded) {
+    int r = 0, changed = 0, encodingchanged = 0;
+
+    encodingchanged = update_modified_intercept_common(&(found->common),
+            &(decoded->common), OPENLI_INTERCEPT_TYPE_VOIP, &changed);
+
+    if (encodingchanged < 0) {
+        r = -1;
+        goto endupdatevint;
+    }
+
+    if (found->options != decoded->options) {
+        if (decoded->options & (1UL << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT)) {
+            if (sipworker->workerid == 0) {
+                logger(LOG_INFO,
+                        "OpenLI: VOIP intercept %s is now ignoring RTP comfort noise",
+                        decoded->common.liid);
+            }
+        } else {
+            if (sipworker->workerid == 0) {
+                logger(LOG_INFO,
+                        "OpenLI: VOIP intercept %s is now intercepting RTP comfort noise",
+                        decoded->common.liid);
+            }
+        }
+        found->options = decoded->options;
+        changed = 1;
+    }
+
+    if (encodingchanged || changed) {
+        sip_worker_send_intercept_update_to_seqtracker(sipworker, found,
+                OPENLI_EXPORT_INTERCEPT_CHANGED);
+    }
+
+    if (changed) {
+        sync_sendq_t *sendq, *tmp;
+        HASH_ITER(hh, (sync_sendq_t *)(sipworker->collector_queues), sendq,
+                    tmp) {
+            sip_worker_push_active_voipstream_update(sipworker, sendq->q,
+                    found);
+        }
+    }
+
+endupdatevint:
+    free_single_voipintercept(decoded);
+    return r;
+}
+
+static void sip_worker_init_voip_intercept(openli_sip_worker_t *sipworker,
+        voipintercept_t *vint) {
+
+    if (sipworker->tracker_threads <= 1) {
+        vint->common.seqtrackerid = 0;
+    } else {
+        vint->common.seqtrackerid = hash_liid(vint->common.liid) %
+                sipworker->tracker_threads;
+    }
+
+    HASH_ADD_KEYPTR(hh_liid, sipworker->voipintercepts, vint->common.liid,
+            vint->common.liid_len, vint);
+    vint->awaitingconfirm = 0;
+
+    sip_worker_send_intercept_update_to_seqtracker(sipworker, vint,
+            OPENLI_EXPORT_INTERCEPT_DETAILS);
+}
+
+static int sip_worker_add_new_voip_intercept(openli_sip_worker_t *sipworker,
+        provisioner_msg_t *msg) {
+
+    voipintercept_t *vint, *found;
+    sync_sendq_t *sendq, *tmp;
+    int ret = 0;
+
+    vint = calloc(1, sizeof(voipintercept_t));
+    if (decode_voipintercept_start(msg->msgbody, msg->msglen, vint) < 0) {
+        logger(LOG_INFO, "OpenLI: SIP worker failed to decode VoIP intercept start message from provisioner");
+        free(vint);
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, sipworker->voipintercepts, vint->common.liid,
+            vint->common.liid_len, found);
+    if (found) {
+        openli_sip_identity_t *tgt;
+        libtrace_list_node_t *n;
+
+        /* We already know about this intercept, but don't overwrite
+         * anything just yet because hopefully our (updated) targets
+         * will be announced to us shortly.
+         */
+        n = found->targets->head;
+        while (n) {
+            tgt = *((openli_sip_identity_t **)(n->data));
+            tgt->awaitingconfirm = 1;
+            n = n->next;
+        }
+        sip_worker_update_modified_voip_intercept(sipworker, found, vint);
+        found->awaitingconfirm = 0;
+        found->active = 1;
+        ret = 0;
+    } else {
+        sip_worker_init_voip_intercept(sipworker, vint);
+        ret = 1;
+    }
+
+
+    /* Forward any active RTP streams to the packet processing threads */
+    if (sipworker->collector_queues == NULL) {
+        logger(LOG_DEBUG, "WARNING: SIP worker %d has a NULL set of collector queues, which means no RTP streams will be intercepted!", sipworker->workerid);
+    }
+
+    pthread_mutex_lock(&(sipworker->col_queue_mutex));
+    HASH_ITER(hh, (sync_sendq_t *)(sipworker->collector_queues), sendq, tmp) {
+        sip_worker_push_all_active_voipstreams(sipworker, sendq->q, vint);
+    }
+    pthread_mutex_unlock(&(sipworker->col_queue_mutex));
+
+    if (sipworker->workerid == 0) {
+        logger(LOG_INFO,
+            "OpenLI: adding new VOIP intercept %s (start time %lu, end time %lu)", vint->common.liid, vint->common.tostart_time, vint->common.toend_time);
+    }
+
+    return ret;
+}
+
+static int sip_worker_halt_voip_intercept(openli_sip_worker_t *sipworker,
+        provisioner_msg_t *provmsg) {
+
+    voipintercept_t *decode, *found;
+    decode = calloc(1, sizeof(voipintercept_t));
+
+    if (decode_voipintercept_halt(provmsg->msgbody, provmsg->msglen,
+                decode) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: SIP worker thread %d received an invalid VoIP intercept withdrawal", sipworker->workerid);
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, sipworker->voipintercepts, decode->common.liid,
+            decode->common.liid_len, found);
+    if (!found) {
+        if (sipworker->workerid == 0) {
+            logger(LOG_INFO,
+                    "OpenLI: tried to halt VoIP intercept %s within SIP worker but it was not present in the intercept map?",
+                    decode->common.liid);
+        }
+        free_single_voipintercept(decode);
+        return -1;
+    }
+
+    if (sipworker->workerid == 0) {
+        logger(LOG_INFO,
+                "OpenLI: SIP worker threads are withdrawing VOIP intercept: %s",
+                found->common.liid);
+    }
+
+    sip_worker_push_intercept_halt(sipworker, found);
+    sip_worker_send_intercept_update_to_seqtracker(sipworker, found,
+            OPENLI_EXPORT_INTERCEPT_OVER);
+    HASH_DELETE(hh_liid, sipworker->voipintercepts, found);
+    free_single_voipintercept(found);
+    free_single_voipintercept(decode);
+    return 0;
+}
+
+static int sip_worker_modify_voip_intercept(openli_sip_worker_t *sipworker,
+        provisioner_msg_t *provmsg) {
+
+    voipintercept_t *vint, *found;
+
+    vint = calloc(1, sizeof(voipintercept_t));
+    if (decode_voipintercept_modify(provmsg->msgbody, provmsg->msglen,
+                vint) < 0) {
+        logger(LOG_INFO, "OpenLI: SIP worker failed to decode VOIP intercept modify message from provisioner");
+        return -1;
+    }
+
+    HASH_FIND(hh_liid, sipworker->voipintercepts, vint->common.liid,
+            vint->common.liid_len, found);
+    if (!found) {
+        sip_worker_init_voip_intercept(sipworker, vint);
+    } else {
+        sip_worker_update_modified_voip_intercept(sipworker, found, vint);
+    }
+    return 0;
+
+}
+
+static int sip_worker_add_sip_target(openli_sip_worker_t *sipworker,
+        provisioner_msg_t *provmsg) {
+
+    voipintercept_t *found;
+    openli_sip_identity_t sipid;
+
+    found = lookup_sip_target_intercept(sipworker, provmsg, &sipid);
+    if (!found) {
+        if (sipid.username) {
+            free(sipid.username);
+        }
+        if (sipid.realm) {
+            free(sipid.realm);
+        }
+        return -1;
+    }
+    add_new_sip_target_to_list(found, &sipid);
+    if (sipworker->workerid == 0) {
+        logger(LOG_INFO,
+                "OpenLI: collector received new SIP target for LIID %s.",
+                found->common.liid);
+    }
+
+    return 0;
+}
+
+static int sip_worker_remove_sip_target(openli_sip_worker_t *sipworker,
+        provisioner_msg_t *provmsg) {
+
+    voipintercept_t *found;
+    openli_sip_identity_t sipid;
+    int ret = 0;
+
+    found = lookup_sip_target_intercept(sipworker, provmsg, &sipid);
+    if (!found) {
+        ret = -1;
+        goto removesiptargetend;
+    }
+    disable_sip_target_from_list(found, &sipid);
+    if (sipworker->workerid == 0) {
+        logger(LOG_INFO,
+                "OpenLI: collector has withdrawn a SIP target for LIID %s.",
+                found->common.liid);
+    }
+
+removesiptargetend:
+    if (sipid.username) {
+        free(sipid.username);
+    }
+    if (sipid.realm) {
+        free(sipid.realm);
+    }
+
+    return ret;
+}
+
+static int sip_worker_handle_provisioner_message(openli_sip_worker_t *sipworker,
+        openli_export_recv_t *msg) {
+
+    int ret = 0;
+    switch(msg->data.provmsg.msgtype) {
+        case OPENLI_PROTO_START_VOIPINTERCEPT:
+            ret = sip_worker_add_new_voip_intercept(sipworker,
+                    &(msg->data.provmsg));
+            break;
+        case OPENLI_PROTO_HALT_VOIPINTERCEPT:
+            ret = sip_worker_halt_voip_intercept(sipworker,
+                    &(msg->data.provmsg));
+            break;
+        case OPENLI_PROTO_MODIFY_VOIPINTERCEPT:
+            ret = sip_worker_modify_voip_intercept(sipworker,
+                    &(msg->data.provmsg));
+            break;
+        case OPENLI_PROTO_ANNOUNCE_SIP_TARGET:
+            ret = sip_worker_add_sip_target(sipworker, &(msg->data.provmsg));
+            break;
+        case OPENLI_PROTO_WITHDRAW_SIP_TARGET:
+            ret = sip_worker_remove_sip_target(sipworker, &(msg->data.provmsg));
+            break;
+        case OPENLI_PROTO_NOMORE_INTERCEPTS:
+            /* No additional per-intercept or per-target behaviour is
+             * required?
+             */
+            disable_unconfirmed_voip_intercepts(&(sipworker->voipintercepts),
+                    NULL, NULL, NULL, NULL);
+            break;
+        case OPENLI_PROTO_DISCONNECT:
+            flag_voip_intercepts_as_unconfirmed(&(sipworker->voipintercepts));
+            break;
+        default:
+            logger(LOG_INFO, "OpenLI: SIP worker thread %d received unexpected message type from provisioner: %u",
+                    sipworker->workerid, msg->data.provmsg.msgtype);
+            ret = -1;
+    }
+    if (msg->data.provmsg.msgbody) {
+        free(msg->data.provmsg.msgbody);
+    }
+
+    return ret;
+}
+
+
+static int sip_worker_process_sync_thread_message(
+        openli_sip_worker_t *sipworker) {
+
+    openli_export_recv_t *msg;
+    int x;
+
+    do {
+        x = zmq_recv(sipworker->zmq_ii_sock, &msg, sizeof(msg), ZMQ_DONTWAIT);
+        if (x < 0 && errno != EAGAIN) {
+            logger(LOG_INFO,
+                    "OpenLI: error receiving II in SIP worker thread %d: %s",
+                    sipworker->workerid, strerror(errno));
+            return -1;
+        }
+
+        if (x <= 0) {
+            break;
+        }
+
+        if (msg->type == OPENLI_EXPORT_HALT) {
+            free(msg);
+            return -1;
+        }
+
+        if (msg->type == OPENLI_EXPORT_PROVISIONER_MESSAGE) {
+            if (sip_worker_handle_provisioner_message(sipworker, msg) < 0) {
+                free(msg);
+                return -1;
+            }
+        }
+
+        free(msg);
+    } while (x > 0);
+
+    return 1;
+}
+
 static void sip_worker_main(openli_sip_worker_t *sipworker) {
 
     sync_epoll_t purgetimer;
     zmq_pollitem_t *topoll;
     size_t topoll_size, topoll_cnt;
     struct itimerspec its;
-    struct timeval tv;
     struct rtpstreaminf **expiringstreams;
+    int x, rc;
 
     topoll = calloc(128, sizeof(zmq_pollitem_t));
     expiringstreams = calloc(128, sizeof(struct rtpstreaminf *));
@@ -243,7 +733,7 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
     timerfd_settime(purgetimer.fd, 0, &its, NULL);
 
     while (1) {
-        topoll_cnt = setup_zmq_sockets(sipworker, &topoll, &topoll_size,
+        topoll_cnt = setup_pollset(sipworker, &topoll, &topoll_size,
                 purgetimer.fd, &expiringstreams);
 
         if (topoll_cnt < 1) {
@@ -263,6 +753,13 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
          */
 
         /* handle any messages from the sync thread -- topoll[0] */
+        if (topoll[0].revents & ZMQ_POLLIN) {
+            x = sip_worker_process_sync_thread_message(sipworker);
+            if (x < 0) {
+                break;
+            }
+            topoll[0].revents = 0;
+        }
 
         /* process SIP packets receiving from the packet processing threads --
          * topoll[1]
@@ -271,6 +768,17 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
         /* purge any SMS-only sessions that have been idle for a while --
          * topoll[2] timer
          */
+        if (topoll[2].revents & ZMQ_POLLIN) {
+            topoll[2].revents = 0;
+            close(topoll[2].fd);
+
+            purge_old_sms_sessions(sipworker);
+            /* reset the timer */
+            purgetimer.fdtype = 0;
+            purgetimer.fd = timerfd_create(CLOCK_MONOTONIC, 0);
+            timerfd_settime(purgetimer.fd, 0, &its, NULL);
+            topoll[2].fd = purgetimer.fd;
+        }
     }
 }
 

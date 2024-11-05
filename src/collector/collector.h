@@ -54,6 +54,7 @@
 #include "email_worker.h"
 #include "gtp_worker.h"
 #include "sms_worker.h"
+#include "sip_worker.h"
 #include "sipparsing.h"
 
 enum {
@@ -228,10 +229,13 @@ typedef struct colthread_local {
     /* Array of message queues to pass packets to the SMS worker threads */
     void **sms_worker_queues;
 
+    /* Array of message queues to pass packets to the SMS worker threads */
+    void **sip_worker_queues;
+
     /* Array of message queues to pass packets to the GTP worker threads */
     void **gtp_worker_queues;
 
-    /** SIP parser for detecting SMS over SIP */
+    /** SIP parser for detecting SMS over SIP  -- TODO remove*/
     openli_sip_parser_t *sipparser;
 
     /* Current intercepts */
