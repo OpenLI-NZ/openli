@@ -28,6 +28,19 @@ encoderthreads: 2
 # mediators. You probably don't need to change this.
 forwardingthreads: 1
 
+# Number of threads to use for parsing GTP traffic to intercept mobile
+# data session. Can be set to zero if the collector will not see GTP traffic.
+gtpthreads: 1
+
+# Number of threads to use for intercepting SMS messages sent over SIP
+# Can be set to zero if the collector will not see SMS over SIP.
+smsthreads: 1
+
+# Number of threads to use for parsing email traffic (SMTP, IMAP, and POP3).
+# Can be set to zero if the collector will not see email traffic, or you are
+# not required to perform email interception.
+emailthreads: 1
+
 # Set this to yes if you want to override the policy of not trusting the
 # contents of the "From:" field in SIP packets (as this field is not
 # validated and can be easily spoofed).

@@ -886,7 +886,7 @@ static inline uint8_t check_for_invalid_sip(packet_info_t *pinfo,
 }
 
 static inline uint32_t is_core_server_packet(
-        packet_info_t *pinfo, coreserver_t *servers) {
+        packet_info_t *pinfo, coreserver_t *servers, uint8_t hashrequired) {
 
     coreserver_t *found = NULL;
     uint32_t hashval = 0;
@@ -901,12 +901,16 @@ static inline uint32_t is_core_server_packet(
     /* Not technically an LIID, but we just need a hashed ID for the server
      * entity.
      */
-    hashval = hash_liid(found->serverkey);
-
-    /* 0 is our value for "not found", so make sure we never use it... */
-    if (hashval == 0) {
+    if (hashrequired) {
+        hashval = hash_liid(found->serverkey);
+        /* 0 is our value for "not found", so make sure we never use it... */
+        if (hashval == 0) {
+            hashval = 1;
+        }
+    } else {
         hashval = 1;
     }
+
     return hashval;
 
 }
@@ -927,7 +931,7 @@ static uint8_t check_if_gtp(packet_info_t *pinfo, libtrace_packet_t *pkt,
         return 0;
     }
 
-    if ( !is_core_server_packet(pinfo, loc->gtpservers)) {
+    if ( !is_core_server_packet(pinfo, loc->gtpservers, 0)) {
         return 0;
     }
 
@@ -1206,7 +1210,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
         /* Is this a RADIUS packet? -- if yes, create a state update */
         if (loc->radiusservers && is_core_server_packet(&pinfo,
-                    loc->radiusservers)) {
+                    loc->radiusservers, 0)) {
             send_packet_to_sync(pkt, loc->tosyncq_ip, OPENLI_UPDATE_RADIUS);
             ipsynced = 1;
             goto processdone;
@@ -1216,10 +1220,12 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
         /* Is this a SIP packet? -- if yes, create a state update */
         if (loc->sipservers && is_core_server_packet(&pinfo,
-                    loc->sipservers)) {
+                    loc->sipservers, 0)) {
             add_payload_info_from_packet(pkt, &pinfo);
             if (!check_for_invalid_sip(&pinfo, fragoff)) {
+                //int sipthread;
                 is_sms_over_sip(pkt, loc, glob);
+                //sipthread = hash_packet_info_fivetuple(&pinfo, 4);
                 send_packet_to_sync(pkt, loc->tosyncq_voip, OPENLI_UPDATE_SIP);
                 voipsynced = 1;
             }
@@ -1227,16 +1233,19 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     } else if (proto == TRACE_IPPROTO_TCP) {
         /* Is this a SIP packet? -- if yes, create a state update */
         if (loc->sipservers && is_core_server_packet(&pinfo,
-                    loc->sipservers)) {
+                    loc->sipservers, 0)) {
+
+            //int sipthread;
             add_payload_info_from_packet(pkt, &pinfo);
             is_sms_over_sip(pkt, loc, glob);
+            //sipthread = hash_packet_info_fivetuple(&pinfo, 4);
             send_packet_to_sync(pkt, loc->tosyncq_voip, OPENLI_UPDATE_SIP);
             voipsynced = 1;
         }
 
         else if (loc->smtpservers &&
                 (servhash = is_core_server_packet(&pinfo,
-                    loc->smtpservers))) {
+                    loc->smtpservers, 1))) {
             send_packet_to_emailworker(pkt, loc->email_worker_queues,
                     glob->email_threads, servhash, OPENLI_UPDATE_SMTP);
             emailsynced = 1;
@@ -1245,7 +1254,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
         else if (loc->imapservers &&
                 (servhash = is_core_server_packet(&pinfo,
-                    loc->imapservers))) {
+                    loc->imapservers, 1))) {
             send_packet_to_emailworker(pkt, loc->email_worker_queues,
                     glob->email_threads, servhash, OPENLI_UPDATE_IMAP);
             emailsynced = 1;
@@ -1253,7 +1262,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
         else if (loc->pop3servers &&
                 (servhash = is_core_server_packet(&pinfo,
-                    loc->pop3servers))) {
+                    loc->pop3servers, 1))) {
             send_packet_to_emailworker(pkt, loc->email_worker_queues,
                     glob->email_threads, servhash, OPENLI_UPDATE_POP3);
             emailsynced = 1;

@@ -6,6 +6,15 @@ openli (1.1.10-1) unstable; urgency=medium
     matching Response.
   * Collector: using multiple forwarding threads now actually
     behaves as expected.
+  * Collector: support the use of zero GTP, SMS, or email worker
+    threads. Having no SMS worker threads, in particular, can increase
+    collector performance for operators who do not require SMS
+    interception.
+  * Collector: reduce CPU usage in encoder worker threads when they are idle.
+  * Collector: improve performance when copying packets to distribute to
+    other worker threads.
+  * Collector: reduce CPU usage when checking if a packet matches a
+    user-specified RADIUS, GTP, or SIP server.
   * Voice: fix bug where the RTP stream might not be intercepted if
     there are multiple intercepts configured for the same target.
   * Mediator: fix bug where a mediator using RabbitMQ would never receive
@@ -17,8 +26,14 @@ openli (1.1.10-1) unstable; urgency=medium
   * SIP: fix bug where SIP messages that do not begin at the start of the
     TCP payload would not be intercepted or used to update the call
     state.
+  * SIP: assume TCP packets for a stream are lost forever if the gap between
+    the expected sequence number and the observed packets exceeds 64KB.
+  * SIP: reset the SIP and TCP reassembly state for TCP streams where a
+    packet has been lost or the SIP parser reported an error.
+  * SIP: fix bug that caused an assertion failure in find_sip_message_end()
+    when processing a TCP SIP stream after a packet was lost.
 
- -- Shane Alcock <salcock@searchlight.nz>  Tue, 22 Oct 2024 15:46:51 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Mon, 04 Nov 2024 11:21:40 +1300
 
 openli (1.1.9-1) unstable; urgency=medium
 

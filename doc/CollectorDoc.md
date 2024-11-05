@@ -219,6 +219,15 @@ The basic option keys are:
                         users that do not explicitly include their domain
                         in their username will be assumed to be using the
                         address'<username>@<this domain>'.
+* gtpthreads        -- set the number of threads to use for processing GTP
+                       traffic (defaults to 1, can be set to zero to disable
+                       GTP session tracking).
+* smsthreads        -- set the number of threads to use for intercepting SMS
+                       messages (defaults to 1, can be set to zero to disable
+                       SMS interception).
+* emailthreads      -- set the number of threads to use for processing email
+                       traffic (defaults to 1, can be set to zero to disable
+                       email interception).
 
 Be aware that increasing the number of threads used for sequence number
 tracking, encoding or forwarding can actually decrease OpenLI's performance,
