@@ -52,12 +52,14 @@ typedef struct colsync_data {
     int emailcount;
     int smscount;
     int gtpcount;
+    int sipcount;
 
     void **zmq_pubsocks;
     void **zmq_fwdctrlsocks;
     void **zmq_emailsocks;
     void **zmq_gtpsocks;
     void **zmq_smssocks;
+    void **zmq_sipsocks;
     void *zmq_colsock;
 
     internet_user_t *allusers;

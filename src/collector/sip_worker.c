@@ -205,6 +205,111 @@ static void purge_old_sms_sessions(openli_sip_worker_t *sipworker) {
     }
 }
 
+static int halt_expired_rtpstream(openli_sip_worker_t *sipworker,
+        rtpstreaminf_t *rtp) {
+    voipintercept_t *vint;
+    voipcinmap_t *cin_callid, *tmpcin;
+    voipsdpmap_t *cin_sdp, *tmpsdp;
+    uint8_t stop;
+
+    if (!rtp) {
+        return 0;
+    }
+
+    vint = rtp->parent;
+
+    if (rtp->timeout_ev) {
+        sync_epoll_t *timerev = (sync_epoll_t *)(rtp->timeout_ev);
+        sync_epoll_t *syncev;
+
+        HASH_FIND(hh, sipworker->timeouts, &(timerev->fd), sizeof(int),
+                syncev);
+        if (syncev) {
+            HASH_DELETE(hh, sipworker->timeouts, syncev);
+        }
+        close(timerev->fd);
+        free(timerev);
+        rtp->timeout_ev = NULL;
+    }
+
+    if (rtp->active) {
+        sync_sendq_t *sendq, *tmpq;
+        openli_pushed_t msg;
+        /* tell all of the packet processing threads to stop intercepting
+         * this RTP stream */
+        pthread_mutex_lock(&(sipworker->col_queue_mutex));
+        HASH_ITER(hh, (sync_sendq_t *)(sipworker->collector_queues), sendq,
+                tmpq) {
+            memset(&msg, 0, sizeof(openli_pushed_t));
+            msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
+            msg.data.rtpstreamkey = strdup(rtp->streamkey);
+            libtrace_message_queue_put(sendq->q, (void *)(&msg));
+        }
+
+        pthread_mutex_unlock(&(sipworker->col_queue_mutex));
+    }
+
+    if (!vint) {
+        return 0;
+    }
+
+    HASH_DEL(vint->active_cins, rtp);
+
+    /* Iterating through the corresponding voipintercept's call maps seems
+     * a bit clunky at first glance, but there shouldn't be too many
+     * entries in these maps at any given time so it isn't really worth
+     * the effort of trying to maintain reverse references to the map
+     * entries in the RTP stream info structure
+     */
+
+    HASH_ITER(hh_callid, vint->cin_callid_map, cin_callid, tmpcin) {
+        stop = 0;
+        if (cin_callid->shared->cin == rtp->cin) {
+            HASH_DELETE(hh_callid, vint->cin_callid_map, cin_callid);
+            free(cin_callid->callid);
+            cin_callid->shared->refs --;
+            if (cin_callid->shared->refs == 0) {
+                free(cin_callid->shared);
+                stop = 1;
+            }
+            if (cin_callid->username) {
+                free(cin_callid->username);
+            }
+            if (cin_callid->realm) {
+                free(cin_callid->realm);
+            }
+            free(cin_callid);
+            if (stop) {
+                break;
+            }
+        }
+    }
+
+    HASH_ITER(hh_sdp, vint->cin_sdp_map, cin_sdp, tmpsdp) {
+        stop = 0;
+        if (cin_sdp->shared->cin == rtp->cin) {
+            HASH_DELETE(hh_sdp, vint->cin_sdp_map, cin_sdp);
+            cin_sdp->shared->refs --;
+            if (cin_sdp->shared->refs == 0) {
+                free(cin_sdp->shared);
+                stop = 1;
+            }
+            if (cin_sdp->username) {
+                free(cin_sdp->username);
+            }
+            if (cin_sdp->realm) {
+                free(cin_sdp->realm);
+            }
+            free(cin_sdp);
+            if (stop) {
+                break;
+            }
+        }
+    }
+    free_single_rtpstream(rtp);
+    return 0;
+}
+
 static inline voipintercept_t *lookup_sip_target_intercept(
         openli_sip_worker_t *sipworker, provisioner_msg_t *provmsg,
         openli_sip_identity_t *sipid) {
@@ -323,6 +428,7 @@ static void sip_worker_push_intercept_halt(openli_sip_worker_t *sipworker,
         return;
     }
 
+    pthread_mutex_lock(&(sipworker->col_queue_mutex));
     HASH_ITER(hh, (sync_sendq_t *)(sipworker->collector_queues), sendq, tmp) {
         for (cin = vint->active_cins; cin != NULL; cin=cin->hh.next) {
             if (cin->active == 0) {
@@ -359,6 +465,7 @@ static void sip_worker_push_intercept_halt(openli_sip_worker_t *sipworker,
             }
         }
     }
+    pthread_mutex_unlock(&(sipworker->col_queue_mutex));
 }
 
 static void sip_worker_push_active_voipstream_update(
@@ -419,11 +526,13 @@ static int sip_worker_update_modified_voip_intercept(
 
     if (changed) {
         sync_sendq_t *sendq, *tmp;
+        pthread_mutex_lock(&(sipworker->col_queue_mutex));
         HASH_ITER(hh, (sync_sendq_t *)(sipworker->collector_queues), sendq,
                     tmp) {
             sip_worker_push_active_voipstream_update(sipworker, sendq->q,
                     found);
         }
+        pthread_mutex_unlock(&(sipworker->col_queue_mutex));
     }
 
 endupdatevint:
@@ -714,7 +823,7 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
 
     sync_epoll_t purgetimer;
     zmq_pollitem_t *topoll;
-    size_t topoll_size, topoll_cnt;
+    size_t topoll_size, topoll_cnt, i;
     struct itimerspec its;
     struct rtpstreaminf **expiringstreams;
     int x, rc;
@@ -747,10 +856,14 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
             break;
         }
 
-        /* TODO */
         /* halt RTP streams for calls that have been over long enough --
          * topoll[3 .. N]
          */
+        for (i = 3; i < topoll_cnt; i++) {
+            if (topoll[i].revents & ZMQ_POLLIN) {
+                halt_expired_rtpstream(sipworker, expiringstreams[i]);
+            }
+        }
 
         /* handle any messages from the sync thread -- topoll[0] */
         if (topoll[0].revents & ZMQ_POLLIN) {
@@ -761,7 +874,7 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
             topoll[0].revents = 0;
         }
 
-        /* process SIP packets receiving from the packet processing threads --
+        /* process SIP packets received from the packet processing threads --
          * topoll[1]
          */
 
