@@ -32,6 +32,7 @@
 #include <osipparser2/osip_message.h>
 #include <osipparser2/sdp_message.h>
 #include "sipparsing.h"
+#include "sip_worker.h"
 #include "logger.h"
 #include "util.h"
 #include "location.h"
@@ -1207,6 +1208,13 @@ int sip_is_invite(openli_sip_parser_t *parser) {
     return 0;
 }
 
+int sip_is_message(openli_sip_parser_t *parser) {
+    if (MSG_IS_MESSAGE(parser->osip)) {
+        return 1;
+    }
+    return 0;
+}
+
 int sip_is_register(openli_sip_parser_t *parser) {
     if (MSG_IS_REGISTER(parser->osip)) {
         return 1;
@@ -1468,4 +1476,272 @@ void release_openli_sip_identity_set(openli_sip_identity_set_t *idset) {
         free(idset->remotepartyid.realm);
     }
 }
+
+static void populate_sdp_identifier(openli_sip_parser_t *sipparser,
+        sip_sdp_identifier_t *sdpo, uint8_t log_bad_sip, char *callid) {
+
+    char *sessid, *sessversion, *sessaddr, *sessuser;
+
+    memset(sdpo->address, 0, sizeof(sdpo->address));
+    memset(sdpo->username, 0, sizeof(sdpo->username));
+
+    sessid = get_sip_session_id(sipparser);
+    sessversion = get_sip_session_version(sipparser);
+    sessaddr = get_sip_session_address(sipparser);
+    sessuser = get_sip_session_username(sipparser);
+
+    if (sessid != NULL) {
+        errno = 0;
+        sdpo->sessionid = strtoul(sessid, NULL, 0);
+        if (errno != 0) {
+            if (log_bad_sip) {
+                logger(LOG_INFO, "OpenLI: SIP worker saw an invalid session ID in SIP packet %s", sessid);
+            }
+            sessid = NULL;
+            sdpo->sessionid = 0;
+        }
+    } else {
+        sdpo->sessionid = 0;
+    }
+
+    if (sessversion != NULL) {
+        errno = 0;
+        sdpo->version = strtoul(sessversion, NULL, 0);
+        if (errno != 0) {
+            if (log_bad_sip) {
+                logger(LOG_INFO, "OpenLI: invalid version in SIP packet %s",
+                        sessid);
+            }
+            sessversion = NULL;
+            sdpo->version = 0;
+        }
+    } else {
+        sdpo->version = 0;
+    }
+
+    if (sessaddr != NULL) {
+        strncpy(sdpo->address, sessaddr, sizeof(sdpo->address) - 1);
+    } else {
+        strncpy(sdpo->address, callid, sizeof(sdpo->address) - 1);
+    }
+
+    if (sessuser != NULL) {
+        strncpy(sdpo->username, sessaddr, sizeof(sdpo->username) - 1);
+    } else {
+        strncpy(sdpo->username, "unknown", sizeof(sdpo->username) - 1);
+    }
+
+
+}
+
+static voipcinmap_t *update_cin_callid_map(voipcinmap_t **cinmap,
+        char *callid, voipintshared_t *vshared,
+        char *targetuser, char *targetrealm) {
+
+    voipcinmap_t *newcinmap;
+
+    HASH_FIND(hh_callid, *cinmap, callid, strlen(callid), newcinmap);
+    if (newcinmap) {
+        return newcinmap;
+    }
+
+    newcinmap = (voipcinmap_t *)malloc(sizeof(voipcinmap_t));
+    if (!newcinmap) {
+        logger(LOG_INFO,
+                "OpenLI: out of memory in SIP worker thread");
+        logger(LOG_INFO,
+                "OpenLI: forcing collector to halt immediately.");
+        exit(-2);
+    }
+    newcinmap->callid = strdup(callid);
+    newcinmap->username = strdup(targetuser);
+    if (targetrealm) {
+        newcinmap->realm = strdup(targetrealm);
+    } else {
+        newcinmap->realm = NULL;
+    }
+    newcinmap->shared = vshared;
+    if (newcinmap->shared) {
+        newcinmap->shared->refs ++;
+    }
+    newcinmap->smsonly = 1;     // for now...
+
+    HASH_ADD_KEYPTR(hh_callid, *cinmap, newcinmap->callid,
+            strlen(newcinmap->callid), newcinmap);
+    return newcinmap;
+}
+
+static void remove_cin_callid_from_map(voipcinmap_t **cinmap, char *callid) {
+
+    voipcinmap_t *c;
+    HASH_FIND(hh_callid, *cinmap, callid, strlen(callid), c);
+    if (c) {
+        HASH_DELETE(hh_callid, *cinmap, c);
+        if (c->shared) {
+            c->shared->refs --; 
+            if (c->shared->refs == 0) {
+                free(c->shared);
+            }
+        }
+        if (c->username) {
+            free(c->username);
+        }
+        if (c->realm) {
+            free(c->realm);
+        }
+        free(c->callid);
+        free(c);
+    }
+}
+
+static sipregister_t *create_new_voip_registration(
+        openli_sip_worker_t *sipworker, voipintercept_t *vint,
+        char *callid, openli_sip_identity_t *targetuser) {
+
+    sipregister_t *newreg = NULL;
+    uint32_t cin_id = 0;
+    voipcinmap_t *newcin = NULL;
+
+    newcin = update_cin_callid_map(&(sipworker->knowncallids), callid, NULL,
+            targetuser->username, targetuser->realm);
+    if (newcin == NULL) {
+        remove_cin_callid_from_map(&(vint->cin_callid_map), callid);
+        return NULL;
+    }
+    newcin->smsonly = 0;
+
+    HASH_FIND(hh, vint->active_registrations, callid, strlen(callid), newreg);
+    if (!newreg) {
+        cin_id = hashlittle(callid, strlen(callid), 0xceefface);
+        cin_id = (cin_id % (uint32_t)(pow(2, 31)));
+        newreg = create_sipregister(vint, callid, cin_id);
+
+        HASH_ADD_KEYPTR(hh, vint->active_registrations, newreg->callid,
+                strlen(newreg->callid), newreg);
+    }
+
+    return newreg;
+}
+
+static int process_sip_register(openli_sip_worker_t *sipworker, char *callid,
+        openli_export_recv_t *irimsg, libtrace_packet_t **pkts, int pkt_cnt,
+        openli_location_t *locptr, int loc_cnt) {
+
+    openli_sip_identity_t *matched = NULL;
+    voipintercept_t *vint, *tmp;
+    sipregister_t *sipreg;
+    int exportcount = 0;
+    uint8_t trust_sip_from;
+
+    openli_sip_identity_set_t all_identities;
+
+    locptr = NULL;
+    loc_cnt = 0;
+
+    if (extract_sip_identities(sipworker->sipparser, &all_identities,
+            sipworker->debug.log_bad_sip) < 0) {
+        sipworker->debug.log_bad_sip = 0;
+        return -1;
+    }
+
+    pthread_rwlock_rdlock(sipworker->shared_mutex);
+    trust_sip_from = sipworker->shared->trust_sip_from;
+    pthread_rwlock_unlock(sipworker->shared_mutex);
+
+    HASH_ITER(hh_liid, sipworker->voipintercepts, vint, tmp) {
+        sipreg = NULL;
+
+        matched = match_sip_target_against_identities(vint->targets,
+                &all_identities, trust_sip_from);
+        if (matched == NULL) {
+            continue;
+        }
+        sipreg = create_new_voip_registration(sipworker, vint, callid, matched);
+        if (!sipreg) {
+            continue;
+        }
+        create_sip_ipmmiri(sipworker, vint, irimsg, ETSILI_IRI_REPORT,
+                sipreg->cin, locptr, loc_cnt, pkts, pkt_cnt);
+        exportcount += 1;
+    }
+
+    release_openli_sip_identity_set(&all_identities);
+
+    return exportcount;
+
+}
+
+static inline int lookup_sip_callid(openli_sip_worker_t *sipworker,
+        char *callid) {
+
+    voipcinmap_t *lookup;
+
+    HASH_FIND(hh_callid, sipworker->knowncallids, callid, strlen(callid),
+            lookup);
+    if (!lookup) {
+        return 0;
+    }
+    return 1;
+}
+
+
+int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
+        libtrace_packet_t **pkts,
+        int pkt_cnt, openli_export_recv_t *irimsg) {
+
+
+    char *callid;
+    sip_sdp_identifier_t sdpo;
+    int iserr = 0;
+    int ret = 0;
+    openli_location_t *locptr;
+    int loc_cnt = 0;
+
+    callid = get_sip_callid(sipworker->sipparser);
+
+    if (callid == NULL) {
+        if (sipworker->debug.log_bad_sip) {
+            logger(LOG_INFO, "OpenLI: SIP packet has no Call ID?");
+        }
+        iserr = 1;
+        goto sipgiveup;
+    }
+
+    get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
+
+    populate_sdp_identifier(sipworker->sipparser, &sdpo,
+            sipworker->debug.log_bad_sip, callid);
+
+    if (sip_is_message(sipworker->sipparser)) {
+
+    } else if (sip_is_invite(sipworker->sipparser)) {
+
+    } else if (sip_is_register(sipworker->sipparser)) {
+        if (( ret = process_sip_register(sipworker, callid, irimsg, pkts,
+                        pkt_cnt, locptr, loc_cnt)) < 0) {
+            iserr = 1;
+            if (sipworker->debug.log_bad_sip) {
+                logger(LOG_INFO, "OpenLI: error in SIP worker thread %d while processing REGISTER message", sipworker->workerid);
+            }
+            goto sipgiveup;
+        }
+    } else if (lookup_sip_callid(sipworker, callid) != 0) {
+
+    }
+
+sipgiveup:
+    if (locptr) {
+        free(locptr);
+    }
+    if (iserr) {
+        pthread_mutex_lock(sipworker->stats_mutex);
+        sipworker->stats->bad_sip_packets ++;
+        pthread_mutex_unlock(sipworker->stats_mutex);
+        return -1;
+    }
+    return 1;
+
+}
+
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

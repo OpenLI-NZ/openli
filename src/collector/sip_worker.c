@@ -310,6 +310,234 @@ static int halt_expired_rtpstream(openli_sip_worker_t *sipworker,
     return 0;
 }
 
+static libtrace_out_t *open_debug_output(char *basename, size_t workerid,
+        char *ext) {
+    libtrace_out_t *out = NULL;
+    char fname[1024];
+    int compressmethod = TRACE_OPTION_COMPRESSTYPE_ZLIB;
+    int compresslevel = 1;
+
+    snprintf(fname, 1024, "pcapfile:%s-%s-%zu.pcap.gz", basename, ext,
+            workerid);
+    out = trace_create_output(fname);
+    if (trace_is_err_output(out)) {
+        trace_perror_output(out, "trace_create_output");
+        goto debugfail;
+    }
+
+    if (trace_config_output(out, TRACE_OPTION_OUTPUT_COMPRESSTYPE,
+            &compressmethod) == -1) {
+        trace_perror_output(out, "config compress type");
+        goto debugfail;
+    }
+
+    if (trace_config_output(out, TRACE_OPTION_OUTPUT_COMPRESS,
+                    &compresslevel) == -1) {
+        trace_perror_output(out, "config compress level");
+        goto debugfail;
+    }
+
+    if (trace_start_output(out) == -1) {
+        trace_perror_output(out, "trace_start_output");
+        goto debugfail;
+    }
+
+    return out;
+
+debugfail:
+    if (out) {
+        trace_destroy_output(out);
+    }
+    return NULL;
+}
+
+static void handle_bad_sip_update(openli_sip_worker_t *sipworker,
+        libtrace_packet_t **packets, int pkt_cnt, uint8_t during) {
+
+    int i;
+
+    if (sipworker->debug.log_bad_sip) {
+        if (during == SIP_PROCESSING_PARSING) {
+            logger(LOG_INFO,
+                    "OpenLI: SIP worker thread %d saw an invalid SIP packet?",
+                    sipworker->workerid);
+        } else if (during == SIP_PROCESSING_UPDATING_STATE) {
+            logger(LOG_INFO,
+                    "OpenLI: error while updating SIP state in worker thread %d.",
+                    sipworker->workerid);
+        } else if (during == SIP_PROCESSING_EXTRACTING_IPS) {
+            logger(LOG_INFO,
+                    "OpenLI: error while extracting IP addresses from SIP packet in worker thread %d", sipworker->workerid);
+        } else if (during == SIP_PROCESSING_ADD_PARSER) {
+            logger(LOG_INFO,
+                    "OpenLI: SIP worker thread %d received an invalid SIP packet?",
+                    sipworker->workerid);
+        } else {
+            logger(LOG_INFO,
+                    "OpenLI: unexpected error when processing SIP packet in worker thread %d", sipworker->workerid);
+
+        }
+        logger(LOG_INFO,
+                "OpenLI: SIP worker thread %d will not log any further invalid SIP instances.", sipworker->workerid);
+        sipworker->debug.log_bad_sip = 0;
+    }
+    pthread_mutex_lock(sipworker->stats_mutex);
+    sipworker->stats->bad_sip_packets ++;
+    pthread_mutex_unlock(sipworker->stats_mutex);
+
+    if (sipworker->debug.sipdebugfile_base && packets) {
+        if (!sipworker->debug.sipdebugout) {
+            sipworker->debug.sipdebugout = open_debug_output(
+                    sipworker->debug.sipdebugfile_base,
+                    sipworker->workerid, "invalid");
+        }
+        if (sipworker->debug.sipdebugout) {
+            for (i = 0; i < pkt_cnt; i++) {
+                if (packets[i] == NULL) {
+                    continue;
+                }
+                trace_write_packet(sipworker->debug.sipdebugout, packets[i]);
+            }
+        }
+    }
+}
+
+
+static void sip_update_fast_path(openli_sip_worker_t *sipworker,
+        libtrace_packet_t *packet) {
+
+    int ret;
+    openli_export_recv_t baseirimsg;
+
+    /* The provided packet contains an entire SIP message, so we
+     * don't need to worry about segmentation or multiple
+     * messages within the same packet.
+     */
+
+    memset(&baseirimsg, 0, sizeof(openli_export_recv_t));
+
+    baseirimsg.type = OPENLI_EXPORT_IPMMIRI;
+    baseirimsg.data.ipmmiri.ipmmiri_style = OPENLI_IPMMIRI_SIP;
+    baseirimsg.ts = trace_get_timeval(packet);
+
+    if (extract_ip_addresses(packet, baseirimsg.data.ipmmiri.ipsrc,
+            baseirimsg.data.ipmmiri.ipdest,
+            &(baseirimsg.data.ipmmiri.ipfamily)) != 0) {
+        handle_bad_sip_update(sipworker, &packet, 1,
+                SIP_PROCESSING_EXTRACTING_IPS);
+        return;
+    }
+
+    ret = parse_next_sip_message(sipworker->sipparser, NULL, NULL);
+    if (ret == 0) {
+        return;
+    }
+    if (ret < 0) {
+        handle_bad_sip_update(sipworker, &packet, 1, SIP_PROCESSING_PARSING);
+        return;
+
+    }
+    baseirimsg.data.ipmmiri.content = (uint8_t *)get_sip_contents(
+            sipworker->sipparser, &(baseirimsg.data.ipmmiri.contentlen));
+
+    if (sipworker_update_sip_state(sipworker, &packet, 1, &baseirimsg) < 0) {
+        handle_bad_sip_update(sipworker, &packet, 1,
+                SIP_PROCESSING_UPDATING_STATE);
+    }
+
+}
+
+static void sip_update_slow_path(openli_sip_worker_t *sipworker,
+        libtrace_packet_t *packet, uint8_t doonce) {
+
+    int ret, i;
+    openli_export_recv_t baseirimsg;
+    libtrace_packet_t **packets = NULL;
+    int pkt_cnt = 0;
+
+    memset(&baseirimsg, 0, sizeof(openli_export_recv_t));
+
+    baseirimsg.type = OPENLI_EXPORT_IPMMIRI;
+    baseirimsg.data.ipmmiri.ipmmiri_style = OPENLI_IPMMIRI_SIP;
+    baseirimsg.ts = trace_get_timeval(packet);
+
+    if (extract_ip_addresses(packet, baseirimsg.data.ipmmiri.ipsrc,
+            baseirimsg.data.ipmmiri.ipdest,
+            &(baseirimsg.data.ipmmiri.ipfamily)) != 0) {
+        handle_bad_sip_update(sipworker, &packet, 1,
+                SIP_PROCESSING_EXTRACTING_IPS);
+        return;
+    }
+
+    do {
+        if (packets != NULL) {
+            for (i = 0; i < pkt_cnt; i++) {
+                if (packets[i]) {
+                    trace_destroy_packet(packets[i]);
+                }
+            }
+            free(packets);
+            pkt_cnt = 0;
+            packets = NULL;
+        }
+
+        ret = parse_next_sip_message(sipworker->sipparser, &packets, &pkt_cnt);
+        if (ret == 0) {
+            return;
+        }
+        if (ret < 0) {
+            handle_bad_sip_update(sipworker, packets, pkt_cnt,
+                    SIP_PROCESSING_PARSING);
+            continue;
+        }
+        baseirimsg.data.ipmmiri.content = (uint8_t *)get_sip_contents(
+                sipworker->sipparser, &(baseirimsg.data.ipmmiri.contentlen));
+        if (sipworker_update_sip_state(sipworker, packets, pkt_cnt,
+                    &baseirimsg) < 0) {
+            handle_bad_sip_update(sipworker, packets, pkt_cnt,
+                    SIP_PROCESSING_UPDATING_STATE);
+            continue;
+        }
+
+    } while (!doonce);
+
+    if (packets) {
+        for (i = 0; i < pkt_cnt; i++) {
+            if (packets[i]) {
+                trace_destroy_packet(packets[i]);
+            }
+        }
+        free(packets);
+    }
+
+}
+
+static void process_received_sip_packet(openli_sip_worker_t *sipworker,
+        libtrace_packet_t *packet) {
+
+    int ret;
+
+    ret = add_sip_packet_to_parser(&(sipworker->sipparser), packet,
+            sipworker->debug.log_bad_sip);
+
+    if (ret == SIP_ACTION_ERROR) {
+        handle_bad_sip_update(sipworker, &packet, 1,
+                SIP_PROCESSING_ADD_PARSER);
+    } else if (ret == SIP_ACTION_USE_PACKET) {
+        sip_update_fast_path(sipworker, packet);
+    } else if (ret == SIP_ACTION_REASSEMBLE_TCP) {
+        sip_update_slow_path(sipworker, packet, 0);
+        packet = NULL;        // consumed by the reassembler
+    } else if (ret == SIP_ACTION_REASSEMBLE_IPFRAG) {
+        sip_update_slow_path(sipworker, packet, 1);
+    }
+
+    if (packet) {
+        trace_destroy_packet(packet);
+    }
+}
+
+
 static inline voipintercept_t *lookup_sip_target_intercept(
         openli_sip_worker_t *sipworker, provisioner_msg_t *provmsg,
         openli_sip_identity_t *sipid) {
@@ -819,6 +1047,43 @@ static int sip_worker_process_sync_thread_message(
     return 1;
 }
 
+static int sip_worker_process_packets(openli_sip_worker_t *sipworker) {
+    openli_state_update_t recvd;
+    int rc;
+
+    do {
+        rc = zmq_recv(sipworker->zmq_colthread_recvsock, &recvd, sizeof(recvd),
+                ZMQ_DONTWAIT);
+        if (rc < 0) {
+            if (errno == EAGAIN) {
+                return 0;
+            }
+            logger(LOG_INFO,
+                    "OpenLI: error while receiving packet in SIP worker thread %d: %s",
+                    sipworker->workerid, strerror(errno));
+            return -1;
+        }
+
+        if (recvd.type == OPENLI_UPDATE_HELLO) {
+            /* Push all interceptable RTP streams back to the sender */
+            voipintercept_t *v;
+            for (v = sipworker->voipintercepts; v != NULL;
+                    v = v->hh_liid.next) {
+                sip_worker_push_all_active_voipstreams(sipworker,
+                        recvd.data.replyq, v);
+            }
+        } else if (recvd.type == OPENLI_UPDATE_SIP) {
+            process_received_sip_packet(sipworker, recvd.data.pkt);
+        } else {
+            logger(LOG_INFO,
+                    "OpenLI: SIP worker thread %d received unexpected update type %u",
+                    sipworker->workerid, recvd.type);
+        }
+
+    } while (rc > 0);
+    return 0;
+}
+
 static void sip_worker_main(openli_sip_worker_t *sipworker) {
 
     sync_epoll_t purgetimer;
@@ -877,6 +1142,13 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
         /* process SIP packets received from the packet processing threads --
          * topoll[1]
          */
+        if (topoll[1].revents & ZMQ_POLLIN) {
+            x = sip_worker_process_packets(sipworker);
+            if (x < 0) {
+                break;
+            }
+            topoll[1].revents = 0;
+        }
 
         /* purge any SMS-only sessions that have been idle for a while --
          * topoll[2] timer
@@ -894,6 +1166,70 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
         }
     }
 }
+
+void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
+        voipintercept_t *vint, openli_export_recv_t *irimsg,
+        etsili_iri_type_t iritype, int64_t cin, openli_location_t *loc,
+        int loc_count, libtrace_packet_t **pkts, int pkt_cnt) {
+
+    openli_export_recv_t *copy;
+
+    if (vint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
+        return;
+    }
+
+    if (vint->common.tostart_time > irimsg->ts.tv_sec) {
+        return;
+    }
+
+    if (vint->common.toend_time > 0 &&
+            vint->common.toend_time <= irimsg->ts.tv_sec) {
+        return;
+    }
+
+    if (vint->common.targetagency == NULL ||
+            strcmp(vint->common.targetagency, "pcapdisk") == 0) {
+        int i;
+        if (pkts == NULL) {
+            return;
+        }
+        for (i = 0; i < pkt_cnt; i++) {
+            if (pkts[i] == NULL) {
+                continue;
+            }
+            copy = create_rawip_iri_job(vint->common.liid, vint->common.destid,
+                pkts[i]);
+            publish_openli_msg(
+                    sipworker->zmq_pubsocks[vint->common.seqtrackerid],
+                    copy);
+        }
+        return;
+    }
+    /* TODO consider recycling IRI messages like we do with IPCCs */
+
+    /* Wrap this packet up in an IRI and forward it on to the exporter.
+     * irimsg may be used multiple times, so make a copy and forward
+     * that instead. */
+    copy = calloc(1, sizeof(openli_export_recv_t));
+    memcpy(copy, irimsg, sizeof(openli_export_recv_t));
+
+    copy->data.ipmmiri.liid = strdup(vint->common.liid);
+    copy->destid = vint->common.destid;
+    copy->data.ipmmiri.iritype = iritype;
+    copy->data.ipmmiri.cin = cin;
+
+    copy->data.ipmmiri.content = malloc(copy->data.ipmmiri.contentlen);
+    memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,
+            irimsg->data.ipmmiri.contentlen);
+    copy_location_into_ipmmiri_job(copy, loc, loc_count);
+
+    pthread_mutex_lock(sipworker->stats_mutex);
+    sipworker->stats->ipmmiri_created ++;
+    pthread_mutex_unlock(sipworker->stats_mutex);
+    publish_openli_msg(sipworker->zmq_pubsocks[vint->common.seqtrackerid],
+            copy);
+}
+
 
 void *start_sip_worker_thread(void *arg) {
     openli_sip_worker_t *sipworker = (openli_sip_worker_t *)arg;
