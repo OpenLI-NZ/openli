@@ -991,6 +991,7 @@ static int sip_worker_handle_provisioner_message(openli_sip_worker_t *sipworker,
             /* No additional per-intercept or per-target behaviour is
              * required?
              */
+            /* TODO */
             disable_unconfirmed_voip_intercepts(&(sipworker->voipintercepts),
                     NULL, NULL, NULL, NULL);
             break;

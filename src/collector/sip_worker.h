@@ -130,5 +130,6 @@ void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
 int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
         libtrace_packet_t **pkts,
         int pkt_cnt, openli_export_recv_t *irimsg);
+int mask_sms_message_content(uint8_t *sipstart, uint16_t siplen);
 
 #endif
