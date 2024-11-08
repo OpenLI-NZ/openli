@@ -103,7 +103,7 @@ typedef struct openli_sip_parser {
     uint16_t sipoffset;
     uint16_t siplen;
     tcp_reassemble_stream_t *thisstream;
-
+    uint8_t badsip;
 } openli_sip_parser_t;
 
 int add_sip_packet_to_parser(openli_sip_parser_t **parser,

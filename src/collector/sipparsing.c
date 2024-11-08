@@ -200,6 +200,7 @@ int parse_next_sip_message(openli_sip_parser_t *p,
         osip_message_init(&(p->osip));
         ret = osip_message_parse(p->osip,
                 (const char *)(p->sipmessage + p->sipoffset), p->siplen);
+        p->badsip = 0;
         if (ret != 0) {
             if (p->thisstream) {
                 /* reassembled stream is probably in a bad state, so let's
@@ -1534,6 +1535,89 @@ static void populate_sdp_identifier(openli_sip_parser_t *sipparser,
 
 }
 
+static uint8_t apply_invite_cseq_to_call(rtpstreaminf_t *thisrtp,
+        char *invitecseq, openli_export_recv_t *irimsg,
+        etsili_iri_type_t iritype) {
+
+    uint8_t dir = 0xff;
+
+    if (thisrtp->invitecseq && invitecseq &&
+            strcmp(thisrtp->invitecseq, invitecseq) == 0) {
+        // duplicate of the original INVITE, can mostly ignore
+        dir = 0xff;
+    } else if (iritype == ETSILI_IRI_BEGIN) {
+        // this is the original INVITE, so save the source IP as the
+        // inviter
+        memcpy(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc, 16);
+        dir = 0;
+    } else if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc,
+                16) == 0) {
+        // source IP matches the original inviter, so this is client->server
+        dir = 0;
+    } else if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipdest,
+                16) == 0) {
+        // this must be server->client
+        dir = 1;
+    }
+
+
+    /* A bit of an explanation of invitecseq_stack...
+     *
+     * This is mainly dedicated to resolving issues that arise
+     * when we see both sides of a proxied SIP session (i.e.
+     * A->B followed by B->C and the reverse for the opposite
+     * direction).
+     *
+     * In these cases, we have to be careful to only track the
+     * RTP session for ONE of the sides of the proxying, otherwise
+     * we get confused and try to intercept RTP streams that don't
+     * exist (such as the outgoing port from A->B and the incoming
+     * port for C->B).
+     *
+     * To further complicate matters, we can see reversed direction
+     * INVITEs (e.g. on call connection to confirm the media port)
+     * so we cannot assume that an INVITE is coming from the caller.
+     *
+     * So what I'm trying to do here is two things:
+     *  1. always track the RTP stream for A->B session only.
+     *  2. don't screw up if we see a reversed INVITE.
+     *
+     * I'm doing this by counting the number of times I see a
+     * specific INVITE cseq, and reducing that count whenever I
+     * see a 183 or 200 with the response SDP info. When the count
+     * gets down to zero, that response must belong to the initial
+     * A->B INVITE.
+     *
+     * For subsequent INVITEs, the counting only starts when the initial
+     * inviting IP address was involved (either as a sender or receiver)
+     * so if a reverse INVITE from C->B won't be looked at for RTP stream
+     * tracking purposes until it is proxied to the B->A link.
+     *
+     * There is one edge case where this will still break and I have
+     * no idea how to resolve it: if the proxy is not A->B and B->C,
+     * but instead is A->B and B->A.
+     */
+    if (invitecseq) {
+        if (dir != 0xff && thisrtp->invitecseq == NULL) {
+            // this is the first INVITE for the call
+            thisrtp->invitecseq = strdup(invitecseq);
+            thisrtp->invitecseq_stack = 1;
+        } else if (thisrtp->invitecseq != NULL &&
+                strcmp(invitecseq, thisrtp->invitecseq) == 0) {
+            // this is a copy of the original INVITE
+            thisrtp->invitecseq_stack ++;
+        } else if (dir != 0xff && thisrtp->invitecseq != NULL) {
+            // this is a subsequent INVITE
+            free(thisrtp->invitecseq);
+            thisrtp->invitecseq = NULL;
+            thisrtp->invitecseq = strdup(invitecseq);
+            thisrtp->invitecseq_stack = 1;
+        }
+    }
+
+    return dir;
+}
+
 static voipsdpmap_t *update_cin_sdp_map(voipintercept_t *vint,
         sip_sdp_identifier_t *sdpo, voipintshared_t *vshared, char *targetuser,
         char *targetrealm) {
@@ -1638,6 +1722,84 @@ static void remove_cin_callid_from_map(voipcinmap_t **cinmap, char *callid) {
         free(c->callid);
         free(c);
     }
+}
+
+static int update_rtp_stream(rtpstreaminf_t *rtp, char *ipstr, char *portstr,
+        char *mediatype, uint8_t dir) {
+
+    int32_t port;
+    struct sockaddr_storage *saddr;
+    int family, i;
+    struct sipmediastream *mstream = NULL;
+    int changed = 0;
+
+    errno = 0;
+    port = strtoul(portstr, NULL, 0);
+
+    if (errno != 0 || port > 65535) {
+        return -1;
+    }
+
+    convert_ipstr_to_sockaddr(ipstr, &(saddr), &(family));
+
+    for (i = 0; i < rtp->streamcount; i++) {
+        if (strcmp(rtp->mediastreams[i].mediatype, mediatype) == 0) {
+            mstream = &(rtp->mediastreams[i]);
+            break;
+        }
+    }
+
+    if (mstream == NULL) {
+        if (rtp->streamcount > 0 && (rtp->streamcount %
+                RTP_STREAM_ALLOC) == 0) {
+            rtp->mediastreams = realloc(rtp->mediastreams,
+                    (rtp->streamcount + RTP_STREAM_ALLOC) *
+                        sizeof(struct sipmediastream));
+            mstream = &(rtp->mediastreams[rtp->streamcount]);
+        }
+        mstream = &(rtp->mediastreams[rtp->streamcount]);
+        rtp->streamcount ++;
+
+        mstream->targetport = 0;
+        mstream->otherport = 0;
+        mstream->mediatype = strdup(mediatype);
+    }
+
+    /* SDP announcements always relate to the "sender" end of the connection */
+    if (dir == ETSI_DIR_FROM_TARGET) {
+        if (rtp->targetaddr) {
+            /* has the address or port changed? should we warn? */
+            if (memcmp(rtp->targetaddr, saddr, sizeof(struct sockaddr_storage))
+                    != 0) {
+                changed = 1;
+            }
+            free(rtp->targetaddr);
+        }
+        rtp->ai_family = family;
+        rtp->targetaddr = saddr;
+        if (mstream->targetport != 0 && port != mstream->targetport) {
+            changed = 1;
+        }
+        mstream->targetport = (uint16_t)port;
+
+
+    } else {
+        if (rtp->otheraddr) {
+            /* has the address or port changed? should we warn? */
+            if (memcmp(rtp->otheraddr, saddr, sizeof(struct sockaddr_storage))
+                    != 0) {
+                changed = 1;
+            }
+            free(rtp->otheraddr);
+        }
+        rtp->ai_family = family;
+        rtp->otheraddr = saddr;
+        if (mstream->otherport != 0 && port != mstream->otherport) {
+            changed = 1;
+        }
+        mstream->otherport = (uint16_t)port;
+    }
+    return changed;
 }
 
 static rtpstreaminf_t *create_new_voipcin(rtpstreaminf_t **activecins,
@@ -1816,6 +1978,7 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
                             callid, sdpo->sessionid, sdpo->version,
                             sdpo->username, sdpo->address);
                 }
+                sipworker->sipparser->badsip = 1;
                 return NULL;
             }
         }
@@ -1859,6 +2022,7 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
                 logger(LOG_INFO, "OpenLI: SIP worker %d was unable to find %u inthe active call list for LIID %s",
                         sipworker->workerid, vshared->cin, vint->common.liid);
             }
+            sipworker->sipparser->badsip = 1;
             return NULL;
         }
     }
@@ -1866,6 +2030,101 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
     *cin = vshared->cin;
     return thisrtp;
 
+}
+
+static int extract_media_streams_from_sdp(rtpstreaminf_t *thisrtp,
+        openli_sip_parser_t *sipparser, uint8_t dir) {
+
+    int i = 1, changed;
+    char *ipstr, *portstr, *mediatype;
+
+    ipstr = get_sip_media_ipaddr(sipparser);
+    portstr = get_sip_media_port(sipparser, 0);
+    mediatype = get_sip_media_type(sipparser, 0);
+
+    while (ipstr && portstr && mediatype) {
+        changed = update_rtp_stream(thisrtp, ipstr, portstr, mediatype, dir);
+        if (changed == -1) {
+            return -1;
+        }
+        portstr = get_sip_media_port(sipparser, i);
+        mediatype = get_sip_media_type(sipparser, i);
+        i++;
+
+        if (changed) {
+            thisrtp->changed = 1;
+        }
+    }
+
+    return i - 1;
+}
+
+static int process_sip_invite(openli_sip_worker_t *sipworker, char *callid,
+        openli_export_recv_t *irimsg, libtrace_packet_t **pkts, int pkt_cnt,
+        openli_location_t *locptr, int loc_cnt) {
+
+
+    voipintercept_t *vint, *tmp;
+    uint8_t trust_sip_from;
+    etsili_iri_type_t iritype = ETSILI_IRI_BEGIN;
+    rtpstreaminf_t *thisrtp;
+    uint32_t cin = 0;
+    struct timeval tv;
+    int exportcount = 0;
+    openli_sip_identity_set_t all_identities;
+    char *invitecseq = NULL;
+    uint8_t dir = 0xff;
+
+    if (extract_sip_identities(sipworker->sipparser, &all_identities,
+            sipworker->debug.log_bad_sip) < 0) {
+        sipworker->debug.log_bad_sip = 0;
+        return -1;
+    }
+
+    pthread_rwlock_rdlock(sipworker->shared_mutex);
+    trust_sip_from = sipworker->shared->trust_sip_from;
+    pthread_rwlock_unlock(sipworker->shared_mutex);
+
+    gettimeofday(&tv, NULL);
+    invitecseq = get_sip_cseq(sipworker->sipparser);
+
+    HASH_ITER(hh_liid, sipworker->voipintercepts, vint, tmp) {
+        if (sipworker->sipparser->badsip) {
+            break;
+        }
+        thisrtp = match_call_to_intercept(sipworker, vint, callid, NULL,
+                &iritype, &cin, trust_sip_from, &tv, &all_identities);
+        if (thisrtp == NULL) {
+            continue;
+        }
+        thisrtp->changed = 0;
+
+        dir = apply_invite_cseq_to_call(thisrtp, invitecseq, irimsg, iritype);
+        if (dir != 0xff) {
+            if (extract_media_streams_from_sdp(thisrtp, sipworker->sipparser,
+                        dir) < 0) {
+                if (sipworker->debug.log_bad_sip) {
+                    logger(LOG_INFO,
+                            "OpenLI: error while extracting media streams from SDP -- SIP messages may be malformed");
+                }
+                sipworker->sipparser->badsip = 1;
+                continue;
+            }
+        }
+
+        create_sip_ipmmiri(sipworker, vint, irimsg, iritype, (int64_t)cin,
+                locptr, loc_cnt, pkts, pkt_cnt);
+        exportcount ++;
+    }
+
+    if (invitecseq) {
+        free(invitecseq);
+    }
+    release_openli_sip_identity_set(&all_identities);
+    if (sipworker->sipparser->badsip) {
+        return -1;
+    }
+    return exportcount;
 }
 
 static int process_sip_message(openli_sip_worker_t *sipworker, char *callid,
@@ -1894,6 +2153,9 @@ static int process_sip_message(openli_sip_worker_t *sipworker, char *callid,
     gettimeofday(&tv, NULL);
 
     HASH_ITER(hh_liid, sipworker->voipintercepts, vint, tmp) {
+        if (sipworker->sipparser->badsip) {
+            break;
+        }
         thisrtp = match_call_to_intercept(sipworker, vint, callid, NULL,
                 &iritype, &cin, trust_sip_from, &tv, &all_identities);
         if (thisrtp == NULL) {
@@ -1913,6 +2175,9 @@ static int process_sip_message(openli_sip_worker_t *sipworker, char *callid,
     }
 
     release_openli_sip_identity_set(&all_identities);
+    if (sipworker->sipparser->badsip) {
+        return -1;
+    }
     return exportcount;
 }
 
@@ -1942,12 +2207,20 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
     openli_location_t *locptr;
     int loc_cnt = 0;
 
+    if (sipworker->sipparser->badsip) {
+        /* this should never happen, but just in case... */
+        logger(LOG_INFO, "OpenLI: Invalid SIP message passed into sipworker_update_sip_state");
+        iserr = 1;
+        goto sipgiveup;
+    }
+
     callid = get_sip_callid(sipworker->sipparser);
 
     if (callid == NULL) {
         if (sipworker->debug.log_bad_sip) {
-            logger(LOG_INFO, "OpenLI: SIP packet has no Call ID?");
+            logger(LOG_INFO, "OpenLI: SIP message has no Call ID?");
         }
+        sipworker->sipparser->badsip = 1;
         iserr = 1;
         goto sipgiveup;
     }
@@ -1967,7 +2240,14 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             goto sipgiveup;
         }
     } else if (sip_is_invite(sipworker->sipparser)) {
-
+        if (( ret = process_sip_invite(sipworker, callid, irimsg, pkts,
+                        pkt_cnt, locptr, loc_cnt)) < 0) {
+            iserr = 1;
+            if (sipworker->debug.log_bad_sip) {
+                logger(LOG_INFO, "OpenLI: error in SIP worker thread %d while processing INVITE message", sipworker->workerid);
+            }
+            goto sipgiveup;
+        }
     } else if (sip_is_register(sipworker->sipparser)) {
         if (( ret = process_sip_register(sipworker, callid, irimsg, pkts,
                         pkt_cnt, locptr, loc_cnt)) < 0) {
@@ -1978,7 +2258,7 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             goto sipgiveup;
         }
     } else if (lookup_sip_callid(sipworker, callid) != 0) {
-
+        /* TODO */
     }
 
 sipgiveup:
