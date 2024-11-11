@@ -945,6 +945,88 @@ static int process_sip_message(openli_sip_worker_t *sipworker, char *callid,
     return exportcount;
 }
 
+static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
+        openli_export_recv_t *irimsg, libtrace_packet_t **pkts, int pkt_cnt,
+        openli_location_t *locptr, int loc_cnt) {
+
+    voipintercept_t *vint, *tmp;
+    voipcinmap_t *findcin;
+    sipregister_t *findreg;
+    uint8_t badsip = 0;
+    voipintshared_t *vshared;
+    char rtpkey[256];
+    rtpstreaminf_t *thisrtp;
+    etsili_iri_type_t iritype = ETSILI_IRI_CONTINUE;
+    int exportcount = 0;
+
+    HASH_ITER(hh_liid, sipworker->voipintercepts, vint, tmp) {
+        HASH_FIND(hh_callid, vint->cin_callid_map, callid, strlen(callid),
+                findcin);
+
+        if (!findcin) {
+            HASH_FIND(hh, vint->active_registrations, callid, strlen(callid),
+                    findreg);
+            if (findreg) {
+                create_sip_ipmmiri(sipworker, vint, irimsg,
+                        ETSILI_IRI_REPORT, findreg->cin, NULL, 0, pkts,
+                        pkt_cnt);
+                exportcount ++;
+            }
+            continue;
+        }
+
+        vshared = findcin->shared;
+        snprintf(rtpkey, 256, "%s-%u", vint->common.liid, vshared->cin);
+        HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
+        if (thisrtp == NULL) {
+            continue;
+        }
+
+        if (sip_is_200ok(sipworker->sipparser)) {
+            if (process_sip_200ok(sipworker, thisrtp, vint, &iritype,
+                        irimsg) < 0) {
+                badsip = 1;
+                continue;
+            }
+        }
+        /* Check for 183 Session Progress, as this can contain RTP info */
+        /* Also check for 180, which can be handled in more or less the
+         * same way from our perspective...
+         */
+        else if (sip_is_183sessprog(sipworker->sipparser) ||
+                sip_is_180ringing(sipworker->sipparser)) {
+            if (process_sip_ringing(sipworker, vint, thisrtp, irimsg) < 0) {
+                badsip = 1;
+                continue;
+            }
+        }
+
+        else if ((sip_is_bye(sipworker->sipparser) ||
+                    sip_is_cancel(sipworker->sipparser)) &&
+                !thisrtp->byematched) {
+            if (thisrtp->byecseq) {
+                free(thisrtp->byecseq);
+            }
+            thisrtp->byecseq = get_sip_cseq(sipworker->sipparser);
+        }
+
+        if (thisrtp->byematched && iritype != ETSILI_IRI_END) {
+            /* All post-END IRIs must be REPORTs */
+            iritype = ETSILI_IRI_REPORT;
+        }
+
+        create_sip_ipmmiri(sipworker, vint, irimsg, iritype, vshared->cin,
+               locptr, loc_cnt, pkts, pkt_cnt);
+        exportcount += 1;
+
+    }
+
+    if (badsip) {
+        return -1;
+    }
+    return exportcount;
+}
+
 static inline int lookup_sip_callid(openli_sip_worker_t *sipworker,
         char *callid) {
 
@@ -1023,6 +1105,14 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
         }
     } else if (lookup_sip_callid(sipworker, callid) != 0) {
         /* TODO */
+        if (( ret = process_sip_other(sipworker, callid, irimsg, pkts,
+                        pkt_cnt, locptr, loc_cnt)) < 0) {
+            iserr = 1;
+            if (sipworker->debug.log_bad_sip) {
+                logger(LOG_INFO, "OpenLI: error in SIP worker thread %d while processing SIP message");
+            }
+            goto sipgiveup;
+        }
     }
 
 sipgiveup:
