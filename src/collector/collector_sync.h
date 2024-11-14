@@ -50,7 +50,6 @@ typedef struct colsync_data {
     int pubsockcount;
     int forwardcount;
     int emailcount;
-    int smscount;
     int gtpcount;
     int sipcount;
 
@@ -58,7 +57,6 @@ typedef struct colsync_data {
     void **zmq_fwdctrlsocks;
     void **zmq_emailsocks;
     void **zmq_gtpsocks;
-    void **zmq_smssocks;
     void **zmq_sipsocks;
     void *zmq_colsock;
 

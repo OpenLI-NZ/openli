@@ -49,8 +49,7 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
 		collector/alushim_parser.c collector/alushim_parser.h \
 		collector/cisco_parser.c collector/cisco_parser.h \
                 collector/ipiri.c collector/ipiri.h \
-		collector/collector_sync_voip.c \
-		collector/collector_sync_voip.h collector/export_shared.h \
+				collector/export_shared.h \
                 collector/reassembler.h collector/reassembler.c \
                 collector/collector_publish.c collector/collector_publish.h \
                 collector/encoder_worker.c collector/encoder_worker.h \
@@ -73,7 +72,6 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/etsiencoding/ipmmiri.c \
                 collector/etsiencoding/epsiri.c collector/epsiri.h \
                 collector/etsiencoding/epscc.c collector/epscc.h \
-                collector/sms_worker.c collector/sms_worker.h \
                 collector/sip_worker.c collector/sip_worker.h \
 				collector/sip_update_state.c \
                 collector/gtp_worker.c collector/gtp_worker.h \

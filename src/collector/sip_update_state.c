@@ -1099,7 +1099,7 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
     sip_sdp_identifier_t sdpo;
     int iserr = 0;
     int ret = 0;
-    openli_location_t *locptr;
+    openli_location_t *locptr = NULL;
     int loc_cnt = 0;
 
     if (sipworker->sipparser->badsip) {

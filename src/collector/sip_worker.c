@@ -130,7 +130,7 @@ static int setup_zmq_sockets(openli_sip_worker_t *sipworker) {
 
     sipworker->zmq_colthread_recvsock = zmq_socket(sipworker->zmq_ctxt,
             ZMQ_PULL);
-    snprintf(sockname, 256, "inproc://openlisipworker_colrecv-%d",
+    snprintf(sockname, 256, "inproc://openlisipworker-colrecv-%d",
             sipworker->workerid);
     if (zmq_bind(sipworker->zmq_colthread_recvsock, sockname) < 0) {
         logger(LOG_INFO,

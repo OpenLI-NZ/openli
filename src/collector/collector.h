@@ -53,7 +53,6 @@
 #include "email_ingest_service.h"
 #include "email_worker.h"
 #include "gtp_worker.h"
-#include "sms_worker.h"
 #include "sip_worker.h"
 #include "sipparsing.h"
 
@@ -86,12 +85,6 @@ enum {
     OPENLI_UPDATE_POP3 = 7,
     OPENLI_UPDATE_SMS_SIP = 8,
 };
-
-typedef struct openli_intersync_msg {
-    uint8_t msgtype;
-    uint8_t *msgbody;
-    uint16_t msglen;
-} PACKED openli_intersync_msg_t;
 
 typedef struct openli_sip_content {
     uint8_t *content;
@@ -208,13 +201,6 @@ typedef struct colthread_local {
     /* Message queue for receiving IP intercept instructions from sync thread */
     libtrace_message_queue_t fromsyncq_ip;
 
-    /* Message queue for pushing updates to sync VOIP thread */
-    void *tosyncq_voip;
-
-    /* Message queue for receiving VOIP intercept instructions from sync
-       thread */
-    libtrace_message_queue_t fromsyncq_voip;
-
     /* Array of message threads for receiving intercept instructions from
      * the GTP processing threads
      */
@@ -233,9 +219,6 @@ typedef struct colthread_local {
 
     /* Array of message queues to pass packets to the email worker threads */
     void **email_worker_queues;
-
-    /* Array of message queues to pass packets to the SMS worker threads */
-    void **sms_worker_queues;
 
     /* Array of message queues to pass packets to the SMS worker threads */
     void **sip_worker_queues;
@@ -311,7 +294,6 @@ typedef struct collector_global {
     int forwarding_threads;
     int email_threads;
     int gtp_threads;
-    int sms_threads;
     int sip_threads;
 
     void *zmq_encoder_ctrl;
@@ -319,7 +301,6 @@ typedef struct collector_global {
     pthread_rwlock_t config_mutex;
 
     sync_thread_global_t syncip;
-    sync_thread_global_t syncvoip;
     etsili_generic_freelist_t *syncgenericfreelist;
 
     //support_thread_global_t *exporters;
@@ -329,12 +310,9 @@ typedef struct collector_global {
     forwarding_thread_data_t *forwarders;
     openli_email_worker_t *emailworkers;
     openli_gtp_worker_t *gtpworkers;
-    openli_sms_worker_t *smsworkers;
     openli_sip_worker_t *sipworkers;
     colthread_local_t **collocals;
     int nextloc;
-
-    libtrace_message_queue_t intersyncq;
 
     char *configfile;
     collector_identity_t sharedinfo;
