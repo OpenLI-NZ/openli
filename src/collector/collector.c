@@ -2177,7 +2177,11 @@ static int init_sip_worker_thread(openli_sip_worker_t *sipworker,
     sipworker->knowncallids = NULL;
     sipworker->ignore_sdpo_matches = glob->ignore_sdpo_matches;
 
-    sipworker->debug.sipdebugfile_base = strdup(glob->sipdebugfile);
+    if (glob->sipdebugfile) {
+        sipworker->debug.sipdebugfile_base = strdup(glob->sipdebugfile);
+    } else {
+        sipworker->debug.sipdebugfile_base = NULL;
+    }
     sipworker->debug.sipdebugout = NULL;
     sipworker->debug.sipdebugupdate = NULL;
     sipworker->debug.log_bad_sip = 1;
