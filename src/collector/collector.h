@@ -220,8 +220,16 @@ typedef struct colthread_local {
      */
     libtrace_message_queue_t *fromgtp_queues;
 
+    /* Array of message threads for receiving intercept instructions from
+     * the SIP processing threads
+     */
+    libtrace_message_queue_t *fromsip_queues;
+
     /* Number of GTP processing threads that have queues in the above array */
     int gtpq_count;
+
+    /* Number of SIP processing threads that have queues in the above array */
+    int sipq_count;
 
     /* Array of message queues to pass packets to the email worker threads */
     void **email_worker_queues;

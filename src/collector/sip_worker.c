@@ -310,6 +310,38 @@ static int halt_expired_rtpstream(openli_sip_worker_t *sipworker,
     return 0;
 }
 
+void sip_worker_conclude_sip_call(openli_sip_worker_t *sipworker,
+        rtpstreaminf_t *thisrtp) {
+
+    sync_epoll_t *timeout = (sync_epoll_t *)calloc(1, sizeof(sync_epoll_t));
+    struct itimerspec its;
+
+    thisrtp->byematched = 1;
+    its.it_value.tv_sec = 30;
+    its.it_value.tv_nsec = 0;
+    its.it_interval.tv_sec = 0;
+    its.it_interval.tv_nsec = 0;
+
+    /* Call for this session should be over */
+    thisrtp->timeout_ev = (void *)timeout;
+    timeout->fdtype = SYNC_EVENT_SIP_TIMEOUT;
+    timeout->fd = timerfd_create(CLOCK_MONOTONIC, 0);
+    timerfd_settime(timeout->fd, 0, &its, NULL);
+
+    timeout->ptr = thisrtp;
+    if (timeout->fd > 0) {
+        HASH_ADD_KEYPTR(hh, sipworker->timeouts, &(timeout->fd), sizeof(int),
+                timeout);
+    } else {
+        /* if we can't get a valid file descriptor for a timer, we
+         * have to just purge the call right away... */
+        free(timeout);
+        thisrtp->timeout_ev = NULL;
+        halt_expired_rtpstream(sipworker, thisrtp);
+    }
+
+}
+
 static libtrace_out_t *open_debug_output(char *basename, size_t workerid,
         char *ext) {
     libtrace_out_t *out = NULL;
@@ -598,6 +630,27 @@ static inline void sip_worker_push_single_voipstreamintercept(
     libtrace_message_queue_put(q, (void *)(&msg));
 }
 
+int sip_worker_announce_rtp_streams(openli_sip_worker_t *sipworker,
+        rtpstreaminf_t *rtp) {
+
+    sync_sendq_t *sendq, *tmp;
+
+    if (!rtp->targetaddr || !rtp->otheraddr) {
+        return 0;
+    }
+
+    if (rtp->active == 1 && rtp->changed == 0) {
+        return 0;
+    }
+
+    HASH_ITER(hh, (sync_sendq_t *)(sipworker->collector_queues), sendq, tmp) {
+        sip_worker_push_single_voipstreamintercept(sipworker, sendq->q, rtp);
+    }
+    rtp->active = 1;
+    rtp->changed = 0;
+    return 1;
+}
+
 static void sip_worker_push_all_active_voipstreams(
         openli_sip_worker_t *sipworker, libtrace_message_queue_t *q,
         voipintercept_t *vint) {
@@ -696,6 +749,8 @@ static void sip_worker_push_intercept_halt(openli_sip_worker_t *sipworker,
     pthread_mutex_unlock(&(sipworker->col_queue_mutex));
 }
 
+
+
 static void sip_worker_push_active_voipstream_update(
         openli_sip_worker_t *sipworker UNUSED, libtrace_message_queue_t *q,
         voipintercept_t *vint) {
@@ -766,6 +821,98 @@ static int sip_worker_update_modified_voip_intercept(
 endupdatevint:
     free_single_voipintercept(decoded);
     return r;
+}
+
+static void remove_cin_callids_for_target(voipcinmap_t **cinmap,
+        char *username, char *realm) {
+
+    voipcinmap_t *c, *tmp;
+    openli_sip_identity_t a, b;
+
+    a.username = username;
+    a.realm = realm;
+    HASH_ITER(hh_callid, *cinmap, c, tmp) {
+        b.username = c->username;
+        b.realm = c->realm;
+
+        if (!are_sip_identities_same(&a, &b)) {
+            continue;
+        }
+
+        HASH_DELETE(hh_callid, *cinmap, c);
+        if (c->shared) {
+            c->shared->refs --;
+            if (c->shared->refs == 0) {
+                free(c->shared);
+            }
+        }
+        if (c->username) {
+            free(c->username);
+        }
+        if (c->realm) {
+            free(c->realm);
+        }
+        free(c->callid);
+        free(c);
+    }
+
+}
+
+static void remove_cin_sdpkeys_for_target(voipsdpmap_t **sdpmap,
+        char *username, char *realm) {
+
+    voipsdpmap_t *s, *tmp;
+    openli_sip_identity_t a, b;
+
+    a.username = username;
+    a.realm = realm;
+    HASH_ITER(hh_sdp, *sdpmap, s, tmp) {
+        b.username = s->username;
+        b.realm = s->realm;
+
+        if (!are_sip_identities_same(&a, &b)) {
+            continue;
+        }
+
+        HASH_DELETE(hh_sdp, *sdpmap, s);
+        if (s->shared) {
+            s->shared->refs --;
+            if (s->shared->refs == 0) {
+                free(s->shared);
+            }
+        }
+        if (s->username) {
+            free(s->username);
+        }
+        if (s->realm) {
+            free(s->realm);
+        }
+        free(s);
+    }
+}
+
+static void post_disable_unconfirmed_voip_intercept(voipintercept_t *vint,
+        void *arg) {
+    openli_sip_worker_t *sipworker = (openli_sip_worker_t *)arg;
+    if (sipworker && vint) {
+        sip_worker_push_intercept_halt(sipworker, vint);
+    }
+}
+
+static void post_disable_unconfirmed_voip_target(openli_sip_identity_t *sipid,
+        voipintercept_t *v, void *arg) {
+
+    openli_sip_worker_t *sipworker = (openli_sip_worker_t *)arg;
+    if (sipworker == NULL || v == NULL || sipid == NULL) {
+        return;
+    }
+
+    remove_cin_callids_for_target(&(v->cin_callid_map), sipid->username,
+            sipid->realm);
+    remove_cin_sdpkeys_for_target(&(v->cin_sdp_map), sipid->username,
+            sipid->realm);
+    remove_cin_callids_for_target(&(sipworker->knowncallids), sipid->username,
+            sipid->realm);
 }
 
 static void sip_worker_init_voip_intercept(openli_sip_worker_t *sipworker,
@@ -988,12 +1135,9 @@ static int sip_worker_handle_provisioner_message(openli_sip_worker_t *sipworker,
             ret = sip_worker_remove_sip_target(sipworker, &(msg->data.provmsg));
             break;
         case OPENLI_PROTO_NOMORE_INTERCEPTS:
-            /* No additional per-intercept or per-target behaviour is
-             * required?
-             */
-            /* TODO */
             disable_unconfirmed_voip_intercepts(&(sipworker->voipintercepts),
-                    NULL, NULL, NULL, NULL);
+                    post_disable_unconfirmed_voip_intercept, sipworker,
+                    post_disable_unconfirmed_voip_target, sipworker);
             break;
         case OPENLI_PROTO_DISCONNECT:
             flag_voip_intercepts_as_unconfirmed(&(sipworker->voipintercepts));
@@ -1166,6 +1310,8 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
             topoll[2].fd = purgetimer.fd;
         }
     }
+    free(topoll);
+    free(expiringstreams);
 }
 
 void create_sip_ipmmiri(openli_sip_worker_t *sipworker,

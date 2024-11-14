@@ -131,5 +131,9 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
         libtrace_packet_t **pkts,
         int pkt_cnt, openli_export_recv_t *irimsg);
 int mask_sms_message_content(uint8_t *sipstart, uint16_t siplen);
+int sip_worker_announce_rtp_streams(openli_sip_worker_t *sipworker,
+        rtpstreaminf_t *rtp);
+void sip_worker_conclude_sip_call(openli_sip_worker_t *sipworker,
+        rtpstreaminf_t *thisrtp);
 
 #endif

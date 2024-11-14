@@ -945,6 +945,54 @@ static int process_sip_message(openli_sip_worker_t *sipworker, char *callid,
     return exportcount;
 }
 
+static int process_sip_response(openli_sip_worker_t *sipworker,
+        rtpstreaminf_t *thisrtp,
+        etsili_iri_type_t *iritype, openli_export_recv_t *irimsg) {
+
+    char *cseqstr;
+    uint8_t dir = 0xff;
+
+    if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc, 16) == 0) {
+        dir = 0;
+    } else if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipdest, 16) == 0) {
+        dir = 1;
+    }
+
+    cseqstr = get_sip_cseq(sipworker->sipparser);
+    if (thisrtp->invitecseq && strcmp(thisrtp->invitecseq, cseqstr) == 0) {
+        if (dir == 0xff || thisrtp->invitecseq_stack != 1) {
+            goto responseover;
+        }
+        if (extract_media_streams_from_sdp(thisrtp, sipworker->sipparser,
+                    dir) < 0) {
+            if (sipworker->debug.log_bad_sip) {
+                logger(LOG_INFO,
+                        "OpenLI: error while extracting media streams from SDP -- SIP messages may be malformed");
+            }
+            sipworker->sipparser->badsip = 1;
+        }
+        if (thisrtp->invitecseq_stack >= 1) {
+            thisrtp->invitecseq_stack --;
+            if (sip_worker_announce_rtp_streams(sipworker, thisrtp)) {
+                free(thisrtp->invitecseq);
+                thisrtp->invitecseq = NULL;
+            }
+        }
+    } else if (thisrtp->byecseq && strcmp(thisrtp->byecseq, cseqstr) == 0 &&
+            thisrtp->byematched == 0) {
+        sip_worker_conclude_sip_call(sipworker, thisrtp);
+        *iritype = ETSILI_IRI_END;
+    }
+
+responseover:
+    free(cseqstr);
+    if (sipworker->sipparser->badsip) {
+        return -1;
+    }
+    return 0;
+
+}
+
 static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
         openli_export_recv_t *irimsg, libtrace_packet_t **pkts, int pkt_cnt,
         openli_location_t *locptr, int loc_cnt) {
@@ -952,7 +1000,6 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
     voipintercept_t *vint, *tmp;
     voipcinmap_t *findcin;
     sipregister_t *findreg;
-    uint8_t badsip = 0;
     voipintshared_t *vshared;
     char rtpkey[256];
     rtpstreaminf_t *thisrtp;
@@ -960,6 +1007,9 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
     int exportcount = 0;
 
     HASH_ITER(hh_liid, sipworker->voipintercepts, vint, tmp) {
+        if (sipworker->sipparser->badsip) {
+            break;
+        }
         HASH_FIND(hh_callid, vint->cin_callid_map, callid, strlen(callid),
                 findcin);
 
@@ -983,9 +1033,8 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
         }
 
         if (sip_is_200ok(sipworker->sipparser)) {
-            if (process_sip_200ok(sipworker, thisrtp, vint, &iritype,
+            if (process_sip_response(sipworker, thisrtp, &iritype,
                         irimsg) < 0) {
-                badsip = 1;
                 continue;
             }
         }
@@ -995,8 +1044,8 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
          */
         else if (sip_is_183sessprog(sipworker->sipparser) ||
                 sip_is_180ringing(sipworker->sipparser)) {
-            if (process_sip_ringing(sipworker, vint, thisrtp, irimsg) < 0) {
-                badsip = 1;
+            if (process_sip_response(sipworker, thisrtp, &iritype,
+                        irimsg) < 0) {
                 continue;
             }
         }
@@ -1021,7 +1070,7 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
 
     }
 
-    if (badsip) {
+    if (sipworker->sipparser->badsip) {
         return -1;
     }
     return exportcount;

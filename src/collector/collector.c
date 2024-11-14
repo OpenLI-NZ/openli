@@ -283,6 +283,9 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
 
     if (glob->sip_threads > 0) {
         loc->sip_worker_queues = calloc(glob->sip_threads, sizeof(void *));
+        loc->fromsip_queues = calloc(glob->sip_threads,
+                sizeof(libtrace_message_queue_t));
+
         for (i = 0; i < glob->sip_threads; i++) {
             char pubsockname[128];
 
@@ -292,9 +295,14 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
             zmq_setsockopt(loc->sip_worker_queues[i], ZMQ_SNDHWM, &hwm,
                     sizeof(hwm));
             zmq_connect(loc->sip_worker_queues[i], pubsockname);
+            libtrace_message_queue_init(&(loc->fromsip_queues[i]),
+                    sizeof(openli_pushed_t));
         }
+        loc->sipq_count = glob->sip_threads;
     } else {
         loc->sip_worker_queues = NULL;
+        loc->fromsip_queues = NULL;
+        loc->sipq_count = 0;
     }
 
     if (glob->sms_threads > 0) {
@@ -379,6 +387,20 @@ static void *start_processing_thread(libtrace_t *trace UNUSED,
         glob->gtpworkers[i].collector_queues = (void *)sendq_hash;
 
         pthread_mutex_unlock(&(glob->gtpworkers[i].col_queue_mutex));
+    }
+
+    for (i = 0; i < glob->sip_threads; i++) {
+        syncq = (sync_sendq_t *)malloc(sizeof(sync_sendq_t));
+        syncq->q = &(loc->fromsip_queues[i]);
+        syncq->parent = t;
+
+        pthread_mutex_lock(&(glob->sipworkers[i].col_queue_mutex));
+
+        sendq_hash = (sync_sendq_t *)(glob->sipworkers[i].collector_queues);
+        HASH_ADD_PTR(sendq_hash, parent, syncq);
+        glob->sipworkers[i].collector_queues = (void *)sendq_hash;
+
+        pthread_mutex_unlock(&(glob->sipworkers[i].col_queue_mutex));
     }
 
     return loc;
@@ -548,9 +570,28 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     }
 
     for (i = 0; i < glob->sip_threads; i++) {
+        openli_sip_worker_t *sipworker;
+
+        sipworker = &(glob->sipworkers[i]);
         zmq_setsockopt(loc->sip_worker_queues[i], ZMQ_LINGER, &zero,
                 sizeof(zero));
         zmq_close(loc->sip_worker_queues[i]);
+        while (libtrace_message_queue_try_get(&(loc->fromsip_queues[i]),
+                    (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
+            process_incoming_messages(loc, &syncpush);
+        }
+        pthread_mutex_lock(&(sipworker->col_queue_mutex));
+        sendq_hash = (sync_sendq_t *)(sipworker->collector_queues);
+
+        HASH_FIND_PTR(sendq_hash, &t, syncq);
+        if (syncq) {
+            HASH_DELETE(hh, sendq_hash, syncq);
+            free(syncq);
+            sipworker->collector_queues = (void *)sendq_hash;
+        }
+        pthread_mutex_unlock(&(sipworker->col_queue_mutex));
+
+        libtrace_message_queue_destroy(&(loc->fromsip_queues[i]));
     }
 
     zmq_setsockopt(loc->tosyncq_ip, ZMQ_LINGER, &zero, sizeof(zero));
@@ -561,6 +602,9 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     if (loc->fromgtp_queues) {
         free(loc->fromgtp_queues);
     }
+    if (loc->fromsip_queues) {
+        free(loc->fromsip_queues);
+    }
     free(loc->zmq_pubsocks);
     if (loc->email_worker_queues) {
         free(loc->email_worker_queues);
@@ -570,6 +614,9 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     }
     if (loc->gtp_worker_queues) {
         free(loc->gtp_worker_queues);
+    }
+    if (loc->sip_worker_queues) {
+        free(loc->sip_worker_queues);
     }
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
@@ -1060,6 +1107,14 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     for (i = 0; i < loc->gtpq_count; i++) {
         while (libtrace_message_queue_try_get(&(loc->fromgtp_queues[i]),
+                (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
+
+            process_incoming_messages(loc, &syncpush);
+        }
+    }
+
+    for (i = 0; i < loc->sipq_count; i++) {
+        while (libtrace_message_queue_try_get(&(loc->fromsip_queues[i]),
                 (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
             process_incoming_messages(loc, &syncpush);
@@ -1616,6 +1671,13 @@ static void destroy_collector_state(collector_global_t *glob) {
             pthread_mutex_destroy(&(glob->gtpworkers[i].col_queue_mutex));
         }
         free(glob->gtpworkers);
+    }
+
+    if (glob->sipworkers) {
+        for (i = 0; i < glob->sip_threads; i++) {
+            pthread_mutex_destroy(&(glob->sipworkers[i].col_queue_mutex));
+        }
+        free(glob->sipworkers);
     }
 
     libtrace_message_queue_destroy(&(glob->intersyncq));
@@ -2499,6 +2561,10 @@ int main(int argc, char *argv[]) {
                 sizeof(openli_sip_worker_t));
         for (i = 0; i < glob->sip_threads; i++) {
             init_sip_worker_thread(&(glob->sipworkers[i]), glob, i);
+            pthread_create(&(glob->sipworkers[i].threadid), NULL,
+                    start_sip_worker_thread, (void *)&(glob->sipworkers[i]));
+            pthread_setname_np(glob->sipworkers[i].threadid,
+                    glob->sipworkers[i].worker_threadname);
         }
     } else {
         glob->sipworkers = NULL;
