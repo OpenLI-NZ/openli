@@ -834,7 +834,7 @@ static int process_sip_invite(openli_sip_worker_t *sipworker, char *callid,
     rtpstreaminf_t *thisrtp;
     uint32_t cin = 0;
     struct timeval tv;
-    int exportcount = 0;
+    int exportcount = 0, r;
     openli_sip_identity_set_t all_identities;
     char *invitecseq = NULL;
     uint8_t dir = 0xff;
@@ -865,8 +865,9 @@ static int process_sip_invite(openli_sip_worker_t *sipworker, char *callid,
 
         dir = apply_invite_cseq_to_call(thisrtp, invitecseq, irimsg, iritype);
         if (dir != 0xff) {
-            if (extract_media_streams_from_sdp(thisrtp, sipworker->sipparser,
-                        dir) < 0) {
+            r = extract_media_streams_from_sdp(thisrtp, sipworker->sipparser,
+                        dir);
+            if (r < 0) {
                 if (sipworker->debug.log_bad_sip) {
                     logger(LOG_INFO,
                             "OpenLI: error while extracting media streams from SDP -- SIP messages may be malformed");
@@ -951,6 +952,8 @@ static int process_sip_response(openli_sip_worker_t *sipworker,
 
     char *cseqstr;
     uint8_t dir = 0xff;
+    int r = 0;
+    char *mediatype = NULL;
 
     if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc, 16) == 0) {
         dir = 0;
@@ -959,17 +962,22 @@ static int process_sip_response(openli_sip_worker_t *sipworker,
     }
 
     cseqstr = get_sip_cseq(sipworker->sipparser);
+
     if (thisrtp->invitecseq && strcmp(thisrtp->invitecseq, cseqstr) == 0) {
-        if (dir == 0xff || thisrtp->invitecseq_stack != 1) {
+        mediatype = get_sip_media_type(sipworker->sipparser, 0);
+        if (mediatype == NULL) {
             goto responseover;
         }
-        if (extract_media_streams_from_sdp(thisrtp, sipworker->sipparser,
-                    dir) < 0) {
-            if (sipworker->debug.log_bad_sip) {
-                logger(LOG_INFO,
-                        "OpenLI: error while extracting media streams from SDP -- SIP messages may be malformed");
+        if (dir != 0xff && thisrtp->invitecseq_stack == 1) {
+            r = extract_media_streams_from_sdp(thisrtp, sipworker->sipparser,
+                        dir);
+            if (r < 0) {
+                if (sipworker->debug.log_bad_sip) {
+                    logger(LOG_INFO,
+                            "OpenLI: error while extracting media streams from SDP -- SIP messages may be malformed");
+                }
+                sipworker->sipparser->badsip = 1;
             }
-            sipworker->sipparser->badsip = 1;
         }
         if (thisrtp->invitecseq_stack >= 1) {
             thisrtp->invitecseq_stack --;
