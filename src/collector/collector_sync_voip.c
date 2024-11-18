@@ -1430,7 +1430,7 @@ static int update_sip_state(collector_sync_voip_t *sync,
     }
 
     if (sessuser != NULL) {
-        strncpy(sdpo.username, sessaddr, sizeof(sdpo.username) - 1);
+        strncpy(sdpo.username, sessuser, sizeof(sdpo.username) - 1);
     } else {
         strncpy(sdpo.username, "unknown", sizeof(sdpo.username) - 1);
     }
