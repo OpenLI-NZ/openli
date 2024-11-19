@@ -1,3 +1,10 @@
+openli (1.1.11-1) unstable; urgency=medium
+
+  * SIP: fix crash when processing an INVITE where the SDP address is
+    missing but the SDP username is present.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 20 Nov 2024 10:47:40 +1300
+
 openli (1.1.10-2) unstable; urgency=medium
 
   * Add explicit version to libwandder2 dependency to force upgraded
