@@ -291,7 +291,7 @@ static void populate_sdp_identifier(openli_sip_parser_t *sipparser,
     }
 
     if (sessuser != NULL) {
-        strncpy(sdpo->username, sessaddr, sizeof(sdpo->username) - 1);
+        strncpy(sdpo->username, sessuser, sizeof(sdpo->username) - 1);
     } else {
         strncpy(sdpo->username, "unknown", sizeof(sdpo->username) - 1);
     }
