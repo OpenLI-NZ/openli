@@ -969,6 +969,7 @@ static int sip_worker_add_new_voip_intercept(openli_sip_worker_t *sipworker,
         ret = 0;
     } else {
         sip_worker_init_voip_intercept(sipworker, vint);
+        found = vint;
         ret = 1;
     }
 
@@ -980,13 +981,13 @@ static int sip_worker_add_new_voip_intercept(openli_sip_worker_t *sipworker,
 
     pthread_mutex_lock(&(sipworker->col_queue_mutex));
     HASH_ITER(hh, (sync_sendq_t *)(sipworker->collector_queues), sendq, tmp) {
-        sip_worker_push_all_active_voipstreams(sipworker, sendq->q, vint);
+        sip_worker_push_all_active_voipstreams(sipworker, sendq->q, found);
     }
     pthread_mutex_unlock(&(sipworker->col_queue_mutex));
 
-    if (sipworker->workerid == 0) {
+    if (sipworker->workerid == 0 && ret == 1) {
         logger(LOG_INFO,
-            "OpenLI: adding new VOIP intercept %s (start time %lu, end time %lu)", vint->common.liid, vint->common.tostart_time, vint->common.toend_time);
+            "OpenLI: adding new VOIP intercept %s (start time %lu, end time %lu)", found->common.liid, found->common.tostart_time, found->common.toend_time);
     }
 
     return ret;
@@ -1060,6 +1061,7 @@ static int sip_worker_add_sip_target(openli_sip_worker_t *sipworker,
 
     voipintercept_t *found;
     openli_sip_identity_t sipid;
+    int r;
 
     found = lookup_sip_target_intercept(sipworker, provmsg, &sipid);
     if (!found) {
@@ -1071,14 +1073,14 @@ static int sip_worker_add_sip_target(openli_sip_worker_t *sipworker,
         }
         return -1;
     }
-    add_new_sip_target_to_list(found, &sipid);
-    if (sipworker->workerid == 0) {
+    r = add_new_sip_target_to_list(found, &sipid);
+    if (sipworker->workerid == 0 && r == 1) {
         logger(LOG_INFO,
                 "OpenLI: collector received new SIP target for LIID %s.",
                 found->common.liid);
     }
 
-    return 0;
+    return r;
 }
 
 static int sip_worker_remove_sip_target(openli_sip_worker_t *sipworker,
@@ -1383,6 +1385,8 @@ void *start_sip_worker_thread(void *arg) {
     int x;
     openli_state_update_t recvd;
 
+    logger(LOG_INFO, "OpenLI: starting SIP processing thread %d",
+            sipworker->workerid);
     if (setup_zmq_sockets(sipworker) < 0) {
         goto haltsipworker;
     }

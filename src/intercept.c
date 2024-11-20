@@ -657,7 +657,7 @@ void disable_unconfirmed_voip_intercepts(voipintercept_t **voipintercepts,
     }
 }
 
-void add_new_sip_target_to_list(voipintercept_t *vint,
+int add_new_sip_target_to_list(voipintercept_t *vint,
         openli_sip_identity_t *sipid) {
     openli_sip_identity_t *newid, *iter;
     libtrace_list_node_t *n;
@@ -683,7 +683,7 @@ void add_new_sip_target_to_list(voipintercept_t *vint,
             if (sipid->realm) {
                 free(sipid->realm);
             }
-            return;
+            return 0;
         }
         n = n->next;
     }
@@ -700,6 +700,7 @@ void add_new_sip_target_to_list(voipintercept_t *vint,
     sipid->username = NULL;
 
     libtrace_list_push_back(vint->targets, &newid);
+    return 1;
 }
 
 void free_single_voipintercept(voipintercept_t *v) {

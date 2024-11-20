@@ -470,7 +470,7 @@ char *list_sip_targets(voipintercept_t *v, int maxchars);
 
 /* Add a provided SIP identity to the targets list for a VoIP intercept.
  */
-void add_new_sip_target_to_list(voipintercept_t *vint,
+int add_new_sip_target_to_list(voipintercept_t *vint,
         openli_sip_identity_t *sipid);
 
 /* Disables the provided SIP identity for a VoIP intercept. */
