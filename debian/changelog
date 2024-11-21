@@ -2,8 +2,11 @@ openli (1.1.11-1) unstable; urgency=medium
 
   * SIP: fix crash when processing an INVITE where the SDP address is
     missing but the SDP username is present.
+  * Collector: add ability to use multiple threads for SIP parsing.
+  * Collector: merged capabilities of SMS threads into the new SIP parsing
+    threads. Standalone SMS interception threads now no longer exist.
 
- -- Shane Alcock <salcock@searchlight.nz>  Wed, 20 Nov 2024 10:47:40 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Thu, 21 Nov 2024 15:54:19 +1300
 
 openli (1.1.10-2) unstable; urgency=medium
 

@@ -29,12 +29,12 @@ encoderthreads: 2
 forwardingthreads: 1
 
 # Number of threads to use for parsing GTP traffic to intercept mobile
-# data session. Can be set to zero if the collector will not see GTP traffic.
+# data sessions. Can be set to zero if the collector will not see GTP traffic.
 gtpthreads: 1
 
-# Number of threads to use for intercepting SMS messages sent over SIP
-# Can be set to zero if the collector will not see SMS over SIP.
-smsthreads: 1
+# Number of threads to use for parsing SIP traffic to intercept voice calls
+# and SMS messages over SIP. You must have at least one SIP thread.
+sipthreads: 2
 
 # Number of threads to use for parsing email traffic (SMTP, IMAP, and POP3).
 # Can be set to zero if the collector will not see email traffic, or you are
