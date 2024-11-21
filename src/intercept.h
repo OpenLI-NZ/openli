@@ -256,6 +256,8 @@ typedef struct voipcinmap {
     char *username;
     char *realm;
     voipintshared_t *shared;
+    time_t lastsip;
+    uint8_t smsonly;        // if 1, this "call" has only sent MESSAGEs
     UT_hash_handle hh_callid;
 
 } voipcinmap_t;
@@ -376,6 +378,7 @@ struct rtpstreaminf {
 
     uint8_t inviter[16];
 
+    uint8_t announced;
     uint8_t skip_comfort;
     intercept_common_t common;
     voipintercept_t *parent;
@@ -443,6 +446,7 @@ void free_all_vendmirror_intercepts(vendmirror_intercept_list_t **mirror_interce
 void free_all_staticipsessions(staticipsession_t **statintercepts);
 void free_all_staticipranges(static_ipranges_t **ipranges);
 
+void free_single_voip_cinmap_entry(voipcinmap_t *c);
 void free_voip_cinmap(voipcinmap_t *cins);
 void free_single_ipintercept(ipintercept_t *cept);
 void free_single_voipintercept(voipintercept_t *v);
@@ -466,7 +470,7 @@ char *list_sip_targets(voipintercept_t *v, int maxchars);
 
 /* Add a provided SIP identity to the targets list for a VoIP intercept.
  */
-void add_new_sip_target_to_list(voipintercept_t *vint,
+int add_new_sip_target_to_list(voipintercept_t *vint,
         openli_sip_identity_t *sipid);
 
 /* Disables the provided SIP identity for a VoIP intercept. */

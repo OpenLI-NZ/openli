@@ -588,6 +588,7 @@ static inline voipcinmap_t *update_cin_callid_map(voipcinmap_t **cinmap,
     if (newcinmap->shared) {
         newcinmap->shared->refs ++;
     }
+    newcinmap->smsonly = 0;     // TODO fix when we merge with SMS worker
 
     HASH_ADD_KEYPTR(hh_callid, *cinmap, newcinmap->callid,
             strlen(newcinmap->callid), newcinmap);

@@ -39,7 +39,6 @@
 #include "etsili_core.h"
 #include "collector.h"
 #include "collector_sync.h"
-#include "collector_sync_voip.h"
 #include "collector_publish.h"
 #include "configparser.h"
 #include "logger.h"
@@ -57,7 +56,6 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 			malloc(sizeof(collector_sync_t));
 
     sync->glob = &(glob->syncip);
-    sync->intersyncq = &(glob->intersyncq);
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
     sync->knownvoips = NULL;
@@ -85,14 +83,14 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->pubsockcount = glob->seqtracker_threads;
     sync->forwardcount = glob->forwarding_threads;
     sync->emailcount = glob->email_threads;
-    sync->smscount = glob->sms_threads;
+    sync->sipcount = glob->sip_threads;
     sync->gtpcount = glob->gtp_threads;
 
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
     sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
     sync->zmq_emailsocks = calloc(sync->emailcount, sizeof(void *));
     sync->zmq_gtpsocks = calloc(sync->gtpcount, sizeof(void *));
-    sync->zmq_smssocks = calloc(sync->smscount, sizeof(void *));
+    sync->zmq_sipsocks = calloc(sync->sipcount, sizeof(void *));
 
     sync->ctx = glob->sslconf.ctx;
     sync->ssl = NULL;
@@ -114,8 +112,8 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     init_zmq_socket_array(sync->zmq_gtpsocks, sync->gtpcount,
             "inproc://openligtpcontrol_sync", glob->zmq_ctxt);
 
-    init_zmq_socket_array(sync->zmq_smssocks, sync->smscount,
-            "inproc://openlismscontrol_sync", glob->zmq_ctxt);
+    init_zmq_socket_array(sync->zmq_sipsocks, sync->sipcount,
+            "inproc://openlisipcontrol_sync", glob->zmq_ctxt);
 
     init_zmq_socket_array(sync->zmq_pubsocks, sync->pubsockcount,
             "inproc://openlipub", glob->zmq_ctxt);
@@ -224,7 +222,7 @@ void clean_sync_data(collector_sync_t *sync) {
         haltfails += send_halt_message_to_zmq_socket_array(
                 sync->zmq_gtpsocks, sync->gtpcount);
         haltfails += send_halt_message_to_zmq_socket_array(
-                sync->zmq_smssocks, sync->smscount);
+                sync->zmq_sipsocks, sync->sipcount);
 
         if (haltfails == 0) {
             break;
@@ -234,7 +232,7 @@ void clean_sync_data(collector_sync_t *sync) {
     }
 
     free(sync->zmq_emailsocks);
-    free(sync->zmq_smssocks);
+    free(sync->zmq_sipsocks);
     free(sync->zmq_gtpsocks);
     free(sync->zmq_pubsocks);
     free(sync->zmq_fwdctrlsocks);
@@ -274,27 +272,6 @@ static int forward_provmsg_to_workers(void **zmq_socks, int sockcount,
 
 }
 
-static int forward_provmsg_to_voipsync(collector_sync_t *sync,
-        uint8_t *provmsg, uint16_t msglen, openli_proto_msgtype_t msgtype) {
-
-    openli_intersync_msg_t topush;
-
-    topush.msgtype = msgtype;
-
-    if (provmsg && msglen > 0) {
-        topush.msgbody = (uint8_t *)malloc(msglen);
-        memcpy(topush.msgbody, provmsg, msglen);
-        topush.msglen = msglen;
-    } else {
-        topush.msgbody = NULL;
-        topush.msglen = 0;
-    }
-
-    libtrace_message_queue_put(sync->intersyncq, &topush);
-    return 1;
-
-}
-
 static inline void push_coreserver_msg(collector_sync_t *sync,
         coreserver_t *cs, uint8_t msgtype) {
 
@@ -324,7 +301,6 @@ void sync_thread_publish_reload(collector_sync_t *sync) {
 
         publish_openli_msg(sync->zmq_pubsocks[i], expmsg);
     }
-    forward_provmsg_to_voipsync(sync, NULL, 0, OPENLI_PROTO_CONFIG_RELOADED);
 }
 
 static int export_raw_sync_packet_content(access_plugin_t *p,
@@ -1640,24 +1616,14 @@ static int recv_from_provisioner(collector_sync_t *sync) {
             case OPENLI_PROTO_MODIFY_VOIPINTERCEPT:
             case OPENLI_PROTO_ANNOUNCE_SIP_TARGET:
             case OPENLI_PROTO_WITHDRAW_SIP_TARGET:
-                ret = forward_provmsg_to_voipsync(sync, provmsg, msglen,
-                        msgtype);
-                if (ret == -1) {
-                    return -1;
-                }
-                ret = forward_provmsg_to_workers(sync->zmq_smssocks,
-                        sync->smscount, provmsg, msglen, msgtype, "SMS");
+                ret = forward_provmsg_to_workers(sync->zmq_sipsocks,
+                        sync->sipcount, provmsg, msglen, msgtype, "SIP");
                 if (ret == -1) {
                     return -1;
                 }
                 break;
             case OPENLI_PROTO_NOMORE_INTERCEPTS:
                 disable_unconfirmed_intercepts(sync);
-                ret = forward_provmsg_to_voipsync(sync, provmsg, msglen,
-                        msgtype);
-                if (ret == -1) {
-                    return -1;
-                }
                 ret = forward_provmsg_to_workers(sync->zmq_emailsocks,
                         sync->emailcount, provmsg, msglen, msgtype, "email");
                 if (ret == -1) {
@@ -1668,8 +1634,8 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 if (ret == -1) {
                     return -1;
                 }
-                ret = forward_provmsg_to_workers(sync->zmq_smssocks,
-                        sync->smscount, provmsg, msglen, msgtype, "SMS");
+                ret = forward_provmsg_to_workers(sync->zmq_sipsocks,
+                        sync->sipcount, provmsg, msglen, msgtype, "SIP");
                 if (ret == -1) {
                     return -1;
                 }
@@ -1840,13 +1806,12 @@ void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
     touch_all_defaultradius(sync->defaultradiususers);
 
     /* Tell other sync thread to flag its intercepts too */
-    forward_provmsg_to_voipsync(sync, NULL, 0, OPENLI_PROTO_DISCONNECT);
     forward_provmsg_to_workers(sync->zmq_emailsocks, sync->emailcount,
             NULL, 0, OPENLI_PROTO_DISCONNECT, "email");
     forward_provmsg_to_workers(sync->zmq_gtpsocks, sync->gtpcount,
             NULL, 0, OPENLI_PROTO_DISCONNECT, "GTP");
-    forward_provmsg_to_workers(sync->zmq_smssocks, sync->smscount,
-            NULL, 0, OPENLI_PROTO_DISCONNECT, "SMS");
+    forward_provmsg_to_workers(sync->zmq_sipsocks, sync->sipcount,
+            NULL, 0, OPENLI_PROTO_DISCONNECT, "SIP");
 
     /* Same with mediators -- keep exporting to them, but flag them to be
      * disconnected if they are not announced after we reconnect. */

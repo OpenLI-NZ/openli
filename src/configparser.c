@@ -1315,10 +1315,12 @@ static int global_parser(void *arg, yaml_document_t *doc,
             key, value, "forwarding", 1);
     parse_col_thread_count(&(glob->email_threads), "emailthreads",
             key, value, "email worker", 0);
-    parse_col_thread_count(&(glob->sms_threads), "smsthreads",
-            key, value, "SMS worker", 0);
     parse_col_thread_count(&(glob->gtp_threads), "gtpthreads",
             key, value, "GTP worker", 0);
+    parse_col_thread_count(&(glob->sip_threads), "smsthreads",
+            key, value, "SIP worker", 0);
+    parse_col_thread_count(&(glob->sip_threads), "sipthreads",
+            key, value, "SIP worker", 0);
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&

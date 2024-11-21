@@ -32,6 +32,7 @@
 #include <osipparser2/osip_message.h>
 #include <osipparser2/sdp_message.h>
 #include "sipparsing.h"
+#include "sip_worker.h"
 #include "logger.h"
 #include "util.h"
 #include "location.h"
@@ -199,6 +200,7 @@ int parse_next_sip_message(openli_sip_parser_t *p,
         osip_message_init(&(p->osip));
         ret = osip_message_parse(p->osip,
                 (const char *)(p->sipmessage + p->sipoffset), p->siplen);
+        p->badsip = 0;
         if (ret != 0) {
             if (p->thisstream) {
                 /* reassembled stream is probably in a bad state, so let's
@@ -1207,6 +1209,13 @@ int sip_is_invite(openli_sip_parser_t *parser) {
     return 0;
 }
 
+int sip_is_message(openli_sip_parser_t *parser) {
+    if (MSG_IS_MESSAGE(parser->osip)) {
+        return 1;
+    }
+    return 0;
+}
+
 int sip_is_register(openli_sip_parser_t *parser) {
     if (MSG_IS_REGISTER(parser->osip)) {
         return 1;
@@ -1261,211 +1270,4 @@ int sip_is_cancel(openli_sip_parser_t *parser) {
     return 0;
 }
 
-static openli_sip_identity_t *sipid_matches_target(libtrace_list_t *targets,
-        openli_sip_identity_t *sipid) {
-
-    libtrace_list_node_t *n;
-
-    if (sipid->username == NULL) {
-        return NULL;
-    }
-
-    n = targets->head;
-    while (n) {
-        openli_sip_identity_t *x = *((openli_sip_identity_t **) (n->data));
-        n = n->next;
-
-        if (x->active == 0) {
-            continue;
-        }
-
-        if (x->username == NULL || strlen(x->username) == 0) {
-            continue;
-        }
-
-        /* treat a '*' at the beginning of a SIP username as a wildcard,
-         * so users can specify phone numbers as targets without worrying
-         * about all possible combinations of (with area codes, without
-         * area codes, with '+', without '+', etc.)
-         */
-        if (x->username[0] == '*') {
-            int termlen = strlen(x->username) - 1;
-            int idlen = strlen(sipid->username);
-
-            if (idlen < termlen) {
-                continue;
-            }
-            if (strncmp(x->username + 1, sipid->username + (idlen - termlen),
-                    termlen) != 0) {
-                continue;
-            }
-        } else if (strcmp(x->username, sipid->username) != 0) {
-            continue;
-        }
-
-        if (x->realm == NULL || strcmp(x->realm, sipid->realm) == 0) {
-            return x;
-        }
-    }
-    return NULL;
-}
-
-int extract_sip_identities(openli_sip_parser_t *parser,
-        openli_sip_identity_set_t *idset, uint8_t log_error) {
-
-    int i, unused;
-    openli_sip_identity_t authid;
-
-    memset(idset, 0, sizeof(openli_sip_identity_set_t));
-
-    if (get_sip_to_uri_identity(parser, &(idset->touriid)) < 0) {
-        if (log_error) {
-            logger(LOG_INFO,
-                    "OpenLI: unable to derive SIP identity from To: URI");
-        }
-        return -1;
-    }
-
-    if (get_sip_from_uri_identity(parser, &(idset->fromuriid)) < 0) {
-        if (log_error) {
-            logger(LOG_INFO,
-                    "OpenLI: unable to derive SIP identity from From: URI");
-        }
-        return -1;
-    }
-
-    if (get_sip_proxy_auth_identity(parser, 0, &(idset->proxyauthcount),
-            &authid, log_error) < 0) {
-        return -1;
-    }
-
-    if (idset->proxyauthcount > 0) {
-        idset->proxyauths = calloc(idset->proxyauthcount,
-                sizeof(openli_sip_identity_t));
-        memcpy(&(idset->proxyauths[0]), &authid, sizeof(openli_sip_identity_t));
-
-        for (i = 1; i < idset->proxyauthcount; i++) {
-            if (get_sip_proxy_auth_identity(parser, i, &unused,
-                    &(idset->proxyauths[i]), log_error) < 0) {
-                return -1;
-            }
-        }
-    }
-
-    if (get_sip_auth_identity(parser, 0, &(idset->regauthcount),
-            &authid, log_error) < 0) {
-        return -1;
-    }
-
-    if (idset->regauthcount > 0) {
-        idset->regauths = calloc(idset->regauthcount,
-                sizeof(openli_sip_identity_t));
-        memcpy(&(idset->regauths[0]), &authid, sizeof(openli_sip_identity_t));
-
-        for (i = 1; i < idset->regauthcount; i++) {
-            if (get_sip_auth_identity(parser, i, &unused,
-                    &(idset->regauths[i]), log_error) < 0) {
-                return -1;
-            }
-        }
-    }
-
-    if (get_sip_identity_by_header_name(parser, &(idset->passertid),
-                "P-Asserted-Identity") < 0) {
-        if (log_error) {
-            logger(LOG_INFO,
-                    "OpenLI: error while extracting P-Asserted-Identity from SIP message");
-        }
-        return -1;
-    }
-
-    if (get_sip_identity_by_header_name(parser, &(idset->ppreferredid),
-                "P-Preferred-Identity") < 0) {
-        if (log_error) {
-            logger(LOG_INFO,
-                    "OpenLI: error while extracting P-Preferred-Identity from SIP message");
-        }
-        return -1;
-    }
-
-    if (get_sip_identity_by_header_name(parser, &(idset->remotepartyid),
-                "Remote-Party-ID") < 0) {
-        if (log_error) {
-            logger(LOG_INFO,
-                    "OpenLI: error while extracting Remote-Party from SIP message");
-        }
-        return -1;
-    }
-
-    return 0;
-}
-
-openli_sip_identity_t *match_sip_target_against_identities(
-        libtrace_list_t *targets, openli_sip_identity_set_t *idset,
-        uint8_t trust_from) {
-
-    int i;
-    openli_sip_identity_t *matched = NULL;
-
-    /* Try the To: uri first */
-    if ((matched = sipid_matches_target(targets, &(idset->touriid)))) {
-        return matched;
-    }
-    if ((matched = sipid_matches_target(targets, &(idset->passertid)))) {
-        return matched;
-    }
-    if ((matched = sipid_matches_target(targets, &(idset->remotepartyid)))) {
-        return matched;
-    }
-    for (i = 0; i < idset->proxyauthcount; i++) {
-        if ((matched = sipid_matches_target(targets, &(idset->proxyauths[i]))))
-        {
-            return matched;
-        }
-    }
-    for (i = 0; i < idset->regauthcount; i++) {
-        if ((matched = sipid_matches_target(targets, &(idset->regauths[i]))))
-        {
-            return matched;
-        }
-    }
-
-    if (trust_from && (matched = sipid_matches_target(targets, &(idset->ppreferredid)))) {
-        return matched;
-    }
-
-    if (trust_from && (matched = sipid_matches_target(targets,
-            &(idset->fromuriid)))) {
-        return matched;
-    }
-
-    return NULL;
-}
-
-void release_openli_sip_identity_set(openli_sip_identity_set_t *idset) {
-    if (idset->proxyauthcount > 0) {
-        free(idset->proxyauths);
-    }
-    if (idset->regauthcount > 0) {
-        free(idset->regauths);
-    }
-    if (idset->passertid.username) {
-        free(idset->passertid.username);
-    }
-    if (idset->passertid.realm) {
-        free(idset->passertid.realm);
-    }
-    if (idset->ppreferredid.username) {
-        free(idset->ppreferredid.username);
-    }
-    if (idset->ppreferredid.realm) {
-        free(idset->ppreferredid.realm);
-    }
-    if (idset->remotepartyid.username) {
-        free(idset->remotepartyid.username);
-    }
-    if (idset->remotepartyid.realm) {
-        free(idset->remotepartyid.realm);
-    }
-}
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
