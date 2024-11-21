@@ -1318,9 +1318,9 @@ static int global_parser(void *arg, yaml_document_t *doc,
     parse_col_thread_count(&(glob->gtp_threads), "gtpthreads",
             key, value, "GTP worker", 0);
     parse_col_thread_count(&(glob->sip_threads), "smsthreads",
-            key, value, "SIP worker", 0);
+            key, value, "SIP worker", 1);
     parse_col_thread_count(&(glob->sip_threads), "sipthreads",
-            key, value, "SIP worker", 0);
+            key, value, "SIP worker", 1);
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
