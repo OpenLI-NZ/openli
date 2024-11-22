@@ -59,9 +59,6 @@ static int parse_tcp_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *pkt,
     ret = update_tcp_reassemble_stream(stream, (uint8_t *)payload, tcprem,
             ntohl(tcp->seq), pkt, 1);
 
-    if (stream->established == TCP_STATE_LOSS) {
-        remove_tcp_reassemble_stream(p->tcpreass, p->thisstream);
-    }
     return ret;
 
 }

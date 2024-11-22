@@ -341,6 +341,33 @@ tcp_reassemble_stream_t *create_new_tcp_reassemble_stream(
     return stream;
 }
 
+static void reset_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
+               uint32_t newseqno) {
+
+    /* Remove any existing saved segments, packets, etc. for a
+     * stream and blank slate it to the current sequence number.
+     */
+    tcp_reass_segment_t *iter, *tmp;
+    int i;
+
+    HASH_ITER(hh, stream->segments, iter, tmp) {
+        HASH_DELETE(hh, stream->segments, iter);
+        free(iter->content);
+        free(iter);
+    }
+
+    if (stream->packets) {
+        for (i = 0; i < stream->pkt_cnt; i++) {
+            if (stream->packets[i]) {
+                trace_destroy_packet(stream->packets[i]);
+            }
+        }
+    }
+    stream->pkt_cnt = 0;
+    stream->expectedseqno = newseqno;
+    stream->lastts = 0;
+}
+
 void destroy_tcp_reassemble_stream(tcp_reassemble_stream_t *stream) {
     tcp_reass_segment_t *iter, *tmp;
     int i;
@@ -600,7 +627,7 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
          * to be reassembled.
          */
         if (seq_cmp(seqno, stream->expectedseqno + TCP_STREAM_MAX_GAP) >= 0) {
-            stream->established = TCP_STATE_LOSS;
+            reset_tcp_reassemble_stream(stream, seqno);
         }
 
 
