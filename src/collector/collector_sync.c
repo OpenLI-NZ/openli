@@ -122,17 +122,36 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
 }
 
+#define HALT_THREADS(socks, count) \
+    pthread_mutex_lock(&(haltinfo.mutex)); \
+    haltinfo.halted = 0; \
+    haltfails = send_halt_message_to_zmq_socket_array( \
+        socks, count, &haltinfo); \
+    \
+    if (haltfails) { \
+        haltattempts ++; \
+        usleep(250000); \
+        continue; \
+    } \
+    \
+    while (count > 0 && haltinfo.halted < count) { \
+        pthread_cond_wait(&(haltinfo.cond), &(haltinfo.mutex)); \
+    } \
+    pthread_mutex_unlock(&(haltinfo.mutex));
+
+
 void clean_sync_data(collector_sync_t *sync) {
 
     int zero=0;
     int haltattempts = 0, haltfails = 0;
     ip_to_session_t *iter, *tmp;
     default_radius_user_t *raditer, *radtmp;
+    halt_info_t haltinfo;
 
-	if (sync->instruct_fd != -1) {
-		close(sync->instruct_fd);
-        sync->instruct_fd = -1;
-	}
+    if (sync->instruct_fd != -1) {
+	    close(sync->instruct_fd);
+	    sync->instruct_fd = -1;
+    }
 
     HASH_ITER(hh, sync->activeips, iter, tmp) {
         HASH_DELETE(hh, sync->activeips, iter);
@@ -186,6 +205,9 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->radiusplugin = NULL;
     sync->activeips = NULL;
 
+    pthread_mutex_init(&(haltinfo.mutex), NULL);
+    pthread_cond_init(&(haltinfo.cond), NULL);
+
     while (haltattempts < 10) {
         haltfails = 0;
 
@@ -213,23 +235,16 @@ void clean_sync_data(collector_sync_t *sync) {
             sync->zmq_colsock = NULL;
         }
 
-        haltfails += send_halt_message_to_zmq_socket_array(sync->zmq_pubsocks,
-                sync->pubsockcount);
-        haltfails += send_halt_message_to_zmq_socket_array(
-                sync->zmq_fwdctrlsocks, sync->forwardcount);
-        haltfails += send_halt_message_to_zmq_socket_array(
-                sync->zmq_emailsocks, sync->emailcount);
-        haltfails += send_halt_message_to_zmq_socket_array(
-                sync->zmq_gtpsocks, sync->gtpcount);
-        haltfails += send_halt_message_to_zmq_socket_array(
-                sync->zmq_sipsocks, sync->sipcount);
-
-        if (haltfails == 0) {
-            break;
-        }
-        haltattempts ++;
-        usleep(250000);
+	HALT_THREADS(sync->zmq_sipsocks, sync->sipcount);
+	HALT_THREADS(sync->zmq_emailsocks, sync->emailcount);
+	HALT_THREADS(sync->zmq_gtpsocks, sync->gtpcount);
+	HALT_THREADS(sync->zmq_pubsocks, sync->pubsockcount);
+	HALT_THREADS(sync->zmq_fwdctrlsocks, sync->forwardcount);
+	break;
     }
+
+    pthread_mutex_destroy(&(haltinfo.mutex));
+    pthread_cond_destroy(&(haltinfo.cond));
 
     free(sync->zmq_emailsocks);
     free(sync->zmq_sipsocks);
@@ -290,7 +305,7 @@ static inline void push_coreserver_msg(collector_sync_t *sync,
 
 void sync_thread_publish_reload(collector_sync_t *sync) {
 
-    int i;
+    size_t i;
     openli_export_recv_t *expmsg;
 
     for (i = 0; i < sync->pubsockcount; i++) {
@@ -870,7 +885,7 @@ static void push_ipintercept_update_to_threads(collector_sync_t *sync,
 static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
         uint16_t msglen) {
 
-    int i;
+    size_t i;
     openli_mediator_t med;
     openli_export_recv_t *expmsg;
 
@@ -902,7 +917,7 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
 static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
         uint16_t msglen) {
 
-    int i;
+    size_t i;
     openli_mediator_t med;
     openli_export_recv_t *expmsg;
 
@@ -1114,7 +1129,7 @@ static inline void remove_vendormirror_id(collector_sync_t *sync,
 static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
 
     openli_export_recv_t *expmsg;
-    int i;
+    size_t i;
 
     if (!ipint) {
         logger(LOG_INFO,
@@ -1273,7 +1288,7 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
 void sync_drop_all_mediators(collector_sync_t *sync) {
     openli_export_recv_t *expmsg;
-    int i;
+    size_t i;
 
     for (i = 0; i < sync->forwardcount; i++) {
         expmsg = (openli_export_recv_t *)calloc(1,
@@ -1287,7 +1302,7 @@ void sync_drop_all_mediators(collector_sync_t *sync) {
 
 void sync_reconnect_all_mediators(collector_sync_t *sync) {
     openli_export_recv_t *expmsg;
-    int i;
+    size_t i;
 
     for (i = 0; i < sync->forwardcount; i++) {
         expmsg = (openli_export_recv_t *)calloc(1,
@@ -1781,7 +1796,7 @@ static inline void touch_all_intercepts(ipintercept_t *intlist) {
 void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
 
     openli_export_recv_t *expmsg;
-    int i;
+    size_t i;
 
     destroy_net_buffer(sync->outgoing, NULL);
     destroy_net_buffer(sync->incoming, NULL);

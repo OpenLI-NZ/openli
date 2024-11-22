@@ -316,6 +316,7 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         openli_export_recv_t *msg) {
 
     if (msg->type == OPENLI_EXPORT_HALT) {
+	fwd->haltinfo = msg->data.haltinfo;
         free(msg);
         return 0;
     }
@@ -666,10 +667,10 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
 
 static int drain_incoming_etsi(forwarding_thread_data_t *fwd) {
 
-    int x, encoders_over = 0, i, msgcnt;
+    int x, i, msgcnt;
     openli_encoded_result_t res[MAX_ENCODED_RESULT_BATCH];
 
-    do {
+    while (fwd->encoders_over < fwd->encoders) {
         x = zmq_recv(fwd->zmq_pullressock, res, sizeof(res),
                 ZMQ_DONTWAIT);
         if (x < 0 && errno != EAGAIN) {
@@ -690,15 +691,12 @@ static int drain_incoming_etsi(forwarding_thread_data_t *fwd) {
         for (i = 0; i < msgcnt; i++) {
 
             if (res[i].liid == NULL && res[i].destid == 0) {
-                if (fwd->forwardid == 0) {
-                    logger(LOG_INFO, "OpenLI: encoder %d has ceased encoding", encoders_over);
-                }
-                encoders_over ++;
+                fwd->encoders_over ++;
             }
 
             free_encoded_result(&(res[i]));
         }
-    } while (encoders_over < fwd->encoders);
+    }
 
     return 1;
 }
@@ -730,6 +728,11 @@ static int receive_incoming_etsi(forwarding_thread_data_t *fwd) {
         msgcnt = x / sizeof(openli_encoded_result_t);
 
         for (i = 0; i < msgcnt; i++) {
+	    if (res[i].liid == NULL || res[i].destid == 0) {
+		fwd->encoders_over ++;
+            	free_encoded_result(&(res[i]));
+		break;
+	    }
             if (handle_encoded_result(fwd, &(res[i])) < 0) {
                 return -1;
             }
@@ -1202,6 +1205,7 @@ void *start_forwarding_thread(void *data) {
     char sockname[128];
     int zero = 0;
 
+    fwd->encoders_over = 0;
     fwd->zmq_ctrlsock = zmq_socket(fwd->zmq_ctxt, ZMQ_PULL);
     snprintf(sockname, 128, "inproc://openliforwardercontrol_sync-%d",
             fwd->forwardid);
@@ -1248,6 +1252,12 @@ haltforwarder:
     remove_all_destinations(fwd);
     logger(LOG_DEBUG, "OpenLI: halting forwarding thread %d",
             fwd->forwardid);
+    if (fwd->haltinfo) {
+	pthread_mutex_lock(&(fwd->haltinfo->mutex));
+	fwd->haltinfo->halted ++;
+	pthread_cond_signal(&(fwd->haltinfo->cond));
+	pthread_mutex_unlock(&(fwd->haltinfo->mutex));
+    }
     pthread_exit(NULL);
 }
 

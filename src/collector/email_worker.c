@@ -1157,6 +1157,7 @@ static int process_sync_thread_message(openli_email_worker_t *state) {
         }
 
         if (msg->type == OPENLI_EXPORT_HALT) {
+            state->haltinfo = msg->data.haltinfo;
             free(msg);
             return -1;
         }
@@ -1563,6 +1564,12 @@ haltemailworker:
     }
     if (state->fragreass) {
         destroy_ipfrag_reassembler(state->fragreass);
+    }
+    if (state->haltinfo) {
+	pthread_mutex_lock(&(state->haltinfo->mutex));
+	state->haltinfo->halted ++;
+	pthread_cond_signal(&(state->haltinfo->cond));
+	pthread_mutex_unlock(&(state->haltinfo->mutex));
     }
     pthread_exit(NULL);
 }

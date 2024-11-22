@@ -172,6 +172,7 @@ typedef struct openli_email_worker {
     string_set_t **email_forwarding_headers;
     pthread_rwlock_t *glob_config_mutex;
 
+    halt_info_t *haltinfo;
 } openli_email_worker_t;
 
 void *start_email_worker_thread(void *arg);

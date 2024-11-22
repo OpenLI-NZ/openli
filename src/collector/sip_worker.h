@@ -34,6 +34,7 @@
 #include "util.h"
 #include "collector_util.h"
 #include "collector_base.h"
+#include "export_buffer.h"
 
 #define SMS_SESSION_EXPIRY 180
 
@@ -119,6 +120,9 @@ typedef struct openli_sip_worker {
      * the state for that session.
      */
     sync_epoll_t *timeouts;
+
+    /* Shared state used to track how many worker threads have halted */
+    halt_info_t *haltinfo;
 
 } openli_sip_worker_t;
 

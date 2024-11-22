@@ -601,9 +601,9 @@ static voipintshared_t *create_new_voip_session(openli_sip_worker_t *sipworker,
         return NULL;
     }
 
-    logger(LOG_INFO,
-            "OpenLI: SIP worker %d is creating a new VOIP session for LIID %s (callID=%s)",
-            sipworker->workerid, vint->common.liid, callid);
+    //logger(LOG_INFO,
+    //        "OpenLI: SIP worker %d is creating a new VOIP session for LIID %s (callID=%s)",
+    //        sipworker->workerid, vint->common.liid, callid);
 
     vshared = (voipintshared_t *)malloc(sizeof(voipintshared_t));
     vshared->cin = cin_id;

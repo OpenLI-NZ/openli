@@ -2160,6 +2160,7 @@ static int init_sip_worker_thread(openli_sip_worker_t *sipworker,
     sipworker->shared = &(glob->sharedinfo);
     sipworker->shared_mutex = &(glob->config_mutex);
     sipworker->collector_queues = NULL;
+    sipworker->haltinfo = NULL;
 
     /* It is ok to initialize this mutex here because this method will
      * be called by the main collector thread before we start any packet
@@ -2313,6 +2314,7 @@ int main(int argc, char *argv[]) {
         //forwarder only needs CTX if ctx exists and is enabled 
         glob->forwarders[i].RMQ_conf = glob->RMQ_conf;
         glob->forwarders[i].ampq_blocked = 0;
+	glob->forwarders[i].haltinfo = NULL;
 
         pthread_create(&(glob->forwarders[i].threadid), NULL,
                 start_forwarding_thread, (void *)&(glob->forwarders[i]));
@@ -2363,6 +2365,7 @@ int main(int argc, char *argv[]) {
             glob->emailworkers[i].zmq_ingest_recvsock = NULL;
             glob->emailworkers[i].zmq_colthread_recvsock = NULL;
             glob->emailworkers[i].zmq_ii_sock = NULL;
+	    glob->emailworkers[i].haltinfo = NULL;
 
             glob->emailworkers[i].timeouts = NULL;
             glob->emailworkers[i].allintercepts = NULL;
@@ -2405,6 +2408,7 @@ int main(int argc, char *argv[]) {
         glob->seqtrackers[i].zmq_pushjobsock = NULL;
         glob->seqtrackers[i].zmq_recvpublished = NULL;
         glob->seqtrackers[i].intercepts = NULL;
+	glob->seqtrackers[i].haltinfo = NULL;
         glob->seqtrackers[i].colident = &(glob->sharedinfo);
         glob->seqtrackers[i].colident_mutex = &(glob->config_mutex);
         glob->seqtrackers[i].encoding_method = glob->encoding_method;

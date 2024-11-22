@@ -342,7 +342,7 @@ tcp_reassemble_stream_t *create_new_tcp_reassemble_stream(
 }
 
 static void reset_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
-               uint32_t newseqno) {
+        uint32_t newseqno) {
 
     /* Remove any existing saved segments, packets, etc. for a
      * stream and blank slate it to the current sequence number.

@@ -90,6 +90,13 @@ static void destroy_sip_worker_thread(openli_sip_worker_t *sipworker) {
     clear_zmq_socket_array(sipworker->zmq_fwdsocks,
             sipworker->forwarding_threads);
 
+    if (sipworker->haltinfo) {
+	pthread_mutex_lock(&(sipworker->haltinfo->mutex));
+	sipworker->haltinfo->halted ++;
+	pthread_cond_signal(&(sipworker->haltinfo->cond));
+	pthread_mutex_unlock(&(sipworker->haltinfo->mutex));
+    }
+
     /* Don't destroy the col_queue_mutex here -- let the main collector thread
      * handle that.
      */
@@ -329,7 +336,7 @@ void sip_worker_conclude_sip_call(openli_sip_worker_t *sipworker,
     timeout->ptr = thisrtp;
 
     if (timeout->fd > 0) {
-        timerfd_settime(timeout->fd, 0, &its, NULL);
+    	timerfd_settime(timeout->fd, 0, &its, NULL);
         HASH_ADD_KEYPTR(hh, sipworker->timeouts, &(timeout->fd), sizeof(int),
                 timeout);
     } else {
@@ -648,7 +655,6 @@ int sip_worker_announce_rtp_streams(openli_sip_worker_t *sipworker,
         sip_worker_push_single_voipstreamintercept(sipworker, sendq->q, rtp);
     }
     pthread_mutex_unlock(&(sipworker->col_queue_mutex));
-
     rtp->active = 1;
     rtp->changed = 0;
     return 1;
@@ -1180,6 +1186,7 @@ static int sip_worker_process_sync_thread_message(
         }
 
         if (msg->type == OPENLI_EXPORT_HALT) {
+	    sipworker->haltinfo = (halt_info_t *)(msg->data.haltinfo);
             free(msg);
             return -1;
         }

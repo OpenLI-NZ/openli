@@ -97,6 +97,9 @@ typedef struct openli_gtp_worker {
      */
     etsili_generic_freelist_t *freegenerics;
 
+    /* Shared state for tracking how many workers have halted during shutdown */
+    halt_info_t *haltinfo;
+
 } openli_gtp_worker_t;
 
 int start_gtp_worker_thread(openli_gtp_worker_t *worker, int id,

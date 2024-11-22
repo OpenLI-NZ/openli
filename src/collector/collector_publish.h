@@ -27,6 +27,7 @@
 #ifndef OPENLI_COLLECTOR_PUBLISH_H_
 #define OPENLI_COLLECTOR_PUBLISH_H_
 
+#include <pthread.h>
 #include <libtrace.h>
 #include <zmq.h>
 
@@ -35,6 +36,12 @@
 #include "intercept.h"
 #include "internetaccess.h"
 #include "location.h"
+
+typedef struct halt_info {
+    size_t halted;
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+} halt_info_t;
 
 enum {
     OPENLI_EXPORT_HALT_WORKER = 1,
@@ -203,6 +210,7 @@ struct openli_export_recv {
         openli_rawip_job_t rawip;
         openli_emailiri_job_t emailiri;
         openli_emailcc_job_t emailcc;
+	halt_info_t *haltinfo;
     } data;
 };
 
