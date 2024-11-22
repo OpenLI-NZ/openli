@@ -326,10 +326,10 @@ void sip_worker_conclude_sip_call(openli_sip_worker_t *sipworker,
     thisrtp->timeout_ev = (void *)timeout;
     timeout->fdtype = SYNC_EVENT_SIP_TIMEOUT;
     timeout->fd = timerfd_create(CLOCK_MONOTONIC, 0);
-    timerfd_settime(timeout->fd, 0, &its, NULL);
-
     timeout->ptr = thisrtp;
+
     if (timeout->fd > 0) {
+        timerfd_settime(timeout->fd, 0, &its, NULL);
         HASH_ADD_KEYPTR(hh, sipworker->timeouts, &(timeout->fd), sizeof(int),
                 timeout);
     } else {
@@ -643,9 +643,12 @@ int sip_worker_announce_rtp_streams(openli_sip_worker_t *sipworker,
         return 0;
     }
 
+    pthread_mutex_lock(&(sipworker->col_queue_mutex));
     HASH_ITER(hh, (sync_sendq_t *)(sipworker->collector_queues), sendq, tmp) {
         sip_worker_push_single_voipstreamintercept(sipworker, sendq->q, rtp);
     }
+    pthread_mutex_unlock(&(sipworker->col_queue_mutex));
+
     rtp->active = 1;
     rtp->changed = 0;
     return 1;
