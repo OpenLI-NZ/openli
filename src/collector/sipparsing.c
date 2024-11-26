@@ -43,7 +43,12 @@ static int parse_tcp_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *pkt,
 
     tcp_reassemble_stream_t *stream;
     void *payload = NULL;
-    int ret;
+    int ret = -1;
+
+    payload = trace_get_payload_from_tcp(tcp, &tcprem);
+    if (payload == NULL || (tcprem == 0 && !tcp->syn)) {
+        return -1;
+    }
 
     stream = get_tcp_reassemble_stream(p->tcpreass, tcpid, tcp, tv, tcprem);
     if (stream == NULL) {
@@ -51,13 +56,10 @@ static int parse_tcp_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *pkt,
     }
 
     p->thisstream = stream;
-    payload = trace_get_payload_from_tcp(tcp, &tcprem);
-    if (payload == NULL || tcprem == 0) {
-        return -1;
+    if (tcprem > 0) {
+        ret = update_tcp_reassemble_stream(stream, (uint8_t *)payload,
+	        tcprem, ntohl(tcp->seq), pkt, 1);
     }
-
-    ret = update_tcp_reassemble_stream(stream, (uint8_t *)payload, tcprem,
-            ntohl(tcp->seq), pkt, 1);
 
     return ret;
 

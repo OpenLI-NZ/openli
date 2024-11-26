@@ -955,6 +955,10 @@ static int process_sip_response(openli_sip_worker_t *sipworker,
     int r = 0;
     char *mediatype = NULL;
 
+    if (!thisrtp->invitecseq && !thisrtp->byecseq) {
+        return 0;
+    }
+
     if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc, 16) == 0) {
         dir = 0;
     } else if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipdest, 16) == 0) {

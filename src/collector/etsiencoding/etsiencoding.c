@@ -69,24 +69,35 @@ static inline uint8_t encode_pspdu_sequence(uint8_t *space, uint8_t space_len,
     return len_space_req + 2 + (2 + liidlen);
 }
 
-void encode_ipaddress(wandder_encoder_t *encoder, etsili_ipaddress_t *addr) {
+void encode_ipaddress(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed, etsili_ipaddress_t *addr) {
 
     uint32_t addrlen = 4;
     uint32_t iptype = addr->iptype;
     uint32_t assign = addr->assignment;
     uint32_t prefbits = addr->v6prefixlen;
 
+    wandder_encode_job_t *jobarray[2];
+    int joblen = 0;
+
     if (addr->ipvalue == NULL) {
         return; // ???
     }
 
+    // iP-Type
+    if (iptype == ETSILI_IPADDRESS_VERSION_4) {
+	jobarray[0] = &(precomputed[OPENLI_PREENCODE_IPTYPE_IPV4]);
+    } else if (iptype == ETSILI_IPADDRESS_VERSION_6) {
+	jobarray[0] = &(precomputed[OPENLI_PREENCODE_IPTYPE_IPV6]);
+    } else {
+        free(addr->ipvalue);
+        return;
+    }
+    wandder_encode_next_preencoded(encoder, jobarray, 1);
+        
     if (addr->iptype == ETSILI_IPADDRESS_VERSION_6) {
         addrlen = 16;
     }
-
-    // iP-Type
-    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(iptype), sizeof(iptype));
 
     ENC_CSEQUENCE(encoder, 2);      // iP-value
     if (addr->valtype == ETSILI_IPADDRESS_REP_BINARY) {
@@ -101,20 +112,47 @@ void encode_ipaddress(wandder_encoder_t *encoder, etsili_ipaddress_t *addr) {
     wandder_encode_endseq(encoder);     // ends iP-value
 
     // iP-assignment
-    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 3, &(assign), sizeof(assign));
+    if (assign == ETSILI_IPADDRESS_ASSIGNED_STATIC) {
+	jobarray[0] = &(precomputed[OPENLI_PREENCODE_IPASSIGN_STATIC]);
+    } else if (assign == ETSILI_IPADDRESS_ASSIGNED_DYNAMIC) {
+	jobarray[0] = &(precomputed[OPENLI_PREENCODE_IPASSIGN_DYNAMIC]);
+    } else {
+	jobarray[0] = &(precomputed[OPENLI_PREENCODE_IPASSIGN_UNKNOWN]);
+    }
+    joblen = 1;
 
     // iPv6PrefixLength
-    if (addr->v6prefixlen > 0) {
+    if (addr->v6prefixlen == 48) {
+	jobarray[1] = &(precomputed[OPENLI_PREENCODE_IPV6_PREFIX_48]);
+	joblen ++;
+    } else if (addr->v6prefixlen == 64) {
+	jobarray[1] = &(precomputed[OPENLI_PREENCODE_IPV6_PREFIX_64]);
+	joblen ++;
+    } else if (addr->v6prefixlen > 0) {
+	if (joblen > 0) {
+	    wandder_encode_next_preencoded(encoder, jobarray, joblen);
+	    joblen = 0;
+	}
         wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, &(prefbits), sizeof(prefbits));
     }
 
     // iPv4SubnetMask
-    if (addr->v4subnetmask > 0) {
+    if (addr->v4subnetmask == 32) {
+	jobarray[joblen] = &(precomputed[OPENLI_PREENCODE_IPV4_NETMASK_32]);
+	joblen ++;
+    } else if (addr->v4subnetmask > 0) {
+	if (joblen > 0) {
+	    wandder_encode_next_preencoded(encoder, jobarray, joblen);
+	    joblen = 0;
+	}
+
         wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 5, &(addr->v4subnetmask),
             sizeof(addr->v4subnetmask));
+    }
+    if (joblen > 0) {
+	wandder_encode_next_preencoded(encoder, jobarray, joblen);
     }
 
     free(addr->ipvalue);
