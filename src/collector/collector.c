@@ -177,6 +177,102 @@ static void log_collector_stats(collector_global_t *glob) {
     logger(LOG_INFO, "OpenLI: === statistics complete ===");
 }
 
+static void process_incoming_messages(colthread_local_t *loc,
+        openli_pushed_t *syncpush) {
+
+    if (syncpush->type == OPENLI_PUSH_IPINTERCEPT) {
+        handle_push_ipintercept(loc, syncpush->data.ipsess);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_HALT_IPINTERCEPT) {
+        handle_halt_ipintercept(loc, syncpush->data.ipsess);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_IPMMINTERCEPT) {
+        handle_push_ipmmintercept(loc, syncpush->data.ipmmint);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_HALT_IPMMINTERCEPT) {
+        handle_halt_ipmmintercept(loc, syncpush->data.rtpstreamkey);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_CORESERVER) {
+        handle_push_coreserver(loc, syncpush->data.coreserver);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_REMOVE_CORESERVER) {
+        handle_remove_coreserver(loc, syncpush->data.coreserver);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_VENDMIRROR_INTERCEPT) {
+        handle_push_mirror_intercept(loc, syncpush->data.mirror);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_HALT_VENDMIRROR_INTERCEPT) {
+        handle_halt_mirror_intercept(loc, syncpush->data.mirror);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_IPRANGE) {
+        handle_iprange(loc, syncpush->data.iprange);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_REMOVE_IPRANGE) {
+        handle_remove_iprange(loc, syncpush->data.iprange);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_MODIFY_IPRANGE) {
+        handle_modify_iprange(loc, syncpush->data.iprange);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_UPDATE_VOIPINTERCEPT) {
+        handle_change_voip_intercept(loc, syncpush->data.ipmmint);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_UPDATE_IPINTERCEPT) {
+        handle_change_ipint_intercept(loc, syncpush->data.ipsess);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_UPDATE_VENDMIRROR_INTERCEPT) {
+        handle_change_vendmirror_intercept(loc, syncpush->data.mirror);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_UPDATE_IPRANGE_INTERCEPT) {
+        handle_change_iprange_intercept(loc, syncpush->data.iprange);
+    }
+
+}
+
+#define PACKETS_PER_READ_THRESH 100
+
+static void check_for_messages(colthread_local_t *loc) {
+    openli_pushed_t syncpush;
+    int i;
+
+    /* Check for any messages from the sync threads */
+    while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
+            (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
+
+        process_incoming_messages(loc, &syncpush);
+    }
+
+    for (i = 0; i < loc->gtpq_count; i++) {
+        while (libtrace_message_queue_try_get(&(loc->fromgtp_queues[i]),
+                (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
+
+            process_incoming_messages(loc, &syncpush);
+        }
+    }
+
+    for (i = 0; i < loc->sipq_count; i++) {
+        while (libtrace_message_queue_try_get(&(loc->fromsip_queues[i]),
+                (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
+
+            process_incoming_messages(loc, &syncpush);
+        }
+    }
+    loc->pkts_since_msg_read = 0;
+}
+
 static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
         void *global, void *local, uint64_t tick) {
 
@@ -184,6 +280,7 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
     colthread_local_t *loc = (colthread_local_t *)local;
     libtrace_stat_t *stats;
 
+    check_for_messages(loc);
 
     if (trace_get_perpkt_thread_id(t) == 0) {
 
@@ -247,8 +344,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
 
     loc->accepted = 0;
     loc->dropped = 0;
-
-    loc->sipparser = NULL;
+    loc->pkts_since_msg_read = 0;
 
 
     loc->zmq_pubsocks = calloc(glob->seqtracker_threads, sizeof(void *));
@@ -343,7 +439,6 @@ static void *start_processing_thread(libtrace_t *trace UNUSED,
 
     pthread_rwlock_wrlock(&(glob->config_mutex));
     loc = glob->collocals[glob->nextloc];
-    loc->sipparser = NULL;
     glob->nextloc ++;
     pthread_rwlock_unlock(&(glob->config_mutex));
 
@@ -400,71 +495,6 @@ static void free_staticcache(static_ipcache_t *cache) {
         HASH_DELETE(hh, cache, ent);
         free(ent);
     }
-}
-
-static void process_incoming_messages(colthread_local_t *loc,
-        openli_pushed_t *syncpush) {
-
-    if (syncpush->type == OPENLI_PUSH_IPINTERCEPT) {
-        handle_push_ipintercept(loc, syncpush->data.ipsess);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_HALT_IPINTERCEPT) {
-        handle_halt_ipintercept(loc, syncpush->data.ipsess);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_IPMMINTERCEPT) {
-        handle_push_ipmmintercept(loc, syncpush->data.ipmmint);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_HALT_IPMMINTERCEPT) {
-        handle_halt_ipmmintercept(loc, syncpush->data.rtpstreamkey);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_CORESERVER) {
-        handle_push_coreserver(loc, syncpush->data.coreserver);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_REMOVE_CORESERVER) {
-        handle_remove_coreserver(loc, syncpush->data.coreserver);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_VENDMIRROR_INTERCEPT) {
-        handle_push_mirror_intercept(loc, syncpush->data.mirror);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_HALT_VENDMIRROR_INTERCEPT) {
-        handle_halt_mirror_intercept(loc, syncpush->data.mirror);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_IPRANGE) {
-        handle_iprange(loc, syncpush->data.iprange);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_REMOVE_IPRANGE) {
-        handle_remove_iprange(loc, syncpush->data.iprange);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_MODIFY_IPRANGE) {
-        handle_modify_iprange(loc, syncpush->data.iprange);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_UPDATE_VOIPINTERCEPT) {
-        handle_change_voip_intercept(loc, syncpush->data.ipmmint);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_UPDATE_IPINTERCEPT) {
-        handle_change_ipint_intercept(loc, syncpush->data.ipsess);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_UPDATE_VENDMIRROR_INTERCEPT) {
-        handle_change_vendmirror_intercept(loc, syncpush->data.mirror);
-    }
-
-    if (syncpush->type == OPENLI_PUSH_UPDATE_IPRANGE_INTERCEPT) {
-        handle_change_iprange_intercept(loc, syncpush->data.iprange);
-    }
-
 }
 
 static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
@@ -608,9 +638,6 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
 
     free_staticcache(loc->staticcache);
 
-    if (loc->sipparser) {
-        release_sip_parser(loc->sipparser);
-    }
 }
 
 static inline void send_packet_to_sync(libtrace_packet_t *pkt,
@@ -881,38 +908,18 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     uint16_t ethertype;
     uint32_t rem, iprem;
     uint8_t proto;
-    int forwarded = 0, ret, i;
+    int forwarded = 0, ret;
     int ipsynced = 0, voipsynced = 0, emailsynced = 0;
-    uint16_t fragoff = 0;
+    uint16_t fragoff = 0, offset;
     uint32_t servhash = 0;
 
-    openli_pushed_t syncpush;
     packet_info_t pinfo;
 
-    /* Check for any messages from the sync threads */
-    while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
-            (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
-
-        process_incoming_messages(loc, &syncpush);
+    if (loc->pkts_since_msg_read >= PACKETS_PER_READ_THRESH) {
+	check_for_messages(loc);
     }
 
-    for (i = 0; i < loc->gtpq_count; i++) {
-        while (libtrace_message_queue_try_get(&(loc->fromgtp_queues[i]),
-                (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
-
-            process_incoming_messages(loc, &syncpush);
-        }
-    }
-
-    for (i = 0; i < loc->sipq_count; i++) {
-        while (libtrace_message_queue_try_get(&(loc->fromsip_queues[i]),
-                (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
-
-            process_incoming_messages(loc, &syncpush);
-        }
-    }
-
-
+    loc->pkts_since_msg_read ++;
     l3 = trace_get_layer3(pkt, &ethertype, &rem);
     if (l3 == NULL || rem == 0) {
         return pkt;
@@ -937,8 +944,10 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         in4 = (struct sockaddr_in *)(&(pinfo.destip));
         in4->sin_addr = ipheader->ip_dst;
 
-        fragoff = trace_get_fragment_offset(pkt, &moreflag);
-        if (moreflag || fragoff > 0) {
+	offset = ntohs(ipheader->ip_off);
+	/* fast check for IP fragmentation */
+	if ((offset & 0x2000) || (offset & 0x1FFF)) {
+            fragoff = trace_get_fragment_offset(pkt, &moreflag);
             ipstream = get_ipfrag_reassemble_stream(loc->fragreass, pkt);
             if (!ipstream) {
                 logger(LOG_INFO, "OpenLI: error trying to reassemble IP fragment in collector.");
@@ -1235,9 +1244,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
     trace_set_stopping_cb(inp->pktcbs, stop_processing_thread);
     trace_set_packet_cb(inp->pktcbs, process_packet);
 
-    if (inp->report_drops) {
-        trace_set_tick_interval_cb(inp->pktcbs, process_tick);
-    }
+    trace_set_tick_interval_cb(inp->pktcbs, process_tick);
 
     assert(!inp->trace);
     inp->trace = trace_create(inp->uri);
@@ -2174,7 +2181,6 @@ static int init_sip_worker_thread(openli_sip_worker_t *sipworker,
     sipworker->tracker_threads = glob->seqtracker_threads;
     sipworker->forwarding_threads = glob->forwarding_threads;
     sipworker->voipintercepts = NULL;
-    sipworker->sipparser = NULL;
     sipworker->knowncallids = NULL;
     sipworker->ignore_sdpo_matches = glob->ignore_sdpo_matches;
 

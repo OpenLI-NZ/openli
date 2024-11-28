@@ -226,9 +226,6 @@ typedef struct colthread_local {
     /* Array of message queues to pass packets to the GTP worker threads */
     void **gtp_worker_queues;
 
-    /** SIP parser for detecting SMS over SIP  -- TODO remove*/
-    openli_sip_parser_t *sipparser;
-
     /* Current intercepts */
     ipv4_target_t *activeipv4intercepts;
     ipv6_target_t *activeipv6intercepts;
@@ -280,6 +277,8 @@ typedef struct colthread_local {
 
     uint64_t accepted;
     uint64_t dropped;
+
+    uint16_t pkts_since_msg_read;
 
 } colthread_local_t;
 
