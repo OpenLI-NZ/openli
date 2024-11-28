@@ -353,7 +353,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
         }
     }
 
-    if (loc->staticv4ranges == NULL) {
+    if (loc->activestaticintercepts == NULL) {
         goto ipv4ccdone;
     }
 
