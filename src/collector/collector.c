@@ -279,27 +279,35 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
     collector_global_t *glob = (collector_global_t *)global;
     colthread_local_t *loc = (colthread_local_t *)local;
     libtrace_stat_t *stats;
+    struct timeval tv;
 
     check_for_messages(loc);
 
     if (trace_get_perpkt_thread_id(t) == 0) {
 
+	gettimeofday(&tv, NULL);
         stats = trace_create_statistics();
         trace_get_statistics(trace, stats);
 
-        pthread_mutex_lock(&(glob->stats_mutex));
-        glob->stats.packets_dropped += (stats->dropped - loc->dropped);
-        glob->stats.packets_accepted += (stats->accepted - loc->accepted);
-        pthread_mutex_unlock(&(glob->stats_mutex));
+	if (tv.tv_sec - loc->startedat > 1) {
+	    /* ignore drops in the first second -- they probably happened
+	     * while our processing threads were starting because of the order
+	     * that libtrace does all the tasks necessary to start an input.
+	     */
+            pthread_mutex_lock(&(glob->stats_mutex));
+            glob->stats.packets_dropped += (stats->dropped - loc->dropped);
+            glob->stats.packets_accepted += (stats->accepted - loc->accepted);
+            pthread_mutex_unlock(&(glob->stats_mutex));
 
-        if (stats->dropped > loc->dropped) {
-            logger(LOG_INFO,
-                    "%lu dropped %lu packets in last second (accepted %lu)",
-                    (tick >> 32),
-                    stats->dropped - loc->dropped,
-                    stats->accepted - loc->accepted);
-            loc->dropped = stats->dropped;
-        }
+            if (stats->dropped > loc->dropped) {
+                logger(LOG_INFO,
+                        "%lu dropped %lu packets in last second (accepted %lu)",
+                        (tick >> 32),
+                        stats->dropped - loc->dropped,
+                        stats->accepted - loc->accepted);
+            }
+	}
+        loc->dropped = stats->dropped;
 
         pthread_rwlock_rdlock(&(glob->config_mutex));
         if (glob->stat_frequency > 0) {
@@ -436,6 +444,7 @@ static void *start_processing_thread(libtrace_t *trace UNUSED,
     colthread_local_t *loc = NULL;
     int i;
     sync_sendq_t *syncq, *sendq_hash;
+    struct timeval tv;
 
     pthread_rwlock_wrlock(&(glob->config_mutex));
     loc = glob->collocals[glob->nextloc];
@@ -472,6 +481,8 @@ static void *start_processing_thread(libtrace_t *trace UNUSED,
 
         pthread_mutex_unlock(&(glob->sipworkers[i].col_queue_mutex));
     }
+    gettimeofday(&tv, NULL);
+    loc->startedat = tv.tv_sec;
 
     return loc;
 }
@@ -1281,6 +1292,15 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
                 (void *)&(inp->hashradconf));
     }
 
+    if (inp->coremap) {
+	char opt[256];
+
+	snprintf(opt, 256, "coremap=%s", inp->coremap);
+	if (trace_set_configuration(inp->trace, opt) < 0) {
+	    logger(LOG_INFO, "OpenLI: unable to set coremap (%s) for %s",
+			    inp->coremap, inp->uri);
+	}
+    }
 
     if (inp->filterstring) {
         inp->filter = trace_create_filter(inp->filterstring);
@@ -1319,7 +1339,7 @@ static void reload_inputs(collector_global_t *glob,
         collector_global_t *newstate) {
 
     colinput_t *oldinp, *newinp, *tmp;
-    int filterchanged = 0, i;
+    int filterchanged = 0, i, coremapchanged = 0;
     int oldcolthreads = glob->total_col_threads;
 
     logger(LOG_INFO,
@@ -1330,6 +1350,18 @@ static void reload_inputs(collector_global_t *glob,
                 newinp);
         filterchanged = 0;
         if (newinp) {
+	    if (oldinp->coremap) {
+		if (newinp->coremap == NULL) {
+		    coremapchanged = 1;
+		} else if (strcmp(newinp->coremap, oldinp->coremap) != 0) {
+		    coremapchanged = 1;
+		}
+	    } else {
+		if (newinp->coremap) {
+		    coremapchanged = 1;
+		}
+	    }
+
             if (oldinp->filterstring) {
                 if (newinp->filterstring == NULL) {
                     filterchanged = 1;
@@ -1346,8 +1378,10 @@ static void reload_inputs(collector_global_t *glob,
 
         if (!newinp || newinp->threadcount != oldinp->threadcount ||
                 newinp->hasher_apply != oldinp->hasher_apply ||
-                filterchanged) {
-            /* This input is no longer wanted at all */
+                filterchanged || coremapchanged) {
+            /* This input is either no longer wanted at all or has
+	     * changed configuration
+	     */
             logger(LOG_INFO,
                     "OpenLI collector: stop reading packets from %s",
                     oldinp->uri);
@@ -1418,6 +1452,9 @@ static void clear_input(colinput_t *input) {
     }
     if (input->filterstring) {
         free(input->filterstring);
+    }
+    if (input->coremap) {
+        free(input->coremap);
     }
     if (input->hashconfigured) {
         hash_radius_cleanup(&(input->hashradconf));

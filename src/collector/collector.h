@@ -129,6 +129,7 @@ enum {
 typedef struct colinput {
     char *uri;
     char *filterstring;
+    char *coremap;
     int threadcount;
     libtrace_t *trace;
     libtrace_filter_t *filter;
@@ -278,6 +279,7 @@ typedef struct colthread_local {
     uint64_t accepted;
     uint64_t dropped;
 
+    time_t startedat;
     uint16_t pkts_since_msg_read;
 
 } colthread_local_t;
