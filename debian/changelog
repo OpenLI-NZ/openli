@@ -9,8 +9,6 @@ openli (1.1.11-1) unstable; urgency=medium
     threads. Standalone SMS interception threads now no longer exist.
   * Collector: add configuration option to specify a coremap for an
     individual input.
-  * Collector: decreased frequency at which packet processing threads will
-    check for incoming messages from session tracking threads.
   * Collector: improved packet processing thread performance by avoiding
     fragment offset calculations if the packet is clearly not a fragment.
   * Collector: improved encoding performance by pre-encoding certain

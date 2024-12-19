@@ -926,9 +926,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     packet_info_t pinfo;
 
-    if (loc->pkts_since_msg_read >= PACKETS_PER_READ_THRESH) {
 	check_for_messages(loc);
-    }
 
     loc->pkts_since_msg_read ++;
     l3 = trace_get_layer3(pkt, &ethertype, &rem);
