@@ -207,6 +207,7 @@ int parse_next_sip_message(openli_sip_parser_t *p,
                  * that lines up with the start of a SIP message.
                  */
                 remove_tcp_reassemble_stream(p->tcpreass, p->thisstream);
+                p->thisstream = NULL;
                 return 0;
             }
             return -1;

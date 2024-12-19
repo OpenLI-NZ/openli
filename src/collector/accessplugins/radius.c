@@ -1638,6 +1638,18 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
     }
 
     if (raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST) {
+        reqid = DERIVE_REQUEST_ID(raddata, raddata->msgtype);
+
+        if (raddata->savedreq) {
+            if (raddata->savedreq->reqid == reqid) {
+                goto usessupdate;
+            }
+            release_attribute_list(&(glob->freeattrs),
+                    raddata->savedreq->attrs);
+            release_saved_request(&(glob->freeaccreqs), raddata->savedreq);
+            raddata->savedreq = NULL;
+        }
+
         if (glob->freeaccreqs == NULL) {
             req = (radius_saved_req_t *)malloc(
                     sizeof(radius_saved_req_t));
@@ -1645,7 +1657,6 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
             req = glob->freeaccreqs;
             glob->freeaccreqs = req->next;
         }
-        reqid = DERIVE_REQUEST_ID(raddata, raddata->msgtype);
 
         req->reqid = reqid;
         req->statustype = raddata->accttype;
@@ -1736,6 +1747,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         }
     }
 
+usessupdate:
     JLG(pval, raduser->sessions, raddata->acctsess_hash);
     if (pval == NULL) {
         usess = calloc(1, sizeof(radius_user_session_t));
