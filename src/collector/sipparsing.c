@@ -60,6 +60,8 @@ static int parse_tcp_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *pkt,
 
     if (stream->established == TCP_STATE_LOSS) {
         remove_tcp_reassemble_stream(p->tcpreass, p->thisstream);
+        p->thisstream = NULL;
+        return parse_tcp_sip_packet(p, pkt, tcp, tcprem, tcpid, tv);
     }
     return ret;
 
@@ -206,6 +208,7 @@ int parse_next_sip_message(openli_sip_parser_t *p,
                  * that lines up with the start of a SIP message.
                  */
                 remove_tcp_reassemble_stream(p->tcpreass, p->thisstream);
+                p->thisstream = NULL;
                 return 0;
             }
             return -1;
