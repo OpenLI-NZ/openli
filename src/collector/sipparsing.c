@@ -641,12 +641,67 @@ char *get_sip_from_uri_scheme(openli_sip_parser_t *parser) {
     return scheme;
 }
 
+char *parse_tel_uri(osip_uri_t *uri) {
+
+    char *buf;
+    int r;
+    char *semicolon;
+    char *start;
+
+
+    r = osip_uri_to_str(uri, &buf);
+    if (r != 0) {
+        return NULL;
+    }
+
+    if (strncmp(buf, "tel:", 4) != 0) {
+        logger(LOG_INFO, "Unexpected SIP URI for tel scheme: %s\n", buf);
+        return NULL;
+    }
+    start = buf + 4;
+    semicolon = strchr(start, ';');
+    if (semicolon) {
+        *semicolon = '\0';
+    }
+    return start;
+
+}
+
+char *get_sip_from_uri_telnumber(openli_sip_parser_t *parser) {
+    osip_uri_t *uri;
+    osip_from_t *from = osip_message_get_from(parser->osip);
+    if (from == NULL) {
+        return NULL;
+    }
+    uri = osip_from_get_url(from);
+    if (uri == NULL) {
+        return NULL;
+    }
+
+    return parse_tel_uri(uri);
+}
+
+char *get_sip_to_uri_telnumber(openli_sip_parser_t *parser) {
+    osip_uri_t *uri;
+    osip_to_t *to = osip_message_get_to(parser->osip);
+    if (to == NULL) {
+        return NULL;
+    }
+    uri = osip_to_get_url(to);
+    if (uri == NULL) {
+        return NULL;
+    }
+
+    return parse_tel_uri(uri);
+}
+
 char *get_sip_to_uri_username(openli_sip_parser_t *parser) {
 
     char *uriuser;
     char *semicolon;
     osip_uri_t *uri;
     osip_to_t *to = osip_message_get_to(parser->osip);
+    char *buf;
 
     if (to == NULL) {
         return NULL;
@@ -666,6 +721,7 @@ char *get_sip_to_uri_username(openli_sip_parser_t *parser) {
      * the username and leave the realm option blank.
      */
     if ((uriuser = osip_uri_get_username(uri)) == NULL) {
+        osip_uri_to_str(uri, &buf);
         uriuser = osip_uri_get_host(uri);
     }
 
@@ -722,18 +778,25 @@ int get_sip_to_uri_identity(openli_sip_parser_t *parser,
     }
 
     if (strcmp(scheme, "tel") == 0) {
-        /* TODO do we need to support targets using tel: ?
-         * Would be slightly annoying because libosip2 doesn't seem
-         * to handle tel nicely.
+        /* libosip2 doesn't seem to handle tel nicely, so we'll have to
+         * parse the tel: URI ourselves
          */
 
-        /* For now, just ignore tel: URIs */
         sipid->realm = NULL;
         sipid->realm_len = 0;
 
         sipid->username = NULL;
         sipid->username_len = 0;
         sipid->active = 0;
+
+        sipid->username = get_sip_to_uri_telnumber(parser);
+        if (sipid->username == NULL) {
+            return -1;
+        }
+        sipid->username_len = strlen(sipid->username);
+        sipid->realm = NULL;
+        sipid->realm_len = 0;
+
     } else if (strcmp(scheme, "sip") == 0 || strcmp(scheme, "sips") == 0) {
         sipid->username = get_sip_to_uri_username(parser);
         if (sipid->username == NULL) {
@@ -768,18 +831,25 @@ int get_sip_from_uri_identity(openli_sip_parser_t *parser,
     }
 
     if (strcmp(scheme, "tel") == 0) {
-        /* TODO do we need to support targets using tel: ?
-         * Would be slightly annoying because libosip2 doesn't seem
-         * to handle tel nicely.
+        /* libosip2 doesn't seem to handle tel nicely, so we'll have to
+         * parse the tel: URI ourselves
          */
 
-        /* For now, just ignore tel: URIs */
         sipid->realm = NULL;
         sipid->realm_len = 0;
 
         sipid->username = NULL;
         sipid->username_len = 0;
         sipid->active = 0;
+
+        sipid->username = get_sip_from_uri_telnumber(parser);
+        if (sipid->username == NULL) {
+            return -1;
+        }
+        sipid->username_len = strlen(sipid->username);
+        sipid->realm = NULL;
+        sipid->realm_len = 0;
+
     } else if (strcmp(scheme, "sip") == 0 || strcmp(scheme, "sips") == 0) {
         sipid->username = get_sip_from_uri_username(parser);
         if (sipid->username == NULL) {
