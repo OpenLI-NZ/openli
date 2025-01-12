@@ -2,6 +2,7 @@ openli (1.1.11-1) unstable; urgency=medium
 
   * SIP: fix crash when processing an INVITE where the SDP address is
     missing but the SDP username is present.
+  * SIP: add ability to extract target usernames from tel: URIs.
   * RADIUS: fix memory leak when RADIUS sessions have multiple usable
     identities.
   * Collector: add ability to use multiple threads for SIP parsing.
@@ -26,7 +27,7 @@ openli (1.1.11-1) unstable; urgency=medium
     static IP intercept code path for IP packets in situations where there
     were no static IP intercepts configured.
 
- -- Shane Alcock <salcock@searchlight.nz>  Thu, 19 Dec 2024 17:33:40 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Sat, 11 Jan 2025 15:32:04 +1300
 
 openli (1.1.10-2) unstable; urgency=medium
 
