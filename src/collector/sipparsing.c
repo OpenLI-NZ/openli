@@ -247,7 +247,7 @@ static int _add_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *packet,
             free(p->sipmessage);
             p->sipalloced = 0;
         }
-
+        p->thisstream = NULL;
         p->sipmessage = ((char *)transport);
         p->siplen = rem - sizeof(libtrace_udp_t);
         p->sipoffset = sizeof(libtrace_udp_t);
@@ -311,6 +311,7 @@ static int _add_sip_fragment(openli_sip_parser_t *p,
         if (p->sipalloced) {
             free(p->sipmessage);
         }
+        p->thisstream = NULL;
         p->sipmessage = completefrag;
         p->sipalloced = 1;
         p->siplen = fraglen - sizeof(libtrace_udp_t);
@@ -659,10 +660,12 @@ char *parse_tel_uri(osip_uri_t *uri) {
         return NULL;
     }
     start = buf + 4;
+    start = strdup(start);
     semicolon = strchr(start, ';');
     if (semicolon) {
         *semicolon = '\0';
     }
+    free(buf);
     return start;
 
 }
@@ -802,12 +805,14 @@ int get_sip_to_uri_identity(openli_sip_parser_t *parser,
         if (sipid->username == NULL) {
             return -1;
         }
+        sipid->username = strdup(sipid->username);
         sipid->username_len = strlen(sipid->username);
 
         sipid->realm = get_sip_to_uri_realm(parser);
         if (sipid->realm == NULL) {
             return -1;
         }
+        sipid->realm = strdup(sipid->realm);
         sipid->realm_len = strlen(sipid->realm);
     } else {
         logger(LOG_INFO, "OpenLI: unexpected SIP scheme '%s', ignoring",
@@ -855,12 +860,14 @@ int get_sip_from_uri_identity(openli_sip_parser_t *parser,
         if (sipid->username == NULL) {
             return -1;
         }
+        sipid->username = strdup(sipid->username);
         sipid->username_len = strlen(sipid->username);
 
         sipid->realm = get_sip_from_uri_realm(parser);
         if (sipid->realm == NULL) {
             return -1;
         }
+        sipid->realm = strdup(sipid->realm);
         sipid->realm_len = strlen(sipid->realm);
     } else {
         logger(LOG_INFO, "OpenLI: unexpected SIP scheme '%s', ignoring",

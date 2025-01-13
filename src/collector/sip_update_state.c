@@ -240,6 +240,18 @@ void release_openli_sip_identity_set(openli_sip_identity_set_t *idset) {
     if (idset->remotepartyid.realm) {
         free(idset->remotepartyid.realm);
     }
+    if (idset->fromuriid.username) {
+        free(idset->fromuriid.username);
+    }
+    if (idset->fromuriid.realm) {
+        free(idset->fromuriid.realm);
+    }
+    if (idset->touriid.username) {
+        free(idset->touriid.username);
+    }
+    if (idset->touriid.realm) {
+        free(idset->touriid.realm);
+    }
 }
 
 static void populate_sdp_identifier(openli_sip_parser_t *sipparser,
