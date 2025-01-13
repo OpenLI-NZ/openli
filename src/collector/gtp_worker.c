@@ -916,7 +916,7 @@ void *gtp_thread_begin(void *arg) {
 
     worker->zmq_pubsocks = calloc(worker->tracker_threads, sizeof(void *));
     init_zmq_socket_array(worker->zmq_pubsocks, worker->tracker_threads,
-            "inproc://openlipub", worker->zmq_ctxt);
+            "inproc://openlipub", worker->zmq_ctxt, -1);
 
     worker->zmq_ii_sock = zmq_socket(worker->zmq_ctxt, ZMQ_PULL);
     snprintf(sockname, 256, "inproc://openligtpcontrol_sync-%d",

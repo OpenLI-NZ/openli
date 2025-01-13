@@ -35,6 +35,7 @@
 #include "collector_util.h"
 #include "collector_base.h"
 #include "export_buffer.h"
+#include "sip_worker_redirection.h"
 
 #define SMS_SESSION_EXPIRY 180
 
@@ -84,6 +85,15 @@ typedef struct openli_sip_worker {
     /* ZMQ for sending messages to forwarding threads */
     void **zmq_fwdsocks;
 
+    /* ZMQ for receiving SIP messages from other SIP worker threads */
+    void *zmq_redirect_insock;
+
+    /* ZMQ for sending SIP messages to other SIP worker threads */
+    void **zmq_redirect_outsocks;
+
+    /* Number of SIP worker threads operated by this collector */
+    int sipworker_threads;
+
     /* Number of sequence tracker threads operated by this collector */
     int tracker_threads;
 
@@ -124,6 +134,12 @@ typedef struct openli_sip_worker {
     /* Shared state used to track how many worker threads have halted */
     halt_info_t *haltinfo;
 
+    /* Local state for SIP call-ids that are either being redirected, or
+     * have been redirected by other worker threads.
+     */
+    sip_worker_redirect_t redir_data;
+
+
 } openli_sip_worker_t;
 
 void *start_sip_worker_thread(void *arg);
@@ -139,5 +155,10 @@ int sip_worker_announce_rtp_streams(openli_sip_worker_t *sipworker,
         rtpstreaminf_t *rtp);
 void sip_worker_conclude_sip_call(openli_sip_worker_t *sipworker,
         rtpstreaminf_t *thisrtp);
+
+int redirect_sip_worker_packets(openli_sip_worker_t *sipworker,
+        char *callid, libtrace_packet_t **pkts, int pkt_cnt);
+void clear_redirection_map(Pvoid_t *map);
+void destroy_redirected_message(redirected_sip_message_t *msg);
 
 #endif

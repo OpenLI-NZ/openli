@@ -649,7 +649,6 @@ char *parse_tel_uri(osip_uri_t *uri) {
     char *semicolon;
     char *start;
 
-
     r = osip_uri_to_str(uri, &buf);
     if (r != 0) {
         return NULL;

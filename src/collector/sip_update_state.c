@@ -837,7 +837,7 @@ static int extract_media_streams_from_sdp(rtpstreaminf_t *thisrtp,
 
 static int process_sip_invite(openli_sip_worker_t *sipworker, char *callid,
         openli_export_recv_t *irimsg, libtrace_packet_t **pkts, int pkt_cnt,
-        openli_location_t *locptr, int loc_cnt) {
+        openli_location_t *locptr, int loc_cnt, sip_sdp_identifier_t *sdpo) {
 
 
     voipintercept_t *vint, *tmp;
@@ -868,7 +868,7 @@ static int process_sip_invite(openli_sip_worker_t *sipworker, char *callid,
         if (sipworker->sipparser->badsip) {
             break;
         }
-        thisrtp = match_call_to_intercept(sipworker, vint, callid, NULL,
+        thisrtp = match_call_to_intercept(sipworker, vint, callid, sdpo,
                 &iritype, &cin, trust_sip_from, &tv, &all_identities);
         if (thisrtp == NULL) {
             continue;
@@ -1144,12 +1144,8 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
         goto sipgiveup;
     }
 
-    get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
-
-    populate_sdp_identifier(sipworker->sipparser, &sdpo,
-            sipworker->debug.log_bad_sip, callid);
-
     if (sip_is_message(sipworker->sipparser)) {
+        get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
         if (( ret = process_sip_message(sipworker, callid, irimsg, pkts,
                         pkt_cnt, locptr, loc_cnt)) < 0) {
             iserr = 1;
@@ -1159,8 +1155,12 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             goto sipgiveup;
         }
     } else if (sip_is_invite(sipworker->sipparser)) {
+        fprintf(stderr, "INVITE: %s %u\n", callid, sipworker->workerid);
+        get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
+        populate_sdp_identifier(sipworker->sipparser, &sdpo,
+                sipworker->debug.log_bad_sip, callid);
         if (( ret = process_sip_invite(sipworker, callid, irimsg, pkts,
-                        pkt_cnt, locptr, loc_cnt)) < 0) {
+                        pkt_cnt, locptr, loc_cnt, &sdpo)) < 0) {
             iserr = 1;
             if (sipworker->debug.log_bad_sip) {
                 logger(LOG_INFO, "OpenLI: error in SIP worker thread %d while processing INVITE message", sipworker->workerid);
@@ -1168,6 +1168,7 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             goto sipgiveup;
         }
     } else if (sip_is_register(sipworker->sipparser)) {
+        get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
         if (( ret = process_sip_register(sipworker, callid, irimsg, pkts,
                         pkt_cnt, locptr, loc_cnt)) < 0) {
             iserr = 1;
@@ -1177,7 +1178,7 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             goto sipgiveup;
         }
     } else if (lookup_sip_callid(sipworker, callid) != 0) {
-        /* TODO */
+        get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
         if (( ret = process_sip_other(sipworker, callid, irimsg, pkts,
                         pkt_cnt, locptr, loc_cnt)) < 0) {
             iserr = 1;
@@ -1186,6 +1187,11 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             }
             goto sipgiveup;
         }
+    } else {
+        fprintf(stderr, "Redirection required: %s %u\n", callid,
+                sipworker->workerid);
+
+        redirect_sip_worker_packets(sipworker, callid, pkts, pkt_cnt);
     }
 
 sipgiveup:

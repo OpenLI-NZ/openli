@@ -86,16 +86,25 @@ static void destroy_sip_worker_thread(openli_sip_worker_t *sipworker) {
         zmq_close(sipworker->zmq_ii_sock);
     }
 
+    if (sipworker->zmq_redirect_insock) {
+        zmq_close(sipworker->zmq_redirect_insock);
+    }
+
     clear_zmq_socket_array(sipworker->zmq_pubsocks, sipworker->tracker_threads);
     clear_zmq_socket_array(sipworker->zmq_fwdsocks,
             sipworker->forwarding_threads);
+    clear_zmq_socket_array(sipworker->zmq_redirect_outsocks,
+            sipworker->sipworker_threads);
 
     if (sipworker->haltinfo) {
-	pthread_mutex_lock(&(sipworker->haltinfo->mutex));
-	sipworker->haltinfo->halted ++;
-	pthread_cond_signal(&(sipworker->haltinfo->cond));
-	pthread_mutex_unlock(&(sipworker->haltinfo->mutex));
+        pthread_mutex_lock(&(sipworker->haltinfo->mutex));
+        sipworker->haltinfo->halted ++;
+        pthread_cond_signal(&(sipworker->haltinfo->cond));
+        pthread_mutex_unlock(&(sipworker->haltinfo->mutex));
     }
+
+    clear_redirection_map(&(sipworker->redir_data.redirections));
+    clear_redirection_map(&(sipworker->redir_data.recvd_redirections));
 
     /* Don't destroy the col_queue_mutex here -- let the main collector thread
      * handle that.
@@ -110,12 +119,42 @@ static int setup_zmq_sockets(openli_sip_worker_t *sipworker) {
             sizeof(void *));
     sipworker->zmq_fwdsocks = calloc(sipworker->forwarding_threads,
             sizeof(void *));
+    sipworker->zmq_redirect_outsocks = calloc(sipworker->sipworker_threads,
+            sizeof(void *));
 
     init_zmq_socket_array(sipworker->zmq_pubsocks, sipworker->tracker_threads,
-            "inproc://openlipub", sipworker->zmq_ctxt);
+            "inproc://openlipub", sipworker->zmq_ctxt, -1);
+    init_zmq_socket_array(sipworker->zmq_redirect_outsocks,
+            sipworker->sipworker_threads,
+            "inproc://openlisipredirect", sipworker->zmq_ctxt, 1000);
     init_zmq_socket_array(sipworker->zmq_fwdsocks,
             sipworker->forwarding_threads,
-            "inproc://openliforwardercontrol_sync", sipworker->zmq_ctxt);
+            "inproc://openliforwardercontrol_sync", sipworker->zmq_ctxt, -1);
+
+    /* don't need to redirect to ourselves... */
+    if (sipworker->zmq_redirect_outsocks[sipworker->workerid]) {
+        zmq_close(sipworker->zmq_redirect_outsocks[sipworker->workerid]);
+        sipworker->zmq_redirect_outsocks[sipworker->workerid] = NULL;
+    }
+
+    sipworker->zmq_redirect_insock = zmq_socket(sipworker->zmq_ctxt, ZMQ_PULL);
+    snprintf(sockname, 256, "inproc://openlisipredirect-%d",
+            sipworker->workerid);
+    if (zmq_bind(sipworker->zmq_redirect_insock, sockname) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: SIP processing thread %d failed to bind to redirect recv ZMQ: %s",
+                sipworker->workerid, strerror(errno));
+        return -1;
+    }
+
+    if (zmq_setsockopt(sipworker->zmq_redirect_insock, ZMQ_LINGER, &zero,
+                sizeof(zero)) != 0) {
+        logger(LOG_INFO,
+                "OpenLI: SIP processing thread %d failed to configure redirect recv ZMQ: %s",
+                sipworker->workerid, strerror(errno));
+        return -1;
+    }
+
 
     sipworker->zmq_ii_sock = zmq_socket(sipworker->zmq_ctxt, ZMQ_PULL);
     snprintf(sockname, 256, "inproc://openlisipcontrol_sync-%d",
@@ -1186,7 +1225,7 @@ static int sip_worker_process_sync_thread_message(
         }
 
         if (msg->type == OPENLI_EXPORT_HALT) {
-	    sipworker->haltinfo = (halt_info_t *)(msg->data.haltinfo);
+	        sipworker->haltinfo = (halt_info_t *)(msg->data.haltinfo);
             free(msg);
             return -1;
         }
@@ -1394,6 +1433,9 @@ void *start_sip_worker_thread(void *arg) {
     openli_sip_worker_t *sipworker = (openli_sip_worker_t *)arg;
     int x;
     openli_state_update_t recvd;
+
+    sipworker->redir_data.redirections = NULL;
+    sipworker->redir_data.recvd_redirections = NULL;
 
     logger(LOG_INFO, "OpenLI: starting SIP processing thread %d",
             sipworker->workerid);

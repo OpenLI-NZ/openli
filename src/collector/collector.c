@@ -2211,10 +2211,13 @@ static int init_sip_worker_thread(openli_sip_worker_t *sipworker,
     pthread_mutex_init(&(sipworker->col_queue_mutex), NULL);
     sipworker->zmq_ii_sock = NULL;
     sipworker->zmq_pubsocks = NULL;
+    sipworker->zmq_redirect_insock = NULL;
     sipworker->zmq_fwdsocks = NULL;
     sipworker->zmq_colthread_recvsock = NULL;
+    sipworker->zmq_redirect_outsocks = NULL;
     sipworker->tracker_threads = glob->seqtracker_threads;
     sipworker->forwarding_threads = glob->forwarding_threads;
+    sipworker->sipworker_threads = glob->sip_threads;
     sipworker->voipintercepts = NULL;
     sipworker->knowncallids = NULL;
     sipworker->ignore_sdpo_matches = glob->ignore_sdpo_matches;
