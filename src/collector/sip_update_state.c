@@ -1187,7 +1187,7 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             }
             goto sipgiveup;
         }
-    } else {
+    } else if (sipworker->sipworker_threads > 1) {
         fprintf(stderr, "Redirection required: %s %u\n", callid,
                 sipworker->workerid);
 
