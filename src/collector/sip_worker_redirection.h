@@ -35,6 +35,13 @@ enum {
     REDIRECTED_SIP_CLAIM = 2,
     REDIRECTED_SIP_REJECTED = 3,
     REDIRECTED_SIP_OVER = 4,
+    REDIRECTED_SIP_PURGE = 5,
+};
+
+enum {
+    REDIRECTED_SIP_STATUS_NEW = 1,
+    REDIRECTED_SIP_STATUS_REJECTED = 2,
+    REDIRECTED_SIP_STATUS_CLAIMED = 3
 };
 
 typedef struct sip_worker_redirect {
@@ -44,6 +51,7 @@ typedef struct sip_worker_redirect {
 
 typedef struct redirected_sip_message {
     uint8_t message_type;
+    uint8_t sender;
     char *callid;
     uint32_t pkt_cnt;
     libtrace_packet_t **packets;
@@ -53,6 +61,8 @@ typedef struct saved_redirection {
     char *callid;
     uint64_t redir_mask;
     uint8_t receive_status;
+    time_t last_packet;
+    uint8_t redir_from;
 } sip_saved_redirection_t;
 
 #endif

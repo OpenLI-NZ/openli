@@ -1094,14 +1094,22 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
 
     }
 
+    if (iritype == ETSILI_IRI_END) {
+    /* If another worker has redirected SIP to us for this call, let them
+     * know that it is over so they can remove it from their redirection
+     * map.
+     */
+        conclude_redirected_sip_call(sipworker, callid);
+    }
+
+
     if (sipworker->sipparser->badsip) {
         return -1;
     }
     return exportcount;
 }
 
-static inline int lookup_sip_callid(openli_sip_worker_t *sipworker,
-        char *callid) {
+int lookup_sip_callid(openli_sip_worker_t *sipworker, char *callid) {
 
     voipcinmap_t *lookup;
 
@@ -1188,6 +1196,11 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             goto sipgiveup;
         }
     } else if (sipworker->sipworker_threads > 1) {
+        /* TODO don't redirect if the collector has just started up
+         * as we'll most likely start capturing in the middle of a bunch
+         * of ongoing SIP sessions and it is a waste of time to redirect
+         * them all.
+         */
         fprintf(stderr, "Redirection required: %s %u\n", callid,
                 sipworker->workerid);
 

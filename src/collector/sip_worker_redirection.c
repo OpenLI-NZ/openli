@@ -46,6 +46,7 @@ void clear_redirection_map(Pvoid_t *map) {
         if (rd->callid) {
             free(rd->callid);
         }
+        free(rd);
         JSLN(pval, *map, index);
     }
     JSLFA(rc, *map)
@@ -69,6 +70,281 @@ void destroy_redirected_message(redirected_sip_message_t *msg) {
     }
 }
 
+int handle_sip_redirection_claim(openli_sip_worker_t *sipworker,
+        char *callid, uint8_t claimer) {
+
+    Word_t *pval;
+    sip_saved_redirection_t *rd;
+
+    if (callid == NULL) {
+        return 0;
+    }
+    JSLG(pval, sipworker->redir_data.redirections, (uint8_t *)callid);
+
+    if (!pval) {
+        /* we can't do anything with this claim */
+        return 0;
+    }
+
+    rd = (sip_saved_redirection_t *)(*pval);
+    if (rd->redir_mask == 0) {
+        /* this call is already over? */
+        return 0;
+    }
+
+    /* The claimant now has exclusive rights to the call */
+    rd->redir_mask = (1 << claimer);
+    fprintf(stderr, "DEVDEBUG: callid %s has been claimed by %u (%d)\n",
+            callid, claimer, sipworker->workerid);
+    return 1;
+}
+
+int handle_sip_redirection_reject(openli_sip_worker_t *sipworker,
+        char *callid, uint8_t rejector) {
+
+    Word_t *pval;
+    sip_saved_redirection_t *rd;
+
+    if (callid == NULL) {
+        return 0;
+    }
+    JSLG(pval, sipworker->redir_data.redirections, (uint8_t *)callid);
+
+    if (!pval) {
+        /* we can't do anything with this rejection */
+        return 0;
+    }
+
+    rd = (sip_saved_redirection_t *)(*pval);
+
+    /* The claimant has refused the call */
+    rd->redir_mask &= (~(1 << rejector));
+    fprintf(stderr, "DEVDEBUG: callid %s has been rejected by %u (%d)\n",
+            callid, rejector, sipworker->workerid);
+
+    return 1;
+}
+
+int handle_sip_redirection_over(openli_sip_worker_t *sipworker,
+        char *callid, uint8_t ender) {
+
+    Word_t *pval, rc;
+    sip_saved_redirection_t *rd;
+
+    if (callid == NULL) {
+        return 0;
+    }
+    JSLG(pval, sipworker->redir_data.redirections, (uint8_t *)callid);
+
+    if (!pval) {
+        /* we can't do anything with this announcement */
+        return 0;
+    }
+
+    rd = (sip_saved_redirection_t *)(*pval);
+    /* delete the call ID from the map */
+    JSLD(rc, sipworker->redir_data.redirections, (uint8_t *)callid);
+    fprintf(stderr, "DEVDEBUG: callid %s has been ended by %u (%d)\n",
+            callid, ender, sipworker->workerid);
+    free(rd->callid);
+    free(rd);
+    return 1;
+}
+
+int handle_sip_redirection_purge(openli_sip_worker_t *sipworker,
+        char *callid, uint8_t purger) {
+
+    Word_t *pval, rc;
+    sip_saved_redirection_t *rd;
+
+    if (callid == NULL) {
+        return 0;
+    }
+    JSLG(pval, sipworker->redir_data.recvd_redirections, (uint8_t *)callid);
+    if (!pval) {
+        /* can't purge something we never knew about... */
+        return 0;
+    }
+
+    rd = (sip_saved_redirection_t *)(*pval);
+    JSLD(rc, sipworker->redir_data.recvd_redirections, (uint8_t *)callid);
+    fprintf(stderr, "DEVDEBUG: callid %s has been purged by %u (%d, state was %u)\n",
+            callid, purger, sipworker->workerid, rd->receive_status);
+    free(rd->callid);
+    free(rd);
+    return 1;
+}
+
+static inline void send_sip_redirect_instruction(openli_sip_worker_t *sipworker,
+        uint8_t msgtype, char *callid, uint8_t dest) {
+
+    redirected_sip_message_t instruct;
+
+    memset(&instruct, 0, sizeof(instruct));
+    instruct.sender = sipworker->workerid;
+    instruct.message_type = msgtype;
+    instruct.callid = strdup(callid);
+
+    if (dest >= sipworker->sipworker_threads ||
+            sipworker->zmq_redirect_outsocks[dest] == NULL) {
+        return;
+    }
+
+    if (zmq_send(sipworker->zmq_redirect_outsocks[dest], &instruct,
+                sizeof(instruct), 0) < 0) {
+        destroy_redirected_message(&instruct);
+    }
+}
+
+static inline void send_sip_redirect_reply(openli_sip_worker_t *sipworker,
+        uint8_t msgtype, redirected_sip_message_t *src) {
+
+    redirected_sip_message_t reply;
+
+    memset(&reply, 0, sizeof(reply));
+    reply.sender = sipworker->workerid;
+    reply.message_type = msgtype;
+    reply.callid = src->callid;
+    src->callid = NULL;
+
+    if (src->sender >= sipworker->sipworker_threads ||
+            sipworker->zmq_redirect_outsocks[src->sender] == NULL) {
+        return;
+    }
+
+    if (zmq_send(sipworker->zmq_redirect_outsocks[src->sender], &reply,
+                sizeof(reply), 0) < 0) {
+        destroy_redirected_message(&reply);
+    }
+}
+
+int handle_sip_redirection_packet(openli_sip_worker_t *sipworker,
+        redirected_sip_message_t *msg) {
+
+    sip_saved_redirection_t *rd;
+    Word_t *pval;
+
+
+    if (msg->callid == NULL) {
+        return 0;
+    }
+    if (msg->sender == sipworker->workerid) {
+        // shouldn't happen, but just in case...
+        return 0;
+    }
+
+    JSLG(pval, sipworker->redir_data.recvd_redirections,
+            (uint8_t *)msg->callid);
+    if (pval) {
+        rd = (sip_saved_redirection_t *)(*pval);
+
+        if (rd->receive_status == REDIRECTED_SIP_STATUS_REJECTED) {
+            return 0;
+        }
+    } else {
+        rd = calloc(1, sizeof(sip_saved_redirection_t));
+        rd->callid = strdup(msg->callid);
+        rd->redir_mask = 0;         // we're receiving, not redirecting
+        rd->receive_status = REDIRECTED_SIP_STATUS_NEW;
+        rd->redir_from = msg->sender;
+
+        JSLI(pval, sipworker->redir_data.recvd_redirections,
+                (uint8_t *)msg->callid);
+        *pval = (Word_t)rd;
+    }
+
+    if (lookup_sip_callid(sipworker, msg->callid) == 0) {
+        /* we've never seen this call ID before, so reject it */
+        send_sip_redirect_reply(sipworker, REDIRECTED_SIP_REJECTED, msg);
+        rd->receive_status = REDIRECTED_SIP_STATUS_REJECTED;
+        return 0;
+    }
+
+    /* claim the call ID if we haven't already */
+    if (rd->receive_status != REDIRECTED_SIP_STATUS_CLAIMED) {
+        send_sip_redirect_reply(sipworker, REDIRECTED_SIP_CLAIM, msg);
+        rd->receive_status = REDIRECTED_SIP_STATUS_CLAIMED;
+    }
+
+    return 1;
+}
+
+int conclude_redirected_sip_call(openli_sip_worker_t *sipworker, char *callid) {
+
+    Word_t *pval, rc;
+    sip_saved_redirection_t *rd;
+
+    if (callid == NULL) {
+        return 0;
+    }
+    JSLG(pval, sipworker->redir_data.recvd_redirections, (uint8_t *)callid);
+    if (!pval) {
+        /* can't remove a call that is not in our map */
+        return 0;
+    }
+
+    rd = (sip_saved_redirection_t *)(*pval);
+
+    JSLD(rc, sipworker->redir_data.recvd_redirections, (uint8_t *)callid);
+    fprintf(stderr, "DEVDEBUG: callid %s has been concluded by %d, state was %u\n",
+            callid, sipworker->workerid, rd->receive_status);
+
+    /* send an OVER message so the worker that was redirecting this call knows
+     * they can safely remove their redirection state for this call ID */
+    send_sip_redirect_instruction(sipworker, REDIRECTED_SIP_OVER, callid,
+            rd->redir_from);
+
+    free(rd->callid);
+    free(rd);
+    return 1;
+}
+
+void purge_redirected_sip_calls(openli_sip_worker_t *sipworker) {
+
+    uint8_t callid[512];
+    Word_t *pval, rc;
+    sip_saved_redirection_t *rd;
+    struct timeval tv;
+    int i;
+
+    gettimeofday(&tv, NULL);
+    callid[0] = '\0';
+    JSLF(pval, sipworker->redir_data.redirections, callid);
+
+    printf("purge_redirected...\n");
+    while (pval) {
+        rd = (sip_saved_redirection_t *)(*pval);
+
+        printf("rd: callid %s, redir_mask: %lu, last_packet: %lu  vs %lu\n",
+                callid, rd->redir_mask, rd->last_packet, tv.tv_sec);
+        if (rd->redir_mask != 0) {
+            /* a worker has claimed this, or at least not all workers have
+             * rejected it */
+            JSLN(pval, sipworker->redir_data.redirections, callid);
+            continue;
+        }
+
+        if (tv.tv_sec - rd->last_packet < 300) {
+            /* 5 minutes is more than long enough to wait */
+            JSLN(pval, sipworker->redir_data.redirections, callid);
+            continue;
+        }
+
+        JSLD(rc, sipworker->redir_data.redirections, callid);
+        for (i = 0; i < sipworker->sipworker_threads; i++) {
+            if (i == sipworker->workerid) {
+                continue;
+            }
+            send_sip_redirect_instruction(sipworker, REDIRECTED_SIP_PURGE,
+                    rd->callid, i);
+        }
+        free(rd->callid);
+        free(rd);
+        JSLN(pval, sipworker->redir_data.redirections, callid);
+    }
+
+}
+
 int redirect_sip_worker_packets(openli_sip_worker_t *sipworker,
         char *callid, libtrace_packet_t **pkts, int pkt_cnt) {
 
@@ -86,8 +362,13 @@ int redirect_sip_worker_packets(openli_sip_worker_t *sipworker,
     if (!pval) {
         rd = calloc(1, sizeof(sip_saved_redirection_t));
         rd->callid = strdup(callid);
-        rd->redir_mask = 0xFFFFFFFFFFFFFFFF;    // start out broadcasting
+        rd->redir_mask = (0xFFFFFFFFFFFFFFFF >>
+                (64 - sipworker->sipworker_threads));  // start out broadcasting
+
+        // exclude ourselves from the set of possible recipients...
+        rd->redir_mask &= (~(1 << sipworker->workerid));
         rd->receive_status = 0;                 // not relevant
+        rd->redir_from = sipworker->workerid;   // not relevant
 
         JSLI(pval, sipworker->redir_data.redirections, (uint8_t *)callid);
         *pval = (Word_t)rd;
@@ -97,6 +378,11 @@ int redirect_sip_worker_packets(openli_sip_worker_t *sipworker,
 
     if (rd->redir_mask == 0) {
         return 0;
+    }
+
+    if (pkt_cnt > 0) {
+        struct timeval tv = trace_get_timeval(pkts[0]);
+        rd->last_packet = tv.tv_sec;
     }
 
     memset(&msg, 0, sizeof(msg));
@@ -109,6 +395,7 @@ int redirect_sip_worker_packets(openli_sip_worker_t *sipworker,
             continue;
         }
         msg.message_type = REDIRECTED_SIP_PACKET;
+        msg.sender = (uint8_t) sipworker->workerid;
         msg.callid = strdup(callid);
         msg.pkt_cnt = pkt_cnt;
         msg.packets = calloc(pkt_cnt, sizeof(libtrace_packet_t *));

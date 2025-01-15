@@ -156,9 +156,23 @@ int sip_worker_announce_rtp_streams(openli_sip_worker_t *sipworker,
 void sip_worker_conclude_sip_call(openli_sip_worker_t *sipworker,
         rtpstreaminf_t *thisrtp);
 
+int lookup_sip_callid(openli_sip_worker_t *sipworker, char *callid);
+
 int redirect_sip_worker_packets(openli_sip_worker_t *sipworker,
         char *callid, libtrace_packet_t **pkts, int pkt_cnt);
 void clear_redirection_map(Pvoid_t *map);
 void destroy_redirected_message(redirected_sip_message_t *msg);
+int handle_sip_redirection_reject(openli_sip_worker_t *sipworker,
+        char *callid, uint8_t rejector);
+int handle_sip_redirection_over(openli_sip_worker_t *sipworker,
+        char *callid, uint8_t ender);
+int handle_sip_redirection_claim(openli_sip_worker_t *sipworker,
+        char *callid, uint8_t claimer);
+int handle_sip_redirection_packet(openli_sip_worker_t *sipworker,
+        redirected_sip_message_t *msg);
+int handle_sip_redirection_purge(openli_sip_worker_t *sipworker,
+        char *callid, uint8_t purger);
+int conclude_redirected_sip_call(openli_sip_worker_t *sipworker, char *callid);
+void purge_redirected_sip_calls(openli_sip_worker_t *sipworker);
 
 #endif
