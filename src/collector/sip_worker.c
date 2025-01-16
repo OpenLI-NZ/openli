@@ -1327,14 +1327,12 @@ static int sip_worker_receive_redirect(openli_sip_worker_t *sipworker) {
                 }
                 break;
             case REDIRECTED_SIP_OVER:
-                if (handle_sip_redirection_over(sipworker, msg.callid,
-                            msg.sender) < 0) {
+                if (handle_sip_redirection_over(sipworker, msg.callid) < 0) {
                     return -1;
                 }
                 break;
             case REDIRECTED_SIP_PURGE:
-                if (handle_sip_redirection_purge(sipworker, msg.callid,
-                            msg.sender) < 0) {
+                if (handle_sip_redirection_purge(sipworker, msg.callid) < 0) {
                     return -1;
                 }
                 break;
@@ -1515,6 +1513,7 @@ void *start_sip_worker_thread(void *arg) {
     openli_sip_worker_t *sipworker = (openli_sip_worker_t *)arg;
     int x;
     openli_state_update_t recvd;
+    struct timeval tv;
 
     sipworker->redir_data.redirections = NULL;
     sipworker->redir_data.recvd_redirections = NULL;
@@ -1525,6 +1524,8 @@ void *start_sip_worker_thread(void *arg) {
         goto haltsipworker;
     }
 
+    gettimeofday(&tv, NULL);
+    sipworker->started = tv.tv_sec;
     sip_worker_main(sipworker);
 
     do {

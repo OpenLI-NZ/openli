@@ -139,6 +139,8 @@ typedef struct openli_sip_worker {
      */
     sip_worker_redirect_t redir_data;
 
+    /* The timestamp when this thread was started */
+    time_t started;
 
 } openli_sip_worker_t;
 
@@ -165,13 +167,13 @@ void destroy_redirected_message(redirected_sip_message_t *msg);
 int handle_sip_redirection_reject(openli_sip_worker_t *sipworker,
         char *callid, uint8_t rejector);
 int handle_sip_redirection_over(openli_sip_worker_t *sipworker,
-        char *callid, uint8_t ender);
+        char *callid);
 int handle_sip_redirection_claim(openli_sip_worker_t *sipworker,
         char *callid, uint8_t claimer);
 int handle_sip_redirection_packet(openli_sip_worker_t *sipworker,
         redirected_sip_message_t *msg);
 int handle_sip_redirection_purge(openli_sip_worker_t *sipworker,
-        char *callid, uint8_t purger);
+        char *callid);
 int conclude_redirected_sip_call(openli_sip_worker_t *sipworker, char *callid);
 void purge_redirected_sip_calls(openli_sip_worker_t *sipworker);
 

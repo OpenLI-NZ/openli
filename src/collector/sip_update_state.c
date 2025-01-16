@@ -34,6 +34,8 @@
 #include "util.h"
 #include "location.h"
 
+#define SIP_REDIRECT_GRACE_PERIOD 5
+
 static openli_sip_identity_t *sipid_matches_target(libtrace_list_t *targets,
         openli_sip_identity_t *sipid) {
 
@@ -1163,7 +1165,6 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             goto sipgiveup;
         }
     } else if (sip_is_invite(sipworker->sipparser)) {
-        fprintf(stderr, "INVITE: %s %u\n", callid, sipworker->workerid);
         get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
         populate_sdp_identifier(sipworker->sipparser, &sdpo,
                 sipworker->debug.log_bad_sip, callid);
@@ -1195,14 +1196,35 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             }
             goto sipgiveup;
         }
-    } else if (sipworker->sipworker_threads > 1) {
-        /* TODO don't redirect if the collector has just started up
+    } else if (sipworker->sipworker_threads > 1 && pkt_cnt > 0) {
+        /* Don't redirect if the collector has just started up
          * as we'll most likely start capturing in the middle of a bunch
          * of ongoing SIP sessions and it is a waste of time to redirect
          * them all.
          */
-        fprintf(stderr, "Redirection required: %s %u\n", callid,
-                sipworker->workerid);
+        struct timeval tv;
+        int i;
+        tv.tv_sec = 0;
+
+        pthread_rwlock_rdlock(sipworker->shared_mutex);
+        if (sipworker->shared->disable_sip_redirect) {
+            pthread_rwlock_unlock(sipworker->shared_mutex);
+            goto sipgiveup;
+        }
+        pthread_rwlock_unlock(sipworker->shared_mutex);
+
+        for (i = 0; i < pkt_cnt; i++) {
+            if (pkts[i] == NULL) {
+                continue;
+            }
+            tv = trace_get_timeval(pkts[i]);
+            break;
+        }
+
+        if (tv.tv_sec == 0 || tv.tv_sec - sipworker->started <
+                SIP_REDIRECT_GRACE_PERIOD) {
+            goto sipgiveup;
+        }
 
         redirect_sip_worker_packets(sipworker, callid, pkts, pkt_cnt);
     }

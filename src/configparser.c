@@ -1393,6 +1393,15 @@ static int global_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value,
+                    "SIPdisableredirect") == 0) {
+
+       glob->sharedinfo.disable_sip_redirect =
+                check_onoff((char *)value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
                     "maskimapcreds") == 0) {
 
        glob->mask_imap_creds = check_onoff((char *)value->data.scalar.value);

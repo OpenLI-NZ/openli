@@ -169,6 +169,7 @@ typedef struct collector_identity {
 
     uint8_t cisco_noradius;
     uint8_t trust_sip_from;
+    uint8_t disable_sip_redirect;
 
 } collector_identity_t;
 

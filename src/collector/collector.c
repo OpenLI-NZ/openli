@@ -1762,6 +1762,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->configfile = NULL;
     glob->sharedinfo.provisionerip = NULL;
     glob->sharedinfo.provisionerport = NULL;
+    glob->sharedinfo.disable_sip_redirect = 0;
     glob->alumirrors = NULL;
     glob->jmirrors = NULL;
     glob->ciscomirrors = NULL;
@@ -1870,6 +1871,9 @@ static collector_global_t *parse_global_config(char *configfile) {
     if (glob->sharedinfo.trust_sip_from) {
         logger(LOG_INFO, "Allowing SIP From: URIs to be used for target identification");
     }
+
+    logger(LOG_INFO, "Redirection of packets between SIP threads is %s",
+            glob->sharedinfo.disable_sip_redirect ? "disabled": "allowed");
 
     if (glob->mask_imap_creds) {
         logger(LOG_INFO, "Email interception: rewriting IMAP auth credentials to avoid leaking passwords to agencies");
@@ -2040,6 +2044,8 @@ static int reload_collector_config(collector_global_t *glob,
 
     glob->sharedinfo.cisco_noradius = newstate.sharedinfo.cisco_noradius;
     glob->sharedinfo.trust_sip_from = newstate.sharedinfo.trust_sip_from;
+    glob->sharedinfo.disable_sip_redirect =
+            newstate.sharedinfo.disable_sip_redirect;
 
     pthread_rwlock_unlock(&(glob->config_mutex));
 

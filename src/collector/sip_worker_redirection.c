@@ -94,8 +94,6 @@ int handle_sip_redirection_claim(openli_sip_worker_t *sipworker,
 
     /* The claimant now has exclusive rights to the call */
     rd->redir_mask = (1 << claimer);
-    fprintf(stderr, "DEVDEBUG: callid %s has been claimed by %u (%d)\n",
-            callid, claimer, sipworker->workerid);
     return 1;
 }
 
@@ -119,14 +117,12 @@ int handle_sip_redirection_reject(openli_sip_worker_t *sipworker,
 
     /* The claimant has refused the call */
     rd->redir_mask &= (~(1 << rejector));
-    fprintf(stderr, "DEVDEBUG: callid %s has been rejected by %u (%d)\n",
-            callid, rejector, sipworker->workerid);
 
     return 1;
 }
 
 int handle_sip_redirection_over(openli_sip_worker_t *sipworker,
-        char *callid, uint8_t ender) {
+        char *callid) {
 
     Word_t *pval, rc;
     sip_saved_redirection_t *rd;
@@ -144,15 +140,13 @@ int handle_sip_redirection_over(openli_sip_worker_t *sipworker,
     rd = (sip_saved_redirection_t *)(*pval);
     /* delete the call ID from the map */
     JSLD(rc, sipworker->redir_data.redirections, (uint8_t *)callid);
-    fprintf(stderr, "DEVDEBUG: callid %s has been ended by %u (%d)\n",
-            callid, ender, sipworker->workerid);
     free(rd->callid);
     free(rd);
     return 1;
 }
 
 int handle_sip_redirection_purge(openli_sip_worker_t *sipworker,
-        char *callid, uint8_t purger) {
+        char *callid) {
 
     Word_t *pval, rc;
     sip_saved_redirection_t *rd;
@@ -168,8 +162,6 @@ int handle_sip_redirection_purge(openli_sip_worker_t *sipworker,
 
     rd = (sip_saved_redirection_t *)(*pval);
     JSLD(rc, sipworker->redir_data.recvd_redirections, (uint8_t *)callid);
-    fprintf(stderr, "DEVDEBUG: callid %s has been purged by %u (%d, state was %u)\n",
-            callid, purger, sipworker->workerid, rd->receive_status);
     free(rd->callid);
     free(rd);
     return 1;
@@ -286,8 +278,6 @@ int conclude_redirected_sip_call(openli_sip_worker_t *sipworker, char *callid) {
     rd = (sip_saved_redirection_t *)(*pval);
 
     JSLD(rc, sipworker->redir_data.recvd_redirections, (uint8_t *)callid);
-    fprintf(stderr, "DEVDEBUG: callid %s has been concluded by %d, state was %u\n",
-            callid, sipworker->workerid, rd->receive_status);
 
     /* send an OVER message so the worker that was redirecting this call knows
      * they can safely remove their redirection state for this call ID */
@@ -311,12 +301,9 @@ void purge_redirected_sip_calls(openli_sip_worker_t *sipworker) {
     callid[0] = '\0';
     JSLF(pval, sipworker->redir_data.redirections, callid);
 
-    printf("purge_redirected...\n");
     while (pval) {
         rd = (sip_saved_redirection_t *)(*pval);
 
-        printf("rd: callid %s, redir_mask: %lu, last_packet: %lu  vs %lu\n",
-                callid, rd->redir_mask, rd->last_packet, tv.tv_sec);
         if (rd->redir_mask != 0) {
             /* a worker has claimed this, or at least not all workers have
              * rejected it */
@@ -416,8 +403,6 @@ int redirect_sip_worker_packets(openli_sip_worker_t *sipworker,
              */
             destroy_redirected_message(&msg);
         } else {
-            fprintf(stderr, "DEVDEBUG: redirected SIP packet for %s to %d\n",
-                    callid, i);
             success ++;
         }
     }
