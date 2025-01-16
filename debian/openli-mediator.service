@@ -1,6 +1,7 @@
 [Unit]
 Description=OpenLI mediator daemon
 After=network.target
+Wants=rabbitmq-server.service
 
 [Service]
 Type=forking
