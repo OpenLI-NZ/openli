@@ -1,6 +1,7 @@
 [Unit]
 Description=OpenLI provisioner daemon
 Documentation=http://github.com/OpenLI-NZ/openli/wiki
+After=network.target
 
 [Service]
 User=openli

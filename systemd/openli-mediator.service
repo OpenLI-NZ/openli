@@ -1,6 +1,8 @@
 [Unit]
 Description=OpenLI mediator daemon
 Documentation=http://github.com/OpenLI-NZ/openli/wiki
+After=network.target
+Wants=rabbitmq-server.service
 
 [Service]
 User=openli
