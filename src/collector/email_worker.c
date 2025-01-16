@@ -1473,10 +1473,10 @@ void *start_email_worker_thread(void *arg) {
     state->zmq_fwdsocks = calloc(state->fwd_threads, sizeof(void *));
 
     init_zmq_socket_array(state->zmq_pubsocks, state->tracker_threads,
-            "inproc://openlipub", state->zmq_ctxt);
+            "inproc://openlipub", state->zmq_ctxt, -1);
 
     init_zmq_socket_array(state->zmq_fwdsocks, state->fwd_threads,
-            "inproc://openliforwardercontrol_sync", state->zmq_ctxt);
+            "inproc://openliforwardercontrol_sync", state->zmq_ctxt, -1);
 
     state->zmq_ii_sock = zmq_socket(state->zmq_ctxt, ZMQ_PULL);
     snprintf(sockname, 256, "inproc://openliemailcontrol_sync-%d",

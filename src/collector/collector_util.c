@@ -32,15 +32,29 @@
 #include <string.h>
 
 int init_zmq_socket_array(void **zmq_socks, int sockcount,
-        const char *basename, void *zmq_ctxt) {
+        const char *basename, void *zmq_ctxt, int sendtimeo) {
 
     int i;
     char sockname[256];
     int ret = 0;
 
     for (i = 0; i < sockcount; i++) {
+
         zmq_socks[i] = zmq_socket(zmq_ctxt, ZMQ_PUSH);
         snprintf(sockname, 256, "%s-%d", basename, i);
+        if (sendtimeo >= 0) {
+            if (zmq_setsockopt(zmq_socks[i], ZMQ_SNDTIMEO, &sendtimeo,
+                        sizeof(sendtimeo)) != 0) {
+                ret = -1;
+                logger(LOG_INFO,
+                        "OpenLI: failed to configure send timeout for publishing zmq %s: %s",
+                       sockname, strerror(errno));
+                zmq_close(zmq_socks[i]);
+                zmq_socks[i] = NULL;
+                continue;
+            }
+        }
+
         if (zmq_connect(zmq_socks[i], sockname) < 0) {
             ret = -1;
             logger(LOG_INFO,

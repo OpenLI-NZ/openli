@@ -104,19 +104,19 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     }
 
     init_zmq_socket_array(sync->zmq_fwdctrlsocks, sync->forwardcount,
-            "inproc://openliforwardercontrol_sync", glob->zmq_ctxt);
+            "inproc://openliforwardercontrol_sync", glob->zmq_ctxt, -1);
 
     init_zmq_socket_array(sync->zmq_emailsocks, sync->emailcount,
-            "inproc://openliemailcontrol_sync", glob->zmq_ctxt);
+            "inproc://openliemailcontrol_sync", glob->zmq_ctxt, -1);
 
     init_zmq_socket_array(sync->zmq_gtpsocks, sync->gtpcount,
-            "inproc://openligtpcontrol_sync", glob->zmq_ctxt);
+            "inproc://openligtpcontrol_sync", glob->zmq_ctxt, -1);
 
     init_zmq_socket_array(sync->zmq_sipsocks, sync->sipcount,
-            "inproc://openlisipcontrol_sync", glob->zmq_ctxt);
+            "inproc://openlisipcontrol_sync", glob->zmq_ctxt, -1);
 
     init_zmq_socket_array(sync->zmq_pubsocks, sync->pubsockcount,
-            "inproc://openlipub", glob->zmq_ctxt);
+            "inproc://openlipub", glob->zmq_ctxt, -1);
 
     return sync;
 

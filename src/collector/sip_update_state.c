@@ -34,6 +34,8 @@
 #include "util.h"
 #include "location.h"
 
+#define SIP_REDIRECT_GRACE_PERIOD 5
+
 static openli_sip_identity_t *sipid_matches_target(libtrace_list_t *targets,
         openli_sip_identity_t *sipid) {
 
@@ -837,7 +839,7 @@ static int extract_media_streams_from_sdp(rtpstreaminf_t *thisrtp,
 
 static int process_sip_invite(openli_sip_worker_t *sipworker, char *callid,
         openli_export_recv_t *irimsg, libtrace_packet_t **pkts, int pkt_cnt,
-        openli_location_t *locptr, int loc_cnt) {
+        openli_location_t *locptr, int loc_cnt, sip_sdp_identifier_t *sdpo) {
 
 
     voipintercept_t *vint, *tmp;
@@ -868,7 +870,7 @@ static int process_sip_invite(openli_sip_worker_t *sipworker, char *callid,
         if (sipworker->sipparser->badsip) {
             break;
         }
-        thisrtp = match_call_to_intercept(sipworker, vint, callid, NULL,
+        thisrtp = match_call_to_intercept(sipworker, vint, callid, sdpo,
                 &iritype, &cin, trust_sip_from, &tv, &all_identities);
         if (thisrtp == NULL) {
             continue;
@@ -1094,14 +1096,22 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
 
     }
 
+    if (iritype == ETSILI_IRI_END) {
+    /* If another worker has redirected SIP to us for this call, let them
+     * know that it is over so they can remove it from their redirection
+     * map.
+     */
+        conclude_redirected_sip_call(sipworker, callid);
+    }
+
+
     if (sipworker->sipparser->badsip) {
         return -1;
     }
     return exportcount;
 }
 
-static inline int lookup_sip_callid(openli_sip_worker_t *sipworker,
-        char *callid) {
+int lookup_sip_callid(openli_sip_worker_t *sipworker, char *callid) {
 
     voipcinmap_t *lookup;
 
@@ -1144,12 +1154,8 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
         goto sipgiveup;
     }
 
-    get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
-
-    populate_sdp_identifier(sipworker->sipparser, &sdpo,
-            sipworker->debug.log_bad_sip, callid);
-
     if (sip_is_message(sipworker->sipparser)) {
+        get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
         if (( ret = process_sip_message(sipworker, callid, irimsg, pkts,
                         pkt_cnt, locptr, loc_cnt)) < 0) {
             iserr = 1;
@@ -1159,8 +1165,11 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             goto sipgiveup;
         }
     } else if (sip_is_invite(sipworker->sipparser)) {
+        get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
+        populate_sdp_identifier(sipworker->sipparser, &sdpo,
+                sipworker->debug.log_bad_sip, callid);
         if (( ret = process_sip_invite(sipworker, callid, irimsg, pkts,
-                        pkt_cnt, locptr, loc_cnt)) < 0) {
+                        pkt_cnt, locptr, loc_cnt, &sdpo)) < 0) {
             iserr = 1;
             if (sipworker->debug.log_bad_sip) {
                 logger(LOG_INFO, "OpenLI: error in SIP worker thread %d while processing INVITE message", sipworker->workerid);
@@ -1168,6 +1177,7 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             goto sipgiveup;
         }
     } else if (sip_is_register(sipworker->sipparser)) {
+        get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
         if (( ret = process_sip_register(sipworker, callid, irimsg, pkts,
                         pkt_cnt, locptr, loc_cnt)) < 0) {
             iserr = 1;
@@ -1177,7 +1187,7 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             goto sipgiveup;
         }
     } else if (lookup_sip_callid(sipworker, callid) != 0) {
-        /* TODO */
+        get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
         if (( ret = process_sip_other(sipworker, callid, irimsg, pkts,
                         pkt_cnt, locptr, loc_cnt)) < 0) {
             iserr = 1;
@@ -1186,6 +1196,37 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             }
             goto sipgiveup;
         }
+    } else if (sipworker->sipworker_threads > 1 && pkt_cnt > 0) {
+        /* Don't redirect if the collector has just started up
+         * as we'll most likely start capturing in the middle of a bunch
+         * of ongoing SIP sessions and it is a waste of time to redirect
+         * them all.
+         */
+        struct timeval tv;
+        int i;
+        tv.tv_sec = 0;
+
+        pthread_rwlock_rdlock(sipworker->shared_mutex);
+        if (sipworker->shared->disable_sip_redirect) {
+            pthread_rwlock_unlock(sipworker->shared_mutex);
+            goto sipgiveup;
+        }
+        pthread_rwlock_unlock(sipworker->shared_mutex);
+
+        for (i = 0; i < pkt_cnt; i++) {
+            if (pkts[i] == NULL) {
+                continue;
+            }
+            tv = trace_get_timeval(pkts[i]);
+            break;
+        }
+
+        if (tv.tv_sec == 0 || tv.tv_sec - sipworker->started <
+                SIP_REDIRECT_GRACE_PERIOD) {
+            goto sipgiveup;
+        }
+
+        redirect_sip_worker_packets(sipworker, callid, pkts, pkt_cnt);
     }
 
 sipgiveup:

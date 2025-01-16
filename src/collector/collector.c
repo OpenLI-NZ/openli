@@ -1762,6 +1762,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->configfile = NULL;
     glob->sharedinfo.provisionerip = NULL;
     glob->sharedinfo.provisionerport = NULL;
+    glob->sharedinfo.disable_sip_redirect = 0;
     glob->alumirrors = NULL;
     glob->jmirrors = NULL;
     glob->ciscomirrors = NULL;
@@ -1870,6 +1871,9 @@ static collector_global_t *parse_global_config(char *configfile) {
     if (glob->sharedinfo.trust_sip_from) {
         logger(LOG_INFO, "Allowing SIP From: URIs to be used for target identification");
     }
+
+    logger(LOG_INFO, "Redirection of packets between SIP threads is %s",
+            glob->sharedinfo.disable_sip_redirect ? "disabled": "allowed");
 
     if (glob->mask_imap_creds) {
         logger(LOG_INFO, "Email interception: rewriting IMAP auth credentials to avoid leaking passwords to agencies");
@@ -2040,6 +2044,8 @@ static int reload_collector_config(collector_global_t *glob,
 
     glob->sharedinfo.cisco_noradius = newstate.sharedinfo.cisco_noradius;
     glob->sharedinfo.trust_sip_from = newstate.sharedinfo.trust_sip_from;
+    glob->sharedinfo.disable_sip_redirect =
+            newstate.sharedinfo.disable_sip_redirect;
 
     pthread_rwlock_unlock(&(glob->config_mutex));
 
@@ -2211,10 +2217,13 @@ static int init_sip_worker_thread(openli_sip_worker_t *sipworker,
     pthread_mutex_init(&(sipworker->col_queue_mutex), NULL);
     sipworker->zmq_ii_sock = NULL;
     sipworker->zmq_pubsocks = NULL;
+    sipworker->zmq_redirect_insock = NULL;
     sipworker->zmq_fwdsocks = NULL;
     sipworker->zmq_colthread_recvsock = NULL;
+    sipworker->zmq_redirect_outsocks = NULL;
     sipworker->tracker_threads = glob->seqtracker_threads;
     sipworker->forwarding_threads = glob->forwarding_threads;
+    sipworker->sipworker_threads = glob->sip_threads;
     sipworker->voipintercepts = NULL;
     sipworker->knowncallids = NULL;
     sipworker->ignore_sdpo_matches = glob->ignore_sdpo_matches;

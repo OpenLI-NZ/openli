@@ -30,7 +30,7 @@
 #include "export_buffer.h"
 
 int init_zmq_socket_array(void **zmq_socks, int sockcount,
-        const char *basename, void *zmq_ctxt);
+        const char *basename, void *zmq_ctxt, int sendtimeo);
 void clear_zmq_socket_array(void **zmq_socks, int sockcount);
 int send_halt_message_to_zmq_socket_array(void **zmq_socks, int sockcount,
 		halt_info_t *haltinfo);

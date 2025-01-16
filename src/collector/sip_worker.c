@@ -86,16 +86,25 @@ static void destroy_sip_worker_thread(openli_sip_worker_t *sipworker) {
         zmq_close(sipworker->zmq_ii_sock);
     }
 
+    if (sipworker->zmq_redirect_insock) {
+        zmq_close(sipworker->zmq_redirect_insock);
+    }
+
     clear_zmq_socket_array(sipworker->zmq_pubsocks, sipworker->tracker_threads);
     clear_zmq_socket_array(sipworker->zmq_fwdsocks,
             sipworker->forwarding_threads);
+    clear_zmq_socket_array(sipworker->zmq_redirect_outsocks,
+            sipworker->sipworker_threads);
 
     if (sipworker->haltinfo) {
-	pthread_mutex_lock(&(sipworker->haltinfo->mutex));
-	sipworker->haltinfo->halted ++;
-	pthread_cond_signal(&(sipworker->haltinfo->cond));
-	pthread_mutex_unlock(&(sipworker->haltinfo->mutex));
+        pthread_mutex_lock(&(sipworker->haltinfo->mutex));
+        sipworker->haltinfo->halted ++;
+        pthread_cond_signal(&(sipworker->haltinfo->cond));
+        pthread_mutex_unlock(&(sipworker->haltinfo->mutex));
     }
+
+    clear_redirection_map(&(sipworker->redir_data.redirections));
+    clear_redirection_map(&(sipworker->redir_data.recvd_redirections));
 
     /* Don't destroy the col_queue_mutex here -- let the main collector thread
      * handle that.
@@ -110,12 +119,42 @@ static int setup_zmq_sockets(openli_sip_worker_t *sipworker) {
             sizeof(void *));
     sipworker->zmq_fwdsocks = calloc(sipworker->forwarding_threads,
             sizeof(void *));
+    sipworker->zmq_redirect_outsocks = calloc(sipworker->sipworker_threads,
+            sizeof(void *));
 
     init_zmq_socket_array(sipworker->zmq_pubsocks, sipworker->tracker_threads,
-            "inproc://openlipub", sipworker->zmq_ctxt);
+            "inproc://openlipub", sipworker->zmq_ctxt, -1);
+    init_zmq_socket_array(sipworker->zmq_redirect_outsocks,
+            sipworker->sipworker_threads,
+            "inproc://openlisipredirect", sipworker->zmq_ctxt, 1000);
     init_zmq_socket_array(sipworker->zmq_fwdsocks,
             sipworker->forwarding_threads,
-            "inproc://openliforwardercontrol_sync", sipworker->zmq_ctxt);
+            "inproc://openliforwardercontrol_sync", sipworker->zmq_ctxt, -1);
+
+    /* don't need to redirect to ourselves... */
+    if (sipworker->zmq_redirect_outsocks[sipworker->workerid]) {
+        zmq_close(sipworker->zmq_redirect_outsocks[sipworker->workerid]);
+        sipworker->zmq_redirect_outsocks[sipworker->workerid] = NULL;
+    }
+
+    sipworker->zmq_redirect_insock = zmq_socket(sipworker->zmq_ctxt, ZMQ_PULL);
+    snprintf(sockname, 256, "inproc://openlisipredirect-%d",
+            sipworker->workerid);
+    if (zmq_bind(sipworker->zmq_redirect_insock, sockname) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: SIP processing thread %d failed to bind to redirect recv ZMQ: %s",
+                sipworker->workerid, strerror(errno));
+        return -1;
+    }
+
+    if (zmq_setsockopt(sipworker->zmq_redirect_insock, ZMQ_LINGER, &zero,
+                sizeof(zero)) != 0) {
+        logger(LOG_INFO,
+                "OpenLI: SIP processing thread %d failed to configure redirect recv ZMQ: %s",
+                sipworker->workerid, strerror(errno));
+        return -1;
+    }
+
 
     sipworker->zmq_ii_sock = zmq_socket(sipworker->zmq_ctxt, ZMQ_PULL);
     snprintf(sockname, 256, "inproc://openlisipcontrol_sync-%d",
@@ -163,7 +202,7 @@ static size_t setup_pollset(openli_sip_worker_t *sipworker,
     size_t topoll_req, i;
     sync_epoll_t *syncev, *tmp;
 
-    topoll_req = 3 + HASH_CNT(hh, sipworker->timeouts);
+    topoll_req = 4 + HASH_CNT(hh, sipworker->timeouts);
     if (topoll_req > *topoll_size) {
         free(*topoll);
         free(*expiring);
@@ -183,7 +222,10 @@ static size_t setup_pollset(openli_sip_worker_t *sipworker,
     (*topoll)[2].fd = timerfd;
     (*topoll)[2].events = ZMQ_POLLIN;
 
-    i = 3;
+    (*topoll)[3].socket = sipworker->zmq_redirect_insock;
+    (*topoll)[3].events = ZMQ_POLLIN;
+
+    i = 4;
     HASH_ITER(hh, sipworker->timeouts, syncev, tmp) {
         (*topoll)[i].socket = NULL;
         (*topoll)[i].fd = syncev->fd;
@@ -1186,7 +1228,7 @@ static int sip_worker_process_sync_thread_message(
         }
 
         if (msg->type == OPENLI_EXPORT_HALT) {
-	    sipworker->haltinfo = (halt_info_t *)(msg->data.haltinfo);
+	        sipworker->haltinfo = (halt_info_t *)(msg->data.haltinfo);
             free(msg);
             return -1;
         }
@@ -1241,6 +1283,67 @@ static int sip_worker_process_packets(openli_sip_worker_t *sipworker) {
     return 0;
 }
 
+static int sip_worker_receive_redirect(openli_sip_worker_t *sipworker) {
+    redirected_sip_message_t msg;
+    int rc, r;
+
+    do {
+        rc = zmq_recv(sipworker->zmq_redirect_insock, &msg, sizeof(msg),
+                ZMQ_DONTWAIT);
+        if (rc < 0) {
+            if (errno == EAGAIN) {
+                return 0;
+            }
+            logger(LOG_INFO,
+                    "OpenLI: error while receiving redirection message in SIP worker thread %d: %s",
+                    sipworker->workerid, strerror(errno));
+            return -1;
+        }
+
+        switch (msg.message_type) {
+            case REDIRECTED_SIP_PACKET:
+                if ((r = handle_sip_redirection_packet(sipworker, &msg)) < 0) {
+                    return -1;
+                }
+                if (r != 0) {
+                    uint32_t i;
+                    for (i = 0; i < msg.pkt_cnt; i++) {
+                        process_received_sip_packet(sipworker, msg.packets[i]);
+                        msg.packets[i] = NULL;
+                    }
+                }
+
+                break;
+            case REDIRECTED_SIP_CLAIM:
+                if (handle_sip_redirection_claim(sipworker, msg.callid,
+                            msg.sender) < 0) {
+                    return -1;
+                }
+                break;
+            case REDIRECTED_SIP_REJECTED:
+                if (handle_sip_redirection_reject(sipworker, msg.callid,
+                            msg.sender) < 0) {
+                    return -1;
+                }
+                break;
+            case REDIRECTED_SIP_OVER:
+                if (handle_sip_redirection_over(sipworker, msg.callid) < 0) {
+                    return -1;
+                }
+                break;
+            case REDIRECTED_SIP_PURGE:
+                if (handle_sip_redirection_purge(sipworker, msg.callid) < 0) {
+                    return -1;
+                }
+                break;
+        }
+        destroy_redirected_message(&msg);
+
+    } while (rc > 0);
+
+    return 0;
+}
+
 static void sip_worker_main(openli_sip_worker_t *sipworker) {
 
     sync_epoll_t purgetimer;
@@ -1281,7 +1384,7 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
         /* halt RTP streams for calls that have been over long enough --
          * topoll[3 .. N]
          */
-        for (i = 3; i < topoll_cnt; i++) {
+        for (i = 4; i < topoll_cnt; i++) {
             if (topoll[i].revents & ZMQ_POLLIN) {
                 halt_expired_rtpstream(sipworker, expiringstreams[i]);
             }
@@ -1315,12 +1418,28 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
             close(topoll[2].fd);
 
             purge_old_sms_sessions(sipworker);
+
+            /* also purge any "redirected to other worker" calls that have
+             * not been claimed and have been idle for some time
+             */
+            purge_redirected_sip_calls(sipworker);
+
             /* reset the timer */
             purgetimer.fdtype = 0;
             purgetimer.fd = timerfd_create(CLOCK_MONOTONIC, 0);
             timerfd_settime(purgetimer.fd, 0, &its, NULL);
             topoll[2].fd = purgetimer.fd;
         }
+
+        if (topoll[3].revents & ZMQ_POLLIN) {
+            x = sip_worker_receive_redirect(sipworker);
+            if (x < 0) {
+                break;
+            }
+
+            topoll[3].revents = 0;
+        }
+
     }
     free(topoll);
     free(expiringstreams);
@@ -1394,6 +1513,10 @@ void *start_sip_worker_thread(void *arg) {
     openli_sip_worker_t *sipworker = (openli_sip_worker_t *)arg;
     int x;
     openli_state_update_t recvd;
+    struct timeval tv;
+
+    sipworker->redir_data.redirections = NULL;
+    sipworker->redir_data.recvd_redirections = NULL;
 
     logger(LOG_INFO, "OpenLI: starting SIP processing thread %d",
             sipworker->workerid);
@@ -1401,6 +1524,8 @@ void *start_sip_worker_thread(void *arg) {
         goto haltsipworker;
     }
 
+    gettimeofday(&tv, NULL);
+    sipworker->started = tv.tv_sec;
     sip_worker_main(sipworker);
 
     do {
