@@ -80,6 +80,7 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/collector_util.c collector/collector_util.h \
                 collector/sip_worker_redirection.c \
 				collector/sip_worker_redirection.h \
+				collector/x2x3_ingest.c collector/x2x3_ingest.h \
                 $(PLUGIN_SRCS)
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 

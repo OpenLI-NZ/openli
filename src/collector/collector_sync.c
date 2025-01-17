@@ -57,6 +57,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
     sync->glob = &(glob->syncip);
     sync->allusers = NULL;
+    sync->x2x3_queues = NULL;
     sync->ipintercepts = NULL;
     sync->knownvoips = NULL;
     sync->userintercepts = NULL;
@@ -147,6 +148,7 @@ void clean_sync_data(collector_sync_t *sync) {
     ip_to_session_t *iter, *tmp;
     default_radius_user_t *raditer, *radtmp;
     halt_info_t haltinfo;
+    x_input_sync_t *xpush, *xtmp;
 
     if (sync->instruct_fd != -1) {
 	    close(sync->instruct_fd);
@@ -235,12 +237,24 @@ void clean_sync_data(collector_sync_t *sync) {
             sync->zmq_colsock = NULL;
         }
 
-	HALT_THREADS(sync->zmq_sipsocks, sync->sipcount);
-	HALT_THREADS(sync->zmq_emailsocks, sync->emailcount);
-	HALT_THREADS(sync->zmq_gtpsocks, sync->gtpcount);
-	HALT_THREADS(sync->zmq_pubsocks, sync->pubsockcount);
-	HALT_THREADS(sync->zmq_fwdctrlsocks, sync->forwardcount);
-	break;
+        HASH_ITER(hh, sync->x2x3_queues, xpush, xtmp) {
+            if (xpush->zmq_socket) {
+                HALT_THREADS(&(xpush->zmq_socket), 1);
+                zmq_close(xpush->zmq_socket);
+            }
+            HASH_DELETE(hh, sync->x2x3_queues, xpush);
+            if (xpush->identifier) {
+                free(xpush->identifier);
+            }
+            free(xpush);
+        }
+
+        HALT_THREADS(sync->zmq_sipsocks, sync->sipcount);
+        HALT_THREADS(sync->zmq_emailsocks, sync->emailcount);
+        HALT_THREADS(sync->zmq_gtpsocks, sync->gtpcount);
+        HALT_THREADS(sync->zmq_pubsocks, sync->pubsockcount);
+        HALT_THREADS(sync->zmq_fwdctrlsocks, sync->forwardcount);
+        break;
     }
 
     pthread_mutex_destroy(&(haltinfo.mutex));
@@ -2291,6 +2305,60 @@ endupdate:
     }
 
     return 1;
+}
+
+int add_x2x3_to_sync(collector_sync_t *sync, char *identifier) {
+    x_input_sync_t *found;
+    char sockname[1024];
+    int hwm = 1000;
+
+    HASH_FIND(hh, sync->x2x3_queues, identifier, strlen(identifier), found);
+    if (found) {
+        /* we already have a PUSH ZMQ for this identifier */
+        return 0;
+    }
+
+    snprintf(sockname, 1024, "inproc://openlix2x3_sync-%s", identifier);
+
+    found = calloc(1, sizeof(x_input_sync_t));
+    found->identifier = strdup(identifier);
+    found->zmq_socket = zmq_socket(sync->glob->zmq_ctxt, ZMQ_PUSH);
+    if (zmq_setsockopt(found->zmq_socket, ZMQ_SNDHWM, &hwm, sizeof(hwm)) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error while configuring control ZMQ for X2/X3 %s: %s",
+                identifier, strerror(errno));
+        goto x2x3setup_fail;
+    }
+    if (zmq_connect(found->zmq_socket, sockname) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error when connecting to control ZMQ for X2/X3 %s: %s",
+                identifier, strerror(errno));
+        goto x2x3setup_fail;
+    }
+    HASH_ADD_KEYPTR(hh, sync->x2x3_queues, found->identifier,
+            strlen(found->identifier), found);
+    return 1;
+
+x2x3setup_fail:
+    zmq_close(found->zmq_socket);
+    free(found->identifier);
+    free(found);
+    return -1;
+}
+
+void remove_x2x3_from_sync(collector_sync_t *sync, char *identifier) {
+    x_input_sync_t *found;
+
+    HASH_FIND(hh, sync->x2x3_queues, identifier, strlen(identifier), found);
+    if (found) {
+        /* we don't have a PUSH ZMQ for this identifier */
+        return;
+    }
+
+    HASH_DELETE(hh, sync->x2x3_queues, found);
+    zmq_close(found->zmq_socket);
+    free(found->identifier);
+    free(found);
 }
 
 static int set_upcoming_timer(collector_sync_t *sync) {
