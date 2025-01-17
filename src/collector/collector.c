@@ -1238,6 +1238,33 @@ processdone:
     return pkt;
 }
 
+static int start_xinput(collector_global_t *glob, x_input_t *xinp) {
+
+    char name[1024];
+
+    if (xinp->running == 1) {
+        return 1;
+    }
+
+    snprintf(name, 1024, "x2x3input-%s", xinp->identifier);
+
+    xinp->zmq_ctxt = glob->zmq_ctxt;
+    xinp->forwarding_threads = glob->forwarding_threads;
+    xinp->zmq_ctrlsock = NULL;
+    xinp->zmq_fwdsocks = NULL;
+    xinp->haltinfo = NULL;
+
+    pthread_create(&(xinp->threadid), NULL,
+            start_x2x3_ingest_thread, (void *)xinp);
+    pthread_setname_np(xinp->threadid, name);
+
+    logger(LOG_INFO,
+            "OpenLI: collector has started X2/X3 ingestor %s.",
+            xinp->identifier);
+    xinp->running = 1;
+    return 1;
+}
+
 static int start_input(collector_global_t *glob, colinput_t *inp,
         int todaemon, char *progname) {
 
@@ -1331,6 +1358,20 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
             inp->uri, inp->threadcount);
     inp->running = 1;
     return 1;
+}
+
+static void reload_x2x3_inputs(collector_global_t *glob,
+        collector_global_t *newstate) {
+
+    /* TODO */
+    x_input_t *oldinp, *newinp, *tmp;
+
+    HASH_ITER(hh, glob->x_inputs, oldinp, tmp) {
+        HASH_FIND(hh, newstate->inputs, oldinp->identifier,
+                strlen(oldinp->identifier), newinp);
+
+    }
+
 }
 
 static void reload_inputs(collector_global_t *glob,
@@ -1463,6 +1504,7 @@ static inline void init_sync_thread_data(collector_global_t *glob,
         sync_thread_global_t *sup) {
 
     sup->threadid = 0;
+    sup->zmq_ctxt = glob->zmq_ctxt;
     pthread_mutex_init(&(sup->mutex), NULL);
     sup->collector_queues = NULL;
     sup->epollevs = NULL;
@@ -1573,12 +1615,18 @@ static void destroy_collector_state(collector_global_t *glob) {
 
 static void clear_global_config(collector_global_t *glob) {
     colinput_t *inp, *tmp;
+    x_input_t *xinp, *xtmp;
 
     HASH_ITER(hh, glob->inputs, inp, tmp) {
         HASH_DELETE(hh, glob->inputs, inp);
         clear_input(inp);
         free(inp);
     }
+
+    HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
+        HASH_DELETE(hh, glob->x_inputs, xinp);
+        destroy_x_input(xinp);
+    };
 
     if (glob->sipdebugfile) {
         free(glob->sipdebugfile);
@@ -1742,6 +1790,7 @@ static int prepare_collector_glob(collector_global_t *glob) {
 static void init_collector_global(collector_global_t *glob) {
     glob->zmq_ctxt = NULL;
     glob->inputs = NULL;
+    glob->x_inputs = NULL;
     glob->seqtracker_threads = 1;
     glob->forwarding_threads = 1;
     glob->encoding_threads = 2;
@@ -2000,6 +2049,7 @@ static int reload_collector_config(collector_global_t *glob,
 
     glob->stat_frequency = newstate.stat_frequency;
     reload_inputs(glob, &newstate);
+    reload_x2x3_inputs(glob, &newstate);
 
     /* Just update these, regardless of whether they've changed. It's more
      * effort to check for a change than it is worth and there are no
@@ -2252,6 +2302,7 @@ int main(int argc, char *argv[]) {
     int i, ret, todaemon;
     colinput_t *inp, *tmp;
     char name[1024];
+    x_input_t *xinp, *xtmp;
 
     todaemon = 0;
     while (1) {
@@ -2538,9 +2589,16 @@ int main(int argc, char *argv[]) {
         }
 
         pthread_rwlock_rdlock(&(glob->config_mutex));
+        HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
+            if (start_xinput(glob, xinp) == 0) {
+                logger(LOG_INFO, "OpenLI: failed to start X2-X3 input %s",
+                        xinp->identifier);
+            }
+        }
+
         HASH_ITER(hh, glob->inputs, inp, tmp) {
             if (start_input(glob, inp, todaemon, argv[0]) == 0) {
-                logger(LOG_INFO, "OpenLI: failed to start input %s\n",
+                logger(LOG_INFO, "OpenLI: failed to start input %s",
                         inp->uri);
             }
         }
@@ -2576,6 +2634,13 @@ int main(int argc, char *argv[]) {
             free(stat);
         }
     }
+
+    HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
+        pthread_join(xinp->threadid, NULL);
+        HASH_DELETE(hh, glob->x_inputs, xinp);
+        destroy_x_input(xinp);
+    }
+
     pthread_rwlock_unlock(&(glob->config_mutex));
 
     if (glob->zmq_encoder_ctrl) {

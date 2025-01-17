@@ -39,6 +39,7 @@
 #include "logger.h"
 #include "agency.h"
 #include "coreserver.h"
+#include "collector/x2x3_ingest.h"
 
 uint64_t nextid = 0;
 
@@ -84,6 +85,82 @@ static int check_onoff(char *value) {
     }
 
     return -1;
+}
+
+static int parse_x2x3_ingestion_config(collector_global_t *glob,
+        yaml_document_t *doc, yaml_node_t *ingests) {
+
+    yaml_node_item_t *item;
+    for (item = ingests->data.sequence.items.start;
+            item != ingests->data.sequence.items.top; item ++) {
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+        x_input_t *inp, *found;
+        yaml_node_pair_t *pair;
+        char identifier[512];
+
+        inp = calloc(1, sizeof(x_input_t));
+        for (pair = node->data.mapping.pairs.start;
+                pair < node->data.mapping.pairs.top; pair ++) {
+            yaml_node_t *key, *value;
+
+            key = yaml_document_get_node(doc, pair->key);
+            value = yaml_document_get_node(doc, pair->value);
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "listenaddr") == 0) {
+                SET_CONFIG_STRING_OPTION(inp->listenaddr, value);
+            }
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "listenport") == 0) {
+                SET_CONFIG_STRING_OPTION(inp->listenport, value);
+            }
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "certfile") == 0) {
+                SET_CONFIG_STRING_OPTION(inp->certfile, value);
+            }
+        }
+
+        if (inp->certfile == NULL) {
+            logger(LOG_INFO,
+                    "OpenLI: X2-X3 input must include a 'certfile' parameter");
+            destroy_x_input(inp);
+            continue;
+        }
+
+        if (inp->listenaddr == NULL) {
+            logger(LOG_INFO,
+                    "OpenLI: X2-X3 input must include a 'listenaddr' parameter");
+            destroy_x_input(inp);
+            continue;
+        }
+
+        if (inp->listenport == NULL) {
+            logger(LOG_INFO,
+                    "OpenLI: X2-X3 input must include a 'listenport' parameter");
+            destroy_x_input(inp);
+            continue;
+        }
+
+        snprintf(identifier, 512, "%s-%s", inp->listenaddr, inp->listenport);
+        HASH_FIND(hh, glob->x_inputs, identifier, strlen(identifier), found);
+        if (found) {
+            logger(LOG_INFO,
+                    "OpenLI: X2-X3 input '%s' has been defined multiple times",
+                    identifier);
+            destroy_x_input(inp);
+        } else {
+            inp->identifier = strdup(identifier);
+            HASH_ADD_KEYPTR(hh, glob->x_inputs, inp->identifier,
+                    strlen(inp->identifier), inp);
+        };
+    }
+    return 0;
 }
 
 static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
@@ -1216,6 +1293,14 @@ static int global_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SEQUENCE_NODE &&
             strcasecmp((char *)key->data.scalar.value, "inputs") == 0) {
         if (parse_input_config(glob, doc, value) == -1) {
+            return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcasecmp((char *)key->data.scalar.value, "x2x3inputs") == 0) {
+        if (parse_x2x3_ingestion_config(glob, doc, value) == -1) {
             return -1;
         }
     }
