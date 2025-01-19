@@ -404,6 +404,7 @@ static int gtp_worker_process_sync_thread_message(openli_gtp_worker_t *worker) {
         }
 
         if (msg->type == OPENLI_EXPORT_HALT) {
+	    worker->haltinfo = msg->data.haltinfo;
             free(msg);
             return -1;
         }
@@ -915,7 +916,7 @@ void *gtp_thread_begin(void *arg) {
 
     worker->zmq_pubsocks = calloc(worker->tracker_threads, sizeof(void *));
     init_zmq_socket_array(worker->zmq_pubsocks, worker->tracker_threads,
-            "inproc://openlipub", worker->zmq_ctxt);
+            "inproc://openlipub", worker->zmq_ctxt, -1);
 
     worker->zmq_ii_sock = zmq_socket(worker->zmq_ctxt, ZMQ_PULL);
     snprintf(sockname, 256, "inproc://openligtpcontrol_sync-%d",
@@ -981,6 +982,13 @@ haltgtpworker:
         destroy_gtp_access_plugin(worker->gtpplugin);
     }
 
+    if (worker->haltinfo) {
+	pthread_mutex_lock(&(worker->haltinfo->mutex));
+	worker->haltinfo->halted ++;
+	pthread_cond_signal(&(worker->haltinfo->cond));
+	pthread_mutex_unlock(&(worker->haltinfo->mutex));
+    }
+
     pthread_exit(NULL);
 }
 
@@ -1009,6 +1017,7 @@ int start_gtp_worker_thread(openli_gtp_worker_t *worker, int id,
     worker->userintercepts = NULL;
     worker->gtpplugin = get_gtp_access_plugin();
     worker->freegenerics = create_etsili_generic_freelist(1);
+    worker->haltinfo = NULL;
 
     pthread_create(&(worker->threadid), NULL, gtp_thread_begin,
             (void *)worker);

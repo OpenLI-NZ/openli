@@ -147,7 +147,8 @@ wandder_encoded_result_t *encode_epsiri_body(wandder_encoder_t *encoder,
     if (p) {
         ENC_CSEQUENCE(encoder, 1);       // pdp-address
         ENC_CSEQUENCE(encoder, 1);       // datanodeaddress
-        encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
+        encode_ipaddress(encoder, precomputed,
+			(etsili_ipaddress_t *)(p->itemptr));
         END_ENCODED_SEQUENCE(encoder, 2);
     }
 
@@ -188,7 +189,8 @@ wandder_encoded_result_t *encode_epsiri_body(wandder_encoder_t *encoder,
     if (p) {
         ENC_CSEQUENCE(encoder, 24);
         ENC_CSEQUENCE(encoder, 1);  // ipAddress
-        encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
+        encode_ipaddress(encoder, precomputed,
+			(etsili_ipaddress_t *)(p->itemptr));
         END_ENCODED_SEQUENCE(encoder, 2);
     }
 
@@ -212,7 +214,8 @@ wandder_encoded_result_t *encode_epsiri_body(wandder_encoder_t *encoder,
     if (p) {
         ENC_CSEQUENCE(encoder, 1);
         ENC_CSEQUENCE(encoder, 5);
-        encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
+        encode_ipaddress(encoder, precomputed,
+			(etsili_ipaddress_t *)(p->itemptr));
         END_ENCODED_SEQUENCE(encoder, 2);
     }
 

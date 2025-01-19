@@ -39,7 +39,6 @@
 #include "etsili_core.h"
 #include "collector.h"
 #include "collector_sync.h"
-#include "collector_sync_voip.h"
 #include "collector_publish.h"
 #include "configparser.h"
 #include "logger.h"
@@ -57,7 +56,6 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 			malloc(sizeof(collector_sync_t));
 
     sync->glob = &(glob->syncip);
-    sync->intersyncq = &(glob->intersyncq);
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
     sync->knownvoips = NULL;
@@ -85,14 +83,14 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->pubsockcount = glob->seqtracker_threads;
     sync->forwardcount = glob->forwarding_threads;
     sync->emailcount = glob->email_threads;
-    sync->smscount = glob->sms_threads;
+    sync->sipcount = glob->sip_threads;
     sync->gtpcount = glob->gtp_threads;
 
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
     sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
     sync->zmq_emailsocks = calloc(sync->emailcount, sizeof(void *));
     sync->zmq_gtpsocks = calloc(sync->gtpcount, sizeof(void *));
-    sync->zmq_smssocks = calloc(sync->smscount, sizeof(void *));
+    sync->zmq_sipsocks = calloc(sync->sipcount, sizeof(void *));
 
     sync->ctx = glob->sslconf.ctx;
     sync->ssl = NULL;
@@ -106,23 +104,41 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     }
 
     init_zmq_socket_array(sync->zmq_fwdctrlsocks, sync->forwardcount,
-            "inproc://openliforwardercontrol_sync", glob->zmq_ctxt);
+            "inproc://openliforwardercontrol_sync", glob->zmq_ctxt, -1);
 
     init_zmq_socket_array(sync->zmq_emailsocks, sync->emailcount,
-            "inproc://openliemailcontrol_sync", glob->zmq_ctxt);
+            "inproc://openliemailcontrol_sync", glob->zmq_ctxt, -1);
 
     init_zmq_socket_array(sync->zmq_gtpsocks, sync->gtpcount,
-            "inproc://openligtpcontrol_sync", glob->zmq_ctxt);
+            "inproc://openligtpcontrol_sync", glob->zmq_ctxt, -1);
 
-    init_zmq_socket_array(sync->zmq_smssocks, sync->smscount,
-            "inproc://openlismscontrol_sync", glob->zmq_ctxt);
+    init_zmq_socket_array(sync->zmq_sipsocks, sync->sipcount,
+            "inproc://openlisipcontrol_sync", glob->zmq_ctxt, -1);
 
     init_zmq_socket_array(sync->zmq_pubsocks, sync->pubsockcount,
-            "inproc://openlipub", glob->zmq_ctxt);
+            "inproc://openlipub", glob->zmq_ctxt, -1);
 
     return sync;
 
 }
+
+#define HALT_THREADS(socks, count) \
+    pthread_mutex_lock(&(haltinfo.mutex)); \
+    haltinfo.halted = 0; \
+    haltfails = send_halt_message_to_zmq_socket_array( \
+        socks, count, &haltinfo); \
+    \
+    if (haltfails) { \
+        haltattempts ++; \
+        usleep(250000); \
+        continue; \
+    } \
+    \
+    while (count > 0 && haltinfo.halted < count) { \
+        pthread_cond_wait(&(haltinfo.cond), &(haltinfo.mutex)); \
+    } \
+    pthread_mutex_unlock(&(haltinfo.mutex));
+
 
 void clean_sync_data(collector_sync_t *sync) {
 
@@ -130,11 +146,12 @@ void clean_sync_data(collector_sync_t *sync) {
     int haltattempts = 0, haltfails = 0;
     ip_to_session_t *iter, *tmp;
     default_radius_user_t *raditer, *radtmp;
+    halt_info_t haltinfo;
 
-	if (sync->instruct_fd != -1) {
-		close(sync->instruct_fd);
-        sync->instruct_fd = -1;
-	}
+    if (sync->instruct_fd != -1) {
+	    close(sync->instruct_fd);
+	    sync->instruct_fd = -1;
+    }
 
     HASH_ITER(hh, sync->activeips, iter, tmp) {
         HASH_DELETE(hh, sync->activeips, iter);
@@ -188,6 +205,9 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->radiusplugin = NULL;
     sync->activeips = NULL;
 
+    pthread_mutex_init(&(haltinfo.mutex), NULL);
+    pthread_cond_init(&(haltinfo.cond), NULL);
+
     while (haltattempts < 10) {
         haltfails = 0;
 
@@ -215,26 +235,19 @@ void clean_sync_data(collector_sync_t *sync) {
             sync->zmq_colsock = NULL;
         }
 
-        haltfails += send_halt_message_to_zmq_socket_array(sync->zmq_pubsocks,
-                sync->pubsockcount);
-        haltfails += send_halt_message_to_zmq_socket_array(
-                sync->zmq_fwdctrlsocks, sync->forwardcount);
-        haltfails += send_halt_message_to_zmq_socket_array(
-                sync->zmq_emailsocks, sync->emailcount);
-        haltfails += send_halt_message_to_zmq_socket_array(
-                sync->zmq_gtpsocks, sync->gtpcount);
-        haltfails += send_halt_message_to_zmq_socket_array(
-                sync->zmq_smssocks, sync->smscount);
-
-        if (haltfails == 0) {
-            break;
-        }
-        haltattempts ++;
-        usleep(250000);
+	HALT_THREADS(sync->zmq_sipsocks, sync->sipcount);
+	HALT_THREADS(sync->zmq_emailsocks, sync->emailcount);
+	HALT_THREADS(sync->zmq_gtpsocks, sync->gtpcount);
+	HALT_THREADS(sync->zmq_pubsocks, sync->pubsockcount);
+	HALT_THREADS(sync->zmq_fwdctrlsocks, sync->forwardcount);
+	break;
     }
 
+    pthread_mutex_destroy(&(haltinfo.mutex));
+    pthread_cond_destroy(&(haltinfo.cond));
+
     free(sync->zmq_emailsocks);
-    free(sync->zmq_smssocks);
+    free(sync->zmq_sipsocks);
     free(sync->zmq_gtpsocks);
     free(sync->zmq_pubsocks);
     free(sync->zmq_fwdctrlsocks);
@@ -274,27 +287,6 @@ static int forward_provmsg_to_workers(void **zmq_socks, int sockcount,
 
 }
 
-static int forward_provmsg_to_voipsync(collector_sync_t *sync,
-        uint8_t *provmsg, uint16_t msglen, openli_proto_msgtype_t msgtype) {
-
-    openli_intersync_msg_t topush;
-
-    topush.msgtype = msgtype;
-
-    if (provmsg && msglen > 0) {
-        topush.msgbody = (uint8_t *)malloc(msglen);
-        memcpy(topush.msgbody, provmsg, msglen);
-        topush.msglen = msglen;
-    } else {
-        topush.msgbody = NULL;
-        topush.msglen = 0;
-    }
-
-    libtrace_message_queue_put(sync->intersyncq, &topush);
-    return 1;
-
-}
-
 static inline void push_coreserver_msg(collector_sync_t *sync,
         coreserver_t *cs, uint8_t msgtype) {
 
@@ -313,7 +305,7 @@ static inline void push_coreserver_msg(collector_sync_t *sync,
 
 void sync_thread_publish_reload(collector_sync_t *sync) {
 
-    int i;
+    size_t i;
     openli_export_recv_t *expmsg;
 
     for (i = 0; i < sync->pubsockcount; i++) {
@@ -324,7 +316,6 @@ void sync_thread_publish_reload(collector_sync_t *sync) {
 
         publish_openli_msg(sync->zmq_pubsocks[i], expmsg);
     }
-    forward_provmsg_to_voipsync(sync, NULL, 0, OPENLI_PROTO_CONFIG_RELOADED);
 }
 
 static int export_raw_sync_packet_content(access_plugin_t *p,
@@ -894,7 +885,7 @@ static void push_ipintercept_update_to_threads(collector_sync_t *sync,
 static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
         uint16_t msglen) {
 
-    int i;
+    size_t i;
     openli_mediator_t med;
     openli_export_recv_t *expmsg;
 
@@ -926,7 +917,7 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
 static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
         uint16_t msglen) {
 
-    int i;
+    size_t i;
     openli_mediator_t med;
     openli_export_recv_t *expmsg;
 
@@ -1138,7 +1129,7 @@ static inline void remove_vendormirror_id(collector_sync_t *sync,
 static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
 
     openli_export_recv_t *expmsg;
-    int i;
+    size_t i;
 
     if (!ipint) {
         logger(LOG_INFO,
@@ -1297,7 +1288,7 @@ static int halt_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
 
 void sync_drop_all_mediators(collector_sync_t *sync) {
     openli_export_recv_t *expmsg;
-    int i;
+    size_t i;
 
     for (i = 0; i < sync->forwardcount; i++) {
         expmsg = (openli_export_recv_t *)calloc(1,
@@ -1311,7 +1302,7 @@ void sync_drop_all_mediators(collector_sync_t *sync) {
 
 void sync_reconnect_all_mediators(collector_sync_t *sync) {
     openli_export_recv_t *expmsg;
-    int i;
+    size_t i;
 
     for (i = 0; i < sync->forwardcount; i++) {
         expmsg = (openli_export_recv_t *)calloc(1,
@@ -1640,24 +1631,14 @@ static int recv_from_provisioner(collector_sync_t *sync) {
             case OPENLI_PROTO_MODIFY_VOIPINTERCEPT:
             case OPENLI_PROTO_ANNOUNCE_SIP_TARGET:
             case OPENLI_PROTO_WITHDRAW_SIP_TARGET:
-                ret = forward_provmsg_to_voipsync(sync, provmsg, msglen,
-                        msgtype);
-                if (ret == -1) {
-                    return -1;
-                }
-                ret = forward_provmsg_to_workers(sync->zmq_smssocks,
-                        sync->smscount, provmsg, msglen, msgtype, "SMS");
+                ret = forward_provmsg_to_workers(sync->zmq_sipsocks,
+                        sync->sipcount, provmsg, msglen, msgtype, "SIP");
                 if (ret == -1) {
                     return -1;
                 }
                 break;
             case OPENLI_PROTO_NOMORE_INTERCEPTS:
                 disable_unconfirmed_intercepts(sync);
-                ret = forward_provmsg_to_voipsync(sync, provmsg, msglen,
-                        msgtype);
-                if (ret == -1) {
-                    return -1;
-                }
                 ret = forward_provmsg_to_workers(sync->zmq_emailsocks,
                         sync->emailcount, provmsg, msglen, msgtype, "email");
                 if (ret == -1) {
@@ -1668,8 +1649,8 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 if (ret == -1) {
                     return -1;
                 }
-                ret = forward_provmsg_to_workers(sync->zmq_smssocks,
-                        sync->smscount, provmsg, msglen, msgtype, "SMS");
+                ret = forward_provmsg_to_workers(sync->zmq_sipsocks,
+                        sync->sipcount, provmsg, msglen, msgtype, "SIP");
                 if (ret == -1) {
                     return -1;
                 }
@@ -1815,7 +1796,7 @@ static inline void touch_all_intercepts(ipintercept_t *intlist) {
 void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
 
     openli_export_recv_t *expmsg;
-    int i;
+    size_t i;
 
     destroy_net_buffer(sync->outgoing, NULL);
     destroy_net_buffer(sync->incoming, NULL);
@@ -1840,13 +1821,12 @@ void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
     touch_all_defaultradius(sync->defaultradiususers);
 
     /* Tell other sync thread to flag its intercepts too */
-    forward_provmsg_to_voipsync(sync, NULL, 0, OPENLI_PROTO_DISCONNECT);
     forward_provmsg_to_workers(sync->zmq_emailsocks, sync->emailcount,
             NULL, 0, OPENLI_PROTO_DISCONNECT, "email");
     forward_provmsg_to_workers(sync->zmq_gtpsocks, sync->gtpcount,
             NULL, 0, OPENLI_PROTO_DISCONNECT, "GTP");
-    forward_provmsg_to_workers(sync->zmq_smssocks, sync->smscount,
-            NULL, 0, OPENLI_PROTO_DISCONNECT, "SMS");
+    forward_provmsg_to_workers(sync->zmq_sipsocks, sync->sipcount,
+            NULL, 0, OPENLI_PROTO_DISCONNECT, "SIP");
 
     /* Same with mediators -- keep exporting to them, but flag them to be
      * disconnected if they are not announced after we reconnect. */

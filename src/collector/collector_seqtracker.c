@@ -452,6 +452,7 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
             switch(job->type) {
                 case OPENLI_EXPORT_HALT:
                     halted = 1;
+		    seqdata->haltinfo = job->data.haltinfo;
                     free(job);
                     break;
 
@@ -587,8 +588,17 @@ haltseqtracker:
         free_intercept_state(seqdata, intstate);
     }
 
+    logger(LOG_INFO, "OpenLI: halting sequence tracker %d\n",
+		    seqdata->trackerid);
     zmq_close(seqdata->zmq_recvpublished);
     zmq_close(seqdata->zmq_pushjobsock);
+
+    if (seqdata->haltinfo) {
+	pthread_mutex_lock(&(seqdata->haltinfo->mutex));
+	seqdata->haltinfo->halted ++;
+	pthread_cond_signal(&(seqdata->haltinfo->cond));
+	pthread_mutex_unlock(&(seqdata->haltinfo->mutex));
+    }
     pthread_exit(NULL);
 }
 

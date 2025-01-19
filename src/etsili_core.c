@@ -227,7 +227,7 @@ static inline void encode_ipcc_body(wandder_encoder_t *encoder,
 }
 
 static inline void encode_ipiri_id(wandder_encoder_t *encoder,
-        ipiri_id_t *iriid) {
+        wandder_encode_job_t *precomputed, ipiri_id_t *iriid) {
 
     if (iriid->type == IPIRI_ID_PRINTABLE) {
         wandder_encode_next(encoder, WANDDER_TAG_UTF8STR,
@@ -238,7 +238,7 @@ static inline void encode_ipiri_id(wandder_encoder_t *encoder,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, iriid->content.mac, 6);
     } else if (iriid->type == IPIRI_ID_IPADDR) {
         ENC_CSEQUENCE(encoder, 2);
-        encode_ipaddress(encoder, iriid->content.ip);
+        encode_ipaddress(encoder, precomputed, iriid->content.ip);
         END_ENCODED_SEQUENCE(encoder, 1);
     }
 
@@ -259,13 +259,13 @@ static inline void encode_email_recipients(wandder_encoder_t *encoder,
 }
 
 static inline void encode_other_targets(wandder_encoder_t *encoder,
-        etsili_other_targets_t *others) {
+        wandder_encode_job_t *precomputed, etsili_other_targets_t *others) {
 
     int i;
 
     ENC_CSEQUENCE(encoder, 0);
     for (i = 0; i < others->count; i++) {
-        encode_ipaddress(encoder, &(others->targets[i]));
+        encode_ipaddress(encoder, precomputed, &(others->targets[i]));
     }
     END_ENCODED_SEQUENCE(encoder, 1);
 
@@ -448,7 +448,8 @@ wandder_encoded_result_t *encode_umtsiri_body(wandder_encoder_t *encoder,
     if (p) {
         ENC_CSEQUENCE(encoder, 1);       // pdp-address
         ENC_CSEQUENCE(encoder, 1);       // datanodeaddress
-        encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
+        encode_ipaddress(encoder, precomputed,
+			(etsili_ipaddress_t *)(p->itemptr));
         END_ENCODED_SEQUENCE(encoder, 2);
     }
 
@@ -532,7 +533,8 @@ wandder_encoded_result_t *encode_umtsiri_body(wandder_encoder_t *encoder,
     if (p) {
         ENC_CSEQUENCE(encoder, 1);
         ENC_CSEQUENCE(encoder, 5);
-        encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
+        encode_ipaddress(encoder, precomputed,
+			(etsili_ipaddress_t *)(p->itemptr));
         END_ENCODED_SEQUENCE(encoder, 2);
     } else {
         logger(LOG_INFO,
@@ -581,7 +583,8 @@ wandder_encoded_result_t *encode_emailiri_body(wandder_encoder_t *encoder,
             case EMAILIRI_CONTENTS_CLIENT_ADDRESS:
             case EMAILIRI_CONTENTS_SERVER_ADDRESS:
                 ENC_CSEQUENCE(encoder, p->itemnum);
-                encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
+                encode_ipaddress(encoder, precomputed,
+				(etsili_ipaddress_t *)(p->itemptr));
                 END_ENCODED_SEQUENCE(encoder, 1);
                 break;
             case EMAILIRI_CONTENTS_CLIENT_PORT:
@@ -671,13 +674,15 @@ wandder_encoded_result_t *encode_ipiri_body(wandder_encoder_t *encoder,
             case IPIRI_CONTENTS_POP_IPADDRESS:
             case IPIRI_CONTENTS_ADDITIONAL_IPADDRESS:
                 ENC_CSEQUENCE(encoder, p->itemnum);
-                encode_ipaddress(encoder, (etsili_ipaddress_t *)(p->itemptr));
+                encode_ipaddress(encoder, precomputed,
+				(etsili_ipaddress_t *)(p->itemptr));
                 END_ENCODED_SEQUENCE(encoder, 1);
                 break;
 
             case IPIRI_CONTENTS_POP_IDENTIFIER:
                 ENC_CSEQUENCE(encoder, p->itemnum);
-                encode_ipiri_id(encoder, (ipiri_id_t *)(p->itemptr));
+                encode_ipiri_id(encoder, precomputed,
+				(ipiri_id_t *)(p->itemptr));
                 break;
 
             case IPIRI_CONTENTS_NATIONAL_IPIRI_PARAMETERS:
@@ -686,7 +691,7 @@ wandder_encoded_result_t *encode_ipiri_body(wandder_encoder_t *encoder,
 
             case IPIRI_CONTENTS_OTHER_TARGET_IDENTIFIERS:
                 ENC_CSEQUENCE(encoder, p->itemnum);
-                encode_other_targets(encoder,
+                encode_other_targets(encoder, precomputed,
                         (etsili_other_targets_t *)(p->itemptr));
                 END_ENCODED_SEQUENCE(encoder, 1);
                 break;
@@ -1085,6 +1090,9 @@ void etsili_preencode_static_fields(
     int tvclass = 1;
     uint32_t dirin = 0, dirout = 1, dirunk = 2;
     uint32_t noencrypt = 1, aes_192_cbc = 3;
+    uint32_t iptype_4 = 0, iptype_6 = 1;
+    uint32_t ipassign_static = 1, ipassign_dynamic = 2, ipassign_unk = 3;
+    uint32_t ippfx_64 = 64, ippfx_48 = 48, ippfx_32 = 32;
 
     memset(pendarray, 0, sizeof(wandder_encode_job_t) * OPENLI_PREENCODE_LAST);
 
@@ -1316,6 +1324,56 @@ void etsili_preencode_static_fields(
     p->identifier = 0;
     p->encodeas = WANDDER_TAG_ENUM;
     wandder_encode_preencoded_value(p, &aes_192_cbc, sizeof(aes_192_cbc));
+
+    p = &(pendarray[OPENLI_PREENCODE_IPTYPE_IPV4]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 1;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_preencoded_value(p, &iptype_4, sizeof(iptype_4));
+
+    p = &(pendarray[OPENLI_PREENCODE_IPTYPE_IPV6]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 1;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_preencoded_value(p, &iptype_6, sizeof(iptype_6));
+
+    p = &(pendarray[OPENLI_PREENCODE_IPASSIGN_STATIC]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 3;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_preencoded_value(p, &ipassign_static,
+		    sizeof(ipassign_static));
+
+    p = &(pendarray[OPENLI_PREENCODE_IPASSIGN_DYNAMIC]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 3;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_preencoded_value(p, &ipassign_dynamic,
+		    sizeof(ipassign_dynamic));
+
+    p = &(pendarray[OPENLI_PREENCODE_IPASSIGN_UNKNOWN]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 3;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_preencoded_value(p, &ipassign_unk, sizeof(ipassign_unk));
+
+    p = &(pendarray[OPENLI_PREENCODE_IPV6_PREFIX_64]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 4;
+    p->encodeas = WANDDER_TAG_INTEGER;
+    wandder_encode_preencoded_value(p, &ippfx_64, sizeof(ippfx_64));
+
+    p = &(pendarray[OPENLI_PREENCODE_IPV6_PREFIX_48]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 4;
+    p->encodeas = WANDDER_TAG_INTEGER;
+    wandder_encode_preencoded_value(p, &ippfx_48, sizeof(ippfx_48));
+
+    p = &(pendarray[OPENLI_PREENCODE_IPV4_NETMASK_32]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 5;
+    p->encodeas = WANDDER_TAG_OCTETSTRING;
+    wandder_encode_preencoded_value(p, &ippfx_32, sizeof(ippfx_32));
 
 }
 

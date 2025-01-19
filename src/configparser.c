@@ -109,6 +109,7 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         inp->hasher_apply = OPENLI_HASHER_BIDIR;
         inp->filterstring = NULL;
         inp->filter = NULL;
+	inp->coremap = NULL;
 
         /* Mappings describe the parameters for each input */
         for (pair = node->data.mapping.pairs.start;
@@ -128,6 +129,13 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
                     value->type == YAML_SCALAR_NODE &&
                     strcasecmp((char *)key->data.scalar.value, "filter") == 0) {
                 SET_CONFIG_STRING_OPTION(inp->filterstring, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+			    "coremap") == 0) {
+                SET_CONFIG_STRING_OPTION(inp->coremap, value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -1315,10 +1323,12 @@ static int global_parser(void *arg, yaml_document_t *doc,
             key, value, "forwarding", 1);
     parse_col_thread_count(&(glob->email_threads), "emailthreads",
             key, value, "email worker", 0);
-    parse_col_thread_count(&(glob->sms_threads), "smsthreads",
-            key, value, "SMS worker", 0);
     parse_col_thread_count(&(glob->gtp_threads), "gtpthreads",
             key, value, "GTP worker", 0);
+    parse_col_thread_count(&(glob->sip_threads), "smsthreads",
+            key, value, "SIP worker", 1);
+    parse_col_thread_count(&(glob->sip_threads), "sipthreads",
+            key, value, "SIP worker", 1);
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
@@ -1377,6 +1387,15 @@ static int global_parser(void *arg, yaml_document_t *doc,
                     "SIPallowfromident") == 0) {
 
        glob->sharedinfo.trust_sip_from =
+                check_onoff((char *)value->data.scalar.value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
+                    "SIPdisableredirect") == 0) {
+
+       glob->sharedinfo.disable_sip_redirect =
                 check_onoff((char *)value->data.scalar.value);
     }
 

@@ -85,7 +85,8 @@ typedef struct encoder_job {
     char *encryptkey;
 } PACKED openli_encoding_job_t;
 
-void encode_ipaddress(wandder_encoder_t *encoder, etsili_ipaddress_t *addr);
+void encode_ipaddress(wandder_encoder_t *encoder,
+		wandder_encode_job_t *precomputed, etsili_ipaddress_t *addr);
 
 int create_encrypted_message_body(wandder_encoder_t *encoder,
                 encrypt_encode_state_t *encrypt,

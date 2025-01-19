@@ -169,6 +169,7 @@ typedef struct collector_identity {
 
     uint8_t cisco_noradius;
     uint8_t trust_sip_from;
+    uint8_t disable_sip_redirect;
 
 } collector_identity_t;
 
@@ -199,7 +200,7 @@ typedef struct seqtracker_thread_data {
     exporter_intercept_state_t *intercepts;
     removed_intercept_t *removedints;
     uint8_t encoding_method;
-
+    halt_info_t *haltinfo;
 
 } seqtracker_thread_data_t;
 
@@ -217,6 +218,7 @@ typedef struct forwarding_thread_data {
     pthread_t threadid;
     int forwardid;
     int encoders;
+    int encoders_over;
     int colthreads;
 
     void *zmq_ctrlsock;
@@ -245,6 +247,7 @@ typedef struct forwarding_thread_data {
     amqp_socket_t *ampq_sock;
     uint8_t ampq_blocked;
     openli_RMQ_config_t RMQ_conf;
+    halt_info_t *haltinfo;
 
 } forwarding_thread_data_t;
 

@@ -1,3 +1,34 @@
+openli (1.1.11-1) unstable; urgency=medium
+
+  * SIP: fix crash when processing an INVITE where the SDP address is
+    missing but the SDP username is present.
+  * SIP: add ability to extract target usernames from tel: URIs.
+  * RADIUS: fix memory leak when RADIUS sessions have multiple usable
+    identities.
+  * Collector: add ability to use multiple threads for SIP parsing.
+  * Collector: merged capabilities of SMS threads into the new SIP parsing
+    threads. Standalone SMS interception threads now no longer exist.
+  * Collector: add configuration option to specify a coremap for an
+    individual input.
+  * Collector: improved packet processing thread performance by avoiding
+    fragment offset calculations if the packet is clearly not a fragment.
+  * Collector: improved encoding performance by pre-encoding certain
+    members of the IPAddress structure that are likely to occur frequently.
+  * Collector: improved TCP reassembly performance by replacing regular
+    sorting of TCP segments with an in-order insertion.
+  * SIP: improved SIP parsing performance by avoiding CSeq extraction from
+    responses when there are no relevant unresponded requests.
+  * Collector: improved TCP reassembly performance by automatically skipping
+    ACKs without data.
+  * Collector: fix deadlock on exit problems caused when threads exited in
+    a bad order.
+  * SIP: fix crashes when a TCP stream had to be reset due to packet loss.
+  * Collector: improved packet processing performance by skipping the
+    static IP intercept code path for IP packets in situations where there
+    were no static IP intercepts configured.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Sat, 11 Jan 2025 15:32:04 +1300
+
 openli (1.1.10-2) unstable; urgency=medium
 
   * Add explicit version to libwandder2 dependency to force upgraded

@@ -222,9 +222,8 @@ The basic option keys are:
 * gtpthreads        -- set the number of threads to use for processing GTP
                        traffic (defaults to 1, can be set to zero to disable
                        GTP session tracking).
-* smsthreads        -- set the number of threads to use for intercepting SMS
-                       messages (defaults to 1, can be set to zero to disable
-                       SMS interception).
+* sipthreads        -- set the number of threads to use for processing SIP
+                       traffic (defaults to 1, cannot be set to zero).
 * emailthreads      -- set the number of threads to use for processing email
                        traffic (defaults to 1, can be set to zero to disable
                        email interception).

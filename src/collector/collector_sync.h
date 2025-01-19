@@ -47,17 +47,17 @@ typedef struct colsync_data {
     collector_identity_t *info;
     pthread_rwlock_t *info_mutex;
 
-    int pubsockcount;
-    int forwardcount;
-    int emailcount;
-    int smscount;
-    int gtpcount;
+    size_t pubsockcount;
+    size_t forwardcount;
+    size_t emailcount;
+    size_t gtpcount;
+    size_t sipcount;
 
     void **zmq_pubsocks;
     void **zmq_fwdctrlsocks;
     void **zmq_emailsocks;
     void **zmq_gtpsocks;
-    void **zmq_smssocks;
+    void **zmq_sipsocks;
     void *zmq_colsock;
 
     internet_user_t *allusers;

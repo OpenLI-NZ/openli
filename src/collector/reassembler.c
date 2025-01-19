@@ -329,7 +329,7 @@ tcp_reassemble_stream_t *create_new_tcp_reassemble_stream(
     stream = (tcp_reassemble_stream_t *)calloc(1, sizeof(tcp_reassemble_stream_t));
     stream->segments = NULL;
     stream->expectedseqno = synseq + 1;
-    stream->sorted = 0;
+    stream->sorted = 1;
     stream->streamid = calloc(1, sizeof(tcp_streamid_t));
     memcpy(stream->streamid, streamid, sizeof(tcp_streamid_t));
     stream->lastts = 0;
@@ -339,6 +339,33 @@ tcp_reassemble_stream_t *create_new_tcp_reassemble_stream(
     stream->pkt_cnt = 0;
 
     return stream;
+}
+
+static void reset_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
+        uint32_t newseqno) {
+
+    /* Remove any existing saved segments, packets, etc. for a
+     * stream and blank slate it to the current sequence number.
+     */
+    tcp_reass_segment_t *iter, *tmp;
+    int i;
+
+    HASH_ITER(hh, stream->segments, iter, tmp) {
+        HASH_DELETE(hh, stream->segments, iter);
+        free(iter->content);
+        free(iter);
+    }
+
+    if (stream->packets) {
+        for (i = 0; i < stream->pkt_cnt; i++) {
+            if (stream->packets[i]) {
+                trace_destroy_packet(stream->packets[i]);
+            }
+        }
+    }
+    stream->pkt_cnt = 0;
+    stream->expectedseqno = newseqno;
+    stream->lastts = 0;
 }
 
 void destroy_tcp_reassemble_stream(tcp_reassemble_stream_t *stream) {
@@ -600,7 +627,7 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
          * to be reassembled.
          */
         if (seq_cmp(seqno, stream->expectedseqno + TCP_STREAM_MAX_GAP) >= 0) {
-            stream->established = TCP_STATE_LOSS;
+            reset_tcp_reassemble_stream(stream, seqno);
         }
 
 
@@ -642,9 +669,9 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
         stream->pkt_cnt ++;
     }
 
-    HASH_ADD_KEYPTR(hh, stream->segments, &(seg->seqno), sizeof(seg->seqno),
-            seg);
-    stream->sorted = 0;
+    HASH_ADD_KEYPTR_INORDER(hh, stream->segments, &(seg->seqno),
+		    sizeof(seg->seqno), seg, tcpseg_sort);
+    //stream->sorted = 0;
     return 0;
 }
 

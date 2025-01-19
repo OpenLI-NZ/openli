@@ -103,7 +103,7 @@ typedef struct openli_sip_parser {
     uint16_t sipoffset;
     uint16_t siplen;
     tcp_reassemble_stream_t *thisstream;
-
+    uint8_t badsip;
 } openli_sip_parser_t;
 
 int add_sip_packet_to_parser(openli_sip_parser_t **parser,
@@ -154,9 +154,12 @@ int sip_is_register(openli_sip_parser_t *parser);
 int sip_is_200ok(openli_sip_parser_t *parser);
 int sip_is_183sessprog(openli_sip_parser_t *parser);
 int sip_is_180ringing(openli_sip_parser_t *parser);
+int sip_is_message(openli_sip_parser_t *parser);
 int sip_is_bye(openli_sip_parser_t *parser);
 int sip_is_cancel(openli_sip_parser_t *parser);
 
+int get_sip_identity_by_header_name(openli_sip_parser_t *parser,
+        openli_sip_identity_t *sipid, const char *header);
 int extract_sip_identities(openli_sip_parser_t *parser,
         openli_sip_identity_set_t *idset, uint8_t log_error);
 openli_sip_identity_t *match_sip_target_against_identities(

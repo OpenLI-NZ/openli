@@ -588,6 +588,7 @@ static inline voipcinmap_t *update_cin_callid_map(voipcinmap_t **cinmap,
     if (newcinmap->shared) {
         newcinmap->shared->refs ++;
     }
+    newcinmap->smsonly = 0;     // TODO fix when we merge with SMS worker
 
     HASH_ADD_KEYPTR(hh_callid, *cinmap, newcinmap->callid,
             strlen(newcinmap->callid), newcinmap);
@@ -1430,7 +1431,7 @@ static int update_sip_state(collector_sync_voip_t *sync,
     }
 
     if (sessuser != NULL) {
-        strncpy(sdpo.username, sessaddr, sizeof(sdpo.username) - 1);
+        strncpy(sdpo.username, sessuser, sizeof(sdpo.username) - 1);
     } else {
         strncpy(sdpo.username, "unknown", sizeof(sdpo.username) - 1);
     }

@@ -156,12 +156,12 @@ static wandder_encoded_result_t *encode_sipiri_body(wandder_encoder_t *encoder,
     jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]); // SIPMessage
     jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_0]); // Src IP
     wandder_encode_next_preencoded(encoder, jobarray, 2);
-    encode_ipaddress(encoder, &encipsrc);
+    encode_ipaddress(encoder, precomputed, &encipsrc);
     END_ENCODED_SEQUENCE(encoder, 1);
 
     jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]); // Dest IP
     wandder_encode_next_preencoded(encoder, jobarray, 1);
-    encode_ipaddress(encoder, &encipdst);
+    encode_ipaddress(encoder, precomputed, &encipdst);
     END_ENCODED_SEQUENCE(encoder, 1);
 
     /* SIP content */
