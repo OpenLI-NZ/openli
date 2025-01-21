@@ -1363,7 +1363,12 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
 static void reload_x2x3_inputs(collector_global_t *glob,
         collector_global_t *newstate) {
 
-    /* TODO */
+    /* TODO same thing as with inputs
+     *  - mark the inputs that are in newstate that are also in old
+     *  - announce removal of any existing inputs that are not in newstate
+     *  - announce any remaining inputs in newstate that were not already
+     *    running
+     */
     x_input_t *oldinp, *newinp, *tmp;
 
     HASH_ITER(hh, glob->x_inputs, oldinp, tmp) {
@@ -2176,6 +2181,7 @@ static void *start_ip_sync_thread(void *params) {
     int ret;
     collector_sync_t *sync = init_sync_data(glob);
     sync_sendq_t *sq;
+    x_input_t *xinp, *xtmp;
 
     /* XXX For early development work, we will read intercept instructions
      * from a config file. Eventually this should be replaced with
@@ -2183,6 +2189,17 @@ static void *start_ip_sync_thread(void *params) {
      */
     if (sync->zmq_colsock == NULL) {
         goto haltsyncthread;
+    }
+
+    HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
+        if (add_x2x3_to_sync(sync, xinp->identifier) < 0) {
+            logger(LOG_INFO, "OpenLI: failed to register X2-X3 input %s with sync thread", xinp->identifier);
+            /*
+             * try to force the thread to die because the sync thread was
+             * our only means of telling the thread to halt normally
+             */
+            pthread_cancel(xinp->threadid);
+        }
     }
 
     while (collector_halt == 0) {

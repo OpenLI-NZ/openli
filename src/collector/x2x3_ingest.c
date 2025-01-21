@@ -127,7 +127,7 @@ static int x2x3_process_sync_thread_message(x_input_t *xinp) {
 void x2x3_ingest_main(x_input_t *xinp) {
 
     zmq_pollitem_t *topoll;
-    size_t topoll_size, topoll_cnt, i;
+    size_t topoll_size, topoll_cnt;
     int rc, x;
 
     topoll = calloc(128, sizeof(zmq_pollitem_t));
