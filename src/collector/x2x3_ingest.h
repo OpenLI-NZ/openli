@@ -70,10 +70,14 @@ typedef struct x_input {
 
     int forwarding_threads;
 
+    /* Shared state used to track when X2/X3 threads have halted */
+    halt_info_t *haltinfo;
+
     UT_hash_handle hh;
 
 } x_input_t;
 
 void destroy_x_input(x_input_t *xinp);
+void *start_x2x3_ingest_thread(void *param);
 
 #endif
