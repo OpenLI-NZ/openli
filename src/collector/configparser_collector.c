@@ -70,19 +70,6 @@ static int parse_x2x3_ingestion_config(collector_global_t *glob,
                             "listenport") == 0) {
                 SET_CONFIG_STRING_OPTION(inp->listenport, value);
             }
-            if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
-                    strcasecmp((char *)key->data.scalar.value,
-                            "certfile") == 0) {
-                SET_CONFIG_STRING_OPTION(inp->certfile, value);
-            }
-        }
-
-        if (inp->certfile == NULL) {
-            logger(LOG_INFO,
-                    "OpenLI: X2-X3 input must include a 'certfile' parameter");
-            destroy_x_input(inp);
-            continue;
         }
 
         if (inp->listenaddr == NULL) {

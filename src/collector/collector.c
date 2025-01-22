@@ -1254,6 +1254,10 @@ static int start_xinput(collector_global_t *glob, x_input_t *xinp) {
     xinp->zmq_fwdsocks = NULL;
     xinp->haltinfo = NULL;
 
+    xinp->reset_listener = 1;
+    xinp->ssl_ctx = glob->sslconf.ctx;
+    pthread_mutex_init(&(xinp->sslmutex), NULL);
+
     pthread_create(&(xinp->threadid), NULL,
             start_x2x3_ingest_thread, (void *)xinp);
     pthread_setname_np(xinp->threadid, name);
@@ -1361,7 +1365,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
 }
 
 static void reload_x2x3_inputs(collector_global_t *glob,
-        collector_global_t *newstate, collector_sync_t *sync) {
+        collector_global_t *newstate, collector_sync_t *sync, int tlschanged) {
 
     /* TODO same thing as with inputs
      *  - mark the inputs that are in newstate that are also in old
@@ -1376,6 +1380,12 @@ static void reload_x2x3_inputs(collector_global_t *glob,
                 strlen(oldinp->identifier), newinp);
         if (newinp) {
             newinp->running = 1;
+            if (tlschanged) {
+                pthread_mutex_lock(&(oldinp->sslmutex));
+                oldinp->ssl_ctx = glob->sslconf.ctx;
+                oldinp->reset_listener = 1;
+                pthread_mutex_unlock(&(oldinp->sslmutex));
+            }
         } else {
             // this input has been removed
             remove_x2x3_from_sync(sync, oldinp->identifier, oldinp->threadid);
@@ -2086,7 +2096,7 @@ static int reload_collector_config(collector_global_t *glob,
 
     glob->stat_frequency = newstate.stat_frequency;
     reload_inputs(glob, &newstate);
-    reload_x2x3_inputs(glob, &newstate, sync);
+    reload_x2x3_inputs(glob, &newstate, sync, tlschanged);
 
     /* Just update these, regardless of whether they've changed. It's more
      * effort to check for a change than it is worth and there are no

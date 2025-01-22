@@ -29,8 +29,19 @@
 
 #include <uthash.h>
 #include <pthread.h>
+#include <openssl/evp.h>
 
 #include "collector_util.h"
+
+typedef struct x_input_client {
+    SSL *ssl;
+    int fd;
+
+    uint8_t *buffer;
+    size_t buffer_size;
+    size_t bufread;
+    size_t bufwrite;
+} x_input_client_t;
 
 typedef struct x_input_sync {
     void *zmq_socket;
@@ -41,14 +52,22 @@ typedef struct x_input_sync {
 
 typedef struct x_input {
 
+    uint8_t running;
+    pthread_t threadid;
+
     char *identifier;
     char *listenaddr;
     char *listenport;
 
-    char *certfile;
-    uint8_t running;
+    SSL_CTX *ssl_ctx;
+    uint8_t reset_listener;
+    pthread_mutex_t sslmutex;
 
-    pthread_t threadid;
+    int listener_fd;
+    x_input_client_t *clients;
+    size_t client_count;
+    size_t client_array_size;
+    size_t dead_clients;
 
     void *zmq_ctxt;
 
