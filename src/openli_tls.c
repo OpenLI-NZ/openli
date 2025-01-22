@@ -83,8 +83,8 @@ static SSL_CTX * ssl_init(const char *cacertfile, const char *certfile,
         return NULL;
     }
 
-    /* Enforce use of TLSv1_2 */
-    SSL_CTX_set_options(ctx, SSL_OP_ALL | SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+    /* Enforce use of TLSv1_3 */
+    SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
 
     if (SSL_CTX_load_verify_locations(ctx, cacertfile, "./") != 1){ //TODO this might want to be changed
         logger(LOG_INFO, "OpenLI: SSL CA cert loading {%s} failed", cacertfile);
