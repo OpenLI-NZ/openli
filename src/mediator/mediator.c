@@ -46,7 +46,7 @@
 #include <amqp.h>
 
 #include "config.h"
-#include "configparser.h"
+#include "configparser_mediator.h"
 #include "logger.h"
 #include "util.h"
 #include "agency.h"

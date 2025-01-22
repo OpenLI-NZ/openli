@@ -40,7 +40,7 @@
 #include "collector.h"
 #include "collector_sync.h"
 #include "collector_publish.h"
-#include "configparser.h"
+#include "configparser_collector.h"
 #include "logger.h"
 #include "intercept.h"
 #include "netcomms.h"
@@ -2310,7 +2310,7 @@ endupdate:
 int add_x2x3_to_sync(collector_sync_t *sync, char *identifier) {
     x_input_sync_t *found;
     char sockname[1024];
-    int hwm = 1000;
+    int hwm = 1000, timeout=1000;
 
     HASH_FIND(hh, sync->x2x3_queues, identifier, strlen(identifier), found);
     if (found) {
@@ -2329,6 +2329,14 @@ int add_x2x3_to_sync(collector_sync_t *sync, char *identifier) {
                 identifier, strerror(errno));
         goto x2x3setup_fail;
     }
+    if (zmq_setsockopt(found->zmq_socket, ZMQ_SNDTIMEO, &timeout,
+                sizeof(timeout)) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error while configuring control ZMQ for X2/X3 %s: %s",
+                identifier, strerror(errno));
+        goto x2x3setup_fail;
+    }
+
     if (zmq_connect(found->zmq_socket, sockname) < 0) {
         logger(LOG_INFO,
                 "OpenLI: error when connecting to control ZMQ for X2/X3 %s: %s",
@@ -2346,13 +2354,28 @@ x2x3setup_fail:
     return -1;
 }
 
-void remove_x2x3_from_sync(collector_sync_t *sync, char *identifier) {
+void remove_x2x3_from_sync(collector_sync_t *sync, char *identifier,
+        pthread_t threadid) {
     x_input_sync_t *found;
+    openli_export_recv_t *msg;
 
     HASH_FIND(hh, sync->x2x3_queues, identifier, strlen(identifier), found);
-    if (found) {
+    if (!found) {
         /* we don't have a PUSH ZMQ for this identifier */
         return;
+    }
+
+    msg = calloc(1, sizeof(openli_export_recv_t));
+    msg->type = OPENLI_EXPORT_HALT;
+    msg->data.haltinfo = NULL;
+
+    if (zmq_send(found->zmq_socket, &msg, sizeof(msg), 0) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: failed to send HALT message to X2/X3 thread %s: %s",
+                found->identifier, strerror(errno));
+        if (threadid != 0) {
+            pthread_cancel(threadid);
+        }
     }
 
     HASH_DELETE(hh, sync->x2x3_queues, found);
