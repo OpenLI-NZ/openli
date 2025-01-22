@@ -43,7 +43,7 @@
 
 #include "logger.h"
 #include "collector.h"
-#include "configparser.h"
+#include "configparser_collector.h"
 #include "collector_sync.h"
 #include "collector_push_messaging.h"
 #include "ipcc.h"
@@ -1361,7 +1361,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
 }
 
 static void reload_x2x3_inputs(collector_global_t *glob,
-        collector_global_t *newstate) {
+        collector_global_t *newstate, collector_sync_t *sync) {
 
     /* TODO same thing as with inputs
      *  - mark the inputs that are in newstate that are also in old
@@ -1372,10 +1372,42 @@ static void reload_x2x3_inputs(collector_global_t *glob,
     x_input_t *oldinp, *newinp, *tmp;
 
     HASH_ITER(hh, glob->x_inputs, oldinp, tmp) {
-        HASH_FIND(hh, newstate->inputs, oldinp->identifier,
+        HASH_FIND(hh, newstate->x_inputs, oldinp->identifier,
                 strlen(oldinp->identifier), newinp);
+        if (newinp) {
+            newinp->running = 1;
+        } else {
+            // this input has been removed
+            remove_x2x3_from_sync(sync, oldinp->identifier, oldinp->threadid);
+            HASH_DELETE(hh, glob->x_inputs, oldinp);
+            if (oldinp->threadid != 0) {
+                pthread_join(oldinp->threadid, NULL);
+            }
+            destroy_x_input(oldinp);
+
+        }
 
     }
+
+    HASH_ITER(hh, newstate->x_inputs, newinp, tmp) {
+        if (newinp->running) {
+            continue;
+        }
+        HASH_DELETE(hh, newstate->x_inputs, newinp);
+        HASH_ADD_KEYPTR(hh, glob->x_inputs, newinp->identifier,
+                strlen(newinp->identifier), newinp);
+        if (add_x2x3_to_sync(sync, newinp->identifier) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: failed to register X2-X3 input %s with sync thread",
+                    newinp->identifier);
+        }
+        if (start_xinput(glob, newinp) == 0) {
+            logger(LOG_INFO,
+                    "OpenLI: failed to start X2-X3 input %s\n",
+                    newinp->identifier);
+        }
+    }
+
 
 }
 
@@ -2054,7 +2086,7 @@ static int reload_collector_config(collector_global_t *glob,
 
     glob->stat_frequency = newstate.stat_frequency;
     reload_inputs(glob, &newstate);
-    reload_x2x3_inputs(glob, &newstate);
+    reload_x2x3_inputs(glob, &newstate, sync);
 
     /* Just update these, regardless of whether they've changed. It's more
      * effort to check for a change than it is worth and there are no
@@ -2198,7 +2230,9 @@ static void *start_ip_sync_thread(void *params) {
              * try to force the thread to die because the sync thread was
              * our only means of telling the thread to halt normally
              */
-            pthread_cancel(xinp->threadid);
+            if (xinp->threadid != 0) {
+                pthread_cancel(xinp->threadid);
+            }
         }
     }
 
@@ -2605,14 +2639,16 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
-        pthread_rwlock_rdlock(&(glob->config_mutex));
+        pthread_rwlock_wrlock(&(glob->config_mutex));
         HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
             if (start_xinput(glob, xinp) == 0) {
                 logger(LOG_INFO, "OpenLI: failed to start X2-X3 input %s",
                         xinp->identifier);
             }
         }
+        pthread_rwlock_unlock(&(glob->config_mutex));
 
+        pthread_rwlock_rdlock(&(glob->config_mutex));
         HASH_ITER(hh, glob->inputs, inp, tmp) {
             if (start_input(glob, inp, todaemon, argv[0]) == 0) {
                 logger(LOG_INFO, "OpenLI: failed to start input %s",

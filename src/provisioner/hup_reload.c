@@ -25,10 +25,10 @@
  */
 
 #include "config.h"
+#include "configparser_provisioner.h"
 #include "provisioner.h"
 #include "logger.h"
 #include "util.h"
-#include "configparser.h"
 #include "updateserver.h"
 #include "intercept_timers.h"
 

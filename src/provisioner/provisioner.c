@@ -40,7 +40,7 @@
 #include <unistd.h>
 #include <assert.h>
 
-#include "configparser.h"
+#include "configparser_provisioner.h"
 #include "logger.h"
 #include "intercept.h"
 #include "provisioner.h"
