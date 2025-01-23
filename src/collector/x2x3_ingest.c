@@ -30,7 +30,9 @@
 #include "collector_publish.h"
 #include "netcomms.h"
 #include "openli_tls.h"
+#include "collector.h"
 
+#include <sys/timerfd.h>
 #include <unistd.h>
 #include <zmq.h>
 
@@ -57,6 +59,40 @@ static int setup_zmq_sockets_for_x2x3(x_input_t *xinp) {
         return -1;
     }
     return 0;
+}
+
+static void purge_dead_clients(x_input_t *xinp) {
+    size_t i, newsize, newcnt;
+
+    x_input_client_t *replace;
+
+    if (xinp->clients == NULL || xinp->client_count == 0) {
+        return;
+    }
+
+    if (xinp->dead_clients < 4) {
+        return;
+    }
+
+    newcnt = 0;
+    newsize = xinp->client_count;
+    replace = calloc(xinp->client_count, sizeof(x_input_client_t));
+
+    for (i = 0; i < xinp->client_count; i++) {
+        if (xinp->clients[i].fd == -1 && xinp->clients[i].ssl == NULL &&
+                xinp->clients[i].buffer == NULL) {
+            continue;
+        }
+
+        memcpy(&replace[newcnt], &(xinp->clients[i]), sizeof(x_input_client_t));
+        newcnt ++;
+    }
+    free(xinp->clients);
+    xinp->clients = replace;
+    xinp->client_count = newcnt;
+    xinp->dead_clients = 0;
+    xinp->client_array_size = newsize;
+
 }
 
 static void tidyup_x2x3_ingest_thread(x_input_t *xinp) {
@@ -102,12 +138,12 @@ static void tidyup_x2x3_ingest_thread(x_input_t *xinp) {
 
 
 static size_t setup_x2x3_pollset(x_input_t *xinp, zmq_pollitem_t **topoll,
-        size_t *topoll_size, size_t *index_map) {
+        size_t *topoll_size, size_t *index_map, int timerfd) {
 
     size_t topoll_req = 0, i, ind;
 
     memset(index_map, 0, sizeof(size_t) * MAX_ZPOLL_X2X3 * 2);
-    topoll_req = 2 + xinp->client_count;
+    topoll_req = (3 + xinp->client_count - xinp->dead_clients);
 
     if (topoll_req > *topoll_size) {
         free(*topoll);
@@ -122,7 +158,11 @@ static size_t setup_x2x3_pollset(x_input_t *xinp, zmq_pollitem_t **topoll,
     (*topoll)[1].fd = xinp->listener_fd;
     (*topoll)[1].events = ZMQ_POLLIN;
 
-    ind = 2;
+    (*topoll)[2].socket = NULL;
+    (*topoll)[2].fd = timerfd;
+    (*topoll)[2].events = ZMQ_POLLIN;
+
+    ind = 3;
 
     for (i = 0; i < xinp->client_count; i++) {
         if (xinp->clients[i].fd < 0) {
@@ -298,6 +338,7 @@ static int receive_client_data(x_input_t *xinp, size_t client_ind) {
     return r;
 
 dropclient:
+    xinp->dead_clients ++;
     SSL_free(client->ssl);
     client->ssl = NULL;
     close(client->fd);
@@ -313,6 +354,8 @@ void x2x3_ingest_main(x_input_t *xinp) {
     size_t topoll_size, topoll_cnt, i;
     int rc, x;
     size_t client_index_map[MAX_ZPOLL_X2X3 * 2];
+    sync_epoll_t clientpurgetimer;
+    struct itimerspec its;
 
     if (create_x2x3_listening_socket(xinp) < 0) {
         logger(LOG_INFO, "OpenLI: failed to create listening socket for X2-X3 input %s, unable to accept connections!", xinp->identifier);
@@ -322,9 +365,18 @@ void x2x3_ingest_main(x_input_t *xinp) {
     topoll = calloc(128, sizeof(zmq_pollitem_t));
     topoll_size = 128;
 
+    its.it_value.tv_sec = 300;
+    its.it_value.tv_nsec = 0;
+    its.it_interval.tv_sec = 0;
+    its.it_interval.tv_nsec = 0;
+
+    clientpurgetimer.fdtype = 0;
+    clientpurgetimer.fd = timerfd_create(CLOCK_MONOTONIC, 0);
+    timerfd_settime(clientpurgetimer.fd, 0, &its, NULL);
+
     while (1) {
         topoll_cnt = setup_x2x3_pollset(xinp, &topoll, &topoll_size,
-                client_index_map);
+                client_index_map, clientpurgetimer.fd);
 
         if (topoll_cnt < 1) {
             break;
@@ -354,12 +406,24 @@ void x2x3_ingest_main(x_input_t *xinp) {
             topoll[1].revents = 0;
         }
 
-        for (i = 2; i < topoll_cnt; i++) {
+        if (topoll[2].revents & ZMQ_POLLIN) {
+            topoll[2].revents = 0;
+            close(topoll[2].fd);
+
+            purge_dead_clients(xinp);
+
+            clientpurgetimer.fdtype = 0;
+            clientpurgetimer.fd = timerfd_create(CLOCK_MONOTONIC, 0);
+            timerfd_settime(clientpurgetimer.fd, 0, &its, NULL);
+        }
+
+        for (i = 3; i < topoll_cnt; i++) {
             if (topoll[i].fd > 0 && topoll[i].revents & ZMQ_POLLIN) {
                 receive_client_data(xinp, client_index_map[i]);
             }
         }
     }
+    close(clientpurgetimer.fd);
     free(topoll);
 }
 
