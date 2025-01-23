@@ -79,13 +79,21 @@ static void convert_commonintercept_to_json(json_object *jobj,
 
     const char *encrypt_str;
     json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
-    json_object *encryptkey;
+    json_object *encryptkey, *xid;
     json_object *starttime, *endtime, *tomediate, *encryption;
+    char uuid[64];
 
     if (common->encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
         encrypt_str = "aes-192-cbc";
     } else {
         encrypt_str = "none";
+    }
+
+    if (!uuid_is_null(common->xid)) {
+        uuid_unparse(common->xid, uuid);
+        xid = json_object_new_string(uuid);
+    } else {
+        xid = NULL;
     }
 
 
@@ -122,6 +130,9 @@ static void convert_commonintercept_to_json(json_object *jobj,
     if (common->toend_time != 0) {
         endtime = json_object_new_int(common->toend_time);
         json_object_object_add(jobj, "endtime", endtime);
+    }
+    if (xid) {
+        json_object_object_add(jobj, "xid", xid);
     }
 
 }
