@@ -381,6 +381,7 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
          sizeof(common.toend_time) + sizeof(common.tomediate) + \
          strlen(common.targetagency) + sizeof(common.destid) + \
          sizeof(common.encrypt) + common.delivcc_len + \
+         (uuid_is_null(common.xid) ? 0 : 36 + 4) + \
          (common.encryptkey ? (strlen(common.encryptkey) + 4) : 0) + (9 * 4))
 
 #define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
@@ -454,6 +455,20 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
             return -1;
         }
     }
+
+    if (!uuid_is_null(common->xid)) {
+        char uuid[64];
+        uuid_unparse(common->xid, uuid);
+        if (strlen(uuid) == 36) {
+            if (push_tlv(nb, OPENLI_PROTO_FIELD_XID, (uint8_t *)uuid, 36) == -1)
+            {
+                return -1;
+            }
+        } else {
+            logger(LOG_INFO, "OpenLI: unable to send UUID '%s' for LIID %s via netcomms because it is too long", uuid, common->liid);
+        }
+    }
+
     return 0;
 }
 
@@ -1530,63 +1545,110 @@ static int decode_tlv(uint8_t *start, uint8_t *end,
         (target)[vallen] = '\0'; \
     } while (0);
 
+static inline void init_decoded_intercept_common(intercept_common_t *common) {
+    common->liid = NULL;
+    common->authcc = NULL;
+    common->delivcc = NULL;
+    common->destid = 0;
+    common->targetagency = NULL;
+    common->liid_len = 0;
+    common->authcc_len = 0;
+    common->delivcc_len = 0;
+    common->tostart_time = 0;
+    common->toend_time = 0;
+    common->tomediate = 0;
+    common->encrypt = 0;
+    common->encryptkey = NULL;
+    common->seqtrackerid = 0;
+    uuid_clear(common->xid);
+
+}
+
+static int assign_intercept_common_fields(intercept_common_t *common,
+        openli_proto_fieldtype_t f, uint8_t *valptr, uint16_t vallen) {
+    char *uuid;
+
+    switch(f) {
+        case OPENLI_PROTO_FIELD_MEDIATORID:
+            common->destid = *((uint32_t *)valptr);
+            break;
+        case OPENLI_PROTO_FIELD_LIID:
+            DECODE_STRING_FIELD(common->liid, valptr, vallen);
+            common->liid_len = vallen;
+            break;
+        case OPENLI_PROTO_FIELD_AUTHCC:
+            DECODE_STRING_FIELD(common->authcc, valptr, vallen);
+            common->authcc_len = vallen;
+            break;
+        case OPENLI_PROTO_FIELD_LEAID:
+            DECODE_STRING_FIELD(common->targetagency, valptr, vallen);
+            break;
+        case OPENLI_PROTO_FIELD_DELIVCC:
+            DECODE_STRING_FIELD(common->delivcc, valptr, vallen);
+            common->delivcc_len = vallen;
+            break;
+        case OPENLI_PROTO_FIELD_INTERCEPT_START_TIME:
+            common->tostart_time = *((uint64_t *)valptr);
+            break;
+        case OPENLI_PROTO_FIELD_INTERCEPT_END_TIME:
+            common->toend_time = *((uint64_t *)valptr);
+            break;
+        case OPENLI_PROTO_FIELD_TOMEDIATE:
+            common->tomediate = *((intercept_outputs_t *)valptr);
+            break;
+        case OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION:
+            common->encrypt = *((payload_encryption_method_t *)valptr);
+            break;
+        case OPENLI_PROTO_FIELD_ENCRYPTION_KEY:
+            DECODE_STRING_FIELD(common->encryptkey, valptr, vallen);
+            break;
+        case OPENLI_PROTO_FIELD_XID:
+            DECODE_STRING_FIELD(uuid, valptr, vallen);
+            if (uuid_parse(uuid, common->xid) < 0) {
+                logger(LOG_INFO, "OpenLI: XID '%s' is not a valid UUID", uuid);
+                uuid_clear(common->xid);
+            }
+            free(uuid);
+            break;
+        default:
+            return 0;
+    }
+    return 1;
+
+}
+
 int decode_emailintercept_start(uint8_t *msgbody, uint16_t len,
         emailintercept_t *mailint) {
 
     uint8_t *msgend = msgbody + len;
 
-    mailint->common.liid = NULL;
-    mailint->common.authcc = NULL;
-    mailint->common.delivcc = NULL;
+    init_decoded_intercept_common(&(mailint->common));
     mailint->targets = NULL;
-    mailint->common.destid = 0;
-    mailint->common.targetagency = NULL;
     mailint->awaitingconfirm = 0;
-
-    mailint->common.liid_len = 0;
-    mailint->common.authcc_len = 0;
-    mailint->common.delivcc_len = 0;
-    mailint->common.tostart_time = 0;
-    mailint->common.toend_time = 0;
-    mailint->common.tomediate = 0;
-    mailint->common.encrypt = 0;
-    mailint->common.encryptkey = NULL;
     mailint->delivercompressed = OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
         uint8_t *valptr;
         uint16_t vallen;
+        int r;
 
         if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
             return -1;
         }
 
-        if (f == OPENLI_PROTO_FIELD_MEDIATORID) {
-            mailint->common.destid = *((uint32_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_LIID) {
-            DECODE_STRING_FIELD(mailint->common.liid, valptr, vallen);
-            mailint->common.liid_len = vallen;
-        } else if (f == OPENLI_PROTO_FIELD_AUTHCC) {
-            DECODE_STRING_FIELD(mailint->common.authcc, valptr, vallen);
-            mailint->common.authcc_len = vallen;
-        } else if (f == OPENLI_PROTO_FIELD_LEAID) {
-            DECODE_STRING_FIELD(mailint->common.targetagency, valptr, vallen);
-        } else if (f == OPENLI_PROTO_FIELD_DELIVCC) {
-            DECODE_STRING_FIELD(mailint->common.delivcc, valptr, vallen);
-            mailint->common.delivcc_len = vallen;
-        } else if (f == OPENLI_PROTO_FIELD_INTERCEPT_START_TIME) {
-            mailint->common.tostart_time = *((uint64_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_INTERCEPT_END_TIME) {
-            mailint->common.toend_time = *((uint64_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_TOMEDIATE) {
-            mailint->common.tomediate = *((intercept_outputs_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_DELIVER_COMPRESSED) {
+        r = assign_intercept_common_fields(&(mailint->common), f, valptr,
+                vallen);
+        if (r < 0) {
+            return -1;
+        }
+        if (r > 0) {
+            msgbody += (vallen + 4);
+            continue;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_DELIVER_COMPRESSED) {
             mailint->delivercompressed = *((uint8_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION) {
-            mailint->common.encrypt = *((payload_encryption_method_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_ENCRYPTION_KEY) {
-            DECODE_STRING_FIELD(mailint->common.encryptkey, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
@@ -1615,65 +1677,39 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
     uint8_t *msgend = msgbody + len;
 
     vint->internalid = 0;
-    vint->common.liid = NULL;
-    vint->common.authcc = NULL;
-    vint->common.delivcc = NULL;
     vint->active_cins = NULL;  /* Placeholder -- sync thread should populate */
     vint->active_registrations = NULL;  /* Placeholder */
     vint->cin_callid_map = NULL;
     vint->cin_sdp_map = NULL;
     vint->targets = libtrace_list_init(sizeof(openli_sip_identity_t *));
-    vint->common.destid = 0;
-    vint->common.targetagency = NULL;
     vint->active = 1;
     vint->awaitingconfirm = 0;
     vint->options = 0;
 
-    vint->common.liid_len = 0;
-    vint->common.authcc_len = 0;
-    vint->common.delivcc_len = 0;
-    vint->common.tostart_time = 0;
-    vint->common.toend_time = 0;
-    vint->common.tomediate = 0;
-    vint->common.encrypt = 0;
-    vint->common.encryptkey = NULL;
-
+    init_decoded_intercept_common(&(vint->common));
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
         uint8_t *valptr;
+        int r;
         uint16_t vallen;
 
         if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
             return -1;
         }
 
-        if (f == OPENLI_PROTO_FIELD_MEDIATORID) {
-            vint->common.destid = *((uint32_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_INTOPTIONS) {
+        r = assign_intercept_common_fields(&(vint->common), f, valptr, vallen);
+        if (r < 0) {
+            return -1;
+        }
+        if (r > 0) {
+            msgbody += (vallen + 4);
+            continue;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_INTOPTIONS) {
             vint->options = *((uint32_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_LIID) {
-            DECODE_STRING_FIELD(vint->common.liid, valptr, vallen);
-            vint->common.liid_len = vallen;
-        } else if (f == OPENLI_PROTO_FIELD_AUTHCC) {
-            DECODE_STRING_FIELD(vint->common.authcc, valptr, vallen);
-            vint->common.authcc_len = vallen;
-        } else if (f == OPENLI_PROTO_FIELD_LEAID) {
-            DECODE_STRING_FIELD(vint->common.targetagency, valptr, vallen);
-        } else if (f == OPENLI_PROTO_FIELD_DELIVCC) {
-            DECODE_STRING_FIELD(vint->common.delivcc, valptr, vallen);
-            vint->common.delivcc_len = vallen;
         } else if (f == OPENLI_PROTO_FIELD_INTERCEPTID) {
             vint->internalid = *((uint64_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_INTERCEPT_START_TIME) {
-            vint->common.tostart_time = *((uint64_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_INTERCEPT_END_TIME) {
-            vint->common.toend_time = *((uint64_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_TOMEDIATE) {
-            vint->common.tomediate = *((intercept_outputs_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION) {
-            vint->common.encrypt = *((payload_encryption_method_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_ENCRYPTION_KEY) {
-            DECODE_STRING_FIELD(vint->common.encryptkey, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
@@ -1711,12 +1747,8 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
 
     uint8_t *msgend = msgbody + len;
 
-    ipint->common.liid = NULL;
-    ipint->common.authcc = NULL;
-    ipint->common.delivcc = NULL;
     ipint->username = NULL;
-    ipint->common.destid = 0;
-    ipint->common.targetagency = NULL;
+    ipint->username_len = 0;
     ipint->awaitingconfirm = 0;
     ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
@@ -1724,57 +1756,38 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->options = 0;
     ipint->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
 
-    ipint->common.liid_len = 0;
-    ipint->common.authcc_len = 0;
-    ipint->common.delivcc_len = 0;
-    ipint->common.tostart_time = 0;
-    ipint->common.toend_time = 0;
-    ipint->common.tomediate = 0;
-    ipint->common.encrypt = 0;
-    ipint->common.encryptkey = NULL;
-    ipint->username_len = 0;
+    init_decoded_intercept_common(&(ipint->common));
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
         uint8_t *valptr;
         uint16_t vallen;
+        int r;
 
         if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
             return -1;
         }
 
-        if (f == OPENLI_PROTO_FIELD_MEDIATORID) {
-            ipint->common.destid = *((uint32_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_VENDMIRRORID) {
+        r = assign_intercept_common_fields(&(ipint->common), f, valptr, vallen);
+
+        if (r < 0) {
+            return -1;
+        }
+
+        if (r > 0) {
+            msgbody += (vallen + 4);
+            continue;
+        }
+
+
+        if (f == OPENLI_PROTO_FIELD_VENDMIRRORID) {
             ipint->vendmirrorid = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_ACCESSTYPE) {
             ipint->accesstype = *((internet_access_method_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_MOBILEIDENT) {
             ipint->mobileident = *((openli_mobile_identifier_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_LIID) {
-            DECODE_STRING_FIELD(ipint->common.liid, valptr, vallen);
-            ipint->common.liid_len = vallen;
-            ipint->common.seqtrackerid = 0;
-        } else if (f == OPENLI_PROTO_FIELD_AUTHCC) {
-            DECODE_STRING_FIELD(ipint->common.authcc, valptr, vallen);
-            ipint->common.authcc_len = vallen;
-        } else if (f == OPENLI_PROTO_FIELD_DELIVCC) {
-            DECODE_STRING_FIELD(ipint->common.delivcc, valptr, vallen);
-            ipint->common.delivcc_len = vallen;
-        } else if (f == OPENLI_PROTO_FIELD_LEAID) {
-            DECODE_STRING_FIELD(ipint->common.targetagency, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_INTOPTIONS) {
             ipint->options = *((uint32_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_INTERCEPT_START_TIME) {
-            ipint->common.tostart_time = *((uint64_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_INTERCEPT_END_TIME) {
-            ipint->common.toend_time = *((uint64_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_TOMEDIATE) {
-            ipint->common.tomediate = *((intercept_outputs_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION) {
-            ipint->common.encrypt = *((payload_encryption_method_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_ENCRYPTION_KEY) {
-            DECODE_STRING_FIELD(ipint->common.encryptkey, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_USERNAME) {
             DECODE_STRING_FIELD(ipint->username, valptr, vallen);
             if (vallen == 0) {
