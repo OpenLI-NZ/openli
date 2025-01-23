@@ -33,6 +33,7 @@
 #include <libtrace/linked_list.h>
 #include <uthash.h>
 #include <Judy.h>
+#include <uuid/uuid.h>
 
 #define OPENLI_VENDOR_MIRROR_NONE (0xffffffff)
 
@@ -133,6 +134,8 @@ typedef struct intercept_common {
     intercept_outputs_t tomediate;
     payload_encryption_method_t encrypt;
     char *encryptkey;
+
+    uuid_t xid;
 
     /** A pointer to use for storing "local" data against an instance of
      *  an intercept, i.e. the provisioner might want to associate

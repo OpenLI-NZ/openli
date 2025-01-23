@@ -462,6 +462,15 @@ static void parse_intercept_common_fields(intercept_common_t *common,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value, "xid") == 0) {
+        if (uuid_parse((char *)value->data.scalar.value, common->xid) < 0) {
+            logger(LOG_INFO, "OpenLI: invalid UUID provided as 'xid' in intercept config: %s", (char *)value->data.scalar.value);
+            uuid_clear(common->xid);
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "outputhandovers") == 0) {
 
         if (strcasecmp((char *)value->data.scalar.value, "irionly") == 0) {
@@ -493,6 +502,8 @@ static inline void init_intercept_common(intercept_common_t *common,
     common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
     common->hi1_seqno = 0;
     common->local = calloc(1, sizeof(prov_intercept_data_t));
+
+    uuid_clear(common->xid);
 
     local = (prov_intercept_data_t *)(common->local);
     local->intercept_type = intercept_type;

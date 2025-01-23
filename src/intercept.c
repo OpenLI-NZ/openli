@@ -59,6 +59,8 @@ static inline void copy_intercept_common(intercept_common_t *src,
     } else {
         dest->encryptkey = NULL;
     }
+
+    uuid_copy(dest->xid, src->xid);
 }
 
 int update_modified_intercept_common(intercept_common_t *current,
@@ -145,6 +147,11 @@ int update_modified_intercept_common(intercept_common_t *current,
         current->delivcc = tmp;
         current->delivcc_len = strlen(current->delivcc);
         encodingchanged = 1;
+        *updatereq = 1;
+    }
+
+    if (uuid_compare(update->xid, current->xid) != 0) {
+        uuid_copy(current->xid, update->xid);
         *updatereq = 1;
     }
 

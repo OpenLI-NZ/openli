@@ -122,6 +122,9 @@ will be more than happy to accept your contribution.
 * libtcmalloc -- Debian / Ubuntu users can install the libgoogle-perftools-dev
   package. Optional, but highly recommended for performance reasons.
 
+* libuuid -- Debian / Ubuntu users can install the uuid-dev package. Required
+  by all components.
+
 * RabbitMQ Server -- Debian/Ubuntu users can install the rabbitmq-server
   package. Optional for the collector, required for the mediator.
 
