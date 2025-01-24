@@ -136,6 +136,99 @@ static void tidyup_x2x3_ingest_thread(x_input_t *xinp) {
     }
 }
 
+#define UPDATE_STRING_FIELD(dst, src, dstlen) \
+    if (dst) { \
+        if (src == NULL) { \
+            free(dst); dst = NULL; \
+        } else if (strcmp(dst,src) != 0) { \
+            free(dst); dst = src; src = NULL; dstlen=strlen(dst); \
+        } \
+    } else { \
+        dst = src; src = NULL; dstlen=strlen(dst); \
+    }
+
+static inline void update_intercept_common(published_intercept_msg_t *src,
+        intercept_common_t *dst, uint32_t destid) {
+
+    int unused;
+
+    UPDATE_STRING_FIELD(dst->authcc, src->authcc, dst->authcc_len)
+    UPDATE_STRING_FIELD(dst->delivcc, src->delivcc, dst->delivcc_len)
+    UPDATE_STRING_FIELD(dst->encryptkey, src->encryptkey, unused)
+
+    dst->destid = destid;
+    dst->seqtrackerid = src->seqtrackerid;
+    dst->encrypt = src->encryptmethod;
+    uuid_copy(dst->xid, src->xid);
+
+    (void)unused;
+}
+
+static inline void populate_intercept_common(published_intercept_msg_t *src,
+        intercept_common_t *dst, uint32_t destid) {
+
+    dst->liid = src->liid;
+    dst->authcc = src->authcc;
+    dst->delivcc = src->delivcc;
+    dst->destid = destid;
+    dst->seqtrackerid = src->seqtrackerid;
+    dst->encrypt = src->encryptmethod;
+    dst->encryptkey = src->encryptkey;
+    uuid_copy(dst->xid, src->xid);
+
+    if (dst->liid) {
+        dst->liid_len = strlen(dst->liid);
+    }
+    if (dst->authcc) {
+        dst->authcc_len = strlen(dst->authcc);
+    }
+    if (dst->delivcc) {
+        dst->delivcc_len = strlen(dst->delivcc);
+    }
+
+    src->liid = NULL;
+    src->authcc = NULL;
+    src->delivcc = NULL;
+    src->encryptkey = NULL;
+}
+
+static void add_or_update_received_ipintercept(x_input_t *xinp,
+        openli_export_recv_t *msg) {
+
+    ipintercept_t *found;
+
+    if (msg->data.cept.liid == NULL) {
+        return;
+    }
+
+    HASH_FIND(hh_liid, xinp->ipintercepts, msg->data.cept.liid,
+            strlen(msg->data.cept.liid), found);
+    if (found) {
+        update_intercept_common(&(msg->data.cept), &(found->common),
+                msg->destid);
+        UPDATE_STRING_FIELD(found->username, msg->data.cept.username,
+                found->username_len);
+
+        found->accesstype = msg->data.cept.accesstype;
+
+    } else {
+        found = calloc(1, sizeof(ipintercept_t));
+        populate_intercept_common(&(msg->data.cept), &(found->common),
+                msg->destid);
+
+        found->username = msg->data.cept.username;
+        msg->data.cept.username = NULL;
+        found->accesstype = msg->data.cept.accesstype;
+
+        if (found->username) {
+            found->username_len = strlen(found->username);
+        }
+        HASH_ADD_KEYPTR(hh_liid, xinp->ipintercepts, found->common.liid,
+                found->common.liid_len, found);
+    }
+
+
+}
 
 static size_t setup_x2x3_pollset(x_input_t *xinp, zmq_pollitem_t **topoll,
         size_t *topoll_size, size_t *index_map, int timerfd) {
@@ -201,8 +294,14 @@ static int x2x3_process_sync_thread_message(x_input_t *xinp) {
             return -1;
         }
 
+        if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
+            if (msg->data.cept.cepttype == OPENLI_INTERCEPT_TYPE_IP) {
+                add_or_update_received_ipintercept(xinp, msg);
+            }
+        }
+
         /* TODO other messages (X1 intercepts, mainly) */
-        free(msg);
+        free_published_message(msg);
     } while (x > 0);
 
     return 1;
