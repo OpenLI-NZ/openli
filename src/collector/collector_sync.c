@@ -1222,6 +1222,8 @@ static int update_modified_intercept(collector_sync_t *sync,
         }
     }
 
+    update_intercept_time_event(&(sync->upcoming_intercept_events),
+            ipint, &(ipint->common), &(modified->common));
     encodingchanged = update_modified_intercept_common(&(ipint->common),
             &(modified->common), OPENLI_INTERCEPT_TYPE_IP, &changed);
 
