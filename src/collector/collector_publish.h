@@ -183,6 +183,13 @@ typedef struct published_intercept_msg {
     int seqtrackerid;
     payload_encryption_method_t encryptmethod;
     char *encryptkey;
+    uuid_t xid;
+    openli_intercept_types_t cepttype;
+
+    // optional fields
+    char *username;
+    internet_access_method_t accesstype;
+
 } published_intercept_msg_t;
 
 typedef struct provisioner_msg {
@@ -217,7 +224,8 @@ struct openli_export_recv {
 int publish_openli_msg(void *pubsock, openli_export_recv_t *msg);
 void free_published_message(openli_export_recv_t *msg);
 
-openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common);
+openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common,
+        openli_intercept_types_t cepttype);
 
 openli_export_recv_t *create_ipcc_job(
         uint32_t cin, char *liid, uint32_t destid, libtrace_packet_t *pkt,

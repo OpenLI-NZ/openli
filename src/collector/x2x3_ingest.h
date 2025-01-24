@@ -89,6 +89,8 @@ typedef struct x_input {
 
     int forwarding_threads;
 
+    ipintercept_t *ipintercepts;
+
     /* Shared state used to track when X2/X3 threads have halted */
     halt_info_t *haltinfo;
 

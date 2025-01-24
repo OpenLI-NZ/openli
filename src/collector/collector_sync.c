@@ -1024,6 +1024,29 @@ static int forward_remove_coreserver(collector_sync_t *sync, uint8_t *provmsg,
     return 1;
 }
 
+static void announce_xid(collector_sync_t *sync, ipintercept_t *ipint,
+        uint8_t is_new) {
+
+    x_input_sync_t *xsync, *xtmp;
+    openli_export_recv_t *msg;
+
+    HASH_ITER(hh, sync->x2x3_queues, xsync, xtmp) {
+        msg = create_intercept_details_msg(&(ipint->common),
+                OPENLI_INTERCEPT_TYPE_IP);
+        if (!is_new) {
+            msg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
+        }
+        msg->data.cept.username = strdup(ipint->username);
+        msg->data.cept.accesstype = ipint->accesstype;
+        publish_openli_msg(xsync->zmq_socket, msg);
+    }
+
+    /* Don't worry about incrementing session counts -- that's something
+     * that will happen when we see a new correlation ID + XID combination
+     * in the X2/X3 threads
+     */
+}
+
 static inline void announce_vendormirror_id(collector_sync_t *sync,
         ipintercept_t *ipint) {
 
@@ -1086,7 +1109,9 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
          * ID in the shim.
          */
         announce_vendormirror_id(sync, cept);
-    } else if (cept->username != NULL) {
+    } else if (!uuid_is_null(cept->common.xid)) {
+        announce_xid(sync, cept, 1);
+    }else if (cept->username != NULL) {
         logger(LOG_INFO,
                 "OpenLI: received IP intercept from provisioner (LIID %s, authCC %s, start time %lu, end time %lu)",
                 cept->common.liid, cept->common.authcc,
@@ -1110,7 +1135,8 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
     sync->glob->stats->ipintercepts_added_total ++;
     pthread_mutex_unlock(sync->glob->stats_mutex);
 
-    expmsg = create_intercept_details_msg(&(cept->common));
+    expmsg = create_intercept_details_msg(&(cept->common),
+            OPENLI_INTERCEPT_TYPE_IP);
     publish_openli_msg(sync->zmq_pubsocks[cept->common.seqtrackerid], expmsg);
 
     if (cept->username) {
@@ -1228,11 +1254,13 @@ static int update_modified_intercept(collector_sync_t *sync,
             &(modified->common), OPENLI_INTERCEPT_TYPE_IP, &changed);
 
     if (encodingchanged) {
-        expmsg = create_intercept_details_msg(&(modified->common));
+        expmsg = create_intercept_details_msg(&(modified->common),
+                OPENLI_INTERCEPT_TYPE_IP);
         expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
         publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid],
                 expmsg);
     }
+
 
     if (changed) {
         /* Note: this will replace the values in 'ipint' with the new ones
@@ -1240,6 +1268,9 @@ static int update_modified_intercept(collector_sync_t *sync,
          * earlier in this method...
          */
         push_ipintercept_update_to_threads(sync, ipint, modified);
+        if (!uuid_is_null(ipint->common.xid)) {
+            announce_xid(sync, ipint, 0);
+        }
     }
 
     free_single_ipintercept(modified);
@@ -1861,18 +1892,18 @@ void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
 
 }
 
-static void push_all_active_intercepts(internet_user_t *allusers,
-        ipintercept_t *intlist, libtrace_message_queue_t *q) {
+static void push_all_active_intercepts(collector_sync_t *sync,
+        libtrace_message_queue_t *q) {
 
     ipintercept_t *orig, *tmp;
     internet_user_t *user;
     access_session_t *sess, *tmp2;
     static_ipranges_t *ipr, *tmpr;
 
-    HASH_ITER(hh_liid, intlist, orig, tmp) {
+    HASH_ITER(hh_liid, sync->ipintercepts, orig, tmp) {
         /* Do we have a valid user that matches the target username? */
         if (orig->username != NULL) {
-            user = lookup_user_by_intercept(allusers, orig);
+            user = lookup_user_by_intercept(sync->allusers, orig);
             if (user) {
                 HASH_ITER(hh, user->sessions, sess, tmp2) {
                     push_session_ips_to_collector_queue(q, orig, sess);
@@ -1882,6 +1913,10 @@ static void push_all_active_intercepts(internet_user_t *allusers,
         if (orig->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
             push_single_vendmirrorid(q, orig, OPENLI_PUSH_VENDMIRROR_INTERCEPT);
         }
+        if (!uuid_is_null(orig->common.xid)) {
+            announce_xid(sync, orig, 1);
+        }
+
         HASH_ITER(hh, orig->statics, ipr, tmpr) {
             push_static_iprange_to_collectors(q, orig, ipr);
         }
@@ -2503,8 +2538,7 @@ int sync_thread_main(collector_sync_t *sync) {
 
             /* If a hello from a thread, push all active intercepts back */
             if (recvd.type == OPENLI_UPDATE_HELLO) {
-                push_all_active_intercepts(sync->allusers,
-                        sync->ipintercepts, recvd.data.replyq);
+                push_all_active_intercepts(sync, recvd.data.replyq);
                 push_all_coreservers(sync->coreservers, recvd.data.replyq);
                 sync->hellosreceived ++;
 
