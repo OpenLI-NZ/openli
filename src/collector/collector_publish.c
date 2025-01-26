@@ -90,7 +90,8 @@ openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common,
 void free_published_message(openli_export_recv_t *msg) {
 
     if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS ||
-            msg->type == OPENLI_EXPORT_INTERCEPT_CHANGED) {
+            msg->type == OPENLI_EXPORT_INTERCEPT_CHANGED ||
+            msg->type == OPENLI_EXPORT_INTERCEPT_OVER) {
         if (msg->data.cept.liid) {
             free(msg->data.cept.liid);
         }

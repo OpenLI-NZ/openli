@@ -1024,8 +1024,21 @@ static int forward_remove_coreserver(collector_sync_t *sync, uint8_t *provmsg,
     return 1;
 }
 
-static void announce_xid(collector_sync_t *sync, ipintercept_t *ipint,
-        uint8_t is_new) {
+static void withdraw_xid(collector_sync_t *sync, ipintercept_t *ipint) {
+
+    x_input_sync_t *xsync, *xtmp;
+    openli_export_recv_t *msg;
+
+    HASH_ITER(hh, sync->x2x3_queues, xsync, xtmp) {
+        msg = calloc(1, sizeof(openli_export_recv_t));
+        msg->type = OPENLI_EXPORT_INTERCEPT_OVER;
+        msg->data.cept.liid = strdup(ipint->common.liid);
+        msg->data.cept.cepttype = OPENLI_INTERCEPT_TYPE_IP;
+        publish_openli_msg(xsync->zmq_socket, msg);
+    }
+}
+
+static void announce_xid(collector_sync_t *sync, ipintercept_t *ipint) {
 
     x_input_sync_t *xsync, *xtmp;
     openli_export_recv_t *msg;
@@ -1033,9 +1046,6 @@ static void announce_xid(collector_sync_t *sync, ipintercept_t *ipint,
     HASH_ITER(hh, sync->x2x3_queues, xsync, xtmp) {
         msg = create_intercept_details_msg(&(ipint->common),
                 OPENLI_INTERCEPT_TYPE_IP);
-        if (!is_new) {
-            msg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
-        }
         msg->data.cept.username = strdup(ipint->username);
         msg->data.cept.accesstype = ipint->accesstype;
         publish_openli_msg(xsync->zmq_socket, msg);
@@ -1110,8 +1120,8 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
          */
         announce_vendormirror_id(sync, cept);
     } else if (!uuid_is_null(cept->common.xid)) {
-        announce_xid(sync, cept, 1);
-    }else if (cept->username != NULL) {
+        announce_xid(sync, cept);
+    } else if (cept->username != NULL) {
         logger(LOG_INFO,
                 "OpenLI: received IP intercept from provisioner (LIID %s, authCC %s, start time %lu, end time %lu)",
                 cept->common.liid, cept->common.authcc,
@@ -1200,6 +1210,8 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
 
     if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
         remove_vendormirror_id(sync, ipint);
+    } else if (!uuid_is_null(ipint->common.xid)) {
+        withdraw_xid(sync, ipint);
     }
     publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], expmsg);
     for (i = 0; i < sync->forwardcount; i++) {
@@ -1221,6 +1233,7 @@ static int update_modified_intercept(collector_sync_t *sync,
     openli_export_recv_t *expmsg;
     int changed = 0;
     int encodingchanged = 0;
+    int useridentitychanged = 0;
 
     if (strcmp(ipint->username, modified->username) != 0
             || ipint->mobileident != modified->mobileident) {
@@ -1235,6 +1248,7 @@ static int update_modified_intercept(collector_sync_t *sync,
 
         push_existing_user_sessions(sync, ipint);
         logger(LOG_INFO, "OpenLI: IP intercept %s has changed target, resuming interception for new target", ipint->common.liid);
+        useridentitychanged = 1;
     }
 
     if (ipint->vendmirrorid != modified->vendmirrorid) {
@@ -1270,12 +1284,14 @@ static int update_modified_intercept(collector_sync_t *sync,
                 expmsg);
     }
 
+    if (!uuid_is_null(ipint->common.xid)) {
+        if (changed || useridentitychanged) {
+            announce_xid(sync, ipint);
+        }
+    }
 
     if (changed) {
         push_ipintercept_update_to_threads(sync, ipint, modified);
-        if (!uuid_is_null(ipint->common.xid)) {
-            announce_xid(sync, ipint, 0);
-        }
     }
 
     free_single_ipintercept(modified);
@@ -1919,7 +1935,7 @@ static void push_all_active_intercepts(collector_sync_t *sync,
             push_single_vendmirrorid(q, orig, OPENLI_PUSH_VENDMIRROR_INTERCEPT);
         }
         if (!uuid_is_null(orig->common.xid)) {
-            announce_xid(sync, orig, 1);
+            announce_xid(sync, orig);
         }
 
         HASH_ITER(hh, orig->statics, ipr, tmpr) {

@@ -31,6 +31,7 @@
 #include "netcomms.h"
 #include "openli_tls.h"
 #include "collector.h"
+#include "intercept.h"
 
 #include <sys/timerfd.h>
 #include <unistd.h>
@@ -103,6 +104,8 @@ static void tidyup_x2x3_ingest_thread(x_input_t *xinp) {
     /* free remaining state */
 
     size_t i;
+
+    free_all_ipintercepts(&(xinp->ipintercepts));
 
     if (xinp->clients) {
         for (i = 0; i < xinp->client_count; i++) {
@@ -192,7 +195,27 @@ static inline void populate_intercept_common(published_intercept_msg_t *src,
     src->encryptkey = NULL;
 }
 
-static void add_or_update_received_ipintercept(x_input_t *xinp,
+static void withdraw_xid_ipintercept(x_input_t *xinp,
+        openli_export_recv_t *msg) {
+
+    ipintercept_t *found;
+
+    if (msg->data.cept.liid == NULL) {
+        return;
+    }
+
+    HASH_FIND(hh_liid, xinp->ipintercepts, msg->data.cept.liid,
+            strlen(msg->data.cept.liid), found);
+    if (!found) {
+        return;
+    }
+
+    HASH_DELETE(hh_liid, xinp->ipintercepts, found);
+    free_single_ipintercept(found);
+
+}
+
+static void add_or_update_xid_ipintercept(x_input_t *xinp,
         openli_export_recv_t *msg) {
 
     ipintercept_t *found;
@@ -296,7 +319,13 @@ static int x2x3_process_sync_thread_message(x_input_t *xinp) {
 
         if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
             if (msg->data.cept.cepttype == OPENLI_INTERCEPT_TYPE_IP) {
-                add_or_update_received_ipintercept(xinp, msg);
+                add_or_update_xid_ipintercept(xinp, msg);
+            }
+        }
+
+        if (msg->type == OPENLI_EXPORT_INTERCEPT_OVER) {
+            if (msg->data.cept.cepttype == OPENLI_INTERCEPT_TYPE_IP) {
+                withdraw_xid_ipintercept(xinp, msg);
             }
         }
 
