@@ -1250,8 +1250,17 @@ static int update_modified_intercept(collector_sync_t *sync,
 
     update_intercept_time_event(&(sync->upcoming_intercept_events),
             ipint, &(ipint->common), &(modified->common));
+    /* Note: this will replace the values in 'ipint' with the new ones
+     * from 'modified' so don't panic that we haven't changed them
+     * earlier in this method...
+     */
     encodingchanged = update_modified_intercept_common(&(ipint->common),
             &(modified->common), OPENLI_INTERCEPT_TYPE_IP, &changed);
+
+    if (ipint->accesstype != modified->accesstype) {
+        ipint->accesstype = modified->accesstype;
+        changed = 1;
+    }
 
     if (encodingchanged) {
         expmsg = create_intercept_details_msg(&(modified->common),
@@ -1263,10 +1272,6 @@ static int update_modified_intercept(collector_sync_t *sync,
 
 
     if (changed) {
-        /* Note: this will replace the values in 'ipint' with the new ones
-         * from 'modified' so don't panic that we haven't changed them
-         * earlier in this method...
-         */
         push_ipintercept_update_to_threads(sync, ipint, modified);
         if (!uuid_is_null(ipint->common.xid)) {
             announce_xid(sync, ipint, 0);
