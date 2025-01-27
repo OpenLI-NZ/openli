@@ -211,8 +211,6 @@ static void withdraw_xid_ipintercept(x_input_t *xinp,
         return;
     }
 
-    printf("DEVDEBUG: withdraw %s %s\n", found->common.liid, xinp->identifier);
-
     HASH_DELETE(hh_liid, xinp->ipintercepts, found);
     free_single_ipintercept(found);
 
@@ -295,8 +293,6 @@ static void add_or_update_xid_ipintercept(x_input_t *xinp,
         HASH_ADD_KEYPTR(hh_liid, xinp->ipintercepts, found->common.liid,
                 found->common.liid_len, found);
     }
-
-    printf("DEVDEBUG: insert %s %s\n", found->common.liid, xinp->identifier);
 
 }
 
