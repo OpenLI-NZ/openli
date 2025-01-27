@@ -43,7 +43,7 @@ typedef struct x2x3_base_header {
     uint16_t payloaddir;
     uuid_t xid;
     uint64_t correlation;
-} x2x3_base_header_t PACKED;
+} PACKED x2x3_base_header_t;
 
 enum {
     X2X3_PDUTYPE_X2 = 1,
@@ -109,7 +109,7 @@ typedef struct x2x3_conditional_attribute {
 
     union {
         char *as_string;
-        uint32_t as_u32_nbo;
+        uint32_t as_u32;
         uint16_t as_u16;
         uint64_t as_u64;
         uint8_t *as_octets;
