@@ -196,6 +196,258 @@ static inline void populate_intercept_common(published_intercept_msg_t *src,
     src->encryptkey = NULL;
 }
 
+static x2x3_cond_attr_t *add_unparsed_conditional_attribute(
+        x2x3_cond_attr_t *attrs,
+        uint16_t attrtype, uint16_t attrlen, uint8_t *attrbody,
+        uint32_t *nextattr_id, uint8_t allow_multiple) {
+
+    x2x3_cond_attr_t *toadd;
+
+    if (!allow_multiple && attrs[attrtype] != NULL) {
+        /* already seen this attribute once and we are not allowed to
+         * have multiple instances */
+        return NULL;
+    }
+
+    toadd = calloc(1, sizeof(x2x3_cond_attr_t));
+    if (!toadd) {
+        return NULL;
+    }
+    toadd->type = attrtype;
+    toadd->length = attrlen;
+    toadd->body = attrbody;
+    toadd->is_parsed = 0;
+    toadd->parsed.as_octets = NULL;
+
+    if (allow_multiple) {
+        toadd->sub_id = *nextaddr_id;
+        (*nextaddr_id) ++;
+    } else {
+        toadd->sub_id = 0;
+    }
+    HASH_ADD_KEYPTR(hh, attrs[attrtype], &(toadd->sub_id),
+            sizeof(toadd->sub_id), toadd);
+    return toadd;
+}
+
+static int add_octets_condition_attribute(x2x3_cond_attr_t *attrs,
+        uint16_t attrtype, uint16_t attrlen, uint16_t expectedattrlen,
+        uint8_t *attrbody, uint32_t *nextattr_id, uint8_t allow_multiple) {
+
+    x2x3_cond_attr_t *added;
+
+    added = add_unparsed_conditional_attribute(attrs, attrtype, attrlen,
+            attrbody, nextaddr_id, allow_multiple);
+    if (!added) {
+        return 0;
+    }
+    if (attrlen != expectedattrlen) {
+        logger(LOG_INFO,
+                "OpenLI: warning -- X2X3 attribute type %u should be %u octets in size but it is actually %u; possible parsing error?",
+                attrtype, expectedattrlen, attrlen);
+        return 1;
+    }
+
+    toadd->parsed.as_octets = malloc(attrlen, sizeof(uint8_t));
+    memcpy(toadd->parsed.as_octets, attrbody, attrlen);
+    toadd->is_parsed = 1;
+    return 1;
+}
+
+static int parse_conditional_attributes(uint8_t *hdrstart, uint32_t hlen,
+        x2x3_cond_attr_t **attrs) {
+
+    uint8_t *ptr = (hdrstart + sizeof(x2x3_base_header_t));
+    uint16_t attrtype, attrlen;
+    uint32_t parsed = sizeof(x2x3_base_header_t);
+    uint32_t nextattr_id = 1;
+
+    if (hlen <= sizeof(x2x3_base_header_t)) {
+        return 0;
+    }
+
+    memset(attrs, 0, sizeof(x2x3_cond_attr_t *) * X2X3_COND_ATTR_LAST);
+
+    while (parsed < hlen) {
+
+        attrtype = ntohs(*((uint16_t *)ptr));
+        ptr += sizeof(uint16_t);
+
+        attrlen = ntohs(*((uint16_t *)ptr));
+        ptr += sizeof(uint16_t);
+
+        if (attrlen > hlen - (parsed + (2 * sizeof(uint16_t)))) {
+            logger(LOG_INFO, "OpenLI: parsing error when reading conditional attributes in X2/X3 PDU");
+            return -1;
+        }
+
+        if (attrtype >= X2X3_COND_ATTR_LAST || attrtype == 0) {
+            logger(LOG_INFO, "OpenLI: unsupported conditional attribute seen in X2/X3 PDU: %u", attrtype);
+            return -1;
+        }
+
+        switch(attrtype) {
+            case X2X3_COND_ATTR_SEQNO:
+                break;
+            case X2X3_COND_ATTR_TIMESTAMP:
+                break;
+            case X2X3_COND_ATTR_SOURCE_IPV4_ADDRESS:
+            case X2X3_COND_ATTR_DEST_IPV4_ADDRESS:
+                if (add_octets_condition_attribute(attrs, attrtype, attrlen,
+                        sizeof(uint32_t), ptr, &nextattr_id, 0) == 0) {
+                    // try to ignore because it's probably an invalid duplicate
+                    break;
+                }
+                break;
+            case X2X3_COND_ATTR_SOURCE_IPV6_ADDRESS:
+            case X2X3_COND_ATTR_DEST_IPV6_ADDRESS:
+                if (add_octets_condition_attribute(attrs, attrtype, attrlen,
+                        16, ptr, &nextattr_id, 0) == 0) {
+                    // try to ignore because it's probably an invalid duplicate
+                    break;
+                }
+                break;
+            case X2X3_COND_ATTR_SOURCE_PORT:
+            case X2X3_COND_ATTR_DEST_PORT:
+                break;
+            case X2X3_COND_ATTR_IPPROTO:
+                break;
+            case X2X3_COND_ATTR_MATCHED_TARGETID:
+            case X2X3_COND_ATTR_OTHER_TARGETID:
+            case X2X3_COND_ATTR_SDP_SESSION_DESC:
+                break;
+
+            /* XXX
+             * These are the attributes that we don't really support so
+             * they're not going to make their way into any IRIs or CCs.
+             * Mainly we ignore them because they're vaguely defined in the
+             * standard and therefore it is difficult to know how to interpret
+             * them even if they do appear in a PDU.
+             *
+             * For now, we'll just skip over them quietly and worry about
+             * them in the future if it turns out we need them. At that point,
+             * we should hopefully have a useful example to assist us.
+             */
+            case X2X3_COND_ATTR_ETSI_102232:
+            case X2X3_COND_ATTR_3GPP_33128:
+            case X2X3_COND_ATTR_3GPP_33108:
+            case X2X3_COND_ATTR_PROPRIETARY:
+            case X2X3_COND_ATTR_ADDITIONAL_XID_RELATED:
+                if (add_unparsed_conditional_attribute(attrs, attrtype, attrlen,
+                        ptr, &nextattr_id, 1) == NULL) {
+                    // has to be a failure to allocate
+                    logger(LOG_INFO, "OpenLI: memory exhaustion when reading conditional attributes in X2/X3 PDU");
+                    return -1;
+                }
+                break;
+            case X2X3_COND_ATTR_DOMAINID:
+            case X2X3_COND_ATTR_NFID:
+            case X2X3_COND_ATTR_IPID:
+            case X2X3_COND_ATTR_MIME_CONTENT_TYPE:
+            case X2X3_COND_ATTR_MIME_CONTENT_ENCODING:
+                if (add_unparsed_conditional_attribute(attrs, attrtype, attrlen,
+                        ptr, &nextattr_id, 0)) {
+                    // probably an invalid duplicate
+                    break;
+                }
+                break;
+            case X2X3_COND_ATTR_LAST:
+                // should never hit this!
+                break;
+
+        }
+        ptr += attrlen;
+        parsed += attrlen;
+    }
+
+    return parsed;
+}
+
+static int parse_received_x2x3_msg(x_input_t *xinp, x_input_client_t *client) {
+    size_t bufavail = client->bufwrite - client->bufread;
+    x2x3_base_header_t *hdr;
+    uint16_t pdutype;
+    uint32_t hlen, plen;
+
+    x2x3_cond_attr_t *cond_attrs[X2X3_COND_ATTR_LAST];
+
+    /* start with the required header fields */
+    if (bufavail < sizeof(x2x3_base_header_t)) {
+        return 0;
+    }
+
+    hdr = (x2x3_base_header_t *)(client->buffer + bufread);
+    pdutype = ntohs(hdr->pdutype);
+
+    hlen = ntohl(hdr->hdrlength);
+    plen = ntohl(hdr->payloadlength);
+
+    if (bufavail < hlen + plen) {
+        // not enough content for the whole message
+        return 0;
+    }
+
+    if (hlen > sizeof(x2x3_base_header_t)) {
+        // we have some conditional attribute to parse
+        if (parse_conditional_attributes((uint8_t *)hdr, hlen,
+                    cond_attrs) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: %s encountered an error in parse_conditional_attributes",
+                    xinp->identifier);
+            return -1;
+        }
+    }
+
+    switch(pdutype) {
+        case X2X3_PDUTYPE_X2:
+            break;
+
+        case X2X3_PDUTYPE_X3:
+            break;
+
+        case X2X3_PDUTYPE_KEEPALIVE:
+            if (plen != 0) {
+                logger(LOG_INFO, "OpenLI: X2X3 thread %s has received a keepalive with an invalid payload length.", xinp->identifier);
+                logger(LOG_INFO, "OpenLI: dropping the client that sent it.");
+                return -1;
+            }
+            /* TODO send a keepalive response */
+            break;
+
+        case X2X3_PDUTYPE_KEEPALIVE_ACK:
+            if (plen != 0) {
+                logger(LOG_INFO, "OpenLI: X2X3 thread %s has received a keepalive response with an invalid payload length.", xinp->identifier);
+                logger(LOG_INFO, "OpenLI: dropping the client that sent it.");
+                return -1;
+            }
+
+            // we shouldn't receive KA Acks, but we'll just silently ignore
+            // them for now
+            break;
+
+        default:
+            logger(LOG_INFO, "OpenLI: X2X3 thread %s has received a unexpected PDU type: %u", xinp->identifier, pdutype);
+            logger(LOG_INFO, "OpenLI: dropping the client that sent it.");
+            return -1;
+    }
+
+    client->bufread += (hlen + plen);
+
+    if (client->bufread >= client->buffer_size * 0.75) {
+        bufavail = client->bufwrite - client->bufread;
+        if (bufavail > 0) {
+            memmove(client->buffer, client->bufread, bufavail);
+        }
+        client->bufread = 0;
+        client->bufwrite = bufavail;
+    }
+
+    if (client->bufread == client->bufwrite) {
+        return 0;
+    }
+    return 1;
+}
+
 static void withdraw_xid_ipintercept(x_input_t *xinp,
         openli_export_recv_t *msg) {
 
@@ -494,10 +746,13 @@ static int receive_client_data(x_input_t *xinp, size_t client_ind) {
 
     client->bufwrite += r;
 
-    /* TODO try to parse the data that we have in our buffer */
-    fprintf(stderr, "%s %zu %s", xinp->identifier, client_ind,
-            (char *)(client->buffer + client->bufread));
-
+    /* try to parse the data that we have in our buffer */
+    do {
+        r = parse_received_x2x3_msg(xinp, client);
+        if (r < 0) {
+            goto dropclient;
+        }
+    } while (r != 0);
 
     if (client->bufwrite >= client->buffer_size) {
         /* Buffer has filled up but we don't have a parseable X2/X3 PDU?
