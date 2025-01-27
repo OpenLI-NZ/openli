@@ -106,6 +106,7 @@ static void tidyup_x2x3_ingest_thread(x_input_t *xinp) {
     size_t i;
 
     free_all_ipintercepts(&(xinp->ipintercepts));
+    free_all_voipintercepts(&(xinp->voipintercepts));
 
     if (xinp->clients) {
         for (i = 0; i < xinp->client_count; i++) {
@@ -210,9 +211,54 @@ static void withdraw_xid_ipintercept(x_input_t *xinp,
         return;
     }
 
+    printf("DEVDEBUG: withdraw %s %s\n", found->common.liid, xinp->identifier);
+
     HASH_DELETE(hh_liid, xinp->ipintercepts, found);
     free_single_ipintercept(found);
 
+}
+
+static void withdraw_xid_voipintercept(x_input_t *xinp,
+        openli_export_recv_t *msg) {
+
+    voipintercept_t *found;
+
+    if (msg->data.cept.liid == NULL) {
+        return;
+    }
+
+    HASH_FIND(hh_liid, xinp->voipintercepts, msg->data.cept.liid,
+            strlen(msg->data.cept.liid), found);
+    if (!found) {
+        return;
+    }
+
+    HASH_DELETE(hh_liid, xinp->voipintercepts, found);
+    free_single_voipintercept(found);
+
+}
+
+static void add_or_update_xid_voipintercept(x_input_t *xinp,
+        openli_export_recv_t *msg) {
+
+    voipintercept_t *found;
+
+    if (msg->data.cept.liid == NULL) {
+        return;
+    }
+
+    HASH_FIND(hh_liid, xinp->voipintercepts, msg->data.cept.liid,
+            strlen(msg->data.cept.liid), found);
+    if (found) {
+        update_intercept_common(&(msg->data.cept), &(found->common),
+                msg->destid);
+    } else {
+        found = calloc(1, sizeof(voipintercept_t));
+        populate_intercept_common(&(msg->data.cept), &(found->common),
+                msg->destid);
+        HASH_ADD_KEYPTR(hh_liid, xinp->voipintercepts, found->common.liid,
+                found->common.liid_len, found);
+    }
 }
 
 static void add_or_update_xid_ipintercept(x_input_t *xinp,
@@ -250,6 +296,7 @@ static void add_or_update_xid_ipintercept(x_input_t *xinp,
                 found->common.liid_len, found);
     }
 
+    printf("DEVDEBUG: insert %s %s\n", found->common.liid, xinp->identifier);
 
 }
 
@@ -321,11 +368,17 @@ static int x2x3_process_sync_thread_message(x_input_t *xinp) {
             if (msg->data.cept.cepttype == OPENLI_INTERCEPT_TYPE_IP) {
                 add_or_update_xid_ipintercept(xinp, msg);
             }
+            if (msg->data.cept.cepttype == OPENLI_INTERCEPT_TYPE_VOIP) {
+                add_or_update_xid_voipintercept(xinp, msg);
+            }
         }
 
         if (msg->type == OPENLI_EXPORT_INTERCEPT_OVER) {
             if (msg->data.cept.cepttype == OPENLI_INTERCEPT_TYPE_IP) {
                 withdraw_xid_ipintercept(xinp, msg);
+            }
+            if (msg->data.cept.cepttype == OPENLI_INTERCEPT_TYPE_VOIP) {
+                withdraw_xid_voipintercept(xinp, msg);
             }
         }
 

@@ -727,6 +727,11 @@ static void sip_worker_send_intercept_update_to_seqtracker(
 
     openli_export_recv_t *expmsg;
 
+    if (sipworker->workerid != 0) {
+        // we don't need all of our workers to send the same update
+        return;
+    }
+
     expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
     expmsg->type = type;
     expmsg->data.cept.liid = strdup(vint->common.liid);
