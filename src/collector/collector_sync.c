@@ -1057,6 +1057,57 @@ static void announce_xid(collector_sync_t *sync, ipintercept_t *ipint) {
      */
 }
 
+static int x2x3_sync_voipintercept(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen, openli_proto_msgtype_t msgtype) {
+
+    x_input_sync_t *xsync, *xtmp;
+    openli_export_recv_t *msg;
+    voipintercept_t *decode;
+    decode = calloc(1, sizeof(voipintercept_t));
+
+    if (msgtype == OPENLI_PROTO_HALT_VOIPINTERCEPT) {
+
+        if (decode_voipintercept_halt(provmsg, msglen, decode) < 0) {
+            /* Don't bother logging, the SIP workers will complain enough */
+            free_single_voipintercept(decode);
+            return -1;
+        }
+    } else if (msgtype == OPENLI_PROTO_MODIFY_VOIPINTERCEPT) {
+        if (decode_voipintercept_modify(provmsg, msglen, decode) < 0) {
+            free_single_voipintercept(decode);
+            return -1;
+        }
+    } else {
+        if (decode_voipintercept_start(provmsg, msglen, decode) < 0) {
+            free_single_voipintercept(decode);
+            return -1;
+        }
+    }
+
+    if (decode->common.liid == NULL) {
+        free_single_voipintercept(decode);
+        return -1;
+    }
+
+    if (uuid_is_null(decode->common.xid)) {
+        /* No XID, so don't bother forwarding to the X2/X3 threads */
+        free_single_voipintercept(decode);
+        return 0;
+    }
+
+    HASH_ITER(hh, sync->x2x3_queues, xsync, xtmp) {
+        msg = create_intercept_details_msg(&(decode->common),
+                OPENLI_INTERCEPT_TYPE_VOIP);
+        if (msgtype == OPENLI_PROTO_HALT_VOIPINTERCEPT) {
+            msg->type = OPENLI_EXPORT_INTERCEPT_OVER;
+        }
+        publish_openli_msg(xsync->zmq_socket, msg);
+    }
+
+    free_single_voipintercept(decode);
+    return 1;
+}
+
 static inline void announce_vendormirror_id(collector_sync_t *sync,
         ipintercept_t *ipint) {
 
@@ -1697,6 +1748,9 @@ static int recv_from_provisioner(collector_sync_t *sync) {
             case OPENLI_PROTO_START_VOIPINTERCEPT:
             case OPENLI_PROTO_HALT_VOIPINTERCEPT:
             case OPENLI_PROTO_MODIFY_VOIPINTERCEPT:
+                x2x3_sync_voipintercept(sync, provmsg, msglen, msgtype);
+                __attribute__ ((fallthrough));
+
             case OPENLI_PROTO_ANNOUNCE_SIP_TARGET:
             case OPENLI_PROTO_WITHDRAW_SIP_TARGET:
                 ret = forward_provmsg_to_workers(sync->zmq_sipsocks,
