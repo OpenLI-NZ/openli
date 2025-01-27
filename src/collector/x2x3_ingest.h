@@ -33,6 +33,92 @@
 
 #include "collector_util.h"
 
+typedef struct x2x3_base_header {
+
+    uint16_t version;
+    uint16_t pdutype;
+    uint32_t hdrlength;
+    uint32_t payloadlength;
+    uint16_t payloadfmt;
+    uint16_t payloaddir;
+    uuid_t xid;
+    uint64_t correlation;
+} x2x3_base_header_t PACKED;
+
+enum {
+    X2X3_PDUTYPE_X2 = 1,
+    X2X3_PDUTYPE_X3 = 2,
+    X2X3_PDUTYPE_KEEPALIVE = 3,
+    X2X3_PDUTYPE_KEEPALIVE_ACK = 4,
+    X2X3_PDUTYPE_LAST
+};
+
+enum {
+    X2X3_COND_ATTR_ETSI_102232 = 1,
+    X2X3_COND_ATTR_3GPP_33128 = 2,
+    X2X3_COND_ATTR_3GPP_33108 = 3,
+    X2X3_COND_ATTR_PROPRIETARY = 4,
+    X2X3_COND_ATTR_DOMAINID = 5,
+    X2X3_COND_ATTR_NFID = 6,
+    X2X3_COND_ATTR_IPID = 7,
+    X2X3_COND_ATTR_SEQNO = 8,
+    X2X3_COND_ATTR_TIMESTAMP = 9,
+    X2X3_COND_ATTR_SOURCE_IPV4_ADDRESS = 10,
+    X2X3_COND_ATTR_DEST_IPV4_ADDRESS = 11,
+    X2X3_COND_ATTR_SOURCE_IPV6_ADDRESS = 12,
+    X2X3_COND_ATTR_DEST_IPV6_ADDRESS = 13,
+    X2X3_COND_ATTR_SOURCE_PORT = 14,
+    X2X3_COND_ATTR_DEST_PORT = 15,
+    X2X3_COND_ATTR_IPPROTO = 16,
+    X2X3_COND_ATTR_MATCHED_TARGETID = 17,
+    X2X3_COND_ATTR_OTHER_TARGETID = 18,
+    X2X3_COND_ATTR_MIME_CONTENT_TYPE = 19,
+    X2X3_COND_ATTR_MIME_CONTENT_ENCODING = 20,
+    X2X3_COND_ATTR_ADDITIONAL_XID_RELATED = 21,
+    X2X3_COND_ATTR_SDP_SESSION_DESC = 22,
+    X2X3_COND_ATTR_LAST
+};
+
+enum {
+    X2X3_PAYLOAD_FORMAT_ETSI_102232 = 1,
+    X2X3_PAYLOAD_FORMAT_3GPP_33128 = 2,
+    X2X3_PAYLOAD_FORMAT_3GPP_33108 = 3,
+    X2X3_PAYLOAD_FORMAT_PROPRIETARY = 4,
+    X2X3_PAYLOAD_FORMAT_IPV4_PACKET = 5,
+    X2X3_PAYLOAD_FORMAT_IPV6_PACKET = 6,
+    X2X3_PAYLOAD_FORMAT_ETHERNET = 7,
+    X2X3_PAYLOAD_FORMAT_RTP = 8,
+    X2X3_PAYLOAD_FORMAT_SIP = 9,
+    X2X3_PAYLOAD_FORMAT_DHCP = 10,
+    X2X3_PAYLOAD_FORMAT_RADIUS = 11,
+    X2X3_PAYLOAD_FORMAT_GTP_U = 12,
+    X2X3_PAYLOAD_FORMAT_MSRP = 13,
+    X2X3_PAYLOAD_FORMAT_EPSIRI = 14,
+    X2X3_PAYLOAD_FORMAT_MIME = 15,
+    X2X3_PAYLOAD_FORMAT_UNSTRUCTURED = 16,
+    X2X3_PAYLOAD_FORMAT_LAST
+};
+
+
+typedef struct x2x3_conditional_attribute {
+    uint16_t type;
+    uint16_t length;
+    uint32_t sub_id;
+    uint8_t *body;
+    uint8_t is_parsed;
+
+    union {
+        char *as_string;
+        uint32_t as_u32_nbo;
+        uint16_t as_u16;
+        uint64_t as_u64;
+        uint8_t *as_octets;
+        uint8_t as_u8;
+    } parsed;
+
+    UT_hash_handle hh;
+} x2x3_cond_attr_t;
+
 typedef struct x_input_client {
     SSL *ssl;
     int fd;
