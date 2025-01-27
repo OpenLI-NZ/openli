@@ -204,17 +204,22 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
 
     if (intstate) {
         remove_preencoded(seqdata, intstate);
-        free(cept->liid);
         free(intstate->details.authcc);
         free(intstate->details.delivcc);
-        free(intstate->details.encryptkey);
+        if (intstate->details.encryptkey) {
+            free(intstate->details.encryptkey);
+        }
 
         /* leave the CIN seqno state as is for now */
-        intstate->details.authcc = cept->authcc;
-        intstate->details.delivcc = cept->delivcc;
+        intstate->details.authcc = strdup(cept->authcc);
+        intstate->details.delivcc = strdup(cept->delivcc);
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
-        intstate->details.encryptkey = cept->encryptkey;
+        if (intstate->details.encryptkey) {
+            intstate->details.encryptkey = strdup(cept->encryptkey);
+        } else {
+            intstate->details.encryptkey = NULL;
+        }
         intstate->details.encryptmethod = cept->encryptmethod;
         intstate->version ++;
 
@@ -222,13 +227,17 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         /* New LIID, create fresh intercept state */
         intstate = (exporter_intercept_state_t *)malloc(
                 sizeof(exporter_intercept_state_t));
-        intstate->details.liid = cept->liid;
-        intstate->details.authcc = cept->authcc;
-        intstate->details.delivcc = cept->delivcc;
+        intstate->details.liid = strdup(cept->liid);
+        intstate->details.authcc = strdup(cept->authcc);
+        intstate->details.delivcc = strdup(cept->delivcc);
         intstate->details.liid_len = strlen(cept->liid);
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
-        intstate->details.encryptkey = cept->encryptkey;
+        if (cept->encryptkey) {
+            intstate->details.encryptkey = strdup(cept->encryptkey);
+        } else {
+            intstate->details.encryptkey = NULL;
+        }
         intstate->details.encryptmethod = cept->encryptmethod;
         intstate->cinsequencing = NULL;
         intstate->version = 0;
@@ -321,18 +330,6 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
      * for this particular intercept, somehow?
      */
     HASH_DELETE(hh, seqdata->intercepts, intstate);
-	if (msg->liid) {
-		free(msg->liid);
-	}
-	if (msg->authcc) {
-		free(msg->authcc);
-	}
-	if (msg->delivcc) {
-		free(msg->delivcc);
-	}
-    if (msg->encryptkey) {
-        free(msg->encryptkey);
-    }
     free_intercept_state(seqdata, intstate);
     return 1;
 }
@@ -452,28 +449,28 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
             switch(job->type) {
                 case OPENLI_EXPORT_HALT:
                     halted = 1;
-		    seqdata->haltinfo = job->data.haltinfo;
-                    free(job);
+		            seqdata->haltinfo = job->data.haltinfo;
+                    free_published_message(job);
                     break;
 
                 case OPENLI_EXPORT_RECONFIGURE_INTERCEPTS:
                     reconfigure_intercepts(seqdata);
-                    free(job);
+                    free_published_message(job);
                     break;
 
                 case OPENLI_EXPORT_INTERCEPT_DETAILS:
                     track_new_intercept(seqdata, &(job->data.cept));
-                    free(job);
+                    free_published_message(job);
                     break;
 
                 case OPENLI_EXPORT_INTERCEPT_OVER:
 					remove_tracked_intercept(seqdata, &(job->data.cept));
-					free(job);
+                    free_published_message(job);
 					break;
 
                 case OPENLI_EXPORT_INTERCEPT_CHANGED:
                     modify_tracked_intercept(seqdata, &(job->data.cept));
-                    free(job);
+                    free_published_message(job);
                     break;
 
                 case OPENLI_EXPORT_IPMMCC:
