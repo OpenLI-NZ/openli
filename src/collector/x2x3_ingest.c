@@ -197,7 +197,7 @@ static inline void populate_intercept_common(published_intercept_msg_t *src,
 }
 
 static x2x3_cond_attr_t *add_unparsed_conditional_attribute(
-        x2x3_cond_attr_t *attrs,
+        x2x3_cond_attr_t **attrs,
         uint16_t attrtype, uint16_t attrlen, uint8_t *attrbody,
         uint32_t *nextattr_id, uint8_t allow_multiple) {
 
@@ -220,8 +220,8 @@ static x2x3_cond_attr_t *add_unparsed_conditional_attribute(
     toadd->parsed.as_octets = NULL;
 
     if (allow_multiple) {
-        toadd->sub_id = *nextaddr_id;
-        (*nextaddr_id) ++;
+        toadd->sub_id = *nextattr_id;
+        (*nextattr_id) ++;
     } else {
         toadd->sub_id = 0;
     }
@@ -230,14 +230,14 @@ static x2x3_cond_attr_t *add_unparsed_conditional_attribute(
     return toadd;
 }
 
-static int add_octets_condition_attribute(x2x3_cond_attr_t *attrs,
+static int add_octets_condition_attribute(x2x3_cond_attr_t **attrs,
         uint16_t attrtype, uint16_t attrlen, uint16_t expectedattrlen,
         uint8_t *attrbody, uint32_t *nextattr_id, uint8_t allow_multiple) {
 
     x2x3_cond_attr_t *added;
 
     added = add_unparsed_conditional_attribute(attrs, attrtype, attrlen,
-            attrbody, nextaddr_id, allow_multiple);
+            attrbody, nextattr_id, allow_multiple);
     if (!added) {
         return 0;
     }
@@ -248,9 +248,9 @@ static int add_octets_condition_attribute(x2x3_cond_attr_t *attrs,
         return 1;
     }
 
-    toadd->parsed.as_octets = malloc(attrlen, sizeof(uint8_t));
-    memcpy(toadd->parsed.as_octets, attrbody, attrlen);
-    toadd->is_parsed = 1;
+    added->parsed.as_octets = malloc(attrlen * sizeof(uint8_t));
+    memcpy(added->parsed.as_octets, attrbody, attrlen);
+    added->is_parsed = 1;
     return 1;
 }
 
@@ -376,7 +376,7 @@ static int parse_received_x2x3_msg(x_input_t *xinp, x_input_client_t *client) {
         return 0;
     }
 
-    hdr = (x2x3_base_header_t *)(client->buffer + bufread);
+    hdr = (x2x3_base_header_t *)(client->buffer + client->bufread);
     pdutype = ntohs(hdr->pdutype);
 
     hlen = ntohl(hdr->hdrlength);
@@ -436,7 +436,7 @@ static int parse_received_x2x3_msg(x_input_t *xinp, x_input_client_t *client) {
     if (client->bufread >= client->buffer_size * 0.75) {
         bufavail = client->bufwrite - client->bufread;
         if (bufavail > 0) {
-            memmove(client->buffer, client->bufread, bufavail);
+            memmove(client->buffer, client->buffer + client->bufread, bufavail);
         }
         client->bufread = 0;
         client->bufwrite = bufavail;
