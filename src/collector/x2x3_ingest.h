@@ -122,6 +122,7 @@ typedef struct x2x3_conditional_attribute {
 typedef struct x_input_client {
     SSL *ssl;
     int fd;
+    char *clientip;
 
     uint8_t *buffer;
     size_t buffer_size;
@@ -187,5 +188,9 @@ typedef struct x_input {
 
 void destroy_x_input(x_input_t *xinp);
 void *start_x2x3_ingest_thread(void *param);
+
+int parse_x2x3_conditional_attributes(uint8_t *hdrstart, uint32_t hlen,
+        x2x3_cond_attr_t **attrs);
+void free_x2x3_conditional_attributes(x2x3_cond_attr_t **attrs);
 
 #endif
