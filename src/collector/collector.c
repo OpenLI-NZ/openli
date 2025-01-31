@@ -437,7 +437,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
 
 }
 
-static void *start_processing_thread(libtrace_t *trace UNUSED,
+static void *start_processing_thread(libtrace_t *trace,
         libtrace_thread_t *t, void *global) {
 
     collector_global_t *glob = (collector_global_t *)global;
@@ -445,10 +445,22 @@ static void *start_processing_thread(libtrace_t *trace UNUSED,
     int i;
     sync_sendq_t *syncq, *sendq_hash;
     struct timeval tv;
+    char locname[1024];
+
+    snprintf(locname, 1024, "%s-%s-%d", trace_get_uri_format(trace),
+            trace_get_uri_body(trace), trace_get_perpkt_thread_id(t));
 
     pthread_rwlock_wrlock(&(glob->config_mutex));
-    loc = glob->collocals[glob->nextloc];
-    glob->nextloc ++;
+    HASH_FIND(hh, glob->collocals, locname, strlen(locname), loc);
+    if (!loc) {
+        loc = calloc(1, sizeof(colthread_local_t));
+        init_collocal(loc, glob);
+        HASH_ADD_KEYPTR(hh, glob->collocals, loc->localname,
+                strlen(loc->localname), loc);
+    } else {
+        init_collocal(loc, glob);
+    }
+
     pthread_rwlock_unlock(&(glob->config_mutex));
 
     register_sync_queues(&(glob->syncip), loc->tosyncq_ip,
@@ -508,8 +520,8 @@ static void free_staticcache(static_ipcache_t *cache) {
     }
 }
 
-static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
-        void *global, void *tls) {
+static void stop_processing_thread(libtrace_t *trace UNUSED,
+        libtrace_thread_t *t, void *global, void *tls) {
 
     collector_global_t *glob = (collector_global_t *)global;
     colthread_local_t *loc = (colthread_local_t *)tls;
@@ -518,12 +530,6 @@ static void stop_processing_thread(libtrace_t *trace, libtrace_thread_t *t,
     openli_pushed_t syncpush;
     int zero = 0, i;
     sync_sendq_t *syncq, *sendq_hash;
-
-    if (trace_is_err(trace)) {
-        libtrace_err_t err = trace_get_err(trace);
-        logger(LOG_INFO, "OpenLI: halting input due to error: %s",
-                err.problem);
-    }
 
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
@@ -1274,11 +1280,41 @@ static int start_xinput(collector_global_t *glob, x_input_t *xinp) {
 static int start_input(collector_global_t *glob, colinput_t *inp,
         int todaemon, char *progname) {
 
+    libtrace_info_t *info;
+    struct timeval tv;
+
     if (inp->running == 1) {
         /* Trace is already running */
+        if (inp->trace && trace_is_err(inp->trace)) {
+            /* We had a problem with this input trace -- make sure we stop
+             * it cleanly and attempt to restart it if it is a live source
+             */
+            libtrace_err_t err = trace_get_err(inp->trace);
+            info = trace_get_information(inp->trace);
+
+            logger(LOG_INFO,
+                    "OpenLI: halting input %s%s due to an error encountered by libtrace: %s",
+                    inp->uri, info->live ? "" : "permanently", err.problem);
+            trace_pstop(inp->trace);
+            trace_join(inp->trace);
+            trace_destroy(inp->trace);
+            inp->trace = NULL;
+
+            if (info->live && inp->no_restart == 0) {
+                // try to restart live inputs, just in case
+                inp->running = 0;
+                gettimeofday(&tv, NULL);
+                inp->start_at = tv.tv_sec + 60;
+            }
+        }
+
         return 1;
     }
 
+    gettimeofday(&tv, NULL);
+    if (tv.tv_sec < inp->start_at) {
+        return 1;
+    }
     if (!inp->pktcbs) {
         inp->pktcbs = trace_create_callback_set();
     }
@@ -1428,27 +1464,29 @@ static void reload_inputs(collector_global_t *glob,
 
     colinput_t *oldinp, *newinp, *tmp;
     int filterchanged = 0, i, coremapchanged = 0;
-    int oldcolthreads = glob->total_col_threads;
+    char locname[1024];
+    colthread_local_t *loc;
 
     logger(LOG_INFO,
             "OpenLI: collector is reloading input configuration.");
 
+    glob->total_col_threads = newstate->total_col_threads;
     HASH_ITER(hh, glob->inputs, oldinp, tmp) {
         HASH_FIND(hh, newstate->inputs, oldinp->uri, strlen(oldinp->uri),
                 newinp);
         filterchanged = 0;
         if (newinp) {
-	    if (oldinp->coremap) {
-		if (newinp->coremap == NULL) {
-		    coremapchanged = 1;
-		} else if (strcmp(newinp->coremap, oldinp->coremap) != 0) {
-		    coremapchanged = 1;
-		}
-	    } else {
-		if (newinp->coremap) {
-		    coremapchanged = 1;
-		}
-	    }
+            if (oldinp->coremap) {
+                if (newinp->coremap == NULL) {
+                    coremapchanged = 1;
+                } else if (strcmp(newinp->coremap, oldinp->coremap) != 0) {
+                    coremapchanged = 1;
+                }
+            } else {
+                if (newinp->coremap) {
+                    coremapchanged = 1;
+                }
+            }
 
             if (oldinp->filterstring) {
                 if (newinp->filterstring == NULL) {
@@ -1474,6 +1512,23 @@ static void reload_inputs(collector_global_t *glob,
                     "OpenLI collector: stop reading packets from %s",
                     oldinp->uri);
             trace_pstop(oldinp->trace);
+            trace_join(oldinp->trace);
+            trace_destroy(oldinp->trace);
+
+            for (i = 0; i < oldinp->threadcount; i++) {
+                snprintf(locname, 1024, "%s-%s-%d",
+                        trace_get_uri_format(oldinp->trace),
+                        trace_get_uri_body(oldinp->trace), i);
+                HASH_FIND(hh, glob->collocals, locname, strlen(locname),
+                        loc);
+                if (loc) {
+                    HASH_DELETE(hh, glob->collocals, loc);
+                    free(loc);
+                }
+            }
+
+
+            oldinp->trace = NULL;
             HASH_DELETE(hh, glob->inputs, oldinp);
             libtrace_list_push_back(glob->expired_inputs, &oldinp);
             continue;
@@ -1492,31 +1547,6 @@ static void reload_inputs(collector_global_t *glob,
         HASH_DELETE(hh, newstate->inputs, newinp);
         HASH_ADD_KEYPTR(hh, glob->inputs, newinp->uri, strlen(newinp->uri),
                 newinp);
-        glob->total_col_threads += newinp->threadcount;
-    }
-
-    /* XXX one thing to be aware of -- we never reclaim the memory
-     * allocated to collector threads that are no longer used (because
-     * we called trace_pstop() on the input). In theory, that means
-     * we will slowly leak colthread_local_t's whenever the collector
-     * config is reloaded AND an input is changed. Realistically, this
-     * won't happen often so shouldn't be a big deal but I want to note
-     * that I am aware of this potential issue.
-     *
-     * The correct answer would be to replace this array with a dynamic
-     * data structure that we can remove items from easily whenever their
-     * parent input is stopped. Not worth the effort right now, but would
-     * be a good task to assign to a new developer on the project?
-     */
-
-    if (glob->total_col_threads > oldcolthreads) {
-        glob->collocals = (colthread_local_t **)realloc(glob->collocals,
-                sizeof(colthread_local_t *) * glob->total_col_threads);
-
-        for (i = oldcolthreads; i < glob->total_col_threads; i++) {
-            glob->collocals[i] = calloc(1, sizeof(colthread_local_t));
-            init_collocal(glob->collocals[i], glob);
-        }
     }
 
 }
@@ -1581,6 +1611,7 @@ static void destroy_collector_state(collector_global_t *glob) {
 
     colinput_t *inp;
     int i;
+    colthread_local_t *loc, *tmp;
 
     if (glob->expired_inputs) {
         libtrace_list_node_t *n;
@@ -1647,13 +1678,9 @@ static void destroy_collector_state(collector_global_t *glob) {
         free(glob->encoders);
     }
 
-    if (glob->collocals) {
-        for (i = 0; i < glob->total_col_threads; i++) {
-            if (glob->collocals[i]) {
-                free(glob->collocals[i]);
-            }
-        }
-        free(glob->collocals);
+    HASH_ITER(hh, glob->collocals, loc, tmp) {
+        HASH_DELETE(hh, glob->collocals, loc);
+        free(loc);
     }
 
     pthread_mutex_destroy(&(glob->stats_mutex));
@@ -1802,7 +1829,6 @@ void deregister_sync_queues(sync_thread_global_t *glob,
 
 
 static int prepare_collector_glob(collector_global_t *glob) {
-    int i;
 
     glob->zmq_ctxt = zmq_ctx_new();
 
@@ -1810,14 +1836,7 @@ static int prepare_collector_glob(collector_global_t *glob) {
 
     init_sync_thread_data(glob, &(glob->syncip));
 
-    glob->collocals = (colthread_local_t **)calloc(glob->total_col_threads,
-            sizeof(colthread_local_t *));
-
-    for (i = 0; i < glob->total_col_threads; i++) {
-        glob->collocals[i] = calloc(1, sizeof(colthread_local_t));
-        init_collocal(glob->collocals[i], glob);
-    }
-
+    glob->collocals = NULL;
     glob->syncgenericfreelist = create_etsili_generic_freelist(1);
 
     glob->zmq_encoder_ctrl = zmq_socket(glob->zmq_ctxt, ZMQ_PUB);
@@ -2469,7 +2488,6 @@ int main(int argc, char *argv[]) {
         glob->forwarders[i].zmq_ctxt = glob->zmq_ctxt;
         glob->forwarders[i].forwardid = i;
         glob->forwarders[i].encoders = glob->encoding_threads;
-        glob->forwarders[i].colthreads = glob->total_col_threads;
         glob->forwarders[i].zmq_ctrlsock = NULL;
         glob->forwarders[i].zmq_pullressock = NULL;
         pthread_mutex_init(&(glob->forwarders[i].sslmutex), NULL);
@@ -2673,7 +2691,7 @@ int main(int argc, char *argv[]) {
             logger(LOG_INFO, "Unable to re-enable signals after starting threads.");
             return 1;
         }
-        usleep(1000);
+        usleep(1000000);
     }
 
     pthread_rwlock_rdlock(&(glob->config_mutex));
