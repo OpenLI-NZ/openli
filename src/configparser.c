@@ -109,7 +109,9 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         inp->hasher_apply = OPENLI_HASHER_BIDIR;
         inp->filterstring = NULL;
         inp->filter = NULL;
-	inp->coremap = NULL;
+    	inp->coremap = NULL;
+        inp->start_at = 0;
+        inp->no_restart = 0;
 
         /* Mappings describe the parameters for each input */
         for (pair = node->data.mapping.pairs.start;
