@@ -455,6 +455,7 @@ static void *start_processing_thread(libtrace_t *trace,
     if (!loc) {
         loc = calloc(1, sizeof(colthread_local_t));
         init_collocal(loc, glob);
+        loc->localname = strdup(locname);
         HASH_ADD_KEYPTR(hh, glob->collocals, loc->localname,
                 strlen(loc->localname), loc);
     } else {
@@ -1433,6 +1434,9 @@ static void reload_inputs(collector_global_t *glob,
                         loc);
                 if (loc) {
                     HASH_DELETE(hh, glob->collocals, loc);
+                    if (loc->localname) {
+                        free(loc->localname);
+                    }
                     free(loc);
                 }
             }
@@ -1589,6 +1593,9 @@ static void destroy_collector_state(collector_global_t *glob) {
 
     HASH_ITER(hh, glob->collocals, loc, tmp) {
         HASH_DELETE(hh, glob->collocals, loc);
+        if (loc->localname) {
+            free(loc->localname);
+        }
         free(loc);
     }
 
