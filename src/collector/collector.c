@@ -1700,7 +1700,7 @@ int register_sync_queues(sync_thread_global_t *glob,
         void *recvq, libtrace_message_queue_t *sendq,
         libtrace_thread_t *parent) {
 
-    sync_sendq_t *syncq, *sendq_hash;
+    sync_sendq_t *syncq, *sendq_hash, *found;
 
     syncq = (sync_sendq_t *)malloc(sizeof(sync_sendq_t));
     syncq->q = sendq;
@@ -1709,6 +1709,11 @@ int register_sync_queues(sync_thread_global_t *glob,
     pthread_mutex_lock(&(glob->mutex));
 
     sendq_hash = (sync_sendq_t *)(glob->collector_queues);
+    HASH_FIND_PTR(sendq_hash, parent, found);
+    if (found) {
+        HASH_DEL(sendq_hash, found);
+        free(found);
+    }
     HASH_ADD_PTR(sendq_hash, parent, syncq);
     glob->collector_queues = (void *)sendq_hash;
 
