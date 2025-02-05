@@ -219,7 +219,6 @@ typedef struct forwarding_thread_data {
     int forwardid;
     int encoders;
     int encoders_over;
-    int colthreads;
 
     void *zmq_ctrlsock;
     void *zmq_pullressock;
