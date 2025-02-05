@@ -78,7 +78,7 @@ will be more than happy to accept your contribution.
 
 ## Dependencies for building from source
 
-* [libtrace 4.0.24 or later](https://github.com/LibtraceTeam/libtrace/)
+* [libtrace 4.0.27 or later](https://github.com/LibtraceTeam/libtrace/)
   (packages for Debian / Ubuntu are available
   [from WAND](https://cloudsmith.io/~wand/repos/libtrace/packages/) as well).
 
