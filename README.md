@@ -1,10 +1,10 @@
 OpenLI -- open source ETSI-compliant Lawful Intercept software
 
-Version: 1.1.11
+Version: 1.1.12
 
 ---------------------------------------------------------------------------
 
-Copyright (c) 2024 SearchLight Ltd, New Zealand.
+Copyright (c) 2024, 2025 SearchLight Ltd, New Zealand.
 All rights reserved.
 
 OpenLI was originally developed by the University of Waikato WAND research
