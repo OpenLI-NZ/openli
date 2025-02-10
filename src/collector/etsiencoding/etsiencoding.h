@@ -66,6 +66,64 @@ enum {
     OPENLI_ENCRYPTED_PAYLOAD_TYPE_PART1 = 8
 };
 
+enum {
+    TEMPLATE_TYPE_IPCC_DIRFROM,
+    TEMPLATE_TYPE_IPCC_DIRTO,
+    TEMPLATE_TYPE_IPCC_DIROTHER,
+
+    TEMPLATE_TYPE_IPMMCC_DIRFROM_IP_RTP,
+    TEMPLATE_TYPE_IPMMCC_DIRTO_IP_RTP,
+    TEMPLATE_TYPE_IPMMCC_DIROTHER_IP_RTP,
+
+    TEMPLATE_TYPE_IPMMCC_DIRFROM_IP_MSRP,
+    TEMPLATE_TYPE_IPMMCC_DIRTO_IP_MSRP,
+    TEMPLATE_TYPE_IPMMCC_DIROTHER_IP_MSRP,
+
+    TEMPLATE_TYPE_IPMMCC_DIRFROM_IP_UDPTL,
+    TEMPLATE_TYPE_IPMMCC_DIRTO_IP_UDPTL,
+    TEMPLATE_TYPE_IPMMCC_DIROTHER_IP_UDPTL,
+
+    TEMPLATE_TYPE_IPMMCC_DIRFROM_UDP_RTP,
+    TEMPLATE_TYPE_IPMMCC_DIRTO_UDP_RTP,
+    TEMPLATE_TYPE_IPMMCC_DIROTHER_UDP_RTP,
+
+    TEMPLATE_TYPE_IPMMCC_DIRFROM_UDP_UDPTL,
+    TEMPLATE_TYPE_IPMMCC_DIRTO_UDP_UDPTL,
+    TEMPLATE_TYPE_IPMMCC_DIROTHER_UDP_UDPTL,
+
+    TEMPLATE_TYPE_IPMMCC_DIRFROM_TCP_MSRP,
+    TEMPLATE_TYPE_IPMMCC_DIRTO_TCP_MSRP,
+    TEMPLATE_TYPE_IPMMCC_DIROTHER_TCP_MSRP,
+
+    TEMPLATE_TYPE_IPMMCC_DIRFROM_RTP_RTP,
+    TEMPLATE_TYPE_IPMMCC_DIRTO_RTP_RTP,
+    TEMPLATE_TYPE_IPMMCC_DIROTHER_RTP_RTP,
+
+    TEMPLATE_TYPE_IPMMCC_DIRFROM_MSRP_MSRP,
+    TEMPLATE_TYPE_IPMMCC_DIRTO_MSRP_MSRP,
+    TEMPLATE_TYPE_IPMMCC_DIROTHER_MSRP_MSRP,
+
+    TEMPLATE_TYPE_IPMMCC_DIRFROM_UDPTL_UDPTL,
+    TEMPLATE_TYPE_IPMMCC_DIRTO_UDPTL_UDPTL,
+    TEMPLATE_TYPE_IPMMCC_DIROTHER_UDPTL_UDPTL,
+
+    TEMPLATE_TYPE_UMTSCC_DIRFROM,
+    TEMPLATE_TYPE_UMTSCC_DIRTO,
+    TEMPLATE_TYPE_UMTSCC_DIROTHER,
+
+    TEMPLATE_TYPE_EMAILCC_IP_DIRTO,
+    TEMPLATE_TYPE_EMAILCC_APP_DIRTO,
+    TEMPLATE_TYPE_EMAILCC_IP_DIRFROM,
+    TEMPLATE_TYPE_EMAILCC_APP_DIRFROM,
+    TEMPLATE_TYPE_EMAILCC_IP_DIROTHER,
+    TEMPLATE_TYPE_EMAILCC_APP_DIROTHER,
+
+    TEMPLATE_TYPE_EPSCC_DIRFROM,
+    TEMPLATE_TYPE_EPSCC_DIRTO,
+    TEMPLATE_TYPE_EPSCC_DIROTHER,
+};
+
+
 typedef struct encrypt_encode_state {
     uint32_t byte_counter;
     uint32_t byte_startts;
@@ -108,6 +166,15 @@ int encode_templated_ipmmiri(wandder_encoder_t *encoder,
         encrypt_encode_state_t *encrypt,
         openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res);
+
+int encode_templated_ipmmcc(wandder_encoder_t *encoder,
+        encrypt_encode_state_t *encrypt,
+        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res, Pvoid_t *saved_templates);
+
+encoded_global_template_t *lookup_global_template(Pvoid_t *saved_templates,
+        uint32_t key, uint8_t *is_new);
+void clear_global_templates(Pvoid_t *saved_templates);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

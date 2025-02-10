@@ -734,14 +734,12 @@ wandder_encoded_result_t *encode_ipiri_body(wandder_encoder_t *encoder,
 
 void encode_ipmmcc_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed,
-        void *ipcontent, uint32_t iplen, uint8_t dir) {
+        void *ipcontent, uint32_t iplen, uint8_t dir,
+        uint32_t frametype, uint32_t mmccproto) {
 
-    uint32_t frametype, mmccproto;
     wandder_encode_job_t *jobarray[7];
     int nextjob = 0;
 
-    frametype = 0;      //  ipFrame
-    mmccproto = 0;      //  RTP  -- consider others in future?
     jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]);
     jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
     jobarray[2] = &(precomputed[OPENLI_PREENCODE_USEQUENCE]);
@@ -1556,84 +1554,6 @@ int etsili_update_header_template(encoded_header_template_t *tplate,
         tvusec = tvusec >> 8;
     }
 
-    return 0;
-}
-
-int etsili_update_ipmmcc_template(encoded_global_template_t *tplate,
-        uint8_t *ipcontent, uint16_t ipclen) {
-
-    assert(ipclen == tplate->cc_content.content_size);
-
-    memcpy(tplate->cc_content.content_ptr, ipcontent, ipclen);
-    return 0;
-}
-
-int etsili_create_ipmmcc_template(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, uint8_t dir, uint8_t *ipcontent,
-        uint16_t ipclen, encoded_global_template_t *tplate) {
-
-    wandder_encoded_result_t *encres;
-    wandder_decoder_t *dec;
-
-    if (tplate == NULL) {
-        logger(LOG_INFO, "OpenLI: called etsili_create_ipmmcc_template with NULL template?");
-        return -1;
-    }
-
-    if (encoder == NULL) {
-        logger(LOG_INFO, "OpenLI: called etsili_create_ipmmcc_template with NULL encoder?");
-        return -1;
-    }
-
-    reset_wandder_encoder(encoder);
-
-    encode_ipmmcc_body(encoder, precomputed, ipcontent, ipclen, dir);
-    encres = wandder_encode_finish(encoder);
-
-    if (encres == NULL || encres->len == 0 || encres->encoded == NULL) {
-        logger(LOG_INFO, "OpenLI: failed to encode ETSI IPMMCC body for template");
-        if (encres) {
-            wandder_release_encoded_result(encoder, encres);
-        }
-        return -1;
-    }
-
-    /* Copy the encoded header to the template */
-    tplate->cc_content.cc_wrap = malloc(encres->len);
-    memcpy(tplate->cc_content.cc_wrap, encres->encoded, encres->len);
-    tplate->cc_content.cc_wrap_len = encres->len;
-    tplate->cc_content.content_size = ipclen;
-
-    /* Find the MMCCContents and save a pointer to the value location so
-     * we can overwrite it when another intercepted packet can use this
-     * template.
-     */
-    dec = init_wandder_decoder(NULL, tplate->cc_content.cc_wrap,
-            tplate->cc_content.cc_wrap_len, 0);
-    if (dec == NULL) {
-        logger(LOG_INFO, "OpenLI: unable to create decoder for templated ETSI IPMMCC");
-        return -1;
-    }
-
-    /* TODO add tedious error checking */
-    wandder_decode_next(dec);       // payload
-    wandder_decode_next(dec);       // ccpayloadsequence
-    wandder_decode_next(dec);       // ccpayload
-    wandder_decode_sequence_until(dec, 2);  // ccContents
-    wandder_decode_next(dec);       // IPMMCC
-    wandder_decode_next(dec);       // IPMMCCObjId
-    wandder_decode_next(dec);       // MMCCContents
-
-    if (wandder_get_identifier(dec) != 1 || wandder_get_itemlen(dec) != ipclen)
-    {
-        assert(0);
-    }
-
-    tplate->cc_content.content_ptr = wandder_get_itemptr(dec);
-
-    /* Release the encoded result -- the caller will use the templated copy */
-    wandder_release_encoded_result(encoder, encres);
-    free_wandder_decoder(dec);
     return 0;
 }
 

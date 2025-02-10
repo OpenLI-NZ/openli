@@ -1250,8 +1250,10 @@ static int start_xinput(collector_global_t *glob, x_input_t *xinp) {
 
     xinp->zmq_ctxt = glob->zmq_ctxt;
     xinp->forwarding_threads = glob->forwarding_threads;
+    xinp->tracker_threads = glob->seqtracker_threads;
     xinp->zmq_ctrlsock = NULL;
     xinp->zmq_fwdsocks = NULL;
+    xinp->zmq_pubsocks = NULL;
     xinp->haltinfo = NULL;
 
     xinp->reset_listener = 1;

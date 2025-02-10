@@ -176,6 +176,7 @@ typedef struct ipintercept {
     uint32_t options;
     UT_hash_handle hh_liid;
     UT_hash_handle hh_user;
+    UT_hash_handle hh_xid;
 } ipintercept_t;
 
 typedef struct email_target {
@@ -296,6 +297,7 @@ typedef struct voipintercept {
     sipregister_t *active_registrations;
 
     UT_hash_handle hh_liid;
+    UT_hash_handle hh_xid;
 } voipintercept_t;
 
 struct sipregister {
