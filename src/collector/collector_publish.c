@@ -381,7 +381,7 @@ openli_export_recv_t *create_ipmmcc_job_from_rtp(uint32_t cin, char *liid,
     msg->data.ipmmcc.contentlen = rtplen;
     msg->data.ipmmcc.cin = cin;
     msg->data.ipmmcc.dir = dir;
-    msg->data.ipmmcc.frametype = OPENLI_IPMMCC_FRAME_TYPE_IP;
+    msg->data.ipmmcc.frametype = OPENLI_IPMMCC_FRAME_TYPE_RTP;
     msg->data.ipmmcc.mmccproto = OPENLI_IPMMCC_MMCC_PROTOCOL_RTP;
 
     return msg;

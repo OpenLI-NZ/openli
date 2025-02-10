@@ -151,9 +151,9 @@ static inline int generic_mm_comm_contents(libtrace_packet_t *pkt,
                 msg = create_rawip_cc_job(rtp->common.liid,
                         rtp->common.destid, pkt);
             } else {
-                msg = create_ipcc_job(rtp->cin, rtp->common.liid,
-                        rtp->common.destid, pkt, ETSI_DIR_FROM_TARGET);
-                msg->type = OPENLI_EXPORT_IPMMCC;
+                msg = create_ipmmcc_job_from_packet(rtp->cin, rtp->common.liid,
+                        rtp->common.destid, pkt, ETSI_DIR_FROM_TARGET,
+                        OPENLI_IPMMCC_MMCC_PROTOCOL_RTP);
             }
             publish_openli_msg(loc->zmq_pubsocks[0], msg); // FIXME
             matched ++;

@@ -1031,9 +1031,6 @@ static int sip_worker_add_new_voip_intercept(openli_sip_worker_t *sipworker,
 
 
     /* Forward any active RTP streams to the packet processing threads */
-    if (sipworker->collector_queues == NULL) {
-        logger(LOG_DEBUG, "WARNING: SIP worker %d has a NULL set of collector queues, which means no RTP streams will be intercepted!", sipworker->workerid);
-    }
 
     pthread_mutex_lock(&(sipworker->col_queue_mutex));
     HASH_ITER(hh, (sync_sendq_t *)(sipworker->collector_queues), sendq, tmp) {
