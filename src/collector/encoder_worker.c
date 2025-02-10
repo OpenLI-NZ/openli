@@ -172,7 +172,7 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
     uint32_t drained = 0;
     PWord_t pval;
     uint8_t index[1000];
-    Word_t rcw, indexint;
+    Word_t rcw;
 
     index[0] = '\0';
 
@@ -195,19 +195,7 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
     }
     JSLFA(rcw, enc->saved_intercept_templates);
 
-    indexint = 0;
-    JLF(pval, enc->saved_global_templates, indexint);
-    while (pval) {
-        encoded_global_template_t *t;
-
-        t = (encoded_global_template_t *)(*pval);
-        if (t->cc_content.cc_wrap) {
-            free(t->cc_content.cc_wrap);
-        }
-        free(t);
-        JLN(pval, enc->saved_global_templates, indexint);
-    }
-    JLFA(rcint, enc->saved_global_templates);
+    clear_global_templates(&(enc->saved_global_templates));
 
     etsili_destroy_encrypted_templates(enc->encrypt.saved_encryption_templates);
     if (enc->encoder) {
@@ -342,86 +330,6 @@ static int encode_templated_ipiri(openli_encoder_t *enc,
 
     wandder_release_encoded_result(enc->encoder, body);
     free_ipiri_parameters(params);
-
-    /* Success */
-    return 1;
-}
-
-static inline encoded_global_template_t *lookup_global_template(
-        openli_encoder_t *enc, uint32_t key, uint8_t *is_new) {
-
-    PWord_t pval;
-    encoded_global_template_t *ipcc_tplate = NULL;
-
-    JLG(pval, enc->saved_global_templates, key);
-    if (pval == NULL) {
-        ipcc_tplate = calloc(1, sizeof(encoded_global_template_t));
-        ipcc_tplate->key = key;
-        ipcc_tplate->cctype = (key >> 16);
-        JLI(pval, enc->saved_global_templates, key);
-        *pval = (Word_t)ipcc_tplate;
-        *is_new = 1;
-    } else {
-        ipcc_tplate = (encoded_global_template_t *)(*pval);
-        *is_new = 0;
-    }
-
-    return ipcc_tplate;
-}
-
-static int encode_templated_ipmmcc(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
-        openli_encoded_result_t *res) {
-
-    uint32_t key = 0;
-    encoded_global_template_t *ipmmcc_tplate = NULL;
-    openli_ipcc_job_t *mmccjob;
-    uint8_t is_new = 0;
-
-    mmccjob = (openli_ipcc_job_t *)&(job->origreq->data.ipcc);
-
-    /* We only handle IP frames and RTP protocol for IPMM so far... */
-
-    if (mmccjob->dir == ETSI_DIR_FROM_TARGET) {
-        key = (TEMPLATE_TYPE_IPMMCC_DIRFROM_IP_RTP << 16) + mmccjob->ipclen;
-    } else if (mmccjob->dir == ETSI_DIR_TO_TARGET) {
-        key = (TEMPLATE_TYPE_IPMMCC_DIRTO_IP_RTP << 16) + mmccjob->ipclen;
-    } else {
-        key = (TEMPLATE_TYPE_IPMMCC_DIROTHER_IP_RTP << 16) + mmccjob->ipclen;
-    }
-
-    ipmmcc_tplate = lookup_global_template(enc, key, &is_new);
-
-    if (is_new) {
-        if (etsili_create_ipmmcc_template(enc->encoder, job->preencoded,
-                mmccjob->dir, mmccjob->ipcontent, mmccjob->ipclen,
-                ipmmcc_tplate) < 0) {
-            return -1;
-        }
-    } else {
-        /* Overwrite the existing MMCCContents field */
-        if (etsili_update_ipmmcc_template(ipmmcc_tplate, mmccjob->ipcontent,
-                mmccjob->ipclen) < 0) {
-            return -1;
-        }
-    }
-
-    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_encrypted_message_body(enc->encoder, &enc->encrypt,
-                res, hdr_tplate,
-                ipmmcc_tplate->cc_content.cc_wrap,
-                ipmmcc_tplate->cc_content.cc_wrap_len,
-                NULL, 0, job) < 0) {
-            return -1;
-        }
-
-    } else {
-        if (create_etsi_encoded_result(res, hdr_tplate,
-                ipmmcc_tplate->cc_content.cc_wrap,
-                ipmmcc_tplate->cc_content.cc_wrap_len, NULL, 0, job) < 0) {
-            return -1;
-        }
-    }
 
     /* Success */
     return 1;
@@ -671,7 +579,8 @@ static int encode_templated_umtscc(openli_encoder_t *enc,
         key = (TEMPLATE_TYPE_UMTSCC_DIROTHER << 16) + ccjob->ipclen;
     }
 
-    umtscc_tplate = lookup_global_template(enc, key, &is_new);
+    umtscc_tplate = lookup_global_template(&(enc->saved_global_templates),
+            key, &is_new);
 
     if (is_new) {
         if (etsili_create_umtscc_template(enc->encoder, job->preencoded,
@@ -747,7 +656,8 @@ static int encode_templated_emailcc(openli_encoder_t *enc,
         return -1;
     }
 
-    emailcc_tplate = lookup_global_template(enc, key, &is_new);
+    emailcc_tplate = lookup_global_template(&(enc->saved_global_templates),
+            key, &is_new);
 
     if (is_new) {
         if (etsili_create_emailcc_template(enc->encoder, job->preencoded,
@@ -801,7 +711,8 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
         key = (TEMPLATE_TYPE_IPCC_DIROTHER << 16) + ipccjob->ipclen;
     }
 
-    ipcc_tplate = lookup_global_template(enc, key, &is_new);
+    ipcc_tplate = lookup_global_template(&(enc->saved_global_templates),
+            key, &is_new);
 
     if (is_new) {
         if (etsili_create_ipcc_template(enc->encoder, job->preencoded,
@@ -908,7 +819,8 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             ret = encode_templated_ipcc(enc, job, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_IPMMCC:
-            ret = encode_templated_ipmmcc(enc, job, hdr_tplate, res);
+            ret = encode_templated_ipmmcc(enc->encoder, &enc->encrypt,
+                    job, hdr_tplate, res, &(enc->saved_global_templates));
             break;
         case OPENLI_EXPORT_UMTSCC:
             ret = encode_templated_umtscc(enc, job, hdr_tplate, res);

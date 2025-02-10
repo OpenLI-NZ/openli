@@ -54,6 +54,15 @@ enum {
 };
 
 enum {
+    X2X3_DIRECTION_RESERVED = 0,
+    X2X3_DIRECTION_UNKNOWN = 1,
+    X2X3_DIRECTION_TO_TARGET = 2,
+    X2X3_DIRECTION_FROM_TARGET = 3,
+    X2X3_DIRECTION_MULTIPLE = 4,
+    X2X3_DIRECTION_NA = 5,
+};
+
+enum {
     X2X3_COND_ATTR_ETSI_102232 = 1,
     X2X3_COND_ATTR_3GPP_33128 = 2,
     X2X3_COND_ATTR_3GPP_33108 = 3,
@@ -160,6 +169,7 @@ typedef struct x_input {
 
     void *zmq_ctrlsock;
     void **zmq_fwdsocks;
+    void **zmq_pubsocks;
 
     /* TODO we need ZMQs that allow us to pass on packets to the
      * various worker threads based on the payload format in the X2/X3
@@ -173,11 +183,16 @@ typedef struct x_input {
      * XXX GTP-C is not a payload format? I guess that comes as EPSIRIContent.
      */
 
-
+    int tracker_threads;
     int forwarding_threads;
 
+    /* Hash map of known intercepts, keyed by the LIID */
     ipintercept_t *ipintercepts;
     voipintercept_t *voipintercepts;
+
+    /* Hash map of known intercepts, keyed by the XID */
+    ipintercept_t *ipxids;
+    voipintercept_t *voipxids;
 
     /* Shared state used to track when X2/X3 threads have halted */
     halt_info_t *haltinfo;

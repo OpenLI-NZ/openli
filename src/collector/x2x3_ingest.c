@@ -59,6 +59,11 @@ static int setup_zmq_sockets_for_x2x3(x_input_t *xinp) {
                 xinp->identifier, strerror(errno));
         return -1;
     }
+
+    xinp->zmq_pubsocks = calloc(xinp->tracker_threads, sizeof(void *));
+    init_zmq_socket_array(xinp->zmq_pubsocks, xinp->tracker_threads,
+            "inproc://openlipub", xinp->zmq_ctxt, -1);
+
     return 0;
 }
 
@@ -129,6 +134,7 @@ static void tidyup_x2x3_ingest_thread(x_input_t *xinp) {
     if (xinp->zmq_ctrlsock) {
         zmq_close(xinp->zmq_ctrlsock);
     }
+    clear_zmq_socket_array(xinp->zmq_pubsocks, xinp->tracker_threads);
 
     if (xinp->listener_fd != -1) {
         close(xinp->listener_fd);
@@ -199,11 +205,54 @@ static inline void populate_intercept_common(published_intercept_msg_t *src,
     src->encryptkey = NULL;
 }
 
+static inline uint8_t x2x3dir_to_etsidir(uint16_t xdir) {
+    switch(xdir) {
+        case X2X3_DIRECTION_RESERVED:
+        case X2X3_DIRECTION_MULTIPLE:
+        case X2X3_DIRECTION_UNKNOWN:
+        case X2X3_DIRECTION_NA:
+            return ETSI_DIR_INDETERMINATE;
+        case X2X3_DIRECTION_TO_TARGET:
+            return ETSI_DIR_TO_TARGET;
+        case X2X3_DIRECTION_FROM_TARGET:
+            return ETSI_DIR_FROM_TARGET;
+    }
+    return ETSI_DIR_INDETERMINATE;
+}
+
+
 static int handle_x3_rtp_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
         uint8_t *payload, uint32_t plen, x2x3_cond_attr_t **cond_attrs) {
 
+    voipintercept_t *vint;
+    openli_export_recv_t *msg;
+    struct timeval tv;
 
-    return 0;
+    HASH_FIND(hh_xid, xinp->voipxids, hdr->xid, sizeof(uuid_t), vint);
+    if (!vint) {
+        /* We don't know this XID (or at least, it is not for a VoIP
+         * intercept) so ignore it */
+        return 0;
+    }
+
+    if (cond_attrs[X2X3_COND_ATTR_TIMESTAMP] == NULL ||
+            cond_attrs[X2X3_COND_ATTR_TIMESTAMP]->is_parsed == 0) {
+        gettimeofday(&tv, NULL);
+    } else {
+        tv.tv_sec = cond_attrs[X2X3_COND_ATTR_TIMESTAMP]->parsed.as_u64;
+        tv.tv_usec = cond_attrs[X2X3_COND_ATTR_TIMESTAMP]->parsed.as_u64;
+
+        tv.tv_sec = (tv.tv_sec >> 32);
+        tv.tv_usec = (tv.tv_usec & 0xFFFFFFFF) / 1000;
+    }
+
+    msg = create_ipmmcc_job_from_rtp(hashlittle(&(hdr->correlation),
+                sizeof(hdr->correlation), 78877), vint->common.liid,
+            vint->common.destid, payload, plen,
+            x2x3dir_to_etsidir(ntohs(hdr->payloaddir)), tv);
+    publish_openli_msg(xinp->zmq_pubsocks[vint->common.seqtrackerid], msg);
+
+    return 1;
 }
 
 static int handle_x3_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
@@ -351,7 +400,7 @@ parsingfailure:
 static void withdraw_xid_ipintercept(x_input_t *xinp,
         openli_export_recv_t *msg) {
 
-    ipintercept_t *found;
+    ipintercept_t *found, *x_found;
 
     if (msg->data.cept.liid == NULL) {
         return;
@@ -364,6 +413,12 @@ static void withdraw_xid_ipintercept(x_input_t *xinp,
     }
 
     HASH_DELETE(hh_liid, xinp->ipintercepts, found);
+
+    HASH_FIND(hh_xid, xinp->ipxids, found->common.xid, sizeof(uuid_t),
+            x_found);
+    if (x_found) {
+        HASH_DELETE(hh_xid, xinp->ipxids, x_found);
+    }
     free_single_ipintercept(found);
 
 }
@@ -371,7 +426,7 @@ static void withdraw_xid_ipintercept(x_input_t *xinp,
 static void withdraw_xid_voipintercept(x_input_t *xinp,
         openli_export_recv_t *msg) {
 
-    voipintercept_t *found;
+    voipintercept_t *found, *x_found;
 
     if (msg->data.cept.liid == NULL) {
         return;
@@ -384,6 +439,11 @@ static void withdraw_xid_voipintercept(x_input_t *xinp,
     }
 
     HASH_DELETE(hh_liid, xinp->voipintercepts, found);
+    HASH_FIND(hh_xid, xinp->voipxids, found->common.xid, sizeof(uuid_t),
+            x_found);
+    if (x_found) {
+        HASH_DELETE(hh_xid, xinp->voipxids, x_found);
+    }
     free_single_voipintercept(found);
 
 }
@@ -408,6 +468,8 @@ static void add_or_update_xid_voipintercept(x_input_t *xinp,
                 msg->destid);
         HASH_ADD_KEYPTR(hh_liid, xinp->voipintercepts, found->common.liid,
                 found->common.liid_len, found);
+        HASH_ADD_KEYPTR(hh_xid, xinp->voipxids, found->common.xid,
+                sizeof(uuid_t), found);
     }
 }
 
@@ -444,6 +506,8 @@ static void add_or_update_xid_ipintercept(x_input_t *xinp,
         }
         HASH_ADD_KEYPTR(hh_liid, xinp->ipintercepts, found->common.liid,
                 found->common.liid_len, found);
+        HASH_ADD_KEYPTR(hh_xid, xinp->ipxids, found->common.xid,
+                sizeof(uuid_t), found);
     }
 
 }
