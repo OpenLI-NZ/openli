@@ -39,6 +39,15 @@
 
 #define MAX_ZPOLL_X2X3 (1024)
 
+static int x2x3_ssl_read_error(const char *str, size_t len, void *userdata) {
+
+    (void)userdata;
+    (void)len;
+
+    logger(LOG_INFO, "OpenLI: SSL_read() error was '%s'", str);
+    return 1;
+}
+
 static int setup_zmq_sockets_for_x2x3(x_input_t *xinp) {
     int zero = 0;
     char sockname[1024];
@@ -601,7 +610,7 @@ static int x2x3_process_sync_thread_message(x_input_t *xinp) {
     return 1;
 }
 
-#define X2X3_CLIENT_BUFSIZE (32)        // TODO make this larger ;)
+#define X2X3_CLIENT_BUFSIZE (32 * 1024)        // TODO make this larger ;)
 
 static int x2x3_accept_client_connection(x_input_t *xinp) {
 
@@ -708,14 +717,31 @@ static int receive_client_data(x_input_t *xinp, size_t client_ind) {
         if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             return 0;
         }
-        if (r < 0) {
-            logger(LOG_INFO,
-                    "OpenLI: X2/X3 client %s has been disconnected from %s due to an error: %s",
-                    client->clientip, xinp->identifier, strerror(errno));
-        } else {
-            logger(LOG_INFO,
-                    "OpenLI: X2/X3 client %s has been disconnected from %s",
-                    client->clientip, xinp->identifier);
+        if (r <= 0) {
+            int err = SSL_get_error(client->ssl, r);
+            switch(err) {
+                case SSL_ERROR_WANT_READ:
+                case SSL_ERROR_WANT_WRITE:
+                    return 0;
+                case SSL_ERROR_SYSCALL:
+                    logger(LOG_INFO,
+                            "OpenLI: X2/X3 client %s has been disconnected from %s due to an error: %s",
+                            client->clientip, xinp->identifier,
+                            strerror(errno));
+                    break;
+                case SSL_ERROR_SSL:
+                    logger(LOG_INFO,
+                            "OpenLI: X2/X3 client %s has been disconnected from %s due to an error in SSL_read()",
+                            client->clientip, xinp->identifier);
+                    ERR_print_errors_cb(x2x3_ssl_read_error, NULL);
+                    break;
+                case SSL_ERROR_ZERO_RETURN:
+
+                    logger(LOG_INFO,
+                            "OpenLI: X2/X3 client %s has been disconnected from %s",
+                            client->clientip, xinp->identifier);
+                    break;
+            }
         }
         /* other end is no longer connected */
         goto dropclient;

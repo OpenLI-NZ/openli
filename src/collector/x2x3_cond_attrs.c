@@ -311,6 +311,7 @@ int parse_x2x3_conditional_attributes(uint8_t *hdrstart, uint32_t hlen,
             return -1;
         }
 
+        parsed += sizeof(uint16_t) * 2;
         switch(attrtype) {
             case X2X3_COND_ATTR_SEQNO:
                 if (add_u32_condition_attribute(attrs, attrtype, attrlen, ptr,

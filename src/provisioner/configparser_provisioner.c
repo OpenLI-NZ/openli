@@ -649,7 +649,8 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         }
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
                 newcept->common.delivcc != NULL &&
-                libtrace_list_get_size(newcept->targets) > 0 &&
+                (libtrace_list_get_size(newcept->targets) > 0 ||
+                    !uuid_is_null(newcept->common.xid)) &&
                 newcept->common.destid > 0 &&
                 newcept->common.targetagency != NULL) {
             HASH_ADD_KEYPTR(hh_liid, *voipints, newcept->common.liid,
