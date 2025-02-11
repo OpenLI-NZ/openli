@@ -106,6 +106,8 @@ typedef struct openli_sip_parser {
     uint8_t badsip;
 } openli_sip_parser_t;
 
+int add_sip_content_to_parser(openli_sip_parser_t **parser, uint8_t *content,
+        uint32_t contentlen);
 int add_sip_packet_to_parser(openli_sip_parser_t **parser,
         libtrace_packet_t *packet, uint8_t logallowed);
 int parse_sip_content(openli_sip_parser_t *parser, uint8_t *sipcontent,

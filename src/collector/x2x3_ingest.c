@@ -32,6 +32,7 @@
 #include "openli_tls.h"
 #include "collector.h"
 #include "intercept.h"
+#include "ipmmiri.h"
 
 #include <sys/timerfd.h>
 #include <unistd.h>
@@ -229,6 +230,142 @@ static inline uint8_t x2x3dir_to_etsidir(uint16_t xdir) {
     return ETSI_DIR_INDETERMINATE;
 }
 
+static inline void get_x2x3_pdu_timestamp(struct timeval *tv,
+        x2x3_cond_attr_t **cond_attrs) {
+
+    if (cond_attrs[X2X3_COND_ATTR_TIMESTAMP] == NULL ||
+            cond_attrs[X2X3_COND_ATTR_TIMESTAMP]->is_parsed == 0) {
+        gettimeofday(tv, NULL);
+    } else {
+        tv->tv_sec = cond_attrs[X2X3_COND_ATTR_TIMESTAMP]->parsed.as_u64;
+        tv->tv_usec = cond_attrs[X2X3_COND_ATTR_TIMESTAMP]->parsed.as_u64;
+
+        tv->tv_sec = (tv->tv_sec >> 32);
+        tv->tv_usec = (tv->tv_usec & 0xFFFFFFFF) / 1000;
+    }
+}
+
+static int x2x3_process_sip_message(x_input_t *xinp, char *callid,
+        openli_export_recv_t *irimsg, openli_location_t *locptr,
+        int loc_cnt, voipintercept_t *vint, x2x3_base_header_t *hdr,
+        x2x3_cond_attr_t **cond_attrs) {
+
+
+    
+
+}
+
+static int x2x3_update_sip_state(x_input_t *xinp,
+        openli_export_recv_t *irimsg, voipintercept_t *vint,
+        x2x3_base_header_t *hdr, x2x3_cond_attr_t **cond_attrs) {
+
+    /* mostly borrowed from sip_worker.c, but without having to keep track
+     * of the RTP side of things...
+     */
+
+    char *callid;
+    openli_location_t *locptr = NULL;
+    int loc_cnt = 0, ret = 0;
+
+    irimsg->data.ipmmiri.content = (uint8_t *)get_sip_contents(xinp->sipparser,
+            &(irimsg->data.ipmmiri.contentlen));
+
+
+    callid = get_sip_callid(xinp->sipparser);
+    if (callid == NULL) {
+        logger(LOG_INFO, "OpenLI: SIP message received over X2 has no Call ID");
+        return -1;
+    }
+
+    get_sip_paccess_network_info(xinp->sipparser, &locptr, &loc_cnt);
+    if (sip_is_message(xinp->sipparser)) {
+        ret = x2x3_process_sip_message(xinp, callid, irimsg, locptr, loc_cnt,
+                vint, hdr, cond_attrs);
+    } else if (sip_is_invite(xinp->sipparser)) {
+        ret = x2x3_process_sip_invite(xinp, callid, irimsg, locptr, loc_cnt,
+                vint, hdr, cond_attrs);
+    } else if (sip_is_register(xinp->sipparser)) {
+        ret = x2x3_process_sip_register(xinp, callid, irimsg, locptr, loc_cnt,
+                vint, hdr, cond_attrs);
+    } else {
+        ret = x2x3_process_sip_other(xinp, callid, irimsg, locptr, loc_cnt,
+                vint, hdr, cond_attrs);
+    }
+
+    if (locptr) {
+        free(locptr);
+    }
+
+    return ret;
+}
+
+static int handle_x2_sip_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
+        uint8_t *payload, uint32_t plen, x2x3_cond_attr_t **cond_attrs) {
+
+    voipintercept_t *vint;
+    openli_export_recv_t msg;
+    struct timeval tv;
+    int ret;
+
+    HASH_FIND(hh_xid, xinp->voipxids, hdr->xid, sizeof(uuid_t), vint);
+    if (!vint) {
+        /* We don't know this XID (or at least, it is not for a VoIP
+         * intercept) so ignore it */
+        return 0;
+    }
+    if (vint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
+        return 0;
+    }
+    get_x2x3_pdu_timestamp(&tv, cond_attrs);
+
+    if (vint->common.tostart_time > tv.tv_sec) {
+        return 0;
+    }
+
+    if (vint->common.toend_time > 0 && vint->common.toend_time <=
+            tv.tv_sec) {
+        return 0;
+    }
+
+    if (vint->common.targetagency == NULL || strcmp(vint->common.targetagency,
+                "pcapdisk") == 0) {
+        return 0;
+    }
+
+    ret = add_sip_content_to_parser(&(xinp->sipparser), payload, plen);
+    if (ret == SIP_ACTION_ERROR) {
+        logger(LOG_INFO, "OpenLI: X2/X3 thread %s failed to add SIP PDU to internal parser", xinp->identifier);
+        return -1;
+    } else if (ret == SIP_ACTION_REASSEMBLE_TCP ||
+            ret == SIP_ACTION_REASSEMBLE_IPFRAG) {
+        /* these should not happen! */
+        logger(LOG_INFO, "OpenLI: X2/X3 thread %s unexpectedly requested reassembly when adding SIP PDU to internal parser", xinp->identifier);
+        return -1;
+    } else if (ret != SIP_ACTION_USE_PACKET) {
+        logger(LOG_INFO, "OpenLI: X2/X3 thread %s got unexpected return value from call to add_sip_content_to_parser(): %d", xinp->identifier, ret);
+        return -1;
+    }
+
+    ret = parse_next_sip_message(xinp->sipparser, NULL, NULL);
+    if (ret == 0) {
+        return 0;
+    }
+
+    if (ret < 0) {
+        logger(LOG_INFO, "OpenLI: X2/X3 thread %s failed to parse a SIP message received via X2, ignoring...", xinp->identifier);
+        return 0;
+    }
+
+    msg.type = OPENLI_EXPORT_IPMMIRI;
+    msg.data.ipmmiri.ipmmiri_style = OPENLI_IPMMIRI_SIP;
+    msg.ts = tv;
+    if (x2x3_update_sip_state(xinp, &msg, vint, hdr, cond_attrs) < 0) {
+        return 0;
+    }
+
+    return 1;
+}
+
 
 static int handle_x3_rtp_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
         uint8_t *payload, uint32_t plen, x2x3_cond_attr_t **cond_attrs) {
@@ -244,15 +381,23 @@ static int handle_x3_rtp_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
         return 0;
     }
 
-    if (cond_attrs[X2X3_COND_ATTR_TIMESTAMP] == NULL ||
-            cond_attrs[X2X3_COND_ATTR_TIMESTAMP]->is_parsed == 0) {
-        gettimeofday(&tv, NULL);
-    } else {
-        tv.tv_sec = cond_attrs[X2X3_COND_ATTR_TIMESTAMP]->parsed.as_u64;
-        tv.tv_usec = cond_attrs[X2X3_COND_ATTR_TIMESTAMP]->parsed.as_u64;
+    if (vint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
+        return 0;
+    }
+    get_x2x3_pdu_timestamp(&tv, cond_attrs);
 
-        tv.tv_sec = (tv.tv_sec >> 32);
-        tv.tv_usec = (tv.tv_usec & 0xFFFFFFFF) / 1000;
+    if (vint->common.tostart_time > tv.tv_sec) {
+        return 0;
+    }
+
+    if (vint->common.toend_time > 0 && vint->common.toend_time <=
+            tv.tv_sec) {
+        return 0;
+    }
+
+    if (vint->common.targetagency == NULL || strcmp(vint->common.targetagency,
+                "pcapdisk") == 0) {
+        return 0;
     }
 
     msg = create_ipmmcc_job_from_rtp(hashlittle(&(hdr->correlation),
@@ -262,6 +407,50 @@ static int handle_x3_rtp_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
     publish_openli_msg(xinp->zmq_pubsocks[vint->common.seqtrackerid], msg);
 
     return 1;
+}
+
+static int handle_x2_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
+        uint32_t hlen, uint32_t plen, x2x3_cond_attr_t **cond_attrs,
+        char *clientip) {
+
+    uint8_t *payload;
+    uint16_t pload_fmt;
+
+    payload = ((uint8_t *)hdr) + hlen;
+
+    pload_fmt = ntohs(hdr->payloadfmt);
+
+    switch(pload_fmt) {
+        case X2X3_PAYLOAD_FORMAT_SIP:
+            if (handle_x2_sip_pdu(xinp, hdr, payload, plen, cond_attrs) < 0) {
+                logger(LOG_INFO, "OpenLI: X2/X3 thread %s encountered an error while handling X2-SIP PDU from %s", xinp->identifier, clientip);
+                return -1;
+            }
+            break;
+        case X2X3_PAYLOAD_FORMAT_DHCP:
+        case X2X3_PAYLOAD_FORMAT_RADIUS:
+        case X2X3_PAYLOAD_FORMAT_EPSIRI:
+        case X2X3_PAYLOAD_FORMAT_ETSI_102232:
+        case X2X3_PAYLOAD_FORMAT_3GPP_33128:
+        case X2X3_PAYLOAD_FORMAT_3GPP_33108:
+        case X2X3_PAYLOAD_FORMAT_PROPRIETARY:
+        case X2X3_PAYLOAD_FORMAT_IPV4_PACKET:
+        case X2X3_PAYLOAD_FORMAT_IPV6_PACKET:
+        case X2X3_PAYLOAD_FORMAT_MIME:
+            // TODO support these payload types
+            break;
+        case X2X3_PAYLOAD_FORMAT_ETHERNET:
+        case X2X3_PAYLOAD_FORMAT_RTP:
+        case X2X3_PAYLOAD_FORMAT_GTP_U:
+        case X2X3_PAYLOAD_FORMAT_MSRP:
+        case X2X3_PAYLOAD_FORMAT_UNSTRUCTURED:
+        case X2X3_PAYLOAD_FORMAT_LAST:
+            // these types are not allowed in X3 PDUs
+            logger(LOG_INFO, "OpenLI: X2/X3 thread %s has seen an X2 PDU with an invalid payload format from %s: %u", xinp->identifier, clientip, pload_fmt);
+            return -1;
+    }
+
+    return 0;
 }
 
 static int handle_x3_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
@@ -347,6 +536,11 @@ static int parse_received_x2x3_msg(x_input_t *xinp, x_input_client_t *client) {
 
     switch(pdutype) {
         case X2X3_PDUTYPE_X2:
+            if (handle_x2_pdu(xinp, hdr, hlen, plen, cond_attrs,
+                        client->clientip) < 0) {
+                logger(LOG_INFO, "OpenLI: X2X3 thread %s has been unable to parse an X2 PDU from %s", client->clientip);
+                goto parsingfailure;
+            }
             break;
 
         case X2X3_PDUTYPE_X3:

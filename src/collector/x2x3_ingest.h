@@ -32,6 +32,7 @@
 #include <openssl/evp.h>
 
 #include "collector_util.h"
+#include "sipparsing.h"
 
 typedef struct x2x3_base_header {
 
@@ -193,6 +194,9 @@ typedef struct x_input {
     /* Hash map of known intercepts, keyed by the XID */
     ipintercept_t *ipxids;
     voipintercept_t *voipxids;
+
+    /* Parser for extracting information from SIP messages */
+    openli_sip_parser_t *sipparser;
 
     /* Shared state used to track when X2/X3 threads have halted */
     halt_info_t *haltinfo;
