@@ -49,6 +49,15 @@ static int x2x3_ssl_read_error(const char *str, size_t len, void *userdata) {
     return 1;
 }
 
+static int x2x3_ssl_write_error(const char *str, size_t len, void *userdata) {
+
+    (void)userdata;
+    (void)len;
+
+    logger(LOG_INFO, "OpenLI: SSL_write() error was '%s'", str);
+    return 1;
+}
+
 static int setup_zmq_sockets_for_x2x3(x_input_t *xinp) {
     int zero = 0;
     char sockname[1024];
@@ -230,6 +239,63 @@ static inline uint8_t x2x3dir_to_etsidir(uint16_t xdir) {
     return ETSI_DIR_INDETERMINATE;
 }
 
+static int send_x2x3_ka_response(x_input_t *xinp UNUSED,
+        x_input_client_t *client, uint32_t seqno) {
+
+    uint8_t buf[1024];
+    x2x3_base_header_t *hdr = (x2x3_base_header_t *)buf;
+    uint16_t *ptr;
+    uint32_t *ptrseq;
+    int r;
+
+    hdr->version = htons(0x0005);
+    hdr->pdutype = htons(X2X3_PDUTYPE_KEEPALIVE_ACK);
+    hdr->hdrlength = htonl(sizeof(x2x3_base_header_t) + 8);
+    hdr->payloadlength = 0;
+    hdr->payloadfmt = 0;
+    hdr->payloaddir = 0;
+    uuid_clear(hdr->xid);
+    hdr->correlation = 0;
+
+    ptr = (uint16_t *)(buf + sizeof(x2x3_base_header_t));
+    *ptr = htons(X2X3_COND_ATTR_SEQNO);
+    ptr ++;
+    *ptr = htons(sizeof(uint32_t));
+    ptr ++;
+
+    ptrseq = (uint32_t *)ptr;
+    *ptrseq = htonl(seqno);
+
+    if ((r = SSL_write(client->ssl, buf, ntohl(hdr->hdrlength))) < 0) {
+        int err = SSL_get_error(client->ssl, r);
+        if (err == SSL_ERROR_SSL) {
+            ERR_print_errors_cb(x2x3_ssl_write_error, NULL);
+            return -1;
+        } else if (err == SSL_ERROR_ZERO_RETURN) {
+            logger(LOG_INFO, "OpenLI: X2/X3 connection closed by remote peer");
+            return -1;
+        } else if (err == SSL_ERROR_SYSCALL) {
+            logger(LOG_INFO, "OpenLI: X2/X3 connection reported error when sending keepalive: %s", strerror(errno));
+            return -1;
+        }
+        return 0;
+    }
+
+    return 1;
+}
+
+static inline int get_x2x3_pdu_seqno(x2x3_cond_attr_t **cond_attrs,
+        uint32_t *seqno) {
+
+    if (cond_attrs[X2X3_COND_ATTR_SEQNO] == NULL ||
+            cond_attrs[X2X3_COND_ATTR_SEQNO]->is_parsed == 0) {
+        return -1;
+    }
+
+    *seqno = cond_attrs[X2X3_COND_ATTR_SEQNO]->parsed.as_u32;
+    return 1;
+}
+
 static inline void get_x2x3_pdu_timestamp(struct timeval *tv,
         x2x3_cond_attr_t **cond_attrs) {
 
@@ -245,13 +311,45 @@ static inline void get_x2x3_pdu_timestamp(struct timeval *tv,
     }
 }
 
-static int x2x3_process_sip_message(x_input_t *xinp, char *callid,
-        openli_export_recv_t *irimsg, openli_location_t *locptr,
-        int loc_cnt, voipintercept_t *vint, x2x3_base_header_t *hdr,
-        x2x3_cond_attr_t **cond_attrs) {
+static int x2x3_process_sip_message(x_input_t *xinp UNUSED,
+        char *callid UNUSED, openli_export_recv_t *irimsg UNUSED,
+        openli_location_t *locptr UNUSED, int loc_cnt UNUSED,
+        voipintercept_t *vint UNUSED, x2x3_base_header_t *hdr UNUSED,
+        x2x3_cond_attr_t **cond_attrs UNUSED) {
+
+    return 1;
+}
+
+static int x2x3_process_sip_invite(x_input_t *xinp UNUSED,
+        char *callid UNUSED, openli_export_recv_t *irimsg UNUSED,
+        openli_location_t *locptr UNUSED, int loc_cnt UNUSED,
+        voipintercept_t *vint UNUSED, x2x3_base_header_t *hdr UNUSED,
+        x2x3_cond_attr_t **cond_attrs UNUSED) {
 
 
-    
+    return 1;
+
+}
+
+static int x2x3_process_sip_register(x_input_t *xinp UNUSED,
+        char *callid UNUSED, openli_export_recv_t *irimsg UNUSED,
+        openli_location_t *locptr UNUSED, int loc_cnt UNUSED,
+        voipintercept_t *vint UNUSED, x2x3_base_header_t *hdr UNUSED,
+        x2x3_cond_attr_t **cond_attrs UNUSED) {
+
+
+    return 1;
+
+}
+
+static int x2x3_process_sip_other(x_input_t *xinp UNUSED,
+        char *callid UNUSED, openli_export_recv_t *irimsg UNUSED,
+        openli_location_t *locptr UNUSED, int loc_cnt UNUSED,
+        voipintercept_t *vint UNUSED, x2x3_base_header_t *hdr UNUSED,
+        x2x3_cond_attr_t **cond_attrs UNUSED) {
+
+
+    return 1;
 
 }
 
@@ -504,9 +602,11 @@ static int parse_received_x2x3_msg(x_input_t *xinp, x_input_client_t *client) {
     x2x3_base_header_t *hdr;
     uint16_t pdutype;
     uint32_t hlen, plen;
+    uint32_t seqno = 0;
 
     x2x3_cond_attr_t *cond_attrs[X2X3_COND_ATTR_LAST];
 
+    memset(cond_attrs, 0, sizeof(x2x3_cond_attr_t *) * X2X3_COND_ATTR_LAST);
     /* start with the required header fields */
     if (bufavail < sizeof(x2x3_base_header_t)) {
         return 0;
@@ -556,7 +656,17 @@ static int parse_received_x2x3_msg(x_input_t *xinp, x_input_client_t *client) {
                 logger(LOG_INFO, "OpenLI: X2X3 thread %s has received a keepalive with an invalid payload length from %s.", xinp->identifier, client->clientip);
                 goto parsingfailure;
             }
-            /* TODO send a keepalive response */
+
+            if (get_x2x3_pdu_seqno(cond_attrs, &seqno) < 0) {
+                /* no sequence number in the KA, ignore it because we can't
+                 * send a valid reply */
+                break;
+            }
+            /* send a keepalive response */
+            if (send_x2x3_ka_response(xinp, client, seqno) < 0) {
+                logger(LOG_INFO, "OpenLI: X2X3 thread %s failed to send keep alive response to %s", xinp->identifier, client->clientip);
+                goto parsingfailure;
+            }
             break;
 
         case X2X3_PDUTYPE_KEEPALIVE_ACK:

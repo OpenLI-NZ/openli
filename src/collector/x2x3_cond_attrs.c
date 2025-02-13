@@ -227,54 +227,54 @@ void free_x2x3_conditional_attributes(x2x3_cond_attr_t **attrs) {
         if (attrs[i] == NULL) {
             continue;
         }
-    }
 
-    HASH_ITER(hh, attrs[i], attr, tmp) {
-        switch(i) {
-            case X2X3_COND_ATTR_SOURCE_IPV4_ADDRESS:
-            case X2X3_COND_ATTR_DEST_IPV4_ADDRESS:
-            case X2X3_COND_ATTR_SOURCE_IPV6_ADDRESS:
-            case X2X3_COND_ATTR_DEST_IPV6_ADDRESS:
-                if (attr->is_parsed && attr->parsed.as_octets) {
-                    free(attr->parsed.as_octets);
-                }
-                break;
-            case X2X3_COND_ATTR_SEQNO:
-            case X2X3_COND_ATTR_TIMESTAMP:
-            case X2X3_COND_ATTR_SOURCE_PORT:
-            case X2X3_COND_ATTR_DEST_PORT:
-            case X2X3_COND_ATTR_IPPROTO:
+        HASH_ITER(hh, attrs[i], attr, tmp) {
+            switch(i) {
+                case X2X3_COND_ATTR_SOURCE_IPV4_ADDRESS:
+                case X2X3_COND_ATTR_DEST_IPV4_ADDRESS:
+                case X2X3_COND_ATTR_SOURCE_IPV6_ADDRESS:
+                case X2X3_COND_ATTR_DEST_IPV6_ADDRESS:
+                    if (attr->is_parsed && attr->parsed.as_octets) {
+                        free(attr->parsed.as_octets);
+                    }
+                    break;
+                case X2X3_COND_ATTR_SEQNO:
+                case X2X3_COND_ATTR_TIMESTAMP:
+                case X2X3_COND_ATTR_SOURCE_PORT:
+                case X2X3_COND_ATTR_DEST_PORT:
+                case X2X3_COND_ATTR_IPPROTO:
 
-                break;
+                    break;
 
-            case X2X3_COND_ATTR_MATCHED_TARGETID:
-            case X2X3_COND_ATTR_OTHER_TARGETID:
-            case X2X3_COND_ATTR_SDP_SESSION_DESC:
-                if (attr->is_parsed && attr->parsed.as_string) {
-                    free(attr->parsed.as_string);
-                }
+                case X2X3_COND_ATTR_MATCHED_TARGETID:
+                case X2X3_COND_ATTR_OTHER_TARGETID:
+                case X2X3_COND_ATTR_SDP_SESSION_DESC:
+                    if (attr->is_parsed && attr->parsed.as_string) {
+                        free(attr->parsed.as_string);
+                    }
 
-                break;
+                    break;
 
-            case X2X3_COND_ATTR_ETSI_102232:
-            case X2X3_COND_ATTR_3GPP_33128:
-            case X2X3_COND_ATTR_3GPP_33108:
-            case X2X3_COND_ATTR_PROPRIETARY:
-            case X2X3_COND_ATTR_ADDITIONAL_XID_RELATED:
-            case X2X3_COND_ATTR_DOMAINID:
-            case X2X3_COND_ATTR_NFID:
-            case X2X3_COND_ATTR_IPID:
-            case X2X3_COND_ATTR_MIME_CONTENT_TYPE:
-            case X2X3_COND_ATTR_MIME_CONTENT_ENCODING:
+                case X2X3_COND_ATTR_ETSI_102232:
+                case X2X3_COND_ATTR_3GPP_33128:
+                case X2X3_COND_ATTR_3GPP_33108:
+                case X2X3_COND_ATTR_PROPRIETARY:
+                case X2X3_COND_ATTR_ADDITIONAL_XID_RELATED:
+                case X2X3_COND_ATTR_DOMAINID:
+                case X2X3_COND_ATTR_NFID:
+                case X2X3_COND_ATTR_IPID:
+                case X2X3_COND_ATTR_MIME_CONTENT_TYPE:
+                case X2X3_COND_ATTR_MIME_CONTENT_ENCODING:
 
-                break;
+                    break;
 
-            case X2X3_COND_ATTR_LAST:
-                break;
+                case X2X3_COND_ATTR_LAST:
+                    break;
+            }
+
+            HASH_DELETE(hh, attrs[i], attr);
+            free(attr);
         }
-
-        HASH_DELETE(hh, attrs[i], attr);
-        free(attr);
     }
 
 }
