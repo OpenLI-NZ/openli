@@ -40,6 +40,11 @@
 
 #define MAX_ZPOLL_X2X3 (1024)
 
+static inline int64_t x2x3_correlation_to_cin(uint64_t correlation) {
+
+    return (int64_t)(hashlittle(&correlation, sizeof(correlation), 78877));
+}
+
 static int x2x3_ssl_read_error(const char *str, size_t len, void *userdata) {
 
     (void)userdata;
@@ -120,6 +125,25 @@ static void purge_dead_clients(x_input_t *xinp) {
 
 }
 
+static void free_single_x2x3_sip_session(x2x3_sip_session_t *xs) {
+    if (xs == NULL) {
+        return;
+    }
+    if (xs->callid) {
+        free(xs->callid);
+    }
+    free(xs);
+}
+
+static void clear_x2x3_sessions(x2x3_sip_session_t **sesslist) {
+    x2x3_sip_session_t *xs, *tmp;
+
+    HASH_ITER(hh, *sesslist, xs, tmp) {
+        HASH_DELETE(hh, *sesslist, xs);
+        free_single_x2x3_sip_session(xs);
+    }
+}
+
 static void tidyup_x2x3_ingest_thread(x_input_t *xinp) {
     /* close all client connections */
     /* close listening socket */
@@ -131,6 +155,11 @@ static void tidyup_x2x3_ingest_thread(x_input_t *xinp) {
 
     free_all_ipintercepts(&(xinp->ipintercepts));
     free_all_voipintercepts(&(xinp->voipintercepts));
+
+    clear_x2x3_sessions(&(xinp->sip_active_calls));
+    clear_x2x3_sessions(&(xinp->sip_registrations));
+    clear_x2x3_sessions(&(xinp->sip_active_messages));
+    clear_x2x3_sessions(&(xinp->sip_other_sessions));
 
     if (xinp->clients) {
         for (i = 0; i < xinp->client_count; i++) {
@@ -311,35 +340,91 @@ static inline void get_x2x3_pdu_timestamp(struct timeval *tv,
     }
 }
 
-static int x2x3_process_sip_message(x_input_t *xinp UNUSED,
-        char *callid UNUSED, openli_export_recv_t *irimsg UNUSED,
-        openli_location_t *locptr UNUSED, int loc_cnt UNUSED,
-        voipintercept_t *vint UNUSED, x2x3_base_header_t *hdr UNUSED,
-        x2x3_cond_attr_t **cond_attrs UNUSED) {
+static x2x3_sip_session_t *create_x2x3_sip_session(char *callid,
+        uint8_t sesstype) {
 
+    x2x3_sip_session_t *xs;
+
+    xs = calloc(1, sizeof(x2x3_sip_session_t));
+    xs->callid = strdup(callid);
+    xs->sesstype = sesstype;
+    xs->lastseen = 0;
+    xs->byecseq = NULL;
+    xs->byematched = 0;
+
+    return xs;
+}
+
+static int x2x3_process_sip_message(x_input_t *xinp, char *callid,
+        etsili_iri_type_t *iritype, x2x3_cond_attr_t **cond_attrs) {
+
+    x2x3_sip_session_t *xs;
+    struct timeval tv;
+
+    HASH_FIND(hh, xinp->sip_active_messages, callid, strlen(callid), xs);
+    if (!xs) {
+        xs = create_x2x3_sip_session(callid, X2X3_SIP_SESSION_TYPE_MESSAGE);
+        if (!xs) {
+            return -1;
+        }
+        HASH_ADD_KEYPTR(hh, xinp->sip_active_messages, xs->callid,
+                strlen(xs->callid), xs);
+        *iritype = ETSILI_IRI_BEGIN;
+    } else {
+        *iritype = ETSILI_IRI_CONTINUE;
+    }
+
+    get_x2x3_pdu_timestamp(&tv, cond_attrs);
+    xs->lastseen = tv.tv_sec;
     return 1;
 }
 
-static int x2x3_process_sip_invite(x_input_t *xinp UNUSED,
-        char *callid UNUSED, openli_export_recv_t *irimsg UNUSED,
-        openli_location_t *locptr UNUSED, int loc_cnt UNUSED,
-        voipintercept_t *vint UNUSED, x2x3_base_header_t *hdr UNUSED,
-        x2x3_cond_attr_t **cond_attrs UNUSED) {
+static int x2x3_process_sip_invite(x_input_t *xinp, char *callid,
+        etsili_iri_type_t *iritype, x2x3_cond_attr_t **cond_attrs) {
 
+    x2x3_sip_session_t *xs;
+    struct timeval tv;
 
+    HASH_FIND(hh, xinp->sip_active_calls, callid, strlen(callid), xs);
+    if (!xs) {
+        xs = create_x2x3_sip_session(callid, X2X3_SIP_SESSION_TYPE_CALL);
+        if (!xs) {
+            return -1;
+        }
+        HASH_ADD_KEYPTR(hh, xinp->sip_active_calls, xs->callid,
+                strlen(xs->callid), xs);
+        *iritype = ETSILI_IRI_BEGIN;
+    } else {
+        // re-invites should be a CONTINUE
+        *iritype = ETSILI_IRI_CONTINUE;
+    }
+
+    get_x2x3_pdu_timestamp(&tv, cond_attrs);
+    xs->lastseen = tv.tv_sec;
     return 1;
-
 }
 
-static int x2x3_process_sip_register(x_input_t *xinp UNUSED,
-        char *callid UNUSED, openli_export_recv_t *irimsg UNUSED,
-        openli_location_t *locptr UNUSED, int loc_cnt UNUSED,
-        voipintercept_t *vint UNUSED, x2x3_base_header_t *hdr UNUSED,
-        x2x3_cond_attr_t **cond_attrs UNUSED) {
+static int x2x3_process_sip_register(x_input_t *xinp, char *callid,
+        etsili_iri_type_t *iritype, x2x3_cond_attr_t **cond_attrs) {
 
+    x2x3_sip_session_t *xs;
+    struct timeval tv;
 
+    *iritype = ETSILI_IRI_REPORT;
+
+    HASH_FIND(hh, xinp->sip_registrations, callid, strlen(callid), xs);
+    if (!xs) {
+        xs = create_x2x3_sip_session(callid, X2X3_SIP_SESSION_TYPE_REGISTER);
+        if (!xs) {
+            return -1;
+        }
+        HASH_ADD_KEYPTR(hh, xinp->sip_registrations, xs->callid,
+                strlen(xs->callid), xs);
+    }
+
+    get_x2x3_pdu_timestamp(&tv, cond_attrs);
+    xs->lastseen = tv.tv_sec;
     return 1;
-
 }
 
 static int x2x3_process_sip_other(x_input_t *xinp UNUSED,
@@ -364,6 +449,7 @@ static int x2x3_update_sip_state(x_input_t *xinp,
     char *callid;
     openli_location_t *locptr = NULL;
     int loc_cnt = 0, ret = 0;
+    etsili_iri_type_t iritype = ETSILI_IRI_CONTINUE;
 
     irimsg->data.ipmmiri.content = (uint8_t *)get_sip_contents(xinp->sipparser,
             &(irimsg->data.ipmmiri.contentlen));
@@ -377,19 +463,30 @@ static int x2x3_update_sip_state(x_input_t *xinp,
 
     get_sip_paccess_network_info(xinp->sipparser, &locptr, &loc_cnt);
     if (sip_is_message(xinp->sipparser)) {
-        ret = x2x3_process_sip_message(xinp, callid, irimsg, locptr, loc_cnt,
-                vint, hdr, cond_attrs);
+        ret = x2x3_process_sip_message(xinp, callid, &iritype, cond_attrs);
     } else if (sip_is_invite(xinp->sipparser)) {
-        ret = x2x3_process_sip_invite(xinp, callid, irimsg, locptr, loc_cnt,
-                vint, hdr, cond_attrs);
+        ret = x2x3_process_sip_invite(xinp, callid, &iritype, cond_attrs);
     } else if (sip_is_register(xinp->sipparser)) {
-        ret = x2x3_process_sip_register(xinp, callid, irimsg, locptr, loc_cnt,
-                vint, hdr, cond_attrs);
+        ret = x2x3_process_sip_register(xinp, callid, &iritype, cond_attrs);
     } else {
         ret = x2x3_process_sip_other(xinp, callid, irimsg, locptr, loc_cnt,
                 vint, hdr, cond_attrs);
     }
 
+    if (ret == -1) {
+        goto endsipupdate;
+    }
+
+    irimsg->destid = vint->common.destid;
+    irimsg->data.ipmmiri.liid = strdup(vint->common.liid);
+    irimsg->data.ipmmiri.iritype = iritype;
+    irimsg->data.ipmmiri.cin = x2x3_correlation_to_cin(hdr->correlation);
+    copy_location_into_ipmmiri_job(irimsg, locptr, loc_cnt);
+
+    publish_openli_msg(xinp->zmq_pubsocks[vint->common.seqtrackerid],
+            irimsg);
+
+endsipupdate:
     if (locptr) {
         free(locptr);
     }
@@ -498,9 +595,9 @@ static int handle_x3_rtp_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
         return 0;
     }
 
-    msg = create_ipmmcc_job_from_rtp(hashlittle(&(hdr->correlation),
-                sizeof(hdr->correlation), 78877), vint->common.liid,
-            vint->common.destid, payload, plen,
+    msg = create_ipmmcc_job_from_rtp(
+            x2x3_correlation_to_cin(hdr->correlation),
+            vint->common.liid, vint->common.destid, payload, plen,
             x2x3dir_to_etsidir(ntohs(hdr->payloaddir)), tv);
     publish_openli_msg(xinp->zmq_pubsocks[vint->common.seqtrackerid], msg);
 
