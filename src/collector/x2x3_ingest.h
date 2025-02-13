@@ -109,6 +109,24 @@ enum {
     X2X3_PAYLOAD_FORMAT_LAST
 };
 
+enum {
+    X2X3_SIP_SESSION_TYPE_CALL,
+    X2X3_SIP_SESSION_TYPE_MESSAGE,
+    X2X3_SIP_SESSION_TYPE_REGISTER,
+    X2X3_SIP_SESSION_TYPE_OTHER,
+};
+
+typedef struct x2x3_sip_session {
+    char *callid;
+    uint8_t sesstype;
+    time_t lastseen;
+
+    char *byecseq;
+    uint8_t byematched;
+
+    UT_hash_handle hh;
+
+} x2x3_sip_session_t;
 
 typedef struct x2x3_conditional_attribute {
     uint16_t type;
@@ -197,6 +215,11 @@ typedef struct x_input {
 
     /* Parser for extracting information from SIP messages */
     openli_sip_parser_t *sipparser;
+
+    x2x3_sip_session_t *sip_active_calls;
+    x2x3_sip_session_t *sip_registrations;
+    x2x3_sip_session_t *sip_active_messages;
+    x2x3_sip_session_t *sip_other_sessions;
 
     /* Shared state used to track when X2/X3 threads have halted */
     halt_info_t *haltinfo;
