@@ -1334,6 +1334,13 @@ int sip_is_register(openli_sip_parser_t *parser) {
     return 0;
 }
 
+int sip_is_response(openli_sip_parser_t *parser) {
+    if (MSG_IS_RESPONSE(parser->osip)) {
+        return 1;
+    }
+    return 0;
+}
+
 int sip_is_200ok(openli_sip_parser_t *parser) {
 
     if (MSG_IS_RESPONSE(parser->osip)) {

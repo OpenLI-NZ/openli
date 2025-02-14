@@ -159,6 +159,7 @@ int sip_is_180ringing(openli_sip_parser_t *parser);
 int sip_is_message(openli_sip_parser_t *parser);
 int sip_is_bye(openli_sip_parser_t *parser);
 int sip_is_cancel(openli_sip_parser_t *parser);
+int sip_is_response(openli_sip_parser_t *parser);
 
 int get_sip_identity_by_header_name(openli_sip_parser_t *parser,
         openli_sip_identity_t *sipid, const char *header);

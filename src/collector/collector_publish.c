@@ -70,6 +70,7 @@ openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common,
     expmsg->data.cept.delivcc = strdup(common->delivcc);
     expmsg->data.cept.encryptmethod = common->encrypt;
     expmsg->data.cept.cepttype = cepttype;
+    expmsg->data.cept.targetagency = strdup(common->targetagency);
     uuid_copy(expmsg->data.cept.xid, common->xid);
 
     if (common->encryptkey) {
@@ -106,6 +107,9 @@ void free_published_message(openli_export_recv_t *msg) {
         }
         if (msg->data.cept.username) {
             free(msg->data.cept.username);
+        }
+        if (msg->data.cept.targetagency) {
+            free(msg->data.cept.targetagency);
         }
 
     } else if (msg->type == OPENLI_EXPORT_IPCC ||
