@@ -526,8 +526,11 @@ char *list_sip_targets(voipintercept_t *v, int maxchars) {
     int required = 0;
 
     openli_sip_identity_t *sipid;
-    libtrace_list_node_t *n;
-    n = v->targets->head;
+    libtrace_list_node_t *n = NULL;
+
+    if (v->targets) {
+        n = v->targets->head;
+    }
 
     while (n) {
         sipid = *((openli_sip_identity_t **)(n->data));
@@ -568,6 +571,12 @@ char *list_sip_targets(voipintercept_t *v, int maxchars) {
             spaceused += strlen(sipid->realm);
         }
     }
+
+    if (space == NULL && !uuid_is_null(v->common.xid)) {
+        space = calloc(1, 40);
+        uuid_unparse(v->common.xid, space);
+    }
+
     return space;
 }
 
