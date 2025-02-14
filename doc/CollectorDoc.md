@@ -83,9 +83,10 @@ will disable the statistic logging altogether.
 
 
 ### Inputs
-The inputs option is used to describe which interfaces should be used to
-intercept traffic. Each interface should be expressed using either its
-interface name (for non-DPDK capture) or its PCI device ID (for DPDK capture).
+The inputs option is used to describe which interfaces on the collector
+should be used to intercept traffic. Each interface should be expressed using
+either its interface name (for non-DPDK capture) or its PCI device ID
+(for DPDK capture).
 
 You can also configure the number of processing threads that are assigned
 to intercepting the packets received on that interface. High speed interfaces
@@ -104,21 +105,32 @@ packets for the same user session are received by the same processing thread.
 Valid values for the `hasher` option are `bidirectional` (default), `radius`
 and `balanced`.
 
-### ALU Mirror Configuration
+### X2/X3 Support
+OpenLI collectors now support being able to receive intercepted traffic using
+the X2/X3 standards (i.e. ETSI TS 102 221-2).
+
+To enable this feature, specify the IP address and port that you want your
+collector to listen on using the `x2x3inputs` configuration option. You may
+specify multiple X2/X3 listeners if desired, e.g. if you wanted to scale up
+your collector by adding multiple listeners and using X1 to spread your
+intercept targets across them.
+
+
+### Nokia Mirror Configuration
 If you are using OpenLI to translate the intercept records produced by
 Alcatel-Lucent devices into ETSI-compliant output, any collectors that
-are expected to receive mirrored copies of the ALU intercept records need
+are expected to receive mirrored copies of the Nokia intercept records need
 to be able to identify which packets are encapsulated records to be
 translated.
 
 This is done by configuring the collector with a sequence of known sinks for
-the ALU intercept traffic under the 'alumirrors' top-level configuration
+the Nokia intercept traffic under the 'alumirrors' top-level configuration
 option. Each sequence entry is defined using two parameters:
 * ip -- the IP address of the sink
-* port -- the port that the sink is listening on for ALU intercept records
+* port -- the port that the sink is listening on for Nokia intercept records
 
 Note that in this context, the sink refers to the destination IP address
-and port of the mirrored ALU traffic.
+and port of the mirrored Nokia traffic.
 
 ### Juniper Mirror Configuration
 If you are using Juniper Packet Mirroring (a.k.a. JMirror) to mirror intercepted
@@ -131,7 +143,7 @@ This is done by configuring the collector with a sequence of known sinks for
 the mirrored traffic under the 'jmirrors' top-level configuration option.
 Each sequence entry is defined using two parameters:
 * ip -- the IP address of the sink
-* port -- the port that the sink is listening on for ALU intercept records
+* port -- the port that the sink is listening on for Nokia intercept records
 
 Note that in this context, the sink refers to the destination IP address
 and port of the mirrored traffic.
@@ -237,6 +249,8 @@ contending for CPU time. A good rule of thumb is that the total number
 of input threads, sequence tracker threads, encoding threads and forwarding
 threads should NOT exceed the number of CPU cores on your machine.
 
+---
+
 Inputs are specified as a YAML sequence with a key of `inputs:`. Each
 sequence item represents a single traffic source to intercept traffic from
 and must contain the following two key-value elements:
@@ -248,17 +262,46 @@ and must contain the following two key-value elements:
                       RADIUS packets are strongly recommended to use `radius`
                       here, `bidirectional` otherwise.
 
-As described above, ALU mirrors are defined as a YAML sequence with a key
+---
+
+X2/X3 inputs are also specified as a YAML sequence, using `x2x3inputs:` as
+the key. Each sequence item describes a single X2/X3 listening socket that the
+OpenLI collector will then create. Each X2/X3 input is limited to a single
+thread, so if you want to parallelise X2/X3 ingestion then you should provide
+configuration for multiple listeners and distribute the intercepts accordingly
+when you use X1 to trigger the X2/X3 delivery on your network equipment.
+
+X2/X3 inputs should include the following key-value elements:
+* listenaddr       -- the IP address that the collector should listen on.
+* listenport       -- the TCP port that the collector should listen on.
+* certfile         -- the path to the .pem file containing the TLS certificate
+                      that the collector should offer to connecting clients.
+
+Note that TLS is mandatory for X2/X3 transport and we do not provide an option
+to disable it.
+
+---
+
+As described above, Nokia mirrors are defined as a YAML sequence with a key
 of `alumirrors:`. Each sequence item must contain the following two
 key-value elements:
 * ip -- the IP address of the sink
-* port -- the port that the sink is listening on for ALU intercept records
+* port -- the port that the sink was listening on for Nokia intercept records
 
-Juniper Packet Mirrors (JMirror) are defined in the same way as ALU mirrors,
+Juniper Packet Mirrors (JMirror) are defined in the same way as Nokia mirrors,
 except using the key 'jmirrors:'. Each sequence item must contain the following
 two key-value elements:
 * ip -- the IP address of the JMirror sink
-* port -- the port that the sink is listening on for mirrored traffic
+* port -- the port that the sink was listening on for mirrored traffic
+
+We also support the Cisco equivalent, PacketCable, and the configuration to
+tell the collector how to recognise traffic mirrored from a Cisco device is
+very similar to the above. The sequence key in this case is called
+`ciscomirrors:` and each item must contain the following two key-value
+elements:
+
+* ip -- the IP address of the device that received the mirrored traffic
+* port -- the port that the sink was listening on for mirrored traffic
 
 
 ### Email interception options

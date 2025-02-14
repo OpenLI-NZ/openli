@@ -217,10 +217,18 @@ ipintercepts:
 # To change intercepts for a running OpenLI process, modify the intercept list
 # in the config file, then send a SIGHUP to the provisioner process.
 #
-# In this example, we have two VOIP intercepts running: one for the "Police"
-# intercepting VOIP calls for 'badguy@myisp.com' and one for the "Spooks"
-# intercepting VOIP calls for 'target@myisp.com'.
-# Both intercepts will be routed to the agencies via the mediator that is
+# In this example, we have three VOIP intercepts running: the first one is 
+# for the "Police" intercepting VOIP calls for 'badguy@myisp.com'. The second
+# one is for the "Spooks" intercepting VOIP calls for 'target@myisp.com'
+#
+# The third intercept is being delivered to the collector via X2/X3 so its
+# configuration must include the XID that was assigned to the intercept
+# when it was first announced via X1. Because intercepts delivered over X2/X3
+# should automatically include only the relevant traffic for calls involving
+# the target, it is not necessary to include the target's identity in the
+# configuration here.
+#
+# All three intercepts will be routed to the agencies via the mediator that is
 # configured with the ID 6001.
 voipintercepts:
 
@@ -245,6 +253,13 @@ voipintercepts:
                                 # Authorization headers. Note the lack of
                                 # realm, this means we can match this username
                                 # against *any* realm.
+
+ - liid: ABC6RTN90              # LIID, should be provided by requesting agency
+   authcountrycode: NZ          # Authorisation country code
+   deliverycountrycode: NZ      # Delivery country code
+   mediator: 6001               # ID of the mediator to send intercept via
+   agencyid: "Police"           # ID of agency to send intercept to
+   xid: "29f28e1c-f230-486a-a860-f5a784ab9172" # XID for this intercept
 
 
 # List of active email intercepts
