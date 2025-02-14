@@ -181,3 +181,14 @@ inputs:
 # - uri: dpdk:0000:42:00.0     # capture on DPDK interface with this PCI address
 #   threads: 4                 # use 4 processing threads for this input
 #   hasher: bidirectional      # hash based on bidirectional flow 5-tuple
+
+# List of IP/port pairs to use for listening for intercepted traffic sent
+# by vendor equipment using the X2/X3 interfaces
+#
+# Note that you can have as many X2/X3 inputs as you like, and that you must
+# provide a TLS certificate for the listener to serve to clients to prove
+# your identity.
+x2x3inputs:
+ - listenaddr: 10.230.1.1
+   listenport: 25000
+   certfile: /etc/openli/openli-collector-crt.pem
