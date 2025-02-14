@@ -211,6 +211,7 @@ typedef struct published_intercept_msg {
     char *encryptkey;
     uuid_t xid;
     openli_intercept_types_t cepttype;
+    char *targetagency;
 
     // optional fields
     char *username;

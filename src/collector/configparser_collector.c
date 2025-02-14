@@ -106,15 +106,15 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         yaml_node_t *inputs) {
 
     yaml_node_item_t *item;
+    colinput_t *inp = NULL;
 
     for (item = inputs->data.sequence.items.start;
             item != inputs->data.sequence.items.top; item ++) {
         yaml_node_t *node = yaml_document_get_node(doc, *item);
-        colinput_t *inp;
         yaml_node_pair_t *pair;
 
         /* Each sequence item is a new input */
-        inp = (colinput_t *)malloc(sizeof(colinput_t));
+        inp = (colinput_t *)calloc(1, sizeof(colinput_t));
         inp->uri = NULL;
         inp->hashconfigured = 0;
         inp->threadcount = 1;
@@ -125,7 +125,7 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         inp->hasher_apply = OPENLI_HASHER_BIDIR;
         inp->filterstring = NULL;
         inp->filter = NULL;
-	inp->coremap = NULL;
+    	inp->coremap = NULL;
 
         /* Mappings describe the parameters for each input */
         for (pair = node->data.mapping.pairs.start;
@@ -191,6 +191,13 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         }
         if (!inp->uri) {
             logger(LOG_INFO, "OpenLI collector: input is missing a URI?");
+            if (inp->filterstring) {
+                free(inp->filterstring);
+            }
+            if (inp->coremap) {
+                free(inp->coremap);
+            }
+            free(inp);
             continue;
         }
         HASH_ADD_KEYPTR(hh, glob->inputs, inp->uri, strlen(inp->uri), inp);
