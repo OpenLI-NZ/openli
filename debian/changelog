@@ -1,11 +1,13 @@
 openli (1.1.12-1) unstable; urgency=medium
 
-  * collector: improved handling of situations where a libtrace
+  * Collector: improved handling of situations where a libtrace
     input encounters a fatal error.
-  * mediator: ensure rabbitmq-server is listed as a dependency in
+  * Mediator: ensure rabbitmq-server is listed as a dependency in
     the mediator system file.
+  * Collector: add support for receiving intercepted traffic via X2/X3
+    interfaces (SIP and RTP PDU types only at this stage).
 
- -- Shane Alcock <salcock@searchlight.nz>  Wed, 5 Feb 2025 16:42:18 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Mon, 17 Feb 2025 12:55:45 +1300
 
 openli (1.1.11-1) unstable; urgency=medium
 
