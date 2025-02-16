@@ -136,6 +136,9 @@ typedef struct colinput {
     libtrace_filter_t *filter;
     libtrace_callback_set_t *pktcbs;
 
+    time_t start_at;
+    uint8_t no_restart;
+
     uint8_t hasher_apply;
     hash_radius_conf_t hashradconf;
     uint8_t hashconfigured;
@@ -196,6 +199,8 @@ typedef struct staticip_cacheentry {
 } static_ipcache_t;
 
 typedef struct colthread_local {
+
+    char *localname;
 
     /* Message queue for pushing updates to sync IP thread */
     void *tosyncq_ip;
@@ -283,6 +288,8 @@ typedef struct colthread_local {
     time_t startedat;
     uint16_t pkts_since_msg_read;
 
+    UT_hash_handle hh;
+
 } colthread_local_t;
 
 typedef struct collector_global {
@@ -313,7 +320,7 @@ typedef struct collector_global {
     openli_email_worker_t *emailworkers;
     openli_gtp_worker_t *gtpworkers;
     openli_sip_worker_t *sipworkers;
-    colthread_local_t **collocals;
+    colthread_local_t *collocals;
     int nextloc;
 
     char *configfile;

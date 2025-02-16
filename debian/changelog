@@ -1,3 +1,12 @@
+openli (1.1.12-1) unstable; urgency=medium
+
+  * collector: improved handling of situations where a libtrace
+    input encounters a fatal error.
+  * mediator: ensure rabbitmq-server is listed as a dependency in
+    the mediator system file.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 5 Feb 2025 16:42:18 +1300
+
 openli (1.1.11-1) unstable; urgency=medium
 
   * SIP: fix crash when processing an INVITE where the SDP address is
