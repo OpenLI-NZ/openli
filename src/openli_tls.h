@@ -36,6 +36,7 @@ typedef struct openli_ssl_config {
     char *keyfile;
     char *cacertfile;
     char *certfile;
+    char *logkeyfile;
     SSL_CTX *ctx;
 } openli_ssl_config_t;
 

@@ -285,6 +285,7 @@ int init_prov_state(provision_state_t *state, char *configfile) {
     state->sslconf.certfile = NULL;
     state->sslconf.keyfile = NULL;
     state->sslconf.cacertfile = NULL;
+    state->sslconf.logkeyfile = NULL;
     state->sslconf.ctx = NULL;
 
     state->key_pem = NULL;

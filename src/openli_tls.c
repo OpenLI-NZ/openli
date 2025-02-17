@@ -29,6 +29,9 @@
 #include "logger.h"
 #include "openli_tls.h"
 
+/* global variable?? */
+FILE *openli_ssl_keylog_hdl = NULL;
+
 #if 0
 static void dump_cert_info(SSL *ssl) {
     logger(LOG_DEBUG,
@@ -55,14 +58,20 @@ static void dump_cert_info(SSL *ssl) {
 }
 #endif
 
+static void sslkeylog_cb(const SSL *ssl, const char *line) {
 
-//takes in 3 filenames for the CA, own cert and private key
+    (void)ssl;
+    if (openli_ssl_keylog_hdl) {
+        fprintf(openli_ssl_keylog_hdl, "%s\n", line);
+    }
+}
+
+//takes in struct containing the CA, own cert and private key
 //if all 3 files names are null, returns null as successfully doing nothing
 //returns -1 if an error happened
 //otherwise returns a new SSL_CTX with the provided certificates using TLSv1_2
 //and enforces identity checking at handshake
-static SSL_CTX * ssl_init(const char *cacertfile, const char *certfile,
-        const char *keyfile) {
+static SSL_CTX * ssl_init(openli_ssl_config_t *sslconf) {
 
     /* SSL library initialisation */
     SSL_library_init();
@@ -86,8 +95,10 @@ static SSL_CTX * ssl_init(const char *cacertfile, const char *certfile,
     /* Enforce use of TLSv1_3 */
     SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
 
-    if (SSL_CTX_load_verify_locations(ctx, cacertfile, "./") != 1){ //TODO this might want to be changed
-        logger(LOG_INFO, "OpenLI: SSL CA cert loading {%s} failed", cacertfile);
+    if (SSL_CTX_load_verify_locations(ctx, sslconf->cacertfile,
+                "./") != 1){ //TODO this might want to be changed
+        logger(LOG_INFO, "OpenLI: SSL CA cert loading {%s} failed",
+                sslconf->cacertfile);
         SSL_CTX_free(ctx);
         return NULL;
     }
@@ -95,27 +106,53 @@ static SSL_CTX * ssl_init(const char *cacertfile, const char *certfile,
     //enforce cheking of client/server 
     SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
 
-    if (SSL_CTX_use_certificate_file(ctx, certfile, SSL_FILETYPE_PEM) != 1){
-        logger(LOG_INFO, "OpenLI: SSL cert loading {%s} failed", certfile);
+    if (SSL_CTX_use_certificate_file(ctx, sslconf->certfile,
+                SSL_FILETYPE_PEM) != 1){
+        logger(LOG_INFO, "OpenLI: SSL cert loading {%s} failed",
+                sslconf->certfile);
         SSL_CTX_free(ctx);
         return NULL;
     }
 
-    if (SSL_CTX_use_PrivateKey_file(ctx, keyfile, SSL_FILETYPE_PEM) != 1){
-        logger(LOG_INFO, "OpenLI: SSL Key loading {%s} failed", keyfile);
+    if (SSL_CTX_use_PrivateKey_file(ctx, sslconf->keyfile,
+                SSL_FILETYPE_PEM) != 1){
+        logger(LOG_INFO, "OpenLI: SSL Key loading {%s} failed",
+                sslconf->keyfile);
         SSL_CTX_free(ctx);
         return NULL;
     }
 
     /* Make sure the key and certificate file match. */
     if (SSL_CTX_check_private_key(ctx) != 1){
-        logger(LOG_INFO, "OpenLI: SSL CTX private key failed, %s and %s do not match", keyfile, certfile);
+        logger(LOG_INFO, "OpenLI: SSL CTX private key failed, %s and %s do not match", sslconf->keyfile, sslconf->certfile);
         SSL_CTX_free(ctx);
         return NULL;
     }
 
     logger(LOG_DEBUG, "OpenLI: OpenSSL CTX initialised, TLS encryption enabled.");
-    logger(LOG_DEBUG, "OpenLI: Using %s, %s and %s.", certfile, keyfile, cacertfile);
+    logger(LOG_DEBUG, "OpenLI: Using %s, %s and %s.", sslconf->certfile,
+            sslconf->keyfile, sslconf->cacertfile);
+
+    if (sslconf->logkeyfile) {
+        if (openli_ssl_keylog_hdl) {
+            fclose(openli_ssl_keylog_hdl);
+        }
+        openli_ssl_keylog_hdl = fopen(sslconf->logkeyfile, "w");
+        if (openli_ssl_keylog_hdl == NULL) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to open file for logging TLS keys (%s): %s",
+                    sslconf->logkeyfile, strerror(errno));
+        } else {
+            logger(LOG_DEBUG, "OpenLI: logging TLS keys to %s",
+                    sslconf->logkeyfile);
+        }
+        SSL_CTX_set_keylog_callback(ctx, sslkeylog_cb);
+    } else {
+        if (openli_ssl_keylog_hdl) {
+            fclose(openli_ssl_keylog_hdl);
+        }
+        openli_ssl_keylog_hdl = NULL;
+    }
 
     return ctx;
 }
@@ -123,8 +160,7 @@ static SSL_CTX * ssl_init(const char *cacertfile, const char *certfile,
 int create_ssl_context(openli_ssl_config_t *sslconf) {
 
     if (sslconf->certfile && sslconf->keyfile && sslconf->cacertfile) {
-        sslconf->ctx = ssl_init(sslconf->cacertfile, sslconf->certfile,
-                sslconf->keyfile);
+        sslconf->ctx = ssl_init(sslconf);
         logger(LOG_INFO, "OpenLI: creating new SSL context for TLS sessions");
         return 0;
     }
@@ -139,6 +175,11 @@ int create_ssl_context(openli_ssl_config_t *sslconf) {
 }
 
 void free_ssl_config(openli_ssl_config_t *sslconf) {
+    if (sslconf->logkeyfile) {
+        free(sslconf->logkeyfile);
+        sslconf->logkeyfile = NULL;
+    }
+
     if (sslconf->certfile) {
         free(sslconf->certfile);
         sslconf->certfile = NULL;
@@ -157,6 +198,11 @@ void free_ssl_config(openli_ssl_config_t *sslconf) {
     if (sslconf->ctx) {
         SSL_CTX_free(sslconf->ctx);
         sslconf->ctx = NULL;
+    }
+
+    if (openli_ssl_keylog_hdl) {
+        fclose(openli_ssl_keylog_hdl);
+        openli_ssl_keylog_hdl = NULL;
     }
 }
 
@@ -241,6 +287,23 @@ int reload_ssl_config(openli_ssl_config_t *current,
             free(current->keyfile);
             current->keyfile = newconf->keyfile;
             newconf->keyfile = NULL;
+            changestate = 1;
+        }
+    }
+
+    if (current->logkeyfile == NULL && newconf->logkeyfile != NULL) {
+        current->logkeyfile = newconf->logkeyfile;
+        newconf->logkeyfile = NULL;
+        changestate = 1;
+    } else if (current->logkeyfile != NULL && newconf->logkeyfile == NULL) {
+        free(current->logkeyfile);
+        current->logkeyfile = NULL;
+        changestate = 1;
+    } else if (current->logkeyfile && newconf->logkeyfile) {
+        if (strcmp(current->logkeyfile, newconf->logkeyfile) != 0) {
+            free(current->logkeyfile);
+            current->logkeyfile = newconf->logkeyfile;
+            newconf->logkeyfile = NULL;
             changestate = 1;
         }
     }
