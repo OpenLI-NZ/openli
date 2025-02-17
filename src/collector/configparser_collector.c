@@ -502,6 +502,12 @@ static int collector_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value, "tlskeylogfile") == 0) {
+        SET_CONFIG_STRING_OPTION(glob->sslconf.logkeyfile, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "etsitls") == 0) {
         glob->etsitls = config_check_onoff((char *)value->data.scalar.value);
     }
