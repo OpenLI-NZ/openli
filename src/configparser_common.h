@@ -35,6 +35,8 @@
 #include <string.h>
 #include <yaml.h>
 
+#define AES_ENCRYPT_ITERATIONS 10000
+
 #define SET_CONFIG_STRING_OPTION(optname, yamlval) \
     if (optname) { \
         free(optname); \
@@ -43,7 +45,7 @@
 
 int config_yaml_parser(char *configfile, void *arg,
         int (*parse_mapping)(void *, yaml_document_t *, yaml_node_t *,
-                yaml_node_t *), int createifmissing);
+                yaml_node_t *), int createifmissing, const char *encpassfile);
 int config_check_onoff(char *value);
 int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
         yaml_document_t *doc, yaml_node_t *inputs);

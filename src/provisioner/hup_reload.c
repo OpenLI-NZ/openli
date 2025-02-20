@@ -673,7 +673,8 @@ static int reload_intercept_config(provision_state_t *currstate,
 
     init_intercept_config(&newconf);
 
-    if (parse_intercept_config(currstate->interceptconffile, &(newconf)) == -1)
+    if (parse_intercept_config(currstate->interceptconffile, &(newconf),
+                currstate->encpassfile) == -1)
     {
         logger(LOG_INFO, "OpenLI provisioner: error while parsing intercept config file '%s'", currstate->interceptconffile);
         return -1;
@@ -996,7 +997,8 @@ int reload_provisioner_config(provision_state_t *currstate) {
     int restauthchanged = 0;
     char *target_info;
 
-    if (init_prov_state(&newstate, currstate->conffile) == -1) {
+    if (init_prov_state(&newstate, currstate->conffile,
+                currstate->encpassfile) == -1) {
         logger(LOG_INFO,
                 "OpenLI: Error reloading config file for provisioner.");
         return -1;

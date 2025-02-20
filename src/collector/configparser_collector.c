@@ -649,7 +649,7 @@ static int collector_parser(void *arg, yaml_document_t *doc,
 }
 
 int parse_collector_config(char *configfile, collector_global_t *glob) {
-    return config_yaml_parser(configfile, glob, collector_parser, 0);
+    return config_yaml_parser(configfile, glob, collector_parser, 0, NULL);
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

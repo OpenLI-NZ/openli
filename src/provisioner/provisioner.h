@@ -258,6 +258,10 @@ typedef struct prov_state {
     /** Path to the configuration file */
     char *conffile;
 
+    /** Path to the file containing the passphrase for any encrypted intercept
+     *  configuration */
+    const char *encpassfile;
+
     /** The IP address to listen on for incoming collector connections */
     char *listenaddr;
     /** The port to listen on for incoming collector connections */
@@ -348,7 +352,8 @@ struct prov_sock_state {
 /* Implemented in provisioner.c, but included here to be available
  * inside hup_reload.c
  */
-int init_prov_state(provision_state_t *state, char *configfile);
+int init_prov_state(provision_state_t *state, char *configfile,
+        const char *encpassfile);
 void clear_prov_state(provision_state_t *state);
 void free_all_mediators(int epollfd, prov_mediator_t **mediators,
         mediator_address_t **knownmeds);
