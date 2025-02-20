@@ -512,6 +512,18 @@ static int emit_intercept_common(intercept_common_t *intcom,
         if (!yaml_emitter_emit(emitter, &event)) return -1;
     }
 
+    if (!uuid_is_null(intcom->xid)) {
+        uuid_unparse(intcom->xid, buffer);
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"xid", strlen("xid"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)buffer, strlen(buffer), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+    }
+
     yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
             (yaml_char_t *)"outputhandovers", strlen("outputhandovers"), 1, 0,
             YAML_PLAIN_SCALAR_STYLE);

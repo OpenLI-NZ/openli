@@ -25,10 +25,10 @@
  */
 
 #include "config.h"
+#include "configparser_provisioner.h"
 #include "provisioner.h"
 #include "logger.h"
 #include "util.h"
-#include "configparser.h"
 #include "updateserver.h"
 #include "intercept_timers.h"
 
@@ -92,6 +92,10 @@ static inline int common_intercept_equal(intercept_common_t *a,
     }
 
     if (strcmp(a->targetagency, b->targetagency) != 0) {
+        return 0;
+    }
+
+    if (uuid_compare(a->xid, b->xid) != 0) {
         return 0;
     }
 

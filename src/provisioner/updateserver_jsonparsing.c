@@ -67,6 +67,7 @@ struct json_intercept {
     struct json_object *encryption;
     struct json_object *encryptkey;
     struct json_object *delivercompressed;
+    struct json_object *xid;
 };
 
 struct json_prov_options {
@@ -216,6 +217,7 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "siptargets", &(ipjson->siptargets));
     json_object_object_get_ex(parsed, "targets", &(ipjson->emailtargets));
     json_object_object_get_ex(parsed, "delivercompressed", &(ipjson->delivercompressed));
+    json_object_object_get_ex(parsed, "xid", &(ipjson->xid));
 }
 
 static inline int compare_intercept_times(intercept_common_t *latest,
@@ -282,6 +284,7 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
 
     int parseerr = 0;
     char *encryptmethodstring = NULL;
+    char *uuidstring = NULL;
     struct timeval tv;
     prov_intercept_data_t *timers = NULL;
 
@@ -325,11 +328,25 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
             jsonp->encryption, encryptmethodstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("encryptionkey", cepttype,
             jsonp->encryptkey, common->encryptkey, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("xid", cepttype, jsonp->xid, uuidstring,
+            &parseerr, false);
 
     if (encryptmethodstring) {
         common->encrypt = map_encrypt_method_string(encryptmethodstring);
         free(encryptmethodstring);
     }
+
+    if (uuidstring) {
+        if (uuid_parse(uuidstring, common->xid) < 0) {
+            free(uuidstring);
+            uuid_clear(common->xid);
+            snprintf(cinfo->answerstring, 4096,
+                    "'xid' parameter must be a valid RFC 4122 UUID string");
+            return -1;
+        }
+        free(uuidstring);
+    }
+
 
     if (common->authcc) {
         common->authcc_len = strlen(common->authcc);
@@ -411,6 +428,11 @@ static int update_intercept_common(intercept_common_t *parsed,
                     "'encryptionkey' parameter must be set if 'payloadencryption' is set to anything other than 'none'");
             return -1;
         }
+    }
+
+    if (uuid_compare(parsed->xid, existing->xid) != 0) {
+        uuid_copy(existing->xid, parsed->xid);
+        *changed = 1;
     }
 
     MODIFY_STRING_MEMBER(parsed->authcc, existing->authcc, changed);
@@ -1235,7 +1257,7 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         }
     }
 
-    if (r == 0) {
+    if (r == 0 && uuid_is_null(vint->common.xid)) {
         snprintf(cinfo->answerstring, 4096,
                 "%s <p>VOIP intercept %s has been specified without valid SIP targets. %s",
                 update_failure_page_start, vint->common.liid,

@@ -4,9 +4,12 @@ dist_sbin_SCRIPTS=
 if BUILD_PROVISIONER
 bin_PROGRAMS += openliprovisioner
 openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
-		byteswap.c byteswap.h intercept.h intercept.c configparser.c \
-                configparser.h util.c util.h agency.h logger.c logger.h \
+		byteswap.c byteswap.h intercept.h intercept.c \
+        util.c util.h agency.h logger.c logger.h \
+		provisioner/configparser_provisioner.h \
+		provisioner/configparser_provisioner.c \
 		netcomms.h netcomms.c coreserver.h coreserver.c \
+		configparser_common.c configparser_common.h \
                 collector/jenkinshash.c provisioner/updateserver.c \
                 openli_tls.c openli_tls.h agency.c agency.h \
                 provisioner/provisioner_client.c \
@@ -32,9 +35,12 @@ PLUGIN_SRCS=collector/accessplugins/radius.c \
                 collector/accessplugins/gtp.c
 
 bin_PROGRAMS +=openlicollector
-openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
+openlicollector_SOURCES=collector/collector.c \
+				collector/configparser_collector.c \
+				collector/configparser_collector.h \
                 collector/collector.h logger.c logger.h \
                 collector/collector_base.h \
+		configparser_common.c configparser_common.h \
 		collector/collector_sync.c collector/collector_sync.h \
 		etsili_core.h export_buffer.h export_buffer.c \
                 util.c util.h intercept.c intercept.h \
@@ -70,6 +76,8 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/etsiencoding/etsiencoding.c \
                 collector/etsiencoding/encryptcontainer.c \
                 collector/etsiencoding/ipmmiri.c \
+                collector/etsiencoding/ipmmcc.c \
+                collector/etsiencoding/templating.c \
                 collector/etsiencoding/epsiri.c collector/epsiri.h \
                 collector/etsiencoding/epscc.c collector/epscc.h \
                 collector/sip_worker.c collector/sip_worker.h \
@@ -80,6 +88,8 @@ openlicollector_SOURCES=collector/collector.c configparser.c configparser.h \
                 collector/collector_util.c collector/collector_util.h \
                 collector/sip_worker_redirection.c \
 				collector/sip_worker_redirection.h \
+				collector/x2x3_ingest.c collector/x2x3_ingest.h \
+				collector/x2x3_cond_attrs.c \
                 $(PLUGIN_SRCS)
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 
@@ -91,6 +101,7 @@ endif
 if BUILD_MEDIATOR
 bin_PROGRAMS += openlimediator
 openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
+		configparser_common.c configparser_common.h \
 		mediator/pcapthread.c mediator/pcapthread.h \
                 mediator/handover.c mediator/handover.h \
                 mediator/med_epoll.c mediator/liidmapping.c \
@@ -99,8 +110,8 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
                 mediator/coll_recv_thread.c mediator/coll_recv_thread.h \
                 mediator/lea_send_thread.c mediator/lea_send_thread.h \
                 mediator/mediator_rmq.c mediator/mediator_rmq.h \
-                byteswap.c byteswap.h \
-                configparser.c configparser.h util.c util.h \
+                byteswap.c byteswap.h mediator/configparser_mediator.h \
+                util.c util.h mediator/configparser_mediator.c \
                 agency.h agency.c logger.c logger.h netcomms.c \
                 netcomms.h export_buffer.c intercept.c \
                 export_buffer.h etsili_core.h etsili_core.c \

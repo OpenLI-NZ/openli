@@ -72,9 +72,6 @@ enum {
     OPENLI_EXPORT_EPSIRI = 26,
 };
 
-/* This structure is also used for IPMMCCs since they require the same
- * raw information.
- */
 typedef struct openli_ipcc_job {
     char *liid;
     uint8_t *ipcontent;
@@ -84,6 +81,18 @@ typedef struct openli_ipcc_job {
     uint32_t cin;
     uint8_t dir;
 } PACKED openli_ipcc_job_t;
+
+typedef struct openli_ipmmcc_job {
+    char *liid;
+    uint8_t *content;
+    uint32_t contentlen;
+    uint32_t contentalloc;
+    uint16_t liidalloc;
+    uint32_t cin;
+    uint8_t dir;
+    uint8_t frametype;
+    uint8_t mmccproto;
+} PACKED openli_ipmmcc_job_t;
 
 typedef struct openli_mobcc_job {
     char *liid;
@@ -176,6 +185,23 @@ enum {
     OPENLI_IPIRI_IPMETHOD_UNKNOWN,
 };
 
+enum {
+    OPENLI_IPMMCC_FRAME_TYPE_IP = 0,
+    OPENLI_IPMMCC_FRAME_TYPE_UDP = 1,
+    OPENLI_IPMMCC_FRAME_TYPE_RTP = 2,
+    OPENLI_IPMMCC_FRAME_TYPE_AUDIO = 3,
+    OPENLI_IPMMCC_FRAME_TYPE_TCP = 4,
+    OPENLI_IPMMCC_FRAME_TYPE_ARTIFICIAL_RTP = 5,
+    OPENLI_IPMMCC_FRAME_TYPE_UDPTL = 6,
+    OPENLI_IPMMCC_FRAME_TYPE_MSRP = 7,
+};
+
+enum {
+    OPENLI_IPMMCC_MMCC_PROTOCOL_RTP = 0,
+    OPENLI_IPMMCC_MMCC_PROTOCOL_MSRP = 1,
+    OPENLI_IPMMCC_MMCC_PROTOCOL_UDPTL = 2,
+};
+
 typedef struct published_intercept_msg {
     char *liid;
     char *authcc;
@@ -183,6 +209,14 @@ typedef struct published_intercept_msg {
     int seqtrackerid;
     payload_encryption_method_t encryptmethod;
     char *encryptkey;
+    uuid_t xid;
+    openli_intercept_types_t cepttype;
+    char *targetagency;
+
+    // optional fields
+    char *username;
+    internet_access_method_t accesstype;
+
 } published_intercept_msg_t;
 
 typedef struct provisioner_msg {
@@ -203,6 +237,7 @@ struct openli_export_recv {
         published_intercept_msg_t cept;
         provisioner_msg_t provmsg;
         openli_ipcc_job_t ipcc;
+        openli_ipmmcc_job_t ipmmcc;
         openli_ipmmiri_job_t ipmmiri;
         openli_ipiri_job_t ipiri;
         openli_mobiri_job_t mobiri;
@@ -217,11 +252,20 @@ struct openli_export_recv {
 int publish_openli_msg(void *pubsock, openli_export_recv_t *msg);
 void free_published_message(openli_export_recv_t *msg);
 
-openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common);
+openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common,
+        openli_intercept_types_t cepttype);
 
 openli_export_recv_t *create_ipcc_job(
         uint32_t cin, char *liid, uint32_t destid, libtrace_packet_t *pkt,
         uint8_t dir);
+
+openli_export_recv_t *create_ipmmcc_job_from_packet(
+        uint32_t cin, char *liid, uint32_t destid, libtrace_packet_t *pkt,
+        uint8_t dir, uint8_t mmccproto);
+
+openli_export_recv_t *create_ipmmcc_job_from_rtp(
+        uint32_t cin, char *liid, uint32_t destid, uint8_t *rtpstart,
+        uint32_t rtplen, uint8_t dir, struct timeval timestamp);
 
 openli_export_recv_t *create_epscc_job_from_ip(uint32_t cin, char *liid,
         uint32_t destid, libtrace_packet_t *pkt, uint8_t dir);

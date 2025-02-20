@@ -58,15 +58,21 @@ int publish_openli_msg(void *pubsock, openli_export_recv_t *msg) {
     return 0;
 }
 
-openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common) {
+openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common,
+        openli_intercept_types_t cepttype) {
 
     openli_export_recv_t *expmsg;
     expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
     expmsg->type = OPENLI_EXPORT_INTERCEPT_DETAILS;
+    expmsg->destid = common->destid;
     expmsg->data.cept.liid = strdup(common->liid);
     expmsg->data.cept.authcc = strdup(common->authcc);
     expmsg->data.cept.delivcc = strdup(common->delivcc);
     expmsg->data.cept.encryptmethod = common->encrypt;
+    expmsg->data.cept.cepttype = cepttype;
+    expmsg->data.cept.targetagency = strdup(common->targetagency);
+    uuid_copy(expmsg->data.cept.xid, common->xid);
+
     if (common->encryptkey) {
         expmsg->data.cept.encryptkey = strdup(common->encryptkey);
     } else {
@@ -74,20 +80,54 @@ openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common) {
     }
     expmsg->data.cept.seqtrackerid = common->seqtrackerid;
 
+    // set the optional fields to suitable "null" values
+    expmsg->data.cept.username = NULL;
+    expmsg->data.cept.accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
+
     return expmsg;
 }
 
 
 void free_published_message(openli_export_recv_t *msg) {
 
-    if (msg->type == OPENLI_EXPORT_IPCC || msg->type == OPENLI_EXPORT_IPMMCC
-            || msg->type == OPENLI_EXPORT_UMTSCC) {
+    if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS ||
+            msg->type == OPENLI_EXPORT_INTERCEPT_CHANGED ||
+            msg->type == OPENLI_EXPORT_INTERCEPT_OVER) {
+        if (msg->data.cept.liid) {
+            free(msg->data.cept.liid);
+        }
+        if (msg->data.cept.authcc) {
+            free(msg->data.cept.authcc);
+        }
+        if (msg->data.cept.delivcc) {
+            free(msg->data.cept.delivcc);
+        }
+        if (msg->data.cept.encryptkey) {
+            free(msg->data.cept.encryptkey);
+        }
+        if (msg->data.cept.username) {
+            free(msg->data.cept.username);
+        }
+        if (msg->data.cept.targetagency) {
+            free(msg->data.cept.targetagency);
+        }
+
+    } else if (msg->type == OPENLI_EXPORT_IPCC ||
+            msg->type == OPENLI_EXPORT_UMTSCC) {
         if (msg->data.ipcc.liid) {
             free(msg->data.ipcc.liid);
         }
         if (msg->data.ipcc.ipcontent) {
             free(msg->data.ipcc.ipcontent);
         }
+    } else if (msg->type == OPENLI_EXPORT_IPMMCC) {
+        if (msg->data.ipmmcc.liid) {
+            free(msg->data.ipmmcc.liid);
+        }
+        if (msg->data.ipmmcc.content) {
+            free(msg->data.ipmmcc.content);
+        }
+
     } else if (msg->type == OPENLI_EXPORT_EPSCC) {
         if (msg->data.mobcc.liid) {
             free(msg->data.mobcc.liid);
@@ -287,6 +327,131 @@ openli_export_recv_t *create_epscc_job_from_ip(uint32_t cin, char *liid,
 
     msg->data.mobcc.icetype = 0;
     msg->data.mobcc.gtpseqno = 0;
+
+    return msg;
+}
+
+openli_export_recv_t *create_ipmmcc_job_from_rtp(uint32_t cin, char *liid,
+        uint32_t destid, uint8_t *rtpstart, uint32_t rtplen, uint8_t dir,
+        struct timeval timestamp) {
+
+    openli_export_recv_t *msg = NULL;
+    uint32_t x;
+    size_t liidlen = strlen(liid);
+
+    msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    if (msg == NULL) {
+        return msg;
+    }
+
+    msg->type = OPENLI_EXPORT_IPMMCC;
+    msg->destid = destid;
+    msg->ts = timestamp;
+
+    if (liidlen + 1 > msg->data.ipmmcc.liidalloc) {
+        if (liidlen + 1 < 32) {
+            x = 32;
+        } else {
+            x = liidlen + 1;
+        }
+        msg->data.ipcc.liid = realloc(msg->data.ipmmcc.liid, x);
+        msg->data.ipcc.liidalloc = x;
+    }
+    if (msg->data.ipcc.liid == NULL) {
+        msg->data.ipcc.liidalloc = 0;
+        free(msg);
+        return NULL;
+    }
+
+    memcpy(msg->data.ipmmcc.liid, liid, liidlen);
+    msg->data.ipmmcc.liid[liidlen] = '\0';
+
+    if (rtplen > msg->data.ipmmcc.contentalloc) {
+        if (rtplen < 512) {
+            x = 512;
+        } else {
+            x = rtplen;
+        }
+        msg->data.ipmmcc.content = realloc(msg->data.ipmmcc.content, x);
+        msg->data.ipmmcc.contentalloc = x;
+    }
+
+    if (msg->data.ipmmcc.content == NULL) {
+        msg->data.ipmmcc.contentalloc = 0;
+        free(msg);
+        return NULL;
+    }
+    memcpy(msg->data.ipmmcc.content, rtpstart, rtplen);
+    msg->data.ipmmcc.contentlen = rtplen;
+    msg->data.ipmmcc.cin = cin;
+    msg->data.ipmmcc.dir = dir;
+    msg->data.ipmmcc.frametype = OPENLI_IPMMCC_FRAME_TYPE_RTP;
+    msg->data.ipmmcc.mmccproto = OPENLI_IPMMCC_MMCC_PROTOCOL_RTP;
+
+    return msg;
+}
+
+openli_export_recv_t *create_ipmmcc_job_from_packet(uint32_t cin, char *liid,
+        uint32_t destid, libtrace_packet_t *pkt, uint8_t dir,
+        uint8_t mmccproto) {
+
+    void *l3;
+    uint32_t rem;
+    uint16_t ethertype;
+    openli_export_recv_t *msg = NULL;
+    uint32_t x;
+    size_t liidlen = strlen(liid);
+
+    msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    if (msg == NULL) {
+        return msg;
+    }
+
+    l3 = trace_get_layer3(pkt, &ethertype, &rem);
+
+    msg->type = OPENLI_EXPORT_IPMMCC;
+    msg->destid = destid;
+    msg->ts = trace_get_timeval(pkt);
+
+    if (liidlen + 1 > msg->data.ipmmcc.liidalloc) {
+        if (liidlen + 1 < 32) {
+            x = 32;
+        } else {
+            x = liidlen + 1;
+        }
+        msg->data.ipcc.liid = realloc(msg->data.ipmmcc.liid, x);
+        msg->data.ipcc.liidalloc = x;
+    }
+    if (msg->data.ipcc.liid == NULL) {
+        msg->data.ipcc.liidalloc = 0;
+        free(msg);
+        return NULL;
+    }
+
+    memcpy(msg->data.ipmmcc.liid, liid, liidlen);
+    msg->data.ipmmcc.liid[liidlen] = '\0';
+
+    if (rem > msg->data.ipmmcc.contentalloc) {
+        if (rem < 512) {
+            x = 512;
+        } else {
+            x = rem;
+        }
+        msg->data.ipmmcc.content = realloc(msg->data.ipmmcc.content, x);
+        msg->data.ipmmcc.contentalloc = x;
+    }
+
+    if (msg->data.ipmmcc.content == NULL) {
+        msg->data.ipmmcc.contentalloc = 0;
+        free(msg);
+        return NULL;
+    }
+    memcpy(msg->data.ipmmcc.content, l3, rem);
+    msg->data.ipmmcc.contentlen = rem;
+    msg->data.ipmmcc.cin = cin;
+    msg->data.ipmmcc.dir = dir;
+    msg->data.ipmmcc.frametype = OPENLI_IPMMCC_FRAME_TYPE_IP;
+    msg->data.ipmmcc.mmccproto = mmccproto;
 
     return msg;
 }

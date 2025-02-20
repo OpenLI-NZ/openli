@@ -115,7 +115,9 @@ each intercept must be configured with the following six parameters:
 * Agency ID -- the agency that requested the intercept (this should match one
   of the agencies specified elsewhere in this configuration file).
 * SIP targets -- a list of identities that can be used to recognise
-  activity in the SIP stream that is related to the intercept target.
+  activity in the SIP stream that is related to the intercept target. SIP
+  targets may be excluded only if the SIP/RTP traffic for this intercept is
+  going to be delivered to a collector via the X2/X3 interfaces.
 
 Some VOIP vendors have been known to generate RTP comfort noise packets that
 are not considered valid by the LEA decoders. If this problem occurs on your
@@ -473,6 +475,10 @@ An IP intercept must contain the following key-value elements:
                              default to 'undefined' if not set
 * `mobileident`           -- (required for mobile intercepts only) the type
                              of identifier specified in the `user` element
+* `xid`                   -- (required for interception over X2/X3 only) the XID
+                             that was defined for this intercept when the X1
+                             interface was used to configure it on your
+                             network
 
 Valid access types are:
   'dialup', 'adsl', 'vdsl', 'fiber', 'wireless', 'lan', 'satellite', 'wimax',
@@ -481,10 +487,10 @@ Valid access types are:
 Valid mobileident values are:
   'imsi', 'msisdn', and 'imei'. If not specified, the default is `msisdn`.
 
-Note that setting the access type to 'mobile' will cause OpenLI to use GTPv2
-traffic to identify the target's IP sessions, and the resulting ETSI records
-will conform to the UMTS format (as opposed to the standard IP format
-defined in ETSI TS 102 232-3).
+Note that setting the access type to 'mobile' will cause OpenLI to try to use
+GTP traffic to identify the target's IP sessions, and the resulting ETSI records
+will conform to either the UMTS or EPS format (as opposed to the standard IP
+format defined in ETSI TS 102 232-3).
 
 Optional key-value elements for an IP intercept are:
 
@@ -530,7 +536,12 @@ A VOIP intercept must contain the following key-value elements:
                              intercept
 * `agencyid`              -- the internal identifier of the agency that
                              requested the intercept
-* `siptargets`            -- a list of identities that can be used to recognise
+* `xid`                   -- (required for interception over X2/X3 only) the XID
+                             that was defined for this intercept when the X1
+                             interface was used to configure it on your
+                             network
+* `siptargets`            -- (not required if interception is over X2/X3)
+                             a list of identities that can be used to recognise
                              SIP activity related to the target
 
 

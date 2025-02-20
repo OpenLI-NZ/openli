@@ -55,6 +55,7 @@
 #include "gtp_worker.h"
 #include "sip_worker.h"
 #include "sipparsing.h"
+#include "x2x3_ingest.h"
 
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
@@ -356,6 +357,8 @@ typedef struct collector_global {
     uint8_t email_ingest_use_targetid;
     int emailsockfd;
     email_ingestor_state_t *email_ingestor;
+
+    x_input_t *x_inputs;
 
 } collector_global_t;
 

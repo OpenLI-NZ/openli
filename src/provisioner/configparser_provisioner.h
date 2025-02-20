@@ -24,18 +24,13 @@
  *
  */
 
-#ifndef OPENLI_CONFIGPARSER_H_
-#define OPENLI_CONFIGPARSER_H_
+#ifndef OPENLI_CONFIGPARSER_PROVISIONER_H_
+#define OPENLI_CONFIGPARSER_PROVISIONER_H_
 
-#include "collector/collector.h"
+#include "configparser_common.h"
 #include "provisioner/provisioner.h"
-#include "mediator/mediator.h"
-#include <yaml.h>
 
-int parse_intercept_config(char *configfile, prov_intercept_conf_t *conf);
-int parse_collector_config(char *configfile, collector_global_t *glob);
 int parse_provisioning_config(char *configfile, provision_state_t *state);
-int parse_mediator_config(char *configfile, mediator_state_t *state);
+int parse_intercept_config(char *configfile, prov_intercept_conf_t *conf);
 #endif
 
-// vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

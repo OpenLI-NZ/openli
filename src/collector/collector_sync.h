@@ -40,6 +40,7 @@
 #include "coreserver.h"
 #include "sipparsing.h"
 #include "timed_intercept.h"
+#include "x2x3_ingest.h"
 
 typedef struct colsync_data {
 
@@ -59,6 +60,8 @@ typedef struct colsync_data {
     void **zmq_gtpsocks;
     void **zmq_sipsocks;
     void *zmq_colsock;
+
+    x_input_sync_t *x2x3_queues;
 
     internet_user_t *allusers;
     ipintercept_t *ipintercepts;
@@ -102,7 +105,9 @@ void sync_thread_publish_reload(collector_sync_t *sync);
 int sync_thread_main(collector_sync_t *sync);
 void sync_reconnect_all_mediators(collector_sync_t *sync);
 void sync_drop_all_mediators(collector_sync_t *sync);
-
+int add_x2x3_to_sync(collector_sync_t *sync, char *identifier);
+void remove_x2x3_from_sync(collector_sync_t *sync, char *identifier,
+        pthread_t threadid);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

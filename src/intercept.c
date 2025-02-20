@@ -59,6 +59,8 @@ static inline void copy_intercept_common(intercept_common_t *src,
     } else {
         dest->encryptkey = NULL;
     }
+
+    uuid_copy(dest->xid, src->xid);
 }
 
 int update_modified_intercept_common(intercept_common_t *current,
@@ -145,6 +147,11 @@ int update_modified_intercept_common(intercept_common_t *current,
         current->delivcc = tmp;
         current->delivcc_len = strlen(current->delivcc);
         encodingchanged = 1;
+        *updatereq = 1;
+    }
+
+    if (uuid_compare(update->xid, current->xid) != 0) {
+        uuid_copy(current->xid, update->xid);
         *updatereq = 1;
     }
 
@@ -519,8 +526,11 @@ char *list_sip_targets(voipintercept_t *v, int maxchars) {
     int required = 0;
 
     openli_sip_identity_t *sipid;
-    libtrace_list_node_t *n;
-    n = v->targets->head;
+    libtrace_list_node_t *n = NULL;
+
+    if (v->targets) {
+        n = v->targets->head;
+    }
 
     while (n) {
         sipid = *((openli_sip_identity_t **)(n->data));
@@ -561,6 +571,12 @@ char *list_sip_targets(voipintercept_t *v, int maxchars) {
             spaceused += strlen(sipid->realm);
         }
     }
+
+    if (space == NULL && !uuid_is_null(v->common.xid)) {
+        space = calloc(1, 40);
+        uuid_unparse(v->common.xid, space);
+    }
+
     return space;
 }
 

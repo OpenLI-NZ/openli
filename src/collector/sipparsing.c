@@ -354,6 +354,41 @@ static int _add_sip_fragment(openli_sip_parser_t *p,
 
 }
 
+int add_sip_content_to_parser(openli_sip_parser_t **parser, uint8_t *content,
+        uint32_t contentlen) {
+
+    openli_sip_parser_t *p;
+
+    if (*parser == NULL) {
+    	p = (openli_sip_parser_t *)malloc(sizeof(openli_sip_parser_t));
+
+        p->osip = NULL;
+        p->sdp = NULL;
+        p->tcpreass = create_new_tcp_reassembler(OPENLI_REASSEMBLE_SIP);
+        p->ipreass = create_new_ipfrag_reassembler();
+        p->sipmessage = NULL;
+        p->siplen = 0;
+        p->sipoffset = 0;
+        p->thisstream = NULL;
+        p->sipalloced = 0;
+        *parser = p;
+    } else {
+        p = *parser;
+        p->thisstream = NULL;
+    }
+
+    if (p->sipalloced) {
+        free(p->sipmessage);
+        p->sipalloced = 0;
+    }
+    p->thisstream = NULL;
+    p->sipmessage = ((char *)content);
+    p->siplen = contentlen;
+    p->sipoffset = 0;
+
+    return SIP_ACTION_USE_PACKET;
+}
+
 int add_sip_packet_to_parser(openli_sip_parser_t **parser,
         libtrace_packet_t *packet, uint8_t logallowed) {
 
@@ -1294,6 +1329,13 @@ int sip_is_message(openli_sip_parser_t *parser) {
 
 int sip_is_register(openli_sip_parser_t *parser) {
     if (MSG_IS_REGISTER(parser->osip)) {
+        return 1;
+    }
+    return 0;
+}
+
+int sip_is_response(openli_sip_parser_t *parser) {
+    if (MSG_IS_RESPONSE(parser->osip)) {
         return 1;
     }
     return 0;

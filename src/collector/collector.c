@@ -43,7 +43,7 @@
 
 #include "logger.h"
 #include "collector.h"
-#include "configparser.h"
+#include "configparser_collector.h"
 #include "collector_sync.h"
 #include "collector_push_messaging.h"
 #include "ipcc.h"
@@ -1245,6 +1245,39 @@ processdone:
     return pkt;
 }
 
+static int start_xinput(collector_global_t *glob, x_input_t *xinp) {
+
+    char name[1024];
+
+    if (xinp->running == 1) {
+        return 1;
+    }
+
+    snprintf(name, 1024, "x2x3input-%s", xinp->identifier);
+
+    xinp->zmq_ctxt = glob->zmq_ctxt;
+    xinp->forwarding_threads = glob->forwarding_threads;
+    xinp->tracker_threads = glob->seqtracker_threads;
+    xinp->zmq_ctrlsock = NULL;
+    xinp->zmq_fwdsocks = NULL;
+    xinp->zmq_pubsocks = NULL;
+    xinp->haltinfo = NULL;
+
+    xinp->reset_listener = 1;
+    xinp->ssl_ctx = glob->sslconf.ctx;
+    pthread_mutex_init(&(xinp->sslmutex), NULL);
+
+    pthread_create(&(xinp->threadid), NULL,
+            start_x2x3_ingest_thread, (void *)xinp);
+    pthread_setname_np(xinp->threadid, name);
+
+    logger(LOG_INFO,
+            "OpenLI: collector has started X2/X3 ingestor %s.",
+            xinp->identifier);
+    xinp->running = 1;
+    return 1;
+}
+
 static int start_input(collector_global_t *glob, colinput_t *inp,
         int todaemon, char *progname) {
 
@@ -1368,6 +1401,63 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
             inp->uri, inp->threadcount);
     inp->running = 1;
     return 1;
+}
+
+static void reload_x2x3_inputs(collector_global_t *glob,
+        collector_global_t *newstate, collector_sync_t *sync, int tlschanged) {
+
+    /* TODO same thing as with inputs
+     *  - mark the inputs that are in newstate that are also in old
+     *  - announce removal of any existing inputs that are not in newstate
+     *  - announce any remaining inputs in newstate that were not already
+     *    running
+     */
+    x_input_t *oldinp, *newinp, *tmp;
+
+    HASH_ITER(hh, glob->x_inputs, oldinp, tmp) {
+        HASH_FIND(hh, newstate->x_inputs, oldinp->identifier,
+                strlen(oldinp->identifier), newinp);
+        if (newinp) {
+            newinp->running = 1;
+            if (tlschanged) {
+                pthread_mutex_lock(&(oldinp->sslmutex));
+                oldinp->ssl_ctx = glob->sslconf.ctx;
+                oldinp->reset_listener = 1;
+                pthread_mutex_unlock(&(oldinp->sslmutex));
+            }
+        } else {
+            // this input has been removed
+            remove_x2x3_from_sync(sync, oldinp->identifier, oldinp->threadid);
+            HASH_DELETE(hh, glob->x_inputs, oldinp);
+            if (oldinp->threadid != 0) {
+                pthread_join(oldinp->threadid, NULL);
+            }
+            destroy_x_input(oldinp);
+
+        }
+
+    }
+
+    HASH_ITER(hh, newstate->x_inputs, newinp, tmp) {
+        if (newinp->running) {
+            continue;
+        }
+        HASH_DELETE(hh, newstate->x_inputs, newinp);
+        HASH_ADD_KEYPTR(hh, glob->x_inputs, newinp->identifier,
+                strlen(newinp->identifier), newinp);
+        if (add_x2x3_to_sync(sync, newinp->identifier) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: failed to register X2-X3 input %s with sync thread",
+                    newinp->identifier);
+        }
+        if (start_xinput(glob, newinp) == 0) {
+            logger(LOG_INFO,
+                    "OpenLI: failed to start X2-X3 input %s\n",
+                    newinp->identifier);
+        }
+    }
+
+
 }
 
 static void reload_inputs(collector_global_t *glob,
@@ -1497,6 +1587,7 @@ static inline void init_sync_thread_data(collector_global_t *glob,
         sync_thread_global_t *sup) {
 
     sup->threadid = 0;
+    sup->zmq_ctxt = glob->zmq_ctxt;
     pthread_mutex_init(&(sup->mutex), NULL);
     sup->collector_queues = NULL;
     sup->epollevs = NULL;
@@ -1607,12 +1698,18 @@ static void destroy_collector_state(collector_global_t *glob) {
 
 static void clear_global_config(collector_global_t *glob) {
     colinput_t *inp, *tmp;
+    x_input_t *xinp, *xtmp;
 
     HASH_ITER(hh, glob->inputs, inp, tmp) {
         HASH_DELETE(hh, glob->inputs, inp);
         clear_input(inp);
         free(inp);
     }
+
+    HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
+        HASH_DELETE(hh, glob->x_inputs, xinp);
+        destroy_x_input(xinp);
+    };
 
     if (glob->sipdebugfile) {
         free(glob->sipdebugfile);
@@ -1773,6 +1870,7 @@ static int prepare_collector_glob(collector_global_t *glob) {
 static void init_collector_global(collector_global_t *glob) {
     glob->zmq_ctxt = NULL;
     glob->inputs = NULL;
+    glob->x_inputs = NULL;
     glob->seqtracker_threads = 1;
     glob->forwarding_threads = 1;
     glob->encoding_threads = 2;
@@ -1804,6 +1902,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->sslconf.certfile = NULL;
     glob->sslconf.keyfile = NULL;
     glob->sslconf.cacertfile = NULL;
+    glob->sslconf.logkeyfile = NULL;
     glob->sslconf.ctx = NULL;
 
     glob->RMQ_conf.name = NULL;
@@ -2031,6 +2130,7 @@ static int reload_collector_config(collector_global_t *glob,
 
     glob->stat_frequency = newstate.stat_frequency;
     reload_inputs(glob, &newstate);
+    reload_x2x3_inputs(glob, &newstate, sync, tlschanged);
 
     /* Just update these, regardless of whether they've changed. It's more
      * effort to check for a change than it is worth and there are no
@@ -2157,6 +2257,7 @@ static void *start_ip_sync_thread(void *params) {
     int ret;
     collector_sync_t *sync = init_sync_data(glob);
     sync_sendq_t *sq;
+    x_input_t *xinp, *xtmp;
 
     /* XXX For early development work, we will read intercept instructions
      * from a config file. Eventually this should be replaced with
@@ -2164,6 +2265,19 @@ static void *start_ip_sync_thread(void *params) {
      */
     if (sync->zmq_colsock == NULL) {
         goto haltsyncthread;
+    }
+
+    HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
+        if (add_x2x3_to_sync(sync, xinp->identifier) < 0) {
+            logger(LOG_INFO, "OpenLI: failed to register X2-X3 input %s with sync thread", xinp->identifier);
+            /*
+             * try to force the thread to die because the sync thread was
+             * our only means of telling the thread to halt normally
+             */
+            if (xinp->threadid != 0) {
+                pthread_cancel(xinp->threadid);
+            }
+        }
     }
 
     while (collector_halt == 0) {
@@ -2283,6 +2397,7 @@ int main(int argc, char *argv[]) {
     int i, ret, todaemon;
     colinput_t *inp, *tmp;
     char name[1024];
+    x_input_t *xinp, *xtmp;
 
     todaemon = 0;
     while (1) {
@@ -2567,10 +2682,19 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
+        pthread_rwlock_wrlock(&(glob->config_mutex));
+        HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
+            if (start_xinput(glob, xinp) == 0) {
+                logger(LOG_INFO, "OpenLI: failed to start X2-X3 input %s",
+                        xinp->identifier);
+            }
+        }
+        pthread_rwlock_unlock(&(glob->config_mutex));
+
         pthread_rwlock_rdlock(&(glob->config_mutex));
         HASH_ITER(hh, glob->inputs, inp, tmp) {
             if (start_input(glob, inp, todaemon, argv[0]) == 0) {
-                logger(LOG_INFO, "OpenLI: failed to start input %s\n",
+                logger(LOG_INFO, "OpenLI: failed to start input %s",
                         inp->uri);
             }
         }
@@ -2606,6 +2730,13 @@ int main(int argc, char *argv[]) {
             free(stat);
         }
     }
+
+    HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
+        pthread_join(xinp->threadid, NULL);
+        HASH_DELETE(hh, glob->x_inputs, xinp);
+        destroy_x_input(xinp);
+    }
+
     pthread_rwlock_unlock(&(glob->config_mutex));
 
     if (glob->zmq_encoder_ctrl) {

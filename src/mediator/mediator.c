@@ -46,7 +46,7 @@
 #include <amqp.h>
 
 #include "config.h"
-#include "configparser.h"
+#include "configparser_mediator.h"
 #include "logger.h"
 #include "util.h"
 #include "agency.h"
@@ -205,6 +205,7 @@ static int init_mediator_config(mediator_state_t *state,
     state->sslconf.certfile = NULL;
     state->sslconf.keyfile = NULL;
     state->sslconf.cacertfile = NULL;
+    state->sslconf.logkeyfile = NULL;
     state->sslconf.ctx = NULL;
 
     state->RMQ_conf.name = NULL;

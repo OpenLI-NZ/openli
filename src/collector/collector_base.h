@@ -136,7 +136,8 @@ typedef struct sync_thread_global {
 
     pthread_mutex_t *stats_mutex;
     collector_stats_t *stats;
-
+    /* ZMQ context for the entire collector process */
+    void *zmq_ctxt;
 } sync_thread_global_t;
 
 enum {

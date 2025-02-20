@@ -29,6 +29,7 @@ BuildRequires: sqlcipher-devel
 BuildRequires: librabbitmq-devel
 BuildRequires: libb64-devel
 BuildRequires: zlib-devel
+BuildRequires: uuid-devel
 
 %description
 Software for performing ETSI-compliant lawful intercept

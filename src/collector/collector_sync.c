@@ -40,7 +40,7 @@
 #include "collector.h"
 #include "collector_sync.h"
 #include "collector_publish.h"
-#include "configparser.h"
+#include "configparser_collector.h"
 #include "logger.h"
 #include "intercept.h"
 #include "netcomms.h"
@@ -57,6 +57,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
     sync->glob = &(glob->syncip);
     sync->allusers = NULL;
+    sync->x2x3_queues = NULL;
     sync->ipintercepts = NULL;
     sync->knownvoips = NULL;
     sync->userintercepts = NULL;
@@ -147,6 +148,7 @@ void clean_sync_data(collector_sync_t *sync) {
     ip_to_session_t *iter, *tmp;
     default_radius_user_t *raditer, *radtmp;
     halt_info_t haltinfo;
+    x_input_sync_t *xpush, *xtmp;
 
     if (sync->instruct_fd != -1) {
 	    close(sync->instruct_fd);
@@ -235,12 +237,24 @@ void clean_sync_data(collector_sync_t *sync) {
             sync->zmq_colsock = NULL;
         }
 
-	HALT_THREADS(sync->zmq_sipsocks, sync->sipcount);
-	HALT_THREADS(sync->zmq_emailsocks, sync->emailcount);
-	HALT_THREADS(sync->zmq_gtpsocks, sync->gtpcount);
-	HALT_THREADS(sync->zmq_pubsocks, sync->pubsockcount);
-	HALT_THREADS(sync->zmq_fwdctrlsocks, sync->forwardcount);
-	break;
+        HASH_ITER(hh, sync->x2x3_queues, xpush, xtmp) {
+            if (xpush->zmq_socket) {
+                HALT_THREADS(&(xpush->zmq_socket), 1);
+                zmq_close(xpush->zmq_socket);
+            }
+            HASH_DELETE(hh, sync->x2x3_queues, xpush);
+            if (xpush->identifier) {
+                free(xpush->identifier);
+            }
+            free(xpush);
+        }
+
+        HALT_THREADS(sync->zmq_sipsocks, sync->sipcount);
+        HALT_THREADS(sync->zmq_emailsocks, sync->emailcount);
+        HALT_THREADS(sync->zmq_gtpsocks, sync->gtpcount);
+        HALT_THREADS(sync->zmq_pubsocks, sync->pubsockcount);
+        HALT_THREADS(sync->zmq_fwdctrlsocks, sync->forwardcount);
+        break;
     }
 
     pthread_mutex_destroy(&(haltinfo.mutex));
@@ -1010,6 +1024,90 @@ static int forward_remove_coreserver(collector_sync_t *sync, uint8_t *provmsg,
     return 1;
 }
 
+static void withdraw_xid(collector_sync_t *sync, ipintercept_t *ipint) {
+
+    x_input_sync_t *xsync, *xtmp;
+    openli_export_recv_t *msg;
+
+    HASH_ITER(hh, sync->x2x3_queues, xsync, xtmp) {
+        msg = calloc(1, sizeof(openli_export_recv_t));
+        msg->type = OPENLI_EXPORT_INTERCEPT_OVER;
+        msg->data.cept.liid = strdup(ipint->common.liid);
+        msg->data.cept.cepttype = OPENLI_INTERCEPT_TYPE_IP;
+        publish_openli_msg(xsync->zmq_socket, msg);
+    }
+}
+
+static void announce_xid(collector_sync_t *sync, ipintercept_t *ipint) {
+
+    x_input_sync_t *xsync, *xtmp;
+    openli_export_recv_t *msg;
+
+    HASH_ITER(hh, sync->x2x3_queues, xsync, xtmp) {
+        msg = create_intercept_details_msg(&(ipint->common),
+                OPENLI_INTERCEPT_TYPE_IP);
+        msg->data.cept.username = strdup(ipint->username);
+        msg->data.cept.accesstype = ipint->accesstype;
+        publish_openli_msg(xsync->zmq_socket, msg);
+    }
+
+    /* Don't worry about incrementing session counts -- that's something
+     * that will happen when we see a new correlation ID + XID combination
+     * in the X2/X3 threads
+     */
+}
+
+static int x2x3_sync_voipintercept(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen, openli_proto_msgtype_t msgtype) {
+
+    x_input_sync_t *xsync, *xtmp;
+    openli_export_recv_t *msg;
+    voipintercept_t *decode;
+    decode = calloc(1, sizeof(voipintercept_t));
+
+    if (msgtype == OPENLI_PROTO_HALT_VOIPINTERCEPT) {
+
+        if (decode_voipintercept_halt(provmsg, msglen, decode) < 0) {
+            /* Don't bother logging, the SIP workers will complain enough */
+            free_single_voipintercept(decode);
+            return -1;
+        }
+    } else if (msgtype == OPENLI_PROTO_MODIFY_VOIPINTERCEPT) {
+        if (decode_voipintercept_modify(provmsg, msglen, decode) < 0) {
+            free_single_voipintercept(decode);
+            return -1;
+        }
+    } else {
+        if (decode_voipintercept_start(provmsg, msglen, decode) < 0) {
+            free_single_voipintercept(decode);
+            return -1;
+        }
+    }
+
+    if (decode->common.liid == NULL) {
+        free_single_voipintercept(decode);
+        return -1;
+    }
+
+    if (uuid_is_null(decode->common.xid)) {
+        /* No XID, so don't bother forwarding to the X2/X3 threads */
+        free_single_voipintercept(decode);
+        return 0;
+    }
+
+    HASH_ITER(hh, sync->x2x3_queues, xsync, xtmp) {
+        msg = create_intercept_details_msg(&(decode->common),
+                OPENLI_INTERCEPT_TYPE_VOIP);
+        if (msgtype == OPENLI_PROTO_HALT_VOIPINTERCEPT) {
+            msg->type = OPENLI_EXPORT_INTERCEPT_OVER;
+        }
+        publish_openli_msg(xsync->zmq_socket, msg);
+    }
+
+    free_single_voipintercept(decode);
+    return 1;
+}
+
 static inline void announce_vendormirror_id(collector_sync_t *sync,
         ipintercept_t *ipint) {
 
@@ -1072,6 +1170,8 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
          * ID in the shim.
          */
         announce_vendormirror_id(sync, cept);
+    } else if (!uuid_is_null(cept->common.xid)) {
+        announce_xid(sync, cept);
     } else if (cept->username != NULL) {
         logger(LOG_INFO,
                 "OpenLI: received IP intercept from provisioner (LIID %s, authCC %s, start time %lu, end time %lu)",
@@ -1096,7 +1196,8 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
     sync->glob->stats->ipintercepts_added_total ++;
     pthread_mutex_unlock(sync->glob->stats_mutex);
 
-    expmsg = create_intercept_details_msg(&(cept->common));
+    expmsg = create_intercept_details_msg(&(cept->common),
+            OPENLI_INTERCEPT_TYPE_IP);
     publish_openli_msg(sync->zmq_pubsocks[cept->common.seqtrackerid], expmsg);
 
     if (cept->username) {
@@ -1160,6 +1261,8 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
 
     if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
         remove_vendormirror_id(sync, ipint);
+    } else if (!uuid_is_null(ipint->common.xid)) {
+        withdraw_xid(sync, ipint);
     }
     publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], expmsg);
     for (i = 0; i < sync->forwardcount; i++) {
@@ -1181,6 +1284,7 @@ static int update_modified_intercept(collector_sync_t *sync,
     openli_export_recv_t *expmsg;
     int changed = 0;
     int encodingchanged = 0;
+    int useridentitychanged = 0;
 
     if (strcmp(ipint->username, modified->username) != 0
             || ipint->mobileident != modified->mobileident) {
@@ -1195,6 +1299,7 @@ static int update_modified_intercept(collector_sync_t *sync,
 
         push_existing_user_sessions(sync, ipint);
         logger(LOG_INFO, "OpenLI: IP intercept %s has changed target, resuming interception for new target", ipint->common.liid);
+        useridentitychanged = 1;
     }
 
     if (ipint->vendmirrorid != modified->vendmirrorid) {
@@ -1208,21 +1313,35 @@ static int update_modified_intercept(collector_sync_t *sync,
         }
     }
 
+    update_intercept_time_event(&(sync->upcoming_intercept_events),
+            ipint, &(ipint->common), &(modified->common));
+    /* Note: this will replace the values in 'ipint' with the new ones
+     * from 'modified' so don't panic that we haven't changed them
+     * earlier in this method...
+     */
     encodingchanged = update_modified_intercept_common(&(ipint->common),
             &(modified->common), OPENLI_INTERCEPT_TYPE_IP, &changed);
 
+    if (ipint->accesstype != modified->accesstype) {
+        ipint->accesstype = modified->accesstype;
+        changed = 1;
+    }
+
     if (encodingchanged) {
-        expmsg = create_intercept_details_msg(&(modified->common));
+        expmsg = create_intercept_details_msg(&(modified->common),
+                OPENLI_INTERCEPT_TYPE_IP);
         expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
         publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid],
                 expmsg);
     }
 
+    if (!uuid_is_null(ipint->common.xid)) {
+        if (changed || useridentitychanged) {
+            announce_xid(sync, ipint);
+        }
+    }
+
     if (changed) {
-        /* Note: this will replace the values in 'ipint' with the new ones
-         * from 'modified' so don't panic that we haven't changed them
-         * earlier in this method...
-         */
         push_ipintercept_update_to_threads(sync, ipint, modified);
     }
 
@@ -1629,6 +1748,9 @@ static int recv_from_provisioner(collector_sync_t *sync) {
             case OPENLI_PROTO_START_VOIPINTERCEPT:
             case OPENLI_PROTO_HALT_VOIPINTERCEPT:
             case OPENLI_PROTO_MODIFY_VOIPINTERCEPT:
+                x2x3_sync_voipintercept(sync, provmsg, msglen, msgtype);
+                __attribute__ ((fallthrough));
+
             case OPENLI_PROTO_ANNOUNCE_SIP_TARGET:
             case OPENLI_PROTO_WITHDRAW_SIP_TARGET:
                 ret = forward_provmsg_to_workers(sync->zmq_sipsocks,
@@ -1845,18 +1967,18 @@ void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
 
 }
 
-static void push_all_active_intercepts(internet_user_t *allusers,
-        ipintercept_t *intlist, libtrace_message_queue_t *q) {
+static void push_all_active_intercepts(collector_sync_t *sync,
+        libtrace_message_queue_t *q) {
 
     ipintercept_t *orig, *tmp;
     internet_user_t *user;
     access_session_t *sess, *tmp2;
     static_ipranges_t *ipr, *tmpr;
 
-    HASH_ITER(hh_liid, intlist, orig, tmp) {
+    HASH_ITER(hh_liid, sync->ipintercepts, orig, tmp) {
         /* Do we have a valid user that matches the target username? */
         if (orig->username != NULL) {
-            user = lookup_user_by_intercept(allusers, orig);
+            user = lookup_user_by_intercept(sync->allusers, orig);
             if (user) {
                 HASH_ITER(hh, user->sessions, sess, tmp2) {
                     push_session_ips_to_collector_queue(q, orig, sess);
@@ -1866,6 +1988,10 @@ static void push_all_active_intercepts(internet_user_t *allusers,
         if (orig->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
             push_single_vendmirrorid(q, orig, OPENLI_PUSH_VENDMIRROR_INTERCEPT);
         }
+        if (!uuid_is_null(orig->common.xid)) {
+            announce_xid(sync, orig);
+        }
+
         HASH_ITER(hh, orig->statics, ipr, tmpr) {
             push_static_iprange_to_collectors(q, orig, ipr);
         }
@@ -2293,6 +2419,83 @@ endupdate:
     return 1;
 }
 
+int add_x2x3_to_sync(collector_sync_t *sync, char *identifier) {
+    x_input_sync_t *found;
+    char sockname[1024];
+    int hwm = 1000, timeout=1000;
+
+    HASH_FIND(hh, sync->x2x3_queues, identifier, strlen(identifier), found);
+    if (found) {
+        /* we already have a PUSH ZMQ for this identifier */
+        return 0;
+    }
+
+    snprintf(sockname, 1024, "inproc://openlix2x3_sync-%s", identifier);
+
+    found = calloc(1, sizeof(x_input_sync_t));
+    found->identifier = strdup(identifier);
+    found->zmq_socket = zmq_socket(sync->glob->zmq_ctxt, ZMQ_PUSH);
+    if (zmq_setsockopt(found->zmq_socket, ZMQ_SNDHWM, &hwm, sizeof(hwm)) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error while configuring control ZMQ for X2/X3 %s: %s",
+                identifier, strerror(errno));
+        goto x2x3setup_fail;
+    }
+    if (zmq_setsockopt(found->zmq_socket, ZMQ_SNDTIMEO, &timeout,
+                sizeof(timeout)) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error while configuring control ZMQ for X2/X3 %s: %s",
+                identifier, strerror(errno));
+        goto x2x3setup_fail;
+    }
+
+    if (zmq_connect(found->zmq_socket, sockname) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error when connecting to control ZMQ for X2/X3 %s: %s",
+                identifier, strerror(errno));
+        goto x2x3setup_fail;
+    }
+    HASH_ADD_KEYPTR(hh, sync->x2x3_queues, found->identifier,
+            strlen(found->identifier), found);
+    return 1;
+
+x2x3setup_fail:
+    zmq_close(found->zmq_socket);
+    free(found->identifier);
+    free(found);
+    return -1;
+}
+
+void remove_x2x3_from_sync(collector_sync_t *sync, char *identifier,
+        pthread_t threadid) {
+    x_input_sync_t *found;
+    openli_export_recv_t *msg;
+
+    HASH_FIND(hh, sync->x2x3_queues, identifier, strlen(identifier), found);
+    if (!found) {
+        /* we don't have a PUSH ZMQ for this identifier */
+        return;
+    }
+
+    msg = calloc(1, sizeof(openli_export_recv_t));
+    msg->type = OPENLI_EXPORT_HALT;
+    msg->data.haltinfo = NULL;
+
+    if (zmq_send(found->zmq_socket, &msg, sizeof(msg), 0) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: failed to send HALT message to X2/X3 thread %s: %s",
+                found->identifier, strerror(errno));
+        if (threadid != 0) {
+            pthread_cancel(threadid);
+        }
+    }
+
+    HASH_DELETE(hh, sync->x2x3_queues, found);
+    zmq_close(found->zmq_socket);
+    free(found->identifier);
+    free(found);
+}
+
 static int set_upcoming_timer(collector_sync_t *sync) {
     struct itimerspec its;
     sync->upcomingtimerfd = timerfd_create(CLOCK_MONOTONIC, 0);
@@ -2410,8 +2613,7 @@ int sync_thread_main(collector_sync_t *sync) {
 
             /* If a hello from a thread, push all active intercepts back */
             if (recvd.type == OPENLI_UPDATE_HELLO) {
-                push_all_active_intercepts(sync->allusers,
-                        sync->ipintercepts, recvd.data.replyq);
+                push_all_active_intercepts(sync, recvd.data.replyq);
                 push_all_coreservers(sync->coreservers, recvd.data.replyq);
                 sync->hellosreceived ++;
 
