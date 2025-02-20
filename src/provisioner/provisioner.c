@@ -253,11 +253,13 @@ static void free_openli_mediator(openli_mediator_t *med) {
     free(med);
 }
 
-int init_prov_state(provision_state_t *state, char *configfile) {
+int init_prov_state(provision_state_t *state, char *configfile,
+        const char *encpassfile) {
 
     sigset_t sigmask;
 
     state->conffile = configfile;
+    state->encpassfile = encpassfile;
     state->interceptconffile = NULL;
     state->updatedaemon = NULL;
     state->updatesockfd = -1;
@@ -1861,12 +1863,13 @@ static void run(provision_state_t *state) {
 }
 
 static void usage(char *prog) {
-    fprintf(stderr, "Usage: %s [ -d ] -c configfile\n", prog);
+    fprintf(stderr, "Usage: %s [ -d ] -c configfile [ -K keyfile ]\n", prog);
     fprintf(stderr, "\nSet the -d flag to run this program as a daemon.\n");
 }
 
 int main(int argc, char *argv[]) {
     char *configfile = NULL;
+    const char *encpassfile = NULL;
     sigset_t sigblock;
     int daemonmode = 0;
     char *pidfile = NULL;
@@ -1881,15 +1884,19 @@ int main(int argc, char *argv[]) {
             { "config", 1, 0, 'c'},
             { "daemonise", 0, 0, 'd'},
             { "pidfile", 1, 0, 'p'},
+            { "encpassfile", 1, 0, 'K'},
             { NULL, 0, 0, 0},
         };
 
-        int c = getopt_long(argc, argv, "c:p:dh", long_options, &optind);
+        int c = getopt_long(argc, argv, "c:p:dK:h", long_options, &optind);
         if (c == -1) {
             break;
         }
 
         switch (c) {
+            case 'K':
+                encpassfile = (const char *)optarg;
+                break;
             case 'c':
                 configfile = optarg;
                 break;
@@ -1928,7 +1935,7 @@ int main(int argc, char *argv[]) {
     sigprocmask(SIG_BLOCK, &sigblock, NULL);
 
 
-    if (init_prov_state(&provstate, configfile) == -1) {
+    if (init_prov_state(&provstate, configfile, encpassfile) == -1) {
         logger(LOG_INFO, "OpenLI: Error initialising provisioner.");
         return 1;
     }
@@ -1960,7 +1967,7 @@ int main(int argc, char *argv[]) {
     init_intercept_config(&(provstate.interceptconf));
 
     if ((ret = parse_intercept_config(provstate.interceptconffile,
-            &(provstate.interceptconf))) < 0) {
+            &(provstate.interceptconf), provstate.encpassfile)) < 0) {
         /* -2 means the config file was empty, but this is allowed for
          * the intercept config.
          */
