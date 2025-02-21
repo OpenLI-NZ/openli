@@ -262,6 +262,8 @@ typedef struct prov_state {
      *  configuration */
     const char *encpassfile;
 
+    uint8_t encrypt_intercept_config;
+
     /** The IP address to listen on for incoming collector connections */
     char *listenaddr;
     /** The port to listen on for incoming collector connections */
@@ -365,8 +367,12 @@ void clear_intercept_state(prov_intercept_conf_t *conf);
 void init_intercept_config(prov_intercept_conf_t *conf);
 int map_intercepts_to_leas(prov_intercept_conf_t *conf);
 
+/* Implemented in configparser_provisioner.c */
+size_t read_encryption_password_file(const char *encpassfile, uint8_t *space);
+
 /* Implemented in configwriter.c */
-int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf);
+int emit_intercept_config(char *configfile, const char *encpassfile,
+        prov_intercept_conf_t *conf);
 
 /* Implemented in clientupdates.c */
 int compare_sip_targets(provision_state_t *currstate,

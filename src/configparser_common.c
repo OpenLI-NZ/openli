@@ -132,38 +132,22 @@ static int decrypt_aes(uint8_t *ciphertext, uint32_t cipherlen, uint8_t *key,
 
 }
 
-static int load_encrypted_config_yaml(FILE *in, yaml_parser_t *parser,
-        unsigned char *encheader, const char *encpassfile) {
-
-    uint8_t iv[AES_IV_SIZE];
-    uint8_t salt[SALT_SIZE];
-    uint8_t key[AES_KEY_SIZE];
+size_t read_encryption_password_file(const char *encpassfile, uint8_t *space) {
     FILE *passin;
-    uint8_t pass[1024];
-    uint32_t file_size;
-    uint8_t *ciphered, *plain;
-    int plainlen;
-    size_t readlen;
     char *passptr, *passend;
-
-    if (encpassfile == NULL) {
-        logger(LOG_INFO, "OpenLI: missing the path to the file containing the encryption key!");
-        return -1;
-    }
-
-    memcpy(salt, encheader + 8, SALT_SIZE);
+    size_t readlen;
 
     passin = fopen(encpassfile, "r");
     if (!passin) {
         logger(LOG_INFO, "OpenLI: unable to open file containing the encryption key");
-        return -1;
+        return 0;
     }
 
-    passptr = (char *)pass;
+    passptr = (char *)space;
     if (fgets(passptr, 1024, passin) == NULL) {
         logger(LOG_INFO, "OpenLI: unable to read from encryption key file");
         fclose(passin);
-        return -1;
+        return 0;
     }
 
     readlen = strlen(passptr);
@@ -174,8 +158,34 @@ static int load_encrypted_config_yaml(FILE *in, yaml_parser_t *parser,
     }
 
     fclose(passin);
+    return strlen(passptr);
+}
 
-    if (derive_iv_from_encrypt_key(pass, strlen(passptr), salt, key, iv) < 0) {
+static int load_encrypted_config_yaml(FILE *in, yaml_parser_t *parser,
+        unsigned char *encheader, const char *encpassfile) {
+
+    uint8_t iv[AES_IV_SIZE];
+    uint8_t salt[SALT_SIZE];
+    uint8_t key[AES_KEY_SIZE];
+    uint8_t pass[1024];
+    uint32_t file_size;
+    uint8_t *ciphered, *plain;
+    int plainlen;
+    size_t passlen;
+
+    if (encpassfile == NULL) {
+        logger(LOG_INFO, "OpenLI: missing the path to the file containing the encryption key!");
+        return -1;
+    }
+
+    memcpy(salt, encheader + 8, SALT_SIZE);
+
+    passlen = read_encryption_password_file(encpassfile, pass);
+    if (passlen == 0) {
+        return -1;
+    }
+
+    if (derive_iv_from_encrypt_key(pass, passlen, salt, key, iv) < 0) {
         logger(LOG_INFO, "OpenLI: unable to derive IV from password + salt");
         return -1;
     }

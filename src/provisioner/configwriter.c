@@ -28,12 +28,21 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
 
 #include "logger.h"
 #include "agency.h"
 #include "coreserver.h"
 #include "provisioner.h"
 #include "intercept.h"
+#include "configparser_common.h"
+
+typedef struct yaml_mem_buf {
+    uint8_t *buffer;
+    size_t alloced;
+    size_t used;
+} yaml_buffer_t;
 
 static const char *access_type_to_string(internet_access_method_t method) {
 
@@ -893,30 +902,130 @@ static int emit_basic_options(prov_intercept_conf_t *conf,
     return 0;
 }
 
-int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf) {
+#define AES_KEY_SIZE 32
+#define AES_BLOCK_SIZE 16
+#define AES_SALT_SIZE 8
 
+size_t encrypt_aes_yaml(yaml_buffer_t *buf, unsigned char *key,
+        unsigned char *iv, uint8_t *out) {
+
+    EVP_CIPHER_CTX *ctx;
+    int len, cipherlen;
+    char msg[256];
+    unsigned long errcode;
+
+    ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) {
+        logger(LOG_INFO, "OpenLI: EVP_CIPHER_CTX_new() failed");
+        return 0;
+    }
+
+    if (EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv) != 1) {
+        logger(LOG_INFO, "OpenLI: EVP_EncryptInit_ex() failed");
+        return 0;
+    }
+
+    if (EVP_EncryptUpdate(ctx, out, &len, buf->buffer, buf->used) != 1) {
+        logger(LOG_INFO, "OpenLI: EVP_EncryptUpdate() failed");
+        return 0;
+    }
+    cipherlen = len;
+    if (EVP_EncryptFinal_ex(ctx, out + len, &len) != 1) {
+        errcode = ERR_get_error();
+        if (errcode) {
+            ERR_error_string_n(errcode, msg, sizeof(msg));
+        } else {
+            snprintf(msg, 256, "No SSL error");
+        }
+        logger(LOG_INFO, "OpenLI: EVP_EncryptFinal_ex() failed: %s", msg);
+
+        return 0;
+    }
+    cipherlen += len;
+    EVP_CIPHER_CTX_free(ctx);
+    return cipherlen;
+
+}
+
+uint8_t *encrypt_intercept_config(yaml_buffer_t *buf, const char *encpassfile,
+        size_t *enclen) {
+
+    unsigned char key[AES_KEY_SIZE], iv[AES_BLOCK_SIZE], salt[AES_SALT_SIZE];
+    uint8_t pass[1024];
+    size_t passlen;
+    uint8_t *output;
+    uint8_t tmp[AES_KEY_SIZE + AES_BLOCK_SIZE];
+
+    RAND_bytes(salt, AES_SALT_SIZE);
+    RAND_bytes(iv, AES_BLOCK_SIZE);
+
+    passlen = read_encryption_password_file(encpassfile, pass);
+    if (passlen == 0) {
+        return NULL;
+    }
+
+    if (PKCS5_PBKDF2_HMAC((char *)pass, passlen, salt, AES_SALT_SIZE,
+                AES_ENCRYPT_ITERATIONS, EVP_sha256(),
+                AES_BLOCK_SIZE + AES_KEY_SIZE, tmp) == 0) {
+        return NULL;
+    }
+
+    memcpy(key, tmp, AES_KEY_SIZE);
+    memcpy(iv, tmp + AES_KEY_SIZE, AES_BLOCK_SIZE);
+
+    output = calloc(1, buf->used + AES_BLOCK_SIZE + 8 + AES_SALT_SIZE);
+    memcpy(output, "Salted__", 8);
+    memcpy(output + 8, salt, AES_SALT_SIZE);
+
+    *enclen = encrypt_aes_yaml(buf, key, iv, output + 8 + AES_SALT_SIZE);
+    if (*enclen == 0) {
+        free(output);
+        return NULL;
+    }
+    *enclen = *enclen + 8 + AES_SALT_SIZE;
+    return output;
+}
+
+int buffer_yaml_memory(void *data, unsigned char *towrite, size_t size) {
+
+    yaml_buffer_t *buf = (yaml_buffer_t *)data;
+
+    if (size > buf->alloced - buf->used) {
+        buf->buffer = realloc(buf->buffer, buf->alloced + 65536);
+        if (buf->buffer == NULL) {
+            return 0;
+        }
+        buf->alloced += 65536;
+    }
+
+    memcpy(buf->buffer + buf->used, towrite, size);
+    buf->used += size;
+    buf->buffer[buf->used] = '\0';
+    return 1;
+}
+
+int emit_intercept_config(char *configfile, const char *encpassfile,
+        prov_intercept_conf_t *conf) {
+
+    yaml_buffer_t buf;
     yaml_emitter_t emitter;
     yaml_event_t event;
-    FILE *f, *fout;
-    char tmpfile[] = "/tmp/openli-intconf-XXXXXX";
-    int tmpfd;
-    char buffer[1024 * 32];
-    size_t n;
+    FILE *fout;
+    uint8_t *finalconfig;
+    uint8_t *ciphered = NULL;
+    size_t configlen;
+    int ret = 0;
 
-    tmpfd = mkstemp(tmpfile);
-
-    f = fdopen(tmpfd, "w");
-    if (ferror(f)) {
-        logger(LOG_INFO, "OpenLI: unable to open config file '%s' to write updated intercept config: %s", tmpfile, strerror(errno));
-        return -1;
-    }
+    buf.buffer = calloc(1, 65536);
+    buf.alloced = 65536;
+    buf.used = 0;
 
     /* TODO write warning comments that manual edits will not persist
      * unless a HUP is triggered prior to any REST API calls (except
      * GET) */
 
     yaml_emitter_initialize(&emitter);
-    yaml_emitter_set_output_file(&emitter, f);
+    yaml_emitter_set_output(&emitter, buffer_yaml_memory, (void *)&buf);
 
     yaml_stream_start_event_initialize(&event, YAML_UTF8_ENCODING);
     if (!yaml_emitter_emit(&emitter, &event)) goto error;
@@ -992,42 +1101,47 @@ int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf) {
     if (!yaml_emitter_emit(&emitter, &event)) goto error;
 
     yaml_emitter_delete(&emitter);
-    if (f) {
-        fclose(f);
+
+    /* do we need to encrypt? */
+    if (encpassfile == NULL) {
+        finalconfig = buf.buffer;
+        configlen = buf.used;
+    } else {
+        ciphered = encrypt_intercept_config(&buf, encpassfile, &configlen);
+        if (ciphered == NULL) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to encrypt intercept configuration");
+            ret = -1;
+            goto endemit;
+        }
+        finalconfig = ciphered;
     }
 
-    /* copy temp file contents back into the original */
-    f = fopen(tmpfile, "r");
+    /* copy encoded config back into the original file */
     fout = fopen(configfile, "w");
 
-    while ((n = fread(buffer, sizeof(char), sizeof(buffer), f)) > 0) {
-        if (fwrite(buffer, sizeof(char), n, fout) != n) {
-            logger(LOG_INFO,
-                    "OpenLI: error writing new intercept config file: %s",
-                    strerror(errno));
-            return -1;
-        }
-    }
-    if (!feof(f)) {
+    if (fwrite(finalconfig, 1, configlen, fout) != configlen) {
         logger(LOG_INFO,
-                "OpenLI: error reading temporary intercept config file: %s",
+                "OpenLI: error while writing new intercept config file: %s",
                 strerror(errno));
-        return -1;
+        ret = -1;
     }
 
     fclose(fout);
-    fclose(f);
-    unlink(tmpfile);
 
-    return 0;
+endemit:
+    if (ciphered) {
+        free(ciphered);
+    }
+    if (buf.buffer) {
+        free(buf.buffer);
+    }
+    return ret;
 
 error:
     logger(LOG_INFO, "OpenLI: error while emitting intercept config: %s",
             emitter.problem);
     yaml_emitter_delete(&emitter);
-    if (f) {
-        fclose(f);
-    }
     return -1;
 
 }
