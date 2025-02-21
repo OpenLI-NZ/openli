@@ -305,7 +305,8 @@ static int update_configuration_delete(update_con_info_t *cinfo,
     /* Safe to unlock before emitting, since all accesses should be reads
      * anyway... */
     pthread_mutex_unlock(&(state->interceptconf.safelock));
-    emit_intercept_config(state->interceptconffile, &(state->interceptconf));
+    emit_intercept_config(state->interceptconffile, state->encpassfile,
+            &(state->interceptconf));
     free(urlcopy);
     return ret;
 }
@@ -460,7 +461,8 @@ static int update_configuration_post(update_con_info_t *cinfo,
      * anyway... */
     pthread_mutex_unlock(&(state->interceptconf.safelock));
 
-    emit_intercept_config(state->interceptconffile, &(state->interceptconf));
+    emit_intercept_config(state->interceptconffile, state->encpassfile,
+            &(state->interceptconf));
     return ret;
 }
 

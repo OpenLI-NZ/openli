@@ -293,6 +293,7 @@ int init_prov_state(provision_state_t *state, char *configfile,
     state->key_pem = NULL;
     state->cert_pem = NULL;
 
+    state->encrypt_intercept_config = 0;
     state->ignorertpcomfort = 0;
     state->restauthenabled = 0;
     state->restauthdbfile = NULL;
@@ -304,6 +305,18 @@ int init_prov_state(provision_state_t *state, char *configfile,
     if (parse_provisioning_config(configfile, state) == -1) {
         logger(LOG_INFO, "OpenLI provisioner: error while parsing provisioner config in %s", configfile);
         return -1;
+    }
+
+    if (state->encrypt_intercept_config && state->encpassfile == NULL) {
+        logger(LOG_INFO, "OpenLI provisioner: configuration requested that intercept config file be encrypted, but no key has been provided via the -K option!");
+        logger(LOG_INFO, "OpenLI provisioner: disabling intercept config encryption");
+        state->encrypt_intercept_config = 0;
+    }
+
+    if (state->encrypt_intercept_config) {
+        logger(LOG_INFO, "OpenLI provisioner: intercept configuration will be encrypted");
+    } else {
+        logger(LOG_INFO, "OpenLI provisioner: intercept configuration will be plain text");
     }
 
     if (state->pushport == NULL) {

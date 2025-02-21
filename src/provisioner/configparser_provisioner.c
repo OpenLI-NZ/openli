@@ -941,6 +941,13 @@ static int provisioning_parser(void *arg, yaml_document_t *doc UNUSED,
 
     provision_state_t *state = (provision_state_t *)arg;
 
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
+                "encrypt-intercept-config-file") == 0) {
+        state->encrypt_intercept_config = config_check_onoff(
+                (char *)(value->data.scalar.value));
+    }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
