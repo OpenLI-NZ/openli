@@ -6,7 +6,7 @@ After=network.target
 [Service]
 User=openli
 Type=simple
-ExecStart=/usr/bin/openliprovisioner -c /etc/openli/provisioner-config.yaml
+ExecStart=/usr/bin/openliprovisioner -c /etc/openli/provisioner-config.yaml -K default
 ExecReload=/bin/kill -s HUP $MAINPID
 ExecStop=/bin/kill -s TERM $MAINPID
 Restart=on-abnormal

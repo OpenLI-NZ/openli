@@ -5,6 +5,7 @@ case "$1" in
 
         rm -f /var/lib/openli/provauth.db
         rm -f /etc/openli/provauthdb.phrase
+        rm -f /etc/openli/.intercept-encrypt
 
         ;;
         remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
