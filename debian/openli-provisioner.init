@@ -74,7 +74,7 @@ do_start()
     log_daemon_msg "Starting ${DESC}" "$CONFFILE"
 
     start-stop-daemon --start --quiet --chuid $USER --exec $DAEMON \
-	--pidfile $PIDFILE -- -p $PIDFILE -d -c $CONFFILE
+	--pidfile $PIDFILE -- -p $PIDFILE -d -c $CONFFILE -K default
 
     if [ $? -eq 0 ]; then
         do_wait $PIDFILE

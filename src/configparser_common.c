@@ -139,13 +139,16 @@ size_t read_encryption_password_file(const char *encpassfile, uint8_t *space) {
 
     passin = fopen(encpassfile, "r");
     if (!passin) {
-        logger(LOG_INFO, "OpenLI: unable to open file containing the encryption key");
+        logger(LOG_INFO,
+                "OpenLI: unable to open file containing the encryption key: %s",
+                strerror(errno));
         return 0;
     }
 
     passptr = (char *)space;
     if (fgets(passptr, 1024, passin) == NULL) {
-        logger(LOG_INFO, "OpenLI: unable to read from encryption key file");
+        logger(LOG_INFO, "OpenLI: unable to read from encryption key file: %s",
+                strerror(errno));
         fclose(passin);
         return 0;
     }

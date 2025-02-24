@@ -43,6 +43,8 @@
 
 #define DEFAULT_INTERCEPT_CONFIG_FILE "/etc/openli/running-intercept-config.yaml"
 
+#define DEFAULT_ENCPASSFILE_LOCATION "/etc/openli/.intercept-encrypt"
+
 #ifndef MHD_SOCKET_DEFINED
 typedef int MHD_socket;
 #define MHD_SOCKET_DEFINED

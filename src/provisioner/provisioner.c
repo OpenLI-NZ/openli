@@ -1947,6 +1947,9 @@ int main(int argc, char *argv[]) {
     sigaddset(&sigblock, SIGINT);
     sigprocmask(SIG_BLOCK, &sigblock, NULL);
 
+    if (encpassfile && strcmp(encpassfile, "default") == 0) {
+        encpassfile = DEFAULT_ENCPASSFILE_LOCATION;
+    }
 
     if (init_prov_state(&provstate, configfile, encpassfile) == -1) {
         logger(LOG_INFO, "OpenLI: Error initialising provisioner.");

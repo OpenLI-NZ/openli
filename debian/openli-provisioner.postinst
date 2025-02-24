@@ -11,6 +11,11 @@ until s="$s$(dd bs=24 count=1 if=/dev/urandom 2>/dev/null | LC_ALL=C tr -cd 'a-z
     [ ${#s} -ge 16 ]; do :; done
 DBPHRASE=$(printf %.16s $s)
 
+s=""
+until s="$s$(dd bs=64 count=1 if=/dev/urandom 2>/dev/null | LC_ALL=C tr -cd 'a-zA-Z0-9')"
+    [ ${#s} -ge 32 ]; do :; done
+INTENCPHRASE=$(printf %.32s $s)
+
 case "$1" in
     configure)
         adduser --quiet --system --group --no-create-home \
@@ -24,6 +29,11 @@ case "$1" in
             echo ${DBPHRASE} > /etc/openli/provauthdb.phrase
             chmod 0640 /etc/openli/provauthdb.phrase
             chmod 0640 /var/lib/openli/provauth.db
+        fi
+
+        if [ ! -f /etc/openli/.intercept-encrypt ]; then
+            echo ${INTENCPHRASE} > /etc/openli/.intercept-encrypt
+            chmod 0640 /etc/openli/.intercept-encrypt
         fi
 
         chown -R ${USER}: /etc/openli
