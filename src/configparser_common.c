@@ -25,6 +25,10 @@
  */
 
 #include <errno.h>
+#include <ctype.h>
+#include <openssl/evp.h>
+#include <openssl/err.h>
+#include <openssl/rand.h>
 
 #include "configparser_common.h"
 
@@ -64,17 +68,174 @@ int config_check_onoff(char *value) {
     return -1;
 }
 
+#define AES_KEY_SIZE 32
+#define AES_IV_SIZE 16
+#define SALT_HEADER "Salted__"
+#define SALT_SIZE 8
+
+static int derive_iv_from_encrypt_key(const uint8_t *pass, int passlen,
+        const uint8_t *salt, uint8_t *key, uint8_t *iv) {
+
+    uint8_t tmp[AES_KEY_SIZE + AES_IV_SIZE];
+
+    if (!PKCS5_PBKDF2_HMAC((char *)pass, passlen, salt, SALT_SIZE,
+                AES_ENCRYPT_ITERATIONS, EVP_sha256(),
+                AES_IV_SIZE + AES_KEY_SIZE, tmp)) {
+        return -1;
+    }
+
+    memcpy(key, tmp, AES_KEY_SIZE);
+    memcpy(iv, tmp + AES_KEY_SIZE, AES_IV_SIZE);
+
+    return 0;
+
+}
+
+static int decrypt_aes(uint8_t *ciphertext, uint32_t cipherlen, uint8_t *key,
+        uint8_t *iv, uint8_t *plain) {
+
+    EVP_CIPHER_CTX *ctx;
+    int len, plainlen;
+    char msg[256];
+    unsigned long errcode;
+
+    ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) {
+        logger(LOG_INFO, "OpenLI: EVP_CIPHER_CTX_new() failed");
+        return -1;
+    }
+
+    if (EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, key, iv) != 1) {
+        logger(LOG_INFO, "OpenLI: EVP_DecryptInit_ex() failed");
+        return -1;
+    }
+
+    if (EVP_DecryptUpdate(ctx, plain, &len, ciphertext, cipherlen) != 1) {
+        logger(LOG_INFO, "OpenLI: EVP_DecryptUpdate() failed");
+        return -1;
+    }
+    plainlen = len;
+    if (EVP_DecryptFinal_ex(ctx, plain + len, &len) != 1) {
+        errcode = ERR_get_error();
+        if (errcode) {
+            ERR_error_string_n(errcode, msg, sizeof(msg));
+        } else {
+            snprintf(msg, 256, "No SSL error");
+        }
+        logger(LOG_INFO, "OpenLI: EVP_DecryptFinal_ex() failed: %s", msg);
+
+        return -1;
+    }
+    plainlen += len;
+    EVP_CIPHER_CTX_free(ctx);
+    return plainlen;
+
+}
+
+size_t read_encryption_password_file(const char *encpassfile, uint8_t *space) {
+    FILE *passin;
+    char *passptr, *passend;
+    size_t readlen;
+
+    passin = fopen(encpassfile, "r");
+    if (!passin) {
+        logger(LOG_INFO,
+                "OpenLI: unable to open file containing the encryption key: %s",
+                strerror(errno));
+        return 0;
+    }
+
+    passptr = (char *)space;
+    if (fgets(passptr, 1024, passin) == NULL) {
+        logger(LOG_INFO, "OpenLI: unable to read from encryption key file: %s",
+                strerror(errno));
+        fclose(passin);
+        return 0;
+    }
+
+    readlen = strlen(passptr);
+    passend = passptr + readlen - 1;
+    while (passend >= passptr && isspace((unsigned char)(*passend))) {
+        (*passend) = '\0';
+        passend --;
+    }
+
+    fclose(passin);
+    return strlen(passptr);
+}
+
+static int load_encrypted_config_yaml(FILE *in, yaml_parser_t *parser,
+        unsigned char *encheader, const char *encpassfile) {
+
+    uint8_t iv[AES_IV_SIZE];
+    uint8_t salt[SALT_SIZE];
+    uint8_t key[AES_KEY_SIZE];
+    uint8_t pass[1024];
+    uint32_t file_size;
+    uint8_t *ciphered, *plain;
+    int plainlen;
+    size_t passlen;
+
+    if (encpassfile == NULL) {
+        logger(LOG_INFO, "OpenLI: missing the path to the file containing the encryption key!");
+        return -1;
+    }
+
+    memcpy(salt, encheader + 8, SALT_SIZE);
+
+    passlen = read_encryption_password_file(encpassfile, pass);
+    if (passlen == 0) {
+        return -1;
+    }
+
+    if (derive_iv_from_encrypt_key(pass, passlen, salt, key, iv) < 0) {
+        logger(LOG_INFO, "OpenLI: unable to derive IV from password + salt");
+        return -1;
+    }
+
+    /* figure out how much space we need to read the file into memory, then
+     * reset the FILE * offset to point to the first byte after the header
+     */
+    fseek(in, 0, SEEK_END);
+    file_size = ftell(in) - (SALT_SIZE + 8);
+    rewind(in);
+    fseek(in, SALT_SIZE + 8, SEEK_SET);
+
+    ciphered = malloc(file_size);
+    if (fread(ciphered, 1, file_size, in) == 0) {
+        logger(LOG_INFO,
+                "OpenLI: unable to read full encrypted config file content");
+        free(ciphered);
+        return -1;
+    }
+
+    plain = calloc(file_size + 1, sizeof(uint8_t));
+    plainlen = decrypt_aes(ciphered, file_size, key, iv, plain);
+    if (plainlen < 0) {
+        free(plain);
+        free(ciphered);
+        return -1;
+    }
+
+    yaml_parser_initialize(parser);
+    yaml_parser_set_input_string(parser, plain, plainlen);
+    return 0;
+
+}
+
+
 int config_yaml_parser(char *configfile, void *arg,
         int (*parse_mapping)(void *, yaml_document_t *, yaml_node_t *,
-                yaml_node_t *), int createifmissing) {
+                yaml_node_t *), int createifmissing, const char *encpassfile) {
     FILE *in = NULL;
     yaml_parser_t parser;
     yaml_document_t document;
     yaml_node_t *root, *key, *value;
     yaml_node_pair_t *pair;
     int ret = -1;
+    unsigned char encheader[SALT_SIZE + 8];
 
-    in = fopen(configfile, "r");
+    in = fopen(configfile, "rb");
 
     if (in == NULL && errno == ENOENT && createifmissing) {
         in = fopen(configfile, "w+");
@@ -86,9 +247,29 @@ int config_yaml_parser(char *configfile, void *arg,
         return -1;
     }
 
+    if (fread(encheader, 1, SALT_SIZE + 8, in) == SALT_SIZE + 8) {
+        if (memcmp(encheader, SALT_HEADER, 8) == 0) {
+            if (load_encrypted_config_yaml(in, &parser, encheader,
+                        encpassfile) < 0) {
+                logger(LOG_INFO, "OpenLI: unable to decrypt config file %s",
+                        configfile);
+                goto yamlfail;
+            }
+            logger(LOG_DEBUG,
+                    "OpenLI: reading encrypted configuration from %s",
+                    configfile);
+            goto startparsing;
+        }
+    }
+
+    // file is not encrypted
+    logger(LOG_DEBUG, "OpenLI: reading unencrypted configuration from %s",
+            configfile);
+    rewind(in);
     yaml_parser_initialize(&parser);
     yaml_parser_set_input_file(&parser, in);
 
+startparsing:
     if (!yaml_parser_load(&parser, &document)) {
         logger(LOG_INFO, "OpenLI: Malformed config file");
         goto yamlfail;

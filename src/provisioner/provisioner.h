@@ -43,6 +43,8 @@
 
 #define DEFAULT_INTERCEPT_CONFIG_FILE "/etc/openli/running-intercept-config.yaml"
 
+#define DEFAULT_ENCPASSFILE_LOCATION "/etc/openli/.intercept-encrypt"
+
 #ifndef MHD_SOCKET_DEFINED
 typedef int MHD_socket;
 #define MHD_SOCKET_DEFINED
@@ -258,6 +260,12 @@ typedef struct prov_state {
     /** Path to the configuration file */
     char *conffile;
 
+    /** Path to the file containing the passphrase for any encrypted intercept
+     *  configuration */
+    const char *encpassfile;
+
+    uint8_t encrypt_intercept_config;
+
     /** The IP address to listen on for incoming collector connections */
     char *listenaddr;
     /** The port to listen on for incoming collector connections */
@@ -348,7 +356,8 @@ struct prov_sock_state {
 /* Implemented in provisioner.c, but included here to be available
  * inside hup_reload.c
  */
-int init_prov_state(provision_state_t *state, char *configfile);
+int init_prov_state(provision_state_t *state, char *configfile,
+        const char *encpassfile);
 void clear_prov_state(provision_state_t *state);
 void free_all_mediators(int epollfd, prov_mediator_t **mediators,
         mediator_address_t **knownmeds);
@@ -360,8 +369,12 @@ void clear_intercept_state(prov_intercept_conf_t *conf);
 void init_intercept_config(prov_intercept_conf_t *conf);
 int map_intercepts_to_leas(prov_intercept_conf_t *conf);
 
+/* Implemented in configparser_provisioner.c */
+size_t read_encryption_password_file(const char *encpassfile, uint8_t *space);
+
 /* Implemented in configwriter.c */
-int emit_intercept_config(char *configfile, prov_intercept_conf_t *conf);
+int emit_intercept_config(char *configfile, const char *encpassfile,
+        prov_intercept_conf_t *conf);
 
 /* Implemented in clientupdates.c */
 int compare_sip_targets(provision_state_t *currstate,

@@ -217,6 +217,6 @@ static int mediator_parser(void *arg, yaml_document_t *doc UNUSED,
 }
 
 int parse_mediator_config(char *configfile, mediator_state_t *state) {
-    return config_yaml_parser(configfile, state, mediator_parser, 0);
+    return config_yaml_parser(configfile, state, mediator_parser, 0, NULL);
 }
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

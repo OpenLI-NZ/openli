@@ -31,6 +31,7 @@
 #include "provisioner/provisioner.h"
 
 int parse_provisioning_config(char *configfile, provision_state_t *state);
-int parse_intercept_config(char *configfile, prov_intercept_conf_t *conf);
+int parse_intercept_config(char *configfile, prov_intercept_conf_t *conf,
+        const char *encpassfile);
 #endif
 
