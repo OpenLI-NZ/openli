@@ -27,6 +27,12 @@ updateport: 9009
 # Make sure that this file is writable by the OpenLI provisioner!
 intercept-config-file: /etc/openli/running-intercept-config.yaml
 
+# If set to yes, any writes made by the provisioner to the intercept config
+# file will be encrypted. Enabling this option will require an encryption
+# password to be passed into the provisioner via the command line using the
+# -K flag.
+encrypt-intercept-config-file: no
+
 # If set to 'yes', RTP comfort noise packets will NOT be intercepted by
 # all collectors associated with this provisioner. Only enable this option
 # if an LEA reports difficulty with decoding your intercepted RTP streams.
