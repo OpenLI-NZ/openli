@@ -59,6 +59,58 @@ without having to manually trigger a reload of the provisioner configuration,
 but users who are concerned about having an open socket that can start, stop or
 modify intercepts may find this to be a preferable option.
 
+#### Encrypting the running intercept config file
+In some deployments, it may be required or preferable that the intercept
+configuration is stored in an encrypted format.
+
+To enable this capability in OpenLI, you will need to complete the following
+steps:
+
+  1. Add `encrypt-intercept-config-file: true` to the top level of your
+     provisioner configuration file.
+  2. Generate a random 32 character password and write it into a file on disk
+     that only the user that will run your provisioner can read.
+  3. Start the OpenLI provisioner with the `-K <file>` command line argument,
+     where `<file>` is the path to the file containing your password from
+     Step 2.
+
+Note that if your running intercept config is unencrypted at the time when
+you enable encryption, it will remain unencrypted until either the REST API is
+used to modify the intercept configuration OR you manually encrypt the config
+file prior to starting the provisioner.
+
+If you have installed OpenLI from a pre-built package and are using the
+systemd service files provided by those packages to run the provisioner, you
+do not need to worry about Steps 2 and 3 above -- but you will still need to
+do Step 1 to turn on encryption support.
+
+To generate the random password, I recommend the following bash code:
+```
+s=""
+until s="$s$(dd bs=64 count=1 if=/dev/urandom 2>/dev/null | LC_ALL=C tr -cd 'a-zA-Z0-9')"
+    [ ${#s} -ge 32 ]; do :; done
+PASSWORD=$(printf %.32s $s)
+echo ${PASSWORD} > /etc/openli/enc-pass.txt
+chmod 0640 /etc/openli/enc-pass.txt
+```
+
+Don't forget to use `chown` to set the ownership correctly.
+
+To manually encrypt an unencrypted running intercept config file:
+```
+openssl enc -salt -aes-256-cbc -pbkdf2 -pass file:/etc/openli/enc-pass.txt
+    -in <existing-config-file> -out <new-encrypted-file>
+```
+
+To manually decrypt an encrypted running intercept config file (e.g. for
+debugging purposes):
+```
+openssl enc -d -aes-256-cbc -pbkdf2 -pass file:/etc/openli/enc-pass.txt
+    -in <encrypted-file> -out <decrypted-file>
+
+```
+
+
 #### Authentication for Provisioner Updates
 Optionally, you can configure the update socket to accept requests only from
 authenticated users. OpenLI supports two authentication mechanisms at present:
