@@ -6,8 +6,11 @@ openli (1.1.12-1) unstable; urgency=medium
     the mediator system file.
   * Collector: add support for receiving intercepted traffic via X2/X3
     interfaces (SIP and RTP PDU types only at this stage).
+  * SIP: fix bug where RTP streams are not intercepted if the corresponding
+    SIP session occurs between two endpoints with the same IP address.
+  * Provisioner: add support for encrypting the running intercept config file.
 
- -- Shane Alcock <salcock@searchlight.nz>  Mon, 17 Feb 2025 12:55:45 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Thu, 27 Feb 2025 18:59:15 +1300
 
 openli (1.1.11-1) unstable; urgency=medium
 
