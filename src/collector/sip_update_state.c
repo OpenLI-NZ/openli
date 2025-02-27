@@ -374,9 +374,11 @@ static uint8_t apply_invite_cseq_to_call(rtpstreaminf_t *thisrtp,
      * so if a reverse INVITE from C->B won't be looked at for RTP stream
      * tracking purposes until it is proxied to the B->A link.
      *
-     * There is one edge case where this will still break and I have
-     * no idea how to resolve it: if the proxy is not A->B and B->C,
-     * but instead is A->B and B->A.
+     * There is one edge case where this approach could cause issues
+     * and that is where the proxy is not A->B and B->C, but instead is A->B
+     * and B->A. I think that the addition of port numbers to the "inviter"
+     * definition should resolve this, but I also wouldn't be surprised if
+     * there are further issues down the line.
      */
     if (invitecseq) {
         if (dir != 0xff && thisrtp->invitecseq == NULL) {
