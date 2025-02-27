@@ -246,6 +246,8 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
     newcin->timeout_ev = NULL;
     newcin->byematched = 0;
     newcin->announced = 0;
+    memset(newcin->inviter, 0, 16);
+    newcin->inviterport = 0;
 
     newcin->streamcount = 0;
     newcin->mediastreams = calloc(RTP_STREAM_ALLOC,
