@@ -509,6 +509,9 @@ static void sip_update_fast_path(openli_sip_worker_t *sipworker,
         return;
     }
 
+    baseirimsg.data.ipmmiri.srcport = trace_get_source_port(packet);
+    baseirimsg.data.ipmmiri.dstport = trace_get_destination_port(packet);
+
     ret = parse_next_sip_message(sipworker->sipparser, NULL, NULL);
     if (ret == 0) {
         return;
@@ -549,6 +552,8 @@ static void sip_update_slow_path(openli_sip_worker_t *sipworker,
                 SIP_PROCESSING_EXTRACTING_IPS);
         return;
     }
+    baseirimsg.data.ipmmiri.srcport = trace_get_source_port(packet);
+    baseirimsg.data.ipmmiri.dstport = trace_get_destination_port(packet);
 
     do {
         if (packets != NULL) {

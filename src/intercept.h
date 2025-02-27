@@ -382,6 +382,7 @@ struct rtpstreaminf {
     uint16_t invitecseq_stack;
 
     uint8_t inviter[16];
+    uint16_t inviterport;
 
     uint8_t announced;
     uint8_t skip_comfort;

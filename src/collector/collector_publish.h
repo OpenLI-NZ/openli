@@ -131,6 +131,8 @@ typedef struct openli_ipmmiri_job {
     uint8_t ipsrc[16];
     uint8_t ipdest[16];
     int ipfamily;
+    uint16_t srcport;
+    uint16_t dstport;
 
     openli_location_t *locations;
     uint8_t location_cnt;
