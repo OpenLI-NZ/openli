@@ -1,4 +1,6 @@
 # Example configuration file for an OpenLI collector
+#  * (C) 2025 Telefónica Innovación Digital (laura.dominguez.cespedes@telefonica.com)
+#  * (C) 2024 by Original Author(shane@alcock.co.nz)
 
 # Connect to a provisioner that is listening on 10.0.0.1:9001
 provisioneraddr: 10.0.0.1
@@ -82,17 +84,21 @@ logstatfrequency: 5
 # components, these three options must be point to valid certificates / keys
 # to be used for TLS encryption. Make sure that if you enable TLS on
 # one OpenLI component, that you also do so on all of the others.
+# The TLS certificates and keys can be generated using PQC cryptography algorithms, based on OQS-Provider list of algorithms.
+#
+# This will offer Quantum-Safe in the asymmetric process of the TLS handshake.
+# As well, is required to modify the "Openssl.cnf" file to add the desired QS Key Exchange Methods (KEM) desired.
 #
 # Leave these commented out for unencrypted inter-component communications.
-#tlscert: /etc/openli/openli-collector-crt.pem
-#tlskey: /etc/openli/openli-collector-key.pem
-#tlsca: /etc/openli/openli-ca-crt.pem
+tlscert: /etc/openli/openli-collector-crt.pem
+tlskey: /etc/openli/openli-collector-key.pem
+tlsca: /etc/openli/openli-ca-crt.pem
 
 # If set to 'no', intercepted packets streamed by this collector to the
 # mediator will not be encrypted -- this may be desirable for performance
 # reasons. Make sure you set the corresponding option on the mediator as
 # well.
-#etsitls: yes
+etsitls: yes
 
 # If set to 'yes', SIP packets with the same identifiers in the SDP O field
 # will *not* be assumed to be different legs of the same SIP call. Some
