@@ -1,3 +1,6 @@
+ * (C) 2025 Telefónica Innovación Digital (laura.dominguez.cespedes@telefonica.com)
+ * (C) 2019 by Original Author(shane@alcock.co.nz)
+
 DISTCHECK_CONFIGURE_FLAGS = \
         --with-systemdsystemunitdir=$$dc_install_base/$(systemdsystemunitdir)
 
@@ -33,6 +36,10 @@ endif
 
 if BUILD_MEDIATOR
 systemdsystemunit_DATA += systemd/openli-mediator.service
+endif
+
+if ENABLE_OQS
+AM_CFLAGS = -DENABLE_OQS
 endif
 
 endif

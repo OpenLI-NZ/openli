@@ -1,4 +1,5 @@
-# Super primitive configure script
+ * (C) 2025 Telefónica Innovación Digital (laura.dominguez.cespedes@telefonica.com)
+ * (C) 2025 by Original Author(shane@alcock.co.nz)
 
 AC_INIT([openli],[1.1.12],[shane@alcock.co.nz])
 
@@ -24,6 +25,10 @@ AC_ARG_ENABLE([provisioner], AS_HELP_STRING([--disable-provisioner],
         [Disable building the OpenLI provisioner]))
 AC_ARG_ENABLE([collector], AS_HELP_STRING([--disable-collector],
         [Disable building the OpenLI collector]))
+AC_ARG_ENABLE([oqs], [AS_HELP_STRING([--enable-oqs], [Enable OQS support])],
+  [enable_oqs=$enableval],
+  [enable_oqs=no]
+)
 
 PKG_PROG_PKG_CONFIG
 AC_ARG_WITH([systemdsystemunitdir],
@@ -179,6 +184,13 @@ if test "$libzmq_found" = 0; then
         AC_MSG_ERROR(Required library libzmq not found; use LDFLAGS to specify library location)
 fi
 
+if test "x$enable_oqs" = "xyes"; then
+  AC_DEFINE([ENABLE_OQS], [1], [Enable OQS support])
+  AM_CONDITIONAL([ENABLE_OQS], [test "x$enable_oqs" = "xyes"])
+else
+  AM_CONDITIONAL([ENABLE_OQS], [false])
+fi
+
 
 AM_CONDITIONAL([BUILD_MEDIATOR], [test "x$enable_mediator" != "xno"])
 AM_CONDITIONAL([BUILD_PROVISIONER], [test "x$enable_provisioner" != "xno"])
@@ -204,4 +216,3 @@ reportopt() {
                 AC_MSG_NOTICE([$1: No])
         fi
 }
-
