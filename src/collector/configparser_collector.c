@@ -51,6 +51,7 @@ static int parse_x2x3_ingestion_config(collector_global_t *glob,
         char identifier[512];
 
         inp = calloc(1, sizeof(x_input_t));
+        inp->use_tls = 1;
         for (pair = node->data.mapping.pairs.start;
                 pair < node->data.mapping.pairs.top; pair ++) {
             yaml_node_t *key, *value;
@@ -69,6 +70,16 @@ static int parse_x2x3_ingestion_config(collector_global_t *glob,
                     strcasecmp((char *)key->data.scalar.value,
                             "listenport") == 0) {
                 SET_CONFIG_STRING_OPTION(inp->listenport, value);
+            }
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "disable_tls") == 0) {
+                if (config_check_onoff((char *)value->data.scalar.value) == 0) {
+                    inp->use_tls = 1;
+                } else {
+                    inp->use_tls = 0;
+                }
             }
         }
 
