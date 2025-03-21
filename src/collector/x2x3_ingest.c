@@ -287,7 +287,7 @@ static inline uint8_t x2x3dir_to_etsidir(uint16_t xdir) {
     return ETSI_DIR_INDETERMINATE;
 }
 
-static int send_x2x3_ka_response(x_input_t *xinp UNUSED,
+static int send_x2x3_ka_response(x_input_t *xinp,
         x_input_client_t *client, uint32_t seqno) {
 
     uint8_t buf[1024];
@@ -314,19 +314,28 @@ static int send_x2x3_ka_response(x_input_t *xinp UNUSED,
     ptrseq = (uint32_t *)ptr;
     *ptrseq = htonl(seqno);
 
-    if ((r = SSL_write(client->ssl, buf, ntohl(hdr->hdrlength))) < 0) {
-        int err = SSL_get_error(client->ssl, r);
-        if (err == SSL_ERROR_SSL) {
-            ERR_print_errors_cb(x2x3_ssl_write_error, NULL);
-            return -1;
-        } else if (err == SSL_ERROR_ZERO_RETURN) {
-            logger(LOG_INFO, "OpenLI: X2/X3 connection closed by remote peer");
-            return -1;
-        } else if (err == SSL_ERROR_SYSCALL) {
-            logger(LOG_INFO, "OpenLI: X2/X3 connection reported error when sending keepalive: %s", strerror(errno));
+    if (xinp->use_tls && client->ssl) {
+        if ((r = SSL_write(client->ssl, buf, ntohl(hdr->hdrlength))) < 0) {
+            int err = SSL_get_error(client->ssl, r);
+            if (err == SSL_ERROR_SSL) {
+                ERR_print_errors_cb(x2x3_ssl_write_error, NULL);
+                return -1;
+            } else if (err == SSL_ERROR_ZERO_RETURN) {
+                logger(LOG_INFO,
+                        "OpenLI: X2/X3 connection closed by remote peer");
+                return -1;
+            } else if (err == SSL_ERROR_SYSCALL) {
+                logger(LOG_INFO, "OpenLI: X2/X3 connection reported error when sending keepalive: %s", strerror(errno));
+                return -1;
+            }
+            return 0;
+        }
+    } else if (client->fd != -1) {
+        if ((r = send(client->fd, buf, ntohl(hdr->hdrlength), 0)) <= 0) {
+            logger(LOG_INFO, "OpenLI: X2/X3 instance %s was unable to send a keepalive response to %s: %s",
+                    xinp->identifier, client->clientip, strerror(errno));
             return -1;
         }
-        return 0;
     }
 
     return 1;
@@ -1164,6 +1173,57 @@ static int x2x3_process_sync_thread_message(x_input_t *xinp) {
 
 #define X2X3_CLIENT_BUFSIZE (32 * 1024)        // TODO make this larger ;)
 
+static int add_new_x2x3_client(x_input_t *xinp, SSL *newssl, int newfd,
+        char *clientip) {
+
+    while (xinp->client_count >= xinp->client_array_size) {
+        x_input_client_t *replace = calloc(xinp->client_count + 8,
+                sizeof(x_input_client_t));
+
+        if (xinp->client_count > 0) {
+            memcpy(replace, xinp->clients,
+                    sizeof(x_input_client_t) * xinp->client_count);
+            free(xinp->clients);
+        }
+        xinp->clients = replace;
+        xinp->client_array_size = xinp->client_count + 8;
+    }
+
+    xinp->clients[xinp->client_count].ssl = newssl;
+    xinp->clients[xinp->client_count].fd = newfd;
+    xinp->clients[xinp->client_count].buffer = malloc(X2X3_CLIENT_BUFSIZE);
+    xinp->clients[xinp->client_count].buffer_size = X2X3_CLIENT_BUFSIZE;
+    xinp->clients[xinp->client_count].bufread = 0;
+    xinp->clients[xinp->client_count].bufwrite = 0;
+    xinp->clients[xinp->client_count].clientip = strdup(clientip);
+    xinp->client_count ++;
+    return 1;
+}
+
+static int x2x3_accept_nontls_client_connection(x_input_t *xinp) {
+    int newfd;
+    struct sockaddr_storage saddr;
+    socklen_t socklen = sizeof(saddr);
+    char strbuf[INET6_ADDRSTRLEN];
+
+    newfd = accept(xinp->listener_fd, (struct sockaddr *)&saddr, &socklen);
+    if (newfd == -1) {
+        logger(LOG_INFO, "OpenLI: error while accepting client connection in X2-X3 thread %s: %s", xinp->identifier, strerror(errno));
+        return -1;
+    }
+    fd_set_nonblock(newfd);
+
+    if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, sizeof(strbuf),
+                0, 0, NI_NUMERICHOST) != 0) {
+        logger(LOG_INFO, "OpenLI: getnameinfo error when accepting an X2/X3 client connection: %s", strerror(errno));
+        close(newfd);
+        return -1;
+    }
+
+    add_new_x2x3_client(xinp, NULL, newfd, strbuf);
+    return 1;
+}
+
 static int x2x3_accept_client_connection(x_input_t *xinp) {
 
     int r, newfd;
@@ -1175,7 +1235,7 @@ static int x2x3_accept_client_connection(x_input_t *xinp) {
 
     pthread_mutex_lock(&(xinp->sslmutex));
     if (xinp->ssl_ctx == NULL) {
-        logger(LOG_INFO, "OpenLI: cannot create X2-X3 listener for %s because this collector has no usable TLS configuration", xinp->identifier);
+        logger(LOG_INFO, "OpenLI: cannot accept X2-X3 connection for %s because this collector has no usable TLS configuration", xinp->identifier);
         pthread_mutex_unlock(&(xinp->sslmutex));
         return -1;
     }
@@ -1208,29 +1268,10 @@ static int x2x3_accept_client_connection(x_input_t *xinp) {
         return -1;
     }
 
-    while (xinp->client_count >= xinp->client_array_size) {
-        x_input_client_t *replace = calloc(xinp->client_count + 8,
-                sizeof(x_input_client_t));
-
-        if (xinp->client_count > 0) {
-            memcpy(replace, xinp->clients,
-                    sizeof(x_input_client_t) * xinp->client_count);
-            free(xinp->clients);
-        }
-        xinp->clients = replace;
-        xinp->client_array_size = xinp->client_count + 8;
-    }
-
-    xinp->clients[xinp->client_count].ssl = newc;
-    xinp->clients[xinp->client_count].fd = newfd;
-    xinp->clients[xinp->client_count].buffer = malloc(X2X3_CLIENT_BUFSIZE);
-    xinp->clients[xinp->client_count].buffer_size = X2X3_CLIENT_BUFSIZE;
-    xinp->clients[xinp->client_count].bufread = 0;
-    xinp->clients[xinp->client_count].bufwrite = 0;
-    xinp->clients[xinp->client_count].clientip = strdup(strbuf);
-    xinp->client_count ++;
+    add_new_x2x3_client(xinp, newc, newfd, strbuf);
     return 1;
 }
+
 
 static int create_x2x3_listening_socket(x_input_t *xinp) {
     int sockfd;
@@ -1252,47 +1293,68 @@ static int create_x2x3_listening_socket(x_input_t *xinp) {
     return xinp->listener_fd;
 }
 
+static int log_ssl_read_error(x_input_t *xinp, x_input_client_t *client,
+        int sslret) {
+
+    int err = SSL_get_error(client->ssl, sslret);
+    switch(err) {
+        case SSL_ERROR_WANT_READ:
+        case SSL_ERROR_WANT_WRITE:
+            return 0;
+        case SSL_ERROR_SYSCALL:
+            logger(LOG_INFO,
+                    "OpenLI: X2/X3 client %s has been disconnected from %s due to an error: %s",
+                    client->clientip, xinp->identifier,
+                    strerror(errno));
+            break;
+        case SSL_ERROR_SSL:
+            logger(LOG_INFO,
+                    "OpenLI: X2/X3 client %s has been disconnected from %s due to an error in SSL_read()",
+                    client->clientip, xinp->identifier);
+            ERR_print_errors_cb(x2x3_ssl_read_error, NULL);
+            break;
+        case SSL_ERROR_ZERO_RETURN:
+
+            logger(LOG_INFO,
+                    "OpenLI: X2/X3 client %s has been disconnected from %s",
+                    client->clientip, xinp->identifier);
+            break;
+    }
+    return -1;
+}
+
 static int receive_client_data(x_input_t *xinp, size_t client_ind) {
 
     x_input_client_t *client = &(xinp->clients[client_ind]);
     size_t maxread = 0;
     int r;
 
-    if (client_ind >= xinp->client_count || client->ssl == NULL ||
-            client->fd == -1) {
+    if (client_ind >= xinp->client_count || client->fd == -1 ||
+            (client->ssl == NULL && xinp->use_tls)) {
         return 0;
     }
 
     maxread = client->buffer_size - client->bufwrite;
-    r = SSL_read(client->ssl, client->buffer + client->bufwrite, maxread);
+    if (xinp->use_tls) {
+        r = SSL_read(client->ssl, client->buffer + client->bufwrite, maxread);
+    } else {
+        r = recv(client->fd, client->buffer + client->bufwrite, maxread,
+                MSG_DONTWAIT);
+    }
+
     if (r <= 0) {
         if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             return 0;
         }
         if (r <= 0) {
-            int err = SSL_get_error(client->ssl, r);
-            switch(err) {
-                case SSL_ERROR_WANT_READ:
-                case SSL_ERROR_WANT_WRITE:
+            if (xinp->use_tls) {
+                if (log_ssl_read_error(xinp, client, r) == 0) {
+                    /* TLS equivalent of EAGAIN */
                     return 0;
-                case SSL_ERROR_SYSCALL:
-                    logger(LOG_INFO,
-                            "OpenLI: X2/X3 client %s has been disconnected from %s due to an error: %s",
-                            client->clientip, xinp->identifier,
-                            strerror(errno));
-                    break;
-                case SSL_ERROR_SSL:
-                    logger(LOG_INFO,
-                            "OpenLI: X2/X3 client %s has been disconnected from %s due to an error in SSL_read()",
-                            client->clientip, xinp->identifier);
-                    ERR_print_errors_cb(x2x3_ssl_read_error, NULL);
-                    break;
-                case SSL_ERROR_ZERO_RETURN:
-
-                    logger(LOG_INFO,
-                            "OpenLI: X2/X3 client %s has been disconnected from %s",
-                            client->clientip, xinp->identifier);
-                    break;
+                }
+            } else {
+                logger(LOG_INFO, "OpenLI: (%s) error receiving data from X2/X3 client %s: %s",
+                        xinp->identifier, client->clientip, strerror(errno));
             }
         }
         /* other end is no longer connected */
@@ -1326,7 +1388,9 @@ static int receive_client_data(x_input_t *xinp, size_t client_ind) {
 
 dropclient:
     xinp->dead_clients ++;
-    SSL_free(client->ssl);
+    if (client->ssl) {
+        SSL_free(client->ssl);
+    }
     client->ssl = NULL;
     if (client->clientip) {
         free(client->clientip);
@@ -1392,7 +1456,11 @@ void x2x3_ingest_main(x_input_t *xinp) {
 
         if (topoll[1].revents & ZMQ_POLLIN) {
             // if this fails, we don't really care?
-            x2x3_accept_client_connection(xinp);
+            if (xinp->use_tls) {
+                x2x3_accept_client_connection(xinp);
+            } else {
+                x2x3_accept_nontls_client_connection(xinp);
+            }
 
             topoll[1].revents = 0;
         }
