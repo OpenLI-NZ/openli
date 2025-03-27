@@ -1233,17 +1233,9 @@ static int x2x3_accept_client_connection(x_input_t *xinp) {
     socklen_t socklen = sizeof(saddr);
     char strbuf[INET6_ADDRSTRLEN];
 
-    pthread_mutex_lock(&(xinp->sslmutex));
-    if (xinp->ssl_ctx == NULL) {
-        logger(LOG_INFO, "OpenLI: cannot accept X2-X3 connection for %s because this collector has no usable TLS configuration", xinp->identifier);
-        pthread_mutex_unlock(&(xinp->sslmutex));
-        return -1;
-    }
-
     newfd = accept(xinp->listener_fd, (struct sockaddr *)&saddr, &socklen);
     if (newfd == -1) {
         logger(LOG_INFO, "OpenLI: error while accepting client connection in X2-X3 thread %s: %s", xinp->identifier, strerror(errno));
-        pthread_mutex_unlock(&(xinp->sslmutex));
         return -1;
     }
     fd_set_nonblock(newfd);
@@ -1251,6 +1243,16 @@ static int x2x3_accept_client_connection(x_input_t *xinp) {
     if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, sizeof(strbuf),
                 0, 0, NI_NUMERICHOST) != 0) {
         logger(LOG_INFO, "OpenLI: getnameinfo error when accepting an X2/X3 client connection: %s", strerror(errno));
+        close(newfd);
+        return -1;
+    }
+
+    pthread_mutex_lock(&(xinp->sslmutex));
+    if (xinp->ssl_ctx == NULL) {
+        if (xinp->ssl_ctx_bad == 0) {
+            logger(LOG_INFO, "OpenLI: cannot accept X2-X3 connection for %s because this collector has no usable TLS configuration", xinp->identifier);
+            xinp->ssl_ctx_bad = 1;
+        }
         close(newfd);
         pthread_mutex_unlock(&(xinp->sslmutex));
         return -1;
