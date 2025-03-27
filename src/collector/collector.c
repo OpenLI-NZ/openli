@@ -1265,6 +1265,7 @@ static int start_xinput(collector_global_t *glob, x_input_t *xinp) {
 
     xinp->reset_listener = 1;
     xinp->ssl_ctx = glob->sslconf.ctx;
+    xinp->ssl_ctx_bad = 0;
     pthread_mutex_init(&(xinp->sslmutex), NULL);
 
     pthread_create(&(xinp->threadid), NULL,
@@ -2071,6 +2072,7 @@ static int reload_collector_config(collector_global_t *glob,
     collector_global_t newstate;
     int i, tlschanged, ret;
     coreserver_t *tmp;
+    x_input_t *xinp, *xtmp;
 
     ret = 0;
 
@@ -2123,6 +2125,13 @@ static int reload_collector_config(collector_global_t *glob,
             glob->forwarders[i].ctx = (glob->sslconf.ctx && glob->etsitls)
                     ? glob->sslconf.ctx : NULL;
             pthread_mutex_unlock(&(glob->forwarders[i].sslmutex));
+        }
+
+        HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
+            pthread_mutex_lock(&(xinp->sslmutex));
+            xinp->ssl_ctx = glob->sslconf.ctx;
+            xinp->ssl_ctx_bad = 0;
+            pthread_mutex_unlock(&(xinp->sslmutex));
         }
     }
 

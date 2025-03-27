@@ -176,6 +176,7 @@ typedef struct x_input {
 
     uint8_t use_tls;
     SSL_CTX *ssl_ctx;
+    uint8_t ssl_ctx_bad;
     uint8_t reset_listener;
     pthread_mutex_t sslmutex;
 
