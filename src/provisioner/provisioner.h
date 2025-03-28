@@ -147,6 +147,8 @@ struct prov_client {
 
     char *identifier;
 
+    char *ipaddress;
+
     int clientrole;
 
     /** Epoll event for the main communication socket */
@@ -316,6 +318,11 @@ typedef struct prov_state {
     char *restauthkey;
     void *authdb;
 
+    uint8_t clientdbenabled;
+    char *clientdbfile;
+    char *clientdbkey;
+    void *clientdb;
+
     /** A flag indicating whether collectors should ignore RTP comfort noise
      *  packets when intercepting voice traffic.
      */
@@ -428,6 +435,12 @@ int announce_latest_default_email_decompress(provision_state_t *state);
 int reload_provisioner_config(provision_state_t *state);
 
 
+/* Implemented in clientdb.c */
+int init_clientdb(provision_state_t *state);
+void close_clientdb(provision_state_t *state);
+int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med);
+int update_collector_client_row(provision_state_t *state,
+        prov_collector_t *col);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

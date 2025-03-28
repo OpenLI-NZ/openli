@@ -859,6 +859,21 @@ static inline int reload_mediator_socket_config(provision_state_t *currstate,
     return 0;
 }
 
+static inline void replace_clientdb_config(provision_state_t *currstate,
+        provision_state_t *newstate) {
+
+    if (currstate->clientdbfile) {
+        free(currstate->clientdbfile);
+    }
+    if (currstate->clientdbkey) {
+        free(currstate->clientdbkey);
+    }
+    currstate->clientdbfile = newstate->clientdbfile;
+    currstate->clientdbkey = newstate->clientdbkey;
+    newstate->clientdbfile = NULL;
+    newstate->clientdbkey = NULL;
+}
+
 static inline void replace_restauth_config(provision_state_t *currstate,
         provision_state_t *newstate) {
 
@@ -872,6 +887,55 @@ static inline void replace_restauth_config(provision_state_t *currstate,
     currstate->restauthkey = newstate->restauthkey;
     newstate->restauthdbfile = NULL;
     newstate->restauthkey = NULL;
+}
+
+static int reload_clientdb_config(provision_state_t *currstate,
+        provision_state_t *newstate) {
+
+    if (currstate->clientdbenabled == 0 &&
+            (newstate->clientdbfile == NULL || newstate->clientdbkey == NULL)
+            ) {
+        /* tracking was disabled and the new config doesn't change that */
+        logger(LOG_INFO, "OpenLI provisioner: Client tracking will remain disabled.");
+        return 0;
+    }
+
+    if (currstate->clientdbenabled == 0) {
+        /* tracking was disabled and the new config wants to enable it */
+        replace_clientdb_config(currstate, newstate);
+    } else {
+        if (newstate->clientdbfile == NULL || newstate->clientdbkey == NULL) {
+            /* tracking was enabled and now it has been disabled */
+            replace_clientdb_config(currstate, newstate);
+        } else if (strcmp(currstate->clientdbfile,
+                    newstate->clientdbfile) == 0 &&
+                strcmp(currstate->clientdbkey, newstate->clientdbkey) == 0) {
+            /* tracking is enabled but database etc is unchanged, leave as is */
+            logger(LOG_INFO, "OpenLI provisioner: Client tracking database config is unchanged.");
+            return 0;
+        } else {
+            /* tracking was enabled but database or key has changed */
+            replace_clientdb_config(currstate, newstate);
+        }
+    }
+
+    if (currstate->clientdbfile && currstate->clientdbkey) {
+#ifdef HAVE_SQLCIPHER
+        if (init_clientdb(currstate) < 0) {
+            logger(LOG_INFO, "OpenLI provisioner: error while opening client tracking database");
+            return -1;
+        }
+#else
+        logger(LOG_INFO, "OpenLI provisioner: Client tracking database options are set, but your OpenLI provisioner was not built with SQLCipher support.");
+        logger(LOG_INFO, "OpenLI provisioner: Client tracking will not occur.");
+        currstate->clientdbenabled = 0;
+#endif
+    } else {
+        logger(LOG_INFO, "OpenLI provisioner: Client tracking has been disabled");
+        currstate->clientdbenabled = 0;
+    }
+
+    return 1;
 }
 
 static int reload_restauth_config(provision_state_t *currstate,
@@ -994,7 +1058,7 @@ int reload_provisioner_config(provision_state_t *currstate) {
     int pushchanged = 0;
     int tlschanged = 0;
     int voipoptschanged = 0;
-    int restauthchanged = 0;
+    int restauthchanged = 0, clientdbchanged = 0;
     char *target_info;
 
     if (init_prov_state(&newstate, currstate->conffile,
@@ -1021,6 +1085,12 @@ int reload_provisioner_config(provision_state_t *currstate) {
 
     restauthchanged = reload_restauth_config(currstate, &newstate);
     if (restauthchanged == -1) {
+        clear_prov_state(&newstate);
+        return -1;
+    }
+
+    clientdbchanged = reload_clientdb_config(currstate, &newstate);
+    if (clientdbchanged == -1) {
         clear_prov_state(&newstate);
         return -1;
     }

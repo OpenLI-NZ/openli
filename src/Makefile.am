@@ -19,6 +19,7 @@ openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
                 provisioner/updateserver_jsonparsing.c \
                 provisioner/updateserver_jsoncreation.c \
                 provisioner/hup_reload.c \
+				provisioner/clientdb.c \
                 provisioner/intercept_timers.c provisioner/intercept_timers.h
 
 openliprovisioner_LDFLAGS = -lpthread @PROVISIONER_LIBS@

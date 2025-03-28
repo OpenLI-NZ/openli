@@ -1028,6 +1028,18 @@ static int provisioning_parser(void *arg, yaml_document_t *doc UNUSED,
         SET_CONFIG_STRING_OPTION(state->restauthkey, value);
     }
 
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value, "clientdbfile") == 0) {
+        SET_CONFIG_STRING_OPTION(state->clientdbfile, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value, "clientdbkey") == 0) {
+        SET_CONFIG_STRING_OPTION(state->clientdbkey, value);
+    }
+
     return 0;
 }
 
