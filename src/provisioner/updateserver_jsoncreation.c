@@ -336,6 +336,24 @@ json_object *get_provisioner_options(update_con_info_t *cinfo UNUSED,
     return jobj;
 }
 
+json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
+        provision_state_t *state UNUSED) {
+
+    json_object *jarray, *jobj;
+
+    jarray = jobj = NULL;
+    return jarray;
+}
+
+json_object *get_known_mediators(update_con_info_t *cinfo UNUSED,
+        provision_state_t *state UNUSED) {
+
+    json_object *jarray, *jobj;
+
+    jarray = jobj = NULL;
+    return jarray;
+}
+
 json_object *get_default_radius(update_con_info_t *cinfo UNUSED,
         provision_state_t *state) {
 

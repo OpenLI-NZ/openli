@@ -23,8 +23,10 @@
  *
  *
  */
+#define _XOPEN_SOURCE 700
 
 #include "provisioner.h"
+#include "updateserver.h"
 #include "logger.h"
 
 #ifdef HAVE_SQLCIPHER
@@ -33,20 +35,23 @@
 
 #include <string.h>
 #include <sys/types.h>
+#include <time.h>
 
 const char *insert_sql =
         "INSERT INTO observed_clients (identifier, type, ip_address, last_seen)"
-        " VALUES (?, ?, ?, DATETIME('now', 'utc')); ";
+        " VALUES (?, ?, ?, DATETIME('now')); ";
 const char *update_sql =
-        "UPDATE observed_clients SET last_seen = DATETIME('now', 'utc') "
+        "UPDATE observed_clients SET last_seen = DATETIME('now') "
         "WHERE identifier = ? AND type = ? AND ip_address = ?;";
 
+const char *select_sql =
+        "SELECT * FROM observed_clients WHERE type = ?;";
 
 const char *upsert_sql =
         "INSERT INTO observed_clients (identifier, type, ip_address, last_seen)"
-        " VALUES (?, ?, ?, DATETIME('now', 'utc')) "
+        " VALUES (?, ?, ?, DATETIME('now')) "
         "ON CONFLICT(identifier, type, ip_address) DO UPDATE SET "
-        "last_seen = (DATETIME('now', 'utc')); ";
+        "last_seen = (DATETIME('now')); ";
 
 int init_clientdb(provision_state_t *state) {
     int rc;
@@ -201,6 +206,90 @@ int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med) {
     sqlite3_finalize(upd_stmt);
 #endif
     return 1;
+}
+
+void update_all_client_rows(provision_state_t *state) {
+    prov_mediator_t *med, *medtmp;
+    prov_collector_t *col, *coltmp;
+
+    HASH_ITER(hh, state->mediators, med, medtmp) {
+        update_mediator_client_row(state, med);
+    }
+    HASH_ITER(hh, state->collectors, col, coltmp) {
+        update_collector_client_row(state, col);
+    }
+
+}
+
+known_client_t *_fetch_all_clients(provision_state_t *state,
+        size_t *clientcount, const char *where, uint8_t client_enum) {
+
+    int rc;
+    sqlite3_stmt *sel_stmt;
+    known_client_t *clients = NULL;
+    size_t ind, rows;
+    const char *id_text, *dt_text;
+    struct tm tm;
+
+    *clientcount = 0;
+    rows = 0;
+
+    rc = sqlite3_prepare_v2(state->clientdb, select_sql, -1, &sel_stmt, NULL);
+    if (rc != SQLITE_OK) {
+        return NULL;
+    }
+
+    sqlite3_bind_text(sel_stmt, 1, where, -1, SQLITE_STATIC);
+    while (sqlite3_step(sel_stmt) == SQLITE_ROW) {
+        rows ++;
+    }
+
+    sqlite3_reset(sel_stmt);
+    if (rows == 0) {
+        return NULL;
+    }
+
+    clients = calloc(rows, sizeof(known_client_t));
+    if (clients == NULL) {
+        return NULL;
+    }
+
+    ind = 0;
+    while (sqlite3_step(sel_stmt) == SQLITE_ROW && ind < rows) {
+        id_text = (const char *)sqlite3_column_text(sel_stmt, 0);
+
+        clients[ind].medid = strtoul(id_text, NULL, 10);
+        clients[ind].type = client_enum;
+        clients[ind].ipaddress = (const char *)sqlite3_column_text(sel_stmt, 2);
+
+        dt_text = (const char *)sqlite3_column_text(sel_stmt, 3);
+        memset(&tm, 0, sizeof(struct tm));
+        if (dt_text && strptime(dt_text, "%Y-%m-%d %H:%M:%S", &tm)) {
+            clients[ind].firstseen = mktime(&tm);
+        }
+
+        dt_text = (const char *)sqlite3_column_text(sel_stmt, 4);
+        memset(&tm, 0, sizeof(struct tm));
+        if (dt_text && strptime(dt_text, "%Y-%m-%d %H:%M:%S", &tm)) {
+            clients[ind].lastseen = mktime(&tm);
+        }
+    }
+    *clientcount = rows;
+    return clients;
+
+}
+
+known_client_t *fetch_all_mediator_clients(provision_state_t *state,
+        size_t *clientcount) {
+
+    return _fetch_all_clients(state, clientcount, "mediator", TARGET_MEDIATOR);
+}
+
+known_client_t *fetch_all_collector_clients(provision_state_t *state,
+        size_t *clientcount) {
+
+    return _fetch_all_clients(state, clientcount, "collector",
+            TARGET_COLLECTOR);
 }
 
 void close_clientdb(provision_state_t *state) {

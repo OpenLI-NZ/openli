@@ -1806,7 +1806,13 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
         case PROV_EPOLL_UPDATE:
             /* TODO */
             break;
+        case PROV_EPOLL_CLIENTDB_TIMER:
+            update_all_client_rows(state);
+            close(pev->fd);
+            pev->fd = -1;
 
+            pev->fd = epoll_add_timer(state->epoll_fd, 300, pev);
+            break;
         default:
             logger(LOG_INFO,
                     "OpenLI Provisioner: invalid fd triggering epoll event,");
@@ -1825,6 +1831,8 @@ static void run(provision_state_t *state) {
     struct epoll_event evs[64];
     struct epoll_event ev;
 
+    prov_epoll_ev_t clientdb_timer;
+
     ev.data.ptr = state->signalfd;
     ev.events = EPOLLIN;
 
@@ -1837,6 +1845,11 @@ static void run(provision_state_t *state) {
     }
 
     state->timerfd = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
+
+    timerfd = epoll_add_timer(state->epoll_fd, 300, &clientdb_timer);
+    clientdb_timer.fd = timerfd;
+    clientdb_timer.fdtype = PROV_EPOLL_CLIENTDB_TIMER;
+    clientdb_timer.client = NULL;
 
     while (!provisioner_halt) {
         if (reload_config) {
@@ -1880,7 +1893,7 @@ static void run(provision_state_t *state) {
             return;
         }
 
-        close(timerfd);
+        close(state->timerfd->fd);
         state->timerfd->fd = -1;
     }
 
@@ -1888,6 +1901,9 @@ static void run(provision_state_t *state) {
         MHD_stop_daemon(state->updatedaemon);
     }
 
+    if (clientdb_timer.fd != -1) {
+        close(clientdb_timer.fd);
+    }
 }
 
 static void usage(char *prog) {

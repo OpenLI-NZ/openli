@@ -112,6 +112,10 @@ enum {
 
     /** Timer to fire when an intercept is scheduled to cease */
     PROV_EPOLL_INTERCEPT_HALT,
+
+    /** Timer to periodically update the last_seen field in the client
+     *  database for all connected clients */
+    PROV_EPOLL_CLIENTDB_TIMER,
 };
 
 /** A LIID->agency mapping, used to ensure mediators route the intercept
@@ -441,6 +445,7 @@ void close_clientdb(provision_state_t *state);
 int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med);
 int update_collector_client_row(provision_state_t *state,
         prov_collector_t *col);
+void update_all_client_rows(provision_state_t *state);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

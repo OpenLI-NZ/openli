@@ -49,6 +49,14 @@ typedef struct con_info {
 
 } update_con_info_t;
 
+typedef struct known_client {
+    uint32_t medid;
+    uint8_t type;
+    const char *ipaddress;
+    time_t firstseen;
+    time_t lastseen;
+} known_client_t;
+
 enum {
     TARGET_AGENCY,
     TARGET_SIPSERVER,
@@ -63,6 +71,8 @@ enum {
     TARGET_POP3SERVER,
     TARGET_OPTIONS,
     TARGET_OPENLIVERSION,
+    TARGET_COLLECTOR,
+    TARGET_MEDIATOR,
 };
 
 extern const char *update_success_page;
@@ -129,5 +139,9 @@ struct json_object *get_email_intercept(update_con_info_t *cinfo,
 struct json_object *get_provisioner_options(update_con_info_t *cinfo,
         provision_state_t *state);
 struct json_object *get_openli_version(void);
+struct json_object *get_known_collectors(update_con_info_t *cinfo,
+        provision_state_t *state);
+struct json_object *get_known_mediators(update_con_info_t *cinfo,
+        provision_state_t *state);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

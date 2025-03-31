@@ -300,6 +300,10 @@ static int update_configuration_delete(update_con_info_t *cinfo,
         case TARGET_OPENLIVERSION:
             /* deleting this is not sensible either */
             break;
+        case TARGET_COLLECTOR:
+        case TARGET_MEDIATOR:
+            /* You shouldn't be able to delete known collectors or mediators */
+            break;
     }
 
     /* Safe to unlock before emitting, since all accesses should be reads
@@ -347,6 +351,12 @@ static json_object *create_get_response(update_con_info_t *cinfo,
             break;
         case TARGET_OPTIONS:
             jobj = get_provisioner_options(cinfo, state);
+            break;
+        case TARGET_MEDIATOR:
+            jobj = get_known_mediators(cinfo, state);
+            break;
+        case TARGET_COLLECTOR:
+            jobj = get_known_collectors(cinfo, state);
             break;
         case TARGET_OPENLIVERSION:
             jobj = get_openli_version();
@@ -453,6 +463,9 @@ static int update_configuration_post(update_con_info_t *cinfo,
             }
             break;
         case TARGET_OPENLIVERSION:
+            break;
+        case TARGET_MEDIATOR:
+        case TARGET_COLLECTOR:
             break;
     }
 
@@ -686,6 +699,12 @@ MHD_RESULT handle_update_request(void *cls, struct MHD_Connection *conn,
         } else if (strncmp(url, "/openliversion",
                 strlen("/openliversion")) == 0) {
             cinfo->target = TARGET_OPENLIVERSION;
+        } else if (strncmp(url, "/collectors",
+                strlen("/collectors")) == 0) {
+            cinfo->target = TARGET_COLLECTOR;
+        } else if (strncmp(url, "/mediators",
+                strlen("/mediators")) == 0) {
+            cinfo->target = TARGET_MEDIATOR;
         } else if (strncmp(url, "/options", strlen("/options")) == 0) {
             cinfo->target = TARGET_OPTIONS;
         } else {
