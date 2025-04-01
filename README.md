@@ -116,6 +116,9 @@ will be more than happy to accept your contribution.
 * librabbitmq -- Debian / Ubuntu users can install the librabbitmq-dev
   package. Required for the collector and mediator.
 
+* libb64 -- Debian / Ubuntu users can install the libb64-dev package. Required
+  for the collector.
+
 * libtcmalloc -- Debian / Ubuntu users can install the libgoogle-perftools-dev
   package. Optional, but highly recommended for performance reasons.
 
