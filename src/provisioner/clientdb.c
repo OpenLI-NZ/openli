@@ -23,7 +23,7 @@
  *
  *
  */
-#define _XOPEN_SOURCE 700
+#define _GNU_SOURCE
 
 #include "provisioner.h"
 #include "updateserver.h"
@@ -260,19 +260,21 @@ known_client_t *_fetch_all_clients(provision_state_t *state,
 
         clients[ind].medid = strtoul(id_text, NULL, 10);
         clients[ind].type = client_enum;
-        clients[ind].ipaddress = (const char *)sqlite3_column_text(sel_stmt, 2);
+        clients[ind].ipaddress =
+                strdup((const char *)sqlite3_column_text(sel_stmt, 2));
 
         dt_text = (const char *)sqlite3_column_text(sel_stmt, 3);
         memset(&tm, 0, sizeof(struct tm));
         if (dt_text && strptime(dt_text, "%Y-%m-%d %H:%M:%S", &tm)) {
-            clients[ind].firstseen = mktime(&tm);
+            clients[ind].firstseen = timegm(&tm);
         }
 
         dt_text = (const char *)sqlite3_column_text(sel_stmt, 4);
         memset(&tm, 0, sizeof(struct tm));
         if (dt_text && strptime(dt_text, "%Y-%m-%d %H:%M:%S", &tm)) {
-            clients[ind].lastseen = mktime(&tm);
+            clients[ind].lastseen = timegm(&tm);
         }
+        ind ++;
     }
     *clientcount = rows;
     return clients;

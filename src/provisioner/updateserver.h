@@ -49,14 +49,6 @@ typedef struct con_info {
 
 } update_con_info_t;
 
-typedef struct known_client {
-    uint32_t medid;
-    uint8_t type;
-    const char *ipaddress;
-    time_t firstseen;
-    time_t lastseen;
-} known_client_t;
-
 enum {
     TARGET_AGENCY,
     TARGET_SIPSERVER,

@@ -53,6 +53,30 @@ typedef int MHD_socket;
 typedef struct prov_client prov_client_t;
 typedef struct prov_intercept_data prov_intercept_data_t;
 
+/** Describes an OpenLI client component that has connected to this provisioner
+ *  at least once before.
+ */
+typedef struct known_client {
+    /** If the client is a mediator, this field contains their mediator ID */
+    uint32_t medid;
+
+    /** Set to TARGET_COLLECTOR if this client was a collector,
+     *  TARGET_MEDIATOR if it was a mediator.
+     */
+    uint8_t type;
+
+    /** The IP address that the client used to connect to the provisioner */
+    const char *ipaddress;
+
+    /** The timestamp of when this client was first seen by the provisioner */
+    time_t firstseen;
+
+    /** The timestamp of when this client was most recently seen by the
+     *  provisioner (approximately)
+     */
+    time_t lastseen;
+} known_client_t;
+
 /** Represents an event that has been added to the epoll event set */
 typedef struct prov_epoll_ev {
     /** The event type -- one of the PROV_EPOLL_* values listed below */
@@ -446,6 +470,10 @@ int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med);
 int update_collector_client_row(provision_state_t *state,
         prov_collector_t *col);
 void update_all_client_rows(provision_state_t *state);
+known_client_t *fetch_all_collector_clients(provision_state_t *state,
+        size_t *clientcount);
+known_client_t *fetch_all_mediator_clients(provision_state_t *state,
+        size_t *clientcount);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
