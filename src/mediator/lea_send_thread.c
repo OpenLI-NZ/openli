@@ -332,7 +332,7 @@ static int consume_available_rmq_records(handover_t *ho,
     /* Otherwise, read some new messages from RMQ and try to send those */
     if (ho->handover_type == HANDOVER_HI3) {
         r = consume_mediator_cc_messages(ho->rmq_consumer,
-                &(ho->ho_state->buf), 1024, &(ho->ho_state->next_rmq_ack));
+                &(ho->ho_state->buf), 10, &(ho->ho_state->next_rmq_ack));
         if (r < 0) {
             reset_handover_rmq(ho);
             logger(LOG_INFO, "OpenLI Mediator: error while consuming CC messages from internal queue by agency %s", state->agencyid);
@@ -342,7 +342,7 @@ static int consume_available_rmq_records(handover_t *ho,
         }
     } else if (ho->handover_type == HANDOVER_HI2) {
         r = consume_mediator_iri_messages(ho->rmq_consumer,
-                &(ho->ho_state->buf), 1024, &(ho->ho_state->next_rmq_ack));
+                &(ho->ho_state->buf), 10, &(ho->ho_state->next_rmq_ack));
         if (r < 0) {
             reset_handover_rmq(ho);
             logger(LOG_INFO, "OpenLI Mediator: error while consuming IRI messages from internal queue by agency %s", state->agencyid);
