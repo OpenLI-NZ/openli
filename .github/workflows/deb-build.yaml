@@ -18,7 +18,6 @@ jobs:
          target:
            - "debian:bookworm"
            - "debian:bullseye"
-           - "ubuntu:focal"
            - "ubuntu:jammy"
            - "ubuntu:noble"
 
@@ -54,7 +53,6 @@ jobs:
            - amd64
          target:
            - "debian:bullseye"
-           - "ubuntu:focal"
            - "ubuntu:jammy"
            - "debian:bookworm"
            - "ubuntu:noble"
@@ -100,7 +98,6 @@ jobs:
          target:
            - "debian:bullseye"
            - "debian:bookworm"
-           - "ubuntu:focal"
            - "ubuntu:jammy"
            - "ubuntu:noble"
      needs: test
