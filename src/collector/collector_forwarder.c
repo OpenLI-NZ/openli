@@ -1105,10 +1105,12 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             continue;
         }
 
+#if 0
         if (fwd->forcesend[i] == 0 && availsend < MIN_SEND_AMOUNT) {
             /* Not enough data to warrant a send right now */
             continue;
         }
+#endif
 
         if (transmit_buffered_records(&(dest->buffer), dest->fd,
                 BUF_BATCH_SIZE, dest->ssl) < 0) {
