@@ -277,7 +277,8 @@ int transmit_heartbeat(int fd, SSL *ssl) {
             if (ret <= 0 ) {
                 char errstring[128];
                 int errr = SSL_get_error(ssl, ret);
-                if (errr == SSL_ERROR_WANT_WRITE) {
+                if (errr == SSL_ERROR_WANT_WRITE ||
+                        errr == SSL_ERROR_WANT_READ) {
                     continue;
                 }
                 logger(LOG_INFO,
@@ -371,7 +372,8 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
                 if ((ret) <= 0 ) {
                     char errstring[128];
                     int errr = SSL_get_error(ssl, ret);
-                    if (errr == SSL_ERROR_WANT_WRITE) {
+                    if (errr == SSL_ERROR_WANT_WRITE ||
+                            errr == SSL_ERROR_WANT_READ) {
                         continue;
                     }
                     logger(LOG_INFO,
