@@ -9,8 +9,13 @@ openli (1.1.12-1) unstable; urgency=medium
   * SIP: fix bug where RTP streams are not intercepted if the corresponding
     SIP session occurs between two endpoints with the same IP address.
   * Provisioner: add support for encrypting the running intercept config file.
+  * Mediator: fix bursty delivery of CC records over HI3.
+  * Collector: fix bursty delivery of intercept records to the mediator
+    when publishing to a standard TCP socket.
+  * Collector: fix immediate mediator disconnection when using SSL for
+    inter-component connections.
 
- -- Shane Alcock <salcock@searchlight.nz>  Thu, 27 Feb 2025 18:59:15 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Mon, 14 Apr 2025 17:15:41 +1200
 
 openli (1.1.11-1) unstable; urgency=medium
 
