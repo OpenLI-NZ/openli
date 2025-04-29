@@ -1,9 +1,6 @@
 OpenLI -- open source ETSI-compliant Lawful Intercept software
 
-Version: 1.1.13
-
- * (C) 2025 Telefónica Innovación Digital (laura.dominguez.cespedes@telefonica.com)
- * (C) 2025 by Original Author(shane@alcock.co.nz)
+Version: 1.1.12
 
 ---------------------------------------------------------------------------
 
@@ -237,7 +234,7 @@ To build OpenLI from source, just follow the series of steps given below.
 1. Run the `./bootstrap.sh` script at the top level of the source tree (only
    required if you have cloned the OpenLI git repo).
 
-2. Run the `./configure --prefix=/ --enable-oqs` script.
+2. Run the `./configure --enable-oqs` script.
 
 
 3. Run `make`.

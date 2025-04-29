@@ -63,9 +63,9 @@ pcapcompress: 1
 # The TLS certificates and keys can be generated using PQC cryptography algorithms, based on OQS-Provider list of algorithms. 
 # As well, is required to modify the "Openssl.cnf" file to add the desired QS Key Exchange Methods (KEM) desired.
 #
-tlscert: /etc/openli/openli-mediator-crt.pem
-tlskey: /etc/openli/openli-mediator-key.pem
-tlsca: /etc/openli/openli-ca-crt.pem
+#tlscert: /etc/openli/openli-mediator-crt.pem
+#tlskey: /etc/openli/openli-mediator-key.pem
+#tlsca: /etc/openli/openli-ca-crt.pem
 
 # To receive records from collectors that are using RabbitMQ to persist
 # unacknowledged data, you will need to provide the credentials necessary

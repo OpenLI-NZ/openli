@@ -185,10 +185,22 @@ if test "$libzmq_found" = 0; then
 fi
 
 if test "x$enable_oqs" = "xyes"; then
-  AC_DEFINE([ENABLE_OQS], [1], [Enable OQS support])
-  AM_CONDITIONAL([ENABLE_OQS], [test "x$enable_oqs" = "xyes"])
+    LIBOQS_REQUIRED_VERSION="0.13.0-dev"
+    PKG_CHECK_MODULES([OQS], [liboqs >= $LIBOQS_REQUIRED_VERSION], [liboqs_found=1], [liboqs_found=0])
+    if test "$liboqs_found" -eq 0; then
+        AC_MSG_ERROR([Required library liboqs with verison equal or greated than $LIBOQS_REQUIRED_VERSION; please install and use LDFLAGS to specify library location])
+    fi
+    LIBSSL_REQUIRED_VERSION="3.3.0"
+    PKG_CHECK_MODULES([SSL], [libssl >= $LIBSSL_REQUIRED_VERSION], [libssl_found=1], [libssl_found=0])
+    if test "$libssl_found" -eq 0; then
+        AC_MSG_ERROR([Required library libssl with verison equal or greated than $LIBSSL_REQUIRED_VERSION; please install and use LDFLAGS to specify library location])
+
+    fi
+
+    AC_DEFINE([ENABLE_OQS], [1], [Enable OQS support])
+    AM_CONDITIONAL([ENABLE_OQS], [test "x$enable_oqs" = "xyes"])
 else
-  AM_CONDITIONAL([ENABLE_OQS], [false])
+    AM_CONDITIONAL([ENABLE_OQS], [false])
 fi
 
 
@@ -205,7 +217,6 @@ AC_SUBST([COLLECTOR_LIBS])
 AC_SUBST([MEDIATOR_LIBS])
 AC_SUBST([PROVISIONER_LIBS])
 AC_SUBST([PROVISIONER_CFLAGS])
-
 AC_OUTPUT
 
 # Function for reporting whether an option was set or not

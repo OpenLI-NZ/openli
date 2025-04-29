@@ -90,15 +90,15 @@ logstatfrequency: 5
 # As well, is required to modify the "Openssl.cnf" file to add the desired QS Key Exchange Methods (KEM) desired.
 #
 # Leave these commented out for unencrypted inter-component communications.
-tlscert: /etc/openli/openli-collector-crt.pem
-tlskey: /etc/openli/openli-collector-key.pem
-tlsca: /etc/openli/openli-ca-crt.pem
+#tlscert: /etc/openli/openli-collector-crt.pem
+#tlskey: /etc/openli/openli-collector-key.pem
+#tlsca: /etc/openli/openli-ca-crt.pem
 
 # If set to 'no', intercepted packets streamed by this collector to the
 # mediator will not be encrypted -- this may be desirable for performance
 # reasons. Make sure you set the corresponding option on the mediator as
 # well.
-etsitls: yes
+#etsitls: yes
 
 # If set to 'yes', SIP packets with the same identifiers in the SDP O field
 # will *not* be assumed to be different legs of the same SIP call. Some

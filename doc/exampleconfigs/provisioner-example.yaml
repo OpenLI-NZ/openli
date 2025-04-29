@@ -23,9 +23,9 @@ updateport: 9009
 # The TLS certificates and keys can be generated using PQC cryptography algorithms, based on OQS-Provider list of algorithms. 
 # As well, is required to modify the "Openssl.cnf" file to add the desired QS Key Exchange Methods (KEM) desired.
 #
-tlscert: /etc/openli/openli-provisioner-crt.pem
-tlskey: /etc/openli/openli-provisioner-key.pem
-tlsca: /etc/openli/openli-ca-crt.pem
+#tlscert: /etc/openli/openli-provisioner-crt.pem
+#tlskey: /etc/openli/openli-provisioner-key.pem
+#tlsca: /etc/openli/openli-ca-crt.pem
 
 # Current intercept configuration will be stored in the following file.
 # Make sure that this file is writable by the OpenLI provisioner!
