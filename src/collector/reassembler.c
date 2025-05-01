@@ -591,8 +591,7 @@ int update_tcp_reassemble_stream(tcp_reassemble_stream_t *stream,
             free(existing->content);
             free(existing);
         }
-        assert(stream->pkt_cnt > 0);
-        if (pkt) {
+        if (pkt && stream->pkt_cnt > 0) {
             if (stream->packets[stream->pkt_cnt - 1] != NULL) {
                 trace_destroy_packet(stream->packets[stream->pkt_cnt - 1]);
             }
