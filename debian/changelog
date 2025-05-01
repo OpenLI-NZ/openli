@@ -14,8 +14,10 @@ openli (1.1.12-1) unstable; urgency=medium
     when publishing to a standard TCP socket.
   * Collector: fix immediate mediator disconnection when using SSL for
     inter-component connections.
+  * Collector: fix assertion failure that could occur in very rare instances
+    (believed to be when a SIP message is fragmented at the IP layer).
 
- -- Shane Alcock <salcock@searchlight.nz>  Mon, 14 Apr 2025 17:15:41 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Thu, 1 May 2025 16:33:50 +1200
 
 openli (1.1.11-1) unstable; urgency=medium
 
