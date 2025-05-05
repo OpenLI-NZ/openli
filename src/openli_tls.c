@@ -21,8 +21,8 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
- * (C) 2025 Telefónica Innovación Digital (laura.dominguez.cespedes@telefonica.com)
  * (C) 2019 by Original Author(shane@alcock.co.nz)
+ * Quantum Safe implementation (section #ifdef ENABLE_OQS) developed by (C) 2025 Telefónica Innovación Digital (laura.dominguez.cespedes@telefonica.com)
 
 
  */

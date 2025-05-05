@@ -1,4 +1,3 @@
- * (C) 2025 Telefónica Innovación Digital (laura.dominguez.cespedes@telefonica.com)
  * (C) 2019 by Original Author(shane@alcock.co.nz)
 
 DISTCHECK_CONFIGURE_FLAGS = \
