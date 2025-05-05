@@ -173,6 +173,9 @@ void destroy_provisioner_client(int epollfd, prov_client_t *client,
     if (client->identifier) {
         free(client->identifier);
     }
+    if (client->ipaddress) {
+        free(client->ipaddress);
+    }
 	destroy_client_state(client->state);
     free(client);
 }

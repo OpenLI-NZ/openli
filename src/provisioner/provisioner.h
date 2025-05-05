@@ -53,6 +53,30 @@ typedef int MHD_socket;
 typedef struct prov_client prov_client_t;
 typedef struct prov_intercept_data prov_intercept_data_t;
 
+/** Describes an OpenLI client component that has connected to this provisioner
+ *  at least once before.
+ */
+typedef struct known_client {
+    /** If the client is a mediator, this field contains their mediator ID */
+    uint32_t medid;
+
+    /** Set to TARGET_COLLECTOR if this client was a collector,
+     *  TARGET_MEDIATOR if it was a mediator.
+     */
+    uint8_t type;
+
+    /** The IP address that the client used to connect to the provisioner */
+    const char *ipaddress;
+
+    /** The timestamp of when this client was first seen by the provisioner */
+    time_t firstseen;
+
+    /** The timestamp of when this client was most recently seen by the
+     *  provisioner (approximately)
+     */
+    time_t lastseen;
+} known_client_t;
+
 /** Represents an event that has been added to the epoll event set */
 typedef struct prov_epoll_ev {
     /** The event type -- one of the PROV_EPOLL_* values listed below */
@@ -112,6 +136,10 @@ enum {
 
     /** Timer to fire when an intercept is scheduled to cease */
     PROV_EPOLL_INTERCEPT_HALT,
+
+    /** Timer to periodically update the last_seen field in the client
+     *  database for all connected clients */
+    PROV_EPOLL_CLIENTDB_TIMER,
 };
 
 /** A LIID->agency mapping, used to ensure mediators route the intercept
@@ -146,6 +174,8 @@ typedef struct prov_sock_state prov_sock_state_t;
 struct prov_client {
 
     char *identifier;
+
+    char *ipaddress;
 
     int clientrole;
 
@@ -316,6 +346,11 @@ typedef struct prov_state {
     char *restauthkey;
     void *authdb;
 
+    uint8_t clientdbenabled;
+    char *clientdbfile;
+    char *clientdbkey;
+    void *clientdb;
+
     /** A flag indicating whether collectors should ignore RTP comfort noise
      *  packets when intercepting voice traffic.
      */
@@ -428,6 +463,17 @@ int announce_latest_default_email_decompress(provision_state_t *state);
 int reload_provisioner_config(provision_state_t *state);
 
 
+/* Implemented in clientdb.c */
+int init_clientdb(provision_state_t *state);
+void close_clientdb(provision_state_t *state);
+int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med);
+int update_collector_client_row(provision_state_t *state,
+        prov_collector_t *col);
+void update_all_client_rows(provision_state_t *state);
+known_client_t *fetch_all_collector_clients(provision_state_t *state,
+        size_t *clientcount);
+known_client_t *fetch_all_mediator_clients(provision_state_t *state,
+        size_t *clientcount);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

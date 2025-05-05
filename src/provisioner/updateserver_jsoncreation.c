@@ -291,6 +291,34 @@ static json_object *convert_coreserver_to_json(coreserver_t *cs) {
     return jobj;
 }
 
+static json_object *convert_client_to_json(known_client_t *c) {
+    json_object *jobj;
+    json_object *medid, *ipaddress, *firstseen, *lastseen;
+
+    medid = ipaddress = firstseen = lastseen = NULL;
+
+    jobj = json_object_new_object();
+
+    if (c->type == TARGET_MEDIATOR) {
+        medid = json_object_new_uint64(c->medid);
+        json_object_object_add(jobj, "mediatorid", medid);
+    }
+
+    if (c->ipaddress) {
+        ipaddress = json_object_new_string(c->ipaddress);
+        json_object_object_add(jobj, "ipaddress", ipaddress);
+        free((void *)c->ipaddress);
+    }
+
+    firstseen = json_object_new_uint64(c->firstseen);
+    json_object_object_add(jobj, "firstseen", firstseen);
+
+    lastseen = json_object_new_uint64(c->lastseen);
+    json_object_object_add(jobj, "lastseen", lastseen);
+
+    return jobj;
+}
+
 struct json_object *get_openli_version(void) {
     json_object *jobj, *major, *minor, *revision, *full;
     int a,b,c;
@@ -334,6 +362,50 @@ json_object *get_provisioner_options(update_con_info_t *cinfo UNUSED,
                 defaultemaildecompressed);
     }
     return jobj;
+}
+
+json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
+        provision_state_t *state) {
+
+    json_object *jarray, *jobj;
+    known_client_t *cols;
+    size_t colcount, i;
+
+    cols = fetch_all_collector_clients(state, &colcount);
+    if (!cols || colcount == 0) {
+        return NULL;
+    }
+
+    jarray = json_object_new_array();
+    for (i = 0; i < colcount; i++) {
+        jobj = convert_client_to_json(&(cols[i]));
+        json_object_array_add(jarray, jobj);
+    }
+    free(cols);
+
+    return jarray;
+}
+
+json_object *get_known_mediators(update_con_info_t *cinfo UNUSED,
+        provision_state_t *state) {
+
+    json_object *jarray, *jobj;
+    known_client_t *meds;
+    size_t medcount, i;
+
+    meds = fetch_all_mediator_clients(state, &medcount);
+    if (!meds || medcount == 0) {
+        return NULL;
+    }
+
+    jarray = json_object_new_array();
+    for (i = 0; i < medcount; i++) {
+        jobj = convert_client_to_json(&(meds[i]));
+        json_object_array_add(jarray, jobj);
+    }
+    free(meds);
+
+    return jarray;
 }
 
 json_object *get_default_radius(update_con_info_t *cinfo UNUSED,

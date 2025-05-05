@@ -298,6 +298,8 @@ int init_prov_state(provision_state_t *state, char *configfile,
     state->restauthenabled = 0;
     state->restauthdbfile = NULL;
     state->restauthkey = NULL;
+    state->clientdbfile = NULL;
+    state->clientdbkey = NULL;
     state->authdb = NULL;
 
     init_intercept_config(&(state->interceptconf));
@@ -696,6 +698,7 @@ void clear_prov_state(provision_state_t *state) {
 
     close(state->epoll_fd);
     close_restauth_db(state);
+    close_clientdb(state);
 
     if (state->clientfd) {
         close(state->clientfd->fd);
@@ -748,6 +751,12 @@ void clear_prov_state(provision_state_t *state) {
     }
     if (state->restauthkey) {
         free(state->restauthkey);
+    }
+    if (state->clientdbfile) {
+        free(state->clientdbfile);
+    }
+    if (state->clientdbkey) {
+        free(state->clientdbkey);
     }
 
     free_ssl_config(&(state->sslconf));
@@ -1216,6 +1225,7 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 cs->ipaddr, pev->fd);
         halt_provisioner_client_authtimer(state->epoll_fd, pev->client,
                 cs->ipaddr);
+        update_collector_client_row(state, (prov_collector_t *)(cs->parent));
         return respond_collector_auth(state, pev, cs->outgoing);
    }
 
@@ -1300,6 +1310,7 @@ static int receive_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
                 cs->ipaddr, pev->fd);
         halt_provisioner_client_authtimer(state->epoll_fd, pev->client,
                 cs->ipaddr);
+        update_mediator_client_row(state, (prov_mediator_t *)(cs->parent));
         return respond_mediator_auth(state, pev, cs->outgoing);
     }
 
@@ -1343,12 +1354,11 @@ static int transmit_socket(provision_state_t *state, prov_epoll_ev_t *pev) {
 }
 
 static inline int accept_client(int sock, char *identspace,
-        int spacelen) {
+        int spacelen, char *justipspace) {
 
     int newfd;
     struct sockaddr_storage saddr;
     socklen_t socklen = sizeof(saddr);
-    char strbuf[INET6_ADDRSTRLEN];
     char portbuf[10];
 
     newfd = accept(sock, (struct sockaddr *)&saddr, &socklen);
@@ -1357,7 +1367,8 @@ static inline int accept_client(int sock, char *identspace,
     }
     fd_set_nonblock(newfd);
 
-    if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, sizeof(strbuf),
+    if (getnameinfo((struct sockaddr *)&saddr, socklen, justipspace,
+                INET6_ADDRSTRLEN,
             portbuf, sizeof(portbuf), NI_NUMERICHOST | NI_NUMERICSERV) != 0) {
         logger(LOG_INFO, "OpenLI: getnameinfo error in provisioner: %s.",
                 strerror(errno));
@@ -1365,7 +1376,7 @@ static inline int accept_client(int sock, char *identspace,
         return -1;
     }
 
-    snprintf(identspace, spacelen, "%s-%s", strbuf, portbuf);
+    snprintf(identspace, spacelen, "%s-%s", justipspace, portbuf);
     return newfd;
 }
 
@@ -1373,6 +1384,7 @@ static inline int accept_client(int sock, char *identspace,
 static int accept_collector(provision_state_t *state) {
 
     char identbuf[INET6_ADDRSTRLEN + 11];
+    char ipbuf[INET6_ADDRSTRLEN + 1];
     prov_client_t *colclient;
     int newfd = -1;
 
@@ -1382,7 +1394,7 @@ static int accept_collector(provision_state_t *state) {
      * out to the collector. */
 
     if ((newfd = accept_client(state->clientfd->fd, identbuf,
-            INET6_ADDRSTRLEN + 11)) < 0) {
+            INET6_ADDRSTRLEN + 11, ipbuf)) < 0) {
         return -1;
     }
 
@@ -1392,6 +1404,7 @@ static int accept_collector(provision_state_t *state) {
     if (!colclient) {
         colclient = calloc(1, sizeof(prov_client_t));
         colclient->identifier = strdup(identbuf);
+        colclient->ipaddress = strdup(ipbuf);
         colclient->clientrole = PROV_EPOLL_COLLECTOR;
         init_provisioner_client(colclient);
 
@@ -1411,6 +1424,7 @@ static int accept_collector(provision_state_t *state) {
 static int accept_mediator(provision_state_t *state) {
 
     char identbuf[10 + INET6_ADDRSTRLEN + 1];
+    char ipbuf[INET6_ADDRSTRLEN + 1];
     prov_client_t *medclient;
     int newfd = -1;
 
@@ -1421,7 +1435,7 @@ static int accept_mediator(provision_state_t *state) {
      */
     /* See if this mediator already exists */
     if ((newfd = accept_client(state->mediatorfd->fd, identbuf,
-            INET6_ADDRSTRLEN + 11)) < 0) {
+            INET6_ADDRSTRLEN + 11, ipbuf)) < 0) {
         return -1;
     }
 
@@ -1431,6 +1445,7 @@ static int accept_mediator(provision_state_t *state) {
         medclient = calloc(1, sizeof(prov_client_t));
         init_provisioner_client(medclient);
         medclient->identifier = strdup(identbuf);
+        medclient->ipaddress = strdup(ipbuf);
         medclient->clientrole = PROV_EPOLL_MEDIATOR;
         HASH_ADD_KEYPTR(hh, state->pendingclients, medclient->identifier,
                 strlen(medclient->identifier), medclient);
@@ -1791,7 +1806,13 @@ static int check_epoll_fd(provision_state_t *state, struct epoll_event *ev) {
         case PROV_EPOLL_UPDATE:
             /* TODO */
             break;
+        case PROV_EPOLL_CLIENTDB_TIMER:
+            update_all_client_rows(state);
+            close(pev->fd);
+            pev->fd = -1;
 
+            pev->fd = epoll_add_timer(state->epoll_fd, 300, pev);
+            break;
         default:
             logger(LOG_INFO,
                     "OpenLI Provisioner: invalid fd triggering epoll event,");
@@ -1810,6 +1831,8 @@ static void run(provision_state_t *state) {
     struct epoll_event evs[64];
     struct epoll_event ev;
 
+    prov_epoll_ev_t clientdb_timer;
+
     ev.data.ptr = state->signalfd;
     ev.events = EPOLLIN;
 
@@ -1822,6 +1845,11 @@ static void run(provision_state_t *state) {
     }
 
     state->timerfd = (prov_epoll_ev_t *)malloc(sizeof(prov_epoll_ev_t));
+
+    timerfd = epoll_add_timer(state->epoll_fd, 300, &clientdb_timer);
+    clientdb_timer.fd = timerfd;
+    clientdb_timer.fdtype = PROV_EPOLL_CLIENTDB_TIMER;
+    clientdb_timer.client = NULL;
 
     while (!provisioner_halt) {
         if (reload_config) {
@@ -1865,7 +1893,7 @@ static void run(provision_state_t *state) {
             return;
         }
 
-        close(timerfd);
+        close(state->timerfd->fd);
         state->timerfd->fd = -1;
     }
 
@@ -1873,6 +1901,9 @@ static void run(provision_state_t *state) {
         MHD_stop_daemon(state->updatedaemon);
     }
 
+    if (clientdb_timer.fd != -1) {
+        close(clientdb_timer.fd);
+    }
 }
 
 static void usage(char *prog) {
@@ -1955,6 +1986,21 @@ int main(int argc, char *argv[]) {
         logger(LOG_INFO, "OpenLI: Error initialising provisioner.");
         return 1;
     }
+
+    if (provstate.clientdbfile && provstate.clientdbkey) {
+#ifdef HAVE_SQLCIPHER
+        if (init_clientdb(&provstate) <= 0) {
+            logger(LOG_INFO, "OpenLI provisioner: error while opening client tracker database");
+            return -1;
+        }
+#else
+        logger(LOG_INFO, "OpenLI provisioner: Client tracking database options are set, but you have not built OpenLI with sqlcipher support.");
+        logger(LOG_INFO, "OpenLI provisioner: Client tracking database is not available.");
+#endif
+    } else {
+        logger(LOG_INFO, "OpenLI provisioner: client tracking database has NOT been enabled");
+    }
+
 
     if (provstate.restauthdbfile && provstate.restauthkey) {
 #ifdef HAVE_SQLCIPHER
