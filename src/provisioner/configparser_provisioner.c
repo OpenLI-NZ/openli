@@ -40,6 +40,37 @@
 
 uint64_t nextid = 0;
 
+static void add_single_xid(char *srcvalue, intercept_common_t *common) {
+
+    uuid_t parsed;
+    if (uuid_parse(srcvalue, parsed) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: invalid UUID provided as 'xid' in intercept config: %s",
+                (char *)srcvalue);
+        return;
+    }
+
+    common->xid_count ++;
+    common->xids = realloc(common->xids, common->xid_count * sizeof(uuid_t));
+    uuid_copy(common->xids[common->xid_count - 1], parsed);
+
+}
+
+static void parse_xid_list(intercept_common_t *common, yaml_document_t *doc,
+        yaml_node_t *xidlist) {
+
+    yaml_node_item_t *item;
+    for (item = xidlist->data.sequence.items.start;
+            item != xidlist->data.sequence.items.top; item ++) {
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+
+        if (node->type == YAML_SCALAR_NODE) {
+            add_single_xid((char *)(node->data.scalar.value), common);
+        }
+    }
+}
+
+
 static void parse_email_targets(email_target_t **targets, yaml_document_t *doc,
         yaml_node_t *tgtconf) {
 
@@ -391,7 +422,7 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
 }
 
 static void parse_intercept_common_fields(intercept_common_t *common,
-        yaml_node_t *key, yaml_node_t *value) {
+        yaml_document_t *doc, yaml_node_t *key, yaml_node_t *value) {
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
@@ -463,10 +494,13 @@ static void parse_intercept_common_fields(intercept_common_t *common,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "xid") == 0) {
-        if (uuid_parse((char *)value->data.scalar.value, common->xid) < 0) {
-            logger(LOG_INFO, "OpenLI: invalid UUID provided as 'xid' in intercept config: %s", (char *)value->data.scalar.value);
-            uuid_clear(common->xid);
-        }
+        add_single_xid((char *)value->data.scalar.value, common);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcasecmp((char *)key->data.scalar.value, "xids") == 0) {
+        parse_xid_list(common, doc, value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -503,7 +537,8 @@ static inline void init_intercept_common(intercept_common_t *common,
     common->hi1_seqno = 0;
     common->local = calloc(1, sizeof(prov_intercept_data_t));
 
-    uuid_clear(common->xid);
+    common->xids = NULL;
+    common->xid_count = 0;
 
     local = (prov_intercept_data_t *)(common->local);
     local->intercept_type = intercept_type;
@@ -536,7 +571,7 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
             key = yaml_document_get_node(doc, pair->key);
             value = yaml_document_get_node(doc, pair->value);
 
-            parse_intercept_common_fields(&(newcept->common), key, value);
+            parse_intercept_common_fields(&(newcept->common), doc, key, value);
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SEQUENCE_NODE &&
@@ -627,7 +662,7 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
             key = yaml_document_get_node(doc, pair->key);
             value = yaml_document_get_node(doc, pair->value);
 
-            parse_intercept_common_fields(&(newcept->common), key, value);
+            parse_intercept_common_fields(&(newcept->common), doc, key, value);
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SEQUENCE_NODE &&
                     strcasecmp((char *)key->data.scalar.value, "siptargets") == 0) {
@@ -650,7 +685,7 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
                 newcept->common.delivcc != NULL &&
                 (libtrace_list_get_size(newcept->targets) > 0 ||
-                    !uuid_is_null(newcept->common.xid)) &&
+                    newcept->common.xid_count > 0) &&
                 newcept->common.destid > 0 &&
                 newcept->common.targetagency != NULL) {
             HASH_ADD_KEYPTR(hh_liid, *voipints, newcept->common.liid,
@@ -700,7 +735,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
             key = yaml_document_get_node(doc, pair->key);
             value = yaml_document_get_node(doc, pair->value);
 
-            parse_intercept_common_fields(&(newcept->common), key, value);
+            parse_intercept_common_fields(&(newcept->common), doc, key, value);
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SEQUENCE_NODE &&

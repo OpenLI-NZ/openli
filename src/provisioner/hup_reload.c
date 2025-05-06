@@ -31,6 +31,14 @@
 #include "util.h"
 #include "updateserver.h"
 #include "intercept_timers.h"
+#include "intercept.h"
+
+typedef struct xid_hash {
+    uuid_t xid;
+    const char *liid;
+    UT_hash_handle hh;
+} xid_hash_t;
+
 
 static inline int reload_staticips(provision_state_t *currstate,
         ipintercept_t *ipint, ipintercept_t *newequiv) {
@@ -95,7 +103,7 @@ static inline int common_intercept_equal(intercept_common_t *a,
         return 0;
     }
 
-    if (uuid_compare(a->xid, b->xid) != 0) {
+    if (compare_xid_list(a, b) != 0) {
         return 0;
     }
 
@@ -176,6 +184,99 @@ static int reload_intercept_config_filename(provision_state_t *currstate,
         return 1;
     }
     return 0;
+}
+
+static int _update_xid_map(xid_hash_t **map, intercept_common_t *common) {
+
+    xid_hash_t *found;
+    size_t i;
+    uuid_t u;
+    for (i = 0; i < common->xid_count; i++) {
+        uuid_copy(u, common->xids[i]);
+        HASH_FIND(hh, *map, u, sizeof(uuid_t), found);
+
+        if (found) {
+            char uuidstr[128];
+
+            uuid_unparse(u, uuidstr);
+            logger(LOG_INFO,
+                    "OpenLI: invalid intercept configuration -- XID %s has been associated with multiple LIIDs (%s and %s)",
+                    uuidstr, found->liid, common->liid);
+            return -1;
+        }
+        found = calloc(1, sizeof(xid_hash_t));
+        uuid_copy(found->xid, u);
+        found->liid = strdup(common->liid);
+        HASH_ADD_KEYPTR(hh, *map, found->xid, sizeof(uuid_t), found);
+    }
+    return 0;
+}
+
+int check_for_duplicate_xids(prov_intercept_conf_t *intconf, size_t xid_count,
+        uuid_t *xids, char *xid_liid) {
+
+    xid_hash_t *map = NULL;
+    emailintercept_t *em, *emtmp;
+    voipintercept_t *vint, *vtmp;
+    ipintercept_t *ipint, *iptmp;
+    xid_hash_t *iter, *tmp;
+    int ret = 0;
+
+    /* Populate our map of known XIDS across all intercepts. If we
+     * find a duplicate in the existing config, we can throw an error
+     * right away
+     */
+    HASH_ITER(hh_liid, intconf->ipintercepts, ipint, iptmp) {
+        if (_update_xid_map(&map, &(ipint->common)) < 0) {
+            ret = -1;
+            goto endxidcheck;
+        }
+    }
+
+    HASH_ITER(hh_liid, intconf->voipintercepts, vint, vtmp) {
+        if (_update_xid_map(&map, &(vint->common)) < 0) {
+            ret = -1;
+            goto endxidcheck;
+        }
+    }
+
+    HASH_ITER(hh_liid, intconf->emailintercepts, em, emtmp) {
+        if (_update_xid_map(&map, &(em->common)) < 0) {
+            ret = -1;
+            goto endxidcheck;
+        }
+    }
+
+    /* If the caller has a set of XIDs they want to perform a check on then
+     * we can now do so.
+     */
+    if (xid_count > 0) {
+        for (size_t i = 0; i < xid_count; i++) {
+            HASH_FIND(hh, map, xids[i], sizeof(uuid_t), iter);
+            /* A XID allowed to already be in the map if it is for the
+             * same LIID as the one that prompted the check in the first
+             * place.
+             */
+            if (iter && xid_liid && strcmp(iter->liid, xid_liid) != 0) {
+                char uuidstr[128];
+
+                uuid_unparse(xids[i], uuidstr);
+                logger(LOG_INFO,
+                        "OpenLI: invalid intercept configuration -- XID %s is already associated with another LIID (%s)",
+                    uuidstr, iter->liid);
+                ret = -1;
+                goto endxidcheck;
+            }
+        }
+    }
+
+endxidcheck:
+    HASH_ITER(hh, map, iter, tmp) {
+        HASH_DELETE(hh, map, iter);
+        free((void *)iter->liid);
+        free(iter);
+    }
+    return ret;
 }
 
 static int reload_leas(provision_state_t *state, prov_intercept_conf_t *curr,
@@ -683,6 +784,10 @@ static int reload_intercept_config(provision_state_t *currstate,
     pthread_mutex_lock(&(currstate->interceptconf.safelock));
     currstate->interceptconf.destroy_pending = 1;
     pthread_mutex_unlock(&(currstate->interceptconf.safelock));
+
+    if (check_for_duplicate_xids(&newconf, 0, NULL, NULL) == -1) {
+        return -1;
+    }
 
     if (map_intercepts_to_leas(&(newconf)) < 0) {
         return -1;
