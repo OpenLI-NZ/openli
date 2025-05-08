@@ -79,7 +79,7 @@ static void convert_commonintercept_to_json(json_object *jobj,
 
     const char *encrypt_str;
     json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
-    json_object *encryptkey, *xid;
+    json_object *encryptkey, *xids;
     json_object *starttime, *endtime, *tomediate, *encryption;
     char uuid[64];
 
@@ -89,13 +89,23 @@ static void convert_commonintercept_to_json(json_object *jobj,
         encrypt_str = "none";
     }
 
-    if (!uuid_is_null(common->xid)) {
-        uuid_unparse(common->xid, uuid);
-        xid = json_object_new_string(uuid);
-    } else {
-        xid = NULL;
-    }
 
+    xids = NULL;
+    if (common->xid_count > 0) {
+        size_t i;
+        json_object *xid;
+
+        xids = json_object_new_array();
+
+        for (i = 0; i < common->xid_count; i++) {
+            if (!uuid_is_null(common->xids[i])) {
+                uuid_unparse(common->xids[i], uuid);
+                xid = json_object_new_string(uuid);
+
+                json_object_array_add(xids, xid);
+            }
+        }
+    }
 
     liid = json_object_new_string(common->liid);
     authcc = json_object_new_string(common->authcc);
@@ -131,8 +141,8 @@ static void convert_commonintercept_to_json(json_object *jobj,
         endtime = json_object_new_int(common->toend_time);
         json_object_object_add(jobj, "endtime", endtime);
     }
-    if (xid) {
-        json_object_object_add(jobj, "xid", xid);
+    if (xids) {
+        json_object_object_add(jobj, "xids", xids);
     }
 
 }

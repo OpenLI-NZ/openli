@@ -300,6 +300,7 @@ int init_prov_state(provision_state_t *state, char *configfile,
     state->restauthkey = NULL;
     state->clientdbfile = NULL;
     state->clientdbkey = NULL;
+    state->clientdb = NULL;
     state->authdb = NULL;
 
     init_intercept_config(&(state->interceptconf));
@@ -2037,6 +2038,11 @@ int main(int argc, char *argv[]) {
             logger(LOG_INFO, "OpenLI provisioner: error while parsing intercept config file '%s'", provstate.interceptconffile);
             return -1;
         }
+    }
+
+    if (check_for_duplicate_xids(&(provstate.interceptconf), 0, NULL,
+            NULL) == -1) {
+        return -1;
     }
 
     if ((ret = add_all_intercept_timers(provstate.epoll_fd,

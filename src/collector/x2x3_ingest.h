@@ -165,6 +165,13 @@ typedef struct x_input_sync {
     UT_hash_handle hh;
 } x_input_sync_t;
 
+typedef struct uuid_intercept_map {
+    uuid_t uuid;
+    openli_intercept_types_t type;
+    void *intercept;
+    UT_hash_handle hh;
+} uuid_intercept_map_t;
+
 typedef struct x_input {
 
     uint8_t running;
@@ -212,8 +219,8 @@ typedef struct x_input {
     voipintercept_t *voipintercepts;
 
     /* Hash map of known intercepts, keyed by the XID */
-    ipintercept_t *ipxids;
-    voipintercept_t *voipxids;
+    uuid_intercept_map_t *ipxids;
+    uuid_intercept_map_t *voipxids;
 
     /* Parser for extracting information from SIP messages */
     openli_sip_parser_t *sipparser;

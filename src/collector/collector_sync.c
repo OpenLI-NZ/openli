@@ -1089,7 +1089,7 @@ static int x2x3_sync_voipintercept(collector_sync_t *sync, uint8_t *provmsg,
         return -1;
     }
 
-    if (uuid_is_null(decode->common.xid)) {
+    if (decode->common.xid_count == 0) {
         /* No XID, so don't bother forwarding to the X2/X3 threads */
         free_single_voipintercept(decode);
         return 0;
@@ -1170,7 +1170,8 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
          * ID in the shim.
          */
         announce_vendormirror_id(sync, cept);
-    } else if (!uuid_is_null(cept->common.xid)) {
+    }
+    if (cept->common.xid_count > 0) {
         announce_xid(sync, cept);
     } else if (cept->username != NULL) {
         logger(LOG_INFO,
@@ -1261,9 +1262,8 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
 
     if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
         remove_vendormirror_id(sync, ipint);
-    } else if (!uuid_is_null(ipint->common.xid)) {
-        withdraw_xid(sync, ipint);
     }
+    withdraw_xid(sync, ipint);
     publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], expmsg);
     for (i = 0; i < sync->forwardcount; i++) {
         expmsg = (openli_export_recv_t *)calloc(1,
@@ -1335,10 +1335,11 @@ static int update_modified_intercept(collector_sync_t *sync,
                 expmsg);
     }
 
-    if (!uuid_is_null(ipint->common.xid)) {
-        if (changed || useridentitychanged) {
-            announce_xid(sync, ipint);
-        }
+    // announce to the x2x3 threads regardless of whether we have an active
+    // XID now or not, otherwise they won't catch cases where the XIDs have
+    // been removed for some reason...
+    if (changed || useridentitychanged) {
+        announce_xid(sync, ipint);
     }
 
     if (changed) {
@@ -1988,7 +1989,7 @@ static void push_all_active_intercepts(collector_sync_t *sync,
         if (orig->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
             push_single_vendmirrorid(q, orig, OPENLI_PUSH_VENDMIRROR_INTERCEPT);
         }
-        if (!uuid_is_null(orig->common.xid)) {
+        if (orig->common.xid_count > 0) {
             announce_xid(sync, orig);
         }
 

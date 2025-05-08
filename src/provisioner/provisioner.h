@@ -461,7 +461,8 @@ int announce_latest_default_email_decompress(provision_state_t *state);
 
 /* Implemented in hup_reload.c */
 int reload_provisioner_config(provision_state_t *state);
-
+int check_for_duplicate_xids(prov_intercept_conf_t *intconf,
+        size_t xid_count, uuid_t *xids, char *xid_liid);
 
 /* Implemented in clientdb.c */
 int init_clientdb(provision_state_t *state);

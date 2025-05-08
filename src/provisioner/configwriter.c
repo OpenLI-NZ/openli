@@ -521,16 +521,31 @@ static int emit_intercept_common(intercept_common_t *intcom,
         if (!yaml_emitter_emit(emitter, &event)) return -1;
     }
 
-    if (!uuid_is_null(intcom->xid)) {
-        uuid_unparse(intcom->xid, buffer);
-        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)"xid", strlen("xid"), 1, 0,
+    if (intcom->xid_count != 0) {
+        size_t i;
+        yaml_scalar_event_initialize(&event, NULL, NULL,
+                (yaml_char_t *)"xids", strlen("xids"), 1, 1,
                 YAML_PLAIN_SCALAR_STYLE);
         if (!yaml_emitter_emit(emitter, &event)) return -1;
-        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)buffer, strlen(buffer), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
+
+        yaml_sequence_start_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_SEQ_TAG, 1, YAML_ANY_SEQUENCE_STYLE);
         if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        for (i = 0; i < intcom->xid_count; i++) {
+            if (uuid_is_null(intcom->xids[i])) {
+                continue;
+            }
+            uuid_unparse(intcom->xids[i], buffer);
+            yaml_scalar_event_initialize(&event, NULL,
+                    NULL,
+                    (yaml_char_t *)buffer, strlen(buffer), 1, 1,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
+        yaml_sequence_end_event_initialize(&event);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
     }
 
     yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
