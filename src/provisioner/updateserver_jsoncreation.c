@@ -301,6 +301,20 @@ static json_object *convert_coreserver_to_json(coreserver_t *cs) {
     return jobj;
 }
 
+
+/* RHEL 8 doesn't have a libjson that provides json_object_new_uint64(), so
+ * we need to provide our own version.
+ */
+#if JSON_C_VERSION_NUM >= 0x000d0100
+#define openli_json_object_new_uint64(val) json_object_new_uint64(val)
+#else
+static inline struct json_object *openli_json_object_new_uint64(uint64_t val) {
+    char buf[64];
+    snprintf(buf, 64, "%" PRIu64, val);
+    return json_object_new_string(buf);
+}
+#endif
+
 static json_object *convert_client_to_json(known_client_t *c) {
     json_object *jobj;
     json_object *medid, *ipaddress, *firstseen, *lastseen;
@@ -310,7 +324,7 @@ static json_object *convert_client_to_json(known_client_t *c) {
     jobj = json_object_new_object();
 
     if (c->type == TARGET_MEDIATOR) {
-        medid = json_object_new_uint64(c->medid);
+        medid = openli_json_object_new_uint64(c->medid);
         json_object_object_add(jobj, "mediatorid", medid);
     }
 
@@ -320,10 +334,10 @@ static json_object *convert_client_to_json(known_client_t *c) {
         free((void *)c->ipaddress);
     }
 
-    firstseen = json_object_new_uint64(c->firstseen);
+    firstseen = openli_json_object_new_uint64(c->firstseen);
     json_object_object_add(jobj, "firstseen", firstseen);
 
-    lastseen = json_object_new_uint64(c->lastseen);
+    lastseen = openli_json_object_new_uint64(c->lastseen);
     json_object_object_add(jobj, "lastseen", lastseen);
 
     return jobj;
