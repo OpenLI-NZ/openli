@@ -196,7 +196,24 @@ typedef enum {
     OPENLI_PROTO_FIELD_CORESERVER_LOWER_PORT,
     OPENLI_PROTO_FIELD_LEACC,
     OPENLI_PROTO_FIELD_XID,
+    OPENLI_PROTO_FIELD_INTEGRITY_HASH_METHOD,
+    OPENLI_PROTO_FIELD_INTEGRITY_HASH_TIMEOUT,
+    OPENLI_PROTO_FIELD_INTEGRITY_HASH_PDULIMIT,
+    OPENLI_PROTO_FIELD_INTEGRITY_SIGN_TIMEOUT,
+    OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT,
+    OPENLI_PROTO_FIELD_INTEGRITY_ENABLED,
+    OPENLI_PROTO_FIELD_INTEGRITY_DSA_KEY,
+
 } openli_proto_fieldtype_t;
+/* XXX one day we may need to separate these field types into distinct
+ * enums for each "message type" as there is only byte available for
+ * storing the field type in a field.
+ *
+ * But since we always know the context of the message type that we are
+ * parsing, we can re-purpose each field type value to mean different fields
+ * depending on whether we are parsing an LEA announcement vs an intercept vs
+ * a core server etc...
+ */
 
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl);
 int fd_set_nonblock(int fd);

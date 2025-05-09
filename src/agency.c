@@ -46,6 +46,12 @@ void free_liagency(liagency_t *lea) {
     if (lea->agencycc) {
         free(lea->agencycc);
     }
+    if (lea->dsa_key) {
+        free(lea->dsa_key);
+    }
+    if (lea->dsa_key_location) {
+        free(lea->dsa_key_location);
+    }
 	free(lea);
 }
 

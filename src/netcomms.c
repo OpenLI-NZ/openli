@@ -295,6 +295,9 @@ int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
      strlen(lea->hi2_ipstr) + strlen(lea->hi2_portstr) + \
 	 strlen(lea->hi3_ipstr) + strlen(lea->hi3_portstr) + \
 	 sizeof(uint32_t) + sizeof(uint32_t) + \
+     (lea->digest_required ? (sizeof(openli_integrity_hash_method_t) + \
+        (4 * sizeof(uint32_t)) + sizeof(uint8_t) + \
+        (lea->dsa_key ? strlen(lea->dsa_key) + 4 : 0) + (6 * 4)) : 0) + \
 	 (7 * 4)) /* each field has 4 bytes for the key, length of field and terminating \0 */
 
 #define LEA_WITHDRAW_BODY_LEN(lea) \
@@ -354,6 +357,51 @@ int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
                 sizeof(uint32_t)) == -1) {
         return -1;
     }
+
+    if (lea->digest_required) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_ENABLED,
+                (uint8_t *)(&(lea->digest_required)), sizeof(uint8_t)) == -1) {
+            return -1;
+        }
+
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_HASH_METHOD,
+                (uint8_t *)(&(lea->digest_hash_method)),
+                sizeof(openli_integrity_hash_method_t)) == -1) {
+            return -1;
+        }
+
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_HASH_TIMEOUT,
+                (uint8_t *)(&(lea->digest_hash_timeout)),
+                sizeof(uint32_t)) == -1) {
+            return -1;
+        }
+
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_HASH_PDULIMIT,
+                (uint8_t *)(&(lea->digest_hash_pdulimit)),
+                sizeof(uint32_t)) == -1) {
+            return -1;
+        }
+
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_SIGN_TIMEOUT,
+                (uint8_t *)(&(lea->digest_sign_timeout)),
+                sizeof(uint32_t)) == -1) {
+            return -1;
+        }
+
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT,
+                (uint8_t *)(&(lea->digest_sign_hashlimit)),
+                sizeof(uint32_t)) == -1) {
+            return -1;
+        }
+
+        if (lea->dsa_key) {
+            if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_DSA_KEY,
+                   (uint8_t *)(lea->dsa_key), strlen(lea->dsa_key)) == -1) {
+                return -1;
+            }
+        }
+    }
+
     return (int)totallen;
 
 }
@@ -2176,8 +2224,15 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
     lea->hi3_portstr = NULL;
     lea->agencyid = NULL;
     lea->agencycc = NULL;
-    lea->keepalivefreq = 300;
+    lea->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
     lea->keepalivewait = 0;
+    lea->digest_required = 0;
+    lea->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
+    lea->digest_hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
+    lea->digest_hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
+    lea->digest_sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
+    lea->digest_sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
+    lea->dsa_key = NULL;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -2204,6 +2259,21 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
             lea->keepalivefreq = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_KAWAIT) {
             lea->keepalivewait = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_HASH_METHOD) {
+            lea->digest_hash_method =
+                    *((openli_integrity_hash_method_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_ENABLED) {
+            lea->digest_required = *((uint8_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_HASH_TIMEOUT) {
+            lea->digest_hash_timeout = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_HASH_PDULIMIT) {
+            lea->digest_hash_pdulimit = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_SIGN_TIMEOUT) {
+            lea->digest_sign_timeout = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT) {
+            lea->digest_sign_hashlimit = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_DSA_KEY) {
+            DECODE_STRING_FIELD(lea->dsa_key, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,

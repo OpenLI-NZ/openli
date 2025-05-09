@@ -74,6 +74,22 @@ static const char *access_type_to_string(internet_access_method_t method) {
 
 }
 
+static const char *agency_integrity_hash_method_to_string(
+        openli_integrity_hash_method_t method) {
+
+    switch(method) {
+        case OPENLI_DIGEST_HASH_ALGO_SHA1:
+            return "sha-1";
+        case OPENLI_DIGEST_HASH_ALGO_SHA256:
+            return "sha-256";
+        case OPENLI_DIGEST_HASH_ALGO_SHA384:
+            return "sha-384";
+        case OPENLI_DIGEST_HASH_ALGO_SHA512:
+            return "sha-512";
+    }
+    return "undefined";
+}
+
 static int emit_default_radius_usernames(default_radius_user_t *radusers,
         yaml_emitter_t *emitter) {
 
@@ -194,6 +210,99 @@ static int emit_core_server_list(coreserver_t *servers, const char *label,
     return 0;
 }
 
+static inline int emit_u32_scalar(yaml_emitter_t *emitter, const char *key,
+        uint32_t *toemit) {
+
+    yaml_event_t event;
+    char buffer[64];
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)key, strlen(key), 1, 0, YAML_PLAIN_SCALAR_STYLE);
+
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    snprintf(buffer, 64, "%u", *toemit);
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)buffer, strlen(buffer), 1, 0,
+            YAML_PLAIN_SCALAR_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    return 0;
+}
+
+static int emit_agency_integrity_config(yaml_emitter_t *emitter,
+        liagency_t *ag) {
+
+    yaml_event_t event;
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)"integrity", strlen("integrity"), 1, 0,
+            YAML_PLAIN_SCALAR_STYLE);
+    const char *hashmethod;
+
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    yaml_mapping_start_event_initialize(&event, NULL,
+            (yaml_char_t *)YAML_MAP_TAG, 1, YAML_ANY_MAPPING_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)"enabled", strlen("enabled"), 1, 0,
+            YAML_PLAIN_SCALAR_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+
+    if (ag->digest_required) {
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"yes", strlen("yes"),
+                1, 0, YAML_PLAIN_SCALAR_STYLE);
+    } else {
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"no", strlen("no"),
+                1, 0, YAML_PLAIN_SCALAR_STYLE);
+    }
+
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)"hashmethod", strlen("hashmethod"), 1, 0,
+            YAML_PLAIN_SCALAR_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    hashmethod = agency_integrity_hash_method_to_string(ag->digest_hash_method);
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)hashmethod, strlen(hashmethod),
+            1, 0, YAML_PLAIN_SCALAR_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    if (emit_u32_scalar(emitter, "hashtimeout", &(ag->digest_hash_timeout))
+            < 0) return -1;
+    if (emit_u32_scalar(emitter, "datapducount", &(ag->digest_hash_pdulimit))
+            < 0) return -1;
+    if (emit_u32_scalar(emitter, "signtimeout", &(ag->digest_sign_timeout))
+            < 0) return -1;
+    if (emit_u32_scalar(emitter, "hashpducount", &(ag->digest_sign_hashlimit))
+            < 0) return -1;
+
+    if (ag->dsa_key_location) {
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"dsakey", strlen("dsakey"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)ag->dsa_key_location,
+                strlen(ag->dsa_key_location), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+    }
+
+    yaml_mapping_end_event_initialize(&event);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+    return 0;
+}
+
 static int emit_agencies(prov_agency_t *agencies, yaml_emitter_t *emitter) {
     yaml_event_t event;
     prov_agency_t *ag, *tmp;
@@ -301,6 +410,10 @@ static int emit_agencies(prov_agency_t *agencies, yaml_emitter_t *emitter) {
                 (yaml_char_t *)buffer, strlen(buffer), 1, 0,
                 YAML_PLAIN_SCALAR_STYLE);
         if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        if (emit_agency_integrity_config(emitter, ag->ag) < 0) {
+            return -1;
+        }
 
         yaml_mapping_end_event_initialize(&event);
         if (!yaml_emitter_emit(emitter, &event)) return -1;
