@@ -38,6 +38,8 @@
 static json_object *convert_lea_to_json(prov_agency_t *lea) {
 
     json_object *jobj;
+    json_object *integrity;
+
     json_object *hi3addr;
     json_object *hi3port;
     json_object *hi2addr;
@@ -46,8 +48,15 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     json_object *ka_wait;
     json_object *agencyid;
     json_object *agencycc = NULL;
+    json_object *digest_hash_method;
+    json_object *digest_required;
+    json_object *digest_hash_timeout;
+    json_object *digest_hash_pdulimit;
+    json_object *digest_sign_timeout;
+    json_object *digest_sign_hashlimit;
 
     jobj = json_object_new_object();
+    integrity = json_object_new_object();
 
     agencyid = json_object_new_string(lea->ag->agencyid);
     if (lea->ag->agencycc) {
@@ -70,6 +79,53 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     json_object_object_add(jobj, "hi2port", hi2port);
     json_object_object_add(jobj, "keepalivefreq", ka_freq);
     json_object_object_add(jobj, "keepalivewait", ka_wait);
+
+    digest_required = json_object_new_boolean(lea->ag->digest_required);
+    json_object_object_add(integrity, "enabled", digest_required);
+
+    if (lea->ag->digest_required) {
+        digest_hash_timeout = json_object_new_int(lea->ag->digest_hash_timeout);
+        digest_sign_timeout = json_object_new_int(lea->ag->digest_sign_timeout);
+        digest_hash_pdulimit = json_object_new_int(lea->ag->digest_hash_pdulimit);
+        digest_sign_hashlimit = json_object_new_int(lea->ag->digest_sign_hashlimit);
+
+        if (lea->ag->digest_hash_method == OPENLI_DIGEST_HASH_ALGO_SHA1) {
+            digest_hash_method = json_object_new_string("sha-1");
+        } else if (lea->ag->digest_hash_method ==
+                OPENLI_DIGEST_HASH_ALGO_SHA256) {
+            digest_hash_method = json_object_new_string("sha-256");
+        } else if (lea->ag->digest_hash_method ==
+                OPENLI_DIGEST_HASH_ALGO_SHA384) {
+            digest_hash_method = json_object_new_string("sha-384");
+        } else if (lea->ag->digest_hash_method ==
+                OPENLI_DIGEST_HASH_ALGO_SHA512) {
+            digest_hash_method = json_object_new_string("sha-512");
+        } else {
+            digest_hash_method = NULL;
+        }
+
+        if (digest_hash_method) {
+            json_object_object_add(integrity, "hashmethod", digest_hash_method);
+        }
+        if (digest_hash_timeout) {
+            json_object_object_add(integrity, "hashtimeout",
+                    digest_hash_timeout);
+        }
+        if (digest_hash_pdulimit) {
+            json_object_object_add(integrity, "datapducount",
+                    digest_hash_pdulimit);
+        }
+        if (digest_sign_timeout) {
+            json_object_object_add(integrity, "signtimeout",
+                    digest_sign_timeout);
+        }
+        if (digest_sign_hashlimit) {
+            json_object_object_add(integrity, "hashpducount",
+                    digest_sign_hashlimit);
+        }
+    }
+
+    json_object_object_add(jobj, "integrity", integrity);
 
     return jobj;
 }

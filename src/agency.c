@@ -24,8 +24,25 @@
  *
  */
 #include <stdlib.h>
+#include <string.h>
 
 #include "agency.h"
+
+openli_integrity_hash_method_t map_digest_hash_method_string(char *str) {
+    if (str == NULL) {
+        return DEFAULT_DIGEST_HASH_METHOD;
+    }
+    if (strcasecmp("sha-1", str) == 0) {
+        return OPENLI_DIGEST_HASH_ALGO_SHA1;
+    } else if (strcasecmp("sha-256", str) == 0) {
+        return OPENLI_DIGEST_HASH_ALGO_SHA256;
+    } else if (strcasecmp("sha-384", str) == 0) {
+        return OPENLI_DIGEST_HASH_ALGO_SHA384;
+    } else if (strcasecmp("sha-512", str) == 0) {
+        return OPENLI_DIGEST_HASH_ALGO_SHA512;
+    }
+    return DEFAULT_DIGEST_HASH_METHOD;
+}
 
 void free_liagency(liagency_t *lea) {
 	if (lea->hi2_ipstr) {
@@ -45,12 +62,6 @@ void free_liagency(liagency_t *lea) {
 	}
     if (lea->agencycc) {
         free(lea->agencycc);
-    }
-    if (lea->dsa_key) {
-        free(lea->dsa_key);
-    }
-    if (lea->dsa_key_location) {
-        free(lea->dsa_key_location);
     }
 	free(lea);
 }

@@ -375,27 +375,8 @@ static int parse_integrity_check_options(liagency_t *newag,
                 return -1;
             }
         }
-
-        if (key->type == YAML_SCALAR_NODE && value->type == YAML_SCALAR_NODE &&
-                !strcasecmp((char *)key->data.scalar.value, "dsakey")) {
-            newag->dsa_key_location = strdup(
-                    (char *)value->data.scalar.value);
-            newag->dsa_key = load_file_into_string(
-                    (char *)value->data.scalar.value, 4096);
-            if (newag->dsa_key == NULL) {
-                logger(LOG_INFO,
-                        "OpenLI provisioner: failed to load DSA Key into memory for generation of integrity signatures");
-                return -1;
-            }
-        }
-
     }
 
-    if (newag->digest_required && newag->dsa_key == NULL) {
-        logger(LOG_INFO,
-                "OpenLI provisioner: an agency has message digests required, but no DSA key has been specified for that agency...");
-        return -1;
-    }
     return 0;
 }
 
@@ -426,8 +407,6 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         newag->digest_sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
         newag->digest_sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
         newag->digest_required = 0;
-        newag->dsa_key = NULL;
-        newag->dsa_key_location = NULL;
 
         for (pair = node->data.mapping.pairs.start;
                 pair < node->data.mapping.pairs.top; pair ++) {
@@ -1199,6 +1178,14 @@ static int provisioning_parser(void *arg, yaml_document_t *doc UNUSED,
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "clientdbkey") == 0) {
         SET_CONFIG_STRING_OPTION(state->clientdbkey, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
+                    "integrity-signing-private-key") == 0) {
+        SET_CONFIG_STRING_OPTION(state->integrity_sign_private_key_location,
+                value);
     }
 
     return 0;

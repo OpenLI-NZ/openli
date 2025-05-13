@@ -302,6 +302,8 @@ int init_prov_state(provision_state_t *state, char *configfile,
     state->clientdbkey = NULL;
     state->clientdb = NULL;
     state->authdb = NULL;
+    state->integrity_sign_private_key = NULL;
+    state->integrity_sign_private_key_location = NULL;
 
     init_intercept_config(&(state->interceptconf));
 
@@ -337,6 +339,10 @@ int init_prov_state(provision_state_t *state, char *configfile,
     state->timerfd = NULL;
 
     if (create_ssl_context(&(state->sslconf)) < 0) {
+        return -1;
+    }
+
+    if (load_integrity_signing_privatekey(state) < 0) {
         return -1;
     }
 
@@ -544,6 +550,7 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
         provmed = calloc(1, sizeof(prov_mediator_t));
         provmed->mediatorid = med->mediatorid;
         provmed->details = med;
+        provmed->mdctx = NULL;
 
         HASH_ADD_KEYPTR(hh, state->mediators, &(provmed->mediatorid),
                 sizeof(provmed->mediatorid), provmed);
@@ -591,6 +598,9 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
             free_openli_mediator(prevmed->details);
             destroy_provisioner_client(state->epoll_fd, prevmed->client,
                     identifier);
+            if (prevmed->mdctx) {
+                EVP_MD_CTX_free(prevmed->mdctx);
+            }
             free(prevmed);
         }
     }
@@ -758,6 +768,12 @@ void clear_prov_state(provision_state_t *state) {
     }
     if (state->clientdbkey) {
         free(state->clientdbkey);
+    }
+    if (state->integrity_sign_private_key) {
+        EVP_PKEY_free(state->integrity_sign_private_key);
+    }
+    if (state->integrity_sign_private_key_location) {
+        free(state->integrity_sign_private_key_location);
     }
 
     free_ssl_config(&(state->sslconf));
@@ -1645,6 +1661,9 @@ static void remove_idle_client(provision_state_t *state, prov_epoll_ev_t *pev) {
                     med->mediatorid);
             HASH_DELETE(hh, state->mediators, med);
             free_openli_mediator(med->details);
+            if (med->mdctx) {
+                EVP_MD_CTX_free(med->mdctx);
+            }
             free(med);
         }
         destroy_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);

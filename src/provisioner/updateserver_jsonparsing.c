@@ -45,6 +45,7 @@ struct json_agency {
     struct json_object *ka_freq;
     struct json_object *ka_wait;
     struct json_object *agencycc;
+    struct json_object *integrity;
 };
 
 struct json_intercept {
@@ -184,6 +185,7 @@ static inline void extract_agency_json_objects(struct json_agency *agjson,
     json_object_object_get_ex(parsed, "keepalivefreq", &(agjson->ka_freq));
     json_object_object_get_ex(parsed, "keepalivewait", &(agjson->ka_wait));
     json_object_object_get_ex(parsed, "agencycc", &(agjson->agencycc));
+    json_object_object_get_ex(parsed, "integrity", &(agjson->integrity));
 
 }
 
@@ -1070,6 +1072,69 @@ siptargeterr:
     }
     return -1;
 
+}
+
+static int parse_agency_integrity_options(liagency_t *newag,
+        struct json_object *integrity, update_con_info_t *cinfo) {
+
+    int parseerr = 0;
+    struct json_object *enabled, *hash_method, *hash_timeout;
+    struct json_object *sign_timeout, *sign_hashlimit, *hash_pdulimit;
+
+    if (json_object_get_type(integrity) != json_type_object) {
+        logger(LOG_INFO, "OpenLI update socket: 'integrity' for an agency must be expressed as a JSON object");
+        snprintf(cinfo->answerstring, 4096, "%s <p>The 'integrity' member of an agency must be expressed as a JSON object. %s",
+                update_failure_page_start, update_failure_page_end);
+        goto integrityerr;
+    }
+
+    enabled = hash_method = hash_timeout = NULL;
+    sign_timeout = sign_hashlimit = hash_pdulimit = NULL;
+
+    json_object_object_get_ex(integrity, "enabled", &enabled);
+    json_object_object_get_ex(integrity, "hashmethod", &hash_method);
+    json_object_object_get_ex(integrity, "hashtimeout", &hash_timeout);
+    json_object_object_get_ex(integrity, "datapducount", &hash_pdulimit);
+    json_object_object_get_ex(integrity, "signtimeout", &sign_timeout);
+    json_object_object_get_ex(integrity, "hashpducount", &sign_hashlimit);
+
+    if (enabled) {
+        json_bool isset = json_object_get_boolean(enabled);
+        if (isset) {
+            newag->digest_required = 1;
+        } else {
+            newag->digest_required = 0;
+        }
+    }
+
+    if (hash_method) {
+        char *hashmethodstr = NULL;
+        EXTRACT_JSON_STRING_PARAM("hashmethod", "Agency Digest Hash method",
+                hash_method, hashmethodstr, &parseerr, false);
+        if (hashmethodstr) {
+            newag->digest_hash_method =
+                    map_digest_hash_method_string(hashmethodstr);
+            free(hashmethodstr);
+        }
+    }
+
+    EXTRACT_JSON_INT_PARAM("hashtimeout", "Agency Digest Hash timeout",
+            hash_timeout, newag->digest_hash_timeout, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("datapducount", "Agency Digest Hash PDU limit",
+            hash_pdulimit, newag->digest_hash_pdulimit, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("signtimeout", "Agency Digest Signature timeout",
+            sign_timeout, newag->digest_sign_timeout, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("hashpducount", "Agency Digest Signature hash limit",
+            sign_hashlimit, newag->digest_sign_hashlimit, &parseerr, false);
+
+    if (parseerr) {
+        goto integrityerr;
+    }
+
+    return 0;
+
+integrityerr:
+    return -1;
 }
 
 static int parse_ipintercept_staticips(provision_state_t *state,
@@ -2189,6 +2254,12 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     nag->agencyid = strdup(idstr);
     nag->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
     nag->keepalivewait = DEFAULT_AGENCY_KEEPALIVE_WAIT;
+    nag->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
+    nag->digest_hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
+    nag->digest_hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
+    nag->digest_sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
+    nag->digest_sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
+    nag->digest_required = 0;
 
     EXTRACT_JSON_STRING_PARAM("hi3address", "agency", agjson.hi3addr,
             nag->hi3_ipstr, &parseerr, true);
@@ -2207,6 +2278,10 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
             nag->keepalivewait, &parseerr, false);
 
     if (parseerr) {
+        goto agencyerr;
+    }
+
+    if (parse_agency_integrity_options(nag, agjson.integrity, cinfo) < 0) {
         goto agencyerr;
     }
 
@@ -2239,25 +2314,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
 
 agencyerr:
     if (nag) {
-        if (nag->hi2_ipstr) {
-            free(nag->hi2_ipstr);
-        }
-        if (nag->hi3_ipstr) {
-            free(nag->hi3_ipstr);
-        }
-        if (nag->hi2_portstr) {
-            free(nag->hi2_portstr);
-        }
-        if (nag->hi3_portstr) {
-            free(nag->hi3_portstr);
-        }
-        if (nag->agencyid) {
-            free(nag->agencyid);
-        }
-        if (nag->agencycc) {
-            free(nag->agencycc);
-        }
-        free(nag);
+        free_liagency(nag);
     }
     if (parsed) {
         json_object_put(parsed);
@@ -2293,6 +2350,12 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
 
     modified.keepalivefreq = 0xffffffff;
     modified.keepalivewait = 0xffffffff;
+    modified.digest_required = 0xff;
+    modified.digest_hash_method = 0xff;
+    modified.digest_hash_timeout = 0xffffffff;
+    modified.digest_hash_pdulimit = 0xffffffff;
+    modified.digest_sign_timeout = 0xffffffff;
+    modified.digest_sign_hashlimit = 0xffffffff;
 
     extract_agency_json_objects(&agjson, parsed);
     EXTRACT_JSON_STRING_PARAM("hi3address", "agency", agjson.hi3addr,
@@ -2315,6 +2378,11 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         goto agencyerr;
     }
 
+    if (parse_agency_integrity_options(&modified, agjson.integrity,
+                cinfo) < 0) {
+        goto agencyerr;
+    }
+
     MODIFY_STRING_MEMBER(modified.agencycc, found->ag->agencycc, &changed);
     MODIFY_STRING_MEMBER(modified.hi3_ipstr, found->ag->hi3_ipstr, &changed);
     MODIFY_STRING_MEMBER(modified.hi2_ipstr, found->ag->hi2_ipstr, &changed);
@@ -2322,6 +2390,46 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
             &changed);
     MODIFY_STRING_MEMBER(modified.hi2_portstr, found->ag->hi2_portstr,
             &changed);
+
+    if (modified.digest_required != 0xff &&
+                modified.digest_required != found->ag->digest_required) {
+        changed = 1;
+        found->ag->digest_required = modified.digest_required;
+    }
+
+    if (modified.digest_hash_method != 0xff &&
+                modified.digest_hash_method != found->ag->digest_hash_method) {
+        changed = 1;
+        found->ag->digest_hash_method = modified.digest_hash_method;
+    }
+
+    if (modified.digest_hash_timeout != 0xffffffff &&
+                modified.digest_hash_timeout !=
+                        found->ag->digest_hash_timeout) {
+        changed = 1;
+        found->ag->digest_hash_timeout = modified.digest_hash_timeout;
+    }
+
+    if (modified.digest_hash_pdulimit != 0xffffffff &&
+                modified.digest_hash_pdulimit !=
+                        found->ag->digest_hash_pdulimit) {
+        changed = 1;
+        found->ag->digest_hash_pdulimit = modified.digest_hash_pdulimit;
+    }
+
+    if (modified.digest_sign_timeout != 0xffffffff &&
+                modified.digest_sign_timeout !=
+                        found->ag->digest_sign_timeout) {
+        changed = 1;
+        found->ag->digest_sign_timeout = modified.digest_sign_timeout;
+    }
+
+    if (modified.digest_sign_hashlimit != 0xffffffff &&
+                modified.digest_sign_hashlimit !=
+                        found->ag->digest_sign_hashlimit) {
+        changed = 1;
+        found->ag->digest_sign_hashlimit = modified.digest_sign_hashlimit;
+    }
 
     if (modified.keepalivefreq != 0xffffffff &&
                 modified.keepalivefreq != found->ag->keepalivefreq) {

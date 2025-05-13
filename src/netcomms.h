@@ -202,7 +202,6 @@ typedef enum {
     OPENLI_PROTO_FIELD_INTEGRITY_SIGN_TIMEOUT,
     OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT,
     OPENLI_PROTO_FIELD_INTEGRITY_ENABLED,
-    OPENLI_PROTO_FIELD_INTEGRITY_DSA_KEY,
 
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct

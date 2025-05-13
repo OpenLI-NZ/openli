@@ -62,8 +62,6 @@ typedef struct liagency {
     uint32_t digest_hash_pdulimit;
     uint32_t digest_sign_timeout;
     uint32_t digest_sign_hashlimit;
-    char *dsa_key;
-    char *dsa_key_location;
 } liagency_t;
 
 #define agency_equal(a, b) \
@@ -80,16 +78,14 @@ typedef struct liagency {
              a->digest_hash_pdulimit == b->digest_hash_pdulimit && \
              a->digest_sign_timeout == b->digest_sign_timeout && \
              a->digest_sign_hashlimit == b->digest_sign_hashlimit && \
-             a->digest_hash_method == b->digest_hash_method && \
-             ((a->dsa_key == NULL && b->dsa_key == NULL) || \
-                (a->dsa_key != NULL && b->dsa_key != NULL && \
-                 strcmp(a->dsa_key, b->dsa_key) == 0))))  && \
+             a->digest_hash_method == b->digest_hash_method)) && \
      ((a->agencycc == NULL && b->agencycc == NULL) || \
         (a->agencycc != NULL && b->agencycc != NULL && \
          strcmp(a->agencycc, b->agencycc) == 0)))
 
 #endif
 
+openli_integrity_hash_method_t map_digest_hash_method_string(char *str);
 void free_liagency(liagency_t *ag);
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

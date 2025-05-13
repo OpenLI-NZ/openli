@@ -296,8 +296,7 @@ int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
 	 strlen(lea->hi3_ipstr) + strlen(lea->hi3_portstr) + \
 	 sizeof(uint32_t) + sizeof(uint32_t) + \
      (lea->digest_required ? (sizeof(openli_integrity_hash_method_t) + \
-        (4 * sizeof(uint32_t)) + sizeof(uint8_t) + \
-        (lea->dsa_key ? strlen(lea->dsa_key) + 4 : 0) + (6 * 4)) : 0) + \
+        (4 * sizeof(uint32_t)) + sizeof(uint8_t) + (6 * 4)) : 0) + \
 	 (7 * 4)) /* each field has 4 bytes for the key, length of field and terminating \0 */
 
 #define LEA_WITHDRAW_BODY_LEN(lea) \
@@ -392,13 +391,6 @@ int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
                 (uint8_t *)(&(lea->digest_sign_hashlimit)),
                 sizeof(uint32_t)) == -1) {
             return -1;
-        }
-
-        if (lea->dsa_key) {
-            if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_DSA_KEY,
-                   (uint8_t *)(lea->dsa_key), strlen(lea->dsa_key)) == -1) {
-                return -1;
-            }
         }
     }
 
@@ -2232,7 +2224,6 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
     lea->digest_hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
     lea->digest_sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
     lea->digest_sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
-    lea->dsa_key = NULL;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -2272,8 +2263,6 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
             lea->digest_sign_timeout = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT) {
             lea->digest_sign_hashlimit = *((uint32_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_DSA_KEY) {
-            DECODE_STRING_FIELD(lea->dsa_key, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,

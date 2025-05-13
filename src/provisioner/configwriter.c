@@ -285,19 +285,6 @@ static int emit_agency_integrity_config(yaml_emitter_t *emitter,
     if (emit_u32_scalar(emitter, "hashpducount", &(ag->digest_sign_hashlimit))
             < 0) return -1;
 
-    if (ag->dsa_key_location) {
-        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)"dsakey", strlen("dsakey"), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)ag->dsa_key_location,
-                strlen(ag->dsa_key_location), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
-    }
-
     yaml_mapping_end_event_initialize(&event);
     if (!yaml_emitter_emit(emitter, &event)) return -1;
     return 0;

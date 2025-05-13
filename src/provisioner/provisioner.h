@@ -41,6 +41,8 @@
 #include "util.h"
 #include "openli_tls.h"
 
+#define DEFAULT_DIGEST_HASH_KEY_LOCATION "/etc/openli/digesthash/private.pem"
+
 #define DEFAULT_INTERCEPT_CONFIG_FILE "/etc/openli/running-intercept-config.yaml"
 
 #define DEFAULT_ENCPASSFILE_LOCATION "/etc/openli/.intercept-encrypt"
@@ -227,6 +229,10 @@ typedef struct prov_mediator {
      *  connections from collectors */
     openli_mediator_t *details;
 
+    /** context for digest computation, used if the mediator requires
+     *  us to sign integrity checks */
+    EVP_MD_CTX *mdctx;
+
     UT_hash_handle hh;
 } prov_mediator_t;
 
@@ -351,6 +357,12 @@ typedef struct prov_state {
     char *clientdbkey;
     void *clientdb;
 
+    /** The location of the private key to use when signing digest hash
+     *  integrity checks */
+    char *integrity_sign_private_key_location;
+    /** The private key to use when signing digest hash integrity checks */
+    EVP_PKEY *integrity_sign_private_key;
+
     /** A flag indicating whether collectors should ignore RTP comfort noise
      *  packets when intercepting voice traffic.
      */
@@ -410,6 +422,9 @@ size_t read_encryption_password_file(const char *encpassfile, uint8_t *space);
 /* Implemented in configwriter.c */
 int emit_intercept_config(char *configfile, const char *encpassfile,
         prov_intercept_conf_t *conf);
+
+/* Implemented in integrity_sign.c */
+int load_integrity_signing_privatekey(provision_state_t *state);
 
 /* Implemented in clientupdates.c */
 int compare_sip_targets(provision_state_t *currstate,
