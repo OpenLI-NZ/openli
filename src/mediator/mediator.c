@@ -139,6 +139,7 @@ static void clear_med_config(mediator_state_t *state) {
     }
 
     free_ssl_config(&(state->sslconf));
+
 }
 
 /** Frees all global state for a mediator instance.
@@ -576,16 +577,22 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
         logger(LOG_INFO, "OpenLI Mediator: HI2 = %s:%s    HI3 = %s:%s",
                 lea->hi2_ipstr, lea->hi2_portstr, lea->hi3_ipstr,
                 lea->hi3_portstr);
+        logger(LOG_INFO, "OpenLI Mediator: integrity checks: %s",
+                lea->digest_required ? "enabled" : "disabled");
     }
 
     HASH_FIND(hh, state->agency_threads.threads, lea->agencyid,
             strlen(lea->agencyid), existing);
     if (!existing) {
         ret = mediator_start_agency_thread(&(state->agency_threads), lea);
-        free_liagency(lea);
+
+        /* tell coll threads about this new agency */
+
     } else {
         ret = mediator_update_agency_thread(existing, lea);
         /* Don't free lea -- it will get sent to the LEA thread */
+
+        /* tell coll threads about this modified agency */
     }
 
     return ret;

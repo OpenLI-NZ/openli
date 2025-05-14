@@ -152,6 +152,9 @@ typedef struct lea_thread_state {
     /** The agency state instance describing the agency and its handovers */
     mediator_agency_t agency;
 
+    /** The full agency configuration as announced by the provisioner */
+    liagency_t *lea;
+
     /** The set of LIIDs that are associated with the agency */
     liid_map_t active_liids;
 

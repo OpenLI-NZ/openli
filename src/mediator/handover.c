@@ -423,6 +423,9 @@ void destroy_agency(mediator_agency_t *ag) {
     if (ag->agencyid) {
         free(ag->agencyid);
     }
+    if (ag->agencycc) {
+        free(ag->agencycc);
+    }
 }
 
 /** Registers a single RMQ queue for an LIID with the RMQ consumer for a
@@ -671,8 +674,16 @@ handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
 	ho->outev = NULL;
 
     /* Initialise the remaining handover state */
-    ho->ipstr = ipstr;
-    ho->portstr = portstr;
+    if (ipstr) {
+        ho->ipstr = strdup(ipstr);
+    } else {
+        ho->ipstr = NULL;
+    }
+    if (portstr) {
+        ho->portstr = strdup(portstr);
+    } else {
+        ho->portstr = NULL;
+    }
     ho->handover_type = handover_type;
     ho->disconnect_msg = 0;
 
