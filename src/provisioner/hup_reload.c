@@ -1173,6 +1173,17 @@ int reload_provisioner_config(provision_state_t *currstate) {
         return -1;
     }
 
+    /* integrity signing key changes are local to the provisioner, so
+     * there is no need to notify clients
+     */
+    if (currstate->integrity_sign_private_key_location) {
+        free(currstate->integrity_sign_private_key_location);
+    }
+    currstate->integrity_sign_private_key_location =
+            newstate.integrity_sign_private_key_location;
+    load_integrity_signing_privatekey(currstate);
+
+
     /* Only make changes if the relevant configuration has changed, so as
      * to minimise interruptions.
      */
