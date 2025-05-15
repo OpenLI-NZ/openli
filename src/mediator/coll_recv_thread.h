@@ -147,11 +147,19 @@ typedef struct mediator_collector_config {
 } mediator_collector_config_t;
 
 
-typedef struct integrity_check_state {
-
+typedef struct agency_digest_config {
     char *agencyid;
 
     liagency_t *config;
+
+    UT_hash_handle hh;
+} agency_digest_config_t;
+
+typedef struct integrity_check_state {
+
+    char *key;
+    char *liid;
+    agency_digest_config_t *agency;
 
     /* TODO all the per-LIID + CIN state for calculating hash digests
      * and signed hashes
@@ -257,9 +265,9 @@ struct single_coll_receiver {
     col_known_liid_t *known_liids;
 
     /** The set of LEAs that have been announced by the provisioner, and
-     *  their corresponding state for calculating integrity checks
+     *  their corresponding configuraiton for calculating integrity checks
      */
-    integrity_check_state_t *known_agencies;
+    agency_digest_config_t *known_agencies;
 
     /** A pointer to the shared global config for collector receive threads
      *  (owned by the main mediator thread)
@@ -433,11 +441,12 @@ void mediator_clean_collectors(mediator_collector_t *medcol);
 
 
 /* defined in mediator_integrity_check.c */
-int update_integrity_check_state_lea(integrity_check_state_t **map,
+int update_agency_digest_config_map(agency_digest_config_t **map,
         liagency_t *lea);
-void free_integrity_check_state(integrity_check_state_t *ics);
-void remove_integrity_check_state(integrity_check_state_t **map,
+void free_agency_digest_config(agency_digest_config_t *dig);
+void remove_agency_digest_config(agency_digest_config_t **map,
         char *agencyid);
+
 
 #endif
 

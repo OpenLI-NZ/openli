@@ -31,10 +31,10 @@
 #include "coll_recv_thread.h"
 #include "liidmapping.h"
 
-int update_integrity_check_state_lea(integrity_check_state_t **map,
+int update_agency_digest_config_map(agency_digest_config_t **map,
         liagency_t *lea) {
 
-    integrity_check_state_t *found = NULL;
+    agency_digest_config_t *found = NULL;
 
     HASH_FIND(hh, *map, lea->agencyid, strlen(lea->agencyid), found);
 
@@ -51,12 +51,9 @@ int update_integrity_check_state_lea(integrity_check_state_t **map,
          return 0;
     }
 
-    found = calloc(1, sizeof(integrity_check_state_t));
+    found = calloc(1, sizeof(agency_digest_config_t));
     found->agencyid = strdup(lea->agencyid);
     found->config = lea;
-
-    /* TODO init the actual digest state once I decide what it is going
-     * to look like */
 
     HASH_ADD_KEYPTR(hh, *map, found->agencyid, strlen(found->agencyid),
             found);
@@ -64,24 +61,22 @@ int update_integrity_check_state_lea(integrity_check_state_t **map,
     return 1;
 }
 
-void free_integrity_check_state(integrity_check_state_t *ics) {
+void free_agency_digest_config(agency_digest_config_t *dig) {
 
-    if (ics->agencyid) {
-        free(ics->agencyid);
+    if (dig->agencyid) {
+        free(dig->agencyid);
     }
-    if (ics->config) {
-        free_liagency(ics->config);
+    if (dig->config) {
+        free_liagency(dig->config);
     }
 
-    /* TODO free digest state for all observed streams */
-
-    free(ics);
+    free(dig);
 }
 
-void remove_integrity_check_state(integrity_check_state_t **map,
+void remove_agency_digest_config(agency_digest_config_t **map,
         char *agencyid) {
 
-    integrity_check_state_t *found;
+    agency_digest_config_t *found;
 
     HASH_FIND(hh, *map, agencyid, strlen(agencyid), found);
     if (!found) {
@@ -89,6 +84,6 @@ void remove_integrity_check_state(integrity_check_state_t **map,
     }
 
     HASH_DELETE(hh, *map, found);
-    free_integrity_check_state(found);
+    free_agency_digest_config(found);
 
 }

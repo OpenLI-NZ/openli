@@ -832,7 +832,7 @@ static int collector_thread_epoll_event(coll_recv_t *col,
  */
 static void cleanup_collector_thread(coll_recv_t *col) {
     col_known_liid_t *known, *tmp;
-    integrity_check_state_t *intag, *tmpag;
+    agency_digest_config_t *intag, *tmpag;
 
     if (col->colev) {
         remove_mediator_fdevent(col->colev);
@@ -851,7 +851,7 @@ static void cleanup_collector_thread(coll_recv_t *col) {
 
     HASH_ITER(hh, col->known_agencies, intag, tmpag) {
         HASH_DELETE(hh, col->known_agencies, intag);
-        free_integrity_check_state(intag);
+        free_agency_digest_config(intag);
     }
 
     if (col->internalpass) {
@@ -1041,13 +1041,13 @@ static void *start_collector_thread(void *params) {
             if (msg.type == MED_COLL_LEA_ANNOUNCE) {
                 liagency_t *ag = (liagency_t *)(msg.arg);
 
-                update_integrity_check_state_lea(&(col->known_agencies), ag);
+                update_agency_digest_config_map(&(col->known_agencies), ag);
             }
 
             if (msg.type == MED_COLL_LEA_WITHDRAW) {
                 char *agencyid = (char *)(msg.arg);
 
-                remove_integrity_check_state(&(col->known_agencies), agencyid);
+                remove_agency_digest_config(&(col->known_agencies), agencyid);
                 free(agencyid);
             }
 
