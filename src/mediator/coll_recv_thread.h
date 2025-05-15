@@ -32,6 +32,7 @@
 #include "netcomms.h"
 #include "openli_tls.h"
 #include "med_epoll.h"
+#include "liidmapping.h"
 
 /** This file defines public types and methods for interactive with a
  *  "collector receive" thread for the OpenLI mediator.
@@ -66,7 +67,18 @@ enum {
     /** Global shared configuration has changed, update local copy of this
      *  config.
      */
-    MED_COLL_MESSAGE_RELOAD
+    MED_COLL_MESSAGE_RELOAD,
+
+    /** Used to tell the receive thread about a new (or modified) LEA
+     *  configuration that was received by the main thread from the
+     *  provisioner */
+    MED_COLL_LEA_ANNOUNCE,
+
+
+    /** Used to tell the receive thread about an LEA that has been
+     *  withdrawn by the provisioner.
+     */
+    MED_COLL_LEA_WITHDRAW,
 };
 
 
@@ -129,8 +141,25 @@ typedef struct mediator_collector_config {
 
     /** Boolean flag indicating whether collector connections are using TLS */
     uint8_t usingtls;
+
+    /** Mapping of LIIDs to the ID of their current destination agency */
+    added_liid_t *liid_to_agency_map;
 } mediator_collector_config_t;
 
+
+typedef struct integrity_check_state {
+
+    char *agencyid;
+
+    liagency_t *config;
+
+    /* TODO all the per-LIID + CIN state for calculating hash digests
+     * and signed hashes
+     */
+
+    UT_hash_handle hh;
+
+} integrity_check_state_t;
 
 /** State associated with a single collector connection */
 typedef struct single_coll_receiver coll_recv_t;
@@ -224,8 +253,13 @@ struct single_coll_receiver {
     /** The SSL socket for this collector connection, if not using RMQ */
     SSL *ssl;
 
-    /** The set of LIIDs that we have seen */
+    /** The set of LIIDs that we have seen in records sent by the collector */
     col_known_liid_t *known_liids;
+
+    /** The set of LEAs that have been announced by the provisioner, and
+     *  their corresponding state for calculating integrity checks
+     */
+    integrity_check_state_t *known_agencies;
 
     /** A pointer to the shared global config for collector receive threads
      *  (owned by the main mediator thread)
@@ -319,6 +353,44 @@ void unlock_med_collector_config(mediator_collector_config_t *config);
 void update_med_collector_config(mediator_collector_config_t *config,
         uint8_t usetls, uint32_t mediatorid);
 
+/** Adds a new LIID -> agency mapping to the map stored in the shared
+ *  configuration.
+ *
+ *  @param config       The global config for the collector threads
+ *  @param liid         The LIID to add to the map
+ *  @param agencyid     The ID of the agency that this LIID is destined for.
+ */
+void add_liid_mapping_collector_config(mediator_collector_config_t *config,
+        char *liid, char *agencyid);
+
+/** Looks up the corresponding agency ID for a given LIID in the map that
+ *  is stored in the shared configuration.
+ *
+ *  @param config       The global config for the collector threads
+ *  @param liid         The LIID to search for
+ *  @return             The ID of the agency that this LIID is destined for.
+ */
+char *lookup_liid_mapping_collector_config(mediator_collector_config_t *config,
+        char *liid);
+
+/** Removes a LIID -> agency mapping from the map stored in the shared
+ *  configuration.
+ *
+ *  @param config       The global config for the collector threads
+ *  @param liid         The LIID to remove from the map
+ */
+void remove_liid_mapping_collector_config(mediator_collector_config_t *config,
+        char *liid);
+
+/** Removes all LIID -> agency mappings that refer to a particular agency
+ *  from the map stored in the shared  configuration.
+ *
+ *  @param config       The global config for the collector threads
+ *  @param agencyid     The agency to remove from the map
+ */
+void remove_liid_mapping_by_agency_collector_config(
+        mediator_collector_config_t *config, char *agencyid);
+
 /** Frees any resources allocated to the shared collector configuration.
  *
  *
@@ -358,6 +430,14 @@ void mediator_disconnect_all_collectors(mediator_collector_t *medcol);
  *  to do the bulk of the "cleaning" work with a single iteration.
  */
 void mediator_clean_collectors(mediator_collector_t *medcol);
+
+
+/* defined in mediator_integrity_check.c */
+int update_integrity_check_state_lea(integrity_check_state_t **map,
+        liagency_t *lea);
+void free_integrity_check_state(integrity_check_state_t *ics);
+void remove_integrity_check_state(integrity_check_state_t **map,
+        char *agencyid);
 
 #endif
 

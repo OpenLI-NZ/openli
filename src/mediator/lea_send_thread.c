@@ -893,9 +893,8 @@ static int process_agency_messages(lea_thread_state_t *state) {
 
         if (msg.type == MED_LEA_MESSAGE_SHUTDOWN_TIMER) {
             /* provisioner has disconnected, start the thread shutdown timer */
-            uint16_t *timeout = (uint16_t *)msg.data;
-            start_shutdown_timer(state, *timeout);
-            free(timeout);
+            uint16_t timeout = (msg.data_uint % 65536);
+            start_shutdown_timer(state, timeout);
         }
 
         if (msg.type == MED_LEA_MESSAGE_RECONNECT) {

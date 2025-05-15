@@ -421,8 +421,7 @@ static void trigger_lea_thread_shutdown_timers(mediator_state_t *state,
 
     HASH_ITER(hh, state->agency_threads.threads, lea_t, tmp) {
         msg.type = MED_LEA_MESSAGE_SHUTDOWN_TIMER;
-        msg.data = calloc(1, sizeof(uint16_t));
-        memcpy(msg.data, &timeout, sizeof(uint16_t));
+        msg.data_uint = timeout;
 
         libtrace_message_queue_put(&(lea_t->in_main), &msg);
     }
@@ -515,6 +514,38 @@ static int process_signal(int sigfd) {
     return 0;
 }
 
+/** Sends a message to all collector receive threads to tell them that
+ *  a particular agency is no longer active.
+ *
+ *  @param state        The global state for this mediator
+ *  @param agencyid     The ID of the agency being withdrawn
+ *
+ *  @return 0 if successful, -1 if an error occurs
+ */
+static int withdraw_lea_from_collector_threads(mediator_state_t *state,
+        char *agencyid) {
+
+    coll_recv_t *col_thread, *tmp;
+    col_thread_msg_t msg;
+    char *copy;
+
+    HASH_ITER(hh, state->collector_threads.threads, col_thread, tmp) {
+        while (col_thread) {
+            copy = strdup(agencyid);
+            if (!copy) {
+                return -1;
+            }
+            memset(&msg, 0, sizeof(msg));
+            msg.type = MED_COLL_LEA_WITHDRAW;
+            msg.arg = (uint64_t)copy;
+            libtrace_message_queue_put(&(col_thread->in_main), &msg);
+            col_thread = col_thread->next;
+        }
+    }
+    return 0;
+
+}
+
 /** Parse and action a withdrawal of an LEA by the provisioner
  *
  *  @param state        The global state for this mediator
@@ -542,8 +573,45 @@ static int receive_lea_withdrawal(mediator_state_t *state, uint8_t *msgbody,
                 lea->agencyid);
     }
 
+    /* Tell the collector threads to not worry about digest calculations
+     * for this agency any more */
+    withdraw_lea_from_collector_threads(state, lea->agencyid);
+    remove_liid_mapping_by_agency_collector_config(
+            &(state->collector_threads.config), lea->agencyid);
+
     mediator_halt_agency_thread(&(state->agency_threads), lea->agencyid);
     free_liagency(lea);
+    return 0;
+}
+
+/** Sends a message to all collector receive threads to tell them about a
+ *  new or updated agency
+ *
+ *  @param state        The global state for this mediator
+ *  @param lea          The current configuration for the agency being announced
+ *
+ *  @return 0 if successful, -1 if an error occurs
+ */
+static int announce_lea_to_collector_threads(mediator_state_t *state,
+        liagency_t *lea) {
+
+    liagency_t *copy;
+    coll_recv_t *col_thread, *tmp;
+    col_thread_msg_t msg;
+
+    HASH_ITER(hh, state->collector_threads.threads, col_thread, tmp) {
+        while (col_thread) {
+            copy = copy_liagency(lea);
+            if (!copy) {
+                return -1;
+            }
+            memset(&msg, 0, sizeof(msg));
+            msg.type = MED_COLL_LEA_ANNOUNCE;
+            msg.arg = (uint64_t)copy;
+            libtrace_message_queue_put(&(col_thread->in_main), &msg);
+            col_thread = col_thread->next;
+        }
+    }
     return 0;
 }
 
@@ -587,12 +655,14 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
         ret = mediator_start_agency_thread(&(state->agency_threads), lea);
 
         /* tell coll threads about this new agency */
+        announce_lea_to_collector_threads(state, lea);
 
     } else {
         ret = mediator_update_agency_thread(existing, lea);
         /* Don't free lea -- it will get sent to the LEA thread */
 
         /* tell coll threads about this modified agency */
+        announce_lea_to_collector_threads(state, lea);
     }
 
     return ret;
@@ -725,6 +795,9 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
         libtrace_message_queue_put(&(lea_t->in_main), &msg);
     }
 
+    remove_liid_mapping_collector_config(&(state->collector_threads.config),
+            liid);
+
     free(liid);
     return 0;
 }
@@ -791,6 +864,9 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
 
         libtrace_message_queue_put(&(target->in_main), &msg);
     }
+
+    add_liid_mapping_collector_config(&(state->collector_threads.config),
+            liid, agencyid);
 
     if (found == 0) {
         logger(LOG_INFO, "OpenLI Mediator: agency %s is not recognised by the mediator, yet LIID %s is intended for it?",

@@ -83,6 +83,7 @@ void init_med_collector_config(mediator_collector_config_t *config,
     config->sslconf = sslconf;
     config->rmqconf = rmqconf;
     config->parent_mediatorid = mediatorid;
+    config->liid_to_agency_map = NULL;
 
     pthread_mutex_init(&(config->mutex), NULL);
 }
@@ -113,7 +114,112 @@ void update_med_collector_config(mediator_collector_config_t *config,
  *  @param config       The global config to be destroyed
  */
 void destroy_med_collector_config(mediator_collector_config_t *config) {
+    added_liid_t *iter, *tmp;
+    HASH_ITER(hh, config->liid_to_agency_map, iter, tmp) {
+        HASH_DELETE(hh, config->liid_to_agency_map, iter);
+        free(iter->liid);
+        free(iter->agencyid);
+        free(iter);
+    }
     pthread_mutex_destroy(&(config->mutex));
+}
+
+/** Adds a new LIID -> agency mapping to the map stored in the shared
+ *  configuration.
+ *
+ *  @param config       The global config for the collector threads
+ *  @param liid         The LIID to add to the map
+ *  @param agencyid     The ID of the agency that this LIID is destined for.
+ */
+void add_liid_mapping_collector_config(mediator_collector_config_t *config,
+        char *liid, char *agencyid) {
+    added_liid_t *found = NULL;
+
+    pthread_mutex_lock(&(config->mutex));
+    HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
+    if (found) {
+        free(found->agencyid);
+        found->agencyid = strdup(agencyid);
+    } else {
+        found = calloc(1, sizeof(added_liid_t));
+        found->liid = strdup(liid);
+        found->agencyid = strdup(agencyid);
+
+        HASH_ADD_KEYPTR(hh, config->liid_to_agency_map, found->liid,
+                strlen(found->liid), found);
+    }
+
+    pthread_mutex_unlock(&(config->mutex));
+}
+
+/** Looks up the corresponding agency ID for a given LIID in the map that
+ *  is stored in the shared configuration.
+ *
+ *  @param config       The global config for the collector threads
+ *  @param liid         The LIID to search for
+ *  @return             The ID of the agency that this LIID is destined for.
+ */
+char *lookup_liid_mapping_collector_config(mediator_collector_config_t *config,
+        char *liid) {
+
+    char *res = NULL;
+
+    added_liid_t *found = NULL;
+    pthread_mutex_lock(&(config->mutex));
+    HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
+    if (found) {
+        res = found->agencyid;
+    }
+
+    pthread_mutex_unlock(&(config->mutex));
+    return res;
+}
+
+/** Removes a LIID -> agency mapping from the map stored in the shared
+ *  configuration.
+ *
+ *  @param config       The global config for the collector threads
+ *  @param liid         The LIID to remove from the map
+ */
+void remove_liid_mapping_collector_config(mediator_collector_config_t *config,
+        char *liid) {
+
+    added_liid_t *found = NULL;
+    pthread_mutex_lock(&(config->mutex));
+
+    HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
+    if (found) {
+        HASH_DELETE(hh, config->liid_to_agency_map, found);
+        free(found->agencyid);
+        free(found->liid);
+        free(found);
+    }
+    pthread_mutex_unlock(&(config->mutex));
+}
+
+/** Removes all LIID -> agency mappings that refer to a particular agency
+ *  from the map stored in the shared  configuration.
+ *
+ *  @param config       The global config for the collector threads
+ *  @param agencyid     The agency to remove from the map
+ */
+void remove_liid_mapping_by_agency_collector_config(
+        mediator_collector_config_t *config, char *agencyid) {
+
+    /* Not the quickest, but hopefully this won't happen very often */
+    added_liid_t *iter, *tmp;
+
+    pthread_mutex_lock(&(config->mutex));
+    HASH_ITER(hh, config->liid_to_agency_map, iter, tmp) {
+        if (strcasecmp(iter->agencyid, agencyid) == 0) {
+            HASH_DELETE(hh, config->liid_to_agency_map, iter);
+            free(iter->agencyid);
+            free(iter->liid);
+            free(iter);
+        }
+    }
+
+    pthread_mutex_unlock(&(config->mutex));
 }
 
 /** Grabs the mutex for the shared collector configuration to prevent
@@ -726,6 +832,7 @@ static int collector_thread_epoll_event(coll_recv_t *col,
  */
 static void cleanup_collector_thread(coll_recv_t *col) {
     col_known_liid_t *known, *tmp;
+    integrity_check_state_t *intag, *tmpag;
 
     if (col->colev) {
         remove_mediator_fdevent(col->colev);
@@ -740,6 +847,11 @@ static void cleanup_collector_thread(coll_recv_t *col) {
     destroy_rmq_colev(col);
     if (col->ssl) {
         SSL_free(col->ssl);
+    }
+
+    HASH_ITER(hh, col->known_agencies, intag, tmpag) {
+        HASH_DELETE(hh, col->known_agencies, intag);
+        free_integrity_check_state(intag);
     }
 
     if (col->internalpass) {
@@ -926,6 +1038,19 @@ static void *start_collector_thread(void *params) {
                 col->was_dropped = 0;
             }
 
+            if (msg.type == MED_COLL_LEA_ANNOUNCE) {
+                liagency_t *ag = (liagency_t *)(msg.arg);
+
+                update_integrity_check_state_lea(&(col->known_agencies), ag);
+            }
+
+            if (msg.type == MED_COLL_LEA_WITHDRAW) {
+                char *agencyid = (char *)(msg.arg);
+
+                remove_integrity_check_state(&(col->known_agencies), agencyid);
+                free(agencyid);
+            }
+
         }
 
         if (col->was_dropped) {
@@ -1034,6 +1159,7 @@ static void init_new_colrecv_thread(mediator_collector_t *medcol,
     newcol->next = NULL;
     newcol->rmq_queuename = NULL;
     newcol->creation = tv.tv_sec;
+    newcol->known_agencies = NULL;
 
     if (head) {
         newcol->head = head;

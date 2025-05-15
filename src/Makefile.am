@@ -111,6 +111,7 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
                 mediator/coll_recv_thread.c mediator/coll_recv_thread.h \
                 mediator/lea_send_thread.c mediator/lea_send_thread.h \
                 mediator/mediator_rmq.c mediator/mediator_rmq.h \
+                mediator/mediator_integrity_check.c \
                 byteswap.c byteswap.h mediator/configparser_mediator.h \
                 util.c util.h mediator/configparser_mediator.c \
                 agency.h agency.c logger.c logger.h netcomms.c \

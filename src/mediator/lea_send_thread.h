@@ -91,14 +91,6 @@ enum {
     MED_LEA_MESSAGE_SHUTDOWN_TIMER,
 };
 
-/** Structure describing an LIID->agency association */
-typedef struct added_liid {
-    /** The LIID */
-    char *liid;
-    /** The ID of the agency that the LIID is associated with */
-    char *agencyid;
-} added_liid_t;
-
 /** Message structure for the LEA send threads */
 typedef struct lea_thread_msg {
     /** The message type, defined by the enum above */
@@ -107,6 +99,8 @@ typedef struct lea_thread_msg {
      *  depending on the message type.
      */
     void *data;
+
+    uint64_t data_uint;
 } lea_thread_msg_t;
 
 /** Shared configuration for the LEA send threads -- all config values

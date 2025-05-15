@@ -29,8 +29,19 @@
 
 #include <Judy.h>
 #include <amqp.h>
+#include <uthash.h>
 
 typedef struct liidmapping liid_map_entry_t;
+
+/** Structure describing an LIID->agency association */
+typedef struct added_liid {
+    /** The LIID */
+    char *liid;
+    /** The ID of the agency that the LIID is associated with */
+    char *agencyid;
+
+    UT_hash_handle hh;
+} added_liid_t;
 
 /** Records an association between an LIID and the agency that should receive
  *  the intercepted records for that LIID

@@ -87,5 +87,6 @@ typedef struct liagency {
 
 openli_integrity_hash_method_t map_digest_hash_method_string(char *str);
 void free_liagency(liagency_t *ag);
+liagency_t *copy_liagency(liagency_t *lea);
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
