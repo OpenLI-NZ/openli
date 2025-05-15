@@ -1181,6 +1181,7 @@ int reload_provisioner_config(provision_state_t *currstate) {
     }
     currstate->integrity_sign_private_key_location =
             newstate.integrity_sign_private_key_location;
+    newstate.integrity_sign_private_key_location = NULL;
     load_integrity_signing_privatekey(currstate);
 
 
