@@ -147,12 +147,22 @@ static void clear_med_config(mediator_state_t *state) {
  *  @param state        The global state for the mediator instance
  */
 static void destroy_med_state(mediator_state_t *state) {
+    agency_digest_config_t *ag, *tmp;
 
     /* Tear down the connection to the provisioner */
     free_provisioner(&(state->provisioner));
 
     destroy_med_collector_config(&(state->collector_threads.config));
     destroy_med_agency_config(&(state->agency_threads.config));
+
+    HASH_ITER(hh, state->saved_agencies, ag, tmp) {
+        HASH_DELETE(hh, state->saved_agencies, ag);
+        if (ag->agencyid) {
+            free(ag->agencyid);
+        }
+        free_liagency(ag->config);
+        free(ag);
+    }
 
     /* Close the main epoll file descriptor */
     if (state->epoll_fd != -1) {
@@ -278,6 +288,7 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
     state->timerev = NULL;
     state->col_clean_timerev = NULL;
     state->epoll_fd = -1;
+    state->saved_agencies = NULL;
 
     init_provisioner_instance(&(state->provisioner), &(state->sslconf.ctx));
     if (init_mediator_config(state, configfile) < 0) {
@@ -584,6 +595,32 @@ static int receive_lea_withdrawal(mediator_state_t *state, uint8_t *msgbody,
     return 0;
 }
 
+
+/** Sends a message to a single collector receive thread to tell them about a
+ *  new or updated agency
+ *
+ *  @param col_thread   The collector receive thread to send the message to
+ *  @param lea          The current configuration for the agency being announced
+ *
+ *  @return 0 if successful, -1 if an error occurs
+ */
+static inline int announce_lea_to_single_collector_thread(
+        coll_recv_t *col_thread, liagency_t *lea) {
+
+    liagency_t *copy;
+    col_thread_msg_t msg;
+
+    copy = copy_liagency(lea);
+    if (!copy) {
+        return -1;
+    }
+    memset(&msg, 0, sizeof(msg));
+    msg.type = MED_COLL_LEA_ANNOUNCE;
+    msg.arg = (uint64_t)copy;
+    libtrace_message_queue_put(&(col_thread->in_main), &msg);
+    return 0;
+}
+
 /** Sends a message to all collector receive threads to tell them about a
  *  new or updated agency
  *
@@ -595,24 +632,71 @@ static int receive_lea_withdrawal(mediator_state_t *state, uint8_t *msgbody,
 static int announce_lea_to_collector_threads(mediator_state_t *state,
         liagency_t *lea) {
 
-    liagency_t *copy;
     coll_recv_t *col_thread, *tmp;
-    col_thread_msg_t msg;
+    agency_digest_config_t *agd;
+    liagency_t *copy;
 
     HASH_ITER(hh, state->collector_threads.threads, col_thread, tmp) {
         while (col_thread) {
-            copy = copy_liagency(lea);
-            if (!copy) {
+            if (announce_lea_to_single_collector_thread(col_thread, lea) < 0) {
                 return -1;
             }
-            memset(&msg, 0, sizeof(msg));
-            msg.type = MED_COLL_LEA_ANNOUNCE;
-            msg.arg = (uint64_t)copy;
-            libtrace_message_queue_put(&(col_thread->in_main), &msg);
             col_thread = col_thread->next;
         }
     }
+
+    copy = copy_liagency(lea);
+    HASH_FIND(hh, state->saved_agencies, lea->agencyid, strlen(lea->agencyid),
+            agd);
+    if (!agd) {
+        agd = calloc(1, sizeof(agency_digest_config_t));
+        agd->agencyid = strdup(lea->agencyid);
+        agd->config = copy;
+        agd->disabled = 0;
+        HASH_ADD_KEYPTR(hh, state->saved_agencies, agd->agencyid,
+                strlen(agd->agencyid), agd);
+    } else {
+        if (agd->config) {
+            free_liagency(agd->config);
+        }
+        agd->config = copy;
+    }
     return 0;
+}
+
+static int announce_all_leas_to_collector_thread(mediator_state_t *state,
+        char *collectorid) {
+
+    /* Because we can have multiple threads per "collectorid" (because of
+     * a collector having multiple forwarding threads which each result
+     * in a separate thread on the mediator side), we will end up having
+     * to announce all LEAs to all receive threads associated with this
+     * "collectorid". This means there is going to be a bit of duplication
+     * of announcements to some receive threads, but it's not enough of an
+     * issue to be worth the hassle of trying to avoid the duplication in
+     * the first place.
+     */
+
+    agency_digest_config_t *lea, *tmp;
+    coll_recv_t *col;
+
+    HASH_FIND(hh, state->collector_threads.threads, collectorid,
+            strlen(collectorid), col);
+    if (!col) {
+        /* weird, but ok */
+        return 0;
+    }
+
+    while (col) {
+        HASH_ITER(hh, state->saved_agencies, lea, tmp) {
+            if (announce_lea_to_single_collector_thread(col, lea->config) < 0) {
+                return -1;
+            }
+        }
+        col = col->next;
+    }
+
+    return 1;
 }
 
 /** Parse and action an LEA announcement received from the provisioner.
@@ -973,6 +1057,7 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 
 	med_epoll_ev_t *mev = (med_epoll_ev_t *)(ev->data.ptr);
     int ret = 0;
+    char colname[INET6_ADDRSTRLEN];
 
 	switch(mev->fdtype) {
 		case MED_EPOLL_SIGCHECK_TIMER:
@@ -996,7 +1081,11 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
         case MED_EPOLL_COLL_CONN:
             /* a connection is occuring on our listening socket */
             ret = mediator_accept_collector_connection(
-                    &(state->collector_threads), state->listenerev->fd);
+                    &(state->collector_threads), state->listenerev->fd,
+                    colname, INET6_ADDRSTRLEN);
+            if (ret > 0) {
+                ret = announce_all_leas_to_collector_thread(state, colname);
+            }
             break;
         case MED_EPOLL_CEASE_LIID_TIMER:
             /* an LIID->agency mapping can now be safely removed */

@@ -108,6 +108,17 @@ enum {
      *  same collector
      */
     MED_EPOLL_CLEAN_DEAD_COLRECV,
+
+    /** A timer to trigger the sending of integrity check hash records for
+     *  a particular handover stream
+     */
+    MED_EPOLL_INTEGRITY_HASH_TIMER,
+
+    /** A timer to trigger the sending of signed integrity check records for
+     *  a particular handover stream
+     */
+    MED_EPOLL_INTEGRITY_SIGN_TIMER,
+
 };
 
 /** Starts an existing timer and adds it to the global epoll event set.

@@ -29,6 +29,9 @@
 
 #include <amqp.h>
 #include <libtrace/message_queue.h>
+#include <libwandder_etsili.h>
+#include <openssl/evp.h>
+#include <openssl/err.h>
 #include "netcomms.h"
 #include "openli_tls.h"
 #include "med_epoll.h"
@@ -82,6 +85,12 @@ enum {
 };
 
 
+enum {
+    INTEGRITY_CHECK_NO_ACTION,
+    INTEGRITY_CHECK_SEND_HASH,
+    INTEGRITY_CHECK_REQUEST_SIGN
+};
+
 /** Structure defining a message that may be sent from the main mediator
  *  thread to a collector receive thread.
  */
@@ -95,6 +104,8 @@ typedef struct col_thread_msg {
     uint64_t arg;
 } col_thread_msg_t;
 
+typedef struct agency_digest_config agency_digest_config_t;
+
 /** Structure for keeping track of the LIIDs that a collector receive thread
  *  has seen
  */
@@ -106,7 +117,7 @@ typedef struct col_known_liid {
     int liidlen;
 
     /** Timestamp when this LIID was last seen */
-    uint64_t lastseen;
+    time_t lastseen;
 
     /** Flag indicating whether we have declared an RMQ for publishing
      *  raw IP to the pcap thread.
@@ -119,6 +130,12 @@ typedef struct col_known_liid {
     uint8_t declared_int_rmq;
 
     const char *queuenames[3];
+
+    uint8_t no_agency_map_warning;
+
+    time_t last_agency_check;
+
+    agency_digest_config_t *digest_config;
 
     UT_hash_handle hh;
 } col_known_liid_t;
@@ -144,26 +161,37 @@ typedef struct mediator_collector_config {
 
     /** Mapping of LIIDs to the ID of their current destination agency */
     added_liid_t *liid_to_agency_map;
+
 } mediator_collector_config_t;
 
 
-typedef struct agency_digest_config {
+struct agency_digest_config {
     char *agencyid;
 
     liagency_t *config;
 
+    uint8_t disabled;
+
     UT_hash_handle hh;
-} agency_digest_config_t;
+};
 
 typedef struct integrity_check_state {
 
     char *key;
     char *liid;
-    agency_digest_config_t *agency;
+    uint32_t cin;
+    openli_proto_msgtype_t msgtype;
 
-    /* TODO all the per-LIID + CIN state for calculating hash digests
-     * and signed hashes
-     */
+    agency_digest_config_t *agency;
+    col_known_liid_t *intercept;
+
+    med_epoll_ev_t *hash_timer;
+    med_epoll_ev_t *sign_timer;
+
+    uint32_t pdus_since_last_hashrec;
+    uint32_t hashes_since_last_signrec;
+
+    EVP_MD_CTX *hash_ctx;
 
     UT_hash_handle hh;
 
@@ -176,6 +204,9 @@ struct single_coll_receiver {
 
     /** ID of the thread that this connection is running in */
     pthread_t tid;
+
+    /** The file descriptor for the main epoll loop in this thread */
+    int epoll_fd;
 
     /** Timestamp of when the connection attempt was made */
     time_t creation;
@@ -245,6 +276,11 @@ struct single_coll_receiver {
     /** The socket for sending records onto the local RMQ instance */
     amqp_socket_t *amqp_producer_sock;
 
+    /** Decoder for parsing received ETSI records (required for integrity
+     *  check generation)
+     */
+    wandder_etsispec_t *etsidecoder;
+
     /** The buffer used to store ETSI records received from the collector via
      *  a network connection */
     net_buffer_t *incoming;
@@ -268,6 +304,10 @@ struct single_coll_receiver {
      *  their corresponding configuraiton for calculating integrity checks
      */
     agency_digest_config_t *known_agencies;
+
+    /** The "integrity check" state for all observed "LIID + CIN + HI" streams
+     */
+    integrity_check_state_t *integrity_state;
 
     /** A pointer to the shared global config for collector receive threads
      *  (owned by the main mediator thread)
@@ -412,12 +452,17 @@ void destroy_med_collector_config(mediator_collector_config_t *config);
  *  @param medcol       The shared config for all collector receive threads
  *  @param listenfd     The listening file descriptor that the connection
  *                      arrived on
+ *  @param strbuf[out]  A character buffer to store the key in the collector
+ *                      receive thread map that the new receive thread was
+ *                      inserted under.
+ *  @param strbuflen    The amount of space available in the buffer provided
+ *                      by 'strbuf'
  *
  *  @return -1 if an error occurs, otherwise returns the file descriptor
  *          for the newly accepted connection.
  */
 int mediator_accept_collector_connection(mediator_collector_t *medcol,
-        int listenfd);
+        int listenfd, char *strbuf, size_t strbuflen);
 
 /** Halts all collector receive threads and waits for the threads to
  *  terminate.
@@ -446,7 +491,12 @@ int update_agency_digest_config_map(agency_digest_config_t **map,
 void free_agency_digest_config(agency_digest_config_t *dig);
 void remove_agency_digest_config(agency_digest_config_t **map,
         char *agencyid);
-
+void free_integrity_check_state(integrity_check_state_t *integ);
+uint8_t update_integrity_check_state(integrity_check_state_t **map,
+        col_known_liid_t *known, uint8_t *msgbody, uint16_t msglen,
+        openli_proto_msgtype_t msgtype, int epoll_fd,
+        wandder_etsispec_t *decoder);
+int integrity_hash_timer_callback(coll_recv_t *col, med_epoll_ev_t *mev);
 
 #endif
 

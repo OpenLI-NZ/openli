@@ -63,6 +63,14 @@
  */
 #define LIID_QUEUE_EXPIRY_THRESH (10 * 60)
 
+/** The frequency (in seconds) that we should check if the LIID -> agency
+ *  mapping has changed.
+ *
+ *  Ideally, this would never change but misconfigurations are always
+ *  possible so we need to handle that case.
+ */
+#define AGENCY_MAPPING_CHECK_FREQ (5)
+
 /** Initialises the shared configuration for the collectors managed by a
  *  mediator.
  *
@@ -539,8 +547,11 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
     unsigned char liidstr[65536];
     uint16_t liidlen;
     col_known_liid_t *found;
+    char *agencyid;
     struct timeval tv;
     int r;
+    agency_digest_config_t *agdigest = NULL;
+    uint8_t integrity_res = INTEGRITY_CHECK_NO_ACTION;
 
     /* The queue that this record must be published to is derived from
      * the LIID for the record and the record type
@@ -569,6 +580,9 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
         found->lastseen = 0;
         found->declared_raw_rmq = 0;
         found->declared_int_rmq = 0;
+        found->no_agency_map_warning = 0;
+        found->last_agency_check = 0;
+        found->digest_config = NULL;
 
         snprintf(qname, 1024, "%s-iri", found->liid);
         found->queuenames[0] = strdup(qname);
@@ -598,6 +612,49 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
     gettimeofday(&tv, NULL);
     found->lastseen = tv.tv_sec;
+
+    if (found->lastseen - found->last_agency_check >=
+            AGENCY_MAPPING_CHECK_FREQ) {
+
+        /* Look up the integrity check configuration for the recipient of
+         * this intercept */
+        agencyid = lookup_liid_mapping_collector_config(col->parentconfig,
+                found->liid);
+        found->last_agency_check = found->lastseen;
+
+        if (agencyid == NULL) {
+            if (found->no_agency_map_warning == 0) {
+                logger(LOG_INFO, "OpenLI Mediator: collector thread %s does not have a usable agency mapping for LIID %s, cannot produce integrity checks for this LIID",
+                        col->ipaddr, found->liid);
+                found->no_agency_map_warning = 1;
+            }
+            found->digest_config = NULL;
+        } else {
+            HASH_FIND(hh, col->known_agencies, agencyid, strlen(agencyid),
+                    agdigest);
+            if (!agdigest) {
+                if (found->no_agency_map_warning == 0) {
+                    logger(LOG_INFO, "OpenLI Mediator: collector thread %s is missing expected agency digest configuration for agency %s, will not be able to produce integrity checks for LIID %s",
+                            col->ipaddr, agencyid, found->liid);
+                    found->no_agency_map_warning = 1;
+                }
+                found->digest_config = NULL;
+            } else {
+                found->digest_config = agdigest;
+            }
+        }
+    }
+
+
+    if (found->digest_config && found->digest_config->config &&
+            !found->digest_config->disabled &&
+            found->digest_config->config->digest_required) {
+
+        integrity_res = update_integrity_check_state(&(col->integrity_state),
+                found, msgbody + (liidlen + 2), msglen - (liidlen + 2),
+                msgtype, col->epoll_fd, col->etsidecoder);
+        (void)integrity_res;
+    }
 
     /* Hand off to publishing methods defined in mediator_rmq.c */
     if (msgtype == OPENLI_PROTO_ETSI_CC) {
@@ -816,6 +873,13 @@ static int collector_thread_epoll_event(coll_recv_t *col,
                 ret = receive_collector(col, mev);
             }
             break;
+        case MED_EPOLL_INTEGRITY_HASH_TIMER:
+            /* TODO */
+            integrity_hash_timer_callback(col, mev);
+            break;
+        case MED_EPOLL_INTEGRITY_SIGN_TIMER:
+            /* TODO */
+            break;
         default:
             logger(LOG_INFO,
                     "OpenLI Mediator: invalid epoll event type %d seen in collector thread for %s", mev->fdtype, col->ipaddr);
@@ -832,7 +896,8 @@ static int collector_thread_epoll_event(coll_recv_t *col,
  */
 static void cleanup_collector_thread(coll_recv_t *col) {
     col_known_liid_t *known, *tmp;
-    agency_digest_config_t *intag, *tmpag;
+    agency_digest_config_t *ag, *tmpag;
+    integrity_check_state_t *integ, *integtmp;
 
     if (col->colev) {
         remove_mediator_fdevent(col->colev);
@@ -849,9 +914,14 @@ static void cleanup_collector_thread(coll_recv_t *col) {
         SSL_free(col->ssl);
     }
 
-    HASH_ITER(hh, col->known_agencies, intag, tmpag) {
-        HASH_DELETE(hh, col->known_agencies, intag);
-        free_agency_digest_config(intag);
+    HASH_ITER(hh, col->known_agencies, ag, tmpag) {
+        HASH_DELETE(hh, col->known_agencies, ag);
+        free_agency_digest_config(ag);
+    }
+
+    HASH_ITER(hh, col->integrity_state, integ, integtmp) {
+        HASH_DELETE(hh, col->integrity_state, integ);
+        free_integrity_check_state(integ);
     }
 
     if (col->internalpass) {
@@ -884,6 +954,10 @@ static void cleanup_collector_thread(coll_recv_t *col) {
 
     if (col->ipaddr) {
         free(col->ipaddr);
+    }
+
+    if (col->etsidecoder) {
+        wandder_free_etsili_decoder(col->etsidecoder);
     }
 
 }
@@ -940,6 +1014,7 @@ static void *start_collector_thread(void *params) {
     queuecheck = create_mediator_timer(epoll_fd, NULL,
             MED_EPOLL_QUEUE_EXPIRE_TIMER, 60);
 
+    col->epoll_fd = epoll_fd;
     while (!is_halted) {
 
         /* Check for messages on the control socket */
@@ -1160,6 +1235,10 @@ static void init_new_colrecv_thread(mediator_collector_t *medcol,
     newcol->rmq_queuename = NULL;
     newcol->creation = tv.tv_sec;
     newcol->known_agencies = NULL;
+    newcol->integrity_state = NULL;
+    newcol->epoll_fd = -1;
+
+    newcol->etsidecoder = wandder_create_etsili_decoder();
 
     if (head) {
         newcol->head = head;
@@ -1191,18 +1270,17 @@ static void init_new_colrecv_thread(mediator_collector_t *medcol,
  *          for the newly accepted connection.
  */
 int mediator_accept_collector_connection(mediator_collector_t *medcol,
-        int listenfd) {
+        int listenfd, char *strbuf, size_t strbuflen) {
     int newfd = -1;
     struct sockaddr_storage saddr;
     socklen_t socklen = sizeof(saddr);
-    char strbuf[INET6_ADDRSTRLEN];
     coll_recv_t *found = NULL;
 
     /* Standard socket connection accept code... */
     newfd = accept(listenfd, (struct sockaddr *)&saddr, &socklen);
     fd_set_nonblock(newfd);
 
-    if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, sizeof(strbuf),
+    if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, strbuflen,
                 0, 0, NI_NUMERICHOST) != 0) {
         logger(LOG_INFO, "OpenLI Mediator: getnameinfo error in mediator: %s.",
                 strerror(errno));
