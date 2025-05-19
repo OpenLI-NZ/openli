@@ -137,6 +137,7 @@ static integrity_check_state_t *lookup_integrity_check_state(
         found->hashed_seqnos = calloc(32, sizeof(int64_t));
         found->seqno_array_size = 32;
         found->seqno_next_index = 0;
+        found->self_seqno = 1;
         HASH_ADD_KEYPTR(hh, *map, found->key, strlen(found->key), found);
     }
 

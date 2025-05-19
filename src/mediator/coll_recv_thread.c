@@ -568,7 +568,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
     col_known_liid_t *found;
     char *agencyid;
     struct timeval tv;
-    int r;
+    int r = 0;
     agency_digest_config_t *agdigest = NULL;
     uint8_t integrity_res = INTEGRITY_CHECK_NO_ACTION;
     integrity_check_state_t *chain = NULL;
@@ -673,7 +673,6 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
         integrity_res = update_integrity_check_state(&(col->integrity_state),
                 found, msgbody + (liidlen + 2), msglen - (liidlen + 2),
                 msgtype, col->epoll_fd, col->etsidecoder, &chain);
-        (void)integrity_res;
     }
 
     /* Hand off to publishing methods defined in mediator_rmq.c */
@@ -693,7 +692,6 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
             increment_col_drop_counter(col);
             r = 0;
         }
-        return r;
     }
 
     if (msgtype == OPENLI_PROTO_ETSI_IRI) {
@@ -713,7 +711,6 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
             increment_col_drop_counter(col);
             r = 0;
         }
-        return r;
     }
 
     if (msgtype == OPENLI_PROTO_RAWIP_SYNC ||
@@ -746,10 +743,13 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
             increment_col_drop_counter(col);
             r = 0;
         }
-        return r;
     }
 
-    return 1;
+    if (r >= 0 && integrity_res == INTEGRITY_CHECK_SEND_HASH) {
+        r = send_integrity_check_hash_pdu(col, chain);
+    }
+
+    return r;
 }
 
 /** Reads and processes a message from the collector that this thread
@@ -894,8 +894,7 @@ static int collector_thread_epoll_event(coll_recv_t *col,
             }
             break;
         case MED_EPOLL_INTEGRITY_HASH_TIMER:
-            /* TODO */
-            integrity_hash_timer_callback(col, mev);
+            ret = integrity_hash_timer_callback(col, mev);
             break;
         case MED_EPOLL_INTEGRITY_SIGN_TIMER:
             /* TODO */
