@@ -311,7 +311,8 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
     state->collector_threads.threads = NULL;
     init_med_collector_config(&(state->collector_threads.config),
             state->etsitls,
-            &(state->sslconf), &(state->RMQ_conf), state->mediatorid);
+            &(state->sslconf), &(state->RMQ_conf), state->mediatorid,
+            state->operatorid);
 
     logger(LOG_DEBUG, "OpenLI Mediator: ETSI TLS encryption %s",
         state->etsitls ? "enabled" : "disabled");
@@ -402,7 +403,7 @@ static void update_coll_recv_thread_config(mediator_state_t *state) {
     col_thread_msg_t msg;
 
     update_med_collector_config(&(state->collector_threads.config),
-                state->etsitls, state->mediatorid);
+                state->etsitls, state->mediatorid, state->operatorid);
 
     /* Send the "reload your config" message to every collector thread */
     memset(&msg, 0, sizeof(msg));
@@ -1454,7 +1455,7 @@ static int reload_mediator_config(mediator_state_t *currstate) {
     }
 
     if (tlschanged != 0 || newstate.etsitls != currstate->etsitls ||
-            medidchanged || rmqchanged) {
+            medidchanged || rmqchanged || opidchanged) {
         /* Something has changed that will affect our collector receive
          * threads and therefore we may need to drop them and force them
          * to reconnect.

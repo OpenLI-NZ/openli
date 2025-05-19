@@ -162,6 +162,9 @@ typedef struct mediator_collector_config {
     /** Mapping of LIIDs to the ID of their current destination agency */
     added_liid_t *liid_to_agency_map;
 
+    /** The operator ID for this mediator */
+    char *operatorid;
+
 } mediator_collector_config_t;
 
 
@@ -192,6 +195,12 @@ typedef struct integrity_check_state {
     uint32_t hashes_since_last_signrec;
 
     EVP_MD_CTX *hash_ctx;
+
+    int64_t *hashed_seqnos;
+    size_t seqno_array_size;
+    size_t seqno_next_index;
+
+    int64_t self_seqno;
 
     UT_hash_handle hh;
 
@@ -280,6 +289,9 @@ struct single_coll_receiver {
      *  check generation)
      */
     wandder_etsispec_t *etsidecoder;
+
+    /** Encoder for generating ETSI Integrity Check records */
+    wandder_encoder_t *etsiencoder;
 
     /** The buffer used to store ETSI records received from the collector via
      *  a network connection */
@@ -370,10 +382,12 @@ typedef struct mediator_collectors {
  *  @param rmqconf      A pointer to the RabbitMQ configuration for this
  *                      mediator.
  *  @param mediatorid   The ID number of the mediator
+ *  @param operatorid   The ID string of the operator whose network is
+ *                      hosting this mediator
  */
 void init_med_collector_config(mediator_collector_config_t *config,
         uint8_t usetls, openli_ssl_config_t *sslconf,
-        openli_RMQ_config_t *rmqconf, uint32_t mediatorid);
+        openli_RMQ_config_t *rmqconf, uint32_t mediatorid, char *operatorid);
 
 /** Locks the shared collector configuration for exclusive use.
  *
@@ -397,9 +411,11 @@ void unlock_med_collector_config(mediator_collector_config_t *config);
  *  @param usetls       The value of the global flag that indicates whether
  *                      new collector connections must use TLS.
  *  @param mediatorid   The ID number of the mediator
+ *  @param operatorid   The ID string of the operator whose network is
+ *                      hosting this mediator
  */
 void update_med_collector_config(mediator_collector_config_t *config,
-        uint8_t usetls, uint32_t mediatorid);
+        uint8_t usetls, uint32_t mediatorid, char *operatorid);
 
 /** Adds a new LIID -> agency mapping to the map stored in the shared
  *  configuration.
@@ -495,8 +511,10 @@ void free_integrity_check_state(integrity_check_state_t *integ);
 uint8_t update_integrity_check_state(integrity_check_state_t **map,
         col_known_liid_t *known, uint8_t *msgbody, uint16_t msglen,
         openli_proto_msgtype_t msgtype, int epoll_fd,
-        wandder_etsispec_t *decoder);
+        wandder_etsispec_t *decoder, integrity_check_state_t **chain);
 int integrity_hash_timer_callback(coll_recv_t *col, med_epoll_ev_t *mev);
+int send_integrity_check_hash_pdu(coll_recv_t *col,
+        integrity_check_state_t *ics);
 
 #endif
 

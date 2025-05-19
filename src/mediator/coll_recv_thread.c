@@ -82,16 +82,24 @@
  *  @param rmqconf      A pointer to the RabbitMQ configuration for this
  *                      mediator.
  *  @param mediatorid   The ID number of the mediator
+ *  @param operatorid   The ID string for the operator who is running this
+ *                      mediator
  */
 void init_med_collector_config(mediator_collector_config_t *config,
         uint8_t usetls, openli_ssl_config_t *sslconf,
-        openli_RMQ_config_t *rmqconf, uint32_t mediatorid) {
+        openli_RMQ_config_t *rmqconf, uint32_t mediatorid,
+        char *operatorid) {
 
     config->usingtls = usetls;
     config->sslconf = sslconf;
     config->rmqconf = rmqconf;
     config->parent_mediatorid = mediatorid;
     config->liid_to_agency_map = NULL;
+    if (operatorid) {
+        config->operatorid = strdup(operatorid);
+    } else {
+        config->operatorid = NULL;
+    }
 
     pthread_mutex_init(&(config->mutex), NULL);
 }
@@ -104,14 +112,22 @@ void init_med_collector_config(mediator_collector_config_t *config,
  *  @param usetls       The value of the global flag that indicates whether
  *                      new collector connections must use TLS.
  *  @param mediatorid   The ID number of the mediator
+ *  @param operatorid   The ID string for the operator who is running this
+ *                      mediator
  */
 void update_med_collector_config(mediator_collector_config_t *config,
-        uint8_t usetls, uint32_t mediatorid) {
+        uint8_t usetls, uint32_t mediatorid, char *operatorid) {
 
     pthread_mutex_lock(&(config->mutex));
 
     config->usingtls = usetls;
     config->parent_mediatorid = mediatorid;
+    if (config->operatorid) {
+        free(config->operatorid);
+    }
+    if (operatorid) {
+        config->operatorid = strdup(operatorid);
+    }
 
     pthread_mutex_unlock(&(config->mutex));
 }
@@ -128,6 +144,9 @@ void destroy_med_collector_config(mediator_collector_config_t *config) {
         free(iter->liid);
         free(iter->agencyid);
         free(iter);
+    }
+    if (config->operatorid) {
+        free(config->operatorid);
     }
     pthread_mutex_destroy(&(config->mutex));
 }
@@ -552,6 +571,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
     int r;
     agency_digest_config_t *agdigest = NULL;
     uint8_t integrity_res = INTEGRITY_CHECK_NO_ACTION;
+    integrity_check_state_t *chain = NULL;
 
     /* The queue that this record must be published to is derived from
      * the LIID for the record and the record type
@@ -652,7 +672,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
         integrity_res = update_integrity_check_state(&(col->integrity_state),
                 found, msgbody + (liidlen + 2), msglen - (liidlen + 2),
-                msgtype, col->epoll_fd, col->etsidecoder);
+                msgtype, col->epoll_fd, col->etsidecoder, &chain);
         (void)integrity_res;
     }
 
@@ -960,6 +980,10 @@ static void cleanup_collector_thread(coll_recv_t *col) {
         wandder_free_etsili_decoder(col->etsidecoder);
     }
 
+    if (col->etsiencoder) {
+        free_wandder_encoder(col->etsiencoder);
+    }
+
 }
 
 /** pthread_create() callback to start a collector receive thread
@@ -1239,6 +1263,7 @@ static void init_new_colrecv_thread(mediator_collector_t *medcol,
     newcol->epoll_fd = -1;
 
     newcol->etsidecoder = wandder_create_etsili_decoder();
+    newcol->etsiencoder = init_wandder_encoder();
 
     if (head) {
         newcol->head = head;

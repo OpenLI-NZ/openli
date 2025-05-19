@@ -25,11 +25,13 @@
  */
 
 #include <uthash.h>
+#include <libwandder_etsili.h>
 
 #include "logger.h"
 #include "agency.h"
 #include "coll_recv_thread.h"
 #include "liidmapping.h"
+#include "mediator_rmq.h"
 
 int update_agency_digest_config_map(agency_digest_config_t **map,
         liagency_t *lea) {
@@ -132,6 +134,9 @@ static integrity_check_state_t *lookup_integrity_check_state(
         found->cin = cin;
         found->msgtype = msgtype;
         found->liid = strdup(liid);
+        found->hashed_seqnos = calloc(32, sizeof(int64_t));
+        found->seqno_array_size = 32;
+        found->seqno_next_index = 0;
         HASH_ADD_KEYPTR(hh, *map, found->key, strlen(found->key), found);
     }
 
@@ -169,22 +174,45 @@ static inline void printable_integrity_key(integrity_check_state_t *ics,
 
 }
 
+static wandder_encoded_result_t *generate_integrity_check_pdu(
+        integrity_check_state_t *ics, uint32_t mediatorid, char *operatorid,
+        wandder_encoder_t *encoder) {
+
+    wandder_encoded_result_t *ic_pdu = NULL;
+    uint8_t hashresult[EVP_MAX_MD_SIZE];
+    unsigned int hashlen;
+
+    EVP_DigestFinal_ex(ics->hash_ctx, hashresult, &hashlen);
+    (void)mediatorid;
+    (void)operatorid;
+
+    reset_wandder_encoder(encoder);
+
+
+    reset_hash_context(ics);
+    return ic_pdu;
+}
+
 uint8_t update_integrity_check_state(integrity_check_state_t **map,
         col_known_liid_t *known, uint8_t *msgbody, uint16_t msglen,
         openli_proto_msgtype_t msgtype, int epoll_fd,
-        wandder_etsispec_t *decoder) {
+        wandder_etsispec_t *decoder, integrity_check_state_t **chain) {
 
     //char keydump[128];
     integrity_check_state_t *found;
+    int64_t seqno;
     uint8_t action = INTEGRITY_CHECK_NO_ACTION;
 
     if (msgtype != OPENLI_PROTO_ETSI_IRI && msgtype != OPENLI_PROTO_ETSI_CC) {
+        *chain = NULL;
         return action;
     }
 
     wandder_attach_etsili_buffer(decoder, msgbody, msglen, false);
 
     found = lookup_integrity_check_state(map, known->liid, msgtype, decoder);
+    seqno = wandder_etsili_get_sequence_number(decoder);
+
     //printable_integrity_key(found, keydump, 128);  // TODO remove
     if (found->agency == NULL) {
         /* this is a new stream */
@@ -206,12 +234,15 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
         found->agency = known->digest_config;
     }
 
+    EVP_DigestUpdate(found->hash_ctx, msgbody, msglen);
 
-    if (msgtype == OPENLI_PROTO_ETSI_IRI) {
-
-    } else if (msgtype == OPENLI_PROTO_ETSI_CC) {
-
+    if (found->seqno_next_index == found->seqno_array_size) {
+        found->hashed_seqnos = realloc(found->hashed_seqnos,
+                (found->seqno_array_size + 32) * sizeof(int64_t));
+        found->seqno_array_size += 32;
     }
+    found->hashed_seqnos[found->seqno_next_index] = seqno;
+    found->seqno_next_index ++;
 
     if (found->pdus_since_last_hashrec == 0 &&
             found->agency->config->digest_hash_pdulimit > 1) {
@@ -226,46 +257,101 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
             found->agency->config->digest_hash_pdulimit) {
         halt_mediator_timer(found->hash_timer);
 
-        found->pdus_since_last_hashrec = 0;
+        //found->pdus_since_last_hashrec = 0;
 
         action = INTEGRITY_CHECK_SEND_HASH;
 
     }
-
+    *chain = found;
     return action;
 
 }
 
-int integrity_hash_timer_callback(coll_recv_t *col, med_epoll_ev_t *mev) {
+int send_integrity_check_hash_pdu(coll_recv_t *col,
+        integrity_check_state_t *ics) {
 
-    integrity_check_state_t *ics;
-    //char keydump[128];
+    wandder_encoded_result_t *encres;
+    char *operatorid = NULL;
+    uint32_t medid;
+    col_known_liid_t *found;
+    int r = 0;
 
-    (void)col;
-
-    if (mev == NULL) {
-        return -1;
+    if (ics == NULL) {
+        return 0;
     }
-
-    ics = (integrity_check_state_t *)(mev->state);
-    halt_mediator_timer(mev);
 
     if (ics->pdus_since_last_hashrec == 0) {
         /* shouldn't happen, but just in case... */
         return 0;
     }
 
+    HASH_FIND(hh, col->known_liids, ics->liid, strlen(ics->liid), found);
+    if (!found) {
+        /* this shouldn't happen either */
+        return 0;
+    }
+
+    if (!found->declared_int_rmq) {
+        /* we don't have an RMQ to put this IC PDU into, so for now we'll
+         * just have to skip it */
+        ics->pdus_since_last_hashrec = 0;
+        return 0;
+    }
+
     //printable_integrity_key(ics, keydump, 128);
 
-    /* TODO generate a hash digest record and push it into the appropriate
+    /* Generate a hash digest record and push it into the appropriate
      * RMQ for the LIID
      */
 
+    lock_med_collector_config(col->parentconfig);
+    if (col->parentconfig->operatorid) {
+        operatorid = strdup(col->parentconfig->operatorid);
+    }
+    medid = col->parentconfig->parent_mediatorid;
+    unlock_med_collector_config(col->parentconfig);
+
+    encres = generate_integrity_check_pdu(ics, medid, operatorid,
+            col->etsiencoder);
+    if (ics->msgtype == OPENLI_PROTO_ETSI_CC) {
+        r = publish_cc_on_mediator_liid_RMQ_queue(col->amqp_producer_state,
+                encres->encoded, encres->len, found->liid,
+                found->queuenames[1], &(col->rmq_blocked));
+    } else if (ics->msgtype == OPENLI_PROTO_ETSI_IRI) {
+        r = publish_iri_on_mediator_liid_RMQ_queue(col->amqp_producer_state,
+                encres->encoded, encres->len, found->liid,
+                found->queuenames[0], &(col->rmq_blocked));
+    }
+
+    if (r < 0) {
+        amqp_destroy_connection(col->amqp_producer_state);
+        col->amqp_producer_state = NULL;
+    }
+    if (operatorid) {
+        free(operatorid);
+    }
+    wandder_release_encoded_result(col->etsiencoder, encres);
     ics->pdus_since_last_hashrec = 0;
 
     // don't restart the timer until we've seen at least one hashable PDU
+    halt_mediator_timer(ics->hash_timer);
 
     return 1;
+}
+
+int integrity_hash_timer_callback(coll_recv_t *col, med_epoll_ev_t *mev) {
+
+    integrity_check_state_t *ics;
+//char keydump[128];
+
+    if (mev == NULL) {
+        return -1;
+    }
+
+    ics = (integrity_check_state_t *)(mev->state);
+
+    return send_integrity_check_hash_pdu(col, ics);
+
 }
 
 void free_integrity_check_state(integrity_check_state_t *integ) {
@@ -277,5 +363,6 @@ void free_integrity_check_state(integrity_check_state_t *integ) {
     if (integ->hash_ctx) EVP_MD_CTX_free(integ->hash_ctx);
     if (integ->hash_timer) destroy_mediator_timer(integ->hash_timer);
     if (integ->sign_timer) destroy_mediator_timer(integ->sign_timer);
+    if (integ->hashed_seqnos) free(integ->hashed_seqnos);
     free(integ);
 }
