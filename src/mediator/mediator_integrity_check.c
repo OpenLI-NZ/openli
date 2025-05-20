@@ -32,6 +32,7 @@
 #include "coll_recv_thread.h"
 #include "liidmapping.h"
 #include "mediator_rmq.h"
+#include "etsiencoding.h"
 
 int update_agency_digest_config_map(agency_digest_config_t **map,
         liagency_t *lea) {
@@ -175,21 +176,69 @@ static inline void printable_integrity_key(integrity_check_state_t *ics,
 
 }
 
-static wandder_encoded_result_t *generate_integrity_check_pdu(
+static inline void populate_integrity_check_pshdr_data(
+        wandder_etsipshdr_data_t *hdrdata, integrity_check_state_t *ics,
+        uint32_t mediatorid, char *operatorid, char *netelemid) {
+
+    hdrdata->liid = ics->liid;
+    hdrdata->liid_len = strlen(ics->liid);
+    if (ics->agency->config->agencycc &&
+            strlen(ics->agency->config->agencycc) == 2) {
+        hdrdata->authcc = ics->agency->config->agencycc;
+        hdrdata->delivcc = ics->agency->config->agencycc;
+    } else {
+        hdrdata->authcc = "--";
+        hdrdata->delivcc = "--";
+    }
+
+    hdrdata->authcc_len = strlen(hdrdata->authcc);
+    hdrdata->delivcc_len = strlen(hdrdata->delivcc);
+
+    if (operatorid) {
+        hdrdata->operatorid = operatorid;
+    } else {
+        hdrdata->operatorid = "unspecified";
+    }
+    hdrdata->operatorid_len = strlen(hdrdata->operatorid);
+
+    if (strcmp(hdrdata->authcc, "NL") == 0) {
+        snprintf(netelemid, 16, "%u", mediatorid);
+    } else {
+        snprintf(netelemid, 16, "med-%u", mediatorid);
+    }
+    hdrdata->networkelemid = netelemid;
+    hdrdata->networkelemid_len = strlen(netelemid);
+
+    hdrdata->intpointid = NULL;
+    hdrdata->intpointid_len = 0;
+}
+
+static wandder_encoded_result_t *generate_integrity_check_hash_pdu(
         integrity_check_state_t *ics, uint32_t mediatorid, char *operatorid,
         wandder_encoder_t *encoder) {
 
     wandder_encoded_result_t *ic_pdu = NULL;
     uint8_t hashresult[EVP_MAX_MD_SIZE];
     unsigned int hashlen;
+    wandder_etsipshdr_data_t hdrdata;
+    char netelemid[128];
 
     EVP_DigestFinal_ex(ics->hash_ctx, hashresult, &hashlen);
-    (void)mediatorid;
-    (void)operatorid;
+    populate_integrity_check_pshdr_data(&hdrdata, ics, mediatorid,
+            operatorid, netelemid);
 
     reset_wandder_encoder(encoder);
 
+    ic_pdu = encode_etsi_integrity_check(encoder, &hdrdata, ics->self_seqno,
+            ics->agency->config->digest_hash_method, INTEGRITY_CHECK_SEND_HASH,
+            ics->msgtype, hashresult, hashlen, ics->hashed_seqnos,
+            ics->seqno_next_index);
 
+    if (ic_pdu != NULL) {
+        ics->self_seqno ++;
+    }
+
+    ics->seqno_next_index = 0;
     reset_hash_context(ics);
     return ic_pdu;
 }
@@ -312,7 +361,7 @@ int send_integrity_check_hash_pdu(coll_recv_t *col,
     medid = col->parentconfig->parent_mediatorid;
     unlock_med_collector_config(col->parentconfig);
 
-    encres = generate_integrity_check_pdu(ics, medid, operatorid,
+    encres = generate_integrity_check_hash_pdu(ics, medid, operatorid,
             col->etsiencoder);
     if (ics->msgtype == OPENLI_PROTO_ETSI_CC) {
         r = publish_cc_on_mediator_liid_RMQ_queue(col->amqp_producer_state,

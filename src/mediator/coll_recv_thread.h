@@ -86,9 +86,9 @@ enum {
 
 
 enum {
-    INTEGRITY_CHECK_NO_ACTION,
-    INTEGRITY_CHECK_SEND_HASH,
-    INTEGRITY_CHECK_REQUEST_SIGN
+    INTEGRITY_CHECK_NO_ACTION = 0,
+    INTEGRITY_CHECK_SEND_HASH = 1,
+    INTEGRITY_CHECK_REQUEST_SIGN = 2,
 };
 
 /** Structure defining a message that may be sent from the main mediator
