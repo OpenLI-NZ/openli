@@ -175,6 +175,19 @@ int encode_templated_ipmmcc(wandder_encoder_t *encoder,
 encoded_global_template_t *lookup_global_template(Pvoid_t *saved_templates,
         uint32_t key, uint8_t *is_new);
 void clear_global_templates(Pvoid_t *saved_templates);
+
+void encode_etsili_pshdr(wandder_encoder_t *encoder,
+        wandder_etsipshdr_data_t *hdrdata, int64_t cin,
+        int64_t seqno, struct timeval *tv);
+
+/* defined in tripayload.c */
+wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
+        wandder_etsipshdr_data_t *hdrdata, int64_t seqno);
+
+/* defined in hi1notification.c */
+wandder_encoded_result_t *encode_etsi_hi1_notification(
+        wandder_encoder_t *encoder, hi1_notify_data_t *not_data,
+        char *operatorid, char *shortopid);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

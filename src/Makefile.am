@@ -120,10 +120,12 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
                 collector/jenkinshash.c openli_tls.c openli_tls.h \
                 collector/etsiencoding/etsiencoding.h \
                 collector/etsiencoding/etsiencoding.c \
+                collector/etsiencoding/tripayload.c \
+                collector/etsiencoding/hi1notification.c \
                 collector/etsiencoding/encryptcontainer.c \
                 coreserver.c coreserver.h
 openlimediator_LDADD = @ADD_LIBS@
 openlimediator_LDFLAGS=-lpthread @MEDIATOR_LIBS@
-openlimediator_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Werror -Wall -Wextra
+openlimediator_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/etsiencoding -I$(builddir) -Werror -Wall -Wextra
 endif
 

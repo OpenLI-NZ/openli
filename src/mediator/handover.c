@@ -30,7 +30,7 @@
 #include "logger.h"
 #include "util.h"
 #include "netcomms.h"
-#include "etsili_core.h"
+#include "etsiencoding.h"
 #include "handover.h"
 #include "med_epoll.h"
 #include "config.h"

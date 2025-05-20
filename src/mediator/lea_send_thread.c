@@ -31,6 +31,7 @@
 #include "mediator_rmq.h"
 #include "handover.h"
 #include "agency.h"
+#include "etsiencoding.h"
 
 /** The code in this source file implements an "LEA send" thread for the
  *  OpenLI mediator.
