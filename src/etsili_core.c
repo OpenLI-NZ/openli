@@ -537,9 +537,10 @@ wandder_encoded_result_t *encode_emailiri_body(wandder_encoder_t *encoder,
                 break;
             case EMAILIRI_CONTENTS_RECIPIENTS:
                 ENC_CSEQUENCE(encoder, p->itemnum);
+                ENC_USEQUENCE(encoder);
                 encode_email_recipients(encoder,
                         (etsili_email_recipients_t *)(p->itemptr));
-                END_ENCODED_SEQUENCE(encoder, 1);
+                END_ENCODED_SEQUENCE(encoder, 2);
                 break;
 
             case EMAILIRI_CONTENTS_NATIONAL_ASN1_PARAMETERS:
