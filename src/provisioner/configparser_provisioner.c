@@ -375,6 +375,28 @@ static int parse_integrity_check_options(liagency_t *newag,
                 return -1;
             }
         }
+
+        if (key->type == YAML_SCALAR_NODE && value->type == YAML_SCALAR_NODE &&
+                !strcasecmp((char *)key->data.scalar.value,
+                        "signedhashmethod")) {
+            if (strcasecmp((char *)value->data.scalar.value, "sha-1") == 0) {
+                newag->digest_sign_method = OPENLI_DIGEST_HASH_ALGO_SHA1;
+            } else if (strcasecmp((char *)value->data.scalar.value,
+                    "sha-256") == 0) {
+                newag->digest_sign_method = OPENLI_DIGEST_HASH_ALGO_SHA256;
+            } else if (strcasecmp((char *)value->data.scalar.value,
+                    "sha-384") == 0) {
+                newag->digest_sign_method = OPENLI_DIGEST_HASH_ALGO_SHA384;
+            } else if (strcasecmp((char *)value->data.scalar.value,
+                    "sha-512") == 0) {
+                newag->digest_sign_method = OPENLI_DIGEST_HASH_ALGO_SHA512;
+            } else {
+                logger(LOG_INFO,
+                        "OpenLI provisioner: unsupported signedhashmethod '%s' specified in integrity check configuration for agency",
+                        (char *)value->data.scalar.value);
+                return -1;
+            }
+        }
     }
 
     return 0;
@@ -402,6 +424,7 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         newag->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
         newag->keepalivewait = 0;
         newag->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
+        newag->digest_sign_method = DEFAULT_DIGEST_HASH_METHOD;
         newag->digest_hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
         newag->digest_hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
         newag->digest_sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;

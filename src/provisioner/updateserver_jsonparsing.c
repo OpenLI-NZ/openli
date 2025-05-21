@@ -1078,7 +1078,7 @@ static int parse_agency_integrity_options(liagency_t *newag,
         struct json_object *integrity, update_con_info_t *cinfo) {
 
     int parseerr = 0;
-    struct json_object *enabled, *hash_method, *hash_timeout;
+    struct json_object *enabled, *hash_method, *hash_timeout, *sign_method;
     struct json_object *sign_timeout, *sign_hashlimit, *hash_pdulimit;
 
     if (json_object_get_type(integrity) != json_type_object) {
@@ -1093,6 +1093,7 @@ static int parse_agency_integrity_options(liagency_t *newag,
 
     json_object_object_get_ex(integrity, "enabled", &enabled);
     json_object_object_get_ex(integrity, "hashmethod", &hash_method);
+    json_object_object_get_ex(integrity, "signedhashmethod", &sign_method);
     json_object_object_get_ex(integrity, "hashtimeout", &hash_timeout);
     json_object_object_get_ex(integrity, "datapducount", &hash_pdulimit);
     json_object_object_get_ex(integrity, "signtimeout", &sign_timeout);
@@ -1113,6 +1114,18 @@ static int parse_agency_integrity_options(liagency_t *newag,
                 hash_method, hashmethodstr, &parseerr, false);
         if (hashmethodstr) {
             newag->digest_hash_method =
+                    map_digest_hash_method_string(hashmethodstr);
+            free(hashmethodstr);
+        }
+    }
+
+    if (sign_method) {
+        char *hashmethodstr = NULL;
+        EXTRACT_JSON_STRING_PARAM("signedhashmethod",
+                "Agency Signature Hash method",
+                sign_method, hashmethodstr, &parseerr, false);
+        if (hashmethodstr) {
+            newag->digest_sign_method =
                     map_digest_hash_method_string(hashmethodstr);
             free(hashmethodstr);
         }
@@ -2255,6 +2268,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     nag->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
     nag->keepalivewait = DEFAULT_AGENCY_KEEPALIVE_WAIT;
     nag->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
+    nag->digest_sign_method = DEFAULT_DIGEST_HASH_METHOD;
     nag->digest_hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
     nag->digest_hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
     nag->digest_sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
@@ -2352,6 +2366,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     modified.keepalivewait = 0xffffffff;
     modified.digest_required = 0xff;
     modified.digest_hash_method = 0xff;
+    modified.digest_sign_method = 0xff;
     modified.digest_hash_timeout = 0xffffffff;
     modified.digest_hash_pdulimit = 0xffffffff;
     modified.digest_sign_timeout = 0xffffffff;
@@ -2401,6 +2416,12 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
                 modified.digest_hash_method != found->ag->digest_hash_method) {
         changed = 1;
         found->ag->digest_hash_method = modified.digest_hash_method;
+    }
+
+    if (modified.digest_sign_method != 0xff &&
+                modified.digest_sign_method != found->ag->digest_sign_method) {
+        changed = 1;
+        found->ag->digest_sign_method = modified.digest_sign_method;
     }
 
     if (modified.digest_hash_timeout != 0xffffffff &&

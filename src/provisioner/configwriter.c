@@ -239,6 +239,7 @@ static int emit_agency_integrity_config(yaml_emitter_t *emitter,
             (yaml_char_t *)"integrity", strlen("integrity"), 1, 0,
             YAML_PLAIN_SCALAR_STYLE);
     const char *hashmethod;
+    const char *signmethod;
 
     if (!yaml_emitter_emit(emitter, &event)) return -1;
 
@@ -275,6 +276,18 @@ static int emit_agency_integrity_config(yaml_emitter_t *emitter,
             (yaml_char_t *)hashmethod, strlen(hashmethod),
             1, 0, YAML_PLAIN_SCALAR_STYLE);
     if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)"signedhashmethod", strlen("signedhashmethod"), 1, 0,
+            YAML_PLAIN_SCALAR_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    signmethod = agency_integrity_hash_method_to_string(ag->digest_sign_method);
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)signmethod, strlen(signmethod),
+            1, 0, YAML_PLAIN_SCALAR_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
 
     if (emit_u32_scalar(emitter, "hashtimeout", &(ag->digest_hash_timeout))
             < 0) return -1;

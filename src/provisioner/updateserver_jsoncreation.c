@@ -49,6 +49,7 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     json_object *agencyid;
     json_object *agencycc = NULL;
     json_object *digest_hash_method;
+    json_object *digest_sign_method;
     json_object *digest_required;
     json_object *digest_hash_timeout;
     json_object *digest_hash_pdulimit;
@@ -104,8 +105,27 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
             digest_hash_method = NULL;
         }
 
+        if (lea->ag->digest_sign_method == OPENLI_DIGEST_HASH_ALGO_SHA1) {
+            digest_sign_method = json_object_new_string("sha-1");
+        } else if (lea->ag->digest_sign_method ==
+                OPENLI_DIGEST_HASH_ALGO_SHA256) {
+            digest_sign_method = json_object_new_string("sha-256");
+        } else if (lea->ag->digest_sign_method ==
+                OPENLI_DIGEST_HASH_ALGO_SHA384) {
+            digest_sign_method = json_object_new_string("sha-384");
+        } else if (lea->ag->digest_sign_method ==
+                OPENLI_DIGEST_HASH_ALGO_SHA512) {
+            digest_sign_method = json_object_new_string("sha-512");
+        } else {
+            digest_sign_method = NULL;
+        }
+
         if (digest_hash_method) {
             json_object_object_add(integrity, "hashmethod", digest_hash_method);
+        }
+        if (digest_sign_method) {
+            json_object_object_add(integrity, "signedhashmethod",
+                    digest_sign_method);
         }
         if (digest_hash_timeout) {
             json_object_object_add(integrity, "hashtimeout",

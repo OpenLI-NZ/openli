@@ -57,6 +57,7 @@ typedef struct liagency {
     uint32_t keepalivewait;
 
     openli_integrity_hash_method_t digest_hash_method;
+    openli_integrity_hash_method_t digest_sign_method;
     uint8_t digest_required;
     uint32_t digest_hash_timeout;
     uint32_t digest_hash_pdulimit;
@@ -78,6 +79,7 @@ typedef struct liagency {
              a->digest_hash_pdulimit == b->digest_hash_pdulimit && \
              a->digest_sign_timeout == b->digest_sign_timeout && \
              a->digest_sign_hashlimit == b->digest_sign_hashlimit && \
+             a->digest_sign_method == b->digest_sign_method && \
              a->digest_hash_method == b->digest_hash_method)) && \
      ((a->agencycc == NULL && b->agencycc == NULL) || \
         (a->agencycc != NULL && b->agencycc != NULL && \
