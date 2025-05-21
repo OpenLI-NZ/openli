@@ -131,7 +131,6 @@ static integrity_check_state_t *lookup_integrity_check_state(
         found = calloc(1, sizeof(integrity_check_state_t));
         found->key = strdup(key);
         found->agency = NULL;
-        found->intercept = NULL;
         found->cin = cin;
         found->msgtype = msgtype;
         found->liid = strdup(liid);
@@ -139,6 +138,7 @@ static integrity_check_state_t *lookup_integrity_check_state(
         found->seqno_array_size = 32;
         found->seqno_next_index = 0;
         found->self_seqno = 1;
+        found->awaiting_final_signature = 0;
         HASH_ADD_KEYPTR(hh, *map, found->key, strlen(found->key), found);
     }
 
@@ -267,7 +267,6 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
     if (found->agency == NULL) {
         /* this is a new stream */
         found->agency = known->digest_config;
-        found->intercept = known;
         found->hash_ctx = NULL;
 
         reset_hash_context(found);
@@ -295,7 +294,8 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
     found->seqno_next_index ++;
 
     if (found->pdus_since_last_hashrec == 0 &&
-            found->agency->config->digest_hash_pdulimit > 1) {
+            found->agency->config->digest_hash_pdulimit > 1 &&
+            found->agency->config->digest_hash_timeout > 0) {
         if (start_mediator_timer(found->hash_timer,
                     found->agency->config->digest_hash_timeout) < 0) {
             /* what can we do here? */
@@ -304,7 +304,8 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
     found->pdus_since_last_hashrec += 1;
 
     if (found->pdus_since_last_hashrec >=
-            found->agency->config->digest_hash_pdulimit) {
+            found->agency->config->digest_hash_pdulimit &&
+            found->agency->config->digest_hash_pdulimit != 0) {
         halt_mediator_timer(found->hash_timer);
 
         //found->pdus_since_last_hashrec = 0;
@@ -331,13 +332,11 @@ int send_integrity_check_hash_pdu(coll_recv_t *col,
     }
 
     if (ics->pdus_since_last_hashrec == 0) {
-        /* shouldn't happen, but just in case... */
         return 0;
     }
 
     HASH_FIND(hh, col->known_liids, ics->liid, strlen(ics->liid), found);
     if (!found) {
-        /* this shouldn't happen either */
         return 0;
     }
 
@@ -347,8 +346,6 @@ int send_integrity_check_hash_pdu(coll_recv_t *col,
         ics->pdus_since_last_hashrec = 0;
         return 0;
     }
-
-    //printable_integrity_key(ics, keydump, 128);
 
     /* Generate a hash digest record and push it into the appropriate
      * RMQ for the LIID
@@ -392,7 +389,6 @@ int send_integrity_check_hash_pdu(coll_recv_t *col,
 int integrity_hash_timer_callback(coll_recv_t *col, med_epoll_ev_t *mev) {
 
     integrity_check_state_t *ics;
-//char keydump[128];
 
     if (mev == NULL) {
         return -1;
@@ -415,4 +411,50 @@ void free_integrity_check_state(integrity_check_state_t *integ) {
     if (integ->sign_timer) destroy_mediator_timer(integ->sign_timer);
     if (integ->hashed_seqnos) free(integ->hashed_seqnos);
     free(integ);
+}
+
+void handle_liid_withdrawal_within_integrity_check_state(
+        integrity_check_state_t **state, char *liid,
+        coll_recv_t *col) {
+
+    integrity_check_state_t *ics, *tmp;
+
+    HASH_ITER(hh, *state, ics, tmp) {
+        if (strcmp(liid, ics->liid) == 0) {
+            HASH_DELETE(hh, *state, ics);
+            if (ics->hash_timer) {
+                destroy_mediator_timer(ics->hash_timer);
+                ics->hash_timer = NULL;
+            }
+            if (ics->sign_timer) {
+                destroy_mediator_timer(ics->sign_timer);
+                ics->sign_timer = NULL;
+            }
+            /* have to produce a final hash record for any unhashed PDUs */
+            send_integrity_check_hash_pdu(col, ics);
+
+            /* TODO have to produce a final signature for any unsigned hashes */
+
+
+            /* If we need a final signature, we can't free this ICS instance
+             * yet because we will need it to encode the message once the
+             * signed response gets back to us from the provisioner.
+             *
+             */
+        }
+    }
+
+}
+
+void handle_lea_withdrawal_within_integrity_check_state(
+        integrity_check_state_t **state, char *agencyid) {
+
+    integrity_check_state_t *ics, *tmp;
+
+    HASH_ITER(hh, *state, ics, tmp) {
+        if (strcmp(agencyid, ics->agency->agencyid) == 0) {
+            HASH_DELETE(hh, *state, ics);
+            free_integrity_check_state(ics);
+        }
+    }
 }

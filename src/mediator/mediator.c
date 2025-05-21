@@ -851,6 +851,8 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     char *liid = NULL;
     lea_thread_msg_t msg;
     lea_thread_state_t *lea_t, *tmp;
+    col_thread_msg_t cmsg;
+    coll_recv_t *col_t, *ctmp;
 
     /** See netcomms.c for this method */
     if (decode_cease_mediation(msgbody, msglen, &liid) == -1) {
@@ -866,9 +868,8 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
         return -1;
     }
 
-    /* Send the remove message to all LEA threads -- we don't keep a global
-     * map of LIIDs to agencies, but this shouldn't be a huge workload for
-     * the LEA threads to deal with.
+    /* Send the remove message to all LEA threads -- this shouldn't be a
+     * huge workload for the LEA threads to deal with.
      *
      * Note: this will include the pcap output thread.
      */
@@ -878,6 +879,13 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
         msg.data = strdup(liid);
 
         libtrace_message_queue_put(&(lea_t->in_main), &msg);
+    }
+
+    memset(&cmsg, 0, sizeof(cmsg));
+    HASH_ITER(hh, state->collector_threads.threads, col_t, ctmp) {
+        cmsg.type = MED_COLL_LIID_WITHDRAW;
+        cmsg.arg = (uint64_t)strdup(liid);
+        libtrace_message_queue_put(&(col_t->in_main), &cmsg);
     }
 
     remove_liid_mapping_collector_config(&(state->collector_threads.config),

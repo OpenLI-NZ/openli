@@ -603,6 +603,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
         found->no_agency_map_warning = 0;
         found->last_agency_check = 0;
         found->digest_config = NULL;
+        found->provisioner_withdrawn = 0;
 
         snprintf(qname, 1024, "%s-iri", found->liid);
         found->queuenames[0] = strdup(qname);
@@ -615,6 +616,15 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
                 found);
         logger(LOG_INFO, "OpenLI Mediator: LIID %s has been seen coming from collector %s", found->liid, col->ipaddr);
 
+    }
+
+    if (found->provisioner_withdrawn) {
+        /* The intercept has been halted and this is a leftover record that
+         * we hadn't processed in time -- I guess we just have to discard it
+         * as the LEA threads are not going to consume it anyway
+         *
+         */
+        return 0;
     }
 
     if (found->declared_int_rmq == 0) {
@@ -1145,8 +1155,26 @@ static void *start_collector_thread(void *params) {
             if (msg.type == MED_COLL_LEA_WITHDRAW) {
                 char *agencyid = (char *)(msg.arg);
 
+                /* Do the integrity check update before removing the agency
+                 * digest config!
+                 */
+                handle_lea_withdrawal_within_integrity_check_state(
+                        &(col->integrity_state), agencyid);
                 remove_agency_digest_config(&(col->known_agencies), agencyid);
                 free(agencyid);
+            }
+
+            if (msg.type == MED_COLL_LIID_WITHDRAW) {
+                char *thisliid = (char *)(msg.arg);
+                col_known_liid_t *flagged;
+                handle_liid_withdrawal_within_integrity_check_state(
+                        &(col->integrity_state), thisliid, col);
+                HASH_FIND(hh, col->known_liids, thisliid, strlen(thisliid),
+                        flagged);
+                if (flagged) {
+                    flagged->provisioner_withdrawn = 1;
+                }
+                free(thisliid);
             }
 
         }

@@ -313,7 +313,7 @@ static int parse_integrity_check_options(liagency_t *newag,
             errno = 0;
             newag->digest_hash_timeout = strtoul(
                     (char *)value->data.scalar.value, NULL, 10);
-            if (errno || newag->digest_hash_timeout == 0) {
+            if (errno) {
                 logger(LOG_INFO,
                         "OpenLI provisioner: invalid value detected for integrity->hashtimeout option in agency configuration");
                 return -1;
@@ -325,7 +325,7 @@ static int parse_integrity_check_options(liagency_t *newag,
             errno = 0;
             newag->digest_sign_timeout = strtoul(
                     (char *)value->data.scalar.value, NULL, 10);
-            if (errno || newag->digest_sign_timeout == 0) {
+            if (errno) {
                 logger(LOG_INFO,
                         "OpenLI provisioner: invalid value detected for integrity->signtimeout option in agency configuration");
                 return -1;
@@ -336,7 +336,7 @@ static int parse_integrity_check_options(liagency_t *newag,
             errno = 0;
             newag->digest_hash_pdulimit = strtoul(
                     (char *)value->data.scalar.value, NULL, 10);
-            if (errno || newag->digest_hash_pdulimit == 0) {
+            if (errno) {
                 logger(LOG_INFO,
                         "OpenLI provisioner: invalid value detected for integrity->datapducount option in agency configuration");
                 return -1;
@@ -348,7 +348,7 @@ static int parse_integrity_check_options(liagency_t *newag,
             errno = 0;
             newag->digest_sign_hashlimit = strtoul(
                     (char *)value->data.scalar.value, NULL, 10);
-            if (errno || newag->digest_sign_hashlimit == 0) {
+            if (errno) {
                 logger(LOG_INFO,
                         "OpenLI provisioner: invalid value detected for integrity->hashpducount option in agency configuration");
                 return -1;

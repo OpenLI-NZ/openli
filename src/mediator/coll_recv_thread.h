@@ -82,6 +82,11 @@ enum {
      *  withdrawn by the provisioner.
      */
     MED_COLL_LEA_WITHDRAW,
+
+    /** Used to tell the receive thread that an LIID has been withdrawn,
+     *  so the final integrity check PDUs can be written immediately.
+     */
+    MED_COLL_LIID_WITHDRAW,
 };
 
 
@@ -137,6 +142,8 @@ typedef struct col_known_liid {
 
     agency_digest_config_t *digest_config;
 
+    uint8_t provisioner_withdrawn;
+
     UT_hash_handle hh;
 } col_known_liid_t;
 
@@ -186,7 +193,6 @@ typedef struct integrity_check_state {
     openli_proto_msgtype_t msgtype;
 
     agency_digest_config_t *agency;
-    col_known_liid_t *intercept;
 
     med_epoll_ev_t *hash_timer;
     med_epoll_ev_t *sign_timer;
@@ -202,6 +208,8 @@ typedef struct integrity_check_state {
 
     int64_t self_seqno;
 
+
+    uint8_t awaiting_final_signature;
     UT_hash_handle hh;
 
 } integrity_check_state_t;
@@ -507,6 +515,13 @@ int update_agency_digest_config_map(agency_digest_config_t **map,
 void free_agency_digest_config(agency_digest_config_t *dig);
 void remove_agency_digest_config(agency_digest_config_t **map,
         char *agencyid);
+
+void handle_lea_withdrawal_within_integrity_check_state(
+        integrity_check_state_t **state, char *agencyid);
+void handle_liid_withdrawal_within_integrity_check_state(
+        integrity_check_state_t **state, char *liid,
+        coll_recv_t *col);
+
 void free_integrity_check_state(integrity_check_state_t *integ);
 uint8_t update_integrity_check_state(integrity_check_state_t **map,
         col_known_liid_t *known, uint8_t *msgbody, uint16_t msglen,

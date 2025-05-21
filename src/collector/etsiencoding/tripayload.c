@@ -34,13 +34,13 @@
 wandder_encoded_result_t *encode_etsi_integrity_check(
         wandder_encoder_t *encoder, wandder_etsipshdr_data_t *hdrdata,
         int64_t self_seqno, openli_integrity_hash_method_t hashmethod,
-        uint32_t datatype, openli_proto_msgtype_t msgtype,
+        uint32_t checktype, openli_proto_msgtype_t msgtype,
         uint8_t *checkval, unsigned int checkvallen,
         int64_t *inclseqnos, size_t numseqnos) {
 
 
     struct timeval tv;
-    uint32_t checktype = 0;
+    uint32_t datatype_val = 0;
     size_t i;
     uint32_t hashalgo = 0;
 
@@ -61,9 +61,9 @@ wandder_encoded_result_t *encode_etsi_integrity_check(
                                         // End includedSequenceNumbers
 
     if (msgtype == OPENLI_PROTO_ETSI_IRI) {
-        checktype = 1;
+        datatype_val = 1;
     } else if (msgtype == OPENLI_PROTO_ETSI_CC) {
-        checktype = 2;
+        datatype_val = 2;
     } else {
         return NULL;
     }
@@ -73,7 +73,8 @@ wandder_encoded_result_t *encode_etsi_integrity_check(
     wandder_encode_next(encoder, WANDDER_TAG_ENUM,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &checktype, sizeof(checktype));
     wandder_encode_next(encoder, WANDDER_TAG_ENUM,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, &datatype, sizeof(datatype));
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, &datatype_val,
+            sizeof(datatype_val));
 
     wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 3, checkval, checkvallen);
