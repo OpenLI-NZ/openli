@@ -756,7 +756,11 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
     }
 
     if (r >= 0 && integrity_res == INTEGRITY_CHECK_SEND_HASH) {
-        r = send_integrity_check_hash_pdu(col, chain);
+        integrity_res = send_integrity_check_hash_pdu(col, chain);
+    }
+
+    if (r >= 0 && integrity_res == INTEGRITY_CHECK_REQUEST_SIGN) {
+        return send_integrity_check_signing_request(col, chain);
     }
 
     return r;
@@ -907,7 +911,7 @@ static int collector_thread_epoll_event(coll_recv_t *col,
             ret = integrity_hash_timer_callback(col, mev);
             break;
         case MED_EPOLL_INTEGRITY_SIGN_TIMER:
-            /* TODO */
+            ret = integrity_sign_timer_callback(col, mev);
             break;
         default:
             logger(LOG_INFO,
@@ -1308,6 +1312,8 @@ static void init_new_colrecv_thread(mediator_collector_t *medcol,
 
     libtrace_message_queue_init(&(newcol->in_main),
             sizeof(col_thread_msg_t));
+    libtrace_message_queue_init(&(newcol->out_main),
+            sizeof(col_thread_msg_t));
     pthread_create(&(newcol->tid), NULL, start_collector_thread, newcol);
 }
 
@@ -1384,6 +1390,7 @@ void mediator_disconnect_all_collectors(mediator_collector_t *medcol) {
 
             pthread_join(col->tid, NULL);
             libtrace_message_queue_destroy(&(col->in_main));
+            libtrace_message_queue_destroy(&(col->out_main));
             tofree = col;
             col = col->next;
             free(tofree);
@@ -1473,6 +1480,7 @@ void mediator_clean_collectors(mediator_collector_t *medcol) {
 
             pthread_join(tofree->tid, NULL);
             libtrace_message_queue_destroy(&(tofree->in_main));
+            libtrace_message_queue_destroy(&(tofree->out_main));
 
             if (tofree == col && newhead != oldhead) {
                 /* we are removing the head, so we need
