@@ -34,6 +34,7 @@
 #include "lea_send_thread.h"
 #include "mediator_rmq.h"
 #include "med_epoll.h"
+#include "etsili_core.h"
 
 /** This file implements a "collector receive" thread for the OpenLI mediator.
  *  Each OpenLI collector that reports to a mediator will be handled using
@@ -300,6 +301,10 @@ static void remove_expired_liid_queues(coll_recv_t *col) {
         if (known->queuenames[2]) {
             free((void *)known->queuenames[2]);
         }
+        if (known->preencoded_etsi) {
+            etsili_clear_preencoded_fields(known->preencoded_etsi);
+            free(known->preencoded_etsi);
+        }
         HASH_DELETE(hh, col->known_liids, known);
         free(known);
     }
@@ -549,6 +554,122 @@ static int process_fwd_hello(coll_recv_t *col, uint8_t *msgbody,
     return 1;
 }
 
+static void preencode_etsi_for_known_liid(coll_recv_t *col,
+        col_known_liid_t *found) {
+
+    etsili_intercept_details_t intdetails;
+    char netelemid[128];
+
+    intdetails.liid = found->liid;
+    intdetails.authcc = found->digest_config->config->agencycc;
+    intdetails.delivcc = found->digest_config->config->agencycc;
+    intdetails.intpointid = NULL;
+
+    lock_med_collector_config(col->parentconfig);
+    if (col->parentconfig->operatorid) {
+        intdetails.operatorid = col->parentconfig->operatorid;
+    } else {
+        intdetails.operatorid = "unspecified";
+    }
+
+    if (strcmp(intdetails.authcc, "NL") == 0) {
+        snprintf(netelemid, 16, "%u", col->parentconfig->parent_mediatorid);
+    } else {
+        snprintf(netelemid, 16, "med-%u", col->parentconfig->parent_mediatorid);
+    }
+
+    etsili_preencode_static_fields(found->preencoded_etsi, &intdetails);
+    unlock_med_collector_config(col->parentconfig);
+
+}
+
+static col_known_liid_t *create_new_known_liid(coll_recv_t *col,
+        unsigned char *liidstr) {
+
+    col_known_liid_t *found;
+    char qname[1024];
+    /* This is an LIID that we haven't seen before (or recently), so
+     * make sure we have a set of internal mediator RMQ queues for it.
+     */
+    found = (col_known_liid_t *)calloc(1, sizeof(col_known_liid_t));
+    found->liid = strdup((const char *)liidstr);
+    found->liidlen = strlen(found->liid);
+    found->lastseen = 0;
+    found->declared_raw_rmq = 0;
+    found->declared_int_rmq = 0;
+    found->no_agency_map_warning = 0;
+    found->last_agency_check = 0;
+    found->digest_config = NULL;
+    found->provisioner_withdrawn = 0;
+    found->preencoded_etsi = calloc(OPENLI_PREENCODE_LAST,
+            sizeof(wandder_encode_job_t));
+
+    snprintf(qname, 1024, "%s-iri", found->liid);
+    found->queuenames[0] = strdup(qname);
+    snprintf(qname, 1024, "%s-cc", found->liid);
+    found->queuenames[1] = strdup(qname);
+    snprintf(qname, 1024, "%s-rawip", found->liid);
+    found->queuenames[2] = strdup(qname);
+
+    HASH_ADD_KEYPTR(hh, col->known_liids, found->liid, found->liidlen,
+            found);
+    logger(LOG_INFO,
+            "OpenLI Mediator: LIID %s has been seen coming from collector %s",
+            found->liid, col->ipaddr);
+
+    return found;
+}
+
+static void check_agency_digest_config(coll_recv_t *col,
+        col_known_liid_t *found) {
+
+    char *agencyid;
+    agency_digest_config_t *agdigest = NULL;
+    uint8_t reencode_needed = 0;
+
+    if (found->lastseen-found->last_agency_check < AGENCY_MAPPING_CHECK_FREQ) {
+        return;
+    }
+
+    /* Look up the integrity check configuration for the recipient of
+     * this intercept */
+    agencyid = lookup_liid_mapping_collector_config(col->parentconfig,
+            found->liid);
+    found->last_agency_check = found->lastseen;
+
+    if (agencyid == NULL) {
+        if (found->no_agency_map_warning == 0) {
+            logger(LOG_INFO, "OpenLI Mediator: collector thread %s does not have a usable agency mapping for LIID %s, cannot produce integrity checks for this LIID",
+                    col->ipaddr, found->liid);
+            found->no_agency_map_warning = 1;
+        }
+        found->digest_config = NULL;
+    } else {
+
+        HASH_FIND(hh, col->known_agencies, agencyid, strlen(agencyid),
+                agdigest);
+        if (!agdigest) {
+            if (found->no_agency_map_warning == 0) {
+                logger(LOG_INFO, "OpenLI Mediator: collector thread %s is missing expected agency digest configuration for agency %s, will not be able to produce integrity checks for LIID %s",
+                        col->ipaddr, agencyid, found->liid);
+                found->no_agency_map_warning = 1;
+            }
+            found->digest_config = NULL;
+        } else {
+            if (agdigest != found->digest_config ||
+                    strcmp(agdigest->config->agencycc,
+                            found->digest_config->config->agencycc) != 0) {
+                reencode_needed = 1;
+            }
+            found->digest_config = agdigest;
+        }
+    }
+
+    if (reencode_needed) {
+        preencode_etsi_for_known_liid(col, found);
+    }
+}
+
 /** Processes an intercept record received from a collector and inserts
  *  it into the appropriate mediator-internal LIID queue.
  *
@@ -566,10 +687,8 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
     unsigned char liidstr[65536];
     uint16_t liidlen;
     col_known_liid_t *found;
-    char *agencyid;
     struct timeval tv;
     int r = 0;
-    agency_digest_config_t *agdigest = NULL;
     uint8_t integrity_res = INTEGRITY_CHECK_NO_ACTION;
     integrity_check_state_t *chain = NULL;
 
@@ -590,32 +709,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
     HASH_FIND(hh, col->known_liids, liidstr, liidlen, found);
     if (!found) {
-        char qname[1024];
-        /* This is an LIID that we haven't seen before (or recently), so
-         * make sure we have a set of internal mediator RMQ queues for it.
-         */
-        found = (col_known_liid_t *)calloc(1, sizeof(col_known_liid_t));
-        found->liid = strdup((const char *)liidstr);
-        found->liidlen = strlen(found->liid);
-        found->lastseen = 0;
-        found->declared_raw_rmq = 0;
-        found->declared_int_rmq = 0;
-        found->no_agency_map_warning = 0;
-        found->last_agency_check = 0;
-        found->digest_config = NULL;
-        found->provisioner_withdrawn = 0;
-
-        snprintf(qname, 1024, "%s-iri", found->liid);
-        found->queuenames[0] = strdup(qname);
-        snprintf(qname, 1024, "%s-cc", found->liid);
-        found->queuenames[1] = strdup(qname);
-        snprintf(qname, 1024, "%s-rawip", found->liid);
-        found->queuenames[2] = strdup(qname);
-
-        HASH_ADD_KEYPTR(hh, col->known_liids, found->liid, found->liidlen,
-                found);
-        logger(LOG_INFO, "OpenLI Mediator: LIID %s has been seen coming from collector %s", found->liid, col->ipaddr);
-
+        found = create_new_known_liid(col, liidstr);
     }
 
     if (found->provisioner_withdrawn) {
@@ -642,39 +736,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
     gettimeofday(&tv, NULL);
     found->lastseen = tv.tv_sec;
-
-    if (found->lastseen - found->last_agency_check >=
-            AGENCY_MAPPING_CHECK_FREQ) {
-
-        /* Look up the integrity check configuration for the recipient of
-         * this intercept */
-        agencyid = lookup_liid_mapping_collector_config(col->parentconfig,
-                found->liid);
-        found->last_agency_check = found->lastseen;
-
-        if (agencyid == NULL) {
-            if (found->no_agency_map_warning == 0) {
-                logger(LOG_INFO, "OpenLI Mediator: collector thread %s does not have a usable agency mapping for LIID %s, cannot produce integrity checks for this LIID",
-                        col->ipaddr, found->liid);
-                found->no_agency_map_warning = 1;
-            }
-            found->digest_config = NULL;
-        } else {
-            HASH_FIND(hh, col->known_agencies, agencyid, strlen(agencyid),
-                    agdigest);
-            if (!agdigest) {
-                if (found->no_agency_map_warning == 0) {
-                    logger(LOG_INFO, "OpenLI Mediator: collector thread %s is missing expected agency digest configuration for agency %s, will not be able to produce integrity checks for LIID %s",
-                            col->ipaddr, agencyid, found->liid);
-                    found->no_agency_map_warning = 1;
-                }
-                found->digest_config = NULL;
-            } else {
-                found->digest_config = agdigest;
-            }
-        }
-    }
-
+    check_agency_digest_config(col, found);
 
     if (found->digest_config && found->digest_config->config &&
             !found->digest_config->disabled &&
@@ -972,6 +1034,10 @@ static void cleanup_collector_thread(coll_recv_t *col) {
         }
         if (known->queuenames[2]) {
             free((void *)known->queuenames[2]);
+        }
+        if (known->preencoded_etsi) {
+            etsili_clear_preencoded_fields(known->preencoded_etsi);
+            free(known->preencoded_etsi);
         }
         HASH_DELETE(hh, col->known_liids, known);
         free(known);

@@ -156,6 +156,8 @@ typedef struct col_known_liid {
 
     uint8_t provisioner_withdrawn;
 
+    wandder_encode_job_t *preencoded_etsi;
+
     UT_hash_handle hh;
 } col_known_liid_t;
 

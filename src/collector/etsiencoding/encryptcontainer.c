@@ -366,7 +366,6 @@ int create_encrypted_message_body(wandder_encoder_t *encoder,
     bc_increase = calculate_pspdu_length(inplen + hdr_tplate->header_len);
     encrypt->byte_counter += bc_increase;
 
-
     /* Put the body contents and any additional IP packet content into
      * the buffer to be encrypted
      */
@@ -383,6 +382,15 @@ int create_encrypted_message_body(wandder_encoder_t *encoder,
         memcpy(ptr, ipcontents, ipclen);
         ptr += ipclen;
     }
+
+    /* TODO generate a full PS-PDU wrapping the contents of buf. Note that
+     * encryption type must be set to None, so we end up with an
+     * EncryptionContainer containing unencrypted data.
+     *
+     * We need to use this fake PDU to generate a message digest in case
+     * the receiving agency wants us to send Integrity Checks.
+     */
+
 
     /* If this is our first time through, we'll need an encryption context */
     if (encrypt->evp_ctx == NULL) {
