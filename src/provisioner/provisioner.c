@@ -218,19 +218,21 @@ int map_intercepts_to_leas(prov_intercept_conf_t *conf) {
 
     /* Do IP Intercepts */
     HASH_ITER(hh_liid, conf->ipintercepts, ipint, iptmp) {
-        add_liid_mapping(conf, ipint->common.liid, ipint->common.targetagency);
+        apply_intercept_encryption_settings(conf, &(ipint->common));
+        add_liid_mapping(conf, &(ipint->common));
     }
 
     /* Now do the VOIP intercepts */
     for (vint = conf->voipintercepts; vint != NULL; vint = vint->hh_liid.next)
     {
-        add_liid_mapping(conf, vint->common.liid, vint->common.targetagency);
+        apply_intercept_encryption_settings(conf, &(vint->common));
+        add_liid_mapping(conf, &(vint->common));
     }
 
     for (mailint = conf->emailintercepts; mailint != NULL;
             mailint = mailint->hh_liid.next) {
-        add_liid_mapping(conf, mailint->common.liid,
-                mailint->common.targetagency);
+        apply_intercept_encryption_settings(conf, &(mailint->common));
+        add_liid_mapping(conf, &(mailint->common));
     }
 
     /* Sort the final mapping nicely */
@@ -1157,8 +1159,8 @@ static int respond_mediator_auth(provision_state_t *state,
     /* We also need to send any LIID -> LEA mappings that we know about */
     h = state->interceptconf.liid_map;
     while (h != NULL) {
-        if (push_liid_mapping_onto_net_buffer(outgoing, h->agency, h->liid)
-                == -1) {
+        if (push_liid_mapping_onto_net_buffer(outgoing, h->agency, h->liid,
+                h->encryptkey, h->encryptmethod) == -1) {
             logger(LOG_INFO,
                     "OpenLI: error while buffering LIID mappings to send to mediator.");
             pthread_mutex_unlock(&(state->interceptconf.safelock));

@@ -134,6 +134,7 @@ typedef struct intercept_common {
     intercept_outputs_t tomediate;
     payload_encryption_method_t encrypt;
     char *encryptkey;
+    uint8_t encrypt_inherited;      // only used by provisioner
 
     uuid_t *xids;
     size_t xid_count;

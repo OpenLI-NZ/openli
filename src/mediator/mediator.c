@@ -908,18 +908,20 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
 static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
 
-    char *agencyid, *liid;
+    char *agencyid, *liid, *encryptkey;
     int found = 0;
     lea_thread_msg_t msg;
     lea_thread_state_t *target;
     added_liid_t *added;
     lea_thread_state_t *tmp;
+    payload_encryption_method_t encmethod;
 
     agencyid = NULL;
     liid = NULL;
 
     /* See netcomms.c for this method */
-    if (decode_liid_mapping(msgbody, msglen, &agencyid, &liid) == -1) {
+    if (decode_liid_mapping(msgbody, msglen, &agencyid, &liid, &encryptkey,
+            &encmethod) == -1) {
         logger(LOG_INFO, "OpenLI Mediator: receive invalid LIID mapping from provisioner.");
         return -1;
     }

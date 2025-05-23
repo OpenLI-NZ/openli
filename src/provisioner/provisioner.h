@@ -153,6 +153,12 @@ typedef struct liid_hash {
     /** The LIID for the intercept */
     char *liid;
 
+    /** The encryption method to use if/when encrypting intercept payload */
+    payload_encryption_method_t encryptmethod;
+
+    /** The encryption key to use if/when encrypting intercept payload */
+    char *encryptkey;
+
     UT_hash_handle hh;
 } liid_hash_t;
 
@@ -469,10 +475,14 @@ int remove_all_sip_targets(provision_state_t *state, voipintercept_t *vint);
 int announce_single_intercept(provision_state_t *state,
         void *cept, int (*sendfunc)(net_buffer_t *, void *));
 liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
-        char *liid, char *agency);
+        intercept_common_t *common);
 int announce_hi1_notification_to_mediators(provision_state_t *state,
         intercept_common_t *intcomm, char *target_id, hi1_notify_t not_type);
 int announce_latest_default_email_decompress(provision_state_t *state);
+void apply_intercept_encryption_settings(prov_intercept_conf_t *conf,
+        intercept_common_t *common);
+void update_inherited_encryption_settings(provision_state_t *state,
+        liagency_t *agency);
 
 /* Implemented in hup_reload.c */
 int reload_provisioner_config(provision_state_t *state);

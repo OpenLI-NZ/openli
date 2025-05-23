@@ -55,6 +55,15 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     json_object *digest_hash_pdulimit;
     json_object *digest_sign_timeout;
     json_object *digest_sign_hashlimit;
+    json_object *encryptkey, *encryptmethod;
+
+    const char *encrypt_str;
+
+    if (lea->ag->encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
+        encrypt_str = "aes-192-cbc";
+    } else {
+        encrypt_str = "none";
+    }
 
     jobj = json_object_new_object();
     integrity = json_object_new_object();
@@ -69,6 +78,8 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     hi2port = json_object_new_string(lea->ag->hi2_portstr);
     ka_freq = json_object_new_int(lea->ag->keepalivefreq);
     ka_wait = json_object_new_int(lea->ag->keepalivewait);
+    encryptmethod = json_object_new_string(encrypt_str);
+    encryptkey = json_object_new_string(lea->ag->encryptkey);
 
     json_object_object_add(jobj, "agencyid", agencyid);
     if (agencycc) {
@@ -80,6 +91,10 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     json_object_object_add(jobj, "hi2port", hi2port);
     json_object_object_add(jobj, "keepalivefreq", ka_freq);
     json_object_object_add(jobj, "keepalivewait", ka_wait);
+    json_object_object_add(jobj, "payloadencryption", encryptmethod);
+    if (encryptkey) {
+        json_object_object_add(jobj, "encryptionkey", encryptkey);
+    }
 
     digest_required = json_object_new_boolean(lea->ag->digest_required);
     json_object_object_add(integrity, "enabled", digest_required);
@@ -157,6 +172,7 @@ static void convert_commonintercept_to_json(json_object *jobj,
     json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
     json_object *encryptkey, *xids;
     json_object *starttime, *endtime, *tomediate, *encryption;
+    json_object *encrypt_inherited;
     char uuid[64];
 
     if (common->encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
@@ -189,6 +205,7 @@ static void convert_commonintercept_to_json(json_object *jobj,
     agencyid = json_object_new_string(common->targetagency);
     mediator = json_object_new_int(common->destid);
     tomediate = json_object_new_int(common->tomediate);
+    encrypt_inherited = json_object_new_boolean(common->encrypt_inherited);
     encryption = json_object_new_string(encrypt_str);
 
     if (common->encryptkey) {
@@ -203,6 +220,7 @@ static void convert_commonintercept_to_json(json_object *jobj,
     json_object_object_add(jobj, "agencyid", agencyid);
     json_object_object_add(jobj, "mediator", mediator);
     json_object_object_add(jobj, "outputhandovers", tomediate);
+    json_object_object_add(jobj, "encrypt_inherited", encrypt_inherited);
     json_object_object_add(jobj, "payloadencryption", encryption);
     if (encryptkey) {
         json_object_object_add(jobj, "encryptionkey", encryptkey);

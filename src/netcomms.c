@@ -240,16 +240,17 @@ int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb) {
 }
 
 
-#define LIIDMAP_BODY_LEN(agency, liid) \
-    (strlen(agency) + strlen(liid) + (2 * 4))
+#define LIIDMAP_BODY_LEN(agency, liid, key) \
+    (strlen(agency) + strlen(liid) + sizeof(payload_encryption_method_t) + \
+    ( key ? strlen(key) + 4 : 0) + (3 * 4))
 
 int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
-        char *liid) {
+        char *liid, char *encryptkey, payload_encryption_method_t method) {
 
     ii_header_t hdr;
     uint16_t totallen;
 
-    totallen = LIIDMAP_BODY_LEN(agency, liid);
+    totallen = LIIDMAP_BODY_LEN(agency, liid, encryptkey);
     populate_header(&hdr, OPENLI_PROTO_MEDIATE_INTERCEPT, totallen, 0);
 
     if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
@@ -266,6 +267,19 @@ int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
                 strlen(liid)) == -1) {
         return -1;
     }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION,
+            (uint8_t *)(&method), sizeof(method)) == -1) {
+        return -1;
+    }
+
+    if (encryptkey) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_ENCRYPTION_KEY,
+                (uint8_t *)encryptkey, strlen(encryptkey)) == -1) {
+            return -1;
+        }
+    }
+
     return (int)totallen;
 }
 
@@ -2315,9 +2329,12 @@ int decode_default_email_compression_announcement(uint8_t *msgbody,
 }
 
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
-        char **liid) {
+        char **liid, char **encryptkey, payload_encryption_method_t *method) {
 
     uint8_t *msgend = msgbody + len;
+
+    *encryptkey = NULL;
+    *method = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -2332,6 +2349,10 @@ int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
             DECODE_STRING_FIELD(*liid, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_LEAID) {
             DECODE_STRING_FIELD(*agency, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_ENCRYPTION_KEY) {
+            DECODE_STRING_FIELD(*encryptkey, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION) {
+            (*method) = *((payload_encryption_method_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,

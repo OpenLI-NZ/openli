@@ -413,7 +413,7 @@ static int enable_new_intercept(provision_state_t *currstate,
     }
 
     /* Add the LIID mapping */
-    h = add_liid_mapping(intconf, common->liid, common->targetagency);
+    h = add_liid_mapping(intconf, common);
 
     if (!droppedmeds && announce_hi1_notification_to_mediators(currstate,
                 common, target_info, HI1_LI_ACTIVATED) == -1) {
@@ -485,8 +485,7 @@ static int update_reconfigured_intercept(provision_state_t *currstate,
         remove_liid_mapping(currstate, old_common->liid,
                 old_common->liid_len, droppedmeds);
 
-        h = add_liid_mapping(intconf, new_common->liid,
-                new_common->targetagency);
+        h = add_liid_mapping(intconf, new_common);
         if (!droppedmeds && announce_liidmapping_to_mediators(
                     currstate, h) == -1) {
             logger(LOG_INFO,

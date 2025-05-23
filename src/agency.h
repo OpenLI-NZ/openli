@@ -28,6 +28,7 @@
 #define OPENLI_AGENCY_H_
 
 #include <libtrace/linked_list.h>
+#include "intercept.h"
 
 #define DEFAULT_AGENCY_KEEPALIVE_WAIT (30)
 #define DEFAULT_AGENCY_KEEPALIVE_FREQ (300)
@@ -63,6 +64,9 @@ typedef struct liagency {
     uint32_t digest_hash_pdulimit;
     uint32_t digest_sign_timeout;
     uint32_t digest_sign_hashlimit;
+
+    payload_encryption_method_t encrypt;
+    char *encryptkey;
 } liagency_t;
 
 #define agency_equal(a, b) \
@@ -83,7 +87,12 @@ typedef struct liagency {
              a->digest_hash_method == b->digest_hash_method)) && \
      ((a->agencycc == NULL && b->agencycc == NULL) || \
         (a->agencycc != NULL && b->agencycc != NULL && \
-         strcmp(a->agencycc, b->agencycc) == 0)))
+         strcmp(a->agencycc, b->agencycc) == 0)) && \
+     ((a->encryptkey == NULL && b->encryptkey == NULL) || \
+        (a->encryptkey != NULL && b->encryptkey != NULL && \
+         strcmp(a->encryptkey, b->encryptkey) == 0)) && \
+     a->encrypt == b->encrypt \
+     )
 
 #endif
 
