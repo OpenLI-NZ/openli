@@ -544,7 +544,7 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         }
 
         if (newag->encryptkey == NULL &&
-                newag->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+                newag->encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
             logger(LOG_INFO, "OpenLI: Agency configuration for '%s' asks for encryption but has not provided an encryption key -- encryption will be disabled",
                     newag->agencyid);
             newag->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
@@ -756,7 +756,7 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
 
         tgtcount = HASH_CNT(hh, newcept->targets);
         if (newcept->common.encryptkey == NULL &&
-                newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+                newcept->common.encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
             if (newcept->common.liid == NULL) {
                 newcept->common.liid = strdup("unidentified intercept");
             }
@@ -828,7 +828,7 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         }
 
         if (newcept->common.encryptkey == NULL &&
-                newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+                newcept->common.encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
             if (newcept->common.liid == NULL) {
                 newcept->common.liid = strdup("unidentified intercept");
             }
@@ -962,7 +962,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         }
 
         if (newcept->common.encryptkey == NULL &&
-                newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+                newcept->common.encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
             if (newcept->common.liid == NULL) {
                 newcept->common.liid = strdup("unidentified intercept");
             }

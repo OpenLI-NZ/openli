@@ -926,6 +926,8 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         return -1;
     }
 
+    printf("LIID %s (%s) -- %s\n", liid, agencyid, encryptkey);
+
     if (agencyid == NULL || liid == NULL) {
         return -1;
     }

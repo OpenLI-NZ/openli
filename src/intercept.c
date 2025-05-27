@@ -67,6 +67,26 @@ static inline void copy_intercept_common(intercept_common_t *src,
     memcpy(dest->xids, src->xids, src->xid_count * sizeof(uuid_t));
 }
 
+int compare_intercept_encrypt_configuration(intercept_common_t *a,
+        intercept_common_t *b) {
+
+    if (a->encrypt != b->encrypt) {
+        return 1;
+    }
+
+    if (a->encryptkey == NULL && b->encryptkey == NULL) {
+        return 0;
+    }
+    if (a->encryptkey == NULL && b->encryptkey != NULL) {
+        return 1;
+    }
+    if (a->encryptkey != NULL && b->encryptkey == NULL) {
+        return 1;
+    }
+    return strcmp(a->encryptkey, b->encryptkey);
+
+}
+
 int compare_xid_list(intercept_common_t *a, intercept_common_t *b) {
     size_t i, j;
     uint8_t found = 0;

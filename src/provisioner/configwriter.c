@@ -411,6 +411,48 @@ static int emit_agencies(prov_agency_t *agencies, yaml_emitter_t *emitter) {
                 YAML_PLAIN_SCALAR_STYLE);
         if (!yaml_emitter_emit(emitter, &event)) return -1;
 
+        if (ag->ag->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"payloadencryption",
+                    strlen("payloadencryption"),
+                    1, 0, YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            if (ag->ag->encrypt == OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+                yaml_scalar_event_initialize(&event, NULL,
+                        (yaml_char_t *)YAML_STR_TAG,
+                        (yaml_char_t *)"none", strlen("none"), 1, 0,
+                        YAML_PLAIN_SCALAR_STYLE);
+            } else if (ag->ag->encrypt ==
+                    OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
+                yaml_scalar_event_initialize(&event, NULL,
+                        (yaml_char_t *)YAML_STR_TAG,
+                        (yaml_char_t *)"aes-192-cbc", strlen("aes-192-cbc"),
+                        1, 0, YAML_PLAIN_SCALAR_STYLE);
+            } else {
+                yaml_scalar_event_initialize(&event, NULL,
+                        (yaml_char_t *)YAML_STR_TAG,
+                        (yaml_char_t *)"none", strlen("none"), 1, 0,
+                        YAML_PLAIN_SCALAR_STYLE);
+            }
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
+
+        if (ag->ag->encryptkey && strlen(ag->ag->encryptkey) > 0) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"encryptionkey", strlen("encryptionkey"),
+                    1, 0, YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)ag->ag->encryptkey,
+                    strlen(ag->ag->encryptkey), 1, 0, YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
+
         if (emit_agency_integrity_config(emitter, ag->ag) < 0) {
             return -1;
         }
@@ -602,27 +644,34 @@ static int emit_intercept_common(intercept_common_t *intcom,
     if (!yaml_emitter_emit(emitter, &event)) return -1;
 
 
-    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-            (yaml_char_t *)"payloadencryption", strlen("payloadencryption"),
-            1, 0, YAML_PLAIN_SCALAR_STYLE);
-    if (!yaml_emitter_emit(emitter, &event)) return -1;
+    if (!intcom->encrypt_inherited &&
+            intcom->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"payloadencryption", strlen("payloadencryption"),
+                1, 0, YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
 
-    if (intcom->encrypt == OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)"none", strlen("none"), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
-    } else if (intcom->encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
-        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)"aes-192-cbc", strlen("aes-192-cbc"), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
-    } else {
-        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)"none", strlen("none"), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
+        if (intcom->encrypt == OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"none", strlen("none"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+        } else if (intcom->encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"aes-192-cbc", strlen("aes-192-cbc"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+        } else {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"none", strlen("none"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+        }
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
     }
-    if (!yaml_emitter_emit(emitter, &event)) return -1;
 
-    if (intcom->encryptkey && strlen(intcom->encryptkey) > 0) {
+    if (!intcom->encrypt_inherited && intcom->encryptkey &&
+            strlen(intcom->encryptkey) > 0) {
         yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
                 (yaml_char_t *)"encryptionkey", strlen("encryptionkey"), 1, 0,
                 YAML_PLAIN_SCALAR_STYLE);

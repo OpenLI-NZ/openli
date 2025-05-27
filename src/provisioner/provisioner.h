@@ -159,6 +159,11 @@ typedef struct liid_hash {
     /** The encryption key to use if/when encrypting intercept payload */
     char *encryptkey;
 
+    /** Flag to indicate if any of the configuration in this mapping has
+     *  changed and therefore needs to be announced to the mediators
+     */
+    uint8_t need_announce;
+
     UT_hash_handle hh;
 } liid_hash_t;
 
@@ -476,6 +481,8 @@ int announce_single_intercept(provision_state_t *state,
         void *cept, int (*sendfunc)(net_buffer_t *, void *));
 liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
         intercept_common_t *common);
+int announce_all_updated_liidmappings_to_mediators(provision_state_t *state);
+void clear_liid_announce_flags(prov_intercept_conf_t *conf);
 int announce_hi1_notification_to_mediators(provision_state_t *state,
         intercept_common_t *intcomm, char *target_id, hi1_notify_t not_type);
 int announce_latest_default_email_decompress(provision_state_t *state);

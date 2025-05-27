@@ -2082,6 +2082,13 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
+    /* No mediators connected yet, so clear the announce flag for each LIID
+     * mapping -- they'll get forcibly announced to each mediator when it
+     * connects, so this avoids duplicate / unnecessary announcements later
+     * on if some of the mappings change.
+     */
+    clear_liid_announce_flags(&(provstate.interceptconf));
+
     if (start_main_listener(&provstate) == -1) {
         logger(LOG_INFO, "OpenLI: Error, could not start listening socket.");
         return 1;

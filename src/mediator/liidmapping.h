@@ -31,6 +31,7 @@
 #include <amqp.h>
 #include <uthash.h>
 
+#include "intercept.h"
 typedef struct liidmapping liid_map_entry_t;
 
 /** Structure describing an LIID->agency association */
@@ -39,6 +40,10 @@ typedef struct added_liid {
     char *liid;
     /** The ID of the agency that the LIID is associated with */
     char *agencyid;
+
+    char *encryptkey;
+
+    payload_encryption_method_t encrypt;
 
     UT_hash_handle hh;
 } added_liid_t;

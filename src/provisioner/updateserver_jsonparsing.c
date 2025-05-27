@@ -190,7 +190,7 @@ static inline void extract_agency_json_objects(struct json_agency *agjson,
     json_object_object_get_ex(parsed, "integrity", &(agjson->integrity));
     json_object_object_get_ex(parsed, "payloadencryption",
             &(agjson->encryptmethod));
-    json_object_object_get_ex(parsed, "encryptkey", &(agjson->encryptkey));
+    json_object_object_get_ex(parsed, "encryptionkey", &(agjson->encryptkey));
 
 }
 
@@ -2338,8 +2338,10 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
         free(encryptmethodstring);
     }
 
-    if (parse_agency_integrity_options(nag, agjson.integrity, cinfo) < 0) {
-        goto agencyerr;
+    if (agjson.integrity) {
+        if (parse_agency_integrity_options(nag, agjson.integrity, cinfo) < 0) {
+            goto agencyerr;
+        }
     }
 
     lea = calloc(1, sizeof(prov_agency_t));
@@ -2447,9 +2449,11 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         modified.encrypt = map_encrypt_method_string(encryptmethodstring);
         free(encryptmethodstring);
     }
-    if (parse_agency_integrity_options(&modified, agjson.integrity,
-                cinfo) < 0) {
-        goto agencyerr;
+    if (agjson.integrity) {
+        if (parse_agency_integrity_options(&modified, agjson.integrity,
+                    cinfo) < 0) {
+            goto agencyerr;
+        }
     }
 
     MODIFY_STRING_MEMBER(modified.encryptkey, found->ag->encryptkey, &changed);
@@ -2543,6 +2547,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         logger(LOG_INFO,
                 "OpenLI: updated encryption options for intercepts destined for agency '%s' via update socket.",
                 found->ag->agencyid);
+        announce_all_updated_liidmappings_to_mediators(state);
     }
     if (!changed && !encryptchanged) {
         logger(LOG_INFO,

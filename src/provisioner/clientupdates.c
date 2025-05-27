@@ -521,6 +521,23 @@ int announce_liidmapping_to_mediators(provision_state_t *state,
         }
     SEND_ALL_MEDIATORS_END
 
+    liidmap->need_announce = 0;
+    return 0;
+}
+
+int announce_all_updated_liidmappings_to_mediators(provision_state_t *state) {
+    liid_hash_t *h, *tmp;
+
+    HASH_ITER(hh, state->interceptconf.liid_map, h, tmp) {
+        if (h->need_announce == 0) {
+            continue;
+        }
+
+        h->need_announce = 0;
+        if (announce_liidmapping_to_mediators(state, h) < 0) {
+            return -1;
+        }
+    }
     return 0;
 }
 
@@ -708,18 +725,6 @@ liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
         intercept_common_t *common) {
 
     liid_hash_t *h, *found;
-    prov_agency_t *lea;
-
-    /* pcapdisk is a special agency that is not user-defined */
-    if (strcmp(common->targetagency, "pcapdisk") != 0) {
-        HASH_FIND_STR(conf->leas, common->targetagency, lea);
-        if (!lea) {
-            logger(LOG_INFO,
-                    "OpenLI: intercept %s is destined for an unknown agency: %s -- skipping.",
-                    common->liid, common->targetagency);
-            return NULL;
-        }
-    }
 
     HASH_FIND(hh, conf->liid_map, common->liid, strlen(common->liid), found);
     if (found) {
@@ -727,16 +732,22 @@ liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
     } else {
         h = (liid_hash_t *)malloc(sizeof(liid_hash_t));
         h->liid = common->liid;
-        h->agency = NULL;
-        h->encryptkey = NULL;
-        h->encryptmethod = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
         HASH_ADD_KEYPTR(hh, conf->liid_map, h->liid, strlen(h->liid), h);
     }
     h->agency = common->targetagency;
     h->encryptkey = common->encryptkey;
     h->encryptmethod = common->encrypt;
+    h->need_announce = 1;
 
     return h;
+}
+
+void clear_liid_announce_flags(prov_intercept_conf_t *conf) {
+    liid_hash_t *h, *tmp;
+    HASH_ITER(hh, conf->liid_map, h, tmp) {
+        h->need_announce = 0;
+    }
+
 }
 
 static inline int replace_intercept_encryption_config(
@@ -770,6 +781,7 @@ void update_inherited_encryption_settings(provision_state_t *state,
         if (replace_intercept_encryption_config(&(ipint->common), agency)) {
             modify_existing_intercept_options(state, (void *)ipint,
                     OPENLI_PROTO_MODIFY_IPINTERCEPT);
+            add_liid_mapping(&(state->interceptconf), &(ipint->common));
         }
     }
 
@@ -777,6 +789,7 @@ void update_inherited_encryption_settings(provision_state_t *state,
         if (replace_intercept_encryption_config(&(vint->common), agency)) {
             modify_existing_intercept_options(state, (void *)vint,
                     OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
+            add_liid_mapping(&(state->interceptconf), &(vint->common));
         }
     }
 
@@ -784,9 +797,9 @@ void update_inherited_encryption_settings(provision_state_t *state,
         if (replace_intercept_encryption_config(&(mailint->common), agency)) {
             modify_existing_intercept_options(state, (void *)mailint,
                     OPENLI_PROTO_MODIFY_EMAILINTERCEPT);
+            add_liid_mapping(&(state->interceptconf), &(mailint->common));
         }
     }
-
 
 }
 
@@ -815,6 +828,5 @@ void apply_intercept_encryption_settings(prov_intercept_conf_t *conf,
             common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         common->encryptkey = strdup(found->ag->encryptkey);
     }
-
 }
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
