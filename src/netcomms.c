@@ -444,7 +444,6 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
          strlen(common.targetagency) + sizeof(common.destid) + \
          sizeof(common.encrypt) + common.delivcc_len + \
          (36 * common.xid_count) + \
-         (common.encryptkey ? (strlen(common.encryptkey) + 4) : 0) + \
          ((9 + common.xid_count) * 4))
 
 #define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
@@ -512,6 +511,8 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
         return -1;
     }
 
+    /** Collectors do not need to know the encryption key any more */
+    /*
     if (common->encryptkey) {
         if (push_tlv(nb, OPENLI_PROTO_FIELD_ENCRYPTION_KEY,
                 (uint8_t *)(common->encryptkey),
@@ -519,6 +520,7 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
             return -1;
         }
     }
+    */
 
     for (i = 0; i < common->xid_count; i++) {
         char uuid[64];
@@ -1669,6 +1671,7 @@ static int assign_intercept_common_fields(intercept_common_t *common,
             common->encrypt = *((payload_encryption_method_t *)valptr);
             break;
         case OPENLI_PROTO_FIELD_ENCRYPTION_KEY:
+            // shouldn't see this any more, but doesn't hurt to decode anyway
             DECODE_STRING_FIELD(common->encryptkey, valptr, vallen);
             break;
         case OPENLI_PROTO_FIELD_XID:
