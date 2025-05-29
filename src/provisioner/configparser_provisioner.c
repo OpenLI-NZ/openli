@@ -1080,8 +1080,15 @@ static int provisioning_parser(void *arg, yaml_document_t *doc UNUSED,
 
 int parse_intercept_config(char *configfile, prov_intercept_conf_t *conf,
         const char *encpassfile) {
-    return config_yaml_parser(configfile, conf, intercept_parser, 1,
+    int result = config_yaml_parser(configfile, conf, intercept_parser, 1,
             encpassfile);
+
+    if (result == 0) {
+        conf->was_encrypted = 0;
+    } else if (result == 1) {
+        conf->was_encrypted = 1;
+    }
+    return result;
 }
 
 int parse_provisioning_config(char *configfile, provision_state_t *state) {

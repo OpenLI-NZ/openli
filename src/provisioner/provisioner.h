@@ -262,6 +262,8 @@ typedef struct prov_intercept_conf {
     uint8_t default_email_deliver_compress;
 
     int destroy_pending;
+
+    uint8_t was_encrypted;
     /** A mutex to protect the intercept config from race conditions */
     pthread_mutex_t safelock;
 } prov_intercept_conf_t;

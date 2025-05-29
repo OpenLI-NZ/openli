@@ -175,6 +175,7 @@ void init_intercept_config(prov_intercept_conf_t *state) {
     state->leas = NULL;
     state->defradusers = NULL;
     state->destroy_pending = 0;
+    state->was_encrypted = 0;
     state->default_email_deliver_compress =
             OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
     pthread_mutex_init(&(state->safelock), NULL);
@@ -1985,14 +1986,16 @@ int main(int argc, char *argv[]) {
 
     if (init_prov_state(&provstate, configfile, encpassfile) == -1) {
         logger(LOG_INFO, "OpenLI: Error initialising provisioner.");
-        return 1;
+        ret = -1;
+        goto endprovisioner;
     }
 
     if (provstate.clientdbfile && provstate.clientdbkey) {
 #ifdef HAVE_SQLCIPHER
         if (init_clientdb(&provstate) <= 0) {
             logger(LOG_INFO, "OpenLI provisioner: error while opening client tracker database");
-            return -1;
+            ret = -1;
+            goto endprovisioner;
         }
 #else
         logger(LOG_INFO, "OpenLI provisioner: Client tracking database options are set, but you have not built OpenLI with sqlcipher support.");
@@ -2005,9 +2008,9 @@ int main(int argc, char *argv[]) {
 
     if (provstate.restauthdbfile && provstate.restauthkey) {
 #ifdef HAVE_SQLCIPHER
-        if (init_restauth_db(&provstate) < 0) {
+        if ((ret = init_restauth_db(&provstate)) < 0) {
             logger(LOG_INFO, "OpenLI provisioner: error while opening REST authentication database");
-            return -1;
+            goto endprovisioner;
         }
 #else
         logger(LOG_INFO, "OpenLI provisioner: REST Auth DB options are set, but your system does not support using an Auth DB.");
@@ -2036,19 +2039,19 @@ int main(int argc, char *argv[]) {
          */
         if (ret == -1) {
             logger(LOG_INFO, "OpenLI provisioner: error while parsing intercept config file '%s'", provstate.interceptconffile);
-            return -1;
+            goto endprovisioner;
         }
     }
 
-    if (check_for_duplicate_xids(&(provstate.interceptconf), 0, NULL,
-            NULL) == -1) {
-        return -1;
+    if ((ret = check_for_duplicate_xids(&(provstate.interceptconf), 0, NULL,
+            NULL)) == -1) {
+        goto endprovisioner;
     }
 
     if ((ret = add_all_intercept_timers(provstate.epoll_fd,
             &(provstate.interceptconf))) != 0) {
         logger(LOG_INFO, "OpenLI: failed to create all start and end timers for configured intercepts. Exiting.");
-        return -1;
+        goto endprovisioner;
     }
 
     /*
@@ -2058,7 +2061,7 @@ int main(int argc, char *argv[]) {
         logger(LOG_INFO,
                 "OpenLI: failed to map %d intercepts to agencies. Exiting.",
                 ret);
-        return -1;
+        goto endprovisioner;
     }
 
     if (start_main_listener(&provstate) == -1) {
@@ -2088,7 +2091,9 @@ int main(int argc, char *argv[]) {
     }
 
     run(&provstate);
+    ret = 0;
 
+endprovisioner:
     remove_all_intercept_timers(provstate.epoll_fd, &(provstate.interceptconf));
     clear_prov_state(&provstate);
 

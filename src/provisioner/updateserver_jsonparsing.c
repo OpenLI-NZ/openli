@@ -1288,6 +1288,9 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     return 0;
 
 cepterr:
+    if (mailint->common.local) {
+        free(mailint->common.local);
+    }
     if (mailint) {
         free_single_emailintercept(mailint);
     }
@@ -1417,6 +1420,9 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     return 0;
 
 cepterr:
+    if (vint->common.local) {
+        free(vint->common.local);
+    }
     if (vint) {
         free_single_voipintercept(vint);
     }
@@ -1568,6 +1574,9 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     return 0;
 
 cepterr:
+    if (ipint->common.local) {
+        free(ipint->common.local);
+    }
     if (ipint) {
         free_single_ipintercept(ipint);
     }

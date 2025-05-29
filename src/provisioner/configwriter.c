@@ -1126,10 +1126,22 @@ int emit_intercept_config(char *configfile, const char *encpassfile,
         if (ciphered == NULL) {
             logger(LOG_INFO,
                     "OpenLI: unable to encrypt intercept configuration");
-            ret = -1;
-            goto endemit;
+
+            if (conf->was_encrypted) {
+                ret = -1;
+                goto endemit;
+            }
+            /* fall back to unencrypted, since that was what we started with
+             * anyway and it is better for us to update the config file with
+             * the changes
+             */
+            logger(LOG_INFO,
+                    "OpenLI: falling back to writing unencrypted intercept configuration");
+            finalconfig = buf.buffer;
+            configlen = buf.used;
+        } else {
+            finalconfig = ciphered;
         }
-        finalconfig = ciphered;
     }
 
     /* copy encoded config back into the original file */
