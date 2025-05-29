@@ -79,7 +79,11 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     ka_freq = json_object_new_int(lea->ag->keepalivefreq);
     ka_wait = json_object_new_int(lea->ag->keepalivewait);
     encryptmethod = json_object_new_string(encrypt_str);
-    encryptkey = json_object_new_string(lea->ag->encryptkey);
+    if (lea->ag->encryptkey) {
+        encryptkey = json_object_new_string(lea->ag->encryptkey);
+    } else {
+        encryptkey = NULL;
+    }
 
     json_object_object_add(jobj, "agencyid", agencyid);
     if (agencycc) {
