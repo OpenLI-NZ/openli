@@ -127,19 +127,19 @@ if [ $1 -eq 1 ]; then
         /usr/sbin/openli-prov-authsetup.sh ${DBPHRASE} /var/lib/openli/provauth.db
         echo ${DBPHRASE} > /etc/openli/provauthdb.phrase
         chmod 0640 /etc/openli/provauthdb.phrase
+fi
 
+if [ ! -f /etc/openli/.intercept-encrypt ]; then
         # Set up password for encrypting the intercept config file
         s=""
         until s+=$(dd bs=64 count=1 if=/dev/urandom 2>/dev/null | LC_ALL=C tr -cd 'a-zA-Z0-9')
              ((${#s} >= 32)); do :; done
         ENCPHRASE=${s:0:32}
-        if [ ! -f /etc/openli/.intercept-encrypt ]; then
-            echo ${ENCPHRASE} > /etc/openli/.intercept-encrypt
-            chmod 0640 /etc/openli/.intercept-encrypt
-        fi
-
-
+        echo ${ENCPHRASE} > /etc/openli/.intercept-encrypt
+        chmod 0640 /etc/openli/.intercept-encrypt
 fi
+
+
 
 if [ ! -f /etc/openli/.intercept-encrypt ]; then
         # Set up password for encrypting the intercept config file
