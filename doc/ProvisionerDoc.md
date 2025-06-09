@@ -527,10 +527,10 @@ An IP intercept must contain the following key-value elements:
                              default to 'undefined' if not set
 * `mobileident`           -- (required for mobile intercepts only) the type
                              of identifier specified in the `user` element
-* `xid`                   -- (required for interception over X2/X3 only) the XID
-                             that was defined for this intercept when the X1
-                             interface was used to configure it on your
-                             network
+* `xids`                  -- (required for interception over X2/X3) the XIDs
+                             that have been defined for this intercept when
+                             the X1 interface was used to configure it on your
+                             network, expressed as a YAML sequence
 
 Valid access types are:
   'dialup', 'adsl', 'vdsl', 'fiber', 'wireless', 'lan', 'satellite', 'wimax',
@@ -588,10 +588,10 @@ A VOIP intercept must contain the following key-value elements:
                              intercept
 * `agencyid`              -- the internal identifier of the agency that
                              requested the intercept
-* `xid`                   -- (required for interception over X2/X3 only) the XID
-                             that was defined for this intercept when the X1
-                             interface was used to configure it on your
-                             network
+* `xids`                  -- (required for interception over X2/X3) the XIDs
+                             that have been defined for this intercept when
+                             the X1 interface was used to configure it on your
+                             network, expressed as a YAML sequence
 * `siptargets`            -- (not required if interception is over X2/X3)
                              a list of identities that can be used to recognise
                              SIP activity related to the target

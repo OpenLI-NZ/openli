@@ -79,7 +79,7 @@ static void convert_commonintercept_to_json(json_object *jobj,
 
     const char *encrypt_str;
     json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
-    json_object *encryptkey, *xid;
+    json_object *encryptkey, *xids;
     json_object *starttime, *endtime, *tomediate, *encryption;
     char uuid[64];
 
@@ -96,6 +96,23 @@ static void convert_commonintercept_to_json(json_object *jobj,
         xid = NULL;
     }
 
+
+    xids = NULL;
+    if (common->xid_count > 0) {
+        size_t i;
+        json_object *xid;
+
+        xids = json_object_new_array();
+
+        for (i = 0; i < common->xid_count; i++) {
+            if (!uuid_is_null(common->xids[i])) {
+                uuid_unparse(common->xids[i], uuid);
+                xid = json_object_new_string(uuid);
+
+                json_object_array_add(xids, xid);
+            }
+        }
+    }
 
     liid = json_object_new_string(common->liid);
     authcc = json_object_new_string(common->authcc);
@@ -131,8 +148,8 @@ static void convert_commonintercept_to_json(json_object *jobj,
         endtime = json_object_new_int(common->toend_time);
         json_object_object_add(jobj, "endtime", endtime);
     }
-    if (xid) {
-        json_object_object_add(jobj, "xid", xid);
+    if (xids) {
+        json_object_object_add(jobj, "xids", xids);
     }
 
 }
@@ -291,6 +308,48 @@ static json_object *convert_coreserver_to_json(coreserver_t *cs) {
     return jobj;
 }
 
+
+/* RHEL 8 doesn't have a libjson that provides json_object_new_uint64(), so
+ * we need to provide our own version.
+ */
+#if JSON_C_VERSION_NUM >= 0x000d0100
+#define openli_json_object_new_uint64(val) json_object_new_uint64(val)
+#else
+static inline struct json_object *openli_json_object_new_uint64(uint64_t val) {
+    char buf[64];
+    snprintf(buf, 64, "%" PRIu64, val);
+    return json_object_new_string(buf);
+}
+#endif
+
+static json_object *convert_client_to_json(known_client_t *c) {
+    json_object *jobj;
+    json_object *medid, *ipaddress, *firstseen, *lastseen;
+
+    medid = ipaddress = firstseen = lastseen = NULL;
+
+    jobj = json_object_new_object();
+
+    if (c->type == TARGET_MEDIATOR) {
+        medid = openli_json_object_new_uint64(c->medid);
+        json_object_object_add(jobj, "mediatorid", medid);
+    }
+
+    if (c->ipaddress) {
+        ipaddress = json_object_new_string(c->ipaddress);
+        json_object_object_add(jobj, "ipaddress", ipaddress);
+        free((void *)c->ipaddress);
+    }
+
+    firstseen = openli_json_object_new_uint64(c->firstseen);
+    json_object_object_add(jobj, "firstseen", firstseen);
+
+    lastseen = openli_json_object_new_uint64(c->lastseen);
+    json_object_object_add(jobj, "lastseen", lastseen);
+
+    return jobj;
+}
+
 struct json_object *get_openli_version(void) {
     json_object *jobj, *major, *minor, *revision, *full;
     int a,b,c;
@@ -334,6 +393,50 @@ json_object *get_provisioner_options(update_con_info_t *cinfo UNUSED,
                 defaultemaildecompressed);
     }
     return jobj;
+}
+
+json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
+        provision_state_t *state) {
+
+    json_object *jarray, *jobj;
+    known_client_t *cols;
+    size_t colcount, i;
+
+    cols = fetch_all_collector_clients(state, &colcount);
+    if (!cols || colcount == 0) {
+        return NULL;
+    }
+
+    jarray = json_object_new_array();
+    for (i = 0; i < colcount; i++) {
+        jobj = convert_client_to_json(&(cols[i]));
+        json_object_array_add(jarray, jobj);
+    }
+    free(cols);
+
+    return jarray;
+}
+
+json_object *get_known_mediators(update_con_info_t *cinfo UNUSED,
+        provision_state_t *state) {
+
+    json_object *jarray, *jobj;
+    known_client_t *meds;
+    size_t medcount, i;
+
+    meds = fetch_all_mediator_clients(state, &medcount);
+    if (!meds || medcount == 0) {
+        return NULL;
+    }
+
+    jarray = json_object_new_array();
+    for (i = 0; i < medcount; i++) {
+        jobj = convert_client_to_json(&(meds[i]));
+        json_object_array_add(jarray, jobj);
+    }
+    free(meds);
+
+    return jarray;
 }
 
 json_object *get_default_radius(update_con_info_t *cinfo UNUSED,

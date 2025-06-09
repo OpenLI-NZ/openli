@@ -288,13 +288,13 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
     if (intstate->details.authcc) {
         free(intstate->details.authcc);
     }
-    intstate->details.authcc = msg->authcc;
+    intstate->details.authcc = strdup(msg->authcc);
     intstate->details.authcc_len = strlen(msg->authcc);
 
     if (intstate->details.delivcc) {
         free(intstate->details.delivcc);
     }
-    intstate->details.delivcc = msg->delivcc;
+    intstate->details.delivcc = strdup(msg->delivcc);
     intstate->details.delivcc_len = strlen(msg->delivcc);
 
     if (intstate->details.encryptkey) {
@@ -308,9 +308,6 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
     preencode_etsi_fields(seqdata, intstate);
     intstate->version ++;
 
-    if (msg->liid) {
-        free(msg->liid);
-    }
     return 0;
 }
 

@@ -155,15 +155,16 @@ static void tidyup_x2x3_ingest_thread(x_input_t *xinp) {
     /* free remaining state */
 
     size_t i;
-    ipintercept_t *x_ip, *iptmp;
-    voipintercept_t *x_voip, *voiptmp;
+    uuid_intercept_map_t *uuid, *uuidtmp;
 
-    HASH_ITER(hh_xid, xinp->ipxids, x_ip, iptmp) {
-        HASH_DELETE(hh_xid, xinp->ipxids, x_ip);
+    HASH_ITER(hh, xinp->ipxids, uuid, uuidtmp) {
+        HASH_DELETE(hh, xinp->ipxids, uuid);
+        free(uuid);
     }
 
-    HASH_ITER(hh_xid, xinp->voipxids, x_voip, voiptmp) {
-        HASH_DELETE(hh_xid, xinp->voipxids, x_voip);
+    HASH_ITER(hh, xinp->voipxids, uuid, uuidtmp) {
+        HASH_DELETE(hh, xinp->voipxids, uuid);
+        free(uuid);
     }
 
     free_all_ipintercepts(&(xinp->ipintercepts));
@@ -238,7 +239,11 @@ static inline void update_intercept_common(published_intercept_msg_t *src,
     dst->destid = destid;
     dst->seqtrackerid = src->seqtrackerid;
     dst->encrypt = src->encryptmethod;
-    uuid_copy(dst->xid, src->xid);
+
+    free(dst->xids);
+    dst->xids = src->xids;
+    src->xids = NULL;
+    dst->xid_count = src->xid_count;
     (void)unused;
 }
 
@@ -253,7 +258,8 @@ static inline void populate_intercept_common(published_intercept_msg_t *src,
     dst->seqtrackerid = src->seqtrackerid;
     dst->encrypt = src->encryptmethod;
     dst->encryptkey = src->encryptkey;
-    uuid_copy(dst->xid, src->xid);
+    dst->xid_count = src->xid_count;
+    dst->xids = src->xids;
 
     if (dst->liid) {
         dst->liid_len = strlen(dst->liid);
@@ -270,6 +276,7 @@ static inline void populate_intercept_common(published_intercept_msg_t *src,
     src->delivcc = NULL;
     src->encryptkey = NULL;
     src->targetagency = NULL;
+    src->xids = NULL;
 }
 
 static inline uint8_t x2x3dir_to_etsidir(uint16_t xdir) {
@@ -656,14 +663,23 @@ static int handle_x2_sip_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
         uint8_t *payload, uint32_t plen, x2x3_cond_attr_t **cond_attrs) {
 
     voipintercept_t *vint;
+    uuid_intercept_map_t *uuid;
     openli_export_recv_t *msg;
     struct timeval tv;
     int ret;
 
-    HASH_FIND(hh_xid, xinp->voipxids, hdr->xid, sizeof(uuid_t), vint);
-    if (!vint) {
+    HASH_FIND(hh, xinp->voipxids, hdr->xid, sizeof(uuid_t), uuid);
+    if (!uuid) {
         /* We don't know this XID (or at least, it is not for a VoIP
          * intercept) so ignore it */
+        return 0;
+    }
+    if (uuid->type != OPENLI_INTERCEPT_TYPE_VOIP) {
+        /* should never happen, but just in case... */
+        return 0;
+    }
+    vint = uuid->intercept;
+    if (vint == NULL) {
         return 0;
     }
     if (vint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_CCONLY) {
@@ -725,17 +741,26 @@ static int handle_x2_sip_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
 static int handle_x3_rtp_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
         uint8_t *payload, uint32_t plen, x2x3_cond_attr_t **cond_attrs) {
 
+    uuid_intercept_map_t *uuid;
     voipintercept_t *vint;
     openli_export_recv_t *msg;
     struct timeval tv;
 
-    HASH_FIND(hh_xid, xinp->voipxids, hdr->xid, sizeof(uuid_t), vint);
-    if (!vint) {
+    HASH_FIND(hh, xinp->voipxids, hdr->xid, sizeof(uuid_t), uuid);
+    if (!uuid) {
         /* We don't know this XID (or at least, it is not for a VoIP
          * intercept) so ignore it */
         return 0;
     }
 
+    if (uuid->type != OPENLI_INTERCEPT_TYPE_VOIP) {
+        /* should never happen, but just in case... */
+        return 0;
+    }
+    vint = uuid->intercept;
+    if (vint == NULL) {
+        return 0;
+    }
     if (vint->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
         return 0;
     }
@@ -967,10 +992,100 @@ parsingfailure:
 
 }
 
+static inline const char *GET_UUID_MAP_ENTRY_LIID(
+        openli_intercept_types_t type, void *cept) {
+    if (type == OPENLI_INTERCEPT_TYPE_VOIP) {
+        voipintercept_t *vint = (voipintercept_t *)cept;
+        return (const char *)(vint->common.liid);
+    }
+    if (type == OPENLI_INTERCEPT_TYPE_IP) {
+        ipintercept_t *ipint = (ipintercept_t *)cept;
+        return (const char *)(ipint->common.liid);
+    }
+    if (type == OPENLI_INTERCEPT_TYPE_EMAIL) {
+        emailintercept_t *em = (emailintercept_t *)cept;
+        return (const char *)(em->common.liid);
+    }
+    return "";
+}
+
+static void remove_existing_from_uuid_map(uuid_intercept_map_t **uuidmap,
+        intercept_common_t *common) {
+
+    size_t i;
+    uuid_intercept_map_t *found;
+
+    for (i = 0; i < common->xid_count; i++) {
+        uuid_t u;
+        uuid_copy(u, common->xids[i]);
+        if (uuid_is_null(u)) {
+            continue;
+        }
+        HASH_FIND(hh, *uuidmap, u, sizeof(u), found);
+        if (!found) {
+            continue;
+        }
+        if (strcmp(GET_UUID_MAP_ENTRY_LIID(found->type, found->intercept),
+                common->liid) != 0) {
+            /* this was a XID that appeared in multiple LIIDs, and this
+             * LIID is NOT the one that we created the map entry for...
+             */
+            continue;
+        }
+
+        /* XXX one edge case that is not handled here -- if the XID being
+         * removed here is associated with multiple LIIDs, then we do not
+         * replace it with a UUID map that references one of the (still valid)
+         * LIIDs. So if a user "fixes" a XID -> multiple LIID situation by
+         * removing the XID from the LIID that is in the map, then they
+         * won't have the expected outcome of the XID subsequently mapping
+         * to the remaining LIID.
+         *
+         * Instead, I'm going to focus on preventing duplicate XIDs at the
+         * provisioner level as that is going to be more effective and less
+         * error-prone than trying to handle things in here.
+         */
+        HASH_DELETE(hh, *uuidmap, found);
+        free(found);
+    }
+
+}
+
+static void update_uuid_map(uuid_intercept_map_t **uuidmap,
+        intercept_common_t *common, openli_intercept_types_t cepttype,
+        void *intercept) {
+
+    size_t i;
+    uuid_intercept_map_t *found;
+
+    for (i = 0; i < common->xid_count; i++) {
+        uuid_t u;
+        uuid_copy(u, common->xids[i]);
+        if (uuid_is_null(u)) {
+            continue;
+        }
+        HASH_FIND(hh, *uuidmap, u, sizeof(u), found);
+        if (found) {
+            if (strcmp(GET_UUID_MAP_ENTRY_LIID(found->type, found->intercept),
+                    common->liid) != 0) {
+                char uuidstr[128];
+                uuid_unparse(u, uuidstr);
+                logger(LOG_INFO, "OpenLI: (WARNING) XID %s is associated with multiple LIIDs; this is probably a configuration error", uuidstr);
+            }
+            continue;
+        }
+        found = calloc(1, sizeof(uuid_intercept_map_t));
+        found->type = cepttype;
+        found->intercept = intercept;
+        uuid_copy(found->uuid, u);
+        HASH_ADD_KEYPTR(hh, *uuidmap, found->uuid, sizeof(found->uuid), found);
+    }
+}
+
 static void withdraw_xid_ipintercept(x_input_t *xinp,
         openli_export_recv_t *msg) {
 
-    ipintercept_t *found, *x_found;
+    ipintercept_t *found;
 
     if (msg->data.cept.liid == NULL) {
         return;
@@ -983,12 +1098,7 @@ static void withdraw_xid_ipintercept(x_input_t *xinp,
     }
 
     HASH_DELETE(hh_liid, xinp->ipintercepts, found);
-
-    HASH_FIND(hh_xid, xinp->ipxids, found->common.xid, sizeof(uuid_t),
-            x_found);
-    if (x_found) {
-        HASH_DELETE(hh_xid, xinp->ipxids, x_found);
-    }
+    remove_existing_from_uuid_map(&(xinp->voipxids), &(found->common));
     free_single_ipintercept(found);
 
 }
@@ -996,7 +1106,7 @@ static void withdraw_xid_ipintercept(x_input_t *xinp,
 static void withdraw_xid_voipintercept(x_input_t *xinp,
         openli_export_recv_t *msg) {
 
-    voipintercept_t *found, *x_found;
+    voipintercept_t *found;
 
     if (msg->data.cept.liid == NULL) {
         return;
@@ -1009,11 +1119,7 @@ static void withdraw_xid_voipintercept(x_input_t *xinp,
     }
 
     HASH_DELETE(hh_liid, xinp->voipintercepts, found);
-    HASH_FIND(hh_xid, xinp->voipxids, found->common.xid, sizeof(uuid_t),
-            x_found);
-    if (x_found) {
-        HASH_DELETE(hh_xid, xinp->voipxids, x_found);
-    }
+    remove_existing_from_uuid_map(&(xinp->voipxids), &(found->common));
     free_single_voipintercept(found);
 
 }
@@ -1030,17 +1136,20 @@ static void add_or_update_xid_voipintercept(x_input_t *xinp,
     HASH_FIND(hh_liid, xinp->voipintercepts, msg->data.cept.liid,
             strlen(msg->data.cept.liid), found);
     if (found) {
+        remove_existing_from_uuid_map(&(xinp->voipxids), &(found->common));
         update_intercept_common(&(msg->data.cept), &(found->common),
                 msg->destid);
     } else {
         found = calloc(1, sizeof(voipintercept_t));
+
         populate_intercept_common(&(msg->data.cept), &(found->common),
                 msg->destid);
         HASH_ADD_KEYPTR(hh_liid, xinp->voipintercepts, found->common.liid,
                 found->common.liid_len, found);
-        HASH_ADD_KEYPTR(hh_xid, xinp->voipxids, found->common.xid,
-                sizeof(uuid_t), found);
+
     }
+    update_uuid_map(&(xinp->voipxids), &(found->common),
+            OPENLI_INTERCEPT_TYPE_VOIP, found);
 }
 
 static void add_or_update_xid_ipintercept(x_input_t *xinp,
@@ -1055,6 +1164,7 @@ static void add_or_update_xid_ipintercept(x_input_t *xinp,
     HASH_FIND(hh_liid, xinp->ipintercepts, msg->data.cept.liid,
             strlen(msg->data.cept.liid), found);
     if (found) {
+        remove_existing_from_uuid_map(&(xinp->ipxids), &(found->common));
         update_intercept_common(&(msg->data.cept), &(found->common),
                 msg->destid);
         UPDATE_STRING_FIELD(found->username, msg->data.cept.username,
@@ -1076,9 +1186,9 @@ static void add_or_update_xid_ipintercept(x_input_t *xinp,
         }
         HASH_ADD_KEYPTR(hh_liid, xinp->ipintercepts, found->common.liid,
                 found->common.liid_len, found);
-        HASH_ADD_KEYPTR(hh_xid, xinp->ipxids, found->common.xid,
-                sizeof(uuid_t), found);
     }
+    update_uuid_map(&(xinp->ipxids), &(found->common),
+            OPENLI_INTERCEPT_TYPE_IP, found);
 
 }
 

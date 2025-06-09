@@ -135,7 +135,8 @@ typedef struct intercept_common {
     payload_encryption_method_t encrypt;
     char *encryptkey;
 
-    uuid_t xid;
+    uuid_t *xids;
+    size_t xid_count;
 
     /** A pointer to use for storing "local" data against an instance of
      *  an intercept, i.e. the provisioner might want to associate
@@ -297,7 +298,7 @@ typedef struct voipintercept {
     sipregister_t *active_registrations;
 
     UT_hash_handle hh_liid;
-    UT_hash_handle hh_xid;
+    UT_hash_handle *hh_xid;
 } voipintercept_t;
 
 struct sipregister {
@@ -464,6 +465,8 @@ void free_single_vendmirror_intercept(vendmirror_intercept_t *mirror);
 void free_single_staticipsession(staticipsession_t *statint);
 void free_single_staticiprange(static_ipranges_t *ipr);
 void free_single_email_target(email_target_t *tgt);
+
+int compare_xid_list(intercept_common_t *a, intercept_common_t *b);
 
 int update_modified_intercept_common(intercept_common_t *current,
         intercept_common_t *update, openli_intercept_types_t cepttype,

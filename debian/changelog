@@ -1,3 +1,18 @@
+openli (1.1.13-1) unstable; urgency=medium
+
+  * REST API: added new endpoints for collectors/ and mediators/ to
+    provide basic details on existing collectors and mediators and
+    when they were last active.
+  * X2/X3: a single intercept can now have multiple XIDs configured
+    for it.
+  * Provisioner: fix bug where encrypt-intercept-config option was
+    ignored if the provisioner was run with the -K option set.
+  * Provisioner: fix issue where bad encryption configuration would
+    cause changes to the intercept configuration made via the REST API
+    to not persist.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Thu, 5 Jun 2025 14:42:19 +1200
+
 openli (1.1.12-1) unstable; urgency=medium
 
   * Collector: improved handling of situations where a libtrace

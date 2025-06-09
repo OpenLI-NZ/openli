@@ -381,8 +381,9 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
          sizeof(common.toend_time) + sizeof(common.tomediate) + \
          strlen(common.targetagency) + sizeof(common.destid) + \
          sizeof(common.encrypt) + common.delivcc_len + \
-         (uuid_is_null(common.xid) ? 0 : 36 + 4) + \
-         (common.encryptkey ? (strlen(common.encryptkey) + 4) : 0) + (9 * 4))
+         (36 * common.xid_count) + \
+         (common.encryptkey ? (strlen(common.encryptkey) + 4) : 0) + \
+         ((9 + common.xid_count) * 4))
 
 #define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
         (INTERCEPT_COMMON_LEN(ipint->common) + \
@@ -397,6 +398,7 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
 
 static int _push_intercept_common_fields(net_buffer_t *nb,
         intercept_common_t *common) {
+    size_t i;
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID, (uint8_t *)common->liid,
                 strlen(common->liid)) == -1) {
@@ -456,9 +458,13 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
         }
     }
 
-    if (!uuid_is_null(common->xid)) {
+    for (i = 0; i < common->xid_count; i++) {
         char uuid[64];
-        uuid_unparse(common->xid, uuid);
+        if (uuid_is_null(common->xids[i])) {
+            continue;
+        }
+
+        uuid_unparse(common->xids[i], uuid);
         if (strlen(uuid) == 36) {
             if (push_tlv(nb, OPENLI_PROTO_FIELD_XID, (uint8_t *)uuid, 36) == -1)
             {
@@ -1560,7 +1566,8 @@ static inline void init_decoded_intercept_common(intercept_common_t *common) {
     common->encrypt = 0;
     common->encryptkey = NULL;
     common->seqtrackerid = 0;
-    uuid_clear(common->xid);
+    common->xids = NULL;
+    common->xid_count = 0;
 
 }
 
@@ -1604,9 +1611,14 @@ static int assign_intercept_common_fields(intercept_common_t *common,
             break;
         case OPENLI_PROTO_FIELD_XID:
             DECODE_STRING_FIELD(uuid, valptr, vallen);
-            if (uuid_parse(uuid, common->xid) < 0) {
+            common->xids = realloc(common->xids,
+                    (common->xid_count + 1) * sizeof(uuid_t));
+
+            if (uuid_parse(uuid, common->xids[common->xid_count]) < 0) {
                 logger(LOG_INFO, "OpenLI: XID '%s' is not a valid UUID", uuid);
-                uuid_clear(common->xid);
+                uuid_clear(common->xids[common->xid_count]);
+            } else {
+                common->xid_count ++;
             }
             free(uuid);
             break;

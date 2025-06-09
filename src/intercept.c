@@ -60,7 +60,40 @@ static inline void copy_intercept_common(intercept_common_t *src,
         dest->encryptkey = NULL;
     }
 
-    uuid_copy(dest->xid, src->xid);
+    dest->xids = calloc(src->xid_count, sizeof(uuid_t));
+    dest->xid_count = src->xid_count;
+
+    memcpy(dest->xids, src->xids, src->xid_count * sizeof(uuid_t));
+}
+
+int compare_xid_list(intercept_common_t *a, intercept_common_t *b) {
+    size_t i, j;
+    uint8_t found = 0;
+
+    if (a->xid_count != b->xid_count) {
+        return 1;
+    }
+
+    /* Here we consider a list with the same entries but in a different
+     * order to be the same.
+     */
+
+    /* XXX this is not very efficient but the XID array should be
+     * fairly short AND we won't be doing this often (hopefully).
+     */
+    for (i = 0; i < a->xid_count; i++) {
+        found = 0;
+        for (j = 0; j < b->xid_count; j++) {
+            if (uuid_compare(a->xids[i], b->xids[j]) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 int update_modified_intercept_common(intercept_common_t *current,
@@ -150,9 +183,13 @@ int update_modified_intercept_common(intercept_common_t *current,
         *updatereq = 1;
     }
 
-    if (uuid_compare(update->xid, current->xid) != 0) {
-        uuid_copy(current->xid, update->xid);
+    if (compare_xid_list(update, current) != 0) {
         *updatereq = 1;
+        free(current->xids);
+        current->xids = update->xids;
+        current->xid_count = update->xid_count;
+        update->xids = NULL;
+        update->xid_count = 0;
     }
 
     return encodingchanged;
@@ -339,6 +376,10 @@ static inline void free_intercept_common(intercept_common_t *cept) {
 
     if (cept->encryptkey) {
         free(cept->encryptkey);
+    }
+
+    if (cept->xids) {
+        free(cept->xids);
     }
 }
 
@@ -574,9 +615,23 @@ char *list_sip_targets(voipintercept_t *v, int maxchars) {
         }
     }
 
-    if (space == NULL && !uuid_is_null(v->common.xid)) {
-        space = calloc(1, 40);
-        uuid_unparse(v->common.xid, space);
+    if (space == NULL && v->common.xid_count > 0) {
+        char xidspace[50];
+        char *ptr;
+        size_t i;
+        space = calloc(1, 50 * v->common.xid_count);
+        ptr = space;
+
+        for (i = 0; i < v->common.xid_count; i++) {
+            uuid_unparse(v->common.xids[i], xidspace);
+            memcpy(ptr, xidspace, strlen(xidspace));
+            ptr += strlen(xidspace);
+
+            if (i < v->common.xid_count - 1) {
+                *ptr = ',';
+                ptr ++;
+            }
+        }
     }
 
     return space;
