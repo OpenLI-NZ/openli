@@ -165,7 +165,8 @@ size_t read_encryption_password_file(const char *encpassfile, uint8_t *space) {
 }
 
 static int load_encrypted_config_yaml(FILE *in, yaml_parser_t *parser,
-        unsigned char *encheader, const char *encpassfile) {
+        unsigned char *encheader, const char *encpassfile,
+        unsigned char **decrypted) {
 
     uint8_t iv[AES_IV_SIZE];
     uint8_t salt[SALT_SIZE];
@@ -219,6 +220,8 @@ static int load_encrypted_config_yaml(FILE *in, yaml_parser_t *parser,
 
     yaml_parser_initialize(parser);
     yaml_parser_set_input_string(parser, plain, plainlen);
+    free(ciphered);
+    *decrypted = plain;
     return 0;
 
 }
@@ -233,7 +236,9 @@ int config_yaml_parser(char *configfile, void *arg,
     yaml_node_t *root, *key, *value;
     yaml_node_pair_t *pair;
     int ret = -1;
+    uint8_t was_encrypted = 0;
     unsigned char encheader[SALT_SIZE + 8];
+    unsigned char *decrypted = NULL;
 
     in = fopen(configfile, "rb");
 
@@ -250,7 +255,7 @@ int config_yaml_parser(char *configfile, void *arg,
     if (fread(encheader, 1, SALT_SIZE + 8, in) == SALT_SIZE + 8) {
         if (memcmp(encheader, SALT_HEADER, 8) == 0) {
             if (load_encrypted_config_yaml(in, &parser, encheader,
-                        encpassfile) < 0) {
+                        encpassfile, &decrypted) < 0) {
                 logger(LOG_INFO, "OpenLI: unable to decrypt config file %s",
                         configfile);
                 goto yamlfail;
@@ -258,6 +263,7 @@ int config_yaml_parser(char *configfile, void *arg,
             logger(LOG_DEBUG,
                     "OpenLI: reading encrypted configuration from %s",
                     configfile);
+            was_encrypted = 1;
             goto startparsing;
         }
     }
@@ -303,8 +309,14 @@ endconfig:
     yaml_parser_delete(&parser);
 
 yamlfail:
+    if (decrypted) {
+        free(decrypted);
+    }
     fclose(in);
-    return ret;
+    if (ret < 0) {
+        return ret;
+    }
+    return (int)was_encrypted;
 }
 
 int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,

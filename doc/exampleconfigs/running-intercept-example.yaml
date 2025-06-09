@@ -259,7 +259,9 @@ voipintercepts:
    deliverycountrycode: NZ      # Delivery country code
    mediator: 6001               # ID of the mediator to send intercept via
    agencyid: "Police"           # ID of agency to send intercept to
-   xid: "29f28e1c-f230-486a-a860-f5a784ab9172" # XID for this intercept
+   xids:
+    - "29f28e1c-f230-486a-a860-f5a784ab9172" # XID for this intercept
+                                             # add more XIDs here if required
 
 
 # List of active email intercepts

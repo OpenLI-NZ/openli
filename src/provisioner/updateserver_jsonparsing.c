@@ -67,6 +67,7 @@ struct json_intercept {
     struct json_object *encryption;
     struct json_object *encryptkey;
     struct json_object *delivercompressed;
+    struct json_object *xids;
     struct json_object *xid;
 };
 
@@ -217,6 +218,7 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "siptargets", &(ipjson->siptargets));
     json_object_object_get_ex(parsed, "targets", &(ipjson->emailtargets));
     json_object_object_get_ex(parsed, "delivercompressed", &(ipjson->delivercompressed));
+    json_object_object_get_ex(parsed, "xids", &(ipjson->xids));
     json_object_object_get_ex(parsed, "xid", &(ipjson->xid));
 }
 
@@ -278,6 +280,53 @@ static inline void new_intercept_liidmapping(provision_state_t *state,
     }
 }
 
+static int parse_intercept_xids(intercept_common_t *common,
+        struct json_object *xids, update_con_info_t *cinfo) {
+
+    struct json_object *xidobj;
+    size_t i;
+    int parseerr = 0;
+    uuid_t parsed;
+
+    if (json_object_get_type(xids) != json_type_array) {
+        logger(LOG_INFO, "OpenLI update socket: 'xids' must be expressed as a JSON array");
+        goto xiderr;
+    }
+
+    for (i = 0; i < (size_t)json_object_array_length(xids); i++) {
+        char *uuidstring = NULL;
+        xidobj = json_object_array_get_idx(xids, i);
+        EXTRACT_JSON_STRING_PARAM("xid", "xids", xidobj, uuidstring,
+                &parseerr, false);
+        if (parseerr) {
+            if (uuidstring) {
+                free(uuidstring);
+            }
+            goto xiderr;
+        }
+
+        if (uuidstring) {
+            if (uuid_parse(uuidstring, parsed) < 0) {
+                free(uuidstring);
+                snprintf(cinfo->answerstring, 4096,
+                        "'xid' parameters must be valid RFC 4122 UUID strings");
+                goto xiderr;
+            }
+
+            common->xid_count ++;
+            common->xids = realloc(common->xids,
+                    sizeof(uuid_t) * common->xid_count);
+            uuid_copy(common->xids[common->xid_count - 1], parsed);
+            free(uuidstring);
+        }
+    }
+
+    return 0;
+
+xiderr:
+    return -1;
+}
+
 static int parse_intercept_common_json(struct json_intercept *jsonp,
         intercept_common_t *common, const char *cepttype,
         update_con_info_t *cinfo, bool is_new, int epoll_fd) {
@@ -298,11 +347,15 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
         timers->start_hi1_sent = 0;
         timers->end_hi1_sent = 0;
         common->local = timers;
+        common->xids = NULL;
+        common->xid_count = 0;
     } else {
         common->tostart_time = (uint64_t)-1;
         common->toend_time = (uint64_t)-1;
         common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
         common->local = NULL;
+        common->xids = NULL;
+        common->xid_count = 0;
     }
 
     if (common->liid == NULL) {
@@ -337,16 +390,25 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
     }
 
     if (uuidstring) {
-        if (uuid_parse(uuidstring, common->xid) < 0) {
+        uuid_t parsed;
+        if (uuid_parse(uuidstring, parsed) < 0) {
             free(uuidstring);
-            uuid_clear(common->xid);
             snprintf(cinfo->answerstring, 4096,
                     "'xid' parameter must be a valid RFC 4122 UUID string");
             return -1;
         }
+
+        common->xids = calloc(1, sizeof(uuid_t));
+        common->xid_count = 1;
+        uuid_copy(common->xids[0], parsed);
         free(uuidstring);
     }
 
+    if (jsonp->xids) {
+        if (parse_intercept_xids(common, jsonp->xids, cinfo) < 0) {
+            return -1;
+        }
+    }
 
     if (common->authcc) {
         common->authcc_len = strlen(common->authcc);
@@ -430,9 +492,13 @@ static int update_intercept_common(intercept_common_t *parsed,
         }
     }
 
-    if (uuid_compare(parsed->xid, existing->xid) != 0) {
-        uuid_copy(existing->xid, parsed->xid);
+    if (compare_xid_list(parsed, existing) != 0) {
         *changed = 1;
+        free(existing->xids);
+        existing->xids = parsed->xids;
+        existing->xid_count = parsed->xid_count;
+        parsed->xids = NULL;
+        parsed->xid_count = 0;
     }
 
     MODIFY_STRING_MEMBER(parsed->authcc, existing->authcc, changed);
@@ -1121,6 +1187,21 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
+    if (mailint->common.xid_count > 0 &&
+            check_for_duplicate_xids(&(state->interceptconf),
+            mailint->common.xid_count, mailint->common.xids,
+            mailint->common.liid) < 0) {
+        /* Bad XIDs were introduced with this intercept -- reject the
+         * request
+         */
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>LIID %s is using a XID that is already in use by another intercept. %s",
+                update_failure_page_start,
+                mailint->common.liid,
+                update_failure_page_end);
+        goto cepterr;
+    }
+
     timers = (prov_intercept_data_t *)(mailint->common.local);
     timers->intercept_type = OPENLI_INTERCEPT_TYPE_EMAIL;
     timers->intercept_ref = (void *)mailint;
@@ -1167,6 +1248,7 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     HASH_ADD_KEYPTR(hh_liid, state->interceptconf.emailintercepts,
             mailint->common.liid, mailint->common.liid_len, mailint);
 
+
     new_intercept_liidmapping(state, mailint->common.targetagency,
             mailint->common.liid);
 
@@ -1206,6 +1288,9 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     return 0;
 
 cepterr:
+    if (mailint->common.local) {
+        free(mailint->common.local);
+    }
     if (mailint) {
         free_single_emailintercept(mailint);
     }
@@ -1245,6 +1330,22 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             "VOIP intercept", cinfo, true, state->epoll_fd) < 0) {
         goto cepterr;
     }
+
+    if (vint->common.xid_count > 0 &&
+            check_for_duplicate_xids(&(state->interceptconf),
+            vint->common.xid_count, vint->common.xids,
+            vint->common.liid) < 0) {
+        /* Bad XIDs were introduced with this intercept -- reject the
+         * request.
+         */
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>LIID %s is using a XID that is already in use by another intercept. %s",
+                update_failure_page_start,
+                vint->common.liid,
+                update_failure_page_end);
+        goto cepterr;
+    }
+
     timers = (prov_intercept_data_t *)(vint->common.local);
     timers->intercept_type = OPENLI_INTERCEPT_TYPE_VOIP;
     timers->intercept_ref = (void *)vint;
@@ -1257,7 +1358,7 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         }
     }
 
-    if (r == 0 && uuid_is_null(vint->common.xid)) {
+    if (r == 0 && vint->common.xid_count == 0) {
         snprintf(cinfo->answerstring, 4096,
                 "%s <p>VOIP intercept %s has been specified without valid SIP targets. %s",
                 update_failure_page_start, vint->common.liid,
@@ -1319,6 +1420,9 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     return 0;
 
 cepterr:
+    if (vint->common.local) {
+        free(vint->common.local);
+    }
     if (vint) {
         free_single_voipintercept(vint);
     }
@@ -1355,6 +1459,21 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             "IP intercept", cinfo, true, state->epoll_fd) < 0) {
         goto cepterr;
     }
+    if (ipint->common.xid_count > 0 &&
+            check_for_duplicate_xids(&(state->interceptconf),
+            ipint->common.xid_count, ipint->common.xids,
+            ipint->common.liid) < 0) {
+        /* Bad XIDs were introduced with this intercept -- reject the
+         * request.
+         */
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>LIID %s is using a XID that is already in use by another intercept. %s",
+                update_failure_page_start,
+                ipint->common.liid,
+                update_failure_page_end);
+        goto cepterr;
+    }
+
     timers = (prov_intercept_data_t *)(ipint->common.local);
     timers->intercept_type = OPENLI_INTERCEPT_TYPE_IP;
     timers->intercept_ref = (void *)ipint;
@@ -1455,6 +1574,9 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     return 0;
 
 cepterr:
+    if (ipint->common.local) {
+        free(ipint->common.local);
+    }
     if (ipint) {
         free_single_ipintercept(ipint);
     }
@@ -1581,6 +1703,21 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
+    if (mailint->common.xid_count > 0 &&
+            check_for_duplicate_xids(&(state->interceptconf),
+            mailint->common.xid_count, mailint->common.xids,
+            mailint->common.liid) < 0) {
+        /* Bad XIDs were introduced with this intercept -- reject the
+         * request
+         */
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>LIID %s is using a XID that is already in use by another intercept. %s",
+                update_failure_page_start,
+                mailint->common.liid,
+                update_failure_page_end);
+        goto cepterr;
+    }
+
     if (update_intercept_common(&(mailint->common), &(found->common),
             &changed, &agencychanged, &timeschanged, state, cinfo) < 0) {
         goto cepterr;
@@ -1633,7 +1770,7 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
                     OPENLI_PROTO_MODIFY_EMAILINTERCEPT);
     }
 
-    if (changedtargets || timeschanged || agencychanged) {
+    if (changed || changedtargets || timeschanged || agencychanged) {
         target_info = list_email_targets(found, 256);
         if (agencychanged) {
             announce_hi1_notification_to_mediators(state, &(found->common),
@@ -1722,6 +1859,21 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
+    if (vint->common.xid_count > 0 &&
+            check_for_duplicate_xids(&(state->interceptconf),
+            vint->common.xid_count, vint->common.xids,
+            vint->common.liid) < 0) {
+        /* Bad XIDs were introduced with this intercept -- reject the
+         * request.
+         */
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>LIID %s is using a XID that is already in use by another intercept. %s",
+                update_failure_page_start,
+                vint->common.liid,
+                update_failure_page_end);
+        goto cepterr;
+    }
+
     if (update_intercept_common(&(vint->common), &(found->common),
             &changed, &agencychanged, &timeschanged, state, cinfo) < 0) {
         goto cepterr;
@@ -1755,7 +1907,7 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                     OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
     }
 
-    if (changedtargets || timeschanged || agencychanged) {
+    if (changed || changedtargets || timeschanged || agencychanged) {
         target_info = list_sip_targets(found, 256);
         if (agencychanged) {
             announce_hi1_notification_to_mediators(state, &(found->common),
@@ -1844,6 +1996,21 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (parse_intercept_common_json(&ipjson, &(ipint->common),
             "IP intercept", cinfo, false, state->epoll_fd) < 0) {
+        goto cepterr;
+    }
+
+    if (ipint->common.xid_count > 0 &&
+            check_for_duplicate_xids(&(state->interceptconf),
+            ipint->common.xid_count, ipint->common.xids,
+            ipint->common.liid) < 0) {
+        /* Bad XIDs were introduced with this intercept -- reject the
+         * request.
+         */
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>LIID %s is using a XID that is already in use by another intercept. %s",
+                update_failure_page_start,
+                ipint->common.liid,
+                update_failure_page_end);
         goto cepterr;
     }
 
