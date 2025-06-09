@@ -89,7 +89,6 @@ static void convert_commonintercept_to_json(json_object *jobj,
         encrypt_str = "none";
     }
 
-
     xids = NULL;
     if (common->xid_count > 0) {
         size_t i;

@@ -141,6 +141,18 @@ fi
 
 
 
+if [ ! -f /etc/openli/.intercept-encrypt ]; then
+        # Set up password for encrypting the intercept config file
+        s=""
+        until s+=$(dd bs=64 count=1 if=/dev/urandom 2>/dev/null | LC_ALL=C tr -cd 'a-zA-Z0-9')
+             ((${#s} >= 32)); do :; done
+        ENCPHRASE=${s:0:32}
+        echo ${ENCPHRASE} > /etc/openli/.intercept-encrypt
+        chmod 0640 /etc/openli/.intercept-encrypt
+fi
+
+
+
 chown -R openli: /etc/openli
 chown -R openli: /var/lib/openli
 
