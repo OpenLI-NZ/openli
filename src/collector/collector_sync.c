@@ -1262,8 +1262,6 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
 
     if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
         remove_vendormirror_id(sync, ipint);
-    } else if (!uuid_is_null(ipint->common.xid)) {
-        withdraw_xid(sync, ipint);
     }
     withdraw_xid(sync, ipint);
     publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], expmsg);
