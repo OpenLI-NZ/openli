@@ -94,7 +94,6 @@ int compare_xid_list(intercept_common_t *a, intercept_common_t *b) {
         }
     }
     return 0;
->>>>>>> develop
 }
 
 int update_modified_intercept_common(intercept_common_t *current,
