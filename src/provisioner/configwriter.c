@@ -1146,6 +1146,13 @@ int emit_intercept_config(char *configfile, const char *encpassfile,
 
     /* copy encoded config back into the original file */
     fout = fopen(configfile, "w");
+    if (!fout) {
+        logger(LOG_INFO,
+                "OpenLI: cannot open new intercept config file for writing: %s",
+                strerror(errno));
+        ret = -1;
+        goto endemit;
+    }
 
     if (fwrite(finalconfig, 1, configlen, fout) != configlen) {
         logger(LOG_INFO,
