@@ -128,6 +128,73 @@ will be more than happy to accept your contribution.
 * RabbitMQ Server -- Debian/Ubuntu users can install the rabbitmq-server
   package. Optional for the collector, required for the mediator.
 
+### Dependencies for building from source with TLS PQC
+#### OpenSSL 3.x
+OpenSSL 3.3.0 (minimum version) -- Debian/Ubuntu users can install https://www.openssl.org/source/openssl-3.3.0.tar.gz
+The recommended installation, just follow the series of steps given below.
+1. Run the `./configure` script with configured roots (optional): --prefix=/usr/local/openssl --openssldir=/usr/lib/ssl --libdir=/usr/lib/x86_64-linux-gnu
+2. Run `make`.
+3. To install OpenSSL 3.3.0 on your system, run `make install`. If you haven't set
+  the prefix in Step 2, you'll probably need to run this command as a
+  superuser (e.g. `sudo make install`).
+4. Configure environment variables correctly. Example:
+
+        export PATH=/usr/sbin:/usr/local/sbin:/usr/lib/ssl:$PATH
+        export LD_LIBRARY_PATH=/usr/local/lib:/usr/lib:/usr/local/lib64:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+      
+#### LIbOQS
+LibOQS -- Debian/Ubuntu users can install the liboqs from source code: https://github.com/open-quantum-safe/liboqs
+  The recommended installation, just follow the series of steps given below.
+1. Run:
+
+        mkdir build && cd build
+        cmake -GNinja ..
+        ninja
+        sudo ninja install
+
+2. Configure environment variables correctly.
+
+#### OQS-Provider
+Oqs-Provider -- Debian/Ubuntu users can install the oqs-provider from source code: https://github.com/open-quantum-safe/oqs-provider.git
+  The recommended installation, just follow the series of steps given below.
+1. Run:
+
+        cmake -S . -B _build && cmake --build _build && sudo cmake --install _build
+
+2. Configure environment variables correctly.
+3. Configure "openssl.cnf" file, Groups variable represents the KEM methods:
+
+        [openssl_init]
+        providers = provider_sect
+        ssl_conf = ssl_sect
+
+        # List of providers to load
+        [provider_sect]
+        default = default_sect
+        oqsprovider = oqsprovider_sect
+
+        [default_sect]
+        activate = 1
+        [oqsprovider_sect]
+        activate = 1
+
+        [ssl_sect]
+        system_default = system_default_sect
+        [system_default_sect]
+        Groups =  mlkem1024
+
+4. Check the correct installation. Run openssl list -providers, should retrieve:
+
+        Providers:
+          default
+            name: OpenSSL Default Provider
+            version: 3.3.0
+            status: active
+          oqsprovider
+            name: OpenSSL OQS Provider
+            version: 0.8.1-dev
+            status: active
+
 ## Building OpenLI
 
 To build OpenLI from source, just follow the series of steps given below.
@@ -164,7 +231,21 @@ To build OpenLI from source, just follow the series of steps given below.
 
    **This last step is optional -- the OpenLI software components should run without needing to be installed.**
 
+### Building OpenLI with TLS PQC
+To build OpenLI from source, just follow the series of steps given below.
 
+1. Run the `./bootstrap.sh` script at the top level of the source tree (only
+   required if you have cloned the OpenLI git repo).
+
+2. Run the `./configure --enable-oqs` script.
+
+
+3. Run `make`.
+
+4. To install OpenLI on your system, run `make install`. If you haven't set
+   the prefix in Step 2, you'll probably need to run this command as a
+   superuser (e.g. `sudo make install`).
+   
 ## Mediator RabbitMQ Setup
 If you have built OpenLI from source, you will also need to perform some
 additional manual configuration steps to allow your mediator to be able

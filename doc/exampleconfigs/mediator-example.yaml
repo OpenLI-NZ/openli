@@ -1,4 +1,6 @@
 # Example configuration file for an OpenLI mediator
+#  * (C) 2025 Telefónica Innovación Digital (laura.dominguez.cespedes@telefonica.com)
+#  * (C) 2023 by Original Author(shane@alcock.co.nz)
 
 # Unique ID string for my network (16 chars max)
 operatorid: OpenLIExample
@@ -58,6 +60,9 @@ pcapcompress: 1
 # then you will need to provide these options regardless (and therefore will
 # have to accept encrypted inter-component communication).
 #
+# The TLS certificates and keys can be generated using PQC cryptography algorithms, based on OQS-Provider list of algorithms. 
+# As well, is required to modify the "Openssl.cnf" file to add the desired QS Key Exchange Methods (KEM) desired.
+#
 #tlscert: /etc/openli/openli-mediator-crt.pem
 #tlskey: /etc/openli/openli-mediator-key.pem
 #tlsca: /etc/openli/openli-ca-crt.pem
@@ -84,5 +89,5 @@ RMQheartbeatfreq: 30            # time between heartbeats in seconds
 # collectors will be treated as unencrypted -- this may be desirable for
 # performance reasons. Make sure you set the corresponding option on the
 # collectors as well.
-#etsitls: yes
+etsitls: yes
 
