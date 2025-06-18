@@ -37,6 +37,15 @@
 #include <sys/types.h>
 #include <time.h>
 
+const char *insert_x2x3_sql =
+        "INSERT INTO x2x3_listeners (collector, ip_address, port, last_seen)"
+        " VALUES (?, ?, ?, ?); ";
+const char *update_x2x3_sql =
+        "UPDATE x2x3_listeners SET last_seen = ? "
+        "WHERE collector = ? AND ip_address = ? AND port = ?;";
+const char *select_x2x3_sql =
+        "SELECT * FROM x2x3_listeners WHERE collector = ? AND last_seen > ?;";
+
 const char *insert_sql =
         "INSERT INTO observed_clients (identifier, type, ip_address, last_seen)"
         " VALUES (?, ?, ?, DATETIME('now')); ";
@@ -88,6 +97,13 @@ int init_clientdb(provision_state_t *state) {
         goto endofinit;
     }
 
+    if (sqlite3_exec(state->clientdb, "CREATE TABLE IF NOT EXISTS x2x3_listeners (collector text not null, ip_address text not null, port text not null, last_seen text default (DATETIME('now', 'utc')), primary key (collector, port, ip_address));", NULL, NULL,
+                NULL) != SQLITE_OK) {
+        logger(LOG_INFO, "OpenLI provisioner: error while validating x2x3 listener table in client tracking database: %s", sqlite3_errmsg(state->clientdb));
+        rc = -1;
+        goto endofinit;
+    }
+
     logger(LOG_INFO, "OpenLI provisioner: client tracking database enabled.");
     state->clientdbenabled = 1;
     rc = 1;
@@ -105,7 +121,65 @@ endofinit:
     return rc;
 }
 
+int update_x2x3_listener_row(provision_state_t *state, prov_collector_t *col,
+       char *listenaddr, char *listenport, uint64_t timestamp) {
 
+    if (state->clientdb == NULL) {
+        return 0;
+    }
+
+    if (col == NULL || col->client == NULL || col->client->ipaddress == NULL) {
+        return 0;
+    }
+
+#if HAVE_SQLCIPHER
+    sqlite3_stmt *ins_stmt, *upd_stmt;
+    int rc;
+    char dt_str[32];
+    struct tm *tm_info;
+    time_t ts = (time_t) timestamp;
+
+    if (sqlite3_prepare_v2(state->clientdb, insert_x2x3_sql, -1, &ins_stmt,
+            0) != SQLITE_OK) {
+        logger(LOG_INFO, "OpenLI provisioner: failed to prepare insert statement for x2x3 listener database: %s", sqlite3_errmsg(state->clientdb));
+        return -1;
+    }
+
+    if (sqlite3_prepare_v2(state->clientdb, update_x2x3_sql, -1, &upd_stmt,
+            0) != SQLITE_OK) {
+        logger(LOG_INFO, "OpenLI provisioner: failed to prepare update statement for x2x3 listener database: %s", sqlite3_errmsg(state->clientdb));
+        return -1;
+    }
+
+    tm_info = gmtime(&ts);
+    strftime(dt_str, 32, "%Y-%m-%d %H:%M:%S", tm_info);
+
+    sqlite3_bind_text(ins_stmt, 1, col->client->ipaddress, -1, SQLITE_STATIC);
+    sqlite3_bind_text(ins_stmt, 2, listenaddr, -1, SQLITE_STATIC);
+    sqlite3_bind_text(ins_stmt, 3, listenport, -1, SQLITE_STATIC);
+    sqlite3_bind_text(ins_stmt, 4, dt_str, -1, SQLITE_STATIC);
+
+    if ((rc = sqlite3_step(ins_stmt)) == SQLITE_CONSTRAINT) {
+        sqlite3_reset(upd_stmt);
+        sqlite3_bind_text(upd_stmt, 1, dt_str, -1, SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 2, col->client->ipaddress, -1,
+                SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 3, listenaddr, -1, SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 4, listenport, -1, SQLITE_STATIC);
+
+        rc = sqlite3_step(upd_stmt);
+    }
+
+    if (rc != SQLITE_DONE) {
+        logger(LOG_INFO, "OpenLI provisioner: failed to execute upsert statement for x2x3 listener database: %s", sqlite3_errmsg(state->clientdb));
+        return -1;
+    }
+
+    sqlite3_finalize(ins_stmt);
+    sqlite3_finalize(upd_stmt);
+#endif
+    return 1;
+}
 
 int update_collector_client_row(provision_state_t *state,
         prov_collector_t *col) {
@@ -219,6 +293,57 @@ void update_all_client_rows(provision_state_t *state) {
         update_collector_client_row(state, col);
     }
 
+}
+
+x2x3_listener_t *fetch_x2x3_listeners_for_collector(provision_state_t *state,
+        size_t *listenercount, const char *collectorid) {
+
+    int rc;
+    sqlite3_stmt *sel_stmt;
+    x2x3_listener_t *x2x3 = NULL;
+    size_t ind, rows;
+    struct tm tm;
+    const char *dt_text;
+
+    *listenercount = 0;
+    rows = 0;
+
+    rc = sqlite3_prepare_v2(state->clientdb, select_x2x3_sql, -1, &sel_stmt,
+            NULL);
+    if (rc != SQLITE_OK) {
+        printf("huh?\n");
+        return NULL;
+    }
+
+    sqlite3_bind_text(sel_stmt, 1, collectorid, -1, SQLITE_STATIC);
+    sqlite3_bind_int(sel_stmt, 2, 0);
+    while (sqlite3_step(sel_stmt) == SQLITE_ROW) {
+        rows ++;
+    }
+    sqlite3_reset(sel_stmt);
+
+    if (rows == 0) {
+        return NULL;
+    }
+    x2x3 = calloc(rows, sizeof(x2x3_listener_t));
+    *listenercount = rows;
+    ind = 0;
+
+    while (sqlite3_step(sel_stmt) == SQLITE_ROW && ind < rows) {
+
+        x2x3[ind].ipaddr =
+                strdup((const char *)sqlite3_column_text(sel_stmt, 1));
+        x2x3[ind].port =
+                strdup((const char *)sqlite3_column_text(sel_stmt, 2));
+
+        dt_text = (const char *)sqlite3_column_text(sel_stmt, 3);
+        memset(&tm, 0, sizeof(struct tm));
+        if (dt_text && strptime(dt_text, "%Y-%m-%d %H:%M:%S", &tm)) {
+            x2x3[ind].lastseen = timegm(&tm);
+        }
+        ind ++;
+    }
+    return x2x3;
 }
 
 known_client_t *_fetch_all_clients(provision_state_t *state,

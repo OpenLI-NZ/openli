@@ -239,6 +239,41 @@ int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb) {
             sizeof(ii_header_t));
 }
 
+#define X2X3_BODY_LEN(addr, port) \
+    (strlen(addr) + strlen(port) + sizeof(uint64_t) + (3 * 4))
+
+int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
+        char *port, uint64_t ts) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+
+    totallen = X2X3_BODY_LEN(addr, port);
+    populate_header(&hdr, OPENLI_PROTO_X2X3_LISTENER, totallen, 0);
+
+    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t)) == -1) {
+        return -1;
+    }
+
+    /* may as well re-use these field types */
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_IP, (uint8_t *)addr,
+            strlen(addr)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_PORT, (uint8_t *)port,
+            strlen(port)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_TS_SEC, (uint8_t *)(&ts),
+            sizeof(ts)) == -1) {
+        return -1;
+    }
+
+    return (int)totallen;
+}
 
 #define LIIDMAP_BODY_LEN(agency, liid, key) \
     (strlen(agency) + strlen(liid) + sizeof(payload_encryption_method_t) + \
@@ -2330,6 +2365,39 @@ int decode_default_email_compression_announcement(uint8_t *msgbody,
     }
     return 0;
 }
+
+int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,
+        char **port, uint64_t *ts) {
+
+    uint8_t *msgend = msgbody + len;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_CORESERVER_IP) {
+            DECODE_STRING_FIELD(*addr, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_CORESERVER_PORT) {
+            DECODE_STRING_FIELD(*port, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_TS_SEC) {
+            (*ts) = *((uint64_t *)valptr);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_INFO,
+                    "OpenLI: invalid field in received X2/X3 listener announcement: %d.",
+                    f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+    return 0;
+}
+
 
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
         char **liid, char **encryptkey, payload_encryption_method_t *method) {

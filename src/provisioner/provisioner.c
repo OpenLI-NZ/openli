@@ -1181,6 +1181,34 @@ static int respond_mediator_auth(provision_state_t *state,
     return 0;
 }
 
+static int process_x2x3_listener_announcement(provision_state_t *state,
+        prov_collector_t *col, uint8_t *msgbody, uint16_t msglen) {
+
+    char *listenport = NULL;
+    char *listenaddr = NULL;
+    uint64_t ts = 0;
+
+    if (decode_x2x3_listener(msgbody, msglen, &listenaddr, &listenport,
+            &ts) < 0) {
+        logger(LOG_INFO, "OpenLI provisioner: error decoding X2/X3 announcement from collector %s -- ignoring", col->identifier);
+        return -1;
+    }
+
+    if (listenport == NULL || listenaddr == NULL || ts == 0) {
+        return 0;
+    }
+
+    if (update_x2x3_listener_row(state, col, listenaddr, listenport, ts) < 0) {
+        logger(LOG_INFO, "OpenLI provisioner: error while updating X2/X3 information for collector %s in client DB -- ignoring", col->identifier);
+        return -1;
+    }
+
+    free(listenport);
+    free(listenaddr);
+
+    return 0;
+}
+
 static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
 
     prov_sock_state_t *cs = (prov_sock_state_t *)(pev->client->state);
@@ -1206,6 +1234,10 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
             case OPENLI_PROTO_DISCONNECT:
                 return -1;
             case OPENLI_PROTO_NO_MESSAGE:
+                break;
+            case OPENLI_PROTO_X2X3_LISTENER:
+                process_x2x3_listener_announcement(state,
+                        (prov_collector_t *)(cs->parent), msgbody, msglen);
                 break;
             case OPENLI_PROTO_COLLECTOR_AUTH:
                 if (internalid != OPENLI_COLLECTOR_MAGIC) {

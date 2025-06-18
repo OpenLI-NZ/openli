@@ -246,6 +246,12 @@ void clean_sync_data(collector_sync_t *sync) {
             if (xpush->identifier) {
                 free(xpush->identifier);
             }
+            if (xpush->listenaddr) {
+                free(xpush->listenaddr);
+            }
+            if (xpush->listenport) {
+                free(xpush->listenport);
+            }
             free(xpush);
         }
 
@@ -2420,10 +2426,15 @@ endupdate:
     return 1;
 }
 
-int add_x2x3_to_sync(collector_sync_t *sync, char *identifier) {
+int add_x2x3_to_sync(collector_sync_t *sync, char *identifier, char *addr,
+        char *port) {
     x_input_sync_t *found;
     char sockname[1024];
     int hwm = 1000, timeout=1000;
+
+    if (!identifier) {
+        return -1;
+    }
 
     HASH_FIND(hh, sync->x2x3_queues, identifier, strlen(identifier), found);
     if (found) {
@@ -2435,6 +2446,12 @@ int add_x2x3_to_sync(collector_sync_t *sync, char *identifier) {
 
     found = calloc(1, sizeof(x_input_sync_t));
     found->identifier = strdup(identifier);
+    if (addr) {
+        found->listenaddr = strdup(addr);
+    }
+    if (port) {
+        found->listenport = strdup(port);
+    }
     found->zmq_socket = zmq_socket(sync->glob->zmq_ctxt, ZMQ_PUSH);
     if (zmq_setsockopt(found->zmq_socket, ZMQ_SNDHWM, &hwm, sizeof(hwm)) < 0) {
         logger(LOG_INFO,
@@ -2493,6 +2510,8 @@ void remove_x2x3_from_sync(collector_sync_t *sync, char *identifier,
 
     HASH_DELETE(hh, sync->x2x3_queues, found);
     zmq_close(found->zmq_socket);
+    if (found->listenaddr) free(found->listenaddr);
+    if (found->listenport) free(found->listenport);
     free(found->identifier);
     free(found);
 }
@@ -2558,6 +2577,22 @@ int sync_thread_main(collector_sync_t *sync) {
         if (read(sync->upcomingtimerfd, readbuf, 16) > 0) {
             gettimeofday(&tv, NULL);
 
+            if ((tv.tv_sec % 10) == 0) {
+                x_input_sync_t *xpush, *xtmp;
+                HASH_ITER(hh, sync->x2x3_queues, xpush, xtmp) {
+
+                    if (xpush->listenaddr == NULL ||
+                            xpush->listenport == NULL) {
+                        continue;
+                    }
+                    if (push_x2x3_listener_onto_net_buffer(sync->outgoing,
+                            xpush->listenaddr, xpush->listenport,
+                            (uint64_t)tv.tv_sec) < 0) {
+                        logger(LOG_INFO,"OpenLI: collector is unable to queue X2/X3 listener update message (%s) for provisioner.", xpush->identifier);
+                    }
+                }
+                sync->instruct_events = ZMQ_POLLIN | ZMQ_POLLOUT | ZMQ_POLLERR;
+            }
             do {
                 ipint_v = (ipintercept_t *)check_intercept_time_event(
                         &(sync->upcoming_intercept_events), tv.tv_sec);

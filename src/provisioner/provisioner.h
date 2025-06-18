@@ -79,6 +79,14 @@ typedef struct known_client {
     time_t lastseen;
 } known_client_t;
 
+/** Describes a single X2/X3 listening socket that is available on a collector
+ */
+typedef struct x2x3_listener {
+    char *ipaddr;
+    char *port;
+    time_t lastseen;
+} x2x3_listener_t;
+
 /** Represents an event that has been added to the epoll event set */
 typedef struct prov_epoll_ev {
     /** The event type -- one of the PROV_EPOLL_* values listed below */
@@ -409,6 +417,7 @@ struct prov_sock_state {
 
     /** The type of client, e.g. either collector or mediator */
     int clientrole;
+
 };
 
 /* Implemented in provisioner.c, but included here to be available
@@ -502,11 +511,15 @@ void close_clientdb(provision_state_t *state);
 int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med);
 int update_collector_client_row(provision_state_t *state,
         prov_collector_t *col);
+int update_x2x3_listener_row(provision_state_t *state, prov_collector_t *col,
+       char *listenaddr, char *listenport, uint64_t timestamp);
 void update_all_client_rows(provision_state_t *state);
 known_client_t *fetch_all_collector_clients(provision_state_t *state,
         size_t *clientcount);
 known_client_t *fetch_all_mediator_clients(provision_state_t *state,
         size_t *clientcount);
+x2x3_listener_t *fetch_x2x3_listeners_for_collector(provision_state_t *state,
+        size_t *listenercount, const char *collectorid);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
