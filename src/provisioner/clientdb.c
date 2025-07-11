@@ -50,8 +50,9 @@ const char *insert_sql =
         "INSERT INTO observed_clients (identifier, type, ip_address, last_seen)"
         " VALUES (?, ?, ?, DATETIME('now')); ";
 const char *update_sql =
-        "UPDATE observed_clients SET last_seen = DATETIME('now') "
-        "WHERE identifier = ? AND type = ? AND ip_address = ?;";
+        "UPDATE observed_clients SET last_seen = DATETIME('now'), "
+        "ip_address = ? "
+        "WHERE identifier = ? AND type = ?;";
 
 const char *select_sql =
         "SELECT * FROM observed_clients WHERE type = ?;";
@@ -59,8 +60,8 @@ const char *select_sql =
 const char *upsert_sql =
         "INSERT INTO observed_clients (identifier, type, ip_address, last_seen)"
         " VALUES (?, ?, ?, DATETIME('now')) "
-        "ON CONFLICT(identifier, type, ip_address) DO UPDATE SET "
-        "last_seen = (DATETIME('now')); ";
+        "ON CONFLICT(identifier, type) DO UPDATE SET "
+        "last_seen = (DATETIME('now')), ip_address = ?; ";
 
 int init_clientdb(provision_state_t *state) {
     int rc;
@@ -90,14 +91,14 @@ int init_clientdb(provision_state_t *state) {
     sqlite3_key(state->clientdb, state->clientdbkey,
             strlen(state->clientdbkey));
 
-    if (sqlite3_exec(state->clientdb, "CREATE TABLE IF NOT EXISTS observed_clients (identifier text not null, type text not null, ip_address text not null, first_seen text default (DATETIME('now', 'utc')), last_seen text default (DATETIME('now', 'utc')), primary key (identifier, type, ip_address));", NULL, NULL,
+    if (sqlite3_exec(state->clientdb, "CREATE TABLE IF NOT EXISTS observed_clients (identifier text not null, type text not null, ip_address text not null, first_seen text default (DATETIME('now')), last_seen text default (DATETIME('now')), primary key (identifier, type));", NULL, NULL,
                 NULL) != SQLITE_OK) {
         logger(LOG_INFO, "OpenLI provisioner: error while validating client table in client tracking database: %s", sqlite3_errmsg(state->clientdb));
         rc = -1;
         goto endofinit;
     }
 
-    if (sqlite3_exec(state->clientdb, "CREATE TABLE IF NOT EXISTS x2x3_listeners (collector text not null, ip_address text not null, port text not null, last_seen text default (DATETIME('now', 'utc')), primary key (collector, port, ip_address));", NULL, NULL,
+    if (sqlite3_exec(state->clientdb, "CREATE TABLE IF NOT EXISTS x2x3_listeners (collector text not null, ip_address text not null, port text not null, last_seen text default (DATETIME('now')), primary key (collector, port, ip_address));", NULL, NULL,
                 NULL) != SQLITE_OK) {
         logger(LOG_INFO, "OpenLI provisioner: error while validating x2x3 listener table in client tracking database: %s", sqlite3_errmsg(state->clientdb));
         rc = -1;
@@ -154,7 +155,7 @@ int update_x2x3_listener_row(provision_state_t *state, prov_collector_t *col,
     tm_info = gmtime(&ts);
     strftime(dt_str, 32, "%Y-%m-%d %H:%M:%S", tm_info);
 
-    sqlite3_bind_text(ins_stmt, 1, col->client->ipaddress, -1, SQLITE_STATIC);
+    sqlite3_bind_text(ins_stmt, 1, col->identifier, -1, SQLITE_STATIC);
     sqlite3_bind_text(ins_stmt, 2, listenaddr, -1, SQLITE_STATIC);
     sqlite3_bind_text(ins_stmt, 3, listenport, -1, SQLITE_STATIC);
     sqlite3_bind_text(ins_stmt, 4, dt_str, -1, SQLITE_STATIC);
@@ -162,7 +163,7 @@ int update_x2x3_listener_row(provision_state_t *state, prov_collector_t *col,
     if ((rc = sqlite3_step(ins_stmt)) == SQLITE_CONSTRAINT) {
         sqlite3_reset(upd_stmt);
         sqlite3_bind_text(upd_stmt, 1, dt_str, -1, SQLITE_STATIC);
-        sqlite3_bind_text(upd_stmt, 2, col->client->ipaddress, -1,
+        sqlite3_bind_text(upd_stmt, 2, col->identifier, -1,
                 SQLITE_STATIC);
         sqlite3_bind_text(upd_stmt, 3, listenaddr, -1, SQLITE_STATIC);
         sqlite3_bind_text(upd_stmt, 4, listenport, -1, SQLITE_STATIC);
@@ -206,7 +207,7 @@ int update_collector_client_row(provision_state_t *state,
         return -1;
     }
 
-    sqlite3_bind_text(ins_stmt, 1, col->client->ipaddress, -1, SQLITE_STATIC);
+    sqlite3_bind_text(ins_stmt, 1, col->identifier, -1, SQLITE_STATIC);
     sqlite3_bind_text(ins_stmt, 2, "collector", -1, SQLITE_STATIC);
     sqlite3_bind_text(ins_stmt, 3, col->client->ipaddress, -1, SQLITE_STATIC);
 
@@ -214,9 +215,9 @@ int update_collector_client_row(provision_state_t *state,
         sqlite3_reset(upd_stmt);
         sqlite3_bind_text(upd_stmt, 1, col->client->ipaddress, -1,
                 SQLITE_STATIC);
-        sqlite3_bind_text(upd_stmt, 2, "collector", -1, SQLITE_STATIC);
-        sqlite3_bind_text(upd_stmt, 3, col->client->ipaddress, -1,
+        sqlite3_bind_text(upd_stmt, 2, col->identifier, -1,
                 SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 3, "collector", -1, SQLITE_STATIC);
 
         rc = sqlite3_step(upd_stmt);
     }
@@ -264,9 +265,9 @@ int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med) {
 
     if ((rc = sqlite3_step(ins_stmt)) == SQLITE_CONSTRAINT) {
         sqlite3_reset(upd_stmt);
-        sqlite3_bind_text(upd_stmt, 1, medid_str, -1, SQLITE_STATIC);
-        sqlite3_bind_text(upd_stmt, 2, "mediator", -1, SQLITE_STATIC);
-        sqlite3_bind_text(upd_stmt, 3, med->details->ipstr, -1, SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 1, med->details->ipstr, -1, SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 2, medid_str, -1, SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 3, "mediator", -1, SQLITE_STATIC);
 
         rc = sqlite3_step(upd_stmt);
     }
@@ -383,7 +384,14 @@ known_client_t *_fetch_all_clients(provision_state_t *state,
     while (sqlite3_step(sel_stmt) == SQLITE_ROW && ind < rows) {
         id_text = (const char *)sqlite3_column_text(sel_stmt, 0);
 
-        clients[ind].medid = strtoul(id_text, NULL, 10);
+        if (client_enum == TARGET_MEDIATOR) {
+            clients[ind].medid = strtoul(id_text, NULL, 10);
+            clients[ind].colname = NULL;
+        } else {
+            clients[ind].colname = strdup(id_text);
+            clients[ind].medid = 0xFFFFFFFF;
+        }
+
         clients[ind].type = client_enum;
         clients[ind].ipaddress =
                 strdup((const char *)sqlite3_column_text(sel_stmt, 2));

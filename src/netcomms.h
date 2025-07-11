@@ -204,6 +204,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_INTEGRITY_SIGN_TIMEOUT,
     OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT,
     OPENLI_PROTO_FIELD_INTEGRITY_ENABLED,
+    OPENLI_PROTO_FIELD_COMPONENT_NAME,
 
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct
@@ -247,7 +248,7 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
         char *agencyid);
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t
-        authtype);
+        authtype, char *name);
 int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
         char *port, uint64_t ts);
 int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
@@ -342,6 +343,7 @@ int decode_staticip_modify(uint8_t *msgbody, uint16_t len,
         static_ipranges_t *ipr);
 int decode_hi1_notification(uint8_t *msgbody, uint16_t len,
         hi1_notify_data_t *ndata);
+int decode_component_name(uint8_t *msgbody, uint16_t len, char **name);
 void nb_log_receive_error(openli_proto_msgtype_t err);
 void nb_log_transmit_error(openli_proto_msgtype_t err);
 #endif

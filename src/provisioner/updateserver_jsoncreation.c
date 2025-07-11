@@ -401,7 +401,7 @@ static json_object *convert_coreserver_to_json(coreserver_t *cs) {
 
 static json_object *convert_client_to_json(known_client_t *c) {
     json_object *jobj;
-    json_object *medid, *ipaddress, *firstseen, *lastseen;
+    json_object *medid, *ipaddress, *firstseen, *lastseen, *colname;
 
     medid = ipaddress = firstseen = lastseen = NULL;
 
@@ -410,6 +410,9 @@ static json_object *convert_client_to_json(known_client_t *c) {
     if (c->type == TARGET_MEDIATOR) {
         medid = json_object_new_uint64(c->medid);
         json_object_object_add(jobj, "mediatorid", medid);
+    } else if (c->type == TARGET_COLLECTOR) {
+        colname = json_object_new_string(c->colname);
+        json_object_object_add(jobj, "name", colname);
     }
 
     if (c->ipaddress) {
@@ -489,8 +492,12 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
         jobj = convert_client_to_json(&(cols[i]));
         x2x3obj = json_object_new_array();
 
-        x2x3 = fetch_x2x3_listeners_for_collector(state, &x2x3count,
-                cols[i].ipaddress);
+        if (cols[i].colname) {
+            x2x3 = fetch_x2x3_listeners_for_collector(state, &x2x3count,
+                    cols[i].colname);
+        } else {
+            x2x3 = NULL;
+        }
         if (x2x3) {
             for (j = 0; j < x2x3count; j++) {
                 json_object *base, *ipaddr, *port, *lastseen;
@@ -512,6 +519,9 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
         }
         json_object_object_add(jobj, "x2x3listeners", x2x3obj);
         json_object_array_add(jarray, jobj);
+        if (cols[i].colname) {
+            free((void *)(cols[i].colname));
+        }
         free((void *)(cols[i].ipaddress));
     }
     free(cols);
@@ -535,6 +545,7 @@ json_object *get_known_mediators(update_con_info_t *cinfo UNUSED,
     for (i = 0; i < medcount; i++) {
         jobj = convert_client_to_json(&(meds[i]));
         json_object_array_add(jarray, jobj);
+        free((void *)(meds[i].ipaddress));
     }
     free(meds);
 

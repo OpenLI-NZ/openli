@@ -459,26 +459,35 @@ static int announce_mediator_withdraw(provision_state_t *state,
 }
 
 static int add_collector_to_hashmap(provision_state_t *state,
-        prov_client_t *client, prov_sock_state_t *cs) {
+        prov_client_t *client, prov_sock_state_t *cs, uint8_t *msgbody,
+        uint16_t msglen) {
 
     prov_collector_t *col;
+    char *colname = NULL;
 
-    HASH_FIND(hh, state->collectors, client->identifier,
-            strlen(client->identifier), col);
+    if (decode_component_name(msgbody, msglen, &colname) < 0) {
+        logger(LOG_INFO, "OpenLI provisioner: invalid formatting of collector authentication announcement from %s", client->identifier);
+        return -1;
+    }
+
+    if (!colname) {
+        colname = strdup(client->identifier);
+    }
+    HASH_FIND(hh, state->collectors, colname, strlen(colname), col);
 
     if (!col) {
         col = calloc(1, sizeof(prov_collector_t));
-        col->identifier = strdup(client->identifier);
+        col->identifier = colname;
         col->client = client;
         HASH_ADD_KEYPTR(hh, state->collectors, col->identifier,
                 strlen(col->identifier), col);
-        logger(LOG_INFO,
-                "OpenLI provisioner: collector %s is now active",
-                client->identifier);
         cs->parent = (void *)col;
     } else {
-        /* Can probably get away with not caring if we see a duplicate? */
+        free(colname);
     }
+    logger(LOG_INFO,
+            "OpenLI provisioner: collector %s is now active",
+            col->identifier);
 
     HASH_DELETE(hh, state->pendingclients, client);
 
@@ -1256,7 +1265,8 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 }
                 cs->trusted = 1;
                 justauthed = 1;
-                add_collector_to_hashmap(state, pev->client, cs);
+                add_collector_to_hashmap(state, pev->client, cs, msgbody,
+                        msglen);
                 break;
             default:
                 if (cs->log_allowed) {

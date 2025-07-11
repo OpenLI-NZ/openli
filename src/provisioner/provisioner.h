@@ -62,6 +62,8 @@ typedef struct known_client {
     /** If the client is a mediator, this field contains their mediator ID */
     uint32_t medid;
 
+    const char *colname;
+
     /** Set to TARGET_COLLECTOR if this client was a collector,
      *  TARGET_MEDIATOR if it was a mediator.
      */

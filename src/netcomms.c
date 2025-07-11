@@ -212,22 +212,37 @@ static inline int push_tlv(net_buffer_t *nb, openli_proto_fieldtype_t type,
     return push_generic_onto_net_buffer(nb, tmp, vallen + 4);
 }
 
-int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype)
-{
+int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype,
+        char *name) {
 
     ii_header_t hdr;
+    uint16_t len = 0;
+
+    if (name) {
+        len = strlen(name) + 4;
+    }
 
     if (msgtype == OPENLI_PROTO_COLLECTOR_AUTH) {
-        populate_header(&hdr, msgtype, 0, OPENLI_COLLECTOR_MAGIC);
+        populate_header(&hdr, msgtype, len, OPENLI_COLLECTOR_MAGIC);
     } else if (msgtype == OPENLI_PROTO_MEDIATOR_AUTH) {
-        populate_header(&hdr, msgtype, 0, OPENLI_MEDIATOR_MAGIC);
+        populate_header(&hdr, msgtype, len, OPENLI_MEDIATOR_MAGIC);
     } else {
         logger(LOG_INFO, "OpenLI: invalid auth message type: %d.", msgtype);
         return -1;
     }
 
-    return push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
-            sizeof(ii_header_t));
+    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t)) < 0) {
+        return -1;
+    }
+
+    if (name) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_COMPONENT_NAME, (uint8_t *)name,
+                strlen(name)) < 0) {
+            return -1;
+        }
+    }
+    return len;
 }
 
 int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb) {
@@ -1918,6 +1933,33 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
 
     return 0;
 
+}
+
+int decode_component_name(uint8_t *msgbody, uint16_t len, char **name) {
+
+    uint8_t *msgend = msgbody + len;
+
+    *name = NULL;
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+        if (f == OPENLI_PROTO_FIELD_COMPONENT_NAME) {
+            DECODE_STRING_FIELD(*name, valptr, vallen);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_INFO,
+                "OpenLI: invalid field in received component announcement: %d.",
+                f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+    return 0;
 }
 
 int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
