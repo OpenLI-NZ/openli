@@ -33,6 +33,7 @@
 #include <sqlcipher/sqlite3.h>
 #endif
 
+#include <ctype.h>
 #include <string.h>
 #include <sys/types.h>
 #include <time.h>
@@ -56,6 +57,12 @@ const char *update_sql =
 
 const char *select_sql =
         "SELECT * FROM observed_clients WHERE type = ?;";
+
+const char *remove_client_sql =
+        "DELETE FROM observed_clients WHERE type = ? AND identifier = ?;";
+
+const char *remove_x2x3_sql =
+        "DELETE FROM x2x3_listeners WHERE collector = ?;";
 
 const char *upsert_sql =
         "INSERT INTO observed_clients (identifier, type, ip_address, last_seen)"
@@ -296,23 +303,97 @@ void update_all_client_rows(provision_state_t *state) {
 
 }
 
+static char from_hex(char c) {
+    if (isdigit(c)) return c - '0';
+    if (isxdigit(c)) return tolower(c) - 'a' + 10;
+    return 0;
+}
+
+static void url_decode(char *dst, const char *src) {
+    while (*src) {
+        if (*src == '%' && strlen(src) >= 3 && isxdigit(src[1]) &&
+                isxdigit(src[2])) {
+            *dst++ = from_hex(src[1]) << 4 | from_hex(src[2]);
+            src += 3;
+        } else {
+            *dst++ = *src++;
+        }
+    }
+    *dst = '\0';
+}
+
+int remove_collector_from_clientdb(provision_state_t *state, const char *idstr)
+{
+
+#ifdef HAVE_SQLCIPHER
+    prov_collector_t *col, *coltmp;
+    sqlite3_stmt *del_stmt, *del_x2x3_stmt;
+    int rc;
+    char decoded[4096];
+
+    if (strlen(idstr) >= 4096) {
+        logger(LOG_INFO, "OpenLI provisioner: collector identifier received via REST API is too long!");
+        return -1;
+    }
+
+    url_decode(decoded, idstr);
+    HASH_ITER(hh, state->collectors, col, coltmp) {
+        if (strcmp(col->identifier, decoded) == 0) {
+            /* this collector is connected, can't delete it! */
+            return 0;
+        }
+    }
+
+    if (sqlite3_prepare_v2(state->clientdb, remove_client_sql, -1,
+            &del_stmt, 0) != SQLITE_OK) {
+        logger(LOG_INFO, "OpenLI provisioner: failed to prepare DELETE observed statement for client tracking database: %s", sqlite3_errmsg(state->clientdb));
+        return -1;
+    }
+
+    if (sqlite3_prepare_v2(state->clientdb, remove_x2x3_sql, -1,
+            &del_x2x3_stmt, 0) != SQLITE_OK) {
+        logger(LOG_INFO, "OpenLI provisioner: failed to prepare DELETE x2x3 statement for client tracking database: %s", sqlite3_errmsg(state->clientdb));
+        return -1;
+    }
+
+    sqlite3_bind_text(del_stmt, 1, "collector", -1, SQLITE_STATIC);
+    sqlite3_bind_text(del_stmt, 2, decoded, -1, SQLITE_STATIC);
+
+    if ((rc = sqlite3_step(del_stmt)) != SQLITE_DONE) {
+        logger(LOG_INFO, "OpenLI provisioner: failed to execute DELETE collector statement for client tracking database: %s", sqlite3_errmsg(state->clientdb));
+        return -1;
+    }
+
+    sqlite3_bind_text(del_x2x3_stmt, 1, decoded, -1, SQLITE_STATIC);
+    if ((rc = sqlite3_step(del_x2x3_stmt)) != SQLITE_DONE) {
+        logger(LOG_INFO, "OpenLI provisioner: failed to execute DELETE x2x3 statement for client tracking database: %s", sqlite3_errmsg(state->clientdb));
+        return -1;
+    }
+
+    sqlite3_finalize(del_stmt);
+    sqlite3_finalize(del_x2x3_stmt);
+#endif
+
+    return 1;
+}
+
 x2x3_listener_t *fetch_x2x3_listeners_for_collector(provision_state_t *state,
         size_t *listenercount, const char *collectorid) {
 
+    x2x3_listener_t *x2x3 = NULL;
+    *listenercount = 0;
+#ifdef HAVE_SQLCIPHER
     int rc;
     sqlite3_stmt *sel_stmt;
-    x2x3_listener_t *x2x3 = NULL;
     size_t ind, rows;
     struct tm tm;
     const char *dt_text;
 
-    *listenercount = 0;
     rows = 0;
 
     rc = sqlite3_prepare_v2(state->clientdb, select_x2x3_sql, -1, &sel_stmt,
             NULL);
     if (rc != SQLITE_OK) {
-        printf("huh?\n");
         return NULL;
     }
 
@@ -344,20 +425,23 @@ x2x3_listener_t *fetch_x2x3_listeners_for_collector(provision_state_t *state,
         }
         ind ++;
     }
+#endif
     return x2x3;
 }
 
 known_client_t *_fetch_all_clients(provision_state_t *state,
         size_t *clientcount, const char *where, uint8_t client_enum) {
 
+    known_client_t *clients = NULL;
+    *clientcount = 0;
+
+#ifdef HAVE_SQLCIPHER
     int rc;
     sqlite3_stmt *sel_stmt;
-    known_client_t *clients = NULL;
     size_t ind, rows;
     const char *id_text, *dt_text;
     struct tm tm;
 
-    *clientcount = 0;
     rows = 0;
 
     rc = sqlite3_prepare_v2(state->clientdb, select_sql, -1, &sel_stmt, NULL);
@@ -410,6 +494,7 @@ known_client_t *_fetch_all_clients(provision_state_t *state,
         ind ++;
     }
     *clientcount = rows;
+#endif
     return clients;
 
 }
@@ -426,6 +511,7 @@ known_client_t *fetch_all_collector_clients(provision_state_t *state,
     return _fetch_all_clients(state, clientcount, "collector",
             TARGET_COLLECTOR);
 }
+
 
 void close_clientdb(provision_state_t *state) {
 #ifdef HAVE_SQLCIPHER

@@ -522,6 +522,7 @@ known_client_t *fetch_all_mediator_clients(provision_state_t *state,
         size_t *clientcount);
 x2x3_listener_t *fetch_x2x3_listeners_for_collector(provision_state_t *state,
         size_t *listenercount, const char *collectorid);
+int remove_collector_from_clientdb(provision_state_t *state, const char *idstr);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

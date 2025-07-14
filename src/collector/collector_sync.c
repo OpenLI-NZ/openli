@@ -313,10 +313,10 @@ static int sync_thread_send_provisioner_auth(collector_sync_t *sync) {
     pthread_rwlock_rdlock(sync->info_mutex);
     /* Put our auth message onto the outgoing buffer */
     if (sync->info->intpointid) {
-        snprintf(colname, 1024, "%s/%s/%s", sync->info->operatorid,
+        snprintf(colname, 1024, "%s~%s~%s", sync->info->operatorid,
                 sync->info->networkelemid, sync->info->intpointid);
     } else {
-        snprintf(colname, 1024, "%s/%s", sync->info->operatorid,
+        snprintf(colname, 1024, "%s~%s", sync->info->operatorid,
                 sync->info->networkelemid);
     }
 
