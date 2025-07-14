@@ -473,24 +473,26 @@ static int add_collector_to_hashmap(provision_state_t *state,
     if (!colname) {
         colname = strdup(client->identifier);
     }
-    HASH_FIND(hh, state->collectors, colname, strlen(colname), col);
+    HASH_FIND(hh, state->collectors, client->ipaddress,
+            strlen(client->ipaddress), col);
 
     if (!col) {
         col = calloc(1, sizeof(prov_collector_t));
         col->identifier = colname;
         col->client = client;
-        HASH_ADD_KEYPTR(hh, state->collectors, col->identifier,
-                strlen(col->identifier), col);
-        cs->parent = (void *)col;
+        HASH_ADD_KEYPTR(hh, state->collectors, col->client->ipaddress,
+                strlen(col->client->ipaddress), col);
     } else {
-        free(colname);
+        if (col->identifier) {
+            free(col->identifier);
+        }
+        col->identifier = colname;
     }
+
+    cs->parent = (void *)col;
     logger(LOG_INFO,
             "OpenLI provisioner: collector %s is now active",
             col->identifier);
-
-    HASH_DELETE(hh, state->pendingclients, client);
-
 
     return 0;
 }
@@ -1256,12 +1258,8 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                     }
                     return -1;
                 }
-                if (cs->trusted == 1) {
-                    if (cs->log_allowed) {
-                        logger(LOG_INFO,
-                                "OpenLI: warning -- double auth from collector.");
-                    }
-                    return -1;
+                if (!cs->trusted) {
+                    HASH_DELETE(hh, state->pendingclients, pev->client);
                 }
                 cs->trusted = 1;
                 justauthed = 1;

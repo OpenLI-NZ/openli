@@ -307,6 +307,34 @@ static int forward_provmsg_to_workers(void **zmq_socks, int sockcount,
 
 }
 
+static int sync_thread_send_provisioner_auth(collector_sync_t *sync) {
+    char colname[1024];
+
+    pthread_rwlock_rdlock(sync->info_mutex);
+    /* Put our auth message onto the outgoing buffer */
+    if (sync->info->intpointid) {
+        snprintf(colname, 1024, "%s/%s/%s", sync->info->operatorid,
+                sync->info->networkelemid, sync->info->intpointid);
+    } else {
+        snprintf(colname, 1024, "%s/%s", sync->info->operatorid,
+                sync->info->networkelemid);
+    }
+
+    if (push_auth_onto_net_buffer(sync->outgoing, OPENLI_PROTO_COLLECTOR_AUTH,
+            colname) < 0) {
+        pthread_rwlock_unlock(sync->info_mutex);
+        if (sync->instruct_fail == 0) {
+            logger(LOG_INFO,"OpenLI: collector is unable to queue auth message.");
+        }
+        sync->instruct_fail = 1;
+        sync_disconnect_provisioner(sync, 0);
+        return 0;
+    }
+    pthread_rwlock_unlock(sync->info_mutex);
+    return 1;
+}
+
+
 static inline void push_coreserver_msg(collector_sync_t *sync,
         coreserver_t *cs, uint8_t msgtype) {
 
@@ -336,6 +364,7 @@ void sync_thread_publish_reload(collector_sync_t *sync) {
 
         publish_openli_msg(sync->zmq_pubsocks[i], expmsg);
     }
+    sync_thread_send_provisioner_auth(sync);
 }
 
 static int export_raw_sync_packet_content(access_plugin_t *p,
@@ -1821,7 +1850,6 @@ static int recv_from_provisioner(collector_sync_t *sync) {
 int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
 
     int sockfd;
-    char colname[1024];
 
     pthread_rwlock_rdlock(sync->info_mutex);
     sockfd = connect_socket(sync->info->provisionerip,
@@ -1877,29 +1905,8 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
     sync->outgoing = create_net_buffer(NETBUF_SEND, sync->instruct_fd, sync->ssl);
     sync->incoming = create_net_buffer(NETBUF_RECV, sync->instruct_fd, sync->ssl);
 
-    pthread_rwlock_rdlock(sync->info_mutex);
-    /* Put our auth message onto the outgoing buffer */
-    if (sync->info->intpointid) {
-        snprintf(colname, 1024, "%s/%s/%s", sync->info->operatorid,
-                sync->info->networkelemid, sync->info->intpointid);
-    } else {
-        snprintf(colname, 1024, "%s/%s", sync->info->operatorid,
-                sync->info->networkelemid);
-    }
-
-    if (push_auth_onto_net_buffer(sync->outgoing, OPENLI_PROTO_COLLECTOR_AUTH,
-            colname) < 0) {
-        pthread_rwlock_unlock(sync->info_mutex);
-        if (sync->instruct_fail == 0) {
-            logger(LOG_INFO,"OpenLI: collector is unable to queue auth message.");
-        }
-        sync->instruct_fail = 1;
-        sync_disconnect_provisioner(sync, 0);
-        return 0;
-    }
-    pthread_rwlock_unlock(sync->info_mutex);
     sync->instruct_events = ZMQ_POLLIN | ZMQ_POLLOUT | ZMQ_POLLERR;
-    return 1;
+    return sync_thread_send_provisioner_auth(sync);
 }
 
 static inline void touch_all_coreservers(coreserver_t *servers) {
