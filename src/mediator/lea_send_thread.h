@@ -359,12 +359,12 @@ int purge_lea_liid_mapping(lea_thread_state_t *state, char *liid);
  *  handovers so records for that LIID will be consumed by this thread.
  *
  *  @param state        The state object for the LEA send thread
- *  @param liid         The LIID to associate with this agency
+ *  @param toadd        Details of the intercept to be added to the LIID set
  *
  *  @return 1 if successful, 0 if the LIID was already in this thread's LIID
  *          set, -1 if an error occurs.
  */
-int insert_lea_liid_mapping(lea_thread_state_t *state, char *liid);
+int insert_lea_liid_mapping(lea_thread_state_t *state, added_liid_t *toadd);
 
 #endif
 

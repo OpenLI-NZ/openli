@@ -908,8 +908,8 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
 static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
 
-    char *agencyid, *liid, *encryptkey;
-    int found = 0;
+    char *agencyid = NULL, *liid = NULL, *encryptkey = NULL;
+    int found = 0, ret = 0;
     lea_thread_msg_t msg;
     lea_thread_state_t *target;
     added_liid_t *added;
@@ -923,11 +923,13 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     if (decode_liid_mapping(msgbody, msglen, &agencyid, &liid, &encryptkey,
             &encmethod) == -1) {
         logger(LOG_INFO, "OpenLI Mediator: receive invalid LIID mapping from provisioner.");
-        return -1;
+        ret = -1;
+        goto tidyup;
     }
 
     if (agencyid == NULL || liid == NULL) {
-        return -1;
+        ret = -1;
+        goto tidyup;
     }
 
     /*
@@ -953,6 +955,8 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         added = calloc(1, sizeof(added_liid_t));
         added->liid = strdup(liid);
         added->agencyid = strdup(agencyid);
+        added->encryptkey = NULL;       // not required in LEA threads
+        added->encrypt = encmethod;
 
         msg.type = MED_LEA_MESSAGE_ADD_LIID;
         msg.data = (void *)added;
@@ -960,13 +964,19 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         libtrace_message_queue_put(&(target->in_main), &msg);
     }
 
-    add_liid_mapping_collector_config(&(state->collector_threads.config),
-            liid, agencyid);
-
     if (found == 0) {
         logger(LOG_INFO, "OpenLI Mediator: agency %s is not recognised by the mediator, yet LIID %s is intended for it?",
                 agencyid, liid);
-        return -1;
+        ret = -1;
+        goto tidyup;
+    }
+
+    add_liid_mapping_collector_config(&(state->collector_threads.config),
+            liid, agencyid, encmethod, encryptkey);
+
+tidyup:
+    if (encryptkey) {
+        free(encryptkey);
     }
 
     if (liid) {
@@ -975,7 +985,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     if (agencyid) {
         free(agencyid);
     }
-    return 0;
+    return ret;
 }
 
 /** Receives and actions one or more messages received from the provisioner.

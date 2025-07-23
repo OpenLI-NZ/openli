@@ -53,6 +53,9 @@ liid_map_entry_t *lookup_liid_agency_mapping(liid_map_t *map, char *liidstr) {
  *  @param m        The LIID map entry to be freed
  */
 void destroy_liid_mapping(liid_map_entry_t *m) {
+    if (m->encryptkey) {
+        free(m->encryptkey);
+    }
     free(m->liid);
     free(m);
 }
@@ -100,18 +103,20 @@ void withdraw_liid_agency_mapping(liid_map_t *map, char *liidstr) {
 /** Adds a new LIID->agency mapping to an LIID map.
  *
  *  @param map          The LIID map to add the new mapping to
- *  @param liidstr      The LIID for the new mapping (as a string)
+ *  @param toadd        Structure containing the LIID for the new mapping
+ *                      (as a string), as well as encryption requirements for
+ *                      the corresponding intercept
  *
  *  @return -1 if an error occurs, 0 if the LIID already existed and was not
  *          withdrawn, 1 if a new LIID->agency mapping was created or an
  *          existing mapping has been reactivated.
  */
-int add_liid_agency_mapping(liid_map_t *map, char *liidstr) {
+int add_liid_agency_mapping(liid_map_t *map, added_liid_t *toadd) {
 
     PWord_t jval;
 	liid_map_entry_t *m;
 
-    JSLG(jval, map->liid_array, (unsigned char *)liidstr);
+    JSLG(jval, map->liid_array, (unsigned char *)(toadd->liid));
     if (jval != NULL) {
         int ret = 0;
 
@@ -125,17 +130,15 @@ int add_liid_agency_mapping(liid_map_t *map, char *liidstr) {
         } else {
             ret = 0;
         }
+        if (m->encryptkey) {
+            free(m->encryptkey);
+        }
+        m->encryptkey = toadd->encryptkey;
+        m->encrypt = toadd->encrypt;
         m->unconfirmed = 0;
         m->ccqueue_deleted = 0;
         m->iriqueue_deleted = 0;
         return ret;
-    }
-
-    /* Create a new entry in the mapping array */
-    JSLI(jval, map->liid_array, (unsigned char *)liidstr);
-    if (jval == NULL) {
-        logger(LOG_INFO, "OpenLI Mediator: OOM when allocating memory for new LIID.");
-        return -1;
     }
 
     m = (liid_map_entry_t *)calloc(1, sizeof(liid_map_entry_t));
@@ -143,13 +146,22 @@ int add_liid_agency_mapping(liid_map_t *map, char *liidstr) {
         logger(LOG_INFO, "OpenLI Mediator: OOM when allocating memory for new LIID.");
         return -1;
     }
-    *jval = (Word_t)m;
 
     m->withdrawn = 0;
     m->unconfirmed = 0;
-    m->liid = strdup(liidstr);
+    m->liid = strdup(toadd->liid);
     m->ccqueue_deleted = 0;
     m->iriqueue_deleted = 0;
+    m->encrypt = toadd->encrypt;
+    m->encryptkey = toadd->encryptkey;
+
+    /* Create a new entry in the mapping array */
+    JSLI(jval, map->liid_array, (unsigned char *)(m->liid));
+    if (jval == NULL) {
+        logger(LOG_INFO, "OpenLI Mediator: OOM when allocating memory for new LIID.");
+        return -1;
+    }
+    *jval = (Word_t)m;
 
 	return 1;
 }

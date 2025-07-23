@@ -213,7 +213,7 @@ int encode_templated_ipmmiri(wandder_encoder_t *encoder,
     }
 
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_encrypted_message_body(encoder, encrypt, res, hdr_tplate,
+        if (create_preencrypted_message_body(encoder, encrypt, res, hdr_tplate,
                 body->encoded, body->len,
                 NULL, 0, job) < 0) {
             wandder_release_encoded_result(encoder, body);
