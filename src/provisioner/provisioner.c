@@ -218,19 +218,21 @@ int map_intercepts_to_leas(prov_intercept_conf_t *conf) {
 
     /* Do IP Intercepts */
     HASH_ITER(hh_liid, conf->ipintercepts, ipint, iptmp) {
-        add_liid_mapping(conf, ipint->common.liid, ipint->common.targetagency);
+        apply_intercept_encryption_settings(conf, &(ipint->common));
+        add_liid_mapping(conf, &(ipint->common));
     }
 
     /* Now do the VOIP intercepts */
     for (vint = conf->voipintercepts; vint != NULL; vint = vint->hh_liid.next)
     {
-        add_liid_mapping(conf, vint->common.liid, vint->common.targetagency);
+        apply_intercept_encryption_settings(conf, &(vint->common));
+        add_liid_mapping(conf, &(vint->common));
     }
 
     for (mailint = conf->emailintercepts; mailint != NULL;
             mailint = mailint->hh_liid.next) {
-        add_liid_mapping(conf, mailint->common.liid,
-                mailint->common.targetagency);
+        apply_intercept_encryption_settings(conf, &(mailint->common));
+        add_liid_mapping(conf, &(mailint->common));
     }
 
     /* Sort the final mapping nicely */
@@ -457,29 +459,40 @@ static int announce_mediator_withdraw(provision_state_t *state,
 }
 
 static int add_collector_to_hashmap(provision_state_t *state,
-        prov_client_t *client, prov_sock_state_t *cs) {
+        prov_client_t *client, prov_sock_state_t *cs, uint8_t *msgbody,
+        uint16_t msglen) {
 
     prov_collector_t *col;
+    char *colname = NULL;
 
-    HASH_FIND(hh, state->collectors, client->identifier,
-            strlen(client->identifier), col);
+    if (decode_component_name(msgbody, msglen, &colname) < 0) {
+        logger(LOG_INFO, "OpenLI provisioner: invalid formatting of collector authentication announcement from %s", client->identifier);
+        return -1;
+    }
+
+    if (!colname) {
+        colname = strdup(client->identifier);
+    }
+    HASH_FIND(hh, state->collectors, client->ipaddress,
+            strlen(client->ipaddress), col);
 
     if (!col) {
         col = calloc(1, sizeof(prov_collector_t));
-        col->identifier = strdup(client->identifier);
+        col->identifier = colname;
         col->client = client;
-        HASH_ADD_KEYPTR(hh, state->collectors, col->identifier,
-                strlen(col->identifier), col);
-        logger(LOG_INFO,
-                "OpenLI provisioner: collector %s is now active",
-                client->identifier);
-        cs->parent = (void *)col;
+        HASH_ADD_KEYPTR(hh, state->collectors, col->client->ipaddress,
+                strlen(col->client->ipaddress), col);
     } else {
-        /* Can probably get away with not caring if we see a duplicate? */
+        if (col->identifier) {
+            free(col->identifier);
+        }
+        col->identifier = colname;
     }
 
-    HASH_DELETE(hh, state->pendingclients, client);
-
+    cs->parent = (void *)col;
+    logger(LOG_INFO,
+            "OpenLI provisioner: collector %s is now active",
+            col->identifier);
 
     return 0;
 }
@@ -1157,8 +1170,8 @@ static int respond_mediator_auth(provision_state_t *state,
     /* We also need to send any LIID -> LEA mappings that we know about */
     h = state->interceptconf.liid_map;
     while (h != NULL) {
-        if (push_liid_mapping_onto_net_buffer(outgoing, h->agency, h->liid)
-                == -1) {
+        if (push_liid_mapping_onto_net_buffer(outgoing, h->agency, h->liid,
+                h->encryptkey, h->encryptmethod) == -1) {
             logger(LOG_INFO,
                     "OpenLI: error while buffering LIID mappings to send to mediator.");
             pthread_mutex_unlock(&(state->interceptconf.safelock));
@@ -1175,6 +1188,34 @@ static int respond_mediator_auth(provision_state_t *state,
                 pev->fd, strerror(errno));
         return -1;
     }
+
+    return 0;
+}
+
+static int process_x2x3_listener_announcement(provision_state_t *state,
+        prov_collector_t *col, uint8_t *msgbody, uint16_t msglen) {
+
+    char *listenport = NULL;
+    char *listenaddr = NULL;
+    uint64_t ts = 0;
+
+    if (decode_x2x3_listener(msgbody, msglen, &listenaddr, &listenport,
+            &ts) < 0) {
+        logger(LOG_INFO, "OpenLI provisioner: error decoding X2/X3 announcement from collector %s -- ignoring", col->identifier);
+        return -1;
+    }
+
+    if (listenport == NULL || listenaddr == NULL || ts == 0) {
+        return 0;
+    }
+
+    if (update_x2x3_listener_row(state, col, listenaddr, listenport, ts) < 0) {
+        logger(LOG_INFO, "OpenLI provisioner: error while updating X2/X3 information for collector %s in client DB -- ignoring", col->identifier);
+        return -1;
+    }
+
+    free(listenport);
+    free(listenaddr);
 
     return 0;
 }
@@ -1205,6 +1246,10 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 return -1;
             case OPENLI_PROTO_NO_MESSAGE:
                 break;
+            case OPENLI_PROTO_X2X3_LISTENER:
+                process_x2x3_listener_announcement(state,
+                        (prov_collector_t *)(cs->parent), msgbody, msglen);
+                break;
             case OPENLI_PROTO_COLLECTOR_AUTH:
                 if (internalid != OPENLI_COLLECTOR_MAGIC) {
                     if (cs->log_allowed) {
@@ -1213,16 +1258,13 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                     }
                     return -1;
                 }
-                if (cs->trusted == 1) {
-                    if (cs->log_allowed) {
-                        logger(LOG_INFO,
-                                "OpenLI: warning -- double auth from collector.");
-                    }
-                    return -1;
+                if (!cs->trusted) {
+                    HASH_DELETE(hh, state->pendingclients, pev->client);
                 }
                 cs->trusted = 1;
                 justauthed = 1;
-                add_collector_to_hashmap(state, pev->client, cs);
+                add_collector_to_hashmap(state, pev->client, cs, msgbody,
+                        msglen);
                 break;
             default:
                 if (cs->log_allowed) {
@@ -2079,6 +2121,13 @@ int main(int argc, char *argv[]) {
                 ret);
         return -1;
     }
+
+    /* No mediators connected yet, so clear the announce flag for each LIID
+     * mapping -- they'll get forcibly announced to each mediator when it
+     * connects, so this avoids duplicate / unnecessary announcements later
+     * on if some of the mappings change.
+     */
+    clear_liid_announce_flags(&(provstate.interceptconf));
 
     if (start_main_listener(&provstate) == -1) {
         logger(LOG_INFO, "OpenLI: Error, could not start listening socket.");

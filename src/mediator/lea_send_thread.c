@@ -637,20 +637,26 @@ int purge_lea_liid_mapping(lea_thread_state_t *state, char *liid) {
  *  handovers so records for that LIID will be consumed by this thread.
  *
  *  @param state        The state object for the LEA send thread
- *  @param liid         The LIID to associate with this agency
+ *  @param toadd        Details of the intercept to be added to the LIID set
  *
  *  @return 1 if successful, 0 if the LIID was already in this thread's LIID
  *          set, -1 if an error occurs.
  */
-int insert_lea_liid_mapping(lea_thread_state_t *state, char *liid) {
+int insert_lea_liid_mapping(lea_thread_state_t *state, added_liid_t *toadd) {
     int r;
 
+    if (toadd == NULL) {
+        return -1;
+    }
     /* Add the LIID to the thread's LIID set */
-    r = add_liid_agency_mapping(&(state->active_liids), liid);
+    r = add_liid_agency_mapping(&(state->active_liids), toadd);
     if (r < 0) {
         logger(LOG_INFO,
                 "OpenLI Mediator: WARNING failed to add %s -> %s to LIID map",
-                liid, state->agencyid);
+                toadd->liid, state->agencyid);
+        if (toadd->encryptkey) {
+            free(toadd->encryptkey);
+        }
         return -1;
     }
 
@@ -663,15 +669,15 @@ int insert_lea_liid_mapping(lea_thread_state_t *state, char *liid) {
 
     /* Register to consume from the LIID's internal RMQ queues */
     if ((register_mediator_iri_RMQ_consumer(
-                    state->agency.hi2->rmq_consumer, liid) < 0) ||
+                    state->agency.hi2->rmq_consumer, toadd->liid) < 0) ||
             (register_mediator_cc_RMQ_consumer(state->agency.hi3->rmq_consumer,
-                    liid) < 0)) {
+                    toadd->liid) < 0)) {
         logger(LOG_INFO,
             "OpenLI Mediator: WARNING failed to register RMQ for LIID %s -> %s",
-            liid, state->agencyid);
+            toadd->liid, state->agencyid);
     } else {
         logger(LOG_INFO, "OpenLI Mediator: added %s -> %s to LIID map",
-                liid, state->agencyid);
+                toadd->liid, state->agencyid);
     }
     return 1;
 }
@@ -986,7 +992,7 @@ static int process_agency_messages(lea_thread_state_t *state) {
                 /* If the agency ID matches ours, then we should add it to
                  * our handovers.
                  */
-                insert_lea_liid_mapping(state, added->liid);
+                insert_lea_liid_mapping(state, added);
             }
 
             free(added->liid);

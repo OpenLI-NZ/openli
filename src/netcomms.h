@@ -138,6 +138,7 @@ typedef enum {
     OPENLI_PROTO_RAWIP_CC,
     OPENLI_PROTO_RAWIP_IRI,
     OPENLI_PROTO_COLLECTOR_FORWARDER_HELLO,
+    OPENLI_PROTO_X2X3_LISTENER,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -203,6 +204,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_INTEGRITY_SIGN_TIMEOUT,
     OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT,
     OPENLI_PROTO_FIELD_INTEGRITY_ENABLED,
+    OPENLI_PROTO_FIELD_COMPONENT_NAME,
 
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct
@@ -246,9 +248,11 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
         char *agencyid);
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t
-        authtype);
+        authtype, char *name);
+int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
+        char *port, uint64_t ts);
 int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
-        char *liid);
+        char *liid, char *encryptkey, payload_encryption_method_t method);
 int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
         int liid_len);
 int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb);
@@ -315,7 +319,9 @@ int decode_emailintercept_modify(uint8_t *msgbody, uint16_t len,
 int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_lea_withdrawal(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
-        char **liid);
+        char **liid, char **encryptkey, payload_encryption_method_t *method);
+int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,
+        char **port, uint64_t *ts);
 int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid);
 int decode_coreserver_announcement(uint8_t *msgbody, uint16_t len,
         coreserver_t *cs);
@@ -337,6 +343,7 @@ int decode_staticip_modify(uint8_t *msgbody, uint16_t len,
         static_ipranges_t *ipr);
 int decode_hi1_notification(uint8_t *msgbody, uint16_t len,
         hi1_notify_data_t *ndata);
+int decode_component_name(uint8_t *msgbody, uint16_t len, char **name);
 void nb_log_receive_error(openli_proto_msgtype_t err);
 void nb_log_transmit_error(openli_proto_msgtype_t err);
 #endif

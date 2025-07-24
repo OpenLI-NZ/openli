@@ -158,9 +158,13 @@ void destroy_med_collector_config(mediator_collector_config_t *config) {
  *  @param config       The global config for the collector threads
  *  @param liid         The LIID to add to the map
  *  @param agencyid     The ID of the agency that this LIID is destined for.
+ *  @param encmethod    The encryption method to apply to IRIs and CCs using
+ *                      this LIID.
+ *  @param encryptkey   The key to use when encrypting an IRI or CC.
  */
 void add_liid_mapping_collector_config(mediator_collector_config_t *config,
-        char *liid, char *agencyid) {
+        char *liid, char *agencyid, payload_encryption_method_t encmethod,
+        char *encryptkey) {
     added_liid_t *found = NULL;
 
     pthread_mutex_lock(&(config->mutex));
@@ -168,10 +172,25 @@ void add_liid_mapping_collector_config(mediator_collector_config_t *config,
     if (found) {
         free(found->agencyid);
         found->agencyid = strdup(agencyid);
+        if (found->encryptkey) {
+            free(found->encryptkey);
+        }
+        if (encryptkey) {
+            found->encryptkey = strdup(encryptkey);
+        } else {
+            found->encryptkey = NULL;
+        }
+        found->encrypt = encmethod;
     } else {
         found = calloc(1, sizeof(added_liid_t));
         found->liid = strdup(liid);
         found->agencyid = strdup(agencyid);
+        if (encryptkey) {
+            found->encryptkey = strdup(encryptkey);
+        } else {
+            found->encryptkey = NULL;
+        }
+        found->encrypt = encmethod;
 
         HASH_ADD_KEYPTR(hh, config->liid_to_agency_map, found->liid,
                 strlen(found->liid), found);
@@ -185,22 +204,20 @@ void add_liid_mapping_collector_config(mediator_collector_config_t *config,
  *
  *  @param config       The global config for the collector threads
  *  @param liid         The LIID to search for
- *  @return             The ID of the agency that this LIID is destined for.
+ *  @return             The agency that this LIID is destined for.
  */
-char *lookup_liid_mapping_collector_config(mediator_collector_config_t *config,
-        char *liid) {
-
-    char *res = NULL;
+static char *lookup_agencyid_for_liid_collector_config(
+        mediator_collector_config_t *config, char *liid) {
 
     added_liid_t *found = NULL;
+    char *agencyid = NULL;
     pthread_mutex_lock(&(config->mutex));
     HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
     if (found) {
-        res = found->agencyid;
+        agencyid = strdup(found->liid);
     }
-
     pthread_mutex_unlock(&(config->mutex));
-    return res;
+    return agencyid;
 }
 
 /** Removes a LIID -> agency mapping from the map stored in the shared
@@ -218,6 +235,9 @@ void remove_liid_mapping_collector_config(mediator_collector_config_t *config,
     HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
     if (found) {
         HASH_DELETE(hh, config->liid_to_agency_map, found);
+        if (found->encryptkey) {
+            free(found->encryptkey);
+        }
         free(found->agencyid);
         free(found->liid);
         free(found);
@@ -623,7 +643,7 @@ static col_known_liid_t *create_new_known_liid(coll_recv_t *col,
 static void check_agency_digest_config(coll_recv_t *col,
         col_known_liid_t *found) {
 
-    char *agencyid;
+    char *agencyid = NULL;
     agency_digest_config_t *agdigest = NULL;
     uint8_t reencode_needed = 0;
 
@@ -633,7 +653,7 @@ static void check_agency_digest_config(coll_recv_t *col,
 
     /* Look up the integrity check configuration for the recipient of
      * this intercept */
-    agencyid = lookup_liid_mapping_collector_config(col->parentconfig,
+    agencyid = lookup_agencyid_for_liid_collector_config(col->parentconfig,
             found->liid);
     found->last_agency_check = found->lastseen;
 
@@ -668,6 +688,9 @@ static void check_agency_digest_config(coll_recv_t *col,
     if (reencode_needed) {
         preencode_etsi_for_known_liid(col, found);
     }
+    if (agencyid) {
+        free(agencyid);
+    }
 }
 
 /** Processes an intercept record received from a collector and inserts
@@ -684,13 +707,15 @@ static void check_agency_digest_config(coll_recv_t *col,
 static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
         uint16_t msglen, openli_proto_msgtype_t msgtype) {
 
-    unsigned char liidstr[65536];
+    unsigned char liidstr[1024];
     uint16_t liidlen;
     col_known_liid_t *found;
     struct timeval tv;
     int r = 0;
     uint8_t integrity_res = INTEGRITY_CHECK_NO_ACTION;
     integrity_check_state_t *chain = NULL;
+    char *enckey = NULL;
+    payload_encryption_method_t encmethod = OPENLI_PAYLOAD_ENCRYPTION_NONE;
 
     /* The queue that this record must be published to is derived from
      * the LIID for the record and the record type
@@ -745,6 +770,29 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
         integrity_res = update_integrity_check_state(&(col->integrity_state),
                 found, msgbody + (liidlen + 2), msglen - (liidlen + 2),
                 msgtype, col->epoll_fd, col->etsidecoder, &chain);
+    }
+
+    if (msgtype == OPENLI_PROTO_ETSI_IRI || msgtype == OPENLI_PROTO_ETSI_CC) {
+        encmethod = check_encryption_requirements(col->parentconfig,
+                found->liid, &enckey);
+    }
+
+    if (encmethod == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
+
+        if (encrypt_payload_container_aes_192_cbc(col->evp_ctx,
+                col->etsidecoder, msgbody + (liidlen + 2),
+                msglen - (liidlen + 2), enckey) == NULL) {
+
+            logger(LOG_INFO, "OpenLI Mediator: error while attempting to encrypt ETSI record for LIID %s in collector thread %s", found->liid, col->ipaddr);
+            if (enckey) {
+                free(enckey);
+            }
+            return -1;
+        }
+    }
+
+    if (enckey) {
+        free(enckey);
     }
 
     /* Hand off to publishing methods defined in mediator_rmq.c */
@@ -1007,6 +1055,10 @@ static void cleanup_collector_thread(coll_recv_t *col) {
     destroy_rmq_colev(col);
     if (col->ssl) {
         SSL_free(col->ssl);
+    }
+
+    if (col->evp_ctx) {
+        EVP_CIPHER_CTX_free(col->evp_ctx);
     }
 
     HASH_ITER(hh, col->known_agencies, ag, tmpag) {
@@ -1358,6 +1410,7 @@ static void init_new_colrecv_thread(mediator_collector_t *medcol,
     newcol->known_agencies = NULL;
     newcol->integrity_state = NULL;
     newcol->epoll_fd = -1;
+    newcol->evp_ctx = EVP_CIPHER_CTX_new();
 
     newcol->etsidecoder = wandder_create_etsili_decoder();
     newcol->etsiencoder = init_wandder_encoder();

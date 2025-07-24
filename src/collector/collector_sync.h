@@ -105,7 +105,8 @@ void sync_thread_publish_reload(collector_sync_t *sync);
 int sync_thread_main(collector_sync_t *sync);
 void sync_reconnect_all_mediators(collector_sync_t *sync);
 void sync_drop_all_mediators(collector_sync_t *sync);
-int add_x2x3_to_sync(collector_sync_t *sync, char *identifier);
+int add_x2x3_to_sync(collector_sync_t *sync, char *identifier, char *addr,
+        char *port);
 void remove_x2x3_from_sync(collector_sync_t *sync, char *identifier,
         pthread_t threadid);
 #endif

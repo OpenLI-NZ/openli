@@ -77,6 +77,9 @@ liagency_t *copy_liagency(liagency_t *lea) {
     if (lea->hi3_ipstr) {
         copy->hi3_ipstr = strdup(lea->hi3_ipstr);
     }
+    if (lea->encryptkey) {
+        copy->encryptkey = strdup(lea->encryptkey);
+    }
     return copy;
 }
 
@@ -98,6 +101,9 @@ void free_liagency(liagency_t *lea) {
 	}
     if (lea->agencycc) {
         free(lea->agencycc);
+    }
+    if (lea->encryptkey) {
+        free(lea->encryptkey);
     }
 	free(lea);
 }

@@ -395,6 +395,8 @@ struct single_coll_receiver {
     /** Pointer to the last receive thread in the list for this collector */
     coll_recv_t *tail;
 
+    EVP_CIPHER_CTX *evp_ctx;
+
     UT_hash_handle hh;
     UT_hash_handle hh_ssf;
 
@@ -464,9 +466,13 @@ void update_med_collector_config(mediator_collector_config_t *config,
  *  @param config       The global config for the collector threads
  *  @param liid         The LIID to add to the map
  *  @param agencyid     The ID of the agency that this LIID is destined for.
+ *  @param encmethod    The encryption method to apply to IRIs and CCs using
+ *                      this LIID.
+ *  @param encryptkey   The key to use when encrypting an IRI or CC.
  */
 void add_liid_mapping_collector_config(mediator_collector_config_t *config,
-        char *liid, char *agencyid);
+        char *liid, char *agencyid, payload_encryption_method_t encmethod,
+        char *encryptkey);
 
 /** Looks up the corresponding agency ID for a given LIID in the map that
  *  is stored in the shared configuration.
@@ -548,6 +554,14 @@ int update_agency_digest_config_map(agency_digest_config_t **map,
 void free_agency_digest_config(agency_digest_config_t *dig);
 void remove_agency_digest_config(agency_digest_config_t **map,
         char *agencyid);
+
+/* defined in mediator_encryption.c */
+payload_encryption_method_t check_encryption_requirements(
+        mediator_collector_config_t *config, char *liid,
+        char **enckey);
+uint8_t *encrypt_payload_container_aes_192_cbc(EVP_CIPHER_CTX *ctx,
+        wandder_etsispec_t *etsidecoder,
+        uint8_t *fullrec, uint16_t reclen, char *enckey);
 
 void handle_lea_withdrawal_within_integrity_check_state(
         integrity_check_state_t **state, char *agencyid);

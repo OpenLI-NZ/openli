@@ -212,22 +212,37 @@ static inline int push_tlv(net_buffer_t *nb, openli_proto_fieldtype_t type,
     return push_generic_onto_net_buffer(nb, tmp, vallen + 4);
 }
 
-int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype)
-{
+int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype,
+        char *name) {
 
     ii_header_t hdr;
+    uint16_t len = 0;
+
+    if (name) {
+        len = strlen(name) + 4;
+    }
 
     if (msgtype == OPENLI_PROTO_COLLECTOR_AUTH) {
-        populate_header(&hdr, msgtype, 0, OPENLI_COLLECTOR_MAGIC);
+        populate_header(&hdr, msgtype, len, OPENLI_COLLECTOR_MAGIC);
     } else if (msgtype == OPENLI_PROTO_MEDIATOR_AUTH) {
-        populate_header(&hdr, msgtype, 0, OPENLI_MEDIATOR_MAGIC);
+        populate_header(&hdr, msgtype, len, OPENLI_MEDIATOR_MAGIC);
     } else {
         logger(LOG_INFO, "OpenLI: invalid auth message type: %d.", msgtype);
         return -1;
     }
 
-    return push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
-            sizeof(ii_header_t));
+    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t)) < 0) {
+        return -1;
+    }
+
+    if (name) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_COMPONENT_NAME, (uint8_t *)name,
+                strlen(name)) < 0) {
+            return -1;
+        }
+    }
+    return len;
 }
 
 int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb) {
@@ -239,17 +254,53 @@ int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb) {
             sizeof(ii_header_t));
 }
 
+#define X2X3_BODY_LEN(addr, port) \
+    (strlen(addr) + strlen(port) + sizeof(uint64_t) + (3 * 4))
 
-#define LIIDMAP_BODY_LEN(agency, liid) \
-    (strlen(agency) + strlen(liid) + (2 * 4))
-
-int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
-        char *liid) {
+int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
+        char *port, uint64_t ts) {
 
     ii_header_t hdr;
     uint16_t totallen;
 
-    totallen = LIIDMAP_BODY_LEN(agency, liid);
+    totallen = X2X3_BODY_LEN(addr, port);
+    populate_header(&hdr, OPENLI_PROTO_X2X3_LISTENER, totallen, 0);
+
+    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t)) == -1) {
+        return -1;
+    }
+
+    /* may as well re-use these field types */
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_IP, (uint8_t *)addr,
+            strlen(addr)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_PORT, (uint8_t *)port,
+            strlen(port)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_TS_SEC, (uint8_t *)(&ts),
+            sizeof(ts)) == -1) {
+        return -1;
+    }
+
+    return (int)totallen;
+}
+
+#define LIIDMAP_BODY_LEN(agency, liid, key) \
+    (strlen(agency) + strlen(liid) + sizeof(payload_encryption_method_t) + \
+    ( key ? strlen(key) + 4 : 0) + (3 * 4))
+
+int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
+        char *liid, char *encryptkey, payload_encryption_method_t method) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+
+    totallen = LIIDMAP_BODY_LEN(agency, liid, encryptkey);
     populate_header(&hdr, OPENLI_PROTO_MEDIATE_INTERCEPT, totallen, 0);
 
     if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
@@ -266,6 +317,19 @@ int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
                 strlen(liid)) == -1) {
         return -1;
     }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION,
+            (uint8_t *)(&method), sizeof(method)) == -1) {
+        return -1;
+    }
+
+    if (encryptkey) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_ENCRYPTION_KEY,
+                (uint8_t *)encryptkey, strlen(encryptkey)) == -1) {
+            return -1;
+        }
+    }
+
     return (int)totallen;
 }
 
@@ -430,7 +494,6 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
          strlen(common.targetagency) + sizeof(common.destid) + \
          sizeof(common.encrypt) + common.delivcc_len + \
          (36 * common.xid_count) + \
-         (common.encryptkey ? (strlen(common.encryptkey) + 4) : 0) + \
          ((9 + common.xid_count) * 4))
 
 #define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
@@ -498,6 +561,8 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
         return -1;
     }
 
+    /** Collectors do not need to know the encryption key any more */
+    /*
     if (common->encryptkey) {
         if (push_tlv(nb, OPENLI_PROTO_FIELD_ENCRYPTION_KEY,
                 (uint8_t *)(common->encryptkey),
@@ -505,6 +570,7 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
             return -1;
         }
     }
+    */
 
     for (i = 0; i < common->xid_count; i++) {
         char uuid[64];
@@ -1655,6 +1721,7 @@ static int assign_intercept_common_fields(intercept_common_t *common,
             common->encrypt = *((payload_encryption_method_t *)valptr);
             break;
         case OPENLI_PROTO_FIELD_ENCRYPTION_KEY:
+            // shouldn't see this any more, but doesn't hurt to decode anyway
             DECODE_STRING_FIELD(common->encryptkey, valptr, vallen);
             break;
         case OPENLI_PROTO_FIELD_XID:
@@ -1866,6 +1933,33 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
 
     return 0;
 
+}
+
+int decode_component_name(uint8_t *msgbody, uint16_t len, char **name) {
+
+    uint8_t *msgend = msgbody + len;
+
+    *name = NULL;
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+        if (f == OPENLI_PROTO_FIELD_COMPONENT_NAME) {
+            DECODE_STRING_FIELD(*name, valptr, vallen);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_INFO,
+                "OpenLI: invalid field in received component announcement: %d.",
+                f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+    return 0;
 }
 
 int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
@@ -2314,10 +2408,46 @@ int decode_default_email_compression_announcement(uint8_t *msgbody,
     return 0;
 }
 
-int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
-        char **liid) {
+int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,
+        char **port, uint64_t *ts) {
 
     uint8_t *msgend = msgbody + len;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_CORESERVER_IP) {
+            DECODE_STRING_FIELD(*addr, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_CORESERVER_PORT) {
+            DECODE_STRING_FIELD(*port, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_TS_SEC) {
+            (*ts) = *((uint64_t *)valptr);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_INFO,
+                    "OpenLI: invalid field in received X2/X3 listener announcement: %d.",
+                    f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+    return 0;
+}
+
+
+int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
+        char **liid, char **encryptkey, payload_encryption_method_t *method) {
+
+    uint8_t *msgend = msgbody + len;
+
+    *encryptkey = NULL;
+    *method = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -2332,6 +2462,10 @@ int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
             DECODE_STRING_FIELD(*liid, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_LEAID) {
             DECODE_STRING_FIELD(*agency, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_ENCRYPTION_KEY) {
+            DECODE_STRING_FIELD(*encryptkey, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION) {
+            (*method) = *((payload_encryption_method_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,

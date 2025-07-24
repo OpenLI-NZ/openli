@@ -140,13 +140,12 @@ typedef struct encoder_job {
     char *liid;
     uint8_t cept_version;
     payload_encryption_method_t encryptmethod;
-    char *encryptkey;
 } PACKED openli_encoding_job_t;
 
 void encode_ipaddress(wandder_encoder_t *encoder,
 		wandder_encode_job_t *precomputed, etsili_ipaddress_t *addr);
 
-int create_encrypted_message_body(wandder_encoder_t *encoder,
+int create_preencrypted_message_body(wandder_encoder_t *encoder,
                 encrypt_encode_state_t *encrypt,
                 openli_encoded_result_t *res,
                 encoded_header_template_t *hdr_tplate,
@@ -194,6 +193,12 @@ wandder_encoded_result_t *encode_etsi_integrity_check(
 wandder_encoded_result_t *encode_etsi_hi1_notification(
         wandder_encoder_t *encoder, hi1_notify_data_t *not_data,
         char *operatorid, char *shortopid);
+
+/* defined in encryptcontainer.c */
+int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx, uint8_t *buf, uint16_t buflen,
+        uint8_t *dest, uint16_t destlen, uint32_t seqno,
+        char *encryptkey);
+
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

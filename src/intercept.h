@@ -134,6 +134,7 @@ typedef struct intercept_common {
     intercept_outputs_t tomediate;
     payload_encryption_method_t encrypt;
     char *encryptkey;
+    uint8_t encrypt_inherited;      // only used by provisioner
 
     uuid_t *xids;
     size_t xid_count;
@@ -465,6 +466,8 @@ void free_single_staticipsession(staticipsession_t *statint);
 void free_single_staticiprange(static_ipranges_t *ipr);
 void free_single_email_target(email_target_t *tgt);
 
+int compare_intercept_encrypt_configuration(intercept_common_t *a,
+        intercept_common_t *b);
 int compare_xid_list(intercept_common_t *a, intercept_common_t *b);
 
 int update_modified_intercept_common(intercept_common_t *current,

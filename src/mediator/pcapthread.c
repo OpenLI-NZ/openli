@@ -823,7 +823,7 @@ static void add_new_pcapdisk_liid(lea_thread_state_t *state,
         }
     } else {
         /* This is an announcement for the pcap thread! */
-        int r = insert_lea_liid_mapping(state, added->liid);
+        int r = insert_lea_liid_mapping(state, added);
         if (r > 0) {
             /* Only register with RMQ if this LIID is "new" */
             if (register_mediator_rawip_RMQ_consumer(
