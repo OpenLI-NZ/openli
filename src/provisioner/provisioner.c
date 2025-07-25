@@ -483,10 +483,13 @@ static int add_collector_to_hashmap(provision_state_t *state,
         HASH_ADD_KEYPTR(hh, state->collectors, col->client->ipaddress,
                 strlen(col->client->ipaddress), col);
     } else {
+        destroy_provisioner_client(state->epoll_fd, col->client,
+                col->client->identifier);
         if (col->identifier) {
             free(col->identifier);
         }
         col->identifier = colname;
+        col->client = client;
     }
 
     cs->parent = (void *)col;
@@ -1710,7 +1713,6 @@ static void remove_idle_client(provision_state_t *state, prov_epoll_ev_t *pev) {
         }
         destroy_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);
     }
-
 }
 
 static void expire_unauthed(provision_state_t *state, prov_epoll_ev_t *pev) {
