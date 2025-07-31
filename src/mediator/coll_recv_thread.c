@@ -142,6 +142,9 @@ void destroy_med_collector_config(mediator_collector_config_t *config) {
     added_liid_t *iter, *tmp;
     HASH_ITER(hh, config->liid_to_agency_map, iter, tmp) {
         HASH_DELETE(hh, config->liid_to_agency_map, iter);
+        if (iter->encryptkey) {
+            free(iter->encryptkey);
+        }
         free(iter->liid);
         free(iter->agencyid);
         free(iter);
@@ -261,6 +264,9 @@ void remove_liid_mapping_by_agency_collector_config(
     HASH_ITER(hh, config->liid_to_agency_map, iter, tmp) {
         if (strcasecmp(iter->agencyid, agencyid) == 0) {
             HASH_DELETE(hh, config->liid_to_agency_map, iter);
+            if (iter->encryptkey) {
+                free(iter->encryptkey);
+            }
             free(iter->agencyid);
             free(iter->liid);
             free(iter);

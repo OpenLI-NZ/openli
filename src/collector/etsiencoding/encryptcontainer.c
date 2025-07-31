@@ -232,6 +232,9 @@ int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx, uint8_t *buf, uint16_t buflen,
     memset(key, 0, 24);
     memcpy(key, encryptkey, keylen);
 
+    /* Trust that we have correctly pre-padded the data to encrypt */
+    EVP_CIPHER_CTX_set_padding(ctx, 0);
+
     /* Do the encryption */
     if (EVP_EncryptInit_ex(ctx, EVP_aes_192_cbc(), NULL, key, IV_128) != 1) {
             logger(LOG_INFO, "OpenLI: unable to initialise EVP encryption operation -- openssl error %s", ERR_error_string(ERR_get_error(), NULL));
