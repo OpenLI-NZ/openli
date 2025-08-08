@@ -140,8 +140,10 @@ static integrity_check_state_t *lookup_integrity_check_state(
         found->seqno_next_index = 0;
         found->signing_seqno_array_size = 16;
         found->signing_seqno_next_index = 0;
-        found->self_seqno = 1;
+        found->self_seqno_hash = 1;
+        found->self_seqno_sign = 1;
         found->awaiting_final_signature = 0;
+        found->sign_jobs = NULL;
         HASH_ADD_KEYPTR(hh, *map, found->key, strlen(found->key), found);
     }
 
@@ -267,7 +269,7 @@ static inline void update_signature_hash(integrity_check_state_t *found,
             found->signing_seqno_array_size += 16;
         }
         found->signing_seqnos[found->signing_seqno_next_index] =
-                found->self_seqno;
+                found->self_seqno_hash;
         found->signing_seqno_next_index ++;
         found->hashes_since_last_signrec += 1;
     }
@@ -290,7 +292,8 @@ static wandder_encoded_result_t *generate_integrity_check_hash_pdu(
 
     reset_wandder_encoder(encoder);
 
-    ic_pdu = encode_etsi_integrity_check(encoder, &hdrdata, ics->self_seqno,
+    ic_pdu = encode_etsi_integrity_check(encoder, &hdrdata,
+            ics->self_seqno_hash,
             ics->agency->config->digest_hash_method, INTEGRITY_CHECK_SEND_HASH,
             ics->msgtype, hashresult, hashlen, ics->hashed_seqnos,
             ics->seqno_next_index);
@@ -302,7 +305,7 @@ static wandder_encoded_result_t *generate_integrity_check_hash_pdu(
         update_signature_hash(ics, etsidecoder, ic_pdu);
 
         // don't increment until AFTER update_signature_hash()
-        ics->self_seqno ++;
+        ics->self_seqno_hash ++;
     }
 
     ics->seqno_next_index = 0;
@@ -376,9 +379,6 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
             found->agency->config->digest_hash_pdulimit &&
             found->agency->config->digest_hash_pdulimit != 0) {
         halt_mediator_timer(found->hash_timer);
-
-        //found->pdus_since_last_hashrec = 0;
-
         action = INTEGRITY_CHECK_SEND_HASH;
 
     }
@@ -462,12 +462,111 @@ uint8_t send_integrity_check_hash_pdu(coll_recv_t *col,
     return ret;
 }
 
+static void push_signing_request(coll_recv_t *col, integrity_check_state_t *ics,
+        ics_sign_request_t *job) {
+
+    col_thread_msg_t msg;
+    struct ics_sign_request_message *body;
+
+    body = calloc(1, sizeof(struct ics_sign_request_message));
+    body->ics_key = strdup(ics->key);
+    body->seqno = job->seqno;
+    body->digest = calloc(job->digest_len + 1, sizeof(unsigned char));
+    memcpy(body->digest, job->digest, job->digest_len);
+    body->digest_len = job->digest_len;
+
+    memset(&msg, 0, sizeof(msg));
+    msg.type = MED_COLL_INTEGRITY_SIGN_REQUEST;
+    msg.arg = (uint64_t)(body);
+
+    libtrace_message_queue_put(&(col->out_main), &msg);
+
+    job->attempts ++;
+    start_mediator_timer(job->reply_timer, 30);
+}
+
+#define MAX_ICS_SIGN_REQUEST_ATTEMPTS 10
+
+void integrity_sign_reply_timer_callback(coll_recv_t *col,
+        med_epoll_ev_t *mev) {
+
+    ics_sign_request_t *job;
+
+    if (mev == NULL) {
+        return;
+    }
+    halt_mediator_timer(mev);
+    job = (ics_sign_request_t *)(mev->state);
+
+    if (job->attempts == 5 || (
+            job->attempts > MAX_ICS_SIGN_REQUEST_ATTEMPTS &&
+            HASH_CNT(hh, job->chain->sign_jobs) > 5)) {
+        logger(LOG_INFO, "OpenLI mediator: giving up on signing request %ld for ICS chain %s:%u:%u after %u attempts",
+                job->seqno, job->chain->liid, job->chain->cin,
+                job->chain->msgtype, job->attempts);
+        free(job->digest);
+        free(job->signing_seqnos);
+        destroy_mediator_timer(job->reply_timer);
+
+        HASH_DELETE(hh, job->chain->sign_jobs, job);
+        free(job);
+        return;
+    }
+
+    push_signing_request(col, job->chain, job);
+
+}
+
 
 int send_integrity_check_signing_request(coll_recv_t *col,
         integrity_check_state_t *ics) {
 
-    (void)col;
-    (void)ics;
+    ics_sign_request_t *job = NULL;
+
+    HASH_FIND(hh, ics->sign_jobs, &(ics->self_seqno_sign),
+            sizeof(ics->self_seqno_sign), job);
+    if (job) {
+        /* this is bad, because this should not happen... */
+        logger(LOG_INFO, "OpenLI mediator: sequence number %ld is already in use for an outstanding signing request for %s:%u:%u?",
+                ics->self_seqno_sign, ics->liid, ics->cin, ics->msgtype);
+        return -1;
+    }
+
+    job = calloc(1, sizeof(ics_sign_request_t));
+    job->chain = ics;
+    job->attempts = 0;
+    job->seqno = ics->self_seqno_sign;
+    job->signing_seqnos = ics->signing_seqnos;
+    job->signing_seqno_array_size = ics->signing_seqno_next_index;
+    job->reply_timer = NULL;
+    job->digest = calloc(EVP_MAX_MD_SIZE + 1, sizeof(unsigned char));
+    job->digest_len = 0;
+    job->reply_timer = create_mediator_timer(col->epoll_fd, job,
+            MED_EPOLL_INTEGRITY_SIGN_REQUEST_TIMER, 0);
+
+    HASH_ADD_KEYPTR(hh, ics->sign_jobs, &(job->seqno), sizeof(job->seqno), job);
+
+    ics->self_seqno_sign ++;
+    ics->signing_seqnos = calloc(16, sizeof(int64_t));
+    ics->signing_seqno_array_size = 16;
+    ics->signing_seqno_next_index = 0;
+
+    EVP_DigestFinal_ex(ics->signature_ctx, job->digest, &(job->digest_len));
+    push_signing_request(col, ics, job);
+
+    /* TODO here
+     *
+     * EVP_DigestFinal_ex on the current hash.
+     * Generate a signing request and push it back to the provisioner.
+     * Save whatever state we are going to need to generate a PDU if/when
+     * we get a response.
+     * Set up a timer to expire this request if the provisioner never
+     * replies for some reason.
+     * reset_sign_hash_context()
+     */
+
+
+    reset_sign_hash_context(ics);
 
     return 0;
 }
@@ -500,13 +599,36 @@ int integrity_sign_timer_callback(coll_recv_t *col, med_epoll_ev_t *mev) {
 
     ics = (integrity_check_state_t *)(mev->state);
 
+    halt_mediator_timer(ics->sign_timer);
     return send_integrity_check_signing_request(col, ics);
 
 }
 
+void destroy_integrity_sign_job(ics_sign_request_t *job) {
+    if (!job) return;
+
+    if (job->signing_seqnos) {
+        free(job->signing_seqnos);
+    }
+    if (job->reply_timer) {
+        destroy_mediator_timer(job->reply_timer);
+    }
+    if (job->digest) {
+        free(job->digest);
+        job->digest = NULL;
+        job->digest_len = 0;
+    }
+    free(job);
+}
+
 void free_integrity_check_state(integrity_check_state_t *integ) {
+    ics_sign_request_t *job, *tmp;
     if (integ == NULL) {
         return;
+    }
+    HASH_ITER(hh, integ->sign_jobs, job, tmp) {
+        HASH_DELETE(hh, integ->sign_jobs, job);
+        destroy_integrity_sign_job(job);
     }
     if (integ->key) free(integ->key);
     if (integ->liid) free(integ->liid);
@@ -516,6 +638,7 @@ void free_integrity_check_state(integrity_check_state_t *integ) {
     if (integ->sign_timer) destroy_mediator_timer(integ->sign_timer);
     if (integ->hashed_seqnos) free(integ->hashed_seqnos);
     if (integ->signing_seqnos) free(integ->signing_seqnos);
+
     free(integ);
 }
 

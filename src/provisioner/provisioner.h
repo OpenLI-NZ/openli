@@ -250,10 +250,6 @@ typedef struct prov_mediator {
      *  connections from collectors */
     openli_mediator_t *details;
 
-    /** context for digest computation, used if the mediator requires
-     *  us to sign integrity checks */
-    EVP_MD_CTX *mdctx;
-
     UT_hash_handle hh;
 } prov_mediator_t;
 
@@ -384,6 +380,10 @@ typedef struct prov_state {
     /** The private key to use when signing digest hash integrity checks */
     EVP_PKEY *integrity_sign_private_key;
 
+    /** context for signing digests, used if the mediator requires
+     *  us to sign integrity checks */
+    EVP_PKEY_CTX *sign_ctx;
+
     /** A flag indicating whether collectors should ignore RTP comfort noise
      *  packets when intercepting voice traffic.
      */
@@ -447,6 +447,8 @@ int emit_intercept_config(char *configfile, const char *encpassfile,
 
 /* Implemented in integrity_sign.c */
 int load_integrity_signing_privatekey(provision_state_t *state);
+int prov_handle_ics_signing_request(provision_state_t *state,
+        uint8_t *msgbody, uint16_t msglen, prov_sock_state_t *cs);
 
 /* Implemented in clientupdates.c */
 int compare_sip_targets(provision_state_t *currstate,

@@ -82,6 +82,13 @@ typedef struct openli_mediator {
     char *portstr;
 } openli_mediator_t;
 
+struct ics_sign_request_message {
+    char *ics_key;
+    int64_t seqno;
+    unsigned char *digest;
+    unsigned int digest_len;
+};
+
 typedef enum {
     NETBUF_RECV,
     NETBUF_SEND,
@@ -139,6 +146,8 @@ typedef enum {
     OPENLI_PROTO_RAWIP_IRI,
     OPENLI_PROTO_COLLECTOR_FORWARDER_HELLO,
     OPENLI_PROTO_X2X3_LISTENER,
+    OPENLI_PROTO_INTEGRITY_SIGNATURE_REQUEST,
+    OPENLI_PROTO_INTEGRITY_SIGNATURE_RESPONSE,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -205,10 +214,12 @@ typedef enum {
     OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT,
     OPENLI_PROTO_FIELD_INTEGRITY_ENABLED,
     OPENLI_PROTO_FIELD_COMPONENT_NAME,
+    OPENLI_PROTO_FIELD_DIGEST,
+    OPENLI_PROTO_FIELD_LENGTH_BYTES,
 
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct
- * enums for each "message type" as there is only byte available for
+ * enums for each "message type" as there is only one byte available for
  * storing the field type in a field.
  *
  * But since we always know the context of the message type that we are
@@ -232,6 +243,8 @@ int push_default_radius_onto_net_buffer(net_buffer_t *nb,
 int push_default_radius_withdraw_onto_net_buffer(net_buffer_t *nb,
         default_radius_user_t *defuser);
 int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med);
+int push_ics_signing_request_onto_net_buffer(net_buffer_t *nb,
+        struct ics_sign_request_message *req);
 int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
         openli_mediator_t *med);
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *ipint);
@@ -296,6 +309,8 @@ int decode_default_radius_withdraw(uint8_t *msgbody, uint16_t len,
         default_radius_user_t *defuser);
 int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
+int decode_ics_signing_request(uint8_t *msgbody, uint16_t len,
+        struct ics_sign_request_message *req);
 int decode_mediator_withdraw(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,

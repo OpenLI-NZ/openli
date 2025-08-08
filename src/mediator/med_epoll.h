@@ -119,6 +119,11 @@ enum {
      */
     MED_EPOLL_INTEGRITY_SIGN_TIMER,
 
+    /** A timer to retry sending a request to the provisioner to sign a
+     *  particular integrity check record for a handover stream.
+     */
+    MED_EPOLL_INTEGRITY_SIGN_REQUEST_TIMER,
+
 };
 
 /** Starts an existing timer and adds it to the global epoll event set.

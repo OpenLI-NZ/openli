@@ -1513,6 +1513,7 @@ static int reload_mediator_config(mediator_state_t *currstate) {
 
     if ((listenchanged || medidchanged) && !provchanged) {
         /* Need to re-announce our listen socket (or mediator ID) details */
+        printf("DEVDEBUG: REANNOUNCE MEDIATOR\n");
         if (send_mediator_listen_details(currstate, 0) < 0) {
             return -1;
         }
@@ -1544,6 +1545,7 @@ static void run(mediator_state_t *state) {
 	struct epoll_event evs[64];
     int provfail = 0;
     med_epoll_ev_t *signalev;
+    coll_recv_t *col_t, *tmp;
 
     /* Register the epoll event for received signals */
     signalev = create_mediator_fdevent(state->epoll_fd, NULL,
@@ -1590,29 +1592,56 @@ static void run(mediator_state_t *state) {
 
 	    /* Attempt to connect to the provisioner, if we don't already have
          * a connection active */
-        provfail = attempt_provisioner_connect(&(state->provisioner), provfail);
+        if (state->provisioner.provev == NULL &&
+                state->provisioner.tryconnect != 0) {
+            provfail = attempt_provisioner_connect(&(state->provisioner),
+                    provfail);
 
-        if (provfail < 0) {
-            break;
-        }
-
-        if (!provfail) {
-            if (send_mediator_listen_details(state, 1) < 0) {
-                drop_provisioner(state);
-                continue;
+            if (provfail < 0) {
+                break;
             }
 
-            /* Any LEA threads for LEAs that the provisioner does
-             * not announce within the next 60 seconds should be
-             * halted, as presumably those agencies were removed
-             * from the provisioner config while we were not
-             * connected to the provisioner.
-             */
-            if (state->provisioner.just_connected) {
-                trigger_lea_thread_shutdown_timers(state, 60);
-                state->provisioner.just_connected = 0;
+            if (!provfail) {
+                if (send_mediator_listen_details(state, 1) < 0) {
+                    drop_provisioner(state);
+                    continue;
+                }
+
+                /* Any LEA threads for LEAs that the provisioner does
+                 * not announce within the next 60 seconds should be
+                 * halted, as presumably those agencies were removed
+                 * from the provisioner config while we were not
+                 * connected to the provisioner.
+                 */
+                if (state->provisioner.just_connected) {
+                    trigger_lea_thread_shutdown_timers(state, 60);
+                    state->provisioner.just_connected = 0;
+                }
             }
         }
+
+        /* Check for integrity check signing requests from the collector
+         * threads.
+         */
+        HASH_ITER(hh, state->collector_threads.threads, col_t, tmp) {
+            col_thread_msg_t colmsg;
+            while (libtrace_message_queue_try_get(&(col_t->out_main),
+                    (void *)&colmsg) != LIBTRACE_MQ_FAILED) {
+                if (colmsg.type == MED_COLL_INTEGRITY_SIGN_REQUEST) {
+                    struct ics_sign_request_message *signreq;
+
+                    signreq = (struct ics_sign_request_message *)(colmsg.arg);
+                    if (send_ics_signing_request_to_provisioner(
+                            &state->provisioner, signreq) < 0) {
+                        logger(LOG_INFO, "OpenLI mediator: failed to pass on integrity check signing request to the provisioner");
+                    }
+
+                } else {
+                    logger(LOG_INFO, "OpenLI mediator: invalid message type received by main thread from collector thread (%u)", colmsg.type);
+                }
+            }
+        }
+
         /* This timer will force us to stop checking epoll and go back
          * to the start of this loop (i.e. checking if we should halt the
          * entire mediator) every second.

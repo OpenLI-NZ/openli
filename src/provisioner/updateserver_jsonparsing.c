@@ -1463,7 +1463,7 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (r == 0 && vint->common.xid_count == 0) {
         snprintf(cinfo->answerstring, 4096,
-                "%s <p>VOIP intercept %s has been specified without valid SIP targets. %s",
+                "%s <p>VOIP intercept %s has been specified without valid SIP targets or XIDs. %s",
                 update_failure_page_start, vint->common.liid,
                 update_failure_page_end);
         goto cepterr;

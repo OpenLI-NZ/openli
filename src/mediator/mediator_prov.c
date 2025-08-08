@@ -150,6 +150,53 @@ void free_provisioner(mediator_prov_t *prov) {
 	}
 }
 
+/** Sends an integrity check signing request to a connected provisioner.
+ *
+ *  @param prov         The provisioner that needs to receive the request
+ *  @param req          The request that needs to be sent
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
+int send_ics_signing_request_to_provisioner(mediator_prov_t *prov,
+        struct ics_sign_request_message *req) {
+
+    int ret = 0;
+
+    if (prov->outgoing == NULL) {
+        return 0;
+    }
+    if (req == NULL) {
+        logger(LOG_INFO, "OpenLI Mediator: passed a null request into send_ics_signing_request_to_provisioner");
+        return -1;
+    }
+
+    if (push_ics_signing_request_onto_net_buffer(prov->outgoing, req) == -1) {
+        logger(LOG_INFO, "OpenLI Mediator: unable to push signing request to provisioner.");
+        ret = -1;
+        goto tidyup;
+    }
+
+    /* Otherwise, we may have disabled writing when we last emptied the
+     * outgoing buffer so make sure it is enabled again to send this queued
+     * message.
+     */
+    if (modify_mediator_fdevent(prov->provev,
+            EPOLLIN | EPOLLOUT | EPOLLRDHUP) < 0) {
+        logger(LOG_INFO,
+                "OpenLI Mediator: failed to re-enable transmit on provisioner socket: %s.",
+                strerror(errno));
+        ret = -1;
+        goto tidyup;
+    }
+
+tidyup:
+    if (req->digest) free(req->digest);
+    if (req->ics_key) free(req->ics_key);
+    free(req);
+
+    return ret;
+}
+
 /** Sends the mediator details message to a connected provisioner.
  *  Mediator details include the port and IP that it is listening on for
  *  collector connections.

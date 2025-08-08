@@ -217,7 +217,7 @@ static char *lookup_agencyid_for_liid_collector_config(
     pthread_mutex_lock(&(config->mutex));
     HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
     if (found) {
-        agencyid = strdup(found->liid);
+        agencyid = strdup(found->agencyid);
     }
     pthread_mutex_unlock(&(config->mutex));
     return agencyid;
@@ -603,6 +603,7 @@ static void preencode_etsi_for_known_liid(coll_recv_t *col,
     } else {
         snprintf(netelemid, 16, "med-%u", col->parentconfig->parent_mediatorid);
     }
+    intdetails.networkelemid = netelemid;
 
     etsili_preencode_static_fields(found->preencoded_etsi, &intdetails);
     unlock_med_collector_config(col->parentconfig);
@@ -1029,6 +1030,11 @@ static int collector_thread_epoll_event(coll_recv_t *col,
         case MED_EPOLL_INTEGRITY_SIGN_TIMER:
             ret = integrity_sign_timer_callback(col, mev);
             break;
+        case MED_EPOLL_INTEGRITY_SIGN_REQUEST_TIMER:
+            integrity_sign_reply_timer_callback(col, mev);
+            break;
+
+        /* TODO handle timer for expired signature request to provisioner */
         default:
             logger(LOG_INFO,
                     "OpenLI Mediator: invalid epoll event type %d seen in collector thread for %s", mev->fdtype, col->ipaddr);
@@ -1304,6 +1310,8 @@ static void *start_collector_thread(void *params) {
                 }
                 free(thisliid);
             }
+
+            /* TODO implement message for IntegrityCheck signature response */
 
         }
 

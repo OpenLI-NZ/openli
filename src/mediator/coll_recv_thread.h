@@ -199,7 +199,28 @@ struct agency_digest_config {
     UT_hash_handle hh;
 };
 
-typedef struct integrity_check_state {
+typedef struct integrity_check_state integrity_check_state_t;
+
+typedef struct ics_sign_request {
+
+    integrity_check_state_t *chain;
+
+    uint8_t attempts;
+
+    int64_t seqno;
+    int64_t *signing_seqnos;
+    size_t signing_seqno_array_size;
+
+    med_epoll_ev_t *reply_timer;
+
+    unsigned char *digest;
+    unsigned int digest_len;
+
+    UT_hash_handle hh;
+} ics_sign_request_t;
+
+
+struct integrity_check_state {
 
     char *key;
     char *liid;
@@ -210,6 +231,8 @@ typedef struct integrity_check_state {
 
     med_epoll_ev_t *hash_timer;
     med_epoll_ev_t *sign_timer;
+
+    ics_sign_request_t *sign_jobs;
 
     uint32_t pdus_since_last_hashrec;
     uint32_t hashes_since_last_signrec;
@@ -225,25 +248,15 @@ typedef struct integrity_check_state {
     size_t signing_seqno_array_size;
     size_t signing_seqno_next_index;
 
-    int64_t self_seqno;
+    int64_t self_seqno_hash;
+    int64_t self_seqno_sign;
 
     uint8_t awaiting_final_signature;
     UT_hash_handle hh;
-
-} integrity_check_state_t;
+};
 
 /** State associated with a single collector connection */
 typedef struct single_coll_receiver coll_recv_t;
-
-typedef struct ics_sign_request {
-
-    char *requestor;
-
-    uint16_t digestlen;
-    char *digest;
-
-    int64_t seqno;
-} ics_sign_request_t;
 
 struct single_coll_receiver {
 
@@ -554,6 +567,19 @@ int update_agency_digest_config_map(agency_digest_config_t **map,
 void free_agency_digest_config(agency_digest_config_t *dig);
 void remove_agency_digest_config(agency_digest_config_t **map,
         char *agencyid);
+void integrity_sign_reply_timer_callback(coll_recv_t *col,
+        med_epoll_ev_t *mev);
+void free_integrity_check_state(integrity_check_state_t *integ);
+uint8_t update_integrity_check_state(integrity_check_state_t **map,
+        col_known_liid_t *known, uint8_t *msgbody, uint16_t msglen,
+        openli_proto_msgtype_t msgtype, int epoll_fd,
+        wandder_etsispec_t *decoder, integrity_check_state_t **chain);
+int integrity_hash_timer_callback(coll_recv_t *col, med_epoll_ev_t *mev);
+int integrity_sign_timer_callback(coll_recv_t *col, med_epoll_ev_t *mev);
+uint8_t send_integrity_check_hash_pdu(coll_recv_t *col,
+        integrity_check_state_t *ics);
+int send_integrity_check_signing_request(coll_recv_t *col,
+        integrity_check_state_t *ics);
 
 /* defined in mediator_encryption.c */
 payload_encryption_method_t check_encryption_requirements(
@@ -569,17 +595,6 @@ void handle_liid_withdrawal_within_integrity_check_state(
         integrity_check_state_t **state, char *liid,
         coll_recv_t *col);
 
-void free_integrity_check_state(integrity_check_state_t *integ);
-uint8_t update_integrity_check_state(integrity_check_state_t **map,
-        col_known_liid_t *known, uint8_t *msgbody, uint16_t msglen,
-        openli_proto_msgtype_t msgtype, int epoll_fd,
-        wandder_etsispec_t *decoder, integrity_check_state_t **chain);
-int integrity_hash_timer_callback(coll_recv_t *col, med_epoll_ev_t *mev);
-int integrity_sign_timer_callback(coll_recv_t *col, med_epoll_ev_t *mev);
-uint8_t send_integrity_check_hash_pdu(coll_recv_t *col,
-        integrity_check_state_t *ics);
-int send_integrity_check_signing_request(coll_recv_t *col,
-        integrity_check_state_t *ics);
 
 #endif
 
