@@ -84,9 +84,18 @@ typedef struct openli_mediator {
 
 struct ics_sign_request_message {
     char *ics_key;
+    char *requestedby;
     int64_t seqno;
     unsigned char *digest;
     unsigned int digest_len;
+};
+
+struct ics_sign_response_message {
+    char *ics_key;
+    char *requestedby;
+    int64_t seqno;
+    unsigned char *signature;
+    uint32_t sign_len;
 };
 
 typedef enum {
@@ -216,6 +225,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_COMPONENT_NAME,
     OPENLI_PROTO_FIELD_DIGEST,
     OPENLI_PROTO_FIELD_LENGTH_BYTES,
+    OPENLI_PROTO_FIELD_COLLECTORID,
 
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct
@@ -245,6 +255,8 @@ int push_default_radius_withdraw_onto_net_buffer(net_buffer_t *nb,
 int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med);
 int push_ics_signing_request_onto_net_buffer(net_buffer_t *nb,
         struct ics_sign_request_message *req);
+int push_ics_signing_response_onto_net_buffer(net_buffer_t *nb,
+        struct ics_sign_response_message *resp);
 int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
         openli_mediator_t *med);
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *ipint);
@@ -311,6 +323,8 @@ int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
 int decode_ics_signing_request(uint8_t *msgbody, uint16_t len,
         struct ics_sign_request_message *req);
+int decode_ics_signing_response(uint8_t *msgbody, uint16_t len,
+        struct ics_sign_response_message *resp);
 int decode_mediator_withdraw(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,

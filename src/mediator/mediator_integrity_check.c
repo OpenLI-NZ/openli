@@ -95,61 +95,6 @@ void remove_agency_digest_config(agency_digest_config_t **map,
 
 }
 
-static integrity_check_state_t *lookup_integrity_check_state(
-        integrity_check_state_t **map, char *liid,
-        openli_proto_msgtype_t msgtype, wandder_etsispec_t *decoder) {
-
-    /** map key is LIID, CIN and msgtype, separated by space characeters.
-     *  For performance reasons, CIN and msgtype are encoded in binary format
-     *  so we don't have to call snprintf on every intercept record.
-     */
-    uint32_t cin;
-    integrity_check_state_t *found = NULL;
-    char key[64];
-    char *ptr = key;
-
-    memset(ptr, 0, 64);
-
-    memcpy(key, liid, strlen(liid));
-    ptr += strlen(liid);
-    *ptr = ' ';
-    ptr ++;
-    *ptr = (uint8_t)msgtype;
-    ptr ++;
-    *ptr = ' ';
-    ptr ++;
-
-    cin = wandder_etsili_get_cin(decoder);
-    if (cin == 0) {
-        return NULL;
-    }
-
-    memcpy(ptr, &cin, sizeof(uint32_t));
-
-    HASH_FIND(hh, *map, key, strlen(key), found);
-    if (!found) {
-        found = calloc(1, sizeof(integrity_check_state_t));
-        found->key = strdup(key);
-        found->agency = NULL;
-        found->cin = cin;
-        found->msgtype = msgtype;
-        found->liid = strdup(liid);
-        found->hashed_seqnos = calloc(32, sizeof(int64_t));
-        found->signing_seqnos = calloc(16, sizeof(int64_t));
-        found->seqno_array_size = 32;
-        found->seqno_next_index = 0;
-        found->signing_seqno_array_size = 16;
-        found->signing_seqno_next_index = 0;
-        found->self_seqno_hash = 1;
-        found->self_seqno_sign = 1;
-        found->awaiting_final_signature = 0;
-        found->sign_jobs = NULL;
-        HASH_ADD_KEYPTR(hh, *map, found->key, strlen(found->key), found);
-    }
-
-    return found;
-}
-
 static inline void reset_hash_context(integrity_check_state_t *found) {
 
     if (found->hash_ctx == NULL) {
@@ -275,6 +220,26 @@ static inline void update_signature_hash(integrity_check_state_t *found,
     }
 }
 
+static wandder_encoded_result_t *generate_integrity_check_signature_pdu(
+        integrity_check_state_t *ics, uint32_t mediatorid, char *operatorid,
+        wandder_encoder_t *encoder, ics_sign_request_t *job,
+        unsigned char *signature, uint32_t signlen) {
+
+    wandder_encoded_result_t *ic_pdu = NULL;
+    wandder_etsipshdr_data_t hdrdata;
+    char netelemid[128];
+
+    populate_integrity_check_pshdr_data(&hdrdata, ics, mediatorid,
+            operatorid, netelemid);
+    reset_wandder_encoder(encoder);
+    ic_pdu = encode_etsi_integrity_check(encoder, &hdrdata,
+            job->seqno, ics->agency->config->digest_hash_method,
+            INTEGRITY_CHECK_REQUEST_SIGN,
+            ics->msgtype, signature, signlen, job->signing_seqnos,
+            job->signing_seqno_array_size);
+
+    return ic_pdu;
+}
 
 static wandder_encoded_result_t *generate_integrity_check_hash_pdu(
         integrity_check_state_t *ics, uint32_t mediatorid, char *operatorid,
@@ -322,15 +287,59 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
     integrity_check_state_t *found;
     int64_t seqno;
     uint8_t action = INTEGRITY_CHECK_NO_ACTION;
+    uint32_t cin;
+    char key[64];
+    char *ptr = key;
+
+    /** map key is LIID, CIN and msgtype, separated by space characeters.
+     *  For performance reasons, CIN and msgtype are encoded in binary format
+     *  so we don't have to call snprintf on every intercept record.
+     */
+    memset(ptr, 0, 64);
+
+    memcpy(key, known->liid, strlen(known->liid));
+    ptr += strlen(known->liid);
+    *ptr = ' ';
+    ptr ++;
+    *ptr = (uint8_t)msgtype;
+    ptr ++;
+    *ptr = ' ';
+    ptr ++;
+
+    wandder_attach_etsili_buffer(decoder, msgbody, msglen, false);
+    cin = wandder_etsili_get_cin(decoder);
+    if (cin == 0) {
+        *chain = NULL;
+        return action;
+    }
+
+    memcpy(ptr, &cin, sizeof(uint32_t));
 
     if (msgtype != OPENLI_PROTO_ETSI_IRI && msgtype != OPENLI_PROTO_ETSI_CC) {
         *chain = NULL;
         return action;
     }
 
-    wandder_attach_etsili_buffer(decoder, msgbody, msglen, false);
-
-    found = lookup_integrity_check_state(map, known->liid, msgtype, decoder);
+    HASH_FIND(hh, *map, key, strlen(key), found);
+    if (!found) {
+        found = calloc(1, sizeof(integrity_check_state_t));
+        found->key = strdup(key);
+        found->agency = NULL;
+        found->cin = cin;
+        found->msgtype = msgtype;
+        found->liid = strdup(known->liid);
+        found->hashed_seqnos = calloc(32, sizeof(int64_t));
+        found->signing_seqnos = calloc(16, sizeof(int64_t));
+        found->seqno_array_size = 32;
+        found->seqno_next_index = 0;
+        found->signing_seqno_array_size = 16;
+        found->signing_seqno_next_index = 0;
+        found->self_seqno_hash = 1;
+        found->self_seqno_sign = 1;
+        found->awaiting_final_signature = 0;
+        found->sign_jobs = NULL;
+        HASH_ADD_KEYPTR(hh, *map, found->key, strlen(found->key), found);
+    }
     seqno = wandder_etsili_get_sequence_number(decoder);
 
     //printable_integrity_key(found, keydump, 128);  // TODO remove
@@ -462,6 +471,61 @@ uint8_t send_integrity_check_hash_pdu(coll_recv_t *col,
     return ret;
 }
 
+int send_integrity_check_sign_pdu(coll_recv_t *col,
+        integrity_check_state_t *ics, ics_sign_request_t *job,
+        struct ics_sign_response_message *resp) {
+
+    wandder_encoded_result_t *encres;
+    char *operatorid = NULL;
+    uint32_t medid;
+    col_known_liid_t *found;
+    int r = 0;
+
+    HASH_FIND(hh, col->known_liids, ics->liid, strlen(ics->liid), found);
+    if (!found) {
+        return -1;
+    }
+
+    if (!found->declared_int_rmq) {
+        /* we don't have an RMQ to put this IC PDU into, so for now we'll
+         * just have to skip it */
+        return 0;
+    }
+
+    /* Generate a hash digest record and push it into the appropriate
+     * RMQ for the LIID
+     */
+
+    lock_med_collector_config(col->parentconfig);
+    if (col->parentconfig->operatorid) {
+        operatorid = strdup(col->parentconfig->operatorid);
+    }
+    medid = col->parentconfig->parent_mediatorid;
+    unlock_med_collector_config(col->parentconfig);
+
+    encres = generate_integrity_check_signature_pdu(ics, medid, operatorid,
+            col->etsiencoder, job, resp->signature, resp->sign_len);
+    if (ics->msgtype == OPENLI_PROTO_ETSI_CC) {
+        r = publish_cc_on_mediator_liid_RMQ_queue(col->amqp_producer_state,
+                encres->encoded, encres->len, found->liid,
+                found->queuenames[1], &(col->rmq_blocked));
+    } else if (ics->msgtype == OPENLI_PROTO_ETSI_IRI) {
+        r = publish_iri_on_mediator_liid_RMQ_queue(col->amqp_producer_state,
+                encres->encoded, encres->len, found->liid,
+                found->queuenames[0], &(col->rmq_blocked));
+    }
+
+    if (r < 0) {
+        amqp_destroy_connection(col->amqp_producer_state);
+        col->amqp_producer_state = NULL;
+    }
+    if (operatorid) {
+        free(operatorid);
+    }
+    wandder_release_encoded_result(col->etsiencoder, encres);
+    return 1;
+}
+
 static void push_signing_request(coll_recv_t *col, integrity_check_state_t *ics,
         ics_sign_request_t *job) {
 
@@ -472,6 +536,7 @@ static void push_signing_request(coll_recv_t *col, integrity_check_state_t *ics,
     body->ics_key = strdup(ics->key);
     body->seqno = job->seqno;
     body->digest = calloc(job->digest_len + 1, sizeof(unsigned char));
+    body->requestedby = strdup(col->ipaddr);
     memcpy(body->digest, job->digest, job->digest_len);
     body->digest_len = job->digest_len;
 
@@ -517,11 +582,68 @@ void integrity_sign_reply_timer_callback(coll_recv_t *col,
 
 }
 
+void handle_integrity_check_signature_response(coll_recv_t *col,
+        struct ics_sign_response_message *resp) {
+
+    integrity_check_state_t *found;
+    ics_sign_request_t *job = NULL;
+
+    if (resp == NULL) {
+        return;
+    }
+
+    HASH_FIND(hh, col->integrity_state, resp->ics_key, strlen(resp->ics_key),
+            found);
+    if (!found) {
+        logger(LOG_INFO, "OpenLI mediator: failed to find integrity state entry for received response: %s", strtok(resp->ics_key, " "));
+        goto tidyup;
+    }
+
+    HASH_FIND(hh, found->sign_jobs, &(resp->seqno), sizeof(resp->seqno), job);
+    if (!job) {
+        logger(LOG_INFO, "OpenLI mediator: received integrity check signature for seqno %ld, but could not find it in the pending jobs list for %s",
+                resp->seqno, strtok(resp->ics_key, " "));
+        goto tidyup;
+    }
+
+    HASH_DELETE(hh, found->sign_jobs, job);
+    halt_mediator_timer(job->reply_timer);
+
+    /* encode the integrity check PDU with the signature */
+    send_integrity_check_sign_pdu(col, found, job, resp);
+
+    if (found->awaiting_final_signature && HASH_CNT(hh, found->sign_jobs) == 0)
+    {
+        HASH_DELETE(hh, col->integrity_state, found);
+        free_integrity_check_state(found);
+    }
+
+tidyup:
+    if (job) {
+        destroy_integrity_sign_job(job);
+    }
+
+    if (resp->signature) {
+        free(resp->signature);
+    }
+    if (resp->ics_key) {
+        free(resp->ics_key);
+    }
+    if (resp->requestedby) {
+        free(resp->requestedby);
+    }
+
+    free(resp);
+}
 
 int send_integrity_check_signing_request(coll_recv_t *col,
         integrity_check_state_t *ics) {
 
     ics_sign_request_t *job = NULL;
+
+    if (ics->signing_seqno_next_index == 0) {
+        return 0;
+    }
 
     HASH_FIND(hh, ics->sign_jobs, &(ics->self_seqno_sign),
             sizeof(ics->self_seqno_sign), job);
@@ -553,19 +675,6 @@ int send_integrity_check_signing_request(coll_recv_t *col,
 
     EVP_DigestFinal_ex(ics->signature_ctx, job->digest, &(job->digest_len));
     push_signing_request(col, ics, job);
-
-    /* TODO here
-     *
-     * EVP_DigestFinal_ex on the current hash.
-     * Generate a signing request and push it back to the provisioner.
-     * Save whatever state we are going to need to generate a PDU if/when
-     * we get a response.
-     * Set up a timer to expire this request if the provisioner never
-     * replies for some reason.
-     * reset_sign_hash_context()
-     */
-
-
     reset_sign_hash_context(ics);
 
     return 0;
@@ -650,7 +759,6 @@ void handle_liid_withdrawal_within_integrity_check_state(
 
     HASH_ITER(hh, *state, ics, tmp) {
         if (strcmp(liid, ics->liid) == 0) {
-            HASH_DELETE(hh, *state, ics);
             if (ics->hash_timer) {
                 destroy_mediator_timer(ics->hash_timer);
                 ics->hash_timer = NULL;
@@ -662,14 +770,20 @@ void handle_liid_withdrawal_within_integrity_check_state(
             /* have to produce a final hash record for any unhashed PDUs */
             send_integrity_check_hash_pdu(col, ics);
 
-            /* TODO have to produce a final signature for any unsigned hashes */
-
-
+            /* have to produce a final signature for any unsigned hashes */
             /* If we need a final signature, we can't free this ICS instance
              * yet because we will need it to encode the message once the
              * signed response gets back to us from the provisioner.
              *
              */
+            if (ics->hashes_since_last_signrec != 0) {
+                send_integrity_check_signing_request(col, ics);
+                ics->awaiting_final_signature = 1;
+            } else {
+                HASH_DELETE(hh, *state, ics);
+                free_integrity_check_state(ics);
+            }
+
         }
     }
 

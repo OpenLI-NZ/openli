@@ -34,9 +34,7 @@
 #include "provisioner_client.h"
 #include "intercept.h"
 
-/* XXX Duplicated from provisioner.c */
-static inline int enable_epoll_write(provision_state_t *state,
-        prov_epoll_ev_t *pev) {
+int enable_epoll_write(provision_state_t *state, prov_epoll_ev_t *pev) {
     struct epoll_event ev;
 
     if (pev->fd == -1) {

@@ -180,24 +180,6 @@ void init_intercept_config(prov_intercept_conf_t *state) {
     pthread_mutex_init(&(state->safelock), NULL);
 }
 
-static inline int enable_epoll_write(provision_state_t *state,
-        prov_epoll_ev_t *pev) {
-    struct epoll_event ev;
-
-    if (pev->fd == -1) {
-        return 0;
-    }
-
-    ev.data.ptr = (void *)pev;
-    ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
-
-    if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, pev->fd, &ev) == -1) {
-        return -1;
-    }
-
-    return 0;
-}
-
 static int liid_hash_sort(liid_hash_t *a, liid_hash_t *b) {
 
     int x;
@@ -1355,7 +1337,7 @@ static int receive_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
                 break;
             case OPENLI_PROTO_INTEGRITY_SIGNATURE_REQUEST:
                 if (prov_handle_ics_signing_request(state, msgbody, msglen,
-                        cs) == -1) {
+                        cs, pev) == -1) {
                     return -1;
                 }
                 break;

@@ -580,6 +580,9 @@ uint8_t send_integrity_check_hash_pdu(coll_recv_t *col,
         integrity_check_state_t *ics);
 int send_integrity_check_signing_request(coll_recv_t *col,
         integrity_check_state_t *ics);
+void handle_integrity_check_signature_response(coll_recv_t *col,
+        struct ics_sign_response_message *resp);
+void destroy_integrity_sign_job(ics_sign_request_t *job);
 
 /* defined in mediator_encryption.c */
 payload_encryption_method_t check_encryption_requirements(

@@ -1311,7 +1311,13 @@ static void *start_collector_thread(void *params) {
                 free(thisliid);
             }
 
-            /* TODO implement message for IntegrityCheck signature response */
+            if (msg.type == MED_COLL_INTEGRITY_SIGN_RESULT) {
+                struct ics_sign_response_message *resp;
+                resp = (struct ics_sign_response_message *)(msg.arg);
+
+                handle_integrity_check_signature_response(col, resp);
+            }
+
 
         }
 
@@ -1517,6 +1523,7 @@ void mediator_disconnect_all_collectors(mediator_collector_t *medcol) {
 
         HASH_DELETE(hh, medcol->threads, col);
         while (col != NULL) {
+            memset(&end_msg, 0, sizeof(end_msg));
             end_msg.type = MED_COLL_MESSAGE_HALT;
             end_msg.arg = 0;
             libtrace_message_queue_put(&(col->in_main), &end_msg);
@@ -1607,6 +1614,7 @@ void mediator_clean_collectors(mediator_collector_t *medcol) {
                 newhead = tofree->next;
             }
 
+            memset(&end_msg, 0, sizeof(end_msg));
             end_msg.type = MED_COLL_MESSAGE_HALT;
             end_msg.arg = 0;
             libtrace_message_queue_put(&(tofree->in_main), &end_msg);

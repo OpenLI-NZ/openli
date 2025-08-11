@@ -895,6 +895,71 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     return 0;
 }
 
+/**  new LIID->agency mapping received from the
+ *  provisioner.
+ *
+ *  @param state            The global state for this mediator
+ *  @param msgbody          Pointer to the start of the LIID mapping message
+ *                          body
+ *  @param msglen           Length of the LIID mapping message, in bytes.
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
+static int receive_ics_signature(mediator_state_t *state, uint8_t *msgbody,
+        uint16_t msglen) {
+
+    int ret = -1;
+    coll_recv_t *col = NULL;
+    struct ics_sign_response_message *resp;
+    col_thread_msg_t msg;
+
+    resp = calloc(1, sizeof(struct ics_sign_response_message));
+
+    if (decode_ics_signing_response(msgbody, msglen, resp) == -1) {
+        logger(LOG_INFO, "OpenLI Mediator: receive invalid integrity check signature from provisioner.");
+        goto tidyup_err;
+    }
+
+    if (!resp->requestedby) {
+        logger(LOG_INFO, "OpenLI Mediator: received integrity check signature from provisioner without a 'requestedby'.");
+        goto tidyup_err;
+    }
+
+    /* Find the collector receive thread that requested this signature */
+    HASH_FIND(hh, state->collector_threads.threads, resp->requestedby,
+            strlen(resp->requestedby), col);
+    if (col == NULL) {
+        logger(LOG_INFO, "OpenLI Mediator: integrity check signature was supposedly requested by '%s' but we don't recognise it?", resp->requestedby);
+        // not a fatal error, maybe the collector has disappeared since the
+        // request was made?
+        ret = 0;
+        goto tidyup_err;
+    }
+
+    memset(&msg, 0, sizeof(msg));
+    msg.type = MED_COLL_INTEGRITY_SIGN_RESULT;
+    msg.arg = (uint64_t)resp;
+
+    libtrace_message_queue_put(&(col->in_main), &msg);
+
+    return 0;
+
+tidyup_err:
+    if (resp) {
+        if (resp->requestedby) {
+            free(resp->requestedby);
+        }
+        if (resp->signature) {
+            free(resp->signature);
+        }
+        if (resp->ics_key) {
+            free(resp->ics_key);
+        }
+        free(resp);
+    }
+    return ret;
+}
+
 /** Parses and actions a new LIID->agency mapping received from the
  *  provisioner.
  *
@@ -958,6 +1023,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         added->encryptkey = NULL;       // not required in LEA threads
         added->encrypt = encmethod;
 
+        memset(&msg, 0, sizeof(msg));
         msg.type = MED_LEA_MESSAGE_ADD_LIID;
         msg.data = (void *)added;
 
@@ -1050,6 +1116,11 @@ static int receive_provisioner(mediator_state_t *state) {
                 break;
             case OPENLI_PROTO_HI1_NOTIFICATION:
                 if (receive_hi1_notification(state, msgbody, msglen) == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_INTEGRITY_SIGNATURE_RESPONSE:
+                if (receive_ics_signature(state, msgbody, msglen) == -1) {
                     return -1;
                 }
                 break;
@@ -1513,7 +1584,6 @@ static int reload_mediator_config(mediator_state_t *currstate) {
 
     if ((listenchanged || medidchanged) && !provchanged) {
         /* Need to re-announce our listen socket (or mediator ID) details */
-        printf("DEVDEBUG: REANNOUNCE MEDIATOR\n");
         if (send_mediator_listen_details(currstate, 0) < 0) {
             return -1;
         }

@@ -192,6 +192,7 @@ int send_ics_signing_request_to_provisioner(mediator_prov_t *prov,
 tidyup:
     if (req->digest) free(req->digest);
     if (req->ics_key) free(req->ics_key);
+    if (req->requestedby) free(req->requestedby);
     free(req);
 
     return ret;

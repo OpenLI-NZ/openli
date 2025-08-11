@@ -448,7 +448,8 @@ int emit_intercept_config(char *configfile, const char *encpassfile,
 /* Implemented in integrity_sign.c */
 int load_integrity_signing_privatekey(provision_state_t *state);
 int prov_handle_ics_signing_request(provision_state_t *state,
-        uint8_t *msgbody, uint16_t msglen, prov_sock_state_t *cs);
+        uint8_t *msgbody, uint16_t msglen, prov_sock_state_t *cs,
+        prov_epoll_ev_t *pev );
 
 /* Implemented in clientupdates.c */
 int compare_sip_targets(provision_state_t *currstate,
@@ -503,6 +504,7 @@ void apply_intercept_encryption_settings(prov_intercept_conf_t *conf,
         intercept_common_t *common);
 void update_inherited_encryption_settings(provision_state_t *state,
         liagency_t *agency);
+int enable_epoll_write(provision_state_t *state, prov_epoll_ev_t *pev);
 
 /* Implemented in hup_reload.c */
 int reload_provisioner_config(provision_state_t *state);
