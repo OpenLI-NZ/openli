@@ -45,6 +45,9 @@ struct json_agency {
     struct json_object *ka_freq;
     struct json_object *ka_wait;
     struct json_object *agencycc;
+    struct json_object *integrity;
+    struct json_object *encryptmethod;
+    struct json_object *encryptkey;
 };
 
 struct json_intercept {
@@ -184,6 +187,10 @@ static inline void extract_agency_json_objects(struct json_agency *agjson,
     json_object_object_get_ex(parsed, "keepalivefreq", &(agjson->ka_freq));
     json_object_object_get_ex(parsed, "keepalivewait", &(agjson->ka_wait));
     json_object_object_get_ex(parsed, "agencycc", &(agjson->agencycc));
+    json_object_object_get_ex(parsed, "integrity", &(agjson->integrity));
+    json_object_object_get_ex(parsed, "payloadencryption",
+            &(agjson->encryptmethod));
+    json_object_object_get_ex(parsed, "encryptionkey", &(agjson->encryptkey));
 
 }
 
@@ -251,17 +258,17 @@ static inline int compare_intercept_times(intercept_common_t *latest,
 }
 
 static inline void new_intercept_liidmapping(provision_state_t *state,
-        char *targetagency, char *liid) {
+        intercept_common_t *common) {
 
     int liidmapped = 0;
     prov_agency_t *lea = NULL;
 
-    if (targetagency == NULL) {
+    if (common->targetagency == NULL) {
         return;
     }
 
-    if (strcmp(targetagency, "pcapdisk") != 0) {
-        HASH_FIND_STR(state->interceptconf.leas, targetagency, lea);
+    if (strcmp(common->targetagency, "pcapdisk") != 0) {
+        HASH_FIND_STR(state->interceptconf.leas, common->targetagency, lea);
         if (lea) {
             liidmapped = 1;
         }
@@ -270,12 +277,11 @@ static inline void new_intercept_liidmapping(provision_state_t *state,
     }
 
     if (liidmapped) {
-        liid_hash_t *h = add_liid_mapping(&(state->interceptconf),
-                liid, targetagency);
+        liid_hash_t *h = add_liid_mapping(&(state->interceptconf), common);
         if (announce_liidmapping_to_mediators(state, h) < 0) {
             logger(LOG_INFO,
                     "OpenLI provisioner: unable to announce new IP intercept %s to mediators.",
-                    liid);
+                    common->liid);
         }
     }
 }
@@ -421,7 +427,8 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
     }
 
     if (is_new) {
-        if (common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+                common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
             if (common->encryptkey == NULL || strlen(common->encryptkey) == 0) {
                 snprintf(cinfo->answerstring, 4096,
                         "'encryptionkey' parameter must be set if 'payloadencryption' is set to anything other than 'none'");
@@ -474,6 +481,7 @@ static int update_intercept_common(intercept_common_t *parsed,
 
     payload_encryption_method_t enc;
     prov_intercept_data_t *timers = (prov_intercept_data_t *)(existing->local);
+    int encryptchanged = 0;
 
     /* Check if encryption options are valid -- if not, roll back without
      * changing anything.
@@ -484,7 +492,8 @@ static int update_intercept_common(intercept_common_t *parsed,
         enc = parsed->encrypt;
     }
 
-    if (enc != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+    if (enc != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+            enc != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
         if (parsed->encryptkey == NULL || strlen(parsed->encryptkey) == 0) {
             snprintf(cinfo->answerstring, 4096,
                     "'encryptionkey' parameter must be set if 'payloadencryption' is set to anything other than 'none'");
@@ -515,18 +524,38 @@ static int update_intercept_common(intercept_common_t *parsed,
             agencychanged);
 
     if (*agencychanged) {
-        new_intercept_liidmapping(state, existing->targetagency,
-                existing->liid);
         timers->start_hi1_sent = 0;
     }
 
-    if (parsed->encrypt != existing->encrypt &&
-            parsed->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
-        *changed = 1;
-        existing->encrypt = parsed->encrypt;
+    if (existing->encrypt_inherited) {
+        if (parsed->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
+            existing->encrypt = parsed->encrypt;
+            encryptchanged = 1;
+            existing->encrypt_inherited = 0;
+            MODIFY_STRING_MEMBER(parsed->encryptkey, existing->encryptkey,
+                    &encryptchanged);
+        } else if (*agencychanged) {
+            apply_intercept_encryption_settings(&(state->interceptconf),
+                    existing);
+        }
+    } else {
+        if (parsed->encrypt != existing->encrypt &&
+                parsed->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
+            encryptchanged = 1;
+            existing->encrypt = parsed->encrypt;
+        }
+
+        MODIFY_STRING_MEMBER(parsed->encryptkey, existing->encryptkey,
+                &encryptchanged);
     }
 
-    MODIFY_STRING_MEMBER(parsed->encryptkey, existing->encryptkey, changed);
+    if (*agencychanged || encryptchanged) {
+        new_intercept_liidmapping(state, existing);
+    }
+    if (encryptchanged) {
+        *changed = 1;
+    }
+
     if (compare_intercept_times(parsed, existing) == 1) {
         *timeschanged = 1;
     }
@@ -1072,6 +1101,82 @@ siptargeterr:
 
 }
 
+static int parse_agency_integrity_options(liagency_t *newag,
+        struct json_object *integrity, update_con_info_t *cinfo) {
+
+    int parseerr = 0;
+    struct json_object *enabled, *hash_method, *hash_timeout, *sign_method;
+    struct json_object *sign_timeout, *sign_hashlimit, *hash_pdulimit;
+
+    if (json_object_get_type(integrity) != json_type_object) {
+        logger(LOG_INFO, "OpenLI update socket: 'integrity' for an agency must be expressed as a JSON object");
+        snprintf(cinfo->answerstring, 4096, "%s <p>The 'integrity' member of an agency must be expressed as a JSON object. %s",
+                update_failure_page_start, update_failure_page_end);
+        goto integrityerr;
+    }
+
+    enabled = hash_method = hash_timeout = NULL;
+    sign_timeout = sign_hashlimit = hash_pdulimit = NULL;
+
+    json_object_object_get_ex(integrity, "enabled", &enabled);
+    json_object_object_get_ex(integrity, "hashmethod", &hash_method);
+    json_object_object_get_ex(integrity, "signedhashmethod", &sign_method);
+    json_object_object_get_ex(integrity, "hashtimeout", &hash_timeout);
+    json_object_object_get_ex(integrity, "datapducount", &hash_pdulimit);
+    json_object_object_get_ex(integrity, "signtimeout", &sign_timeout);
+    json_object_object_get_ex(integrity, "hashpducount", &sign_hashlimit);
+
+    if (enabled) {
+        json_bool isset = json_object_get_boolean(enabled);
+        if (isset) {
+            newag->digest_required = 1;
+        } else {
+            newag->digest_required = 0;
+        }
+    }
+
+    if (hash_method) {
+        char *hashmethodstr = NULL;
+        EXTRACT_JSON_STRING_PARAM("hashmethod", "Agency Digest Hash method",
+                hash_method, hashmethodstr, &parseerr, false);
+        if (hashmethodstr) {
+            newag->digest_hash_method =
+                    map_digest_hash_method_string(hashmethodstr);
+            free(hashmethodstr);
+        }
+    }
+
+    if (sign_method) {
+        char *hashmethodstr = NULL;
+        EXTRACT_JSON_STRING_PARAM("signedhashmethod",
+                "Agency Signature Hash method",
+                sign_method, hashmethodstr, &parseerr, false);
+        if (hashmethodstr) {
+            newag->digest_sign_method =
+                    map_digest_hash_method_string(hashmethodstr);
+            free(hashmethodstr);
+        }
+    }
+
+    EXTRACT_JSON_INT_PARAM("hashtimeout", "Agency Digest Hash timeout",
+            hash_timeout, newag->digest_hash_timeout, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("datapducount", "Agency Digest Hash PDU limit",
+            hash_pdulimit, newag->digest_hash_pdulimit, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("signtimeout", "Agency Digest Signature timeout",
+            sign_timeout, newag->digest_sign_timeout, &parseerr, false);
+    EXTRACT_JSON_INT_PARAM("hashpducount", "Agency Digest Signature hash limit",
+            sign_hashlimit, newag->digest_sign_hashlimit, &parseerr, false);
+
+    if (parseerr) {
+        goto integrityerr;
+    }
+
+    return 0;
+
+integrityerr:
+    return -1;
+}
+
 static int parse_ipintercept_staticips(provision_state_t *state,
         ipintercept_t *ipint, struct json_object *jsonips, update_con_info_t *cinfo) {
 
@@ -1249,8 +1354,9 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
             mailint->common.liid, mailint->common.liid_len, mailint);
 
 
-    new_intercept_liidmapping(state, mailint->common.targetagency,
-            mailint->common.liid);
+    apply_intercept_encryption_settings(&(state->interceptconf),
+            &(mailint->common));
+    new_intercept_liidmapping(state, &(mailint->common));
 
     if (announce_single_intercept(state, (void *)mailint,
             push_emailintercept_onto_net_buffer) < 0) {
@@ -1360,7 +1466,7 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (r == 0 && vint->common.xid_count == 0) {
         snprintf(cinfo->answerstring, 4096,
-                "%s <p>VOIP intercept %s has been specified without valid SIP targets. %s",
+                "%s <p>VOIP intercept %s has been specified without valid SIP targets or XIDs. %s",
                 update_failure_page_start, vint->common.liid,
                 update_failure_page_end);
         goto cepterr;
@@ -1381,8 +1487,9 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     HASH_ADD_KEYPTR(hh_liid, state->interceptconf.voipintercepts,
             vint->common.liid, vint->common.liid_len, vint);
 
-    new_intercept_liidmapping(state, vint->common.targetagency,
-            vint->common.liid);
+    apply_intercept_encryption_settings(&(state->interceptconf),
+            &(vint->common));
+    new_intercept_liidmapping(state, &(vint->common));
 
     if (announce_single_intercept(state, (void *)vint,
             push_voipintercept_onto_net_buffer) < 0) {
@@ -1545,8 +1652,10 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     HASH_ADD_KEYPTR(hh_liid, state->interceptconf.ipintercepts,
             ipint->common.liid, ipint->common.liid_len, ipint);
 
-    new_intercept_liidmapping(state, ipint->common.targetagency,
-            ipint->common.liid);
+    apply_intercept_encryption_settings(&(state->interceptconf),
+            &(ipint->common));
+
+    new_intercept_liidmapping(state, &(ipint->common));
 
     if (announce_single_intercept(state, (void *)ipint,
             push_ipintercept_onto_net_buffer) < 0) {
@@ -2185,6 +2294,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
 
     const char *idstr;
     const char *verb;
+    char *encryptmethodstring = NULL;
     struct json_object *parsed = NULL;
     struct json_tokener *tknr;
     liagency_t *nag = NULL;
@@ -2198,6 +2308,15 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     nag->agencyid = strdup(idstr);
     nag->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
     nag->keepalivewait = DEFAULT_AGENCY_KEEPALIVE_WAIT;
+    nag->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
+    nag->digest_sign_method = DEFAULT_DIGEST_HASH_METHOD;
+    nag->digest_hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
+    nag->digest_hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
+    nag->digest_sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
+    nag->digest_sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
+    nag->digest_required = 0;
+    nag->encryptkey = NULL;
+    nag->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
 
     EXTRACT_JSON_STRING_PARAM("hi3address", "agency", agjson.hi3addr,
             nag->hi3_ipstr, &parseerr, true);
@@ -2214,9 +2333,24 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
             nag->keepalivefreq, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("keepalivewait", "agency", agjson.ka_wait,
             nag->keepalivewait, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("payloadencryption", "agency",
+            agjson.encryptmethod, encryptmethodstring, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("encryptionkey", "agency",
+            agjson.encryptkey, nag->encryptkey, &parseerr, false);
 
     if (parseerr) {
         goto agencyerr;
+    }
+
+    if (encryptmethodstring) {
+        nag->encrypt = map_encrypt_method_string(encryptmethodstring);
+        free(encryptmethodstring);
+    }
+
+    if (agjson.integrity) {
+        if (parse_agency_integrity_options(nag, agjson.integrity, cinfo) < 0) {
+            goto agencyerr;
+        }
     }
 
     lea = calloc(1, sizeof(prov_agency_t));
@@ -2248,25 +2382,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
 
 agencyerr:
     if (nag) {
-        if (nag->hi2_ipstr) {
-            free(nag->hi2_ipstr);
-        }
-        if (nag->hi3_ipstr) {
-            free(nag->hi3_ipstr);
-        }
-        if (nag->hi2_portstr) {
-            free(nag->hi2_portstr);
-        }
-        if (nag->hi3_portstr) {
-            free(nag->hi3_portstr);
-        }
-        if (nag->agencyid) {
-            free(nag->agencyid);
-        }
-        if (nag->agencycc) {
-            free(nag->agencycc);
-        }
-        free(nag);
+        free_liagency(nag);
     }
     if (parsed) {
         json_object_put(parsed);
@@ -2280,6 +2396,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     struct json_object *agencyid;
     struct json_agency agjson;
 
+    char *encryptmethodstring = NULL;
     const char *idstr = NULL;
     struct json_object *parsed = NULL;
     struct json_tokener *tknr;
@@ -2287,6 +2404,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     int parseerr = 0;
     liagency_t modified;
     int changed = 0;
+    int encryptchanged = 0;
 
     memset(&modified, 0, sizeof(modified));
     INIT_JSON_AGENCY_PARSING
@@ -2302,6 +2420,14 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
 
     modified.keepalivefreq = 0xffffffff;
     modified.keepalivewait = 0xffffffff;
+    modified.digest_required = 0xff;
+    modified.digest_hash_method = 0xff;
+    modified.digest_sign_method = 0xff;
+    modified.digest_hash_timeout = 0xffffffff;
+    modified.digest_hash_pdulimit = 0xffffffff;
+    modified.digest_sign_timeout = 0xffffffff;
+    modified.digest_sign_hashlimit = 0xffffffff;
+    modified.encrypt = 0xff;
 
     extract_agency_json_objects(&agjson, parsed);
     EXTRACT_JSON_STRING_PARAM("hi3address", "agency", agjson.hi3addr,
@@ -2319,9 +2445,31 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
             modified.keepalivefreq, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("keepalivewait", "agency", agjson.ka_wait,
             modified.keepalivewait, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("payloadencryption", "agency",
+            agjson.encryptmethod, encryptmethodstring, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("encryptionkey", "agency",
+            agjson.encryptkey, modified.encryptkey, &parseerr, false);
 
     if (parseerr) {
         goto agencyerr;
+    }
+
+    if (encryptmethodstring) {
+        modified.encrypt = map_encrypt_method_string(encryptmethodstring);
+        free(encryptmethodstring);
+    }
+    if (agjson.integrity) {
+        if (parse_agency_integrity_options(&modified, agjson.integrity,
+                    cinfo) < 0) {
+            goto agencyerr;
+        }
+    }
+
+    MODIFY_STRING_MEMBER(modified.encryptkey, found->ag->encryptkey, &changed);
+    // check for change in encryption key first, so we can set the
+    // encryptchanged flag based on the fact that "changed" has been set
+    if (changed) {
+        encryptchanged = 1;
     }
 
     MODIFY_STRING_MEMBER(modified.agencycc, found->ag->agencycc, &changed);
@@ -2331,6 +2479,59 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
             &changed);
     MODIFY_STRING_MEMBER(modified.hi2_portstr, found->ag->hi2_portstr,
             &changed);
+
+    if (modified.encrypt != 0xff &&
+            modified.encrypt != found->ag->encrypt) {
+        changed = 1;
+        encryptchanged = 1;
+        found->ag->encrypt = modified.encrypt;
+    }
+
+    if (modified.digest_required != 0xff &&
+                modified.digest_required != found->ag->digest_required) {
+        changed = 1;
+        found->ag->digest_required = modified.digest_required;
+    }
+
+    if (modified.digest_hash_method != 0xff &&
+                modified.digest_hash_method != found->ag->digest_hash_method) {
+        changed = 1;
+        found->ag->digest_hash_method = modified.digest_hash_method;
+    }
+
+    if (modified.digest_sign_method != 0xff &&
+                modified.digest_sign_method != found->ag->digest_sign_method) {
+        changed = 1;
+        found->ag->digest_sign_method = modified.digest_sign_method;
+    }
+
+    if (modified.digest_hash_timeout != 0xffffffff &&
+                modified.digest_hash_timeout !=
+                        found->ag->digest_hash_timeout) {
+        changed = 1;
+        found->ag->digest_hash_timeout = modified.digest_hash_timeout;
+    }
+
+    if (modified.digest_hash_pdulimit != 0xffffffff &&
+                modified.digest_hash_pdulimit !=
+                        found->ag->digest_hash_pdulimit) {
+        changed = 1;
+        found->ag->digest_hash_pdulimit = modified.digest_hash_pdulimit;
+    }
+
+    if (modified.digest_sign_timeout != 0xffffffff &&
+                modified.digest_sign_timeout !=
+                        found->ag->digest_sign_timeout) {
+        changed = 1;
+        found->ag->digest_sign_timeout = modified.digest_sign_timeout;
+    }
+
+    if (modified.digest_sign_hashlimit != 0xffffffff &&
+                modified.digest_sign_hashlimit !=
+                        found->ag->digest_sign_hashlimit) {
+        changed = 1;
+        found->ag->digest_sign_hashlimit = modified.digest_sign_hashlimit;
+    }
 
     if (modified.keepalivefreq != 0xffffffff &&
                 modified.keepalivefreq != found->ag->keepalivefreq) {
@@ -2349,7 +2550,15 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         logger(LOG_INFO,
                 "OpenLI: modified existing agency '%s' via update socket.",
                 found->ag->agencyid);
-    } else {
+    }
+    if (encryptchanged) {
+        update_inherited_encryption_settings(state, found->ag);
+        logger(LOG_INFO,
+                "OpenLI: updated encryption options for intercepts destined for agency '%s' via update socket.",
+                found->ag->agencyid);
+        announce_all_updated_liidmappings_to_mediators(state);
+    }
+    if (!changed && !encryptchanged) {
         logger(LOG_INFO,
                 "OpenLI: did not modify existing agency '%s' via update socket, as no agency properties had changed.",
                 found->ag->agencyid);

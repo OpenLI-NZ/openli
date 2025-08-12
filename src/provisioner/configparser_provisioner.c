@@ -292,6 +292,117 @@ static int add_intercept_static_ips(static_ipranges_t **statics,
     return 0;
 }
 
+static int parse_integrity_check_options(liagency_t *newag,
+        yaml_document_t *doc, yaml_node_t *integmap) {
+
+    yaml_node_pair_t *pair;
+    for (pair = integmap->data.mapping.pairs.start;
+            pair < integmap->data.mapping.pairs.top; pair ++) {
+        yaml_node_t *key, *value;
+        key = yaml_document_get_node(doc, pair->key);
+        value = yaml_document_get_node(doc, pair->value);
+
+        if (key->type == YAML_SCALAR_NODE && value->type == YAML_SCALAR_NODE &&
+                !strcasecmp((char *)key->data.scalar.value, "enabled")) {
+            newag->digest_required =
+                    config_check_onoff((char *)value->data.scalar.value);
+        }
+
+        if (key->type == YAML_SCALAR_NODE && value->type == YAML_SCALAR_NODE &&
+                !strcasecmp((char *)key->data.scalar.value, "hashtimeout")) {
+            errno = 0;
+            newag->digest_hash_timeout = strtoul(
+                    (char *)value->data.scalar.value, NULL, 10);
+            if (errno) {
+                logger(LOG_INFO,
+                        "OpenLI provisioner: invalid value detected for integrity->hashtimeout option in agency configuration");
+                return -1;
+            }
+        }
+
+        if (key->type == YAML_SCALAR_NODE && value->type == YAML_SCALAR_NODE &&
+                !strcasecmp((char *)key->data.scalar.value, "signtimeout")) {
+            errno = 0;
+            newag->digest_sign_timeout = strtoul(
+                    (char *)value->data.scalar.value, NULL, 10);
+            if (errno) {
+                logger(LOG_INFO,
+                        "OpenLI provisioner: invalid value detected for integrity->signtimeout option in agency configuration");
+                return -1;
+            }
+        }
+        if (key->type == YAML_SCALAR_NODE && value->type == YAML_SCALAR_NODE &&
+                !strcasecmp((char *)key->data.scalar.value, "datapducount")) {
+            errno = 0;
+            newag->digest_hash_pdulimit = strtoul(
+                    (char *)value->data.scalar.value, NULL, 10);
+            if (errno) {
+                logger(LOG_INFO,
+                        "OpenLI provisioner: invalid value detected for integrity->datapducount option in agency configuration");
+                return -1;
+            }
+        }
+
+        if (key->type == YAML_SCALAR_NODE && value->type == YAML_SCALAR_NODE &&
+                !strcasecmp((char *)key->data.scalar.value, "hashpducount")) {
+            errno = 0;
+            newag->digest_sign_hashlimit = strtoul(
+                    (char *)value->data.scalar.value, NULL, 10);
+            if (errno) {
+                logger(LOG_INFO,
+                        "OpenLI provisioner: invalid value detected for integrity->hashpducount option in agency configuration");
+                return -1;
+            }
+        }
+
+        if (key->type == YAML_SCALAR_NODE && value->type == YAML_SCALAR_NODE &&
+                !strcasecmp((char *)key->data.scalar.value, "hashmethod")) {
+            if (strcasecmp((char *)value->data.scalar.value, "sha-1") == 0) {
+                newag->digest_hash_method = OPENLI_DIGEST_HASH_ALGO_SHA1;
+            } else if (strcasecmp((char *)value->data.scalar.value,
+                    "sha-256") == 0) {
+                newag->digest_hash_method = OPENLI_DIGEST_HASH_ALGO_SHA256;
+            } else if (strcasecmp((char *)value->data.scalar.value,
+                    "sha-384") == 0) {
+                newag->digest_hash_method = OPENLI_DIGEST_HASH_ALGO_SHA384;
+            } else if (strcasecmp((char *)value->data.scalar.value,
+                    "sha-512") == 0) {
+                newag->digest_hash_method = OPENLI_DIGEST_HASH_ALGO_SHA512;
+            } else {
+                logger(LOG_INFO,
+                        "OpenLI provisioner: unsupported hashmethod '%s' specified in integrity check configuration for agency",
+                        (char *)value->data.scalar.value);
+                return -1;
+            }
+        }
+
+        if (key->type == YAML_SCALAR_NODE && value->type == YAML_SCALAR_NODE &&
+                !strcasecmp((char *)key->data.scalar.value,
+                        "signedhashmethod")) {
+            if (strcasecmp((char *)value->data.scalar.value, "sha-1") == 0) {
+                newag->digest_sign_method = OPENLI_DIGEST_HASH_ALGO_SHA1;
+            } else if (strcasecmp((char *)value->data.scalar.value,
+                    "sha-256") == 0) {
+                newag->digest_sign_method = OPENLI_DIGEST_HASH_ALGO_SHA256;
+            } else if (strcasecmp((char *)value->data.scalar.value,
+                    "sha-384") == 0) {
+                newag->digest_sign_method = OPENLI_DIGEST_HASH_ALGO_SHA384;
+            } else if (strcasecmp((char *)value->data.scalar.value,
+                    "sha-512") == 0) {
+                newag->digest_sign_method = OPENLI_DIGEST_HASH_ALGO_SHA512;
+            } else {
+                logger(LOG_INFO,
+                        "OpenLI provisioner: unsupported signedhashmethod '%s' specified in integrity check configuration for agency",
+                        (char *)value->data.scalar.value);
+                return -1;
+            }
+        }
+    }
+
+    return 0;
+}
+
+
 static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         yaml_node_t *inputs) {
 
@@ -302,6 +413,7 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         yaml_node_t *node = yaml_document_get_node(doc, *item);
         yaml_node_pair_t *pair;
         liagency_t *newag = (liagency_t *)malloc(sizeof(liagency_t));
+        uint8_t integrityok = 1;
 
         newag->hi2_ipstr = NULL;
         newag->hi2_portstr = NULL;
@@ -311,13 +423,30 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         newag->agencycc = NULL;
         newag->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
         newag->keepalivewait = 0;
+        newag->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
+        newag->digest_sign_method = DEFAULT_DIGEST_HASH_METHOD;
+        newag->digest_hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
+        newag->digest_hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
+        newag->digest_sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
+        newag->digest_sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
+        newag->digest_required = 0;
+        newag->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
+        newag->encryptkey = NULL;
 
         for (pair = node->data.mapping.pairs.start;
                 pair < node->data.mapping.pairs.top; pair ++) {
             yaml_node_t *key, *value;
-
             key = yaml_document_get_node(doc, pair->key);
             value = yaml_document_get_node(doc, pair->value);
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_MAPPING_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "integrity") == 0) {
+                if (parse_integrity_check_options(newag, doc, value) < 0) {
+                    integrityok = 0;
+                }
+            }
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
@@ -376,6 +505,32 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
                 newag->keepalivewait = strtoul(
                         (char *)value->data.scalar.value, NULL, 10);
             }
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "payloadencryption") == 0) {
+                if (strcasecmp((char *)value->data.scalar.value, "none") == 0) {
+                    newag->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
+                } else if (strcasecmp((char *)value->data.scalar.value,
+                        "aes-192-cbc") == 0) {
+                    newag->encrypt = OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC;
+                }
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value, "encryptionkey") == 0) {
+                SET_CONFIG_STRING_OPTION(newag->encryptkey, value);
+            }
+        }
+
+        if (newag->agencyid == NULL) {
+            logger(LOG_INFO,
+                    "OpenLI: WARNING configuration error in running intercept config -- agency is missing the 'agencyid' field");
+            logger(LOG_INFO,
+                    "OpenLI: this agency will be ignored");
+            free_liagency(newag);
+            continue;
         }
 
         /* 'pcapdisk' is reserved for the intercepts that need to
@@ -384,11 +539,15 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         if (strcasecmp(newag->agencyid, "pcapdisk") == 0) {
             logger(LOG_INFO,
                     "OpenLI: 'pcapdisk' is a reserved agencyid, please rename to something else.");
-            free(newag->agencyid);
-            if (newag->agencycc) {
-                free(newag->agencycc);
-            }
-            newag->agencyid = NULL;
+            free_liagency(newag);
+            continue;
+        }
+
+        if (newag->encryptkey == NULL &&
+                newag->encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+            logger(LOG_INFO, "OpenLI: Agency configuration for '%s' asks for encryption but has not provided an encryption key -- encryption will be disabled",
+                    newag->agencyid);
+            newag->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
         }
 
         if (newag->keepalivewait > newag->keepalivefreq) {
@@ -399,7 +558,7 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
 
         if (newag->hi2_ipstr != NULL && newag->hi2_portstr != NULL &&
                 newag->hi3_ipstr != NULL && newag->hi3_portstr != NULL &&
-                newag->agencyid != NULL) {
+                integrityok) {
             prov_agency_t *prov_ag;
             prov_ag = (prov_agency_t *)malloc(sizeof(prov_agency_t));
             prov_ag->ag = newag;
@@ -408,14 +567,9 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
                     strlen(prov_ag->ag->agencyid), prov_ag);
 
         } else {
-            if (newag->agencyid) {
-                free(newag->agencyid);
-            }
-            if (newag->agencycc) {
-                free(newag->agencycc);
-            }
-            free(newag);
-            logger(LOG_INFO, "OpenLI: LEA configuration was incomplete -- skipping.");
+            logger(LOG_INFO, "OpenLI: LEA configuration for %s was incomplete or invalid-- skipping.",
+                    newag->agencyid ? newag->agencyid : "unknown agency");
+            free_liagency(newag);
         }
     }
     return 0;
@@ -533,12 +687,13 @@ static inline void init_intercept_common(intercept_common_t *common,
     common->tostart_time = 0;
     common->toend_time = 0;
     common->tomediate = OPENLI_INTERCEPT_OUTPUTS_ALL;
-    common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
+    common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
     common->hi1_seqno = 0;
     common->local = calloc(1, sizeof(prov_intercept_data_t));
 
     common->xids = NULL;
     common->xid_count = 0;
+    common->encrypt_inherited = 0;
 
     local = (prov_intercept_data_t *)(common->local);
     local->intercept_type = intercept_type;
@@ -601,7 +756,7 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
 
         tgtcount = HASH_CNT(hh, newcept->targets);
         if (newcept->common.encryptkey == NULL &&
-                newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+                newcept->common.encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
             if (newcept->common.liid == NULL) {
                 newcept->common.liid = strdup("unidentified intercept");
             }
@@ -673,7 +828,7 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
         }
 
         if (newcept->common.encryptkey == NULL &&
-                newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+                newcept->common.encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
             if (newcept->common.liid == NULL) {
                 newcept->common.liid = strdup("unidentified intercept");
             }
@@ -807,7 +962,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         }
 
         if (newcept->common.encryptkey == NULL &&
-                newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+                newcept->common.encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
             if (newcept->common.liid == NULL) {
                 newcept->common.liid = strdup("unidentified intercept");
             }
@@ -1073,6 +1228,14 @@ static int provisioning_parser(void *arg, yaml_document_t *doc UNUSED,
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "clientdbkey") == 0) {
         SET_CONFIG_STRING_OPTION(state->clientdbkey, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
+                    "integrity-signing-private-key") == 0) {
+        SET_CONFIG_STRING_OPTION(state->integrity_sign_private_key_location,
+                value);
     }
 
     return 0;

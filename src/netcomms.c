@@ -212,22 +212,37 @@ static inline int push_tlv(net_buffer_t *nb, openli_proto_fieldtype_t type,
     return push_generic_onto_net_buffer(nb, tmp, vallen + 4);
 }
 
-int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype)
-{
+int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype,
+        char *name) {
 
     ii_header_t hdr;
+    uint16_t len = 0;
+
+    if (name) {
+        len = strlen(name) + 4;
+    }
 
     if (msgtype == OPENLI_PROTO_COLLECTOR_AUTH) {
-        populate_header(&hdr, msgtype, 0, OPENLI_COLLECTOR_MAGIC);
+        populate_header(&hdr, msgtype, len, OPENLI_COLLECTOR_MAGIC);
     } else if (msgtype == OPENLI_PROTO_MEDIATOR_AUTH) {
-        populate_header(&hdr, msgtype, 0, OPENLI_MEDIATOR_MAGIC);
+        populate_header(&hdr, msgtype, len, OPENLI_MEDIATOR_MAGIC);
     } else {
         logger(LOG_INFO, "OpenLI: invalid auth message type: %d.", msgtype);
         return -1;
     }
 
-    return push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
-            sizeof(ii_header_t));
+    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t)) < 0) {
+        return -1;
+    }
+
+    if (name) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_COMPONENT_NAME, (uint8_t *)name,
+                strlen(name)) < 0) {
+            return -1;
+        }
+    }
+    return len;
 }
 
 int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb) {
@@ -239,17 +254,53 @@ int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb) {
             sizeof(ii_header_t));
 }
 
+#define X2X3_BODY_LEN(addr, port) \
+    (strlen(addr) + strlen(port) + sizeof(uint64_t) + (3 * 4))
 
-#define LIIDMAP_BODY_LEN(agency, liid) \
-    (strlen(agency) + strlen(liid) + (2 * 4))
-
-int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
-        char *liid) {
+int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
+        char *port, uint64_t ts) {
 
     ii_header_t hdr;
     uint16_t totallen;
 
-    totallen = LIIDMAP_BODY_LEN(agency, liid);
+    totallen = X2X3_BODY_LEN(addr, port);
+    populate_header(&hdr, OPENLI_PROTO_X2X3_LISTENER, totallen, 0);
+
+    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t)) == -1) {
+        return -1;
+    }
+
+    /* may as well re-use these field types */
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_IP, (uint8_t *)addr,
+            strlen(addr)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_PORT, (uint8_t *)port,
+            strlen(port)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_TS_SEC, (uint8_t *)(&ts),
+            sizeof(ts)) == -1) {
+        return -1;
+    }
+
+    return (int)totallen;
+}
+
+#define LIIDMAP_BODY_LEN(agency, liid, key) \
+    (strlen(agency) + strlen(liid) + sizeof(payload_encryption_method_t) + \
+    ( key ? strlen(key) + 4 : 0) + (3 * 4))
+
+int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
+        char *liid, char *encryptkey, payload_encryption_method_t method) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+
+    totallen = LIIDMAP_BODY_LEN(agency, liid, encryptkey);
     populate_header(&hdr, OPENLI_PROTO_MEDIATE_INTERCEPT, totallen, 0);
 
     if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
@@ -266,6 +317,19 @@ int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
                 strlen(liid)) == -1) {
         return -1;
     }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION,
+            (uint8_t *)(&method), sizeof(method)) == -1) {
+        return -1;
+    }
+
+    if (encryptkey) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_ENCRYPTION_KEY,
+                (uint8_t *)encryptkey, strlen(encryptkey)) == -1) {
+            return -1;
+        }
+    }
+
     return (int)totallen;
 }
 
@@ -295,6 +359,10 @@ int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
      strlen(lea->hi2_ipstr) + strlen(lea->hi2_portstr) + \
 	 strlen(lea->hi3_ipstr) + strlen(lea->hi3_portstr) + \
 	 sizeof(uint32_t) + sizeof(uint32_t) + \
+     (lea->digest_required ? (sizeof(openli_integrity_hash_method_t) + \
+        sizeof(openli_integrity_hash_method_t) + \
+        (4 * sizeof(uint32_t)) + sizeof(uint8_t) + \
+        (7 * 4)) : 0) + \
 	 (7 * 4)) /* each field has 4 bytes for the key, length of field and terminating \0 */
 
 #define LEA_WITHDRAW_BODY_LEN(lea) \
@@ -354,6 +422,50 @@ int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
                 sizeof(uint32_t)) == -1) {
         return -1;
     }
+
+    if (lea->digest_required) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_ENABLED,
+                (uint8_t *)(&(lea->digest_required)), sizeof(uint8_t)) == -1) {
+            return -1;
+        }
+
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_HASH_METHOD,
+                (uint8_t *)(&(lea->digest_hash_method)),
+                sizeof(openli_integrity_hash_method_t)) == -1) {
+            return -1;
+        }
+
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_SIGNED_HASH_METHOD,
+                (uint8_t *)(&(lea->digest_sign_method)),
+                sizeof(openli_integrity_hash_method_t)) == -1) {
+            return -1;
+        }
+
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_HASH_TIMEOUT,
+                (uint8_t *)(&(lea->digest_hash_timeout)),
+                sizeof(uint32_t)) == -1) {
+            return -1;
+        }
+
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_HASH_PDULIMIT,
+                (uint8_t *)(&(lea->digest_hash_pdulimit)),
+                sizeof(uint32_t)) == -1) {
+            return -1;
+        }
+
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_SIGN_TIMEOUT,
+                (uint8_t *)(&(lea->digest_sign_timeout)),
+                sizeof(uint32_t)) == -1) {
+            return -1;
+        }
+
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT,
+                (uint8_t *)(&(lea->digest_sign_hashlimit)),
+                sizeof(uint32_t)) == -1) {
+            return -1;
+        }
+    }
+
     return (int)totallen;
 
 }
@@ -382,7 +494,6 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
          strlen(common.targetagency) + sizeof(common.destid) + \
          sizeof(common.encrypt) + common.delivcc_len + \
          (36 * common.xid_count) + \
-         (common.encryptkey ? (strlen(common.encryptkey) + 4) : 0) + \
          ((9 + common.xid_count) * 4))
 
 #define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
@@ -450,6 +561,8 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
         return -1;
     }
 
+    /** Collectors do not need to know the encryption key any more */
+    /*
     if (common->encryptkey) {
         if (push_tlv(nb, OPENLI_PROTO_FIELD_ENCRYPTION_KEY,
                 (uint8_t *)(common->encryptkey),
@@ -457,6 +570,7 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
             return -1;
         }
     }
+    */
 
     for (i = 0; i < common->xid_count; i++) {
         char uuid[64];
@@ -1147,6 +1261,114 @@ int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
             OPENLI_PROTO_WITHDRAW_MEDIATOR);
 }
 
+
+#define ICS_REQUEST_BODY_LEN(req) \
+    (strlen(req->ics_key) + sizeof(req->seqno) + sizeof(uint32_t) + \
+     strlen(req->requestedby) + (req->digest_len + 1) + (5 * 4))
+
+int push_ics_signing_request_onto_net_buffer(net_buffer_t *nb,
+        struct ics_sign_request_message *req) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+    int ret;
+    uint32_t diglen = (uint32_t)(req->digest_len);
+
+    /* Pre-compute our body length so we can write it in the header */
+    totallen = ICS_REQUEST_BODY_LEN(req);
+
+    /* Push on header */
+    populate_header(&hdr, OPENLI_PROTO_INTEGRITY_SIGNATURE_REQUEST,
+            totallen, 0);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t))) == -1) {
+        return -1;
+    }
+
+    /* Push on each request field */
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID,
+            (uint8_t *)req->ics_key, strlen(req->ics_key))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_SEQNO,
+            (uint8_t *)&(req->seqno), sizeof(req->seqno))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LENGTH_BYTES,
+            (uint8_t *)&(diglen), sizeof(diglen))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DIGEST,
+            (uint8_t *)req->digest, req->digest_len + 1)) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_COLLECTORID,
+            (uint8_t *)req->requestedby, strlen(req->requestedby))) == -1) {
+        return -1;
+    }
+
+
+
+    return (int)totallen;
+
+}
+
+#define ICS_RESPONSE_BODY_LEN(resp) \
+    (strlen(resp->ics_key) + sizeof(resp->seqno) + sizeof(uint32_t) + \
+     (resp->sign_len ) + strlen(resp->requestedby) + (5 * 4))
+
+int push_ics_signing_response_onto_net_buffer(net_buffer_t *nb,
+        struct ics_sign_response_message *resp) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+    int ret;
+
+    /* Pre-compute our body length so we can write it in the header */
+    totallen = ICS_RESPONSE_BODY_LEN(resp);
+
+    /* Push on header */
+    populate_header(&hdr, OPENLI_PROTO_INTEGRITY_SIGNATURE_RESPONSE,
+            totallen, 0);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t))) == -1) {
+        return -1;
+    }
+
+    /* Push on each request field */
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID,
+            (uint8_t *)resp->ics_key, strlen(resp->ics_key))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_COLLECTORID,
+            (uint8_t *)resp->requestedby, strlen(resp->requestedby))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_SEQNO,
+            (uint8_t *)&(resp->seqno), sizeof(resp->seqno))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LENGTH_BYTES,
+            (uint8_t *)&(resp->sign_len), sizeof(resp->sign_len))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DIGEST,
+            (uint8_t *)resp->signature, resp->sign_len)) == -1) {
+        return -1;
+    }
+
+    return (int)totallen;
+
+}
+
 #define HI1_NOTIFY_BODY_LEN(ndata) \
     (sizeof(ndata->notify_type) + sizeof(ndata->seqno) + sizeof(ndata->ts_sec) \
     + sizeof(ndata->ts_usec) + strlen(ndata->liid) + strlen(ndata->authcc) + \
@@ -1607,6 +1829,7 @@ static int assign_intercept_common_fields(intercept_common_t *common,
             common->encrypt = *((payload_encryption_method_t *)valptr);
             break;
         case OPENLI_PROTO_FIELD_ENCRYPTION_KEY:
+            // shouldn't see this any more, but doesn't hurt to decode anyway
             DECODE_STRING_FIELD(common->encryptkey, valptr, vallen);
             break;
         case OPENLI_PROTO_FIELD_XID:
@@ -1818,6 +2041,133 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
 
     return 0;
 
+}
+
+int decode_component_name(uint8_t *msgbody, uint16_t len, char **name) {
+
+    uint8_t *msgend = msgbody + len;
+
+    *name = NULL;
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+        if (f == OPENLI_PROTO_FIELD_COMPONENT_NAME) {
+            DECODE_STRING_FIELD(*name, valptr, vallen);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_INFO,
+                "OpenLI: invalid field in received component announcement: %d.",
+                f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+    return 0;
+}
+
+int decode_ics_signing_request(uint8_t *msgbody, uint16_t len,
+        struct ics_sign_request_message *req) {
+
+    uint8_t *msgend = msgbody + len;
+    uint32_t diglen = 0;
+
+    req->ics_key = NULL;
+    req->digest_len = 0;
+    req->seqno = 0;
+    req->digest = calloc(EVP_MAX_MD_SIZE + 1, sizeof(unsigned char));
+    req->requestedby = NULL;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_LIID) {
+            DECODE_STRING_FIELD(req->ics_key, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_COLLECTORID) {
+            DECODE_STRING_FIELD(req->requestedby, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_LENGTH_BYTES) {
+            req->digest_len = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_SEQNO) {
+            req->seqno = *((int64_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_DIGEST) {
+            if (req->digest_len == 0 || req->digest_len > EVP_MAX_MD_SIZE) {
+                diglen = EVP_MAX_MD_SIZE;
+            } else {
+                diglen = req->digest_len;
+            }
+
+            memcpy(req->digest, valptr, diglen);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_INFO,
+                "OpenLI: invalid field in received integrity check signing request: %d.",
+                f);
+            return -1;
+        }
+
+        msgbody += (vallen + 4);
+    }
+    return 0;
+
+}
+
+int decode_ics_signing_response(uint8_t *msgbody, uint16_t len,
+        struct ics_sign_response_message *resp) {
+
+    uint8_t *msgend = msgbody + len;
+
+    resp->ics_key = NULL;
+    resp->sign_len = 0;
+    resp->seqno = 0;
+    resp->signature = NULL;
+    resp->requestedby = NULL;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_LIID) {
+            DECODE_STRING_FIELD(resp->ics_key, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_COLLECTORID) {
+            DECODE_STRING_FIELD(resp->requestedby, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_LENGTH_BYTES) {
+            resp->sign_len = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_SEQNO) {
+            resp->seqno = *((int64_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_DIGEST) {
+            if (resp->sign_len == 0) {
+                logger(LOG_INFO,
+                        "OpenLI netcomms: received ICS signing response without a valid signature length?");
+                return -1;
+            }
+            resp->signature = calloc(resp->sign_len, sizeof(unsigned char));
+            memcpy(resp->signature, valptr, resp->sign_len);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_INFO,
+                "OpenLI: invalid field in received integrity check signing response: %d.",
+                f);
+            return -1;
+        }
+
+        msgbody += (vallen + 4);
+    }
+    return 0;
 }
 
 int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
@@ -2176,8 +2526,15 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
     lea->hi3_portstr = NULL;
     lea->agencyid = NULL;
     lea->agencycc = NULL;
-    lea->keepalivefreq = 300;
+    lea->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
     lea->keepalivewait = 0;
+    lea->digest_required = 0;
+    lea->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
+    lea->digest_sign_method = DEFAULT_DIGEST_HASH_METHOD;
+    lea->digest_hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
+    lea->digest_hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
+    lea->digest_sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
+    lea->digest_sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -2204,6 +2561,22 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
             lea->keepalivefreq = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_KAWAIT) {
             lea->keepalivewait = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_HASH_METHOD) {
+            lea->digest_hash_method =
+                    *((openli_integrity_hash_method_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_SIGNED_HASH_METHOD) {
+            lea->digest_sign_method =
+                    *((openli_integrity_hash_method_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_ENABLED) {
+            lea->digest_required = *((uint8_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_HASH_TIMEOUT) {
+            lea->digest_hash_timeout = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_HASH_PDULIMIT) {
+            lea->digest_hash_pdulimit = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_SIGN_TIMEOUT) {
+            lea->digest_sign_timeout = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT) {
+            lea->digest_sign_hashlimit = *((uint32_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
@@ -2243,10 +2616,46 @@ int decode_default_email_compression_announcement(uint8_t *msgbody,
     return 0;
 }
 
-int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
-        char **liid) {
+int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,
+        char **port, uint64_t *ts) {
 
     uint8_t *msgend = msgbody + len;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_CORESERVER_IP) {
+            DECODE_STRING_FIELD(*addr, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_CORESERVER_PORT) {
+            DECODE_STRING_FIELD(*port, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_TS_SEC) {
+            (*ts) = *((uint64_t *)valptr);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_INFO,
+                    "OpenLI: invalid field in received X2/X3 listener announcement: %d.",
+                    f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+    return 0;
+}
+
+
+int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
+        char **liid, char **encryptkey, payload_encryption_method_t *method) {
+
+    uint8_t *msgend = msgbody + len;
+
+    *encryptkey = NULL;
+    *method = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -2261,6 +2670,10 @@ int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
             DECODE_STRING_FIELD(*liid, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_LEAID) {
             DECODE_STRING_FIELD(*agency, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_ENCRYPTION_KEY) {
+            DECODE_STRING_FIELD(*encryptkey, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION) {
+            (*method) = *((payload_encryption_method_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,

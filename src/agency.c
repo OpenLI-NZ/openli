@@ -24,8 +24,64 @@
  *
  */
 #include <stdlib.h>
+#include <string.h>
 
 #include "agency.h"
+
+openli_integrity_hash_method_t map_digest_hash_method_string(char *str) {
+    if (str == NULL) {
+        return DEFAULT_DIGEST_HASH_METHOD;
+    }
+    if (strcasecmp("sha-1", str) == 0) {
+        return OPENLI_DIGEST_HASH_ALGO_SHA1;
+    } else if (strcasecmp("sha-256", str) == 0) {
+        return OPENLI_DIGEST_HASH_ALGO_SHA256;
+    } else if (strcasecmp("sha-384", str) == 0) {
+        return OPENLI_DIGEST_HASH_ALGO_SHA384;
+    } else if (strcasecmp("sha-512", str) == 0) {
+        return OPENLI_DIGEST_HASH_ALGO_SHA512;
+    }
+    return DEFAULT_DIGEST_HASH_METHOD;
+}
+
+liagency_t *copy_liagency(liagency_t *lea) {
+    liagency_t *copy;
+
+    if (!lea) return NULL;
+
+    copy = calloc(1, sizeof(liagency_t));
+
+    if (!copy) {
+        return NULL;
+    }
+
+    /* copy in all the non-string variables */
+    memcpy(copy, lea, sizeof(liagency_t));
+
+    /* then overwrite the string pointers with strdup copies */
+    if (lea->agencyid) {
+        copy->agencyid = strdup(lea->agencyid);
+    }
+    if (lea->agencycc) {
+        copy->agencycc = strdup(lea->agencycc);
+    }
+    if (lea->hi2_portstr) {
+        copy->hi2_portstr = strdup(lea->hi2_portstr);
+    }
+    if (lea->hi2_ipstr) {
+        copy->hi2_ipstr = strdup(lea->hi2_ipstr);
+    }
+    if (lea->hi3_portstr) {
+        copy->hi3_portstr = strdup(lea->hi3_portstr);
+    }
+    if (lea->hi3_ipstr) {
+        copy->hi3_ipstr = strdup(lea->hi3_ipstr);
+    }
+    if (lea->encryptkey) {
+        copy->encryptkey = strdup(lea->encryptkey);
+    }
+    return copy;
+}
 
 void free_liagency(liagency_t *lea) {
 	if (lea->hi2_ipstr) {
@@ -45,6 +101,9 @@ void free_liagency(liagency_t *lea) {
 	}
     if (lea->agencycc) {
         free(lea->agencycc);
+    }
+    if (lea->encryptkey) {
+        free(lea->encryptkey);
     }
 	free(lea);
 }

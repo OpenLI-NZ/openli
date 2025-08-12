@@ -139,6 +139,7 @@ static void clear_med_config(mediator_state_t *state) {
     }
 
     free_ssl_config(&(state->sslconf));
+
 }
 
 /** Frees all global state for a mediator instance.
@@ -146,12 +147,22 @@ static void clear_med_config(mediator_state_t *state) {
  *  @param state        The global state for the mediator instance
  */
 static void destroy_med_state(mediator_state_t *state) {
+    agency_digest_config_t *ag, *tmp;
 
     /* Tear down the connection to the provisioner */
     free_provisioner(&(state->provisioner));
 
     destroy_med_collector_config(&(state->collector_threads.config));
     destroy_med_agency_config(&(state->agency_threads.config));
+
+    HASH_ITER(hh, state->saved_agencies, ag, tmp) {
+        HASH_DELETE(hh, state->saved_agencies, ag);
+        if (ag->agencyid) {
+            free(ag->agencyid);
+        }
+        free_liagency(ag->config);
+        free(ag);
+    }
 
     /* Close the main epoll file descriptor */
     if (state->epoll_fd != -1) {
@@ -277,6 +288,7 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
     state->timerev = NULL;
     state->col_clean_timerev = NULL;
     state->epoll_fd = -1;
+    state->saved_agencies = NULL;
 
     init_provisioner_instance(&(state->provisioner), &(state->sslconf.ctx));
     if (init_mediator_config(state, configfile) < 0) {
@@ -299,7 +311,8 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
     state->collector_threads.threads = NULL;
     init_med_collector_config(&(state->collector_threads.config),
             state->etsitls,
-            &(state->sslconf), &(state->RMQ_conf), state->mediatorid);
+            &(state->sslconf), &(state->RMQ_conf), state->mediatorid,
+            state->operatorid);
 
     logger(LOG_DEBUG, "OpenLI Mediator: ETSI TLS encryption %s",
         state->etsitls ? "enabled" : "disabled");
@@ -390,7 +403,7 @@ static void update_coll_recv_thread_config(mediator_state_t *state) {
     col_thread_msg_t msg;
 
     update_med_collector_config(&(state->collector_threads.config),
-                state->etsitls, state->mediatorid);
+                state->etsitls, state->mediatorid, state->operatorid);
 
     /* Send the "reload your config" message to every collector thread */
     memset(&msg, 0, sizeof(msg));
@@ -420,8 +433,7 @@ static void trigger_lea_thread_shutdown_timers(mediator_state_t *state,
 
     HASH_ITER(hh, state->agency_threads.threads, lea_t, tmp) {
         msg.type = MED_LEA_MESSAGE_SHUTDOWN_TIMER;
-        msg.data = calloc(1, sizeof(uint16_t));
-        memcpy(msg.data, &timeout, sizeof(uint16_t));
+        msg.data_uint = timeout;
 
         libtrace_message_queue_put(&(lea_t->in_main), &msg);
     }
@@ -514,6 +526,38 @@ static int process_signal(int sigfd) {
     return 0;
 }
 
+/** Sends a message to all collector receive threads to tell them that
+ *  a particular agency is no longer active.
+ *
+ *  @param state        The global state for this mediator
+ *  @param agencyid     The ID of the agency being withdrawn
+ *
+ *  @return 0 if successful, -1 if an error occurs
+ */
+static int withdraw_lea_from_collector_threads(mediator_state_t *state,
+        char *agencyid) {
+
+    coll_recv_t *col_thread, *tmp;
+    col_thread_msg_t msg;
+    char *copy;
+
+    HASH_ITER(hh, state->collector_threads.threads, col_thread, tmp) {
+        while (col_thread) {
+            copy = strdup(agencyid);
+            if (!copy) {
+                return -1;
+            }
+            memset(&msg, 0, sizeof(msg));
+            msg.type = MED_COLL_LEA_WITHDRAW;
+            msg.arg = (uint64_t)copy;
+            libtrace_message_queue_put(&(col_thread->in_main), &msg);
+            col_thread = col_thread->next;
+        }
+    }
+    return 0;
+
+}
+
 /** Parse and action a withdrawal of an LEA by the provisioner
  *
  *  @param state        The global state for this mediator
@@ -541,9 +585,119 @@ static int receive_lea_withdrawal(mediator_state_t *state, uint8_t *msgbody,
                 lea->agencyid);
     }
 
+    /* Tell the collector threads to not worry about digest calculations
+     * for this agency any more */
+    withdraw_lea_from_collector_threads(state, lea->agencyid);
+    remove_liid_mapping_by_agency_collector_config(
+            &(state->collector_threads.config), lea->agencyid);
+
     mediator_halt_agency_thread(&(state->agency_threads), lea->agencyid);
     free_liagency(lea);
     return 0;
+}
+
+
+/** Sends a message to a single collector receive thread to tell them about a
+ *  new or updated agency
+ *
+ *  @param col_thread   The collector receive thread to send the message to
+ *  @param lea          The current configuration for the agency being announced
+ *
+ *  @return 0 if successful, -1 if an error occurs
+ */
+static inline int announce_lea_to_single_collector_thread(
+        coll_recv_t *col_thread, liagency_t *lea) {
+
+    liagency_t *copy;
+    col_thread_msg_t msg;
+
+    copy = copy_liagency(lea);
+    if (!copy) {
+        return -1;
+    }
+    memset(&msg, 0, sizeof(msg));
+    msg.type = MED_COLL_LEA_ANNOUNCE;
+    msg.arg = (uint64_t)copy;
+    libtrace_message_queue_put(&(col_thread->in_main), &msg);
+    return 0;
+}
+
+/** Sends a message to all collector receive threads to tell them about a
+ *  new or updated agency
+ *
+ *  @param state        The global state for this mediator
+ *  @param lea          The current configuration for the agency being announced
+ *
+ *  @return 0 if successful, -1 if an error occurs
+ */
+static int announce_lea_to_collector_threads(mediator_state_t *state,
+        liagency_t *lea) {
+
+    coll_recv_t *col_thread, *tmp;
+    agency_digest_config_t *agd;
+    liagency_t *copy;
+
+    HASH_ITER(hh, state->collector_threads.threads, col_thread, tmp) {
+        while (col_thread) {
+            if (announce_lea_to_single_collector_thread(col_thread, lea) < 0) {
+                return -1;
+            }
+            col_thread = col_thread->next;
+        }
+    }
+
+    copy = copy_liagency(lea);
+    HASH_FIND(hh, state->saved_agencies, lea->agencyid, strlen(lea->agencyid),
+            agd);
+    if (!agd) {
+        agd = calloc(1, sizeof(agency_digest_config_t));
+        agd->agencyid = strdup(lea->agencyid);
+        agd->config = copy;
+        agd->disabled = 0;
+        HASH_ADD_KEYPTR(hh, state->saved_agencies, agd->agencyid,
+                strlen(agd->agencyid), agd);
+    } else {
+        if (agd->config) {
+            free_liagency(agd->config);
+        }
+        agd->config = copy;
+    }
+    return 0;
+}
+
+static int announce_all_leas_to_collector_thread(mediator_state_t *state,
+        char *collectorid) {
+
+    /* Because we can have multiple threads per "collectorid" (because of
+     * a collector having multiple forwarding threads which each result
+     * in a separate thread on the mediator side), we will end up having
+     * to announce all LEAs to all receive threads associated with this
+     * "collectorid". This means there is going to be a bit of duplication
+     * of announcements to some receive threads, but it's not enough of an
+     * issue to be worth the hassle of trying to avoid the duplication in
+     * the first place.
+     */
+
+    agency_digest_config_t *lea, *tmp;
+    coll_recv_t *col;
+
+    HASH_FIND(hh, state->collector_threads.threads, collectorid,
+            strlen(collectorid), col);
+    if (!col) {
+        /* weird, but ok */
+        return 0;
+    }
+
+    while (col) {
+        HASH_ITER(hh, state->saved_agencies, lea, tmp) {
+            if (announce_lea_to_single_collector_thread(col, lea->config) < 0) {
+                return -1;
+            }
+        }
+        col = col->next;
+    }
+
+    return 1;
 }
 
 /** Parse and action an LEA announcement received from the provisioner.
@@ -576,16 +730,24 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
         logger(LOG_INFO, "OpenLI Mediator: HI2 = %s:%s    HI3 = %s:%s",
                 lea->hi2_ipstr, lea->hi2_portstr, lea->hi3_ipstr,
                 lea->hi3_portstr);
+        logger(LOG_INFO, "OpenLI Mediator: integrity checks: %s",
+                lea->digest_required ? "enabled" : "disabled");
     }
 
     HASH_FIND(hh, state->agency_threads.threads, lea->agencyid,
             strlen(lea->agencyid), existing);
     if (!existing) {
         ret = mediator_start_agency_thread(&(state->agency_threads), lea);
-        free_liagency(lea);
+
+        /* tell coll threads about this new agency */
+        announce_lea_to_collector_threads(state, lea);
+
     } else {
         ret = mediator_update_agency_thread(existing, lea);
         /* Don't free lea -- it will get sent to the LEA thread */
+
+        /* tell coll threads about this modified agency */
+        announce_lea_to_collector_threads(state, lea);
     }
 
     return ret;
@@ -689,6 +851,8 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     char *liid = NULL;
     lea_thread_msg_t msg;
     lea_thread_state_t *lea_t, *tmp;
+    col_thread_msg_t cmsg;
+    coll_recv_t *col_t, *ctmp;
 
     /** See netcomms.c for this method */
     if (decode_cease_mediation(msgbody, msglen, &liid) == -1) {
@@ -704,9 +868,8 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
         return -1;
     }
 
-    /* Send the remove message to all LEA threads -- we don't keep a global
-     * map of LIIDs to agencies, but this shouldn't be a huge workload for
-     * the LEA threads to deal with.
+    /* Send the remove message to all LEA threads -- this shouldn't be a
+     * huge workload for the LEA threads to deal with.
      *
      * Note: this will include the pcap output thread.
      */
@@ -718,8 +881,83 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
         libtrace_message_queue_put(&(lea_t->in_main), &msg);
     }
 
+    memset(&cmsg, 0, sizeof(cmsg));
+    HASH_ITER(hh, state->collector_threads.threads, col_t, ctmp) {
+        cmsg.type = MED_COLL_LIID_WITHDRAW;
+        cmsg.arg = (uint64_t)strdup(liid);
+        libtrace_message_queue_put(&(col_t->in_main), &cmsg);
+    }
+
+    remove_liid_mapping_collector_config(&(state->collector_threads.config),
+            liid);
+
     free(liid);
     return 0;
+}
+
+/**  new LIID->agency mapping received from the
+ *  provisioner.
+ *
+ *  @param state            The global state for this mediator
+ *  @param msgbody          Pointer to the start of the LIID mapping message
+ *                          body
+ *  @param msglen           Length of the LIID mapping message, in bytes.
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
+static int receive_ics_signature(mediator_state_t *state, uint8_t *msgbody,
+        uint16_t msglen) {
+
+    int ret = -1;
+    coll_recv_t *col = NULL;
+    struct ics_sign_response_message *resp;
+    col_thread_msg_t msg;
+
+    resp = calloc(1, sizeof(struct ics_sign_response_message));
+
+    if (decode_ics_signing_response(msgbody, msglen, resp) == -1) {
+        logger(LOG_INFO, "OpenLI Mediator: receive invalid integrity check signature from provisioner.");
+        goto tidyup_err;
+    }
+
+    if (!resp->requestedby) {
+        logger(LOG_INFO, "OpenLI Mediator: received integrity check signature from provisioner without a 'requestedby'.");
+        goto tidyup_err;
+    }
+
+    /* Find the collector receive thread that requested this signature */
+    HASH_FIND(hh, state->collector_threads.threads, resp->requestedby,
+            strlen(resp->requestedby), col);
+    if (col == NULL) {
+        logger(LOG_INFO, "OpenLI Mediator: integrity check signature was supposedly requested by '%s' but we don't recognise it?", resp->requestedby);
+        // not a fatal error, maybe the collector has disappeared since the
+        // request was made?
+        ret = 0;
+        goto tidyup_err;
+    }
+
+    memset(&msg, 0, sizeof(msg));
+    msg.type = MED_COLL_INTEGRITY_SIGN_RESULT;
+    msg.arg = (uint64_t)resp;
+
+    libtrace_message_queue_put(&(col->in_main), &msg);
+
+    return 0;
+
+tidyup_err:
+    if (resp) {
+        if (resp->requestedby) {
+            free(resp->requestedby);
+        }
+        if (resp->signature) {
+            free(resp->signature);
+        }
+        if (resp->ics_key) {
+            free(resp->ics_key);
+        }
+        free(resp);
+    }
+    return ret;
 }
 
 /** Parses and actions a new LIID->agency mapping received from the
@@ -735,24 +973,28 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
 static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
 
-    char *agencyid, *liid;
-    int found = 0;
+    char *agencyid = NULL, *liid = NULL, *encryptkey = NULL;
+    int found = 0, ret = 0;
     lea_thread_msg_t msg;
     lea_thread_state_t *target;
     added_liid_t *added;
     lea_thread_state_t *tmp;
+    payload_encryption_method_t encmethod;
 
     agencyid = NULL;
     liid = NULL;
 
     /* See netcomms.c for this method */
-    if (decode_liid_mapping(msgbody, msglen, &agencyid, &liid) == -1) {
+    if (decode_liid_mapping(msgbody, msglen, &agencyid, &liid, &encryptkey,
+            &encmethod) == -1) {
         logger(LOG_INFO, "OpenLI Mediator: receive invalid LIID mapping from provisioner.");
-        return -1;
+        ret = -1;
+        goto tidyup;
     }
 
     if (agencyid == NULL || liid == NULL) {
-        return -1;
+        ret = -1;
+        goto tidyup;
     }
 
     /*
@@ -778,7 +1020,10 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         added = calloc(1, sizeof(added_liid_t));
         added->liid = strdup(liid);
         added->agencyid = strdup(agencyid);
+        added->encryptkey = NULL;       // not required in LEA threads
+        added->encrypt = encmethod;
 
+        memset(&msg, 0, sizeof(msg));
         msg.type = MED_LEA_MESSAGE_ADD_LIID;
         msg.data = (void *)added;
 
@@ -788,7 +1033,16 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     if (found == 0) {
         logger(LOG_INFO, "OpenLI Mediator: agency %s is not recognised by the mediator, yet LIID %s is intended for it?",
                 agencyid, liid);
-        return -1;
+        ret = -1;
+        goto tidyup;
+    }
+
+    add_liid_mapping_collector_config(&(state->collector_threads.config),
+            liid, agencyid, encmethod, encryptkey);
+
+tidyup:
+    if (encryptkey) {
+        free(encryptkey);
     }
 
     if (liid) {
@@ -797,7 +1051,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     if (agencyid) {
         free(agencyid);
     }
-    return 0;
+    return ret;
 }
 
 /** Receives and actions one or more messages received from the provisioner.
@@ -865,6 +1119,11 @@ static int receive_provisioner(mediator_state_t *state) {
                     return -1;
                 }
                 break;
+            case OPENLI_PROTO_INTEGRITY_SIGNATURE_RESPONSE:
+                if (receive_ics_signature(state, msgbody, msglen) == -1) {
+                    return -1;
+                }
+                break;
             default:
                 if (state->provisioner.disable_log == 0) {
                     logger(LOG_INFO,
@@ -890,6 +1149,7 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 
 	med_epoll_ev_t *mev = (med_epoll_ev_t *)(ev->data.ptr);
     int ret = 0;
+    char colname[INET6_ADDRSTRLEN];
 
 	switch(mev->fdtype) {
 		case MED_EPOLL_SIGCHECK_TIMER:
@@ -913,7 +1173,11 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
         case MED_EPOLL_COLL_CONN:
             /* a connection is occuring on our listening socket */
             ret = mediator_accept_collector_connection(
-                    &(state->collector_threads), state->listenerev->fd);
+                    &(state->collector_threads), state->listenerev->fd,
+                    colname, INET6_ADDRSTRLEN);
+            if (ret > 0) {
+                ret = announce_all_leas_to_collector_thread(state, colname);
+            }
             break;
         case MED_EPOLL_CEASE_LIID_TIMER:
             /* an LIID->agency mapping can now be safely removed */
@@ -1282,7 +1546,7 @@ static int reload_mediator_config(mediator_state_t *currstate) {
     }
 
     if (tlschanged != 0 || newstate.etsitls != currstate->etsitls ||
-            medidchanged || rmqchanged) {
+            medidchanged || rmqchanged || opidchanged) {
         /* Something has changed that will affect our collector receive
          * threads and therefore we may need to drop them and force them
          * to reconnect.
@@ -1351,6 +1615,7 @@ static void run(mediator_state_t *state) {
 	struct epoll_event evs[64];
     int provfail = 0;
     med_epoll_ev_t *signalev;
+    coll_recv_t *col_t, *tmp;
 
     /* Register the epoll event for received signals */
     signalev = create_mediator_fdevent(state->epoll_fd, NULL,
@@ -1397,29 +1662,56 @@ static void run(mediator_state_t *state) {
 
 	    /* Attempt to connect to the provisioner, if we don't already have
          * a connection active */
-        provfail = attempt_provisioner_connect(&(state->provisioner), provfail);
+        if (state->provisioner.provev == NULL &&
+                state->provisioner.tryconnect != 0) {
+            provfail = attempt_provisioner_connect(&(state->provisioner),
+                    provfail);
 
-        if (provfail < 0) {
-            break;
-        }
-
-        if (!provfail) {
-            if (send_mediator_listen_details(state, 1) < 0) {
-                drop_provisioner(state);
-                continue;
+            if (provfail < 0) {
+                break;
             }
 
-            /* Any LEA threads for LEAs that the provisioner does
-             * not announce within the next 60 seconds should be
-             * halted, as presumably those agencies were removed
-             * from the provisioner config while we were not
-             * connected to the provisioner.
-             */
-            if (state->provisioner.just_connected) {
-                trigger_lea_thread_shutdown_timers(state, 60);
-                state->provisioner.just_connected = 0;
+            if (!provfail) {
+                if (send_mediator_listen_details(state, 1) < 0) {
+                    drop_provisioner(state);
+                    continue;
+                }
+
+                /* Any LEA threads for LEAs that the provisioner does
+                 * not announce within the next 60 seconds should be
+                 * halted, as presumably those agencies were removed
+                 * from the provisioner config while we were not
+                 * connected to the provisioner.
+                 */
+                if (state->provisioner.just_connected) {
+                    trigger_lea_thread_shutdown_timers(state, 60);
+                    state->provisioner.just_connected = 0;
+                }
             }
         }
+
+        /* Check for integrity check signing requests from the collector
+         * threads.
+         */
+        HASH_ITER(hh, state->collector_threads.threads, col_t, tmp) {
+            col_thread_msg_t colmsg;
+            while (libtrace_message_queue_try_get(&(col_t->out_main),
+                    (void *)&colmsg) != LIBTRACE_MQ_FAILED) {
+                if (colmsg.type == MED_COLL_INTEGRITY_SIGN_REQUEST) {
+                    struct ics_sign_request_message *signreq;
+
+                    signreq = (struct ics_sign_request_message *)(colmsg.arg);
+                    if (send_ics_signing_request_to_provisioner(
+                            &state->provisioner, signreq) < 0) {
+                        logger(LOG_INFO, "OpenLI mediator: failed to pass on integrity check signing request to the provisioner");
+                    }
+
+                } else {
+                    logger(LOG_INFO, "OpenLI mediator: invalid message type received by main thread from collector thread (%u)", colmsg.type);
+                }
+            }
+        }
+
         /* This timer will force us to stop checking epoll and go back
          * to the start of this loop (i.e. checking if we should halt the
          * entire mediator) every second.

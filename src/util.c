@@ -43,6 +43,53 @@
 #include "logger.h"
 #include "util.h"
 
+char *load_file_into_string(const char *filename, size_t limit) {
+    FILE *fp = fopen(filename, "rb");
+    size_t filelen = 0;
+    char *buf;
+    size_t res;
+
+    if (!fp) {
+        logger(LOG_INFO, "OpenLI: failed to open file '%s' for reading: %s",
+                filename, strerror(errno));
+        return NULL;
+    }
+
+    fseek(fp, 0, SEEK_END);
+    filelen = ftell(fp);
+    rewind(fp);
+
+    if (limit != 0 && filelen > limit) {
+        logger(LOG_INFO, "OpenLI: could not load file '%s' into memory -- file size %ld exceeds maximum allowed file size %zu",
+                filename, filelen, limit);
+        fclose(fp);
+        return NULL;
+    }
+
+    buf = malloc(filelen + 1);
+    if (!buf) {
+        logger(LOG_INFO, "OpenLI: could not load file '%s' into memory -- file size %ld exceeds available memory",
+                filename, filelen);
+        fclose(fp);
+        return NULL;
+    }
+
+    res = fread(buf, 1, filelen, fp);
+    if (res < filelen) {
+        if (feof(fp)) {
+            logger(LOG_INFO, "OpenLI: unexpected end of file reached when loading '%s' into memory", filename);
+        } else if (ferror(fp)) {
+            logger(LOG_INFO, "OpenLI: error while loading file '%s' into memory", filename, strerror(errno));
+            free(buf);
+            fclose(fp);
+            return NULL;
+        }
+    }
+    buf[res] = '\0';
+    fclose(fp);
+    return buf;
+}
+
 void openli_copy_ipcontent(libtrace_packet_t *pkt, uint8_t **ipc,
         uint16_t *iplen) {
 

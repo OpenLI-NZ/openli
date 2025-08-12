@@ -101,6 +101,9 @@ typedef struct med_state {
     /** The collector receive threads that have been spawned */
     mediator_collector_t collector_threads;
 
+    /** The integrity check configuration for all known agencies */
+    agency_digest_config_t *saved_agencies;
+
     /** The LEA send threads that have been spawned */
     mediator_lea_t agency_threads;
 

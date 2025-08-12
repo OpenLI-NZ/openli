@@ -46,6 +46,23 @@ typedef struct string_set {
     UT_hash_handle hh;
 } string_set_t;
 
+/** Loads the contents of a file into a null-terminated string.
+ *
+ *  If limit is set to a value other than 0, then this method will
+ *  fail if the file size is greater than that number of bytes.
+ *
+ *  The returned string has been allocated using malloc, and will need
+ *  to be freed when the caller has no more need of it.
+ *
+ *  @param filename     The path to the file to be loaded into a string
+ *  @param limit        The maximum file size to accept in bytes. Set to 0
+ *                      to have no limit on file size.
+ *
+ *  @return a string containing the entire contents of the file, or NULL
+ *          if an error occurs or the file size exceeds the specified limit.
+ */
+char *load_file_into_string(const char *filename, size_t limit);
+
 int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
         uint8_t setkeepalive);
 int epoll_add_timer(int epoll_fd, uint32_t secs, void *ptr);

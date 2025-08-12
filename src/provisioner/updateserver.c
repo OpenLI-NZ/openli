@@ -50,6 +50,12 @@
 
 #define OPAQUE_TOKEN "a7844291bd990a17bfe389e1ccb0981ed6d187a"
 
+const char *delete_active_collector_page =
+        "<html><body>Cannot delete a collector that is currently active.</body></html>\n";
+
+const char *delete_active_mediator_page =
+        "<html><body>Cannot delete a mediator that is currently active.</body></html>\n";
+
 const char *update_success_page =
         "<html><body>OpenLI provisioner configuration was successfully updated.</body></html>\n";
 
@@ -301,6 +307,14 @@ static int update_configuration_delete(update_con_info_t *cinfo,
             /* deleting this is not sensible either */
             break;
         case TARGET_COLLECTOR:
+            ret = remove_collector_from_clientdb(state, target);
+            if (ret == 0) {
+                snprintf(cinfo->answerstring, 4096, "%s",
+                        delete_active_collector_page);
+                cinfo->answercode = MHD_HTTP_FORBIDDEN;
+            }
+            break;
+
         case TARGET_MEDIATOR:
             /* You shouldn't be able to delete known collectors or mediators */
             break;

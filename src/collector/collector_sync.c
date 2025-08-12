@@ -246,6 +246,12 @@ void clean_sync_data(collector_sync_t *sync) {
             if (xpush->identifier) {
                 free(xpush->identifier);
             }
+            if (xpush->listenaddr) {
+                free(xpush->listenaddr);
+            }
+            if (xpush->listenport) {
+                free(xpush->listenport);
+            }
             free(xpush);
         }
 
@@ -301,6 +307,34 @@ static int forward_provmsg_to_workers(void **zmq_socks, int sockcount,
 
 }
 
+static int sync_thread_send_provisioner_auth(collector_sync_t *sync) {
+    char colname[1024];
+
+    pthread_rwlock_rdlock(sync->info_mutex);
+    /* Put our auth message onto the outgoing buffer */
+    if (sync->info->intpointid) {
+        snprintf(colname, 1024, "%s~%s~%s", sync->info->operatorid,
+                sync->info->networkelemid, sync->info->intpointid);
+    } else {
+        snprintf(colname, 1024, "%s~%s", sync->info->operatorid,
+                sync->info->networkelemid);
+    }
+
+    if (push_auth_onto_net_buffer(sync->outgoing, OPENLI_PROTO_COLLECTOR_AUTH,
+            colname) < 0) {
+        pthread_rwlock_unlock(sync->info_mutex);
+        if (sync->instruct_fail == 0) {
+            logger(LOG_INFO,"OpenLI: collector is unable to queue auth message.");
+        }
+        sync->instruct_fail = 1;
+        sync_disconnect_provisioner(sync, 0);
+        return 0;
+    }
+    pthread_rwlock_unlock(sync->info_mutex);
+    return 1;
+}
+
+
 static inline void push_coreserver_msg(collector_sync_t *sync,
         coreserver_t *cs, uint8_t msgtype) {
 
@@ -330,6 +364,7 @@ void sync_thread_publish_reload(collector_sync_t *sync) {
 
         publish_openli_msg(sync->zmq_pubsocks[i], expmsg);
     }
+    sync_thread_send_provisioner_auth(sync);
 }
 
 static int export_raw_sync_packet_content(access_plugin_t *p,
@@ -1870,18 +1905,8 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
     sync->outgoing = create_net_buffer(NETBUF_SEND, sync->instruct_fd, sync->ssl);
     sync->incoming = create_net_buffer(NETBUF_RECV, sync->instruct_fd, sync->ssl);
 
-    /* Put our auth message onto the outgoing buffer */
-    if (push_auth_onto_net_buffer(sync->outgoing, OPENLI_PROTO_COLLECTOR_AUTH)
-            < 0) {
-        if (sync->instruct_fail == 0) {
-            logger(LOG_INFO,"OpenLI: collector is unable to queue auth message.");
-        }
-        sync->instruct_fail = 1;
-        sync_disconnect_provisioner(sync, 0);
-        return 0;
-    }
     sync->instruct_events = ZMQ_POLLIN | ZMQ_POLLOUT | ZMQ_POLLERR;
-    return 1;
+    return sync_thread_send_provisioner_auth(sync);
 }
 
 static inline void touch_all_coreservers(coreserver_t *servers) {
@@ -2420,10 +2445,15 @@ endupdate:
     return 1;
 }
 
-int add_x2x3_to_sync(collector_sync_t *sync, char *identifier) {
+int add_x2x3_to_sync(collector_sync_t *sync, char *identifier, char *addr,
+        char *port) {
     x_input_sync_t *found;
     char sockname[1024];
     int hwm = 1000, timeout=1000;
+
+    if (!identifier) {
+        return -1;
+    }
 
     HASH_FIND(hh, sync->x2x3_queues, identifier, strlen(identifier), found);
     if (found) {
@@ -2435,6 +2465,12 @@ int add_x2x3_to_sync(collector_sync_t *sync, char *identifier) {
 
     found = calloc(1, sizeof(x_input_sync_t));
     found->identifier = strdup(identifier);
+    if (addr) {
+        found->listenaddr = strdup(addr);
+    }
+    if (port) {
+        found->listenport = strdup(port);
+    }
     found->zmq_socket = zmq_socket(sync->glob->zmq_ctxt, ZMQ_PUSH);
     if (zmq_setsockopt(found->zmq_socket, ZMQ_SNDHWM, &hwm, sizeof(hwm)) < 0) {
         logger(LOG_INFO,
@@ -2493,6 +2529,8 @@ void remove_x2x3_from_sync(collector_sync_t *sync, char *identifier,
 
     HASH_DELETE(hh, sync->x2x3_queues, found);
     zmq_close(found->zmq_socket);
+    if (found->listenaddr) free(found->listenaddr);
+    if (found->listenport) free(found->listenport);
     free(found->identifier);
     free(found);
 }
@@ -2558,6 +2596,22 @@ int sync_thread_main(collector_sync_t *sync) {
         if (read(sync->upcomingtimerfd, readbuf, 16) > 0) {
             gettimeofday(&tv, NULL);
 
+            if ((tv.tv_sec % 10) == 0) {
+                x_input_sync_t *xpush, *xtmp;
+                HASH_ITER(hh, sync->x2x3_queues, xpush, xtmp) {
+
+                    if (xpush->listenaddr == NULL ||
+                            xpush->listenport == NULL) {
+                        continue;
+                    }
+                    if (push_x2x3_listener_onto_net_buffer(sync->outgoing,
+                            xpush->listenaddr, xpush->listenport,
+                            (uint64_t)tv.tv_sec) < 0) {
+                        logger(LOG_INFO,"OpenLI: collector is unable to queue X2/X3 listener update message (%s) for provisioner.", xpush->identifier);
+                    }
+                }
+                sync->instruct_events = ZMQ_POLLIN | ZMQ_POLLOUT | ZMQ_POLLERR;
+            }
             do {
                 ipint_v = (ipintercept_t *)check_intercept_time_event(
                         &(sync->upcoming_intercept_events), tv.tv_sec);

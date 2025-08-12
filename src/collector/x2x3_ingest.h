@@ -161,6 +161,8 @@ typedef struct x_input_client {
 typedef struct x_input_sync {
     void *zmq_socket;
     char *identifier;
+    char *listenaddr;
+    char *listenport;
 
     UT_hash_handle hh;
 } x_input_sync_t;

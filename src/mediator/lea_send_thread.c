@@ -31,6 +31,7 @@
 #include "mediator_rmq.h"
 #include "handover.h"
 #include "agency.h"
+#include "etsiencoding.h"
 
 /** The code in this source file implements an "LEA send" thread for the
  *  OpenLI mediator.
@@ -81,10 +82,6 @@ static void init_mediator_agency(mediator_agency_t *agency,
             fromprov->hi3_portstr, HANDOVER_HI3, fromprov->keepalivefreq,
             fromprov->keepalivewait);
 
-    fromprov->hi2_ipstr = NULL;
-    fromprov->hi2_portstr = NULL;
-    fromprov->hi3_ipstr = NULL;
-    fromprov->hi3_portstr = NULL;
 }
 
 
@@ -197,44 +194,76 @@ static void update_agency_handovers(mediator_agency_t *currag,
         currag->hi2 = create_new_handover(epollfd, newag->hi2_ipstr,
             newag->hi2_portstr, HANDOVER_HI2, newag->keepalivefreq,
             newag->keepalivewait);
-    } else if (strcmp(newag->hi2_ipstr, currag->hi2->ipstr) != 0 ||
+    } else {
+
+        if (newag->hi2_ipstr == NULL || newag->hi2_portstr == NULL) {
+            disconnect_handover(currag->hi2);
+            free(currag->hi2->ipstr);
+            free(currag->hi2->portstr);
+            currag->hi2->ipstr = newag->hi2_ipstr ?
+                    strdup(newag->hi2_ipstr) : NULL;
+            currag->hi2->portstr = newag->hi2_portstr ?
+                    strdup(newag->hi2_portstr) : NULL;
+
+            /* this will, of course, cause this thread to exit due to
+             * missing handover configuration... */
+
+        } else if (strcmp(newag->hi2_ipstr, currag->hi2->ipstr) != 0 ||
             strcmp(newag->hi2_portstr, currag->hi2->portstr) != 0) {
-        /* HI2 has changed */
-        disconnect_handover(currag->hi2);
+            /* HI2 has changed */
+            disconnect_handover(currag->hi2);
 
-        free(currag->hi2->ipstr);
-        currag->hi2->ipstr = newag->hi2_ipstr;
-        newag->hi2_ipstr = NULL;
+            free(currag->hi2->ipstr);
+            currag->hi2->ipstr = strdup(newag->hi2_ipstr);
 
-        free(currag->hi2->portstr);
-        currag->hi2->portstr = newag->hi2_portstr;
-        newag->hi2_portstr = NULL;
+            free(currag->hi2->portstr);
+            currag->hi2->portstr = strdup(newag->hi2_portstr);
 
+            /* will attempt to reconnect with the new config shortly */
+        }
     }
 
     if (currag->agencycc) {
         free(currag->agencycc);
     }
-    currag->agencycc = newag->agencycc;
-    newag->agencycc = NULL;
+    if (newag->agencycc) {
+        currag->agencycc = strdup(newag->agencycc);
+    } else {
+        currag->agencycc = NULL;
+    }
 
     if (currag->hi3 == NULL || currag->hi3->ipstr == NULL ||
             currag->hi3->portstr == NULL) {
         currag->hi3 = create_new_handover(epollfd, newag->hi3_ipstr,
             newag->hi3_portstr, HANDOVER_HI3, newag->keepalivefreq,
             newag->keepalivewait);
-    } else if (strcmp(newag->hi3_ipstr, currag->hi3->ipstr) != 0 ||
+    } else {
+
+        if (newag->hi3_ipstr == NULL || newag->hi3_portstr == NULL) {
+            disconnect_handover(currag->hi3);
+            free(currag->hi3->ipstr);
+            free(currag->hi3->portstr);
+            currag->hi3->ipstr = newag->hi3_ipstr ?
+                    strdup(newag->hi3_ipstr) : NULL;
+            currag->hi3->portstr = newag->hi3_portstr ?
+                    strdup(newag->hi3_portstr) : NULL;
+
+            /* this will, of course, cause this thread to exit due to
+             * missing handover configuration... */
+
+        } else if (strcmp(newag->hi3_ipstr, currag->hi3->ipstr) != 0 ||
             strcmp(newag->hi3_portstr, currag->hi3->portstr) != 0) {
-        /* HI3 has changed */
-        disconnect_handover(currag->hi3);
+            /* HI3 has changed */
+            disconnect_handover(currag->hi3);
 
-        free(currag->hi3->ipstr);
-        currag->hi3->ipstr = newag->hi3_ipstr;
-        newag->hi3_ipstr = NULL;
+            free(currag->hi3->ipstr);
+            currag->hi3->ipstr = strdup(newag->hi3_ipstr);
 
-        free(currag->hi3->portstr);
-        currag->hi3->portstr = newag->hi3_portstr;
-        newag->hi3_portstr = NULL;
+            free(currag->hi3->portstr);
+            currag->hi3->portstr = strdup(newag->hi3_portstr);
+
+            /* will attempt to reconnect with the new config shortly */
+        }
     }
 
     /* Make sure keepalive frequencies are up to date -- won't affect
@@ -244,8 +273,6 @@ static void update_agency_handovers(mediator_agency_t *currag,
     currag->hi2->ho_state->kawait = newag->keepalivewait;
     currag->hi3->ho_state->kafreq = newag->keepalivefreq;
     currag->hi3->ho_state->kawait = newag->keepalivewait;
-
-    free_liagency(newag);
 }
 
 /** Sends intercept records from a handover's local buffer to the
@@ -610,20 +637,26 @@ int purge_lea_liid_mapping(lea_thread_state_t *state, char *liid) {
  *  handovers so records for that LIID will be consumed by this thread.
  *
  *  @param state        The state object for the LEA send thread
- *  @param liid         The LIID to associate with this agency
+ *  @param toadd        Details of the intercept to be added to the LIID set
  *
  *  @return 1 if successful, 0 if the LIID was already in this thread's LIID
  *          set, -1 if an error occurs.
  */
-int insert_lea_liid_mapping(lea_thread_state_t *state, char *liid) {
+int insert_lea_liid_mapping(lea_thread_state_t *state, added_liid_t *toadd) {
     int r;
 
+    if (toadd == NULL) {
+        return -1;
+    }
     /* Add the LIID to the thread's LIID set */
-    r = add_liid_agency_mapping(&(state->active_liids), liid);
+    r = add_liid_agency_mapping(&(state->active_liids), toadd);
     if (r < 0) {
         logger(LOG_INFO,
                 "OpenLI Mediator: WARNING failed to add %s -> %s to LIID map",
-                liid, state->agencyid);
+                toadd->liid, state->agencyid);
+        if (toadd->encryptkey) {
+            free(toadd->encryptkey);
+        }
         return -1;
     }
 
@@ -636,15 +669,15 @@ int insert_lea_liid_mapping(lea_thread_state_t *state, char *liid) {
 
     /* Register to consume from the LIID's internal RMQ queues */
     if ((register_mediator_iri_RMQ_consumer(
-                    state->agency.hi2->rmq_consumer, liid) < 0) ||
+                    state->agency.hi2->rmq_consumer, toadd->liid) < 0) ||
             (register_mediator_cc_RMQ_consumer(state->agency.hi3->rmq_consumer,
-                    liid) < 0)) {
+                    toadd->liid) < 0)) {
         logger(LOG_INFO,
             "OpenLI Mediator: WARNING failed to register RMQ for LIID %s -> %s",
-            liid, state->agencyid);
+            toadd->liid, state->agencyid);
     } else {
         logger(LOG_INFO, "OpenLI Mediator: added %s -> %s to LIID map",
-                liid, state->agencyid);
+                toadd->liid, state->agencyid);
     }
     return 1;
 }
@@ -867,9 +900,8 @@ static int process_agency_messages(lea_thread_state_t *state) {
 
         if (msg.type == MED_LEA_MESSAGE_SHUTDOWN_TIMER) {
             /* provisioner has disconnected, start the thread shutdown timer */
-            uint16_t *timeout = (uint16_t *)msg.data;
-            start_shutdown_timer(state, *timeout);
-            free(timeout);
+            uint16_t timeout = (msg.data_uint % 65536);
+            start_shutdown_timer(state, timeout);
         }
 
         if (msg.type == MED_LEA_MESSAGE_RECONNECT) {
@@ -912,6 +944,8 @@ static int process_agency_messages(lea_thread_state_t *state) {
             /* If a handover has changed, disconnect it */
             update_agency_handovers(&(state->agency),
                     (liagency_t *)(msg.data), state->epoll_fd);
+            free_liagency(state->lea);
+            state->lea = (liagency_t *)(msg.data);
 
             /* Handover reconnections won't happen until the next time
              * around this loop (1 second delay max)
@@ -958,7 +992,7 @@ static int process_agency_messages(lea_thread_state_t *state) {
                 /* If the agency ID matches ours, then we should add it to
                  * our handovers.
                  */
-                insert_lea_liid_mapping(state, added->liid);
+                insert_lea_liid_mapping(state, added);
             }
 
             free(added->liid);
@@ -1120,6 +1154,9 @@ void destroy_agency_thread_state(lea_thread_state_t *state) {
     if (state->pcap_dir) {
         free(state->pcap_dir);
     }
+    if (state->lea) {
+        free_liagency(state->lea);
+    }
     purge_liid_map(&(state->active_liids));
     free(state->agencyid);
 
@@ -1145,6 +1182,7 @@ int mediator_update_agency_thread(lea_thread_state_t *thread, liagency_t *lea) {
 
     lea_thread_msg_t update_msg;
 
+    memset(&update_msg, 0, sizeof(lea_thread_msg_t));
     update_msg.type = MED_LEA_MESSAGE_UPDATE_AGENCY;
     update_msg.data = (void *)lea;
 
@@ -1178,6 +1216,7 @@ int mediator_start_agency_thread(mediator_lea_t *medleas, liagency_t *lea) {
     found->parentconfig = config;
     found->epoll_fd = epoll_create1(0);
     found->handover_id = medleas->next_handover_id;
+    found->lea = lea;
 
     /* Increment by 2 to account for HI2 and HI3 */
     medleas->next_handover_id += 2;

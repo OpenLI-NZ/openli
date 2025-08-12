@@ -29,8 +29,26 @@
 
 #include <Judy.h>
 #include <amqp.h>
+#include <uthash.h>
 
+#include "intercept.h"
 typedef struct liidmapping liid_map_entry_t;
+
+/** Structure describing an LIID->agency association */
+typedef struct added_liid {
+    /** The LIID */
+    char *liid;
+    /** The ID of the agency that the LIID is associated with */
+    char *agencyid;
+
+    /** The key to use to encrypt ETSI payload, if encryption is required */
+    char *encryptkey;
+
+    /** The encryption algorithm to use, if any */
+    payload_encryption_method_t encrypt;
+
+    UT_hash_handle hh;
+} added_liid_t;
 
 /** Records an association between an LIID and the agency that should receive
  *  the intercepted records for that LIID
@@ -58,6 +76,12 @@ struct liidmapping {
      *  been deleted by the mediator.
      */
     uint8_t iriqueue_deleted;
+
+    /** The key to use to encrypt ETSI payload, if encryption is required */
+    char *encryptkey;
+
+    /** The encryption algorithm to use, if any */
+    payload_encryption_method_t encrypt;
 };
 
 /** The map used to track which LIIDs should be sent to which agencies */
@@ -87,12 +111,14 @@ void remove_liid_agency_mapping(liid_map_t *map, liid_map_entry_t *m);
 /** Adds a new LIID->agency mapping to an LIID map.
  *
  *  @param map          The LIID map to add the new mapping to
- *  @param liidstr      The LIID for the new mapping (as a string)
+ *  @param toadd        Structure containing the LIID for the new mapping
+ *                      (as a string), as well as encryption requirements
+ *                      for that intercept.
  *
  *  @return -1 if an error occurs, 0 if the LIID already existed, 1 if
  *          a new LIID->agency mapping was created
  */
-int add_liid_agency_mapping(liid_map_t *map, char *liidstr);
+int add_liid_agency_mapping(liid_map_t *map, added_liid_t *toadd);
 
 /** Flags an LIID->agency mapping as withdrawn.
  *

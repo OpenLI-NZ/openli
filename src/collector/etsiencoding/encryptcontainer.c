@@ -78,8 +78,8 @@ void etsili_destroy_encrypted_templates(Pvoid_t templates) {
 
 }
 
-static int encode_encrypt_container(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, payload_encryption_method_t method,
+static int encode_preencrypt_container(wandder_encoder_t *encoder,
+        wandder_encode_job_t *precomputed,
         uint8_t *enccontent, uint16_t enclen, openli_encoding_job_t *job) {
 
     wandder_encode_job_t *jobarray[3];
@@ -87,13 +87,7 @@ static int encode_encrypt_container(wandder_encoder_t *encoder,
 
     jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]); // Payload
     jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_4]); // encryptionContainer
-
-
-    if (method == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
-        jobarray[2] = &(precomputed[OPENLI_PREENCODE_AES_192_CBC]);
-    } else {
-        jobarray[2] = &(precomputed[OPENLI_PREENCODE_NO_ENCRYPTION]);
-    }
+    jobarray[2] = &(precomputed[OPENLI_PREENCODE_NO_ENCRYPTION]);
 
     wandder_encode_next_preencoded(encoder, jobarray, 3);
 
@@ -124,7 +118,7 @@ static int etsili_update_encrypted_template(
 }
 
 static int etsili_create_encrypted_template(wandder_encoder_t *encoder,
-        wandder_encode_job_t *precomputed, payload_encryption_method_t method,
+        wandder_encode_job_t *precomputed,
         uint8_t *enccontent, uint16_t enclen,
         encoded_encrypt_template_t *tplate, openli_encoding_job_t *job) {
 
@@ -142,7 +136,7 @@ static int etsili_create_encrypted_template(wandder_encoder_t *encoder,
     }
 
     reset_wandder_encoder(encoder);
-    if (encode_encrypt_container(encoder, precomputed, method, enccontent,
+    if (encode_preencrypt_container(encoder, precomputed, enccontent,
                 enclen, job) < 0){
         return -1;
     }
@@ -213,9 +207,9 @@ static encoded_encrypt_template_t *lookup_encrypted_template(
     return tplate;
 }
 
-static int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx,
-        uint8_t *buf, uint16_t buflen, uint8_t *dest,
-        uint16_t destlen, uint32_t seqno, char *encryptkey) {
+int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx, uint8_t *buf, uint16_t buflen,
+        uint8_t *dest, uint16_t destlen, uint32_t seqno,
+        char *encryptkey) {
 
     uint8_t IV_128[16];
     uint8_t key[24];
@@ -238,6 +232,9 @@ static int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx,
     memset(key, 0, 24);
     memcpy(key, encryptkey, keylen);
 
+    /* Trust that we have correctly pre-padded the data to encrypt */
+    EVP_CIPHER_CTX_set_padding(ctx, 0);
+
     /* Do the encryption */
     if (EVP_EncryptInit_ex(ctx, EVP_aes_192_cbc(), NULL, key, IV_128) != 1) {
             logger(LOG_INFO, "OpenLI: unable to initialise EVP encryption operation -- openssl error %s", ERR_error_string(ERR_get_error(), NULL));
@@ -258,7 +255,7 @@ static int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx,
 
 }
 
-int create_encrypted_message_body(wandder_encoder_t *encoder,
+int create_preencrypted_message_body(wandder_encoder_t *encoder,
                 encrypt_encode_state_t *encrypt,
                 openli_encoded_result_t *res,
                 encoded_header_template_t *hdr_tplate,
@@ -270,7 +267,6 @@ int create_encrypted_message_body(wandder_encoder_t *encoder,
     uint32_t enclen = 0, newbodylen = 0;
     uint8_t containerlen = 0, is_new = 0;
     uint8_t *buf, *ptr;
-    uint8_t *encrypted;
     uint32_t bytecounter;
     uint32_t bc_increase;
     encoded_encrypt_template_t *tplate = NULL;
@@ -306,7 +302,6 @@ int create_encrypted_message_body(wandder_encoder_t *encoder,
     /* Add 16 bytes extra, just to be safe...
      */
     buf = calloc(enclen + 16, sizeof(uint8_t));
-    encrypted = calloc(enclen + 16, sizeof(uint8_t));
 
     /* Take the contents of body_tplate (minus the initial "payload" field).
      * Add EncryptedPayload and byteCounter fields to the front to get
@@ -366,9 +361,8 @@ int create_encrypted_message_body(wandder_encoder_t *encoder,
     bc_increase = calculate_pspdu_length(inplen + hdr_tplate->header_len);
     encrypt->byte_counter += bc_increase;
 
-
     /* Put the body contents and any additional IP packet content into
-     * the buffer to be encrypted
+     * the buffer
      */
     if (payloadbody != NULL) {
         memcpy(ptr, payloadbody, bodylen - ipclen);
@@ -384,26 +378,16 @@ int create_encrypted_message_body(wandder_encoder_t *encoder,
         ptr += ipclen;
     }
 
-    /* If this is our first time through, we'll need an encryption context */
-    if (encrypt->evp_ctx == NULL) {
-        encrypt->evp_ctx = EVP_CIPHER_CTX_new();
-        if (encrypt->evp_ctx == NULL) {
-            logger(LOG_INFO, "OpenLI: unable to create EVP encryption context -- openssl error %s", ERR_error_string(ERR_get_error(), NULL));
-            return -1;
-        }
-    }
+    /* Generate a full PS-PDU wrapping the contents of buf. Note that
+     * encryption type must be set to None, so we end up with an
+     * EncryptionContainer containing unencrypted data.
+     *
+     * The mediator will need to use this fake PDU to generate a message
+     * digest in case the receiving agency wants us to send Integrity Checks,
+     * and then the record will be re-encoded with encrypted content by the
+     * mediator itself.
+     */
 
-    /* Do the encryption */
-    if (job->encryptmethod == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
-        if (encrypt_aes_192_cbc(encrypt->evp_ctx, buf, enclen, encrypted,
-                enclen, job->seqno, job->encryptkey) < 0) {
-            return -1;
-        }
-    } else {
-        memcpy(encrypted, buf, enclen);
-    }
-
-    free(buf);
 
     /* Lookup the template for a message of this length and encryption method */
     tplate = lookup_encrypted_template(&(encrypt->saved_encryption_templates),
@@ -414,14 +398,14 @@ int create_encrypted_message_body(wandder_encoder_t *encoder,
      */
     if (is_new) {
         if (etsili_create_encrypted_template(encoder, job->preencoded,
-                job->encryptmethod, encrypted, enclen, tplate, job) < 0) {
-            free(encrypted);
+                buf, enclen, tplate, job) < 0) {
+            free(buf);
             return -1;
         }
     } else {
-        if (etsili_update_encrypted_template(tplate, encrypted, enclen,
+        if (etsili_update_encrypted_template(tplate, buf, enclen,
                 job) < 0) {
-            free(encrypted);
+            free(buf);
             return -1;
         }
     }
@@ -430,11 +414,11 @@ int create_encrypted_message_body(wandder_encoder_t *encoder,
      * create a complete ETSI PSPDU record */
     if (create_etsi_encoded_result(res, hdr_tplate, tplate->start,
             tplate->totallen, NULL, 0, job) < 0) {
-        free(encrypted);
+        free(buf);
         return -1;
     }
 
-    free(encrypted);
+    free(buf);
     return 0;
 }
 

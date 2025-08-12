@@ -34,6 +34,7 @@
 #include "lea_send_thread.h"
 #include "mediator_rmq.h"
 #include "med_epoll.h"
+#include "etsili_core.h"
 
 /** This file implements a "collector receive" thread for the OpenLI mediator.
  *  Each OpenLI collector that reports to a mediator will be handled using
@@ -63,6 +64,14 @@
  */
 #define LIID_QUEUE_EXPIRY_THRESH (10 * 60)
 
+/** The frequency (in seconds) that we should check if the LIID -> agency
+ *  mapping has changed.
+ *
+ *  Ideally, this would never change but misconfigurations are always
+ *  possible so we need to handle that case.
+ */
+#define AGENCY_MAPPING_CHECK_FREQ (5)
+
 /** Initialises the shared configuration for the collectors managed by a
  *  mediator.
  *
@@ -74,15 +83,24 @@
  *  @param rmqconf      A pointer to the RabbitMQ configuration for this
  *                      mediator.
  *  @param mediatorid   The ID number of the mediator
+ *  @param operatorid   The ID string for the operator who is running this
+ *                      mediator
  */
 void init_med_collector_config(mediator_collector_config_t *config,
         uint8_t usetls, openli_ssl_config_t *sslconf,
-        openli_RMQ_config_t *rmqconf, uint32_t mediatorid) {
+        openli_RMQ_config_t *rmqconf, uint32_t mediatorid,
+        char *operatorid) {
 
     config->usingtls = usetls;
     config->sslconf = sslconf;
     config->rmqconf = rmqconf;
     config->parent_mediatorid = mediatorid;
+    config->liid_to_agency_map = NULL;
+    if (operatorid) {
+        config->operatorid = strdup(operatorid);
+    } else {
+        config->operatorid = NULL;
+    }
 
     pthread_mutex_init(&(config->mutex), NULL);
 }
@@ -95,14 +113,22 @@ void init_med_collector_config(mediator_collector_config_t *config,
  *  @param usetls       The value of the global flag that indicates whether
  *                      new collector connections must use TLS.
  *  @param mediatorid   The ID number of the mediator
+ *  @param operatorid   The ID string for the operator who is running this
+ *                      mediator
  */
 void update_med_collector_config(mediator_collector_config_t *config,
-        uint8_t usetls, uint32_t mediatorid) {
+        uint8_t usetls, uint32_t mediatorid, char *operatorid) {
 
     pthread_mutex_lock(&(config->mutex));
 
     config->usingtls = usetls;
     config->parent_mediatorid = mediatorid;
+    if (config->operatorid) {
+        free(config->operatorid);
+    }
+    if (operatorid) {
+        config->operatorid = strdup(operatorid);
+    }
 
     pthread_mutex_unlock(&(config->mutex));
 }
@@ -113,7 +139,141 @@ void update_med_collector_config(mediator_collector_config_t *config,
  *  @param config       The global config to be destroyed
  */
 void destroy_med_collector_config(mediator_collector_config_t *config) {
+    added_liid_t *iter, *tmp;
+    HASH_ITER(hh, config->liid_to_agency_map, iter, tmp) {
+        HASH_DELETE(hh, config->liid_to_agency_map, iter);
+        if (iter->encryptkey) {
+            free(iter->encryptkey);
+        }
+        free(iter->liid);
+        free(iter->agencyid);
+        free(iter);
+    }
+    if (config->operatorid) {
+        free(config->operatorid);
+    }
     pthread_mutex_destroy(&(config->mutex));
+}
+
+/** Adds a new LIID -> agency mapping to the map stored in the shared
+ *  configuration.
+ *
+ *  @param config       The global config for the collector threads
+ *  @param liid         The LIID to add to the map
+ *  @param agencyid     The ID of the agency that this LIID is destined for.
+ *  @param encmethod    The encryption method to apply to IRIs and CCs using
+ *                      this LIID.
+ *  @param encryptkey   The key to use when encrypting an IRI or CC.
+ */
+void add_liid_mapping_collector_config(mediator_collector_config_t *config,
+        char *liid, char *agencyid, payload_encryption_method_t encmethod,
+        char *encryptkey) {
+    added_liid_t *found = NULL;
+
+    pthread_mutex_lock(&(config->mutex));
+    HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
+    if (found) {
+        free(found->agencyid);
+        found->agencyid = strdup(agencyid);
+        if (found->encryptkey) {
+            free(found->encryptkey);
+        }
+        if (encryptkey) {
+            found->encryptkey = strdup(encryptkey);
+        } else {
+            found->encryptkey = NULL;
+        }
+        found->encrypt = encmethod;
+    } else {
+        found = calloc(1, sizeof(added_liid_t));
+        found->liid = strdup(liid);
+        found->agencyid = strdup(agencyid);
+        if (encryptkey) {
+            found->encryptkey = strdup(encryptkey);
+        } else {
+            found->encryptkey = NULL;
+        }
+        found->encrypt = encmethod;
+
+        HASH_ADD_KEYPTR(hh, config->liid_to_agency_map, found->liid,
+                strlen(found->liid), found);
+    }
+
+    pthread_mutex_unlock(&(config->mutex));
+}
+
+/** Looks up the corresponding agency ID for a given LIID in the map that
+ *  is stored in the shared configuration.
+ *
+ *  @param config       The global config for the collector threads
+ *  @param liid         The LIID to search for
+ *  @return             The agency that this LIID is destined for.
+ */
+static char *lookup_agencyid_for_liid_collector_config(
+        mediator_collector_config_t *config, char *liid) {
+
+    added_liid_t *found = NULL;
+    char *agencyid = NULL;
+    pthread_mutex_lock(&(config->mutex));
+    HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
+    if (found) {
+        agencyid = strdup(found->agencyid);
+    }
+    pthread_mutex_unlock(&(config->mutex));
+    return agencyid;
+}
+
+/** Removes a LIID -> agency mapping from the map stored in the shared
+ *  configuration.
+ *
+ *  @param config       The global config for the collector threads
+ *  @param liid         The LIID to remove from the map
+ */
+void remove_liid_mapping_collector_config(mediator_collector_config_t *config,
+        char *liid) {
+
+    added_liid_t *found = NULL;
+    pthread_mutex_lock(&(config->mutex));
+
+    HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
+    if (found) {
+        HASH_DELETE(hh, config->liid_to_agency_map, found);
+        if (found->encryptkey) {
+            free(found->encryptkey);
+        }
+        free(found->agencyid);
+        free(found->liid);
+        free(found);
+    }
+    pthread_mutex_unlock(&(config->mutex));
+}
+
+/** Removes all LIID -> agency mappings that refer to a particular agency
+ *  from the map stored in the shared  configuration.
+ *
+ *  @param config       The global config for the collector threads
+ *  @param agencyid     The agency to remove from the map
+ */
+void remove_liid_mapping_by_agency_collector_config(
+        mediator_collector_config_t *config, char *agencyid) {
+
+    /* Not the quickest, but hopefully this won't happen very often */
+    added_liid_t *iter, *tmp;
+
+    pthread_mutex_lock(&(config->mutex));
+    HASH_ITER(hh, config->liid_to_agency_map, iter, tmp) {
+        if (strcasecmp(iter->agencyid, agencyid) == 0) {
+            HASH_DELETE(hh, config->liid_to_agency_map, iter);
+            if (iter->encryptkey) {
+                free(iter->encryptkey);
+            }
+            free(iter->agencyid);
+            free(iter->liid);
+            free(iter);
+        }
+    }
+
+    pthread_mutex_unlock(&(config->mutex));
 }
 
 /** Grabs the mutex for the shared collector configuration to prevent
@@ -166,6 +326,10 @@ static void remove_expired_liid_queues(coll_recv_t *col) {
         }
         if (known->queuenames[2]) {
             free((void *)known->queuenames[2]);
+        }
+        if (known->preencoded_etsi) {
+            etsili_clear_preencoded_fields(known->preencoded_etsi);
+            free(known->preencoded_etsi);
         }
         HASH_DELETE(hh, col->known_liids, known);
         free(known);
@@ -416,6 +580,126 @@ static int process_fwd_hello(coll_recv_t *col, uint8_t *msgbody,
     return 1;
 }
 
+static void preencode_etsi_for_known_liid(coll_recv_t *col,
+        col_known_liid_t *found) {
+
+    etsili_intercept_details_t intdetails;
+    char netelemid[128];
+
+    intdetails.liid = found->liid;
+    intdetails.authcc = found->digest_config->config->agencycc;
+    intdetails.delivcc = found->digest_config->config->agencycc;
+    intdetails.intpointid = NULL;
+
+    lock_med_collector_config(col->parentconfig);
+    if (col->parentconfig->operatorid) {
+        intdetails.operatorid = col->parentconfig->operatorid;
+    } else {
+        intdetails.operatorid = "unspecified";
+    }
+
+    if (strcmp(intdetails.authcc, "NL") == 0) {
+        snprintf(netelemid, 16, "%u", col->parentconfig->parent_mediatorid);
+    } else {
+        snprintf(netelemid, 16, "med-%u", col->parentconfig->parent_mediatorid);
+    }
+    intdetails.networkelemid = netelemid;
+
+    etsili_preencode_static_fields(found->preencoded_etsi, &intdetails);
+    unlock_med_collector_config(col->parentconfig);
+
+}
+
+static col_known_liid_t *create_new_known_liid(coll_recv_t *col,
+        unsigned char *liidstr) {
+
+    col_known_liid_t *found;
+    char qname[1024];
+    /* This is an LIID that we haven't seen before (or recently), so
+     * make sure we have a set of internal mediator RMQ queues for it.
+     */
+    found = (col_known_liid_t *)calloc(1, sizeof(col_known_liid_t));
+    found->liid = strdup((const char *)liidstr);
+    found->liidlen = strlen(found->liid);
+    found->lastseen = 0;
+    found->declared_raw_rmq = 0;
+    found->declared_int_rmq = 0;
+    found->no_agency_map_warning = 0;
+    found->last_agency_check = 0;
+    found->digest_config = NULL;
+    found->provisioner_withdrawn = 0;
+    found->preencoded_etsi = calloc(OPENLI_PREENCODE_LAST,
+            sizeof(wandder_encode_job_t));
+
+    snprintf(qname, 1024, "%s-iri", found->liid);
+    found->queuenames[0] = strdup(qname);
+    snprintf(qname, 1024, "%s-cc", found->liid);
+    found->queuenames[1] = strdup(qname);
+    snprintf(qname, 1024, "%s-rawip", found->liid);
+    found->queuenames[2] = strdup(qname);
+
+    HASH_ADD_KEYPTR(hh, col->known_liids, found->liid, found->liidlen,
+            found);
+    logger(LOG_INFO,
+            "OpenLI Mediator: LIID %s has been seen coming from collector %s",
+            found->liid, col->ipaddr);
+
+    return found;
+}
+
+static void check_agency_digest_config(coll_recv_t *col,
+        col_known_liid_t *found) {
+
+    char *agencyid = NULL;
+    agency_digest_config_t *agdigest = NULL;
+    uint8_t reencode_needed = 0;
+
+    if (found->lastseen-found->last_agency_check < AGENCY_MAPPING_CHECK_FREQ) {
+        return;
+    }
+
+    /* Look up the integrity check configuration for the recipient of
+     * this intercept */
+    agencyid = lookup_agencyid_for_liid_collector_config(col->parentconfig,
+            found->liid);
+    found->last_agency_check = found->lastseen;
+
+    if (agencyid == NULL) {
+        if (found->no_agency_map_warning == 0) {
+            logger(LOG_INFO, "OpenLI Mediator: collector thread %s does not have a usable agency mapping for LIID %s, cannot produce integrity checks for this LIID",
+                    col->ipaddr, found->liid);
+            found->no_agency_map_warning = 1;
+        }
+        found->digest_config = NULL;
+    } else {
+
+        HASH_FIND(hh, col->known_agencies, agencyid, strlen(agencyid),
+                agdigest);
+        if (!agdigest) {
+            if (found->no_agency_map_warning == 0) {
+                logger(LOG_INFO, "OpenLI Mediator: collector thread %s is missing expected agency digest configuration for agency %s, will not be able to produce integrity checks for LIID %s",
+                        col->ipaddr, agencyid, found->liid);
+                found->no_agency_map_warning = 1;
+            }
+            found->digest_config = NULL;
+        } else {
+            if (agdigest != found->digest_config ||
+                    strcmp(agdigest->config->agencycc,
+                            found->digest_config->config->agencycc) != 0) {
+                reencode_needed = 1;
+            }
+            found->digest_config = agdigest;
+        }
+    }
+
+    if (reencode_needed) {
+        preencode_etsi_for_known_liid(col, found);
+    }
+    if (agencyid) {
+        free(agencyid);
+    }
+}
+
 /** Processes an intercept record received from a collector and inserts
  *  it into the appropriate mediator-internal LIID queue.
  *
@@ -430,11 +714,15 @@ static int process_fwd_hello(coll_recv_t *col, uint8_t *msgbody,
 static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
         uint16_t msglen, openli_proto_msgtype_t msgtype) {
 
-    unsigned char liidstr[65536];
+    unsigned char liidstr[1024];
     uint16_t liidlen;
     col_known_liid_t *found;
     struct timeval tv;
-    int r;
+    int r = 0;
+    uint8_t integrity_res = INTEGRITY_CHECK_NO_ACTION;
+    integrity_check_state_t *chain = NULL;
+    char *enckey = NULL;
+    payload_encryption_method_t encmethod = OPENLI_PAYLOAD_ENCRYPTION_NONE;
 
     /* The queue that this record must be published to is derived from
      * the LIID for the record and the record type
@@ -453,28 +741,16 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
     HASH_FIND(hh, col->known_liids, liidstr, liidlen, found);
     if (!found) {
-        char qname[1024];
-        /* This is an LIID that we haven't seen before (or recently), so
-         * make sure we have a set of internal mediator RMQ queues for it.
+        found = create_new_known_liid(col, liidstr);
+    }
+
+    if (found->provisioner_withdrawn) {
+        /* The intercept has been halted and this is a leftover record that
+         * we hadn't processed in time -- I guess we just have to discard it
+         * as the LEA threads are not going to consume it anyway
+         *
          */
-        found = (col_known_liid_t *)calloc(1, sizeof(col_known_liid_t));
-        found->liid = strdup((const char *)liidstr);
-        found->liidlen = strlen(found->liid);
-        found->lastseen = 0;
-        found->declared_raw_rmq = 0;
-        found->declared_int_rmq = 0;
-
-        snprintf(qname, 1024, "%s-iri", found->liid);
-        found->queuenames[0] = strdup(qname);
-        snprintf(qname, 1024, "%s-cc", found->liid);
-        found->queuenames[1] = strdup(qname);
-        snprintf(qname, 1024, "%s-rawip", found->liid);
-        found->queuenames[2] = strdup(qname);
-
-        HASH_ADD_KEYPTR(hh, col->known_liids, found->liid, found->liidlen,
-                found);
-        logger(LOG_INFO, "OpenLI Mediator: LIID %s has been seen coming from collector %s", found->liid, col->ipaddr);
-
+        return 0;
     }
 
     if (found->declared_int_rmq == 0) {
@@ -492,6 +768,39 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
     gettimeofday(&tv, NULL);
     found->lastseen = tv.tv_sec;
+    check_agency_digest_config(col, found);
+
+    if (found->digest_config && found->digest_config->config &&
+            !found->digest_config->disabled &&
+            found->digest_config->config->digest_required) {
+
+        integrity_res = update_integrity_check_state(&(col->integrity_state),
+                found, msgbody + (liidlen + 2), msglen - (liidlen + 2),
+                msgtype, col->epoll_fd, col->etsidecoder, &chain);
+    }
+
+    if (msgtype == OPENLI_PROTO_ETSI_IRI || msgtype == OPENLI_PROTO_ETSI_CC) {
+        encmethod = check_encryption_requirements(col->parentconfig,
+                found->liid, &enckey);
+    }
+
+    if (encmethod == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
+
+        if (encrypt_payload_container_aes_192_cbc(col->evp_ctx,
+                col->etsidecoder, msgbody + (liidlen + 2),
+                msglen - (liidlen + 2), enckey) == NULL) {
+
+            logger(LOG_INFO, "OpenLI Mediator: error while attempting to encrypt ETSI record for LIID %s in collector thread %s", found->liid, col->ipaddr);
+            if (enckey) {
+                free(enckey);
+            }
+            return -1;
+        }
+    }
+
+    if (enckey) {
+        free(enckey);
+    }
 
     /* Hand off to publishing methods defined in mediator_rmq.c */
     if (msgtype == OPENLI_PROTO_ETSI_CC) {
@@ -510,7 +819,6 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
             increment_col_drop_counter(col);
             r = 0;
         }
-        return r;
     }
 
     if (msgtype == OPENLI_PROTO_ETSI_IRI) {
@@ -530,7 +838,6 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
             increment_col_drop_counter(col);
             r = 0;
         }
-        return r;
     }
 
     if (msgtype == OPENLI_PROTO_RAWIP_SYNC ||
@@ -563,10 +870,17 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
             increment_col_drop_counter(col);
             r = 0;
         }
-        return r;
     }
 
-    return 1;
+    if (r >= 0 && integrity_res == INTEGRITY_CHECK_SEND_HASH) {
+        integrity_res = send_integrity_check_hash_pdu(col, chain);
+    }
+
+    if (r >= 0 && integrity_res == INTEGRITY_CHECK_REQUEST_SIGN) {
+        return send_integrity_check_signing_request(col, chain);
+    }
+
+    return r;
 }
 
 /** Reads and processes a message from the collector that this thread
@@ -710,6 +1024,17 @@ static int collector_thread_epoll_event(coll_recv_t *col,
                 ret = receive_collector(col, mev);
             }
             break;
+        case MED_EPOLL_INTEGRITY_HASH_TIMER:
+            ret = integrity_hash_timer_callback(col, mev);
+            break;
+        case MED_EPOLL_INTEGRITY_SIGN_TIMER:
+            ret = integrity_sign_timer_callback(col, mev);
+            break;
+        case MED_EPOLL_INTEGRITY_SIGN_REQUEST_TIMER:
+            integrity_sign_reply_timer_callback(col, mev);
+            break;
+
+        /* TODO handle timer for expired signature request to provisioner */
         default:
             logger(LOG_INFO,
                     "OpenLI Mediator: invalid epoll event type %d seen in collector thread for %s", mev->fdtype, col->ipaddr);
@@ -726,6 +1051,8 @@ static int collector_thread_epoll_event(coll_recv_t *col,
  */
 static void cleanup_collector_thread(coll_recv_t *col) {
     col_known_liid_t *known, *tmp;
+    agency_digest_config_t *ag, *tmpag;
+    integrity_check_state_t *integ, *integtmp;
 
     if (col->colev) {
         remove_mediator_fdevent(col->colev);
@@ -740,6 +1067,20 @@ static void cleanup_collector_thread(coll_recv_t *col) {
     destroy_rmq_colev(col);
     if (col->ssl) {
         SSL_free(col->ssl);
+    }
+
+    if (col->evp_ctx) {
+        EVP_CIPHER_CTX_free(col->evp_ctx);
+    }
+
+    HASH_ITER(hh, col->known_agencies, ag, tmpag) {
+        HASH_DELETE(hh, col->known_agencies, ag);
+        free_agency_digest_config(ag);
+    }
+
+    HASH_ITER(hh, col->integrity_state, integ, integtmp) {
+        HASH_DELETE(hh, col->integrity_state, integ);
+        free_integrity_check_state(integ);
     }
 
     if (col->internalpass) {
@@ -758,6 +1099,10 @@ static void cleanup_collector_thread(coll_recv_t *col) {
         if (known->queuenames[2]) {
             free((void *)known->queuenames[2]);
         }
+        if (known->preencoded_etsi) {
+            etsili_clear_preencoded_fields(known->preencoded_etsi);
+            free(known->preencoded_etsi);
+        }
         HASH_DELETE(hh, col->known_liids, known);
         free(known);
     }
@@ -772,6 +1117,14 @@ static void cleanup_collector_thread(coll_recv_t *col) {
 
     if (col->ipaddr) {
         free(col->ipaddr);
+    }
+
+    if (col->etsidecoder) {
+        wandder_free_etsili_decoder(col->etsidecoder);
+    }
+
+    if (col->etsiencoder) {
+        free_wandder_encoder(col->etsiencoder);
     }
 
 }
@@ -828,6 +1181,7 @@ static void *start_collector_thread(void *params) {
     queuecheck = create_mediator_timer(epoll_fd, NULL,
             MED_EPOLL_QUEUE_EXPIRE_TIMER, 60);
 
+    col->epoll_fd = epoll_fd;
     while (!is_halted) {
 
         /* Check for messages on the control socket */
@@ -925,6 +1279,45 @@ static void *start_collector_thread(void *params) {
                 col->col_fd = (int)msg.arg;
                 col->was_dropped = 0;
             }
+
+            if (msg.type == MED_COLL_LEA_ANNOUNCE) {
+                liagency_t *ag = (liagency_t *)(msg.arg);
+
+                update_agency_digest_config_map(&(col->known_agencies), ag);
+            }
+
+            if (msg.type == MED_COLL_LEA_WITHDRAW) {
+                char *agencyid = (char *)(msg.arg);
+
+                /* Do the integrity check update before removing the agency
+                 * digest config!
+                 */
+                handle_lea_withdrawal_within_integrity_check_state(
+                        &(col->integrity_state), agencyid);
+                remove_agency_digest_config(&(col->known_agencies), agencyid);
+                free(agencyid);
+            }
+
+            if (msg.type == MED_COLL_LIID_WITHDRAW) {
+                char *thisliid = (char *)(msg.arg);
+                col_known_liid_t *flagged;
+                handle_liid_withdrawal_within_integrity_check_state(
+                        &(col->integrity_state), thisliid, col);
+                HASH_FIND(hh, col->known_liids, thisliid, strlen(thisliid),
+                        flagged);
+                if (flagged) {
+                    flagged->provisioner_withdrawn = 1;
+                }
+                free(thisliid);
+            }
+
+            if (msg.type == MED_COLL_INTEGRITY_SIGN_RESULT) {
+                struct ics_sign_response_message *resp;
+                resp = (struct ics_sign_response_message *)(msg.arg);
+
+                handle_integrity_check_signature_response(col, resp);
+            }
+
 
         }
 
@@ -1034,6 +1427,13 @@ static void init_new_colrecv_thread(mediator_collector_t *medcol,
     newcol->next = NULL;
     newcol->rmq_queuename = NULL;
     newcol->creation = tv.tv_sec;
+    newcol->known_agencies = NULL;
+    newcol->integrity_state = NULL;
+    newcol->epoll_fd = -1;
+    newcol->evp_ctx = EVP_CIPHER_CTX_new();
+
+    newcol->etsidecoder = wandder_create_etsili_decoder();
+    newcol->etsiencoder = init_wandder_encoder();
 
     if (head) {
         newcol->head = head;
@@ -1051,6 +1451,8 @@ static void init_new_colrecv_thread(mediator_collector_t *medcol,
 
     libtrace_message_queue_init(&(newcol->in_main),
             sizeof(col_thread_msg_t));
+    libtrace_message_queue_init(&(newcol->out_main),
+            sizeof(col_thread_msg_t));
     pthread_create(&(newcol->tid), NULL, start_collector_thread, newcol);
 }
 
@@ -1065,18 +1467,17 @@ static void init_new_colrecv_thread(mediator_collector_t *medcol,
  *          for the newly accepted connection.
  */
 int mediator_accept_collector_connection(mediator_collector_t *medcol,
-        int listenfd) {
+        int listenfd, char *strbuf, size_t strbuflen) {
     int newfd = -1;
     struct sockaddr_storage saddr;
     socklen_t socklen = sizeof(saddr);
-    char strbuf[INET6_ADDRSTRLEN];
     coll_recv_t *found = NULL;
 
     /* Standard socket connection accept code... */
     newfd = accept(listenfd, (struct sockaddr *)&saddr, &socklen);
     fd_set_nonblock(newfd);
 
-    if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, sizeof(strbuf),
+    if (getnameinfo((struct sockaddr *)&saddr, socklen, strbuf, strbuflen,
                 0, 0, NI_NUMERICHOST) != 0) {
         logger(LOG_INFO, "OpenLI Mediator: getnameinfo error in mediator: %s.",
                 strerror(errno));
@@ -1122,12 +1523,14 @@ void mediator_disconnect_all_collectors(mediator_collector_t *medcol) {
 
         HASH_DELETE(hh, medcol->threads, col);
         while (col != NULL) {
+            memset(&end_msg, 0, sizeof(end_msg));
             end_msg.type = MED_COLL_MESSAGE_HALT;
             end_msg.arg = 0;
             libtrace_message_queue_put(&(col->in_main), &end_msg);
 
             pthread_join(col->tid, NULL);
             libtrace_message_queue_destroy(&(col->in_main));
+            libtrace_message_queue_destroy(&(col->out_main));
             tofree = col;
             col = col->next;
             free(tofree);
@@ -1211,12 +1614,14 @@ void mediator_clean_collectors(mediator_collector_t *medcol) {
                 newhead = tofree->next;
             }
 
+            memset(&end_msg, 0, sizeof(end_msg));
             end_msg.type = MED_COLL_MESSAGE_HALT;
             end_msg.arg = 0;
             libtrace_message_queue_put(&(tofree->in_main), &end_msg);
 
             pthread_join(tofree->tid, NULL);
             libtrace_message_queue_destroy(&(tofree->in_main));
+            libtrace_message_queue_destroy(&(tofree->out_main));
 
             if (tofree == col && newhead != oldhead) {
                 /* we are removing the head, so we need

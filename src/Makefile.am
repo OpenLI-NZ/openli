@@ -19,7 +19,7 @@ openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
                 provisioner/updateserver_jsonparsing.c \
                 provisioner/updateserver_jsoncreation.c \
                 provisioner/hup_reload.c \
-				provisioner/clientdb.c \
+				provisioner/clientdb.c provisioner/integrity_sign.c \
                 provisioner/intercept_timers.c provisioner/intercept_timers.h
 
 openliprovisioner_LDFLAGS = -lpthread @PROVISIONER_LIBS@
@@ -111,6 +111,8 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
                 mediator/coll_recv_thread.c mediator/coll_recv_thread.h \
                 mediator/lea_send_thread.c mediator/lea_send_thread.h \
                 mediator/mediator_rmq.c mediator/mediator_rmq.h \
+                mediator/mediator_integrity_check.c \
+                mediator/mediator_encryption.c \
                 byteswap.c byteswap.h mediator/configparser_mediator.h \
                 util.c util.h mediator/configparser_mediator.c \
                 agency.h agency.c logger.c logger.h netcomms.c \
@@ -119,10 +121,12 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
                 collector/jenkinshash.c openli_tls.c openli_tls.h \
                 collector/etsiencoding/etsiencoding.h \
                 collector/etsiencoding/etsiencoding.c \
+                collector/etsiencoding/tripayload.c \
+                collector/etsiencoding/hi1notification.c \
                 collector/etsiencoding/encryptcontainer.c \
                 coreserver.c coreserver.h
 openlimediator_LDADD = @ADD_LIBS@
 openlimediator_LDFLAGS=-lpthread @MEDIATOR_LIBS@
-openlimediator_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Werror -Wall -Wextra
+openlimediator_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/etsiencoding -I$(builddir) -Werror -Wall -Wextra
 endif
 

@@ -302,6 +302,7 @@ static int reload_leas(provision_state_t *state, prov_intercept_conf_t *curr,
     HASH_ITER(hh, latest->leas, lea, tmp) {
         if (lea->announcereq) {
             announce_lea_to_mediators(state, lea);
+            update_inherited_encryption_settings(state, lea->ag);
             lea->announcereq = 0;
         }
     }
@@ -413,7 +414,7 @@ static int enable_new_intercept(provision_state_t *currstate,
     }
 
     /* Add the LIID mapping */
-    h = add_liid_mapping(intconf, common->liid, common->targetagency);
+    h = add_liid_mapping(intconf, common);
 
     if (!droppedmeds && announce_hi1_notification_to_mediators(currstate,
                 common, target_info, HI1_LI_ACTIVATED) == -1) {
@@ -433,10 +434,10 @@ static int enable_new_intercept(provision_state_t *currstate,
 static int update_reconfigured_intercept(provision_state_t *currstate,
         intercept_common_t *old_common, intercept_common_t *new_common,
         prov_intercept_conf_t *intconf, int cept_changed, int agencychanged,
-        int droppedmeds, char *old_targets, char *new_targets) {
+        int encryptchanged, int droppedmeds, char *old_targets,
+        char *new_targets) {
 
     char errorstring[1024];
-    liid_hash_t *h = NULL;
 
     prov_intercept_data_t *local, *oldlocal;
     /* save the "hi1 sent" status from the original intercept
@@ -481,18 +482,9 @@ static int update_reconfigured_intercept(provision_state_t *currstate,
         logger(LOG_INFO, "OpenLI provisioner: unable to reset intercept timers: %s", errorstring);
     }
 
-    if (agencychanged) {
-        remove_liid_mapping(currstate, old_common->liid,
-                old_common->liid_len, droppedmeds);
-
-        h = add_liid_mapping(intconf, new_common->liid,
-                new_common->targetagency);
-        if (!droppedmeds && announce_liidmapping_to_mediators(
-                    currstate, h) == -1) {
-            logger(LOG_INFO,
-                    "OpenLI provisioner: unable to announce new agency for intercept %s to mediators.", new_common->liid);
-            return -1;
-        }
+    if (agencychanged || encryptchanged) {
+        apply_intercept_encryption_settings(intconf, new_common);
+        add_liid_mapping(intconf, new_common);
     }
 
     return 0;
@@ -533,14 +525,15 @@ static int reload_emailintercepts(provision_state_t *currstate,
                     newequiv->common.targetagency);
             int changedtargets = compare_email_targets(currstate, mailint,
                     newequiv);
-
+            int encryptchanged = compare_intercept_encrypt_configuration(
+                    &(mailint->common), &(newequiv->common));
             char *old_target_info = list_email_targets(mailint, 256);
             char *new_target_info = list_email_targets(newequiv, 256);
 
             newequiv->awaitingconfirm = 0;
             if (update_reconfigured_intercept(currstate, &(mailint->common),
                     &(newequiv->common), intconf, (!intsame || changedtargets),
-                    agencychanged, droppedmeds, old_target_info,
+                    agencychanged, encryptchanged, droppedmeds, old_target_info,
                     new_target_info) < 0) {
                 return -1;
             }
@@ -635,13 +628,15 @@ static int reload_voipintercepts(provision_state_t *currstate,
                     newequiv->common.targetagency);
             int changedtargets = compare_sip_targets(currstate, voipint,
                     newequiv);
+            int encryptchanged = compare_intercept_encrypt_configuration(
+                    &(voipint->common), &(newequiv->common));
             char *old_target_info = list_sip_targets(voipint, 256);
             char *new_target_info = list_sip_targets(newequiv, 256);
 
             newequiv->awaitingconfirm = 0;
             if (update_reconfigured_intercept(currstate, &(voipint->common),
                     &(newequiv->common), intconf, (!intsame || changedtargets),
-                    agencychanged, droppedmeds, old_target_info,
+                    agencychanged, encryptchanged, droppedmeds, old_target_info,
                     new_target_info) < 0) {
                 return -1;
             }
@@ -725,12 +720,14 @@ static int reload_ipintercepts(provision_state_t *currstate,
             int intsame = ip_intercept_equal(ipint, newequiv);
             int agencychanged = strcmp(ipint->common.targetagency,
                     newequiv->common.targetagency);
+            int encryptchanged = compare_intercept_encrypt_configuration(
+                    &(ipint->common), &(newequiv->common));
 
             newequiv->awaitingconfirm = 0;
 
             if (update_reconfigured_intercept(currstate, &(ipint->common),
                     &(newequiv->common), intconf, (!intsame || staticchanged),
-                    agencychanged, droppedmeds, ipint->username,
+                    agencychanged, encryptchanged, droppedmeds, ipint->username,
                     newequiv->username) < 0) {
                 return -1;
             }
@@ -868,6 +865,7 @@ static int reload_intercept_config(provision_state_t *currstate,
     clear_intercept_state(&(currstate->interceptconf));
     currstate->interceptconf = newconf;
     announce_latest_default_email_decompress(currstate);
+    announce_all_updated_liidmappings_to_mediators(currstate);
     return 0;
 }
 
@@ -1172,6 +1170,18 @@ int reload_provisioner_config(provision_state_t *currstate) {
                 "OpenLI: Error reloading config file for provisioner.");
         return -1;
     }
+
+    /* integrity signing key changes are local to the provisioner, so
+     * there is no need to notify clients
+     */
+    if (currstate->integrity_sign_private_key_location) {
+        free(currstate->integrity_sign_private_key_location);
+    }
+    currstate->integrity_sign_private_key_location =
+            newstate.integrity_sign_private_key_location;
+    newstate.integrity_sign_private_key_location = NULL;
+    load_integrity_signing_privatekey(currstate);
+
 
     /* Only make changes if the relevant configuration has changed, so as
      * to minimise interruptions.

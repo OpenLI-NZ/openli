@@ -34,9 +34,7 @@
 #include "provisioner_client.h"
 #include "intercept.h"
 
-/* XXX Duplicated from provisioner.c */
-static inline int enable_epoll_write(provision_state_t *state,
-        prov_epoll_ev_t *pev) {
+int enable_epoll_write(provision_state_t *state, prov_epoll_ev_t *pev) {
     struct epoll_event ev;
 
     if (pev->fd == -1) {
@@ -510,7 +508,8 @@ int announce_liidmapping_to_mediators(provision_state_t *state,
 
     SEND_ALL_MEDIATORS_BEGIN
         if (push_liid_mapping_onto_net_buffer(sock->outgoing, liidmap->agency,
-                liidmap->liid) == -1) {
+                liidmap->liid, liidmap->encryptkey, liidmap->encryptmethod)
+                == -1) {
             logger(LOG_INFO,
                     "OpenLI provisioner: unable to send mapping for LIID %s to mediator %u.",
                     liidmap->liid, med->mediatorid);
@@ -520,6 +519,23 @@ int announce_liidmapping_to_mediators(provision_state_t *state,
         }
     SEND_ALL_MEDIATORS_END
 
+    liidmap->need_announce = 0;
+    return 0;
+}
+
+int announce_all_updated_liidmappings_to_mediators(provision_state_t *state) {
+    liid_hash_t *h, *tmp;
+
+    HASH_ITER(hh, state->interceptconf.liid_map, h, tmp) {
+        if (h->need_announce == 0) {
+            continue;
+        }
+
+        h->need_announce = 0;
+        if (announce_liidmapping_to_mediators(state, h) < 0) {
+            return -1;
+        }
+    }
     return 0;
 }
 
@@ -704,35 +720,111 @@ int announce_latest_default_email_decompress(provision_state_t *state) {
 }
 
 liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
-        char *liid, char *agency) {
+        intercept_common_t *common) {
 
     liid_hash_t *h, *found;
-    prov_agency_t *lea;
 
-    /* pcapdisk is a special agency that is not user-defined */
-    if (strcmp(agency, "pcapdisk") != 0) {
-        HASH_FIND_STR(conf->leas, agency, lea);
-        if (!lea) {
-            logger(LOG_INFO,
-                    "OpenLI: intercept %s is destined for an unknown agency: %s -- skipping.",
-                    liid, agency);
-            return NULL;
-        }
-    }
-
-    HASH_FIND(hh, conf->liid_map, liid, strlen(liid), found);
+    HASH_FIND(hh, conf->liid_map, common->liid, strlen(common->liid), found);
     if (found) {
-        found->agency = agency;
         h = found;
     } else {
         h = (liid_hash_t *)malloc(sizeof(liid_hash_t));
-        h->agency = agency;
-        h->liid = liid;
+        h->liid = common->liid;
         HASH_ADD_KEYPTR(hh, conf->liid_map, h->liid, strlen(h->liid), h);
     }
+    h->agency = common->targetagency;
+    h->encryptkey = common->encryptkey;
+    h->encryptmethod = common->encrypt;
+    h->need_announce = 1;
 
     return h;
 }
 
+void clear_liid_announce_flags(prov_intercept_conf_t *conf) {
+    liid_hash_t *h, *tmp;
+    HASH_ITER(hh, conf->liid_map, h, tmp) {
+        h->need_announce = 0;
+    }
 
+}
+
+static inline int replace_intercept_encryption_config(
+        intercept_common_t *common, liagency_t *agency) {
+
+    if (!common->encrypt_inherited) {
+        return 0;
+    }
+    if (strcmp(common->targetagency, agency->agencyid) != 0) {
+        return 0;
+    }
+    common->encrypt = agency->encrypt;
+    if (common->encryptkey) {
+        free(common->encryptkey);
+        common->encryptkey = NULL;
+    }
+    if (agency->encryptkey) {
+        common->encryptkey = strdup(agency->encryptkey);
+    }
+    return 1;
+}
+
+void update_inherited_encryption_settings(provision_state_t *state,
+        liagency_t *agency) {
+
+    ipintercept_t *ipint, *iptmp;
+    emailintercept_t *mailint, *mailtmp;
+    voipintercept_t *vint, *vtmp;
+
+    HASH_ITER(hh_liid, state->interceptconf.ipintercepts, ipint, iptmp) {
+        if (replace_intercept_encryption_config(&(ipint->common), agency)) {
+            modify_existing_intercept_options(state, (void *)ipint,
+                    OPENLI_PROTO_MODIFY_IPINTERCEPT);
+            add_liid_mapping(&(state->interceptconf), &(ipint->common));
+        }
+    }
+
+    HASH_ITER(hh_liid, state->interceptconf.voipintercepts, vint, vtmp) {
+        if (replace_intercept_encryption_config(&(vint->common), agency)) {
+            modify_existing_intercept_options(state, (void *)vint,
+                    OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
+            add_liid_mapping(&(state->interceptconf), &(vint->common));
+        }
+    }
+
+    HASH_ITER(hh_liid, state->interceptconf.emailintercepts, mailint, mailtmp) {
+        if (replace_intercept_encryption_config(&(mailint->common), agency)) {
+            modify_existing_intercept_options(state, (void *)mailint,
+                    OPENLI_PROTO_MODIFY_EMAILINTERCEPT);
+            add_liid_mapping(&(state->interceptconf), &(mailint->common));
+        }
+    }
+
+}
+
+void apply_intercept_encryption_settings(prov_intercept_conf_t *conf,
+        intercept_common_t *common) {
+
+    prov_agency_t *found;
+    HASH_FIND_STR(conf->leas, common->targetagency, found);
+
+    if (!found) {
+        // shouldn't happen, but in this case just leave the encryption
+        // settings as they are
+        return;
+    }
+
+    if (common->encrypt == OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
+        // no override, so use whatever is configured for the agency as a
+        // whole
+        common->encrypt = found->ag->encrypt;
+        common->encrypt_inherited = 1;
+    } else {
+        common->encrypt_inherited = 0;
+    }
+
+    if (common->encryptkey == NULL && found->ag->encryptkey &&
+            common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        common->encryptkey = strdup(found->ag->encryptkey);
+    }
+}
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
