@@ -83,6 +83,8 @@ typedef struct handover {
     med_epoll_ev_t *aliverespev;
     per_handover_state_t *ho_state;
     uint8_t disconnect_msg;
+
+    time_t last_connect_attempt;
 } handover_t;
 
 typedef struct mediator_agency {
@@ -91,6 +93,7 @@ typedef struct mediator_agency {
     int awaitingconfirm;
     int disabled;
     int disabled_msg;
+    uint16_t handover_retry;
     handover_t *hi2;
     handover_t *hi3;
 } mediator_agency_t;
@@ -184,10 +187,13 @@ handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
  *  @param ho           The handover object that is to be connected
  *  @param epoll_fd     The epoll fd to add handover events to
  *  @param ho_id        The unique ID number for this handover
+ *  @param reconnect_interval   The number of seconds we should wait between
+ *                              connection attempts for this agency.
  *
  *  @return -1 if the connection fails, 0 otherwise.
  */
-int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id);
+int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id,
+        uint16_t reconnect_interval);
 
 /** Releases all memory associated with a single handover object.
  *

@@ -44,6 +44,7 @@ struct json_agency {
     struct json_object *hi2port;
     struct json_object *ka_freq;
     struct json_object *ka_wait;
+    struct json_object *ho_retry;
     struct json_object *agencycc;
     struct json_object *integrity;
     struct json_object *encryptmethod;
@@ -78,7 +79,8 @@ struct json_prov_options {
     struct json_object *defaultemailcompress;
 };
 
-#define EXTRACT_JSON_INT_PARAM(name, uptype, jsonobj, dest, errflag, force) \
+#define EXTRACT_JSON_INT_PARAM(name, uptype, jsonobj, dest, errflag, \
+        minval, maxval, force) \
     if ((*errflag) == 0) { \
         int64_t ival = 0; \
         errno = 0; \
@@ -91,6 +93,10 @@ struct json_prov_options {
                 snprintf(cinfo->answerstring, 4096, "%s <p>OpenLI provisioner could not parse '%s' in %s update socket message. %s", update_failure_page_start, name, uptype, update_failure_page_end); \
                 *errflag = 1; \
             } \
+        } else if (ival < minval) { \
+            dest = minval; \
+        } else if (ival > maxval) { \
+            dest = maxval; \
         } else { \
             dest = ival; \
         } \
@@ -186,6 +192,7 @@ static inline void extract_agency_json_objects(struct json_agency *agjson,
     json_object_object_get_ex(parsed, "hi2port", &(agjson->hi2port));
     json_object_object_get_ex(parsed, "keepalivefreq", &(agjson->ka_freq));
     json_object_object_get_ex(parsed, "keepalivewait", &(agjson->ka_wait));
+    json_object_object_get_ex(parsed, "connectretrywait", &(agjson->ho_retry));
     json_object_object_get_ex(parsed, "agencycc", &(agjson->agencycc));
     json_object_object_get_ex(parsed, "integrity", &(agjson->integrity));
     json_object_object_get_ex(parsed, "payloadencryption",
@@ -376,13 +383,13 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
     EXTRACT_JSON_STRING_PARAM("agencyid", cepttype, jsonp->agencyid,
             common->targetagency, &parseerr, is_new);
     EXTRACT_JSON_INT_PARAM("outputhandovers", cepttype,
-            jsonp->tomediate, common->tomediate, &parseerr, false);
+            jsonp->tomediate, common->tomediate, &parseerr, 0, 3, false);
     EXTRACT_JSON_INT_PARAM("mediator", cepttype, jsonp->mediator,
-            common->destid, &parseerr, is_new);
+            common->destid, &parseerr, 0, 1000000, is_new);
     EXTRACT_JSON_INT_PARAM("starttime", cepttype, jsonp->starttime,
-            common->tostart_time, &parseerr, false);
+            common->tostart_time, &parseerr, 0, 0xFFFFFFFF, false);
     EXTRACT_JSON_INT_PARAM("endtime", cepttype, jsonp->endtime,
-            common->toend_time, &parseerr, false);
+            common->toend_time, &parseerr, 0, 0xFFFFFFFF, false);
     EXTRACT_JSON_STRING_PARAM("payloadencryption", cepttype,
             jsonp->encryption, encryptmethodstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("encryptionkey", cepttype,
@@ -1159,13 +1166,17 @@ static int parse_agency_integrity_options(liagency_t *newag,
     }
 
     EXTRACT_JSON_INT_PARAM("hashtimeout", "Agency Digest Hash timeout",
-            hash_timeout, newag->digest_hash_timeout, &parseerr, false);
+            hash_timeout, newag->digest_hash_timeout, &parseerr, 1,
+            1000000, false);
     EXTRACT_JSON_INT_PARAM("datapducount", "Agency Digest Hash PDU limit",
-            hash_pdulimit, newag->digest_hash_pdulimit, &parseerr, false);
+            hash_pdulimit, newag->digest_hash_pdulimit, &parseerr, 1,
+            1000000, false);
     EXTRACT_JSON_INT_PARAM("signtimeout", "Agency Digest Signature timeout",
-            sign_timeout, newag->digest_sign_timeout, &parseerr, false);
+            sign_timeout, newag->digest_sign_timeout, &parseerr, 1,
+            1000000, false);
     EXTRACT_JSON_INT_PARAM("hashpducount", "Agency Digest Signature hash limit",
-            sign_hashlimit, newag->digest_sign_hashlimit, &parseerr, false);
+            sign_hashlimit, newag->digest_sign_hashlimit, &parseerr, 1,
+            1000000, false);
 
     if (parseerr) {
         goto integrityerr;
@@ -1211,7 +1222,7 @@ static int parse_ipintercept_staticips(provision_state_t *state,
         EXTRACT_JSON_STRING_PARAM("iprange", "IP intercept static IP", iprange,
                 rangestr, &parseerr, true);
         EXTRACT_JSON_INT_PARAM("sessionid", "IP intercept static IP", sessionid,
-                newr->cin, &parseerr, false);
+                newr->cin, &parseerr, 1, 0xFFFFFFFF, false);
 
         if (parseerr) {
             if (rangestr) {
@@ -1586,7 +1597,7 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     timers->intercept_ref = (void *)ipint;
 
     EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
-            ipint->vendmirrorid, &parseerr, false);
+            ipint->vendmirrorid, &parseerr, 0, 0xFFFFFFFF, false);
     EXTRACT_JSON_STRING_PARAM("user", "IP intercept", ipjson.user,
             ipint->username, &parseerr, true);
     EXTRACT_JSON_STRING_PARAM("accesstype", "IP intercept", ipjson.accesstype,
@@ -2137,7 +2148,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     EXTRACT_JSON_STRING_PARAM("mobileident", "IP intercept", ipjson.mobileident,
             mobileidentstring, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
-            ipint->vendmirrorid, &parseerr, false);
+            ipint->vendmirrorid, &parseerr, 0, 0xFFFFFFFE, false);
 
     if (parseerr) {
         goto cepterr;
@@ -2308,6 +2319,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     nag->agencyid = strdup(idstr);
     nag->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
     nag->keepalivewait = DEFAULT_AGENCY_KEEPALIVE_WAIT;
+    nag->handover_retry = DEFAULT_AGENCY_HANDOVER_RETRY;
     nag->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
     nag->digest_sign_method = DEFAULT_DIGEST_HASH_METHOD;
     nag->digest_hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
@@ -2330,9 +2342,11 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
             nag->agencycc, &parseerr, false);
 
     EXTRACT_JSON_INT_PARAM("keepalivefreq", "agency", agjson.ka_freq,
-            nag->keepalivefreq, &parseerr, false);
+            nag->keepalivefreq, &parseerr, 0, 0xFFFFFFFF, false);
     EXTRACT_JSON_INT_PARAM("keepalivewait", "agency", agjson.ka_wait,
-            nag->keepalivewait, &parseerr, false);
+            nag->keepalivewait, &parseerr, 0, 0xFFFFFFFF, false);
+    EXTRACT_JSON_INT_PARAM("connectretrywait", "agency", agjson.ho_retry,
+            nag->handover_retry, &parseerr, 1, 0xFFFF, false);
     EXTRACT_JSON_STRING_PARAM("payloadencryption", "agency",
             agjson.encryptmethod, encryptmethodstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("encryptionkey", "agency",
@@ -2420,6 +2434,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
 
     modified.keepalivefreq = 0xffffffff;
     modified.keepalivewait = 0xffffffff;
+    modified.handover_retry = 0xffff;
     modified.digest_required = 0xff;
     modified.digest_hash_method = 0xff;
     modified.digest_sign_method = 0xff;
@@ -2442,9 +2457,11 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
             modified.agencycc, &parseerr, false);
 
     EXTRACT_JSON_INT_PARAM("keepalivefreq", "agency", agjson.ka_freq,
-            modified.keepalivefreq, &parseerr, false);
+            modified.keepalivefreq, &parseerr, 0, 1000000, false);
     EXTRACT_JSON_INT_PARAM("keepalivewait", "agency", agjson.ka_wait,
-            modified.keepalivewait, &parseerr, false);
+            modified.keepalivewait, &parseerr, 0, 1000000, false);
+    EXTRACT_JSON_INT_PARAM("connectretrywait", "agency", agjson.ho_retry,
+            modified.handover_retry, &parseerr, 1, 60000, false);
     EXTRACT_JSON_STRING_PARAM("payloadencryption", "agency",
             agjson.encryptmethod, encryptmethodstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("encryptionkey", "agency",
@@ -2537,6 +2554,12 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
                 modified.keepalivefreq != found->ag->keepalivefreq) {
         changed = 1;
         found->ag->keepalivefreq = modified.keepalivefreq;
+    }
+
+    if (modified.handover_retry != 0xffff &&
+                modified.handover_retry != found->ag->handover_retry) {
+        changed = 1;
+        found->ag->handover_retry = modified.handover_retry;
     }
 
     if (modified.keepalivewait != 0xffffffff &&

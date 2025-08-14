@@ -423,6 +423,7 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         newag->agencycc = NULL;
         newag->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
         newag->keepalivewait = 0;
+        newag->handover_retry = 10;
         newag->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
         newag->digest_sign_method = DEFAULT_DIGEST_HASH_METHOD;
         newag->digest_hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
@@ -508,6 +509,18 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcasecmp((char *)key->data.scalar.value,
+                            "connectretrywait") == 0) {
+                uint64_t retry = strtoul(
+                        (char *)value->data.scalar.value, NULL, 10);
+                if (retry > 60000) {
+                    logger(LOG_INFO, "connectretrywait has been reduced to the maximum value of 60,000 seconds");
+                    retry = 60000;
+                }
+                newag->handover_retry = retry;
+            }
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
                             "payloadencryption") == 0) {
                 if (strcasecmp((char *)value->data.scalar.value, "none") == 0) {
                     newag->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
@@ -550,11 +563,22 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
             newag->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
         }
 
+        if (newag->keepalivefreq > 1000000) {
+            logger(LOG_INFO, "keepalivefreq cannot be larger than 1,000,000 seconds, reducing keepalivefreq to that value...");
+            newag->keepalivefreq = 1000000;
+        }
+
         if (newag->keepalivewait > newag->keepalivefreq) {
             logger(LOG_INFO, "keepalivewait must be less than or equal to keepalivefreq, setting keepalivewait to %u",
                     newag->keepalivefreq);
             newag->keepalivewait = newag->keepalivefreq;
         }
+
+        if (newag->handover_retry == 0) {
+            logger(LOG_INFO, "connectretrywait has been increased to the minimum value of 1 second");
+            newag->handover_retry = 1;
+        }
+
 
         if (newag->hi2_ipstr != NULL && newag->hi2_portstr != NULL &&
                 newag->hi3_ipstr != NULL && newag->hi3_portstr != NULL &&

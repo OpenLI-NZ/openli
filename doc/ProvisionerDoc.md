@@ -507,6 +507,21 @@ key-value elements:
                    connection. Defaults to 30. If set to zero, the mediator
                    will not require a response to keep alives to maintain the
                    handover connections.
+* `connectretrywait` -- the amount of time (in seconds) to wait between attempts
+                        to connect to an agency handover. Defaults to 10.
+* `payloadencryption`     -- Specifies if the CC and IRI contents sent to this
+                             agency should be encrypted and, if so, which
+                             encryption method to use. If set to "none", no
+                             encryption is performed.
+                             The only encryption method supported right now is
+                             "aes-192-cbc".
+                             The default setting is "none".
+* `encryptionkey`         -- The encryption key to use when encrypting CC and
+                             IRI contents. This option is mandatory if
+                             `payloadencryption` is NOT set to "none". The
+                             ideal key length is 24 characters. Shorter keys
+                             will be padded with null bytes, longer keys will be
+                             truncated to 24 characters.
 
 VOIP, Email and IPintercepts are also expressed as a YAML sequence, with a key
 of `voipintercepts:`, `emailintercepts:`, and `ipintercepts:` respectively.
@@ -670,6 +685,11 @@ All intercept types also support the following optional key-value elements:
                              ideal key length is 24 characters. Shorter keys
                              will be padded with null bytes, longer keys will be
                              truncated to 24 characters.
+
+Note that encryption configuration provided at the intercept level will
+override any encryption configuration that has been set at the agency level
+for the agency that the intercept is destined for.
+
 ---
 
 The default approach for delivering compressed email content to the agencies

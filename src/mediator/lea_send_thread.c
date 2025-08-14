@@ -74,6 +74,7 @@ static void init_mediator_agency(mediator_agency_t *agency,
     }
     agency->disabled = 0;
     agency->disabled_msg = 0;
+    agency->handover_retry = fromprov->handover_retry;
     agency->hi2 = create_new_handover(epollfd, fromprov->hi2_ipstr,
             fromprov->hi2_portstr, HANDOVER_HI2, fromprov->keepalivefreq,
             fromprov->keepalivewait);
@@ -273,6 +274,7 @@ static void update_agency_handovers(mediator_agency_t *currag,
     currag->hi2->ho_state->kawait = newag->keepalivewait;
     currag->hi3->ho_state->kafreq = newag->keepalivefreq;
     currag->hi3->ho_state->kawait = newag->keepalivewait;
+    currag->handover_retry = newag->handover_retry;
 }
 
 /** Sends intercept records from a handover's local buffer to the
@@ -1046,9 +1048,12 @@ static void *run_agency_thread(void *params) {
             int r_hi2 = 0, r_hi3 = 0;
 
             r_hi2 = connect_mediator_handover(state->agency.hi2,
-                    state->epoll_fd, state->handover_id);
+                    state->epoll_fd, state->handover_id,
+                    state->agency.handover_retry);
             r_hi3 = connect_mediator_handover(state->agency.hi3,
-                    state->epoll_fd, state->handover_id + 1);
+                    state->epoll_fd, state->handover_id + 1,
+                    state->agency.handover_retry);
+
             if (r_hi2 < 0 || r_hi3 < 0) {
                 break;
             }

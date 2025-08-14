@@ -370,6 +370,7 @@ void disconnect_handover(handover_t *ho) {
      * until / unless it reconnects.
      */
     ho->disconnect_msg = 1;
+    ho->last_connect_attempt = 0;
 	pthread_mutex_unlock(&(ho->ho_state->ho_mutex));
 }
 
@@ -535,15 +536,26 @@ int register_handover_RMQ_all(handover_t *ho, liid_map_t *liidmap,
  *
  *  @return -1 if the connection fails, 0 otherwise.
  */
-int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id) {
+int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id,
+        uint16_t reconnect_interval) {
 
 	uint32_t epollev;
 	int outsock;
+    struct timeval tv;
 
 	/* Check if we're already connected? */
     if (ho->outev) {
         return 0;
     }
+
+    gettimeofday(&tv, NULL);
+    if (ho->last_connect_attempt != 0) {
+        if (tv.tv_sec < ho->last_connect_attempt + reconnect_interval) {
+            return 0;
+        }
+    }
+
+    ho->last_connect_attempt = tv.tv_sec;
 
     /* Connect the handover socket */
     outsock = connect_socket(ho->ipstr, ho->portstr, ho->disconnect_msg, 1);
@@ -649,6 +661,7 @@ handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
     ho->rmq_consumer = NULL;
     ho->rmq_registered = 0;
     ho->amqp_log_failure = 1;
+    ho->last_connect_attempt = 0;
 
 	pthread_mutex_init(&(ho->ho_state->ho_mutex), NULL);
 

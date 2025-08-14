@@ -46,6 +46,7 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     json_object *hi2port;
     json_object *ka_freq;
     json_object *ka_wait;
+    json_object *ho_retry;
     json_object *agencyid;
     json_object *agencycc = NULL;
     json_object *digest_hash_method;
@@ -78,6 +79,8 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     hi2port = json_object_new_string(lea->ag->hi2_portstr);
     ka_freq = json_object_new_int(lea->ag->keepalivefreq);
     ka_wait = json_object_new_int(lea->ag->keepalivewait);
+    ho_retry = json_object_new_int(lea->ag->handover_retry);
+
     encryptmethod = json_object_new_string(encrypt_str);
     if (lea->ag->encryptkey) {
         encryptkey = json_object_new_string(lea->ag->encryptkey);
@@ -95,6 +98,7 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     json_object_object_add(jobj, "hi2port", hi2port);
     json_object_object_add(jobj, "keepalivefreq", ka_freq);
     json_object_object_add(jobj, "keepalivewait", ka_wait);
+    json_object_object_add(jobj, "connectretrywait", ho_retry);
     json_object_object_add(jobj, "payloadencryption", encryptmethod);
     if (encryptkey) {
         json_object_object_add(jobj, "encryptionkey", encryptkey);
