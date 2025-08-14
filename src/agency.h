@@ -32,6 +32,7 @@
 
 #define DEFAULT_AGENCY_KEEPALIVE_WAIT (30)
 #define DEFAULT_AGENCY_KEEPALIVE_FREQ (300)
+#define DEFAULT_AGENCY_HANDOVER_RETRY (10)
 
 #define DEFAULT_DIGEST_HASH_TIMEOUT 1
 #define DEFAULT_DIGEST_SIGN_TIMEOUT 300
@@ -56,6 +57,7 @@ typedef struct liagency {
     char *agencycc;
     uint32_t keepalivefreq;
     uint32_t keepalivewait;
+    uint16_t handover_retry;
 
     openli_integrity_hash_method_t digest_hash_method;
     openli_integrity_hash_method_t digest_sign_method;
@@ -77,6 +79,7 @@ typedef struct liagency {
      (strcmp(a->agencyid, b->agencyid) == 0) && \
      a->keepalivefreq == b->keepalivefreq && \
      a->keepalivewait == b->keepalivewait && \
+     a->handover_retry == b->handover_retry && \
      a->digest_required == b->digest_required && \
          ((!a->digest_required) || ( \
              a->digest_hash_timeout == b->digest_hash_timeout && \

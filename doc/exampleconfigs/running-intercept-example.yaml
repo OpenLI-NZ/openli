@@ -71,6 +71,8 @@ agencies:
                                 # (5 minutes), if handover is idle
    keepalivewait: 30            # agency must respond to a keep alive within
                                 # 30 seconds to avoid being disconnected
+   connectretrywait: 30         # wait 30 seconds between attempts to connect
+                                # to either handover
 
  - agencyid: "Spooks"           # id must be unique per agency
    agencycountrycode: "NZ"      # 2 letter country code (ISO 3166) matching the
@@ -83,6 +85,8 @@ agencies:
                                 # (2 minutes), if handover is idle
    keepalivewait: 0             # agency does not respond to keep alives, so
                                 # don't disconnect if no response is received
+   connectretrywait: 5          # wait 5 seconds between attempts to connect
+                                # to either handover
 
 # List of active IP intercepts.
 # To change intercepts for a running OpenLI process, modify the intercept list
