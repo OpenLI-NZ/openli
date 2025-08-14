@@ -64,8 +64,9 @@ jobs:
         arch:
           - amd64
         target:
-          - "rockylinux:9"
-          - "rockylinux:8"
+          - "almalinux:10"
+          - "almalinux:9"
+          - "almalinux:8"
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
