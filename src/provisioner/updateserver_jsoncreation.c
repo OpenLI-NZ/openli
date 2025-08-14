@@ -522,7 +522,7 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
 
                 ipaddr = json_object_new_string(x2x3[j].ipaddr);
                 port = json_object_new_string(x2x3[j].port);
-                lastseen = json_object_new_uint64(x2x3[j].lastseen);
+                lastseen = openli_json_object_new_uint64(x2x3[j].lastseen);
 
                 json_object_object_add(base, "ipaddress", ipaddr);
                 json_object_object_add(base, "port", port);
