@@ -33,6 +33,7 @@ fi
 if [[ "$1" =~ alma* ]]; then
         dnf install -y dnf-plugins-core epel-release || true
         dnf config-manager --set-enabled powertools || true
+        dnf module disable -y mariadb || true
         /usr/bin/crb enable || true
 fi
 
