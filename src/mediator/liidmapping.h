@@ -28,7 +28,8 @@
 #define OPENLI_LIID_AGENCY_MAPPING_H_
 
 #include <Judy.h>
-#include <amqp.h>
+#include <rabbitmq-c/amqp.h>
+#include <uthash.h>
 
 typedef struct liidmapping liid_map_entry_t;
 

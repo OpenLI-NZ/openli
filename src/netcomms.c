@@ -30,8 +30,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
-#include <amqp.h>
-#include <amqp_tcp_socket.h>
+#include <rabbitmq-c/amqp.h>
+#include <rabbitmq-c/tcp_socket.h>
 
 #include "netcomms.h"
 #include "logger.h"

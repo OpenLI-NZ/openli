@@ -222,7 +222,7 @@ static int extract_imap_email_sender(emailsession_t *sess,
     char *end = (char *)(comm->commbuffer + comm->reply_end);
 
     copylen = (end - search) + 1;
-    safecopy = calloc(sizeof(char), copylen);
+    safecopy = calloc(copylen, sizeof(char));
     memcpy(safecopy, search, (end - search));
 
     r = extract_email_sender_from_body(safecopy, &extracted);
