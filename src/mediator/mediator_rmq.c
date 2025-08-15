@@ -24,9 +24,9 @@
  *
  */
 
-#include <amqp.h>
-#include <amqp_tcp_socket.h>
-#include <amqp_ssl_socket.h>
+#include <rabbitmq-c/amqp.h>
+#include <rabbitmq-c/tcp_socket.h>
+#include <rabbitmq-c/ssl_socket.h>
 #include "mediator_rmq.h"
 #include <unistd.h>
 #include "logger.h"
@@ -655,7 +655,6 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
     /* Try to connect to RMQ service at col->ipaddr and join the appropiate
      * queue (which should be named after our mediator ID)
      */
-    amqp_set_initialize_ssl_library(0);
     amqp_state = amqp_new_connection();
 
     lock_med_collector_config(conf);    /* LOCK SHARED CONFIGURATION */

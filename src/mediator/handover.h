@@ -30,7 +30,7 @@
 #include <libtrace/simple_circular_buffer.h>
 #include <libwandder.h>
 #include <libwandder_etsili.h>
-#include <amqp.h>
+#include <rabbitmq-c/amqp.h>
 
 #include "export_buffer.h"
 #include "med_epoll.h"

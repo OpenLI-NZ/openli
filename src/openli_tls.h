@@ -30,7 +30,7 @@
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
-#include <amqp_tcp_socket.h>
+#include <rabbitmq-c/tcp_socket.h>
 
 typedef struct openli_ssl_config {
     char *keyfile;

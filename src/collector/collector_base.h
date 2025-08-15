@@ -33,7 +33,7 @@
 #include <libwandder.h>
 #include <zmq.h>
 #include <Judy.h>
-#include <amqp.h>
+#include <rabbitmq-c/amqp.h>
 #include <uthash.h>
 #include <libtrace.h>
 #include <openssl/evp.h>

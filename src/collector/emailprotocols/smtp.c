@@ -1012,8 +1012,8 @@ static int parse_mail_content(openli_email_worker_t *state,
 
     len = smtpsess->reply_start - smtpsess->command_start;
 
-    copy = calloc(sizeof(char), len + 1);
-    header = calloc(sizeof(char), len + 1);
+    copy = calloc(len + 1, sizeof(char));
+    header = calloc(len + 1, sizeof(char));
     memcpy(copy, smtpsess->contbuffer + smtpsess->command_start, len);
 
     start = copy;
