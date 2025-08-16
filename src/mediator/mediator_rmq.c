@@ -24,9 +24,6 @@
  *
  */
 
-#include <rabbitmq-c/amqp.h>
-#include <rabbitmq-c/tcp_socket.h>
-#include <rabbitmq-c/ssl_socket.h>
 #include "mediator_rmq.h"
 #include <unistd.h>
 #include "logger.h"

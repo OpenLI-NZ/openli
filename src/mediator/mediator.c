@@ -41,9 +41,6 @@
 #include <assert.h>
 #include <libwandder_etsili.h>
 #include <Judy.h>
-#include <rabbitmq-c/tcp_socket.h>
-#include <rabbitmq-c/ssl_socket.h>
-#include <rabbitmq-c/amqp.h>
 
 #include "config.h"
 #include "configparser_mediator.h"

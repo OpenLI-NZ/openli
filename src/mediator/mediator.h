@@ -31,7 +31,6 @@
 #include <libwandder.h>
 #include <libwandder_etsili.h>
 #include <uthash.h>
-#include <rabbitmq-c/amqp.h>
 #include "netcomms.h"
 #include "export_buffer.h"
 #include "util.h"

@@ -25,7 +25,6 @@
  */
 
 #include <unistd.h>
-#include <rabbitmq-c/amqp.h>
 
 #include "logger.h"
 #include "lea_send_thread.h"

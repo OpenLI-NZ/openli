@@ -33,7 +33,6 @@
 #include <assert.h>
 #include <unistd.h>
 #include <sys/timerfd.h>
-#include <rabbitmq-c/tcp_socket.h>
 
 #include "util.h"
 #include "logger.h"
