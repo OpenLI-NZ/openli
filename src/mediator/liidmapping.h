@@ -27,8 +27,9 @@
 #ifndef OPENLI_LIID_AGENCY_MAPPING_H_
 #define OPENLI_LIID_AGENCY_MAPPING_H_
 
+#include "config.h"
+
 #include <Judy.h>
-#include <rabbitmq-c/amqp.h>
 #include <uthash.h>
 
 #include "intercept.h"

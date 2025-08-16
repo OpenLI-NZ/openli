@@ -27,10 +27,17 @@
 #ifndef OPENLI_TLS_H_
 #define OPENLI_TLS_H_
 
+#include "config.h"
+
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
+
+#ifdef RMQC_HEADER_SUBDIR
 #include <rabbitmq-c/tcp_socket.h>
+#else
+#include <amqp_tcp_socket.h>
+#endif
 
 typedef struct openli_ssl_config {
     char *keyfile;

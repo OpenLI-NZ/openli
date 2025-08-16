@@ -27,7 +27,6 @@
 #ifndef OPENLI_MEDIATOR_COLL_RECV_THREAD_H
 #define OPENLI_MEDIATOR_COLL_RECV_THREAD_H
 
-#include <rabbitmq-c/amqp.h>
 #include <libtrace/message_queue.h>
 #include <libwandder_etsili.h>
 #include <openssl/evp.h>
