@@ -80,7 +80,7 @@ jobs:
            fi
        - name: Test package install
          run: |
-           yum install -y findutils
+           yum install -y findutils gnupg
            find . -name "*.rpm" | xargs yum install -y
        - name: Test package removal
          run: |
