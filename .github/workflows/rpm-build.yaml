@@ -18,7 +18,7 @@ jobs:
          target:
            - "almalinux:8"
            - "almalinux:9"
-           - "almalinux:10"
+       #    - "almalinux:10"
 
      steps:
       - name: Checkout repo
@@ -52,7 +52,7 @@ jobs:
          target:
            - "almalinux:8"
            - "almalinux:9"
-           - "almalinux:10"
+     #      - "almalinux:10"
      needs: build
      steps:
        - name: Set environment variables for download
@@ -101,7 +101,7 @@ jobs:
          target:
            - "almalinux:8"
            - "almalinux:9"
-           - "almalinux:10"
+#           - "almalinux:10"
      needs: test
      steps:
        - name: Set environment variables for download
