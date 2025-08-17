@@ -1,3 +1,10 @@
+openli (1.1.14-1) unstable; urgency=medium
+
+  * Add support for new RabbitMQ header file structure added in
+    rabbitmq-c 0.12.0, so we can build packages for Debian trixie.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Mon, 18 Aug 2025 10:55:35 +1200
+
 openli (1.1.13-1) unstable; urgency=medium
 
   * REST API: added new endpoints for collectors/ and mediators/ to
