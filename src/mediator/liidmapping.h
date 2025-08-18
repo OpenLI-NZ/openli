@@ -28,7 +28,6 @@
 #define OPENLI_LIID_AGENCY_MAPPING_H_
 
 #include "config.h"
-
 #include <Judy.h>
 #include <uthash.h>
 
