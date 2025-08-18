@@ -27,8 +27,10 @@
 #ifndef OPENLI_LIID_AGENCY_MAPPING_H_
 #define OPENLI_LIID_AGENCY_MAPPING_H_
 
+#include "config.h"
+
 #include <Judy.h>
-#include <amqp.h>
+#include <uthash.h>
 
 typedef struct liidmapping liid_map_entry_t;
 

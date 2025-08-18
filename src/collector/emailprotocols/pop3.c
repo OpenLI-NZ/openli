@@ -636,7 +636,7 @@ static int extract_pop3_email_sender(emailsession_t *sess,
     char *end = (char *)(pop3sess->contbuffer + pop3sess->contbufread);
 
     copylen = (end - search) + 1;
-    safecopy = calloc(sizeof(char), copylen);
+    safecopy = calloc(copylen, sizeof(char));
     memcpy(safecopy, search, (end - search));
 
     r = extract_email_sender_from_body(safecopy, &extracted);

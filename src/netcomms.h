@@ -32,7 +32,14 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <fcntl.h>
+
+#ifdef RMQC_HEADER_SUBDIR
+#include <rabbitmq-c/amqp.h>
+#include <rabbitmq-c/tcp_socket.h>
+#else
 #include <amqp.h>
+#include <amqp_tcp_socket.h>
+#endif
 
 #define NETBUF_ALLOC_SIZE (10 * 1024 * 1024)
 

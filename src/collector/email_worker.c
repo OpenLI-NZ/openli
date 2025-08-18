@@ -32,7 +32,6 @@
 #include <assert.h>
 #include <unistd.h>
 #include <sys/timerfd.h>
-#include <amqp_tcp_socket.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>

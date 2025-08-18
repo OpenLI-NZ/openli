@@ -41,9 +41,6 @@
 #include <assert.h>
 #include <libwandder_etsili.h>
 #include <Judy.h>
-#include <amqp_tcp_socket.h>
-#include <amqp_ssl_socket.h>
-#include <amqp.h>
 
 #include "config.h"
 #include "configparser_mediator.h"

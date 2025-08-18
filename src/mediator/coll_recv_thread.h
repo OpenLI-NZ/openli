@@ -27,7 +27,6 @@
 #ifndef OPENLI_MEDIATOR_COLL_RECV_THREAD_H
 #define OPENLI_MEDIATOR_COLL_RECV_THREAD_H
 
-#include <amqp.h>
 #include <libtrace/message_queue.h>
 #include "netcomms.h"
 #include "openli_tls.h"

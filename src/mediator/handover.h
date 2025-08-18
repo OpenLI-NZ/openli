@@ -27,10 +27,17 @@
 #ifndef OPENLI_MEDIATOR_HANDOVER_H_
 #define OPENLI_MEDIATOR_HANDOVER_H_
 
+#include "config.h"
+
 #include <libtrace/simple_circular_buffer.h>
 #include <libwandder.h>
 #include <libwandder_etsili.h>
+
+#ifdef RMQC_HEADER_SUBDIR
+#include <rabbitmq-c/amqp.h>
+#else
 #include <amqp.h>
+#endif
 
 #include "export_buffer.h"
 #include "med_epoll.h"

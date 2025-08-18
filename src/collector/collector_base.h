@@ -33,7 +33,15 @@
 #include <libwandder.h>
 #include <zmq.h>
 #include <Judy.h>
+
+#ifdef RMQC_HEADER_SUBDIR
+#include <rabbitmq-c/amqp.h>
+#include <rabbitmq-c/tcp_socket.h>
+#else
 #include <amqp.h>
+#include <amqp_tcp_socket.h>
+#endif
+
 #include <uthash.h>
 #include <libtrace.h>
 #include <openssl/evp.h>

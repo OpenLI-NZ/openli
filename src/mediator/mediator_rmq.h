@@ -27,6 +27,18 @@
 #ifndef OPENLI_MEDIATOR_RMQ_H_
 #define OPENLI_MEDIATOR_RMQ_H_
 
+#include "config.h"
+
+#ifdef RMQC_HEADER_SUBDIR
+#include <rabbitmq-c/tcp_socket.h>
+#include <rabbitmq-c/amqp.h>
+#include <rabbitmq-c/ssl_socket.h>
+#else
+#include <amqp_tcp_socket.h>
+#include <amqp.h>
+#include <amqp_ssl_socket.h>
+#endif
+
 #include "coll_recv_thread.h"
 #include "lea_send_thread.h"
 

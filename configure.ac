@@ -1,6 +1,6 @@
 # Super primitive configure script
 
-AC_INIT([openli],[1.1.13],[shane@alcock.co.nz])
+AC_INIT([openli],[1.1.14],[shane@alcock.co.nz])
 
 AM_INIT_AUTOMAKE([subdir-objects])
 AC_CONFIG_SRCDIR(src/collector/collector.c)
@@ -60,7 +60,8 @@ fi
 
 AC_CHECK_HEADERS([uthash.h], [uthash_avail=yes; break;])
 AC_CHECK_HEADERS([syslog.h])
-AC_CHECK_HEADER(amqp.h, ampq_h_found=1, amqp_h_found=0)
+AC_CHECK_HEADER(amqp.h, amqp_h_found=1, amqp_h_found=0)
+AC_CHECK_HEADER(rabbitmq-c/tcp_socket.h, [amqp_h_found=1; rabbitmq_include_subdir=1;])
 
 AC_CONFIG_FILES([Makefile src/Makefile extlib/Makefile
                 extlib/libpatricia/Makefile])
@@ -169,6 +170,11 @@ else
                 MEDIATOR_LIBS="$MEDIATOR_LIBS -lrabbitmq"
                 PROVISIONER_LIBS="$PROVISIONER_LIBS -lrabbitmq"
         fi
+
+        if test "$rabbitmq_include_subdir" = 1; then
+            AC_DEFINE(RMQC_HEADER_SUBDIR, 1, [defined to 1 if rabbitmq-c headers are in the rabbitmq-c subdirectory])
+        fi
+
 fi
 
 if test "$libyaml_found" = 0; then
