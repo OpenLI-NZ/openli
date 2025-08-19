@@ -509,6 +509,10 @@ key-value elements:
                    handover connections.
 * `connectretrywait` -- the amount of time (in seconds) to wait between attempts
                         to connect to an agency handover. Defaults to 10.
+* `resendwindow`  -- the amount of buffered data to retransmit when a handover
+                     reconnects after a disconnection event (in KBs). Defaults
+                     to zero (i.e. don't retransmit anything that was sent
+                     prior to the disconnection).
 * `payloadencryption`     -- Specifies if the CC and IRI contents sent to this
                              agency should be encrypted and, if so, which
                              encryption method to use. If set to "none", no

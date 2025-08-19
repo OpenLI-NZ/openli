@@ -627,11 +627,14 @@ int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id,
  * @param kafreq        The frequency to send keep alive requests (in seconds).
  * @param kawait        The time to wait before assuming a keep alive has
  *                      failed (in seconds).
+ * @param resendwin     The amount of previously-sent bytes to retransmit upon
+ *                      a handover reconnection, in KBs.
  *
  * @return a pointer to a new handover instance, or NULL if an error occurs.
  */
 handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
-        int handover_type, uint32_t kafreq, uint32_t kawait) {
+        int handover_type, uint32_t kafreq, uint32_t kawait,
+        uint32_t resendwin) {
 
     handover_t *ho = (handover_t *)malloc(sizeof(handover_t));
 
@@ -649,6 +652,7 @@ handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
 
     /* Initialise all of the handover-specific state for this handover */
     init_export_buffer(&(ho->ho_state->buf));
+    set_export_buffer_ack_window(&(ho->ho_state->buf), resendwin * 1024);
     ho->ho_state->katimer_setsec = 0;
     ho->ho_state->incoming = NULL;
     ho->ho_state->encoder = NULL;

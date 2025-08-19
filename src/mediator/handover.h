@@ -177,11 +177,14 @@ int receive_handover(handover_t *ho);
  * @param kafreq        The frequency to send keep alive requests (in seconds).
  * @param kawait        The time to wait before assuming a keep alive has
  *                      failed (in seconds).
+ * @param resendwin     The amount of previously-sent bytes to retransmit upon
+ *                      a handover reconnection, in KBs.
  *
  * @return a pointer to a new handover instance, or NULL if an error occurs.
  */
 handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
-        int handover_type, uint32_t kafreq, uint32_t kawait);
+        int handover_type, uint32_t kafreq, uint32_t kawait,
+        uint32_t resendwin);
 
 /** Establish an agency handover connection
  *

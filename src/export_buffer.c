@@ -412,12 +412,14 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
             return ret;
         }
         buf->writeoffset += ((uint32_t)ret + buf->partialfront);
-        if (buf->writeoffset > buf->deadwindow) {
+        if (buf->deadwindow != 0 && buf->writeoffset > buf->deadwindow) {
             int rcint;
             Word_t index = buf->writeoffset - buf->deadwindow;
             J1P(rcint, buf->record_offsets, index);
 
             buf->deadfront = (uint32_t)index;
+        } else if (buf->deadwindow == 0) {
+            buf->deadfront = buf->writeoffset;
         }
     }
 

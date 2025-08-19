@@ -77,11 +77,11 @@ static void init_mediator_agency(mediator_agency_t *agency,
     agency->handover_retry = fromprov->handover_retry;
     agency->hi2 = create_new_handover(epollfd, fromprov->hi2_ipstr,
             fromprov->hi2_portstr, HANDOVER_HI2, fromprov->keepalivefreq,
-            fromprov->keepalivewait);
+            fromprov->keepalivewait, fromprov->resend_window_kbs);
 
     agency->hi3 = create_new_handover(epollfd, fromprov->hi3_ipstr,
             fromprov->hi3_portstr, HANDOVER_HI3, fromprov->keepalivefreq,
-            fromprov->keepalivewait);
+            fromprov->keepalivewait, fromprov->resend_window_kbs);
 
 }
 
@@ -194,7 +194,7 @@ static void update_agency_handovers(mediator_agency_t *currag,
             currag->hi2->portstr == NULL) {
         currag->hi2 = create_new_handover(epollfd, newag->hi2_ipstr,
             newag->hi2_portstr, HANDOVER_HI2, newag->keepalivefreq,
-            newag->keepalivewait);
+            newag->keepalivewait, newag->resend_window_kbs);
     } else {
 
         if (newag->hi2_ipstr == NULL || newag->hi2_portstr == NULL) {
@@ -237,7 +237,7 @@ static void update_agency_handovers(mediator_agency_t *currag,
             currag->hi3->portstr == NULL) {
         currag->hi3 = create_new_handover(epollfd, newag->hi3_ipstr,
             newag->hi3_portstr, HANDOVER_HI3, newag->keepalivefreq,
-            newag->keepalivewait);
+            newag->keepalivewait, newag->resend_window_kbs);
     } else {
 
         if (newag->hi3_ipstr == NULL || newag->hi3_portstr == NULL) {
@@ -274,6 +274,10 @@ static void update_agency_handovers(mediator_agency_t *currag,
     currag->hi2->ho_state->kawait = newag->keepalivewait;
     currag->hi3->ho_state->kafreq = newag->keepalivefreq;
     currag->hi3->ho_state->kawait = newag->keepalivewait;
+    set_export_buffer_ack_window(&(currag->hi2->ho_state->buf),
+            newag->resend_window_kbs * 1024);
+    set_export_buffer_ack_window(&(currag->hi3->ho_state->buf),
+            newag->resend_window_kbs * 1024);
     currag->handover_retry = newag->handover_retry;
 }
 

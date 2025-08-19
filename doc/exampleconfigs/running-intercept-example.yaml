@@ -73,6 +73,8 @@ agencies:
                                 # 30 seconds to avoid being disconnected
    connectretrywait: 30         # wait 30 seconds between attempts to connect
                                 # to either handover
+   resendwindow: 256            # retransmit the last 256KB of data when a
+                                # handover recovers from a disconnection
 
  - agencyid: "Spooks"           # id must be unique per agency
    agencycountrycode: "NZ"      # 2 letter country code (ISO 3166) matching the
