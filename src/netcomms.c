@@ -357,11 +357,12 @@ int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
      strlen(lea->hi2_ipstr) + strlen(lea->hi2_portstr) + \
 	 strlen(lea->hi3_ipstr) + strlen(lea->hi3_portstr) + \
 	 sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint16_t) + \
+     sizeof(uint32_t) + \
      (lea->digest_required ? (sizeof(openli_integrity_hash_method_t) + \
         sizeof(openli_integrity_hash_method_t) + \
         (4 * sizeof(uint32_t)) + sizeof(uint8_t) + \
         (7 * 4)) : 0) + \
-	 (8 * 4)) /* each field has 4 bytes for the key, length of field and terminating \0 */
+	 (9 * 4)) /* each field has 4 bytes for the key, length of field and terminating \0 */
 
 #define LEA_WITHDRAW_BODY_LEN(lea) \
     (strlen(lea->agencyid) + (1 * 4))
@@ -424,6 +425,12 @@ int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
     if (push_tlv(nb, OPENLI_PROTO_FIELD_HANDOVER_RETRY,
                 (uint8_t *)(&lea->handover_retry),
                 sizeof(uint16_t)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_WINDOW_SIZE,
+                (uint8_t *)(&lea->resend_window_kbs),
+                sizeof(uint32_t)) == -1) {
         return -1;
     }
 
@@ -2533,6 +2540,7 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
     lea->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
     lea->keepalivewait = 0;
     lea->handover_retry = 1;
+    lea->resend_window_kbs = 1;
     lea->digest_required = 0;
     lea->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
     lea->digest_sign_method = DEFAULT_DIGEST_HASH_METHOD;
@@ -2568,6 +2576,8 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
             lea->keepalivewait = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_HANDOVER_RETRY) {
             lea->handover_retry = *((uint16_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_WINDOW_SIZE) {
+            lea->resend_window_kbs = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_HASH_METHOD) {
             lea->digest_hash_method =
                     *((openli_integrity_hash_method_t *)valptr);

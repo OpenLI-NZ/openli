@@ -422,6 +422,21 @@ static int emit_agencies(prov_agency_t *agencies, yaml_emitter_t *emitter) {
                 YAML_PLAIN_SCALAR_STYLE);
         if (!yaml_emitter_emit(emitter, &event)) return -1;
 
+        if (ag->ag->resend_window_kbs != 0) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"resendwindow", strlen("resendwindow"),
+                    1, 0, YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            snprintf(buffer, 64, "%u", ag->ag->resend_window_kbs);
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)buffer, strlen(buffer), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
+
         if (ag->ag->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
             yaml_scalar_event_initialize(&event, NULL,
                     (yaml_char_t *)YAML_STR_TAG,

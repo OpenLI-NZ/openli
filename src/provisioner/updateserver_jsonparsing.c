@@ -45,6 +45,7 @@ struct json_agency {
     struct json_object *ka_freq;
     struct json_object *ka_wait;
     struct json_object *ho_retry;
+    struct json_object *resend_win;
     struct json_object *agencycc;
     struct json_object *integrity;
     struct json_object *encryptmethod;
@@ -193,6 +194,7 @@ static inline void extract_agency_json_objects(struct json_agency *agjson,
     json_object_object_get_ex(parsed, "keepalivefreq", &(agjson->ka_freq));
     json_object_object_get_ex(parsed, "keepalivewait", &(agjson->ka_wait));
     json_object_object_get_ex(parsed, "connectretrywait", &(agjson->ho_retry));
+    json_object_object_get_ex(parsed, "resendwindow", &(agjson->resend_win));
     json_object_object_get_ex(parsed, "agencycc", &(agjson->agencycc));
     json_object_object_get_ex(parsed, "integrity", &(agjson->integrity));
     json_object_object_get_ex(parsed, "payloadencryption",
@@ -2347,6 +2349,8 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
             nag->keepalivewait, &parseerr, 0, 0xFFFFFFFF, false);
     EXTRACT_JSON_INT_PARAM("connectretrywait", "agency", agjson.ho_retry,
             nag->handover_retry, &parseerr, 1, 0xFFFF, false);
+    EXTRACT_JSON_INT_PARAM("resendwindow", "agency", agjson.resend_win,
+            nag->resend_window_kbs, &parseerr, 0, 1024 * 1024, false);
     EXTRACT_JSON_STRING_PARAM("payloadencryption", "agency",
             agjson.encryptmethod, encryptmethodstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("encryptionkey", "agency",
@@ -2435,6 +2439,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     modified.keepalivefreq = 0xffffffff;
     modified.keepalivewait = 0xffffffff;
     modified.handover_retry = 0xffff;
+    modified.resend_window_kbs = 0xffffffff;
     modified.digest_required = 0xff;
     modified.digest_hash_method = 0xff;
     modified.digest_sign_method = 0xff;
@@ -2462,6 +2467,8 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
             modified.keepalivewait, &parseerr, 0, 1000000, false);
     EXTRACT_JSON_INT_PARAM("connectretrywait", "agency", agjson.ho_retry,
             modified.handover_retry, &parseerr, 1, 60000, false);
+    EXTRACT_JSON_INT_PARAM("resendwindow", "agency", agjson.resend_win,
+            modified.resend_window_kbs, &parseerr, 0, 1024 * 1024, false);
     EXTRACT_JSON_STRING_PARAM("payloadencryption", "agency",
             agjson.encryptmethod, encryptmethodstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("encryptionkey", "agency",
@@ -2560,6 +2567,12 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
                 modified.handover_retry != found->ag->handover_retry) {
         changed = 1;
         found->ag->handover_retry = modified.handover_retry;
+    }
+
+    if (modified.resend_window_kbs != 0xffffffff &&
+            modified.resend_window_kbs != found->ag->resend_window_kbs) {
+        changed = 1;
+        found->ag->resend_window_kbs = modified.resend_window_kbs;
     }
 
     if (modified.keepalivewait != 0xffffffff &&

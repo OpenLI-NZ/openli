@@ -1002,7 +1002,7 @@ static void *run_pcap_thread(void *params) {
     pstate.packet = NULL;
     pstate.dummypcap = trace_create_dead("pcapfile:/dev/null");
     pstate.rawip_handover = create_new_handover(state->epoll_fd, NULL, NULL,
-            HANDOVER_RAWIP, 0, 0);
+            HANDOVER_RAWIP, 0, 0, 0);
 
     register_handover_RMQ_all(pstate.rawip_handover, NULL, "pcapdisk",
             state->internalrmqpass);
@@ -1114,8 +1114,8 @@ static inline void init_pcapdisk_agency(mediator_agency_t *agency,
     agency->agencyid = strdup("pcapdisk");
     agency->disabled = 0;
     agency->disabled_msg = 0;
-    agency->hi2 = create_new_handover(epollfd, NULL, NULL, HANDOVER_HI2, 0, 0);
-    agency->hi3 = create_new_handover(epollfd, NULL, NULL, HANDOVER_HI3, 0, 0);
+    agency->hi2 = create_new_handover(epollfd, NULL, NULL, HANDOVER_HI2, 0,0,0);
+    agency->hi3 = create_new_handover(epollfd, NULL, NULL, HANDOVER_HI3, 0,0,0);
 }
 
 /** Creates and starts the pcap output thread for an OpenLI mediator.

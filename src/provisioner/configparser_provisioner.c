@@ -423,7 +423,8 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         newag->agencycc = NULL;
         newag->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
         newag->keepalivewait = 0;
-        newag->handover_retry = 10;
+        newag->handover_retry = DEFAULT_AGENCY_HANDOVER_RETRY;
+        newag->resend_window_kbs = DEFAULT_AGENCY_RESEND_WINDOW;
         newag->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
         newag->digest_sign_method = DEFAULT_DIGEST_HASH_METHOD;
         newag->digest_hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
@@ -521,6 +522,18 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcasecmp((char *)key->data.scalar.value,
+                            "resendwindow") == 0) {
+                uint64_t window = strtoul(
+                        (char *)value->data.scalar.value, NULL, 10);
+                if (window > 1024 * 1024) {
+                    logger(LOG_INFO, "resendwindow has been reduced to the maximum value of 1GB");
+                    window = 1024 * 1024;
+                }
+                newag->resend_window_kbs = window;
+            }
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
                             "payloadencryption") == 0) {
                 if (strcasecmp((char *)value->data.scalar.value, "none") == 0) {
                     newag->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
@@ -579,6 +592,12 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
             newag->handover_retry = 1;
         }
 
+        if (newag->resend_window_kbs < 1024 && newag->agencycc != NULL &&
+                strcmp(newag->agencycc, "NL") == 0) {
+            logger(LOG_INFO, "OpenLI: WARNING -- NL agencies require a resendwindow of at least 1024 KB, '%s' is configured with a resendwindow of %u KB",
+                    newag->agencyid, newag->resend_window_kbs);
+            logger(LOG_INFO, "OpenLI: please consider increasing your agency's resendwindow parameter...");
+        }
 
         if (newag->hi2_ipstr != NULL && newag->hi2_portstr != NULL &&
                 newag->hi3_ipstr != NULL && newag->hi3_portstr != NULL &&

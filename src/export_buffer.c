@@ -44,9 +44,15 @@ void init_export_buffer(export_buffer_t *buf) {
     buf->partialfront = 0;
     buf->partialrem = 0;
     buf->deadfront = 0;
+    buf->writeoffset = 0;
     buf->nextwarn = BUFFER_WARNING_THRESH;
     buf->record_offsets = NULL;
     buf->since_last_saved_offset = 0;
+    buf->deadwindow = 0;
+}
+
+void set_export_buffer_ack_window(export_buffer_t *buf, uint32_t window) {
+    buf->deadwindow = window;
 }
 
 void release_export_buffer(export_buffer_t *buf) {
@@ -56,7 +62,7 @@ void release_export_buffer(export_buffer_t *buf) {
 }
 
 uint64_t get_buffered_amount(export_buffer_t *buf) {
-    return (buf->buftail - (buf->bufhead + buf->deadfront));
+    return (buf->buftail - (buf->bufhead + buf->writeoffset));
 }
 
 uint8_t *get_buffered_head(export_buffer_t *buf, uint64_t *rem) {
@@ -64,10 +70,11 @@ uint8_t *get_buffered_head(export_buffer_t *buf, uint64_t *rem) {
     if (*rem == 0) {
         return NULL;
     }
-    return (buf->bufhead + buf->deadfront);
+    return (buf->bufhead + buf->writeoffset);
 }
 
 void reset_export_buffer(export_buffer_t *buf) {
+    buf->writeoffset = buf->deadfront;
     buf->partialfront = 0;
     buf->partialrem = 0;
 }
@@ -116,6 +123,7 @@ static inline uint64_t extend_buffer(export_buffer_t *buf) {
     /* Add some space to the buffer */
     uint8_t *space = NULL;
     uint64_t bufused = buf->buftail - (buf->bufhead + buf->deadfront);
+    uint32_t writeroffset = buf->writeoffset - buf->deadfront;
 
     if (buf->deadfront > 0) {
         slide_buffer(buf, buf->bufhead + buf->deadfront, bufused);
@@ -133,6 +141,7 @@ static inline uint64_t extend_buffer(export_buffer_t *buf) {
 
 
     buf->deadfront = 0;
+    buf->writeoffset = writeroffset;
     buf->bufhead = space;
     buf->buftail = space + bufused;
     buf->alloced = buf->alloced + BUFFER_ALLOC_SIZE;
@@ -310,6 +319,7 @@ static inline void post_transmit(export_buffer_t *buf) {
     uint64_t rem = 0;
     uint8_t *newbuf = NULL;
     uint64_t resize = 0;
+    uint32_t writeoff = buf->writeoffset - buf->deadfront;
 
     assert(buf->buftail >= buf->bufhead + buf->deadfront);
     rem = (buf->buftail - (buf->bufhead + buf->deadfront));
@@ -324,6 +334,7 @@ static inline void post_transmit(export_buffer_t *buf) {
         buf->buftail = newbuf + rem;
         buf->bufhead = newbuf;
         buf->alloced = resize;
+        buf->writeoffset = writeoff;
         buf->deadfront = 0;
     } else if (buf->alloced - (buf->buftail - buf->bufhead) <
             0.25 * buf->alloced && buf->deadfront >= 0.25 * buf->alloced) {
@@ -332,6 +343,7 @@ static inline void post_transmit(export_buffer_t *buf) {
         buf->buftail = buf->bufhead + rem;
         assert(buf->buftail < buf->bufhead + buf->alloced);
         buf->deadfront = 0;
+        buf->writeoffset = writeoff;
     }
 
     buf->partialfront = 0;
@@ -342,7 +354,7 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         uint64_t bytelimit, SSL *ssl) {
 
     uint64_t sent = 0;
-    uint8_t *bhead = buf->bufhead + buf->deadfront;
+    uint8_t *bhead = buf->bufhead + buf->writeoffset;
     uint64_t offset = buf->partialfront;
     int ret, rcint;
     Word_t index = 0;
@@ -353,13 +365,13 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         sent = (buf->buftail - (bhead + offset));
 
         if (sent > bytelimit) {
-            index = bytelimit + 1 + buf->deadfront;
+            index = bytelimit + 1 + buf->writeoffset;
             J1P(rcint, buf->record_offsets, index);
             if (rcint == 0) {
                 assert(rcint != 0);
                 return 0;
             }
-            sent = index - buf->deadfront;
+            sent = index - buf->writeoffset;
         }
         buf->partialrem = sent;
     }
@@ -399,7 +411,16 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
             buf->partialrem -= (uint32_t)ret;
             return ret;
         }
-        buf->deadfront += ((uint32_t)ret + buf->partialfront);
+        buf->writeoffset += ((uint32_t)ret + buf->partialfront);
+        if (buf->deadwindow != 0 && buf->writeoffset > buf->deadwindow) {
+            int rcint;
+            Word_t index = buf->writeoffset - buf->deadwindow;
+            J1P(rcint, buf->record_offsets, index);
+
+            buf->deadfront = (uint32_t)index;
+        } else if (buf->deadwindow == 0) {
+            buf->deadfront = buf->writeoffset;
+        }
     }
 
     post_transmit(buf);
@@ -474,7 +495,7 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
         uint64_t bytelimit, uint8_t *is_blocked) {
 
     uint64_t sent = 0;
-    uint8_t *bhead = buf->bufhead + buf->deadfront;
+    uint8_t *bhead = buf->bufhead + buf->writeoffset;
     int ret, x;
 
     sent = (buf->buftail - (bhead));
@@ -519,7 +540,10 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
         }
 
         if (x > 0) {
-            buf->deadfront += ((uint32_t)ret);
+            buf->writeoffset += ((uint32_t)ret);
+            if (buf->writeoffset > buf->deadwindow) {
+                buf->deadfront = buf->writeoffset - buf->deadwindow;
+            }
         }
     }
 
@@ -535,7 +559,12 @@ int advance_export_buffer_head(export_buffer_t *buf, uint64_t amount) {
         amount = rem;
     }
 
-    buf->deadfront += amount;
+    /* This is only used in the pcap output context, so there's no real
+     * need to maintain a retransmit window, so just set deadfront to
+     * match the write offset.
+     */
+    buf->writeoffset += amount;
+    buf->deadfront = buf->writeoffset;
     post_transmit(buf);
     return 0;
 }
