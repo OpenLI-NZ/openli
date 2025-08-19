@@ -310,12 +310,9 @@ fi
 
 
 %changelog
-<<<<<<< HEAD
-=======
 * Mon Aug 18 2025 Shane Alcock <salcock@searchlight.nz> - 1.1.14-1
 - Updated for 1.1.14 release
 
->>>>>>> master
 * Thu Jun 5 2025 Shane Alcock <salcock@searchlight.nz> - 1.1.13-1
 - Updated for 1.1.13 release
 
