@@ -241,11 +241,15 @@ int update_collector_client_row(provision_state_t *state,
 }
 
 int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med) {
+    prov_sock_state_t *cs = med->client->state;
 
     if (state->clientdb == NULL) {
         return 0;
     }
     if (med == NULL || med->details == NULL || med->details->ipstr == NULL) {
+        return 0;
+    }
+    if (cs->halted || !cs->trusted) {
         return 0;
     }
 #if HAVE_SQLCIPHER
