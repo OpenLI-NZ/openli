@@ -143,6 +143,14 @@ int update_modified_intercept_common(intercept_common_t *current,
         *updatereq = 1;
     }
 
+    if (update->destid != current->destid) {
+        current->destid = update->destid;
+        logger(LOG_INFO,
+                "OpenLI: %s intercept %s is now using exporting to mediator %u",
+                cepttype_strings[cepttype], update->liid, current->destid);
+        *updatereq = 1;
+    }
+
     if (update->tomediate != current->tomediate) {
         char space[1024];
         intercept_mediation_mode_as_string(update->tomediate, space,

@@ -529,6 +529,11 @@ static int update_intercept_common(intercept_common_t *parsed,
         *changed = 1;
     }
 
+    if (parsed->destid != existing->destid) {
+        existing->destid = parsed->destid;
+        *changed = 1;
+    }
+
     MODIFY_STRING_MEMBER(parsed->targetagency, existing->targetagency,
             agencychanged);
 
