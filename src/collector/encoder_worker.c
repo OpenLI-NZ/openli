@@ -798,7 +798,8 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
     saved_encoding_templates_t *t_set = NULL;
     encoded_header_template_t *hdr_tplate = NULL;
 
-    snprintf(keystr, 1000, "%s-%s", job->liid, job->cinstr);
+    snprintf(keystr, 1000, "%s-%s-%u", job->liid, job->cinstr,
+            job->timefmt);
     JSLI(pval, enc->saved_intercept_templates, (const uint8_t *)keystr);
     if ((*pval)) {
         t_set = (saved_encoding_templates_t *)(*pval);

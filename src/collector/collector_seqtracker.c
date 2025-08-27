@@ -210,6 +210,7 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
         intstate->details.encryptmethod = cept->encryptmethod;
+        intstate->details.timefmt = cept->timefmt;
         intstate->version ++;
 
     } else {
@@ -223,6 +224,7 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
         intstate->details.encryptmethod = cept->encryptmethod;
+        intstate->details.timefmt = cept->timefmt;
         intstate->cinsequencing = NULL;
         intstate->version = 0;
 
@@ -282,7 +284,7 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
     intstate->details.delivcc_len = strlen(msg->delivcc);
 
     intstate->details.encryptmethod = msg->encryptmethod;
-
+    intstate->details.timefmt = msg->timefmt;
 
     remove_preencoded(seqdata, intstate);
     preencode_etsi_fields(seqdata, intstate);
@@ -364,6 +366,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     job.cin = (int64_t)cin;
     job.cept_version = intstate->version;
     job.encryptmethod = intstate->details.encryptmethod;
+    job.timefmt = intstate->details.timefmt;
 
 	if (recvd->type == OPENLI_EXPORT_IPMMCC ||
 			recvd->type == OPENLI_EXPORT_IPCC ||

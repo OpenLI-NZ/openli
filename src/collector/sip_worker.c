@@ -737,19 +737,9 @@ static void sip_worker_send_intercept_update_to_seqtracker(
         return;
     }
 
-    expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+    expmsg = create_intercept_details_msg(&(vint->common),
+            OPENLI_INTERCEPT_TYPE_VOIP);
     expmsg->type = type;
-    expmsg->data.cept.liid = strdup(vint->common.liid);
-    expmsg->data.cept.authcc = strdup(vint->common.authcc);
-    expmsg->data.cept.delivcc = strdup(vint->common.delivcc);
-    expmsg->data.cept.encryptmethod = vint->common.encrypt;
-    if (vint->common.encryptkey) {
-        expmsg->data.cept.encryptkey = strdup(vint->common.encryptkey);
-    } else {
-        expmsg->data.cept.encryptkey = NULL;
-    }
-    expmsg->data.cept.seqtrackerid = vint->common.seqtrackerid;
-
     publish_openli_msg(sipworker->zmq_pubsocks[vint->common.seqtrackerid],
             expmsg);
 

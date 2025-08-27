@@ -235,6 +235,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_COLLECTORID,
     OPENLI_PROTO_FIELD_HANDOVER_RETRY,
     OPENLI_PROTO_FIELD_WINDOW_SIZE,
+    OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT,
 
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct

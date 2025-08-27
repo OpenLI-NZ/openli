@@ -43,6 +43,7 @@ typedef struct exporter_intercept_msg {
     int delivcc_len;
 
     payload_encryption_method_t encryptmethod;
+    openli_timestamp_encoding_fmt_t timefmt;
 } exporter_intercept_msg_t;
 
 typedef struct cin_seqno {

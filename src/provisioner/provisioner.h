@@ -507,6 +507,8 @@ void apply_intercept_encryption_settings(prov_intercept_conf_t *conf,
 void update_inherited_encryption_settings(provision_state_t *state,
         liagency_t *agency);
 int enable_epoll_write(provision_state_t *state, prov_epoll_ev_t *pev);
+void update_intercept_timeformats(provision_state_t *state,
+        const char *agencyid, openli_timestamp_encoding_fmt_t newfmt);
 
 /* Implemented in hup_reload.c */
 int reload_provisioner_config(provision_state_t *state);

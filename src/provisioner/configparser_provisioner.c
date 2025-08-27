@@ -425,6 +425,7 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         newag->keepalivewait = 0;
         newag->handover_retry = DEFAULT_AGENCY_HANDOVER_RETRY;
         newag->resend_window_kbs = DEFAULT_AGENCY_RESEND_WINDOW;
+        newag->time_fmt = DEFAULT_AGENCY_TIMESTAMP_FORMAT;
         newag->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
         newag->digest_sign_method = DEFAULT_DIGEST_HASH_METHOD;
         newag->digest_hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
@@ -531,6 +532,20 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
                 }
                 newag->resend_window_kbs = window;
             }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "timestampformat") == 0) {
+                if (strcasecmp((char *)value->data.scalar.value,
+                        "generalized") == 0) {
+                    newag->time_fmt = OPENLI_ENCODED_TIMESTAMP_GENERALIZED;
+                } else if (strcasecmp((char *)value->data.scalar.value,
+                        "microseconds") == 0) {
+                    newag->time_fmt = OPENLI_ENCODED_TIMESTAMP_MICROSECONDS;
+                }
+            }
+
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcasecmp((char *)key->data.scalar.value,
@@ -737,6 +752,7 @@ static inline void init_intercept_common(intercept_common_t *common,
     common->xids = NULL;
     common->xid_count = 0;
     common->encrypt_inherited = 0;
+    common->time_fmt = DEFAULT_AGENCY_TIMESTAMP_FORMAT;
 
     local = (prov_intercept_data_t *)(common->local);
     local->intercept_type = intercept_type;
@@ -1284,10 +1300,47 @@ static int provisioning_parser(void *arg, yaml_document_t *doc UNUSED,
     return 0;
 }
 
+static void apply_agency_config_to_intercepts(prov_intercept_conf_t *conf) {
+    prov_agency_t *ag;
+    emailintercept_t *em, *emtmp;
+    voipintercept_t *vint, *vinttmp;
+    ipintercept_t *ipint, *ipinttmp;
+
+    HASH_ITER(hh_liid, conf->ipintercepts, ipint, ipinttmp) {
+        HASH_FIND(hh, conf->leas, ipint->common.targetagency,
+                strlen(ipint->common.targetagency), ag);
+        if (!ag) {
+            continue;
+        }
+        ipint->common.time_fmt = ag->ag->time_fmt;
+    }
+
+    HASH_ITER(hh_liid, conf->voipintercepts, vint, vinttmp) {
+        HASH_FIND(hh, conf->leas, vint->common.targetagency,
+                strlen(vint->common.targetagency), ag);
+        if (!ag) {
+            continue;
+        }
+        vint->common.time_fmt = ag->ag->time_fmt;
+    }
+
+    HASH_ITER(hh_liid, conf->emailintercepts, em, emtmp) {
+        HASH_FIND(hh, conf->leas, em->common.targetagency,
+                strlen(em->common.targetagency), ag);
+        if (!ag) {
+            continue;
+        }
+        em->common.time_fmt = ag->ag->time_fmt;
+    }
+
+}
+
 int parse_intercept_config(char *configfile, prov_intercept_conf_t *conf,
         const char *encpassfile) {
     int result = config_yaml_parser(configfile, conf, intercept_parser, 1,
             encpassfile);
+
+    apply_agency_config_to_intercepts(conf);
 
     if (result == 0) {
         conf->was_encrypted = 0;

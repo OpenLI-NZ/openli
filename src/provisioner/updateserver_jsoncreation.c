@@ -58,13 +58,21 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     json_object *digest_sign_timeout;
     json_object *digest_sign_hashlimit;
     json_object *encryptkey, *encryptmethod;
+    json_object *timefmt;
 
     const char *encrypt_str;
+    const char *timefmt_str;
 
     if (lea->ag->encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
         encrypt_str = "aes-192-cbc";
     } else {
         encrypt_str = "none";
+    }
+
+    if (lea->ag->time_fmt == OPENLI_ENCODED_TIMESTAMP_GENERALIZED) {
+        timefmt_str = "generalized";
+    } else {
+        timefmt_str = "microseconds";
     }
 
     jobj = json_object_new_object();
@@ -82,7 +90,7 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     ka_wait = json_object_new_int(lea->ag->keepalivewait);
     ho_retry = json_object_new_int(lea->ag->handover_retry);
     resend_win = json_object_new_int(lea->ag->resend_window_kbs);
-
+    timefmt = json_object_new_string(timefmt_str);
     encryptmethod = json_object_new_string(encrypt_str);
     if (lea->ag->encryptkey) {
         encryptkey = json_object_new_string(lea->ag->encryptkey);
@@ -102,6 +110,7 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     json_object_object_add(jobj, "keepalivewait", ka_wait);
     json_object_object_add(jobj, "connectretrywait", ho_retry);
     json_object_object_add(jobj, "resendwindow", resend_win);
+    json_object_object_add(jobj, "timestampformat", timefmt);
     json_object_object_add(jobj, "payloadencryption", encryptmethod);
     if (encryptkey) {
         json_object_object_add(jobj, "encryptionkey", encryptkey);

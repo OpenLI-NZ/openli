@@ -151,6 +151,12 @@ int update_modified_intercept_common(intercept_common_t *current,
         *updatereq = 1;
     }
 
+    if (update->time_fmt != current->time_fmt) {
+        current->time_fmt = update->time_fmt;
+        *updatereq = 1;
+        encodingchanged = 1;
+    }
+
     if (update->tomediate != current->tomediate) {
         char space[1024];
         intercept_mediation_mode_as_string(update->tomediate, space,
@@ -1465,6 +1471,13 @@ const char *get_access_type_string(internet_access_method_t method) {
     }
 
     return "undefined";
+}
+
+openli_timestamp_encoding_fmt_t map_timestamp_format_string(char *fmtstr) {
+    if (strcasecmp(fmtstr, "generalized") == 0) {
+        return OPENLI_ENCODED_TIMESTAMP_GENERALIZED;
+    }
+    return OPENLI_ENCODED_TIMESTAMP_MICROSECONDS;
 }
 
 payload_encryption_method_t map_encrypt_method_string(char *encstr) {
