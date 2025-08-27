@@ -36,6 +36,16 @@
 
 #define SIP_REDIRECT_GRACE_PERIOD 5
 
+static void remove_smsonly_flag(openli_sip_worker_t *worker, char *callid) {
+    voipcinmap_t *cid;
+
+    HASH_FIND(hh_callid, worker->knowncallids, callid, strlen(callid), cid);
+    if (!cid) {
+        return;
+    }
+    cid->smsonly = 0;
+}
+
 static openli_sip_identity_t *sipid_matches_target(libtrace_list_t *targets,
         openli_sip_identity_t *sipid) {
 
@@ -1183,6 +1193,7 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             }
             goto sipgiveup;
         }
+        remove_smsonly_flag(sipworker, callid);
     } else if (sip_is_register(sipworker->sipparser)) {
         get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
         if (( ret = process_sip_register(sipworker, callid, irimsg, pkts,
