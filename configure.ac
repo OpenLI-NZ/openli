@@ -121,10 +121,10 @@ if test "x$enable_provisioner" != "xno"; then
 fi
 
 if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then
-        AC_CHECK_LIB([wandder], [wandder_decode_integer_value],libwandder_found=1,libwandder_found=0)
+        AC_CHECK_LIB([wandder], [wandder_timeval_to_generalizedts],libwandder_found=1,libwandder_found=0)
 
         if test "$libwandder_found" = 0; then
-                AC_MSG_ERROR(Required library libwandder 2.0.6 or later not found; use LDFLAGS to specify library location)
+                AC_MSG_ERROR(Required library libwandder 2.0.16 or later not found; use LDFLAGS to specify library location)
         fi
 
 
