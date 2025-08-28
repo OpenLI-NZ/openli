@@ -351,18 +351,21 @@ int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
     return (int)totallen;
 }
 
+/* Don't include the time_fmt -- we only need it at the provisioner level to
+ * assign it to intercepts directly.
+ */
 #define LEA_BODY_LEN(lea) \
     (strlen(lea->agencyid) + \
      (lea->agencycc ? strlen(lea->agencycc) + 4 : 0)  + \
      strlen(lea->hi2_ipstr) + strlen(lea->hi2_portstr) + \
 	 strlen(lea->hi3_ipstr) + strlen(lea->hi3_portstr) + \
 	 sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint16_t) + \
-     sizeof(uint32_t) + \
+     sizeof(uint32_t) + sizeof(openli_timestamp_encoding_fmt_t) + \
      (lea->digest_required ? (sizeof(openli_integrity_hash_method_t) + \
         sizeof(openli_integrity_hash_method_t) + \
         (4 * sizeof(uint32_t)) + sizeof(uint8_t) + \
         (7 * 4)) : 0) + \
-	 (9 * 4)) /* each field has 4 bytes for the key, length of field and terminating \0 */
+	 (10 * 4)) /* each field has 4 bytes for the key, length of field and terminating \0 */
 
 #define LEA_WITHDRAW_BODY_LEN(lea) \
     (strlen(lea->agencyid) + (1 * 4))
@@ -425,6 +428,12 @@ int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
     if (push_tlv(nb, OPENLI_PROTO_FIELD_HANDOVER_RETRY,
                 (uint8_t *)(&lea->handover_retry),
                 sizeof(uint16_t)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT,
+                (uint8_t *)(&lea->time_fmt),
+                sizeof(openli_timestamp_encoding_fmt_t)) == -1) {
         return -1;
     }
 
@@ -504,8 +513,9 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
          sizeof(common.toend_time) + sizeof(common.tomediate) + \
          strlen(common.targetagency) + sizeof(common.destid) + \
          sizeof(common.encrypt) + common.delivcc_len + \
+         sizeof(common.time_fmt) + \
          (36 * common.xid_count) + \
-         ((9 + common.xid_count) * 4))
+         ((10 + common.xid_count) * 4))
 
 #define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
         (INTERCEPT_COMMON_LEN(ipint->common) + \
@@ -539,6 +549,12 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_LEAID, (uint8_t *)common->targetagency,
             strlen(common->targetagency)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT,
+            (uint8_t *)&(common->time_fmt),
+            sizeof(common->time_fmt)) == -1) {
         return -1;
     }
 
@@ -1801,6 +1817,7 @@ static inline void init_decoded_intercept_common(intercept_common_t *common) {
     common->seqtrackerid = 0;
     common->xids = NULL;
     common->xid_count = 0;
+    common->time_fmt = DEFAULT_AGENCY_TIMESTAMP_FORMAT;
 
 }
 
@@ -1826,6 +1843,9 @@ static int assign_intercept_common_fields(intercept_common_t *common,
         case OPENLI_PROTO_FIELD_DELIVCC:
             DECODE_STRING_FIELD(common->delivcc, valptr, vallen);
             common->delivcc_len = vallen;
+            break;
+        case OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT:
+            common->time_fmt = *((openli_timestamp_encoding_fmt_t *)valptr);
             break;
         case OPENLI_PROTO_FIELD_INTERCEPT_START_TIME:
             common->tostart_time = *((uint64_t *)valptr);
@@ -2541,6 +2561,7 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
     lea->keepalivewait = 0;
     lea->handover_retry = 1;
     lea->resend_window_kbs = 1;
+    lea->time_fmt = DEFAULT_AGENCY_TIMESTAMP_FORMAT;
     lea->digest_required = 0;
     lea->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
     lea->digest_sign_method = DEFAULT_DIGEST_HASH_METHOD;
@@ -2576,6 +2597,8 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
             lea->keepalivewait = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_HANDOVER_RETRY) {
             lea->handover_retry = *((uint16_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT) {
+            lea->time_fmt = *((openli_timestamp_encoding_fmt_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_WINDOW_SIZE) {
             lea->resend_window_kbs = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_HASH_METHOD) {

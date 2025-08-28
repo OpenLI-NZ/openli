@@ -50,6 +50,11 @@ typedef enum {
 } openli_intercept_types_t;
 
 typedef enum {
+    OPENLI_ENCODED_TIMESTAMP_GENERALIZED,
+    OPENLI_ENCODED_TIMESTAMP_MICROSECONDS
+} openli_timestamp_encoding_fmt_t;
+
+typedef enum {
     INTERNET_ACCESS_TYPE_UNDEFINED = 0,
     INTERNET_ACCESS_TYPE_DIALUP = 1,
     INTERNET_ACCESS_TYPE_XDSL = 2,
@@ -135,6 +140,7 @@ typedef struct intercept_common {
     payload_encryption_method_t encrypt;
     char *encryptkey;
     uint8_t encrypt_inherited;      // only used by provisioner
+    openli_timestamp_encoding_fmt_t time_fmt;
 
     uuid_t *xids;
     size_t xid_count;
@@ -556,6 +562,7 @@ const char *get_radius_ident_string(uint32_t radoptions);
 internet_access_method_t map_access_type_string(char *confstr);
 uint32_t map_radius_ident_string(char *confstr);
 payload_encryption_method_t map_encrypt_method_string(char *encstr);
+openli_timestamp_encoding_fmt_t map_timestamp_format_string(char *fmtstr);
 uint8_t map_email_decompress_option_string(char *decstr);
 openli_mobile_identifier_t map_mobile_ident_string(char *idstr);
 

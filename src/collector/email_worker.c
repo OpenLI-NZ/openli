@@ -735,19 +735,9 @@ static int update_modified_email_intercept(openli_email_worker_t *state,
     }
 
     if (encodingchanged) {
-        expmsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
+        expmsg = create_intercept_details_msg(&(found->common),
+                OPENLI_INTERCEPT_TYPE_EMAIL);
         expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
-        expmsg->data.cept.liid = strdup(found->common.liid);
-        expmsg->data.cept.authcc = strdup(found->common.authcc);
-        expmsg->data.cept.delivcc = strdup(found->common.delivcc);
-        expmsg->data.cept.seqtrackerid = found->common.seqtrackerid;
-        expmsg->data.cept.encryptmethod = found->common.encrypt;
-        if (found->common.encryptkey) {
-            expmsg->data.cept.encryptkey = strdup(found->common.encryptkey);
-        } else {
-            expmsg->data.cept.encryptkey = NULL;
-        }
-
         publish_openli_msg(state->zmq_pubsocks[found->common.seqtrackerid],
                 expmsg);
     }

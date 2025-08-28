@@ -233,9 +233,11 @@ typedef struct encoded_header_template {
     uint8_t seqno_size;
     uint8_t tssec_size;
     uint8_t tsusec_size;
+    uint8_t gents_size;
     uint8_t *seqno_ptr;
     uint8_t *tssec_ptr;
     uint8_t *tsusec_ptr;
+    uint8_t *gents_ptr;
 
 } encoded_header_template_t;
 
@@ -298,9 +300,11 @@ int etsili_create_umtscc_template(wandder_encoder_t *encoder,
         encoded_global_template_t *tplate);
 int etsili_create_header_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        struct timeval *tv, encoded_header_template_t *tplate);
+        struct timeval *tv, encoded_header_template_t *tplate,
+        openli_timestamp_encoding_fmt_t timefmt);
 int etsili_update_header_template(encoded_header_template_t *tplate,
-        int64_t seqno, struct timeval *tv);
+        int64_t seqno, struct timeval *tv,
+        openli_timestamp_encoding_fmt_t timefmt);
 int etsili_create_ipcc_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, uint8_t dir, uint16_t ipclen,
         encoded_global_template_t *tplate);

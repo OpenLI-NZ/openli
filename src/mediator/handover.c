@@ -209,7 +209,8 @@ void trigger_handover_ka_failure(handover_t *ho) {
  *  @return -1 if an error occurs, 0 otherwise
  */
 int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
-        char *operator_id, char *agency_cc) {
+        char *operator_id, char *agency_cc,
+        openli_timestamp_encoding_fmt_t timefmt) {
 
     wandder_encoded_result_t *kamsg;
     wandder_etsipshdr_data_t hdrdata;
@@ -281,7 +282,7 @@ int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
         hdrdata.intpointid_len = 0;
 
         kamsg = encode_etsi_keepalive(ho->ho_state->encoder, &hdrdata,
-                ho->ho_state->lastkaseq + 1);
+                ho->ho_state->lastkaseq + 1, timefmt);
         if (kamsg == NULL) {
             logger(LOG_INFO,
                     "OpenLI Mediator: failed to construct a keep-alive.");

@@ -96,7 +96,8 @@ static inline void encode_hi1_notification_body(wandder_encoder_t *encoder,
 
 wandder_encoded_result_t *encode_etsi_hi1_notification(
         wandder_encoder_t *encoder, hi1_notify_data_t *not_data,
-        char *operatorid, char *shortopid) {
+        char *operatorid, char *shortopid,
+        openli_timestamp_encoding_fmt_t timefmt) {
 
     struct timeval tv;
     wandder_etsipshdr_data_t hdrdata;
@@ -115,7 +116,8 @@ wandder_encoded_result_t *encode_etsi_hi1_notification(
     hdrdata.intpointid_len = 0;
 
     gettimeofday(&tv, NULL);
-    encode_etsili_pshdr(encoder, &hdrdata, 0, (int64_t)not_data->seqno, &tv);
+    encode_etsili_pshdr(encoder, &hdrdata, 0, (int64_t)not_data->seqno, &tv,
+            timefmt);
     encode_hi1_notification_body(encoder, not_data, shortopid);
     return wandder_encode_finish(encoder);
 }

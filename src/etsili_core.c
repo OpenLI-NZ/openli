@@ -718,7 +718,8 @@ void encode_ipmmcc_body(wandder_encoder_t *encoder,
 
 static inline void encode_etsili_pshdr_pc(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, int64_t cin,
-        int64_t seqno, struct timeval *tv) {
+        int64_t seqno, struct timeval *tv,
+        openli_timestamp_encoding_fmt_t timefmt) {
 
     /* hdrdata should be pretty static for each ETSI LI record, so
      * you can populate it once and repeatedly use it.
@@ -753,22 +754,28 @@ static inline void encode_etsili_pshdr_pc(wandder_encoder_t *encoder,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, &(seqno),
             sizeof(int64_t));
 
+    if (timefmt == OPENLI_ENCODED_TIMESTAMP_GENERALIZED) {
+        wandder_encode_next(encoder, WANDDER_TAG_GENERALTIME,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 5, tv,
+                sizeof(struct timeval));
+    }
+
     if (precomputed[OPENLI_PREENCODE_INTPOINTID].valspace) {
         jobarray[0] = &(precomputed[OPENLI_PREENCODE_INTPOINTID]);
-        jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_7]);
-        wandder_encode_next_preencoded(encoder, jobarray, 2);
-    } else {
-        jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_7]);
         wandder_encode_next_preencoded(encoder, jobarray, 1);
     }
 
-    wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &(tv->tv_sec),
-            sizeof(tv->tv_sec));
-    wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(tv->tv_usec),
-            sizeof(tv->tv_usec));
-    END_ENCODED_SEQUENCE(encoder, 1)
+    if (timefmt == OPENLI_ENCODED_TIMESTAMP_MICROSECONDS) {
+        jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_7]);
+        wandder_encode_next_preencoded(encoder, jobarray, 1);
+        wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &(tv->tv_sec),
+                sizeof(tv->tv_sec));
+        wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(tv->tv_usec),
+                sizeof(tv->tv_usec));
+        END_ENCODED_SEQUENCE(encoder, 1)
+    }
 
     jobarray[0] = &(precomputed[OPENLI_PREENCODE_TVCLASS]);
     wandder_encode_next_preencoded(encoder, jobarray, 1);
@@ -1224,7 +1231,8 @@ void etsili_copy_preencoded(wandder_encode_job_t *dest,
 
 int etsili_create_header_template(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, int64_t cin, int64_t seqno,
-        struct timeval *tv, encoded_header_template_t *tplate) {
+        struct timeval *tv, encoded_header_template_t *tplate,
+        openli_timestamp_encoding_fmt_t timefmt) {
 
     wandder_encoded_result_t *encres;
     wandder_decoder_t *dec;
@@ -1244,7 +1252,7 @@ int etsili_create_header_template(wandder_encoder_t *encoder,
     reset_wandder_encoder(encoder);
 
     /* Create an encoded header */
-    encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv);
+    encode_etsili_pshdr_pc(encoder, precomputed, cin, seqno, tv, timefmt);
     encres = wandder_encode_finish(encoder);
 
     if (encres == NULL || encres->len == 0 || encres->encoded == NULL) {
@@ -1308,6 +1316,11 @@ int etsili_create_header_template(wandder_encoder_t *encoder,
             continue;
         }
 
+        if (wandder_get_identifier(dec) == 5) {
+            tplate->gents_ptr = wandder_get_itemptr(dec);
+            tplate->gents_size = wandder_get_itemlen(dec);
+        }
+
         if (wandder_get_identifier(dec) != 7) {
             continue;
         }
@@ -1340,7 +1353,8 @@ int etsili_create_header_template(wandder_encoder_t *encoder,
 }
 
 int etsili_update_header_template(encoded_header_template_t *tplate,
-        int64_t seqno, struct timeval *tv) {
+        int64_t seqno, struct timeval *tv,
+        openli_timestamp_encoding_fmt_t timefmt) {
     int i;
     time_t tvsec = tv->tv_sec;
     time_t tvusec = tv->tv_usec;
@@ -1357,14 +1371,33 @@ int etsili_update_header_template(encoded_header_template_t *tplate,
         seqno = seqno >> 8;
     }
 
-    for (i = tplate->tssec_size - 1; i >= 0; i--) {
-        *(tplate->tssec_ptr + i) = (tvsec & 0xff);
-        tvsec = tvsec >> 8;
+    if (timefmt == OPENLI_ENCODED_TIMESTAMP_MICROSECONDS) {
+        for (i = tplate->tssec_size - 1; i >= 0; i--) {
+            *(tplate->tssec_ptr + i) = (tvsec & 0xff);
+            tvsec = tvsec >> 8;
+        }
+
+        for (i = tplate->tsusec_size - 1; i >= 0; i--) {
+            *(tplate->tsusec_ptr + i) = (tvusec & 0xff);
+            tvusec = tvusec >> 8;
+        }
     }
 
-    for (i = tplate->tsusec_size - 1; i >= 0; i--) {
-        *(tplate->tsusec_ptr + i) = (tvusec & 0xff);
-        tvusec = tvusec >> 8;
+    if (timefmt == OPENLI_ENCODED_TIMESTAMP_GENERALIZED) {
+        char gents_str[1024];
+        int len;
+        if ((len = wandder_timeval_to_generalizedts(tv, gents_str, 1024))
+                <= 0) {
+            logger(LOG_INFO, "OpenLI: failed to convert timestamp to a generalized time");
+            return -1;
+        }
+
+        if (tplate->gents_size != (uint8_t)len) {
+            logger(LOG_INFO, "OpenLI: unexpected length for generalized time %d (expected %u)", len, tplate->gents_size);
+            return -1;
+        }
+
+        memcpy(tplate->gents_ptr, gents_str, tplate->gents_size);
     }
 
     return 0;

@@ -827,4 +827,50 @@ void apply_intercept_encryption_settings(prov_intercept_conf_t *conf,
         common->encryptkey = strdup(found->ag->encryptkey);
     }
 }
+
+void update_intercept_timeformats(provision_state_t *state,
+        const char *agencyid, openli_timestamp_encoding_fmt_t newfmt) {
+
+    emailintercept_t *em, *emtmp;
+    ipintercept_t *ipint, *iptmp;
+    voipintercept_t *vint, *vtmp;
+
+    HASH_ITER(hh_liid, state->interceptconf.emailintercepts, em, emtmp) {
+        if (strcasecmp(em->common.targetagency, agencyid) != 0) {
+            continue;
+        }
+        if (em->common.time_fmt == newfmt) {
+            continue;
+        }
+        em->common.time_fmt = newfmt;
+        modify_existing_intercept_options(state, (void *)em,
+                OPENLI_PROTO_MODIFY_EMAILINTERCEPT);
+    }
+
+    HASH_ITER(hh_liid, state->interceptconf.ipintercepts, ipint, iptmp) {
+        if (strcasecmp(ipint->common.targetagency, agencyid) != 0) {
+            continue;
+        }
+        if (ipint->common.time_fmt == newfmt) {
+            continue;
+        }
+        ipint->common.time_fmt = newfmt;
+        modify_existing_intercept_options(state, (void *)ipint,
+                OPENLI_PROTO_MODIFY_IPINTERCEPT);
+    }
+
+    HASH_ITER(hh_liid, state->interceptconf.voipintercepts, vint, vtmp) {
+        if (strcasecmp(vint->common.targetagency, agencyid) != 0) {
+            continue;
+        }
+        if (vint->common.time_fmt == newfmt) {
+            continue;
+        }
+        vint->common.time_fmt = newfmt;
+        modify_existing_intercept_options(state, (void *)vint,
+                OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
+    }
+
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

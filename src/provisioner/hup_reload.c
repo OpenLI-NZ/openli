@@ -117,6 +117,10 @@ static inline int common_intercept_equal(intercept_common_t *a,
         return 0;
     }
 
+    if (a->time_fmt != b->time_fmt) {
+        return 0;
+    }
+
     return 1;
 }
 

@@ -40,6 +40,7 @@
 #define DEFAULT_DIGEST_HASH_PDULIMIT 1000
 #define DEFAULT_DIGEST_SIGN_HASHLIMIT 15
 #define DEFAULT_DIGEST_HASH_METHOD OPENLI_DIGEST_HASH_ALGO_SHA256
+#define DEFAULT_AGENCY_TIMESTAMP_FORMAT OPENLI_ENCODED_TIMESTAMP_MICROSECONDS
 
 typedef enum {
     OPENLI_DIGEST_HASH_ALGO_SHA1 = 1,
@@ -60,6 +61,7 @@ typedef struct liagency {
     uint32_t keepalivewait;
     uint16_t handover_retry;
     uint32_t resend_window_kbs;
+    openli_timestamp_encoding_fmt_t time_fmt;
 
     openli_integrity_hash_method_t digest_hash_method;
     openli_integrity_hash_method_t digest_sign_method;
@@ -84,6 +86,7 @@ typedef struct liagency {
      a->handover_retry == b->handover_retry && \
      a->resend_window_kbs == b->resend_window_kbs && \
      a->digest_required == b->digest_required && \
+     a->time_fmt == b->time_fmt && \
          ((!a->digest_required) || ( \
              a->digest_hash_timeout == b->digest_hash_timeout && \
              a->digest_hash_pdulimit == b->digest_hash_pdulimit && \

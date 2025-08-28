@@ -50,6 +50,7 @@ struct json_agency {
     struct json_object *integrity;
     struct json_object *encryptmethod;
     struct json_object *encryptkey;
+    struct json_object *timefmt;
 };
 
 struct json_intercept {
@@ -195,6 +196,7 @@ static inline void extract_agency_json_objects(struct json_agency *agjson,
     json_object_object_get_ex(parsed, "keepalivewait", &(agjson->ka_wait));
     json_object_object_get_ex(parsed, "connectretrywait", &(agjson->ho_retry));
     json_object_object_get_ex(parsed, "resendwindow", &(agjson->resend_win));
+    json_object_object_get_ex(parsed, "timestampformat", &(agjson->timefmt));
     json_object_object_get_ex(parsed, "agencycc", &(agjson->agencycc));
     json_object_object_get_ex(parsed, "integrity", &(agjson->integrity));
     json_object_object_get_ex(parsed, "payloadencryption",
@@ -2313,6 +2315,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     const char *idstr;
     const char *verb;
     char *encryptmethodstring = NULL;
+    char *timefmtstring = NULL;
     struct json_object *parsed = NULL;
     struct json_tokener *tknr;
     liagency_t *nag = NULL;
@@ -2356,6 +2359,8 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
             nag->handover_retry, &parseerr, 1, 0xFFFF, false);
     EXTRACT_JSON_INT_PARAM("resendwindow", "agency", agjson.resend_win,
             nag->resend_window_kbs, &parseerr, 0, 1024 * 1024, false);
+    EXTRACT_JSON_STRING_PARAM("timestampformat", "agency",
+            agjson.timefmt, timefmtstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("payloadencryption", "agency",
             agjson.encryptmethod, encryptmethodstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("encryptionkey", "agency",
@@ -2368,6 +2373,11 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (encryptmethodstring) {
         nag->encrypt = map_encrypt_method_string(encryptmethodstring);
         free(encryptmethodstring);
+    }
+
+    if (timefmtstring) {
+        nag->time_fmt = map_timestamp_format_string(timefmtstring);
+        free(timefmtstring);
     }
 
     if (agjson.integrity) {
@@ -2420,6 +2430,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     struct json_agency agjson;
 
     char *encryptmethodstring = NULL;
+    char *timefmtstring = NULL;
     const char *idstr = NULL;
     struct json_object *parsed = NULL;
     struct json_tokener *tknr;
@@ -2427,6 +2438,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     int parseerr = 0;
     liagency_t modified;
     int changed = 0;
+    int medchanged = 0;
     int encryptchanged = 0;
 
     memset(&modified, 0, sizeof(modified));
@@ -2453,6 +2465,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     modified.digest_sign_timeout = 0xffffffff;
     modified.digest_sign_hashlimit = 0xffffffff;
     modified.encrypt = 0xff;
+    modified.time_fmt = 0xff;
 
     extract_agency_json_objects(&agjson, parsed);
     EXTRACT_JSON_STRING_PARAM("hi3address", "agency", agjson.hi3addr,
@@ -2474,6 +2487,8 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
             modified.handover_retry, &parseerr, 1, 60000, false);
     EXTRACT_JSON_INT_PARAM("resendwindow", "agency", agjson.resend_win,
             modified.resend_window_kbs, &parseerr, 0, 1024 * 1024, false);
+    EXTRACT_JSON_STRING_PARAM("timestampformat", "agency",
+            agjson.timefmt, timefmtstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("payloadencryption", "agency",
             agjson.encryptmethod, encryptmethodstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("encryptionkey", "agency",
@@ -2487,6 +2502,13 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         modified.encrypt = map_encrypt_method_string(encryptmethodstring);
         free(encryptmethodstring);
     }
+
+    if (timefmtstring) {
+        modified.time_fmt = map_timestamp_format_string(timefmtstring);
+        printf("%s\n", timefmtstring);
+        free(timefmtstring);
+    }
+
     if (agjson.integrity) {
         if (parse_agency_integrity_options(&modified, agjson.integrity,
                     cinfo) < 0) {
@@ -2513,24 +2535,37 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
             modified.encrypt != found->ag->encrypt) {
         changed = 1;
         encryptchanged = 1;
+        medchanged = 1;
         found->ag->encrypt = modified.encrypt;
+    }
+
+    if (modified.time_fmt != 0xff &&
+            modified.time_fmt != found->ag->time_fmt) {
+        update_intercept_timeformats(state, found->ag->agencyid,
+                modified.time_fmt);
+        found->ag->time_fmt = modified.time_fmt;
+        changed = 1;
+        medchanged = 1;
     }
 
     if (modified.digest_required != 0xff &&
                 modified.digest_required != found->ag->digest_required) {
         changed = 1;
+        medchanged = 1;
         found->ag->digest_required = modified.digest_required;
     }
 
     if (modified.digest_hash_method != 0xff &&
                 modified.digest_hash_method != found->ag->digest_hash_method) {
         changed = 1;
+        medchanged = 1;
         found->ag->digest_hash_method = modified.digest_hash_method;
     }
 
     if (modified.digest_sign_method != 0xff &&
                 modified.digest_sign_method != found->ag->digest_sign_method) {
         changed = 1;
+        medchanged = 1;
         found->ag->digest_sign_method = modified.digest_sign_method;
     }
 
@@ -2538,6 +2573,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
                 modified.digest_hash_timeout !=
                         found->ag->digest_hash_timeout) {
         changed = 1;
+        medchanged = 1;
         found->ag->digest_hash_timeout = modified.digest_hash_timeout;
     }
 
@@ -2545,6 +2581,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
                 modified.digest_hash_pdulimit !=
                         found->ag->digest_hash_pdulimit) {
         changed = 1;
+        medchanged = 1;
         found->ag->digest_hash_pdulimit = modified.digest_hash_pdulimit;
     }
 
@@ -2552,6 +2589,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
                 modified.digest_sign_timeout !=
                         found->ag->digest_sign_timeout) {
         changed = 1;
+        medchanged = 1;
         found->ag->digest_sign_timeout = modified.digest_sign_timeout;
     }
 
@@ -2559,34 +2597,39 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
                 modified.digest_sign_hashlimit !=
                         found->ag->digest_sign_hashlimit) {
         changed = 1;
+        medchanged = 1;
         found->ag->digest_sign_hashlimit = modified.digest_sign_hashlimit;
     }
 
     if (modified.keepalivefreq != 0xffffffff &&
                 modified.keepalivefreq != found->ag->keepalivefreq) {
         changed = 1;
+        medchanged = 1;
         found->ag->keepalivefreq = modified.keepalivefreq;
     }
 
     if (modified.handover_retry != 0xffff &&
                 modified.handover_retry != found->ag->handover_retry) {
         changed = 1;
+        medchanged = 1;
         found->ag->handover_retry = modified.handover_retry;
     }
 
     if (modified.resend_window_kbs != 0xffffffff &&
             modified.resend_window_kbs != found->ag->resend_window_kbs) {
         changed = 1;
+        medchanged = 1;
         found->ag->resend_window_kbs = modified.resend_window_kbs;
     }
 
     if (modified.keepalivewait != 0xffffffff &&
                 modified.keepalivewait != found->ag->keepalivewait) {
         changed = 1;
+        medchanged = 1;
         found->ag->keepalivewait = modified.keepalivewait;
     }
 
-    if (changed) {
+    if (medchanged) {
         announce_lea_to_mediators(state, found);
         logger(LOG_INFO,
                 "OpenLI: modified existing agency '%s' via update socket.",
@@ -2599,7 +2642,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
                 found->ag->agencyid);
         announce_all_updated_liidmappings_to_mediators(state);
     }
-    if (!changed && !encryptchanged) {
+    if (!changed) {
         logger(LOG_INFO,
                 "OpenLI: did not modify existing agency '%s' via update socket, as no agency properties had changed.",
                 found->ag->agencyid);
