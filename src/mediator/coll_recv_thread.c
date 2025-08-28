@@ -598,7 +598,7 @@ static void preencode_etsi_for_known_liid(coll_recv_t *col,
         intdetails.operatorid = "unspecified";
     }
 
-    if (strcmp(intdetails.authcc, "NL") == 0) {
+    if (intdetails.authcc && strcmp(intdetails.authcc, "NL") == 0) {
         snprintf(netelemid, 16, "%u", col->parentconfig->parent_mediatorid);
     } else {
         snprintf(netelemid, 16, "med-%u", col->parentconfig->parent_mediatorid);
