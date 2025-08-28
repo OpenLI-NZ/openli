@@ -75,6 +75,9 @@ agencies:
                                 # to either handover
    resendwindow: 256            # retransmit the last 256KB of data when a
                                 # handover recovers from a disconnection
+   timestampformat: "generalized"   # include the GeneralizedTime timeStamp
+                                    # field in the PS header of all records
+                                    # sent to this agency
 
  - agencyid: "Spooks"           # id must be unique per agency
    agencycountrycode: "NZ"      # 2 letter country code (ISO 3166) matching the
@@ -89,6 +92,9 @@ agencies:
                                 # don't disconnect if no response is received
    connectretrywait: 5          # wait 5 seconds between attempts to connect
                                 # to either handover
+   timestampformat: "microseconds"   # include the microSecondTimeStamp
+                                     # field in the PS header of all records
+                                     # sent to this agency
 
 # List of active IP intercepts.
 # To change intercepts for a running OpenLI process, modify the intercept list
