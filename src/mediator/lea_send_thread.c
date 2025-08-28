@@ -75,6 +75,7 @@ static void init_mediator_agency(mediator_agency_t *agency,
     agency->disabled = 0;
     agency->disabled_msg = 0;
     agency->handover_retry = fromprov->handover_retry;
+    agency->timefmt = fromprov->time_fmt;
     agency->hi2 = create_new_handover(epollfd, fromprov->hi2_ipstr,
             fromprov->hi2_portstr, HANDOVER_HI2, fromprov->keepalivefreq,
             fromprov->keepalivewait, fromprov->resend_window_kbs);
@@ -279,6 +280,7 @@ static void update_agency_handovers(mediator_agency_t *currag,
     set_export_buffer_ack_window(&(currag->hi3->ho_state->buf),
             newag->resend_window_kbs * 1024);
     currag->handover_retry = newag->handover_retry;
+    currag->timefmt = newag->time_fmt;
 }
 
 /** Sends intercept records from a handover's local buffer to the
@@ -538,7 +540,8 @@ static int agency_thread_epoll_event(lea_thread_state_t *state,
             /* we are due to send a keep alive */
             ho = (handover_t *)(mev->state);
             trigger_handover_keepalive(ho, state->mediator_id,
-                    state->operator_id, state->agency.agencycc);
+                    state->operator_id, state->agency.agencycc,
+                    state->agency.timefmt);
             ret = 0;
             break;
         case MED_EPOLL_KA_RESPONSE_TIMER:
@@ -844,7 +847,7 @@ static void publish_hi1_notification(lea_thread_state_t *state,
     /* encode into ETSI format using libwandder */
     encoded_hi1 = encode_etsi_hi1_notification(
             state->agency.hi2->ho_state->encoder, ndata, state->operator_id,
-            state->short_operator_id);
+            state->short_operator_id, state->agency.timefmt);
     if (encoded_hi1 == NULL) {
         logger(LOG_INFO, "OpenLI Mediator: failed to construct HI1 Notification message for %s:%s", ndata->agencyid, ndata->liid);
         goto freehi1;

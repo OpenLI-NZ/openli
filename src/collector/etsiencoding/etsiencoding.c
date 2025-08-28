@@ -71,7 +71,8 @@ static inline uint8_t encode_pspdu_sequence(uint8_t *space, uint8_t space_len,
 
 void encode_etsili_pshdr(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t cin,
-        int64_t seqno, struct timeval *tv) {
+        int64_t seqno, struct timeval *tv,
+        openli_timestamp_encoding_fmt_t timefmt) {
 
     uint32_t tvclass = 1;       // timeOfInterception
 
@@ -120,11 +121,12 @@ void encode_etsili_pshdr(wandder_encoder_t *encoder,
     wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, &(seqno),
             sizeof(int64_t));
-    /*
-    wandder_encode_next(encoder, WANDDER_TAG_GENERALTIME,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 5, tv,
-            sizeof(struct timeval));
-    */
+
+    if (timefmt == OPENLI_ENCODED_TIMESTAMP_GENERALIZED) {
+        wandder_encode_next(encoder, WANDDER_TAG_GENERALTIME,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 5, tv,
+                sizeof(struct timeval));
+    }
 
     if (hdrdata->intpointid) {
         wandder_encode_next(encoder, WANDDER_TAG_PRINTABLE,
@@ -132,14 +134,17 @@ void encode_etsili_pshdr(wandder_encoder_t *encoder,
                 hdrdata->intpointid_len);
     }
 
-    ENC_CSEQUENCE(encoder, 7);
-    wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &(tv->tv_sec),
-            sizeof(tv->tv_sec));
-    wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(tv->tv_usec),
-            sizeof(tv->tv_usec));
-    wandder_encode_endseq(encoder);
+
+    if (timefmt == OPENLI_ENCODED_TIMESTAMP_MICROSECONDS) {
+        ENC_CSEQUENCE(encoder, 7);
+        wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &(tv->tv_sec),
+                sizeof(tv->tv_sec));
+        wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(tv->tv_usec),
+                sizeof(tv->tv_usec));
+        wandder_encode_endseq(encoder);
+    }
 
     wandder_encode_next(encoder, WANDDER_TAG_ENUM,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 8, &tvclass, sizeof(tvclass));

@@ -236,7 +236,7 @@ static wandder_encoded_result_t *generate_integrity_check_signature_pdu(
             job->seqno, ics->agency->config->digest_hash_method,
             INTEGRITY_CHECK_REQUEST_SIGN,
             ics->msgtype, signature, signlen, job->signing_seqnos,
-            job->signing_seqno_array_size);
+            job->signing_seqno_array_size, ics->agency->config->time_fmt);
 
     return ic_pdu;
 }
@@ -261,7 +261,7 @@ static wandder_encoded_result_t *generate_integrity_check_hash_pdu(
             ics->self_seqno_hash,
             ics->agency->config->digest_hash_method, INTEGRITY_CHECK_SEND_HASH,
             ics->msgtype, hashresult, hashlen, ics->hashed_seqnos,
-            ics->seqno_next_index);
+            ics->seqno_next_index, ics->agency->config->time_fmt);
 
     if (ic_pdu != NULL) {
         /* update the signed hash using the contents of the IntegrityCheck

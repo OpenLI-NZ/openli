@@ -756,13 +756,21 @@ static encoded_header_template_t *encode_templated_psheader(
     if (job->origreq->ts.tv_sec == 0) {
         gettimeofday(&(job->origreq->ts), NULL);
     }
-
     seqlen = DERIVE_INTEGER_LENGTH(job->seqno);
-    tvsec_len = DERIVE_INTEGER_LENGTH(job->origreq->ts.tv_sec);
-    tvusec_len = DERIVE_INTEGER_LENGTH(job->origreq->ts.tv_usec);
 
-    key = (job->cept_version << 24) + (seqlen << 16) +
-            (tvsec_len << 8) + tvusec_len;
+    if (job->timefmt == OPENLI_ENCODED_TIMESTAMP_MICROSECONDS) {
+        tvsec_len = DERIVE_INTEGER_LENGTH(job->origreq->ts.tv_sec);
+        tvusec_len = DERIVE_INTEGER_LENGTH(job->origreq->ts.tv_usec);
+
+        key = (job->cept_version << 24) + (seqlen << 16) +
+                (tvsec_len << 8) + tvusec_len;
+    } else if (job->timefmt == OPENLI_ENCODED_TIMESTAMP_GENERALIZED) {
+        // all libwandder generalized timestamps are encoded with the
+        // same length
+        key = (job->cept_version << 24) + (seqlen << 16);
+    } else {
+        return NULL;
+    }
 
     JLI(pval, t_set->headers, key);
     if (*pval == 0) {
@@ -770,7 +778,7 @@ static encoded_header_template_t *encode_templated_psheader(
 
         if (etsili_create_header_template(encoder, job->preencoded,
                 (int64_t)job->cin, (int64_t)job->seqno, &(job->origreq->ts),
-                tplate) < 0) {
+                tplate, job->timefmt) < 0) {
             free(tplate);
             return NULL;
         }
@@ -781,7 +789,7 @@ static encoded_header_template_t *encode_templated_psheader(
         tplate = (encoded_header_template_t *)(*pval);
 
         if (etsili_update_header_template(tplate, (int64_t)job->seqno,
-                &(job->origreq->ts)) < 0) {
+                &(job->origreq->ts), job->timefmt) < 0) {
             return NULL;
         }
     }
@@ -903,7 +911,6 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         } else if (job.origreq->type == OPENLI_EXPORT_RAW_IRI) {
             encode_rawip(&job, &(result[next]), OPENLI_PROTO_RAWIP_IRI);
         } else {
-
             if ((x = encode_etsi(enc, &job, &(result[next]))) <= 0) {
                 /* What do we do in the event of an error? */
                 if (x < 0) {

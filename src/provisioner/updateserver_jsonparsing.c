@@ -2539,13 +2539,13 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         found->ag->encrypt = modified.encrypt;
     }
 
-    printf("%u %u\n", modified.time_fmt, found->ag->time_fmt);
     if (modified.time_fmt != 0xff &&
             modified.time_fmt != found->ag->time_fmt) {
         update_intercept_timeformats(state, found->ag->agencyid,
                 modified.time_fmt);
         found->ag->time_fmt = modified.time_fmt;
         changed = 1;
+        medchanged = 1;
     }
 
     if (modified.digest_required != 0xff &&

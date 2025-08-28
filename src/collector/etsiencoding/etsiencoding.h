@@ -178,22 +178,27 @@ void clear_global_templates(Pvoid_t *saved_templates);
 
 void encode_etsili_pshdr(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t cin,
-        int64_t seqno, struct timeval *tv);
+        int64_t seqno, struct timeval *tv,
+        openli_timestamp_encoding_fmt_t timefmt);
 
 /* defined in tripayload.c */
 wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
-        wandder_etsipshdr_data_t *hdrdata, int64_t seqno);
+        wandder_etsipshdr_data_t *hdrdata, int64_t seqno,
+        openli_timestamp_encoding_fmt_t timefmt);
+
 wandder_encoded_result_t *encode_etsi_integrity_check(
         wandder_encoder_t *encoder, wandder_etsipshdr_data_t *hdrdata,
         int64_t self_seqno, openli_integrity_hash_method_t hashmethod,
         uint32_t datatype, openli_proto_msgtype_t msgtype,
         uint8_t *checkval, unsigned int checkvallen,
-        int64_t *inclseqnos, size_t numseqnos);
+        int64_t *inclseqnos, size_t numseqnos,
+        openli_timestamp_encoding_fmt_t timefmt);
 
 /* defined in hi1notification.c */
 wandder_encoded_result_t *encode_etsi_hi1_notification(
         wandder_encoder_t *encoder, hi1_notify_data_t *not_data,
-        char *operatorid, char *shortopid);
+        char *operatorid, char *shortopid,
+        openli_timestamp_encoding_fmt_t timefmt);
 
 /* defined in encryptcontainer.c */
 int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx, uint8_t *buf, uint16_t buflen,

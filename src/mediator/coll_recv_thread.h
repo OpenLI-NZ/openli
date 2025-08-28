@@ -361,7 +361,7 @@ struct single_coll_receiver {
     col_known_liid_t *known_liids;
 
     /** The set of LEAs that have been announced by the provisioner, and
-     *  their corresponding configuraiton for calculating integrity checks
+     *  their corresponding configuration for calculating integrity checks
      */
     agency_digest_config_t *known_agencies;
 

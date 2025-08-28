@@ -101,6 +101,7 @@ typedef struct mediator_agency {
     int disabled;
     int disabled_msg;
     uint16_t handover_retry;
+    openli_timestamp_encoding_fmt_t timefmt;
     handover_t *hi2;
     handover_t *hi3;
 } mediator_agency_t;
@@ -142,11 +143,13 @@ void trigger_handover_ka_failure(handover_t *ho);
  *  @param ho           The handover that needs to send a keep alive
  *  @param mediator_id  The ID of this mediator (to be included in the KA msg)
  *  @param operator_id  The operator ID string (to be included in the KA msg)
+ *  @param timefmt      The type of timestamp to include in keep alive PSHeader
  *
  *  @return -1 if an error occurs, 0 otherwise
  */
 int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
-        char *operator_id, char *agency_cc);
+        char *operator_id, char *agency_cc,
+        openli_timestamp_encoding_fmt_t timefmt);
 
 /** Disconnects a single mediator handover connection to an LEA.
  *

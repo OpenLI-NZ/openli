@@ -36,7 +36,8 @@ wandder_encoded_result_t *encode_etsi_integrity_check(
         int64_t self_seqno, openli_integrity_hash_method_t hashmethod,
         uint32_t checktype, openli_proto_msgtype_t msgtype,
         uint8_t *checkval, unsigned int checkvallen,
-        int64_t *inclseqnos, size_t numseqnos) {
+        int64_t *inclseqnos, size_t numseqnos,
+        openli_timestamp_encoding_fmt_t timefmt) {
 
 
     struct timeval tv;
@@ -45,7 +46,7 @@ wandder_encoded_result_t *encode_etsi_integrity_check(
     uint32_t hashalgo = 0;
 
     gettimeofday(&tv, NULL);
-    encode_etsili_pshdr(encoder, hdrdata, 0, self_seqno, &tv);
+    encode_etsili_pshdr(encoder, hdrdata, 0, self_seqno, &tv, timefmt);
     ENC_CSEQUENCE(encoder, 2);          // Payload
     ENC_CSEQUENCE(encoder, 2);          // TRIPayload
     ENC_CSEQUENCE(encoder, 0);          // integrityCheck
@@ -90,12 +91,13 @@ wandder_encoded_result_t *encode_etsi_integrity_check(
 }
 
 wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
-        wandder_etsipshdr_data_t *hdrdata, int64_t seqno) {
+        wandder_etsipshdr_data_t *hdrdata, int64_t seqno,
+        openli_timestamp_encoding_fmt_t timefmt) {
 
     struct timeval tv;
 
     gettimeofday(&tv, NULL);
-    encode_etsili_pshdr(encoder, hdrdata, 0, seqno, &tv);
+    encode_etsili_pshdr(encoder, hdrdata, 0, seqno, &tv, timefmt);
     ENC_CSEQUENCE(encoder, 2);          // Payload
     ENC_CSEQUENCE(encoder, 2);          // TRIPayload
     wandder_encode_next(encoder, WANDDER_TAG_NULL,
