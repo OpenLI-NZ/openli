@@ -3,7 +3,7 @@ Section: net
 Priority: optional
 Maintainer: Shane Alcock <salcock@searchlight.nz>
 Build-Depends: debhelper-compat (= 12), dh-autoreconf,
- libtrace4-dev (>= 4.0.28), libyaml-dev, uthash-dev, libwandder2-dev (>=2.0.14),
+ libtrace4-dev (>= 4.0.28), libyaml-dev, uthash-dev, libwandder2-dev (>=2.0.16),
  libjudy-dev, libzmq3-dev, libgoogle-perftools-dev, libosip2-dev (>=5.0.0),
  libssl-dev, librabbitmq-dev, libb64-dev, uuid-dev,
  libmicrohttpd-dev, libjson-c-dev, libsqlcipher-dev, zlib1g-dev
@@ -30,7 +30,7 @@ Package: openli-mediator
 Section: net
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, lsb-base, adduser,
-    rabbitmq-server, procps
+    rabbitmq-server, procps, libwandder2 (>=2.0.16)
 Recommends: strongswan
 Description: Mediation daemon for an OpenLI system
  OpenLI is a software suite that allows network operators to conduct
@@ -47,7 +47,7 @@ Package: openli-collector
 Section: net
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, lsb-base, procps,
- rabbitmq-server, adduser, libwandder2 (>=2.0.13)
+ rabbitmq-server, adduser, libwandder2 (>=2.0.16)
 Description: Collector daemon for an OpenLI system
  OpenLI is a software suite that allows network operators to conduct
  lawful interception of Internet traffic that is compliant with the
