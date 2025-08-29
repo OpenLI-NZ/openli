@@ -587,8 +587,13 @@ static void preencode_etsi_for_known_liid(coll_recv_t *col,
     char netelemid[128];
 
     intdetails.liid = found->liid;
-    intdetails.authcc = found->digest_config->config->agencycc;
-    intdetails.delivcc = found->digest_config->config->agencycc;
+    if (found->digest_config->config->agencycc) {
+        intdetails.authcc = found->digest_config->config->agencycc;
+        intdetails.delivcc = found->digest_config->config->agencycc;
+    } else {
+        intdetails.authcc = "--";
+        intdetails.delivcc = "--";
+    }
     intdetails.intpointid = NULL;
 
     lock_med_collector_config(col->parentconfig);
