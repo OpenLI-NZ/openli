@@ -496,6 +496,7 @@ int register_handover_RMQ_all(handover_t *ho, liid_map_t *liidmap,
 
         if (ho->rmq_consumer == NULL) {
             ho->amqp_log_failure = 0;
+            return 0;
         } else {
             ho->amqp_log_failure = 1;
         }
@@ -518,6 +519,7 @@ int register_handover_RMQ_all(handover_t *ho, liid_map_t *liidmap,
         }
         ho->amqp_log_failure = 1;
         ho->rmq_registered = 1;
+        logger(LOG_INFO, "OpenLI Mediator: successfully registered consumer queues for HI%d for agency %s", ho->handover_type, agencyid);
     }
 
     return 1;

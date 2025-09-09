@@ -804,7 +804,7 @@ static int rmq_write_buffered(forwarding_thread_data_t *fwd) {
                     amqp_empty_table);
 
             if (amqp_get_rpc_reply(fwd->ampq_conn).reply_type != AMQP_RESPONSE_NORMAL ) {
-                logger(LOG_INFO, "OpenLI: Failed to declare producer queue '%s' for forwarder thread %d", dest->rmq_queueid, fwd->forwardid);
+                logger(LOG_INFO, "OpenLI: Failed to declare producer queue '%s' for forwarder thread %d", (char *)(dest->rmq_queueid.bytes), fwd->forwardid);
             }
             dest->rmq_declared = 1;
         }
@@ -816,7 +816,7 @@ static int rmq_write_buffered(forwarding_thread_data_t *fwd) {
                 dest->rmq_queueid,
                 BUF_BATCH_SIZE,
                 &(fwd->ampq_blocked)) < 0 ) {
-            logger(LOG_INFO, "OpenLI: forwarder thread %d encountered an error when publishing to RMQ %s", fwd->forwardid, dest->rmq_queueid);
+            logger(LOG_INFO, "OpenLI: forwarder thread %d encountered an error when publishing to RMQ %s", fwd->forwardid, (char *)(dest->rmq_queueid.bytes));
             return -1;
         }
     }
@@ -888,7 +888,10 @@ static int poll_control_only(forwarding_thread_data_t *fwd) {
 static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
     int topollc, x, i;
     int towait = 10000;
-
+    /* TODO this function is way too long, and has a lot of repetitive
+     * code segments. Break it up and refactor to make it easier to
+     * follow and maintain.
+     */
 
     /* Add the mediator confirmation timer to our poll item list, if
      * required.
