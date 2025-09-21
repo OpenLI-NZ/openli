@@ -2558,9 +2558,9 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
     lea->agencyid = NULL;
     lea->agencycc = NULL;
     lea->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
-    lea->keepalivewait = 0;
-    lea->handover_retry = 1;
-    lea->resend_window_kbs = 1;
+    lea->keepalivewait = DEFAULT_AGENCY_KEEPALIVE_WAIT;
+    lea->handover_retry = DEFAULT_AGENCY_HANDOVER_RETRY;
+    lea->resend_window_kbs = DEFAULT_AGENCY_RESEND_WINDOW;
     lea->time_fmt = DEFAULT_AGENCY_TIMESTAMP_FORMAT;
     lea->digest_required = 0;
     lea->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
