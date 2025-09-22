@@ -733,7 +733,7 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
             continue;
         } else if (newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
             if (!validate_encryption_key_if_needed(&(newcept->common))) {
-                free_single_emailintercept(newcept);
+            	free_single_voipintercept(newcept);
                 continue;
             }
         }
@@ -872,7 +872,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
             continue;
         } else if (newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
             if (!validate_encryption_key_if_needed(&(newcept->common))) {
-                free_single_emailintercept(newcept);
+            	free_single_ipintercept(newcept);
                 continue;
             }
         }
