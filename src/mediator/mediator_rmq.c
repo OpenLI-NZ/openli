@@ -248,6 +248,10 @@ int declare_mediator_liid_RMQ_queue(amqp_connection_state_t state,
     char cc_queuename[1024];
     char iri_queuename[1024];
 
+    if (state == NULL) {
+      return 0;
+    }
+
     /*
     if (update_mediator_rmq_connection_block_status(state, is_blocked) < 0) {
         return -1;

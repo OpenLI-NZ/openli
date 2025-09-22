@@ -764,7 +764,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
                     found->liid, &(col->rmq_blocked));
         if (r < 0) {
             logger(LOG_INFO, "OpenLI Mediator: failed to create internal RMQ queues for LIID %s in collector thread %s", found->liid, col->ipaddr);
-            return -1;
+            return 0;
         }
         if (r > 0) {
             found->declared_int_rmq = 1;
@@ -819,6 +819,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
             if (r < 0) {
                 amqp_destroy_connection(col->amqp_producer_state);
                 col->amqp_producer_state = NULL;
+		r = 0;
             }
         } else {
             increment_col_drop_counter(col);
@@ -838,6 +839,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
             if (r < 0) {
                 amqp_destroy_connection(col->amqp_producer_state);
                 col->amqp_producer_state = NULL;
+		r = 0;
             }
         } else {
             increment_col_drop_counter(col);
@@ -854,7 +856,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
             r = declare_mediator_rawip_RMQ_queue(col->amqp_producer_state,
                     found->liid, &(col->rmq_blocked));
             if (r < 0) {
-                return -1;
+                return 0;
             } else if (r > 0) {
                 found->declared_raw_rmq = 1;
             }
@@ -903,10 +905,19 @@ static int receive_collector(coll_recv_t *col, med_epoll_ev_t *mev) {
     uint64_t internalid;
     int total_recvd = 0;
     openli_proto_msgtype_t msgtype;
+    int r;
+    int force_break = 0;
 
     /* An epoll read event fired for our collector connection, so there
      * should be at least one message for us to read.
+     *
+     * But if our internal RMQ is broken then we should try to avoid reading
+     * it, because we'll just have to throw it away.
      */
+    if (col->amqp_producer_state == NULL) {
+	return 0;
+    }
+
     do {
         /* Read the next available message -- see netcomms.c for the
          * implementation of these methods */
@@ -952,15 +963,22 @@ static int receive_collector(coll_recv_t *col, med_epoll_ev_t *mev) {
             case OPENLI_PROTO_ETSI_CC:
             case OPENLI_PROTO_ETSI_IRI:
                 /* Intercept record -- process it appropriately */
-                if (process_received_data(col, msgbody, msglen, msgtype) < 0) {
+                if ((r = process_received_data(col, msgbody, msglen, msgtype))
+					< 0) {
                     return -1;
                 }
+		if (r == 0 && col->amqp_producer_state == NULL) {
+		    // rabbitmq broke down, don't try to process any more
+		    // data until it comes back
+		    force_break = 1;
+		}
                 break;
             default:
                 /* Unexpected message type, probably OK to just ignore... */
                 break;
         }
-    } while (msgtype != OPENLI_PROTO_NO_MESSAGE && total_recvd < MAX_COLL_RECV);
+    } while (force_break == 0 && msgtype != OPENLI_PROTO_NO_MESSAGE &&
+		    total_recvd < MAX_COLL_RECV);
 
     /* We use a cap of MAX_COLL_RECV bytes per receive method call so that
      * we can periodically go back and check for "halt" messages etc. even
