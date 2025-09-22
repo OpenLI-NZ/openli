@@ -34,9 +34,15 @@
 #include <unistd.h>
 #include <sys/epoll.h>
 #include <math.h>
+#include <string.h>
+#include <ctype.h>
+#include <stdint.h>
 
 #include "configparser_common.h"
 #include "configparser_provisioner.h"
+
+/* From configparser_common.c */
+extern int openli_is_valid_aes192_hex_key(const char *key_str);
 
 uint64_t nextid = 0;
 
@@ -488,7 +494,18 @@ static void parse_intercept_common_fields(intercept_common_t *common,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "encryptionkey") == 0) {
+        /* Store as-is for backward compatibility */
         SET_CONFIG_STRING_OPTION(common->encryptkey, value);
+        /* If the user intended hex (0x...), validate length/charset now */
+        if (common->encryptkey &&
+            common->encryptkey[0] == '0' &&
+            (common->encryptkey[1] == 'x' || common->encryptkey[1] == 'X')) {
+            if (!openli_is_valid_aes192_hex_key(common->encryptkey)) {
+                logger(LOG_INFO,
+                       "OpenLI: encryptionkey looks hex but is invalid. Expect '0x' + 48 hex digits (AES-192).");
+                /* Leave the raw string as-is; we'll reject this intercept later if encryption is requested. */
+            }
+        }
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -516,6 +533,33 @@ static void parse_intercept_common_fields(intercept_common_t *common,
         }
     }
 }
+
+
+/* Validate encryption key semantics for an intercept.
+ * Returns 1 if OK (or not needed), 0 if invalid.
+ */
+static int validate_encryption_key_if_needed(intercept_common_t *c) {
+    if (c->encrypt == OPENLI_PAYLOAD_ENCRYPTION_NONE) return 1;
+    if (c->encryptkey == NULL) return 0; /* handled by existing checks */
+    if (c->encryptkey[0] == '0' && (c->encryptkey[1] == 'x' || c->encryptkey[1] == 'X')) {
+        if (!openli_is_valid_aes192_hex_key(c->encryptkey)) {
+            logger(LOG_INFO,
+                   "OpenLI: intercept '%s' provided an invalid hex encryptionkey; require 0x + 48 hex digits.",
+                   c->liid ? c->liid : "(unknown)");
+            return 0;
+        }
+    } else {
+        /* Legacy string key; warn if length != 24 bytes (AES-192). */
+        size_t rawlen = strlen(c->encryptkey);
+        if (rawlen != 24) {
+            logger(LOG_INFO,
+                   "OpenLI: intercept '%s' uses a legacy string encryptionkey of %zu bytes (AES-192 expects 24).",
+                   c->liid ? c->liid : "(unknown)", rawlen);
+        }
+    }
+    return 1;
+}
+
 
 static inline void init_intercept_common(intercept_common_t *common,
         void *parent, openli_intercept_types_t intercept_type) {
@@ -609,7 +653,13 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
                     newcept->common.liid);
             free_single_emailintercept(newcept);
             continue;
+        } else if (newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+            if (!validate_encryption_key_if_needed(&(newcept->common))) {
+                free_single_emailintercept(newcept);
+                continue;
+            }
         }
+
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
                 newcept->common.delivcc != NULL &&
                 tgtcount > 0 &&
@@ -681,6 +731,11 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
                     newcept->common.liid);
             free_single_voipintercept(newcept);
             continue;
+        } else if (newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+            if (!validate_encryption_key_if_needed(&(newcept->common))) {
+                free_single_emailintercept(newcept);
+                continue;
+            }
         }
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
                 newcept->common.delivcc != NULL &&
@@ -815,6 +870,11 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                     newcept->common.liid);
             free_single_ipintercept(newcept);
             continue;
+        } else if (newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+            if (!validate_encryption_key_if_needed(&(newcept->common))) {
+                free_single_emailintercept(newcept);
+                continue;
+            }
         }
 
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&

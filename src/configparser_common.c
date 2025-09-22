@@ -26,6 +26,8 @@
 
 #include <errno.h>
 #include <ctype.h>
+#include <stdint.h>
+#include <stdbool.h>
 #include <openssl/evp.h>
 #include <openssl/err.h>
 #include <openssl/rand.h>
@@ -163,6 +165,48 @@ size_t read_encryption_password_file(const char *encpassfile, uint8_t *space) {
     fclose(passin);
     return strlen(passptr);
 }
+
+
+/* ===== Helper functions for handling 0x-prefixed AES-192 hex keys =====
+ * Public helpers so other modules (e.g., libwandder_etsili.c) can reuse.
+ *
+ * Returns 1 if key_str looks like "0x" or "0X" + exactly 48 hex digits, else 0.
+ */
+int openli_is_valid_aes192_hex_key(const char *key_str) {
+    if (!key_str) return 0;
+    if (!(key_str[0] == '0' && (key_str[1] == 'x' || key_str[1] == 'X')))
+        return 0;
+    const char *p = key_str + 2;
+    size_t n = 0;
+    while (*p) {
+        unsigned char c = (unsigned char)*p++;
+        if (!isxdigit(c)) return 0;
+        n++;
+    }
+    return (n == 48) ? 1 : 0; /* 48 hex chars => 24 bytes */
+}
+
+/* Decodes "0x" + 48 hex digits into 24 bytes. Returns 0 on success, -1 on error. */
+int openli_hex_to_bytes_24(const char *key_str, uint8_t out[24]) {
+    if (!out || !openli_is_valid_aes192_hex_key(key_str)) return -1;
+    const char *p = key_str + 2;
+    for (size_t i = 0; i < 24; ++i) {
+        int hi, lo;
+        unsigned char c1 = (unsigned char)p[2*i];
+        unsigned char c2 = (unsigned char)p[2*i + 1];
+        if (c1 >= '0' && c1 <= '9') hi = c1 - '0';
+        else if (c1 >= 'a' && c1 <= 'f') hi = 10 + (c1 - 'a');
+        else if (c1 >= 'A' && c1 <= 'F') hi = 10 + (c1 - 'A');
+        else return -1;
+        if (c2 >= '0' && c2 <= '9') lo = c2 - '0';
+        else if (c2 >= 'a' && c2 <= 'f') lo = 10 + (c2 - 'a');
+        else if (c2 >= 'A' && c2 <= 'F') lo = 10 + (c2 - 'A');
+        else return -1;
+        out[i] = (uint8_t)((hi << 4) | lo);
+    }
+    return 0;
+}
+
 
 static int load_encrypted_config_yaml(FILE *in, yaml_parser_t *parser,
         unsigned char *encheader, const char *encpassfile,
