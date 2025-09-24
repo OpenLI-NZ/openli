@@ -190,6 +190,17 @@ void remove_mediator_liid_RMQ_queue(amqp_connection_state_t state,
 void remove_mediator_rawip_RMQ_queue(amqp_connection_state_t state,
         char *liid);
 
+
+/** Consumes all acknowledgements for messages that have been published,
+ *  and updates the saved message state accordingly.
+ *
+ *  @param col              The collector thread that wants to receive acks
+ *
+ *  @return 0 if a published message is NACKed or RMQ fails while this method
+ *            is in progress, 1 if all outstanding messages are acknowledged.
+ */
+int consume_mediator_RMQ_producer_acks(coll_recv_t *col);
+
 /** Publishes an encoded CC onto a mediator RMQ queue.
  *
  *  @param state            The RMQ connection to use to publish the message

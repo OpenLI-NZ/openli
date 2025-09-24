@@ -350,6 +350,50 @@ static void destroy_rmq_colev(coll_recv_t *col) {
     col->incoming_rmq = NULL;
 }
 
+static int save_message(coll_recv_t *col, unsigned char *liid, uint8_t *msgbody,
+        uint16_t msglen, openli_proto_msgtype_t msgtype) {
+
+    saved_received_data_t *sav;
+    size_t *nexttag;
+
+    if (msgtype == OPENLI_PROTO_ETSI_IRI) {
+        if (col->saved_iri_msg_cnt == MAX_SAVED_RECEIVED_DATA) {
+            return -1;
+        }
+        sav = &(col->saved_iri_msgs[col->saved_iri_msg_cnt]);
+        nexttag = &(col->iris_published);
+        col->saved_iri_msg_cnt ++;
+    } else if (msgtype == OPENLI_PROTO_ETSI_CC) {
+        if (col->saved_cc_msg_cnt == MAX_SAVED_RECEIVED_DATA) {
+            return -1;
+        }
+        sav = &(col->saved_cc_msgs[col->saved_cc_msg_cnt]);
+        nexttag = &(col->ccs_published);
+        col->saved_cc_msg_cnt ++;
+    } else {
+        if (col->saved_raw_msg_cnt == MAX_SAVED_RECEIVED_DATA) {
+            return -1;
+        }
+        sav = &(col->saved_raw_msgs[col->saved_raw_msg_cnt]);
+        nexttag = &(col->raw_published);
+        col->saved_raw_msg_cnt ++;
+    }
+
+    /* TODO replace constant calloc/free with "retained" buffers that get
+     * expanded if necessary but otherwise recycled
+     */
+    (*nexttag)++;
+    sav->liid = strdup((const char *)liid);
+    sav->msglen = msglen;
+    sav->msgtype = msgtype;
+    sav->delivtag = *nexttag;
+    sav->msgbody = calloc(sav->msglen, sizeof(uint8_t));
+
+    memcpy(sav->msgbody, msgbody, msglen);
+
+    return 0;
+}
+
 /** Perform the necessary setup to establish a TLS connection with the
  *  OpenLI collector that we are responsible for.
  *
@@ -688,9 +732,7 @@ static void check_agency_digest_config(coll_recv_t *col,
             }
             found->digest_config = NULL;
         } else {
-            if (agdigest != found->digest_config ||
-                    strcmp(agdigest->config->agencycc,
-                            found->digest_config->config->agencycc) != 0) {
+            if (agdigest != found->digest_config) {
                 reencode_needed = 1;
             }
             found->digest_config = agdigest;
@@ -705,22 +747,10 @@ static void check_agency_digest_config(coll_recv_t *col,
     }
 }
 
-/** Processes an intercept record received from a collector and inserts
- *  it into the appropriate mediator-internal LIID queue.
- *
- *  @param col      The state object for this collector receive thread
- *  @param msgbody  A pointer to the start of the received record
- *  @param msglen   The length of the received record, in bytes
- *  @param msgtype  The record type (e.g. CC, IRI, etc).
- *
- *  @return 1 if the record is processed successfully, 0 if an error
- *          occurs.
- */
-static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
-        uint16_t msglen, openli_proto_msgtype_t msgtype) {
+static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
+        uint16_t msglen, openli_proto_msgtype_t msgtype, unsigned char *liidstr,
+        uint16_t liidlen) {
 
-    unsigned char liidstr[1024];
-    uint16_t liidlen;
     col_known_liid_t *found;
     struct timeval tv;
     int r = 0;
@@ -732,14 +762,6 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
     /* The queue that this record must be published to is derived from
      * the LIID for the record and the record type
      */
-    extract_liid_from_exported_msg(msgbody, msglen, liidstr, 65536, &liidlen);
-
-    if (liidlen > 2) {
-        liidlen -= 2;
-    } else {
-        return 0;
-    }
-
     if (col->disabled_log) {
         col->disabled_log = 0;
     }
@@ -780,7 +802,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
             found->digest_config->config->digest_required) {
 
         integrity_res = update_integrity_check_state(&(col->integrity_state),
-                found, msgbody + (liidlen + 2), msglen - (liidlen + 2),
+                found, msgbody, msglen,
                 msgtype, col->epoll_fd, col->etsidecoder, &chain);
     }
 
@@ -792,8 +814,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
     if (encmethod == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
 
         if (encrypt_payload_container_aes_192_cbc(col->evp_ctx,
-                col->etsidecoder, msgbody + (liidlen + 2),
-                msglen - (liidlen + 2), enckey) == NULL) {
+                col->etsidecoder, msgbody, msglen, enckey) == NULL) {
 
             logger(LOG_INFO, "OpenLI Mediator: error while attempting to encrypt ETSI record for LIID %s in collector thread %s", found->liid, col->ipaddr);
             if (enckey) {
@@ -811,15 +832,13 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
     if (msgtype == OPENLI_PROTO_ETSI_CC) {
         if (found->declared_int_rmq) {
             r = publish_cc_on_mediator_liid_RMQ_queue(col->amqp_producer_state,
-                    msgbody + (liidlen + 2), msglen - (liidlen + 2),
+                    msgbody, msglen,
                     found->liid, found->queuenames[1], &(col->rmq_blocked));
-            if (r <= 0) {
-                increment_col_drop_counter(col);
-            }
             if (r < 0) {
                 amqp_destroy_connection(col->amqp_producer_state);
                 col->amqp_producer_state = NULL;
-		r = 0;
+                r = 0;
+
             }
         } else {
             increment_col_drop_counter(col);
@@ -830,16 +849,12 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
     if (msgtype == OPENLI_PROTO_ETSI_IRI) {
         if (found->declared_int_rmq) {
             r = publish_iri_on_mediator_liid_RMQ_queue(
-                    col->amqp_producer_state,
-                    msgbody + (liidlen + 2), msglen - (liidlen + 2),
+                    col->amqp_producer_state, msgbody, msglen,
                     found->liid, found->queuenames[0], &(col->rmq_blocked));
-            if (r <= 0) {
-                increment_col_drop_counter(col);
-            }
             if (r < 0) {
                 amqp_destroy_connection(col->amqp_producer_state);
                 col->amqp_producer_state = NULL;
-		r = 0;
+                r = 0;
             }
         } else {
             increment_col_drop_counter(col);
@@ -866,9 +881,6 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
             r = publish_rawip_on_mediator_liid_RMQ_queue(
                     col->amqp_producer_state, msgbody, msglen, found->liid,
                     found->queuenames[2], &(col->rmq_blocked));
-            if (r <= 0) {
-                increment_col_drop_counter(col);
-            }
             if (r < 0) {
                 amqp_destroy_connection(col->amqp_producer_state);
                 col->amqp_producer_state = NULL;
@@ -888,6 +900,110 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
     }
 
     return r;
+
+}
+
+static int process_saved_messages(coll_recv_t *col,
+        saved_received_data_t *msgs, size_t *msgcnt, size_t *nexttag) {
+    size_t i;
+    int r;
+
+    for (i = 0; i < *msgcnt; i++) {
+        if (msgs[i].msgbody == NULL) {
+            continue;
+        }
+
+        if ((r = _process_received_data(col, msgs[i].msgbody,
+                        msgs[i].msglen, msgs[i].msgtype,
+                        (unsigned char *)msgs[i].liid,
+                        strlen(msgs[i].liid))) < 0) {
+            return -1;
+        }
+        if (r == 0) {
+            // RMQ died again while we were trying to re-send this batch
+            // of messages.
+            // we could try a memmove to shuffle the remaining messages to
+            // the front, but it's probably not necessary
+            return 0;
+        }
+        (*nexttag)++;
+
+        // delivery tags have been reset, so we need to adjust accordingly
+        msgs[i].delivtag = *nexttag;
+    }
+    return 1;
+}
+
+static int process_all_saved_messages(coll_recv_t *col) {
+    int r;
+    if (col->saved_iri_msg_cnt > 0) {
+        if ((r = process_saved_messages(col, col->saved_iri_msgs,
+                &(col->saved_iri_msg_cnt), &(col->iris_published))) <= 0) {
+            return r;
+        }
+    }
+
+    if (col->saved_cc_msg_cnt > 0) {
+        if ((r = process_saved_messages(col, col->saved_cc_msgs,
+                &(col->saved_cc_msg_cnt), &(col->ccs_published))) <= 0) {
+            return r;
+        }
+    }
+
+    if (col->saved_raw_msg_cnt > 0) {
+        if ((r = process_saved_messages(col, col->saved_raw_msgs,
+                &(col->saved_raw_msg_cnt), &(col->raw_published))) <= 0) {
+            return r;
+        }
+    }
+    if (consume_mediator_RMQ_producer_acks(col) == 0) {
+        /* RMQ failed to acknowledge everything we published, have to
+         * reconnect and re-publish
+         */
+        amqp_destroy_connection(col->amqp_producer_state);
+        col->amqp_producer_state = NULL;
+        return 0;
+    }
+    return 1;
+}
+
+/** Processes an intercept record received from a collector and inserts
+ *  it into the appropriate mediator-internal LIID queue.
+ *
+ *  @param col      The state object for this collector receive thread
+ *  @param msgbody  A pointer to the start of the received record
+ *  @param msglen   The length of the received record, in bytes
+ *  @param msgtype  The record type (e.g. CC, IRI, etc).
+ *
+ *  @return 1 if the record is processed successfully, 0 if an error
+ *          occurs.
+ */
+static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
+        uint16_t msglen, openli_proto_msgtype_t msgtype) {
+
+    unsigned char liidstr[1024];
+    uint16_t liidlen;
+
+    extract_liid_from_exported_msg(msgbody, msglen, liidstr, 65536, &liidlen);
+
+    if (liidlen > 2) {
+        liidlen -= 2;
+    } else {
+        return 0;
+    }
+
+    if (msgtype == OPENLI_PROTO_ETSI_CC || msgtype == OPENLI_PROTO_ETSI_IRI) {
+        msgbody += (liidlen + 2);
+        msglen -= (liidlen + 2);
+    }
+
+    if (save_message(col, liidstr, msgbody, msglen, msgtype) < 0) {
+        increment_col_drop_counter(col);
+        return 0;
+    }
+
+    return _process_received_data(col, msgbody, msglen, msgtype,
+            liidstr, liidlen);
 }
 
 /** Reads and processes a message from the collector that this thread
@@ -915,7 +1031,7 @@ static int receive_collector(coll_recv_t *col, med_epoll_ev_t *mev) {
      * it, because we'll just have to throw it away.
      */
     if (col->amqp_producer_state == NULL) {
-	return 0;
+        return 0;
     }
 
     do {
@@ -964,21 +1080,33 @@ static int receive_collector(coll_recv_t *col, med_epoll_ev_t *mev) {
             case OPENLI_PROTO_ETSI_IRI:
                 /* Intercept record -- process it appropriately */
                 if ((r = process_received_data(col, msgbody, msglen, msgtype))
-					< 0) {
+                                        < 0) {
                     return -1;
                 }
-		if (r == 0 && col->amqp_producer_state == NULL) {
-		    // rabbitmq broke down, don't try to process any more
-		    // data until it comes back
-		    force_break = 1;
-		}
+                if (r == 0 && col->amqp_producer_state == NULL) {
+                    // rabbitmq broke down, don't try to process any more
+                    // data until it comes back
+                    force_break = 1;
+                }
                 break;
             default:
                 /* Unexpected message type, probably OK to just ignore... */
                 break;
         }
     } while (force_break == 0 && msgtype != OPENLI_PROTO_NO_MESSAGE &&
-		    total_recvd < MAX_COLL_RECV);
+                    total_recvd < MAX_COLL_RECV &&
+                    col->saved_iri_msg_cnt < MAX_SAVED_RECEIVED_DATA &&
+                    col->saved_cc_msg_cnt < MAX_SAVED_RECEIVED_DATA &&
+                    col->saved_raw_msg_cnt < MAX_SAVED_RECEIVED_DATA);
+
+    if (col->amqp_producer_state &&
+            consume_mediator_RMQ_producer_acks(col) == 0) {
+        /* RMQ failed to acknowledge everything we published, have to
+         * reconnect and re-publish
+         */
+        amqp_destroy_connection(col->amqp_producer_state);
+        col->amqp_producer_state = NULL;
+    }
 
     /* We use a cap of MAX_COLL_RECV bytes per receive method call so that
      * we can periodically go back and check for "halt" messages etc. even
@@ -1076,6 +1204,7 @@ static void cleanup_collector_thread(coll_recv_t *col) {
     col_known_liid_t *known, *tmp;
     agency_digest_config_t *ag, *tmpag;
     integrity_check_state_t *integ, *integtmp;
+    size_t i;
 
     if (col->colev) {
         remove_mediator_fdevent(col->colev);
@@ -1085,6 +1214,32 @@ static void cleanup_collector_thread(coll_recv_t *col) {
     }
     if (col->amqp_producer_state) {
         amqp_destroy_connection(col->amqp_producer_state);
+    }
+    for (i = 0; i < col->saved_cc_msg_cnt; i++) {
+        if (col->saved_cc_msgs[i].msgbody) {
+            free(col->saved_cc_msgs[i].msgbody);
+        }
+        if (col->saved_cc_msgs[i].liid) {
+            free(col->saved_cc_msgs[i].liid);
+        }
+    }
+
+    for (i = 0; i < col->saved_iri_msg_cnt; i++) {
+        if (col->saved_iri_msgs[i].msgbody) {
+            free(col->saved_iri_msgs[i].msgbody);
+        }
+        if (col->saved_iri_msgs[i].liid) {
+            free(col->saved_iri_msgs[i].liid);
+        }
+    }
+
+    for (i = 0; i < col->saved_raw_msg_cnt; i++) {
+        if (col->saved_raw_msgs[i].msgbody) {
+            free(col->saved_raw_msgs[i].msgbody);
+        }
+        if (col->saved_raw_msgs[i].liid) {
+            free(col->saved_raw_msgs[i].liid);
+        }
     }
 
     destroy_rmq_colev(col);
@@ -1152,6 +1307,23 @@ static void cleanup_collector_thread(coll_recv_t *col) {
 
 }
 
+static inline void move_thread_into_error_state(coll_recv_t *col, uint8_t log) {
+
+    if (col->colev) {
+        remove_mediator_fdevent(col->colev);
+        col->colev = NULL;
+    }
+    if (col->rmq_colev) {
+        destroy_rmq_colev(col);
+    }
+    if (log && col->disabled_log == 0) {
+        logger(LOG_INFO, "OpenLI Mediator: collector thread %d for %s is now inactive", col->tid, col->ipaddr);
+    }
+    col->was_dropped = 1;
+    col->disabled_log = 1;
+
+}
+
 /** pthread_create() callback to start a collector receive thread
  *
  *  @param params       The state object for this collector receive thread (as
@@ -1162,7 +1334,7 @@ static void cleanup_collector_thread(coll_recv_t *col) {
 static void *start_collector_thread(void *params) {
 
     coll_recv_t *col = (coll_recv_t *)params;
-    int is_halted = 0, i;
+    int is_halted = 0, i, r;
     col_thread_msg_t msg;
     int epoll_fd = -1, timerexpired, nfds;
     med_epoll_ev_t *timerev, *queuecheck = NULL;
@@ -1273,19 +1445,7 @@ static void *start_collector_thread(void *params) {
                 /* A configuration change means that we need to disconnect
                  * from the collector.
                  */
-                if (col->colev) {
-                    remove_mediator_fdevent(col->colev);
-                    col->colev = NULL;
-                }
-                if (col->rmq_colev) {
-                    destroy_rmq_colev(col);
-                }
-                /* Disable logging until the collector starts working
-                 * properly again to avoid spamming connection failure
-                 * messages if the collector is down for a long time.
-                 */
-                col->was_dropped = 1;
-                col->disabled_log = 1;
+                move_thread_into_error_state(col, 0);
             }
 
             if (msg.type == MED_COLL_MESSAGE_RECONNECT) {
@@ -1355,6 +1515,18 @@ static void *start_collector_thread(void *params) {
         if (col->amqp_producer_state == NULL) {
             if (join_mediator_RMQ_as_producer(col) == NULL) {
                 col->disabled_log = 1;
+                col->iris_published = 0;
+                col->ccs_published = 0;
+                col->raw_published = 0;
+                continue;
+            }
+            r = process_all_saved_messages(col);
+            if (r < 0) {
+                // fatal error
+                move_thread_into_error_state(col, 1);
+                continue;
+            } else if (r == 0) {
+                // RMQ failed while sending the saved messages, retry
                 continue;
             }
         }
@@ -1398,18 +1570,7 @@ static void *start_collector_thread(void *params) {
                 timerexpired = collector_thread_epoll_event(col, &(evs[i]));
                 if (timerexpired == -1) {
                     /* We're in an error state -- disable this thread for now */
-                    if (col->colev) {
-                        remove_mediator_fdevent(col->colev);
-                        col->colev = NULL;
-                    }
-                    if (col->rmq_colev) {
-                        destroy_rmq_colev(col);
-                    }
-                    if (col->disabled_log == 0) {
-                        logger(LOG_INFO, "OpenLI Mediator: collector thread %d for %s is now inactive", col->tid, col->ipaddr);
-                    }
-                    col->was_dropped = 1;
-                    col->disabled_log = 1;
+                    move_thread_into_error_state(col, 1);
                     break;
                 }
             }
@@ -1471,6 +1632,16 @@ static void init_new_colrecv_thread(mediator_collector_t *medcol,
     }
     newcol->tail = newcol;
 
+
+    memset(newcol->saved_raw_msgs, 0, sizeof(saved_received_data_t) *
+                    MAX_SAVED_RECEIVED_DATA);
+    newcol->saved_raw_msg_cnt = 0;
+    memset(newcol->saved_iri_msgs, 0, sizeof(saved_received_data_t) *
+                    MAX_SAVED_RECEIVED_DATA);
+    newcol->saved_iri_msg_cnt = 0;
+    memset(newcol->saved_cc_msgs, 0, sizeof(saved_received_data_t) *
+                    MAX_SAVED_RECEIVED_DATA);
+    newcol->saved_cc_msg_cnt = 0;
 
     libtrace_message_queue_init(&(newcol->in_main),
             sizeof(col_thread_msg_t));

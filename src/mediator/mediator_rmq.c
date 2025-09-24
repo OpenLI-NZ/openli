@@ -25,6 +25,7 @@
  */
 
 #include "mediator_rmq.h"
+#include <assert.h>
 #include <unistd.h>
 #include "logger.h"
 #include "coll_recv_thread.h"
@@ -600,6 +601,13 @@ amqp_connection_state_t join_mediator_RMQ_as_producer(coll_recv_t *col) {
         goto prodfailed;
     }
 
+    if ( ! amqp_confirm_select(col->amqp_producer_state, 2)) {
+        if (col->disabled_log == 0) {
+            logger(LOG_ERR, "OpenLI Mediator: failed to configure RMQ channel 2 in collector thread for %s", col->ipaddr);
+        }
+        goto prodfailed;
+    }
+
     amqp_channel_open(col->amqp_producer_state, 3);
     if ((amqp_get_rpc_reply(col->amqp_producer_state).reply_type) !=
             AMQP_RESPONSE_NORMAL) {
@@ -609,11 +617,26 @@ amqp_connection_state_t join_mediator_RMQ_as_producer(coll_recv_t *col) {
         goto prodfailed;
     }
 
+    if ( ! amqp_confirm_select(col->amqp_producer_state, 3)) {
+        if (col->disabled_log == 0) {
+            logger(LOG_ERR, "OpenLI Mediator: failed to configure RMQ channel 3 in collector thread for %s", col->ipaddr);
+        }
+        goto prodfailed;
+    }
+
+
     amqp_channel_open(col->amqp_producer_state, 4);
     if ((amqp_get_rpc_reply(col->amqp_producer_state).reply_type) !=
             AMQP_RESPONSE_NORMAL) {
         if (col->disabled_log == 0) {
             logger(LOG_ERR, "OpenLI Mediator: failed to open RMQ channel 4 in collector thread for %s", col->ipaddr);
+        }
+        goto prodfailed;
+    }
+
+    if ( ! amqp_confirm_select(col->amqp_producer_state, 4)) {
+        if (col->disabled_log == 0) {
+            logger(LOG_ERR, "OpenLI Mediator: failed to configure RMQ channel 4 in collector thread for %s", col->ipaddr);
         }
         goto prodfailed;
     }
@@ -965,6 +988,118 @@ static int consume_other_frame(amqp_connection_state_t state) {
 
     return -1;
 }
+
+int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
+
+    size_t i;
+    int r;
+    amqp_frame_t frame;
+    saved_received_data_t *sav;
+
+    int cc_await = 0, iri_await = 0, raw_await = 0;
+    int iri_start = -1, cc_start = -1, raw_start = -1;
+
+    for (i = 0; i < col->saved_iri_msg_cnt; i++) {
+        if (col->saved_iri_msgs[i].msglen > 0) {
+            iri_await ++;
+            if (iri_start < 0) {
+                iri_start = i;
+            }
+        }
+    }
+
+    for (i = 0; i < col->saved_cc_msg_cnt; i++) {
+        if (col->saved_cc_msgs[i].msglen > 0) {
+            cc_await ++;
+            if (cc_start < 0) {
+                cc_start = i;
+            }
+        }
+    }
+
+    for (i = 0; i < col->saved_raw_msg_cnt; i++) {
+        if (col->saved_raw_msgs[i].msglen > 0) {
+            raw_await ++;
+            if (raw_start < 0) {
+                raw_start = i;
+            }
+        }
+    }
+
+    while (cc_await > 0 || iri_await > 0 || raw_await > 0) {
+        /* keep consuming until we get an ACK or a NACK -- everything else
+         * can just be ignored (note that this will block until we get what
+         * we are looking for, or the connection fails).
+         */
+        r = amqp_simple_wait_frame(col->amqp_producer_state, &frame);
+
+        if (r < 0) {
+            /* broker failure, must retry */
+            return 0;
+        }
+
+        if (frame.frame_type == AMQP_FRAME_METHOD) {
+            amqp_basic_ack_t *ack;
+
+            switch(frame.payload.method.id) {
+                case AMQP_BASIC_ACK_METHOD:
+                    ack = (amqp_basic_ack_t *)frame.payload.method.decoded;
+                    int *start, *await;
+
+                    if (frame.channel == 2) {
+                        sav = col->saved_iri_msgs;
+                        start = &(iri_start);
+                        await = &(iri_await);
+                    } else if (frame.channel == 3) {
+                        sav = col->saved_cc_msgs;
+                        start = &(cc_start);
+                        await = &(cc_await);
+
+                    } else if (frame.channel == 4) {
+                        sav = col->saved_raw_msgs;
+                        start = &(raw_start);
+                        await = &(raw_await);
+
+                    } else {
+                        break;
+                    }
+
+                    while (*start < MAX_SAVED_RECEIVED_DATA && *await > 0) {
+                        saved_received_data_t *next = &(sav[*start]);
+
+                        if (next->delivtag > ack->delivery_tag) {
+                            break;
+                        }
+                        if (next->msgbody) {
+                            free(next->msgbody);
+                            next->msgbody = NULL;
+                        }
+                        if (next->liid) {
+                            free(next->liid);
+                            next->liid = NULL;
+                        }
+                        next->msglen = 0;
+                        next->delivtag = 0;
+                        (*start)++;
+                        (*await)--;
+                    }
+
+                    break;
+
+                case AMQP_BASIC_NACK_METHOD:
+                    return 0;
+            }
+        }
+    }
+
+    /* all messages were acknowledged */
+    col->saved_iri_msg_cnt = 0;
+    col->saved_raw_msg_cnt = 0;
+    col->saved_cc_msg_cnt = 0;
+    return 1;
+
+}
+
 
 #define MAX_CONSUMER_REJECTIONS 10
 

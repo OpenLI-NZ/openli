@@ -50,6 +50,7 @@
  *
  */
 
+#define MAX_SAVED_RECEIVED_DATA 32
 
 /** Types of messages that can be sent between the main mediator thread and a
  *  collector receive thread.
@@ -197,6 +198,15 @@ struct agency_digest_config {
 
     UT_hash_handle hh;
 };
+
+
+typedef struct saved_received_data {
+    char *liid;
+    uint8_t *msgbody;
+    uint16_t msglen;
+    uint64_t delivtag;
+    openli_proto_msgtype_t msgtype;
+} saved_received_data_t;
 
 typedef struct integrity_check_state integrity_check_state_t;
 
@@ -393,6 +403,18 @@ struct single_coll_receiver {
      *  to the internal RMQ
      */
     uint64_t dropped_recs;
+
+    saved_received_data_t saved_iri_msgs[MAX_SAVED_RECEIVED_DATA];
+    size_t saved_iri_msg_cnt;
+    size_t iris_published;
+
+    saved_received_data_t saved_cc_msgs[MAX_SAVED_RECEIVED_DATA];
+    size_t saved_cc_msg_cnt;
+    size_t ccs_published;
+
+    saved_received_data_t saved_raw_msgs[MAX_SAVED_RECEIVED_DATA];
+    size_t saved_raw_msg_cnt;
+    size_t raw_published;
 
     /** Pointer to the next receive thread for this collector, i.e. in
      *  cases where the collector has multiple forwarding threads */
