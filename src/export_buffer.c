@@ -497,6 +497,7 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
     uint64_t sent = 0;
     uint8_t *bhead = buf->bufhead + buf->writeoffset;
     int ret, x;
+    amqp_frame_t frame;
 
     sent = (buf->buftail - (bhead));
 
@@ -543,6 +544,23 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
             buf->writeoffset += ((uint32_t)ret);
             if (buf->writeoffset > buf->deadwindow) {
                 buf->deadfront = buf->writeoffset - buf->deadwindow;
+            }
+        }
+    }
+
+    while (1) {
+        ret = amqp_simple_wait_frame(amqp_state, &frame);
+        if (ret < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: error while waiting for RMQ acknowledgement");
+            return -1;
+        }
+        if (frame.frame_type == AMQP_FRAME_METHOD) {
+            if (frame.payload.method.id == AMQP_BASIC_ACK_METHOD) {
+                break;
+            }
+            if (frame.payload.method.id == AMQP_BASIC_NACK_METHOD) {
+                return 0;
             }
         }
     }

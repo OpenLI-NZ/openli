@@ -977,6 +977,20 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
                 sleep(1);
                 return poll_control_only(fwd);
             }
+
+            if ( !amqp_confirm_select(fwd->ampq_conn, 1)) {
+                if (fwd->logged_rmq_connect_failure != 5) {
+                    logger(LOG_ERR,
+                            "OpenLI: forwarding thread %d encountered an error while enabling confirms for the RabbitMQ instance", fwd->forwardid);
+                    fwd->logged_rmq_connect_failure = 5;
+                }
+                amqp_destroy_connection(fwd->ampq_conn);
+                fwd->ampq_conn = NULL;
+                fwd->ampq_sock = NULL;
+                sleep(1);
+                return poll_control_only(fwd);
+            }
+
             logger(LOG_INFO, "OpenLI: forwarding thread %d has connected to RabbitMQ instance", fwd->forwardid);
 
             if (check_rmq_connection_block_status(fwd->ampq_conn,
