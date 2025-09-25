@@ -37,6 +37,7 @@
 
 #define OPENLI_VENDOR_MIRROR_NONE (0xffffffff)
 #define OPENLI_MAX_ENCRYPTKEY_LEN 32  // room for AES-256 later
+#define OPENLI_AES192_KEY_LEN 24
 
 #define INTERCEPT_IS_ACTIVE(cept, now) \
     (cept->common.tostart_time <= now.tv_sec && ( \
@@ -135,6 +136,7 @@ typedef struct intercept_common {
     intercept_outputs_t tomediate;
     payload_encryption_method_t encrypt;
     uint8_t encryptkey[OPENLI_MAX_ENCRYPTKEY_LEN];
+    size_t encryptkey_len;   /* set to 24 when valid */
 
     uuid_t *xids;
     size_t xid_count;

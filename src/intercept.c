@@ -24,6 +24,7 @@
  *
  */
 
+#include <assert.h>
 #include "util.h"
 #include "logger.h"
 #include "intercept.h"
@@ -54,11 +55,13 @@ static inline void copy_intercept_common(intercept_common_t *src,
     dest->tomediate = src->tomediate;
     dest->encrypt = src->encrypt;
 
-    if (src->encryptkey) {
-        dest->encryptkey = strdup(src->encryptkey);
-    } else {
-        dest->encryptkey = NULL;
+    dest->encryptkey_len = src->encryptkey_len;   /* typically 24 */
+    memcpy(dest->encryptkey, src->encryptkey, dest->encryptkey_len);
+    if (dest->encryptkey_len < OPENLI_MAX_ENCRYPTKEY_LEN) {
+        memset(dest->encryptkey + dest->encryptkey_len, 0,
+               OPENLI_MAX_ENCRYPTKEY_LEN - dest->encryptkey_len);
     }
+
 
     dest->xids = calloc(src->xid_count, sizeof(uuid_t));
     dest->xid_count = src->xid_count;
@@ -101,7 +104,7 @@ int update_modified_intercept_common(intercept_common_t *current,
         int *updatereq) {
 
     char *tmp;
-    int encodingchanged = 0, keychanged = 0;
+    int encodingchanged = 0;
 
     *updatereq = 0;
 
@@ -144,15 +147,6 @@ int update_modified_intercept_common(intercept_common_t *current,
         encodingchanged = 1;
     }
 
-    if (current->encryptkey && update->encryptkey) {
-        if (strcmp(current->encryptkey, update->encryptkey) != 0) {
-            keychanged = 1;
-        }
-    } else if (current->encryptkey == NULL && update->encryptkey) {
-        keychanged = 1;
-    } else if (current->encryptkey && update->encryptkey == NULL) {
-        keychanged = 1;
-    }
 
     if (strcmp(update->targetagency, current->targetagency) != 0) {
         tmp = update->targetagency;
@@ -161,13 +155,24 @@ int update_modified_intercept_common(intercept_common_t *current,
         *updatereq = 1;
     }
 
-    if (keychanged) {
+    /* Update encryption key in-place when changed */
+    assert(update->encryptkey_len <= OPENLI_MAX_ENCRYPTKEY_LEN);
+    if (current->encryptkey_len != update->encryptkey_len ||
+        memcmp(current->encryptkey,
+               update->encryptkey,
+               update->encryptkey_len) != 0) {
+
+        size_t n = update->encryptkey_len;          // 24 for AES-192 today
+        memcpy(current->encryptkey, update->encryptkey, n);
+        if (n < OPENLI_MAX_ENCRYPTKEY_LEN) {
+            memset(current->encryptkey + n, 0, OPENLI_MAX_ENCRYPTKEY_LEN - n);
+        }
+        current->encryptkey_len = n;
+
         encodingchanged = 1;
-        tmp = current->encryptkey;
-        current->encryptkey = update->encryptkey;
-        update->encryptkey = tmp;
         *updatereq = 1;
     }
+
 
     if (strcmp(update->delivcc, current->delivcc) != 0 ||
             strcmp(update->authcc, current->authcc) != 0) {
@@ -374,9 +379,14 @@ static inline void free_intercept_common(intercept_common_t *cept) {
         free(cept->targetagency);
     }
 
-    if (cept->encryptkey) {
-        free(cept->encryptkey);
-    }
+    // zero the encryption key
+#if defined(__GLIBC__) && defined(_GNU_SOURCE)
+    explicit_bzero(cept->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN);
+#else
+	volatile uint8_t *p = cept->encryptkey;
+	for (size_t i = 0; i < OPENLI_MAX_ENCRYPTKEY_LEN; ++i) p[i] = 0;
+#endif
+	cept->encryptkey_len = 0;
 
     if (cept->xids) {
         free(cept->xids);

@@ -214,8 +214,8 @@ static encoded_encrypt_template_t *lookup_encrypted_template(
 }
 
 static int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx,
-        uint8_t *buf, uint16_t buflen, uint8_t *dest,
-        uint16_t destlen, uint32_t seqno, char *encryptkey) {
+    uint8_t *buf, uint16_t buflen, uint8_t *dest,
+    uint16_t destlen, uint32_t seqno, const uint8_t *encryptkey) {
 
     uint8_t IV_128[16];
     uint8_t key[24];
@@ -232,7 +232,6 @@ static int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx,
     }
 
     /* The key is 24 bytes for AES-192.  */
-    /* memset(key, 0, 24); */
     memcpy(key, encryptkey, 24);
 
 
@@ -263,6 +262,13 @@ static int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx,
             return -1;
     }
 
+    /* Cleanse local key copy */
+#if defined(__GLIBC__) && defined(_GNU_SOURCE)
+    explicit_bzero(key, sizeof(key));
+#else
+    volatile uint8_t *p = key;
+    for (size_t i = 0; i < sizeof(key); ++i) p[i] = 0;
+#endif
     return 0;
 
 }
@@ -406,6 +412,8 @@ int create_encrypted_message_body(wandder_encoder_t *encoder,
     if (job->encryptmethod == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
         if (encrypt_aes_192_cbc(encrypt->evp_ctx, buf, enclen, encrypted,
                 enclen, job->seqno, job->encryptkey) < 0) {
+        	free(buf);
+        	free(encrypted);
             return -1;
         }
     } else {

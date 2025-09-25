@@ -41,8 +41,6 @@
 #include "configparser_common.h"
 #include "configparser_provisioner.h"
 
-/* From configparser_common.c */
-extern int openli_is_valid_aes192_hex_key(const char *key_str);
 
 uint64_t nextid = 0;
 
@@ -241,6 +239,7 @@ static int parse_and_set_encryption_key(intercept_common_t *c, const char *yaml_
             logger(LOG_ERR, "OpenLI: encryptionkey must be 0x + 48 hex digits for AES-192.");
             return -1;
         }
+        c->encryptkey_len = OPENLI_AES192_KEY_LEN;
         return 0;
     }
 
@@ -256,6 +255,7 @@ static int parse_and_set_encryption_key(intercept_common_t *c, const char *yaml_
             }
         }
         memcpy(c->encryptkey, yaml_value, 24);
+        c->encryptkey_len = OPENLI_AES192_KEY_LEN;
         return 0;
     }
 
@@ -530,9 +530,7 @@ static void parse_intercept_common_fields(intercept_common_t *common,
 			strcasecmp((char *)key->data.scalar.value, "encryptionkey") == 0) {
 
 		const char *k = (const char *)value->data.scalar.value;
-		if (parse_and_set_encryption_key(common, k) != 0) {
-			// leave encryptkey_set=false; post-parse will skip if encryption enabled
-		}
+		parse_and_set_encryption_key(common, k);
 	}
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -562,32 +560,6 @@ static void parse_intercept_common_fields(intercept_common_t *common,
 }
 
 
-/* Validate encryption key semantics for an intercept.
- * Returns 1 if OK (or not needed), 0 if invalid.
- */
-static int validate_encryption_key_if_needed(intercept_common_t *c) {
-    if (c->encrypt == OPENLI_PAYLOAD_ENCRYPTION_NONE) return 1;
-    if (c->encryptkey == NULL) return 0; /* handled by existing checks */
-    if (c->encryptkey[0] == '0' && (c->encryptkey[1] == 'x' || c->encryptkey[1] == 'X')) {
-        if (!openli_is_valid_aes192_hex_key(c->encryptkey)) {
-            logger(LOG_INFO,
-                   "OpenLI: intercept '%s' provided an invalid hex encryptionkey; require 0x + 48 hex digits.",
-                   c->liid ? c->liid : "(unknown)");
-            return 0;
-        }
-    } else {
-        /* Legacy string key; warn if length != 24 bytes (AES-192). */
-        size_t rawlen = strlen(c->encryptkey);
-        if (rawlen != 24) {
-            logger(LOG_INFO,
-                   "OpenLI: intercept '%s' uses a legacy string encryptionkey of %zu bytes (AES-192 expects 24).",
-                   c->liid ? c->liid : "(unknown)", rawlen);
-        }
-    }
-    return 1;
-}
-
-
 static inline void init_intercept_common(intercept_common_t *common,
         void *parent, openli_intercept_types_t intercept_type) {
     prov_intercept_data_t *local;
@@ -600,13 +572,14 @@ static inline void init_intercept_common(intercept_common_t *common,
     common->delivcc_len = 0;
     common->destid = 0;
     common->targetagency = NULL;
-    common->encryptkey = NULL;
     common->tostart_time = 0;
     common->toend_time = 0;
     common->tomediate = OPENLI_INTERCEPT_OUTPUTS_ALL;
-    common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
     common->hi1_seqno = 0;
     common->local = calloc(1, sizeof(prov_intercept_data_t));
+    common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
+    memset(common->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
+    common->encryptkey_len = 0;
 
     common->xids = NULL;
     common->xid_count = 0;
@@ -671,8 +644,8 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
         }
 
         tgtcount = HASH_CNT(hh, newcept->targets);
-        if (!newcept->common.encryptkey &&
-                newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+		if (newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+        	    newcept->common.encryptkey_len != OPENLI_AES192_KEY_LEN) {
             if (!newcept->common.liid) {
                 newcept->common.liid = strdup("unidentified intercept");
             }
@@ -744,8 +717,8 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
 
         }
 
-        if (!newcept->common.encryptkey &&
-                newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+		if (newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+        	    newcept->common.encryptkey_len != OPENLI_AES192_KEY_LEN) {
             if (!newcept->common.liid) {
                 newcept->common.liid = strdup("unidentified intercept");
             }
@@ -879,8 +852,8 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         }
 
 
-        if (!newcept->common.encryptkey &&
-                newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+		if (newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+        	    newcept->common.encryptkey_len != OPENLI_AES192_KEY_LEN) {
             if (!newcept->common.liid) {
                 newcept->common.liid = strdup("unidentified intercept");
             }
