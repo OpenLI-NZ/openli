@@ -36,6 +36,7 @@
 #include <uuid/uuid.h>
 
 #define OPENLI_VENDOR_MIRROR_NONE (0xffffffff)
+#define OPENLI_MAX_ENCRYPTKEY_LEN 32  // room for AES-256 later
 
 #define INTERCEPT_IS_ACTIVE(cept, now) \
     (cept->common.tostart_time <= now.tv_sec && ( \
@@ -133,7 +134,7 @@ typedef struct intercept_common {
     time_t toend_time;
     intercept_outputs_t tomediate;
     payload_encryption_method_t encrypt;
-    char *encryptkey;
+    uint8_t encryptkey[OPENLI_MAX_ENCRYPTKEY_LEN];
 
     uuid_t *xids;
     size_t xid_count;

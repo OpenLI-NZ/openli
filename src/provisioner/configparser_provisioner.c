@@ -231,6 +231,40 @@ static int parse_defradusers_list(prov_intercept_conf_t *state,
     return 0;
 }
 
+
+static int parse_and_set_encryption_key(intercept_common_t *c, const char *yaml_value) {
+    if (!c || !yaml_value) return -1;
+
+    // Case 1: 0x + 48 hex digits
+    if (yaml_value[0] == '0' && (yaml_value[1] == 'x' || yaml_value[1] == 'X')) {
+        if (openli_hex_to_bytes_24(yaml_value, c->encryptkey) != 0) {
+            logger(LOG_ERR, "OpenLI: encryptionkey must be 0x + 48 hex digits for AES-192.");
+            return -1;
+        }
+        return 0;
+    }
+
+    // Case 2: ASCII string of exactly 24 bytes
+    size_t n = strlen(yaml_value);
+    if (n == 24) {
+        // Optional: enforce printable ASCII only
+        for (size_t i = 0; i < n; ++i) {
+            unsigned char ch = (unsigned char)yaml_value[i];
+            if (ch < 0x20 || ch > 0x7E) {
+                logger(LOG_ERR, "OpenLI: encryptionkey ASCII must be 24 printable characters.");
+                return -1;
+            }
+        }
+        memcpy(c->encryptkey, yaml_value, 24);
+        return 0;
+    }
+
+    logger(LOG_ERR, "OpenLI: encryptionkey must be 0x + 48 hex digits or a 24-byte ASCII string.");
+    return -1;
+}
+
+
+
 static int add_intercept_static_ips(static_ipranges_t **statics,
         yaml_document_t *doc, yaml_node_t *ipseq) {
 
@@ -491,22 +525,15 @@ static void parse_intercept_common_fields(intercept_common_t *common,
         }
     }
 
-    if (key->type == YAML_SCALAR_NODE &&
-            value->type == YAML_SCALAR_NODE &&
-            strcasecmp((char *)key->data.scalar.value, "encryptionkey") == 0) {
-        /* Store as-is for backward compatibility */
-        SET_CONFIG_STRING_OPTION(common->encryptkey, value);
-        /* If the user intended hex (0x...), validate length/charset now */
-        if (common->encryptkey &&
-            common->encryptkey[0] == '0' &&
-            (common->encryptkey[1] == 'x' || common->encryptkey[1] == 'X')) {
-            if (!openli_is_valid_aes192_hex_key(common->encryptkey)) {
-                logger(LOG_INFO,
-                       "OpenLI: encryptionkey looks hex but is invalid. Expect '0x' + 48 hex digits (AES-192).");
-                /* Leave the raw string as-is; we'll reject this intercept later if encryption is requested. */
-            }
-        }
-    }
+	if (key->type == YAML_SCALAR_NODE &&
+			value->type == YAML_SCALAR_NODE &&
+			strcasecmp((char *)key->data.scalar.value, "encryptionkey") == 0) {
+
+		const char *k = (const char *)value->data.scalar.value;
+		if (parse_and_set_encryption_key(common, k) != 0) {
+			// leave encryptkey_set=false; post-parse will skip if encryption enabled
+		}
+	}
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
@@ -644,20 +671,15 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
         }
 
         tgtcount = HASH_CNT(hh, newcept->targets);
-        if (newcept->common.encryptkey == NULL &&
+        if (!newcept->common.encryptkey &&
                 newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-            if (newcept->common.liid == NULL) {
+            if (!newcept->common.liid) {
                 newcept->common.liid = strdup("unidentified intercept");
             }
-            logger(LOG_INFO, "OpenLI: Email intercept configuration for '%s' asks for encryption but has not provided an encryption key -- skipping",
+            logger(LOG_INFO, "OpenLI: Email intercept configuration for '%s' asks for encryption but has not provided a valid encryption key -- skipping",
                     newcept->common.liid);
             free_single_emailintercept(newcept);
             continue;
-        } else if (newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-            if (!validate_encryption_key_if_needed(&(newcept->common))) {
-                free_single_emailintercept(newcept);
-                continue;
-            }
         }
 
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
@@ -722,20 +744,15 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
 
         }
 
-        if (newcept->common.encryptkey == NULL &&
+        if (!newcept->common.encryptkey &&
                 newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-            if (newcept->common.liid == NULL) {
+            if (!newcept->common.liid) {
                 newcept->common.liid = strdup("unidentified intercept");
             }
-            logger(LOG_INFO, "OpenLI: VoIP intercept configuration for '%s' asks for encryption but has not provided an encryption key -- skipping",
+            logger(LOG_INFO, "OpenLI: VoIP intercept configuration for '%s' asks for encryption but has not provided a valid encryption key -- skipping",
                     newcept->common.liid);
             free_single_voipintercept(newcept);
             continue;
-        } else if (newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-            if (!validate_encryption_key_if_needed(&(newcept->common))) {
-            	free_single_voipintercept(newcept);
-                continue;
-            }
         }
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
                 newcept->common.delivcc != NULL &&
@@ -861,20 +878,16 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
             }
         }
 
-        if (newcept->common.encryptkey == NULL &&
+
+        if (!newcept->common.encryptkey &&
                 newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-            if (newcept->common.liid == NULL) {
+            if (!newcept->common.liid) {
                 newcept->common.liid = strdup("unidentified intercept");
             }
-            logger(LOG_INFO, "OpenLI: IP intercept configuration for '%s' asks for encryption but has not provided an encryption key -- skipping",
+            logger(LOG_INFO, "OpenLI: IP intercept configuration for '%s' asks for encryption but has not provided a valid encryption key -- skipping",
                     newcept->common.liid);
             free_single_ipintercept(newcept);
             continue;
-        } else if (newcept->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-            if (!validate_encryption_key_if_needed(&(newcept->common))) {
-            	free_single_ipintercept(newcept);
-                continue;
-            }
         }
 
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
