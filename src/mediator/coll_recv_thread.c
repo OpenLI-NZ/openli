@@ -1050,6 +1050,10 @@ static int receive_collector(coll_recv_t *col, med_epoll_ev_t *mev) {
                 nb_log_receive_error(msgtype);
                 logger(LOG_INFO, "OpenLI Mediator: error receiving message from collector %s.", col->ipaddr);
             }
+            if (mev->fdtype == MED_EPOLL_COL_RMQ) {
+                destroy_rmq_colev(col);
+                return 0;
+            }
             return -1;
         }
 
@@ -1168,10 +1172,16 @@ static int collector_thread_epoll_event(coll_recv_t *col,
             break;
         case MED_EPOLL_COLLECTOR:
         case MED_EPOLL_COL_RMQ:
-            /* Data is readable from our collector socket / RMQ */
             if (ev->events & EPOLLRDHUP) {
-                ret = -1;
+                if (mev->fdtype == MED_EPOLL_COL_RMQ) {
+                    /* RMQ failed, but no need to trash the whole thread */
+                    destroy_rmq_colev(col);
+                    ret = 0;
+                } else {
+                    ret = -1;
+                }
             } else if (ev->events & EPOLLIN) {
+                /* Data is readable from our collector socket / RMQ */
                 ret = receive_collector(col, mev);
             }
             break;

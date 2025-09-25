@@ -496,8 +496,11 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
 
     uint64_t sent = 0;
     uint8_t *bhead = buf->bufhead + buf->writeoffset;
-    int ret, x;
+    int ret, x, elapsed, timeout;
     amqp_frame_t frame;
+    amqp_bytes_t message_bytes;
+    amqp_basic_properties_t props;
+    struct timeval tv;
 
     sent = (buf->buftail - (bhead));
 
@@ -505,68 +508,87 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
         sent = bytelimit;
     }
 
-    if (sent != 0) {
-        amqp_bytes_t message_bytes;
-        amqp_basic_properties_t props;
-        message_bytes.len = sent;
-        message_bytes.bytes = bhead;
-
-        props._flags = AMQP_BASIC_DELIVERY_MODE_FLAG;
-        props.delivery_mode = 2;        /* persistent mode */
-	ret = 0;
-
-        if ((*is_blocked) == 0) {
-            int pub_ret = amqp_basic_publish(
-                    amqp_state,
-                    channel,
-                    exchange,
-                    routing_key,
-                    0,
-                    0,
-                    &props,
-                    message_bytes);
-
-            if ( pub_ret != 0 ){
-                logger(LOG_INFO,
-                        "OpenLI: RMQ publish error %d", pub_ret);
-                return -1;
-            } else {
-                ret = sent;
-            }
-        }
-
-        if ((x = check_rmq_connection_block_status(amqp_state,
-                        is_blocked)) < 0) {
-            return -1;
-        }
-
-        if (x > 0) {
-            buf->writeoffset += ((uint32_t)ret);
-            if (buf->writeoffset > buf->deadwindow) {
-                buf->deadfront = buf->writeoffset - buf->deadwindow;
-            }
-        }
+    if (sent == 0) {
+        return sent;
     }
+
+    message_bytes.len = sent;
+    message_bytes.bytes = bhead;
+
+    props._flags = AMQP_BASIC_DELIVERY_MODE_FLAG;
+    props.delivery_mode = 2;        /* persistent mode */
+    ret = 0;
+
+    if ((x = check_rmq_connection_block_status(amqp_state, is_blocked)) < 0) {
+        return -1;
+    }
+
+    if (*is_blocked) {
+        return 0;
+    }
+
+    int pub_ret = amqp_basic_publish(
+            amqp_state,
+            channel,
+            exchange,
+            routing_key,
+            0,
+            0,
+            &props,
+            message_bytes);
+
+    if ( pub_ret != 0 ){
+        logger(LOG_INFO,
+                "OpenLI: RMQ publish error %d", pub_ret);
+        return -1;
+    } else {
+        ret = sent;
+    }
+
+    elapsed = 0;
+    timeout = 3;
 
     while (1) {
-        ret = amqp_simple_wait_frame(amqp_state, &frame);
-        if (ret < 0) {
+        tv.tv_sec = 1; tv.tv_usec = 0;
+        ret = amqp_simple_wait_frame_noblock(amqp_state, &frame, &tv);
+        if (ret == AMQP_STATUS_OK) {
+            if (frame.frame_type == AMQP_FRAME_METHOD) {
+                if (frame.payload.method.id == AMQP_BASIC_ACK_METHOD) {
+                    break;
+                }
+                if (frame.payload.method.id == AMQP_BASIC_NACK_METHOD) {
+                    return 0;
+                }
+                if (frame.payload.method.id == AMQP_CONNECTION_BLOCKED_METHOD) {
+                    *is_blocked = 1;
+                }
+                if (frame.payload.method.id ==
+                        AMQP_CONNECTION_UNBLOCKED_METHOD) {
+                    *is_blocked = 0;
+                }
+            }
+        } else if (ret == AMQP_STATUS_TIMEOUT) {
+            elapsed ++;
+        } else {
             logger(LOG_INFO,
-                    "OpenLI: error while waiting for RMQ acknowledgement");
+                    "OpenLI collector: RMQ error while waiting for publisher confirm");
             return -1;
         }
-        if (frame.frame_type == AMQP_FRAME_METHOD) {
-            if (frame.payload.method.id == AMQP_BASIC_ACK_METHOD) {
-                break;
-            }
-            if (frame.payload.method.id == AMQP_BASIC_NACK_METHOD) {
-                return 0;
-            }
+        if (elapsed >= timeout) {
+            // didn't see an ACK in a reasonable time frame, assume lost
+            return 0;
         }
     }
 
+    /* if we get here, the publish was successful and confirmed by the
+     * broker
+     */
+    buf->writeoffset += ((uint32_t)sent);
+    if (buf->writeoffset > buf->deadwindow) {
+        buf->deadfront = buf->writeoffset - buf->deadwindow;
+    }
     post_transmit(buf);
-    return sent;
+    return 1;
 }
 
 int advance_export_buffer_head(export_buffer_t *buf, uint64_t amount) {

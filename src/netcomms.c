@@ -80,7 +80,7 @@ void destroy_net_buffer(net_buffer_t *nb, amqp_connection_state_t amqp_state) {
                 nb->rmq_channel,
                 nb->last_tag,
                 1) != 0 ) {
-            logger(LOG_INFO, "OpenLI: RMQ error in basic acknowledgement");
+            logger(LOG_INFO, "OpenLI: RMQ error in final acknowledgement before destroying net buffer");
         }
     }
 
