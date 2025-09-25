@@ -380,7 +380,7 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
          strlen(common.targetagency) + sizeof(common.destid) + \
          sizeof(common.encrypt) + common.delivcc_len + \
          (36 * common.xid_count) + \
-         (common.encryptkey ? (strlen(common.encryptkey) + 4) : 0) + \
+         (common.encryptkey_len ? (common.encryptkey_len + 4) : 0) + \
          ((9 + common.xid_count) * 4))
 
 #define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
@@ -448,10 +448,11 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
         return -1;
     }
 
-    if (common->encryptkey) {
+    if (common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+        common->encryptkey_len > 0) {
         if (push_tlv(nb, OPENLI_PROTO_FIELD_ENCRYPTION_KEY,
-                (uint8_t *)(common->encryptkey),
-                strlen(common->encryptkey)) == -1) {
+                (uint8_t *)common->encryptkey,
+                (uint16_t)common->encryptkey_len) == -1) {
             return -1;
         }
     }
@@ -1562,7 +1563,8 @@ static inline void init_decoded_intercept_common(intercept_common_t *common) {
     common->toend_time = 0;
     common->tomediate = 0;
     common->encrypt = 0;
-    common->encryptkey = NULL;
+    memset(common->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
+    common->encryptkey_len = 0;
     common->seqtrackerid = 0;
     common->xids = NULL;
     common->xid_count = 0;
@@ -1605,7 +1607,15 @@ static int assign_intercept_common_fields(intercept_common_t *common,
             common->encrypt = *((payload_encryption_method_t *)valptr);
             break;
         case OPENLI_PROTO_FIELD_ENCRYPTION_KEY:
-            DECODE_STRING_FIELD(common->encryptkey, valptr, vallen);
+			if (vallen > OPENLI_MAX_ENCRYPTKEY_LEN) {
+				logger(LOG_INFO, "OpenLI: encryption key too long for buffer (%u)", vallen);
+				return -1;
+			}
+			memcpy(common->encryptkey, valptr, vallen);
+			if (vallen < OPENLI_MAX_ENCRYPTKEY_LEN) {
+				memset(common->encryptkey + vallen, 0, OPENLI_MAX_ENCRYPTKEY_LEN - vallen);
+			}
+			common->encryptkey_len = vallen;
             break;
         case OPENLI_PROTO_FIELD_XID:
             DECODE_STRING_FIELD(uuid, valptr, vallen);
