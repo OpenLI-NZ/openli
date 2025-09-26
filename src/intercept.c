@@ -24,6 +24,8 @@
  *
  */
 
+#include <string.h>
+#include <stdlib.h>
 #include <assert.h>
 #include "util.h"
 #include "logger.h"
@@ -31,6 +33,57 @@
 
 const char *cepttype_strings[] =
         {"Unknown", "IP", "VoIP", "Email"};
+
+/* portable secure bzero */
+static void openli_secure_bzero(void *p, size_t n) {
+#if defined(__GLIBC__) && defined(_GNU_SOURCE)
+    explicit_bzero(p, n);
+#else
+    volatile unsigned char *v = (volatile unsigned char *)p;
+    while (n--) *v++ = 0;
+#endif
+}
+
+size_t openli_copy_encryptkey(uint8_t *dst, size_t dst_cap,
+                              const uint8_t *src, size_t src_len)
+{
+    if (!dst || dst_cap == 0) return 0;
+
+    /* Clamp to buffer capacity; zero the whole destination first */
+    size_t n = (src && src_len) ? src_len : 0;
+    if (n > dst_cap) n = dst_cap;
+
+    /* Zero destination fully to avoid stale bytes */
+    memset(dst, 0, dst_cap);
+
+    if (n > 0) {
+        memcpy(dst, src, n);
+    }
+    return n;
+}
+
+size_t openli_move_encryptkey(uint8_t *dst, size_t dst_cap,
+                              uint8_t **psrc, size_t free_src_len)
+{
+    const uint8_t *src = (psrc && *psrc) ? *psrc : NULL;
+    size_t copied = openli_copy_encryptkey(dst, dst_cap, src, free_src_len);
+
+    if (psrc && *psrc) {
+        /* Wipe and free the source buffer; only use if the source was heap-allocated */
+        if (free_src_len > 0) openli_secure_bzero(*psrc, free_src_len);
+        free(*psrc);
+        *psrc = NULL;
+    }
+    return copied;
+}
+
+void openli_clear_encryptkey(uint8_t *dst, size_t dst_cap, size_t *dst_len)
+{
+    if (dst && dst_cap) openli_secure_bzero(dst, dst_cap);
+    if (dst_len) *dst_len = 0;
+}
+
+
 
 static inline void copy_intercept_common(intercept_common_t *src,
         intercept_common_t *dest) {

@@ -509,16 +509,31 @@ static int emit_intercept_common(intercept_common_t *intcom,
     }
     if (!yaml_emitter_emit(emitter, &event)) return -1;
 
-    if (intcom->encryptkey && strlen(intcom->encryptkey) > 0) {
+    /* Emit encryption key as 0x + hex, using the binary key length */
+    if (intcom->encryptkey_len > 0) {
+        yaml_event_t event;
+        /* field name */
         yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)"encryptionkey", strlen("encryptionkey"), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
+            (yaml_char_t *)"encryptionkey", (int)strlen("encryptionkey"),
+            1, 0, YAML_PLAIN_SCALAR_STYLE);
+        yaml_emitter_emit(emitter, &event);
+
+        /* value: 0x + 2 hex chars per byte */
+        char hexbuf[2 + OPENLI_MAX_ENCRYPTKEY_LEN * 2 + 1];
+        size_t n = intcom->encryptkey_len;
+        char *p = hexbuf;
+        static const char hexd[] = "0123456789abcdef";
+        *p++ = '0'; *p++ = 'x';
+        for (size_t i = 0; i < n; ++i) {
+            *p++ = hexd[intcom->encryptkey[i] >> 4];
+            *p++ = hexd[intcom->encryptkey[i] & 0x0F];
+        }
+        *p = '\0';
 
         yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)intcom->encryptkey,
-                strlen(intcom->encryptkey), 1, 0, YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
+            (yaml_char_t *)hexbuf, (int)(2 + n * 2),
+            1, 0, YAML_PLAIN_SCALAR_STYLE);
+        yaml_emitter_emit(emitter, &event);
     }
 
     if (intcom->xid_count != 0) {

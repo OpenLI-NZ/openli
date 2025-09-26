@@ -44,6 +44,8 @@ typedef struct exporter_intercept_msg {
 
     payload_encryption_method_t encryptmethod;
     char *encryptkey;
+    uint8_t *encryptkey;
+    int encryptkey_len;
 } exporter_intercept_msg_t;
 
 typedef struct cin_seqno {

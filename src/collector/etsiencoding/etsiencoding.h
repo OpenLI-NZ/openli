@@ -140,7 +140,7 @@ typedef struct encoder_job {
     char *liid;
     uint8_t cept_version;
     payload_encryption_method_t encryptmethod;
-    char *encryptkey;
+    const uint8_t *encryptkey;
 } PACKED openli_encoding_job_t;
 
 void encode_ipaddress(wandder_encoder_t *encoder,

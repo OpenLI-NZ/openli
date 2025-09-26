@@ -28,6 +28,7 @@
 #include <assert.h>
 #include <uthash.h>
 #include <arpa/inet.h>
+#include <string.h>
 
 #include "logger.h"
 #include "collector.h"
@@ -54,14 +55,21 @@ static inline void update_intercept_common(intercept_common_t *found,
     found->tomediate = replace->tomediate;
     found->encrypt = replace->encrypt;
 
-    tmp = found->encryptkey;
-    found->encryptkey = replace->encryptkey;
-    replace->encryptkey = tmp;
-
     tmp = found->targetagency;
     found->targetagency = replace->targetagency;
     replace->targetagency = tmp;
-}
+
+    /* copy binary key + set length; clear when encryption is NONE */
+    if (replace->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+        replace->encryptkey_len > 0) {
+        found->encryptkey_len = openli_copy_encryptkey(
+            found->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN,
+            replace->encryptkey, replace->encryptkey_len);
+    } else {
+        openli_clear_encryptkey(found->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN,
+                                &found->encryptkey_len);
+    }
+
 
 static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
     rtpstreaminf_t *rtp;

@@ -114,11 +114,12 @@ static void convert_commonintercept_to_json(json_object *jobj,
     tomediate = json_object_new_int(common->tomediate);
     encryption = json_object_new_string(encrypt_str);
 
-    if (common->encryptkey) {
+/*    if (common->encryptkey) {
         encryptkey = json_object_new_string(common->encryptkey);
     } else {
         encryptkey = NULL;
     }
+*/
 
     json_object_object_add(jobj, "liid", liid);
     json_object_object_add(jobj, "authcc", authcc);
@@ -127,8 +128,11 @@ static void convert_commonintercept_to_json(json_object *jobj,
     json_object_object_add(jobj, "mediator", mediator);
     json_object_object_add(jobj, "outputhandovers", tomediate);
     json_object_object_add(jobj, "payloadencryption", encryption);
-    if (encryptkey) {
-        json_object_object_add(jobj, "encryptionkey", encryptkey);
+	json_object_object_add(jobj, "has_encryptionkey",
+			json_object_new_boolean(common->encryptkey_len == OPENLI_AES192_KEY_LEN));
+	json_object_object_add(jobj, "encryptionkey_len",
+	    json_object_new_int((int)common->encryptkey_len));
+
     }
 
     if (common->tostart_time != 0) {

@@ -44,8 +44,10 @@ static inline void free_intercept_msg(exporter_intercept_msg_t *msg) {
     if (msg->delivcc) {
         free(msg->delivcc);
     }
-    if (msg->encryptkey) {
-        free(msg->encryptkey);
+    if (intstate->details.encryptkey) {
+        openli_free_encryptkey_ptr(&intstate->details.encryptkey,
+                                   intstate->details.encryptkey_len);
+        intstate->details.encryptkey_len = 0;
     }
 }
 
@@ -206,19 +208,26 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         remove_preencoded(seqdata, intstate);
         free(intstate->details.authcc);
         free(intstate->details.delivcc);
-        if (intstate->details.encryptkey) {
-            free(intstate->details.encryptkey);
-        }
+		if (intstate->details.encryptkey) {
+			openli_free_encryptkey_ptr(&intstate->details.encryptkey,
+									   intstate->details.encryptkey_len);
+			intstate->details.encryptkey_len = 0;
+		}
 
         /* leave the CIN seqno state as is for now */
         intstate->details.authcc = strdup(cept->authcc);
         intstate->details.delivcc = strdup(cept->delivcc);
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
-        if (intstate->details.encryptkey) {
-            intstate->details.encryptkey = strdup(cept->encryptkey);
+        if (cept->encryptkey && cept->encryptkey_len > 0) {
+            /* take ownership from published message */
+            intstate->details.encryptkey = cept->encryptkey;
+            intstate->details.encryptkey_len = (int)cept->encryptkey_len;
+            cept->encryptkey = NULL;
+            cept->encryptkey_len = 0;
         } else {
             intstate->details.encryptkey = NULL;
+            intstate->details.encryptkey_len = 0;
         }
         intstate->details.encryptmethod = cept->encryptmethod;
         intstate->version ++;
@@ -233,12 +242,17 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate->details.liid_len = strlen(cept->liid);
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
-        if (cept->encryptkey) {
-            intstate->details.encryptkey = strdup(cept->encryptkey);
+        if (cept->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+            cept->encryptkey && cept->encryptkey_len == OPENLI_AES192_KEY_LEN) {
+            /* move ownership to intstate */
+            intstate->details.encryptkey     = cept->encryptkey;
+            intstate->details.encryptkey_len = (int)cept->encryptkey_len;
+            cept->encryptkey     = NULL;
+            cept->encryptkey_len = 0;
         } else {
-            intstate->details.encryptkey = NULL;
-        }
-        intstate->details.encryptmethod = cept->encryptmethod;
+            intstate->details.encryptkey     = NULL;
+            intstate->details.encryptkey_len = 0;
+        }        intstate->details.encryptmethod = cept->encryptmethod;
         intstate->cinsequencing = NULL;
         intstate->version = 0;
 
@@ -298,9 +312,15 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
     intstate->details.delivcc_len = strlen(msg->delivcc);
 
     if (intstate->details.encryptkey) {
-        free(intstate->details.encryptkey);
-    }
+        openli_free_encryptkey_ptr(&intstate->details.encryptkey,
+                                   intstate->details.encryptkey_len);
+        intstate->details.encryptkey_len = 0;
+     }
     intstate->details.encryptkey = msg->encryptkey;
+    intstate->details.encryptkey_len = (int)msg->encryptkey_len;
+    msg->encryptkey = NULL;
+    msg->encryptkey_len = 0;
+
     intstate->details.encryptmethod = msg->encryptmethod;
 
 
@@ -384,11 +404,12 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     job.cin = (int64_t)cin;
     job.cept_version = intstate->version;
     job.encryptmethod = intstate->details.encryptmethod;
-    if (intstate->details.encryptkey) {
-        job.encryptkey = strdup(intstate->details.encryptkey);
+    if (intstate->details.encryptkey_len == OPENLI_AES192_KEY_LEN) {
+        job.encryptkey = openli_dup_encryptkey_ptr(
+            intstate->details.encryptkey, intstate->details.encryptkey_len);
     } else {
         job.encryptkey = NULL;
-    }
+     }
 
 	if (recvd->type == OPENLI_EXPORT_IPMMCC ||
 			recvd->type == OPENLI_EXPORT_IPCC ||

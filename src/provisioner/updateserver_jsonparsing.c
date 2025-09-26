@@ -36,6 +36,7 @@
 #include "logger.h"
 #include "util.h"
 #include "intercept_timers.h"
+#include "configparser_common.h"
 
 struct json_agency {
     struct json_object *hi3addr;
@@ -333,11 +334,16 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
 
     int parseerr = 0;
     char *encryptmethodstring = NULL;
+    char *encstr = NULL;  /* JSON-sourced encryption key string */
     char *uuidstring = NULL;
     struct timeval tv;
     prov_intercept_data_t *timers = NULL;
 
-    if (is_new) {
+	/* init binary key state */
+	memset(common->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
+	common->encryptkey_len = 0;
+
+	if (is_new) {
         common->tostart_time = 0;
         common->toend_time = 0;
         common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
@@ -379,8 +385,10 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
             common->toend_time, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("payloadencryption", cepttype,
             jsonp->encryption, encryptmethodstring, &parseerr, false);
+    /* extract textual key into temporary string; we will decode to bytes below */
     EXTRACT_JSON_STRING_PARAM("encryptionkey", cepttype,
-            jsonp->encryptkey, common->encryptkey, &parseerr, false);
+            jsonp->encryptkey, encstr, &parseerr, false);
+
     EXTRACT_JSON_STRING_PARAM("xid", cepttype, jsonp->xid, uuidstring,
             &parseerr, false);
 
@@ -388,6 +396,42 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
         common->encrypt = map_encrypt_method_string(encryptmethodstring);
         free(encryptmethodstring);
     }
+
+    /* If client supplied an encryption key string, normalize it to 24 bytes */
+    if (encstr) {
+        if (encstr[0] == '0' && (encstr[1] == 'x' || encstr[1] == 'X')) {
+            if (openli_hex_to_bytes_24(encstr, common->encryptkey) != 0) {
+                snprintf(cinfo->answerstring, 4096,
+                        "'encryptionkey' must be 0x + 48 hex digits for AES-192");
+                free(encstr);
+                return -1;
+            }
+            common->encryptkey_len = OPENLI_AES192_KEY_LEN;
+        } else {
+            size_t n = strlen(encstr);
+            if (n != OPENLI_AES192_KEY_LEN) {
+                snprintf(cinfo->answerstring, 4096,
+                        "'encryptionkey' must be exactly 24 ASCII bytes or 0x + 48 hex digits for AES-192");
+                free(encstr);
+                return -1;
+            }
+            /* optional: enforce printable ASCII */
+            for (size_t i = 0; i < n; ++i) {
+                unsigned char ch = (unsigned char)encstr[i];
+                if (ch < 0x20 || ch > 0x7E) {
+                    snprintf(cinfo->answerstring, 4096,
+                            "'encryptionkey' ASCII must be 24 printable characters");
+                    free(encstr);
+                    return -1;
+                }
+            }
+            memcpy(common->encryptkey, encstr, OPENLI_AES192_KEY_LEN);
+            common->encryptkey_len = OPENLI_AES192_KEY_LEN;
+        }
+        free(encstr);
+        encstr = NULL;
+    }
+
 
     if (uuidstring) {
         uuid_t parsed;
@@ -420,14 +464,15 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
         common->liid_len = strlen(common->liid);
     }
 
-    if (is_new) {
-        if (common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-            if (common->encryptkey == NULL || strlen(common->encryptkey) == 0) {
-                snprintf(cinfo->answerstring, 4096,
-                        "'encryptionkey' parameter must be set if 'payloadencryption' is set to anything other than 'none'");
-                return -1;
-            }
-        }
+	if (is_new) {
+		if (common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+			if (common->encryptkey_len != OPENLI_AES192_KEY_LEN) {
+				snprintf(cinfo->answerstring, 4096,
+						"'encryptionkey' parameter (0x + 48 hex or 24 ASCII) is required for AES-192");
+				return -1;
+			}
+		}
+
 
         /* If we are new, we can just go ahead and add any timers that
          * we need for this intercept.
@@ -485,9 +530,11 @@ static int update_intercept_common(intercept_common_t *parsed,
     }
 
     if (enc != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (parsed->encryptkey == NULL || strlen(parsed->encryptkey) == 0) {
+        /* For modify: accept either an existing valid key, or a new valid key */
+        if (parsed->encryptkey_len != OPENLI_AES192_KEY_LEN &&
+            existing->encryptkey_len != OPENLI_AES192_KEY_LEN) {
             snprintf(cinfo->answerstring, 4096,
-                    "'encryptionkey' parameter must be set if 'payloadencryption' is set to anything other than 'none'");
+                    "'encryptionkey' (0x + 48 hex or 24 ASCII) is required for AES-192");
             return -1;
         }
     }
@@ -526,7 +573,20 @@ static int update_intercept_common(intercept_common_t *parsed,
         existing->encrypt = parsed->encrypt;
     }
 
-    MODIFY_STRING_MEMBER(parsed->encryptkey, existing->encryptkey, changed);
+    /* If a new key was provided (len==24) and it differs, copy it in */
+    if (parsed->encryptkey_len == OPENLI_AES192_KEY_LEN) {
+        if (existing->encryptkey_len != parsed->encryptkey_len ||
+            memcmp(existing->encryptkey, parsed->encryptkey, parsed->encryptkey_len) != 0) {
+            memcpy(existing->encryptkey, parsed->encryptkey, parsed->encryptkey_len);
+            if (parsed->encryptkey_len < OPENLI_MAX_ENCRYPTKEY_LEN) {
+                memset(existing->encryptkey + parsed->encryptkey_len, 0,
+                       OPENLI_MAX_ENCRYPTKEY_LEN - parsed->encryptkey_len);
+            }
+            existing->encryptkey_len = parsed->encryptkey_len;
+            *changed = 1;
+        }
+    }
+
     if (compare_intercept_times(parsed, existing) == 1) {
         *timeschanged = 1;
     }
