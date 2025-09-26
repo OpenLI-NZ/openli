@@ -83,6 +83,24 @@ void openli_clear_encryptkey(uint8_t *dst, size_t dst_cap, size_t *dst_len)
     if (dst_len) *dst_len = 0;
 }
 
+uint8_t *openli_dup_encryptkey_ptr(const uint8_t *src, size_t src_len) {
+    if (!src || src_len == 0) return NULL;
+    uint8_t *p = (uint8_t *)malloc(src_len);
+    if (!p) return NULL;
+    memcpy(p, src, src_len);
+    return p;
+}
+
+void openli_free_encryptkey_ptr(uint8_t **pp, size_t len) {
+    if (!pp || !*pp) return;
+#if defined(__GLIBC__) && defined(_GNU_SOURCE)
+    if (len) explicit_bzero(*pp, len);
+#else
+    if (len) { volatile uint8_t *v = (volatile uint8_t *)*pp; while (len--) *v++ = 0; }
+#endif
+    free(*pp);
+    *pp = NULL;
+}
 
 
 static inline void copy_intercept_common(intercept_common_t *src,

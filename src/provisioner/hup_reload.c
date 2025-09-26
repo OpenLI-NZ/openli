@@ -24,6 +24,7 @@
  *
  */
 
+#include <string.h>
 #include "config.h"
 #include "configparser_provisioner.h"
 #include "provisioner.h"
@@ -107,14 +108,16 @@ static inline int common_intercept_equal(intercept_common_t *a,
         return 0;
     }
 
-    if (a->encryptkey == NULL) {
-        if (b->encryptkey != NULL) {
+    /* Binary key comparison: lengths must match; if >0, bytes must match */
+    if (a->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE ||
+        b->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (a->encryptkey_len != b->encryptkey_len) {
             return 0;
         }
-    } else if (b->encryptkey == NULL) {
-        return 0;
-    } else if (strcmp(a->encryptkey, b->encryptkey) != 0) {
-        return 0;
+        if (a->encryptkey_len > 0 &&
+            memcmp(a->encryptkey, b->encryptkey, a->encryptkey_len) != 0) {
+            return 0;
+        }
     }
 
     return 1;

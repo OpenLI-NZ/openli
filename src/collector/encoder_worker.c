@@ -40,6 +40,7 @@
 #include "logger.h"
 #include "etsili_core.h"
 #include "encoder_worker.h"
+#include "intercept.h"
 
 static int init_worker(openli_encoder_t *enc) {
     int zero = 0, rto = 10;
@@ -226,7 +227,11 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
                 free(job.cinstr);
             }
             if (job.encryptkey) {
-                free(job.encryptkey);
+                if (job.encryptkey) {
+                    uint8_t *tmp = job.encryptkey;   /* avoid &packed-member */
+                    openli_free_encryptkey_ptr(&tmp, OPENLI_AES192_KEY_LEN);
+                    job.encryptkey = NULL;
+                }
             }
             drained ++;
 
@@ -921,7 +926,11 @@ encodejoberror:
                     free(job.liid);
                 }
                 if (job.encryptkey) {
-                    free(job.encryptkey);
+                    if (job.encryptkey) {
+                        uint8_t *tmp = job.encryptkey;   /* avoid &packed-member */
+                        openli_free_encryptkey_ptr(&tmp, OPENLI_AES192_KEY_LEN);
+                        job.encryptkey = NULL;
+                    }
                 }
                 if (job.origreq) {
                     free_published_message(job.origreq);
@@ -938,7 +947,11 @@ encodejoberror:
         result[next].encodedby = enc->workerid;
 
         if (job.encryptkey) {
-            free(job.encryptkey);
+            if (job.encryptkey) {
+                uint8_t *tmp = job.encryptkey;   /* avoid &packed-member */
+                openli_free_encryptkey_ptr(&tmp, OPENLI_AES192_KEY_LEN);
+                job.encryptkey = NULL;
+            }
         }
         encoded_total ++;
         enc->result_batch[index] ++;

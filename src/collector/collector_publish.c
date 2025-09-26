@@ -36,6 +36,7 @@
 #include "collector_publish.h"
 #include "emailiri.h"
 #include "export_buffer.h"
+#include "intercept.h"
 
 int publish_openli_msg(void *pubsock, openli_export_recv_t *msg) {
 
@@ -81,12 +82,16 @@ openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common,
     }
     expmsg->data.cept.xid_count = common->xid_count;
 
-    if (common->encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC &&
-        common->encryptkey_len == OPENLI_AES192_KEY_LEN) {
-        expmsg->data.cept.encryptkey_len = common->encryptkey_len;
-        expmsg->data.cept.encryptkey =
-            openli_dup_encryptkey_ptr(common->encryptkey, common->encryptkey_len);
-    } else {
+    if (common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+        common->encryptkey_len > 0) {
+		expmsg->data.cept.encryptkey_len = common->encryptkey_len;
+		expmsg->data.cept.encryptkey =
+			openli_dup_encryptkey_ptr(common->encryptkey, common->encryptkey_len);
+		if (!expmsg->data.cept.encryptkey) {
+			/* treat as no key or bail out; pick one policy */
+			expmsg->data.cept.encryptkey_len = 0;
+		}
+	} else {
         expmsg->data.cept.encryptkey = NULL;
         expmsg->data.cept.encryptkey_len = 0;
     }

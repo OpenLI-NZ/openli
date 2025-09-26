@@ -69,7 +69,7 @@ static inline void update_intercept_common(intercept_common_t *found,
         openli_clear_encryptkey(found->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN,
                                 &found->encryptkey_len);
     }
-
+}
 
 static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
     rtpstreaminf_t *rtp;

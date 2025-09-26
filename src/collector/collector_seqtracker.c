@@ -33,6 +33,7 @@
 #include "logger.h"
 #include "collector_base.h"
 #include "collector_publish.h"
+#include "intercept.h"
 
 static inline void free_intercept_msg(exporter_intercept_msg_t *msg) {
     if (msg->liid) {
@@ -44,10 +45,11 @@ static inline void free_intercept_msg(exporter_intercept_msg_t *msg) {
     if (msg->delivcc) {
         free(msg->delivcc);
     }
-    if (intstate->details.encryptkey) {
-        openli_free_encryptkey_ptr(&intstate->details.encryptkey,
-                                   intstate->details.encryptkey_len);
-        intstate->details.encryptkey_len = 0;
+    if (msg->encryptkey) {
+        uint8_t *tmp = msg->encryptkey;                 // avoid &packed-member issues anywhere
+        openli_free_encryptkey_ptr(&tmp, msg->encryptkey_len);  // zeroize + free
+        msg->encryptkey     = NULL;
+        msg->encryptkey_len = 0;
     }
 }
 
@@ -219,7 +221,8 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate->details.delivcc = strdup(cept->delivcc);
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
-        if (cept->encryptkey && cept->encryptkey_len > 0) {
+        if (cept->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+            cept->encryptkey && cept->encryptkey_len == OPENLI_AES192_KEY_LEN) {
             /* take ownership from published message */
             intstate->details.encryptkey = cept->encryptkey;
             intstate->details.encryptkey_len = (int)cept->encryptkey_len;
@@ -315,14 +318,18 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
         openli_free_encryptkey_ptr(&intstate->details.encryptkey,
                                    intstate->details.encryptkey_len);
         intstate->details.encryptkey_len = 0;
-     }
-    intstate->details.encryptkey = msg->encryptkey;
-    intstate->details.encryptkey_len = (int)msg->encryptkey_len;
-    msg->encryptkey = NULL;
-    msg->encryptkey_len = 0;
-
+    }
     intstate->details.encryptmethod = msg->encryptmethod;
-
+    if (msg->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+        msg->encryptkey && msg->encryptkey_len == OPENLI_AES192_KEY_LEN) {
+        intstate->details.encryptkey = msg->encryptkey;
+        intstate->details.encryptkey_len = (int)msg->encryptkey_len;
+        msg->encryptkey = NULL;
+        msg->encryptkey_len = 0;
+    } else {
+        intstate->details.encryptkey = NULL;
+        intstate->details.encryptkey_len = 0;
+    }
 
     remove_preencoded(seqdata, intstate);
     preencode_etsi_fields(seqdata, intstate);
@@ -404,7 +411,8 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     job.cin = (int64_t)cin;
     job.cept_version = intstate->version;
     job.encryptmethod = intstate->details.encryptmethod;
-    if (intstate->details.encryptkey_len == OPENLI_AES192_KEY_LEN) {
+    if (job.encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+        intstate->details.encryptkey_len == OPENLI_AES192_KEY_LEN) {
         job.encryptkey = openli_dup_encryptkey_ptr(
             intstate->details.encryptkey, intstate->details.encryptkey_len);
     } else {

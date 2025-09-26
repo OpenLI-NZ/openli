@@ -743,10 +743,19 @@ static void sip_worker_send_intercept_update_to_seqtracker(
     expmsg->data.cept.authcc = strdup(vint->common.authcc);
     expmsg->data.cept.delivcc = strdup(vint->common.delivcc);
     expmsg->data.cept.encryptmethod = vint->common.encrypt;
-    if (vint->common.encryptkey) {
-        expmsg->data.cept.encryptkey = strdup(vint->common.encryptkey);
+    if (vint->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+        vint->common.encryptkey_len > 0) {
+        expmsg->data.cept.encryptkey_len = vint->common.encryptkey_len;
+        expmsg->data.cept.encryptkey =
+            openli_dup_encryptkey_ptr(vint->common.encryptkey,
+                                      vint->common.encryptkey_len);
+        if (!expmsg->data.cept.encryptkey) {
+            /* OOM: treat as no key; downstream will error if it needs one */
+            expmsg->data.cept.encryptkey_len = 0;
+        }
     } else {
         expmsg->data.cept.encryptkey = NULL;
+        expmsg->data.cept.encryptkey_len = 0;
     }
     expmsg->data.cept.seqtrackerid = vint->common.seqtrackerid;
 

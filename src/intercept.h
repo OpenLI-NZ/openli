@@ -570,7 +570,6 @@ void intercept_mediation_mode_as_string(intercept_outputs_t mode,
 void intercept_encryption_mode_as_string(payload_encryption_method_t method,
         char *space, int spacelen);
 void email_decompress_option_as_string(uint8_t opt, char *space, int spacelen);
-#endif
 
 /* Copy src_len bytes from src → dst (capacity dst_cap), zero-fill the tail.
  * Returns the number of bytes copied (clamped to dst_cap).
@@ -597,4 +596,12 @@ static inline size_t openli_move_encryptkey_aes192(uint8_t *dst,
     return openli_move_encryptkey(dst, OPENLI_MAX_ENCRYPTKEY_LEN, psrc,
                                   OPENLI_AES192_KEY_LEN);
 }
+/* Allocate a new heap buffer and duplicate src_len bytes; returns NULL on OOM. */
+uint8_t *openli_dup_encryptkey_ptr(const uint8_t *src, size_t src_len);
+
+/* Securely wipe and free a heap-allocated key pointer (if *pp non-NULL). */
+void openli_free_encryptkey_ptr(uint8_t **pp, size_t len);
+
+
+#endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

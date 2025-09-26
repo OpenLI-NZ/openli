@@ -79,7 +79,8 @@ static void convert_commonintercept_to_json(json_object *jobj,
 
     const char *encrypt_str;
     json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
-    json_object *encryptkey, *xids;
+/*    json_object *encryptkey, *xids; */
+    json_object *xids;
     json_object *starttime, *endtime, *tomediate, *encryption;
     char uuid[64];
 
@@ -133,7 +134,6 @@ static void convert_commonintercept_to_json(json_object *jobj,
 	json_object_object_add(jobj, "encryptionkey_len",
 	    json_object_new_int((int)common->encryptkey_len));
 
-    }
 
     if (common->tostart_time != 0) {
         starttime = json_object_new_int(common->tostart_time);
