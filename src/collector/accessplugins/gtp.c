@@ -614,18 +614,26 @@ static void walk_bearer_context_ie(etsili_generic_freelist_t *freelist,
 }
 
 static inline void get_gtpnum_from_ie(gtp_infoelem_t *gtpel, char *field,
-        int skipfront) {
+        size_t maxlen, int skipfront) {
 
     /* IMSI is encoded in a weird way :( */
     uint8_t *ptr = (gtpel->iecontent + skipfront);
-    int i, j;
+    int i;
+    uint8_t num, j;
 
     j = 0;
     for (i = 0; i < gtpel->ielength - skipfront; i++) {
-        uint8_t num = *(ptr + i);
+        if (j >= maxlen - 1) {
+            break;
+        }
+
+        num = *(ptr + i);
         field[j] = (char)('0' + (num & 0x0f));
 
         j++;
+        if (j >= maxlen - 1) {
+            break;
+        }
 
         /* bits 8-5 are 1111, which is a filler when there is an odd number
          * of digits.
@@ -718,13 +726,16 @@ static int walk_gtpv1_ies(gtp_parsed_t *parsedpkt, uint8_t *ptr, uint32_t rem,
         if (gtpel) {
             if (parsedpkt->msgtype == GTPV1_CREATE_PDP_CONTEXT_REQUEST) {
                 if (ietype == GTPV1_IE_IMSI) {
-                    get_gtpnum_from_ie(gtpel, parsedpkt->imsi, 0);
+                    get_gtpnum_from_ie(gtpel, parsedpkt->imsi,
+                            sizeof(parsedpkt->imsi), 0);
                 }
                 if (ietype == GTPV1_IE_MEI) {
-                    get_gtpnum_from_ie(gtpel, parsedpkt->imei, 0);
+                    get_gtpnum_from_ie(gtpel, parsedpkt->imei,
+                            sizeof(parsedpkt->imei), 0);
                 }
                 if (ietype == GTPV1_IE_MSISDN) {
-                    get_gtpnum_from_ie(gtpel, parsedpkt->msisdn, 1);
+                    get_gtpnum_from_ie(gtpel, parsedpkt->msisdn,
+                            sizeof(parsedpkt->msisdn), 1);
                 }
             }
 
@@ -774,13 +785,16 @@ static void walk_gtpv2_ies(gtp_parsed_t *parsedpkt, uint8_t *ptr, uint32_t rem,
 
             if (parsedpkt->msgtype == GTPV2_CREATE_SESSION_REQUEST) {
                 if (ietype == GTPV2_IE_IMSI) {
-                    get_gtpnum_from_ie(gtpel, parsedpkt->imsi, 0);
+                    get_gtpnum_from_ie(gtpel, parsedpkt->imsi,
+                            sizeof(parsedpkt->imsi), 0);
                 }
                 if (ietype == GTPV2_IE_MEI) {
-                    get_gtpnum_from_ie(gtpel, parsedpkt->imei, 0);
+                    get_gtpnum_from_ie(gtpel, parsedpkt->imei,
+                            sizeof(parsedpkt->imei), 0);
                 }
                 if (ietype == GTPV2_IE_MSISDN) {
-                    get_gtpnum_from_ie(gtpel, parsedpkt->msisdn, 0);
+                    get_gtpnum_from_ie(gtpel, parsedpkt->msisdn,
+                            sizeof(parsedpkt->msisdn), 0);
                 }
             }
 
