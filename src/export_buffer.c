@@ -566,6 +566,14 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
                         AMQP_CONNECTION_UNBLOCKED_METHOD) {
                     *is_blocked = 0;
                 }
+                if (frame.payload.method.id ==
+                        AMQP_CONNECTION_CLOSE_METHOD) {
+                    return -1;
+                }
+                if (frame.payload.method.id ==
+                        AMQP_CHANNEL_CLOSE_METHOD) {
+                    return -1;
+                }
             }
         } else if (ret == AMQP_STATUS_TIMEOUT) {
             elapsed ++;
@@ -575,13 +583,24 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
             return -1;
         }
         if (elapsed >= timeout) {
-            // didn't see an ACK in a reasonable time frame, assume lost
-            return 0;
+            /* Didn't see an ACK in a reasonable time frame, normally it
+             * would make sense to assume that message wasn't published but
+             * there are certain situations (usually after the RMQ broker
+             * has been restarted) where RMQ won't produce acks for
+             * re-published messages.
+             * At this stage, we can't tell if what we are sending is a
+             * republication. It is most likely, however,
+             * that if 3 seconds have passed without an ACK or CLOSE result
+             * then we are probably dealing with a broker that is not going
+             * to acknowledge this message.
+             */
+            break;
         }
     }
 
     /* if we get here, the publish was successful and confirmed by the
-     * broker
+     * broker (or we got no feedback from the broker and have to assume
+     * a successful publication...)
      */
     buf->writeoffset += ((uint32_t)sent);
     if (buf->writeoffset > buf->deadwindow) {
