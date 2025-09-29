@@ -992,9 +992,10 @@ static int consume_other_frame(amqp_connection_state_t state) {
 int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
 
     size_t i;
-    int r;
+    int r, elapsed;
     amqp_frame_t frame;
     saved_received_data_t *sav;
+    struct timeval tv;
 
     int cc_await = 0, iri_await = 0, raw_await = 0;
     int iri_start = -1, cc_start = -1, raw_start = -1;
@@ -1026,14 +1027,25 @@ int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
         }
     }
 
+    elapsed = 0;
     while (cc_await > 0 || iri_await > 0 || raw_await > 0) {
         /* keep consuming until we get an ACK or a NACK -- everything else
          * can just be ignored (note that this will block until we get what
          * we are looking for, or the connection fails).
          */
-        r = amqp_simple_wait_frame(col->amqp_producer_state, &frame);
+        tv.tv_sec = 1; tv.tv_usec = 0;
+        r = amqp_simple_wait_frame_noblock(col->amqp_producer_state, &frame,
+                &tv);
 
-        if (r < 0) {
+        if (r == AMQP_STATUS_TIMEOUT) {
+            elapsed ++;
+            if (elapsed >= 3) {
+                /* we've gone 3 seconds with no acknowledgement, we'll
+                 * have to retry the publish
+                 */
+                return 0;
+            }
+        } else if (r != AMQP_STATUS_OK) {
             /* broker failure, must retry */
             return 0;
         }
@@ -1042,6 +1054,9 @@ int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
             amqp_basic_ack_t *ack;
 
             switch(frame.payload.method.id) {
+                case AMQP_CONNECTION_CLOSE_METHOD:
+                case AMQP_CHANNEL_CLOSE_METHOD:
+                    return 0;
                 case AMQP_BASIC_ACK_METHOD:
                     ack = (amqp_basic_ack_t *)frame.payload.method.decoded;
                     int *start, *await;

@@ -956,14 +956,15 @@ static int process_all_saved_messages(coll_recv_t *col) {
             return r;
         }
     }
-    if (consume_mediator_RMQ_producer_acks(col) == 0) {
-        /* RMQ failed to acknowledge everything we published, have to
-         * reconnect and re-publish
-         */
-        amqp_destroy_connection(col->amqp_producer_state);
-        col->amqp_producer_state = NULL;
-        return 0;
-    }
+
+    /* Unfortunately, publisher confirms are not guaranteed when
+     * republishing messages that the broker may have seen in a previous
+     * lifetime. So that means we just re-publish and hope, rather than
+     * relying on ACKs to confirm that the messages got persisted
+     */
+    col->saved_iri_msg_cnt = 0;
+    col->saved_cc_msg_cnt = 0;
+    col->saved_raw_msg_cnt = 0;
     return 1;
 }
 
