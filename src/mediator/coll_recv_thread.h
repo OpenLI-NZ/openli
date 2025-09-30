@@ -404,6 +404,13 @@ struct single_coll_receiver {
      */
     uint64_t dropped_recs;
 
+    /** Flag to indicate if one of the saved received data queues is
+     *  full and therefore we should avoid receiving new data from the
+     *  collector until we've managed to get confirmation that what we've
+     *  already got has been published successfully
+     */
+    uint8_t queue_full;
+
     saved_received_data_t saved_iri_msgs[MAX_SAVED_RECEIVED_DATA];
     size_t saved_iri_msg_cnt;
     size_t iris_published;

@@ -835,6 +835,7 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
                     msgbody, msglen,
                     found->liid, found->queuenames[1], &(col->rmq_blocked));
             if (r < 0) {
+                logger(LOG_INFO, "OpenLI Mediator: collector thread for %s has disconnected from local RMQ instance after failing to publish a CC", col->ipaddr);
                 amqp_destroy_connection(col->amqp_producer_state);
                 col->amqp_producer_state = NULL;
                 r = 0;
@@ -852,6 +853,7 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
                     col->amqp_producer_state, msgbody, msglen,
                     found->liid, found->queuenames[0], &(col->rmq_blocked));
             if (r < 0) {
+                logger(LOG_INFO, "OpenLI Mediator: collector thread for %s has disconnected from local RMQ instance after failing to publish an IRI", col->ipaddr);
                 amqp_destroy_connection(col->amqp_producer_state);
                 col->amqp_producer_state = NULL;
                 r = 0;
@@ -882,8 +884,10 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
                     col->amqp_producer_state, msgbody, msglen, found->liid,
                     found->queuenames[2], &(col->rmq_blocked));
             if (r < 0) {
+                logger(LOG_INFO, "OpenLI Mediator: collector thread for %s has disconnected from local RMQ instance after failing to publish raw data", col->ipaddr);
                 amqp_destroy_connection(col->amqp_producer_state);
                 col->amqp_producer_state = NULL;
+                r = 0;
             }
         } else {
             increment_col_drop_counter(col);
@@ -965,6 +969,7 @@ static int process_all_saved_messages(coll_recv_t *col) {
     col->saved_iri_msg_cnt = 0;
     col->saved_cc_msg_cnt = 0;
     col->saved_raw_msg_cnt = 0;
+    col->queue_full = 0;
     return 1;
 }
 
@@ -1000,6 +1005,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
     if (save_message(col, liidstr, msgbody, msglen, msgtype) < 0) {
         increment_col_drop_counter(col);
+        col->queue_full = 1;
         return 0;
     }
 
@@ -1033,6 +1039,9 @@ static int receive_collector(coll_recv_t *col, med_epoll_ev_t *mev) {
      */
     if (col->amqp_producer_state == NULL) {
         return 0;
+    }
+    if (col->queue_full) {
+        goto processacks;
     }
 
     do {
@@ -1104,6 +1113,8 @@ static int receive_collector(coll_recv_t *col, med_epoll_ev_t *mev) {
                     col->saved_cc_msg_cnt < MAX_SAVED_RECEIVED_DATA &&
                     col->saved_raw_msg_cnt < MAX_SAVED_RECEIVED_DATA);
 
+
+processacks:
     if (col->amqp_producer_state &&
             consume_mediator_RMQ_producer_acks(col) == 0) {
         /* RMQ failed to acknowledge everything we published, have to
@@ -1526,11 +1537,11 @@ static void *start_collector_thread(void *params) {
         if (col->amqp_producer_state == NULL) {
             if (join_mediator_RMQ_as_producer(col) == NULL) {
                 col->disabled_log = 1;
-                col->iris_published = 0;
-                col->ccs_published = 0;
-                col->raw_published = 0;
                 continue;
             }
+            col->iris_published = 0;
+            col->ccs_published = 0;
+            col->raw_published = 0;
             r = process_all_saved_messages(col);
             if (r < 0) {
                 // fatal error

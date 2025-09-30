@@ -1111,6 +1111,7 @@ int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
     col->saved_iri_msg_cnt = 0;
     col->saved_raw_msg_cnt = 0;
     col->saved_cc_msg_cnt = 0;
+    col->queue_full = 0;
     return 1;
 
 }
