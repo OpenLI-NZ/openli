@@ -494,12 +494,10 @@ static med_epoll_ev_t *prepare_collector_receive_rmq(coll_recv_t *col,
         close(rmq_sock);
         return NULL;
     }
-
-    if (col->disabled_log == 0) {
-        logger(LOG_INFO,
-                "OpenLI Mediator: joined RMQ on collector %s successfully",
-                col->ipaddr);
-    }
+    col->disabled_log = 0;
+    logger(LOG_INFO,
+            "OpenLI Mediator: joined RMQ on collector %s successfully",
+            col->ipaddr);
     return rmqev;
 }
 

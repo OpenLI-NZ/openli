@@ -1167,7 +1167,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             continue;
         }
         fwd->topoll[i].revents = 0;
-        if (fwd->ampq_conn) {
+        if (fwd->ampq_conn || fwd->RMQ_conf.enabled) {
             continue;
         }
 
