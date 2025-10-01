@@ -33,6 +33,7 @@
 
 wandder_encoded_result_t *encode_etsi_integrity_check(
         wandder_encoder_t *encoder, wandder_etsipshdr_data_t *hdrdata,
+        int64_t cin,
         int64_t self_seqno, openli_integrity_hash_method_t hashmethod,
         uint32_t checktype, openli_proto_msgtype_t msgtype,
         uint8_t *checkval, unsigned int checkvallen,
@@ -46,7 +47,7 @@ wandder_encoded_result_t *encode_etsi_integrity_check(
     uint32_t hashalgo = 0;
 
     gettimeofday(&tv, NULL);
-    encode_etsili_pshdr(encoder, hdrdata, 0, self_seqno, &tv, timefmt);
+    encode_etsili_pshdr(encoder, hdrdata, cin, self_seqno, &tv, timefmt);
     ENC_CSEQUENCE(encoder, 2);          // Payload
     ENC_CSEQUENCE(encoder, 2);          // TRIPayload
     ENC_CSEQUENCE(encoder, 0);          // integrityCheck

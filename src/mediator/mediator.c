@@ -892,13 +892,12 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     return 0;
 }
 
-/**  new LIID->agency mapping received from the
+/** Parses and forwards an integrity check signature received from the
  *  provisioner.
  *
  *  @param state            The global state for this mediator
- *  @param msgbody          Pointer to the start of the LIID mapping message
- *                          body
- *  @param msglen           Length of the LIID mapping message, in bytes.
+ *  @param msgbody          Pointer to the start of the ICS response body
+ *  @param msglen           Length of the ICS response message, in bytes.
  *
  *  @return -1 if an error occurs, 0 otherwise.
  */
@@ -1696,7 +1695,6 @@ static void run(mediator_state_t *state) {
                     (void *)&colmsg) != LIBTRACE_MQ_FAILED) {
                 if (colmsg.type == MED_COLL_INTEGRITY_SIGN_REQUEST) {
                     struct ics_sign_request_message *signreq;
-
                     signreq = (struct ics_sign_request_message *)(colmsg.arg);
                     if (send_ics_signing_request_to_provisioner(
                             &state->provisioner, signreq) < 0) {

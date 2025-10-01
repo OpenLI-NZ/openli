@@ -588,6 +588,8 @@ void mediator_disconnect_all_collectors(mediator_collector_t *medcol);
  */
 void mediator_clean_collectors(mediator_collector_t *medcol);
 
+int collrecv_save_message(coll_recv_t *col, unsigned char *liid,
+        uint8_t *msgbody, uint16_t msglen, openli_proto_msgtype_t msgtype);
 
 /* defined in mediator_integrity_check.c */
 int update_agency_digest_config_map(agency_digest_config_t **map,

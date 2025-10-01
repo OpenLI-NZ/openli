@@ -350,8 +350,8 @@ static void destroy_rmq_colev(coll_recv_t *col) {
     col->incoming_rmq = NULL;
 }
 
-static int save_message(coll_recv_t *col, unsigned char *liid, uint8_t *msgbody,
-        uint16_t msglen, openli_proto_msgtype_t msgtype) {
+int collrecv_save_message(coll_recv_t *col, unsigned char *liid,
+        uint8_t *msgbody, uint16_t msglen, openli_proto_msgtype_t msgtype) {
 
     saved_received_data_t *sav;
     size_t *nexttag;
@@ -1001,7 +1001,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
         msglen -= (liidlen + 2);
     }
 
-    if (save_message(col, liidstr, msgbody, msglen, msgtype) < 0) {
+    if (collrecv_save_message(col, liidstr, msgbody, msglen, msgtype) < 0) {
         increment_col_drop_counter(col);
         col->queue_full = 1;
         return 0;
@@ -1517,7 +1517,6 @@ static void *start_collector_thread(void *params) {
             if (msg.type == MED_COLL_INTEGRITY_SIGN_RESULT) {
                 struct ics_sign_response_message *resp;
                 resp = (struct ics_sign_response_message *)(msg.arg);
-
                 handle_integrity_check_signature_response(col, resp);
             }
 

@@ -232,7 +232,7 @@ static wandder_encoded_result_t *generate_integrity_check_signature_pdu(
     populate_integrity_check_pshdr_data(&hdrdata, ics, mediatorid,
             operatorid, netelemid);
     reset_wandder_encoder(encoder);
-    ic_pdu = encode_etsi_integrity_check(encoder, &hdrdata,
+    ic_pdu = encode_etsi_integrity_check(encoder, &hdrdata, ics->cin,
             job->seqno, ics->agency->config->digest_hash_method,
             INTEGRITY_CHECK_REQUEST_SIGN,
             ics->msgtype, signature, signlen, job->signing_seqnos,
@@ -257,7 +257,7 @@ static wandder_encoded_result_t *generate_integrity_check_hash_pdu(
 
     reset_wandder_encoder(encoder);
 
-    ic_pdu = encode_etsi_integrity_check(encoder, &hdrdata,
+    ic_pdu = encode_etsi_integrity_check(encoder, &hdrdata, ics->cin,
             ics->self_seqno_hash,
             ics->agency->config->digest_hash_method, INTEGRITY_CHECK_SEND_HASH,
             ics->msgtype, hashresult, hashlen, ics->hashed_seqnos,
@@ -505,6 +505,13 @@ int send_integrity_check_sign_pdu(coll_recv_t *col,
 
     encres = generate_integrity_check_signature_pdu(ics, medid, operatorid,
             col->etsiencoder, job, resp->signature, resp->sign_len);
+
+    if (collrecv_save_message(col, (unsigned char *)ics->liid, encres->encoded,
+            encres->len, ics->msgtype) < 0) {
+        wandder_release_encoded_result(col->etsiencoder, encres);
+        return -1;
+    }
+
     if (ics->msgtype == OPENLI_PROTO_ETSI_CC) {
         r = publish_cc_on_mediator_liid_RMQ_queue(col->amqp_producer_state,
                 encres->encoded, encres->len, found->liid,
@@ -660,7 +667,6 @@ int send_integrity_check_signing_request(coll_recv_t *col,
     job->seqno = ics->self_seqno_sign;
     job->signing_seqnos = ics->signing_seqnos;
     job->signing_seqno_array_size = ics->signing_seqno_next_index;
-    job->reply_timer = NULL;
     job->digest = calloc(EVP_MAX_MD_SIZE + 1, sizeof(unsigned char));
     job->digest_len = 0;
     job->reply_timer = create_mediator_timer(col->epoll_fd, job,
